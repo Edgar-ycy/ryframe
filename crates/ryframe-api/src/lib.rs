@@ -7,7 +7,7 @@ pub mod __macro_support {
 }
 
 pub mod auth_middleware;
-mod captcha;
+pub mod captcha;
 mod client_ip;
 pub mod dto;
 mod handler_utils;

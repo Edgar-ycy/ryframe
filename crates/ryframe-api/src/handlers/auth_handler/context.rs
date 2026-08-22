@@ -127,7 +127,7 @@ fn assemble_context(
     })
 }
 
-pub(super) fn login_actor(user_id: i64, user: &UserInfo) -> ActorContext {
+pub fn login_actor(user_id: i64, user: &UserInfo) -> ActorContext {
     ActorContext {
         user_id,
         tenant_id: user.tenant_id.clone(),
@@ -138,36 +138,5 @@ pub(super) fn login_actor(user_id: i64, user: &UserInfo) -> ActorContext {
         custom_dept_ids: Vec::new(),
         include_self: true,
         is_super_admin: user.is_super_admin,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use ryframe_application::UserInfo;
-
-    use super::login_actor;
-
-    fn user(role: &str, is_super_admin: bool) -> UserInfo {
-        UserInfo {
-            id: "1".into(),
-            tenant_id: "tenant-a".into(),
-            tenant_name: "租户甲".into(),
-            dept_name: None,
-            username: "tester".into(),
-            nickname: "测试用户".into(),
-            email: String::new(),
-            phone: String::new(),
-            avatar: None,
-            preferred_locale: None,
-            is_super_admin,
-            roles: vec![role.into()],
-            perms: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn login_actor_does_not_infer_super_admin_from_role_code() {
-        assert!(!login_actor(1, &user("admin", false)).is_super_admin);
-        assert!(login_actor(1, &user("ordinary", true)).is_super_admin);
     }
 }

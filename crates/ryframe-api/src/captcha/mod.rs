@@ -1,6 +1,6 @@
 //! 验证码题目生成与 PNG 渲染。
 
-mod challenge;
+pub mod challenge;
 mod glyph;
 mod render;
 

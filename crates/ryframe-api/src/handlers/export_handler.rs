@@ -241,7 +241,7 @@ pub(crate) async fn request_export(
     ))
 }
 
-fn require_idempotency_key(headers: &HeaderMap) -> HttpResult<()> {
+pub fn require_idempotency_key(headers: &HeaderMap) -> HttpResult<()> {
     let valid = headers
         .get("Idempotency-Key")
         .and_then(|value| value.to_str().ok())
@@ -253,26 +253,4 @@ fn require_idempotency_key(headers: &HeaderMap) -> HttpResult<()> {
     Ok(valid
         .then_some(())
         .ok_or_else(|| AppError::Validation("导出任务必须提供 Idempotency-Key 请求头".into()))?)
-}
-
-#[cfg(test)]
-mod tests {
-    use axum::http::HeaderValue;
-
-    use super::*;
-
-    #[test]
-    fn deletion_requires_a_bounded_visible_ascii_idempotency_key() {
-        assert!(require_idempotency_key(&HeaderMap::new()).is_err());
-
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            "Idempotency-Key",
-            HeaderValue::from_static("delete-export-01"),
-        );
-        require_idempotency_key(&headers).expect("有效幂等键应通过");
-
-        headers.insert("Idempotency-Key", HeaderValue::from_static("has space"));
-        assert!(require_idempotency_key(&headers).is_err());
-    }
 }

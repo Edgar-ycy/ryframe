@@ -49,7 +49,7 @@ fn ensure_vary_accept_language(headers: &mut HeaderMap) {
 }
 
 /// 优先按 `Accept-Language` 协商；没有可用值时再使用用户偏好；最终回退中文。
-fn negotiate_locale(accept_language: Option<&str>, preferred_locale: Option<&str>) -> Locale {
+pub fn negotiate_locale(accept_language: Option<&str>, preferred_locale: Option<&str>) -> Locale {
     accept_language
         .and_then(parse_accept_language)
         .or_else(|| preferred_locale.and_then(Locale::parse))
@@ -72,19 +72,4 @@ fn parse_accept_language(header: &str) -> Option<Locale> {
         .collect::<Vec<_>>();
     candidates.sort_by(|left, right| right.1.total_cmp(&left.1));
     candidates.first().map(|(locale, _)| *locale)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn locale_negotiation_honors_quality_and_fallbacks() {
-        assert_eq!(
-            negotiate_locale(Some("zh-CN;q=0.5, en-US;q=0.9"), Some("zh-CN")),
-            Locale::EnUs
-        );
-        assert_eq!(negotiate_locale(None, Some("en-GB")), Locale::EnUs);
-        assert_eq!(negotiate_locale(Some("fr-FR"), None), Locale::DEFAULT);
-    }
 }

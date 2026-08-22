@@ -25,20 +25,3 @@ pub fn tenant_user_key(tenant_id: &str, user_id: &str) -> String {
 pub fn api_client_key(path: &str, client_ip: IpAddr) -> String {
     format!("api:{path}:ip:{client_ip}")
 }
-
-#[cfg(test)]
-mod tests {
-    use std::net::{IpAddr, Ipv4Addr};
-
-    use super::{api_client_key, tenant_key, tenant_user_key};
-
-    #[test]
-    fn rate_limit_keys_preserve_existing_namespaces() {
-        assert_eq!(tenant_key("tenant-a"), "tenant:tenant-a");
-        assert_eq!(tenant_user_key("tenant-a", "42"), "tenant_user:tenant-a:42");
-        assert_eq!(
-            api_client_key("/api/v1/users", IpAddr::V4(Ipv4Addr::LOCALHOST)),
-            "api:/api/v1/users:ip:127.0.0.1"
-        );
-    }
-}

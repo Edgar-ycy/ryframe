@@ -51,19 +51,19 @@ enum LocalState {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-struct CachedResponse {
-    status: u16,
-    body: Vec<u8>,
-    headers: Vec<CachedHeader>,
+pub struct CachedResponse {
+    pub status: u16,
+    pub body: Vec<u8>,
+    pub headers: Vec<CachedHeader>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-struct CachedHeader {
-    name: String,
-    value: Vec<u8>,
+pub struct CachedHeader {
+    pub name: String,
+    pub value: Vec<u8>,
 }
 
-enum Reservation {
+pub enum Reservation {
     Acquired,
     Processing,
     Conflict,
@@ -132,7 +132,7 @@ impl IdempotencyState {
         self
     }
 
-    async fn reserve(&self, key: &str, fingerprint: &str) -> Result<Reservation, String> {
+    pub async fn reserve(&self, key: &str, fingerprint: &str) -> Result<Reservation, String> {
         if let Some(store) = &self.store {
             if let Some(reservation) = self.local_terminal(key, fingerprint) {
                 return Ok(reservation);
@@ -213,7 +213,7 @@ impl IdempotencyState {
             .await
     }
 
-    async fn complete(
+    pub async fn complete(
         &self,
         key: &str,
         fingerprint: &str,
@@ -600,52 +600,4 @@ fn unavailable_response(error: String) -> Response {
         "idempotency service unavailable",
     )
         .into_response()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn local_store_replays_only_the_same_fingerprint() {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()
-            .expect("测试运行时应创建成功")
-            .block_on(async {
-                let state = IdempotencyState::new(None, 300);
-                assert!(matches!(
-                    state.reserve("key", "fingerprint").await,
-                    Ok(Reservation::Acquired)
-                ));
-                assert!(matches!(
-                    state.reserve("key", "fingerprint").await,
-                    Ok(Reservation::Processing)
-                ));
-                state
-                    .complete(
-                        "key",
-                        "fingerprint",
-                        CachedResponse {
-                            status: StatusCode::CREATED.as_u16(),
-                            body: b"created".to_vec(),
-                            headers: Vec::new(),
-                        },
-                    )
-                    .await
-                    .expect("本地完成状态应写入成功");
-
-                let Ok(Reservation::Completed(response)) =
-                    state.reserve("key", "fingerprint").await
-                else {
-                    panic!("相同指纹应回放已完成响应");
-                };
-                assert_eq!(response.status, StatusCode::CREATED.as_u16());
-                assert_eq!(response.body, b"created");
-                assert!(matches!(
-                    state.reserve("key", "different").await,
-                    Ok(Reservation::Conflict)
-                ));
-            });
-    }
 }

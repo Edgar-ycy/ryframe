@@ -76,28 +76,16 @@ pub async fn telemetry_middleware(request: Request, next: Next) -> Response {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum HttpResponseClass {
+pub enum HttpResponseClass {
     Success,
     ClientError,
     ServerError,
 }
 
-const fn classify_http_response(status: u16) -> HttpResponseClass {
+pub const fn classify_http_response(status: u16) -> HttpResponseClass {
     match status {
         500.. => HttpResponseClass::ServerError,
         400..=499 => HttpResponseClass::ClientError,
         _ => HttpResponseClass::Success,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{HttpResponseClass, classify_http_response};
-
-    #[test]
-    fn response_classes_follow_http_status_ranges() {
-        assert_eq!(classify_http_response(204), HttpResponseClass::Success);
-        assert_eq!(classify_http_response(404), HttpResponseClass::ClientError);
-        assert_eq!(classify_http_response(503), HttpResponseClass::ServerError);
     }
 }

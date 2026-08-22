@@ -926,6 +926,3 @@ pub async fn openapi_json() -> impl axum::response::IntoResponse {
     use axum::Json;
     Json(ApiDoc::openapi())
 }
-
-#[cfg(test)]
-mod tests;

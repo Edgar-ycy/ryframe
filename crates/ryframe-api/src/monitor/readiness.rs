@@ -161,32 +161,3 @@ const fn status(healthy: bool) -> DependencyStatus {
         DependencyStatus::Down
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use super::{DependencyHealthCache, DependencyStatus};
-
-    #[test]
-    fn initial_snapshot_fails_closed() {
-        let cache = DependencyHealthCache::new(true, true, Duration::MAX);
-        let snapshot = cache.snapshot();
-
-        assert!(!snapshot.is_ready());
-        assert_eq!(snapshot.mysql, DependencyStatus::Unknown);
-        assert_eq!(snapshot.redis, DependencyStatus::Unknown);
-        assert_eq!(snapshot.object_storage, DependencyStatus::Unknown);
-    }
-
-    #[test]
-    fn optional_dependencies_do_not_block_readiness() {
-        let cache = DependencyHealthCache::new(false, false, Duration::MAX);
-        cache.update(true, false, false);
-        let snapshot = cache.snapshot();
-
-        assert!(snapshot.is_ready());
-        assert_eq!(snapshot.redis, DependencyStatus::OptionalDegraded);
-        assert_eq!(snapshot.object_storage, DependencyStatus::NotRequired);
-    }
-}

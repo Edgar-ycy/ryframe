@@ -1,4 +1,4 @@
-pub(crate) mod context;
+pub mod context;
 mod cookies;
 mod guards;
 pub(crate) mod login;
