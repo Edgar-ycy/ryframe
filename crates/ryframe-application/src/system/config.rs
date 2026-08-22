@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use ryframe_kernel::{
     ActorContext, AppError, AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery,
 };
@@ -23,7 +23,7 @@ pub struct ConfigVo {
     pub value: String,
     pub portable: bool,
     pub remark: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: DateTime<Utc>,
 }
 
 impl From<ConfigRecord> for ConfigVo {

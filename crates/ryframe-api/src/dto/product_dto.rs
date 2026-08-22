@@ -12,7 +12,7 @@ use ryframe_application::system::{
     SessionCapabilityVo as ServiceSessionCapabilityVo,
     SessionProductContextVo as ServiceSessionProductContextVo,
 };
-use ryframe_kernel::AppError;
+use ryframe_kernel::{AppError, ValidatedPageQuery};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use utoipa::ToSchema;
@@ -51,10 +51,8 @@ pub struct ProductPlanPageQuery {
 }
 
 impl ProductPlanPageQuery {
-    pub fn validate_page(
-        &self,
-    ) -> Result<ryframe_kernel::ValidatedPageQuery, ryframe_kernel::AppError> {
-        ryframe_kernel::ValidatedPageQuery::from_optional(
+    pub fn validate_page(&self) -> Result<ValidatedPageQuery, AppError> {
+        ValidatedPageQuery::from_optional(
             self.page,
             self.page_size,
             ryframe_kernel::PaginationPolicy::new(

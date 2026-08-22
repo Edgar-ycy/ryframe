@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use crate::http::{ApiResponse, HttpResult, api_path};
 use axum::{
     Json,
-    http::{HeaderMap, HeaderValue, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar};
@@ -124,7 +124,7 @@ pub(super) async fn enforce_login_rate_limit(
         if !decision.allowed {
             crate::metrics::record_rate_limit_rejection(scope);
             let mut response = (
-                axum::http::StatusCode::TOO_MANY_REQUESTS,
+                StatusCode::TOO_MANY_REQUESTS,
                 Json(ApiResponse::<()>::fail(
                     429,
                     "too many login attempts; try again later",

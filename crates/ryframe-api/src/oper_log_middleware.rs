@@ -10,6 +10,7 @@ use crate::RequestPrincipal;
 use crate::middleware::request_id::RequestId;
 use axum::{
     extract::{MatchedPath, Request, State},
+    http::Method,
     middleware::Next,
     response::Response,
 };
@@ -72,10 +73,7 @@ pub async fn oper_log_middleware(
     // 仅对写操作记录日志
     let should_log = matches!(
         method,
-        axum::http::Method::POST
-            | axum::http::Method::PUT
-            | axum::http::Method::PATCH
-            | axum::http::Method::DELETE
+        Method::POST | Method::PUT | Method::PATCH | Method::DELETE
     );
 
     if !should_log {

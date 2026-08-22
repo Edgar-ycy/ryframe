@@ -94,7 +94,7 @@ impl OnlineUserService {
 
     pub fn new_in_memory(refresh_sessions: Arc<dyn RefreshSessionPort>) -> Self {
         Self {
-            metadata: Arc::new(memory_backend::InMemoryOnlineSessionMetadata::default()),
+            metadata: Arc::new(InMemoryOnlineSessionMetadata::default()),
             refresh_sessions,
         }
     }

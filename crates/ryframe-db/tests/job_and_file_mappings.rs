@@ -30,7 +30,7 @@ fn upload_record() -> FileUploadRecord {
         upload_by: Some("operator".to_owned()),
         upload_status: "pending".to_owned(),
         reservation_token: Some("token".to_owned()),
-        reservation_expires_at: Some(created_at + chrono::Duration::minutes(5)),
+        reservation_expires_at: Some(created_at + Duration::minutes(5)),
         del_flag: "0".to_owned(),
         created_at,
         updated_at: created_at,

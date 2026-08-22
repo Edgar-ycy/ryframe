@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use ryframe_kernel::{
     ActorContext, AppError, AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery,
 };
@@ -43,7 +43,7 @@ pub struct RoleVo {
     pub status: String,
     pub sort: i32,
     pub remark: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: DateTime<Utc>,
     /// 自定义数据权限的部门ID列表（仅查询详情时填充）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dept_ids: Option<Vec<String>>,

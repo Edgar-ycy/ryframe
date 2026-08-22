@@ -1,7 +1,7 @@
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
-    io::{Cursor, Read},
+    io::{Cursor, Read, Seek},
     path::Path,
 };
 
@@ -128,7 +128,7 @@ impl ExcelImporter {
     }
 
     /// 从文件读取 Excel 数据
-    pub fn read_from_file<P: AsRef<std::path::Path>, T: DeserializeOwned>(
+    pub fn read_from_file<P: AsRef<Path>, T: DeserializeOwned>(
         path: P,
         sheet_name: Option<&str>,
     ) -> AppResult<Vec<T>> {
@@ -172,7 +172,7 @@ impl ExcelImporter {
     where
         R: Reader<RS>,
         R::Error: std::fmt::Display,
-        RS: std::io::Read + std::io::Seek,
+        RS: Read + Seek,
     {
         let name = match sheet_name {
             Some(n) => n.to_string(),

@@ -113,9 +113,9 @@ mod lifecycle {
     use super::*;
 
     fn requester_record() -> ExportRequesterRecord {
-        let now = chrono::DateTime::parse_from_rfc3339("2026-08-21T00:00:00Z")
+        let now = DateTime::parse_from_rfc3339("2026-08-21T00:00:00Z")
             .expect("测试时间应有效")
-            .with_timezone(&chrono::Utc);
+            .with_timezone(&Utc);
         ExportRequesterRecord {
             id: 42,
             resource: "users".into(),
@@ -312,7 +312,7 @@ mod types {
             serde_json::from_value(previous_version).expect("旧版本结构仍可被类型读取");
         assert!(matches!(
             previous.validate("roles"),
-            Err(ryframe_kernel::AppError::Validation(_))
+            Err(AppError::Validation(_))
         ));
 
         let old_shape = serde_json::json!({"request": {"name": "ops"}});
@@ -347,7 +347,7 @@ mod types {
         };
         assert!(matches!(
             request.validate("roles"),
-            Err(ryframe_kernel::AppError::Validation(_))
+            Err(AppError::Validation(_))
         ));
 
         let current = StoredExportRequest {
@@ -360,7 +360,7 @@ mod types {
         };
         assert!(matches!(
             current.validate("users"),
-            Err(ryframe_kernel::AppError::Validation(_))
+            Err(AppError::Validation(_))
         ));
     }
 
@@ -385,9 +385,6 @@ mod types {
             "request_version": 0
         }))
         .expect("旧版本载荷结构应可解析");
-        assert!(matches!(
-            old.validate(),
-            Err(ryframe_kernel::AppError::Validation(_))
-        ));
+        assert!(matches!(old.validate(), Err(AppError::Validation(_))));
     }
 }

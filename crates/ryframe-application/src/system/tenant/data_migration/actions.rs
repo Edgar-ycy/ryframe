@@ -75,7 +75,7 @@ impl TenantDataMigrationService {
             .reactivate_linked_in_transaction(
                 intent_transaction.background_jobs(),
                 background_job_id,
-                super::TENANT_DATA_MIGRATION_JOB_TYPE,
+                TENANT_DATA_MIGRATION_JOB_TYPE,
                 "migration_id",
                 migration_id,
                 intent_now,
@@ -188,7 +188,7 @@ impl TenantDataMigrationService {
             .reactivate_linked_in_transaction(
                 intent_transaction.background_jobs(),
                 background_job_id,
-                super::TENANT_DATA_MIGRATION_JOB_TYPE,
+                TENANT_DATA_MIGRATION_JOB_TYPE,
                 "migration_id",
                 migration_id,
                 now,

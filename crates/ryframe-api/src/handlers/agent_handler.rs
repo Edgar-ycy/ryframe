@@ -6,7 +6,7 @@ use axum::{
     Router,
     body::Body,
     extract::{Extension, Path, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header, request::Parts},
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
@@ -150,10 +150,7 @@ where
 {
     type Rejection = std::convert::Infallible;
 
-    async fn from_request_parts(
-        parts: &mut axum::http::request::Parts,
-        _state: &S,
-    ) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         let started_at = Utc::now();
         let parsed = axum::extract::Query::<AgentPageQuery>::try_from_uri(&parts.uri);
         let (page, page_size, validation_error) = match parsed {

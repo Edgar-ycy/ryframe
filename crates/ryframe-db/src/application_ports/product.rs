@@ -10,7 +10,7 @@ use crate::{
         role_permission, tenant_capability_override, tenant_operation_lease,
     },
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseTransaction, EntityTrait,
@@ -203,8 +203,8 @@ impl ProductWriteTransaction for DatabaseProductWriteTransaction {
         tenant_id: &'a str,
         owner_token: &'a str,
         version_id: i64,
-        acquired_at: chrono::DateTime<chrono::Utc>,
-        expires_at: chrono::DateTime<chrono::Utc>,
+        acquired_at: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
     ) -> PersistenceFuture<'a, ()> {
         Box::pin(async move {
             TenantOperationLeaseRepository
@@ -235,9 +235,7 @@ impl ProductWriteTransaction for DatabaseProductWriteTransaction {
             let observed = repository
                 .find_version_by_id(&self.transaction, version_id)
                 .await?
-                .ok_or_else(|| {
-                    ryframe_kernel::AppError::NotFound("目标产品套餐版本不存在".into())
-                })?;
+                .ok_or_else(|| AppError::NotFound("目标产品套餐版本不存在".into()))?;
             let plan = repository
                 .lock_plan_by_id_in_txn(&self.transaction, observed.plan.id)
                 .await?;
@@ -245,7 +243,7 @@ impl ProductWriteTransaction for DatabaseProductWriteTransaction {
                 .lock_version_by_id_in_txn(&self.transaction, version_id)
                 .await?;
             if version.plan_id != plan.id {
-                return Err(ryframe_kernel::AppError::Conflict(
+                return Err(AppError::Conflict(
                     "目标产品套餐版本所属套餐已变化，请重新预览".into(),
                 ));
             }
@@ -253,7 +251,7 @@ impl ProductWriteTransaction for DatabaseProductWriteTransaction {
                 .find_version_by_id(&self.transaction, version_id)
                 .await?
                 .map(version_snapshot)
-                .ok_or_else(|| ryframe_kernel::AppError::NotFound("目标产品套餐版本不存在".into()))
+                .ok_or_else(|| AppError::NotFound("目标产品套餐版本不存在".into()))
         })
     }
 
@@ -381,7 +379,7 @@ impl ProductWriteTransaction for DatabaseProductWriteTransaction {
         &self,
         version: ProductVersionState,
         capabilities: Vec<ProductCapabilityRecord>,
-        capability_time: chrono::DateTime<chrono::Utc>,
+        capability_time: DateTime<Utc>,
     ) -> PersistenceFuture<'_, ProductVersionWriteResult> {
         Box::pin(async move {
             let version_id = version.id;
@@ -431,7 +429,7 @@ impl ProductWriteTransaction for DatabaseProductWriteTransaction {
         &self,
         version: ProductVersionState,
         capabilities: Vec<ProductCapabilityRecord>,
-        capability_time: chrono::DateTime<chrono::Utc>,
+        capability_time: DateTime<Utc>,
     ) -> PersistenceFuture<'_, ProductVersionWriteResult> {
         Box::pin(async move {
             let version_id = version.id;
@@ -488,8 +486,8 @@ impl ProductWriteTransaction for DatabaseProductWriteTransaction {
 async fn plan_record(
     repository: &ProductRepository,
     database: &sea_orm::DatabaseConnection,
-    plan: crate::entities::product_plan::Model,
-) -> ryframe_kernel::AppResult<ProductPlanRecord> {
+    plan: product_plan::Model,
+) -> AppResult<ProductPlanRecord> {
     let versions = repository.list_versions(database, plan.id).await?;
     let mut version_records = Vec::with_capacity(versions.len());
     for version in versions {
@@ -523,7 +521,7 @@ async fn plan_record(
 }
 
 pub(crate) fn capability_record(
-    capability: crate::entities::product_plan_capability::Model,
+    capability: product_plan_capability::Model,
 ) -> ProductCapabilityRecord {
     ProductCapabilityRecord {
         code: capability.capability_code,
@@ -594,7 +592,7 @@ fn version_model(version: ProductVersionState) -> product_plan_version::Model {
 fn capability_models(
     version_id: i64,
     capabilities: Vec<ProductCapabilityRecord>,
-    now: chrono::DateTime<chrono::Utc>,
+    now: DateTime<Utc>,
 ) -> Vec<product_plan_capability::Model> {
     capabilities
         .into_iter()
@@ -906,7 +904,7 @@ async fn assign_default_admin_permissions(
 
 fn override_models(
     tenant_id: &str,
-    changed_at: chrono::DateTime<chrono::Utc>,
+    changed_at: DateTime<Utc>,
     overrides: Vec<TenantCapabilityOverrideRecord>,
 ) -> Vec<tenant_capability_override::Model> {
     overrides
@@ -926,8 +924,8 @@ fn override_models(
         .collect()
 }
 
-fn database_error(error: impl std::fmt::Display) -> ryframe_kernel::AppError {
-    ryframe_kernel::AppError::Database(error.to_string())
+fn database_error(error: impl std::fmt::Display) -> AppError {
+    AppError::Database(error.to_string())
 }
 
 pub(crate) fn version_snapshot(bundle: crate::ProductPlanVersionBundle) -> ProductVersionSnapshot {

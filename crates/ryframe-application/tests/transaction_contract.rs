@@ -204,7 +204,7 @@ mod login_info {
             _tenant_id: &'a str,
             _page: ValidatedPageQuery,
             _filter: LoginInfoFilter<'a>,
-            _data_scope: &'a ryframe_kernel::DataScopeContext,
+            _data_scope: &'a DataScopeContext,
         ) -> PersistenceFuture<'a, PageResult<LoginInfoRecord>> {
             Box::pin(async { unreachable!("本测试不读取列表") })
         }
@@ -213,7 +213,7 @@ mod login_info {
             &'a self,
             _tenant_id: &'a str,
             _filter: LoginInfoFilter<'a>,
-            _data_scope: &'a ryframe_kernel::DataScopeContext,
+            _data_scope: &'a DataScopeContext,
             _window: ExportCursorWindow,
         ) -> PersistenceFuture<'a, Vec<LoginInfoRecord>> {
             Box::pin(async { unreachable!("本测试不执行导出") })
@@ -443,7 +443,7 @@ mod oper_log {
             _tenant_id: &'a str,
             _page: ValidatedPageQuery,
             _filter: OperLogFilter<'a>,
-            _data_scope: &'a ryframe_kernel::DataScopeContext,
+            _data_scope: &'a DataScopeContext,
         ) -> PersistenceFuture<'a, PageResult<OperLogRecord>> {
             Box::pin(async { unreachable!("本测试不读取列表") })
         }
@@ -452,7 +452,7 @@ mod oper_log {
             &'a self,
             _tenant_id: &'a str,
             _filter: OperLogFilter<'a>,
-            _data_scope: &'a ryframe_kernel::DataScopeContext,
+            _data_scope: &'a DataScopeContext,
             _window: ExportCursorWindow,
         ) -> PersistenceFuture<'a, Vec<OperLogRecord>> {
             Box::pin(async { unreachable!("本测试不执行导出") })

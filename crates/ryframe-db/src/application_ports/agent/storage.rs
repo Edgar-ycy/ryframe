@@ -135,7 +135,7 @@ impl AgentPersistenceTransaction for DatabaseAgentTransaction {
                 .tenant_product(&self.transaction, tenant_id)
                 .await?
                 .map(super::super::product::tenant_snapshot)
-                .ok_or_else(|| ryframe_kernel::AppError::NotFound("租户不存在".into()))?;
+                .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
             self.product
                 .require_capability_snapshot(snapshot, capability_code)
                 .map(|_| ())

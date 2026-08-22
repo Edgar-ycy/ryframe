@@ -68,7 +68,7 @@ impl TenantDataMigrationService {
                 .reactivate_linked_in_transaction(
                     transaction.background_jobs(),
                     job_id,
-                    super::TENANT_DATA_MIGRATION_JOB_TYPE,
+                    TENANT_DATA_MIGRATION_JOB_TYPE,
                     "migration_id",
                     migration.id,
                     now,
@@ -90,7 +90,7 @@ impl TenantDataMigrationService {
                     schedule_id: None,
                     scheduled_for: None,
                     max_runtime_seconds: Some(86_400),
-                    job_type: super::TENANT_DATA_MIGRATION_JOB_TYPE.into(),
+                    job_type: TENANT_DATA_MIGRATION_JOB_TYPE.into(),
                     payload: json!({ "migration_id": migration.id.to_string() }),
                     priority: 20,
                     available_at: now,

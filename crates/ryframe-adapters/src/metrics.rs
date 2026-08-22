@@ -601,7 +601,7 @@ pub fn set_job_queue_depth(job_type: &str, status: &'static str, depth: u64) {
 }
 
 /// 设置已就绪任务的最大等待年龄；零表示该类型当前没有可执行任务。
-pub fn set_job_oldest_ready_age(job_type: &str, age: std::time::Duration) {
+pub fn set_job_oldest_ready_age(job_type: &str, age: Duration) {
     ensure_registered();
     JOB_OLDEST_READY_AGE_SECONDS
         .with_label_values(&[job_type])
@@ -609,7 +609,7 @@ pub fn set_job_oldest_ready_age(job_type: &str, age: std::time::Duration) {
 }
 
 /// 记录后台任务从领取到状态落库完成的执行时长。
-pub fn observe_job_duration(job_type: &str, result: &'static str, duration: std::time::Duration) {
+pub fn observe_job_duration(job_type: &str, result: &'static str, duration: Duration) {
     ensure_registered();
     JOB_DURATION_SECONDS
         .with_label_values(&[job_type, result])
@@ -663,7 +663,7 @@ pub fn record_job_schedule_trigger(outcome: &'static str) {
 }
 
 /// 记录调度领取相对计划时间的延迟。
-pub fn observe_job_schedule_lag(lag: std::time::Duration) {
+pub fn observe_job_schedule_lag(lag: Duration) {
     ensure_registered();
     JOB_SCHEDULE_LAG_SECONDS.observe(lag.as_secs_f64());
 }
@@ -677,7 +677,7 @@ pub fn record_authorization_cache_lookup(scope: &'static str, result: &'static s
 }
 
 /// 记录一次成功的消息确认操作耗时。
-pub fn observe_message_ack_latency(duration: std::time::Duration) {
+pub fn observe_message_ack_latency(duration: Duration) {
     ensure_registered();
     MESSAGE_ACK_LATENCY_SECONDS.observe(duration.as_secs_f64());
 }
@@ -735,7 +735,7 @@ pub fn spawn_process_metrics_updater() {
                     PROCESS_OPEN_FDS.set(entries.count() as f64);
                 }
             }
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            tokio::time::sleep(Duration::from_secs(5)).await;
         }
     });
 }

@@ -22,7 +22,7 @@ use crate::{
 use axum::{
     Json, Router,
     extract::{Extension, Request, State},
-    http::{HeaderValue, StatusCode, header, header::RETRY_AFTER},
+    http::{HeaderName, HeaderValue, StatusCode, header, header::RETRY_AFTER},
     middleware,
     middleware::{Next, from_fn_with_state},
     response::{IntoResponse, Response},
@@ -173,7 +173,7 @@ async fn tenant_context_headers(
         })?;
         response
             .headers_mut()
-            .insert(axum::http::HeaderName::from_static(name), value);
+            .insert(HeaderName::from_static(name), value);
     }
     Ok(response)
 }

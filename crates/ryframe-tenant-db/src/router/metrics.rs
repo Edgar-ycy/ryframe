@@ -28,7 +28,7 @@ impl TenantDatabaseRouter {
                 } else {
                     let _permit = concurrency.acquire_owned().await.ok();
                     match tokio::time::timeout(
-                        std::time::Duration::from_secs(10),
+                        Duration::from_secs(10),
                         router.verify_target_now(&row.current_target_key),
                     )
                     .await

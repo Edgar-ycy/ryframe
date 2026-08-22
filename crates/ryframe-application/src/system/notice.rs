@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use serde::Serialize;
 
@@ -15,7 +15,7 @@ pub struct NoticeVo {
     pub notice_type: Option<String>,
     pub status: String,
     pub created_by: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: DateTime<Utc>,
 }
 
 impl From<NoticeRecord> for NoticeVo {

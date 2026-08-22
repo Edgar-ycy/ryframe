@@ -1,6 +1,6 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use ryframe_kernel::{
     ActorContext, AppError, AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery,
 };
@@ -33,7 +33,7 @@ pub struct DictTypeVo {
     pub code: String,
     pub status: String,
     pub remark: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: DateTime<Utc>,
 }
 
 impl From<DictTypeRecord> for DictTypeVo {

@@ -83,20 +83,18 @@ pub(super) fn capability_records(
 pub(super) fn override_records(
     actor_id: i64,
     values: Vec<CapabilityOverrideInput>,
-) -> Vec<crate::ports::product::TenantCapabilityOverrideRecord> {
+) -> Vec<TenantCapabilityOverrideRecord> {
     values
         .into_iter()
-        .map(
-            |value| crate::ports::product::TenantCapabilityOverrideRecord {
-                code: value.capability_code,
-                enabled: value.enabled,
-                variant: value.variant_code,
-                schema_version: value.schema_version,
-                config: value.config,
-                reason: Some("platform_override".into()),
-                changed_by: Some(actor_id),
-            },
-        )
+        .map(|value| TenantCapabilityOverrideRecord {
+            code: value.capability_code,
+            enabled: value.enabled,
+            variant: value.variant_code,
+            schema_version: value.schema_version,
+            config: value.config,
+            reason: Some("platform_override".into()),
+            changed_by: Some(actor_id),
+        })
         .collect()
 }
 
