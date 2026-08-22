@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
-use ryframe_application::system::tenant_config_transfer::compare_resources;
+use ryframe_application::system::tenant::config_transfer::compare_resources;
 use ryframe_application::{
     next_id,
     ports::tenant_config::{

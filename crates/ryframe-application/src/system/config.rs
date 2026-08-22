@@ -329,7 +329,7 @@ fn validate_portable_key(key: &str, portable: bool) -> AppResult<()> {
     if !portable {
         return Ok(());
     }
-    if super::tenant_config_package::is_sensitive_config_key(key) {
+    if super::tenant::config_package::is_sensitive_config_key(key) {
         return Err(AppError::Validation("敏感参数禁止加入租户配置包".into()));
     }
     Ok(())

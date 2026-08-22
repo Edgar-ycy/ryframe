@@ -12,12 +12,12 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use super::tenant_config_package::TENANT_CONFIG_PACKAGE_SCHEMA;
-use super::{
+use super::super::{
     CapabilityRequirement, DownloadedFile, FileService, ParsedTenantConfigPackage, ProductService,
     TenantConfigPackageLimits, TenantConfigPackageResources, TenantConfigPackageSource,
     UploadPolicy, UserService, parse_tenant_config_package,
 };
+use super::config_package::TENANT_CONFIG_PACKAGE_SCHEMA;
 use crate::{
     AuthorizationCache, ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue,
     ports::tenant_config::{

@@ -5,7 +5,7 @@ use ryframe_kernel::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::{CAPABILITY_CATALOG, CapabilityRequirement};
+use super::super::{CAPABILITY_CATALOG, CapabilityRequirement};
 
 mod format;
 

@@ -19,10 +19,6 @@ pub mod product_capability_catalog;
 pub mod role;
 pub mod service_account;
 pub mod tenant;
-pub mod tenant_config_package;
-pub mod tenant_config_transfer;
-pub mod tenant_data_migration;
-pub mod tenant_usage;
 pub mod user;
 pub mod user_import;
 pub mod websocket_ticket;
@@ -92,15 +88,14 @@ pub use service_account::{
     ServiceCapabilityDescriptor, ServiceCredentialVo, ServiceDelegationTargetVo,
     ServiceDelegationVo, UpdateServiceAccountCommand,
 };
-pub use tenant::{CreateTenantParams, TenantService, TenantVo, UpdateTenantParams};
-pub use tenant_config_package::{
+pub use tenant::config_package::{
     GeneratedTenantConfigPackage, ParsedTenantConfigPackage, PortableConfig, PortableDepartment,
     PortableDictData, PortableDictType, PortableMenu, PortablePermission, PortablePost,
     PortableRole, TenantConfigCatalogSummary, TenantConfigPackageLimits,
     TenantConfigPackageManifest, TenantConfigPackageResources, TenantConfigPackageSource,
     TenantConfigResourceCounts, build_tenant_config_package, parse_tenant_config_package,
 };
-pub use tenant_config_transfer::{
+pub use tenant::config_transfer::{
     ApplyTenantConfigTransferCommand, RequestTenantConfigBundleOutcome,
     RequestTenantConfigTransferOutcome, TENANT_CONFIG_APPLY_JOB_TYPE,
     TENANT_CONFIG_EXPORT_JOB_TYPE, TENANT_CONFIG_PREVIEW_JOB_TYPE, TENANT_CONFIG_ROLLBACK_JOB_TYPE,
@@ -109,17 +104,18 @@ pub use tenant_config_transfer::{
     TenantConfigTargetCatalog, TenantConfigTransferDependencies, TenantConfigTransferItemVo,
     TenantConfigTransferService, TenantConfigTransferSettings, TenantConfigTransferVo,
 };
-pub use tenant_data_migration::{
+pub use tenant::data_migration::{
     BackupPointListParams, BackupPointView, CreateMigrationCommand, DataPlacementView,
     DataTargetDetail, DataTargetListParams, DataTargetSummary, MigrationActionCommand,
     MigrationImpact, MigrationItemView, MigrationPreview, MigrationPreviewRequest, MigrationView,
     TENANT_DATA_MIGRATION_JOB_TYPE, TenantDataMigrationJobHandler, TenantDataMigrationService,
 };
-pub use tenant_usage::{
+pub use tenant::usage::{
     QuotaUsage, RequestWindowUsage, TenantAuxiliaryUsage, TenantCapacityVo,
     TenantRateLimitReadFuture, TenantRateLimitReadPort, TenantRateLimitSnapshot,
     TenantUsagePageParams, TenantUsageService, TenantUsageVo,
 };
+pub use tenant::{CreateTenantParams, TenantService, TenantVo, UpdateTenantParams};
 pub use user::{
     CreateUserParams, RoleBriefVo, USER_STATUS_NORMAL, UpdateUserParams, UserDetailVo,
     UserListParams, UserService, UserVo,

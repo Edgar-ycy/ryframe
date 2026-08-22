@@ -107,7 +107,7 @@ impl TenantConfigTransferService {
         validate_sha256(idempotency_key_hash)?;
         let tenant_id = crate::validated_tenant_id(actor)?;
         let (parsed, data) =
-            crate::system::tenant_config_package::parse_tenant_config_package_with_source(
+            crate::system::tenant::config_package::parse_tenant_config_package_with_source(
                 Arc::clone(&self.archive),
                 data,
                 self.package_limits(),

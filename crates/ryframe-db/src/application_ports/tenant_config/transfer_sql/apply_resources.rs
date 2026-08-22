@@ -240,7 +240,7 @@ async fn upsert_simple_resources(
         if !changed.contains(&("config".to_owned(), normalize_stable_key(&item.key))) {
             continue;
         }
-        if ryframe_application::system::tenant_config_package::is_sensitive_config_key(&item.key) {
+        if ryframe_application::system::tenant::config_package::is_sensitive_config_key(&item.key) {
             return Err(AppError::Validation("敏感参数不能应用".into()));
         }
         let existing = config::Entity::find()
