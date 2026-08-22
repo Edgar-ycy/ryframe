@@ -10,6 +10,15 @@ pub(super) fn validate_enum_key(
     field: &FieldSpec,
     key: &str,
 ) -> Result<(), ResourceError> {
+    if field.value_type == ValueType::String && field.usage.filter && key.is_empty() {
+        return Err(field_error(
+            resource,
+            &field.name,
+            source_path,
+            "可筛选字符串枚举不能使用空字符串键",
+            "使用非空枚举键；空字符串保留为前端“未筛选”哨兵",
+        ));
+    }
     let valid = match field.value_type {
         ValueType::String => true,
         ValueType::I32 => key

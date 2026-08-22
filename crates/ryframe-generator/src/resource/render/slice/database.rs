@@ -344,6 +344,11 @@ fn filter_statements(resource: &ResourceIr) -> String {
                     "        if let Some(value) = filter.{0}.filter(|value| !value.is_empty()) {{\n            select = select.filter(entity::Column::{column}.contains(value));\n        }}",
                     field.name
                 )
+            } else if field.value_type == ValueType::String {
+                format!(
+                    "        if let Some(value) = filter.{0}.filter(|value| !value.is_empty()) {{\n            select = select.filter(entity::Column::{column}.eq(value));\n        }}",
+                    field.name
+                )
             } else {
                 format!(
                     "        if let Some(value) = filter.{0} {{\n            select = select.filter(entity::Column::{column}.eq(value));\n        }}",

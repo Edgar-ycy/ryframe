@@ -815,21 +815,36 @@ fn render_frontend_page(resource: &ResourceIr) -> String {
     @search="search"
     @submit="submit"
     @update:query="setQuery"
-  />
+  >
+    <template v-if="slots.actions" #actions>
+      <slot
+        name="actions"
+        :can-export="canExport"
+        :last-successful-query="lastSuccessfulQuery ?? null"
+      />
+    </template>
+  </FlatCrudPage>
 </template>
 
 <script setup lang="ts">
+import {{ computed }} from 'vue'
 import {{ useI18n }} from 'vue-i18n'
 
 import {{ FlatCrudPage, useFlatCrudResource }} from '@/components/business/flat-crud'
 import {{ formatLocalizedDate }} from '@/i18n'
+import type {{ {pascal}Query }} from './api'
 import {{ create{pascal}Presentation }} from './fields'
+
+const slots = defineSlots<{{
+  actions?(props: {{ canExport: boolean; lastSuccessfulQuery: {pascal}Query | null }}): unknown
+}}>()
 
 const {{ locale }} = useI18n()
 const translate = (zhCN: string, en: string) => locale.value.startsWith('zh') ? zhCN : en
 const presentation = computed(() => create{pascal}Presentation(translate, formatLocalizedDate))
 const {{
   add,
+  canExport,
   changePage,
   deletingKey,
   dialogTitle,
@@ -837,6 +852,7 @@ const {{
   edit,
   editing,
   form,
+  lastSuccessfulQuery,
   listQuery,
   page,
   pageSize,

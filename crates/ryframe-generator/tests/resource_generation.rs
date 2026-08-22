@@ -66,6 +66,9 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
     assert!(service.contains("岗位编码已存在"));
     assert!(service.contains("increment_configuration_version(tenant_id)"));
     assert!(service.contains("TransactionAuditMode::CurrentRequest"));
+    assert!(service.contains("command.sort.unwrap_or(0_i32)"));
+    assert!(service.contains("AppError::NotFound(\"岗位不存在\".into())"));
+    assert!(!service.contains("AppError::NotFound(format!"));
     let repository = content("post/repository.rs");
     assert!(repository.contains("lock_tenant_configuration_in_txn"));
     assert!(repository.contains("increment_configuration_version_in_txn"));
@@ -74,6 +77,7 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
     assert!(repository.contains("normalized.contains(\"uk_tenant_code\")"));
     assert!(repository.contains("岗位编码已存在"));
     assert!(repository.contains("entity::Column::Name.contains(value)"));
+    assert!(repository.contains("filter.status.filter(|value| !value.is_empty())"));
     assert!(repository.contains("entity::Column::Status.eq(value)"));
     assert!(!repository.contains("entity::Column::Status.contains(value)"));
     assert!(repository.contains("active.updated_at = Set(chrono::Utc::now())"));
@@ -101,6 +105,22 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
     assert!(!fake.contains("state.records.retain"));
     assert!(fake.contains("!record.name.contains(value)"));
     assert!(fake.contains("record.status != value"));
+    assert!(fake.contains("filter.status.filter(|value| !value.is_empty())"));
+    assert!(fake.contains(".filter(|((owner, _), _)| owner == tenant_id)"));
+    assert!(!fake.contains(".filter_map(|((owner, id), record)|"));
+    let page = content("post/page.vue");
+    assert!(page.contains("name=\"actions\""));
+    assert!(page.contains(":last-successful-query=\"lastSuccessfulQuery ?? null\""));
+    assert!(page.contains("lastSuccessfulQuery: PostQuery | null"));
+    assert!(page.contains("actions?(props:"));
+    assert!(page.contains("<template v-if=\"slots.actions\" #actions>"));
+    assert!(page.contains("import { computed } from 'vue'"));
+    let access = generated
+        .assets
+        .iter()
+        .find(|asset| asset.path == "catalog/access.generated.toml")
+        .expect("应生成访问目录");
+    assert!(!access.content.ends_with("\n\n"));
     let commit_failure = fake
         .find("fail_if_requested(&mut state, PostFailure::Commit)?")
         .expect("commit 必须先处理失败");
@@ -459,6 +479,53 @@ fn field_errors_include_resource_field_file_and_fix() {
             "错误缺少上下文 {expected}: {error}"
         );
     }
+}
+
+#[test]
+fn nullable_string_enum_filter_generates_type_safe_fake_comparison() {
+    let source = fs::read_to_string(post_path()).expect("应读取 Post 清单");
+    let nullable = source
+        .replacen(
+            "name = \"status\"\nvalue_type = \"string\"",
+            "name = \"status\"\nvalue_type = \"string\"\nnullable = true",
+            1,
+        )
+        .replacen(
+            "[fields.validation]\nrequired = true\n\n[fields.labels]\nzh_cn = \"状态\"",
+            "[fields.labels]\nzh_cn = \"状态\"",
+            1,
+        );
+    let spec = ResourceSpec::parse(&nullable, "catalog/resources/post.toml").expect("TOML 应有效");
+    let resource = normalize_resource(spec, "catalog/resources/post.toml", "fixture")
+        .expect("可空字符串枚举应能规范化");
+    let generated = render_resources(&[resource]).expect("可空字符串枚举应能生成");
+    let fake = generated
+        .assets
+        .iter()
+        .find(|asset| asset.path.ends_with("post/fake.rs"))
+        .expect("应生成 Fake");
+
+    assert!(
+        fake.content
+            .contains("record.status.as_deref() != Some(value)")
+    );
+}
+
+#[test]
+fn filtered_string_enum_rejects_empty_sentinel_key() {
+    let source = fs::read_to_string(post_path()).expect("应读取 Post 清单");
+    let invalid = source.replacen(
+        "[fields.enum_values.\"0\"]",
+        "[fields.enum_values.\"\"]\nzh_cn = \"未指定\"\nen = \"Unspecified\"\n\n[fields.enum_values.\"0\"]",
+        1,
+    );
+    let spec = ResourceSpec::parse(&invalid, "catalog/resources/post.toml").expect("TOML 应有效");
+    let error = normalize_resource(spec, "catalog/resources/post.toml", "fixture")
+        .expect_err("空字符串会与未筛选哨兵冲突")
+        .to_string();
+
+    assert!(error.contains("空字符串键"));
+    assert!(error.contains("未筛选"));
 }
 
 #[test]

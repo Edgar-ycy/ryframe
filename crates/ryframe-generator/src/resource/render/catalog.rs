@@ -59,7 +59,10 @@ pub(super) fn access_catalog(resources: &[&ResourceIr], source: &str) -> String 
         crate::GENERATOR_VERSION,
         sources,
     );
-    for resource in resources {
+    for (index, resource) in resources.iter().enumerate() {
+        if index > 0 {
+            output.push('\n');
+        }
         output.push_str("[[resources]]\n");
         output.push_str(&format!("name = {:?}\n", resource.name));
         output.push_str(&format!("module = {:?}\n", resource.module));
@@ -93,7 +96,6 @@ pub(super) fn access_catalog(resources: &[&ResourceIr], source: &str) -> String 
         for (name, permission) in &resource.extension_permissions {
             output.push_str(&format!("{name} = {permission:?}\n"));
         }
-        output.push('\n');
     }
     output
 }
