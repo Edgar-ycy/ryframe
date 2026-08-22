@@ -410,7 +410,7 @@ async fn update_mirror(redis: &RedisClient, key: String, version: i64) -> Result
         .map_err(|error| error.to_string())
 }
 
-fn version_is_newer(current: Option<&str>, incoming: &str) -> Result<bool, String> {
+pub fn version_is_newer(current: Option<&str>, incoming: &str) -> Result<bool, String> {
     current
         .map(|current| {
             let current = current
@@ -425,7 +425,7 @@ fn version_is_newer(current: Option<&str>, incoming: &str) -> Result<bool, Strin
         .map(|value| value.unwrap_or(false))
 }
 
-fn validate_canonical_decimal(value: &str) -> Result<(), String> {
+pub fn validate_canonical_decimal(value: &str) -> Result<(), String> {
     let canonical = value == "0"
         || (!value.is_empty()
             && !value.starts_with('0')
@@ -464,35 +464,4 @@ fn redis_cache_value_error(message: String) -> redis::RedisError {
         message,
     )
         .into()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn validates_cache_versions_without_lexical_ordering() {
-        assert_eq!(version_is_newer(Some("10"), "9"), Ok(true));
-        assert_eq!(version_is_newer(Some("9"), "10"), Ok(false));
-        assert!(validate_canonical_decimal("0").is_ok());
-        assert!(validate_canonical_decimal("01").is_err());
-        assert!(validate_canonical_decimal("-1").is_err());
-    }
-
-    #[tokio::test]
-    async fn disabled_cache_respects_availability_policy() {
-        let optional = cache(None, CacheAvailabilityPolicy::Optional);
-        assert!(!optional.is_enabled());
-        assert!(
-            optional
-                .lookup_snapshot("tenant-a", 1)
-                .await
-                .expect("可选缓存应回退")
-                .snapshot
-                .is_none()
-        );
-
-        let required = cache(None, CacheAvailabilityPolicy::Required);
-        assert!(required.lookup_snapshot("tenant-a", 1).await.is_err());
-    }
 }

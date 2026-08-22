@@ -11,7 +11,7 @@ use ryframe_application::{
 use tokio::task::JoinHandle;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum WakeupKind {
+pub enum WakeupKind {
     AuthorizationChanged,
     Message,
 }
@@ -107,7 +107,7 @@ pub fn spawn(
     }))
 }
 
-fn classify_channel(
+pub fn classify_channel(
     channel: &str,
     authorization_channel: &str,
     message_channel: &str,
@@ -118,29 +118,5 @@ fn classify_channel(
         Some(WakeupKind::Message)
     } else {
         None
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn scoped_channels_are_classified_by_their_physical_names() {
-        let authorization = "ryframe:test:authorization";
-        let message = "ryframe:test:message";
-
-        assert_eq!(
-            classify_channel(authorization, authorization, message),
-            Some(WakeupKind::AuthorizationChanged)
-        );
-        assert_eq!(
-            classify_channel(message, authorization, message),
-            Some(WakeupKind::Message)
-        );
-        assert_eq!(
-            classify_channel("ryframe:other", authorization, message),
-            None
-        );
     }
 }

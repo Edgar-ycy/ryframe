@@ -86,7 +86,7 @@ pub fn application_store(storage: Arc<dyn ObjectStorage>) -> Arc<dyn ArtifactSto
     Arc::new(ObjectStorageBridge { storage })
 }
 
-fn map_storage_error(error: StorageError) -> ArtifactStoreError {
+pub fn map_storage_error(error: StorageError) -> ArtifactStoreError {
     let kind = match &error {
         StorageError::InvalidLocation(_) => ArtifactStoreErrorKind::InvalidLocation,
         StorageError::Configuration(_)
@@ -106,28 +106,4 @@ fn map_storage_error(error: StorageError) -> ArtifactStoreError {
         | StorageError::InvalidResponse(_) => ArtifactStoreErrorKind::Unavailable,
     };
     ArtifactStoreError::new(kind, error.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn storage_errors_are_mapped_to_stable_application_kinds() {
-        let not_found = map_storage_error(StorageError::Service {
-            operation: "GET",
-            status: 404,
-            message: "missing".into(),
-        });
-        let unavailable = map_storage_error(StorageError::Service {
-            operation: "PUT",
-            status: 503,
-            message: "busy".into(),
-        });
-        let misconfigured = map_storage_error(StorageError::Unsupported("operation".into()));
-
-        assert_eq!(not_found.kind(), ArtifactStoreErrorKind::NotFound);
-        assert_eq!(unavailable.kind(), ArtifactStoreErrorKind::Unavailable);
-        assert_eq!(misconfigured.kind(), ArtifactStoreErrorKind::Misconfigured);
-    }
 }

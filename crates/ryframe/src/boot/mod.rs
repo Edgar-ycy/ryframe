@@ -14,7 +14,7 @@ pub mod app_state;
 pub mod application_policy;
 pub mod artifact_store;
 pub mod authorization_cache;
-mod authorization_cache_keyspace;
+pub mod authorization_cache_keyspace;
 pub mod datasource;
 pub mod file_content;
 pub mod idempotency;

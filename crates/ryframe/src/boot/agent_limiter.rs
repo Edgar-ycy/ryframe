@@ -262,7 +262,7 @@ impl AgentConcurrencyLease for RedisAgentConcurrencyLease {
     }
 }
 
-fn digest_key(dimension: &str, value: &str) -> String {
+pub fn digest_key(dimension: &str, value: &str) -> String {
     format!(
         "{KEY_PREFIX}{dimension}:{}",
         stable_scope_digest(&[dimension, value])
@@ -275,16 +275,4 @@ fn redis_ttl_secs(value: u64) -> i64 {
 
 fn redis_ttl_ms(value: u64) -> i64 {
     value.min(i64::MAX as u64) as i64
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn digest_separates_dimensions_and_values() {
-        assert_ne!(digest_key("tenant", "12"), digest_key("tenant1", "2"));
-        assert_ne!(digest_key("tenant", "12"), digest_key("account", "12"));
-        assert!(digest_key("tenant", "12").starts_with("ryframe:agent-limit:tenant:"));
-    }
 }

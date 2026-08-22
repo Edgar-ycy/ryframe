@@ -10,3 +10,4 @@ mod session_codec;
 pub fn redis_store(client: RedisClient) -> Arc<dyn OnlineSessionMetadataStore> {
     Arc::new(redis_store::RedisOnlineSessionMetadata::new(client))
 }
+pub use keyspace::{session_key, tenant_index_key, tenant_user_index_key};

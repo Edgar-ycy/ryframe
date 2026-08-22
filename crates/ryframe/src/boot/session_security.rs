@@ -97,31 +97,10 @@ pub fn refresh_sessions(store: Arc<dyn RefreshSessionPort>) -> Arc<dyn RefreshSe
     Arc::new(RefreshSessionControlBridge { store })
 }
 
-const fn map_session_revocation(value: ApplicationSessionRevocation) -> SessionRevocation {
+pub const fn map_session_revocation(value: ApplicationSessionRevocation) -> SessionRevocation {
     match value {
         ApplicationSessionRevocation::Revoked => SessionRevocation::Revoked,
         ApplicationSessionRevocation::AlreadyRevoked => SessionRevocation::AlreadyRevoked,
         ApplicationSessionRevocation::NotFoundOrForeign => SessionRevocation::NotFoundOrForeign,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn session_revocation_mapping_is_complete() {
-        assert_eq!(
-            map_session_revocation(ApplicationSessionRevocation::Revoked),
-            SessionRevocation::Revoked
-        );
-        assert_eq!(
-            map_session_revocation(ApplicationSessionRevocation::AlreadyRevoked),
-            SessionRevocation::AlreadyRevoked
-        );
-        assert_eq!(
-            map_session_revocation(ApplicationSessionRevocation::NotFoundOrForeign),
-            SessionRevocation::NotFoundOrForeign
-        );
     }
 }

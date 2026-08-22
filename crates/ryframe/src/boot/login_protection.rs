@@ -113,44 +113,13 @@ fn redis_unavailable(error: impl std::fmt::Display) -> AppError {
     AppError::ServiceUnavailable("登录保护服务暂不可用".into())
 }
 
-fn principal_key(tenant_id: &str, username: &str) -> String {
+pub fn principal_key(tenant_id: &str, username: &str) -> String {
     let normalized_username = username.trim().to_lowercase();
     let digest = ryframe_auth::stable_scope_digest(&[tenant_id, &normalized_username]);
     format!("ryframe:v0.5:login_fail:principal:{digest}")
 }
 
-fn ip_key(tenant_id: &str, ip: &str) -> String {
+pub fn ip_key(tenant_id: &str, ip: &str) -> String {
     let digest = ryframe_auth::stable_scope_digest(&[tenant_id, ip.trim()]);
     format!("ryframe:v0.5:login_fail:ip:{digest}")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn keys_normalize_principal_and_hide_raw_values() {
-        assert_eq!(
-            principal_key("tenant-a", " Alice "),
-            principal_key("tenant-a", "alice")
-        );
-        assert!(!ip_key("tenant-a", "192.0.2.1").contains("192.0.2.1"));
-    }
-
-    #[tokio::test]
-    async fn missing_redis_disables_login_protection_without_error() {
-        let store = store(None);
-        store
-            .ensure_allowed("tenant-a", "alice", "192.0.2.1", 5)
-            .await
-            .expect("未配置 Redis 时不应阻止登录");
-        store
-            .record_failure("tenant-a", "alice", "192.0.2.1", 60)
-            .await
-            .expect("未配置 Redis 时记录失败应为空操作");
-        store
-            .clear("tenant-a", "alice", "192.0.2.1")
-            .await
-            .expect("未配置 Redis 时清理应为空操作");
-    }
 }

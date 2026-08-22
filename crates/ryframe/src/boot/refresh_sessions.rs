@@ -143,7 +143,7 @@ fn map_revocation(revocation: AdapterRevocation) -> RefreshSessionRevocation {
     }
 }
 
-fn map_rotation(rotation: RefreshRotation) -> RefreshSessionRotation {
+pub fn map_rotation(rotation: RefreshRotation) -> RefreshSessionRotation {
     match rotation {
         RefreshRotation::Rotated {
             current_jti,
@@ -162,70 +162,5 @@ fn map_rotation(rotation: RefreshRotation) -> RefreshSessionRotation {
         RefreshRotation::Concurrent => RefreshSessionRotation::Concurrent,
         RefreshRotation::Replayed => RefreshSessionRotation::Replayed,
         RefreshRotation::MissingOrRevoked => RefreshSessionRotation::MissingOrRevoked,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn maps_all_refresh_rotation_outcomes() {
-        assert_eq!(
-            map_rotation(RefreshRotation::Concurrent),
-            RefreshSessionRotation::Concurrent
-        );
-        assert_eq!(
-            map_rotation(RefreshRotation::Replayed),
-            RefreshSessionRotation::Replayed
-        );
-        assert_eq!(
-            map_rotation(RefreshRotation::MissingOrRevoked),
-            RefreshSessionRotation::MissingOrRevoked
-        );
-    }
-
-    #[tokio::test]
-    async fn memory_store_preserves_refresh_family_semantics() {
-        let sessions = store(None);
-        let sid = ryframe_auth::jwt::new_sid();
-        let now = chrono::Utc::now().timestamp();
-        sessions
-            .register(RefreshSessionFamily {
-                sid: sid.clone(),
-                tenant_id: "tenant-a".into(),
-                user_id: 42,
-                current_jti: "jti-1".into(),
-                previous_jti: None,
-                last_attempt_id: None,
-                rotated_at: now,
-                absolute_exp: now + 60,
-                revoked: false,
-            })
-            .await
-            .expect("应登记刷新会话族");
-
-        let identity = sessions
-            .identity(&sid)
-            .await
-            .expect("应读取刷新会话")
-            .expect("刷新会话应存在");
-        assert_eq!(identity.tenant_id, "tenant-a");
-        assert_eq!(identity.user_id, 42);
-        assert!(matches!(
-            sessions
-                .rotate(&sid, "jti-1", "jti-2", now + 1, "attempt-1")
-                .await
-                .expect("应轮换刷新令牌"),
-            RefreshSessionRotation::Rotated { .. }
-        ));
-        assert!(sessions.revoke(&sid).await.expect("应撤销刷新会话"));
-        assert!(
-            sessions
-                .identity(&sid)
-                .await
-                .expect("应读取撤销状态")
-                .is_none()
-        );
     }
 }

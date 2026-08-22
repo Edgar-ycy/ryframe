@@ -65,32 +65,3 @@ fn process_blocking(
         content_type,
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use ryframe_kernel::AppError;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn preserves_valid_text_without_compression() {
-        let processed = processor()
-            .process("note.txt".into(), b"hello".to_vec(), false)
-            .await
-            .expect("合法文本应完成处理");
-
-        assert_eq!(processed.original_name, "note.txt");
-        assert_eq!(processed.file_name, "note.txt");
-        assert_eq!(processed.data, b"hello");
-        assert_eq!(processed.content_type, "text/plain");
-    }
-
-    #[tokio::test]
-    async fn rejects_content_that_does_not_match_extension() {
-        let result = processor()
-            .process("image.png".into(), b"not-a-png".to_vec(), false)
-            .await;
-
-        assert!(matches!(result, Err(AppError::Validation(_))));
-    }
-}
