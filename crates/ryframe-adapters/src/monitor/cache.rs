@@ -128,7 +128,7 @@ impl CacheCommandStats {
 }
 
 /// 解析 Redis INFO 输出为 HashMap
-fn parse_info_map(info: &str) -> HashMap<String, String> {
+pub fn parse_redis_info(info: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for line in info.lines() {
         if line.starts_with('#') || line.is_empty() {
@@ -188,7 +188,7 @@ async fn get_redis_cache_info(client: &RedisClient) -> CacheInfo {
         }
     };
 
-    let mut info_map = parse_info_map(&info);
+    let mut info_map = parse_redis_info(&info);
 
     // 解析服务器信息
     let server = RedisServerInfo {
@@ -263,7 +263,7 @@ pub async fn get_cache_command_stats(client: &RedisClient) -> CacheCommandStats 
     let info_result = redis_info(client, Some("commandstats")).await;
 
     match info_result {
-        Ok(info) => CacheCommandStats::available(parse_command_stats(&info)),
+        Ok(info) => CacheCommandStats::available(parse_redis_command_stats(&info)),
         Err(error) => {
             tracing::warn!(%error, "Redis command stats query failed");
             CacheCommandStats::unavailable()
@@ -271,7 +271,7 @@ pub async fn get_cache_command_stats(client: &RedisClient) -> CacheCommandStats 
     }
 }
 
-fn parse_command_stats(info: &str) -> BTreeMap<String, String> {
+pub fn parse_redis_command_stats(info: &str) -> BTreeMap<String, String> {
     let mut stats = BTreeMap::new();
     for line in info.lines() {
         if line.starts_with("cmdstat_")
@@ -282,46 +282,4 @@ fn parse_command_stats(info: &str) -> BTreeMap<String, String> {
         }
     }
     stats
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{CacheCommandStatsStatus, parse_command_stats, parse_info_map};
-
-    #[test]
-    fn redis_info_parser_ignores_headers_and_blank_lines() {
-        let parsed =
-            parse_info_map("# Server\r\nredis_version:7.4.0\r\n\r\nredis_mode:standalone\r\n");
-
-        assert_eq!(
-            parsed.get("redis_version").map(String::as_str),
-            Some("7.4.0")
-        );
-        assert_eq!(
-            parsed.get("redis_mode").map(String::as_str),
-            Some("standalone")
-        );
-        assert_eq!(parsed.len(), 2);
-    }
-
-    #[test]
-    fn command_stats_parser_keeps_only_command_entries() {
-        let parsed = parse_command_stats(
-            "# Commandstats\r\ncmdstat_get:calls=3,usec=5\r\nignored:value\r\n",
-        );
-
-        assert_eq!(
-            parsed.get("get").map(String::as_str),
-            Some("calls=3,usec=5")
-        );
-        assert_eq!(parsed.len(), 1);
-    }
-
-    #[test]
-    fn unavailable_status_remains_distinct_from_not_configured() {
-        assert_ne!(
-            CacheCommandStatsStatus::Unavailable,
-            CacheCommandStatsStatus::NotConfigured
-        );
-    }
 }

@@ -293,6 +293,7 @@ impl ExcelArtifact {
 pub struct IncrementalExcelWriter<'headers> {
     workbook: Workbook,
     headers: &'headers [(&'headers str, &'headers str)],
+    row_limit: u64,
     data_rows: u64,
     input_bytes: u64,
 }
@@ -302,6 +303,20 @@ impl<'headers> IncrementalExcelWriter<'headers> {
         sheet_name: &str,
         headers: &'headers [(&'headers str, &'headers str)],
     ) -> AppResult<Self> {
+        Self::with_row_limit(sheet_name, headers, XLSX_MAX_DATA_ROWS)
+    }
+
+    /// 创建带业务行数上限的增量写入器，上限不得超过 XLSX 硬限制。
+    pub fn with_row_limit(
+        sheet_name: &str,
+        headers: &'headers [(&'headers str, &'headers str)],
+        row_limit: u64,
+    ) -> AppResult<Self> {
+        if row_limit == 0 || row_limit > XLSX_MAX_DATA_ROWS {
+            return Err(AppError::Validation(format!(
+                "Excel 行数上限必须在 1 到 {XLSX_MAX_DATA_ROWS} 之间"
+            )));
+        }
         let mut workbook = Workbook::new();
         let worksheet = workbook.add_worksheet_with_constant_memory();
         ExcelExporter::set_sheet_name(worksheet, sheet_name)?;
@@ -311,6 +326,7 @@ impl<'headers> IncrementalExcelWriter<'headers> {
         Ok(Self {
             workbook,
             headers,
+            row_limit,
             data_rows: 0,
             input_bytes: 0,
         })
@@ -336,10 +352,10 @@ impl<'headers> IncrementalExcelWriter<'headers> {
                 .data_rows
                 .checked_add(1)
                 .ok_or_else(|| AppError::PayloadTooLarge("Excel 导出行数累计溢出".to_owned()))?;
-            if next_row > XLSX_MAX_DATA_ROWS {
+            if next_row > self.row_limit {
                 return Err(AppError::ExportRowLimitExceeded {
                     matched_rows: next_row,
-                    limit: XLSX_MAX_DATA_ROWS,
+                    limit: self.row_limit,
                 });
             }
 
@@ -614,75 +630,4 @@ macro_rules! define_excel_mapping {
             }
         }
     };
-}
-
-#[cfg(test)]
-mod tests {
-    use calamine::{Reader, open_workbook_auto};
-    use serde::Serialize;
-    use sha2::{Digest, Sha256};
-
-    use super::{IncrementalExcelWriter, XLSX_MAX_DATA_ROWS};
-    use ryframe_kernel::AppError;
-
-    const HEADERS: &[(&str, &str)] = &[("id", "编号"), ("name", "名称")];
-
-    #[derive(Serialize)]
-    struct Row {
-        id: u64,
-        name: &'static str,
-    }
-
-    #[test]
-    fn incremental_writer_consumes_batches_and_removes_artifact_on_drop() {
-        let mut writer = IncrementalExcelWriter::new("测试", HEADERS).expect("创建写入器");
-        let first = writer
-            .append_rows([Row { id: 1, name: "甲" }])
-            .expect("写入首批");
-        let second = writer
-            .append_rows([Row { id: 2, name: "乙" }])
-            .expect("写入次批");
-
-        assert_eq!(first.batch_rows, 1);
-        assert_eq!(second.total_rows, 2);
-        assert_eq!(second.total_input_bytes, 8);
-
-        let artifact = writer.finish().expect("完成工作簿");
-        assert_eq!(artifact.data_rows(), 2);
-        assert_eq!(artifact.input_bytes(), 8);
-        assert!(artifact.size() > 0);
-        let artifact_path = artifact.path().to_path_buf();
-        let expected_sha256 = hex::encode(Sha256::digest(
-            std::fs::read(&artifact_path).expect("读取表格产物"),
-        ));
-        assert_eq!(artifact.sha256(), expected_sha256);
-        let mut workbook = open_workbook_auto(&artifact_path).expect("打开工作簿");
-        let range = workbook.worksheet_range("测试").expect("读取工作表");
-        assert_eq!(range.height(), 3);
-        assert_eq!(
-            range.get_value((2, 1)).map(ToString::to_string),
-            Some("乙".into())
-        );
-
-        drop(workbook);
-        drop(artifact);
-        assert!(!artifact_path.exists());
-    }
-
-    #[test]
-    fn incremental_writer_rejects_rows_past_xlsx_limit() {
-        let mut writer = IncrementalExcelWriter::new("测试", HEADERS).expect("创建写入器");
-        writer.data_rows = XLSX_MAX_DATA_ROWS;
-
-        let error = writer
-            .append_rows([Row { id: 1, name: "甲" }])
-            .expect_err("超过 XLSX 行上限必须失败");
-        assert!(matches!(
-            error,
-            AppError::ExportRowLimitExceeded {
-                matched_rows: 1_048_576,
-                limit: XLSX_MAX_DATA_ROWS
-            }
-        ));
-    }
 }

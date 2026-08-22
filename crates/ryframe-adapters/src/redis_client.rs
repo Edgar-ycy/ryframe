@@ -118,6 +118,11 @@ pub struct RedisClient {
 pub struct RedisNamespace(Arc<str>);
 
 impl RedisNamespace {
+    /// 从已校验的资源作用域创建 Redis 命名空间。
+    pub fn for_scope(scope_id: &ryframe_config::ResourceScopeId) -> Self {
+        Self(Arc::from(scope_id.redis_namespace()))
+    }
+
     pub fn key(&self, logical: &str) -> String {
         if logical.starts_with(self.0.as_ref()) {
             return logical.to_owned();
@@ -168,7 +173,7 @@ impl RedisClient {
             client,
             conn,
             timeout: Duration::from_secs(config.timeout_secs.max(1)),
-            namespace: RedisNamespace(Arc::from(config.namespace())),
+            namespace: RedisNamespace::for_scope(config.scope_id()),
         })
     }
 
@@ -605,29 +610,4 @@ async fn read_pem(path: &str) -> Result<Vec<u8>, redis::RedisError> {
             format!("unable to read Redis TLS file {path}: {error}"),
         ))
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use super::RedisNamespace;
-
-    #[test]
-    fn namespace_is_idempotent_and_cannot_escape_to_another_scope() {
-        let namespace = RedisNamespace(Arc::from("ryframe:{dev-a}:"));
-        assert_eq!(namespace.key("jobs:wakeup"), "ryframe:{dev-a}:jobs:wakeup");
-        assert_eq!(
-            namespace.key("ryframe:v0.5:lock:tenant"),
-            "ryframe:{dev-a}:v0.5:lock:tenant"
-        );
-        assert_eq!(
-            namespace.key("ryframe:{dev-a}:jobs:wakeup"),
-            "ryframe:{dev-a}:jobs:wakeup"
-        );
-        assert_eq!(
-            namespace.key("ryframe:{other}:jobs:wakeup"),
-            "ryframe:{dev-a}:{other}:jobs:wakeup"
-        );
-    }
 }

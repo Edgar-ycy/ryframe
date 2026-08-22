@@ -30,8 +30,8 @@ impl RedisIdempotencyStore {
         fingerprint: &str,
         processing_ttl_secs: u64,
     ) -> Result<RemoteIdempotencyReservation, String> {
-        let meta_key = self.redis.scoped_key(&meta_key(key));
-        let guard_key = self.redis.scoped_key(&guard_key(key));
+        let meta_key = self.redis.scoped_key(&idempotency_meta_key(key));
+        let guard_key = self.redis.scoped_key(&idempotency_guard_key(key));
         let watched = [meta_key.clone(), guard_key.clone()];
         let fingerprint = fingerprint.to_owned();
         let result = self
@@ -65,7 +65,7 @@ impl RedisIdempotencyStore {
                         .ignore()
                         .hset(&meta_key, "fingerprint", fingerprint)
                         .ignore()
-                        .expire(&meta_key, redis_ttl_secs(processing_ttl_secs))
+                        .expire(&meta_key, bounded_redis_ttl_secs(processing_ttl_secs))
                         .ignore();
                     let committed: Option<()> = transaction.query_async(&mut connection).await?;
                     Ok(committed.map(|()| 1_i64))
@@ -81,7 +81,7 @@ impl RedisIdempotencyStore {
             4 => Ok(RemoteIdempotencyReservation::NonReplayable),
             5 => self
                 .redis
-                .get(response_key(key))
+                .get(idempotency_response_key(key))
                 .await
                 .map_err(|error| format!("读取 Redis 幂等响应失败: {error}"))?
                 .map(RemoteIdempotencyReservation::Completed)
@@ -96,8 +96,8 @@ impl RedisIdempotencyStore {
         fingerprint: &str,
         completed_ttl_secs: u64,
     ) -> Result<(), String> {
-        let meta_key = self.redis.scoped_key(&meta_key(key));
-        let guard_key = self.redis.scoped_key(&guard_key(key));
+        let meta_key = self.redis.scoped_key(&idempotency_meta_key(key));
+        let guard_key = self.redis.scoped_key(&idempotency_guard_key(key));
         let watched = [meta_key.clone(), guard_key.clone()];
         let fingerprint = fingerprint.to_owned();
         match self
@@ -137,9 +137,9 @@ impl RedisIdempotencyStore {
         response: &str,
         completed_ttl_secs: u64,
     ) -> Result<(), String> {
-        let meta_key = self.redis.scoped_key(&meta_key(key));
-        let response_key = self.redis.scoped_key(&response_key(key));
-        let guard_key = self.redis.scoped_key(&guard_key(key));
+        let meta_key = self.redis.scoped_key(&idempotency_meta_key(key));
+        let response_key = self.redis.scoped_key(&idempotency_response_key(key));
+        let guard_key = self.redis.scoped_key(&idempotency_guard_key(key));
         let watched = [meta_key.clone(), response_key.clone(), guard_key.clone()];
         let fingerprint = fingerprint.to_owned();
         let response = response.to_owned();
@@ -162,7 +162,7 @@ impl RedisIdempotencyStore {
                         .ignore()
                         .hset(&meta_key, "state", "completed")
                         .ignore()
-                        .expire(&meta_key, redis_ttl_secs(completed_ttl_secs))
+                        .expire(&meta_key, bounded_redis_ttl_secs(completed_ttl_secs))
                         .ignore()
                         .del(&guard_key)
                         .ignore();
@@ -184,7 +184,7 @@ impl RedisIdempotencyStore {
         fingerprint: &str,
         completed_ttl_secs: u64,
     ) -> Result<(), String> {
-        let meta_key = self.redis.scoped_key(&meta_key(key));
+        let meta_key = self.redis.scoped_key(&idempotency_meta_key(key));
         let watched = [meta_key.clone()];
         let fingerprint = fingerprint.to_owned();
         match self
@@ -201,7 +201,7 @@ impl RedisIdempotencyStore {
                     transaction
                         .hset(&meta_key, "state", "non_replayable")
                         .ignore()
-                        .expire(&meta_key, redis_ttl_secs(completed_ttl_secs))
+                        .expire(&meta_key, bounded_redis_ttl_secs(completed_ttl_secs))
                         .ignore();
                     let committed: Option<()> = transaction.query_async(&mut connection).await?;
                     Ok(committed.map(|()| true))
@@ -216,47 +216,24 @@ impl RedisIdempotencyStore {
     }
 
     pub async fn release(&self, key: &str) {
-        let _ = self.redis.del(meta_key(key)).await;
-        let _ = self.redis.del(response_key(key)).await;
-        let _ = self.redis.del(guard_key(key)).await;
+        let _ = self.redis.del(idempotency_meta_key(key)).await;
+        let _ = self.redis.del(idempotency_response_key(key)).await;
+        let _ = self.redis.del(idempotency_guard_key(key)).await;
     }
 }
 
-fn meta_key(key: &str) -> String {
+pub fn idempotency_meta_key(key: &str) -> String {
     format!("{KEY_PREFIX}{key}:meta")
 }
 
-fn response_key(key: &str) -> String {
+pub fn idempotency_response_key(key: &str) -> String {
     format!("{KEY_PREFIX}{key}:response")
 }
 
-fn guard_key(key: &str) -> String {
+pub fn idempotency_guard_key(key: &str) -> String {
     format!("{KEY_PREFIX}{key}:guard")
 }
 
-fn redis_ttl_secs(ttl_secs: u64) -> i64 {
+pub fn bounded_redis_ttl_secs(ttl_secs: u64) -> i64 {
     ttl_secs.min(i64::MAX as u64) as i64
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{guard_key, meta_key, redis_ttl_secs, response_key};
-
-    #[test]
-    fn keys_keep_stable_namespace_and_distinct_suffixes() {
-        assert_eq!(meta_key("request"), "ryframe:v0.7:idempotency:request:meta");
-        assert_eq!(
-            response_key("request"),
-            "ryframe:v0.7:idempotency:request:response"
-        );
-        assert_eq!(
-            guard_key("request"),
-            "ryframe:v0.7:idempotency:request:guard"
-        );
-    }
-
-    #[test]
-    fn redis_ttl_is_bounded_to_signed_range() {
-        assert_eq!(redis_ttl_secs(u64::MAX), i64::MAX);
-    }
 }

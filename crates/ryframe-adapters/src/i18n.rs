@@ -142,28 +142,3 @@ fn flatten_resource(
         }),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ryframe_kernel::LocalizedText;
-
-    #[test]
-    fn embedded_resources_load_into_kernel_localizer() {
-        let localizer = LocalizerLoader::embedded().expect("内嵌语言资源应有效");
-        assert_eq!(
-            localizer.translate(Locale::ZhCn, "common.success"),
-            "操作成功"
-        );
-        assert_eq!(
-            localizer.translate(Locale::EnUs, "common.success"),
-            "Operation successful"
-        );
-
-        let text = LocalizedText::Key {
-            key: "user.welcome".into(),
-            args: BTreeMap::from([("name".into(), "Alice".into())]),
-        };
-        assert_eq!(localizer.render(&text, Locale::EnUs), "Welcome Alice");
-    }
-}

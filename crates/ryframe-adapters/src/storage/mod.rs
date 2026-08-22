@@ -10,7 +10,7 @@ use std::{future::Future, path::Path, time::Duration};
 use async_trait::async_trait;
 pub use local::LocalObjectStorage;
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
-pub use s3::{S3Config, S3ObjectStorage};
+pub use s3::{S3Config, S3ObjectStorage, normalize_sha256, parse_list_objects_response};
 pub use scoped::ScopedObjectStorage;
 use tracing::Instrument;
 
