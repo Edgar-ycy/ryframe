@@ -69,7 +69,7 @@ image = { version = "0.25", default-features = false, features = [
     "webp",
 ] }
 calamine = { version = "0.36" }
-rust_xlsxwriter = { version = "0.97" }
+rust_xlsxwriter = { version = "0.98.2" }
 utoipa = { version = "5", features = ["axum_extras", "chrono"] }
 utoipa-swagger-ui = { version = "9.0.2", default-features = false, features = ["vendored"] }
 redis = { version = "1.4", features = ["tokio-rustls-comp", "connection-manager"] }
