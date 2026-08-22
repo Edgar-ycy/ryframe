@@ -6,6 +6,8 @@
 //! - `minio`：MinIO（兼容 S3）
 //! - `s3`：AWS S3 及其他兼容 S3 的服务
 
+use std::fmt;
+
 use serde::Deserialize;
 
 /// 对象存储后端类型
@@ -34,7 +36,7 @@ impl StorageBackend {
 }
 
 /// 对象存储配置
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectStorageConfig {
     /// 存储后端类型：local | rustfs | minio | s3
@@ -69,6 +71,27 @@ pub struct ObjectStorageConfig {
     /// AWS 区域（兼容 S3 的后端通常使用 us-east-1）。
     #[serde(default = "default_region")]
     pub region: String,
+
+    /// 单次兼容 S3 请求的总超时（秒）。
+    #[serde(default = "default_request_timeout_secs")]
+    pub request_timeout_secs: u64,
+}
+
+impl fmt::Debug for ObjectStorageConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ObjectStorageConfig")
+            .field("backend", &self.backend)
+            .field("local_base_dir", &self.local_base_dir)
+            .field("allow_local_in_production", &self.allow_local_in_production)
+            .field("endpoint", &self.endpoint)
+            .field("access_key", &"<redacted>")
+            .field("secret_key", &"<redacted>")
+            .field("use_ssl", &self.use_ssl)
+            .field("region", &self.region)
+            .field("request_timeout_secs", &self.request_timeout_secs)
+            .finish()
+    }
 }
 
 impl Default for ObjectStorageConfig {
@@ -82,6 +105,7 @@ impl Default for ObjectStorageConfig {
             secret_key: String::new(),
             use_ssl: false,
             region: "us-east-1".to_string(),
+            request_timeout_secs: default_request_timeout_secs(),
         }
     }
 }
@@ -97,4 +121,8 @@ fn default_local_base_dir() -> String {
 
 fn default_region() -> String {
     "us-east-1".to_string()
+}
+
+const fn default_request_timeout_secs() -> u64 {
+    30
 }

@@ -109,6 +109,26 @@ lazy_static! {
         &["dependency"],
     )
     .expect("create readiness_failures_total");
+    static ref CONNECTOR_OPERATIONS_TOTAL: IntCounterVec = IntCounterVec::new(
+        Opts::new(
+            "connector_operations_total",
+            "Outbound connector operations by bounded connector, operation, and result",
+        ),
+        &["connector", "operation", "result"],
+    )
+    .expect("create connector_operations_total");
+    static ref CONNECTOR_OPERATION_DURATION: HistogramVec = HistogramVec::new(
+        HistogramOpts::new(
+            "connector_operation_duration_seconds",
+            "Outbound connector latency by bounded connector and operation",
+        )
+        .buckets(vec![
+            0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0,
+            120.0, 300.0,
+        ]),
+        &["connector", "operation"],
+    )
+    .expect("create connector_operation_duration_seconds");
     static ref AUDIT_FAILURES_TOTAL: IntCounterVec = IntCounterVec::new(
         Opts::new(
             "audit_failures_total",
@@ -350,6 +370,8 @@ fn ensure_registered() {
             Box::new(IDEMPOTENCY_CONFLICTS_TOTAL.clone()),
             Box::new(RATE_LIMIT_REJECTIONS_TOTAL.clone()),
             Box::new(READINESS_FAILURES_TOTAL.clone()),
+            Box::new(CONNECTOR_OPERATIONS_TOTAL.clone()),
+            Box::new(CONNECTOR_OPERATION_DURATION.clone()),
             Box::new(AUDIT_FAILURES_TOTAL.clone()),
             Box::new(WS_CONNECTIONS.clone()),
             Box::new(WS_TICKETS_TOTAL.clone()),
@@ -466,6 +488,22 @@ pub fn record_readiness_failure(dependency: &str) {
     READINESS_FAILURES_TOTAL
         .with_label_values(&[dependency])
         .inc();
+}
+
+/// 记录 Redis 与对象存储的有限操作集合，不允许把端点、键、桶或租户作为标签。
+pub(crate) fn observe_connector_operation(
+    connector: &'static str,
+    operation: &'static str,
+    result: &'static str,
+    duration: Duration,
+) {
+    ensure_registered();
+    CONNECTOR_OPERATIONS_TOTAL
+        .with_label_values(&[connector, operation, result])
+        .inc();
+    CONNECTOR_OPERATION_DURATION
+        .with_label_values(&[connector, operation])
+        .observe(duration.as_secs_f64());
 }
 
 /// 记录一次操作审计失败；阶段值必须由调用方使用固定常量。

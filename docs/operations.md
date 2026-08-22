@@ -28,6 +28,14 @@ cargo run --locked -p ryframe --features destructive-reset --bin ryframe-reset -
 
 检查连接模式、TLS、ownership marker 和 scope 前缀。授权缓存不可用时必须失败关闭或按配置禁用缓存；禁止清空共享 Redis DB。
 
+## Redis 与对象存储约定
+
+- Redis `timeout_secs` 统一约束连接、响应和事务，范围 1–60 秒；兼容 S3 后端使用 `object_storage.request_timeout_secs`，范围 1–300 秒。不得在调用点叠加无上限重试。
+- 就绪探针只执行 Redis `PING` 和对象存储私有桶检查，并受独立短超时保护；`required` 依赖失败才阻断就绪，可选依赖明确进入降级状态。
+- `ryframe_connector_operations_total` 与 `ryframe_connector_operation_duration_seconds` 只使用 connector、固定 operation 和 result 三类低基数标签。端点、租户、Redis 键、桶名和对象键禁止进入指标标签。
+- Redis 与 S3 配置的 `Debug` 输出会隐藏密码、访问密钥和客户端私钥。S3 非成功响应只保留稳定操作名和 HTTP 状态，直接丢弃远端响应体；传输错误移除请求 URL。文件维护错误只携带内部文件 ID，不记录桶名、对象键、Authorization、签名或负载。
+- 确定性测试使用本地实现或离线协议样本；真实协议测试必须显式启用，并使用唯一 schema/namespace 与精确清理，禁止 `FLUSH`、`KEYS` 和模糊对象前缀删除。
+
 ## Refresh Token 重放
 
 立即撤销 token family 和当前会话，核对用户授权版本、客户端 IP 与审计事件。确认泄露后轮换相关凭据并保留证据。

@@ -276,6 +276,11 @@ impl AppConfig {
                 "invalid upload limits or timeout configuration".into(),
             ));
         }
+        if !(1..=300).contains(&self.object_storage.request_timeout_secs) {
+            return Err(AppError::Config(
+                "object_storage.request_timeout_secs 必须在 1 到 300 之间".into(),
+            ));
+        }
         match self.object_storage.backend {
             StorageBackend::Local => {
                 if self.object_storage.local_base_dir.trim().is_empty() {
@@ -446,6 +451,17 @@ fn validate_database_connection(
 }
 
 fn validate_redis_tls(redis: &RedisConfig, production: bool) -> AppResult<()> {
+    if redis.host.trim().is_empty()
+        || redis.port == 0
+        || redis.max_pool_size == 0
+        || !(1..=60).contains(&redis.timeout_secs)
+        || redis.database > 15
+    {
+        return Err(AppError::Config(
+            "redis host、port、max_pool_size、database 或 timeout_secs 无效；超时范围为 1 到 60 秒"
+                .into(),
+        ));
+    }
     let client_cert = non_empty(redis.tls_client_cert.as_deref());
     let client_key = non_empty(redis.tls_client_key.as_deref());
     if client_cert.is_some() != client_key.is_some() {

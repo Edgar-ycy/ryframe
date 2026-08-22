@@ -123,6 +123,7 @@ impl StorageReset {
                     secret_key: config.object_storage.secret_key.clone(),
                     use_ssl: config.object_storage.use_ssl,
                     region: config.object_storage.region.trim().to_owned(),
+                    request_timeout_secs: config.object_storage.request_timeout_secs,
                 })
                 .map_err(|_| ResetError::new("对象存储配置无法创建安全客户端"))?,
             ),

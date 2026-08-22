@@ -1,4 +1,6 @@
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
+use std::fmt;
+
 use serde::Deserialize;
 
 use crate::ResourceScopeId;
@@ -21,7 +23,7 @@ impl RedisMode {
 /// Redis 配置（可选）
 ///
 /// 不配置 `[redis]` section 时，框架不启用缓存。
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RedisConfig {
     /// 由顶层 `scope_id` 注入，不允许在 `[redis]` 中单独覆盖。
@@ -59,6 +61,27 @@ pub struct RedisConfig {
     /// 可选的 PEM 格式 mTLS 客户端私钥。
     #[serde(default)]
     pub tls_client_key: Option<String>,
+}
+
+impl fmt::Debug for RedisConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let client_key = self.tls_client_key.as_ref().map(|_| "<redacted>");
+        formatter
+            .debug_struct("RedisConfig")
+            .field("scope_id", &self.scope_id)
+            .field("mode", &self.mode)
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("password", &"<redacted>")
+            .field("database", &self.database)
+            .field("max_pool_size", &self.max_pool_size)
+            .field("timeout_secs", &self.timeout_secs)
+            .field("tls", &self.tls)
+            .field("tls_ca", &self.tls_ca)
+            .field("tls_client_cert", &self.tls_client_cert)
+            .field("tls_client_key", &client_key)
+            .finish()
+    }
 }
 
 impl Default for RedisConfig {

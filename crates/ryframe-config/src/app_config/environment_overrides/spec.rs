@@ -501,4 +501,8 @@ pub(super) const ENV_OVERRIDES: &[EnvOverride] = &[
     ),
     EnvOverride::boolean("APP_OBJECT_STORAGE_USE_SSL", &["object_storage", "use_ssl"]),
     EnvOverride::string("APP_OBJECT_STORAGE_REGION", &["object_storage", "region"]),
+    EnvOverride::integer(
+        "APP_OBJECT_STORAGE_REQUEST_TIMEOUT_SECS",
+        &["object_storage", "request_timeout_secs"],
+    ),
 ];

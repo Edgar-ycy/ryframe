@@ -497,6 +497,7 @@ async fn connect_storage_for_worker(
                 secret_key: config.object_storage.secret_key.clone(),
                 use_ssl: config.object_storage.use_ssl,
                 region: config.object_storage.region.clone(),
+                request_timeout_secs: config.object_storage.request_timeout_secs,
             })
             .map_err(|error| AppError::Config(error.to_string()))?,
         ),

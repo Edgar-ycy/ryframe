@@ -263,3 +263,5 @@ secret_key = ""
 use_ssl = false
 # AWS 区域
 region = "us-east-1"
+# 单次兼容 S3 请求总超时，范围 1–300 秒。
+request_timeout_secs = 30

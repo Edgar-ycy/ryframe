@@ -222,6 +222,7 @@ fn build_storage(config: &AppConfig) -> Result<Arc<dyn ObjectStorage>, DynError>
                 secret_key: config.object_storage.secret_key.clone(),
                 use_ssl: config.object_storage.use_ssl,
                 region: config.object_storage.region.clone(),
+                request_timeout_secs: config.object_storage.request_timeout_secs,
             })?)
         }
     };
@@ -287,12 +288,7 @@ async fn backfill_sha256(
             let object = storage
                 .get(&row.bucket, &row.storage_path)
                 .await
-                .map_err(|error| {
-                    format!(
-                        "读取文件 {} 对象失败（bucket={}, key={}）: {error}",
-                        row.id, row.bucket, row.storage_path
-                    )
-                })?;
+                .map_err(|error| format!("读取文件 {} 对象失败: {error}", row.id))?;
             let digests = tokio::task::spawn_blocking(move || calculate_object_digests(&object))
                 .await
                 .map_err(|error| format!("文件 {} 摘要任务失败: {error}", row.id))?;
@@ -606,12 +602,7 @@ async fn delete_cleanup_reservation(
         storage
             .delete(&current.bucket, &current.storage_path)
             .await
-            .map_err(|error| {
-                format!(
-                    "删除文件 {id} 对象失败（bucket={}, key={}）: {error}",
-                    current.bucket, current.storage_path
-                )
-            })?;
+            .map_err(|error| format!("删除文件 {id} 对象失败: {error}"))?;
         let result = sys_file::Entity::delete_many()
             .filter(sys_file::Column::Id.eq(id))
             .filter(sys_file::Column::DelFlag.eq(LEGACY_RESERVED_FLAG))

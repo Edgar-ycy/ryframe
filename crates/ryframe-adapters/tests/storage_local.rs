@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use ryframe_adapters::metrics;
 use ryframe_adapters::storage::{
     LocalObjectStorage, MAX_OBJECT_LIST_PAGE_SIZE, ObjectStorage, ScopedObjectStorage,
 };
@@ -30,6 +31,25 @@ async fn put_file_streams_through_private_staging() {
         .await
         .expect("读取上传结果");
     assert_eq!(stored, content);
+}
+
+#[tokio::test]
+async fn storage_metrics_use_only_bounded_connector_labels() {
+    let directory = tempfile::tempdir().expect("创建测试目录");
+    let storage = LocalObjectStorage::new(directory.path().join("objects"));
+    storage
+        .put("exports", "scope/metric.txt", b"metric", "text/plain")
+        .await
+        .expect("写入指标测试对象");
+
+    let text = metrics::metrics_text();
+    assert!(text.lines().any(|line| {
+        line.starts_with("ryframe_connector_operations_total")
+            && line.contains("connector=\"local\"")
+            && line.contains("operation=\"PUT\"")
+            && line.contains("result=\"success\"")
+    }));
+    assert!(!text.contains("scope/metric.txt"));
 }
 
 #[tokio::test]

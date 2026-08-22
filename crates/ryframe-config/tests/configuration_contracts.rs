@@ -1,5 +1,6 @@
 use ryframe_config::{
-    Environment, JobConfig, MAX_EXPORT_ROWS, MAX_XLSX_DATA_ROWS, ResetConfig, ResourceScopeId,
+    Environment, JobConfig, MAX_EXPORT_ROWS, MAX_XLSX_DATA_ROWS, ObjectStorageConfig, RedisConfig,
+    ResetConfig, ResourceScopeId,
 };
 
 const _: () = assert!(MAX_EXPORT_ROWS <= MAX_XLSX_DATA_ROWS);
@@ -73,4 +74,29 @@ fn outside_sentinel_key_is_bounded() {
         ..ResetConfig::default()
     };
     assert!(invalid.validate(false).is_err());
+}
+
+#[test]
+fn connector_debug_output_redacts_credentials() {
+    let redis: RedisConfig = toml::from_str(
+        r#"
+        password = "redis-password-must-not-leak"
+        tls_client_key = "redis-client-key-must-not-leak"
+        "#,
+    )
+    .expect("解析 Redis 脱敏测试配置");
+    let redis_debug = format!("{redis:?}");
+    assert!(!redis_debug.contains("redis-password-must-not-leak"));
+    assert!(!redis_debug.contains("redis-client-key-must-not-leak"));
+    assert!(redis_debug.contains("<redacted>"));
+
+    let storage = ObjectStorageConfig {
+        access_key: "storage-access-must-not-leak".into(),
+        secret_key: "storage-secret-must-not-leak".into(),
+        ..ObjectStorageConfig::default()
+    };
+    let storage_debug = format!("{storage:?}");
+    assert!(!storage_debug.contains("storage-access-must-not-leak"));
+    assert!(!storage_debug.contains("storage-secret-must-not-leak"));
+    assert!(storage_debug.contains("<redacted>"));
 }

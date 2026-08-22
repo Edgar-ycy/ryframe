@@ -5,7 +5,11 @@ mod s3;
 mod scoped;
 mod signing;
 
-use std::{future::Future, path::Path, time::Duration};
+use std::{
+    future::Future,
+    path::Path,
+    time::{Duration, Instant},
+};
 
 use async_trait::async_trait;
 pub use local::LocalObjectStorage;
@@ -105,9 +109,17 @@ pub(crate) async fn trace_storage_operation<T>(
     operation: StorageOperation,
     future: impl Future<Output = StorageResult<T>>,
 ) -> StorageResult<T> {
+    let started = Instant::now();
     let span = storage_operation_span(backend, operation);
     let result = future.instrument(span.clone()).await;
-    span.record("storage.result", storage_result_label(&result));
+    let result_label = storage_result_label(&result);
+    span.record("storage.result", result_label);
+    crate::metrics::observe_connector_operation(
+        backend,
+        operation.as_str(),
+        result_label,
+        started.elapsed(),
+    );
     result
 }
 
@@ -142,7 +154,7 @@ pub enum StorageError {
         source: std::io::Error,
     },
     #[error("object storage request failed: {0}")]
-    Transport(#[from] reqwest::Error),
+    Transport(#[source] reqwest::Error),
     #[error("{operation} failed with HTTP {status}: {message}")]
     Service {
         operation: &'static str,
@@ -165,7 +177,7 @@ pub trait ObjectStorage: Send + Sync {
     /// 返回的 future 被取消后，后端仍可能提交 PUT 的最长时间。上传清理墓碑会保留超过该时长，
     /// 以便第二次删除能够捕获远端延迟完成。
     ///
-    /// 具有更大上限的实现必须覆盖此方法。内置 S3 客户端的总请求超时为 30 秒；本地写入
+    /// 具有更大上限的实现必须覆盖此方法。内置 S3 客户端返回配置的总请求超时；本地写入
     /// 不会脱离远端操作。
     fn late_put_completion_bound(&self) -> Duration {
         Duration::from_secs(30)

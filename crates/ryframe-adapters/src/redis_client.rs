@@ -3,7 +3,11 @@
 //! 提供异步 Redis 连接管理器和常用操作封装。
 //! 当 Redis 未配置时，调用方应回退到内存存储。
 
-use std::{future::Future, sync::Arc, time::Duration};
+use std::{
+    future::Future,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use redis::{
     AsyncCommands, FromRedisValue, Pipeline,
@@ -84,9 +88,17 @@ async fn trace_redis_operation<T>(
     operation: RedisOperation,
     future: impl Future<Output = Result<T, redis::RedisError>>,
 ) -> Result<T, redis::RedisError> {
+    let started = Instant::now();
     let span = redis_operation_span(operation);
     let result = future.instrument(span.clone()).await;
-    span.record("redis.result", redis_result_label(&result));
+    let result_label = redis_result_label(&result);
+    span.record("redis.result", result_label);
+    crate::metrics::observe_connector_operation(
+        "redis",
+        operation.as_str(),
+        result_label,
+        started.elapsed(),
+    );
     result
 }
 
@@ -285,8 +297,13 @@ impl RedisClient {
     pub async fn subscribe(&self, channel: &str) -> Result<redis::aio::PubSub, redis::RedisError> {
         let channel = self.scoped_channel(channel);
         trace_redis_operation(RedisOperation::Subscribe, async {
-            let mut subscription = self.client.get_async_pubsub().await?;
-            subscription.subscribe(channel).await?;
+            let mut subscription =
+                tokio::time::timeout(self.timeout, self.client.get_async_pubsub())
+                    .await
+                    .map_err(|_| redis_timeout_error("Redis Pub/Sub 连接超时"))??;
+            tokio::time::timeout(self.timeout, subscription.subscribe(channel))
+                .await
+                .map_err(|_| redis_timeout_error("Redis Pub/Sub 订阅超时"))??;
             Ok(subscription)
         })
         .await
@@ -302,9 +319,14 @@ impl RedisClient {
             .map(|channel| self.scoped_channel(channel))
             .collect::<Vec<_>>();
         trace_redis_operation(RedisOperation::Subscribe, async {
-            let mut subscription = self.client.get_async_pubsub().await?;
+            let mut subscription =
+                tokio::time::timeout(self.timeout, self.client.get_async_pubsub())
+                    .await
+                    .map_err(|_| redis_timeout_error("Redis Pub/Sub 连接超时"))??;
             for channel in channels {
-                subscription.subscribe(channel).await?;
+                tokio::time::timeout(self.timeout, subscription.subscribe(channel))
+                    .await
+                    .map_err(|_| redis_timeout_error("Redis Pub/Sub 订阅超时"))??;
             }
             Ok(subscription)
         })

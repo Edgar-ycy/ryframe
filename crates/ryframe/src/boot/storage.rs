@@ -22,6 +22,7 @@ pub async fn init(config: &AppConfig) -> AppResult<Arc<dyn ArtifactStore>> {
                 secret_key: storage_config.secret_key.clone(),
                 use_ssl: storage_config.use_ssl,
                 region: storage_config.region.clone(),
+                request_timeout_secs: storage_config.request_timeout_secs,
             })
             .map_err(|error| AppError::Config(error.to_string()))?,
         ),

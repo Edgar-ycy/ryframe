@@ -1,4 +1,4 @@
-use std::{io::SeekFrom, path::Path, time::Duration};
+use std::{fmt, io::SeekFrom, path::Path, time::Duration};
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -19,13 +19,28 @@ use super::{
 const MAX_LIST_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 
 /// 路径风格 S3 兼容端点的连接与签名配置。
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct S3Config {
     pub endpoint: String,
     pub access_key: String,
     pub secret_key: String,
     pub use_ssl: bool,
     pub region: String,
+    pub request_timeout_secs: u64,
+}
+
+impl fmt::Debug for S3Config {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("S3Config")
+            .field("endpoint", &self.endpoint)
+            .field("access_key", &"<redacted>")
+            .field("secret_key", &"<redacted>")
+            .field("use_ssl", &self.use_ssl)
+            .field("region", &self.region)
+            .field("request_timeout_secs", &self.request_timeout_secs)
+            .finish()
+    }
 }
 
 /// 适用于 AWS S3 与 MinIO 的 S3 兼容 HTTP 后端。
@@ -34,6 +49,7 @@ pub struct S3ObjectStorage {
     access_key: String,
     secret_key: String,
     region: String,
+    request_timeout: Duration,
     client: reqwest::Client,
 }
 
@@ -54,16 +70,24 @@ impl S3ObjectStorage {
                 "S3 region must contain only letters, digits, or hyphens".to_owned(),
             ));
         }
+        if !(1..=300).contains(&config.request_timeout_secs) {
+            return Err(StorageError::Configuration(
+                "S3 request_timeout_secs must be between 1 and 300".to_owned(),
+            ));
+        }
 
         let endpoint = normalize_endpoint(&config.endpoint, config.use_ssl)?;
+        let request_timeout = Duration::from_secs(config.request_timeout_secs);
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()?;
+            .timeout(request_timeout)
+            .build()
+            .map_err(transport_error)?;
         Ok(Self {
             endpoint,
             access_key: config.access_key,
             secret_key: config.secret_key,
             region: config.region,
+            request_timeout,
             client,
         })
     }
@@ -84,7 +108,7 @@ impl S3ObjectStorage {
         match response.status().as_u16() {
             200..=299 => Ok(true),
             404 => Ok(false),
-            _ => Err(service_error("check S3 bucket", response).await),
+            _ => Err(service_error("check S3 bucket", response)),
         }
     }
 
@@ -112,7 +136,7 @@ impl S3ObjectStorage {
         if response.status().as_u16() == 409 && self.bucket_exists(bucket).await? {
             return Ok(());
         }
-        Err(service_error("create S3 bucket", response).await)
+        Err(service_error("create S3 bucket", response))
     }
 
     async fn enforce_private_bucket(&self, bucket: &str) -> StorageResult<()> {
@@ -126,7 +150,7 @@ impl S3ObjectStorage {
             )
             .await?;
         if !response.status().is_success() {
-            return Err(service_error("set private S3 bucket ACL", response).await);
+            return Err(service_error("set private S3 bucket ACL", response));
         }
 
         let mut policy_url = self.bucket_url(bucket)?;
@@ -141,9 +165,9 @@ impl S3ObjectStorage {
             return Ok(());
         }
         if !response.status().is_success() {
-            return Err(service_error("verify S3 bucket policy", response).await);
+            return Err(service_error("verify S3 bucket policy", response));
         }
-        let policy = response.text().await?;
+        let policy = response.text().await.map_err(transport_error)?;
         let policy: Value = serde_json::from_str(&policy).map_err(|error| {
             StorageError::Configuration(format!("bucket '{bucket}' policy is invalid: {error}"))
         })?;
@@ -228,8 +252,9 @@ impl S3ObjectStorage {
     ) -> StorageResult<Response> {
         let span = storage_operation_span("s3", operation);
         let result = request.send().instrument(span.clone()).await;
-        span.record("storage.result", s3_request_result_label(&result));
-        result.map_err(StorageError::from)
+        let result_label = s3_request_result_label(&result);
+        span.record("storage.result", result_label);
+        result.map_err(transport_error)
     }
 
     pub async fn prepare_upload_file(
@@ -295,7 +320,7 @@ impl S3ObjectStorage {
         let mut body = Vec::new();
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
+            let chunk = chunk.map_err(transport_error)?;
             let next_length = body.len().checked_add(chunk.len()).ok_or_else(|| {
                 StorageError::InvalidResponse("S3 object list response length overflow".to_owned())
             })?;
@@ -312,6 +337,10 @@ impl S3ObjectStorage {
 
 #[async_trait]
 impl ObjectStorage for S3ObjectStorage {
+    fn late_put_completion_bound(&self) -> Duration {
+        self.request_timeout
+    }
+
     async fn put(
         &self,
         bucket: &str,
@@ -319,21 +348,24 @@ impl ObjectStorage for S3ObjectStorage {
         data: &[u8],
         content_type: &str,
     ) -> StorageResult<()> {
-        let url = self.object_url(bucket, key)?;
-        let payload_hash = hex::encode(Sha256::digest(data));
-        let response = self
-            .send_request(
-                StorageOperation::Put,
-                self.signed_request(Method::PUT, url, &payload_hash)?
-                    .header("Content-Type", content_type)
-                    .body(data.to_vec()),
-            )
-            .await?;
-        if response.status().is_success() {
-            Ok(())
-        } else {
-            Err(service_error("upload S3 object", response).await)
-        }
+        trace_storage_operation("s3", StorageOperation::Put, async {
+            let url = self.object_url(bucket, key)?;
+            let payload_hash = hex::encode(Sha256::digest(data));
+            let response = self
+                .send_request(
+                    StorageOperation::Put,
+                    self.signed_request(Method::PUT, url, &payload_hash)?
+                        .header("Content-Type", content_type)
+                        .body(data.to_vec()),
+                )
+                .await?;
+            if response.status().is_success() {
+                Ok(())
+            } else {
+                Err(service_error("upload S3 object", response))
+            }
+        })
+        .await
     }
 
     async fn put_control(
@@ -354,50 +386,56 @@ impl ObjectStorage for S3ObjectStorage {
         content_type: &str,
         sha256_hex: Option<&str>,
     ) -> StorageResult<()> {
-        let url = self.object_url(bucket, key)?;
-        let (file, content_length, payload_hash) =
-            Self::prepare_upload_file(path, sha256_hex).await?;
-        let chunks = stream::try_unfold(file, |mut file| async move {
-            let mut chunk = vec![0u8; 64 * 1024];
-            let read = file.read(&mut chunk).await?;
-            if read == 0 {
-                return Ok(None);
+        trace_storage_operation("s3", StorageOperation::Put, async {
+            let url = self.object_url(bucket, key)?;
+            let (file, content_length, payload_hash) =
+                Self::prepare_upload_file(path, sha256_hex).await?;
+            let chunks = stream::try_unfold(file, |mut file| async move {
+                let mut chunk = vec![0u8; 64 * 1024];
+                let read = file.read(&mut chunk).await?;
+                if read == 0 {
+                    return Ok(None);
+                }
+                chunk.truncate(read);
+                Ok::<_, std::io::Error>(Some((chunk, file)))
+            });
+            let response = self
+                .send_request(
+                    StorageOperation::Put,
+                    self.signed_request(Method::PUT, url, &payload_hash)?
+                        .header("Content-Type", content_type)
+                        .header("Content-Length", content_length)
+                        .body(Body::wrap_stream(chunks)),
+                )
+                .await?;
+            if response.status().is_success() {
+                Ok(())
+            } else {
+                Err(service_error("upload S3 object", response))
             }
-            chunk.truncate(read);
-            Ok::<_, std::io::Error>(Some((chunk, file)))
-        });
-        let response = self
-            .send_request(
-                StorageOperation::Put,
-                self.signed_request(Method::PUT, url, &payload_hash)?
-                    .header("Content-Type", content_type)
-                    .header("Content-Length", content_length)
-                    .body(Body::wrap_stream(chunks)),
-            )
-            .await?;
-        if response.status().is_success() {
-            Ok(())
-        } else {
-            Err(service_error("upload S3 object", response).await)
-        }
+        })
+        .await
     }
 
     async fn get(&self, bucket: &str, key: &str) -> StorageResult<Vec<u8>> {
-        let url = self.object_url(bucket, key)?;
-        let response = self
-            .send_request(
-                StorageOperation::Get,
-                self.signed_request(Method::GET, url, "UNSIGNED-PAYLOAD")?,
-            )
-            .await?;
-        if !response.status().is_success() {
-            return Err(service_error("download S3 object", response).await);
-        }
-        response
-            .bytes()
-            .await
-            .map(|bytes| bytes.to_vec())
-            .map_err(StorageError::from)
+        trace_storage_operation("s3", StorageOperation::Get, async {
+            let url = self.object_url(bucket, key)?;
+            let response = self
+                .send_request(
+                    StorageOperation::Get,
+                    self.signed_request(Method::GET, url, "UNSIGNED-PAYLOAD")?,
+                )
+                .await?;
+            if !response.status().is_success() {
+                return Err(service_error("download S3 object", response));
+            }
+            response
+                .bytes()
+                .await
+                .map(|bytes| bytes.to_vec())
+                .map_err(transport_error)
+        })
+        .await
     }
 
     async fn get_bounded(
@@ -406,77 +444,86 @@ impl ObjectStorage for S3ObjectStorage {
         key: &str,
         max_bytes: usize,
     ) -> StorageResult<Vec<u8>> {
-        if max_bytes == 0 {
-            return Err(StorageError::InvalidLocation(
-                "bounded object read limit must be greater than zero".to_owned(),
-            ));
-        }
-        let url = self.object_url(bucket, key)?;
-        let mut response = self
-            .send_request(
-                StorageOperation::Get,
-                self.signed_request(Method::GET, url, "UNSIGNED-PAYLOAD")?
-                    .header("Range", format!("bytes=0-{max_bytes}")),
-            )
-            .await?;
-        if !response.status().is_success() {
-            return Err(service_error("download bounded S3 object", response).await);
-        }
-        if response
-            .content_length()
-            .is_some_and(|length| length > max_bytes as u64)
-        {
-            return Err(StorageError::InvalidResponse(
-                "object exceeds bounded read limit".to_owned(),
-            ));
-        }
-        let mut data = Vec::with_capacity(
-            response
+        trace_storage_operation("s3", StorageOperation::Get, async {
+            if max_bytes == 0 {
+                return Err(StorageError::InvalidLocation(
+                    "bounded object read limit must be greater than zero".to_owned(),
+                ));
+            }
+            let url = self.object_url(bucket, key)?;
+            let mut response = self
+                .send_request(
+                    StorageOperation::Get,
+                    self.signed_request(Method::GET, url, "UNSIGNED-PAYLOAD")?
+                        .header("Range", format!("bytes=0-{max_bytes}")),
+                )
+                .await?;
+            if !response.status().is_success() {
+                return Err(service_error("download bounded S3 object", response));
+            }
+            if response
                 .content_length()
-                .unwrap_or_default()
-                .min(max_bytes as u64) as usize,
-        );
-        while let Some(chunk) = response.chunk().await.map_err(StorageError::from)? {
-            if data.len().saturating_add(chunk.len()) > max_bytes {
+                .is_some_and(|length| length > max_bytes as u64)
+            {
                 return Err(StorageError::InvalidResponse(
                     "object exceeds bounded read limit".to_owned(),
                 ));
             }
-            data.extend_from_slice(&chunk);
-        }
-        Ok(data)
+            let mut data = Vec::with_capacity(
+                response
+                    .content_length()
+                    .unwrap_or_default()
+                    .min(max_bytes as u64) as usize,
+            );
+            while let Some(chunk) = response.chunk().await.map_err(transport_error)? {
+                if data.len().saturating_add(chunk.len()) > max_bytes {
+                    return Err(StorageError::InvalidResponse(
+                        "object exceeds bounded read limit".to_owned(),
+                    ));
+                }
+                data.extend_from_slice(&chunk);
+            }
+            Ok(data)
+        })
+        .await
     }
 
     async fn delete(&self, bucket: &str, key: &str) -> StorageResult<()> {
-        let url = self.object_url(bucket, key)?;
-        let payload_hash = empty_payload_hash();
-        let response = self
-            .send_request(
-                StorageOperation::Delete,
-                self.signed_request(Method::DELETE, url, &payload_hash)?,
-            )
-            .await?;
-        if response.status().is_success() || response.status().as_u16() == 404 {
-            Ok(())
-        } else {
-            Err(service_error("delete S3 object", response).await)
-        }
+        trace_storage_operation("s3", StorageOperation::Delete, async {
+            let url = self.object_url(bucket, key)?;
+            let payload_hash = empty_payload_hash();
+            let response = self
+                .send_request(
+                    StorageOperation::Delete,
+                    self.signed_request(Method::DELETE, url, &payload_hash)?,
+                )
+                .await?;
+            if response.status().is_success() || response.status().as_u16() == 404 {
+                Ok(())
+            } else {
+                Err(service_error("delete S3 object", response))
+            }
+        })
+        .await
     }
 
     async fn exists(&self, bucket: &str, key: &str) -> StorageResult<bool> {
-        let url = self.object_url(bucket, key)?;
-        let payload_hash = empty_payload_hash();
-        let response = self
-            .send_request(
-                StorageOperation::ObjectHead,
-                self.signed_request(Method::HEAD, url, &payload_hash)?,
-            )
-            .await?;
-        match response.status().as_u16() {
-            200..=299 => Ok(true),
-            404 => Ok(false),
-            _ => Err(service_error("check S3 object", response).await),
-        }
+        trace_storage_operation("s3", StorageOperation::Exists, async {
+            let url = self.object_url(bucket, key)?;
+            let payload_hash = empty_payload_hash();
+            let response = self
+                .send_request(
+                    StorageOperation::ObjectHead,
+                    self.signed_request(Method::HEAD, url, &payload_hash)?,
+                )
+                .await?;
+            match response.status().as_u16() {
+                200..=299 => Ok(true),
+                404 => Ok(false),
+                _ => Err(service_error("check S3 object", response)),
+            }
+        })
+        .await
     }
 
     async fn list_page(
@@ -495,7 +542,7 @@ impl ObjectStorage for S3ObjectStorage {
                 )
                 .await?;
             if !response.status().is_success() {
-                return Err(service_error("list S3 objects", response).await);
+                return Err(service_error("list S3 objects", response));
             }
             let body = Self::read_bounded_list_response(response).await?;
             parse_list_objects_response(&body, prefix, limit)
@@ -729,13 +776,15 @@ fn s3_request_result_label(result: &Result<Response, reqwest::Error>) -> &'stati
     }
 }
 
-async fn service_error(operation: &'static str, response: Response) -> StorageError {
+fn transport_error(error: reqwest::Error) -> StorageError {
+    StorageError::Transport(error.without_url())
+}
+
+fn service_error(operation: &'static str, response: Response) -> StorageError {
     let status = response.status().as_u16();
-    let mut message = response.text().await.unwrap_or_default();
-    message.truncate(2048);
     StorageError::Service {
         operation,
         status,
-        message,
+        message: "remote S3 service returned a non-success response".to_owned(),
     }
 }

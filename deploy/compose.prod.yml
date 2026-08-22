@@ -83,6 +83,7 @@ x-ryframe-environment: &ryframe-environment
   APP_OBJECT_STORAGE_ACCESS_KEY_FILE: /run/secrets/object-storage-access-key
   APP_OBJECT_STORAGE_SECRET_KEY_FILE: /run/secrets/object-storage-secret-key
   APP_OBJECT_STORAGE_REGION: ${APP_OBJECT_STORAGE_REGION:-us-east-1}
+  APP_OBJECT_STORAGE_REQUEST_TIMEOUT_SECS: ${APP_OBJECT_STORAGE_REQUEST_TIMEOUT_SECS:-30}
   APP_OBJECT_STORAGE_USE_SSL: "true"
   APP_AUTH_JWT_SECRET_FILE: /run/secrets/auth-jwt-secret
   APP_MONITOR_METRICS_BEARER_TOKEN_FILE: /run/secrets/metrics-bearer-token
