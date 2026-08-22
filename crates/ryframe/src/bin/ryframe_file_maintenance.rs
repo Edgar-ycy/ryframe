@@ -1,3 +1,5 @@
+// Qodana 默认不启用 Cargo 的 required-features；目标仍由清单强制门禁。
+//noinspection MissingFeatures
 //! 一次性文件元数据维护命令。
 //!
 //! 该命令只用于 FILE-A 单向切换：先校验旧 MD5 并回填 SHA-256，再清空旧版

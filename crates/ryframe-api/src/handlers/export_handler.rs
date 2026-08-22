@@ -74,10 +74,11 @@ async fn delete_records(
     responses((status = 200, description = "未读导出通知数量", body = ApiResponse<u64>)),
     security(("bearer" = [])))]
 async fn unread_notification_count(
-    State(state): State<AppState>,
+    state: State<AppState>,
     current_user: RequestPrincipal,
 ) -> HttpResult<Json<ApiResponse<u64>>> {
     state
+        .0
         .services
         .export
         .unread_notification_count(&current_user)
@@ -200,14 +201,16 @@ async fn download(
         .download_location_for_requester(&current_user, parse_export_id(&id)?)
         .await
         .map_err(crate::http::HttpAppError::from)?;
-    let file = state
+    state
         .services
         .file
         .download(&current_user, &location.bucket, &location.path)
         .await
-        .map_err(crate::http::HttpAppError::from)?;
-    // 导出结果只允许以受控的 Excel 类型返回，不信任通用文件元数据覆盖响应类型。
-    excel_response(file.data, &file.original_name)
+        .map_err(crate::http::HttpAppError::from)
+        .and_then(|file| {
+            // 导出结果只允许以受控的 Excel 类型返回，不信任通用文件元数据覆盖响应类型。
+            excel_response(file.data, &file.original_name)
+        })
 }
 
 fn parse_export_id(value: &str) -> HttpResult<i64> {
