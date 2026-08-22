@@ -45,7 +45,7 @@ impl UserExportFilter {
         self.dept_id
     }
 
-    const fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.username.is_none()
             && self.phone.is_none()
             && self.status.is_none()
@@ -76,7 +76,7 @@ macro_rules! text_export_filter {
                 }
             )+
 
-            const fn is_empty(&self) -> bool {
+            pub const fn is_empty(&self) -> bool {
                 $(self.$field.is_none())&&+
             }
         }
@@ -319,7 +319,7 @@ pub(super) const USER_HEADERS: &[(&str, &str)] = &[
     ("created_at", "创建时间"),
 ];
 
-pub(super) fn validate_request_command(command: &RequestExportCommand) -> AppResult<()> {
+pub fn validate_request_command(command: &RequestExportCommand) -> AppResult<()> {
     let permission_code = command.permission_code.as_str();
     if permission_code.trim().is_empty() || permission_code.len() > 128 {
         return Err(AppError::Validation(
@@ -355,7 +355,7 @@ pub(super) const fn deterministic_export_file_id(export_id: i64) -> i64 {
     export_id
 }
 
-pub(super) fn ensure_download_authorization_matches(
+pub fn ensure_download_authorization_matches(
     stored_fingerprint: &str,
     current_fingerprint: &str,
 ) -> AppResult<()> {
@@ -368,114 +368,6 @@ pub(super) fn ensure_download_authorization_matches(
     }
 }
 
-pub(super) fn should_delete_uncommitted_object(status: &str) -> bool {
+pub fn should_delete_uncommitted_object(status: &str) -> bool {
     status != EXPORT_STATUS_SUCCEEDED
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn normalizes_text_and_preserves_numeric_zero() {
-        let selection = ExportSelection::Users(UserExportFilter::new(
-            Some("  alice  ".into()),
-            Some("   ".into()),
-            Some("0".into()),
-            Some(0),
-        ));
-        let ExportSelection::Users(filter) = selection else {
-            panic!("应为用户筛选");
-        };
-        assert_eq!(filter.username(), Some("alice"));
-        assert_eq!(filter.phone(), None);
-        assert_eq!(filter.status(), Some("0"));
-        assert_eq!(filter.dept_id(), Some(0));
-        assert!(!filter.is_empty());
-    }
-
-    #[test]
-    fn requires_confirmation_for_empty_filter() {
-        let command = RequestExportCommand {
-            permission_code: "system:role:export".into(),
-            selection: ExportSelection::Roles(RoleExportFilter::new(None, None, None)),
-            confirm_all: false,
-        };
-        let error = validate_request_command(&command).expect_err("空筛选必须拒绝");
-        assert_eq!(
-            error.error_code().as_str(),
-            "EXPORT_ALL_CONFIRMATION_REQUIRED"
-        );
-
-        let confirmed = RequestExportCommand {
-            confirm_all: true,
-            ..command
-        };
-        validate_request_command(&confirmed).expect("显式确认后应允许空筛选");
-    }
-
-    #[test]
-    fn requires_rfc3339_timezone_and_normalizes_to_utc() {
-        let filter = OperLogExportFilter::new(
-            Some(" operator ".into()),
-            None,
-            Some("2026-08-20T10:00:00+08:00".into()),
-            Some("2026-08-20T03:00:00Z".into()),
-        )
-        .expect("有效时间区间应通过");
-        assert_eq!(filter.oper_name(), Some("operator"));
-        assert_eq!(
-            filter.begin_time().map(|time| time.to_rfc3339()),
-            Some("2026-08-20T02:00:00+00:00".into())
-        );
-
-        let missing_timezone =
-            LoginLogExportFilter::new(None, None, Some("2026-08-20T10:00:00".into()), None);
-        assert!(matches!(missing_timezone, Err(AppError::Validation(_))));
-
-        let reversed = LoginLogExportFilter::new(
-            None,
-            None,
-            Some("2026-08-20T04:00:00Z".into()),
-            Some("2026-08-20T03:00:00Z".into()),
-        );
-        assert!(matches!(reversed, Err(AppError::Validation(_))));
-    }
-
-    #[test]
-    fn persisted_filter_rejects_pagination_and_unknown_fields() {
-        let with_page = serde_json::json!({
-            "resource": "roles",
-            "filter": {"name": "ops", "page": 2}
-        });
-        assert!(serde_json::from_value::<ExportSelection>(with_page).is_err());
-
-        let unknown_resource_field = serde_json::json!({
-            "resource": "roles",
-            "filter": {"name": "ops"},
-            "legacy": true
-        });
-        assert!(serde_json::from_value::<ExportSelection>(unknown_resource_field).is_err());
-    }
-
-    #[test]
-    fn authorization_change_fails_closed() {
-        ensure_download_authorization_matches("fingerprint-a", "fingerprint-a")
-            .expect("相同授权指纹应通过");
-        assert!(matches!(
-            ensure_download_authorization_matches("fingerprint-a", "fingerprint-b"),
-            Err(AppError::Authorization(_))
-        ));
-        assert!(matches!(
-            ensure_download_authorization_matches("", "fingerprint-b"),
-            Err(AppError::Authorization(_))
-        ));
-    }
-
-    #[test]
-    fn only_committed_success_keeps_the_uploaded_object() {
-        assert!(!should_delete_uncommitted_object(EXPORT_STATUS_SUCCEEDED));
-        assert!(should_delete_uncommitted_object("running"));
-        assert!(should_delete_uncommitted_object("failed"));
-    }
 }

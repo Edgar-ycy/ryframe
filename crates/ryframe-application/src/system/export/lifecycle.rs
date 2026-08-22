@@ -357,7 +357,7 @@ impl ExportService {
     }
 }
 
-fn export_requester_view(export: ExportRequesterRecord) -> ExportJobVo {
+pub fn export_requester_view(export: ExportRequesterRecord) -> ExportJobVo {
     ExportJobVo {
         id: export.id.to_string(),
         resource: export.resource,
@@ -376,7 +376,7 @@ fn export_requester_view(export: ExportRequesterRecord) -> ExportJobVo {
     }
 }
 
-fn export_requester_snapshot(export: &ExportRequesterRecord) -> PersistedExportSnapshot<'_> {
+pub fn export_requester_snapshot(export: &ExportRequesterRecord) -> PersistedExportSnapshot<'_> {
     PersistedExportSnapshot {
         request_version: export.request_version,
         authorization_fingerprint: &export.authorization_fingerprint,
@@ -386,7 +386,7 @@ fn export_requester_snapshot(export: &ExportRequesterRecord) -> PersistedExportS
     }
 }
 
-fn calculate_request_fingerprint(
+pub fn calculate_request_fingerprint(
     tenant_id: &str,
     requester_id: i64,
     permission_code: &str,
@@ -408,7 +408,7 @@ fn calculate_request_fingerprint(
     Ok(hex::encode(digest.finalize()))
 }
 
-fn normalize_deletion_ids(ids: &mut Vec<i64>) -> AppResult<()> {
+pub fn normalize_deletion_ids(ids: &mut Vec<i64>) -> AppResult<()> {
     ids.sort_unstable();
     ids.dedup();
     if ids.is_empty() || ids.len() > 100 || ids.iter().any(|id| *id <= 0) {
@@ -419,7 +419,7 @@ fn normalize_deletion_ids(ids: &mut Vec<i64>) -> AppResult<()> {
     Ok(())
 }
 
-fn deletion_cleanup_dedupe_key(tenant_id: &str, requester_id: i64, ids: &[i64]) -> String {
+pub fn deletion_cleanup_dedupe_key(tenant_id: &str, requester_id: i64, ids: &[i64]) -> String {
     let mut digest = Sha256::new();
     digest.update(b"ryframe:export-deletion-cleanup:v1\0");
     digest.update(tenant_id.as_bytes());
@@ -429,112 +429,4 @@ fn deletion_cleanup_dedupe_key(tenant_id: &str, requester_id: i64, ids: &[i64]) 
         digest.update(id.to_be_bytes());
     }
     format!("export:delete:{}", hex::encode(digest.finalize()))
-}
-
-#[cfg(test)]
-mod deletion_tests {
-    use super::*;
-
-    fn requester_record() -> ExportRequesterRecord {
-        let now = chrono::DateTime::parse_from_rfc3339("2026-08-21T00:00:00Z")
-            .expect("测试时间应有效")
-            .with_timezone(&chrono::Utc);
-        ExportRequesterRecord {
-            id: 42,
-            resource: "users".into(),
-            status: EXPORT_STATUS_SUCCEEDED.into(),
-            result_file_name: Some("users-42.xlsx".into()),
-            content_type: Some(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".into(),
-            ),
-            file_size: Some(128),
-            expires_at: Some(now),
-            error_message: None,
-            snapshot_at: now,
-            matched_rows: 8,
-            created_at: now,
-            updated_at: now,
-            completed_at: Some(now),
-            notification_read_at: None,
-            permission_code: "system:user:export".into(),
-            request_params: serde_json::json!({"request_version": EXPORT_REQUEST_VERSION}),
-            request_version: i32::from(EXPORT_REQUEST_VERSION),
-            authorization_fingerprint: "authorization".into(),
-            upper_id: 99,
-            result_file_id: Some(7),
-        }
-    }
-
-    #[test]
-    fn requester_record_maps_without_database_types() {
-        let record = requester_record();
-        let snapshot = export_requester_snapshot(&record);
-        assert_eq!(snapshot.request_version, i32::from(EXPORT_REQUEST_VERSION));
-        assert_eq!(snapshot.authorization_fingerprint, "authorization");
-        assert_eq!(snapshot.upper_id, 99);
-        assert_eq!(snapshot.matched_rows, 8);
-
-        let view = export_requester_view(record);
-        assert_eq!(view.id, "42");
-        assert_eq!(view.status, EXPORT_STATUS_SUCCEEDED);
-        assert_eq!(view.result_file_name.as_deref(), Some("users-42.xlsx"));
-    }
-
-    #[test]
-    fn deletion_ids_are_sorted_deduplicated_and_bounded() {
-        let mut ids = vec![9, 3, 9, 5];
-        normalize_deletion_ids(&mut ids).expect("有效 ID 应通过");
-        assert_eq!(ids, vec![3, 5, 9]);
-
-        assert!(normalize_deletion_ids(&mut Vec::new()).is_err());
-        assert!(normalize_deletion_ids(&mut vec![0]).is_err());
-        let mut too_many = (1..=101).collect::<Vec<_>>();
-        assert!(normalize_deletion_ids(&mut too_many).is_err());
-
-        assert_eq!(
-            deletion_cleanup_dedupe_key("tenant-a", 7, &[3, 5, 9]),
-            deletion_cleanup_dedupe_key("tenant-a", 7, &[3, 5, 9])
-        );
-        assert_ne!(
-            deletion_cleanup_dedupe_key("tenant-a", 7, &[3, 5, 9]),
-            deletion_cleanup_dedupe_key("tenant-a", 7, &[3, 5, 10])
-        );
-    }
-
-    #[test]
-    fn request_fingerprint_is_stable_and_authorization_sensitive() {
-        let selection = ExportSelection::Roles(RoleExportFilter::new(
-            Some(" ops ".into()),
-            None,
-            Some("0".into()),
-        ));
-        let first =
-            calculate_request_fingerprint("tenant-a", 7, "system:role:export", &selection, "a")
-                .expect("指纹应生成");
-        let same =
-            calculate_request_fingerprint("tenant-a", 7, "system:role:export", &selection, "a")
-                .expect("同一输入应生成指纹");
-        let changed =
-            calculate_request_fingerprint("tenant-a", 7, "system:role:export", &selection, "b")
-                .expect("变更授权仍应生成指纹");
-        assert_eq!(first, same);
-        assert_ne!(first, changed);
-        let other_resource =
-            ExportSelection::Configs(ConfigExportFilter::new(Some("ops".into()), None));
-        for different in [
-            calculate_request_fingerprint("tenant-b", 7, "system:role:export", &selection, "a"),
-            calculate_request_fingerprint("tenant-a", 8, "system:role:export", &selection, "a"),
-            calculate_request_fingerprint("tenant-a", 7, "system:other:export", &selection, "a"),
-            calculate_request_fingerprint(
-                "tenant-a",
-                7,
-                "system:role:export",
-                &other_resource,
-                "a",
-            ),
-        ] {
-            assert_ne!(first, different.expect("不同输入仍应生成指纹"));
-        }
-        assert_eq!(first.len(), 64);
-    }
 }

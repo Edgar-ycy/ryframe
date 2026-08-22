@@ -128,7 +128,7 @@ impl ExportService {
     }
 }
 
-fn artifact_write_required(current: &ExportArtifactState, file_id: i64) -> AppResult<bool> {
+pub fn artifact_write_required(current: &ExportArtifactState, file_id: i64) -> AppResult<bool> {
     if current.status == EXPORT_STATUS_SUCCEEDED {
         return if current.result_file_id == Some(file_id) {
             Ok(false)
@@ -140,47 +140,4 @@ fn artifact_write_required(current: &ExportArtifactState, file_id: i64) -> AppRe
         return Err(AppError::Conflict("导出任务已不再允许运行".into()));
     }
     Ok(true)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn running_export_requires_artifact_write() {
-        let current = ExportArtifactState {
-            status: EXPORT_STATUS_RUNNING.into(),
-            result_file_id: None,
-        };
-        assert!(artifact_write_required(&current, 42).expect("运行任务应继续落账"));
-    }
-
-    #[test]
-    fn matching_succeeded_export_is_idempotent() {
-        let current = ExportArtifactState {
-            status: EXPORT_STATUS_SUCCEEDED.into(),
-            result_file_id: Some(42),
-        };
-        assert!(!artifact_write_required(&current, 42).expect("相同文件应幂等完成"));
-    }
-
-    #[test]
-    fn conflicting_or_terminal_export_is_rejected() {
-        let conflicting = ExportArtifactState {
-            status: EXPORT_STATUS_SUCCEEDED.into(),
-            result_file_id: Some(43),
-        };
-        let cancelled = ExportArtifactState {
-            status: EXPORT_STATUS_CANCELLED.into(),
-            result_file_id: None,
-        };
-        assert!(matches!(
-            artifact_write_required(&conflicting, 42),
-            Err(AppError::Conflict(_))
-        ));
-        assert!(matches!(
-            artifact_write_required(&cancelled, 42),
-            Err(AppError::Conflict(_))
-        ));
-    }
 }

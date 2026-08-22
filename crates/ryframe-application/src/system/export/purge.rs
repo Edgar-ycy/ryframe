@@ -150,7 +150,7 @@ async fn finish_transaction(
     }
 }
 
-async fn delete_object_idempotently(
+pub async fn delete_object_idempotently(
     storage: &dyn ArtifactStore,
     file: &ExportCleanupFile,
 ) -> AppResult<()> {
@@ -158,90 +158,4 @@ async fn delete_object_idempotently(
         .delete(&file.bucket, &file.storage_path)
         .await
         .map_err(storage_error)
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    use crate::ports::files::{ArtifactStoreError, ArtifactStoreErrorKind, ArtifactStoreFuture};
-
-    use super::*;
-
-    struct RetryStorage {
-        attempts: AtomicUsize,
-    }
-
-    impl ArtifactStore for RetryStorage {
-        fn readiness<'a>(&'a self, _bucket: &'a str) -> ArtifactStoreFuture<'a, ()> {
-            unreachable!("测试不检查存储")
-        }
-
-        fn ensure_bucket<'a>(&'a self, _bucket: &'a str) -> ArtifactStoreFuture<'a, ()> {
-            unreachable!("测试不创建桶")
-        }
-
-        fn put<'a>(
-            &'a self,
-            _bucket: &'a str,
-            _key: &'a str,
-            _data: &'a [u8],
-            _content_type: &'a str,
-        ) -> ArtifactStoreFuture<'a, ()> {
-            unreachable!("测试不写对象")
-        }
-
-        fn put_file<'a>(
-            &'a self,
-            _bucket: &'a str,
-            _key: &'a str,
-            _path: &'a std::path::Path,
-            _content_type: &'a str,
-            _sha256_hex: Option<&'a str>,
-        ) -> ArtifactStoreFuture<'a, ()> {
-            unreachable!("测试不写对象")
-        }
-
-        fn get<'a>(&'a self, _bucket: &'a str, _key: &'a str) -> ArtifactStoreFuture<'a, Vec<u8>> {
-            unreachable!("测试不读对象")
-        }
-
-        fn delete<'a>(&'a self, _bucket: &'a str, _key: &'a str) -> ArtifactStoreFuture<'a, ()> {
-            Box::pin(async move {
-                if self.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
-                    Err(ArtifactStoreError::new(
-                        ArtifactStoreErrorKind::Unavailable,
-                        "临时不可用",
-                    ))
-                } else {
-                    Ok(())
-                }
-            })
-        }
-    }
-
-    fn file() -> ExportCleanupFile {
-        ExportCleanupFile {
-            id: 1,
-            storage_path: "tenant-a/exports/users-1.xlsx".into(),
-            bucket: EXPORT_BUCKET.into(),
-        }
-    }
-
-    #[tokio::test]
-    async fn storage_failure_keeps_cleanup_retryable() {
-        let storage = RetryStorage {
-            attempts: AtomicUsize::new(0),
-        };
-        let artifact = file();
-        assert!(
-            delete_object_idempotently(&storage, &artifact)
-                .await
-                .is_err()
-        );
-        delete_object_idempotently(&storage, &artifact)
-            .await
-            .expect("重试应能够完成幂等删除");
-        assert_eq!(storage.attempts.load(Ordering::SeqCst), 2);
-    }
 }

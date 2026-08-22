@@ -451,7 +451,7 @@ impl ExportService {
     }
 }
 
-fn export_execution_snapshot(export: &ExportExecutionRecord) -> PersistedExportSnapshot<'_> {
+pub fn export_execution_snapshot(export: &ExportExecutionRecord) -> PersistedExportSnapshot<'_> {
     PersistedExportSnapshot {
         request_version: export.request_version,
         authorization_fingerprint: &export.authorization_fingerprint,
@@ -483,7 +483,7 @@ fn export_layout(
     }
 }
 
-fn last_batch_id<T>(
+pub fn last_batch_id<T>(
     batch: &[T],
     window: ExportCursorWindow,
     id: impl Fn(&T) -> &str,
@@ -541,7 +541,7 @@ fn validate_runtime_limits(
     validate_row_and_byte_limits(rows, input_bytes, execution.matched_rows, maximum_rows)
 }
 
-fn validate_row_and_byte_limits(
+pub fn validate_row_and_byte_limits(
     rows: u64,
     input_bytes: u64,
     matched_rows: u64,
@@ -563,6 +563,23 @@ fn validate_row_and_byte_limits(
         )));
     }
     Ok(())
+}
+
+/// 校验导出执行耗时、行数与字节数边界。
+pub fn validate_export_runtime(
+    started_at: Instant,
+    matched_rows: u64,
+    rows: u64,
+    input_bytes: u64,
+    maximum_rows: usize,
+) -> AppResult<()> {
+    let execution = ExportExecution {
+        background_job_id: 0,
+        lease_owner: "validation",
+        started_at,
+        matched_rows,
+    };
+    validate_runtime_limits(&execution, rows, input_bytes, maximum_rows)
 }
 
 fn validate_artifact_limits(
@@ -602,80 +619,4 @@ async fn finish_writer_within_deadline(
     .await
     .map_err(|_| AppError::Validation(format!("导出执行超过 {EXPORT_MAX_RUNTIME_SECONDS} 秒上限")))?
     .map_err(|error| AppError::Internal(format!("等待 Excel 文件生成失败: {error}")))?
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const _: () = {
-        assert!(EXPORT_BATCH_SIZE == 1_000);
-        assert!(EXPORT_MAX_RUNTIME_SECONDS == 1_800);
-        assert!(EXPORT_MAX_RUNNING_PER_TENANT == 2);
-        assert!(EXPORT_MAX_RESULT_BYTES == 512 * 1024 * 1024);
-    };
-
-    #[test]
-    fn execution_snapshot_uses_application_record() {
-        let now = chrono::DateTime::parse_from_rfc3339("2026-08-21T00:00:00Z")
-            .expect("测试时间应有效")
-            .with_timezone(&chrono::Utc);
-        let record = ExportExecutionRecord {
-            id: 1,
-            tenant_id: "tenant-a".into(),
-            requester_id: 7,
-            resource: "users".into(),
-            request_params: serde_json::json!({}),
-            request_version: i32::from(EXPORT_REQUEST_VERSION),
-            permission_code: "system:user:export".into(),
-            authorization_fingerprint: "authorization".into(),
-            snapshot_at: now,
-            upper_id: 99,
-            matched_rows: 8,
-            status: EXPORT_STATUS_RUNNING.into(),
-        };
-
-        let snapshot = export_execution_snapshot(&record);
-        assert_eq!(snapshot.request_version, i32::from(EXPORT_REQUEST_VERSION));
-        assert_eq!(snapshot.authorization_fingerprint, "authorization");
-        assert_eq!(snapshot.snapshot_at, &now);
-        assert_eq!(snapshot.upper_id, 99);
-        assert_eq!(snapshot.matched_rows, 8);
-    }
-
-    #[test]
-    fn cursor_window_rejects_non_advancing_or_oversized_batches() {
-        let window = ExportCursorWindow::new(Some(10), 20, 2);
-        assert!(last_batch_id(&["11", "20"], window, |id| id).is_ok());
-        assert!(last_batch_id(&["10"], window, |id| id).is_err());
-        assert!(last_batch_id(&["12", "11"], window, |id| id).is_err());
-        assert!(last_batch_id(&["11", "12", "13"], window, |id| id).is_err());
-    }
-
-    #[test]
-    fn row_and_byte_limits_fail_closed() {
-        validate_row_and_byte_limits(500_000, 512 * 1024 * 1024, 500_000, 500_000)
-            .expect("边界值应可用");
-        assert!(validate_row_and_byte_limits(500_001, 1, 500_001, 500_000).is_err());
-        assert!(validate_row_and_byte_limits(1, 512 * 1024 * 1024 + 1, 1, 500_000).is_err());
-
-        let expired = ExportExecution {
-            background_job_id: 1,
-            lease_owner: "worker-a",
-            started_at: Instant::now()
-                .checked_sub(StdDuration::from_secs(1_800))
-                .expect("测试时间应可回退"),
-            matched_rows: 1,
-        };
-        assert!(validate_runtime_limits(&expired, 0, 0, 500_000).is_err());
-    }
-
-    #[test]
-    fn deletion_after_request_may_finish_with_fewer_rows_but_new_ids_are_rejected() {
-        validate_row_and_byte_limits(998, 1, 1_000, 500_000)
-            .expect("执行前删除应允许实际导出少于申请时匹配数");
-        let snapshot = ExportCursorWindow::new(Some(998), 1_000, 1_000);
-        assert!(last_batch_id(&["999", "1000"], snapshot, |id| id).is_ok());
-        assert!(last_batch_id(&["1001"], snapshot, |id| id).is_err());
-    }
 }

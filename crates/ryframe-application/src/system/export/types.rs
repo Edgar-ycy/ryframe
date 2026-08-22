@@ -99,25 +99,25 @@ pub struct ExportDeletionResult {
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct StoredExportRequest {
-    pub(super) request_version: u16,
-    pub(super) selection: ExportSelection,
-    pub(super) authorization_fingerprint: String,
-    pub(super) snapshot_at: DateTime<Utc>,
-    pub(super) upper_id: i64,
-    pub(super) matched_rows: u64,
+pub struct StoredExportRequest {
+    pub request_version: u16,
+    pub selection: ExportSelection,
+    pub authorization_fingerprint: String,
+    pub snapshot_at: DateTime<Utc>,
+    pub upper_id: i64,
+    pub matched_rows: u64,
 }
 
-pub(super) struct PersistedExportSnapshot<'a> {
-    pub(super) request_version: i32,
-    pub(super) authorization_fingerprint: &'a str,
-    pub(super) snapshot_at: &'a DateTime<Utc>,
-    pub(super) upper_id: i64,
-    pub(super) matched_rows: i64,
+pub struct PersistedExportSnapshot<'a> {
+    pub request_version: i32,
+    pub authorization_fingerprint: &'a str,
+    pub snapshot_at: &'a DateTime<Utc>,
+    pub upper_id: i64,
+    pub matched_rows: i64,
 }
 
 impl StoredExportRequest {
-    pub(super) fn validate(&self, expected_resource: &str) -> ryframe_kernel::AppResult<()> {
+    pub fn validate(&self, expected_resource: &str) -> ryframe_kernel::AppResult<()> {
         if self.request_version != EXPORT_REQUEST_VERSION {
             return Err(ryframe_kernel::AppError::Validation(format!(
                 "不支持的导出请求快照版本: {}",
@@ -142,7 +142,7 @@ impl StoredExportRequest {
         Ok(())
     }
 
-    pub(super) fn validate_persisted_snapshot(
+    pub fn validate_persisted_snapshot(
         &self,
         export: PersistedExportSnapshot<'_>,
     ) -> ryframe_kernel::AppResult<()> {
@@ -174,121 +174,5 @@ impl StoredExportRequest {
             ));
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::system::RoleExportFilter;
-
-    #[test]
-    fn worker_accepts_only_current_strict_snapshot() {
-        let valid = serde_json::json!({
-            "request_version": EXPORT_REQUEST_VERSION,
-            "selection": {
-                "resource": "roles",
-                "filter": {"name": "ops", "code": null, "status": "0"}
-            },
-            "authorization_fingerprint": "fingerprint-at-request",
-            "snapshot_at": "2026-08-20T12:00:00Z",
-            "upper_id": 88,
-            "matched_rows": 12
-        });
-        let request: StoredExportRequest =
-            serde_json::from_value(valid).expect("当前版本快照应可解析");
-        request.validate("roles").expect("资源应匹配");
-
-        let previous_version = serde_json::json!({
-            "request_version": EXPORT_REQUEST_VERSION - 1,
-            "selection": {
-                "resource": "roles",
-                "filter": {"name": "ops", "code": null, "status": "0"}
-            },
-            "authorization_fingerprint": "fingerprint-at-request",
-            "snapshot_at": "2026-08-20T12:00:00Z",
-            "upper_id": 88,
-            "matched_rows": 12
-        });
-        let previous: StoredExportRequest =
-            serde_json::from_value(previous_version).expect("旧版本结构仍可被类型读取");
-        assert!(matches!(
-            previous.validate("roles"),
-            Err(ryframe_kernel::AppError::Validation(_))
-        ));
-
-        let old_shape = serde_json::json!({"request": {"name": "ops"}});
-        assert!(serde_json::from_value::<StoredExportRequest>(old_shape).is_err());
-
-        let unknown = serde_json::json!({
-            "request_version": EXPORT_REQUEST_VERSION,
-            "selection": {
-                "resource": "roles",
-                "filter": {"name": null, "code": null, "status": null}
-            },
-            "authorization_fingerprint": "fingerprint-at-request",
-            "snapshot_at": "2026-08-20T12:00:00Z",
-            "upper_id": 88,
-            "matched_rows": 12,
-            "legacy": true
-        });
-        assert!(serde_json::from_value::<StoredExportRequest>(unknown).is_err());
-    }
-
-    #[test]
-    fn worker_rejects_version_or_resource_mismatch() {
-        let request = StoredExportRequest {
-            request_version: EXPORT_REQUEST_VERSION + 1,
-            selection: ExportSelection::Roles(RoleExportFilter::new(None, None, None)),
-            authorization_fingerprint: "fingerprint-at-request".into(),
-            snapshot_at: DateTime::parse_from_rfc3339("2026-08-20T12:00:00Z")
-                .expect("测试时间有效")
-                .with_timezone(&Utc),
-            upper_id: 88,
-            matched_rows: 12,
-        };
-        assert!(matches!(
-            request.validate("roles"),
-            Err(ryframe_kernel::AppError::Validation(_))
-        ));
-
-        let current = StoredExportRequest {
-            request_version: EXPORT_REQUEST_VERSION,
-            selection: request.selection,
-            authorization_fingerprint: request.authorization_fingerprint,
-            snapshot_at: request.snapshot_at,
-            upper_id: request.upper_id,
-            matched_rows: request.matched_rows,
-        };
-        assert!(matches!(
-            current.validate("users"),
-            Err(ryframe_kernel::AppError::Validation(_))
-        ));
-    }
-
-    #[test]
-    fn job_payload_rejects_old_version_and_unknown_fields() {
-        let valid: ExportJobPayload = serde_json::from_value(serde_json::json!({
-            "resource": "users",
-            "request_version": EXPORT_REQUEST_VERSION
-        }))
-        .expect("当前载荷应可解析");
-        valid.validate().expect("当前载荷应可校验");
-
-        let unknown = serde_json::json!({
-            "resource": "users",
-            "request_version": EXPORT_REQUEST_VERSION,
-            "legacy": true
-        });
-        assert!(serde_json::from_value::<ExportJobPayload>(unknown).is_err());
-
-        let old = ExportJobPayload {
-            resource: "users".into(),
-            request_version: 0,
-        };
-        assert!(matches!(
-            old.validate(),
-            Err(ryframe_kernel::AppError::Validation(_))
-        ));
     }
 }

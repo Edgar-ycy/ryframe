@@ -31,33 +31,43 @@ mod types;
 pub use filters::{
     ConfigExportFilter, DictTypeExportFilter, ExportSelection, LoginLogExportFilter,
     OperLogExportFilter, PostExportFilter, RoleExportFilter, UserExportFilter,
+    ensure_download_authorization_matches, should_delete_uncommitted_object,
+    validate_request_command,
 };
+pub use lifecycle::{
+    calculate_request_fingerprint, deletion_cleanup_dedupe_key, export_requester_snapshot,
+    export_requester_view, normalize_deletion_ids,
+};
+pub use preflight::{ExportRequestSnapshot, validate_export_summary};
 use purge::ExportPurgeUseCase;
+pub use purge::delete_object_idempotently;
+pub use resources::{
+    export_execution_snapshot, last_batch_id, validate_export_runtime, validate_row_and_byte_limits,
+};
+pub use storage::artifact_write_required;
 pub use types::{
     EXPORT_BUCKET, EXPORT_CLEANUP_JOB_TYPE, EXPORT_JOB_TYPE, EXPORT_REQUEST_VERSION,
     ExportDeletionResult, ExportDownloadLocation, ExportJobPayload, ExportJobVo,
-    RequestExportCommand,
+    PersistedExportSnapshot, RequestExportCommand, StoredExportRequest,
 };
 
 use filters::{
     CONFIG_HEADERS, DICT_TYPE_HEADERS, LOGIN_LOG_HEADERS, OPER_LOG_HEADERS, POST_HEADERS,
-    ROLE_HEADERS, USER_HEADERS, deterministic_export_file_id,
-    ensure_download_authorization_matches, export_file_location, should_delete_uncommitted_object,
-    validate_job_id, validate_request_command,
+    ROLE_HEADERS, USER_HEADERS, deterministic_export_file_id, export_file_location,
+    validate_job_id,
 };
-use types::{PersistedExportSnapshot, StoredExportRequest};
 
 /// 单次清理查询的最大任务数，游标会继续排空同一时间快照下的剩余任务。
 const EXPORT_CLEANUP_BATCH_SIZE: u64 = 100;
-const EXPORT_BATCH_SIZE: u64 = 1_000;
+pub const EXPORT_BATCH_SIZE: u64 = 1_000;
 const EXPORT_BUSINESS_MAX_ROWS: usize = 500_000;
-const EXPORT_MAX_RUNTIME_SECONDS: i32 = 1_800;
-const EXPORT_MAX_RESULT_BYTES: u64 = 512 * 1024 * 1024;
-const EXPORT_MAX_RUNNING_PER_TENANT: u64 = 2;
-const EXPORT_STATUS_RUNNING: &str = "running";
-const EXPORT_STATUS_SUCCEEDED: &str = "succeeded";
-const EXPORT_STATUS_FAILED: &str = "failed";
-const EXPORT_STATUS_CANCELLED: &str = "cancelled";
+pub const EXPORT_MAX_RUNTIME_SECONDS: i32 = 1_800;
+pub const EXPORT_MAX_RESULT_BYTES: u64 = 512 * 1024 * 1024;
+pub const EXPORT_MAX_RUNNING_PER_TENANT: u64 = 2;
+pub const EXPORT_STATUS_RUNNING: &str = "running";
+pub const EXPORT_STATUS_SUCCEEDED: &str = "succeeded";
+pub const EXPORT_STATUS_FAILED: &str = "failed";
+pub const EXPORT_STATUS_CANCELLED: &str = "cancelled";
 
 /// 异步导出任务服务。
 pub struct ExportService {
