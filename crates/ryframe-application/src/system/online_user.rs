@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 mod keyspace;
 mod memory_backend;
 
+pub use memory_backend::InMemoryOnlineSessionMetadata;
+
 use crate::ports::auth::RefreshSessionPort;
 
 /// 在线用户信息。

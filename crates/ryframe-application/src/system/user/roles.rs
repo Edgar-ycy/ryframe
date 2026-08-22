@@ -73,7 +73,7 @@ impl UserService {
     }
 }
 
-fn validate_assignment_state(
+pub fn validate_assignment_state(
     state: UserAssignmentState,
     dept_id: Option<i64>,
     role_ids: Option<&[i64]>,
@@ -95,52 +95,4 @@ fn validate_assignment_state(
         return Err(AppError::Authorization("无权限分配超级管理员角色".into()));
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::ports::users::UserAssignmentRole;
-
-    use super::*;
-
-    fn state(roles: Vec<UserAssignmentRole>) -> UserAssignmentState {
-        UserAssignmentState {
-            department_exists: true,
-            roles,
-        }
-    }
-
-    #[test]
-    fn assignment_validation_fails_closed() {
-        let normal = UserAssignmentRole {
-            status_normal: true,
-            is_super: false,
-        };
-        assert!(validate_assignment_state(state(vec![normal]), None, Some(&[1]), false).is_ok());
-        assert!(validate_assignment_state(state(Vec::new()), None, Some(&[1]), false).is_err());
-        assert!(
-            validate_assignment_state(
-                state(vec![UserAssignmentRole {
-                    status_normal: false,
-                    is_super: false,
-                }]),
-                None,
-                Some(&[1]),
-                false,
-            )
-            .is_err()
-        );
-        assert!(
-            validate_assignment_state(
-                state(vec![UserAssignmentRole {
-                    status_normal: true,
-                    is_super: true,
-                }]),
-                None,
-                Some(&[1]),
-                false,
-            )
-            .is_err()
-        );
-    }
 }

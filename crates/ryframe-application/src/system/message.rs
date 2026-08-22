@@ -9,6 +9,7 @@ mod publish;
 mod retention;
 mod types;
 
+pub use publish::validate_message_text_pair;
 pub use types::*;
 
 /// 消息投递任务的稳定类型标识。

@@ -368,7 +368,7 @@ impl UserImportService {
     }
 }
 
-fn validate_import_source(
+pub fn validate_import_source(
     source: &UserImportSourceRecord,
     expected_sha256: &str,
 ) -> AppResult<bool> {
@@ -386,47 +386,5 @@ fn validate_import_source(
         UserImportSourceState::Unavailable => {
             Err(AppError::Validation("用户导入源文件尚未完成上传".into()))
         }
-    }
-}
-
-#[cfg(test)]
-mod management_tests {
-    use super::*;
-
-    fn source(state: UserImportSourceState) -> UserImportSourceRecord {
-        UserImportSourceRecord {
-            bucket: IMPORT_BUCKET.into(),
-            sha256: "a".repeat(64),
-            state,
-        }
-    }
-
-    #[test]
-    fn source_state_controls_restoration() {
-        assert!(!validate_import_source(
-            &source(UserImportSourceState::Ready),
-            &"a".repeat(64)
-        )
-        .unwrap());
-        assert!(validate_import_source(
-            &source(UserImportSourceState::Recoverable),
-            &"a".repeat(64)
-        )
-        .unwrap());
-        assert!(validate_import_source(
-            &source(UserImportSourceState::Unavailable),
-            &"a".repeat(64)
-        )
-        .is_err());
-    }
-
-    #[test]
-    fn source_bucket_and_digest_fail_closed() {
-        let mut candidate = source(UserImportSourceState::Ready);
-        candidate.bucket = "uploads".into();
-        assert!(validate_import_source(&candidate, &"a".repeat(64)).is_err());
-
-        candidate.bucket = IMPORT_BUCKET.into();
-        assert!(validate_import_source(&candidate, &"b".repeat(64)).is_err());
     }
 }

@@ -56,9 +56,7 @@ impl ProductService {
         })
     }
 
-    pub(super) fn version_record_vo(
-        version: ProductVersionRecord,
-    ) -> AppResult<ProductPlanVersionVo> {
+    pub fn version_record_vo(version: ProductVersionRecord) -> AppResult<ProductPlanVersionVo> {
         let mut seen = BTreeSet::new();
         for capability in &version.capabilities {
             if !seen.insert(&capability.code) {
@@ -163,41 +161,5 @@ impl ProductService {
             }
         }
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn capability() -> ProductCapabilityRecord {
-        ProductCapabilityRecord {
-            code: SERVICE_ACCOUNTS_CAPABILITY.into(),
-            variant: "default".into(),
-            schema_version: 1,
-            config: serde_json::json!({}),
-        }
-    }
-
-    fn version(capabilities: Vec<ProductCapabilityRecord>) -> ProductVersionRecord {
-        ProductVersionRecord {
-            id: 1,
-            version: 1,
-            name: "基础版".into(),
-            description: None,
-            status: VERSION_DRAFT.into(),
-            created_by: 2,
-            published_by: None,
-            published_at: None,
-            capabilities,
-        }
-    }
-
-    #[test]
-    fn read_record_rejects_duplicate_capabilities() {
-        assert!(ProductService::version_record_vo(version(vec![capability()])).is_ok());
-        assert!(
-            ProductService::version_record_vo(version(vec![capability(), capability()])).is_err()
-        );
     }
 }

@@ -59,6 +59,7 @@ pub use message::{
     MESSAGE_DISPATCH_JOB_TYPE, MESSAGE_DISPATCH_REDIS_CHANNEL, MESSAGE_RETENTION_JOB_TYPE,
     MessageAudienceKind, MessageAudienceSelector, MessageDelivery, MessageInbox, MessageService,
     MessageTemplate, MessageText, PublishMessageParams, PublishedMessage,
+    validate_message_text_pair,
 };
 pub use notice::{NoticeListParams, NoticeService, NoticeVo};
 pub use oper_log::{OperLogQuery, OperLogService, OperLogStatus, OperLogVo, RecordOperLogCommand};
@@ -140,8 +141,8 @@ pub use file::{
 pub mod online_user;
 pub mod overview;
 pub use online_user::{
-    OnlineSessionMetadataFuture, OnlineSessionMetadataStore, OnlineUserService, OnlineUserVo,
-    UserSession,
+    InMemoryOnlineSessionMetadata, OnlineSessionMetadataFuture, OnlineSessionMetadataStore,
+    OnlineUserService, OnlineUserVo, UserSession,
 };
 pub use overview::{
     OverviewCoreSnapshot, OverviewRange, OverviewService, OverviewTrendBucket, OverviewTrends,

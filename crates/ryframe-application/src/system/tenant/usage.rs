@@ -368,7 +368,7 @@ fn quota_usage(used: u64, limit: u64) -> QuotaUsage {
     }
 }
 
-fn quota_status(used: u64, limit: u64) -> &'static str {
+pub fn quota_status(used: u64, limit: u64) -> &'static str {
     if limit == 0 {
         return "unlimited";
     }
@@ -386,7 +386,7 @@ fn quota_status(used: u64, limit: u64) -> &'static str {
     }
 }
 
-fn percentage_basis_points(used: u64, limit: u64) -> Option<u32> {
+pub fn percentage_basis_points(used: u64, limit: u64) -> Option<u32> {
     if limit == 0 {
         return None;
     }
@@ -411,7 +411,7 @@ fn capacity_status(usage: &TenantUsageVo) -> String {
     "unlimited".to_owned()
 }
 
-fn expiration_status(tenant: &TenantCapacityRecord, now: DateTime<Utc>) -> &'static str {
+pub fn expiration_status(tenant: &TenantCapacityRecord, now: DateTime<Utc>) -> &'static str {
     match tenant.expire_at {
         None => "never",
         Some(expire_at) if expire_at <= now => "expired",
@@ -500,50 +500,4 @@ fn ensure_system_tenant(actor: &ActorContext) -> AppResult<()> {
         return Err(AppError::Authorization("仅系统租户可以查看租户容量".into()));
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use chrono::{Duration, Utc};
-
-    use super::{TenantCapacityRecord, expiration_status, percentage_basis_points, quota_status};
-
-    fn tenant(expire_at: Option<chrono::DateTime<Utc>>) -> TenantCapacityRecord {
-        TenantCapacityRecord {
-            tenant_id: "tenant-a".into(),
-            name: "测试租户".into(),
-            domain: None,
-            status: "0".into(),
-            expire_at,
-            max_users: 100,
-            max_roles: 20,
-            max_storage_mb: 1024,
-            max_requests_per_min: 1000,
-        }
-    }
-
-    #[test]
-    fn quota_thresholds_are_stable() {
-        assert_eq!(quota_status(1, 0), "unlimited");
-        assert_eq!(quota_status(79, 100), "normal");
-        assert_eq!(quota_status(80, 100), "warning");
-        assert_eq!(quota_status(90, 100), "critical");
-        assert_eq!(quota_status(100, 100), "exceeded");
-        assert_eq!(percentage_basis_points(1, 3), Some(3333));
-    }
-
-    #[test]
-    fn expiration_boundaries_use_the_calculation_time() {
-        let now = Utc::now();
-        assert_eq!(expiration_status(&tenant(None), now), "never");
-        assert_eq!(expiration_status(&tenant(Some(now)), now), "expired");
-        assert_eq!(
-            expiration_status(&tenant(Some(now + Duration::days(30))), now),
-            "expiring"
-        );
-        assert_eq!(
-            expiration_status(&tenant(Some(now + Duration::days(31))), now),
-            "active"
-        );
-    }
 }

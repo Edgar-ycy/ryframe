@@ -294,7 +294,7 @@ impl ProfileService {
     }
 }
 
-fn normalize_preferred_locale(locale: Option<String>) -> AppResult<Option<String>> {
+pub fn normalize_preferred_locale(locale: Option<String>) -> AppResult<Option<String>> {
     match locale.as_deref().map(str::trim) {
         None | Some("") => Ok(None),
         Some("zh-CN") => Ok(Some("zh-CN".into())),
@@ -302,21 +302,5 @@ fn normalize_preferred_locale(locale: Option<String>) -> AppResult<Option<String
         Some(_) => Err(AppError::Validation(
             "preferred_locale 只能是 zh-CN、en-US 或空值".into(),
         )),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::normalize_preferred_locale;
-
-    #[test]
-    fn preferred_locale_accepts_only_supported_values() {
-        assert_eq!(normalize_preferred_locale(None).unwrap(), None);
-        assert_eq!(normalize_preferred_locale(Some("  ".into())).unwrap(), None);
-        assert_eq!(
-            normalize_preferred_locale(Some("zh-CN".into())).unwrap(),
-            Some("zh-CN".into())
-        );
-        assert!(normalize_preferred_locale(Some("zh-cn".into())).is_err());
     }
 }

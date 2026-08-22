@@ -253,22 +253,8 @@ impl MenuService {
     }
 }
 
-fn normalize_route_key(route_key: Option<String>) -> Option<String> {
+pub fn normalize_route_key(route_key: Option<String>) -> Option<String> {
     route_key
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::normalize_route_key;
-
-    #[test]
-    fn route_key_is_trimmed_and_blank_becomes_absent() {
-        assert_eq!(
-            normalize_route_key(Some(" user.list ".into())).as_deref(),
-            Some("user.list")
-        );
-        assert_eq!(normalize_route_key(Some("  ".into())), None);
-    }
 }

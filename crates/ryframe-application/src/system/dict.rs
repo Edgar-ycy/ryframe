@@ -21,7 +21,7 @@ pub trait DictCacheStore: Send + Sync {
     fn remove(&self, key: String) -> DictCacheStoreFuture<'_, ()>;
 }
 
-fn dict_cache_key(tenant_id: &str, type_code: &str) -> String {
+pub fn dict_cache_key(tenant_id: &str, type_code: &str) -> String {
     format!("{DICT_CACHE_KEY_PREFIX}{tenant_id}:{type_code}")
 }
 
@@ -339,22 +339,5 @@ impl DictService {
         {
             tracing::warn!(tenant_id, type_code, %error, "删除字典缓存失败");
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn dictionary_cache_key_is_tenant_scoped() {
-        assert_eq!(
-            dict_cache_key("tenant-a", "sys.status"),
-            "sys_dict:data:tenant-a:sys.status"
-        );
-        assert_ne!(
-            dict_cache_key("tenant-a", "sys.status"),
-            dict_cache_key("tenant-b", "sys.status")
-        );
     }
 }

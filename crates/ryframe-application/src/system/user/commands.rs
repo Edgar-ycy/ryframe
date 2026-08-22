@@ -235,36 +235,15 @@ impl UserService {
     }
 }
 
-pub(super) fn normalize_ids(ids: &mut Vec<i64>) {
+pub fn normalize_ids(ids: &mut Vec<i64>) {
     ids.sort_unstable();
     ids.dedup();
 }
 
-fn validate_manageable_status(status: &str) -> AppResult<()> {
+pub fn validate_manageable_status(status: &str) -> AppResult<()> {
     if matches!(status, USER_STATUS_NORMAL | USER_STATUS_DISABLED) {
         Ok(())
     } else {
         Err(AppError::Validation("无效的用户状态".into()))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::ports::users::USER_STATUS_PENDING_ACTIVATION;
-
-    use super::*;
-
-    #[test]
-    fn user_ids_are_sorted_and_deduplicated_before_locking() {
-        let mut ids = vec![9, 2, 9, 5];
-        normalize_ids(&mut ids);
-        assert_eq!(ids, vec![2, 5, 9]);
-    }
-
-    #[test]
-    fn only_manageable_statuses_are_accepted() {
-        assert!(validate_manageable_status(USER_STATUS_NORMAL).is_ok());
-        assert!(validate_manageable_status(USER_STATUS_DISABLED).is_ok());
-        assert!(validate_manageable_status(USER_STATUS_PENDING_ACTIVATION).is_err());
     }
 }

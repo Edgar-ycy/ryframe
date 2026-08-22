@@ -17,7 +17,7 @@ pub use metrics::{CallbackJobMetricsObserver, JobMetricsObserver};
 pub use outbox::{OutboxRunResult, OutboxWorker};
 pub use queue::{
     BackgroundJobListParams, BackgroundJobQueueStats, BackgroundJobVo, EnqueueJob,
-    EnqueueJobResult, JobQueue,
+    EnqueueJobResult, JobQueue, normalize_job_status_filter, public_job_error,
 };
 pub use schedule::{
     CreateJobSchedule, JobScheduleExecutionListParams, JobScheduleExecutionVo,

@@ -21,6 +21,7 @@ use crate::{
     },
 };
 
+pub use copy::rolling_digest;
 pub use models::*;
 pub use workflow::TenantDataMigrationJobHandler;
 

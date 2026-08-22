@@ -24,7 +24,7 @@ pub(super) fn validate_capabilities(capabilities: &[ServiceCapabilityDescriptor]
     Ok(())
 }
 
-pub(super) fn common_capabilities(
+pub fn common_capabilities(
     capabilities: &[ServiceCapabilityDescriptor],
     user_permissions: &HashSet<String>,
     account_permissions: &HashSet<String>,
@@ -58,42 +58,4 @@ pub(super) async fn validate_dept(
         return Err(AppError::Validation("部门不存在或不属于当前租户".into()));
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::HashSet;
-
-    use super::{ServiceCapabilityDescriptor, common_capabilities};
-
-    fn permissions(values: &[&str]) -> HashSet<String> {
-        values.iter().map(|value| (*value).to_owned()).collect()
-    }
-
-    #[test]
-    fn delegated_capability_requires_both_permission_sets() {
-        let capabilities = vec![
-            ServiceCapabilityDescriptor {
-                key: "read".to_owned(),
-                permission: "system:user:list".to_owned(),
-                direct: true,
-                delegated: true,
-            },
-            ServiceCapabilityDescriptor {
-                key: "write".to_owned(),
-                permission: "system:user:create".to_owned(),
-                direct: true,
-                delegated: false,
-            },
-        ];
-
-        let common = common_capabilities(
-            &capabilities,
-            &permissions(&["system:user:*"]),
-            &permissions(&["system:user:list"]),
-        );
-
-        assert_eq!(common.len(), 1);
-        assert_eq!(common[0].key, "read");
-    }
 }

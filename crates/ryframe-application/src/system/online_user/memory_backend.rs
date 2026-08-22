@@ -72,7 +72,7 @@ async fn cleanup_expired(sessions: &Sessions) {
 }
 
 #[derive(Default)]
-pub(super) struct InMemoryOnlineSessionMetadata {
+pub struct InMemoryOnlineSessionMetadata {
     sessions: Sessions,
 }
 
@@ -120,88 +120,5 @@ impl OnlineSessionMetadataStore for InMemoryOnlineSessionMetadata {
             cleanup_expired(&self.sessions).await;
             Ok(())
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn session(sid: &str, absolute_exp: i64) -> UserSession {
-        let now = Utc::now();
-        UserSession {
-            sid: sid.into(),
-            tenant_id: "tenant-a".into(),
-            user_id: 42,
-            username: "alice".into(),
-            dept_name: None,
-            ipaddr: "192.0.2.1".into(),
-            login_location: None,
-            browser: None,
-            os: None,
-            login_time: now,
-            last_access_time: now,
-            absolute_exp,
-        }
-    }
-
-    #[tokio::test]
-    async fn metadata_is_isolated_and_removable() {
-        let store = InMemoryOnlineSessionMetadata::default();
-        store
-            .add(session("sid-a", Utc::now().timestamp() + 60), 60)
-            .await
-            .expect("应写入设备元数据");
-
-        assert_eq!(
-            store
-                .list_for_user("tenant-a", 42)
-                .await
-                .expect("应读取用户设备")
-                .len(),
-            1
-        );
-        assert!(
-            store
-                .list("tenant-b")
-                .await
-                .expect("应隔离其他租户")
-                .is_empty()
-        );
-        assert!(
-            store
-                .touch("tenant-a", "sid-a")
-                .await
-                .expect("应更新设备活动时间")
-        );
-
-        store
-            .remove("tenant-a", "sid-a")
-            .await
-            .expect("应删除设备元数据");
-        assert!(
-            store
-                .list("tenant-a")
-                .await
-                .expect("应读取租户设备")
-                .is_empty()
-        );
-    }
-
-    #[tokio::test]
-    async fn expired_metadata_is_not_returned() {
-        let store = InMemoryOnlineSessionMetadata::default();
-        store
-            .add(session("sid-expired", Utc::now().timestamp() - 1), 1)
-            .await
-            .expect("应允许写入待清理元数据");
-        store.cleanup_expired().await.expect("应清理过期元数据");
-        assert!(
-            store
-                .list("tenant-a")
-                .await
-                .expect("应读取租户设备")
-                .is_empty()
-        );
     }
 }

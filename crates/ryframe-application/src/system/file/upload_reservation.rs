@@ -45,7 +45,7 @@ fn cleanup_grace_for_bound(late_completion_bound: Duration) -> chrono::Duration 
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ExpiredReservationPlan {
+pub enum ExpiredReservationPlan {
     BeginCleanup { cleanup_after: DateTime<Utc> },
     DeleteCleanup,
 }
@@ -56,7 +56,7 @@ enum CompensationPlan {
     PreserveObject,
 }
 
-fn plan_expired_reservation(
+pub fn plan_expired_reservation(
     reservation: &FileCleanupRecord,
     now: DateTime<Utc>,
     cleanup_grace: chrono::Duration,
@@ -806,70 +806,4 @@ async fn compensate_upload_reservation(
 
 pub(super) fn storage_error_is_not_found(error: &ArtifactStoreError) -> bool {
     error.kind() == ArtifactStoreErrorKind::NotFound
-}
-
-#[cfg(test)]
-mod tests {
-    use chrono::{Duration, Utc};
-
-    use super::{ExpiredReservationPlan, plan_expired_reservation};
-    use crate::ports::files::{
-        FILE_DEL_FLAG_NORMAL, FILE_UPLOAD_STATUS_CLEANUP, FILE_UPLOAD_STATUS_PENDING,
-        FileCleanupRecord,
-    };
-
-    fn reservation(status: &str, expires_at: chrono::DateTime<Utc>) -> FileCleanupRecord {
-        FileCleanupRecord {
-            id: 1,
-            tenant_id: "tenant-a".to_owned(),
-            bucket: "uploads".to_owned(),
-            storage_path: "tenant-a/object".to_owned(),
-            upload_status: status.to_owned(),
-            reservation_token: Some("token".to_owned()),
-            reservation_expires_at: Some(expires_at),
-            del_flag: FILE_DEL_FLAG_NORMAL.to_owned(),
-        }
-    }
-
-    #[test]
-    fn expired_pending_reservation_enters_cleanup_grace() {
-        let now = Utc::now();
-        let grace = Duration::minutes(5);
-        let record = reservation(FILE_UPLOAD_STATUS_PENDING, now - Duration::seconds(1));
-
-        assert_eq!(
-            plan_expired_reservation(&record, now, grace),
-            Some(ExpiredReservationPlan::BeginCleanup {
-                cleanup_after: now + grace,
-            })
-        );
-    }
-
-    #[test]
-    fn expired_cleanup_reservation_is_ready_for_deletion() {
-        let now = Utc::now();
-        let record = reservation(FILE_UPLOAD_STATUS_CLEANUP, now - Duration::seconds(1));
-
-        assert_eq!(
-            plan_expired_reservation(&record, now, Duration::minutes(5)),
-            Some(ExpiredReservationPlan::DeleteCleanup)
-        );
-    }
-
-    #[test]
-    fn active_or_deleted_reservation_is_ignored() {
-        let now = Utc::now();
-        let active = reservation(FILE_UPLOAD_STATUS_PENDING, now + Duration::seconds(1));
-        assert_eq!(
-            plan_expired_reservation(&active, now, Duration::minutes(5)),
-            None
-        );
-
-        let mut deleted = reservation(FILE_UPLOAD_STATUS_CLEANUP, now - Duration::seconds(1));
-        deleted.del_flag = "1".to_owned();
-        assert_eq!(
-            plan_expired_reservation(&deleted, now, Duration::minutes(5)),
-            None
-        );
-    }
 }

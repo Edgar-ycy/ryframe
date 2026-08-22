@@ -514,7 +514,8 @@ fn data_scope_key(scope: &DataScope) -> &'static str {
     }
 }
 
-fn menu_inaccessible_reason(
+/// 根据账号、菜单和权限事实计算不可访问原因。
+pub fn menu_inaccessible_reason(
     menu: &DiagnosticMenuRecord,
     permission: Option<&DiagnosticPermissionRecord>,
     tenant_available: bool,
@@ -542,56 +543,4 @@ fn menu_inaccessible_reason(
         "permission_not_granted"
     };
     Some(reason.to_owned())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{DiagnosticMenuRecord, menu_inaccessible_reason};
-
-    fn menu(status: &str, menu_type: &str, perm_id: Option<i64>) -> DiagnosticMenuRecord {
-        DiagnosticMenuRecord {
-            id: 1,
-            parent_id: None,
-            name: "测试菜单".to_owned(),
-            route_key: Some("test".to_owned()),
-            perm_id,
-            menu_type: menu_type.to_owned(),
-            status: status.to_owned(),
-            visible: true,
-        }
-    }
-
-    #[test]
-    fn inaccessible_reason_prefers_account_state_before_menu_configuration() {
-        let disabled_menu = menu("0", "C", None);
-
-        assert_eq!(
-            menu_inaccessible_reason(&disabled_menu, None, false, false, false).as_deref(),
-            Some("tenant_unavailable")
-        );
-        assert_eq!(
-            menu_inaccessible_reason(&disabled_menu, None, true, false, false).as_deref(),
-            Some("user_disabled")
-        );
-        assert_eq!(
-            menu_inaccessible_reason(&disabled_menu, None, true, true, false).as_deref(),
-            Some("menu_disabled")
-        );
-    }
-
-    #[test]
-    fn inaccessible_reason_distinguishes_directory_and_permission_configuration() {
-        assert_eq!(
-            menu_inaccessible_reason(&menu("1", "M", None), None, true, true, false).as_deref(),
-            Some("no_accessible_child")
-        );
-        assert_eq!(
-            menu_inaccessible_reason(&menu("1", "C", None), None, true, true, false).as_deref(),
-            Some("permission_missing")
-        );
-        assert_eq!(
-            menu_inaccessible_reason(&menu("1", "C", Some(9)), None, true, true, false).as_deref(),
-            Some("invalid_permission_reference")
-        );
-    }
 }

@@ -33,7 +33,8 @@ mod roles;
 mod support;
 mod validation;
 
-use capabilities::*;
+pub use capabilities::common_capabilities;
+use capabilities::{validate_capabilities, validate_dept};
 pub use model::*;
 use validation::*;
 

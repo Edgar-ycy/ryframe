@@ -516,7 +516,8 @@ fn manual_retry_permission(job_type: &str) -> Option<&'static str> {
     }
 }
 
-fn public_job_error(job_type: &str, error: Option<String>) -> Option<String> {
+/// 按任务类型收敛可向用户展示的失败信息。
+pub fn public_job_error(job_type: &str, error: Option<String>) -> Option<String> {
     error.map(|error| match job_type {
         "system.tenant_config.export" => "配置包生成失败，请稍后重试或联系管理员".to_owned(),
         "system.tenant_config.preview" => "配置预览失败，请稍后重试或联系管理员".to_owned(),
@@ -552,7 +553,8 @@ fn normalize_schedule_id_filter(value: Option<String>) -> AppResult<Option<i64>>
     Ok(Some(schedule_id))
 }
 
-fn normalize_job_status_filter(value: Option<String>) -> AppResult<Option<String>> {
+/// 规范化并校验后台任务状态筛选。
+pub fn normalize_job_status_filter(value: Option<String>) -> AppResult<Option<String>> {
     let Some(value) = value else {
         return Ok(None);
     };
@@ -569,22 +571,4 @@ fn normalize_job_status_filter(value: Option<String>) -> AppResult<Option<String
         ));
     }
     Ok(Some(value.to_owned()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{normalize_job_status_filter, public_job_error};
-
-    #[test]
-    fn status_and_public_error_rules_are_application_owned() {
-        assert_eq!(
-            normalize_job_status_filter(Some("dead".into())).unwrap(),
-            Some("dead".into())
-        );
-        assert!(normalize_job_status_filter(Some("cancelled".into())).is_err());
-        assert_eq!(
-            public_job_error("system.tenant_config.apply", Some("secret".into())).as_deref(),
-            Some("配置应用失败，请稍后重试或联系管理员")
-        );
-    }
 }

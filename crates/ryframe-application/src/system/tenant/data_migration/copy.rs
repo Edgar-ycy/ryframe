@@ -271,7 +271,7 @@ fn target_fence(migration: &TenantDataMigrationRecord) -> AppResult<TenantDataFe
     })
 }
 
-fn rolling_digest(previous: Option<&str>, rows: &[TenantDataRow]) -> AppResult<String> {
+pub fn rolling_digest(previous: Option<&str>, rows: &[TenantDataRow]) -> AppResult<String> {
     let mut state = [0_u8; 32];
     if let Some(previous) = previous {
         let decoded =
@@ -305,23 +305,4 @@ fn rolling_digest(previous: Option<&str>, rows: &[TenantDataRow]) -> AppResult<S
 
 fn empty_rolling_digest() -> String {
     hex::encode([0_u8; 32])
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn rolling_digest_is_stable_and_order_sensitive() {
-        let first = vec![vec![Some("a".into()), None], vec![Some("b".into())]];
-        let second = vec![vec![Some("b".into())], vec![Some("a".into()), None]];
-        assert_eq!(
-            rolling_digest(None, &first).expect("应计算摘要"),
-            rolling_digest(None, &first).expect("相同行应得到相同摘要")
-        );
-        assert_ne!(
-            rolling_digest(None, &first).expect("应计算摘要"),
-            rolling_digest(None, &second).expect("应计算摘要")
-        );
-    }
 }

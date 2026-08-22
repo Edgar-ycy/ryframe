@@ -23,7 +23,10 @@ pub use crate::ports::users::{
     USER_STATUS_DISABLED, USER_STATUS_MUST_RESET_PASSWORD, USER_STATUS_NORMAL,
     USER_STATUS_PENDING_ACTIVATION,
 };
+pub use commands::{normalize_ids, validate_manageable_status};
+pub use password_reset::{ensure_not_super, ensure_pending, password_reset_next_status};
 pub(crate) use queries::CurrentAuthorization;
+pub use roles::validate_assignment_state;
 
 #[derive(Debug, Serialize)]
 pub struct UserVo {

@@ -161,38 +161,15 @@ fn prepare_content(title: MessageText, content: MessageText) -> AppResult<Prepar
     }
 }
 
+/// 校验标题与正文的本地化表示是否能够组成同一条消息。
+pub fn validate_message_text_pair(title: MessageText, content: MessageText) -> AppResult<()> {
+    prepare_content(title, content).map(drop)
+}
+
 struct PreparedMessageContent {
     title_text: Option<String>,
     body_text: Option<String>,
     title_key: Option<String>,
     body_key: Option<String>,
     args_json: Option<Value>,
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::BTreeMap;
-
-    use super::{MessageText, prepare_content};
-
-    #[test]
-    fn localized_message_requires_identical_arguments() {
-        let mut title_args = BTreeMap::new();
-        title_args.insert("name".into(), "A".into());
-        let mut body_args = BTreeMap::new();
-        body_args.insert("name".into(), "B".into());
-        assert!(
-            prepare_content(
-                MessageText::Key {
-                    key: "title".into(),
-                    args: title_args,
-                },
-                MessageText::Key {
-                    key: "body".into(),
-                    args: body_args,
-                },
-            )
-            .is_err()
-        );
-    }
 }

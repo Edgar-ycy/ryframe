@@ -16,6 +16,7 @@ mod upload_reservation;
 
 pub use policy::UploadPolicy;
 
+pub use upload_reservation::{ExpiredReservationPlan, plan_expired_reservation};
 use upload_reservation::{ReservationOutcome, UploadReservationGuard, storage_error_is_not_found};
 
 /// 文件上传响应
@@ -643,7 +644,7 @@ fn generate_storage_filename(original_name: &str) -> String {
     }
 }
 
-fn map_storage_write_error(error: ArtifactStoreError) -> AppError {
+pub fn map_storage_write_error(error: ArtifactStoreError) -> AppError {
     match error.kind() {
         ArtifactStoreErrorKind::InvalidLocation => {
             AppError::Validation("非法的对象存储路径".into())
@@ -658,7 +659,7 @@ fn map_storage_write_error(error: ArtifactStoreError) -> AppError {
     }
 }
 
-fn map_storage_read_error(error: ArtifactStoreError) -> AppError {
+pub fn map_storage_read_error(error: ArtifactStoreError) -> AppError {
     match error.kind() {
         ArtifactStoreErrorKind::NotFound => AppError::NotFound("文件不存在".into()),
         ArtifactStoreErrorKind::InvalidLocation => {
@@ -669,48 +670,5 @@ fn map_storage_read_error(error: ArtifactStoreError) -> AppError {
         ArtifactStoreErrorKind::Unavailable => {
             AppError::ServiceUnavailable("对象存储暂不可用".into())
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{map_storage_read_error, map_storage_write_error};
-    use crate::ports::files::{ArtifactStoreError, ArtifactStoreErrorKind};
-    use ryframe_kernel::AppError;
-
-    #[test]
-    fn maps_unsupported_storage_operation_to_internal_error() {
-        assert!(matches!(
-            map_storage_write_error(ArtifactStoreError::new(
-                ArtifactStoreErrorKind::Misconfigured,
-                "list",
-            )),
-            AppError::Internal(_)
-        ));
-        assert!(matches!(
-            map_storage_read_error(ArtifactStoreError::new(
-                ArtifactStoreErrorKind::Misconfigured,
-                "list",
-            )),
-            AppError::Internal(_)
-        ));
-    }
-
-    #[test]
-    fn maps_invalid_storage_response_to_service_unavailable() {
-        assert!(matches!(
-            map_storage_write_error(ArtifactStoreError::new(
-                ArtifactStoreErrorKind::Unavailable,
-                "truncated",
-            )),
-            AppError::ServiceUnavailable(_)
-        ));
-        assert!(matches!(
-            map_storage_read_error(ArtifactStoreError::new(
-                ArtifactStoreErrorKind::Unavailable,
-                "truncated",
-            )),
-            AppError::ServiceUnavailable(_)
-        ));
     }
 }

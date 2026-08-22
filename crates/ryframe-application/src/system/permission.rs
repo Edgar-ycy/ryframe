@@ -302,7 +302,7 @@ impl PermissionService {
     }
 }
 
-fn ensure_tenant_permission_code_boundary(tenant_id: &str, code: &str) -> AppResult<()> {
+pub fn ensure_tenant_permission_code_boundary(tenant_id: &str, code: &str) -> AppResult<()> {
     if tenant_id != SYSTEM_TENANT_ID && is_tenant_permission_code(code) {
         return Err(AppError::Authorization(
             "租户管理权限仅允许系统租户维护".into(),
@@ -316,19 +316,7 @@ fn is_tenant_permission_code(code: &str) -> bool {
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case(TENANT_PERMISSION_PREFIX))
 }
 
-fn is_platform_permission_code(code: &str) -> bool {
+pub fn is_platform_permission_code(code: &str) -> bool {
     code.get(..PLATFORM_PERMISSION_PREFIX.len())
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case(PLATFORM_PERMISSION_PREFIX))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{ensure_tenant_permission_code_boundary, is_platform_permission_code};
-
-    #[test]
-    fn tenant_permission_boundary_is_case_insensitive_and_fail_closed() {
-        assert!(ensure_tenant_permission_code_boundary("system", "tenant:read").is_ok());
-        assert!(ensure_tenant_permission_code_boundary("demo", "TENANT:read").is_err());
-        assert!(is_platform_permission_code("PLATFORM:ops"));
-    }
 }

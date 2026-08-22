@@ -146,7 +146,7 @@ impl DeptService {
     }
 }
 
-fn rewrite_descendant_ancestors(
+pub fn rewrite_descendant_ancestors(
     ancestors: &str,
     old_prefix: &str,
     new_prefix: &str,
@@ -155,18 +155,4 @@ fn rewrite_descendant_ancestors(
         .strip_prefix(old_prefix)
         .map(|suffix| format!("{new_prefix}{suffix}"))
         .ok_or_else(|| AppError::Internal("部门祖级路径不一致，无法移动子树".into()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::rewrite_descendant_ancestors;
-
-    #[test]
-    fn descendant_path_rewrite_preserves_suffix_and_rejects_mismatch() {
-        assert_eq!(
-            rewrite_descendant_ancestors("0,10,20,30", "0,10", "0,40").unwrap(),
-            "0,40,20,30"
-        );
-        assert!(rewrite_descendant_ancestors("0,11,20", "0,10", "0,40").is_err());
-    }
 }

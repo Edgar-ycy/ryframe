@@ -9,6 +9,7 @@ mod commands;
 mod model;
 mod queries;
 
+pub use commands::rewrite_descendant_ancestors;
 pub use model::{CreateDeptCommand, DeptTreeNode, DeptVo, UpdateDeptCommand};
 
 const CACHE_TTL_SECS: u64 = 3600;

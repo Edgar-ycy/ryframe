@@ -216,7 +216,7 @@ enum PasswordResetCompletion {
     },
 }
 
-fn ensure_pending(
+pub fn ensure_pending(
     status: &str,
     completed_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> AppResult<()> {
@@ -227,7 +227,7 @@ fn ensure_pending(
     }
 }
 
-fn ensure_not_super(user: &PasswordResetUserState) -> AppResult<()> {
+pub fn ensure_not_super(user: &PasswordResetUserState) -> AppResult<()> {
     if user.has_super_role {
         Err(AppError::Authorization("禁止操作超级管理员".into()))
     } else {
@@ -235,7 +235,7 @@ fn ensure_not_super(user: &PasswordResetUserState) -> AppResult<()> {
     }
 }
 
-fn password_reset_next_status(current: &str) -> String {
+pub fn password_reset_next_status(current: &str) -> String {
     if matches!(
         current,
         USER_STATUS_PENDING_ACTIVATION | USER_STATUS_MUST_RESET_PASSWORD
@@ -243,54 +243,5 @@ fn password_reset_next_status(current: &str) -> String {
         USER_STATUS_NORMAL.to_owned()
     } else {
         current.to_owned()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn request_state_must_be_unfinished_and_pending() {
-        assert!(ensure_pending(PASSWORD_RESET_STATUS_PENDING, None).is_ok());
-        assert!(ensure_pending("completed", None).is_err());
-        assert!(
-            ensure_pending(
-                PASSWORD_RESET_STATUS_PENDING,
-                Some(chrono::DateTime::<chrono::Utc>::UNIX_EPOCH),
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn password_reset_activates_only_onboarding_states() {
-        assert_eq!(
-            password_reset_next_status(USER_STATUS_PENDING_ACTIVATION),
-            USER_STATUS_NORMAL
-        );
-        assert_eq!(
-            password_reset_next_status(USER_STATUS_MUST_RESET_PASSWORD),
-            USER_STATUS_NORMAL
-        );
-        assert_eq!(password_reset_next_status("1"), "1");
-    }
-
-    #[test]
-    fn super_role_is_always_rejected() {
-        let regular = PasswordResetUserState {
-            id: 7,
-            authorization_version: 2,
-            status: USER_STATUS_NORMAL.to_owned(),
-            has_super_role: false,
-        };
-        assert!(ensure_not_super(&regular).is_ok());
-        assert!(
-            ensure_not_super(&PasswordResetUserState {
-                has_super_role: true,
-                ..regular
-            })
-            .is_err()
-        );
     }
 }
