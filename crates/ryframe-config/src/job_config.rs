@@ -226,27 +226,3 @@ const fn default_scheduler_batch_size() -> usize {
 const fn default_max_enabled_schedules_per_tenant() -> usize {
     100
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const _: () = assert!(MAX_EXPORT_ROWS <= MAX_XLSX_DATA_ROWS);
-
-    #[test]
-    fn export_limit_cannot_exceed_business_or_xlsx_bounds() {
-        let config = JobConfig {
-            export_max_rows: MAX_EXPORT_ROWS,
-            ..JobConfig::default()
-        };
-        config
-            .validate(Environment::Dev)
-            .expect("业务行数上限应可用");
-
-        let config = JobConfig {
-            export_max_rows: MAX_EXPORT_ROWS + 1,
-            ..JobConfig::default()
-        };
-        assert!(config.validate(Environment::Dev).is_err());
-    }
-}

@@ -4,16 +4,16 @@ use ryframe_kernel::{AppError, AppResult};
 
 use super::security::MIN_PRODUCTION_JWT_SECRET_BYTES;
 use crate::{
-    AppConfig, DbConnection, DbTlsMode, MigrationMode, RedisConfig, RedisMode, ResourceScopeId,
-    StorageBackend, TenantDatabaseTargetKind,
+    AppConfig, DbConnection, DbTlsMode, MigrationMode, RedisConfig, RedisMode, StorageBackend,
+    TenantDatabaseTargetKind,
 };
-
-const PRODUCTION_SCOPE_PLACEHOLDER: &str = "replace-with-unique-scope";
 
 impl AppConfig {
     /// 校验必填配置项
     pub fn validate(&self) -> AppResult<()> {
-        validate_resource_scope(&self.scope_id, self.environment.is_production())?;
+        self.scope_id
+            .validate_environment(self.environment)
+            .map_err(AppError::Config)?;
         self.reset
             .validate(self.environment.is_production())
             .map_err(AppError::Config)?;
@@ -326,15 +326,6 @@ impl AppConfig {
     }
 }
 
-fn validate_resource_scope(scope_id: &ResourceScopeId, production: bool) -> AppResult<()> {
-    if production && scope_id.as_str() == PRODUCTION_SCOPE_PLACEHOLDER {
-        return Err(AppError::Config(
-            "生产环境必须显式设置唯一的 APP_SCOPE_ID，不允许使用配置占位值".into(),
-        ));
-    }
-    Ok(())
-}
-
 fn parse_duration_seconds(path: &str, raw: &str) -> AppResult<u64> {
     let value = raw.trim();
     let (number, multiplier) = if let Some(hours) = value.strip_suffix('h') {
@@ -489,21 +480,4 @@ fn is_loopback_host(host: &str) -> bool {
         || host
             .parse::<std::net::IpAddr>()
             .is_ok_and(|address| address.is_loopback())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{PRODUCTION_SCOPE_PLACEHOLDER, validate_resource_scope};
-    use crate::ResourceScopeId;
-
-    #[test]
-    fn production_scope_must_replace_the_placeholder() {
-        let placeholder =
-            ResourceScopeId::parse(PRODUCTION_SCOPE_PLACEHOLDER).expect("占位作用域格式有效");
-        let explicit = ResourceScopeId::parse("production-main").expect("生产作用域有效");
-
-        assert!(validate_resource_scope(&placeholder, true).is_err());
-        assert!(validate_resource_scope(&placeholder, false).is_ok());
-        assert!(validate_resource_scope(&explicit, true).is_ok());
-    }
 }

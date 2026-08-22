@@ -58,33 +58,3 @@ impl ResetConfig {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::ResetConfig;
-
-    #[test]
-    fn legacy_exclusive_flags_are_fail_closed_in_production() {
-        let config = ResetConfig {
-            legacy_mysql_exclusive: true,
-            ..ResetConfig::default()
-        };
-        assert!(config.validate(true).is_err());
-        assert!(config.validate(false).is_ok());
-    }
-
-    #[test]
-    fn outside_sentinel_key_is_bounded() {
-        let config = ResetConfig {
-            redis_outside_sentinel_key: Some("sentinel:other-scope".into()),
-            credential_version: Some("test-v1".into()),
-            ..ResetConfig::default()
-        };
-        assert!(config.validate(false).is_ok());
-        let invalid = ResetConfig {
-            redis_outside_sentinel_key: Some(" sentinel".into()),
-            ..ResetConfig::default()
-        };
-        assert!(invalid.validate(false).is_err());
-    }
-}

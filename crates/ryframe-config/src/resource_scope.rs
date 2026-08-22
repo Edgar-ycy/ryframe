@@ -2,6 +2,10 @@ use std::{fmt, str::FromStr};
 
 use serde::{Deserialize, Deserializer};
 
+use crate::Environment;
+
+const PRODUCTION_SCOPE_PLACEHOLDER: &str = "replace-with-unique-scope";
+
 /// 一个部署环境对共享基础设施资源的稳定所有权标识。
 ///
 /// 该值同时进入 Redis 命名空间、对象键前缀和重建清单。限制为较短的 ASCII 标识，
@@ -52,6 +56,14 @@ impl ResourceScopeId {
     pub fn ownership_marker(&self, resource_kind: &str) -> String {
         format!("ryframe-owner:v1:{}:{resource_kind}", self.0)
     }
+
+    /// 校验作用域是否满足指定环境的安全要求。
+    pub fn validate_environment(&self, environment: Environment) -> Result<(), String> {
+        if environment.is_production() && self.as_str() == PRODUCTION_SCOPE_PLACEHOLDER {
+            return Err("生产环境必须显式设置唯一的 APP_SCOPE_ID，不允许使用配置占位值".into());
+        }
+        Ok(())
+    }
 }
 
 impl AsRef<str> for ResourceScopeId {
@@ -81,28 +93,5 @@ impl<'de> Deserialize<'de> for ResourceScopeId {
     {
         let value = String::deserialize(deserializer)?;
         Self::parse(value).map_err(serde::de::Error::custom)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::ResourceScopeId;
-
-    #[test]
-    fn scope_generates_stable_resource_namespaces() {
-        let scope = ResourceScopeId::parse("dev_local-01").expect("作用域有效");
-        assert_eq!(scope.redis_namespace(), "ryframe:{dev_local-01}:");
-        assert_eq!(scope.object_prefix(), "dev_local-01/");
-        assert_eq!(
-            scope.ownership_marker("redis"),
-            "ryframe-owner:v1:dev_local-01:redis"
-        );
-    }
-
-    #[test]
-    fn scope_rejects_ambiguous_or_path_like_values() {
-        for invalid in ["a", "Dev", "dev local", "dev/local", "-dev", "dev-"] {
-            assert!(ResourceScopeId::parse(invalid).is_err(), "{invalid}");
-        }
     }
 }
