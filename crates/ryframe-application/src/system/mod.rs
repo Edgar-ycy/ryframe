@@ -1,7 +1,7 @@
 pub mod authorization_diagnostic_service;
 pub mod captcha_service;
 pub mod config_service;
-pub mod data_retention_service;
+pub mod data_retention;
 pub mod dept_service;
 pub mod dict_service;
 pub mod export_service;
@@ -17,13 +17,13 @@ pub mod post_service;
 pub mod product_capability_catalog;
 pub mod product_service;
 pub mod role_service;
-pub mod service_account_service;
+pub mod service_account;
 pub mod tenant_config_package;
-pub mod tenant_config_transfer_service;
-pub mod tenant_data_migration_service;
+pub mod tenant_config_transfer;
+pub mod tenant_data_migration;
 pub mod tenant_service;
 pub mod tenant_usage_service;
-pub mod user_import_service;
+pub mod user_import;
 pub mod user_service;
 pub mod websocket_ticket_service;
 
@@ -36,7 +36,7 @@ pub use authorization_diagnostic_service::{
 };
 pub use captcha_service::{CaptchaStore, CaptchaStoreFuture, InMemoryCaptchaStore};
 pub use config_service::{ConfigListParams, ConfigService, ConfigVo};
-pub use data_retention_service::{
+pub use data_retention::{
     DATA_RETENTION_JOB_TYPE, DataRetentionJobHandler, DataRetentionOverview, DataRetentionPolicy,
     DataRetentionPreview, DataRetentionRunVo, DataRetentionService,
 };
@@ -87,7 +87,7 @@ pub use product_service::{
     UpdateProductPlanVersionCommand,
 };
 pub use role_service::{RoleListParams, RoleOptionPurpose, RoleService, RoleVo};
-pub use service_account_service::{
+pub use service_account::{
     CreateCredentialCommand, CreateDelegationCommand, CreateServiceAccountCommand,
     CreatedCredentialVo, CreatedDelegationVo, ServiceAccessAuditVo, ServiceAccountDetailVo,
     ServiceAccountReadDependencies, ServiceAccountService, ServiceAccountVo,
@@ -101,7 +101,7 @@ pub use tenant_config_package::{
     TenantConfigPackageManifest, TenantConfigPackageResources, TenantConfigPackageSource,
     TenantConfigResourceCounts, build_tenant_config_package, parse_tenant_config_package,
 };
-pub use tenant_config_transfer_service::{
+pub use tenant_config_transfer::{
     ApplyTenantConfigTransferCommand, RequestTenantConfigBundleOutcome,
     RequestTenantConfigTransferOutcome, TENANT_CONFIG_APPLY_JOB_TYPE,
     TENANT_CONFIG_EXPORT_JOB_TYPE, TENANT_CONFIG_PREVIEW_JOB_TYPE, TENANT_CONFIG_ROLLBACK_JOB_TYPE,
@@ -110,7 +110,7 @@ pub use tenant_config_transfer_service::{
     TenantConfigTargetCatalog, TenantConfigTransferDependencies, TenantConfigTransferItemVo,
     TenantConfigTransferService, TenantConfigTransferSettings, TenantConfigTransferVo,
 };
-pub use tenant_data_migration_service::{
+pub use tenant_data_migration::{
     BackupPointListParams, BackupPointView, CreateMigrationCommand, DataPlacementView,
     DataTargetDetail, DataTargetListParams, DataTargetSummary, MigrationActionCommand,
     MigrationImpact, MigrationItemView, MigrationPreview, MigrationPreviewRequest, MigrationView,
@@ -122,7 +122,7 @@ pub use tenant_usage_service::{
     TenantRateLimitReadFuture, TenantRateLimitReadPort, TenantRateLimitSnapshot,
     TenantUsagePageParams, TenantUsageService, TenantUsageVo,
 };
-pub use user_import_service::{
+pub use user_import::{
     RequestUserImportCommand, RequestUserImportOutcome, USER_IMPORT_JOB_TYPE, UserImportData,
     UserImportJobHandler, UserImportJobVo, UserImportListParams, UserImportRowVo,
     UserImportService,
