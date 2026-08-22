@@ -28,15 +28,15 @@ where
 const ACCESS_CATALOG: &str = include_str!("../../../../catalog/access.toml");
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct AccessMenu<'a> {
-    route_key: &'a str,
-    name: &'a str,
-    menu_type: &'a str,
-    permission: Option<&'a str>,
+pub struct AccessMenu<'a> {
+    pub route_key: &'a str,
+    pub name: &'a str,
+    pub menu_type: &'a str,
+    pub permission: Option<&'a str>,
 }
 
 impl AccessMenu<'_> {
-    fn parent_route_key(&self) -> Option<&str> {
+    pub fn parent_route_key(&self) -> Option<&str> {
         (self.menu_type == "C")
             .then(|| self.route_key.split_once('.').map(|(parent, _)| parent))
             .flatten()
@@ -113,7 +113,7 @@ where
     Ok(())
 }
 
-fn access_permission_codes() -> Result<Vec<&'static str>, DbErr> {
+pub fn access_permission_codes() -> Result<Vec<&'static str>, DbErr> {
     let mut values = Vec::new();
     let mut inside = false;
     for line in ACCESS_CATALOG.lines().map(str::trim) {
@@ -143,7 +143,7 @@ fn access_permission_codes() -> Result<Vec<&'static str>, DbErr> {
     Ok(values)
 }
 
-fn access_menus() -> Result<Vec<AccessMenu<'static>>, DbErr> {
+pub fn access_menus() -> Result<Vec<AccessMenu<'static>>, DbErr> {
     let mut menus = Vec::new();
     let mut current = None;
     for line in ACCESS_CATALOG.lines().map(str::trim) {
@@ -708,71 +708,18 @@ fn backtick_identifiers(value: &str) -> Vec<String> {
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use std::collections::BTreeSet;
-
-    use super::*;
-
-    #[test]
-    fn access_catalog_seed_is_complete_and_unambiguous() {
-        let permissions = access_permission_codes().expect("访问目录权限应可解析");
-        let permission_set = permissions.iter().copied().collect::<BTreeSet<_>>();
-        assert_eq!(permission_set.len(), permissions.len());
-        assert!(permissions.iter().all(|code| code.len() <= 64));
-        assert!(permission_set.contains("tenant:capability:override"));
-
-        let menus = access_menus().expect("访问目录菜单应可解析");
-        let mut preceding_routes = BTreeSet::new();
-        for menu in &menus {
-            assert!(menu.route_key.len() <= 64);
-            assert!(!menu.name.is_empty());
-            assert!(menu.name.chars().count() <= 64);
-            if let Some(parent) = menu.parent_route_key() {
-                assert!(preceding_routes.contains(parent));
-            }
-            preceding_routes.insert(menu.route_key);
-        }
-        let route_keys = menus
-            .iter()
-            .map(|menu| menu.route_key)
-            .collect::<BTreeSet<_>>();
-        assert_eq!(route_keys.len(), menus.len());
-        for menu in menus {
-            if let Some(permission) = menu.permission {
-                assert!(permission_set.contains(permission));
-            }
+pub fn validate_seed_statements() -> Result<(), DbErr> {
+    for statement in seed_statements() {
+        let parsed = parse_seed_insert(statement)?;
+        if parsed.table.is_empty()
+            || parsed.rows.is_empty()
+            || parsed
+                .rows
+                .iter()
+                .any(|row| row.len() != parsed.columns.len())
+        {
+            return Err(DbErr::Custom("控制库基线种子结构不完整".into()));
         }
     }
-
-    #[test]
-    fn review_snapshot_matches_the_fresh_schema() {
-        let snapshot = mysql_snapshot_sql();
-        assert!(snapshot.contains("schema fingerprint: 595a420d869c5fdb"));
-        assert_eq!(snapshot.matches("CREATE TABLE IF NOT EXISTS").count(), 51);
-        for required in [
-            "`sys_background_job`",
-            "`payload_version`",
-            "`sys_export_job`",
-            "`active_request_fingerprint`",
-            "`delete_pending_at`",
-        ] {
-            assert!(snapshot.contains(required));
-        }
-    }
-
-    #[test]
-    fn canonical_seed_statements_are_strictly_parseable() {
-        for statement in seed_statements() {
-            let parsed = parse_seed_insert(statement).expect("基线种子应可解析");
-            assert!(!parsed.table.is_empty());
-            assert!(!parsed.rows.is_empty());
-            assert!(
-                parsed
-                    .rows
-                    .iter()
-                    .all(|row| row.len() == parsed.columns.len())
-            );
-        }
-    }
+    Ok(())
 }

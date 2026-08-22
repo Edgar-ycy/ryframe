@@ -114,21 +114,13 @@ const fn to_database_resource(resource: RetentionResource) -> DatabaseResource {
     }
 }
 
+pub const fn database_resource_key(resource: RetentionResource) -> &'static str {
+    to_database_resource(resource).key()
+}
+
 const fn from_database_result(result: DatabaseCleanupResult) -> RetentionCleanupResult {
     RetentionCleanupResult {
         deleted: result.deleted,
         remaining: result.remaining,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_application_resource_maps_to_the_same_database_key() {
-        for resource in RetentionResource::ALL {
-            assert_eq!(resource.key(), to_database_resource(resource).key());
-        }
     }
 }

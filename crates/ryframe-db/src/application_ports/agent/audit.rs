@@ -49,7 +49,7 @@ impl AgentAuditWritePort for DatabaseAgentAuditWrite {
     }
 }
 
-pub(crate) fn model(audit: AgentAccessAuditRecord) -> service_access_audit::Model {
+pub fn model(audit: AgentAccessAuditRecord) -> service_access_audit::Model {
     let draft = audit.draft;
     service_access_audit::Model {
         id: draft.id,
@@ -81,50 +81,4 @@ pub(crate) fn model(audit: AgentAccessAuditRecord) -> service_access_audit::Mode
 
 fn database_error(error: impl std::fmt::Display) -> AppError {
     AppError::Database(error.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use chrono::{TimeZone, Utc};
-
-    use super::*;
-
-    #[test]
-    fn audit_mapping_preserves_security_metadata() {
-        let started_at = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
-        let completed_at = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 4).unwrap();
-        let record = AgentAccessAuditDraft {
-            id: 1,
-            request_id: "request-a".into(),
-            tenant_id: Some("tenant-a".into()),
-            account_id: Some(2),
-            credential_id: Some(3),
-            delegation_id: Some(4),
-            represented_user_id: Some(5),
-            operation_id: "agent.users".into(),
-            capability_key: "directory.users".into(),
-            required_permission: "system:user:list".into(),
-            access_mode: "delegated".into(),
-            result: "success".into(),
-            reason_code: "ok".into(),
-            http_status: 200,
-            request_ip_digest: Some(vec![6, 7]),
-            user_agent_digest: Some(vec![8, 9]),
-            row_count: Some(10),
-            response_bytes: Some(11),
-            tenant_epoch: Some(12),
-            account_authorization_version: Some(13),
-            user_authorization_version: Some(14),
-            delegation_version: Some(15),
-            started_at,
-        }
-        .complete(completed_at);
-
-        let model = model(record);
-
-        assert_eq!(model.request_ip_digest, Some(vec![6, 7]));
-        assert_eq!(model.user_agent_digest, Some(vec![8, 9]));
-        assert_eq!(model.completed_at, completed_at);
-        assert_eq!(model.delegation_version, Some(15));
-    }
 }

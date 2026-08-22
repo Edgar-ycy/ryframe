@@ -245,34 +245,3 @@ fn delegation_record(
 fn database_error(error: impl std::fmt::Display) -> AppError {
     AppError::Database(error.to_string())
 }
-
-#[cfg(test)]
-mod tests {
-    use chrono::{TimeZone, Utc};
-
-    use super::*;
-
-    #[test]
-    fn account_mapping_preserves_read_state() {
-        let now = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
-        let record = account_record(service_account::Model {
-            id: 1,
-            tenant_id: "tenant-a".into(),
-            code: "billing".into(),
-            name: "结算服务".into(),
-            description: None,
-            dept_id: Some(2),
-            status: service_account::Model::STATUS_NORMAL.into(),
-            authorization_version: 3,
-            max_requests_per_minute: 60,
-            created_by: 4,
-            del_flag: service_account::Model::DEL_FLAG_NORMAL.into(),
-            created_at: now,
-            updated_at: now,
-        });
-
-        assert!(record.is_enabled());
-        assert_eq!(record.dept_id, Some(2));
-        assert_eq!(record.authorization_version, 3);
-    }
-}

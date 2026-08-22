@@ -10,8 +10,12 @@ pub use audit::port as audit;
 pub use authorization::port as authorization;
 pub use read::port as read;
 pub use write::port as write;
+pub use write::{
+    account_model, credential_model, credential_record as credential_write_record,
+    delegation_model, delegation_record as delegation_write_record,
+};
 
-fn account_record(account: service_account::Model) -> ServiceAccountRecord {
+pub fn account_record(account: service_account::Model) -> ServiceAccountRecord {
     ServiceAccountRecord {
         id: account.id,
         tenant_id: account.tenant_id,

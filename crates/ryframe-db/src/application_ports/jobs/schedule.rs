@@ -369,7 +369,7 @@ fn to_execution(
     }
 }
 
-fn schedule_active(schedule: JobScheduleRecord) -> job_schedule::ActiveModel {
+pub fn schedule_active(schedule: JobScheduleRecord) -> job_schedule::ActiveModel {
     job_schedule::ActiveModel {
         id: Set(schedule.id),
         tenant_id: Set(schedule.tenant_id),
@@ -431,44 +431,4 @@ async fn execution_record(
 
 fn database_error(error: impl std::fmt::Display) -> AppError {
     AppError::Database(error.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use chrono::{TimeZone, Utc};
-    use sea_orm::ActiveValue::Set;
-
-    use super::{JobScheduleRecord, job_schedule, schedule_active};
-
-    #[test]
-    fn schedule_mapping_preserves_state_and_deletion() {
-        let now = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
-        let active = schedule_active(JobScheduleRecord {
-            id: 42,
-            tenant_id: "tenant-a".to_owned(),
-            name: "清理任务".to_owned(),
-            handler_key: "system.cleanup".to_owned(),
-            cron_expression: "0 0 0 * * * *".to_owned(),
-            timezone: "UTC".to_owned(),
-            enabled: false,
-            misfire_policy: "skip".to_owned(),
-            concurrency_policy: "forbid".to_owned(),
-            max_runtime_seconds: 600,
-            next_run_at: None,
-            last_run_at: Some(now),
-            version: 5,
-            created_at: now,
-            updated_at: now,
-            deleted: true,
-        });
-
-        assert_eq!(active.id, Set(42));
-        assert_eq!(active.tenant_id, Set("tenant-a".to_owned()));
-        assert_eq!(active.version, Set(5));
-        assert_eq!(
-            active.del_flag,
-            Set(job_schedule::Model::DEL_FLAG_DELETED.to_owned())
-        );
-        assert_eq!(active.last_run_at, Set(Some(now)));
-    }
 }

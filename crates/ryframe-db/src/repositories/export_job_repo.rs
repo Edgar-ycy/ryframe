@@ -14,6 +14,7 @@ use crate::entities::{export_job, tenant};
 mod deletion;
 
 pub use deletion::MarkExportJobsDeletePending;
+pub use deletion::{validate_candidate_ownership, validate_deletion_candidates};
 
 /// 创建导出任务时写入的不可变请求快照。
 #[derive(Clone, Debug)]
@@ -564,7 +565,7 @@ fn validate_create_command(command: &CreateExportJob) -> AppResult<()> {
     Ok(())
 }
 
-fn visible_for_requester_query(
+pub fn visible_for_requester_query(
     tenant_id: &str,
     requester_id: i64,
 ) -> sea_orm::Select<export_job::Entity> {
@@ -590,7 +591,7 @@ fn database_error(error: sea_orm::DbErr) -> AppError {
     AppError::Database(error.to_string())
 }
 
-fn decide_export_start(
+pub fn decide_export_start(
     status: &str,
     delete_pending: bool,
     running: u64,
@@ -609,38 +610,5 @@ fn decide_export_start(
         ExportStartDisposition::ConcurrencyLimited
     } else {
         ExportStartDisposition::Started
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use sea_orm::{DatabaseBackend, QueryTrait};
-
-    use super::*;
-
-    #[test]
-    fn requester_queries_hide_delete_tombstones() {
-        let statement = visible_for_requester_query("tenant-a", 7).build(DatabaseBackend::MySql);
-        assert!(statement.sql.contains("delete_pending_at` IS NULL"));
-    }
-
-    #[test]
-    fn start_gate_rejects_duplicate_worker_and_third_tenant_export() {
-        assert_eq!(
-            decide_export_start(export_job::Model::STATUS_RUNNING, false, 1, 2),
-            ExportStartDisposition::AlreadyRunning
-        );
-        assert_eq!(
-            decide_export_start(export_job::Model::STATUS_QUEUED, false, 2, 2),
-            ExportStartDisposition::ConcurrencyLimited
-        );
-        assert_eq!(
-            decide_export_start(export_job::Model::STATUS_QUEUED, false, 1, 2),
-            ExportStartDisposition::Started
-        );
-        assert_eq!(
-            decide_export_start(export_job::Model::STATUS_QUEUED, true, 0, 2),
-            ExportStartDisposition::NotRunnable
-        );
     }
 }

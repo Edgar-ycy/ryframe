@@ -157,7 +157,7 @@ fn map_background_lease(record: background_job::Model) -> ExportBackgroundLease 
     }
 }
 
-fn map_start_decision(value: DatabaseStartDisposition) -> ExportStartDecision {
+pub fn map_start_decision(value: DatabaseStartDisposition) -> ExportStartDecision {
     match value {
         DatabaseStartDisposition::Started => ExportStartDecision::Started,
         DatabaseStartDisposition::AlreadyRunning => ExportStartDecision::AlreadyRunning,
@@ -168,29 +168,4 @@ fn map_start_decision(value: DatabaseStartDisposition) -> ExportStartDecision {
 
 fn database_error(error: sea_orm::DbErr) -> AppError {
     AppError::Database(error.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_start_disposition_maps_to_application_state() {
-        assert_eq!(
-            map_start_decision(DatabaseStartDisposition::Started),
-            ExportStartDecision::Started
-        );
-        assert_eq!(
-            map_start_decision(DatabaseStartDisposition::AlreadyRunning),
-            ExportStartDecision::AlreadyRunning
-        );
-        assert_eq!(
-            map_start_decision(DatabaseStartDisposition::ConcurrencyLimited),
-            ExportStartDecision::ConcurrencyLimited
-        );
-        assert_eq!(
-            map_start_decision(DatabaseStartDisposition::NotRunnable),
-            ExportStartDecision::NotRunnable
-        );
-    }
 }

@@ -421,7 +421,7 @@ impl ServiceAccountWriteTransaction for DatabaseServiceAccountWriteTransaction {
     }
 }
 
-fn account_model(account: ServiceAccountRecord) -> service_account::Model {
+pub fn account_model(account: ServiceAccountRecord) -> service_account::Model {
     service_account::Model {
         id: account.id,
         tenant_id: account.tenant_id,
@@ -444,7 +444,7 @@ fn account_model(account: ServiceAccountRecord) -> service_account::Model {
     }
 }
 
-fn credential_record(credential: service_credential::Model) -> ServiceCredentialWriteRecord {
+pub fn credential_record(credential: service_credential::Model) -> ServiceCredentialWriteRecord {
     ServiceCredentialWriteRecord {
         id: credential.id,
         tenant_id: credential.tenant_id,
@@ -466,7 +466,7 @@ fn credential_record(credential: service_credential::Model) -> ServiceCredential
     }
 }
 
-fn credential_model(credential: ServiceCredentialWriteRecord) -> service_credential::Model {
+pub fn credential_model(credential: ServiceCredentialWriteRecord) -> service_credential::Model {
     service_credential::Model {
         id: credential.id,
         tenant_id: credential.tenant_id,
@@ -488,7 +488,7 @@ fn credential_model(credential: ServiceCredentialWriteRecord) -> service_credent
     }
 }
 
-fn delegation_record(
+pub fn delegation_record(
     delegation: service_delegation::Model,
     capability_keys: Vec<String>,
 ) -> ServiceDelegationWriteRecord {
@@ -515,7 +515,7 @@ fn delegation_record(
     }
 }
 
-fn delegation_model(delegation: ServiceDelegationWriteRecord) -> service_delegation::Model {
+pub fn delegation_model(delegation: ServiceDelegationWriteRecord) -> service_delegation::Model {
     service_delegation::Model {
         id: delegation.id,
         tenant_id: delegation.tenant_id,
@@ -598,102 +598,4 @@ async fn permission_codes(
 
 fn database_error(error: impl std::fmt::Display) -> AppError {
     AppError::Database(error.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use chrono::{TimeZone, Utc};
-
-    use super::*;
-
-    #[test]
-    fn account_mapping_preserves_deleted_state() {
-        let now = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
-        let model = service_account::Model {
-            id: 1,
-            tenant_id: "tenant-a".into(),
-            code: "billing".into(),
-            name: "结算服务".into(),
-            description: None,
-            dept_id: None,
-            status: service_account::Model::STATUS_DISABLED.into(),
-            authorization_version: 2,
-            max_requests_per_minute: 60,
-            created_by: 3,
-            del_flag: service_account::Model::DEL_FLAG_DELETED.into(),
-            created_at: now,
-            updated_at: now,
-        };
-
-        let record = account_record(model);
-        assert!(record.deleted);
-        assert_eq!(
-            account_model(record).del_flag,
-            service_account::Model::DEL_FLAG_DELETED
-        );
-    }
-
-    #[test]
-    fn credential_mapping_preserves_secret_metadata() {
-        let now = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
-        let model = service_credential::Model {
-            id: 1,
-            tenant_id: "tenant-a".into(),
-            account_id: 2,
-            key_id: "key-a".into(),
-            secret_mac: vec![1, 2],
-            pepper_version: 3,
-            label: "自动化".into(),
-            status: service_credential::Model::STATUS_ACTIVE.into(),
-            expires_at: now,
-            last_used_at: None,
-            created_by: 4,
-            revoked_at: None,
-            revoked_by: None,
-            created_at: now,
-            updated_at: now,
-            idempotency_key_hash: vec![5, 6],
-            request_fingerprint: vec![7, 8],
-        };
-
-        let record = credential_record(model);
-        assert_eq!(record.secret_mac, [1, 2]);
-        assert_eq!(record.request_fingerprint, [7, 8]);
-        let restored = credential_model(record);
-        assert_eq!(restored.pepper_version, 3);
-        assert_eq!(restored.idempotency_key_hash, [5, 6]);
-    }
-
-    #[test]
-    fn delegation_mapping_preserves_capabilities_without_copying() {
-        let now = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
-        let model = service_delegation::Model {
-            id: 1,
-            tenant_id: "tenant-a".into(),
-            account_id: 2,
-            user_id: 3,
-            token_mac: vec![1, 2],
-            pepper_version: 4,
-            status: service_delegation::Model::STATUS_ACTIVE.into(),
-            version: 1,
-            not_before: now,
-            expires_at: now,
-            reason: "排障".into(),
-            created_by_user_id: 3,
-            revoked_at: None,
-            revoked_by: None,
-            created_at: now,
-            updated_at: now,
-            idempotency_key_hash: vec![5, 6],
-            request_fingerprint: vec![7, 8],
-        };
-
-        let record = delegation_record(model, vec!["system:user:list".into()]);
-        assert_eq!(record.capability_keys, ["system:user:list"]);
-        let mut record = record;
-        let capability_keys = std::mem::take(&mut record.capability_keys);
-        let restored = delegation_model(record);
-        assert_eq!(restored.token_mac, [1, 2]);
-        assert_eq!(capability_keys, ["system:user:list"]);
-    }
 }

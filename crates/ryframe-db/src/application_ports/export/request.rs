@@ -217,7 +217,7 @@ impl ExportRequestTransaction for DatabaseExportRequestTransaction {
     }
 }
 
-fn database_create(command: CreateExportRecord) -> CreateExportJob {
+pub fn database_create(command: CreateExportRecord) -> CreateExportJob {
     CreateExportJob {
         tenant_id: command.tenant_id,
         requester_id: command.requester_id,
@@ -236,42 +236,4 @@ fn database_create(command: CreateExportRecord) -> CreateExportJob {
 
 fn database_error(error: sea_orm::DbErr) -> AppError {
     AppError::Database(error.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use chrono::{TimeZone, Utc};
-
-    use super::*;
-
-    #[test]
-    fn create_mapping_moves_every_snapshot_field() {
-        let now = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
-        let command = database_create(CreateExportRecord {
-            tenant_id: "tenant-a".into(),
-            requester_id: 7,
-            resource: "users".into(),
-            background_job_id: 9,
-            request_params: serde_json::json!({"request_version": 2}),
-            request_version: 2,
-            permission_code: "system:user:export".into(),
-            authorization_fingerprint: "authorization".into(),
-            request_fingerprint: "request".into(),
-            snapshot_at: now,
-            upper_id: 99,
-            matched_rows: 8,
-        });
-
-        assert_eq!(command.tenant_id, "tenant-a");
-        assert_eq!(command.requester_id, 7);
-        assert_eq!(command.resource, "users");
-        assert_eq!(command.background_job_id, 9);
-        assert_eq!(command.request_version, 2);
-        assert_eq!(command.permission_code, "system:user:export");
-        assert_eq!(command.authorization_fingerprint, "authorization");
-        assert_eq!(command.request_fingerprint, "request");
-        assert_eq!(command.snapshot_at, now);
-        assert_eq!(command.upper_id, 99);
-        assert_eq!(command.matched_rows, 8);
-    }
 }

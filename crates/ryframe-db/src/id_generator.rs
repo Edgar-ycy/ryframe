@@ -19,19 +19,3 @@ pub fn next_id() -> AppResult<i64> {
         .get()
         .ok_or_else(|| AppError::Config("数据库 ID 生成器尚未安装".into()))?()
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn fixed_id() -> AppResult<i64> {
-        Ok(42)
-    }
-
-    #[test]
-    fn installed_generator_is_used_and_cannot_be_replaced() {
-        install(fixed_id).expect("首次安装应成功");
-        assert_eq!(next_id().expect("ID 应生成成功"), 42);
-        assert!(install(fixed_id).is_err());
-    }
-}

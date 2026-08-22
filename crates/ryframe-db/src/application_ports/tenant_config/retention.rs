@@ -22,8 +22,8 @@ use ryframe_application::{
     },
 };
 
-const ACTIVE_TRANSFER_PREDICATE: &str = "NOT EXISTS (SELECT 1 FROM sys_tenant_config_transfer transfer WHERE transfer.tenant_id = sys_tenant_config_bundle.tenant_id AND transfer.bundle_id = sys_tenant_config_bundle.id AND transfer.status IN ('preview_pending', 'previewing', 'apply_pending', 'applying'))";
-const INACTIVE_ROLLBACK_PREDICATE: &str =
+pub const ACTIVE_TRANSFER_PREDICATE: &str = "NOT EXISTS (SELECT 1 FROM sys_tenant_config_transfer transfer WHERE transfer.tenant_id = sys_tenant_config_bundle.tenant_id AND transfer.bundle_id = sys_tenant_config_bundle.id AND transfer.status IN ('preview_pending', 'previewing', 'apply_pending', 'applying'))";
+pub const INACTIVE_ROLLBACK_PREDICATE: &str =
     "sys_tenant_config_transfer.status NOT IN ('rollback_pending', 'rolling_back')";
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn TenantConfigRetentionPersistencePort> {
@@ -310,33 +310,4 @@ fn config_snapshot_not_used_by_active_rollback() -> SimpleExpr {
 
 fn database_error(error: impl std::fmt::Display) -> AppError {
     AppError::Database(error.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn active_transfer_predicate_fails_closed_for_every_running_state() {
-        for status in [
-            tenant_config_transfer::Model::STATUS_PREVIEW_PENDING,
-            tenant_config_transfer::Model::STATUS_PREVIEWING,
-            tenant_config_transfer::Model::STATUS_APPLY_PENDING,
-            tenant_config_transfer::Model::STATUS_APPLYING,
-        ] {
-            assert!(ACTIVE_TRANSFER_PREDICATE.contains(status));
-        }
-    }
-
-    #[test]
-    fn active_rollback_predicate_protects_pending_and_running_snapshots() {
-        assert!(
-            INACTIVE_ROLLBACK_PREDICATE
-                .contains(tenant_config_transfer::Model::STATUS_ROLLBACK_PENDING)
-        );
-        assert!(
-            INACTIVE_ROLLBACK_PREDICATE
-                .contains(tenant_config_transfer::Model::STATUS_ROLLING_BACK)
-        );
-    }
 }

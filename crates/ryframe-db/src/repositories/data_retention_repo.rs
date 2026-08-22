@@ -65,7 +65,7 @@ impl RetentionResource {
         }
     }
 
-    const fn predicate(self) -> &'static str {
+    pub const fn predicate(self) -> &'static str {
         match self {
             Self::BackgroundJobs => "status = 'succeeded' AND completed_at < ?",
             Self::OutboxEvents => "status = 'published' AND published_at < ?",
@@ -378,16 +378,4 @@ fn database_error(error: impl std::fmt::Display) -> AppError {
 
 fn try_get_error(error: sea_orm::TryGetError) -> AppError {
     AppError::Database(format!("{error:?}"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn export_retention_never_bypasses_artifact_purge() {
-        let predicate = RetentionResource::ExportJobs.predicate();
-        assert!(predicate.contains("delete_pending_at IS NULL"));
-        assert!(predicate.contains("result_file_id IS NULL"));
-    }
 }

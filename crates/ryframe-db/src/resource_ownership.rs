@@ -68,7 +68,7 @@ pub fn marker(scope_id: &str, resource_kind: &str) -> String {
     format!("ryframe-owner:v1:{scope_id}:{resource_kind}")
 }
 
-fn validate_marker_input(scope_id: &str, resource_kind: &str) -> Result<(), sea_orm::DbErr> {
+pub fn validate_marker_input(scope_id: &str, resource_kind: &str) -> Result<(), sea_orm::DbErr> {
     if scope_id.is_empty()
         || scope_id.len() > 48
         || resource_kind.is_empty()
@@ -85,20 +85,4 @@ fn validate_marker_input(scope_id: &str, resource_kind: &str) -> Result<(), sea_
         ));
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{marker, validate_marker_input};
-
-    #[test]
-    fn marker_is_stable_and_inputs_are_bounded() {
-        assert_eq!(
-            marker("test-a", "tenant-data"),
-            "ryframe-owner:v1:test-a:tenant-data"
-        );
-        assert!(validate_marker_input("test-a", "control").is_ok());
-        assert!(validate_marker_input("Test", "control").is_err());
-        assert!(validate_marker_input("test", "tenant_data").is_err());
-    }
 }

@@ -641,7 +641,7 @@ fn extract_ddl_option(statement: &str, option: &str) -> Result<String, DbErr> {
     Ok(normalize_identifier(value))
 }
 
-fn extract_column_type(value: &str) -> &str {
+pub fn extract_column_type(value: &str) -> &str {
     let value = value.trim_start();
     let first_whitespace = value.find(char::is_whitespace).unwrap_or(value.len());
     let base_end = if let Some(open) = value[..first_whitespace].find('(')
@@ -768,7 +768,7 @@ fn normalize_identifier(value: &str) -> String {
     value.trim().to_ascii_lowercase()
 }
 
-fn normalize_column_type(value: &str) -> String {
+pub fn normalize_column_type(value: &str) -> String {
     value
         .trim()
         .to_ascii_lowercase()
@@ -788,7 +788,7 @@ fn normalize_default(value: &str) -> String {
     }
 }
 
-fn expected_extra(value: &str) -> String {
+pub fn expected_extra(value: &str) -> String {
     let lower = value
         .to_ascii_lowercase()
         .replace("current_timestamp()", "current_timestamp");
@@ -843,35 +843,4 @@ fn compatible_column_type(expected: &str, actual: &str) -> bool {
 
 fn nullable_label(nullable: bool) -> &'static str {
     if nullable { "NULL" } else { "NOT NULL" }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{expected_extra, extract_column_type, normalize_column_type};
-
-    #[test]
-    fn expected_column_type_keeps_unsigned_modifier() {
-        assert_eq!(
-            normalize_column_type(extract_column_type("SMALLINT UNSIGNED NOT NULL")),
-            "smallintunsigned"
-        );
-        assert_eq!(
-            normalize_column_type(extract_column_type("VARCHAR(64) CHARACTER SET utf8mb4")),
-            "varchar(64)"
-        );
-    }
-
-    #[test]
-    fn expected_extra_keeps_timestamp_precision() {
-        assert_eq!(
-            expected_extra(
-                "DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)"
-            ),
-            "on update current_timestamp(6)"
-        );
-        assert_eq!(
-            expected_extra("TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
-            "on update current_timestamp"
-        );
-    }
 }

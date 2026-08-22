@@ -10,8 +10,14 @@ mod m20260820_000000_control_baseline;
 mod schema;
 mod seeder;
 
-pub use schema::verify_current_schema;
-pub use seeder::{mysql_snapshot_sql, seed};
+pub use m20260820_000000_control_baseline::ddl_statements as control_ddl_statements;
+pub use schema::{
+    expected_extra, extract_column_type, normalize_column_type, verify_current_schema,
+};
+pub use seeder::{
+    AccessMenu, access_menus, access_permission_codes, mysql_snapshot_sql, seed,
+    validate_seed_statements,
+};
 
 const MIGRATION_LOCK_SQL_PREFIX: &str = "ryframe:migration:";
 pub const CONTROL_MIGRATION_LEDGER: &str = "seaql_migrations";
@@ -226,24 +232,4 @@ where
         ));
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod compatibility_tests {
-    use super::supports_mysql_80_or_newer;
-
-    #[test]
-    fn supported_version_rejects_old_mysql_mariadb_and_invalid_identity() {
-        assert!(supports_mysql_80_or_newer(
-            "8.0.16",
-            "MySQL Community Server"
-        ));
-        assert!(supports_mysql_80_or_newer("9.1.0-commercial", "MySQL"));
-        assert!(!supports_mysql_80_or_newer("8.0.15", "MySQL"));
-        assert!(!supports_mysql_80_or_newer(
-            "11.4.2-MariaDB",
-            "MariaDB Server"
-        ));
-        assert!(!supports_mysql_80_or_newer("unknown", "MySQL"));
-    }
 }

@@ -153,7 +153,7 @@ impl RetentionRunTransaction for DatabaseRetentionRunTransaction {
     }
 }
 
-fn to_record(model: data_retention_run::Model) -> RetentionRunRecord {
+pub fn to_record(model: data_retention_run::Model) -> RetentionRunRecord {
     RetentionRunRecord {
         id: model.id,
         background_job_id: model.background_job_id,
@@ -172,7 +172,7 @@ fn to_record(model: data_retention_run::Model) -> RetentionRunRecord {
     }
 }
 
-fn to_model(record: RetentionRunRecord) -> data_retention_run::Model {
+pub fn to_model(record: RetentionRunRecord) -> data_retention_run::Model {
     data_retention_run::Model {
         id: record.id,
         background_job_id: record.background_job_id,
@@ -193,34 +193,4 @@ fn to_model(record: RetentionRunRecord) -> data_retention_run::Model {
 
 fn database_error(error: impl std::fmt::Display) -> AppError {
     AppError::Database(error.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use chrono::{TimeZone, Utc};
-
-    use super::*;
-
-    #[test]
-    fn run_mapping_preserves_state() {
-        let now = Utc.with_ymd_and_hms(2026, 8, 21, 2, 3, 4).unwrap();
-        let record = RetentionRunRecord {
-            id: 1,
-            background_job_id: 2,
-            trigger_kind: RetentionRunRecord::TRIGGER_MANUAL.into(),
-            status: RetentionRunRecord::STATUS_RUNNING.into(),
-            policy_snapshot: serde_json::json!({"policy": 1}),
-            eligible_counts: serde_json::json!({"files": 2}),
-            deleted_counts: serde_json::json!({"files": 1}),
-            remaining_counts: serde_json::json!({"files": 1}),
-            requested_by: Some(3),
-            error_summary: None,
-            started_at: Some(now),
-            completed_at: None,
-            created_at: now,
-            updated_at: now,
-        };
-
-        assert_eq!(to_record(to_model(record)).background_job_id, 2);
-    }
 }

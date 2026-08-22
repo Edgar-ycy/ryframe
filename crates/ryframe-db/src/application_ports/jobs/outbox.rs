@@ -180,7 +180,7 @@ async fn finish(transaction: DatabaseTransaction, result: AppResult<bool>) -> Ap
     }
 }
 
-fn to_claimed_event(event: outbox_event::Model) -> ClaimedOutboxEvent {
+pub fn to_claimed_event(event: outbox_event::Model) -> ClaimedOutboxEvent {
     ClaimedOutboxEvent {
         id: event.id,
         tenant_id: event.tenant_id,
@@ -201,49 +201,5 @@ fn to_failure_outcome(value: OutboxFailureDisposition) -> OutboxFailureOutcome {
         }
         OutboxFailureDisposition::Dead => OutboxFailureOutcome::Dead,
         OutboxFailureDisposition::LeaseLost => OutboxFailureOutcome::LeaseLost,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use chrono::TimeZone;
-    use serde_json::json;
-
-    use super::*;
-
-    #[test]
-    fn claimed_event_mapping_keeps_worker_fields() {
-        let now = Utc.timestamp_opt(1_700_000_000, 0).unwrap();
-        let event = outbox_event::Model {
-            id: 41,
-            tenant_id: Some("tenant-a".into()),
-            event_type: "system.message.published".into(),
-            aggregate_type: "message".into(),
-            aggregate_id: "99".into(),
-            payload: json!({"message_id": 99}),
-            status: outbox_event::Model::STATUS_RUNNING.into(),
-            available_at: now,
-            attempts: 2,
-            max_attempts: 5,
-            lease_owner: Some("worker-a".into()),
-            lease_until: Some(now + Duration::seconds(30)),
-            dedupe_key: Some("message:99".into()),
-            traceparent: Some("trace".into()),
-            tracestate: Some("state".into()),
-            last_error: None,
-            published_at: None,
-            created_at: now,
-            updated_at: now,
-        };
-
-        let claimed = to_claimed_event(event);
-
-        assert_eq!(claimed.id, 41);
-        assert_eq!(claimed.tenant_id.as_deref(), Some("tenant-a"));
-        assert_eq!(claimed.attempts, 2);
-        assert_eq!(claimed.max_attempts, 5);
-        assert_eq!(claimed.dedupe_key.as_deref(), Some("message:99"));
-        assert_eq!(claimed.traceparent.as_deref(), Some("trace"));
-        assert_eq!(claimed.tracestate.as_deref(), Some("state"));
     }
 }

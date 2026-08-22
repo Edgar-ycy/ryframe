@@ -204,7 +204,7 @@ impl FileUploadTransaction for DatabaseFileUploadTransaction {
     }
 }
 
-fn map_record(file: sys_file::Model) -> FileUploadRecord {
+pub fn map_record(file: sys_file::Model) -> FileUploadRecord {
     FileUploadRecord {
         id: file.id,
         tenant_id: file.tenant_id,
@@ -226,7 +226,7 @@ fn map_record(file: sys_file::Model) -> FileUploadRecord {
     }
 }
 
-fn map_model(file: FileUploadRecord) -> sys_file::Model {
+pub fn map_model(file: FileUploadRecord) -> sys_file::Model {
     sys_file::Model {
         id: file.id,
         tenant_id: file.tenant_id,
@@ -250,41 +250,4 @@ fn map_model(file: FileUploadRecord) -> sys_file::Model {
 
 fn database_error(error: sea_orm::DbErr) -> AppError {
     AppError::Database(error.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use chrono::{TimeZone, Utc};
-
-    use super::{map_model, map_record};
-    use ryframe_application::ports::files::FileUploadRecord;
-
-    fn record() -> FileUploadRecord {
-        let created_at = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
-        FileUploadRecord {
-            id: 42,
-            tenant_id: "tenant-a".to_owned(),
-            original_name: "report.xlsx".to_owned(),
-            storage_name: "opaque.xlsx".to_owned(),
-            storage_path: "tenant-a/opaque.xlsx".to_owned(),
-            bucket: "exports".to_owned(),
-            file_url: "exports/tenant-a/opaque.xlsx".to_owned(),
-            file_size: 123,
-            content_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                .to_owned(),
-            file_sha256: "digest".to_owned(),
-            upload_by: Some("operator".to_owned()),
-            upload_status: "pending".to_owned(),
-            reservation_token: Some("token".to_owned()),
-            reservation_expires_at: Some(created_at + chrono::Duration::minutes(5)),
-            del_flag: "0".to_owned(),
-            created_at,
-            updated_at: created_at,
-        }
-    }
-
-    #[test]
-    fn upload_record_mapping_preserves_every_field() {
-        assert_eq!(map_record(map_model(record())), record());
-    }
 }
