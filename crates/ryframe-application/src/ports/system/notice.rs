@@ -1,7 +1,8 @@
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use ryframe_kernel::{DataScopeContext, PageResult, ValidatedPageQuery};
+use ryframe_kernel::{AppResult, DataScopeContext, PageResult, ValidatedPageQuery};
 
-use crate::{ControlTransaction, PersistenceFuture};
+use crate::PersistenceTransaction;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NoticeRecord {
@@ -23,41 +24,31 @@ pub struct NoticeFilter<'a> {
     pub data_scope: &'a DataScopeContext,
 }
 
-pub trait NoticeTransaction: ControlTransaction {
-    fn find_by_id_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
+#[async_trait]
+pub trait NoticeTransaction: PersistenceTransaction {
+    async fn find_by_id_for_update(
+        &self,
+        tenant_id: &str,
         id: i64,
-    ) -> PersistenceFuture<'a, Option<NoticeRecord>>;
+    ) -> AppResult<Option<NoticeRecord>>;
 
-    fn insert<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        record: NoticeRecord,
-    ) -> PersistenceFuture<'a, NoticeRecord>;
+    async fn insert(&self, tenant_id: &str, record: NoticeRecord) -> AppResult<NoticeRecord>;
 
-    fn update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        record: NoticeRecord,
-    ) -> PersistenceFuture<'a, NoticeRecord>;
+    async fn update(&self, tenant_id: &str, record: NoticeRecord) -> AppResult<NoticeRecord>;
 
-    fn delete<'a>(&'a self, tenant_id: &'a str, id: i64) -> PersistenceFuture<'a, ()>;
+    async fn delete(&self, tenant_id: &str, id: i64) -> AppResult<()>;
 }
 
+#[async_trait]
 pub trait NoticePersistencePort: Send + Sync {
-    fn find_by_id<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        id: i64,
-    ) -> PersistenceFuture<'a, Option<NoticeRecord>>;
+    async fn find_by_id(&self, tenant_id: &str, id: i64) -> AppResult<Option<NoticeRecord>>;
 
-    fn find_by_page<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_by_page(
+        &self,
+        tenant_id: &str,
         page: ValidatedPageQuery,
-        filter: NoticeFilter<'a>,
-    ) -> PersistenceFuture<'a, PageResult<NoticeRecord>>;
+        filter: NoticeFilter<'_>,
+    ) -> AppResult<PageResult<NoticeRecord>>;
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn NoticeTransaction>>;
+    async fn begin(&self) -> AppResult<Box<dyn NoticeTransaction>>;
 }

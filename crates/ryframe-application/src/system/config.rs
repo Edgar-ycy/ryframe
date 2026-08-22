@@ -7,7 +7,7 @@ use ryframe_kernel::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AuthorizationCache, NamespaceCacheLookup,
+    AuthorizationCache, NamespaceCacheLookup, TransactionAuditMode, complete_transaction,
     ports::system::{ConfigFilter, ConfigPersistencePort, ConfigRecord},
 };
 
@@ -229,26 +229,32 @@ impl ConfigService {
             updated_at: now,
         };
         let transaction = self.persistence.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        if transaction
-            .find_by_key_for_update(tenant_id, key)
-            .await?
-            .is_some()
-        {
-            return Err(AppError::Validation(format!("参数键名 '{key}' 已存在")));
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            if transaction
+                .find_by_key_for_update(tenant_id, key)
+                .await?
+                .is_some()
+            {
+                return Err(AppError::Validation(format!("参数键名 '{key}' 已存在")));
+            }
+            let saved = transaction.insert(tenant_id, record).await?;
+            let namespace_version = transaction
+                .record_namespace_change(tenant_id, CONFIG_CACHE_NAMESPACE)
+                .await?;
+            transaction
+                .increment_configuration_version(tenant_id)
+                .await?;
+            Ok((ConfigVo::from(saved), namespace_version))
         }
-        let saved = transaction.insert(tenant_id, record).await?;
-        let namespace_version = transaction
-            .record_namespace_change(tenant_id, CONFIG_CACHE_NAMESPACE)
-            .await?;
-        transaction
-            .increment_configuration_version(tenant_id)
-            .await?;
-        transaction.commit().await?;
+        .await;
+        let (saved, namespace_version) =
+            complete_transaction(transaction, operation, TransactionAuditMode::CurrentRequest)
+                .await?;
         self.authorization_cache
             .sync_namespace_version(tenant_id, CONFIG_CACHE_NAMESPACE, namespace_version)
             .await?;
-        Ok(ConfigVo::from(saved))
+        Ok(saved)
     }
 
     pub async fn update(&self, actor: &ActorContext, id: i64, value: &str) -> AppResult<ConfigVo> {
@@ -265,46 +271,58 @@ impl ConfigService {
     ) -> AppResult<ConfigVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let transaction = self.persistence.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        let mut config = transaction
-            .find_by_id_for_update(tenant_id, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("参数配置不存在".into()))?;
-        let portable = portable.unwrap_or(config.portable);
-        validate_portable_key(&config.key, portable)?;
-        config.value = value.to_owned();
-        config.portable = portable;
-        config.updated_at = Utc::now();
-        let saved = transaction.update(tenant_id, config).await?;
-        let namespace_version = transaction
-            .record_namespace_change(tenant_id, CONFIG_CACHE_NAMESPACE)
-            .await?;
-        transaction
-            .increment_configuration_version(tenant_id)
-            .await?;
-        transaction.commit().await?;
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            let mut config = transaction
+                .find_by_id_for_update(tenant_id, id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("参数配置不存在".into()))?;
+            let portable = portable.unwrap_or(config.portable);
+            validate_portable_key(&config.key, portable)?;
+            config.value = value.to_owned();
+            config.portable = portable;
+            config.updated_at = Utc::now();
+            let saved = transaction.update(tenant_id, config).await?;
+            let namespace_version = transaction
+                .record_namespace_change(tenant_id, CONFIG_CACHE_NAMESPACE)
+                .await?;
+            transaction
+                .increment_configuration_version(tenant_id)
+                .await?;
+            Ok((ConfigVo::from(saved), namespace_version))
+        }
+        .await;
+        let (saved, namespace_version) =
+            complete_transaction(transaction, operation, TransactionAuditMode::CurrentRequest)
+                .await?;
         self.authorization_cache
             .sync_namespace_version(tenant_id, CONFIG_CACHE_NAMESPACE, namespace_version)
             .await?;
-        Ok(ConfigVo::from(saved))
+        Ok(saved)
     }
 
     pub async fn delete(&self, actor: &ActorContext, id: i64) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let transaction = self.persistence.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        transaction
-            .find_by_id_for_update(tenant_id, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("参数配置不存在".into()))?;
-        transaction.delete(tenant_id, id).await?;
-        let namespace_version = transaction
-            .record_namespace_change(tenant_id, CONFIG_CACHE_NAMESPACE)
-            .await?;
-        transaction
-            .increment_configuration_version(tenant_id)
-            .await?;
-        transaction.commit().await?;
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            transaction
+                .find_by_id_for_update(tenant_id, id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("参数配置不存在".into()))?;
+            transaction.delete(tenant_id, id).await?;
+            let namespace_version = transaction
+                .record_namespace_change(tenant_id, CONFIG_CACHE_NAMESPACE)
+                .await?;
+            transaction
+                .increment_configuration_version(tenant_id)
+                .await?;
+            Ok(namespace_version)
+        }
+        .await;
+        let namespace_version =
+            complete_transaction(transaction, operation, TransactionAuditMode::CurrentRequest)
+                .await?;
         self.authorization_cache
             .sync_namespace_version(tenant_id, CONFIG_CACHE_NAMESPACE, namespace_version)
             .await
@@ -314,10 +332,12 @@ impl ConfigService {
     pub async fn clear_cache(&self, actor: &ActorContext) -> AppResult<u64> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let transaction = self.persistence.begin().await?;
-        let namespace_version = transaction
+        let operation = transaction
             .record_namespace_change(tenant_id, CONFIG_CACHE_NAMESPACE)
-            .await?;
-        transaction.commit().await?;
+            .await;
+        let namespace_version =
+            complete_transaction(transaction, operation, TransactionAuditMode::CurrentRequest)
+                .await?;
         self.authorization_cache
             .sync_namespace_version(tenant_id, CONFIG_CACHE_NAMESPACE, namespace_version)
             .await?;

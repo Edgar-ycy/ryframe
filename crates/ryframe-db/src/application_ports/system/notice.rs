@@ -4,13 +4,14 @@ use crate::{
     ControlDatabaseCluster, NoticeFilter as DatabaseNoticeFilter, NoticeRepository,
     ReadConsistency, Repository, entities::notice,
 };
-use ryframe_kernel::{AppError, PageResult, ValidatedPageQuery};
+use async_trait::async_trait;
+use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait, sea_query::LockType,
 };
 
 use ryframe_application::{
-    ControlTransaction, PersistenceFuture,
+    PersistenceTransaction, TransactionAuditMode,
     ports::system::{NoticeFilter, NoticePersistencePort, NoticeRecord, NoticeTransaction},
 };
 
@@ -26,121 +27,107 @@ struct DatabaseNoticeTransaction {
     transaction: sea_orm::DatabaseTransaction,
 }
 
+#[async_trait]
 impl NoticePersistencePort for DatabaseNoticePersistence {
-    fn find_by_id<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        id: i64,
-    ) -> PersistenceFuture<'a, Option<NoticeRecord>> {
-        Box::pin(async move {
-            let database = self
-                .database
-                .select_read(ReadConsistency::Eventual)
-                .connection;
-            Ok(NoticeRepository
-                .find_by_id(&database, tenant_id, id)
-                .await?
-                .map(to_record))
-        })
+    async fn find_by_id(&self, tenant_id: &str, id: i64) -> AppResult<Option<NoticeRecord>> {
+        let database = self
+            .database
+            .select_read(ReadConsistency::Eventual)
+            .connection;
+        Ok(NoticeRepository
+            .find_by_id(&database, tenant_id, id)
+            .await?
+            .map(to_record))
     }
 
-    fn find_by_page<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_by_page(
+        &self,
+        tenant_id: &str,
         page: ValidatedPageQuery,
-        filter: NoticeFilter<'a>,
-    ) -> PersistenceFuture<'a, PageResult<NoticeRecord>> {
-        Box::pin(async move {
-            let database = self
-                .database
-                .select_read(ReadConsistency::Eventual)
-                .connection;
-            let filter = DatabaseNoticeFilter {
-                title: filter.title,
-                notice_type: filter.notice_type,
-                status: filter.status,
-                data_scope: filter.data_scope,
-            };
-            let result = NoticeRepository
-                .find_by_page_filtered(&database, tenant_id, &page, &filter)
-                .await?;
-            Ok(PageResult::new(
-                result.records.into_iter().map(to_record).collect(),
-                result.total,
-                &page,
-            ))
-        })
+        filter: NoticeFilter<'_>,
+    ) -> AppResult<PageResult<NoticeRecord>> {
+        let database = self
+            .database
+            .select_read(ReadConsistency::Eventual)
+            .connection;
+        let filter = DatabaseNoticeFilter {
+            title: filter.title,
+            notice_type: filter.notice_type,
+            status: filter.status,
+            data_scope: filter.data_scope,
+        };
+        let result = NoticeRepository
+            .find_by_page_filtered(&database, tenant_id, &page, &filter)
+            .await?;
+        Ok(PageResult::new(
+            result.records.into_iter().map(to_record).collect(),
+            result.total,
+            &page,
+        ))
     }
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn NoticeTransaction>> {
-        Box::pin(async move {
-            let transaction = self
-                .database
-                .write()
-                .begin()
-                .await
-                .map_err(database_error)?;
-            Ok(Box::new(DatabaseNoticeTransaction { transaction }) as Box<dyn NoticeTransaction>)
-        })
+    async fn begin(&self) -> AppResult<Box<dyn NoticeTransaction>> {
+        let transaction = self
+            .database
+            .write()
+            .begin()
+            .await
+            .map_err(database_error)?;
+        Ok(Box::new(DatabaseNoticeTransaction { transaction }) as Box<dyn NoticeTransaction>)
     }
 }
 
+#[async_trait]
 impl NoticeTransaction for DatabaseNoticeTransaction {
-    fn find_by_id_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_by_id_for_update(
+        &self,
+        tenant_id: &str,
         id: i64,
-    ) -> PersistenceFuture<'a, Option<NoticeRecord>> {
-        Box::pin(async move {
-            Ok(notice::Entity::find_by_id(id)
-                .filter(notice::Column::TenantId.eq(tenant_id))
-                .filter(notice::Column::DelFlag.eq(notice::Model::DEL_FLAG_NORMAL))
-                .lock(LockType::Update)
-                .one(&self.transaction)
-                .await
-                .map_err(database_error)?
-                .map(to_record))
-        })
+    ) -> AppResult<Option<NoticeRecord>> {
+        Ok(notice::Entity::find_by_id(id)
+            .filter(notice::Column::TenantId.eq(tenant_id))
+            .filter(notice::Column::DelFlag.eq(notice::Model::DEL_FLAG_NORMAL))
+            .lock(LockType::Update)
+            .one(&self.transaction)
+            .await
+            .map_err(database_error)?
+            .map(to_record))
     }
 
-    fn insert<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        record: NoticeRecord,
-    ) -> PersistenceFuture<'a, NoticeRecord> {
-        Box::pin(async move {
-            NoticeRepository
-                .insert_in_transaction(&self.transaction, tenant_id, to_entity(tenant_id, record))
-                .await
-                .map(to_record)
-        })
+    async fn insert(&self, tenant_id: &str, record: NoticeRecord) -> AppResult<NoticeRecord> {
+        NoticeRepository
+            .insert_in_transaction(&self.transaction, tenant_id, to_entity(tenant_id, record))
+            .await
+            .map(to_record)
     }
 
-    fn update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        record: NoticeRecord,
-    ) -> PersistenceFuture<'a, NoticeRecord> {
-        Box::pin(async move {
-            NoticeRepository
-                .update_in_transaction(&self.transaction, tenant_id, to_entity(tenant_id, record))
-                .await
-                .map(to_record)
-        })
+    async fn update(&self, tenant_id: &str, record: NoticeRecord) -> AppResult<NoticeRecord> {
+        NoticeRepository
+            .update_in_transaction(&self.transaction, tenant_id, to_entity(tenant_id, record))
+            .await
+            .map(to_record)
     }
 
-    fn delete<'a>(&'a self, tenant_id: &'a str, id: i64) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            NoticeRepository
-                .delete_in_transaction(&self.transaction, tenant_id, id)
-                .await
-        })
+    async fn delete(&self, tenant_id: &str, id: i64) -> AppResult<()> {
+        NoticeRepository
+            .delete_in_transaction(&self.transaction, tenant_id, id)
+            .await
     }
 }
 
-impl ControlTransaction for DatabaseNoticeTransaction {
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move { super::super::audit::commit_current_audit(self.transaction).await })
+#[async_trait]
+impl PersistenceTransaction for DatabaseNoticeTransaction {
+    async fn commit(self: Box<Self>, audit_mode: TransactionAuditMode) -> AppResult<()> {
+        match audit_mode {
+            TransactionAuditMode::CurrentRequest => {
+                super::super::audit::commit_current_audit(self.transaction).await
+            }
+            TransactionAuditMode::Skip => self.transaction.commit().await.map_err(database_error),
+        }
+    }
+
+    async fn rollback(self: Box<Self>) -> AppResult<()> {
+        self.transaction.rollback().await.map_err(database_error)
     }
 }
 

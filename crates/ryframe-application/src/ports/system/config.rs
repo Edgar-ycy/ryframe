@@ -1,7 +1,8 @@
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use ryframe_kernel::{ExportCursorWindow, PageResult, ValidatedPageQuery};
+use ryframe_kernel::{AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery};
 
-use crate::{ControlTransaction, PersistenceFuture};
+use crate::PersistenceTransaction;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfigRecord {
@@ -21,79 +22,54 @@ pub struct ConfigFilter<'a> {
     pub key: Option<&'a str>,
 }
 
-pub trait ConfigTransaction: ControlTransaction {
-    fn lock_configuration<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()>;
+#[async_trait]
+pub trait ConfigTransaction: PersistenceTransaction {
+    async fn lock_configuration(&self, tenant_id: &str) -> AppResult<()>;
 
-    fn find_by_key_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        key: &'a str,
-    ) -> PersistenceFuture<'a, Option<ConfigRecord>>;
+    async fn find_by_key_for_update(
+        &self,
+        tenant_id: &str,
+        key: &str,
+    ) -> AppResult<Option<ConfigRecord>>;
 
-    fn find_by_id_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_by_id_for_update(
+        &self,
+        tenant_id: &str,
         id: i64,
-    ) -> PersistenceFuture<'a, Option<ConfigRecord>>;
+    ) -> AppResult<Option<ConfigRecord>>;
 
-    fn insert<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        record: ConfigRecord,
-    ) -> PersistenceFuture<'a, ConfigRecord>;
+    async fn insert(&self, tenant_id: &str, record: ConfigRecord) -> AppResult<ConfigRecord>;
 
-    fn update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        record: ConfigRecord,
-    ) -> PersistenceFuture<'a, ConfigRecord>;
+    async fn update(&self, tenant_id: &str, record: ConfigRecord) -> AppResult<ConfigRecord>;
 
-    fn delete<'a>(&'a self, tenant_id: &'a str, id: i64) -> PersistenceFuture<'a, ()>;
+    async fn delete(&self, tenant_id: &str, id: i64) -> AppResult<()>;
 
-    fn record_namespace_change<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        namespace: &'a str,
-    ) -> PersistenceFuture<'a, i64>;
+    async fn record_namespace_change(&self, tenant_id: &str, namespace: &str) -> AppResult<i64>;
 
-    fn increment_configuration_version<'a>(
-        &'a self,
-        tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, ()>;
+    async fn increment_configuration_version(&self, tenant_id: &str) -> AppResult<()>;
 }
 
+#[async_trait]
 pub trait ConfigPersistencePort: Send + Sync {
-    fn find_by_page<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_by_page(
+        &self,
+        tenant_id: &str,
         page: ValidatedPageQuery,
-        filter: ConfigFilter<'a>,
-    ) -> PersistenceFuture<'a, PageResult<ConfigRecord>>;
+        filter: ConfigFilter<'_>,
+    ) -> AppResult<PageResult<ConfigRecord>>;
 
-    fn find_export_batch<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        filter: ConfigFilter<'a>,
+    async fn find_export_batch(
+        &self,
+        tenant_id: &str,
+        filter: ConfigFilter<'_>,
         window: ExportCursorWindow,
-    ) -> PersistenceFuture<'a, Vec<ConfigRecord>>;
+    ) -> AppResult<Vec<ConfigRecord>>;
 
-    fn find_by_id<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        id: i64,
-    ) -> PersistenceFuture<'a, Option<ConfigRecord>>;
+    async fn find_by_id(&self, tenant_id: &str, id: i64) -> AppResult<Option<ConfigRecord>>;
 
-    fn find_by_key<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        key: &'a str,
-    ) -> PersistenceFuture<'a, Option<ConfigRecord>>;
+    async fn find_by_key(&self, tenant_id: &str, key: &str) -> AppResult<Option<ConfigRecord>>;
 
-    fn find_namespace_version<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        namespace: &'a str,
-    ) -> PersistenceFuture<'a, i64>;
+    async fn find_namespace_version(&self, tenant_id: &str, namespace: &str) -> AppResult<i64>;
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn ConfigTransaction>>;
+    async fn begin(&self) -> AppResult<Box<dyn ConfigTransaction>>;
 }

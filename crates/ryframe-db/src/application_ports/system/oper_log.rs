@@ -4,11 +4,14 @@ use crate::{
     ControlDatabaseCluster, OperLogFilter as DatabaseOperLogFilter, OperLogRepository,
     ReadConsistency, Repository, entities::oper_log,
 };
-use ryframe_kernel::{ExportCursorWindow, PageResult, ValidatedPageQuery};
+use async_trait::async_trait;
+use ryframe_kernel::{
+    AppResult, DataScopeContext, ExportCursorWindow, PageResult, ValidatedPageQuery,
+};
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
 use ryframe_application::{
-    ControlTransaction, PersistenceFuture,
+    PersistenceTransaction, TransactionAuditMode,
     ports::system::{OperLogFilter, OperLogPersistencePort, OperLogRecord, OperLogTransaction},
 };
 
@@ -34,104 +37,102 @@ struct DatabaseOperLogTransaction {
     transaction: DatabaseTransaction,
 }
 
+#[async_trait]
 impl OperLogPersistencePort for DatabaseOperLogPersistence {
-    fn insert<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        record: OperLogRecord,
-    ) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            OperLogRepository
-                .insert(
-                    self.database.write(),
-                    tenant_id,
-                    to_entity(tenant_id, record),
-                )
-                .await
-                .map(|_| ())
-        })
+    async fn insert(&self, tenant_id: &str, record: OperLogRecord) -> AppResult<()> {
+        OperLogRepository
+            .insert(
+                self.database.write(),
+                tenant_id,
+                to_entity(tenant_id, record),
+            )
+            .await
+            .map(|_| ())
     }
 
-    fn find_by_page<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_by_page(
+        &self,
+        tenant_id: &str,
         page: ValidatedPageQuery,
-        filter: OperLogFilter<'a>,
-        data_scope: &'a ryframe_kernel::DataScopeContext,
-    ) -> PersistenceFuture<'a, PageResult<OperLogRecord>> {
-        Box::pin(async move {
-            let database = self
-                .database
-                .select_read(ReadConsistency::Eventual)
-                .connection;
-            let result = OperLogRepository
-                .find_by_page_filtered(
-                    &database,
-                    tenant_id,
-                    &page,
-                    to_database_filter(filter),
-                    data_scope,
-                )
-                .await?;
-            Ok(PageResult::new(
-                result.records.into_iter().map(to_record).collect(),
-                result.total,
+        filter: OperLogFilter<'_>,
+        data_scope: &DataScopeContext,
+    ) -> AppResult<PageResult<OperLogRecord>> {
+        let database = self
+            .database
+            .select_read(ReadConsistency::Eventual)
+            .connection;
+        let result = OperLogRepository
+            .find_by_page_filtered(
+                &database,
+                tenant_id,
                 &page,
-            ))
-        })
+                to_database_filter(filter),
+                data_scope,
+            )
+            .await?;
+        Ok(PageResult::new(
+            result.records.into_iter().map(to_record).collect(),
+            result.total,
+            &page,
+        ))
     }
 
-    fn find_export_batch<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        filter: OperLogFilter<'a>,
-        data_scope: &'a ryframe_kernel::DataScopeContext,
+    async fn find_export_batch(
+        &self,
+        tenant_id: &str,
+        filter: OperLogFilter<'_>,
+        data_scope: &DataScopeContext,
         window: ExportCursorWindow,
-    ) -> PersistenceFuture<'a, Vec<OperLogRecord>> {
-        Box::pin(async move {
-            let database = self
-                .database
-                .select_read(ReadConsistency::Strong)
-                .connection;
-            OperLogRepository
-                .find_for_export_after_id(
-                    &database,
-                    tenant_id,
-                    &to_database_filter(filter),
-                    data_scope,
-                    window,
-                )
-                .await
-                .map(|records| records.into_iter().map(to_record).collect())
-        })
+    ) -> AppResult<Vec<OperLogRecord>> {
+        let database = self
+            .database
+            .select_read(ReadConsistency::Strong)
+            .connection;
+        OperLogRepository
+            .find_for_export_after_id(
+                &database,
+                tenant_id,
+                &to_database_filter(filter),
+                data_scope,
+                window,
+            )
+            .await
+            .map(|records| records.into_iter().map(to_record).collect())
     }
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn OperLogTransaction>> {
-        Box::pin(async move {
-            let transaction = self
-                .database
-                .write()
-                .begin()
-                .await
-                .map_err(database_error)?;
-            Ok(Box::new(DatabaseOperLogTransaction { transaction }) as Box<dyn OperLogTransaction>)
-        })
+    async fn begin(&self) -> AppResult<Box<dyn OperLogTransaction>> {
+        let transaction = self
+            .database
+            .write()
+            .begin()
+            .await
+            .map_err(database_error)?;
+        Ok(Box::new(DatabaseOperLogTransaction { transaction }) as Box<dyn OperLogTransaction>)
     }
 }
 
+#[async_trait]
 impl OperLogTransaction for DatabaseOperLogTransaction {
-    fn clean<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, u64> {
-        Box::pin(async move {
-            OperLogRepository
-                .clean_all_in_transaction(&self.transaction, tenant_id)
-                .await
-        })
+    async fn clean(&self, tenant_id: &str) -> AppResult<u64> {
+        OperLogRepository
+            .clean_all_in_transaction(&self.transaction, tenant_id)
+            .await
     }
 }
 
-impl ControlTransaction for DatabaseOperLogTransaction {
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move { super::super::audit::commit_current_audit(self.transaction).await })
+#[async_trait]
+impl PersistenceTransaction for DatabaseOperLogTransaction {
+    async fn commit(self: Box<Self>, audit_mode: TransactionAuditMode) -> AppResult<()> {
+        match audit_mode {
+            TransactionAuditMode::CurrentRequest => {
+                super::super::audit::commit_current_audit(self.transaction).await
+            }
+            TransactionAuditMode::Skip => self.transaction.commit().await.map_err(database_error),
+        }
+    }
+
+    async fn rollback(self: Box<Self>) -> AppResult<()> {
+        self.transaction.rollback().await.map_err(database_error)
     }
 }
 

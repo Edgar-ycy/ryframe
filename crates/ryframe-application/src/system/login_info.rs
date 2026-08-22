@@ -5,6 +5,7 @@ use ryframe_kernel::{ActorContext, AppResult, ExportCursorWindow, PageResult, Va
 use serde::Serialize;
 
 use crate::ports::system::{LoginInfoFilter, LoginInfoPersistencePort, LoginInfoRecord};
+use crate::{TransactionAuditMode, complete_transaction};
 
 use super::log_time_range::parse_log_time_range;
 
@@ -147,8 +148,7 @@ impl LoginInfoService {
     pub async fn clean(&self, actor: &ActorContext) -> AppResult<u64> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let transaction = self.persistence.begin().await?;
-        let rows_affected = transaction.clean(tenant_id).await?;
-        transaction.commit().await?;
-        Ok(rows_affected)
+        let operation = transaction.clean(tenant_id).await;
+        complete_transaction(transaction, operation, TransactionAuditMode::CurrentRequest).await
     }
 }

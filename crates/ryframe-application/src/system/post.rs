@@ -7,6 +7,7 @@ use ryframe_kernel::{
 use serde::Serialize;
 
 use crate::ports::system::{PostFilter, PostPersistencePort, PostRecord};
+use crate::{TransactionAuditMode, complete_transaction};
 
 #[derive(Debug, Serialize)]
 pub struct PostVo {
@@ -80,20 +81,23 @@ impl PostService {
             updated_at: now,
         };
         let transaction = self.persistence.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        if transaction
-            .find_by_code_for_update(tenant_id, code)
-            .await?
-            .is_some()
-        {
-            return Err(AppError::Conflict("岗位编码已存在".into()));
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            if transaction
+                .find_by_code_for_update(tenant_id, code)
+                .await?
+                .is_some()
+            {
+                return Err(AppError::Conflict("岗位编码已存在".into()));
+            }
+            let saved = transaction.insert(tenant_id, record).await?;
+            transaction
+                .increment_configuration_version(tenant_id)
+                .await?;
+            Ok(PostVo::from(saved))
         }
-        let saved = transaction.insert(tenant_id, record).await?;
-        transaction
-            .increment_configuration_version(tenant_id)
-            .await?;
-        transaction.commit().await?;
-        Ok(PostVo::from(saved))
+        .await;
+        complete_transaction(transaction, operation, TransactionAuditMode::CurrentRequest).await
     }
 
     pub async fn update(
@@ -106,36 +110,40 @@ impl PostService {
     ) -> AppResult<PostVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let transaction = self.persistence.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        let mut post = transaction
-            .find_by_id_for_update(tenant_id, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("岗位不存在".into()))?;
-        post.name = name.to_owned();
-        post.sort = sort;
-        post.status = status;
-        post.updated_at = Utc::now();
-        let saved = transaction.update(tenant_id, post).await?;
-        transaction
-            .increment_configuration_version(tenant_id)
-            .await?;
-        transaction.commit().await?;
-        Ok(PostVo::from(saved))
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            let mut post = transaction
+                .find_by_id_for_update(tenant_id, id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("岗位不存在".into()))?;
+            post.name = name.to_owned();
+            post.sort = sort;
+            post.status = status;
+            post.updated_at = Utc::now();
+            let saved = transaction.update(tenant_id, post).await?;
+            transaction
+                .increment_configuration_version(tenant_id)
+                .await?;
+            Ok(PostVo::from(saved))
+        }
+        .await;
+        complete_transaction(transaction, operation, TransactionAuditMode::CurrentRequest).await
     }
 
     pub async fn delete(&self, actor: &ActorContext, id: i64) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let transaction = self.persistence.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        transaction
-            .find_by_id_for_update(tenant_id, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("岗位不存在".into()))?;
-        transaction.delete(tenant_id, id).await?;
-        transaction
-            .increment_configuration_version(tenant_id)
-            .await?;
-        transaction.commit().await
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            transaction
+                .find_by_id_for_update(tenant_id, id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("岗位不存在".into()))?;
+            transaction.delete(tenant_id, id).await?;
+            transaction.increment_configuration_version(tenant_id).await
+        }
+        .await;
+        complete_transaction(transaction, operation, TransactionAuditMode::CurrentRequest).await
     }
 
     pub async fn find_by_page(

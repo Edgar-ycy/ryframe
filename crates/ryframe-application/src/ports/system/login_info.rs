@@ -1,7 +1,10 @@
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use ryframe_kernel::{DataScopeContext, ExportCursorWindow, PageResult, ValidatedPageQuery};
+use ryframe_kernel::{
+    AppResult, DataScopeContext, ExportCursorWindow, PageResult, ValidatedPageQuery,
+};
 
-use crate::{ControlTransaction, PersistenceFuture};
+use crate::PersistenceTransaction;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LoginInfoRecord {
@@ -24,32 +27,30 @@ pub struct LoginInfoFilter<'a> {
     pub end_time: Option<DateTime<Utc>>,
 }
 
-pub trait LoginInfoTransaction: ControlTransaction {
-    fn clean<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, u64>;
+#[async_trait]
+pub trait LoginInfoTransaction: PersistenceTransaction {
+    async fn clean(&self, tenant_id: &str) -> AppResult<u64>;
 }
 
+#[async_trait]
 pub trait LoginInfoPersistencePort: Send + Sync {
-    fn insert<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        record: LoginInfoRecord,
-    ) -> PersistenceFuture<'a, ()>;
+    async fn insert(&self, tenant_id: &str, record: LoginInfoRecord) -> AppResult<()>;
 
-    fn find_by_page<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_by_page(
+        &self,
+        tenant_id: &str,
         page: ValidatedPageQuery,
-        filter: LoginInfoFilter<'a>,
-        data_scope: &'a DataScopeContext,
-    ) -> PersistenceFuture<'a, PageResult<LoginInfoRecord>>;
+        filter: LoginInfoFilter<'_>,
+        data_scope: &DataScopeContext,
+    ) -> AppResult<PageResult<LoginInfoRecord>>;
 
-    fn find_export_batch<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        filter: LoginInfoFilter<'a>,
-        data_scope: &'a DataScopeContext,
+    async fn find_export_batch(
+        &self,
+        tenant_id: &str,
+        filter: LoginInfoFilter<'_>,
+        data_scope: &DataScopeContext,
         window: ExportCursorWindow,
-    ) -> PersistenceFuture<'a, Vec<LoginInfoRecord>>;
+    ) -> AppResult<Vec<LoginInfoRecord>>;
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn LoginInfoTransaction>>;
+    async fn begin(&self) -> AppResult<Box<dyn LoginInfoTransaction>>;
 }

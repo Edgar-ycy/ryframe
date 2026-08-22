@@ -1,7 +1,8 @@
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use ryframe_kernel::{ExportCursorWindow, PageResult, ValidatedPageQuery};
+use ryframe_kernel::{AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery};
 
-use crate::{ControlTransaction, PersistenceFuture};
+use crate::PersistenceTransaction;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PostRecord {
@@ -22,61 +23,48 @@ pub struct PostFilter<'a> {
     pub status: Option<&'a str>,
 }
 
-pub trait PostTransaction: ControlTransaction {
-    fn lock_configuration<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()>;
+#[async_trait]
+pub trait PostTransaction: PersistenceTransaction {
+    async fn lock_configuration(&self, tenant_id: &str) -> AppResult<()>;
 
-    fn find_by_code_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        code: &'a str,
-    ) -> PersistenceFuture<'a, Option<PostRecord>>;
+    async fn find_by_code_for_update(
+        &self,
+        tenant_id: &str,
+        code: &str,
+    ) -> AppResult<Option<PostRecord>>;
 
-    fn find_by_id_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_by_id_for_update(
+        &self,
+        tenant_id: &str,
         id: i64,
-    ) -> PersistenceFuture<'a, Option<PostRecord>>;
+    ) -> AppResult<Option<PostRecord>>;
 
-    fn insert<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        record: PostRecord,
-    ) -> PersistenceFuture<'a, PostRecord>;
+    async fn insert(&self, tenant_id: &str, record: PostRecord) -> AppResult<PostRecord>;
 
-    fn update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        record: PostRecord,
-    ) -> PersistenceFuture<'a, PostRecord>;
+    async fn update(&self, tenant_id: &str, record: PostRecord) -> AppResult<PostRecord>;
 
-    fn delete<'a>(&'a self, tenant_id: &'a str, id: i64) -> PersistenceFuture<'a, ()>;
+    async fn delete(&self, tenant_id: &str, id: i64) -> AppResult<()>;
 
-    fn increment_configuration_version<'a>(
-        &'a self,
-        tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, ()>;
+    async fn increment_configuration_version(&self, tenant_id: &str) -> AppResult<()>;
 }
 
+#[async_trait]
 pub trait PostPersistencePort: Send + Sync {
-    fn find_by_id<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        id: i64,
-    ) -> PersistenceFuture<'a, Option<PostRecord>>;
+    async fn find_by_id(&self, tenant_id: &str, id: i64) -> AppResult<Option<PostRecord>>;
 
-    fn find_by_page<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_by_page(
+        &self,
+        tenant_id: &str,
         page: ValidatedPageQuery,
-        filter: PostFilter<'a>,
-    ) -> PersistenceFuture<'a, PageResult<PostRecord>>;
+        filter: PostFilter<'_>,
+    ) -> AppResult<PageResult<PostRecord>>;
 
-    fn find_export_batch<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        filter: PostFilter<'a>,
+    async fn find_export_batch(
+        &self,
+        tenant_id: &str,
+        filter: PostFilter<'_>,
         window: ExportCursorWindow,
-    ) -> PersistenceFuture<'a, Vec<PostRecord>>;
+    ) -> AppResult<Vec<PostRecord>>;
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn PostTransaction>>;
+    async fn begin(&self) -> AppResult<Box<dyn PostTransaction>>;
 }

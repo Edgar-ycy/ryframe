@@ -5,6 +5,7 @@ use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPag
 use serde::Serialize;
 
 use crate::ports::system::{NoticeFilter, NoticePersistencePort, NoticeRecord};
+use crate::{TransactionAuditMode, complete_transaction};
 
 #[derive(Debug, Serialize)]
 pub struct NoticeVo {
@@ -102,9 +103,11 @@ impl NoticeService {
             updated_at: now,
         };
         let transaction = self.persistence.begin().await?;
-        let saved = transaction.insert(tenant_id, record).await?;
-        transaction.commit().await?;
-        Ok(NoticeVo::from(saved))
+        let operation = transaction
+            .insert(tenant_id, record)
+            .await
+            .map(NoticeVo::from);
+        complete_transaction(transaction, operation, TransactionAuditMode::CurrentRequest).await
     }
 
     pub async fn update(
@@ -118,28 +121,36 @@ impl NoticeService {
     ) -> AppResult<NoticeVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let transaction = self.persistence.begin().await?;
-        let mut notice = transaction
-            .find_by_id_for_update(tenant_id, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("通知公告不存在".into()))?;
-        notice.title = title.to_owned();
-        notice.content = content_markdown.to_owned();
-        notice.notice_type = notice_type.map(str::to_owned);
-        notice.status = status;
-        notice.updated_at = Utc::now();
-        let saved = transaction.update(tenant_id, notice).await?;
-        transaction.commit().await?;
-        Ok(NoticeVo::from(saved))
+        let operation = async {
+            let mut notice = transaction
+                .find_by_id_for_update(tenant_id, id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("通知公告不存在".into()))?;
+            notice.title = title.to_owned();
+            notice.content = content_markdown.to_owned();
+            notice.notice_type = notice_type.map(str::to_owned);
+            notice.status = status;
+            notice.updated_at = Utc::now();
+            transaction
+                .update(tenant_id, notice)
+                .await
+                .map(NoticeVo::from)
+        }
+        .await;
+        complete_transaction(transaction, operation, TransactionAuditMode::CurrentRequest).await
     }
 
     pub async fn delete(&self, actor: &ActorContext, id: i64) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let transaction = self.persistence.begin().await?;
-        transaction
-            .find_by_id_for_update(tenant_id, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("通知公告不存在".into()))?;
-        transaction.delete(tenant_id, id).await?;
-        transaction.commit().await
+        let operation = async {
+            transaction
+                .find_by_id_for_update(tenant_id, id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("通知公告不存在".into()))?;
+            transaction.delete(tenant_id, id).await
+        }
+        .await;
+        complete_transaction(transaction, operation, TransactionAuditMode::CurrentRequest).await
     }
 }

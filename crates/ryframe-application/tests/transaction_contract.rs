@@ -8,11 +8,12 @@ use ryframe_kernel::*;
 mod config {
     use std::sync::Mutex;
 
+    use async_trait::async_trait;
     use ryframe_kernel::DataScope;
 
     use super::*;
     use ryframe_application::{
-        ControlTransaction, PersistenceFuture, ports::system::ConfigTransaction,
+        PersistenceTransaction, TransactionAuditMode, ports::system::ConfigTransaction,
     };
 
     struct FakePersistence {
@@ -23,123 +24,119 @@ mod config {
         calls: Arc<Mutex<Vec<&'static str>>>,
     }
 
+    #[async_trait]
     impl ConfigPersistencePort for FakePersistence {
-        fn find_by_page<'a>(
-            &'a self,
-            _tenant_id: &'a str,
+        async fn find_by_page(
+            &self,
+            _tenant_id: &str,
             _page: ValidatedPageQuery,
-            _filter: ConfigFilter<'a>,
-        ) -> PersistenceFuture<'a, PageResult<ConfigRecord>> {
-            Box::pin(async { unreachable!("本测试不读取列表") })
+            _filter: ConfigFilter<'_>,
+        ) -> AppResult<PageResult<ConfigRecord>> {
+            unreachable!("本测试不读取列表")
         }
 
-        fn find_export_batch<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            _filter: ConfigFilter<'a>,
+        async fn find_export_batch(
+            &self,
+            _tenant_id: &str,
+            _filter: ConfigFilter<'_>,
             _window: ExportCursorWindow,
-        ) -> PersistenceFuture<'a, Vec<ConfigRecord>> {
-            Box::pin(async { unreachable!("本测试不执行导出") })
+        ) -> AppResult<Vec<ConfigRecord>> {
+            unreachable!("本测试不执行导出")
         }
 
-        fn find_by_id<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            _id: i64,
-        ) -> PersistenceFuture<'a, Option<ConfigRecord>> {
-            Box::pin(async { unreachable!("本测试不读取详情") })
+        async fn find_by_id(&self, _tenant_id: &str, _id: i64) -> AppResult<Option<ConfigRecord>> {
+            unreachable!("本测试不读取详情")
         }
 
-        fn find_by_key<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            _key: &'a str,
-        ) -> PersistenceFuture<'a, Option<ConfigRecord>> {
-            Box::pin(async { unreachable!("本测试不读取键值") })
+        async fn find_by_key(
+            &self,
+            _tenant_id: &str,
+            _key: &str,
+        ) -> AppResult<Option<ConfigRecord>> {
+            unreachable!("本测试不读取键值")
         }
 
-        fn find_namespace_version<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            _namespace: &'a str,
-        ) -> PersistenceFuture<'a, i64> {
-            Box::pin(async { unreachable!("本测试不读取缓存版本") })
+        async fn find_namespace_version(
+            &self,
+            _tenant_id: &str,
+            _namespace: &str,
+        ) -> AppResult<i64> {
+            unreachable!("本测试不读取缓存版本")
         }
 
-        fn begin(&self) -> PersistenceFuture<'_, Box<dyn ConfigTransaction>> {
+        async fn begin(&self) -> AppResult<Box<dyn ConfigTransaction>> {
             self.calls.lock().expect("调用记录锁应可用").push("begin");
             let transaction = FakeTransaction {
                 calls: Arc::clone(&self.calls),
             };
-            Box::pin(async move { Ok(Box::new(transaction) as Box<dyn ConfigTransaction>) })
+            Ok(Box::new(transaction) as Box<dyn ConfigTransaction>)
         }
     }
 
+    #[async_trait]
     impl ConfigTransaction for FakeTransaction {
-        fn lock_configuration<'a>(&'a self, _tenant_id: &'a str) -> PersistenceFuture<'a, ()> {
-            Box::pin(async { unreachable!("本测试不锁定配置") })
+        async fn lock_configuration(&self, _tenant_id: &str) -> AppResult<()> {
+            unreachable!("本测试不锁定配置")
         }
 
-        fn find_by_key_for_update<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            _key: &'a str,
-        ) -> PersistenceFuture<'a, Option<ConfigRecord>> {
-            Box::pin(async { unreachable!("本测试不读取键值") })
+        async fn find_by_key_for_update(
+            &self,
+            _tenant_id: &str,
+            _key: &str,
+        ) -> AppResult<Option<ConfigRecord>> {
+            unreachable!("本测试不读取键值")
         }
 
-        fn find_by_id_for_update<'a>(
-            &'a self,
-            _tenant_id: &'a str,
+        async fn find_by_id_for_update(
+            &self,
+            _tenant_id: &str,
             _id: i64,
-        ) -> PersistenceFuture<'a, Option<ConfigRecord>> {
-            Box::pin(async { unreachable!("本测试不读取详情") })
+        ) -> AppResult<Option<ConfigRecord>> {
+            unreachable!("本测试不读取详情")
         }
 
-        fn insert<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            _record: ConfigRecord,
-        ) -> PersistenceFuture<'a, ConfigRecord> {
-            Box::pin(async { unreachable!("本测试不新增配置") })
+        async fn insert(&self, _tenant_id: &str, _record: ConfigRecord) -> AppResult<ConfigRecord> {
+            unreachable!("本测试不新增配置")
         }
 
-        fn update<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            _record: ConfigRecord,
-        ) -> PersistenceFuture<'a, ConfigRecord> {
-            Box::pin(async { unreachable!("本测试不更新配置") })
+        async fn update(&self, _tenant_id: &str, _record: ConfigRecord) -> AppResult<ConfigRecord> {
+            unreachable!("本测试不更新配置")
         }
 
-        fn delete<'a>(&'a self, _tenant_id: &'a str, _id: i64) -> PersistenceFuture<'a, ()> {
-            Box::pin(async { unreachable!("本测试不删除配置") })
+        async fn delete(&self, _tenant_id: &str, _id: i64) -> AppResult<()> {
+            unreachable!("本测试不删除配置")
         }
 
-        fn record_namespace_change<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            _namespace: &'a str,
-        ) -> PersistenceFuture<'a, i64> {
+        async fn record_namespace_change(
+            &self,
+            _tenant_id: &str,
+            _namespace: &str,
+        ) -> AppResult<i64> {
             self.calls
                 .lock()
                 .expect("调用记录锁应可用")
                 .push("namespace");
-            Box::pin(async { Ok(8) })
+            Ok(8)
         }
 
-        fn increment_configuration_version<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-        ) -> PersistenceFuture<'a, ()> {
-            Box::pin(async { unreachable!("本测试不递增配置版本") })
+        async fn increment_configuration_version(&self, _tenant_id: &str) -> AppResult<()> {
+            unreachable!("本测试不递增配置版本")
         }
     }
 
-    impl ControlTransaction for FakeTransaction {
-        fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
+    #[async_trait]
+    impl PersistenceTransaction for FakeTransaction {
+        async fn commit(self: Box<Self>, _audit_mode: TransactionAuditMode) -> AppResult<()> {
             self.calls.lock().expect("调用记录锁应可用").push("commit");
-            Box::pin(async { Ok(()) })
+            Ok(())
+        }
+
+        async fn rollback(self: Box<Self>) -> AppResult<()> {
+            self.calls
+                .lock()
+                .expect("调用记录锁应可用")
+                .push("rollback");
+            Ok(())
         }
     }
 
@@ -175,11 +172,12 @@ mod config {
 mod login_info {
     use std::sync::Mutex;
 
+    use async_trait::async_trait;
     use ryframe_kernel::DataScope;
 
     use super::*;
     use ryframe_application::{
-        ControlTransaction, PersistenceFuture, ports::system::LoginInfoTransaction,
+        PersistenceTransaction, TransactionAuditMode, ports::system::LoginInfoTransaction,
     };
 
     struct FakePersistence {
@@ -190,55 +188,62 @@ mod login_info {
         calls: Arc<Mutex<Vec<&'static str>>>,
     }
 
+    #[async_trait]
     impl LoginInfoPersistencePort for FakePersistence {
-        fn insert<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            _record: LoginInfoRecord,
-        ) -> PersistenceFuture<'a, ()> {
-            Box::pin(async { unreachable!("本测试不写入日志") })
+        async fn insert(&self, _tenant_id: &str, _record: LoginInfoRecord) -> AppResult<()> {
+            unreachable!("本测试不写入日志")
         }
 
-        fn find_by_page<'a>(
-            &'a self,
-            _tenant_id: &'a str,
+        async fn find_by_page(
+            &self,
+            _tenant_id: &str,
             _page: ValidatedPageQuery,
-            _filter: LoginInfoFilter<'a>,
-            _data_scope: &'a DataScopeContext,
-        ) -> PersistenceFuture<'a, PageResult<LoginInfoRecord>> {
-            Box::pin(async { unreachable!("本测试不读取列表") })
+            _filter: LoginInfoFilter<'_>,
+            _data_scope: &DataScopeContext,
+        ) -> AppResult<PageResult<LoginInfoRecord>> {
+            unreachable!("本测试不读取列表")
         }
 
-        fn find_export_batch<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            _filter: LoginInfoFilter<'a>,
-            _data_scope: &'a DataScopeContext,
+        async fn find_export_batch(
+            &self,
+            _tenant_id: &str,
+            _filter: LoginInfoFilter<'_>,
+            _data_scope: &DataScopeContext,
             _window: ExportCursorWindow,
-        ) -> PersistenceFuture<'a, Vec<LoginInfoRecord>> {
-            Box::pin(async { unreachable!("本测试不执行导出") })
+        ) -> AppResult<Vec<LoginInfoRecord>> {
+            unreachable!("本测试不执行导出")
         }
 
-        fn begin(&self) -> PersistenceFuture<'_, Box<dyn LoginInfoTransaction>> {
+        async fn begin(&self) -> AppResult<Box<dyn LoginInfoTransaction>> {
             self.calls.lock().expect("调用记录锁应可用").push("begin");
             let transaction = FakeTransaction {
                 calls: Arc::clone(&self.calls),
             };
-            Box::pin(async move { Ok(Box::new(transaction) as Box<dyn LoginInfoTransaction>) })
+            Ok(Box::new(transaction) as Box<dyn LoginInfoTransaction>)
         }
     }
 
+    #[async_trait]
     impl LoginInfoTransaction for FakeTransaction {
-        fn clean<'a>(&'a self, _tenant_id: &'a str) -> PersistenceFuture<'a, u64> {
+        async fn clean(&self, _tenant_id: &str) -> AppResult<u64> {
             self.calls.lock().expect("调用记录锁应可用").push("clean");
-            Box::pin(async { Ok(3) })
+            Ok(3)
         }
     }
 
-    impl ControlTransaction for FakeTransaction {
-        fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
+    #[async_trait]
+    impl PersistenceTransaction for FakeTransaction {
+        async fn commit(self: Box<Self>, _audit_mode: TransactionAuditMode) -> AppResult<()> {
             self.calls.lock().expect("调用记录锁应可用").push("commit");
-            Box::pin(async { Ok(()) })
+            Ok(())
+        }
+
+        async fn rollback(self: Box<Self>) -> AppResult<()> {
+            self.calls
+                .lock()
+                .expect("调用记录锁应可用")
+                .push("rollback");
+            Ok(())
         }
     }
 
@@ -277,12 +282,13 @@ mod login_info {
 mod notice {
     use std::sync::Mutex;
 
+    use async_trait::async_trait;
     use chrono::TimeZone;
     use ryframe_kernel::DataScope;
 
     use super::*;
     use ryframe_application::{
-        ControlTransaction, PersistenceFuture, ports::system::NoticeTransaction,
+        PersistenceTransaction, TransactionAuditMode, ports::system::NoticeTransaction,
     };
 
     struct FakePersistence {
@@ -295,71 +301,69 @@ mod notice {
         record: NoticeRecord,
     }
 
+    #[async_trait]
     impl NoticePersistencePort for FakePersistence {
-        fn find_by_id<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            _id: i64,
-        ) -> PersistenceFuture<'a, Option<NoticeRecord>> {
-            Box::pin(async { unreachable!("本测试不读取详情") })
+        async fn find_by_id(&self, _tenant_id: &str, _id: i64) -> AppResult<Option<NoticeRecord>> {
+            unreachable!("本测试不读取详情")
         }
 
-        fn find_by_page<'a>(
-            &'a self,
-            _tenant_id: &'a str,
+        async fn find_by_page(
+            &self,
+            _tenant_id: &str,
             _page: ValidatedPageQuery,
-            _filter: NoticeFilter<'a>,
-        ) -> PersistenceFuture<'a, PageResult<NoticeRecord>> {
-            Box::pin(async { unreachable!("本测试不读取列表") })
+            _filter: NoticeFilter<'_>,
+        ) -> AppResult<PageResult<NoticeRecord>> {
+            unreachable!("本测试不读取列表")
         }
 
-        fn begin(&self) -> PersistenceFuture<'_, Box<dyn NoticeTransaction>> {
+        async fn begin(&self) -> AppResult<Box<dyn NoticeTransaction>> {
             self.calls.lock().expect("调用记录锁应可用").push("begin");
             let transaction = FakeTransaction {
                 calls: Arc::clone(&self.calls),
                 record: self.record.clone(),
             };
-            Box::pin(async move { Ok(Box::new(transaction) as Box<dyn NoticeTransaction>) })
+            Ok(Box::new(transaction) as Box<dyn NoticeTransaction>)
         }
     }
 
+    #[async_trait]
     impl NoticeTransaction for FakeTransaction {
-        fn find_by_id_for_update<'a>(
-            &'a self,
-            _tenant_id: &'a str,
+        async fn find_by_id_for_update(
+            &self,
+            _tenant_id: &str,
             _id: i64,
-        ) -> PersistenceFuture<'a, Option<NoticeRecord>> {
+        ) -> AppResult<Option<NoticeRecord>> {
             self.calls.lock().expect("调用记录锁应可用").push("find");
-            let record = self.record.clone();
-            Box::pin(async move { Ok(Some(record)) })
+            Ok(Some(self.record.clone()))
         }
 
-        fn insert<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            record: NoticeRecord,
-        ) -> PersistenceFuture<'a, NoticeRecord> {
-            Box::pin(async move { Ok(record) })
+        async fn insert(&self, _tenant_id: &str, record: NoticeRecord) -> AppResult<NoticeRecord> {
+            Ok(record)
         }
 
-        fn update<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            record: NoticeRecord,
-        ) -> PersistenceFuture<'a, NoticeRecord> {
+        async fn update(&self, _tenant_id: &str, record: NoticeRecord) -> AppResult<NoticeRecord> {
             self.calls.lock().expect("调用记录锁应可用").push("update");
-            Box::pin(async move { Ok(record) })
+            Ok(record)
         }
 
-        fn delete<'a>(&'a self, _tenant_id: &'a str, _id: i64) -> PersistenceFuture<'a, ()> {
-            Box::pin(async { Ok(()) })
+        async fn delete(&self, _tenant_id: &str, _id: i64) -> AppResult<()> {
+            Ok(())
         }
     }
 
-    impl ControlTransaction for FakeTransaction {
-        fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
+    #[async_trait]
+    impl PersistenceTransaction for FakeTransaction {
+        async fn commit(self: Box<Self>, _audit_mode: TransactionAuditMode) -> AppResult<()> {
             self.calls.lock().expect("调用记录锁应可用").push("commit");
-            Box::pin(async { Ok(()) })
+            Ok(())
+        }
+
+        async fn rollback(self: Box<Self>) -> AppResult<()> {
+            self.calls
+                .lock()
+                .expect("调用记录锁应可用")
+                .push("rollback");
+            Ok(())
         }
     }
 
@@ -414,11 +418,12 @@ mod notice {
 mod oper_log {
     use std::sync::Mutex;
 
+    use async_trait::async_trait;
     use ryframe_kernel::DataScope;
 
     use super::*;
     use ryframe_application::{
-        ControlTransaction, PersistenceFuture, ports::system::OperLogTransaction,
+        PersistenceTransaction, TransactionAuditMode, ports::system::OperLogTransaction,
     };
 
     struct FakePersistence {
@@ -429,55 +434,62 @@ mod oper_log {
         calls: Arc<Mutex<Vec<&'static str>>>,
     }
 
+    #[async_trait]
     impl OperLogPersistencePort for FakePersistence {
-        fn insert<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            _record: OperLogRecord,
-        ) -> PersistenceFuture<'a, ()> {
-            Box::pin(async { unreachable!("本测试不写入日志") })
+        async fn insert(&self, _tenant_id: &str, _record: OperLogRecord) -> AppResult<()> {
+            unreachable!("本测试不写入日志")
         }
 
-        fn find_by_page<'a>(
-            &'a self,
-            _tenant_id: &'a str,
+        async fn find_by_page(
+            &self,
+            _tenant_id: &str,
             _page: ValidatedPageQuery,
-            _filter: OperLogFilter<'a>,
-            _data_scope: &'a DataScopeContext,
-        ) -> PersistenceFuture<'a, PageResult<OperLogRecord>> {
-            Box::pin(async { unreachable!("本测试不读取列表") })
+            _filter: OperLogFilter<'_>,
+            _data_scope: &DataScopeContext,
+        ) -> AppResult<PageResult<OperLogRecord>> {
+            unreachable!("本测试不读取列表")
         }
 
-        fn find_export_batch<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            _filter: OperLogFilter<'a>,
-            _data_scope: &'a DataScopeContext,
+        async fn find_export_batch(
+            &self,
+            _tenant_id: &str,
+            _filter: OperLogFilter<'_>,
+            _data_scope: &DataScopeContext,
             _window: ExportCursorWindow,
-        ) -> PersistenceFuture<'a, Vec<OperLogRecord>> {
-            Box::pin(async { unreachable!("本测试不执行导出") })
+        ) -> AppResult<Vec<OperLogRecord>> {
+            unreachable!("本测试不执行导出")
         }
 
-        fn begin(&self) -> PersistenceFuture<'_, Box<dyn OperLogTransaction>> {
+        async fn begin(&self) -> AppResult<Box<dyn OperLogTransaction>> {
             self.calls.lock().expect("调用记录锁应可用").push("begin");
             let transaction = FakeTransaction {
                 calls: Arc::clone(&self.calls),
             };
-            Box::pin(async move { Ok(Box::new(transaction) as Box<dyn OperLogTransaction>) })
+            Ok(Box::new(transaction) as Box<dyn OperLogTransaction>)
         }
     }
 
+    #[async_trait]
     impl OperLogTransaction for FakeTransaction {
-        fn clean<'a>(&'a self, _tenant_id: &'a str) -> PersistenceFuture<'a, u64> {
+        async fn clean(&self, _tenant_id: &str) -> AppResult<u64> {
             self.calls.lock().expect("调用记录锁应可用").push("clean");
-            Box::pin(async { Ok(4) })
+            Ok(4)
         }
     }
 
-    impl ControlTransaction for FakeTransaction {
-        fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
+    #[async_trait]
+    impl PersistenceTransaction for FakeTransaction {
+        async fn commit(self: Box<Self>, _audit_mode: TransactionAuditMode) -> AppResult<()> {
             self.calls.lock().expect("调用记录锁应可用").push("commit");
-            Box::pin(async { Ok(()) })
+            Ok(())
+        }
+
+        async fn rollback(self: Box<Self>) -> AppResult<()> {
+            self.calls
+                .lock()
+                .expect("调用记录锁应可用")
+                .push("rollback");
+            Ok(())
         }
     }
 
@@ -516,120 +528,184 @@ mod oper_log {
 mod post {
     use std::sync::Mutex;
 
+    use async_trait::async_trait;
     use chrono::TimeZone;
     use ryframe_kernel::DataScope;
 
     use super::*;
     use ryframe_application::{
-        ControlTransaction, PersistenceFuture, ports::system::PostTransaction,
+        PersistenceTransaction, TransactionAuditMode, ports::system::PostTransaction,
     };
 
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum Call {
+        Begin,
+        Lock,
+        FindByCode,
+        FindById,
+        Update,
+        IncrementVersion,
+        Commit(TransactionAuditMode),
+        Rollback,
+    }
+
     struct FakePersistence {
-        calls: Arc<Mutex<Vec<&'static str>>>,
+        calls: Arc<Mutex<Vec<Call>>>,
         record: PostRecord,
+        duplicate_code: bool,
     }
 
     struct FakeTransaction {
-        calls: Arc<Mutex<Vec<&'static str>>>,
+        calls: Arc<Mutex<Vec<Call>>>,
         record: PostRecord,
+        duplicate_code: bool,
     }
 
+    #[async_trait]
     impl PostPersistencePort for FakePersistence {
-        fn find_by_id<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            _id: i64,
-        ) -> PersistenceFuture<'a, Option<PostRecord>> {
-            Box::pin(async { unreachable!("本测试不读取详情") })
+        async fn find_by_id(&self, _tenant_id: &str, _id: i64) -> AppResult<Option<PostRecord>> {
+            unreachable!("本测试不读取详情")
         }
 
-        fn find_by_page<'a>(
-            &'a self,
-            _tenant_id: &'a str,
+        async fn find_by_page(
+            &self,
+            _tenant_id: &str,
             _page: ValidatedPageQuery,
-            _filter: PostFilter<'a>,
-        ) -> PersistenceFuture<'a, PageResult<PostRecord>> {
-            Box::pin(async { unreachable!("本测试不读取列表") })
+            _filter: PostFilter<'_>,
+        ) -> AppResult<PageResult<PostRecord>> {
+            unreachable!("本测试不读取列表")
         }
 
-        fn find_export_batch<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            _filter: PostFilter<'a>,
+        async fn find_export_batch(
+            &self,
+            _tenant_id: &str,
+            _filter: PostFilter<'_>,
             _window: ExportCursorWindow,
-        ) -> PersistenceFuture<'a, Vec<PostRecord>> {
-            Box::pin(async { unreachable!("本测试不执行导出") })
+        ) -> AppResult<Vec<PostRecord>> {
+            unreachable!("本测试不执行导出")
         }
 
-        fn begin(&self) -> PersistenceFuture<'_, Box<dyn PostTransaction>> {
-            self.calls.lock().expect("调用记录锁应可用").push("begin");
+        async fn begin(&self) -> AppResult<Box<dyn PostTransaction>> {
+            self.calls
+                .lock()
+                .expect("调用记录锁应可用")
+                .push(Call::Begin);
             let transaction = FakeTransaction {
                 calls: Arc::clone(&self.calls),
                 record: self.record.clone(),
+                duplicate_code: self.duplicate_code,
             };
-            Box::pin(async move { Ok(Box::new(transaction) as Box<dyn PostTransaction>) })
+            Ok(Box::new(transaction) as Box<dyn PostTransaction>)
         }
     }
 
+    #[async_trait]
     impl PostTransaction for FakeTransaction {
-        fn lock_configuration<'a>(&'a self, _tenant_id: &'a str) -> PersistenceFuture<'a, ()> {
-            self.calls.lock().expect("调用记录锁应可用").push("lock");
-            Box::pin(async { Ok(()) })
+        async fn lock_configuration(&self, _tenant_id: &str) -> AppResult<()> {
+            self.calls
+                .lock()
+                .expect("调用记录锁应可用")
+                .push(Call::Lock);
+            Ok(())
         }
 
-        fn find_by_code_for_update<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            _code: &'a str,
-        ) -> PersistenceFuture<'a, Option<PostRecord>> {
-            Box::pin(async { Ok(None) })
+        async fn find_by_code_for_update(
+            &self,
+            _tenant_id: &str,
+            _code: &str,
+        ) -> AppResult<Option<PostRecord>> {
+            self.calls
+                .lock()
+                .expect("调用记录锁应可用")
+                .push(Call::FindByCode);
+            Ok(self.duplicate_code.then(|| self.record.clone()))
         }
 
-        fn find_by_id_for_update<'a>(
-            &'a self,
-            _tenant_id: &'a str,
+        async fn find_by_id_for_update(
+            &self,
+            _tenant_id: &str,
             _id: i64,
-        ) -> PersistenceFuture<'a, Option<PostRecord>> {
-            self.calls.lock().expect("调用记录锁应可用").push("find");
-            let record = self.record.clone();
-            Box::pin(async move { Ok(Some(record)) })
+        ) -> AppResult<Option<PostRecord>> {
+            self.calls
+                .lock()
+                .expect("调用记录锁应可用")
+                .push(Call::FindById);
+            Ok(Some(self.record.clone()))
         }
 
-        fn insert<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            record: PostRecord,
-        ) -> PersistenceFuture<'a, PostRecord> {
-            Box::pin(async move { Ok(record) })
+        async fn insert(&self, _tenant_id: &str, record: PostRecord) -> AppResult<PostRecord> {
+            Ok(record)
         }
 
-        fn update<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            record: PostRecord,
-        ) -> PersistenceFuture<'a, PostRecord> {
-            self.calls.lock().expect("调用记录锁应可用").push("update");
-            Box::pin(async move { Ok(record) })
+        async fn update(&self, _tenant_id: &str, record: PostRecord) -> AppResult<PostRecord> {
+            self.calls
+                .lock()
+                .expect("调用记录锁应可用")
+                .push(Call::Update);
+            Ok(record)
         }
 
-        fn delete<'a>(&'a self, _tenant_id: &'a str, _id: i64) -> PersistenceFuture<'a, ()> {
-            Box::pin(async { Ok(()) })
+        async fn delete(&self, _tenant_id: &str, _id: i64) -> AppResult<()> {
+            Ok(())
         }
 
-        fn increment_configuration_version<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-        ) -> PersistenceFuture<'a, ()> {
-            self.calls.lock().expect("调用记录锁应可用").push("version");
-            Box::pin(async { Ok(()) })
+        async fn increment_configuration_version(&self, _tenant_id: &str) -> AppResult<()> {
+            self.calls
+                .lock()
+                .expect("调用记录锁应可用")
+                .push(Call::IncrementVersion);
+            Ok(())
         }
     }
 
-    impl ControlTransaction for FakeTransaction {
-        fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-            self.calls.lock().expect("调用记录锁应可用").push("commit");
-            Box::pin(async { Ok(()) })
+    #[async_trait]
+    impl PersistenceTransaction for FakeTransaction {
+        async fn commit(self: Box<Self>, audit_mode: TransactionAuditMode) -> AppResult<()> {
+            self.calls
+                .lock()
+                .expect("调用记录锁应可用")
+                .push(Call::Commit(audit_mode));
+            Ok(())
         }
+
+        async fn rollback(self: Box<Self>) -> AppResult<()> {
+            self.calls
+                .lock()
+                .expect("调用记录锁应可用")
+                .push(Call::Rollback);
+            Ok(())
+        }
+    }
+
+    fn record(timestamp: chrono::DateTime<Utc>) -> PostRecord {
+        PostRecord {
+            id: 7,
+            name: "旧岗位".into(),
+            code: "old".into(),
+            sort: 1,
+            status: "1".into(),
+            remark: None,
+            created_at: timestamp,
+            updated_at: timestamp,
+        }
+    }
+
+    fn actor() -> ActorContext {
+        ActorContext {
+            user_id: 1,
+            tenant_id: "tenant-a".into(),
+            username: "tester".into(),
+            dept_id: None,
+            dept_path: None,
+            data_scope: DataScope::SelfOnly,
+            custom_dept_ids: Vec::new(),
+            include_self: true,
+            is_super_admin: false,
+        }
+    }
+
+    fn fixed_id() -> AppResult<i64> {
+        Ok(8)
     }
 
     #[tokio::test]
@@ -641,29 +717,11 @@ mod post {
             .expect("测试时间应有效");
         let persistence = Arc::new(FakePersistence {
             calls: Arc::clone(&calls),
-            record: PostRecord {
-                id: 7,
-                name: "旧岗位".into(),
-                code: "old".into(),
-                sort: 1,
-                status: "1".into(),
-                remark: None,
-                created_at: timestamp,
-                updated_at: timestamp,
-            },
+            record: record(timestamp),
+            duplicate_code: false,
         });
         let service = PostService::new(persistence);
-        let actor = ActorContext {
-            user_id: 1,
-            tenant_id: "tenant-a".into(),
-            username: "tester".into(),
-            dept_id: None,
-            dept_path: None,
-            data_scope: DataScope::SelfOnly,
-            custom_dept_ids: Vec::new(),
-            include_self: true,
-            is_super_admin: false,
-        };
+        let actor = actor();
 
         let updated = service
             .update(&actor, 7, "新岗位", 2, "0".into())
@@ -675,7 +733,41 @@ mod post {
         assert_eq!(updated.status, "0");
         assert_eq!(
             *calls.lock().expect("调用记录锁应可用"),
-            ["begin", "lock", "find", "update", "version", "commit"]
+            [
+                Call::Begin,
+                Call::Lock,
+                Call::FindById,
+                Call::Update,
+                Call::IncrementVersion,
+                Call::Commit(TransactionAuditMode::CurrentRequest),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn create_rolls_back_on_duplicate_code() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let timestamp = Utc
+            .with_ymd_and_hms(2026, 8, 20, 0, 0, 0)
+            .single()
+            .expect("测试时间应有效");
+        let persistence = Arc::new(FakePersistence {
+            calls: Arc::clone(&calls),
+            record: record(timestamp),
+            duplicate_code: true,
+        });
+        let service = PostService::new(persistence);
+        ryframe_application::install_id_generator(fixed_id).expect("测试 ID 生成器应安装成功");
+
+        let error = service
+            .create(&actor(), "新岗位", "old", 2)
+            .await
+            .expect_err("重复岗位编码应失败");
+
+        assert!(matches!(error, AppError::Conflict(_)));
+        assert_eq!(
+            *calls.lock().expect("调用记录锁应可用"),
+            [Call::Begin, Call::Lock, Call::FindByCode, Call::Rollback]
         );
     }
 }

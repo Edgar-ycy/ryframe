@@ -1,7 +1,10 @@
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use ryframe_kernel::{DataScopeContext, ExportCursorWindow, PageResult, ValidatedPageQuery};
+use ryframe_kernel::{
+    AppResult, DataScopeContext, ExportCursorWindow, PageResult, ValidatedPageQuery,
+};
 
-use crate::{ControlTransaction, PersistenceFuture};
+use crate::PersistenceTransaction;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct OperLogRecord {
@@ -32,29 +35,30 @@ pub struct OperLogFilter<'a> {
     pub end_time: Option<DateTime<Utc>>,
 }
 
-pub trait OperLogTransaction: ControlTransaction {
-    fn clean<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, u64>;
+#[async_trait]
+pub trait OperLogTransaction: PersistenceTransaction {
+    async fn clean(&self, tenant_id: &str) -> AppResult<u64>;
 }
 
+#[async_trait]
 pub trait OperLogPersistencePort: Send + Sync {
-    fn insert<'a>(&'a self, tenant_id: &'a str, record: OperLogRecord)
-    -> PersistenceFuture<'a, ()>;
+    async fn insert(&self, tenant_id: &str, record: OperLogRecord) -> AppResult<()>;
 
-    fn find_by_page<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_by_page(
+        &self,
+        tenant_id: &str,
         page: ValidatedPageQuery,
-        filter: OperLogFilter<'a>,
-        data_scope: &'a DataScopeContext,
-    ) -> PersistenceFuture<'a, PageResult<OperLogRecord>>;
+        filter: OperLogFilter<'_>,
+        data_scope: &DataScopeContext,
+    ) -> AppResult<PageResult<OperLogRecord>>;
 
-    fn find_export_batch<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        filter: OperLogFilter<'a>,
-        data_scope: &'a DataScopeContext,
+    async fn find_export_batch(
+        &self,
+        tenant_id: &str,
+        filter: OperLogFilter<'_>,
+        data_scope: &DataScopeContext,
         window: ExportCursorWindow,
-    ) -> PersistenceFuture<'a, Vec<OperLogRecord>>;
+    ) -> AppResult<Vec<OperLogRecord>>;
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn OperLogTransaction>>;
+    async fn begin(&self) -> AppResult<Box<dyn OperLogTransaction>>;
 }
