@@ -129,6 +129,23 @@ pub(super) fn system_router(
             oper_log_middleware,
         ))
         .layer(from_fn_with_state(
+            idempotency_state.clone(),
+            idempotency_middleware,
+        ));
+
+    // 强制下线写入 Redis，不参与数据库业务事务。审计策略必须位于审计
+    // 中间件外层，确保请求进入审计逻辑前已经可见。
+    let independent_online = Router::new()
+        .nest(
+            "/online",
+            online_user_handler::force_logout_router(state.clone()),
+        )
+        .layer(from_fn_with_state(
+            OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
+            oper_log_middleware,
+        ))
+        .layer(Extension(AuditMode::Independent))
+        .layer(from_fn_with_state(
             idempotency_state,
             idempotency_middleware,
         ));
@@ -136,6 +153,7 @@ pub(super) fn system_router(
     let router = Router::new()
         .merge(database_idempotent)
         .merge(redis_idempotent)
+        .merge(independent_online)
         // 从内到外注册：公共系统管理层继续统一提供用户限流。
         .layer(from_fn_with_state(
             rate_limit_state,
@@ -165,9 +183,19 @@ pub(super) fn common_router(state: AppState, idempotency_state: IdempotencyState
         )),
         &state,
     );
+    let regular_exports = export_handler::export_router(state.clone()).layer(from_fn_with_state(
+        oper_log_state.clone(),
+        oper_log_middleware,
+    ));
+    // 通知已读只更新界面状态，不与导出业务事务绑定。后注册的审计策略
+    // 位于操作审计外层，确保中间件读取到 Independent。
+    let notification_read = export_handler::notification_read_router(state.clone())
+        .layer(from_fn_with_state(oper_log_state, oper_log_middleware))
+        .layer(Extension(AuditMode::Independent));
     let exports = protect(
-        export_handler::export_router(state.clone())
-            .layer(from_fn_with_state(oper_log_state, oper_log_middleware))
+        Router::new()
+            .merge(regular_exports)
+            .merge(notification_read)
             .layer(from_fn_with_state(
                 idempotency_state,
                 idempotency_middleware,

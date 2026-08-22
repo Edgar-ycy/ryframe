@@ -24,11 +24,17 @@ pub fn export_router(state: AppState) -> Router {
     Router::new()
         .merge(route!(list))
         .merge(route!(unread_notification_count))
-        .merge(route!(mark_notifications_read))
         .merge(route!(delete_records))
         .merge(route!(detail))
         .merge(route!(cancel))
         .merge(route!(download))
+        .with_state(state)
+}
+
+/// 导出通知已读路由，由组合层显式装配独立审计事务。
+pub fn notification_read_router(state: AppState) -> Router {
+    Router::new()
+        .merge(route!(mark_notifications_read))
         .with_state(state)
 }
 

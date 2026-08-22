@@ -4,13 +4,11 @@ use crate::http::{ApiPageResponse, ApiResponse, HttpResult};
 use crate::list_query;
 use crate::state::AppState;
 use axum::{
-    Extension, Json, Router,
+    Json, Router,
     extract::{Path, Query, State},
 };
 use ryframe_kernel::AppError;
 use ryframe_macro::{delete, get, route};
-
-use crate::oper_log_middleware::AuditMode;
 
 list_query!(pub OnlineUserQuery, OnlineUserFilterQuery {
     username: String,
@@ -21,8 +19,12 @@ list_query!(pub OnlineUserQuery, OnlineUserFilterQuery {
 pub fn online_user_router(state: AppState) -> Router {
     Router::new()
         .merge(route!(list_online_users_page))
-        .merge(route!(force_logout).layer(Extension(AuditMode::Independent)))
         .with_state(state)
+}
+
+/// 强制下线路由，由组合层显式装配独立审计事务。
+pub fn force_logout_router(state: AppState) -> Router {
+    Router::new().merge(route!(force_logout)).with_state(state)
 }
 
 /// 获取在线用户列表（分页）
