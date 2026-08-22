@@ -606,11 +606,11 @@ fn map_create_migration(command: CreateTenantDataMigrationRecord) -> CreateTenan
     }
 }
 
-fn validated_backup_query<'a>(
-    migration: &'a TenantDataMigrationRecord,
+fn validated_backup_query(
+    migration: &TenantDataMigrationRecord,
     not_before: chrono::DateTime<chrono::Utc>,
     now: chrono::DateTime<chrono::Utc>,
-) -> ValidatedTenantDataBackup<'a> {
+) -> ValidatedTenantDataBackup<'_> {
     ValidatedTenantDataBackup {
         tenant_id: &migration.tenant_id,
         target_key: &migration.target_key,

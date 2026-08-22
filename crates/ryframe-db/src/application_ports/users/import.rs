@@ -150,18 +150,6 @@ impl UserImportPersistencePort for DatabaseUserImportPersistence {
         })
     }
 
-    fn requester_usernames<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        user_ids: &'a [i64],
-    ) -> PersistenceFuture<'a, Vec<(i64, String)>> {
-        Box::pin(async move {
-            UserRepository
-                .find_usernames_by_ids(self.database.write(), tenant_id, user_ids)
-                .await
-        })
-    }
-
     fn all_rows<'a>(
         &'a self,
         tenant_id: &'a str,
@@ -172,6 +160,18 @@ impl UserImportPersistencePort for DatabaseUserImportPersistence {
                 .all_row_results(self.database.write(), tenant_id, import_id)
                 .await
                 .map(|rows| rows.into_iter().map(row_record).collect())
+        })
+    }
+
+    fn requester_usernames<'a>(
+        &'a self,
+        tenant_id: &'a str,
+        user_ids: &'a [i64],
+    ) -> PersistenceFuture<'a, Vec<(i64, String)>> {
+        Box::pin(async move {
+            UserRepository
+                .find_usernames_by_ids(self.database.write(), tenant_id, user_ids)
+                .await
         })
     }
 

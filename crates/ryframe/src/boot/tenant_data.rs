@@ -107,13 +107,13 @@ async fn update_metrics(router: &TenantDatabaseRouter) {
         };
         *target_counts.entry((mode, health)).or_default() += 1;
     }
-    let placements = match router.placement_metrics_snapshot().await {
-        Ok(placements) => placements,
-        Err(error) => {
+    let placements = router
+        .placement_metrics_snapshot()
+        .await
+        .unwrap_or_else(|error| {
             tracing::warn!(%error, "租户数据低基数 placement 指标刷新失败");
             Vec::new()
-        }
-    };
+        });
     let mut placement_counts = BTreeMap::<(&'static str, &'static str), u64>::new();
     for placement in placements {
         *placement_counts
