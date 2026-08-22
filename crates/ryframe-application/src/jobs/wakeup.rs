@@ -33,13 +33,13 @@ const OUTBOX_WAKEUP_PAYLOAD: &str = r#"{"v":1,"queue":"outbox"}"#;
 
 /// 仅用于内部唤醒协议的两个持久化队列。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum WakeupQueue {
+pub enum WakeupQueue {
     BackgroundJob,
     Outbox,
 }
 
 impl WakeupQueue {
-    pub(super) const fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::BackgroundJob => "background_job",
             Self::Outbox => "outbox",
@@ -73,7 +73,7 @@ struct RedisWakeupPayload {
 /// 唤醒信号并不承载业务事实。任何信号丢失、重复、解析失败或 Redis 不可用时，
 /// 消费循环都会继续通过 MySQL 轮询领取任务。
 #[derive(Clone)]
-pub(super) struct QueueWakeup {
+pub struct QueueWakeup {
     inner: Arc<QueueWakeupInner>,
 }
 
@@ -86,7 +86,7 @@ struct QueueWakeupInner {
 }
 
 impl QueueWakeup {
-    pub(super) fn new(
+    pub fn new(
         transport: Option<Arc<dyn JobWakeupTransport>>,
         metrics_observer: Arc<RwLock<Option<Arc<dyn JobMetricsObserver>>>>,
     ) -> Self {
@@ -103,7 +103,7 @@ impl QueueWakeup {
         }
     }
 
-    pub(super) fn subscribe(&self, queue: WakeupQueue) -> watch::Receiver<u64> {
+    pub fn subscribe(&self, queue: WakeupQueue) -> watch::Receiver<u64> {
         match queue {
             WakeupQueue::BackgroundJob => self.inner.background_job.subscribe(),
             WakeupQueue::Outbox => self.inner.outbox.subscribe(),
@@ -111,7 +111,7 @@ impl QueueWakeup {
     }
 
     /// 先通知本进程等待者，再尝试发布跨进程提示。Redis 失败只会被观测，不会传回调用方。
-    pub(super) async fn notify(&self, queue: WakeupQueue) {
+    pub async fn notify(&self, queue: WakeupQueue) {
         self.notify_local(queue);
         self.record_wakeup(queue, "local", "success");
 
@@ -304,61 +304,5 @@ impl QueueWakeup {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Mutex;
-
-    use futures_util::stream;
-
-    use super::*;
-
-    #[derive(Default)]
-    struct RecordingTransport {
-        published: Mutex<Vec<(String, String)>>,
-    }
-
-    impl JobWakeupTransport for RecordingTransport {
-        fn publish<'a>(&'a self, channel: &'a str, payload: &'a str) -> JobWakeupFuture<'a, ()> {
-            Box::pin(async move {
-                self.published
-                    .lock()
-                    .expect("记录锁不应中毒")
-                    .push((channel.to_owned(), payload.to_owned()));
-                Ok(())
-            })
-        }
-
-        fn subscribe<'a>(&'a self, _channel: &'a str) -> JobWakeupFuture<'a, JobWakeupStream> {
-            Box::pin(async { Ok(Box::pin(stream::empty()) as JobWakeupStream) })
-        }
-    }
-
-    #[tokio::test]
-    async fn notifies_local_waiter_and_transport() {
-        let transport = Arc::new(RecordingTransport::default());
-        let wakeup = QueueWakeup::new(
-            Some(Arc::clone(&transport) as Arc<dyn JobWakeupTransport>),
-            Arc::new(RwLock::new(None)),
-        );
-        let mut receiver = wakeup.subscribe(WakeupQueue::BackgroundJob);
-
-        wakeup.notify(WakeupQueue::BackgroundJob).await;
-        receiver.changed().await.expect("本地唤醒通道应保持有效");
-
-        assert_eq!(*receiver.borrow(), 1);
-        assert_eq!(
-            transport
-                .published
-                .lock()
-                .expect("记录锁不应中毒")
-                .as_slice(),
-            [(
-                JOB_WAKEUP_REDIS_CHANNEL.to_owned(),
-                BACKGROUND_JOB_WAKEUP_PAYLOAD.to_owned(),
-            )]
-        );
     }
 }

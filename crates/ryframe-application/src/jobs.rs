@@ -29,7 +29,10 @@ pub use schedule_targets::{
     ScheduledJobContext, ScheduledJobTarget, ScheduledJobTargetDescriptor,
     ScheduledJobTargetRegistry, ScheduledJobTargetScope,
 };
-pub use wakeup::{JobWakeupFuture, JobWakeupStream, JobWakeupTransport};
+pub use wakeup::{
+    JOB_WAKEUP_REDIS_CHANNEL, JobWakeupFuture, JobWakeupStream, JobWakeupTransport, QueueWakeup,
+    WakeupQueue,
+};
 pub use worker::{ClaimedBackgroundJob, JobHandler, JobRunResult, JobWorker};
 
 /// 消息发布 Outbox 事件的稳定类型标识。

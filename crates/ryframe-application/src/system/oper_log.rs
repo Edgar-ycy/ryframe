@@ -68,7 +68,7 @@ pub enum OperLogStatus {
 }
 
 impl OperLogStatus {
-    fn as_str(self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::Success => "1",
             Self::Failure => "0",
@@ -200,106 +200,5 @@ impl OperLogService {
         let rows_affected = transaction.clean(tenant_id).await?;
         transaction.commit().await?;
         Ok(rows_affected)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Mutex;
-
-    use ryframe_kernel::DataScope;
-
-    use super::*;
-    use crate::{ControlTransaction, PersistenceFuture, ports::system::OperLogTransaction};
-
-    struct FakePersistence {
-        calls: Arc<Mutex<Vec<&'static str>>>,
-    }
-
-    struct FakeTransaction {
-        calls: Arc<Mutex<Vec<&'static str>>>,
-    }
-
-    impl OperLogPersistencePort for FakePersistence {
-        fn insert<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            _record: OperLogRecord,
-        ) -> PersistenceFuture<'a, ()> {
-            Box::pin(async { unreachable!("本测试不写入日志") })
-        }
-
-        fn find_by_page<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            _page: ValidatedPageQuery,
-            _filter: OperLogFilter<'a>,
-            _data_scope: &'a ryframe_kernel::DataScopeContext,
-        ) -> PersistenceFuture<'a, PageResult<OperLogRecord>> {
-            Box::pin(async { unreachable!("本测试不读取列表") })
-        }
-
-        fn find_export_batch<'a>(
-            &'a self,
-            _tenant_id: &'a str,
-            _filter: OperLogFilter<'a>,
-            _data_scope: &'a ryframe_kernel::DataScopeContext,
-            _window: ExportCursorWindow,
-        ) -> PersistenceFuture<'a, Vec<OperLogRecord>> {
-            Box::pin(async { unreachable!("本测试不执行导出") })
-        }
-
-        fn begin(&self) -> PersistenceFuture<'_, Box<dyn OperLogTransaction>> {
-            self.calls.lock().expect("调用记录锁应可用").push("begin");
-            let transaction = FakeTransaction {
-                calls: Arc::clone(&self.calls),
-            };
-            Box::pin(async move { Ok(Box::new(transaction) as Box<dyn OperLogTransaction>) })
-        }
-    }
-
-    impl OperLogTransaction for FakeTransaction {
-        fn clean<'a>(&'a self, _tenant_id: &'a str) -> PersistenceFuture<'a, u64> {
-            self.calls.lock().expect("调用记录锁应可用").push("clean");
-            Box::pin(async { Ok(4) })
-        }
-    }
-
-    impl ControlTransaction for FakeTransaction {
-        fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-            self.calls.lock().expect("调用记录锁应可用").push("commit");
-            Box::pin(async { Ok(()) })
-        }
-    }
-
-    #[tokio::test]
-    async fn clean_is_committed_by_application_use_case() {
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let service = OperLogService::new(Arc::new(FakePersistence {
-            calls: Arc::clone(&calls),
-        }));
-        let actor = ActorContext {
-            user_id: 1,
-            tenant_id: "tenant-a".into(),
-            username: "tester".into(),
-            dept_id: None,
-            dept_path: None,
-            data_scope: DataScope::SelfOnly,
-            custom_dept_ids: Vec::new(),
-            include_self: true,
-            is_super_admin: false,
-        };
-
-        assert_eq!(service.clean(&actor).await.expect("清理应成功"), 4);
-        assert_eq!(
-            *calls.lock().expect("调用记录锁应可用"),
-            ["begin", "clean", "commit"]
-        );
-    }
-
-    #[test]
-    fn operation_status_keeps_persisted_codes() {
-        assert_eq!(OperLogStatus::Success.as_str(), "1");
-        assert_eq!(OperLogStatus::Failure.as_str(), "0");
     }
 }
