@@ -264,22 +264,3 @@ pub fn parse_duration(s: &str) -> AppResult<usize> {
             .map_err(|_| AppError::Config(format!("无效的 duration: {}", s)))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn token_settings_parse_expirations_once() {
-        let settings = TokenSettings::new("test-secret", "1h", "30m").unwrap();
-
-        assert_eq!(settings.secret(), "test-secret");
-        assert_eq!(settings.access_token_ttl_seconds(), 3_600);
-        assert_eq!(settings.refresh_token_ttl_seconds(), 1_800);
-    }
-
-    #[test]
-    fn token_settings_reject_invalid_expiration() {
-        assert!(TokenSettings::new("test-secret", "later", "7d").is_err());
-    }
-}

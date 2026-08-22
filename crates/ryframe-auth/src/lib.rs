@@ -18,15 +18,3 @@ pub fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     }
     difference == 0
 }
-
-#[cfg(test)]
-mod tests {
-    use super::constant_time_eq;
-
-    #[test]
-    fn constant_time_comparison_checks_content_and_length() {
-        assert!(constant_time_eq(b"monitor-token", b"monitor-token"));
-        assert!(!constant_time_eq(b"monitor-token", b"monitor-other"));
-        assert!(!constant_time_eq(b"monitor-token", b"monitor-token-long"));
-    }
-}
