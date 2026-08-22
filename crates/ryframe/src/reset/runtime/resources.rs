@@ -9,7 +9,7 @@ use ryframe_adapters::{
 };
 use ryframe_config::{AppConfig, RedisConfig, StorageBackend};
 
-use crate::{
+use crate::reset::{
     ResetError, ResetResult,
     engine::{PhaseEvidence, ResourceProgress},
     ledger::ResetLedger,
@@ -426,7 +426,8 @@ impl RedisReset {
             .redis
             .as_ref()
             .ok_or_else(|| ResetError::new("Redis manifest 缺失"))?;
-        if crate::model::sha256_hex(sentinel_key.as_bytes()) != resource.outside_sentinel_key_sha256
+        if crate::reset::model::sha256_hex(sentinel_key.as_bytes())
+            != resource.outside_sentinel_key_sha256
             || sentinel_key.starts_with(&resource.namespace)
         {
             return Err(ResetError::new("Redis scope 外哨兵键与不可变清单不匹配"));
@@ -671,7 +672,7 @@ impl RedisReset {
 
     async fn verify_ownership_before_purge(
         &self,
-        resource: &crate::model::RedisResource,
+        resource: &crate::reset::model::RedisResource,
         legacy_exclusive: bool,
     ) -> ResetResult<()> {
         let marker = raw_get_bounded(
@@ -704,7 +705,7 @@ impl RedisReset {
     }
 }
 
-fn reset_probe_key(namespace: &str, plan_hash: &str) -> ResetResult<String> {
+pub fn reset_probe_key(namespace: &str, plan_hash: &str) -> ResetResult<String> {
     if namespace.is_empty()
         || plan_hash.len() != 64
         || !plan_hash.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -719,7 +720,7 @@ fn reset_probe_key(namespace: &str, plan_hash: &str) -> ResetResult<String> {
 async fn scan_and_unlink_scope(
     redis: &RedisReset,
     guard: &MysqlReset,
-    resource: &crate::model::RedisResource,
+    resource: &crate::reset::model::RedisResource,
     pattern: &str,
 ) -> ResetResult<u64> {
     let mut connection = redis.client.conn().clone();
@@ -801,7 +802,7 @@ async fn scan_scope_keys(
     Ok(keys.into_iter().collect())
 }
 
-fn validate_physical_keys(keys: &[String], namespace: &str) -> ResetResult<()> {
+pub fn validate_physical_keys(keys: &[String], namespace: &str) -> ResetResult<()> {
     if keys.iter().any(|key| !key.starts_with(namespace)) {
         return Err(ResetError::new(
             "Redis SCAN 返回 scope 外键，拒绝执行 UNLINK",
@@ -810,11 +811,11 @@ fn validate_physical_keys(keys: &[String], namespace: &str) -> ResetResult<()> {
     Ok(())
 }
 
-fn is_deletable_object_key(key: &str, ownership_marker_key: &str) -> bool {
+pub fn is_deletable_object_key(key: &str, ownership_marker_key: &str) -> bool {
     key != ownership_marker_key
 }
 
-fn retain_deletable_redis_keys(keys: &mut Vec<String>, ownership_marker_key: &str) {
+pub fn retain_deletable_redis_keys(keys: &mut Vec<String>, ownership_marker_key: &str) {
     keys.retain(|key| key != ownership_marker_key);
 }
 
@@ -892,51 +893,4 @@ async fn raw_unlink_exact(
         .query_async(&mut connection)
         .await
         .map_err(|_| ResetError::new("Redis 精确 scoped 键 UNLINK 失败"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        is_deletable_object_key, reset_probe_key, retain_deletable_redis_keys,
-        validate_physical_keys,
-    };
-
-    #[test]
-    fn unlink_candidates_cannot_escape_namespace() {
-        let namespace = "ryframe:{test-a}:";
-        assert!(
-            validate_physical_keys(
-                &[
-                    "ryframe:{test-a}:jobs:1".into(),
-                    "ryframe:{test-a}:cache".into()
-                ],
-                namespace,
-            )
-            .is_ok()
-        );
-        assert!(validate_physical_keys(&["ryframe:{test-b}:sentinel".into()], namespace).is_err());
-    }
-
-    #[test]
-    fn capability_probe_is_plan_bound_and_cannot_escape_namespace() {
-        let namespace = "ryframe:{test-a}:";
-        let key = reset_probe_key(namespace, &"a".repeat(64)).expect("探针键有效");
-        assert!(key.starts_with(namespace));
-        assert!(key.ends_with(&"a".repeat(64)));
-        assert!(reset_probe_key(namespace, "not-a-hash").is_err());
-    }
-
-    #[test]
-    fn ownership_markers_are_never_selected_for_deletion() {
-        let marker = "ryframe:{test-a}:.ryframe-owner";
-        assert!(!is_deletable_object_key(marker, marker));
-        assert!(is_deletable_object_key(
-            "ryframe:{test-a}:exports/1",
-            marker
-        ));
-
-        let mut keys = vec![marker.into(), "ryframe:{test-a}:jobs:1".into()];
-        retain_deletable_redis_keys(&mut keys, marker);
-        assert_eq!(keys, ["ryframe:{test-a}:jobs:1"]);
-    }
 }

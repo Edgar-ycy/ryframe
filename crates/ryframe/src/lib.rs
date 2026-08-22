@@ -4,5 +4,4 @@ pub mod app;
 pub mod boot;
 
 #[cfg(feature = "destructive-reset")]
-#[path = "bin/ryframe_reset.rs"]
 pub mod reset;

@@ -9,7 +9,7 @@ use sea_orm::{
     TransactionTrait, TryGetable,
 };
 
-use crate::{
+use crate::reset::{
     ResetError, ResetResult,
     engine::{PhaseEvidence, ResourceProgress},
     ledger::ResetLedger,
@@ -75,6 +75,12 @@ struct SeedCredentials {
 struct DatabaseSpec {
     resource: PhysicalDatabase,
     connection: DbConnection,
+}
+
+impl Default for MysqlReset {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MysqlReset {
@@ -481,7 +487,7 @@ async fn server_identity(db: &DatabaseConnection) -> ResetResult<(String, i64)> 
     Ok((server_uuid, lower_case_table_names))
 }
 
-fn parse_lower_case_table_names(value: &str) -> ResetResult<i64> {
+pub fn parse_lower_case_table_names(value: &str) -> ResetResult<i64> {
     let parsed = value
         .parse::<i64>()
         .map_err(|_| ResetError::new("MySQL lower_case_table_names 格式无效"))?;
@@ -630,7 +636,7 @@ fn insert_spec(
     Ok(())
 }
 
-fn same_credentials(left: &DbConnection, right: &DbConnection) -> bool {
+pub fn same_credentials(left: &DbConnection, right: &DbConnection) -> bool {
     left.username == right.username
         && left.password == right.password
         && left.tls_mode == right.tls_mode
@@ -894,7 +900,7 @@ async fn verify_empty_external_tenant(db: &DatabaseConnection) -> ResetResult<()
     Ok(())
 }
 
-fn quote_identifier(identifier: &str) -> ResetResult<String> {
+pub fn quote_identifier(identifier: &str) -> ResetResult<String> {
     if identifier.is_empty()
         || identifier.len() > 64
         || !identifier
@@ -926,45 +932,5 @@ where
         Some(row) => Option::<i64>::try_get_by_index(&row, 0)
             .map_err(|_| ResetError::new("MySQL 标量查询格式无效")),
         None => Ok(None),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{parse_lower_case_table_names, quote_identifier, same_credentials};
-    use ryframe_config::DbConnection;
-
-    #[test]
-    fn ddl_identifier_quoting_is_strict() {
-        assert_eq!(
-            quote_identifier("tenant_a").expect("标识符有效"),
-            "`tenant_a`"
-        );
-        assert!(quote_identifier("tenant-a").is_err());
-        assert!(quote_identifier("tenant`; DROP DATABASE x").is_err());
-        assert!(quote_identifier("mysql").is_ok());
-    }
-
-    #[test]
-    fn deduplication_requires_identical_credentials() {
-        let left = DbConnection {
-            username: "reset".into(),
-            password: "secret-a".into(),
-            ..DbConnection::default()
-        };
-        let mut right = left.clone();
-        assert!(same_credentials(&left, &right));
-        right.password = "secret-b".into();
-        assert!(!same_credentials(&left, &right));
-    }
-
-    #[test]
-    fn lower_case_table_names_accepts_only_mysql_modes() {
-        assert_eq!(parse_lower_case_table_names("0").expect("模式有效"), 0);
-        assert_eq!(parse_lower_case_table_names("1").expect("模式有效"), 1);
-        assert_eq!(parse_lower_case_table_names("2").expect("模式有效"), 2);
-        for invalid in ["-1", "3", " 1", "true"] {
-            assert!(parse_lower_case_table_names(invalid).is_err());
-        }
     }
 }

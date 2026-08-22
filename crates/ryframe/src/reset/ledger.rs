@@ -8,7 +8,7 @@ use std::{
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use crate::{ResetError, ResetResult, model::ResetManifest};
+use crate::reset::{ResetError, ResetResult, model::ResetManifest};
 
 const LEDGER_VERSION: u32 = 3;
 const STATE_DIR_ENV: &str = "RYFRAME_RESET_STATE_DIR";
@@ -112,7 +112,7 @@ pub struct ResetLedger {
 }
 
 impl ResetLedger {
-    fn new(manifest: &ResetManifest, plan_hash: &str) -> Self {
+    pub fn new(manifest: &ResetManifest, plan_hash: &str) -> Self {
         let now = now();
         Self {
             ledger_version: LEDGER_VERSION,
@@ -258,7 +258,7 @@ impl ResetLedger {
         }
         let updated_at = now();
         for database in &manifest.databases {
-            let key = crate::model::database_resource_key(database);
+            let key = crate::reset::model::database_resource_key(database);
             let record = self
                 .resources
                 .get_mut(&key)
@@ -279,7 +279,7 @@ impl ResetLedger {
     }
 
     fn validate_identity(&self, manifest: &ResetManifest, plan_hash: &str) -> ResetResult<()> {
-        let allowed_resources = crate::model::resource_keys(manifest);
+        let allowed_resources = crate::reset::model::resource_keys(manifest);
         if self.ledger_version != LEDGER_VERSION
             || self.plan_hash != plan_hash
             || self.environment != manifest.environment
@@ -311,6 +311,9 @@ pub struct LedgerStore {
 }
 
 impl LedgerStore {
+    pub fn ledger_path(&self) -> &Path {
+        &self.ledger_path
+    }
     pub fn from_environment(manifest: &ResetManifest, plan_hash: &str) -> ResetResult<Self> {
         let base = match std::env::var(STATE_DIR_ENV) {
             Ok(value) if !value.trim().is_empty() => PathBuf::from(value),
@@ -432,7 +435,7 @@ fn write_json_atomically<T: Serialize>(path: &Path, value: &T) -> ResetResult<()
     Ok(())
 }
 
-fn backup_path(path: &Path) -> ResetResult<PathBuf> {
+pub fn backup_path(path: &Path) -> ResetResult<PathBuf> {
     let parent = path
         .parent()
         .ok_or_else(|| ResetError::new("reset 状态文件缺少父目录"))?;
@@ -445,167 +448,4 @@ fn backup_path(path: &Path) -> ResetResult<PathBuf> {
 
 fn now() -> String {
     Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::model::{
-        DatabaseConnectionIdentity, LegacyOwnershipPolicy, ObjectStorageResource, PhysicalDatabase,
-        database_resource_key,
-    };
-
-    fn manifest() -> ResetManifest {
-        ResetManifest {
-            manifest_version: 3,
-            environment: "test".into(),
-            scope_id: "test-a".into(),
-            code_sha: "a".repeat(40),
-            config_sha: "b".repeat(64),
-            credential_version: "test-v1".into(),
-            confirmation_phrase: "RESET-RYFRAME-test-test-a".into(),
-            legacy_ownership: LegacyOwnershipPolicy {
-                mysql_exclusive: false,
-                redis_exclusive: false,
-                object_storage_exclusive: false,
-            },
-            redis: None,
-            object_storage: ObjectStorageResource {
-                backend: "local".into(),
-                endpoint: "unused".into(),
-                use_ssl: false,
-                region: String::new(),
-                access_key_env: None,
-                secret_key_env: None,
-                prefixes: Vec::new(),
-            },
-            databases: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn same_hash_resumes_and_other_identity_is_rejected() {
-        let manifest = manifest();
-        let base = std::env::temp_dir().join(format!(
-            "ryframe-reset-ledger-{}-{}",
-            std::process::id(),
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        ));
-        let hash = "c".repeat(64);
-        let store = LedgerStore::new(&base, &manifest, &hash).expect("创建账本路径");
-        let mut ledger = store.load_or_create(&manifest, &hash).expect("创建账本");
-        ledger.mark_running(ResetPhase::ObjectStorage);
-        ledger.mark_complete(ResetPhase::ObjectStorage, BTreeMap::new());
-        store.save(&ledger).expect("保存账本");
-        let resumed = store
-            .load_or_create(&manifest, &hash)
-            .expect("相同清单续跑");
-        assert!(resumed.phase_complete(ResetPhase::ObjectStorage));
-
-        let mut changed = manifest;
-        changed.config_sha = "d".repeat(64);
-        assert!(store.load_or_create(&changed, &hash).is_err());
-        fs::remove_dir_all(base).expect("清理测试状态目录");
-    }
-
-    #[test]
-    fn recovers_ledger_from_previous_copy_after_interrupted_replace() {
-        let manifest = manifest();
-        let base = std::env::temp_dir().join(format!(
-            "ryframe-reset-ledger-recovery-{}-{}",
-            std::process::id(),
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        ));
-        let hash = "e".repeat(64);
-        let store = LedgerStore::new(&base, &manifest, &hash).expect("创建账本路径");
-        let mut ledger = store.load_or_create(&manifest, &hash).expect("创建账本");
-        ledger.mark_running(ResetPhase::ObjectStorage);
-        store.save(&ledger).expect("生成上一版账本");
-
-        let backup = backup_path(&store.ledger_path).expect("备用路径");
-        if backup.exists() {
-            fs::remove_file(&backup).expect("清理更早的备用账本");
-        }
-        fs::rename(&store.ledger_path, &backup).expect("模拟主账本替换中断");
-        let recovered = store
-            .load_or_create(&manifest, &hash)
-            .expect("从上一版账本恢复");
-
-        assert_eq!(
-            recovered.phase(ResetPhase::ObjectStorage).status,
-            PhaseStatus::Running
-        );
-        assert!(store.ledger_path.exists());
-        assert!(backup.exists());
-        fs::remove_dir_all(base).expect("清理测试状态目录");
-    }
-
-    #[test]
-    fn physical_identity_mismatch_is_rejected_before_resume() {
-        let manifest = manifest();
-        let mut ledger = ResetLedger::new(&manifest, &"f".repeat(64));
-        ledger
-            .mark_resource_running("database:test", Some("identity-a"))
-            .expect("首次物理身份可以持久化");
-        assert!(
-            ledger
-                .mark_resource_running("database:test", Some("identity-b"))
-                .is_err()
-        );
-        assert_eq!(
-            ledger.resource_identity("database:test"),
-            Some("identity-a")
-        );
-    }
-
-    #[test]
-    fn interrupted_baseline_rewinds_database_phases_and_keeps_identity() {
-        let mut manifest = manifest();
-        manifest.databases.push(PhysicalDatabase {
-            host: "localhost".into(),
-            port: 3306,
-            database: "ryframe_test".into(),
-            connection: DatabaseConnectionIdentity {
-                username: "reset".into(),
-                password_env: "RYFRAME_TEST_PASSWORD".into(),
-                tls_mode: "required".into(),
-                tls_ca_sha256: None,
-                tls_client_cert_sha256: None,
-                tls_client_key_ref_sha256: None,
-            },
-            target_keys: vec!["shared-control".into()],
-            control_baseline: true,
-            tenant_baseline: true,
-            ownership_markers: BTreeMap::new(),
-        });
-        let mut ledger = ResetLedger::new(&manifest, &"a".repeat(64));
-        let resource_key = database_resource_key(&manifest.databases[0]);
-        ledger
-            .mark_resource_running(&resource_key, Some("physical-a"))
-            .expect("记录数据库物理身份");
-        ledger.mark_resource_complete(&resource_key);
-        ledger.mark_running(ResetPhase::Databases);
-        ledger.mark_complete(ResetPhase::Databases, BTreeMap::new());
-        ledger.mark_running(ResetPhase::ControlBaseline);
-        ledger.mark_failed(
-            ResetPhase::ControlBaseline,
-            &ResetError::new("模拟 baseline 中断"),
-        );
-
-        assert!(
-            ledger
-                .rewind_interrupted_baselines(&manifest)
-                .expect("中断 baseline 可以安全回退")
-        );
-        assert_eq!(
-            ledger.phase(ResetPhase::Databases).status,
-            PhaseStatus::Pending
-        );
-        assert_eq!(
-            ledger.phase(ResetPhase::ControlBaseline).status,
-            PhaseStatus::Pending
-        );
-        assert!(!ledger.resource_complete(&resource_key));
-        assert_eq!(ledger.resource_identity(&resource_key), Some("physical-a"));
-    }
 }

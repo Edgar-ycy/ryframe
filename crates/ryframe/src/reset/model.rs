@@ -12,7 +12,7 @@ use ryframe_config::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{ResetError, ResetResult};
+use crate::reset::{ResetError, ResetResult};
 
 pub const MANIFEST_VERSION: u32 = 4;
 pub const PRIMARY_DATABASE_PASSWORD_ENV: &str = "APP_DATABASE_PASSWORD";
@@ -319,7 +319,7 @@ fn collect_databases(config: &AppConfig) -> ResetResult<Vec<PhysicalDatabase>> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn insert_database(
+pub fn insert_database(
     databases: &mut BTreeMap<(String, u16, String), PhysicalDatabase>,
     host: &str,
     port: u16,
@@ -531,105 +531,4 @@ pub fn canonical_json<T: Serialize>(value: &T) -> ResetResult<Vec<u8>> {
 
 pub fn sha256_hex(value: &[u8]) -> String {
     hex::encode(Sha256::digest(value))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn connection_identity(password_env: &str) -> DatabaseConnectionIdentity {
-        DatabaseConnectionIdentity {
-            username: "reset".into(),
-            password_env: password_env.into(),
-            tls_mode: "verify_identity".into(),
-            tls_ca_sha256: Some("a".repeat(64)),
-            tls_client_cert_sha256: None,
-            tls_client_key_ref_sha256: None,
-        }
-    }
-
-    #[test]
-    fn physical_databases_are_deduplicated_and_roles_are_merged() {
-        let mut databases = BTreeMap::new();
-        insert_database(
-            &mut databases,
-            "LOCALHOST",
-            3306,
-            "tenant_a",
-            connection_identity("TENANT_A_PASSWORD"),
-            "shared-control",
-            true,
-            true,
-            "test",
-        )
-        .expect("数据库有效");
-        insert_database(
-            &mut databases,
-            "localhost",
-            3306,
-            "tenant_a",
-            connection_identity("TENANT_A_PASSWORD"),
-            "tenant-a",
-            false,
-            true,
-            "test",
-        )
-        .expect("重复物理库合并");
-        let database = databases.into_values().next().expect("数据库存在");
-        assert_eq!(database.target_keys, ["shared-control", "tenant-a"]);
-        assert!(database.control_baseline);
-        assert!(database.tenant_baseline);
-        assert_eq!(database.ownership_markers.len(), 2);
-    }
-
-    #[test]
-    fn connection_identity_is_part_of_the_plan_hash_and_deduplication_key() {
-        let baseline = connection_identity("TENANT_A_PASSWORD");
-        let changed = connection_identity("TENANT_B_PASSWORD");
-        assert_ne!(
-            sha256_hex(&canonical_json(&baseline).expect("编码连接身份")),
-            sha256_hex(&canonical_json(&changed).expect("编码连接身份"))
-        );
-
-        let mut databases = BTreeMap::new();
-        insert_database(
-            &mut databases,
-            "localhost",
-            3306,
-            "tenant_a",
-            baseline,
-            "shared-control",
-            true,
-            true,
-            "test",
-        )
-        .expect("首次登记数据库");
-        assert!(
-            insert_database(
-                &mut databases,
-                "localhost",
-                3306,
-                "tenant_a",
-                changed,
-                "tenant-a",
-                false,
-                true,
-                "test",
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn system_schemas_and_unsafe_identifiers_are_rejected() {
-        assert!(validate_database_identity("localhost", 3306, "mysql").is_err());
-        assert!(validate_database_identity("localhost", 3306, "tenant-a").is_err());
-        assert!(validate_database_identity("", 3306, "tenant_a").is_err());
-    }
-
-    #[test]
-    fn canonical_hash_is_deterministic() {
-        let bytes = canonical_json(&vec!["a", "b"]).expect("编码清单");
-        assert_eq!(sha256_hex(&bytes), sha256_hex(&bytes));
-    }
 }
