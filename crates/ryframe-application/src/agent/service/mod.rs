@@ -13,9 +13,9 @@ use super::{
     AgentAccessAuditDraft, AgentAccessAuditRecord, AgentAccessMode, AgentAccountRecord,
     AgentAuditWritePort, AgentAuthorizationSnapshot, AgentCapability, AgentCapabilityVo,
     AgentCredentialHint, AgentCredentialRecord, AgentDelegationHint, AgentDelegationRecord,
-    AgentDepartmentVo, AgentDictionaryItemVo, AgentDictionaryVo, AgentIdentityReadPort,
-    AgentLimitHints, AgentPage, AgentPersistencePort, AgentPersistenceTransaction, AgentPostVo,
-    AgentPrincipal, AgentRequest, AgentRowScope, AgentSuccess, AgentTenantRecord, AgentUserVo,
+    AgentDepartmentVo, AgentDictionaryItemVo, AgentDictionaryVo, AgentIdentityReadPort, AgentPage,
+    AgentPersistencePort, AgentPersistenceTransaction, AgentPostVo, AgentPrincipal, AgentRequest,
+    AgentRowScope, AgentSuccess, AgentTenantRecord, AgentUserVo,
     limiter::{AgentLimitInput, AgentLimiter},
     registry::AgentCapabilityDescriptor,
     scope::{

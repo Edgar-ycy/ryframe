@@ -47,6 +47,7 @@ pub use export::{
     ExportService, LoginLogExportFilter, OperLogExportFilter, PostExportFilter,
     RequestExportCommand, RoleExportFilter, UserExportFilter,
 };
+pub use log_time_range::{ParsedLogTimeRange, parse_log_time_range};
 pub use login_info::{
     LoginInfoQuery, LoginInfoService, LoginInfoVo, LoginStatus, RecordLoginCommand,
 };

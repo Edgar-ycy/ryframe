@@ -182,6 +182,28 @@ mod persistence;
 use expression::*;
 use persistence::*;
 
+/// 校验数据库中已启用计划的完整配置，不向调用方暴露解析器实现。
+pub fn validate_persisted_schedule_configuration(
+    next_run_at: Option<DateTime<Utc>>,
+    misfire_policy: &str,
+    concurrency_policy: &str,
+    max_runtime_seconds: i32,
+    cron_expression: &str,
+    timezone: &str,
+    now: DateTime<Utc>,
+) -> Result<(), String> {
+    validate_persisted_schedule(
+        next_run_at,
+        misfire_policy,
+        concurrency_policy,
+        max_runtime_seconds,
+        cron_expression,
+        timezone,
+        now,
+    )
+    .map(|_| ())
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::{TimeZone, Utc};

@@ -117,6 +117,14 @@ pub(super) fn resolve_account_scope(
     resolve_scope(snapshot, &snapshot.account_role_ids, None, account_dept_id)
 }
 
+/// 将服务账号授权快照解析为对外稳定的行级范围。
+pub fn resolve_account_row_scope(
+    snapshot: &AgentAuthorizationSnapshot,
+    account_dept_id: Option<i64>,
+) -> AgentRowScope {
+    row_scope(&resolve_account_scope(snapshot, account_dept_id))
+}
+
 pub(super) fn resolve_user_scope(snapshot: &AgentAuthorizationSnapshot) -> SubjectScope {
     let user = snapshot.user.as_ref();
     resolve_scope(
@@ -290,78 +298,5 @@ fn to_department_scope(departments: BTreeSet<i64>) -> AgentRowScope {
         AgentRowScope::Empty
     } else {
         AgentRowScope::Departments(departments.into_iter().collect())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn snapshot(roles: Vec<AgentRoleSnapshot>) -> AgentAuthorizationSnapshot {
-        AgentAuthorizationSnapshot {
-            user: None,
-            account_role_ids: roles.iter().map(|role| role.id).collect(),
-            user_role_ids: Vec::new(),
-            roles,
-            role_permissions: Vec::new(),
-            permissions: Vec::new(),
-            role_departments: Vec::new(),
-            departments: vec![
-                AgentDepartmentSnapshot {
-                    id: 10,
-                    name: "总部".into(),
-                    ancestors: String::new(),
-                },
-                AgentDepartmentSnapshot {
-                    id: 11,
-                    name: "研发部".into(),
-                    ancestors: "10".into(),
-                },
-            ],
-        }
-    }
-
-    #[test]
-    fn deleted_super_role_does_not_grant_all_scope() {
-        let snapshot = snapshot(vec![AgentRoleSnapshot {
-            id: 1,
-            is_super: true,
-            data_scope: AgentRoleSnapshot::DATA_SCOPE_ALL.into(),
-            status: AgentRoleSnapshot::STATUS_NORMAL.into(),
-            deleted: true,
-        }]);
-
-        let scope = resolve_account_scope(&snapshot, Some(10));
-
-        assert!(!scope.is_all());
-        assert!(scope.departments.is_empty());
-    }
-
-    #[test]
-    fn department_children_scope_uses_application_snapshot() {
-        let snapshot = snapshot(vec![AgentRoleSnapshot {
-            id: 1,
-            is_super: false,
-            data_scope: AgentRoleSnapshot::DATA_SCOPE_DEPT_AND_CHILD.into(),
-            status: AgentRoleSnapshot::STATUS_NORMAL.into(),
-            deleted: false,
-        }]);
-
-        let scope = resolve_account_scope(&snapshot, Some(10));
-
-        assert_eq!(scope.departments, BTreeSet::from([10, 11]));
-    }
-
-    #[test]
-    fn deleted_user_is_not_enabled() {
-        let user = AgentUserSnapshot {
-            id: 1,
-            dept_id: None,
-            status: AgentUserSnapshot::STATUS_NORMAL.into(),
-            deleted: true,
-            authorization_version: 1,
-        };
-
-        assert!(!user.is_enabled());
     }
 }

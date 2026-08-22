@@ -75,19 +75,3 @@ impl CaptchaStore for InMemoryCaptchaStore {
         })
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn in_memory_captcha_is_case_insensitive_and_one_time() {
-        let store = InMemoryCaptchaStore::new(60);
-        store
-            .set("captcha-a".into(), "Ab12".into())
-            .await
-            .expect("验证码应保存成功");
-        assert!(store.verify("captcha-a", "aB12").await.unwrap());
-        assert!(!store.verify("captcha-a", "aB12").await.unwrap());
-    }
-}

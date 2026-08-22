@@ -39,20 +39,3 @@ pub trait TenantConfigRetentionPersistencePort: Send + Sync {
         maximum: usize,
     ) -> PersistenceFuture<'_, RetentionCleanupResult>;
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn typed_counts_use_stable_resource_keys() {
-        let counts = TenantConfigArtifactCounts {
-            packages: 2,
-            snapshots: 3,
-        }
-        .into_resource_counts();
-
-        assert_eq!(counts[TENANT_CONFIG_PACKAGE_RESOURCE], 2);
-        assert_eq!(counts[TENANT_CONFIG_SNAPSHOT_RESOURCE], 3);
-    }
-}

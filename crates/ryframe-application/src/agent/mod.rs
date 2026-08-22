@@ -18,7 +18,7 @@ pub use registry::{AgentCapability, AgentCapabilityDescriptor, service_capabilit
 pub use scope::{
     AgentAuthorizationSnapshot, AgentDepartmentSnapshot, AgentPermissionSnapshot,
     AgentRoleDepartmentSnapshot, AgentRolePermissionSnapshot, AgentRoleSnapshot, AgentRowScope,
-    AgentUserSnapshot,
+    AgentUserSnapshot, resolve_account_row_scope,
 };
 pub use service::{AgentService, AgentServiceDependencies};
 pub use storage::{

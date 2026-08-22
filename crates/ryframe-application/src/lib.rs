@@ -32,8 +32,9 @@ pub use authorization_cache::{
     AuthorizationCacheLookup, AuthorizationChangePublishFuture, AuthorizationChangePublisher,
     AuthorizationChangedEvent, AuthorizationMirrorUpdate, AuthorizationSnapshot,
     AuthorizationVersions, NamespaceCacheLookup, TenantCacheLookup,
-    set_authorization_cache_lookup_hook,
+    set_authorization_cache_lookup_hook, validate_cache_namespace,
 };
+pub use authorization_resolver::has_super_admin_role;
 pub(crate) use authorization_resolver::{AuthorizationResolver, ResolvedAuthorization};
 pub use id_generator::{BusinessIdGenerator, install as install_id_generator, next_id};
 #[allow(deprecated)]
@@ -48,6 +49,7 @@ pub use jobs::{
     MessageWakeupPublisher, OutboxRunResult, OutboxWorker, ScheduleMetricsObserver,
     ScheduledJobContext, ScheduledJobTarget, ScheduledJobTargetDescriptor,
     ScheduledJobTargetRegistry, ScheduledJobTargetScope, UpdateJobSchedule,
+    validate_persisted_schedule_configuration,
 };
 pub use persistence::{ControlTransaction, PersistenceFuture};
 pub use principal_resolver::PrincipalResolver;
@@ -55,7 +57,7 @@ pub use request_tenant_context::{TenantContext, with_tenant_context};
 pub use runtime_policy::{
     AuthPolicy, CacheAvailabilityPolicy, ExportPolicy, JobRuntimePolicy, JobSchedulePolicy,
     JobWorkerMode, JobWorkerPolicy, MessagingPolicy, MultiTenancyPolicy, PepperKeyring,
-    ServiceAccountPolicy, TenantConfigTransferPolicy, UserImportPolicy,
+    ServiceAccountPolicy, TenantConfigTransferPolicy, UserImportPolicy, is_valid_tenant_target_key,
 };
 #[doc(hidden)]
 pub use trace_context::current_trace_context;

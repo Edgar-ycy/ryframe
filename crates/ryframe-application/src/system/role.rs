@@ -82,7 +82,7 @@ pub enum RoleOptionPurpose {
 }
 
 impl RoleOptionPurpose {
-    const fn includes_super_role(self, actor_is_super_admin: bool) -> bool {
+    pub const fn includes_super_role(self, actor_is_super_admin: bool) -> bool {
         matches!(self, Self::UserAssignment) && actor_is_super_admin
     }
 }
@@ -491,18 +491,5 @@ impl RoleService {
             .sync_tenant_epoch(tenant_id, authorization_epoch)
             .await?;
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::RoleOptionPurpose;
-
-    #[test]
-    fn role_option_purpose_strictly_controls_super_role_visibility() {
-        assert!(RoleOptionPurpose::UserAssignment.includes_super_role(true));
-        assert!(!RoleOptionPurpose::UserAssignment.includes_super_role(false));
-        assert!(!RoleOptionPurpose::ServiceAccountAssignment.includes_super_role(true));
-        assert!(!RoleOptionPurpose::ServiceAccountAssignment.includes_super_role(false));
     }
 }

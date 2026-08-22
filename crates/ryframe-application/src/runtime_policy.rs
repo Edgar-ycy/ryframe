@@ -417,7 +417,8 @@ impl PepperKeyring {
     }
 }
 
-pub(crate) fn is_valid_tenant_target_key(key: &str) -> bool {
+/// 校验租户数据目标的稳定键。
+pub fn is_valid_tenant_target_key(key: &str) -> bool {
     let bytes = key.as_bytes();
     let is_alphanumeric = |byte: u8| byte.is_ascii_alphanumeric();
     (2..=64).contains(&bytes.len())
@@ -426,21 +427,4 @@ pub(crate) fn is_valid_tenant_target_key(key: &str) -> bool {
         && bytes
             .iter()
             .all(|byte| is_alphanumeric(*byte) || matches!(byte, b'-' | b'_'))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn tenant_target_key_validation_is_strict() {
-        assert!(is_valid_tenant_target_key("shared-control"));
-        assert!(!is_valid_tenant_target_key("-invalid"));
-        assert!(!is_valid_tenant_target_key("invalid value"));
-    }
-
-    #[test]
-    fn worker_policy_rejects_heartbeat_outside_lease() {
-        assert!(JobWorkerPolicy::new(None, 60, 60, 500, 5_000, 15, 4).is_err());
-    }
 }

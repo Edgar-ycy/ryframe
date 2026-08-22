@@ -161,10 +161,7 @@ impl AgentService {
             .identity
             .limit_hints(&hint.credential.tenant_id, hint.credential.account_id)
             .await?;
-        Ok(effective_limits(
-            hints,
-            self.config.default_requests_per_minute,
-        ))
+        Ok(hints.effective_limits(self.config.default_requests_per_minute))
     }
 
     async fn identity_hint(
@@ -196,45 +193,5 @@ impl AgentService {
             credential,
             delegation,
         })
-    }
-}
-
-fn effective_limits(hints: AgentLimitHints, default_account_limit: u32) -> (i32, i32) {
-    (
-        hints.tenant_limit,
-        hints
-            .account_limit
-            .unwrap_or_else(|| i32::try_from(default_account_limit).unwrap_or(i32::MAX)),
-    )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn missing_account_limit_uses_bounded_default() {
-        let limits = effective_limits(
-            AgentLimitHints {
-                tenant_limit: 120,
-                account_limit: None,
-            },
-            u32::MAX,
-        );
-
-        assert_eq!(limits, (120, i32::MAX));
-    }
-
-    #[test]
-    fn account_limit_overrides_default() {
-        let limits = effective_limits(
-            AgentLimitHints {
-                tenant_limit: 120,
-                account_limit: Some(30),
-            },
-            60,
-        );
-
-        assert_eq!(limits, (120, 30));
     }
 }

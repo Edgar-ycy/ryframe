@@ -88,20 +88,3 @@ pub trait RetentionCleanupPersistencePort: Send + Sync {
         limit: usize,
     ) -> PersistenceFuture<'_, Vec<ExpiredImportArtifact>>;
 }
-
-#[cfg(test)]
-mod tests {
-    use std::collections::BTreeSet;
-
-    use super::*;
-
-    #[test]
-    fn resource_keys_are_complete_and_unique() {
-        let keys = RetentionResource::ALL
-            .into_iter()
-            .map(RetentionResource::key)
-            .collect::<BTreeSet<_>>();
-
-        assert_eq!(keys.len(), RetentionResource::ALL.len());
-    }
-}

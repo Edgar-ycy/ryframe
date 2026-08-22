@@ -42,13 +42,3 @@ pub(crate) fn set_parent(
         port.set_parent(span, traceparent, tracestate);
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn missing_adapter_fails_closed_to_empty_context() {
-        assert_eq!(current_trace_context(), PersistedTraceContext::default());
-    }
-}

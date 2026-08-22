@@ -478,17 +478,3 @@ fn validate_namespace_version(version: i64) -> AppResult<()> {
     }
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {
-    use super::validate_cache_namespace;
-
-    #[test]
-    fn cache_namespace_rejects_unsafe_key_fragments() {
-        assert!(validate_cache_namespace("config").is_ok());
-        assert!(validate_cache_namespace("tenant.cache-v1").is_ok());
-        assert!(validate_cache_namespace("").is_err());
-        assert!(validate_cache_namespace("Config").is_err());
-        assert!(validate_cache_namespace("../config").is_err());
-    }
-}

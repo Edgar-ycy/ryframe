@@ -22,7 +22,7 @@ pub use queue::{
 pub use schedule::{
     CreateJobSchedule, JobScheduleExecutionListParams, JobScheduleExecutionVo,
     JobScheduleListParams, JobScheduleOccurrence, JobSchedulePreview, JobScheduleService,
-    JobScheduleVo, UpdateJobSchedule,
+    JobScheduleVo, UpdateJobSchedule, validate_persisted_schedule_configuration,
 };
 pub use schedule_metrics::{CallbackScheduleMetricsObserver, ScheduleMetricsObserver};
 pub use schedule_targets::{

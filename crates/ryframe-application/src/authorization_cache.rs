@@ -17,7 +17,8 @@ pub use types::{
 pub const AUTHORIZATION_SNAPSHOT_TTL_SECS: u64 = 300;
 pub const AUTHORIZATION_MIRROR_OUTBOX_EVENT_TYPE: &str = "security.authorization.mirror-updated";
 
-fn validate_cache_namespace(namespace: &str) -> ryframe_kernel::AppResult<()> {
+/// 校验应用层缓存命名空间，避免适配器分别维护不一致的键规则。
+pub fn validate_cache_namespace(namespace: &str) -> ryframe_kernel::AppResult<()> {
     if namespace.is_empty()
         || namespace.len() > 64
         || !namespace.bytes().all(|byte| {

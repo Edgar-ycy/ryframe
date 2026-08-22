@@ -23,18 +23,3 @@ impl ExecutionTenantScope {
         self.tenant_id.as_deref()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::ExecutionTenantScope;
-
-    #[test]
-    fn fixed_scope_keeps_platform_semantics_without_database_types() {
-        let all = ExecutionTenantScope::all();
-        let fixed = ExecutionTenantScope::tenant_and_platform("tenant-a");
-
-        assert_eq!(all.tenant_id(), None);
-        assert_eq!(fixed.tenant_id(), Some("tenant-a"));
-        assert_ne!(fixed, all);
-    }
-}

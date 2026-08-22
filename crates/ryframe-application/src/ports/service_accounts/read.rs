@@ -100,34 +100,3 @@ pub trait ServiceAccountReadPort: Send + Sync {
         page: ValidatedPageQuery,
     ) -> PersistenceFuture<'a, PageResult<ServiceDelegationRecord>>;
 }
-
-#[cfg(test)]
-mod tests {
-    use chrono::{TimeZone, Utc};
-
-    use super::*;
-
-    #[test]
-    fn enabled_state_is_application_owned() {
-        let now = Utc.with_ymd_and_hms(2026, 8, 21, 1, 2, 3).unwrap();
-        let mut account = ServiceAccountRecord {
-            id: 1,
-            tenant_id: "tenant-a".into(),
-            code: "billing".into(),
-            name: "结算服务".into(),
-            description: None,
-            dept_id: None,
-            status: ServiceAccountRecord::STATUS_NORMAL.into(),
-            authorization_version: 1,
-            max_requests_per_minute: 60,
-            created_by: 2,
-            deleted: false,
-            created_at: now,
-            updated_at: now,
-        };
-
-        assert!(account.is_enabled());
-        account.status = "0".into();
-        assert!(!account.is_enabled());
-    }
-}

@@ -165,16 +165,3 @@ fn mirror_event(
         tracestate: trace_context.tracestate,
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use crate::authorization_cache::validate_cache_namespace;
-
-    #[test]
-    fn cache_namespace_validation_is_application_owned() {
-        assert!(validate_cache_namespace("system.config-items_v2").is_ok());
-        for value in ["", "System", "system/cache", &"a".repeat(65)] {
-            assert!(validate_cache_namespace(value).is_err());
-        }
-    }
-}

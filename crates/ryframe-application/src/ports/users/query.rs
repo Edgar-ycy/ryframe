@@ -93,33 +93,3 @@ pub trait UserQueryReadPort: Send + Sync {
         user_id: i64,
     ) -> PersistenceFuture<'a, bool>;
 }
-
-#[cfg(test)]
-mod tests {
-    use chrono::Utc;
-
-    use super::{USER_QUERY_STATUS_NORMAL, UserQueryRecord};
-
-    fn user(status: &str) -> UserQueryRecord {
-        UserQueryRecord {
-            id: 1,
-            username: "test".to_owned(),
-            nickname: "测试".to_owned(),
-            email: String::new(),
-            phone: String::new(),
-            avatar: None,
-            status: status.to_owned(),
-            dept_id: None,
-            dept_name: None,
-            remark: None,
-            created_at: Utc::now(),
-        }
-    }
-
-    #[test]
-    fn only_normal_status_is_enabled() {
-        assert!(user(USER_QUERY_STATUS_NORMAL).is_enabled());
-        assert!(!user("0").is_enabled());
-        assert!(!user("2").is_enabled());
-    }
-}

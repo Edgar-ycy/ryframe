@@ -22,6 +22,17 @@ pub struct AgentLimitHints {
     pub account_limit: Option<i32>,
 }
 
+impl AgentLimitHints {
+    /// 将可选账号限额与配置默认值收敛为限流器使用的有界值。
+    pub fn effective_limits(self, default_account_limit: u32) -> (i32, i32) {
+        (
+            self.tenant_limit,
+            self.account_limit
+                .unwrap_or_else(|| i32::try_from(default_account_limit).unwrap_or(i32::MAX)),
+        )
+    }
+}
+
 pub trait AgentIdentityReadPort: Send + Sync {
     fn credential_hint<'a>(
         &'a self,
