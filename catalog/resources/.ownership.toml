@@ -1,0 +1,65 @@
+format_version = 1
+generator_version = "1.0.0"
+
+[[entries]]
+resource = "__catalog__"
+root = "backend"
+path = "catalog/access.generated.toml"
+source_hash = "f075cd90e15c0748da9984558580690fe7f4444a7fd78184290a8c3e79466eac"
+content_hash = "f075cd90e15c0748da9984558580690fe7f4444a7fd78184290a8c3e79466eac"
+
+[[entries]]
+resource = "__catalog__"
+root = "backend"
+path = "crates/ryframe-api/src/generated/crud_resources.rs"
+source_hash = "d46fa434904245878f8d84e099c45fc47c0d9be5c6cdbee98dd2eddf73822e9c"
+content_hash = "d46fa434904245878f8d84e099c45fc47c0d9be5c6cdbee98dd2eddf73822e9c"
+
+[[entries]]
+resource = "__catalog__"
+root = "backend"
+path = "crates/ryframe-api/src/generated/mod.rs"
+source_hash = "5a4600620691bf890d0e7ac14d8f03bf2b53e9dc9ec4d048f49130ba555efc90"
+content_hash = "5a4600620691bf890d0e7ac14d8f03bf2b53e9dc9ec4d048f49130ba555efc90"
+
+[[entries]]
+resource = "__catalog__"
+root = "backend"
+path = "crates/ryframe-api/src/generated/openapi.rs"
+source_hash = "d3478d573580c10fbb1b09bed153da82870e0489212c7955c6e8f7d301115f7b"
+content_hash = "d3478d573580c10fbb1b09bed153da82870e0489212c7955c6e8f7d301115f7b"
+
+[[entries]]
+resource = "__catalog__"
+root = "backend"
+path = "crates/ryframe-api/src/generated/router.rs"
+source_hash = "1f33fefb6e6743fc37c54fa3304fb66569ea517873307cc7b88cad140ad9969a"
+content_hash = "1f33fefb6e6743fc37c54fa3304fb66569ea517873307cc7b88cad140ad9969a"
+
+[[entries]]
+resource = "__catalog__"
+root = "backend"
+path = "crates/ryframe-application/src/generated/mod.rs"
+source_hash = "defd31030a5c0d4685b50b8c4217fa0d2b3cb55f70ee62cf514f702513ccbf21"
+content_hash = "defd31030a5c0d4685b50b8c4217fa0d2b3cb55f70ee62cf514f702513ccbf21"
+
+[[entries]]
+resource = "__catalog__"
+root = "backend"
+path = "crates/ryframe-application/src/generated/services.rs"
+source_hash = "17fe72fe8c3a05769771a4f5cf03ab08dd7511f80992940fcc21557ec8d40512"
+content_hash = "17fe72fe8c3a05769771a4f5cf03ab08dd7511f80992940fcc21557ec8d40512"
+
+[[entries]]
+resource = "__catalog__"
+root = "backend"
+path = "crates/ryframe-db/src/generated/mod.rs"
+source_hash = "faf3ceb76086e583cc5c0e0bcbe5db55b7db98133ff8fe4f60ba94c7f53af356"
+content_hash = "faf3ceb76086e583cc5c0e0bcbe5db55b7db98133ff8fe4f60ba94c7f53af356"
+
+[[entries]]
+resource = "__catalog__"
+root = "backend"
+path = "crates/ryframe-tenant-db/src/generated/mod.rs"
+source_hash = "e2a84c5260c41852fb6e065e7ceba31d3babe5669bf0d6ca0f4563a55434084e"
+content_hash = "e2a84c5260c41852fb6e065e7ceba31d3babe5669bf0d6ca0f4563a55434084e"

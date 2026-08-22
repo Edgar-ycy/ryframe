@@ -10,6 +10,7 @@ pub mod auth_middleware;
 pub mod captcha;
 mod client_ip;
 pub mod dto;
+pub mod generated;
 mod handler_utils;
 pub mod handlers;
 pub mod http;

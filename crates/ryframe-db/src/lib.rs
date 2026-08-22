@@ -4,6 +4,7 @@ pub mod connection;
 pub mod data_scope;
 pub mod database_monitor;
 pub mod entities;
+pub mod generated;
 mod id_generator;
 pub mod migration;
 pub mod pagination;

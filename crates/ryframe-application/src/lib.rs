@@ -3,6 +3,7 @@ mod audit;
 mod auth;
 mod authorization_cache;
 mod authorization_resolver;
+pub mod generated;
 mod id_generator;
 pub mod jobs;
 mod persistence;

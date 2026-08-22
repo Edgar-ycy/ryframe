@@ -141,7 +141,10 @@ fn supported_version_rejects_old_mysql_mariadb_and_invalid_identity() {
 #[test]
 fn control_schema_is_one_fresh_baseline() {
     let migrations = Migrator::migrations();
-    assert_eq!(migrations.len(), 1);
+    assert_eq!(
+        migrations.len(),
+        1 + ryframe_db::generated::migrations().len()
+    );
     assert_eq!(CONTROL_MIGRATION_LEDGER, "seaql_migrations");
     assert_eq!(migrations[0].name(), "m20260820_000000_control_baseline");
 }

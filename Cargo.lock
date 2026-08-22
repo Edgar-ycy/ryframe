@@ -3361,13 +3361,16 @@ version = "0.11.2"
 dependencies = [
  "async-trait",
  "chrono",
+ "hex",
  "ryframe-kernel",
  "ryframe-tenant-db",
  "sea-orm",
  "serde",
+ "serde_json",
+ "sha2 0.11.0",
  "syn 3.0.3",
  "tempfile",
- "tokio",
+ "toml",
 ]
 
 [[package]]

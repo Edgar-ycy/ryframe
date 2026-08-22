@@ -1,0 +1,254 @@
+schema_version = 1
+
+[resource]
+name = "post"
+module = "system"
+profile = "flat_crud"
+
+[resource.labels]
+zh_cn = "岗位"
+en = "Post"
+
+[storage]
+kind = "control_row"
+
+[database]
+table = "sys_post"
+primary_key = ["id"]
+
+[[database.indexes]]
+name = "idx_tenant_id"
+fields = ["tenant_id"]
+
+[[database.indexes]]
+name = "uk_tenant_code"
+fields = ["tenant_id", "code"]
+unique = true
+
+[database.soft_delete]
+field = "del_flag"
+active = "0"
+deleted = "2"
+
+[database.audit]
+created_at = "created_at"
+updated_at = "updated_at"
+
+[[fields]]
+name = "id"
+value_type = "i64"
+wire_type = "string"
+order = 10
+widget = "hidden"
+
+[fields.usage]
+read = true
+list = true
+
+[fields.labels]
+zh_cn = "岗位编号"
+en = "Post ID"
+
+[[fields]]
+name = "tenant_id"
+value_type = "string"
+order = 20
+widget = "hidden"
+
+[fields.usage]
+
+[fields.labels]
+zh_cn = "租户"
+en = "Tenant"
+
+[[fields]]
+name = "name"
+value_type = "string"
+order = 30
+widget = "text"
+
+[fields.usage]
+create = true
+update = true
+read = true
+list = true
+filter = true
+
+[fields.validation]
+required = true
+min_length = 1
+max_length = 64
+
+[fields.labels]
+zh_cn = "岗位名称"
+en = "Post name"
+
+[[fields]]
+name = "code"
+value_type = "string"
+order = 40
+widget = "text"
+
+[fields.usage]
+create = true
+read = true
+list = true
+filter = true
+
+[fields.validation]
+required = true
+min_length = 1
+max_length = 64
+
+[fields.labels]
+zh_cn = "岗位编码"
+en = "Post code"
+
+[[fields]]
+name = "sort"
+value_type = "i32"
+order = 50
+default = 0
+widget = "number"
+
+[fields.usage]
+create = true
+create_optional = true
+update = true
+update_optional = true
+read = true
+list = true
+sort = true
+
+[fields.validation]
+minimum = 0
+maximum = 999
+
+[fields.labels]
+zh_cn = "显示顺序"
+en = "Display order"
+
+[[fields]]
+name = "status"
+value_type = "string"
+order = 60
+default = "1"
+widget = "select"
+
+[fields.usage]
+update = true
+read = true
+list = true
+filter = true
+
+[fields.validation]
+required = true
+
+[fields.labels]
+zh_cn = "状态"
+en = "Status"
+
+[fields.enum_values."0"]
+zh_cn = "停用"
+en = "Disabled"
+
+[fields.enum_values."1"]
+zh_cn = "正常"
+en = "Active"
+
+[[fields]]
+name = "remark"
+value_type = "string"
+order = 70
+nullable = true
+widget = "textarea"
+
+[fields.usage]
+read = true
+
+[fields.validation]
+max_length = 512
+
+[fields.labels]
+zh_cn = "备注"
+en = "Remark"
+
+[[fields]]
+name = "del_flag"
+value_type = "string"
+order = 80
+default = "0"
+widget = "hidden"
+
+[fields.usage]
+
+[fields.labels]
+zh_cn = "删除标记"
+en = "Deleted flag"
+
+[[fields]]
+name = "created_at"
+value_type = "date_time"
+order = 90
+widget = "date_time"
+
+[fields.usage]
+read = true
+list = true
+
+[fields.labels]
+zh_cn = "创建时间"
+en = "Created at"
+
+[[fields]]
+name = "updated_at"
+value_type = "date_time"
+order = 100
+widget = "date_time"
+
+[fields.usage]
+
+[fields.labels]
+zh_cn = "更新时间"
+en = "Updated at"
+
+[api]
+path = "/api/v1/system/posts"
+
+[api.operations]
+create = "post_system_posts"
+read = "get_system_posts_by_id"
+list = "get_system_posts"
+update = "put_system_posts_by_id"
+delete = "delete_system_posts_by_id"
+
+[access]
+capability = "system.post"
+
+[access.permissions]
+create = "system:post:add"
+read = "system:post:list"
+list = "system:post:list"
+update = "system:post:edit"
+delete = "system:post:remove"
+
+[menu]
+key = "system.post"
+parent = "system"
+order = 8
+
+[menu.labels]
+zh_cn = "岗位管理"
+en = "Posts"
+
+[route]
+key = "system.post"
+path = "/system/post"
+
+[extensions.backend]
+export = "post"
+export_operation = "post_system_posts_exports"
+export_permission = "system:post:export"
+
+[extensions.frontend]
+export = "post"

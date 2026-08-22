@@ -1,0 +1,15 @@
+  | "delete_system_devices_by_id"
+  | "get_system_devices"
+  | "get_system_devices_by_id"
+  | "post_system_devices"
+  | "put_system_devices_by_id"
+
+export const delete_system_devices_by_id = {"operationId":"delete_system_devices_by_id","method":"delete","path":"/system/devices/{id}"} as const satisfies OperationDescriptor<"delete_system_devices_by_id">
+
+export const get_system_devices = {"operationId":"get_system_devices","method":"get","path":"/system/devices"} as const satisfies OperationDescriptor<"get_system_devices">
+
+export const get_system_devices_by_id = {"operationId":"get_system_devices_by_id","method":"get","path":"/system/devices/{id}"} as const satisfies OperationDescriptor<"get_system_devices_by_id">
+
+export const post_system_devices = {"operationId":"post_system_devices","method":"post","path":"/system/devices"} as const satisfies OperationDescriptor<"post_system_devices">
+
+export const put_system_devices_by_id = {"operationId":"put_system_devices_by_id","method":"put","path":"/system/devices/{id}"} as const satisfies OperationDescriptor<"put_system_devices_by_id">

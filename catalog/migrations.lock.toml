@@ -1,0 +1,26 @@
+format_version = 1
+frozen_at = "2026-08-20"
+
+[[files]]
+path = "crates/ryframe-db/src/migration/m20260820_000000_control_baseline/base.rs"
+sha256 = "521323f4b729a7231869368fd36f5add7bdc792419c2252c9622abca320974e6"
+storage = "control"
+target = "m20260820_000000_control_baseline"
+
+[[files]]
+path = "crates/ryframe-db/src/migration/m20260820_000000_control_baseline/mod.rs"
+sha256 = "3d3d494838229ee057d156d30d2a11d42cc2bf08a82f34b4b4606b4b43afc08e"
+storage = "control"
+target = "m20260820_000000_control_baseline"
+
+[[files]]
+path = "crates/ryframe-db/src/migration/m20260820_000000_control_baseline/schema.rs"
+sha256 = "a3519832e1e71a40ffe0e9cef3575d85e873fbf67f2f3ddb8a1fd900015c53c2"
+storage = "control"
+target = "m20260820_000000_control_baseline"
+
+[[files]]
+path = "crates/ryframe-tenant-db/src/migration/m20260820_000000_tenant_baseline.rs"
+sha256 = "dcf2f848fcdfa03ce78dc4966f48465ba7ae9e8339b07b4e9366fd3d6753ffd8"
+storage = "tenant-data"
+target = "m20260820_000000_tenant_baseline"

@@ -1,0 +1,203 @@
+schema_version = 1
+
+[resource]
+name = "device"
+module = "system"
+profile = "flat_crud"
+
+[resource.labels]
+zh_cn = "设备"
+en = "Device"
+
+[storage]
+kind = "tenant_data"
+tenant_field = "tenant_id"
+
+[database]
+table = "biz_device"
+primary_key = ["tenant_id", "id"]
+bootstrap_migration = true
+
+[[database.indexes]]
+name = "uk_device_tenant_name"
+fields = ["tenant_id", "name"]
+unique = true
+
+[[database.indexes]]
+name = "idx_device_tenant_status"
+fields = ["tenant_id", "status"]
+
+[database.soft_delete]
+field = "del_flag"
+active = 0
+deleted = 1
+
+[database.audit]
+created_at = "created_at"
+updated_at = "updated_at"
+
+[[fields]]
+name = "tenant_id"
+value_type = "string"
+order = 10
+widget = "hidden"
+
+[fields.usage]
+read = true
+filter = true
+
+[fields.labels]
+zh_cn = "租户"
+en = "Tenant"
+
+[[fields]]
+name = "id"
+value_type = "i64"
+wire_type = "string"
+order = 20
+widget = "hidden"
+
+[fields.usage]
+read = true
+list = true
+sort = true
+
+[fields.labels]
+zh_cn = "设备编号"
+en = "Device ID"
+
+[[fields]]
+name = "name"
+value_type = "string"
+order = 30
+widget = "text"
+
+[fields.usage]
+create = true
+update = true
+read = true
+list = true
+filter = true
+
+[fields.validation]
+required = true
+min_length = 1
+max_length = 100
+
+[fields.labels]
+zh_cn = "设备名称"
+en = "Device name"
+
+[[fields]]
+name = "status"
+value_type = "i32"
+order = 40
+default = 1
+widget = "select"
+
+[fields.usage]
+create = true
+update = true
+read = true
+list = true
+filter = true
+
+[fields.validation]
+required = true
+minimum = 0
+maximum = 1
+
+[fields.labels]
+zh_cn = "状态"
+en = "Status"
+
+[fields.enum_values."0"]
+zh_cn = "停用"
+en = "Disabled"
+
+[fields.enum_values."1"]
+zh_cn = "启用"
+en = "Enabled"
+
+[[fields]]
+name = "created_at"
+value_type = "date_time"
+order = 50
+widget = "date_time"
+
+[fields.usage]
+read = true
+list = true
+
+[fields.labels]
+zh_cn = "创建时间"
+en = "Created at"
+
+[[fields]]
+name = "updated_at"
+value_type = "date_time"
+order = 60
+nullable = true
+widget = "date_time"
+
+[fields.usage]
+read = true
+list = true
+
+[fields.labels]
+zh_cn = "更新时间"
+en = "Updated at"
+
+[[fields]]
+name = "del_flag"
+value_type = "i32"
+order = 70
+default = 0
+widget = "hidden"
+
+[fields.usage]
+read = true
+
+[fields.labels]
+zh_cn = "删除标记"
+en = "Deleted flag"
+
+[api]
+path = "/api/v1/system/devices"
+
+[api.operations]
+create = "post_system_devices"
+read = "get_system_devices_by_id"
+list = "get_system_devices"
+update = "put_system_devices_by_id"
+delete = "delete_system_devices_by_id"
+
+[access]
+capability = "system.device"
+
+[access.permissions]
+create = "system:device:create"
+read = "system:device:read"
+list = "system:device:list"
+update = "system:device:update"
+delete = "system:device:delete"
+
+[menu]
+key = "system.device"
+parent = "system"
+order = 80
+icon = "monitor"
+
+[menu.labels]
+zh_cn = "设备管理"
+en = "Devices"
+
+[route]
+key = "SystemDevice"
+path = "/system/device"
+
+[extensions.backend]
+health_probe = true
+
+[extensions.frontend]
+detail_drawer = false

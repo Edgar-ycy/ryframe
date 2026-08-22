@@ -1,15 +1,19 @@
-pub mod cli;
-pub mod engine;
+pub mod import;
 pub mod naming;
-pub mod schema;
-pub mod template;
-pub mod type_mapping;
+pub mod resource;
+mod schema;
+mod type_mapping;
 
 /// 生成器版本号；生成边界或端口签名变化时递增。
-pub const GENERATOR_VERSION: &str = "0.9.0";
+pub const GENERATOR_VERSION: &str = "1.0.0";
 
-pub use engine::{
-    GenerateOptions, GeneratedFile, WriteReport, generate, normalize_relative_output_path,
-    render_tables, validate_table_name, write_to_disk,
+pub use resource::{
+    AccessSpec, ApiSpec, AssetRoot, AuditSpec, DatabaseSpec, EnumValueSpec, ExplainNode,
+    ExtensionSpec, FieldSpec, FieldUsageSpec, GeneratedAsset, GeneratedCatalog, IndexSpec,
+    LabelsSpec, MenuSpec, OperationSpec, OwnershipEntry, OwnershipManifest, PermissionSpec,
+    PlanAction, PlannedAsset, ResourceAssetPlan, ResourceError, ResourceExplanation,
+    ResourceIdentitySpec, ResourceIr, ResourceProfile, ResourceSpec, ResourceWorkspace, RouteSpec,
+    SafeWriteReport, SoftDeleteSpec, StorageKind, StorageSpec, ValidationSpec, ValueType,
+    WidgetSpec, load_resource, normalize_resource, plan_resource_assets, plan_resource_changes,
+    render_resources, write_resource, write_resources,
 };
-pub use schema::{ColumnInfo, ForeignKeyInfo, IndexInfo, TableInfo, fetch_table, list_tables};

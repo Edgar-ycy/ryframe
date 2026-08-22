@@ -45,7 +45,10 @@ pub fn schema_fingerprint() -> String {
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![Box::new(m20260820_000000_control_baseline::Migration)]
+        let mut migrations: Vec<Box<dyn MigrationTrait>> =
+            vec![Box::new(m20260820_000000_control_baseline::Migration)];
+        migrations.extend(crate::generated::migrations());
+        migrations
     }
 
     fn migration_table_name() -> DynIden {

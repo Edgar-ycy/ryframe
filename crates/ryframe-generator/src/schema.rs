@@ -41,7 +41,7 @@ pub struct ColumnInfo {
     pub comment: Option<String>,
 }
 
-/// 读取单张表的结构信息
+/// 读取单张既有表的结构信息，仅供资源清单导入流程使用。
 pub async fn fetch_table(db: &DatabaseConnection, table_name: &str) -> AppResult<TableInfo> {
     // 验证表名只包含字母、数字和下划线，防止注入
     if !table_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
@@ -82,7 +82,7 @@ pub async fn fetch_table(db: &DatabaseConnection, table_name: &str) -> AppResult
 
     ryframe_tenant_db::migration::verify_mysql_80(db)
         .await
-        .map_err(|_| AppError::Validation("代码生成要求 MySQL 8.0.16 或更高版本".into()))?;
+        .map_err(|_| AppError::Validation("表结构导入要求 MySQL 8.0.16 或更高版本".into()))?;
     let table_comment = query_table_comment(db, table_name).await?;
     let indexes = query_indexes(db, table_name).await?;
     let foreign_keys = query_foreign_keys(db, table_name).await?;
@@ -107,20 +107,10 @@ pub async fn fetch_table(db: &DatabaseConnection, table_name: &str) -> AppResult
     })
 }
 
-/// 列出数据库中所有表
+/// 列出数据库中可供显式导入的所有表。
 pub async fn list_tables(db: &DatabaseConnection) -> AppResult<Vec<String>> {
     let tables = query_tables(db).await?;
     Ok(tables.into_iter().map(|t| t.table_name).collect())
-}
-
-/// 获取主键的 Rust 类型（通用工具函数）
-pub fn get_pk_type(table: &TableInfo) -> &str {
-    table
-        .columns
-        .iter()
-        .find(|column| column.is_primary_key && column.name != "tenant_id")
-        .map(|column| column.rust_type.as_str())
-        .unwrap_or("i64")
 }
 
 #[derive(Debug, FromQueryResult)]

@@ -5,6 +5,7 @@
 
 pub mod application_ports;
 mod error;
+pub mod generated;
 pub mod migration;
 mod placement;
 mod placement_repo;

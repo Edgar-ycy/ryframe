@@ -69,7 +69,10 @@ fn cross_schema_foreign_keys_are_rejected() {
 #[test]
 fn tenant_data_uses_one_fresh_baseline_and_its_own_ledger() {
     let migrations = Migrator::migrations();
-    assert_eq!(migrations.len(), 1);
+    assert_eq!(
+        migrations.len(),
+        1 + ryframe_tenant_db::generated::migrations().len()
+    );
     assert_eq!(TENANT_DATA_MIGRATION_LEDGER, "seaql_tenant_data_migrations");
     assert_eq!(migrations[0].name(), "m20260820_000000_tenant_baseline");
 }

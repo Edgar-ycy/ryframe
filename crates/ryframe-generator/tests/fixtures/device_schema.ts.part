@@ -1,0 +1,50 @@
+type DeviceContractRecord = {
+    tenant_id: string;
+    id: string;
+    name: string;
+    status: number;
+    created_at: string;
+    updated_at: string | null;
+    del_flag: number;
+};
+
+type DeviceContractResponse<T> = {
+    code: number;
+    message: string;
+    data?: T;
+    request_id: string;
+};
+
+type DeviceContractHeaders = { [name: string]: unknown };
+
+export interface operations {
+    get_system_devices: {
+        parameters: {
+            query?: { page?: number; page_size?: number; name?: string; status?: number };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: { 200: { headers: DeviceContractHeaders; content: { "application/json": DeviceContractResponse<{ items: DeviceContractRecord[]; page: number; page_size: number; total: number; total_pages: number; max_page_size: number }> } } };
+    };
+    get_system_devices_by_id: {
+        parameters: { query?: never; header?: never; path: { id: string }; cookie?: never };
+        requestBody?: never;
+        responses: { 200: { headers: DeviceContractHeaders; content: { "application/json": DeviceContractResponse<DeviceContractRecord> } } };
+    };
+    post_system_devices: {
+        parameters: { query?: never; header?: never; path?: never; cookie?: never };
+        requestBody: { content: { "application/json": { name: string; status: number } } };
+        responses: { 200: { headers: DeviceContractHeaders; content: { "application/json": DeviceContractResponse<DeviceContractRecord> } } };
+    };
+    put_system_devices_by_id: {
+        parameters: { query?: never; header?: never; path: { id: string }; cookie?: never };
+        requestBody: { content: { "application/json": { name: string; status: number } } };
+        responses: { 200: { headers: DeviceContractHeaders; content: { "application/json": DeviceContractResponse<DeviceContractRecord> } } };
+    };
+    delete_system_devices_by_id: {
+        parameters: { query?: never; header?: never; path: { id: string }; cookie?: never };
+        requestBody?: never;
+        responses: { 200: { headers: DeviceContractHeaders; content: { "application/json": DeviceContractResponse<null> } } };
+    };

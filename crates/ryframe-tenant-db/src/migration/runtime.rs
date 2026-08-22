@@ -27,7 +27,10 @@ pub struct Migrator;
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-        vec![Box::new(super::m20260820_000000_tenant_baseline::Migration)]
+        let mut migrations: Vec<Box<dyn MigrationTrait>> =
+            vec![Box::new(super::m20260820_000000_tenant_baseline::Migration)];
+        migrations.extend(crate::generated::migrations());
+        migrations
     }
 
     fn migration_table_name() -> DynIden {
