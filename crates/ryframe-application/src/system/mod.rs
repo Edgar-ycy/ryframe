@@ -1,47 +1,47 @@
-pub mod authorization_diagnostic_service;
-pub mod captcha_service;
-pub mod config_service;
+pub mod authorization_diagnostic;
+pub mod captcha;
+pub mod config;
 pub mod data_retention;
 pub mod dept;
-pub mod dict_service;
+pub mod dict;
 pub mod export;
 mod log_time_range;
-pub mod login_info_service;
+pub mod login_info;
 pub mod menu;
 pub mod message;
-pub mod notice_service;
-pub mod oper_log_service;
+pub mod notice;
+pub mod oper_log;
 mod option;
 pub mod permission;
-pub mod post_service;
+pub mod post;
 pub mod product;
 pub mod product_capability_catalog;
-pub mod role_service;
+pub mod role;
 pub mod service_account;
+pub mod tenant;
 pub mod tenant_config_package;
 pub mod tenant_config_transfer;
 pub mod tenant_data_migration;
-pub mod tenant_service;
-pub mod tenant_usage_service;
+pub mod tenant_usage;
 pub mod user;
 pub mod user_import;
-pub mod websocket_ticket_service;
+pub mod websocket_ticket;
 
-pub use authorization_diagnostic_service::{
+pub use authorization_diagnostic::{
     AuthorizationDiagnosticDataScopeSourceVo, AuthorizationDiagnosticDataScopeVo,
     AuthorizationDiagnosticDepartmentVo, AuthorizationDiagnosticMenuVo,
     AuthorizationDiagnosticPermissionVo, AuthorizationDiagnosticRefreshVo,
     AuthorizationDiagnosticRoleVo, AuthorizationDiagnosticService, AuthorizationDiagnosticTenantVo,
     AuthorizationDiagnosticUserVo, AuthorizationDiagnosticVersionVo, AuthorizationDiagnosticVo,
 };
-pub use captcha_service::{CaptchaStore, CaptchaStoreFuture, InMemoryCaptchaStore};
-pub use config_service::{ConfigListParams, ConfigService, ConfigVo};
+pub use captcha::{CaptchaStore, CaptchaStoreFuture, InMemoryCaptchaStore};
+pub use config::{ConfigListParams, ConfigService, ConfigVo};
 pub use data_retention::{
     DATA_RETENTION_JOB_TYPE, DataRetentionJobHandler, DataRetentionOverview, DataRetentionPolicy,
     DataRetentionPreview, DataRetentionRunVo, DataRetentionService,
 };
 pub use dept::{CreateDeptCommand, DeptService, DeptTreeNode, DeptVo, UpdateDeptCommand};
-pub use dict_service::{
+pub use dict::{
     DictCacheStore, DictCacheStoreFuture, DictDataVo, DictService, DictTypeListParams, DictTypeVo,
 };
 pub use export::{
@@ -51,7 +51,7 @@ pub use export::{
     ExportService, LoginLogExportFilter, OperLogExportFilter, PostExportFilter,
     RequestExportCommand, RoleExportFilter, UserExportFilter,
 };
-pub use login_info_service::{
+pub use login_info::{
     LoginInfoQuery, LoginInfoService, LoginInfoVo, LoginStatus, RecordLoginCommand,
 };
 pub use menu::{
@@ -63,16 +63,14 @@ pub use message::{
     MessageAudienceKind, MessageAudienceSelector, MessageDelivery, MessageInbox, MessageService,
     MessageTemplate, MessageText, PublishMessageParams, PublishedMessage,
 };
-pub use notice_service::{NoticeListParams, NoticeService, NoticeVo};
-pub use oper_log_service::{
-    OperLogQuery, OperLogService, OperLogStatus, OperLogVo, RecordOperLogCommand,
-};
+pub use notice::{NoticeListParams, NoticeService, NoticeVo};
+pub use oper_log::{OperLogQuery, OperLogService, OperLogStatus, OperLogVo, RecordOperLogCommand};
 pub use option::{OptionItem, OptionList};
 pub use permission::{
     CreatePermissionCommand, PermissionService, PermissionSyncReport, PermissionTreeNode,
     PermissionType, PermissionVo, UpdatePermissionCommand,
 };
-pub use post_service::{PostListParams, PostService, PostVo};
+pub use post::{PostListParams, PostService, PostVo};
 pub use product::{
     ApplyProductChangeCommand, CapabilityCatalogVo, CapabilityOverrideInput, CapabilityOverrideVo,
     CapabilityRequirement, CapabilitySnapshotInput, CreateProductPlanCommand,
@@ -86,7 +84,7 @@ pub use product_capability_catalog::{
     CAPABILITY_CATALOG, CapabilityDescriptor, CapabilityVariantDescriptor,
     SERVICE_ACCOUNTS_CAPABILITY, capability_descriptor, validate_capability_snapshot,
 };
-pub use role_service::{RoleListParams, RoleOptionPurpose, RoleService, RoleVo};
+pub use role::{RoleListParams, RoleOptionPurpose, RoleService, RoleVo};
 pub use service_account::{
     CreateCredentialCommand, CreateDelegationCommand, CreateServiceAccountCommand,
     CreatedCredentialVo, CreatedDelegationVo, ServiceAccessAuditVo, ServiceAccountDetailVo,
@@ -94,6 +92,7 @@ pub use service_account::{
     ServiceCapabilityDescriptor, ServiceCredentialVo, ServiceDelegationTargetVo,
     ServiceDelegationVo, UpdateServiceAccountCommand,
 };
+pub use tenant::{CreateTenantParams, TenantService, TenantVo, UpdateTenantParams};
 pub use tenant_config_package::{
     GeneratedTenantConfigPackage, ParsedTenantConfigPackage, PortableConfig, PortableDepartment,
     PortableDictData, PortableDictType, PortableMenu, PortablePermission, PortablePost,
@@ -116,8 +115,7 @@ pub use tenant_data_migration::{
     MigrationImpact, MigrationItemView, MigrationPreview, MigrationPreviewRequest, MigrationView,
     TENANT_DATA_MIGRATION_JOB_TYPE, TenantDataMigrationJobHandler, TenantDataMigrationService,
 };
-pub use tenant_service::{CreateTenantParams, TenantService, TenantVo, UpdateTenantParams};
-pub use tenant_usage_service::{
+pub use tenant_usage::{
     QuotaUsage, RequestWindowUsage, TenantAuxiliaryUsage, TenantCapacityVo,
     TenantRateLimitReadFuture, TenantRateLimitReadPort, TenantRateLimitSnapshot,
     TenantUsagePageParams, TenantUsageService, TenantUsageVo,
@@ -131,7 +129,7 @@ pub use user_import::{
     UserImportJobHandler, UserImportJobVo, UserImportListParams, UserImportRowVo,
     UserImportService,
 };
-pub use websocket_ticket_service::{
+pub use websocket_ticket::{
     WebSocketTicket, WebSocketTicketGrant, WebSocketTicketService, WebSocketTicketStore,
     WebSocketTicketStoreFuture,
 };
@@ -143,11 +141,11 @@ pub use file::{
     UPLOAD_BUCKET, UploadCommand, UploadPolicy, UploadResponse,
 };
 pub mod online_user;
-pub mod overview_service;
+pub mod overview;
 pub use online_user::{
     OnlineSessionMetadataFuture, OnlineSessionMetadataStore, OnlineUserService, OnlineUserVo,
     UserSession,
 };
-pub use overview_service::{
+pub use overview::{
     OverviewCoreSnapshot, OverviewRange, OverviewService, OverviewTrendBucket, OverviewTrends,
 };

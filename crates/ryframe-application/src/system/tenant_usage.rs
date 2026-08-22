@@ -8,7 +8,7 @@ use crate::ports::tenants::{
     TenantCapacityRecord, TenantUsageAggregateRecord, TenantUsageFilter, TenantUsagePersistencePort,
 };
 
-use super::tenant_service::TenantVo;
+use super::tenant::TenantVo;
 
 const SYSTEM_TENANT_ID: &str = "system";
 const TENANT_RATE_LIMIT_WINDOW_SECS: u64 = 60;

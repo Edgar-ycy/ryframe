@@ -1,6 +1,6 @@
 pub mod agent;
 mod audit;
-mod auth_service;
+mod auth;
 mod authorization_cache;
 mod authorization_resolver;
 mod id_generator;
@@ -25,7 +25,7 @@ pub use audit::{
     AuditOutboxPersistencePort, AuditRequestContext, AuditTransactionBinding, record_audit_failure,
     scope_audit_request, set_audit_failure_hook,
 };
-pub use auth_service::{AuthService, LoginResult, UserInfo};
+pub use auth::{AuthService, LoginResult, UserInfo};
 pub use authorization_cache::{
     AUTHORIZATION_CHANGED_REDIS_CHANNEL, AUTHORIZATION_MIRROR_OUTBOX_EVENT_TYPE,
     AUTHORIZATION_SNAPSHOT_TTL_SECS, AuthorizationCache, AuthorizationCacheBackend,
