@@ -1,3 +1,4 @@
+pub mod cli;
 pub mod engine;
 pub mod naming;
 pub mod schema;
