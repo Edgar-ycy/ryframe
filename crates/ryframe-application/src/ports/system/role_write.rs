@@ -1,4 +1,7 @@
-use crate::{ControlTransaction, PersistenceFuture};
+use async_trait::async_trait;
+use ryframe_kernel::AppResult;
+
+use crate::PersistenceTransaction;
 
 use super::RoleRecord;
 
@@ -8,86 +11,71 @@ pub struct RolePermissionRef {
     pub code: String,
 }
 
-pub trait RoleWriteTransaction: ControlTransaction {
-    fn lock_configuration<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()>;
+#[async_trait]
+pub trait RoleWriteTransaction: PersistenceTransaction {
+    async fn lock_configuration(&self, tenant_id: &str) -> AppResult<()>;
 
-    fn find_by_id_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_by_id_for_update(
+        &self,
+        tenant_id: &str,
         id: i64,
-    ) -> PersistenceFuture<'a, Option<RoleRecord>>;
+    ) -> AppResult<Option<RoleRecord>>;
 
-    fn find_by_code_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        code: &'a str,
-    ) -> PersistenceFuture<'a, Option<RoleRecord>>;
+    async fn find_by_code_for_update(
+        &self,
+        tenant_id: &str,
+        code: &str,
+    ) -> AppResult<Option<RoleRecord>>;
 
-    fn count_available_super_roles<'a>(
-        &'a self,
-        tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, usize>;
+    async fn count_available_super_roles(&self, tenant_id: &str) -> AppResult<usize>;
 
-    fn ensure_role_quota<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()>;
+    async fn ensure_role_quota(&self, tenant_id: &str) -> AppResult<()>;
 
-    fn insert<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        record: RoleRecord,
-    ) -> PersistenceFuture<'a, RoleRecord>;
+    async fn insert(&self, tenant_id: &str, record: RoleRecord) -> AppResult<RoleRecord>;
 
-    fn update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        record: RoleRecord,
-    ) -> PersistenceFuture<'a, RoleRecord>;
+    async fn update(&self, tenant_id: &str, record: RoleRecord) -> AppResult<RoleRecord>;
 
-    fn delete_many<'a>(&'a self, tenant_id: &'a str, ids: &'a [i64]) -> PersistenceFuture<'a, u64>;
+    async fn delete_many(&self, tenant_id: &str, ids: &[i64]) -> AppResult<u64>;
 
-    fn find_permissions_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        permission_ids: &'a [i64],
-    ) -> PersistenceFuture<'a, Vec<RolePermissionRef>>;
+    async fn find_permissions_for_update(
+        &self,
+        tenant_id: &str,
+        permission_ids: &[i64],
+    ) -> AppResult<Vec<RolePermissionRef>>;
 
-    fn ensure_permission_codes_enabled<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        permission_codes: &'a [String],
-    ) -> PersistenceFuture<'a, ()>;
+    async fn ensure_permission_codes_enabled(
+        &self,
+        tenant_id: &str,
+        permission_codes: &[String],
+    ) -> AppResult<()>;
 
-    fn assign_permissions<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn assign_permissions(
+        &self,
+        tenant_id: &str,
         role_id: i64,
-        permission_ids: &'a [i64],
-    ) -> PersistenceFuture<'a, ()>;
+        permission_ids: &[i64],
+    ) -> AppResult<()>;
 
-    fn find_departments_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        department_ids: &'a [i64],
-    ) -> PersistenceFuture<'a, Vec<i64>>;
+    async fn find_departments_for_update(
+        &self,
+        tenant_id: &str,
+        department_ids: &[i64],
+    ) -> AppResult<Vec<i64>>;
 
-    fn replace_data_scope<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn replace_data_scope(
+        &self,
+        tenant_id: &str,
         role_id: i64,
-        data_scope: &'a str,
-        department_ids: &'a [i64],
-    ) -> PersistenceFuture<'a, ()>;
+        data_scope: &str,
+        department_ids: &[i64],
+    ) -> AppResult<()>;
 
-    fn increment_authorization_epoch<'a>(
-        &'a self,
-        tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, i32>;
+    async fn increment_authorization_epoch(&self, tenant_id: &str) -> AppResult<i32>;
 
-    fn increment_configuration_version<'a>(
-        &'a self,
-        tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, ()>;
+    async fn increment_configuration_version(&self, tenant_id: &str) -> AppResult<()>;
 }
 
+#[async_trait]
 pub trait RoleWritePort: Send + Sync {
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn RoleWriteTransaction>>;
+    async fn begin(&self) -> AppResult<Box<dyn RoleWriteTransaction>>;
 }

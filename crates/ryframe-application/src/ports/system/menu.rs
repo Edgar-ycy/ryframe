@@ -1,7 +1,8 @@
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use ryframe_kernel::{PageResult, ValidatedPageQuery};
+use ryframe_kernel::{AppResult, PageResult, ValidatedPageQuery};
 
-use crate::{ControlTransaction, PersistenceFuture};
+use crate::PersistenceTransaction;
 
 #[derive(Debug)]
 pub struct MenuRecord {
@@ -42,88 +43,65 @@ pub struct MenuFilter<'a> {
     pub status: Option<&'a str>,
 }
 
+#[async_trait]
 pub trait MenuReadPort: Send + Sync {
-    fn find_tree<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, Vec<MenuTreeRecord>>;
+    async fn find_tree(&self, tenant_id: &str) -> AppResult<Vec<MenuTreeRecord>>;
 
-    fn find_tree_by_permissions<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        permission_codes: &'a [String],
-    ) -> PersistenceFuture<'a, Vec<MenuTreeRecord>>;
+    async fn find_tree_by_permissions(
+        &self,
+        tenant_id: &str,
+        permission_codes: &[String],
+    ) -> AppResult<Vec<MenuTreeRecord>>;
 
-    fn find_session_tree<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        permission_codes: &'a [String],
-        excluded_routes: &'a [String],
-    ) -> PersistenceFuture<'a, Vec<MenuTreeRecord>>;
+    async fn find_session_tree(
+        &self,
+        tenant_id: &str,
+        permission_codes: &[String],
+        excluded_routes: &[String],
+    ) -> AppResult<Vec<MenuTreeRecord>>;
 
-    fn find_page<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_page(
+        &self,
+        tenant_id: &str,
         page: ValidatedPageQuery,
-        filter: MenuFilter<'a>,
-    ) -> PersistenceFuture<'a, PageResult<MenuRecord>>;
+        filter: MenuFilter<'_>,
+    ) -> AppResult<PageResult<MenuRecord>>;
 
-    fn find_by_id<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        id: i64,
-    ) -> PersistenceFuture<'a, Option<MenuRecord>>;
+    async fn find_by_id(&self, tenant_id: &str, id: i64) -> AppResult<Option<MenuRecord>>;
 }
 
-pub trait MenuWriteTransaction: ControlTransaction + Sync {
-    fn lock_configuration<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()>;
+#[async_trait]
+pub trait MenuWriteTransaction: PersistenceTransaction + Sync {
+    async fn lock_configuration(&self, tenant_id: &str) -> AppResult<()>;
 
-    fn find_by_id_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_by_id_for_update(
+        &self,
+        tenant_id: &str,
         id: i64,
-    ) -> PersistenceFuture<'a, Option<MenuRecord>>;
+    ) -> AppResult<Option<MenuRecord>>;
 
-    fn permission_exists_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        id: i64,
-    ) -> PersistenceFuture<'a, bool>;
+    async fn permission_exists_for_update(&self, tenant_id: &str, id: i64) -> AppResult<bool>;
 
-    fn find_by_route_key_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        route_key: &'a str,
-    ) -> PersistenceFuture<'a, Option<MenuRecord>>;
+    async fn find_by_route_key_for_update(
+        &self,
+        tenant_id: &str,
+        route_key: &str,
+    ) -> AppResult<Option<MenuRecord>>;
 
-    fn insert<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        record: MenuRecord,
-    ) -> PersistenceFuture<'a, MenuRecord>;
+    async fn insert(&self, tenant_id: &str, record: MenuRecord) -> AppResult<MenuRecord>;
 
-    fn update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        record: MenuRecord,
-    ) -> PersistenceFuture<'a, MenuRecord>;
+    async fn update(&self, tenant_id: &str, record: MenuRecord) -> AppResult<MenuRecord>;
 
-    fn has_child_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        id: i64,
-    ) -> PersistenceFuture<'a, bool>;
+    async fn has_child_for_update(&self, tenant_id: &str, id: i64) -> AppResult<bool>;
 
-    fn delete<'a>(&'a self, tenant_id: &'a str, id: i64) -> PersistenceFuture<'a, ()>;
+    async fn delete(&self, tenant_id: &str, id: i64) -> AppResult<()>;
 
-    fn increment_authorization_epoch<'a>(
-        &'a self,
-        tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, i32>;
+    async fn increment_authorization_epoch(&self, tenant_id: &str) -> AppResult<i32>;
 
-    fn increment_configuration_version<'a>(
-        &'a self,
-        tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, ()>;
+    async fn increment_configuration_version(&self, tenant_id: &str) -> AppResult<()>;
 }
 
+#[async_trait]
 pub trait MenuWritePort: Send + Sync {
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn MenuWriteTransaction>>;
+    async fn begin(&self) -> AppResult<Box<dyn MenuWriteTransaction>>;
 }

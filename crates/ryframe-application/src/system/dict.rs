@@ -7,6 +7,7 @@ use ryframe_kernel::{
 use serde::{Deserialize, Serialize};
 
 use crate::ports::system::{DictDataRecord, DictPersistencePort, DictTypeFilter, DictTypeRecord};
+use crate::{TransactionAuditMode, complete_transaction};
 
 const DICT_CACHE_KEY_PREFIX: &str = "sys_dict:data:";
 const CACHE_TTL_SECS: u64 = 3600;
@@ -158,20 +159,23 @@ impl DictService {
             updated_at: now,
         };
         let transaction = self.persistence.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        if transaction
-            .find_type_by_code_for_update(tenant_id, code)
-            .await?
-            .is_some()
-        {
-            return Err(AppError::Conflict("字典类型编码已存在".into()));
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            if transaction
+                .find_type_by_code_for_update(tenant_id, code)
+                .await?
+                .is_some()
+            {
+                return Err(AppError::Conflict("字典类型编码已存在".into()));
+            }
+            let saved = transaction.insert_type(tenant_id, record).await?;
+            transaction
+                .increment_configuration_version(tenant_id)
+                .await?;
+            Ok(DictTypeVo::from(saved))
         }
-        let saved = transaction.insert_type(tenant_id, record).await?;
-        transaction
-            .increment_configuration_version(tenant_id)
-            .await?;
-        transaction.commit().await?;
-        Ok(DictTypeVo::from(saved))
+        .await;
+        complete_transaction(transaction, operation, TransactionAuditMode::CurrentRequest).await
     }
 
     pub async fn update_type(
@@ -183,35 +187,39 @@ impl DictService {
     ) -> AppResult<DictTypeVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let transaction = self.persistence.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        let mut dict_type = transaction
-            .find_type_by_id_for_update(tenant_id, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("字典类型不存在".into()))?;
-        dict_type.name = name.to_owned();
-        dict_type.status = status;
-        dict_type.updated_at = Utc::now();
-        let saved = transaction.update_type(tenant_id, dict_type).await?;
-        transaction
-            .increment_configuration_version(tenant_id)
-            .await?;
-        transaction.commit().await?;
-        Ok(DictTypeVo::from(saved))
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            let mut dict_type = transaction
+                .find_type_by_id_for_update(tenant_id, id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("字典类型不存在".into()))?;
+            dict_type.name = name.to_owned();
+            dict_type.status = status;
+            dict_type.updated_at = Utc::now();
+            let saved = transaction.update_type(tenant_id, dict_type).await?;
+            transaction
+                .increment_configuration_version(tenant_id)
+                .await?;
+            Ok(DictTypeVo::from(saved))
+        }
+        .await;
+        complete_transaction(transaction, operation, TransactionAuditMode::CurrentRequest).await
     }
 
     pub async fn delete_type(&self, actor: &ActorContext, id: i64) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let transaction = self.persistence.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        transaction
-            .find_type_by_id_for_update(tenant_id, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("字典类型不存在".into()))?;
-        transaction.delete_type(tenant_id, id).await?;
-        transaction
-            .increment_configuration_version(tenant_id)
-            .await?;
-        transaction.commit().await
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            transaction
+                .find_type_by_id_for_update(tenant_id, id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("字典类型不存在".into()))?;
+            transaction.delete_type(tenant_id, id).await?;
+            transaction.increment_configuration_version(tenant_id).await
+        }
+        .await;
+        complete_transaction(transaction, operation, TransactionAuditMode::CurrentRequest).await
     }
 
     pub async fn find_data_by_type(
@@ -268,17 +276,22 @@ impl DictService {
             updated_at: now,
         };
         let transaction = self.persistence.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        transaction
-            .find_type_by_code_for_update(tenant_id, type_code)
-            .await?
-            .ok_or_else(|| AppError::NotFound("字典类型不存在".into()))?;
-        let saved = transaction.insert_data(tenant_id, record).await?;
-        transaction
-            .increment_configuration_version(tenant_id)
-            .await?;
-        transaction.commit().await?;
-        let value = DictDataVo::from(saved);
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            transaction
+                .find_type_by_code_for_update(tenant_id, type_code)
+                .await?
+                .ok_or_else(|| AppError::NotFound("字典类型不存在".into()))?;
+            let saved = transaction.insert_data(tenant_id, record).await?;
+            transaction
+                .increment_configuration_version(tenant_id)
+                .await?;
+            Ok(DictDataVo::from(saved))
+        }
+        .await;
+        let value =
+            complete_transaction(transaction, operation, TransactionAuditMode::CurrentRequest)
+                .await?;
         self.invalidate_dict_cache(tenant_id, &value.type_code)
             .await;
         Ok(value)
@@ -295,22 +308,27 @@ impl DictService {
     ) -> AppResult<DictDataVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let transaction = self.persistence.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        let mut data = transaction
-            .find_data_by_id_for_update(tenant_id, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("字典数据不存在".into()))?;
-        data.label = label.to_owned();
-        data.value = value.to_owned();
-        data.sort = sort;
-        data.status = status;
-        data.updated_at = Utc::now();
-        let saved = transaction.update_data(tenant_id, data).await?;
-        transaction
-            .increment_configuration_version(tenant_id)
-            .await?;
-        transaction.commit().await?;
-        let value = DictDataVo::from(saved);
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            let mut data = transaction
+                .find_data_by_id_for_update(tenant_id, id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("字典数据不存在".into()))?;
+            data.label = label.to_owned();
+            data.value = value.to_owned();
+            data.sort = sort;
+            data.status = status;
+            data.updated_at = Utc::now();
+            let saved = transaction.update_data(tenant_id, data).await?;
+            transaction
+                .increment_configuration_version(tenant_id)
+                .await?;
+            Ok(DictDataVo::from(saved))
+        }
+        .await;
+        let value =
+            complete_transaction(transaction, operation, TransactionAuditMode::CurrentRequest)
+                .await?;
         self.invalidate_dict_cache(tenant_id, &value.type_code)
             .await;
         Ok(value)
@@ -319,17 +337,23 @@ impl DictService {
     pub async fn delete_data(&self, actor: &ActorContext, id: i64) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let transaction = self.persistence.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        let data = transaction
-            .find_data_by_id_for_update(tenant_id, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("字典数据不存在".into()))?;
-        transaction.delete_data(tenant_id, id).await?;
-        transaction
-            .increment_configuration_version(tenant_id)
-            .await?;
-        transaction.commit().await?;
-        self.invalidate_dict_cache(tenant_id, &data.type_code).await;
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            let data = transaction
+                .find_data_by_id_for_update(tenant_id, id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("字典数据不存在".into()))?;
+            transaction.delete_data(tenant_id, id).await?;
+            transaction
+                .increment_configuration_version(tenant_id)
+                .await?;
+            Ok(data.type_code)
+        }
+        .await;
+        let type_code =
+            complete_transaction(transaction, operation, TransactionAuditMode::CurrentRequest)
+                .await?;
+        self.invalidate_dict_cache(tenant_id, &type_code).await;
         Ok(())
     }
 

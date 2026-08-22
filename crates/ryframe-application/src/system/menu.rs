@@ -3,7 +3,7 @@ use std::sync::Arc;
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 
 use crate::{
-    AuthorizationCache,
+    AuthorizationCache, TransactionAuditMode, complete_transaction,
     ports::system::{MenuFilter, MenuReadPort, MenuRecord, MenuWritePort, MenuWriteTransaction},
 };
 
@@ -115,41 +115,45 @@ impl MenuService {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let route_key = normalize_route_key(command.route_key);
         let transaction = self.write.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        self.validate_binding(
-            transaction.as_ref(),
-            tenant_id,
-            MenuBinding {
-                current_id: None,
-                parent_id: command.parent_id,
-                menu_type: command.menu_type,
-                perm_id: command.perm_id,
-                route_key: route_key.as_deref(),
-            },
-        )
-        .await?;
-        let saved = transaction
-            .insert(
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            self.validate_binding(
+                transaction.as_ref(),
                 tenant_id,
-                MenuRecord {
-                    id: crate::next_id()?,
-                    name: command.name,
+                MenuBinding {
+                    current_id: None,
                     parent_id: command.parent_id,
-                    menu_type: command.menu_type.as_str().into(),
+                    menu_type: command.menu_type,
                     perm_id: command.perm_id,
-                    route_key,
-                    icon: command.icon,
-                    sort: command.sort,
-                    visible: command.visible,
-                    status: MENU_STATUS_NORMAL.into(),
-                    remark: None,
-                    created_at: Default::default(),
-                    updated_at: Default::default(),
+                    route_key: route_key.as_deref(),
                 },
             )
             .await?;
-        self.commit_mutation(transaction, tenant_id).await?;
-        Ok(saved.into())
+            transaction
+                .insert(
+                    tenant_id,
+                    MenuRecord {
+                        id: crate::next_id()?,
+                        name: command.name,
+                        parent_id: command.parent_id,
+                        menu_type: command.menu_type.as_str().into(),
+                        perm_id: command.perm_id,
+                        route_key,
+                        icon: command.icon,
+                        sort: command.sort,
+                        visible: command.visible,
+                        status: MENU_STATUS_NORMAL.into(),
+                        remark: None,
+                        created_at: Default::default(),
+                        updated_at: Default::default(),
+                    },
+                )
+                .await
+        }
+        .await;
+        self.complete_mutation(transaction, tenant_id, operation)
+            .await
+            .map(MenuVo::from)
     }
 
     pub async fn update(
@@ -160,50 +164,58 @@ impl MenuService {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let route_key = normalize_route_key(command.route_key);
         let transaction = self.write.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        let mut record = transaction
-            .find_by_id_for_update(tenant_id, command.id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("菜单不存在".into()))?;
-        self.validate_binding(
-            transaction.as_ref(),
-            tenant_id,
-            MenuBinding {
-                current_id: Some(command.id),
-                parent_id: command.parent_id,
-                menu_type: command.menu_type,
-                perm_id: command.perm_id,
-                route_key: route_key.as_deref(),
-            },
-        )
-        .await?;
-        record.name = command.name;
-        record.parent_id = command.parent_id;
-        record.menu_type = command.menu_type.as_str().into();
-        record.perm_id = command.perm_id;
-        record.route_key = route_key;
-        record.icon = command.icon;
-        record.sort = command.sort;
-        record.visible = command.visible;
-        record.status = command.status;
-        let saved = transaction.update(tenant_id, record).await?;
-        self.commit_mutation(transaction, tenant_id).await?;
-        Ok(saved.into())
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            let mut record = transaction
+                .find_by_id_for_update(tenant_id, command.id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("菜单不存在".into()))?;
+            self.validate_binding(
+                transaction.as_ref(),
+                tenant_id,
+                MenuBinding {
+                    current_id: Some(command.id),
+                    parent_id: command.parent_id,
+                    menu_type: command.menu_type,
+                    perm_id: command.perm_id,
+                    route_key: route_key.as_deref(),
+                },
+            )
+            .await?;
+            record.name = command.name;
+            record.parent_id = command.parent_id;
+            record.menu_type = command.menu_type.as_str().into();
+            record.perm_id = command.perm_id;
+            record.route_key = route_key;
+            record.icon = command.icon;
+            record.sort = command.sort;
+            record.visible = command.visible;
+            record.status = command.status;
+            transaction.update(tenant_id, record).await
+        }
+        .await;
+        self.complete_mutation(transaction, tenant_id, operation)
+            .await
+            .map(MenuVo::from)
     }
 
     pub async fn delete(&self, actor: &ActorContext, id: i64) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let transaction = self.write.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        transaction
-            .find_by_id_for_update(tenant_id, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("菜单不存在".into()))?;
-        if transaction.has_child_for_update(tenant_id, id).await? {
-            return Err(AppError::Validation("存在子菜单，无法删除".into()));
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            transaction
+                .find_by_id_for_update(tenant_id, id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("菜单不存在".into()))?;
+            if transaction.has_child_for_update(tenant_id, id).await? {
+                return Err(AppError::Validation("存在子菜单，无法删除".into()));
+            }
+            transaction.delete(tenant_id, id).await
         }
-        transaction.delete(tenant_id, id).await?;
-        self.commit_mutation(transaction, tenant_id).await
+        .await;
+        self.complete_mutation(transaction, tenant_id, operation)
+            .await
     }
 
     pub async fn find_by_page(
@@ -237,19 +249,28 @@ impl MenuService {
             .map(|record| record.map(MenuVo::from))
     }
 
-    async fn commit_mutation(
+    async fn complete_mutation<R>(
         &self,
         transaction: Box<dyn MenuWriteTransaction>,
         tenant_id: &str,
-    ) -> AppResult<()> {
-        let authorization_epoch = transaction.increment_authorization_epoch(tenant_id).await?;
-        transaction
-            .increment_configuration_version(tenant_id)
-            .await?;
-        transaction.commit().await?;
+        operation: AppResult<R>,
+    ) -> AppResult<R> {
+        let operation = async {
+            let value = operation?;
+            let authorization_epoch = transaction.increment_authorization_epoch(tenant_id).await?;
+            transaction
+                .increment_configuration_version(tenant_id)
+                .await?;
+            Ok((value, authorization_epoch))
+        }
+        .await;
+        let (value, authorization_epoch) =
+            complete_transaction(transaction, operation, TransactionAuditMode::CurrentRequest)
+                .await?;
         self.authorization_cache
             .sync_tenant_epoch(tenant_id, authorization_epoch)
-            .await
+            .await?;
+        Ok(value)
     }
 }
 

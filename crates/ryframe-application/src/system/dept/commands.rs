@@ -1,6 +1,7 @@
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 
 use crate::ports::system::{DeptRecord, DeptWriteTransaction};
+use crate::{TransactionAuditMode, complete_transaction};
 
 use super::{CreateDeptCommand, DeptService, DeptVo, UpdateDeptCommand};
 
@@ -14,28 +15,32 @@ impl DeptService {
     ) -> AppResult<DeptVo> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let transaction = self.write.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        let ancestors = self
-            .parent_ancestors(transaction.as_ref(), tenant_id, command.parent_id)
-            .await?;
-        let saved = transaction
-            .insert(
-                tenant_id,
-                DeptRecord {
-                    id: crate::next_id()?,
-                    name: command.name,
-                    parent_id: command.parent_id,
-                    ancestors,
-                    sort: command.sort,
-                    status: DEPT_STATUS_NORMAL.into(),
-                    remark: None,
-                    created_at: Default::default(),
-                    updated_at: Default::default(),
-                },
-            )
-            .await?;
-        self.commit_mutation(transaction, tenant_id).await?;
-        Ok(saved.into())
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            let ancestors = self
+                .parent_ancestors(transaction.as_ref(), tenant_id, command.parent_id)
+                .await?;
+            transaction
+                .insert(
+                    tenant_id,
+                    DeptRecord {
+                        id: crate::next_id()?,
+                        name: command.name,
+                        parent_id: command.parent_id,
+                        ancestors,
+                        sort: command.sort,
+                        status: DEPT_STATUS_NORMAL.into(),
+                        remark: None,
+                        created_at: Default::default(),
+                        updated_at: Default::default(),
+                    },
+                )
+                .await
+        }
+        .await;
+        self.complete_mutation(transaction, tenant_id, operation)
+            .await
+            .map(DeptVo::from)
     }
 
     pub async fn update(
@@ -49,69 +54,78 @@ impl DeptService {
             return Err(AppError::Validation("部门不能将自己设为上级".into()));
         }
         let transaction = self.write.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        let mut current = transaction
-            .find_by_id_for_update(tenant_id, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("部门不存在".into()))?;
-        let parent_changed = current.parent_id != command.parent_id;
-        let rewrite = if parent_changed {
-            let old_ancestors = std::mem::take(&mut current.ancestors);
-            let old_prefix = format!("{old_ancestors},{id}");
-            let descendants = transaction
-                .find_descendants_for_update(tenant_id, &old_prefix)
-                .await?;
-            if command
-                .parent_id
-                .is_some_and(|parent| descendants.iter().any(|item| item.id == parent))
-            {
-                return Err(AppError::Validation(
-                    "不能将部门移动到自己的后代节点".into(),
-                ));
-            }
-            current.ancestors = self
-                .parent_ancestors(transaction.as_ref(), tenant_id, command.parent_id)
-                .await?;
-            let new_prefix = format!("{},{id}", current.ancestors);
-            Some((old_prefix, new_prefix, descendants))
-        } else {
-            None
-        };
-        current.name = command.name;
-        current.parent_id = command.parent_id;
-        current.sort = command.sort;
-        current.status = command.status;
-        let saved = transaction.update(tenant_id, current).await?;
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            let mut current = transaction
+                .find_by_id_for_update(tenant_id, id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("部门不存在".into()))?;
+            let parent_changed = current.parent_id != command.parent_id;
+            let rewrite = if parent_changed {
+                let old_ancestors = std::mem::take(&mut current.ancestors);
+                let old_prefix = format!("{old_ancestors},{id}");
+                let descendants = transaction
+                    .find_descendants_for_update(tenant_id, &old_prefix)
+                    .await?;
+                if command
+                    .parent_id
+                    .is_some_and(|parent| descendants.iter().any(|item| item.id == parent))
+                {
+                    return Err(AppError::Validation(
+                        "不能将部门移动到自己的后代节点".into(),
+                    ));
+                }
+                current.ancestors = self
+                    .parent_ancestors(transaction.as_ref(), tenant_id, command.parent_id)
+                    .await?;
+                let new_prefix = format!("{},{id}", current.ancestors);
+                Some((old_prefix, new_prefix, descendants))
+            } else {
+                None
+            };
+            current.name = command.name;
+            current.parent_id = command.parent_id;
+            current.sort = command.sort;
+            current.status = command.status;
+            let saved = transaction.update(tenant_id, current).await?;
 
-        if let Some((old_prefix, new_prefix, descendants)) = rewrite {
-            for mut child in descendants {
-                child.ancestors =
-                    rewrite_descendant_ancestors(&child.ancestors, &old_prefix, &new_prefix)?;
-                transaction.update(tenant_id, child).await?;
+            if let Some((old_prefix, new_prefix, descendants)) = rewrite {
+                for mut child in descendants {
+                    child.ancestors =
+                        rewrite_descendant_ancestors(&child.ancestors, &old_prefix, &new_prefix)?;
+                    transaction.update(tenant_id, child).await?;
+                }
             }
+            Ok(saved)
         }
-        self.commit_mutation(transaction, tenant_id).await?;
-        Ok(saved.into())
+        .await;
+        self.complete_mutation(transaction, tenant_id, operation)
+            .await
+            .map(DeptVo::from)
     }
 
     pub async fn delete(&self, actor: &ActorContext, id: i64) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let transaction = self.write.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        transaction
-            .find_by_id_for_update(tenant_id, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("部门不存在".into()))?;
-        if transaction.has_child_for_update(tenant_id, id).await? {
-            return Err(AppError::Validation("存在子部门，无法删除".into()));
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            transaction
+                .find_by_id_for_update(tenant_id, id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("部门不存在".into()))?;
+            if transaction.has_child_for_update(tenant_id, id).await? {
+                return Err(AppError::Validation("存在子部门，无法删除".into()));
+            }
+            if transaction.has_reference_for_update(tenant_id, id).await? {
+                return Err(AppError::Conflict(
+                    "部门仍被用户或角色数据权限引用，无法删除".into(),
+                ));
+            }
+            transaction.delete(tenant_id, id).await
         }
-        if transaction.has_reference_for_update(tenant_id, id).await? {
-            return Err(AppError::Conflict(
-                "部门仍被用户或角色数据权限引用，无法删除".into(),
-            ));
-        }
-        transaction.delete(tenant_id, id).await?;
-        self.commit_mutation(transaction, tenant_id).await
+        .await;
+        self.complete_mutation(transaction, tenant_id, operation)
+            .await
     }
 
     async fn parent_ancestors(
@@ -130,19 +144,28 @@ impl DeptService {
         }
     }
 
-    async fn commit_mutation(
+    async fn complete_mutation<R>(
         &self,
         transaction: Box<dyn DeptWriteTransaction>,
         tenant_id: &str,
-    ) -> AppResult<()> {
-        let authorization_epoch = transaction.increment_authorization_epoch(tenant_id).await?;
-        transaction
-            .increment_configuration_version(tenant_id)
-            .await?;
-        transaction.commit().await?;
+        operation: AppResult<R>,
+    ) -> AppResult<R> {
+        let operation = async {
+            let value = operation?;
+            let authorization_epoch = transaction.increment_authorization_epoch(tenant_id).await?;
+            transaction
+                .increment_configuration_version(tenant_id)
+                .await?;
+            Ok((value, authorization_epoch))
+        }
+        .await;
+        let (value, authorization_epoch) =
+            complete_transaction(transaction, operation, TransactionAuditMode::CurrentRequest)
+                .await?;
         self.authorization_cache
             .sync_tenant_epoch(tenant_id, authorization_epoch)
-            .await
+            .await?;
+        Ok(value)
     }
 }
 

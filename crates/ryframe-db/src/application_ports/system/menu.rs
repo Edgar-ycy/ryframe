@@ -6,13 +6,14 @@ use crate::{
     entities::{menu, permission},
     repositories::menu_repo::MenuTreeNode as DatabaseMenuTreeNode,
 };
+use async_trait::async_trait;
 use ryframe_kernel::{AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait, sea_query::LockType,
 };
 
 use ryframe_application::{
-    AuthorizationCache, ControlTransaction, PersistenceFuture,
+    AuthorizationCache, PersistenceTransaction, TransactionAuditMode,
     ports::system::{
         MenuFilter, MenuReadPort, MenuRecord, MenuTreeRecord, MenuWritePort, MenuWriteTransaction,
     },
@@ -48,95 +49,82 @@ struct DatabaseMenuWriteTransaction {
     authorization_cache: AuthorizationCache,
 }
 
+#[async_trait]
 impl MenuReadPort for DatabaseMenuRead {
-    fn find_tree<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, Vec<MenuTreeRecord>> {
-        Box::pin(async move {
-            let database = self.eventual_read();
-            MenuRepository
-                .find_tree(&database, tenant_id)
-                .await?
-                .into_iter()
-                .map(to_tree_record)
-                .collect()
-        })
+    async fn find_tree(&self, tenant_id: &str) -> AppResult<Vec<MenuTreeRecord>> {
+        let database = self.eventual_read();
+        MenuRepository
+            .find_tree(&database, tenant_id)
+            .await?
+            .into_iter()
+            .map(to_tree_record)
+            .collect()
     }
 
-    fn find_tree_by_permissions<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        permission_codes: &'a [String],
-    ) -> PersistenceFuture<'a, Vec<MenuTreeRecord>> {
-        Box::pin(async move {
-            let database = self.eventual_read();
-            MenuRepository
-                .find_tree_by_permission_codes(&database, tenant_id, permission_codes)
-                .await?
-                .into_iter()
-                .map(to_tree_record)
-                .collect()
-        })
+    async fn find_tree_by_permissions(
+        &self,
+        tenant_id: &str,
+        permission_codes: &[String],
+    ) -> AppResult<Vec<MenuTreeRecord>> {
+        let database = self.eventual_read();
+        MenuRepository
+            .find_tree_by_permission_codes(&database, tenant_id, permission_codes)
+            .await?
+            .into_iter()
+            .map(to_tree_record)
+            .collect()
     }
 
-    fn find_session_tree<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        permission_codes: &'a [String],
-        excluded_routes: &'a [String],
-    ) -> PersistenceFuture<'a, Vec<MenuTreeRecord>> {
-        Box::pin(async move {
-            MenuRepository
-                .find_tree_by_permission_codes_excluding_routes(
-                    self.database.write(),
-                    tenant_id,
-                    permission_codes,
-                    excluded_routes,
-                )
-                .await?
-                .into_iter()
-                .map(to_tree_record)
-                .collect()
-        })
+    async fn find_session_tree(
+        &self,
+        tenant_id: &str,
+        permission_codes: &[String],
+        excluded_routes: &[String],
+    ) -> AppResult<Vec<MenuTreeRecord>> {
+        MenuRepository
+            .find_tree_by_permission_codes_excluding_routes(
+                self.database.write(),
+                tenant_id,
+                permission_codes,
+                excluded_routes,
+            )
+            .await?
+            .into_iter()
+            .map(to_tree_record)
+            .collect()
     }
 
-    fn find_page<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_page(
+        &self,
+        tenant_id: &str,
         page: ValidatedPageQuery,
-        filter: MenuFilter<'a>,
-    ) -> PersistenceFuture<'a, PageResult<MenuRecord>> {
-        Box::pin(async move {
-            let database = self.eventual_read();
-            let result = MenuRepository
-                .find_by_page_filtered(
-                    &database,
-                    tenant_id,
-                    &page,
-                    &DatabaseMenuFilter {
-                        name: filter.name,
-                        status: filter.status,
-                    },
-                )
-                .await?;
-            Ok(PageResult::new(
-                result.records.into_iter().map(to_record).collect(),
-                result.total,
+        filter: MenuFilter<'_>,
+    ) -> AppResult<PageResult<MenuRecord>> {
+        let database = self.eventual_read();
+        let result = MenuRepository
+            .find_by_page_filtered(
+                &database,
+                tenant_id,
                 &page,
-            ))
-        })
+                &DatabaseMenuFilter {
+                    name: filter.name,
+                    status: filter.status,
+                },
+            )
+            .await?;
+        Ok(PageResult::new(
+            result.records.into_iter().map(to_record).collect(),
+            result.total,
+            &page,
+        ))
     }
 
-    fn find_by_id<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        id: i64,
-    ) -> PersistenceFuture<'a, Option<MenuRecord>> {
-        Box::pin(async move {
-            let database = self.eventual_read();
-            Ok(MenuRepository
-                .find_by_id(&database, tenant_id, id)
-                .await?
-                .map(to_record))
-        })
+    async fn find_by_id(&self, tenant_id: &str, id: i64) -> AppResult<Option<MenuRecord>> {
+        let database = self.eventual_read();
+        Ok(MenuRepository
+            .find_by_id(&database, tenant_id, id)
+            .await?
+            .map(to_record))
     }
 }
 
@@ -148,163 +136,129 @@ impl DatabaseMenuRead {
     }
 }
 
+#[async_trait]
 impl MenuWritePort for DatabaseMenuWrite {
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn MenuWriteTransaction>> {
-        Box::pin(async move {
-            let transaction = self
-                .database
-                .write()
-                .begin()
-                .await
-                .map_err(database_error)?;
-            Ok(Box::new(DatabaseMenuWriteTransaction {
-                transaction: transaction.into(),
-                authorization_cache: self.authorization_cache.clone(),
-            }) as Box<dyn MenuWriteTransaction>)
-        })
+    async fn begin(&self) -> AppResult<Box<dyn MenuWriteTransaction>> {
+        let transaction = self
+            .database
+            .write()
+            .begin()
+            .await
+            .map_err(database_error)?;
+        Ok(Box::new(DatabaseMenuWriteTransaction {
+            transaction: transaction.into(),
+            authorization_cache: self.authorization_cache.clone(),
+        }) as Box<dyn MenuWriteTransaction>)
     }
 }
 
+#[async_trait]
 impl MenuWriteTransaction for DatabaseMenuWriteTransaction {
-    fn lock_configuration<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            TenantConfigTransferRepository
-                .lock_tenant_configuration_in_txn(&self.transaction, tenant_id, None)
-                .await
-                .map(|_| ())
-        })
+    async fn lock_configuration(&self, tenant_id: &str) -> AppResult<()> {
+        TenantConfigTransferRepository
+            .lock_tenant_configuration_in_txn(&self.transaction, tenant_id, None)
+            .await
+            .map(|_| ())
     }
 
-    fn find_by_id_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_by_id_for_update(
+        &self,
+        tenant_id: &str,
         id: i64,
-    ) -> PersistenceFuture<'a, Option<MenuRecord>> {
-        Box::pin(async move {
-            Ok(MenuRepository
-                .find_by_id_for_update(&self.transaction, tenant_id, id)
-                .await?
-                .map(to_record))
-        })
+    ) -> AppResult<Option<MenuRecord>> {
+        Ok(MenuRepository
+            .find_by_id_for_update(&self.transaction, tenant_id, id)
+            .await?
+            .map(to_record))
     }
 
-    fn permission_exists_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        id: i64,
-    ) -> PersistenceFuture<'a, bool> {
-        Box::pin(async move {
-            permission::Entity::find_by_id(id)
-                .filter(permission::Column::TenantId.eq(tenant_id))
-                .lock(LockType::Update)
-                .one(&self.transaction)
-                .await
-                .map(|record| record.is_some())
-                .map_err(database_error)
-        })
+    async fn permission_exists_for_update(&self, tenant_id: &str, id: i64) -> AppResult<bool> {
+        permission::Entity::find_by_id(id)
+            .filter(permission::Column::TenantId.eq(tenant_id))
+            .lock(LockType::Update)
+            .one(&self.transaction)
+            .await
+            .map(|record| record.is_some())
+            .map_err(database_error)
     }
 
-    fn find_by_route_key_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        route_key: &'a str,
-    ) -> PersistenceFuture<'a, Option<MenuRecord>> {
-        Box::pin(async move {
-            Ok(menu::Entity::find()
-                .filter(menu::Column::TenantId.eq(tenant_id))
-                .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
-                .filter(menu::Column::RouteKey.eq(route_key))
-                .lock(LockType::Update)
-                .one(&self.transaction)
-                .await
-                .map_err(database_error)?
-                .map(to_record))
-        })
+    async fn find_by_route_key_for_update(
+        &self,
+        tenant_id: &str,
+        route_key: &str,
+    ) -> AppResult<Option<MenuRecord>> {
+        Ok(menu::Entity::find()
+            .filter(menu::Column::TenantId.eq(tenant_id))
+            .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
+            .filter(menu::Column::RouteKey.eq(route_key))
+            .lock(LockType::Update)
+            .one(&self.transaction)
+            .await
+            .map_err(database_error)?
+            .map(to_record))
     }
 
-    fn insert<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        record: MenuRecord,
-    ) -> PersistenceFuture<'a, MenuRecord> {
-        Box::pin(async move {
-            let mut entity = to_entity(tenant_id, record);
-            entity.fill_on_insert(&FillContext::new())?;
-            MenuRepository
-                .insert_in_transaction(&self.transaction, tenant_id, entity)
-                .await
-                .map(to_record)
-        })
+    async fn insert(&self, tenant_id: &str, record: MenuRecord) -> AppResult<MenuRecord> {
+        let mut entity = to_entity(tenant_id, record);
+        entity.fill_on_insert(&FillContext::new())?;
+        MenuRepository
+            .insert_in_transaction(&self.transaction, tenant_id, entity)
+            .await
+            .map(to_record)
     }
 
-    fn update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        record: MenuRecord,
-    ) -> PersistenceFuture<'a, MenuRecord> {
-        Box::pin(async move {
-            let mut entity = to_entity(tenant_id, record);
-            entity.fill_on_update(&FillContext::new())?;
-            MenuRepository
-                .update_in_transaction(&self.transaction, tenant_id, entity)
-                .await
-                .map(to_record)
-        })
+    async fn update(&self, tenant_id: &str, record: MenuRecord) -> AppResult<MenuRecord> {
+        let mut entity = to_entity(tenant_id, record);
+        entity.fill_on_update(&FillContext::new())?;
+        MenuRepository
+            .update_in_transaction(&self.transaction, tenant_id, entity)
+            .await
+            .map(to_record)
     }
 
-    fn has_child_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        id: i64,
-    ) -> PersistenceFuture<'a, bool> {
-        Box::pin(async move {
-            menu::Entity::find()
-                .filter(menu::Column::TenantId.eq(tenant_id))
-                .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
-                .filter(menu::Column::ParentId.eq(id))
-                .lock(LockType::Update)
-                .one(&self.transaction)
-                .await
-                .map(|record| record.is_some())
-                .map_err(database_error)
-        })
+    async fn has_child_for_update(&self, tenant_id: &str, id: i64) -> AppResult<bool> {
+        menu::Entity::find()
+            .filter(menu::Column::TenantId.eq(tenant_id))
+            .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
+            .filter(menu::Column::ParentId.eq(id))
+            .lock(LockType::Update)
+            .one(&self.transaction)
+            .await
+            .map(|record| record.is_some())
+            .map_err(database_error)
     }
 
-    fn delete<'a>(&'a self, tenant_id: &'a str, id: i64) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            MenuRepository
-                .delete_in_transaction(&self.transaction, tenant_id, id)
-                .await
-        })
+    async fn delete(&self, tenant_id: &str, id: i64) -> AppResult<()> {
+        MenuRepository
+            .delete_in_transaction(&self.transaction, tenant_id, id)
+            .await
     }
 
-    fn increment_authorization_epoch<'a>(
-        &'a self,
-        tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, i32> {
-        Box::pin(async move {
-            self.authorization_cache
-                .increment_tenant_epoch_in_transaction(&self.transaction, tenant_id)
-                .await
-        })
+    async fn increment_authorization_epoch(&self, tenant_id: &str) -> AppResult<i32> {
+        self.authorization_cache
+            .increment_tenant_epoch_in_transaction(&self.transaction, tenant_id)
+            .await
     }
 
-    fn increment_configuration_version<'a>(
-        &'a self,
-        tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            TenantConfigTransferRepository
-                .increment_configuration_version_in_txn(&self.transaction, tenant_id)
-                .await
-                .map(|_| ())
-        })
+    async fn increment_configuration_version(&self, tenant_id: &str) -> AppResult<()> {
+        TenantConfigTransferRepository
+            .increment_configuration_version_in_txn(&self.transaction, tenant_id)
+            .await
+            .map(|_| ())
     }
 }
 
-impl ControlTransaction for DatabaseMenuWriteTransaction {
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move { self.transaction.commit_audited().await })
+#[async_trait]
+impl PersistenceTransaction for DatabaseMenuWriteTransaction {
+    async fn commit(self: Box<Self>, audit_mode: TransactionAuditMode) -> AppResult<()> {
+        match audit_mode {
+            TransactionAuditMode::CurrentRequest => self.transaction.commit_audited().await,
+            TransactionAuditMode::Skip => self.transaction.commit().await.map_err(database_error),
+        }
+    }
+
+    async fn rollback(self: Box<Self>) -> AppResult<()> {
+        self.transaction.rollback().await.map_err(database_error)
     }
 }
 

@@ -1,7 +1,6 @@
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use ryframe_kernel::{ExportCursorWindow, PageResult, ValidatedPageQuery};
-
-use crate::PersistenceFuture;
+use ryframe_kernel::{AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RoleRecord {
@@ -24,49 +23,39 @@ pub struct RoleFilter<'a> {
     pub status: Option<&'a str>,
 }
 
+#[async_trait]
 pub trait RoleReadPort: Send + Sync {
-    fn find_by_id<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        id: i64,
-    ) -> PersistenceFuture<'a, Option<RoleRecord>>;
+    async fn find_by_id(&self, tenant_id: &str, id: i64) -> AppResult<Option<RoleRecord>>;
 
-    fn find_by_page<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_by_page(
+        &self,
+        tenant_id: &str,
         page: ValidatedPageQuery,
-        filter: RoleFilter<'a>,
-    ) -> PersistenceFuture<'a, PageResult<RoleRecord>>;
+        filter: RoleFilter<'_>,
+    ) -> AppResult<PageResult<RoleRecord>>;
 
-    fn find_options<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        query: Option<&'a str>,
+    async fn find_options(
+        &self,
+        tenant_id: &str,
+        query: Option<&str>,
         include_super: bool,
         limit: u64,
-    ) -> PersistenceFuture<'a, Vec<RoleRecord>>;
+    ) -> AppResult<Vec<RoleRecord>>;
 
-    fn find_export_batch<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        filter: RoleFilter<'a>,
+    async fn find_export_batch(
+        &self,
+        tenant_id: &str,
+        filter: RoleFilter<'_>,
         window: ExportCursorWindow,
-    ) -> PersistenceFuture<'a, Vec<RoleRecord>>;
+    ) -> AppResult<Vec<RoleRecord>>;
 
-    fn find_super_role<'a>(
-        &'a self,
-        tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, Option<RoleRecord>>;
+    async fn find_super_role(&self, tenant_id: &str) -> AppResult<Option<RoleRecord>>;
 
-    fn find_role_dept_ids<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_role_dept_ids(&self, tenant_id: &str, role_id: i64) -> AppResult<Vec<i64>>;
+
+    async fn find_permission_codes(
+        &self,
+        tenant_id: &str,
         role_id: i64,
-    ) -> PersistenceFuture<'a, Vec<i64>>;
-
-    fn find_permission_codes<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        role_id: i64,
-    ) -> PersistenceFuture<'a, Option<Vec<String>>>;
+    ) -> AppResult<Option<Vec<String>>>;
 }

@@ -1,7 +1,8 @@
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use ryframe_kernel::{PageResult, ValidatedPageQuery};
+use ryframe_kernel::{AppResult, PageResult, ValidatedPageQuery};
 
-use crate::{ControlTransaction, PersistenceFuture};
+use crate::PersistenceTransaction;
 
 #[derive(Debug)]
 pub struct DeptRecord {
@@ -32,86 +33,59 @@ pub struct DeptFilter<'a> {
     pub status: Option<&'a str>,
 }
 
+#[async_trait]
 pub trait DeptReadPort: Send + Sync {
-    fn find_child_ids<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        dept_id: i64,
-    ) -> PersistenceFuture<'a, Vec<i64>>;
+    async fn find_child_ids(&self, tenant_id: &str, dept_id: i64) -> AppResult<Vec<i64>>;
 
-    fn find_tree<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        visible_ids: Option<&'a [i64]>,
-    ) -> PersistenceFuture<'a, Vec<DeptTreeRecord>>;
+    async fn find_tree(
+        &self,
+        tenant_id: &str,
+        visible_ids: Option<&[i64]>,
+    ) -> AppResult<Vec<DeptTreeRecord>>;
 
-    fn find_page<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_page(
+        &self,
+        tenant_id: &str,
         page: ValidatedPageQuery,
-        filter: DeptFilter<'a>,
-        visible_ids: Option<&'a [i64]>,
-    ) -> PersistenceFuture<'a, PageResult<DeptRecord>>;
+        filter: DeptFilter<'_>,
+        visible_ids: Option<&[i64]>,
+    ) -> AppResult<PageResult<DeptRecord>>;
 
-    fn find_by_id<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        id: i64,
-    ) -> PersistenceFuture<'a, Option<DeptRecord>>;
+    async fn find_by_id(&self, tenant_id: &str, id: i64) -> AppResult<Option<DeptRecord>>;
 }
 
-pub trait DeptWriteTransaction: ControlTransaction + Sync {
-    fn lock_configuration<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()>;
+#[async_trait]
+pub trait DeptWriteTransaction: PersistenceTransaction + Sync {
+    async fn lock_configuration(&self, tenant_id: &str) -> AppResult<()>;
 
-    fn find_by_id_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_by_id_for_update(
+        &self,
+        tenant_id: &str,
         id: i64,
-    ) -> PersistenceFuture<'a, Option<DeptRecord>>;
+    ) -> AppResult<Option<DeptRecord>>;
 
-    fn find_descendants_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        old_prefix: &'a str,
-    ) -> PersistenceFuture<'a, Vec<DeptRecord>>;
+    async fn find_descendants_for_update(
+        &self,
+        tenant_id: &str,
+        old_prefix: &str,
+    ) -> AppResult<Vec<DeptRecord>>;
 
-    fn insert<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        record: DeptRecord,
-    ) -> PersistenceFuture<'a, DeptRecord>;
+    async fn insert(&self, tenant_id: &str, record: DeptRecord) -> AppResult<DeptRecord>;
 
-    fn update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        record: DeptRecord,
-    ) -> PersistenceFuture<'a, DeptRecord>;
+    async fn update(&self, tenant_id: &str, record: DeptRecord) -> AppResult<DeptRecord>;
 
-    fn has_child_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        id: i64,
-    ) -> PersistenceFuture<'a, bool>;
+    async fn has_child_for_update(&self, tenant_id: &str, id: i64) -> AppResult<bool>;
 
-    fn has_reference_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        id: i64,
-    ) -> PersistenceFuture<'a, bool>;
+    async fn has_reference_for_update(&self, tenant_id: &str, id: i64) -> AppResult<bool>;
 
-    fn delete<'a>(&'a self, tenant_id: &'a str, id: i64) -> PersistenceFuture<'a, ()>;
+    async fn delete(&self, tenant_id: &str, id: i64) -> AppResult<()>;
 
-    fn increment_authorization_epoch<'a>(
-        &'a self,
-        tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, i32>;
+    async fn increment_authorization_epoch(&self, tenant_id: &str) -> AppResult<i32>;
 
-    fn increment_configuration_version<'a>(
-        &'a self,
-        tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, ()>;
+    async fn increment_configuration_version(&self, tenant_id: &str) -> AppResult<()>;
 }
 
+#[async_trait]
 pub trait DeptWritePort: Send + Sync {
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn DeptWriteTransaction>>;
+    async fn begin(&self) -> AppResult<Box<dyn DeptWriteTransaction>>;
 }

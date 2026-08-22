@@ -7,8 +7,8 @@ use ryframe_kernel::{
 use serde::Serialize;
 
 use crate::{
-    AuthorizationCache,
-    ports::system::{RoleFilter, RoleReadPort, RoleRecord, RoleWritePort},
+    AuthorizationCache, TransactionAuditMode, complete_transaction,
+    ports::system::{RoleFilter, RoleReadPort, RoleRecord, RoleWritePort, RoleWriteTransaction},
 };
 
 use super::{OptionItem, OptionList};
@@ -229,37 +229,34 @@ impl RoleService {
         let mut ids = ids.to_vec();
         normalize_ids(&mut ids);
         let transaction = self.write.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        let mut roles = Vec::with_capacity(ids.len());
-        for id in &ids {
-            roles.push(
-                transaction
-                    .find_by_id_for_update(tenant_id, *id)
-                    .await?
-                    .ok_or_else(|| AppError::NotFound("角色不存在".into()))?,
-            );
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            let mut roles = Vec::with_capacity(ids.len());
+            for id in &ids {
+                roles.push(
+                    transaction
+                        .find_by_id_for_update(tenant_id, *id)
+                        .await?
+                        .ok_or_else(|| AppError::NotFound("角色不存在".into()))?,
+                );
+            }
+            let active_super_roles = roles
+                .iter()
+                .filter(|role| role.is_super == 1 && role.status == "1")
+                .count();
+            if active_super_roles > 0 {
+                let available = transaction.count_available_super_roles(tenant_id).await?;
+                Self::ensure_super_role_remains(available, active_super_roles)?;
+            }
+            let affected = transaction.delete_many(tenant_id, &ids).await?;
+            if affected != ids.len() as u64 {
+                return Err(AppError::NotFound("角色不存在".into()));
+            }
+            Ok(affected)
         }
-        let active_super_roles = roles
-            .iter()
-            .filter(|role| role.is_super == 1 && role.status == "1")
-            .count();
-        if active_super_roles > 0 {
-            let available = transaction.count_available_super_roles(tenant_id).await?;
-            Self::ensure_super_role_remains(available, active_super_roles)?;
-        }
-        let affected = transaction.delete_many(tenant_id, &ids).await?;
-        if affected != ids.len() as u64 {
-            return Err(AppError::NotFound("角色不存在".into()));
-        }
-        let authorization_epoch = transaction.increment_authorization_epoch(tenant_id).await?;
-        transaction
-            .increment_configuration_version(tenant_id)
-            .await?;
-        transaction.commit().await?;
-        self.authorization_cache
-            .sync_tenant_epoch(tenant_id, authorization_epoch)
-            .await?;
-        Ok(affected)
+        .await;
+        self.complete_mutation(transaction, tenant_id, operation)
+            .await
     }
 
     pub async fn find_by_id(&self, actor: &ActorContext, id: i64) -> AppResult<Option<RoleVo>> {
@@ -311,25 +308,22 @@ impl RoleService {
             updated_at: now,
         };
         let transaction = self.write.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        if transaction
-            .find_by_code_for_update(tenant_id, code)
-            .await?
-            .is_some()
-        {
-            return Err(AppError::Conflict("角色编码已存在".into()));
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            if transaction
+                .find_by_code_for_update(tenant_id, code)
+                .await?
+                .is_some()
+            {
+                return Err(AppError::Conflict("角色编码已存在".into()));
+            }
+            transaction.ensure_role_quota(tenant_id).await?;
+            transaction.insert(tenant_id, record).await
         }
-        transaction.ensure_role_quota(tenant_id).await?;
-        let saved = transaction.insert(tenant_id, record).await?;
-        let authorization_epoch = transaction.increment_authorization_epoch(tenant_id).await?;
-        transaction
-            .increment_configuration_version(tenant_id)
-            .await?;
-        transaction.commit().await?;
-        self.authorization_cache
-            .sync_tenant_epoch(tenant_id, authorization_epoch)
-            .await?;
-        Ok(RoleVo::from(saved))
+        .await;
+        self.complete_mutation(transaction, tenant_id, operation)
+            .await
+            .map(RoleVo::from)
     }
 
     pub async fn update(
@@ -348,32 +342,29 @@ impl RoleService {
         }
 
         let transaction = self.write.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        let mut role = transaction
-            .find_by_id_for_update(tenant_id, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
-        if role.is_super == 1 && role.status == "1" && status != "1" {
-            let available = transaction.count_available_super_roles(tenant_id).await?;
-            Self::ensure_super_role_remains(available, 1)?;
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            let mut role = transaction
+                .find_by_id_for_update(tenant_id, id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
+            if role.is_super == 1 && role.status == "1" && status != "1" {
+                let available = transaction.count_available_super_roles(tenant_id).await?;
+                Self::ensure_super_role_remains(available, 1)?;
+            }
+            role.name = name.to_owned();
+            role.sort = sort;
+            role.status = status;
+            if let Some(data_scope) = data_scope {
+                role.data_scope = data_scope;
+            }
+            role.updated_at = Utc::now();
+            transaction.update(tenant_id, role).await
         }
-        role.name = name.to_owned();
-        role.sort = sort;
-        role.status = status;
-        if let Some(data_scope) = data_scope {
-            role.data_scope = data_scope;
-        }
-        role.updated_at = Utc::now();
-        let saved = transaction.update(tenant_id, role).await?;
-        let authorization_epoch = transaction.increment_authorization_epoch(tenant_id).await?;
-        transaction
-            .increment_configuration_version(tenant_id)
-            .await?;
-        transaction.commit().await?;
-        self.authorization_cache
-            .sync_tenant_epoch(tenant_id, authorization_epoch)
-            .await?;
-        Ok(RoleVo::from(saved))
+        .await;
+        self.complete_mutation(transaction, tenant_id, operation)
+            .await
+            .map(RoleVo::from)
     }
 
     pub async fn delete(&self, actor: &ActorContext, id: i64) -> AppResult<()> {
@@ -390,37 +381,34 @@ impl RoleService {
         let tenant_id = crate::validated_tenant_id(actor)?;
         normalize_ids(&mut perm_ids);
         let transaction = self.write.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        transaction
-            .find_by_id_for_update(tenant_id, role_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
-        let permissions = transaction
-            .find_permissions_for_update(tenant_id, &perm_ids)
-            .await?;
-        if let Some(perm_id) = first_missing_id(&perm_ids, &permissions, |permission| permission.id)
-        {
-            return Err(AppError::NotFound(format!("权限不存在: {perm_id}")));
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            transaction
+                .find_by_id_for_update(tenant_id, role_id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
+            let permissions = transaction
+                .find_permissions_for_update(tenant_id, &perm_ids)
+                .await?;
+            if let Some(perm_id) =
+                first_missing_id(&perm_ids, &permissions, |permission| permission.id)
+            {
+                return Err(AppError::NotFound(format!("权限不存在: {perm_id}")));
+            }
+            let permission_codes = permissions
+                .into_iter()
+                .map(|permission| permission.code)
+                .collect::<Vec<_>>();
+            transaction
+                .ensure_permission_codes_enabled(tenant_id, &permission_codes)
+                .await?;
+            transaction
+                .assign_permissions(tenant_id, role_id, &perm_ids)
+                .await
         }
-        let permission_codes = permissions
-            .into_iter()
-            .map(|permission| permission.code)
-            .collect::<Vec<_>>();
-        transaction
-            .ensure_permission_codes_enabled(tenant_id, &permission_codes)
-            .await?;
-        transaction
-            .assign_permissions(tenant_id, role_id, &perm_ids)
-            .await?;
-        let authorization_epoch = transaction.increment_authorization_epoch(tenant_id).await?;
-        transaction
-            .increment_configuration_version(tenant_id)
-            .await?;
-        transaction.commit().await?;
-        self.authorization_cache
-            .sync_tenant_epoch(tenant_id, authorization_epoch)
-            .await?;
-        Ok(())
+        .await;
+        self.complete_mutation(transaction, tenant_id, operation)
+            .await
     }
 
     /// 返回分配给一个角色的全部已启用 API 权限码。
@@ -464,32 +452,53 @@ impl RoleService {
         };
 
         let transaction = self.write.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        transaction
-            .find_by_id_for_update(tenant_id, role_id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
-        if data_scope == "2" {
-            let existing_depts = transaction
-                .find_departments_for_update(tenant_id, &unique_dept_ids)
-                .await?;
-            if let Some(dept_id) = first_missing_id(&unique_dept_ids, &existing_depts, |id| *id) {
-                return Err(AppError::Validation(format!(
-                    "自定义数据权限包含不存在或跨租户的部门: {dept_id}"
-                )));
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            transaction
+                .find_by_id_for_update(tenant_id, role_id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("角色不存在".into()))?;
+            if data_scope == "2" {
+                let existing_depts = transaction
+                    .find_departments_for_update(tenant_id, &unique_dept_ids)
+                    .await?;
+                if let Some(dept_id) = first_missing_id(&unique_dept_ids, &existing_depts, |id| *id)
+                {
+                    return Err(AppError::Validation(format!(
+                        "自定义数据权限包含不存在或跨租户的部门: {dept_id}"
+                    )));
+                }
             }
+            transaction
+                .replace_data_scope(tenant_id, role_id, data_scope, &unique_dept_ids)
+                .await
         }
-        transaction
-            .replace_data_scope(tenant_id, role_id, data_scope, &unique_dept_ids)
-            .await?;
-        let authorization_epoch = transaction.increment_authorization_epoch(tenant_id).await?;
-        transaction
-            .increment_configuration_version(tenant_id)
-            .await?;
-        transaction.commit().await?;
+        .await;
+        self.complete_mutation(transaction, tenant_id, operation)
+            .await
+    }
+
+    async fn complete_mutation<R>(
+        &self,
+        transaction: Box<dyn RoleWriteTransaction>,
+        tenant_id: &str,
+        operation: AppResult<R>,
+    ) -> AppResult<R> {
+        let operation = async {
+            let value = operation?;
+            let epoch = transaction.increment_authorization_epoch(tenant_id).await?;
+            transaction
+                .increment_configuration_version(tenant_id)
+                .await?;
+            Ok((value, epoch))
+        }
+        .await;
+        let (value, epoch) =
+            complete_transaction(transaction, operation, TransactionAuditMode::CurrentRequest)
+                .await?;
         self.authorization_cache
-            .sync_tenant_epoch(tenant_id, authorization_epoch)
+            .sync_tenant_epoch(tenant_id, epoch)
             .await?;
-        Ok(())
+        Ok(value)
     }
 }

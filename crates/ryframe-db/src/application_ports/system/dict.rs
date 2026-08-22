@@ -5,13 +5,14 @@ use crate::{
     DictTypeRepository, ReadConsistency, TenantConfigTransferRepository,
     entities::{dict_data, dict_type},
 };
-use ryframe_kernel::{ExportCursorWindow, PageResult, ValidatedPageQuery};
+use async_trait::async_trait;
+use ryframe_kernel::{AppResult, ExportCursorWindow, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait, sea_query::LockType,
 };
 
 use ryframe_application::{
-    ControlTransaction, PersistenceFuture,
+    PersistenceTransaction, TransactionAuditMode,
     ports::system::{
         DictDataRecord, DictPersistencePort, DictTransaction, DictTypeFilter, DictTypeRecord,
     },
@@ -29,240 +30,219 @@ struct DatabaseDictTransaction {
     transaction: sea_orm::DatabaseTransaction,
 }
 
+#[async_trait]
 impl DictPersistencePort for DatabaseDictPersistence {
-    fn find_types_by_page<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_types_by_page(
+        &self,
+        tenant_id: &str,
         page: ValidatedPageQuery,
-        filter: DictTypeFilter<'a>,
-    ) -> PersistenceFuture<'a, PageResult<DictTypeRecord>> {
-        Box::pin(async move {
-            let database = self
-                .database
-                .select_read(ReadConsistency::Eventual)
-                .connection;
-            let filter = to_database_filter(filter);
-            let result = DictTypeRepository
-                .find_by_page_filtered(&database, tenant_id, &page, &filter)
-                .await?;
-            Ok(PageResult::new(
-                result.records.into_iter().map(to_type_record).collect(),
-                result.total,
-                &page,
-            ))
-        })
+        filter: DictTypeFilter<'_>,
+    ) -> AppResult<PageResult<DictTypeRecord>> {
+        let database = self
+            .database
+            .select_read(ReadConsistency::Eventual)
+            .connection;
+        let filter = to_database_filter(filter);
+        let result = DictTypeRepository
+            .find_by_page_filtered(&database, tenant_id, &page, &filter)
+            .await?;
+        Ok(PageResult::new(
+            result.records.into_iter().map(to_type_record).collect(),
+            result.total,
+            &page,
+        ))
     }
 
-    fn find_type_export_batch<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        filter: DictTypeFilter<'a>,
+    async fn find_type_export_batch(
+        &self,
+        tenant_id: &str,
+        filter: DictTypeFilter<'_>,
         window: ExportCursorWindow,
-    ) -> PersistenceFuture<'a, Vec<DictTypeRecord>> {
-        Box::pin(async move {
-            let database = self
-                .database
-                .select_read(ReadConsistency::Strong)
-                .connection;
-            DictTypeRepository
-                .find_for_export_after_id(&database, tenant_id, &to_database_filter(filter), window)
-                .await
-                .map(|records| records.into_iter().map(to_type_record).collect())
-        })
+    ) -> AppResult<Vec<DictTypeRecord>> {
+        let database = self
+            .database
+            .select_read(ReadConsistency::Strong)
+            .connection;
+        DictTypeRepository
+            .find_for_export_after_id(&database, tenant_id, &to_database_filter(filter), window)
+            .await
+            .map(|records| records.into_iter().map(to_type_record).collect())
     }
 
-    fn find_data_by_type<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        type_code: &'a str,
-    ) -> PersistenceFuture<'a, Vec<DictDataRecord>> {
-        Box::pin(async move {
-            let database = self
-                .database
-                .select_read(ReadConsistency::Eventual)
-                .connection;
-            DictDataRepository
-                .find_by_type_code(&database, tenant_id, type_code)
-                .await
-                .map(|records| records.into_iter().map(to_data_record).collect())
-        })
+    async fn find_data_by_type(
+        &self,
+        tenant_id: &str,
+        type_code: &str,
+    ) -> AppResult<Vec<DictDataRecord>> {
+        let database = self
+            .database
+            .select_read(ReadConsistency::Eventual)
+            .connection;
+        DictDataRepository
+            .find_by_type_code(&database, tenant_id, type_code)
+            .await
+            .map(|records| records.into_iter().map(to_data_record).collect())
     }
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn DictTransaction>> {
-        Box::pin(async move {
-            let transaction = self
-                .database
-                .write()
-                .begin()
-                .await
-                .map_err(database_error)?;
-            Ok(Box::new(DatabaseDictTransaction { transaction }) as Box<dyn DictTransaction>)
-        })
+    async fn begin(&self) -> AppResult<Box<dyn DictTransaction>> {
+        let transaction = self
+            .database
+            .write()
+            .begin()
+            .await
+            .map_err(database_error)?;
+        Ok(Box::new(DatabaseDictTransaction { transaction }) as Box<dyn DictTransaction>)
     }
 }
 
+#[async_trait]
 impl DictTransaction for DatabaseDictTransaction {
-    fn lock_configuration<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            TenantConfigTransferRepository
-                .lock_tenant_configuration_in_txn(&self.transaction, tenant_id, None)
-                .await
-                .map(|_| ())
-        })
+    async fn lock_configuration(&self, tenant_id: &str) -> AppResult<()> {
+        TenantConfigTransferRepository
+            .lock_tenant_configuration_in_txn(&self.transaction, tenant_id, None)
+            .await
+            .map(|_| ())
     }
 
-    fn find_type_by_code_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        code: &'a str,
-    ) -> PersistenceFuture<'a, Option<DictTypeRecord>> {
-        Box::pin(async move {
-            Ok(dict_type::Entity::find()
-                .filter(dict_type::Column::TenantId.eq(tenant_id))
-                .filter(dict_type::Column::Code.eq(code))
-                .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL))
-                .lock(LockType::Update)
-                .one(&self.transaction)
-                .await
-                .map_err(database_error)?
-                .map(to_type_record))
-        })
+    async fn find_type_by_code_for_update(
+        &self,
+        tenant_id: &str,
+        code: &str,
+    ) -> AppResult<Option<DictTypeRecord>> {
+        Ok(dict_type::Entity::find()
+            .filter(dict_type::Column::TenantId.eq(tenant_id))
+            .filter(dict_type::Column::Code.eq(code))
+            .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL))
+            .lock(LockType::Update)
+            .one(&self.transaction)
+            .await
+            .map_err(database_error)?
+            .map(to_type_record))
     }
 
-    fn find_type_by_id_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_type_by_id_for_update(
+        &self,
+        tenant_id: &str,
         id: i64,
-    ) -> PersistenceFuture<'a, Option<DictTypeRecord>> {
-        Box::pin(async move {
-            Ok(dict_type::Entity::find_by_id(id)
-                .filter(dict_type::Column::TenantId.eq(tenant_id))
-                .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL))
-                .lock(LockType::Update)
-                .one(&self.transaction)
-                .await
-                .map_err(database_error)?
-                .map(to_type_record))
-        })
+    ) -> AppResult<Option<DictTypeRecord>> {
+        Ok(dict_type::Entity::find_by_id(id)
+            .filter(dict_type::Column::TenantId.eq(tenant_id))
+            .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL))
+            .lock(LockType::Update)
+            .one(&self.transaction)
+            .await
+            .map_err(database_error)?
+            .map(to_type_record))
     }
 
-    fn insert_type<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn insert_type(
+        &self,
+        tenant_id: &str,
         record: DictTypeRecord,
-    ) -> PersistenceFuture<'a, DictTypeRecord> {
-        Box::pin(async move {
-            DictTypeRepository
-                .insert_in_transaction(
-                    &self.transaction,
-                    tenant_id,
-                    to_type_entity(tenant_id, record),
-                )
-                .await
-                .map(to_type_record)
-        })
+    ) -> AppResult<DictTypeRecord> {
+        DictTypeRepository
+            .insert_in_transaction(
+                &self.transaction,
+                tenant_id,
+                to_type_entity(tenant_id, record),
+            )
+            .await
+            .map(to_type_record)
     }
 
-    fn update_type<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn update_type(
+        &self,
+        tenant_id: &str,
         record: DictTypeRecord,
-    ) -> PersistenceFuture<'a, DictTypeRecord> {
-        Box::pin(async move {
-            DictTypeRepository
-                .update_in_transaction(
-                    &self.transaction,
-                    tenant_id,
-                    to_type_entity(tenant_id, record),
-                )
-                .await
-                .map(to_type_record)
-        })
+    ) -> AppResult<DictTypeRecord> {
+        DictTypeRepository
+            .update_in_transaction(
+                &self.transaction,
+                tenant_id,
+                to_type_entity(tenant_id, record),
+            )
+            .await
+            .map(to_type_record)
     }
 
-    fn delete_type<'a>(&'a self, tenant_id: &'a str, id: i64) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            DictTypeRepository
-                .delete_in_transaction(&self.transaction, tenant_id, id)
-                .await
-        })
+    async fn delete_type(&self, tenant_id: &str, id: i64) -> AppResult<()> {
+        DictTypeRepository
+            .delete_in_transaction(&self.transaction, tenant_id, id)
+            .await
     }
 
-    fn find_data_by_id_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_data_by_id_for_update(
+        &self,
+        tenant_id: &str,
         id: i64,
-    ) -> PersistenceFuture<'a, Option<DictDataRecord>> {
-        Box::pin(async move {
-            Ok(dict_data::Entity::find_by_id(id)
-                .filter(dict_data::Column::TenantId.eq(tenant_id))
-                .filter(dict_data::Column::DelFlag.eq(dict_data::Model::DEL_FLAG_NORMAL))
-                .lock(LockType::Update)
-                .one(&self.transaction)
-                .await
-                .map_err(database_error)?
-                .map(to_data_record))
-        })
+    ) -> AppResult<Option<DictDataRecord>> {
+        Ok(dict_data::Entity::find_by_id(id)
+            .filter(dict_data::Column::TenantId.eq(tenant_id))
+            .filter(dict_data::Column::DelFlag.eq(dict_data::Model::DEL_FLAG_NORMAL))
+            .lock(LockType::Update)
+            .one(&self.transaction)
+            .await
+            .map_err(database_error)?
+            .map(to_data_record))
     }
 
-    fn insert_data<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn insert_data(
+        &self,
+        tenant_id: &str,
         record: DictDataRecord,
-    ) -> PersistenceFuture<'a, DictDataRecord> {
-        Box::pin(async move {
-            DictDataRepository
-                .insert_in_transaction(
-                    &self.transaction,
-                    tenant_id,
-                    to_data_entity(tenant_id, record),
-                )
-                .await
-                .map(to_data_record)
-        })
+    ) -> AppResult<DictDataRecord> {
+        DictDataRepository
+            .insert_in_transaction(
+                &self.transaction,
+                tenant_id,
+                to_data_entity(tenant_id, record),
+            )
+            .await
+            .map(to_data_record)
     }
 
-    fn update_data<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn update_data(
+        &self,
+        tenant_id: &str,
         record: DictDataRecord,
-    ) -> PersistenceFuture<'a, DictDataRecord> {
-        Box::pin(async move {
-            DictDataRepository
-                .update_in_transaction(
-                    &self.transaction,
-                    tenant_id,
-                    to_data_entity(tenant_id, record),
-                )
-                .await
-                .map(to_data_record)
-        })
+    ) -> AppResult<DictDataRecord> {
+        DictDataRepository
+            .update_in_transaction(
+                &self.transaction,
+                tenant_id,
+                to_data_entity(tenant_id, record),
+            )
+            .await
+            .map(to_data_record)
     }
 
-    fn delete_data<'a>(&'a self, tenant_id: &'a str, id: i64) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            DictDataRepository
-                .delete_in_transaction(&self.transaction, tenant_id, id)
-                .await
-        })
+    async fn delete_data(&self, tenant_id: &str, id: i64) -> AppResult<()> {
+        DictDataRepository
+            .delete_in_transaction(&self.transaction, tenant_id, id)
+            .await
     }
 
-    fn increment_configuration_version<'a>(
-        &'a self,
-        tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            TenantConfigTransferRepository
-                .increment_configuration_version_in_txn(&self.transaction, tenant_id)
-                .await
-                .map(|_| ())
-        })
+    async fn increment_configuration_version(&self, tenant_id: &str) -> AppResult<()> {
+        TenantConfigTransferRepository
+            .increment_configuration_version_in_txn(&self.transaction, tenant_id)
+            .await
+            .map(|_| ())
     }
 }
 
-impl ControlTransaction for DatabaseDictTransaction {
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move { super::super::audit::commit_current_audit(self.transaction).await })
+#[async_trait]
+impl PersistenceTransaction for DatabaseDictTransaction {
+    async fn commit(self: Box<Self>, audit_mode: TransactionAuditMode) -> AppResult<()> {
+        match audit_mode {
+            TransactionAuditMode::CurrentRequest => {
+                super::super::audit::commit_current_audit(self.transaction).await
+            }
+            TransactionAuditMode::Skip => self.transaction.commit().await.map_err(database_error),
+        }
+    }
+
+    async fn rollback(self: Box<Self>) -> AppResult<()> {
+        self.transaction.rollback().await.map_err(database_error)
     }
 }
 

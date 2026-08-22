@@ -4,7 +4,7 @@ use std::sync::Arc;
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 
 use crate::{
-    AuthorizationCache,
+    AuthorizationCache, TransactionAuditMode, complete_transaction,
     ports::system::{
         PermissionReadPort, PermissionRecord, PermissionWritePort, PermissionWriteTransaction,
     },
@@ -97,41 +97,45 @@ impl PermissionService {
         let tenant_id = crate::validated_tenant_id(actor)?;
         ensure_tenant_permission_code_boundary(tenant_id, &command.code)?;
         let transaction = self.write.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        if transaction
-            .find_by_code_for_update(tenant_id, &command.code)
-            .await?
-            .is_some()
-        {
-            return Err(AppError::Conflict("权限码已存在".into()));
-        }
-        if let Some(parent_id) = command.parent_id
-            && transaction
-                .find_by_id_for_update(tenant_id, parent_id)
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            if transaction
+                .find_by_code_for_update(tenant_id, &command.code)
                 .await?
-                .is_none()
-        {
-            return Err(AppError::Validation("父权限不存在".into()));
+                .is_some()
+            {
+                return Err(AppError::Conflict("权限码已存在".into()));
+            }
+            if let Some(parent_id) = command.parent_id
+                && transaction
+                    .find_by_id_for_update(tenant_id, parent_id)
+                    .await?
+                    .is_none()
+            {
+                return Err(AppError::Validation("父权限不存在".into()));
+            }
+            transaction
+                .insert(
+                    tenant_id,
+                    PermissionRecord {
+                        id: crate::next_id()?,
+                        name: command.name,
+                        code: command.code,
+                        parent_id: command.parent_id,
+                        perm_type: command.perm_type.as_str().into(),
+                        icon: command.icon,
+                        sort: command.sort,
+                        status: command.status,
+                        created_at: Default::default(),
+                        updated_at: Default::default(),
+                    },
+                )
+                .await
         }
-        let saved = transaction
-            .insert(
-                tenant_id,
-                PermissionRecord {
-                    id: crate::next_id()?,
-                    name: command.name,
-                    code: command.code,
-                    parent_id: command.parent_id,
-                    perm_type: command.perm_type.as_str().into(),
-                    icon: command.icon,
-                    sort: command.sort,
-                    status: command.status,
-                    created_at: Default::default(),
-                    updated_at: Default::default(),
-                },
-            )
-            .await?;
-        self.commit_mutation(transaction, tenant_id).await?;
-        Ok(saved.into())
+        .await;
+        self.complete_mutation(transaction, tenant_id, operation)
+            .await
+            .map(PermissionVo::from)
     }
 
     pub async fn update(
@@ -145,53 +149,61 @@ impl PermissionService {
             return Err(AppError::Validation("权限不能将自己设为上级".into()));
         }
         let transaction = self.write.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        let mut record = transaction
-            .find_by_id_for_update(tenant_id, command.id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("权限不存在".into()))?;
-        if record.code != command.code
-            && transaction
-                .find_by_code_for_update(tenant_id, &command.code)
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            let mut record = transaction
+                .find_by_id_for_update(tenant_id, command.id)
                 .await?
-                .is_some()
-        {
-            return Err(AppError::Conflict("权限码已存在".into()));
+                .ok_or_else(|| AppError::NotFound("权限不存在".into()))?;
+            if record.code != command.code
+                && transaction
+                    .find_by_code_for_update(tenant_id, &command.code)
+                    .await?
+                    .is_some()
+            {
+                return Err(AppError::Conflict("权限码已存在".into()));
+            }
+            self.validate_parent_chain(
+                transaction.as_ref(),
+                tenant_id,
+                command.id,
+                command.parent_id,
+            )
+            .await?;
+            record.name = command.name;
+            record.code = command.code;
+            record.parent_id = command.parent_id;
+            record.perm_type = command.perm_type.as_str().into();
+            record.icon = command.icon;
+            record.sort = command.sort;
+            record.status = command.status;
+            transaction.update(tenant_id, record).await
         }
-        self.validate_parent_chain(
-            transaction.as_ref(),
-            tenant_id,
-            command.id,
-            command.parent_id,
-        )
-        .await?;
-        record.name = command.name;
-        record.code = command.code;
-        record.parent_id = command.parent_id;
-        record.perm_type = command.perm_type.as_str().into();
-        record.icon = command.icon;
-        record.sort = command.sort;
-        record.status = command.status;
-        let saved = transaction.update(tenant_id, record).await?;
-        self.commit_mutation(transaction, tenant_id).await?;
-        Ok(saved.into())
+        .await;
+        self.complete_mutation(transaction, tenant_id, operation)
+            .await
+            .map(PermissionVo::from)
     }
 
     pub async fn delete(&self, actor: &ActorContext, id: i64) -> AppResult<()> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let transaction = self.write.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        transaction
-            .find_by_id_for_update(tenant_id, id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("权限不存在".into()))?;
-        if transaction.is_referenced(tenant_id, id).await? {
-            return Err(AppError::Conflict(
-                "权限仍被角色或菜单引用，不能删除".into(),
-            ));
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            transaction
+                .find_by_id_for_update(tenant_id, id)
+                .await?
+                .ok_or_else(|| AppError::NotFound("权限不存在".into()))?;
+            if transaction.is_referenced(tenant_id, id).await? {
+                return Err(AppError::Conflict(
+                    "权限仍被角色或菜单引用，不能删除".into(),
+                ));
+            }
+            transaction.delete(tenant_id, id).await
         }
-        transaction.delete(tenant_id, id).await?;
-        self.commit_mutation(transaction, tenant_id).await
+        .await;
+        self.complete_mutation(transaction, tenant_id, operation)
+            .await
     }
 
     pub async fn sync_route_permissions(
@@ -210,54 +222,73 @@ impl PermissionService {
             .map(str::to_owned)
             .collect::<BTreeSet<_>>();
         let transaction = self.write.begin().await?;
-        transaction.lock_configuration(tenant_id).await?;
-        let scanned = transaction
-            .filter_syncable_codes(tenant_id, scanned)
-            .await?;
-        let scanned_total = scanned.len();
-        let existing_codes = transaction
-            .find_all_for_update(tenant_id)
-            .await?
-            .into_iter()
-            .map(|permission| permission.code)
-            .collect::<HashSet<_>>();
-        let mut missing = Vec::new();
-        for code in scanned {
-            if existing_codes.contains(&code) {
-                continue;
-            }
-            let name = code.rsplit(':').next().unwrap_or(&code).to_owned();
-            let saved = transaction
-                .insert(
-                    tenant_id,
-                    PermissionRecord {
-                        id: crate::next_id()?,
-                        name,
-                        code,
-                        parent_id: None,
-                        perm_type: PermissionType::Api.as_str().into(),
-                        icon: None,
-                        sort: 0,
-                        status: "1".into(),
-                        created_at: Default::default(),
-                        updated_at: Default::default(),
-                    },
-                )
+        let operation = async {
+            transaction.lock_configuration(tenant_id).await?;
+            let scanned = transaction
+                .filter_syncable_codes(tenant_id, scanned)
                 .await?;
-            missing.push(saved.code);
+            let scanned_total = scanned.len();
+            let existing_codes = transaction
+                .find_all_for_update(tenant_id)
+                .await?
+                .into_iter()
+                .map(|permission| permission.code)
+                .collect::<HashSet<_>>();
+            let mut missing = Vec::new();
+            for code in scanned {
+                if existing_codes.contains(&code) {
+                    continue;
+                }
+                let name = code.rsplit(':').next().unwrap_or(&code).to_owned();
+                let saved = transaction
+                    .insert(
+                        tenant_id,
+                        PermissionRecord {
+                            id: crate::next_id()?,
+                            name,
+                            code,
+                            parent_id: None,
+                            perm_type: PermissionType::Api.as_str().into(),
+                            icon: None,
+                            sort: 0,
+                            status: "1".into(),
+                            created_at: Default::default(),
+                            updated_at: Default::default(),
+                        },
+                    )
+                    .await?;
+                missing.push(saved.code);
+            }
+            let created = missing.len();
+            Ok((
+                PermissionSyncReport {
+                    scanned: scanned_total,
+                    existing: existing_codes.len(),
+                    created,
+                    missing,
+                },
+                created > 0,
+            ))
         }
-        let created = missing.len();
-        if created == 0 {
-            transaction.rollback().await?;
-        } else {
-            self.commit_mutation(transaction, tenant_id).await?;
+        .await;
+        match operation {
+            Ok((report, false)) => {
+                transaction.rollback().await?;
+                Ok(report)
+            }
+            Ok((report, true)) => {
+                self.complete_mutation(transaction, tenant_id, Ok(report))
+                    .await
+            }
+            Err(error) => {
+                complete_transaction(
+                    transaction,
+                    Err(error),
+                    TransactionAuditMode::CurrentRequest,
+                )
+                .await
+            }
         }
-        Ok(PermissionSyncReport {
-            scanned: scanned_total,
-            existing: existing_codes.len(),
-            created,
-            missing,
-        })
     }
 
     async fn validate_parent_chain(
@@ -286,19 +317,28 @@ impl PermissionService {
         Ok(())
     }
 
-    async fn commit_mutation(
+    async fn complete_mutation<R>(
         &self,
         transaction: Box<dyn PermissionWriteTransaction>,
         tenant_id: &str,
-    ) -> AppResult<()> {
-        let authorization_epoch = transaction.increment_authorization_epoch(tenant_id).await?;
-        transaction
-            .increment_configuration_version(tenant_id)
-            .await?;
-        transaction.commit().await?;
+        operation: AppResult<R>,
+    ) -> AppResult<R> {
+        let operation = async {
+            let value = operation?;
+            let authorization_epoch = transaction.increment_authorization_epoch(tenant_id).await?;
+            transaction
+                .increment_configuration_version(tenant_id)
+                .await?;
+            Ok((value, authorization_epoch))
+        }
+        .await;
+        let (value, authorization_epoch) =
+            complete_transaction(transaction, operation, TransactionAuditMode::CurrentRequest)
+                .await?;
         self.authorization_cache
             .sync_tenant_epoch(tenant_id, authorization_epoch)
-            .await
+            .await?;
+        Ok(value)
     }
 }
 

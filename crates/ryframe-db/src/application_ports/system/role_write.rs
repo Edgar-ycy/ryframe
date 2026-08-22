@@ -5,6 +5,7 @@ use crate::{
     TenantRepository,
     entities::{dept, permission, role},
 };
+use async_trait::async_trait;
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
     TransactionTrait, sea_query::LockType,
@@ -12,7 +13,7 @@ use sea_orm::{
 
 use ryframe_application::system::ProductService;
 use ryframe_application::{
-    AuthorizationCache, ControlTransaction, PersistenceFuture,
+    AuthorizationCache, PersistenceTransaction, TransactionAuditMode,
     ports::system::{RolePermissionRef, RoleRecord, RoleWritePort, RoleWriteTransaction},
 };
 
@@ -42,249 +43,230 @@ struct DatabaseRoleWriteTransaction {
     product: Arc<ProductService>,
 }
 
+#[async_trait]
 impl RoleWritePort for DatabaseRoleWrite {
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn RoleWriteTransaction>> {
-        Box::pin(async move {
-            let transaction = self
-                .database
-                .write()
-                .begin()
-                .await
-                .map_err(database_error)?;
-            Ok(Box::new(DatabaseRoleWriteTransaction {
-                transaction: transaction.into(),
-                authorization_cache: self.authorization_cache.clone(),
-                product: Arc::clone(&self.product),
-            }) as Box<dyn RoleWriteTransaction>)
-        })
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn RoleWriteTransaction>> {
+        let transaction = self
+            .database
+            .write()
+            .begin()
+            .await
+            .map_err(database_error)?;
+        Ok(Box::new(DatabaseRoleWriteTransaction {
+            transaction: transaction.into(),
+            authorization_cache: self.authorization_cache.clone(),
+            product: Arc::clone(&self.product),
+        }) as Box<dyn RoleWriteTransaction>)
     }
 }
 
+#[async_trait]
 impl RoleWriteTransaction for DatabaseRoleWriteTransaction {
-    fn lock_configuration<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            TenantConfigTransferRepository
-                .lock_tenant_configuration_in_txn(&self.transaction, tenant_id, None)
-                .await
-                .map(|_| ())
-        })
+    async fn lock_configuration(&self, tenant_id: &str) -> ryframe_kernel::AppResult<()> {
+        TenantConfigTransferRepository
+            .lock_tenant_configuration_in_txn(&self.transaction, tenant_id, None)
+            .await
+            .map(|_| ())
     }
 
-    fn find_by_id_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_by_id_for_update(
+        &self,
+        tenant_id: &str,
         id: i64,
-    ) -> PersistenceFuture<'a, Option<RoleRecord>> {
-        Box::pin(async move {
-            Ok(RoleRepository
-                .find_by_id_for_update(&self.transaction, tenant_id, id)
-                .await?
-                .map(to_record))
-        })
+    ) -> ryframe_kernel::AppResult<Option<RoleRecord>> {
+        Ok(RoleRepository
+            .find_by_id_for_update(&self.transaction, tenant_id, id)
+            .await?
+            .map(to_record))
     }
 
-    fn find_by_code_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        code: &'a str,
-    ) -> PersistenceFuture<'a, Option<RoleRecord>> {
-        Box::pin(async move {
-            Ok(role::Entity::find()
-                .filter(role::Column::TenantId.eq(tenant_id))
-                .filter(role::Column::Code.eq(code))
-                .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
-                .lock(LockType::Update)
-                .one(&self.transaction)
-                .await
-                .map_err(database_error)?
-                .map(to_record))
-        })
+    async fn find_by_code_for_update(
+        &self,
+        tenant_id: &str,
+        code: &str,
+    ) -> ryframe_kernel::AppResult<Option<RoleRecord>> {
+        Ok(role::Entity::find()
+            .filter(role::Column::TenantId.eq(tenant_id))
+            .filter(role::Column::Code.eq(code))
+            .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
+            .lock(LockType::Update)
+            .one(&self.transaction)
+            .await
+            .map_err(database_error)?
+            .map(to_record))
     }
 
-    fn count_available_super_roles<'a>(
-        &'a self,
-        tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, usize> {
-        Box::pin(async move {
-            RoleRepository
-                .count_available_super_roles_for_update(&self.transaction, tenant_id)
-                .await
-        })
+    async fn count_available_super_roles(
+        &self,
+        tenant_id: &str,
+    ) -> ryframe_kernel::AppResult<usize> {
+        RoleRepository
+            .count_available_super_roles_for_update(&self.transaction, tenant_id)
+            .await
     }
 
-    fn ensure_role_quota<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            TenantRepository
-                .ensure_role_quota_in_txn(&self.transaction, tenant_id)
-                .await
-        })
+    async fn ensure_role_quota(&self, tenant_id: &str) -> ryframe_kernel::AppResult<()> {
+        TenantRepository
+            .ensure_role_quota_in_txn(&self.transaction, tenant_id)
+            .await
     }
 
-    fn insert<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn insert(
+        &self,
+        tenant_id: &str,
         record: RoleRecord,
-    ) -> PersistenceFuture<'a, RoleRecord> {
-        Box::pin(async move {
-            let entity = to_entity(tenant_id, record);
-            if entity.tenant_id != tenant_id {
-                return Err(ryframe_kernel::AppError::Authorization(
-                    "角色租户不匹配".into(),
-                ));
-            }
-            role::ActiveModel::from(entity)
-                .insert(&self.transaction)
-                .await
-                .map(to_record)
-                .map_err(database_error)
-        })
+    ) -> ryframe_kernel::AppResult<RoleRecord> {
+        let entity = to_entity(tenant_id, record);
+        if entity.tenant_id != tenant_id {
+            return Err(ryframe_kernel::AppError::Authorization(
+                "角色租户不匹配".into(),
+            ));
+        }
+        role::ActiveModel::from(entity)
+            .insert(&self.transaction)
+            .await
+            .map(to_record)
+            .map_err(database_error)
     }
 
-    fn update<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn update(
+        &self,
+        tenant_id: &str,
         record: RoleRecord,
-    ) -> PersistenceFuture<'a, RoleRecord> {
-        Box::pin(async move {
-            let entity = to_entity(tenant_id, record);
-            role::ActiveModel::from(entity)
-                .reset_all()
-                .update(&self.transaction)
-                .await
-                .map(to_record)
-                .map_err(database_error)
-        })
+    ) -> ryframe_kernel::AppResult<RoleRecord> {
+        let entity = to_entity(tenant_id, record);
+        role::ActiveModel::from(entity)
+            .reset_all()
+            .update(&self.transaction)
+            .await
+            .map(to_record)
+            .map_err(database_error)
     }
 
-    fn delete_many<'a>(&'a self, tenant_id: &'a str, ids: &'a [i64]) -> PersistenceFuture<'a, u64> {
-        Box::pin(async move {
-            RoleRepository
-                .delete_many(&self.transaction, tenant_id, ids)
-                .await
-        })
+    async fn delete_many(&self, tenant_id: &str, ids: &[i64]) -> ryframe_kernel::AppResult<u64> {
+        RoleRepository
+            .delete_many(&self.transaction, tenant_id, ids)
+            .await
     }
 
-    fn find_permissions_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        permission_ids: &'a [i64],
-    ) -> PersistenceFuture<'a, Vec<RolePermissionRef>> {
-        Box::pin(async move {
-            permission::Entity::find()
-                .filter(permission::Column::TenantId.eq(tenant_id))
-                .filter(permission::Column::Id.is_in(permission_ids.iter().copied()))
-                .order_by_asc(permission::Column::Id)
-                .lock(LockType::Update)
-                .all(&self.transaction)
-                .await
-                .map(|permissions| {
-                    permissions
-                        .into_iter()
-                        .map(|permission| RolePermissionRef {
-                            id: permission.id,
-                            code: permission.code,
-                        })
-                        .collect()
-                })
-                .map_err(database_error)
-        })
+    async fn find_permissions_for_update(
+        &self,
+        tenant_id: &str,
+        permission_ids: &[i64],
+    ) -> ryframe_kernel::AppResult<Vec<RolePermissionRef>> {
+        permission::Entity::find()
+            .filter(permission::Column::TenantId.eq(tenant_id))
+            .filter(permission::Column::Id.is_in(permission_ids.iter().copied()))
+            .order_by_asc(permission::Column::Id)
+            .lock(LockType::Update)
+            .all(&self.transaction)
+            .await
+            .map(|permissions| {
+                permissions
+                    .into_iter()
+                    .map(|permission| RolePermissionRef {
+                        id: permission.id,
+                        code: permission.code,
+                    })
+                    .collect()
+            })
+            .map_err(database_error)
     }
 
-    fn ensure_permission_codes_enabled<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        permission_codes: &'a [String],
-    ) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            let snapshot = ProductRepository
-                .tenant_product(&self.transaction, tenant_id)
-                .await?
-                .map(super::super::product::tenant_snapshot)
-                .ok_or_else(|| ryframe_kernel::AppError::NotFound("租户不存在".into()))?;
-            self.product
-                .ensure_permission_codes_enabled(snapshot, permission_codes)
-        })
+    async fn ensure_permission_codes_enabled(
+        &self,
+        tenant_id: &str,
+        permission_codes: &[String],
+    ) -> ryframe_kernel::AppResult<()> {
+        let snapshot = ProductRepository
+            .tenant_product(&self.transaction, tenant_id)
+            .await?
+            .map(super::super::product::tenant_snapshot)
+            .ok_or_else(|| ryframe_kernel::AppError::NotFound("租户不存在".into()))?;
+        self.product
+            .ensure_permission_codes_enabled(snapshot, permission_codes)
     }
 
-    fn assign_permissions<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn assign_permissions(
+        &self,
+        tenant_id: &str,
         role_id: i64,
-        permission_ids: &'a [i64],
-    ) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            PermissionRepository
-                .assign_perms(&self.transaction, tenant_id, role_id, permission_ids)
-                .await
-        })
+        permission_ids: &[i64],
+    ) -> ryframe_kernel::AppResult<()> {
+        PermissionRepository
+            .assign_perms(&self.transaction, tenant_id, role_id, permission_ids)
+            .await
     }
 
-    fn find_departments_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        department_ids: &'a [i64],
-    ) -> PersistenceFuture<'a, Vec<i64>> {
-        Box::pin(async move {
-            dept::Entity::find()
-                .filter(dept::Column::TenantId.eq(tenant_id))
-                .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
-                .filter(dept::Column::Id.is_in(department_ids.iter().copied()))
-                .order_by_asc(dept::Column::Id)
-                .lock(LockType::Update)
-                .all(&self.transaction)
-                .await
-                .map(|departments| departments.into_iter().map(|dept| dept.id).collect())
-                .map_err(database_error)
-        })
+    async fn find_departments_for_update(
+        &self,
+        tenant_id: &str,
+        department_ids: &[i64],
+    ) -> ryframe_kernel::AppResult<Vec<i64>> {
+        dept::Entity::find()
+            .filter(dept::Column::TenantId.eq(tenant_id))
+            .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
+            .filter(dept::Column::Id.is_in(department_ids.iter().copied()))
+            .order_by_asc(dept::Column::Id)
+            .lock(LockType::Update)
+            .all(&self.transaction)
+            .await
+            .map(|departments| departments.into_iter().map(|dept| dept.id).collect())
+            .map_err(database_error)
     }
 
-    fn replace_data_scope<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn replace_data_scope(
+        &self,
+        tenant_id: &str,
         role_id: i64,
-        data_scope: &'a str,
-        department_ids: &'a [i64],
-    ) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            RoleRepository
-                .replace_data_scope(
-                    &self.transaction,
-                    tenant_id,
-                    role_id,
-                    data_scope,
-                    department_ids,
-                )
-                .await
-        })
+        data_scope: &str,
+        department_ids: &[i64],
+    ) -> ryframe_kernel::AppResult<()> {
+        RoleRepository
+            .replace_data_scope(
+                &self.transaction,
+                tenant_id,
+                role_id,
+                data_scope,
+                department_ids,
+            )
+            .await
     }
 
-    fn increment_authorization_epoch<'a>(
-        &'a self,
-        tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, i32> {
-        Box::pin(async move {
-            self.authorization_cache
-                .increment_tenant_epoch_in_transaction(&self.transaction, tenant_id)
-                .await
-        })
+    async fn increment_authorization_epoch(
+        &self,
+        tenant_id: &str,
+    ) -> ryframe_kernel::AppResult<i32> {
+        self.authorization_cache
+            .increment_tenant_epoch_in_transaction(&self.transaction, tenant_id)
+            .await
     }
 
-    fn increment_configuration_version<'a>(
-        &'a self,
-        tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            TenantConfigTransferRepository
-                .increment_configuration_version_in_txn(&self.transaction, tenant_id)
-                .await
-                .map(|_| ())
-        })
+    async fn increment_configuration_version(
+        &self,
+        tenant_id: &str,
+    ) -> ryframe_kernel::AppResult<()> {
+        TenantConfigTransferRepository
+            .increment_configuration_version_in_txn(&self.transaction, tenant_id)
+            .await
+            .map(|_| ())
     }
 }
 
-impl ControlTransaction for DatabaseRoleWriteTransaction {
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move { self.transaction.commit_audited().await })
+#[async_trait]
+impl PersistenceTransaction for DatabaseRoleWriteTransaction {
+    async fn commit(
+        self: Box<Self>,
+        audit_mode: TransactionAuditMode,
+    ) -> ryframe_kernel::AppResult<()> {
+        match audit_mode {
+            TransactionAuditMode::CurrentRequest => self.transaction.commit_audited().await,
+            TransactionAuditMode::Skip => self.transaction.commit().await.map_err(database_error),
+        }
+    }
+
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
+        self.transaction.rollback().await.map_err(database_error)
     }
 }
 

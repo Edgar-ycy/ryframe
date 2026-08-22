@@ -1,8 +1,10 @@
 use std::collections::BTreeSet;
 
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use ryframe_kernel::AppResult;
 
-use crate::{ControlTransaction, PersistenceFuture};
+use crate::PersistenceTransaction;
 
 #[derive(Debug)]
 pub struct PermissionRecord {
@@ -18,83 +20,63 @@ pub struct PermissionRecord {
     pub updated_at: DateTime<Utc>,
 }
 
+#[async_trait]
 pub trait PermissionReadPort: Send + Sync {
-    fn find_role_codes<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        role_ids: &'a [i64],
-    ) -> PersistenceFuture<'a, Vec<String>>;
+    async fn find_role_codes(&self, tenant_id: &str, role_ids: &[i64]) -> AppResult<Vec<String>>;
 
-    fn find_role_ids<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        role_id: i64,
-    ) -> PersistenceFuture<'a, Vec<i64>>;
+    async fn find_role_ids(&self, tenant_id: &str, role_id: i64) -> AppResult<Vec<i64>>;
 
-    fn find_all<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, Vec<PermissionRecord>>;
+    async fn find_all(&self, tenant_id: &str) -> AppResult<Vec<PermissionRecord>>;
 
-    fn find_by_id<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        id: i64,
-    ) -> PersistenceFuture<'a, Option<PermissionRecord>>;
+    async fn find_by_id(&self, tenant_id: &str, id: i64) -> AppResult<Option<PermissionRecord>>;
 }
 
-pub trait PermissionWriteTransaction: ControlTransaction + Sync {
-    fn lock_configuration<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()>;
+#[async_trait]
+pub trait PermissionWriteTransaction: PersistenceTransaction + Sync {
+    async fn lock_configuration(&self, tenant_id: &str) -> AppResult<()>;
 
-    fn find_by_id_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn find_by_id_for_update(
+        &self,
+        tenant_id: &str,
         id: i64,
-    ) -> PersistenceFuture<'a, Option<PermissionRecord>>;
+    ) -> AppResult<Option<PermissionRecord>>;
 
-    fn find_by_code_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        code: &'a str,
-    ) -> PersistenceFuture<'a, Option<PermissionRecord>>;
+    async fn find_by_code_for_update(
+        &self,
+        tenant_id: &str,
+        code: &str,
+    ) -> AppResult<Option<PermissionRecord>>;
 
-    fn find_all_for_update<'a>(
-        &'a self,
-        tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, Vec<PermissionRecord>>;
+    async fn find_all_for_update(&self, tenant_id: &str) -> AppResult<Vec<PermissionRecord>>;
 
-    fn insert<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn insert(
+        &self,
+        tenant_id: &str,
         record: PermissionRecord,
-    ) -> PersistenceFuture<'a, PermissionRecord>;
+    ) -> AppResult<PermissionRecord>;
 
-    fn update<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn update(
+        &self,
+        tenant_id: &str,
         record: PermissionRecord,
-    ) -> PersistenceFuture<'a, PermissionRecord>;
+    ) -> AppResult<PermissionRecord>;
 
-    fn is_referenced<'a>(&'a self, tenant_id: &'a str, id: i64) -> PersistenceFuture<'a, bool>;
+    async fn is_referenced(&self, tenant_id: &str, id: i64) -> AppResult<bool>;
 
-    fn delete<'a>(&'a self, tenant_id: &'a str, id: i64) -> PersistenceFuture<'a, ()>;
+    async fn delete(&self, tenant_id: &str, id: i64) -> AppResult<()>;
 
-    fn filter_syncable_codes<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn filter_syncable_codes(
+        &self,
+        tenant_id: &str,
         codes: BTreeSet<String>,
-    ) -> PersistenceFuture<'a, BTreeSet<String>>;
+    ) -> AppResult<BTreeSet<String>>;
 
-    fn increment_authorization_epoch<'a>(
-        &'a self,
-        tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, i32>;
+    async fn increment_authorization_epoch(&self, tenant_id: &str) -> AppResult<i32>;
 
-    fn increment_configuration_version<'a>(
-        &'a self,
-        tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, ()>;
-
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn increment_configuration_version(&self, tenant_id: &str) -> AppResult<()>;
 }
 
+#[async_trait]
 pub trait PermissionWritePort: Send + Sync {
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn PermissionWriteTransaction>>;
+    async fn begin(&self) -> AppResult<Box<dyn PermissionWriteTransaction>>;
 }
