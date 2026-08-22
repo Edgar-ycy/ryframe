@@ -27,5 +27,8 @@ serde_json = { workspace = true }
 chrono = {workspace = true,features = ["serde"]}
 tokio = { workspace = true, features = ["time"] }
 
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
+
 [lints]
 workspace = true
