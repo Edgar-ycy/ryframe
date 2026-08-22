@@ -6,6 +6,11 @@ active_profile = "final"
 [source_size]
 max_lines = 1000
 
+# Rust 测试只能作为所属 crate 的集成测试存在，生产源码不得内嵌测试模块。
+[test_layout]
+directory = "tests"
+forbid_source_tests = true
+
 # 生成文件必须精确登记，并保留可验证的生成标记；禁止按目录名宽泛排除。
 [[source_size.generated_exclusions]]
 path = "crates/ryframe-tenant-db/src/migration/generated_catalog.rs"

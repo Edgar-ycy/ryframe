@@ -23,6 +23,11 @@ DOCUMENT_LIMITS = {
     "docs/development.md": 160,
     "docs/operations.md": 240,
 }
+SOURCE_TEST_MARKERS = (
+    re.compile(r"#\s*\[\s*cfg\s*\([^]]*\btest\b[^]]*\)\s*\]"),
+    re.compile(r"#\s*\[\s*(?:[A-Za-z_][A-Za-z0-9_]*::)*test\b[^]]*\]"),
+)
+TEST_FILE_NAME = re.compile(r"(?:^tests?\.rs$|_tests?\.rs$)", re.IGNORECASE)
 
 
 def read(relative: str) -> str:
@@ -247,12 +252,12 @@ def validate_profile(name: str, profile: Any, errors: list[str]) -> dict[str, An
 
 def load_policy(
     errors: list[str],
-) -> tuple[str, dict[str, dict[str, Any]], dict[str, Any]]:
+) -> tuple[str, dict[str, dict[str, Any]], dict[str, Any], dict[str, Any]]:
     try:
         policy = tomllib.loads(POLICY_PATH.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as error:
         errors.append(f"无法读取架构策略 {POLICY_PATH.relative_to(ROOT)}: {error}")
-        return "", {}, {}
+        return "", {}, {}, {}
 
     if policy.get("schema_version") != 1:
         errors.append("架构策略 schema_version 必须为 1")
@@ -275,7 +280,11 @@ def load_policy(
     if not isinstance(source_size, dict):
         errors.append("架构策略必须声明 source_size")
         source_size = {}
-    return active_profile, profiles, source_size
+    test_layout = policy.get("test_layout")
+    if not isinstance(test_layout, dict):
+        errors.append("架构策略必须声明 test_layout")
+        test_layout = {}
+    return active_profile, profiles, source_size, test_layout
 
 
 def cargo_metadata(errors: list[str]) -> dict[str, Any]:
@@ -506,6 +515,58 @@ def validate_source_size(
     return len(scanned_paths), scanned_by_package
 
 
+def validate_test_layout(
+    test_layout: dict[str, Any],
+    packages: dict[str, dict[str, Any]],
+    errors: list[str],
+) -> tuple[int, int]:
+    """确保测试属于当前 crate，并与生产源码物理隔离。"""
+
+    directory = test_layout.get("directory")
+    if directory != "tests":
+        errors.append("test_layout.directory 必须固定为 tests")
+        directory = "tests"
+    if test_layout.get("forbid_source_tests") is not True:
+        errors.append("test_layout.forbid_source_tests 必须为 true")
+
+    checked_sources = 0
+    integration_targets = 0
+    for package_name, package in sorted(packages.items()):
+        package_root = Path(package["manifest_path"]).resolve().parent
+        try:
+            package_root.relative_to(ROOT)
+        except ValueError:
+            errors.append(f"crate 位于仓库之外，无法检查测试位置: {package_name}")
+            continue
+
+        test_root = (package_root / directory).resolve()
+        for target in package.get("targets", []):
+            if "test" not in target.get("kind", []):
+                continue
+            integration_targets += 1
+            target_path = Path(target["src_path"]).resolve()
+            try:
+                target_path.relative_to(test_root)
+            except ValueError:
+                errors.append(
+                    f"{package_name} 的测试目标必须位于本 crate/tests: "
+                    f"{target_path.relative_to(ROOT).as_posix()}"
+                )
+
+        source_root = package_root / "src"
+        if not source_root.is_dir():
+            continue
+        for path in sorted(source_root.rglob("*.rs")):
+            checked_sources += 1
+            relative = path.relative_to(ROOT).as_posix()
+            source = path.read_text(encoding="utf-8")
+            if any(pattern.search(source) for pattern in SOURCE_TEST_MARKERS):
+                errors.append(f"生产源码不得包含测试属性或测试配置: {relative}")
+            if TEST_FILE_NAME.search(path.name):
+                errors.append(f"测试文件必须移至所属 crate/tests: {relative}")
+    return checked_sources, integration_targets
+
+
 def validate_tenant_data_boundaries(errors: list[str]) -> None:
     """校验租户数据目录、生成模板和应用端口边界。"""
 
@@ -631,19 +692,24 @@ def validate_tenant_data_boundaries(errors: list[str]) -> None:
 def main() -> int:
     errors: list[str] = []
     validate_documentation(errors)
-    active_profile, profiles, source_size = load_policy(errors)
+    active_profile, profiles, source_size, test_layout = load_policy(errors)
     metadata = cargo_metadata(errors)
     packages = workspace_packages(metadata) if metadata else {}
     active = profiles.get(active_profile, {})
     actual_edges: set[tuple[str, str]] = set()
     scanned = 0
     scanned_by_package: dict[str, int] = {}
+    checked_test_sources = 0
+    integration_targets = 0
     if active and packages:
         actual_edges = validate_active_workspace(
             active_profile, active, packages, errors
         )
         scanned, scanned_by_package = validate_source_size(
             source_size, active, packages, errors
+        )
+        checked_test_sources, integration_targets = validate_test_layout(
+            test_layout, packages, errors
         )
 
     ran_tenant_checks = bool(active.get("run_legacy_checks"))
@@ -669,6 +735,10 @@ def main() -> int:
         "Production source-size coverage passed "
         f"(crates={len(scanned_by_package)}, files={scanned}, "
         f"max_lines={source_size.get('max_lines')})."
+    )
+    print(
+        "Crate test-layout coverage passed "
+        f"(source_files={checked_test_sources}, integration_targets={integration_targets})."
     )
     if ran_tenant_checks:
         print("Tenant-data architecture boundaries are valid.")
