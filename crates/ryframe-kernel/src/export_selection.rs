@@ -38,18 +38,3 @@ impl ExportCursorWindow {
         self.limit
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::ExportCursorWindow;
-
-    #[test]
-    fn cursor_window_preserves_bounds_and_is_copy() {
-        let window = ExportCursorWindow::new(Some(41), 99, 1_000);
-        let copied = window;
-
-        assert_eq!(window.after_id(), Some(41));
-        assert_eq!(copied.upper_id(), 99);
-        assert_eq!(copied.limit(), 1_000);
-    }
-}

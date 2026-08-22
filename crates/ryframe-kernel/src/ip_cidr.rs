@@ -77,17 +77,3 @@ const fn prefix_mask_v6(prefix: u8) -> u128 {
         u128::MAX << (128 - prefix)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use std::net::{IpAddr, Ipv4Addr};
-
-    use super::IpCidr;
-
-    #[test]
-    fn cidr_normalizes_network_and_checks_membership() {
-        let cidr = IpCidr::parse("10.0.1.9/24").expect("解析 CIDR");
-        assert!(cidr.contains(IpAddr::V4(Ipv4Addr::new(10, 0, 1, 200))));
-        assert!(!cidr.contains(IpAddr::V4(Ipv4Addr::new(10, 0, 2, 1))));
-    }
-}

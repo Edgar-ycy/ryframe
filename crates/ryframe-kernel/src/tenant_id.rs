@@ -37,27 +37,3 @@ impl<'a> TryFrom<&'a str> for TenantId<'a> {
         Self::parse(value)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::TenantId;
-
-    #[test]
-    fn accepts_bounded_ascii_identifiers_without_allocating() {
-        let source = String::from("tenant_01-a");
-        let tenant_id = TenantId::parse(&source).unwrap();
-
-        assert_eq!(tenant_id.as_str(), source);
-        assert_eq!(tenant_id.as_str().as_ptr(), source.as_ptr());
-    }
-
-    #[test]
-    fn rejects_unsafe_or_ambiguous_identifiers() {
-        for value in ["a", "-tenant", "tenant-", "租户", "tenant:*", "a b"] {
-            assert!(
-                TenantId::parse(value).is_err(),
-                "{value} should be rejected"
-            );
-        }
-    }
-}

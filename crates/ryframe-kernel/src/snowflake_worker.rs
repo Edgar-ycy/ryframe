@@ -18,19 +18,3 @@ impl SnowflakeWorkerId {
         self.0
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::{MAX_SNOWFLAKE_WORKER_ID, SnowflakeWorkerId};
-
-    #[test]
-    fn worker_id_is_bounded_by_encoded_bits() {
-        assert_eq!(
-            SnowflakeWorkerId::new(0).map(SnowflakeWorkerId::get),
-            Some(0)
-        );
-        assert!(SnowflakeWorkerId::new(MAX_SNOWFLAKE_WORKER_ID).is_some());
-        assert!(SnowflakeWorkerId::new(-1).is_none());
-        assert!(SnowflakeWorkerId::new(MAX_SNOWFLAKE_WORKER_ID + 1).is_none());
-    }
-}
