@@ -243,9 +243,9 @@ async fn main() -> Result<(), AppError> {
         ryframe_application::system::TenantConfigTransferDependencies {
             persistence: ryframe_db::application_ports::tenant_config::transfer(database.clone()),
             queue: queue.clone(),
-            user_service: user,
-            file_service: file,
-            product_service: product,
+            user,
+            file,
+            product,
             authorization_cache: authorization_cache.clone(),
             archive: process_tenant_config_archive::codec(),
         },

@@ -51,8 +51,8 @@ const USER_IMPORT_REPORT_HEADERS: &[(&str, &str)] = &[
 #[derive(Clone)]
 pub struct UserImportService {
     queue: Arc<JobQueue>,
-    user_service: Arc<UserService>,
-    file_service: Arc<FileService>,
+    user: Arc<UserService>,
+    file: Arc<FileService>,
     config: crate::UserImportPolicy,
     hash_permits: Arc<Semaphore>,
     spreadsheets: Arc<dyn SpreadsheetDocumentProcessor>,

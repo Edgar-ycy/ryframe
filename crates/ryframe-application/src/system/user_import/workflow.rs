@@ -15,7 +15,7 @@ impl UserImportService {
             return Ok(());
         }
         let source = self
-            .file_service
+            .file
             .download_internal(&import.tenant_id, import.source_file_id, IMPORT_BUCKET)
             .await?;
         let source_sha256 = hex::encode(Sha256::digest(&source.data));
@@ -83,7 +83,7 @@ impl UserImportService {
             }
 
             let authorization = match self
-                .user_service
+                .user
                 .resolve_current_authorization(
                     &current.tenant_id,
                     current.requester_user_id,

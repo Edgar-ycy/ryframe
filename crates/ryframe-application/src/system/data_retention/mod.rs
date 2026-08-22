@@ -118,7 +118,7 @@ pub struct DataRetentionService {
     cleanup_persistence: Arc<dyn RetentionCleanupPersistencePort>,
     run_persistence: Arc<dyn RetentionRunPersistencePort>,
     queue: Arc<JobQueue>,
-    file_service: Arc<FileService>,
+    file: Arc<FileService>,
     config: DataRetentionPolicy,
 }
 
@@ -128,7 +128,7 @@ impl DataRetentionService {
         cleanup_persistence: Arc<dyn RetentionCleanupPersistencePort>,
         run_persistence: Arc<dyn RetentionRunPersistencePort>,
         queue: Arc<JobQueue>,
-        file_service: Arc<FileService>,
+        file: Arc<FileService>,
         config: DataRetentionPolicy,
     ) -> Self {
         Self {
@@ -136,7 +136,7 @@ impl DataRetentionService {
             cleanup_persistence,
             run_persistence,
             queue,
-            file_service,
+            file,
             config,
         }
     }

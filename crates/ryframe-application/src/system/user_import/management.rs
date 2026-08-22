@@ -1,16 +1,16 @@
 impl UserImportService {
     pub fn new(
         queue: Arc<JobQueue>,
-        user_service: Arc<UserService>,
-        file_service: Arc<FileService>,
+        user: Arc<UserService>,
+        file: Arc<FileService>,
         spreadsheets: Arc<dyn SpreadsheetDocumentProcessor>,
         persistence: Arc<dyn UserImportPersistencePort>,
         config: crate::UserImportPolicy,
     ) -> Self {
         Self {
             queue,
-            user_service,
-            file_service,
+            user,
+            file,
             hash_permits: Arc::new(Semaphore::new(config.hash_parallelism)),
             spreadsheets,
             persistence,
@@ -41,7 +41,7 @@ impl UserImportService {
     ) -> AppResult<UploadResponse> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let policy = self.upload_policy();
-        self.file_service
+        self.file
             .upload_internal_unbound(
                 tenant_id,
                 &actor.username,
@@ -60,7 +60,7 @@ impl UserImportService {
     pub async fn build_template(&self, actor: &ActorContext) -> AppResult<Vec<u8>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let authorization = self
-            .user_service
+            .user
             .resolve_current_authorization(tenant_id, actor.user_id, USER_IMPORT_PERMISSION)
             .await?;
         let directory = self.load_department_directory(tenant_id).await?;
@@ -354,7 +354,7 @@ impl UserImportService {
                 AppError::Conflict("用户导入报告尚未就绪".into())
             }
         })?;
-        self.file_service
+        self.file
             .download_by_id(actor, file_id, IMPORT_BUCKET)
             .await
     }

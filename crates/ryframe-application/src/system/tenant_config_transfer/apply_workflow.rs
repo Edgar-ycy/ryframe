@@ -17,7 +17,7 @@ impl TenantConfigTransferService {
             return self.sync_committed_cache_state(tenant_id, &transfer).await;
         }
         let requester = self
-            .user_service
+            .user
             .resolve_current_authorization(
                 tenant_id,
                 transfer.requested_by,
@@ -62,7 +62,7 @@ impl TenantConfigTransferService {
             let fence = snapshot_transaction
                 .lock_tenant_configuration(tenant_id, Some(&owner_token))
                 .await?;
-            self.product_service
+            self.product
                 .ensure_capability_requirements_in_txn(
                     snapshot_transaction.product(),
                     tenant_id,
@@ -82,7 +82,7 @@ impl TenantConfigTransferService {
             let target_resources = snapshot_transaction.load_resources(tenant_id).await?;
             ensure_preview_identity(&transfer, &parsed, &target_resources, fence)?;
             let enabled_capabilities = self
-                .product_service
+                .product
                 .enabled_capability_requirements_in_txn(snapshot_transaction.product(), tenant_id)
                 .await?;
             let (snapshot_resources, snapshot_capabilities) = filter_exportable_resources(
@@ -135,7 +135,7 @@ impl TenantConfigTransferService {
             }
         };
         let snapshot_upload = match self
-            .file_service
+            .file
             .upload_config_package_unbound(
                 tenant_id,
                 "config-transfer-worker",
@@ -156,7 +156,7 @@ impl TenantConfigTransferService {
             Err(error) => {
                 if let Ok(file_id) = snapshot_upload.file_id.parse::<i64>() {
                     let _ = self
-                        .file_service
+                        .file
                         .schedule_unreferenced_config_package_cleanup(tenant_id, file_id)
                         .await;
                 }
@@ -167,7 +167,7 @@ impl TenantConfigTransferService {
 
         if let Err(error) = self.renew_operation_lease(tenant_id, &owner_token).await {
             let _ = self
-                .file_service
+                .file
                 .schedule_unreferenced_config_package_cleanup(tenant_id, snapshot_file_id)
                 .await;
             let _ = lease.release().await;
@@ -178,7 +178,7 @@ impl TenantConfigTransferService {
             Ok(transaction) => transaction,
             Err(error) => {
                 let _ = self
-                    .file_service
+                    .file
                     .schedule_unreferenced_config_package_cleanup(tenant_id, snapshot_file_id)
                     .await;
                 let _ = lease.release().await;
@@ -189,7 +189,7 @@ impl TenantConfigTransferService {
             let fence = transaction
                 .lock_tenant_configuration(tenant_id, Some(&owner_token))
                 .await?;
-            self.product_service
+            self.product
                 .ensure_capability_requirements_in_txn(
                     transaction.product(),
                     tenant_id,
@@ -301,7 +301,7 @@ impl TenantConfigTransferService {
             Ok((authorization_epoch, namespace_version)) => {
                 if let Err(error) = transaction.commit().await {
                     let _ = self
-                        .file_service
+                        .file
                         .schedule_unreferenced_config_package_cleanup(tenant_id, snapshot_file_id)
                         .await;
                     let _ = lease.release().await;
@@ -318,7 +318,7 @@ impl TenantConfigTransferService {
             Err(error) => {
                 let rollback_result = transaction.rollback().await;
                 let _ = self
-                    .file_service
+                    .file
                     .schedule_unreferenced_config_package_cleanup(tenant_id, snapshot_file_id)
                     .await;
                 let _ = lease.release().await;

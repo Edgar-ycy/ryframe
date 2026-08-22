@@ -57,7 +57,7 @@ pub fn database_monitor(database: ControlDatabaseCluster) -> Arc<dyn DatabaseMon
 pub fn spawn(
     database: Arc<dyn DatabaseMonitor>,
     redis: Option<RedisClient>,
-    file_service: Option<Arc<FileService>>,
+    file: Option<Arc<FileService>>,
     cache: DependencyHealthCache,
     mut shutdown: watch::Receiver<bool>,
 ) -> JoinHandle<()> {
@@ -71,7 +71,7 @@ pub fn spawn(
                     probe_once(
                         database.as_ref(),
                         redis.as_ref(),
-                        file_service.as_deref(),
+                        file.as_deref(),
                         &cache,
                     )
                     .await;
@@ -89,7 +89,7 @@ pub fn spawn(
 async fn probe_once(
     database: &dyn DatabaseMonitor,
     redis: Option<&RedisClient>,
-    file_service: Option<&FileService>,
+    file: Option<&FileService>,
     cache: &DependencyHealthCache,
 ) {
     let previous = cache.snapshot();
@@ -101,9 +101,9 @@ async fn probe_once(
         }
     });
     let object_storage = async {
-        match file_service {
-            Some(file_service) => matches!(
-                tokio::time::timeout(PROBE_TIMEOUT, file_service.check_storage()).await,
+        match file {
+            Some(file) => matches!(
+                tokio::time::timeout(PROBE_TIMEOUT, file.check_storage()).await,
                 Ok(Ok(()))
             ),
             None => true,

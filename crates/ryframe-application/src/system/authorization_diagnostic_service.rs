@@ -131,7 +131,7 @@ struct PermissionSource {
 
 pub struct AuthorizationDiagnosticService {
     persistence: Arc<dyn AuthorizationDiagnosticReadPort>,
-    user_service: Arc<UserService>,
+    user: Arc<UserService>,
     authorization_cache: AuthorizationCache,
     websocket_notification_available: bool,
 }
@@ -139,13 +139,13 @@ pub struct AuthorizationDiagnosticService {
 impl AuthorizationDiagnosticService {
     pub fn new(
         persistence: Arc<dyn AuthorizationDiagnosticReadPort>,
-        user_service: Arc<UserService>,
+        user: Arc<UserService>,
         authorization_cache: AuthorizationCache,
         websocket_notification_available: bool,
     ) -> Self {
         Self {
             persistence,
-            user_service,
+            user,
             authorization_cache,
             websocket_notification_available,
         }
@@ -168,17 +168,12 @@ impl AuthorizationDiagnosticService {
         if target_tenant != tenant_id {
             return Err(AppError::Authorization("禁止跨租户诊断用户授权".into()));
         }
-        if self
-            .user_service
-            .find_by_id(actor, user_id)
-            .await?
-            .is_none()
-        {
+        if self.user.find_by_id(actor, user_id).await?.is_none() {
             return Err(AppError::NotFound("用户不存在或不在当前数据范围内".into()));
         }
 
         let authorization = self
-            .user_service
+            .user
             .calculate_current_authorization(tenant_id, user_id)
             .await?;
         let calculated_at = self.persistence.database_now().await?;

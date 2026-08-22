@@ -44,7 +44,7 @@ impl TenantConfigTransferService {
         let file_id = bundle
             .file_id
             .ok_or_else(|| AppError::Conflict("配置包文件尚未生成".into()))?;
-        self.file_service
+        self.file
             .download_config_package_internal(tenant_id, file_id)
             .await
     }

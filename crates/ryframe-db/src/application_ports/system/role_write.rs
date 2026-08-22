@@ -21,25 +21,25 @@ use super::super::transaction::DatabasePortTransaction;
 pub fn port(
     database: crate::ControlDatabaseCluster,
     authorization_cache: AuthorizationCache,
-    product_service: Arc<ProductService>,
+    product: Arc<ProductService>,
 ) -> Arc<dyn RoleWritePort> {
     Arc::new(DatabaseRoleWrite {
         database,
         authorization_cache,
-        product_service,
+        product,
     })
 }
 
 struct DatabaseRoleWrite {
     database: crate::ControlDatabaseCluster,
     authorization_cache: AuthorizationCache,
-    product_service: Arc<ProductService>,
+    product: Arc<ProductService>,
 }
 
 struct DatabaseRoleWriteTransaction {
     transaction: DatabasePortTransaction,
     authorization_cache: AuthorizationCache,
-    product_service: Arc<ProductService>,
+    product: Arc<ProductService>,
 }
 
 impl RoleWritePort for DatabaseRoleWrite {
@@ -54,7 +54,7 @@ impl RoleWritePort for DatabaseRoleWrite {
             Ok(Box::new(DatabaseRoleWriteTransaction {
                 transaction: transaction.into(),
                 authorization_cache: self.authorization_cache.clone(),
-                product_service: Arc::clone(&self.product_service),
+                product: Arc::clone(&self.product),
             }) as Box<dyn RoleWriteTransaction>)
         })
     }
@@ -201,7 +201,7 @@ impl RoleWriteTransaction for DatabaseRoleWriteTransaction {
                 .await?
                 .map(super::super::product::tenant_snapshot)
                 .ok_or_else(|| ryframe_kernel::AppError::NotFound("租户不存在".into()))?;
-            self.product_service
+            self.product
                 .ensure_permission_codes_enabled(snapshot, permission_codes)
         })
     }

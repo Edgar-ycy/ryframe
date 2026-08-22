@@ -5,7 +5,7 @@ use axum::{
     http::{HeaderMap, header},
     response::IntoResponse,
 };
-use ryframe_application::system::file_service::{
+use ryframe_application::system::file::{
     AVATAR_BUCKET, DownloadedFile, UPLOAD_BUCKET, UploadPolicy,
 };
 use ryframe_kernel::{AppError, AppResult as KernelAppResult};

@@ -129,7 +129,7 @@ impl TenantConfigTransferService {
             });
         }
         let uploaded = self
-            .file_service
+            .file
             .upload_config_package_unbound(
                 tenant_id,
                 &actor.username,
@@ -147,7 +147,7 @@ impl TenantConfigTransferService {
             Err(_) => true,
         } {
             let _ = self
-                .file_service
+                .file
                 .schedule_unreferenced_config_package_cleanup(tenant_id, file_id)
                 .await;
         }
@@ -167,7 +167,7 @@ impl TenantConfigTransferService {
             transaction
                 .lock_tenant_configuration(tenant_id, None)
                 .await?;
-            self.product_service
+            self.product
                 .ensure_capability_requirements_in_txn(
                     transaction.product(),
                     tenant_id,
@@ -225,7 +225,7 @@ impl TenantConfigTransferService {
             let fence = transaction
                 .lock_tenant_configuration(tenant_id, None)
                 .await?;
-            self.product_service
+            self.product
                 .ensure_capability_requirements_in_txn(
                     transaction.product(),
                     tenant_id,
@@ -301,7 +301,7 @@ impl TenantConfigTransferService {
             let fence = transaction
                 .lock_tenant_configuration(tenant_id, None)
                 .await?;
-            self.product_service
+            self.product
                 .ensure_capability_requirements_in_txn(
                     transaction.product(),
                     tenant_id,

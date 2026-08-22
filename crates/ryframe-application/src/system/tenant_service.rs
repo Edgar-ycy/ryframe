@@ -106,7 +106,7 @@ pub struct UpdateTenantParams {
 
 pub struct TenantService {
     persistence: Arc<dyn TenantPersistencePort>,
-    product_service: Arc<ProductService>,
+    product: Arc<ProductService>,
     tenant_provisioning: Arc<dyn TenantProvisioningPort>,
     authorization_cache: AuthorizationCache,
 }
@@ -115,12 +115,12 @@ impl TenantService {
     pub fn new(
         persistence: Arc<dyn TenantPersistencePort>,
         authorization_cache: AuthorizationCache,
-        product_service: Arc<ProductService>,
+        product: Arc<ProductService>,
         tenant_provisioning: Arc<dyn TenantProvisioningPort>,
     ) -> Self {
         Self {
             persistence,
-            product_service,
+            product,
             tenant_provisioning,
             authorization_cache,
         }
@@ -172,7 +172,7 @@ impl TenantService {
                 .await?
         } else {
             let capability_resources = self
-                .product_service
+                .product
                 .provisioning_resources_in_txn(transaction.product(), params.plan_version_id)
                 .await?;
             let command = ProvisionTenantRecord {
@@ -324,7 +324,7 @@ impl TenantService {
                 "租户已不处于 provisioning，不能同步初始化能力资源".into(),
             ));
         }
-        self.product_service
+        self.product
             .sync_provisioning_resources_in_txn(
                 transaction.product(),
                 &pending.tenant_id,

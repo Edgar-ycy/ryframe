@@ -5,7 +5,7 @@ impl TenantConfigTransferService {
         let tenant_id = job_tenant(job)?;
         let bundle_id = payload_id(job, "bundle_id")?;
         let requester = self
-            .user_service
+            .user
             .resolve_current_authorization(
                 tenant_id,
                 self.bundle_requester(tenant_id, bundle_id).await?,
@@ -51,7 +51,7 @@ impl TenantConfigTransferService {
             let tenant_name = source_transaction.tenant_name(tenant_id).await?;
             let resources = source_transaction.load_resources(tenant_id).await?;
             let enabled_capabilities = self
-                .product_service
+                .product
                 .enabled_capability_requirements_in_txn(source_transaction.product(), tenant_id)
                 .await?;
             let (resources, required_capabilities) = filter_exportable_resources(
@@ -87,7 +87,7 @@ impl TenantConfigTransferService {
         )
         .await?;
         let uploaded = self
-            .file_service
+            .file
             .upload_config_package_unbound(
                 tenant_id,
                 "config-transfer-worker",
@@ -102,7 +102,7 @@ impl TenantConfigTransferService {
             .await?;
         let file_id = parse_file_id(&uploaded.file_id)?;
         let final_requester = self
-            .user_service
+            .user
             .resolve_current_authorization(
                 tenant_id,
                 requester.actor.user_id,
@@ -156,7 +156,7 @@ impl TenantConfigTransferService {
                     // COMMIT 响应丢失时结果可能已经持久化。引用保护会在已绑定成功时拒绝
                     // 清理，而在事务确实未提交时把孤儿文件纳入延迟回收。
                     let _ = self
-                        .file_service
+                        .file
                         .schedule_unreferenced_config_package_cleanup(tenant_id, file_id)
                         .await;
                     return Err(error);
@@ -166,7 +166,7 @@ impl TenantConfigTransferService {
             Err(error) => {
                 transaction.rollback().await?;
                 let _ = self
-                    .file_service
+                    .file
                     .schedule_unreferenced_config_package_cleanup(tenant_id, file_id)
                     .await;
                 Err(error)

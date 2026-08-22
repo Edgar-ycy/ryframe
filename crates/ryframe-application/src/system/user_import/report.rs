@@ -38,7 +38,7 @@ impl UserImportService {
             .max_file_size
             .max(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
         let uploaded = self
-            .file_service
+            .file
             .upload_internal(
                 &import.tenant_id,
                 "system:user-import",

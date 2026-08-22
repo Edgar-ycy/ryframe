@@ -31,7 +31,7 @@ impl DataRetentionService {
             for artifact in artifacts {
                 after_id = Some(artifact.file_id);
                 if self
-                    .file_service
+                    .file
                     .delete_expired_import_artifact(&artifact.tenant_id, artifact.file_id, before)
                     .await?
                 {

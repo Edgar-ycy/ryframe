@@ -124,7 +124,7 @@ impl TenantConfigTransferService {
             .ok_or_else(|| AppError::NotFound("配置包不存在".into()))?;
         ensure_bundle_available(&bundle, self.persistence.database_now().await?)?;
         let file = self
-            .file_service
+            .file
             .download_config_package_internal(
                 tenant_id,
                 bundle

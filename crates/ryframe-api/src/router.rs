@@ -212,7 +212,7 @@ async fn auth_no_store(request: Request, next: Next) -> Response {
 /// 更新在线索引的最后访问时间。在线索引不是会话授权来源；若索引丢失，
 /// 只会影响展示，不会根据 access token 重建一个缺少绝对期限的条目。
 async fn online_user_tracking(
-    State(online_user_service): State<Arc<OnlineUserService>>,
+    State(online_user): State<Arc<OnlineUserService>>,
     request: Request,
     next: Next,
 ) -> Response {
@@ -221,7 +221,7 @@ async fn online_user_tracking(
         request.extensions().get::<RequestPrincipal>(),
         request.extensions().get::<Claims>(),
     ) {
-        online_user_service
+        online_user
             .touch_user(&principal.tenant_id, &claims.sid)
             .await;
     }

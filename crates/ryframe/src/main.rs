@@ -137,7 +137,7 @@ async fn main() -> Result<(), AppError> {
     let message_hub = state.message_hub.clone();
     let readiness_database = state.monitor.database.clone();
     let readiness_redis = redis.client.clone();
-    let readiness_file_service = state.services.file.clone();
+    let readiness_file = state.services.file.clone();
     let readiness_cache = state.monitor.readiness.clone();
     let message_listener = boot::message_listener::spawn(
         &state.message_hub,
@@ -160,7 +160,7 @@ async fn main() -> Result<(), AppError> {
     let mut readiness_monitor = boot::readiness::spawn(
         readiness_database,
         readiness_redis,
-        Some(readiness_file_service),
+        Some(readiness_file),
         readiness_cache,
         shutdown_receiver.clone(),
     );

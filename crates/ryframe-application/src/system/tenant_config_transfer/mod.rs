@@ -69,9 +69,9 @@ const REQUEST_KIND_FROM_PACKAGE: &str = "from_package";
 pub struct TenantConfigTransferService {
     persistence: Arc<dyn TenantConfigTransferPersistencePort>,
     queue: Arc<JobQueue>,
-    user_service: Arc<UserService>,
-    file_service: Arc<FileService>,
-    product_service: Arc<ProductService>,
+    user: Arc<UserService>,
+    file: Arc<FileService>,
+    product: Arc<ProductService>,
     authorization_cache: AuthorizationCache,
     target_catalog: TenantConfigTargetCatalog,
     config: crate::TenantConfigTransferPolicy,
@@ -82,9 +82,9 @@ pub struct TenantConfigTransferService {
 pub struct TenantConfigTransferDependencies {
     pub persistence: Arc<dyn TenantConfigTransferPersistencePort>,
     pub queue: Arc<JobQueue>,
-    pub user_service: Arc<UserService>,
-    pub file_service: Arc<FileService>,
-    pub product_service: Arc<ProductService>,
+    pub user: Arc<UserService>,
+    pub file: Arc<FileService>,
+    pub product: Arc<ProductService>,
     pub authorization_cache: AuthorizationCache,
     pub archive: Arc<dyn TenantConfigArchivePort>,
 }
@@ -103,9 +103,9 @@ impl TenantConfigTransferService {
         let TenantConfigTransferDependencies {
             persistence,
             queue,
-            user_service,
-            file_service,
-            product_service,
+            user,
+            file,
+            product,
             authorization_cache,
             archive,
         } = dependencies;
@@ -116,9 +116,9 @@ impl TenantConfigTransferService {
         Self {
             persistence,
             queue,
-            user_service,
-            file_service,
-            product_service,
+            user,
+            file,
+            product,
             authorization_cache,
             target_catalog,
             config,
@@ -194,7 +194,7 @@ impl TenantConfigTransferService {
 }
 
 fn requester_record(
-    requester: &crate::system::user_service::CurrentAuthorization,
+    requester: &crate::system::user::CurrentAuthorization,
 ) -> TenantConfigRequesterRecord {
     TenantConfigRequesterRecord {
         tenant_id: requester.tenant.tenant_id.clone(),

@@ -26,12 +26,12 @@ pub fn read_port(database: ControlDatabaseCluster) -> Arc<dyn PermissionReadPort
 pub fn write_port(
     database: ControlDatabaseCluster,
     authorization_cache: AuthorizationCache,
-    product_service: Arc<ProductService>,
+    product: Arc<ProductService>,
 ) -> Arc<dyn PermissionWritePort> {
     Arc::new(DatabasePermissionWrite {
         database,
         authorization_cache,
-        product_service,
+        product,
     })
 }
 
@@ -42,13 +42,13 @@ struct DatabasePermissionRead {
 struct DatabasePermissionWrite {
     database: ControlDatabaseCluster,
     authorization_cache: AuthorizationCache,
-    product_service: Arc<ProductService>,
+    product: Arc<ProductService>,
 }
 
 struct DatabasePermissionWriteTransaction {
     transaction: DatabasePortTransaction,
     authorization_cache: AuthorizationCache,
-    product_service: Arc<ProductService>,
+    product: Arc<ProductService>,
 }
 
 impl PermissionReadPort for DatabasePermissionRead {
@@ -129,7 +129,7 @@ impl PermissionWritePort for DatabasePermissionWrite {
             Ok(Box::new(DatabasePermissionWriteTransaction {
                 transaction: transaction.into(),
                 authorization_cache: self.authorization_cache.clone(),
-                product_service: Arc::clone(&self.product_service),
+                product: Arc::clone(&self.product),
             }) as Box<dyn PermissionWriteTransaction>)
         })
     }
@@ -248,7 +248,7 @@ impl PermissionWriteTransaction for DatabasePermissionWriteTransaction {
                 .await?
                 .map(super::super::product::tenant_snapshot)
                 .ok_or_else(|| ryframe_kernel::AppError::NotFound("租户不存在".into()))?;
-            self.product_service
+            self.product
                 .filter_syncable_permission_codes(snapshot, codes)
         })
     }

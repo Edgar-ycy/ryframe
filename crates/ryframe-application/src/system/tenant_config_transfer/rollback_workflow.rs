@@ -17,7 +17,7 @@ impl TenantConfigTransferService {
             return self.sync_committed_cache_state(tenant_id, &transfer).await;
         }
         let requester = self
-            .user_service
+            .user
             .resolve_current_authorization(
                 tenant_id,
                 transfer.requested_by,
@@ -35,7 +35,7 @@ impl TenantConfigTransferService {
             .snapshot_file_id
             .ok_or_else(|| AppError::Conflict("配置回滚快照不存在".into()))?;
         let snapshot_file = self
-            .file_service
+            .file
             .download_config_package_internal(tenant_id, snapshot_file_id)
             .await?;
         let snapshot = parse_tenant_config_package(
@@ -76,7 +76,7 @@ impl TenantConfigTransferService {
             let fence = transaction
                 .lock_tenant_configuration(tenant_id, Some(&owner_token))
                 .await?;
-            self.product_service
+            self.product
                 .ensure_capability_requirements_in_txn(
                     transaction.product(),
                     tenant_id,

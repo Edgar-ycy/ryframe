@@ -2,20 +2,20 @@ pub mod authorization_diagnostic_service;
 pub mod captcha_service;
 pub mod config_service;
 pub mod data_retention;
-pub mod dept_service;
+pub mod dept;
 pub mod dict_service;
-pub mod export_service;
+pub mod export;
 mod log_time_range;
 pub mod login_info_service;
-pub mod menu_service;
-pub mod message_service;
+pub mod menu;
+pub mod message;
 pub mod notice_service;
 pub mod oper_log_service;
 mod option;
-pub mod permission_service;
+pub mod permission;
 pub mod post_service;
+pub mod product;
 pub mod product_capability_catalog;
-pub mod product_service;
 pub mod role_service;
 pub mod service_account;
 pub mod tenant_config_package;
@@ -23,8 +23,8 @@ pub mod tenant_config_transfer;
 pub mod tenant_data_migration;
 pub mod tenant_service;
 pub mod tenant_usage_service;
+pub mod user;
 pub mod user_import;
-pub mod user_service;
 pub mod websocket_ticket_service;
 
 pub use authorization_diagnostic_service::{
@@ -40,11 +40,11 @@ pub use data_retention::{
     DATA_RETENTION_JOB_TYPE, DataRetentionJobHandler, DataRetentionOverview, DataRetentionPolicy,
     DataRetentionPreview, DataRetentionRunVo, DataRetentionService,
 };
-pub use dept_service::{CreateDeptCommand, DeptService, DeptTreeNode, DeptVo, UpdateDeptCommand};
+pub use dept::{CreateDeptCommand, DeptService, DeptTreeNode, DeptVo, UpdateDeptCommand};
 pub use dict_service::{
     DictCacheStore, DictCacheStoreFuture, DictDataVo, DictService, DictTypeListParams, DictTypeVo,
 };
-pub use export_service::{
+pub use export::{
     ConfigExportFilter, DictTypeExportFilter, EXPORT_BUCKET, EXPORT_CLEANUP_JOB_TYPE,
     EXPORT_JOB_TYPE, EXPORT_REQUEST_VERSION, ExportDeletionResult, ExportDownloadLocation,
     ExportJobPayload, ExportJobVo, ExportPersistencePorts, ExportResourceServices, ExportSelection,
@@ -54,11 +54,11 @@ pub use export_service::{
 pub use login_info_service::{
     LoginInfoQuery, LoginInfoService, LoginInfoVo, LoginStatus, RecordLoginCommand,
 };
-pub use menu_service::{
+pub use menu::{
     CreateMenuCommand, MenuListParams, MenuService, MenuTreeNode, MenuType, MenuVo,
     UpdateMenuCommand,
 };
-pub use message_service::{
+pub use message::{
     MESSAGE_DISPATCH_JOB_TYPE, MESSAGE_DISPATCH_REDIS_CHANNEL, MESSAGE_RETENTION_JOB_TYPE,
     MessageAudienceKind, MessageAudienceSelector, MessageDelivery, MessageInbox, MessageService,
     MessageTemplate, MessageText, PublishMessageParams, PublishedMessage,
@@ -68,16 +68,12 @@ pub use oper_log_service::{
     OperLogQuery, OperLogService, OperLogStatus, OperLogVo, RecordOperLogCommand,
 };
 pub use option::{OptionItem, OptionList};
-pub use permission_service::{
+pub use permission::{
     CreatePermissionCommand, PermissionService, PermissionSyncReport, PermissionTreeNode,
     PermissionType, PermissionVo, UpdatePermissionCommand,
 };
 pub use post_service::{PostListParams, PostService, PostVo};
-pub use product_capability_catalog::{
-    CAPABILITY_CATALOG, CapabilityDescriptor, CapabilityVariantDescriptor,
-    SERVICE_ACCOUNTS_CAPABILITY, capability_descriptor, validate_capability_snapshot,
-};
-pub use product_service::{
+pub use product::{
     ApplyProductChangeCommand, CapabilityCatalogVo, CapabilityOverrideInput, CapabilityOverrideVo,
     CapabilityRequirement, CapabilitySnapshotInput, CreateProductPlanCommand,
     CreateProductPlanVersionCommand, EffectiveCapabilityVo, ProductCapabilityChangeVo,
@@ -85,6 +81,10 @@ pub use product_service::{
     ProductPlanVersionVo, ProductPlanVo, ProductService, ProvisioningCapabilityResources,
     SessionCapabilityVo, SessionProductContextVo, UpdateProductPlanCommand,
     UpdateProductPlanVersionCommand,
+};
+pub use product_capability_catalog::{
+    CAPABILITY_CATALOG, CapabilityDescriptor, CapabilityVariantDescriptor,
+    SERVICE_ACCOUNTS_CAPABILITY, capability_descriptor, validate_capability_snapshot,
 };
 pub use role_service::{RoleListParams, RoleOptionPurpose, RoleService, RoleVo};
 pub use service_account::{
@@ -122,29 +122,29 @@ pub use tenant_usage_service::{
     TenantRateLimitReadFuture, TenantRateLimitReadPort, TenantRateLimitSnapshot,
     TenantUsagePageParams, TenantUsageService, TenantUsageVo,
 };
+pub use user::{
+    CreateUserParams, RoleBriefVo, USER_STATUS_NORMAL, UpdateUserParams, UserDetailVo,
+    UserListParams, UserService, UserVo,
+};
 pub use user_import::{
     RequestUserImportCommand, RequestUserImportOutcome, USER_IMPORT_JOB_TYPE, UserImportData,
     UserImportJobHandler, UserImportJobVo, UserImportListParams, UserImportRowVo,
     UserImportService,
 };
-pub use user_service::{
-    CreateUserParams, RoleBriefVo, USER_STATUS_NORMAL, UpdateUserParams, UserDetailVo,
-    UserListParams, UserService, UserVo,
-};
 pub use websocket_ticket_service::{
     WebSocketTicket, WebSocketTicketGrant, WebSocketTicketService, WebSocketTicketStore,
     WebSocketTicketStoreFuture,
 };
-pub mod profile_service;
-pub use profile_service::ProfileService;
-pub mod file_service;
-pub use file_service::{
+pub mod profile;
+pub use profile::ProfileService;
+pub mod file;
+pub use file::{
     AVATAR_BUCKET, CONFIG_PACKAGE_BUCKET, DownloadedFile, FileService, IMPORT_BUCKET,
     UPLOAD_BUCKET, UploadCommand, UploadPolicy, UploadResponse,
 };
-pub mod online_user_service;
+pub mod online_user;
 pub mod overview_service;
-pub use online_user_service::{
+pub use online_user::{
     OnlineSessionMetadataFuture, OnlineSessionMetadataStore, OnlineUserService, OnlineUserVo,
     UserSession,
 };

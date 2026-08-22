@@ -13,7 +13,7 @@ impl TenantConfigTransferService {
             return Ok(());
         }
         let requester = self
-            .user_service
+            .user
             .resolve_current_authorization(
                 tenant_id,
                 transfer.requested_by,
@@ -36,7 +36,7 @@ impl TenantConfigTransferService {
             let fence = transaction
                 .lock_tenant_configuration(tenant_id, None)
                 .await?;
-            self.product_service
+            self.product
                 .ensure_capability_requirements_in_txn(
                     transaction.product(),
                     tenant_id,

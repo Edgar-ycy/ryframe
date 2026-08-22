@@ -343,9 +343,9 @@ pub async fn build_all(
         ryframe_application::system::TenantConfigTransferDependencies {
             persistence: ryframe_db::application_ports::tenant_config::transfer(database.clone()),
             queue: job_queue.clone(),
-            user_service: user.clone(),
-            file_service: file.clone(),
-            product_service: product.clone(),
+            user: user.clone(),
+            file: file.clone(),
+            product: product.clone(),
             authorization_cache: authorization_cache.clone(),
             archive: super::tenant_config_archive::codec(),
         },
