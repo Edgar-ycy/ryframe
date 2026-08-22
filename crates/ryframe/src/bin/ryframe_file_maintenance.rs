@@ -3,6 +3,8 @@
 //! 该命令只用于 FILE-A 单向切换：先校验旧 MD5 并回填 SHA-256，再清空旧版
 //! `del_flag = '3'` 上传预留。常规 API 与 Worker 不启用本二进制所需的 Cargo feature。
 
+#![cfg(feature = "file-maintenance")]
+
 use std::{error::Error, sync::Arc};
 
 use chrono::{DateTime, Utc};
