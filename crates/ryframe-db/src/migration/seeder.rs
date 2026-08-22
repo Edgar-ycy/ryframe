@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use sea_orm::{ConnectionTrait, DbBackend, DbErr, Statement, TryGetable};
 
 use crate::migration::m20260820_000000_control_baseline::{ddl_statements, seed_statements};
@@ -48,17 +50,19 @@ where
     C: ConnectionTrait + ?Sized,
 {
     let permissions = access_permission_codes()?;
+    let permission_names = access_permission_names()?;
     for (index, code) in permissions.iter().enumerate() {
         let index = i32::try_from(index)
             .map_err(|_| DbErr::Custom("访问目录权限数量超出基线可表示范围".into()))?;
         let id = 10_000_i64 + i64::from(index);
+        let name = permission_names.get(code).copied().unwrap_or(code);
         db.execute_raw(Statement::from_sql_and_values(
             DbBackend::MySql,
             "INSERT INTO `sys_permission` \
              (`id`, `tenant_id`, `name`, `code`, `parent_id`, `perm_type`, `icon`, `sort`, `status`, `created_at`, `updated_at`) \
              VALUES (?, 'system', ?, ?, NULL, 'api', NULL, ?, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)) \
-             ON DUPLICATE KEY UPDATE `code` = `code`",
-            [id.into(), (*code).into(), (*code).into(), index.into()],
+             ON DUPLICATE KEY UPDATE `name` = IF(`name` = `code`, VALUES(`name`), `name`)",
+            [id.into(), name.into(), (*code).into(), index.into()],
         ))
         .await?;
     }
@@ -128,11 +132,7 @@ pub fn access_permission_codes() -> Result<Vec<&'static str>, DbErr> {
             break;
         }
         let value = line.trim_end_matches(',').trim_matches('"');
-        if value.is_empty()
-            || !value
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || b":-*._".contains(&byte))
-        {
+        if !is_permission_code(value) {
             return Err(DbErr::Custom("访问目录包含非法权限编码，拒绝初始化".into()));
         }
         values.push(value);
@@ -141,6 +141,39 @@ pub fn access_permission_codes() -> Result<Vec<&'static str>, DbErr> {
         return Err(DbErr::Custom("访问目录没有权限定义".into()));
     }
     Ok(values)
+}
+
+pub fn access_permission_names() -> Result<BTreeMap<&'static str, &'static str>, DbErr> {
+    let permissions = access_permission_codes()?;
+    let mut names = BTreeMap::new();
+    let mut inside = false;
+    for line in ACCESS_CATALOG.lines().map(str::trim) {
+        if line == "[permission_names]" {
+            inside = true;
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        if line.starts_with('[') {
+            break;
+        }
+        if line.is_empty() {
+            continue;
+        }
+        let Some((code, name)) = catalog_map_entry(line) else {
+            return Err(DbErr::Custom("访问目录包含非法权限名称，拒绝初始化".into()));
+        };
+        if !permissions.contains(&code)
+            || name.trim() != name
+            || name.is_empty()
+            || name.chars().count() > 64
+            || names.insert(code, name).is_some()
+        {
+            return Err(DbErr::Custom("访问目录包含非法权限名称，拒绝初始化".into()));
+        }
+    }
+    Ok(names)
 }
 
 pub fn access_menus() -> Result<Vec<AccessMenu<'static>>, DbErr> {
@@ -203,6 +236,20 @@ fn catalog_string_value(line: &'static str, key: &str) -> Option<&'static str> {
         .strip_prefix('=')?
         .trim();
     value.strip_prefix('"')?.strip_suffix('"')
+}
+
+fn catalog_map_entry(line: &'static str) -> Option<(&'static str, &'static str)> {
+    let (key, value) = line.split_once('=')?;
+    let key = key.trim().strip_prefix('"')?.strip_suffix('"')?;
+    let value = value.trim().strip_prefix('"')?.strip_suffix('"')?;
+    is_permission_code(key).then_some((key, value))
+}
+
+fn is_permission_code(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b":-*._".contains(&byte))
 }
 
 async fn permission_id<C>(db: &C, code: &str) -> Result<Option<i64>, DbErr>
@@ -341,14 +388,16 @@ fn append_snapshot_statement(snapshot: &mut String, statement: &str) {
 
 fn access_catalog_snapshot_statements() -> Result<Vec<String>, DbErr> {
     let permissions = access_permission_codes()?;
+    let permission_names = access_permission_names()?;
     let permission_rows = permissions
         .iter()
         .enumerate()
         .map(|(index, code)| {
+            let name = permission_names.get(code).copied().unwrap_or(code);
             format!(
                 "({}, 'system', '{}', '{}', NULL, 'api', NULL, {}, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))",
                 10_000 + index,
-                code,
+                name,
                 code,
                 index
             )
@@ -358,7 +407,7 @@ fn access_catalog_snapshot_statements() -> Result<Vec<String>, DbErr> {
     let mut statements = vec![format!(
         "INSERT INTO `sys_permission` \
          (`id`, `tenant_id`, `name`, `code`, `parent_id`, `perm_type`, `icon`, `sort`, `status`, `created_at`, `updated_at`) VALUES\n{permission_rows}\n\
-         ON DUPLICATE KEY UPDATE `code` = `code`"
+         ON DUPLICATE KEY UPDATE `name` = IF(`name` = `code`, VALUES(`name`), `name`)"
     )];
 
     for (index, menu) in access_menus()?.iter().enumerate() {

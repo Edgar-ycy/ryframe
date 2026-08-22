@@ -22,6 +22,8 @@ struct AccessCatalog {
     #[serde(default)]
     non_route_permissions: Vec<String>,
     #[serde(default)]
+    permission_names: BTreeMap<String, String>,
+    #[serde(default)]
     menus: Vec<MenuEntry>,
     #[serde(default)]
     capabilities: Vec<CapabilityEntry>,
@@ -212,6 +214,12 @@ fn validate_catalog(catalog: &AccessCatalog) -> Result<(), Box<dyn Error>> {
     }
     for permission in &permissions {
         validate_code("权限码", permission, ':')?;
+    }
+    for (permission, name) in &catalog.permission_names {
+        validate_reference("权限名称", permission, "权限码", &permissions)?;
+        if name.trim() != name || name.is_empty() || name.chars().count() > 64 {
+            return Err(format!("权限 {permission} 的中文名称格式无效").into());
+        }
     }
 
     let non_route_permissions = unique_values("非路由权限码", &catalog.non_route_permissions)?;

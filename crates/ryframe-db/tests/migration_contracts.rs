@@ -4,8 +4,8 @@ use ryframe_db::{
     install_id_generator,
     migration::{
         CONTROL_MIGRATION_LEDGER, Migrator, access_menus, access_permission_codes,
-        control_ddl_statements, expected_extra, extract_column_type, mysql_snapshot_sql,
-        normalize_column_type, schema_fingerprint, supports_mysql_80_or_newer,
+        access_permission_names, control_ddl_statements, expected_extra, extract_column_type,
+        mysql_snapshot_sql, normalize_column_type, schema_fingerprint, supports_mysql_80_or_newer,
         validate_seed_statements,
     },
     next_id,
@@ -43,6 +43,17 @@ fn access_catalog_seed_is_complete_and_unambiguous() {
     assert_eq!(permission_set.len(), permissions.len());
     assert!(permissions.iter().all(|code| code.len() <= 64));
     assert!(permission_set.contains("tenant:capability:override"));
+    let permission_names = access_permission_names().expect("权限中文名称应可解析");
+    assert_eq!(
+        permission_names.get("tenant:data-migration:list"),
+        Some(&"租户数据迁移查询")
+    );
+    assert!(
+        permission_names
+            .keys()
+            .all(|code| permission_set.contains(code))
+    );
+    assert!(permission_names.values().all(|name| !name.is_empty()));
 
     let menus = access_menus().expect("访问目录菜单应可解析");
     let mut preceding_routes = BTreeSet::new();

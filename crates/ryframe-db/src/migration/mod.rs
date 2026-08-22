@@ -15,8 +15,8 @@ pub use schema::{
     expected_extra, extract_column_type, normalize_column_type, verify_current_schema,
 };
 pub use seeder::{
-    AccessMenu, access_menus, access_permission_codes, mysql_snapshot_sql, seed,
-    validate_seed_statements,
+    AccessMenu, access_menus, access_permission_codes, access_permission_names, mysql_snapshot_sql,
+    seed, validate_seed_statements,
 };
 
 const MIGRATION_LOCK_SQL_PREFIX: &str = "ryframe:migration:";
