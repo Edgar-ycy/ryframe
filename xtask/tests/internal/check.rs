@@ -7,12 +7,12 @@ use std::{
 };
 
 use super::check::{
-    BACKEND_POLICY_SCRIPTS, BackendSnapshotProfile, CONSUMER_OWNED_COMMANDS,
-    FRONTEND_FULL_NON_CONSUMER_COMMANDS, FRONTEND_ONLY_CONTRACT_COMMANDS, FrontendProfile,
-    PYTHON_TEST_ARGS, RESOURCE_WORKSPACE_TEST_TARGET_DIR, WORKSPACE_CLIPPY_ARGS,
-    WORKSPACE_TEST_ARGS, WORKSPACE_TEST_TARGET_DIR, WorkspaceGraph, changed_paths,
-    classify_changes, complete_verify_selection, consumer_contract_arguments,
-    consumer_contract_plan, feature_operation_args, feature_test_args, frontend_profile_commands,
+    BACKEND_POLICY_SCRIPTS, BACKEND_VERIFY_TARGET_DIR, BackendSnapshotProfile,
+    CONSUMER_OWNED_COMMANDS, FRONTEND_FULL_NON_CONSUMER_COMMANDS, FRONTEND_ONLY_CONTRACT_COMMANDS,
+    FrontendProfile, PYTHON_TEST_ARGS, RESOURCE_VERIFY_TARGET_DIR, WORKSPACE_CLIPPY_ARGS,
+    WORKSPACE_TEST_ARGS, WorkspaceGraph, changed_paths, classify_changes,
+    complete_verify_selection, consumer_contract_arguments, consumer_contract_plan,
+    feature_operation_args, feature_test_args, frontend_profile_commands,
     load_consumer_contract_plan, load_workspace_graph, needs_consumer_contract,
     reverse_dependency_closure, validate_feature_combination,
 };
@@ -71,7 +71,7 @@ fn feature_matrix_compiles_and_tests_required_feature_targets() {
         assert!(args.windows(2).any(|pair| pair == ["-p", "ryframe"]));
         assert!(
             args.windows(2)
-                .any(|pair| { pair == ["--target-dir", "target/feature-matrix"] })
+                .any(|pair| { pair == ["--target-dir", "target/verify/backend"] })
         );
         assert!(args.contains(&"--all-targets".to_owned()));
         assert!(args.contains(&"--no-default-features".to_owned()));
@@ -82,7 +82,7 @@ fn feature_matrix_compiles_and_tests_required_feature_targets() {
     assert!(test.windows(2).any(|pair| pair == ["--jobs", "2"]));
     assert!(
         test.windows(2)
-            .any(|pair| { pair == ["--target-dir", "target/feature-matrix"] })
+            .any(|pair| { pair == ["--target-dir", "target/verify/backend"] })
     );
     assert!(
         test.windows(2)
@@ -123,6 +123,8 @@ fn full_gate_discovers_repository_python_tests() {
         [
             "clippy",
             "--locked",
+            "--target-dir",
+            "target/verify/backend",
             "--workspace",
             "--all-targets",
             "--",
@@ -138,17 +140,14 @@ fn full_gate_discovers_repository_python_tests() {
             "test",
             "--locked",
             "--target-dir",
-            "target/workspace-tests",
+            "target/verify/backend",
             "--workspace",
             "--jobs",
             "2",
         ]
     );
-    assert_eq!(WORKSPACE_TEST_TARGET_DIR, "target/workspace-tests");
-    assert_eq!(
-        RESOURCE_WORKSPACE_TEST_TARGET_DIR,
-        "target/resource-workspace-tests"
-    );
+    assert_eq!(BACKEND_VERIFY_TARGET_DIR, "target/verify/backend");
+    assert_eq!(RESOURCE_VERIFY_TARGET_DIR, "target/verify/resource");
 }
 
 #[test]

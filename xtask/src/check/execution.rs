@@ -40,6 +40,8 @@ pub(crate) const BACKEND_POLICY_SCRIPTS: &[&str] = &[
 pub(crate) const WORKSPACE_CLIPPY_ARGS: &[&str] = &[
     "clippy",
     "--locked",
+    "--target-dir",
+    BACKEND_VERIFY_TARGET_DIR,
     "--workspace",
     "--all-targets",
     "--",
@@ -48,13 +50,15 @@ pub(crate) const WORKSPACE_CLIPPY_ARGS: &[&str] = &[
     "-D",
     "clippy::redundant_clone",
 ];
-pub(crate) const WORKSPACE_TEST_TARGET_DIR: &str = "target/workspace-tests";
-pub(crate) const RESOURCE_WORKSPACE_TEST_TARGET_DIR: &str = "target/resource-workspace-tests";
+/// 完整后端门禁共享的 Cargo 产物目录；feature 指纹由 Cargo 自身隔离。
+pub(crate) const BACKEND_VERIFY_TARGET_DIR: &str = "target/verify/backend";
+/// 临时资源工作区独立使用的 Cargo 产物目录，避免污染常规后端门禁缓存。
+pub(crate) const RESOURCE_VERIFY_TARGET_DIR: &str = "target/verify/resource";
 pub(crate) const WORKSPACE_TEST_ARGS: &[&str] = &[
     "test",
     "--locked",
     "--target-dir",
-    WORKSPACE_TEST_TARGET_DIR,
+    BACKEND_VERIFY_TARGET_DIR,
     "--workspace",
     "--jobs",
     "2",
@@ -252,7 +256,7 @@ fn resource_workspace_compilation(frontend_dir: &Path) -> Result<()> {
             "test",
             "--locked",
             "--target-dir",
-            RESOURCE_WORKSPACE_TEST_TARGET_DIR,
+            RESOURCE_VERIFY_TARGET_DIR,
             "-p",
             "ryframe-generator",
             "--test",

@@ -1,9 +1,10 @@
 use std::{
     env,
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fs,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
+    sync::{Once, OnceLock},
     time::Instant,
 };
 
@@ -11,6 +12,15 @@ use std::{
 use std::{thread, time::Duration};
 
 use crate::{Result, workspace::root_dir};
+
+enum RustcCache {
+    ExistingWrapper(OsString),
+    Sccache,
+    Cargo,
+}
+
+static RUSTC_CACHE: OnceLock<RustcCache> = OnceLock::new();
+static RUSTC_CACHE_NOTICE: Once = Once::new();
 
 /// 开发任务的子进程容器。Windows 使用带 `KILL_ON_JOB_CLOSE` 的 Job Object，
 /// 即使 xtask 异常退出也会回收 API、Worker、Vite 及其后代进程。
@@ -195,7 +205,9 @@ pub(crate) fn run_with_env(
 ) -> Result<()> {
     let started = Instant::now();
     println!("→ {executable} {}", args.join(" "));
-    let status = child_command(executable)
+    let mut command = child_command(executable);
+    configure_cargo_cache(executable, &mut command);
+    let status = command
         .args(args)
         .envs(environment.iter().copied())
         .current_dir(dir)
@@ -213,6 +225,49 @@ pub(crate) fn run_with_env(
             args.join(" ")
         )
         .into())
+    }
+}
+
+fn configure_cargo_cache(executable: &str, command: &mut Command) {
+    if executable != "cargo" {
+        return;
+    }
+    match RUSTC_CACHE.get_or_init(resolve_rustc_cache) {
+        RustcCache::ExistingWrapper(wrapper) => {
+            RUSTC_CACHE_NOTICE.call_once(|| {
+                println!(
+                    "检测到 RUSTC_WRAPPER={}，保留现有编译缓存配置。",
+                    wrapper.to_string_lossy()
+                );
+            });
+        }
+        RustcCache::Sccache => {
+            command.env("RUSTC_WRAPPER", "sccache");
+            RUSTC_CACHE_NOTICE.call_once(|| println!("使用 sccache 复用 Rust 编译缓存。"));
+        }
+        RustcCache::Cargo => {
+            RUSTC_CACHE_NOTICE.call_once(|| {
+                println!("未检测到可用 sccache，使用 Cargo 本地缓存继续执行。");
+            });
+        }
+    }
+}
+
+fn resolve_rustc_cache() -> RustcCache {
+    if let Some(wrapper) = env::var_os("RUSTC_WRAPPER").filter(|value| !value.is_empty()) {
+        return RustcCache::ExistingWrapper(wrapper);
+    }
+    let available = Command::new("sccache")
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+    if available {
+        RustcCache::Sccache
+    } else {
+        RustcCache::Cargo
     }
 }
 

@@ -6,9 +6,10 @@ use std::{
 
 use crate::{Result, workspace::root_dir};
 
-use super::{execution::run_owned, selection::load_workspace_metadata};
-
-pub(crate) const FEATURE_MATRIX_TARGET_DIR: &str = "target/feature-matrix";
+use super::{
+    execution::{BACKEND_VERIFY_TARGET_DIR, run_owned},
+    selection::load_workspace_metadata,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct FeatureMatrixEntry {
@@ -281,7 +282,7 @@ pub(crate) fn feature_test_args(package: &str, features: &[String], target: &str
         "test".to_owned(),
         "--locked".to_owned(),
         "--target-dir".to_owned(),
-        FEATURE_MATRIX_TARGET_DIR.to_owned(),
+        BACKEND_VERIFY_TARGET_DIR.to_owned(),
         "-p".to_owned(),
         package.to_owned(),
         "--no-default-features".to_owned(),
@@ -305,7 +306,7 @@ pub(crate) fn feature_operation_args(
         operation.to_owned(),
         "--locked".to_owned(),
         "--target-dir".to_owned(),
-        FEATURE_MATRIX_TARGET_DIR.to_owned(),
+        BACKEND_VERIFY_TARGET_DIR.to_owned(),
         "-p".to_owned(),
         package.to_owned(),
         "--no-default-features".to_owned(),
