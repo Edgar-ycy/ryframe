@@ -53,7 +53,9 @@ fn device_slice_compiles_in_temporary_real_workspaces() {
     let device =
         load_resource(backend_source.join("crates/ryframe-generator/tests/fixtures/device.toml"))
             .expect("Device 清单应有效");
-    let catalog = render_resources(&[device]).expect("Device 应能生成");
+    let post = load_resource(backend_source.join("catalog/resources/post.toml"))
+        .expect("临时 Workspace 中既有的 Post 清单应有效");
+    let catalog = render_resources(&[device, post]).expect("Device 与既有资源应能共同生成");
     let first = write_resource(
         &catalog,
         "device",
@@ -95,7 +97,6 @@ fn device_slice_compiles_in_temporary_real_workspaces() {
         }
         fs::write(&lib, source).expect("应在临时副本接入 generated module");
     }
-    register_device_permissions(&backend.path().join("catalog/access.toml"));
     register_device_frontend_contract(frontend.path());
     write_device_fake_transaction_test(backend.path());
 
@@ -289,44 +290,6 @@ fn copy_directory(source: &Path, target: &Path) {
             });
         }
     }
-}
-
-fn register_device_permissions(path: &Path) {
-    let source = fs::read_to_string(path).expect("应读取临时访问目录");
-    let mut catalog = toml::from_str::<toml::Value>(&source).expect("访问目录应为 TOML");
-    let root = catalog.as_table_mut().expect("访问目录根应为表");
-    let permissions = root
-        .get_mut("permissions")
-        .and_then(toml::Value::as_array_mut)
-        .expect("访问目录应声明 permissions");
-    for permission in [
-        "system:device:create",
-        "system:device:delete",
-        "system:device:list",
-        "system:device:read",
-        "system:device:update",
-    ] {
-        permissions.push(toml::Value::String(permission.into()));
-    }
-    permissions.sort_by(|left, right| left.as_str().cmp(&right.as_str()));
-    let names = root
-        .get_mut("permission_names")
-        .and_then(toml::Value::as_table_mut)
-        .expect("访问目录应声明 permission_names");
-    for (permission, name) in [
-        ("system:device:create", "创建设备"),
-        ("system:device:delete", "删除设备"),
-        ("system:device:list", "设备列表"),
-        ("system:device:read", "设备详情"),
-        ("system:device:update", "更新设备"),
-    ] {
-        names.insert(permission.into(), toml::Value::String(name.into()));
-    }
-    fs::write(
-        path,
-        toml::to_string_pretty(&catalog).expect("应序列化访问目录"),
-    )
-    .expect("应写入临时访问目录");
 }
 
 fn register_device_frontend_contract(frontend: &Path) {

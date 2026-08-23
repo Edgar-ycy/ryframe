@@ -72,6 +72,7 @@ struct GeneratedMenu {
     key: String,
     parent: String,
     order: u32,
+    icon: Option<String>,
     labels: GeneratedLabels,
 }
 
@@ -303,17 +304,13 @@ fn merge_generated_catalog(
 
         validate_identifier("生成菜单 route_key", &resource.menu.key)?;
         validate_identifier("生成菜单 parent", &resource.menu.parent)?;
+        if let Some(icon) = resource.menu.icon.as_deref() {
+            validate_identifier("生成菜单 icon", icon)?;
+        }
         validate_generated_label("生成菜单中文标签", &resource.menu.labels.zh_cn)?;
         validate_generated_label("生成菜单英文标签", &resource.menu.labels.en)?;
         if resource.menu.order == 0 {
             return Err(format!("生成菜单 {} 的 order 必须大于 0", resource.menu.key).into());
-        }
-        if resource.route.key != resource.menu.key {
-            return Err(format!(
-                "生成资源 {} 的 route.key 必须与 menu.key 一致",
-                resource.name
-            )
-            .into());
         }
         validate_identifier("生成页面 route_key", &resource.route.key)?;
         if !resource.route.path.starts_with('/')
