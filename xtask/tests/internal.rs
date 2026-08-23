@@ -412,12 +412,12 @@ mod check_tests {
     use super::check::{
         BACKEND_POLICY_SCRIPTS, BackendSnapshotProfile, CONSUMER_OWNED_COMMANDS,
         FRONTEND_FULL_NON_CONSUMER_COMMANDS, FRONTEND_ONLY_CONTRACT_COMMANDS, FrontendProfile,
-        PYTHON_TEST_ARGS, WORKSPACE_CLIPPY_ARGS, WORKSPACE_TEST_ARGS, WORKSPACE_TEST_TARGET_DIR,
-        WorkspaceGraph, changed_paths, classify_changes, complete_verify_selection,
-        consumer_contract_arguments, consumer_contract_plan, feature_operation_args,
-        feature_test_args, frontend_profile_commands, load_consumer_contract_plan,
-        load_workspace_graph, needs_consumer_contract, reverse_dependency_closure,
-        validate_feature_combination,
+        PYTHON_TEST_ARGS, RESOURCE_WORKSPACE_TEST_TARGET_DIR, WORKSPACE_CLIPPY_ARGS,
+        WORKSPACE_TEST_ARGS, WORKSPACE_TEST_TARGET_DIR, WorkspaceGraph, changed_paths,
+        classify_changes, complete_verify_selection, consumer_contract_arguments,
+        consumer_contract_plan, feature_operation_args, feature_test_args,
+        frontend_profile_commands, load_consumer_contract_plan, load_workspace_graph,
+        needs_consumer_contract, reverse_dependency_closure, validate_feature_combination,
     };
 
     static NEXT_REPOSITORY: AtomicU64 = AtomicU64::new(1);
@@ -548,6 +548,10 @@ mod check_tests {
             ]
         );
         assert_eq!(WORKSPACE_TEST_TARGET_DIR, "target/workspace-tests");
+        assert_eq!(
+            RESOURCE_WORKSPACE_TEST_TARGET_DIR,
+            "target/resource-workspace-tests"
+        );
     }
 
     #[test]

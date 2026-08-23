@@ -43,6 +43,7 @@ pub(crate) const WORKSPACE_CLIPPY_ARGS: &[&str] = &[
     "clippy::redundant_clone",
 ];
 pub(crate) const WORKSPACE_TEST_TARGET_DIR: &str = "target/workspace-tests";
+pub(crate) const RESOURCE_WORKSPACE_TEST_TARGET_DIR: &str = "target/resource-workspace-tests";
 pub(crate) const WORKSPACE_TEST_ARGS: &[&str] = &[
     "test",
     "--locked",
@@ -496,7 +497,7 @@ fn resource_workspace_compilation(frontend_dir: &Path) -> Result<()> {
             "test",
             "--locked",
             "--target-dir",
-            WORKSPACE_TEST_TARGET_DIR,
+            RESOURCE_WORKSPACE_TEST_TARGET_DIR,
             "-p",
             "ryframe-generator",
             "--test",
