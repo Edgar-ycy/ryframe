@@ -4,7 +4,6 @@ use serde_json::Value as JsonValue;
 use std::collections::BTreeSet;
 
 use crate::{
-    PersistenceFuture,
     ports::authorization::AuthorizationMirrorTransaction,
     ports::jobs::BackgroundJobTransaction,
     ports::product::ProductTransactionPort,
@@ -141,6 +140,7 @@ pub struct TenantConfigRequesterRecord {
 }
 
 /// 租户配置迁移用例所拥有的控制库工作单元。
+#[async_trait::async_trait]
 pub trait TenantConfigTransferTransaction: Send + Sync {
     fn background_jobs(&self) -> &dyn BackgroundJobTransaction;
 
@@ -148,234 +148,241 @@ pub trait TenantConfigTransferTransaction: Send + Sync {
 
     fn authorization_mirror(&self) -> &dyn AuthorizationMirrorTransaction;
 
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn lock_tenant_configuration<'a>(
+    async fn lock_tenant_configuration<'a>(
         &'a self,
         tenant_id: &'a str,
         owner_token: Option<&'a str>,
-    ) -> PersistenceFuture<'a, TenantConfigurationFenceRecord>;
+    ) -> ryframe_kernel::AppResult<TenantConfigurationFenceRecord>;
 
-    fn increment_configuration_version<'a>(
+    async fn increment_configuration_version<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, i64>;
+    ) -> ryframe_kernel::AppResult<i64>;
 
-    fn acquire_lease(&self, lease: TenantConfigOperationLeaseRecord) -> PersistenceFuture<'_, ()>;
+    async fn acquire_lease(
+        &self,
+        lease: TenantConfigOperationLeaseRecord,
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn renew_lease<'a>(
+    async fn renew_lease<'a>(
         &'a self,
         tenant_id: &'a str,
         owner_token: &'a str,
         expires_at: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn release_lease<'a>(
+    async fn release_lease<'a>(
         &'a self,
         tenant_id: &'a str,
         owner_token: &'a str,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn insert_bundle(
+    async fn insert_bundle(
         &self,
         bundle: TenantConfigBundleRecord,
-    ) -> PersistenceFuture<'_, TenantConfigBundleRecord>;
+    ) -> ryframe_kernel::AppResult<TenantConfigBundleRecord>;
 
-    fn lock_bundle<'a>(
+    async fn lock_bundle<'a>(
         &'a self,
         tenant_id: &'a str,
         id: i64,
-    ) -> PersistenceFuture<'a, Option<TenantConfigBundleRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<TenantConfigBundleRecord>>;
 
-    fn lock_bundle_by_background_job(
+    async fn lock_bundle_by_background_job(
         &self,
         background_job_id: i64,
-    ) -> PersistenceFuture<'_, Option<TenantConfigBundleRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<TenantConfigBundleRecord>>;
 
-    fn find_bundle_by_idempotency_key<'a>(
+    async fn find_bundle_by_idempotency_key<'a>(
         &'a self,
         tenant_id: &'a str,
         created_by: i64,
         idempotency_key_hash: &'a str,
-    ) -> PersistenceFuture<'a, Option<TenantConfigBundleRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<TenantConfigBundleRecord>>;
 
-    fn update_bundle(
+    async fn update_bundle(
         &self,
         bundle: TenantConfigBundleRecord,
-    ) -> PersistenceFuture<'_, TenantConfigBundleRecord>;
+    ) -> ryframe_kernel::AppResult<TenantConfigBundleRecord>;
 
-    fn insert_transfer(
+    async fn insert_transfer(
         &self,
         transfer: TenantConfigTransferRecord,
-    ) -> PersistenceFuture<'_, TenantConfigTransferRecord>;
+    ) -> ryframe_kernel::AppResult<TenantConfigTransferRecord>;
 
-    fn find_transfer_by_idempotency_key<'a>(
+    async fn find_transfer_by_idempotency_key<'a>(
         &'a self,
         tenant_id: &'a str,
         requested_by: i64,
         idempotency_key_hash: &'a str,
-    ) -> PersistenceFuture<'a, Option<TenantConfigTransferRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<TenantConfigTransferRecord>>;
 
-    fn lock_transfer<'a>(
+    async fn lock_transfer<'a>(
         &'a self,
         tenant_id: &'a str,
         id: i64,
-    ) -> PersistenceFuture<'a, Option<TenantConfigTransferRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<TenantConfigTransferRecord>>;
 
-    fn update_transfer(
+    async fn update_transfer(
         &self,
         transfer: TenantConfigTransferRecord,
-    ) -> PersistenceFuture<'_, TenantConfigTransferRecord>;
+    ) -> ryframe_kernel::AppResult<TenantConfigTransferRecord>;
 
-    fn replace_items<'a>(
+    async fn replace_items<'a>(
         &'a self,
         tenant_id: &'a str,
         transfer_id: i64,
         items: Vec<TenantConfigTransferItemRecord>,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn list_items<'a>(
+    async fn list_items<'a>(
         &'a self,
         tenant_id: &'a str,
         transfer_id: i64,
-    ) -> PersistenceFuture<'a, Vec<TenantConfigTransferItemRecord>>;
+    ) -> ryframe_kernel::AppResult<Vec<TenantConfigTransferItemRecord>>;
 
-    fn tenant_name<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, String>;
+    async fn tenant_name<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<String>;
 
-    fn ensure_config_package_file_ready<'a>(
+    async fn ensure_config_package_file_ready<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn load_resources<'a>(
+    async fn load_resources<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, TenantConfigPackageResources>;
+    ) -> ryframe_kernel::AppResult<TenantConfigPackageResources>;
 
-    fn apply_resources<'a>(
+    async fn apply_resources<'a>(
         &'a self,
         tenant_id: &'a str,
         resources: &'a TenantConfigPackageResources,
         plan_items: &'a [TenantConfigTransferItemRecord],
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn ensure_rollback_references_safe<'a>(
+    async fn ensure_rollback_references_safe<'a>(
         &'a self,
         tenant_id: &'a str,
         transfer_id: i64,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn restore_snapshot<'a>(
+    async fn restore_snapshot<'a>(
         &'a self,
         tenant_id: &'a str,
         snapshot: &'a TenantConfigPackageResources,
         transfer_id: i64,
         target_catalog: &'a TenantConfigTargetCatalog,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn ensure_requester_snapshot<'a>(
+    async fn ensure_requester_snapshot<'a>(
         &'a self,
         tenant_id: &'a str,
         requester: TenantConfigRequesterRecord,
         fence: TenantConfigurationFenceRecord,
         database_now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn ensure_role_quota<'a>(
+    async fn ensure_role_quota<'a>(
         &'a self,
         tenant_id: &'a str,
         plan_items: &'a [TenantConfigTransferItemRecord],
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn mark_plan_outcome<'a>(
+    async fn mark_plan_outcome<'a>(
         &'a self,
         tenant_id: &'a str,
         transfer_id: i64,
         outcome: &'a str,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn dead_background_job_ids<'a>(
+    async fn dead_background_job_ids<'a>(
         &'a self,
         tenant_id: &'a str,
         candidates: &'a [i64],
-    ) -> PersistenceFuture<'a, BTreeSet<i64>>;
+    ) -> ryframe_kernel::AppResult<BTreeSet<i64>>;
 
-    fn commit_audited(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn commit_audited(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 /// 租户配置迁移用例所需的控制库持久化端口。
+#[async_trait::async_trait]
 pub trait TenantConfigTransferPersistencePort: Send + Sync {
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn bundle_page<'a>(
+    async fn bundle_page<'a>(
         &'a self,
         tenant_id: &'a str,
         page: ValidatedPageQuery,
-    ) -> PersistenceFuture<'a, PageResult<TenantConfigBundleRecord>>;
+    ) -> ryframe_kernel::AppResult<PageResult<TenantConfigBundleRecord>>;
 
-    fn transfer_page<'a>(
+    async fn transfer_page<'a>(
         &'a self,
         tenant_id: &'a str,
         page: ValidatedPageQuery,
-    ) -> PersistenceFuture<'a, PageResult<TenantConfigTransferRecord>>;
+    ) -> ryframe_kernel::AppResult<PageResult<TenantConfigTransferRecord>>;
 
-    fn item_page<'a>(
+    async fn item_page<'a>(
         &'a self,
         tenant_id: &'a str,
         transfer_id: i64,
         page: ValidatedPageQuery,
-    ) -> PersistenceFuture<'a, PageResult<TenantConfigTransferItemRecord>>;
+    ) -> ryframe_kernel::AppResult<PageResult<TenantConfigTransferItemRecord>>;
 
-    fn find_bundle<'a>(
+    async fn find_bundle<'a>(
         &'a self,
         tenant_id: &'a str,
         id: i64,
-    ) -> PersistenceFuture<'a, Option<TenantConfigBundleRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<TenantConfigBundleRecord>>;
 
-    fn find_bundles<'a>(
+    async fn find_bundles<'a>(
         &'a self,
         tenant_id: &'a str,
         ids: &'a [i64],
-    ) -> PersistenceFuture<'a, Vec<TenantConfigBundleRecord>>;
+    ) -> ryframe_kernel::AppResult<Vec<TenantConfigBundleRecord>>;
 
-    fn find_transfer<'a>(
+    async fn find_transfer<'a>(
         &'a self,
         tenant_id: &'a str,
         id: i64,
-    ) -> PersistenceFuture<'a, Option<TenantConfigTransferRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<TenantConfigTransferRecord>>;
 
-    fn find_transfer_by_background_job(
+    async fn find_transfer_by_background_job(
         &self,
         background_job_id: i64,
-    ) -> PersistenceFuture<'_, Option<TenantConfigTransferRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<TenantConfigTransferRecord>>;
 
-    fn find_transfer_by_idempotency_key<'a>(
+    async fn find_transfer_by_idempotency_key<'a>(
         &'a self,
         tenant_id: &'a str,
         requested_by: i64,
         idempotency_key_hash: &'a str,
-    ) -> PersistenceFuture<'a, Option<TenantConfigTransferRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<TenantConfigTransferRecord>>;
 
-    fn items<'a>(
+    async fn items<'a>(
         &'a self,
         tenant_id: &'a str,
         transfer_id: i64,
-    ) -> PersistenceFuture<'a, Vec<TenantConfigTransferItemRecord>>;
+    ) -> ryframe_kernel::AppResult<Vec<TenantConfigTransferItemRecord>>;
 
-    fn cache_namespace_version<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, i64>;
-
-    fn load_resources<'a>(
+    async fn cache_namespace_version<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, TenantConfigPackageResources>;
+    ) -> ryframe_kernel::AppResult<i64>;
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn TenantConfigTransferTransaction>>;
+    async fn load_resources<'a>(
+        &'a self,
+        tenant_id: &'a str,
+    ) -> ryframe_kernel::AppResult<TenantConfigPackageResources>;
+
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn TenantConfigTransferTransaction>>;
 }

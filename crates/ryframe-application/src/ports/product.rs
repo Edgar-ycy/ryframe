@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-use crate::{PersistenceFuture, ports::authorization::AuthorizationMirrorTransaction};
+use crate::ports::authorization::AuthorizationMirrorTransaction;
 
 #[derive(Debug)]
 pub struct ProductCapabilityRecord {
@@ -125,132 +125,149 @@ pub struct ProductAssignmentChange {
     pub changed_at: DateTime<Utc>,
 }
 
+#[async_trait::async_trait]
 pub trait ProductReadPort: Send + Sync {
-    fn list_plans(&self) -> PersistenceFuture<'_, Vec<ProductPlanRecord>>;
+    async fn list_plans(&self) -> ryframe_kernel::AppResult<Vec<ProductPlanRecord>>;
 
-    fn find_plan(&self, plan_id: i64) -> PersistenceFuture<'_, Option<ProductPlanRecord>>;
+    async fn find_plan(&self, plan_id: i64)
+    -> ryframe_kernel::AppResult<Option<ProductPlanRecord>>;
 
-    fn find_version(
+    async fn find_version(
         &self,
         version_id: i64,
-    ) -> PersistenceFuture<'_, Option<ProductVersionSnapshot>>;
+    ) -> ryframe_kernel::AppResult<Option<ProductVersionSnapshot>>;
 
-    fn tenant_product<'a>(
+    async fn tenant_product<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, Option<TenantProductSnapshot>>;
+    ) -> ryframe_kernel::AppResult<Option<TenantProductSnapshot>>;
 }
 
 /// 由调用方已有控制库事务提供的产品快照能力。
+#[async_trait::async_trait]
 pub trait ProductTransactionPort: Send + Sync {
-    fn current_tenant_product<'a>(
+    async fn current_tenant_product<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, TenantProductSnapshot>;
+    ) -> ryframe_kernel::AppResult<TenantProductSnapshot>;
 
-    fn lock_assignable_version(
+    async fn lock_assignable_version(
         &self,
         version_id: i64,
-    ) -> PersistenceFuture<'_, ProductVersionSnapshot>;
+    ) -> ryframe_kernel::AppResult<ProductVersionSnapshot>;
 
-    fn sync_capability_resources<'a>(
+    async fn sync_capability_resources<'a>(
         &'a self,
         tenant_id: &'a str,
         resources: &'a ProvisioningCapabilityResources,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 }
 
+#[async_trait::async_trait]
 pub trait ProductWriteTransaction: Send + Sync {
-    fn lock_change_tenant<'a>(
+    async fn lock_change_tenant<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, ProductChangeTenantState>;
+    ) -> ryframe_kernel::AppResult<ProductChangeTenantState>;
 
-    fn acquire_change_lease<'a>(
+    async fn acquire_change_lease<'a>(
         &'a self,
         tenant_id: &'a str,
         owner_token: &'a str,
         version_id: i64,
         acquired_at: DateTime<Utc>,
         expires_at: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn lock_assignable_version(
+    async fn lock_assignable_version(
         &self,
         version_id: i64,
-    ) -> PersistenceFuture<'_, ProductVersionSnapshot>;
+    ) -> ryframe_kernel::AppResult<ProductVersionSnapshot>;
 
-    fn current_tenant_product<'a>(
+    async fn current_tenant_product<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, TenantProductSnapshot>;
+    ) -> ryframe_kernel::AppResult<TenantProductSnapshot>;
 
-    fn sync_capability_resources<'a>(
+    async fn sync_capability_resources<'a>(
         &'a self,
         tenant_id: &'a str,
         resources: &'a ProvisioningCapabilityResources,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn replace_assignment(&self, change: ProductAssignmentChange) -> PersistenceFuture<'_, ()>;
+    async fn replace_assignment(
+        &self,
+        change: ProductAssignmentChange,
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn increment_runtime_epoch<'a>(
+    async fn increment_runtime_epoch<'a>(
         &'a self,
         tenant_id: &'a str,
         expected_epoch: i64,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
     fn authorization_mirror(&self) -> &dyn AuthorizationMirrorTransaction;
 
-    fn release_change_lease<'a>(
+    async fn release_change_lease<'a>(
         &'a self,
         tenant_id: &'a str,
         owner_token: &'a str,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn plan_key_exists<'a>(&'a self, key: &'a str) -> PersistenceFuture<'a, bool>;
+    async fn plan_key_exists<'a>(&'a self, key: &'a str) -> ryframe_kernel::AppResult<bool>;
 
-    fn insert_plan(&self, plan: ProductPlanState) -> PersistenceFuture<'_, ProductPlanState>;
+    async fn insert_plan(
+        &self,
+        plan: ProductPlanState,
+    ) -> ryframe_kernel::AppResult<ProductPlanState>;
 
-    fn lock_plan(&self, plan_id: i64) -> PersistenceFuture<'_, ProductPlanState>;
+    async fn lock_plan(&self, plan_id: i64) -> ryframe_kernel::AppResult<ProductPlanState>;
 
-    fn save_plan(&self, plan: ProductPlanState) -> PersistenceFuture<'_, ProductPlanState>;
+    async fn save_plan(
+        &self,
+        plan: ProductPlanState,
+    ) -> ryframe_kernel::AppResult<ProductPlanState>;
 
-    fn next_version(&self, plan_id: i64) -> PersistenceFuture<'_, i32>;
+    async fn next_version(&self, plan_id: i64) -> ryframe_kernel::AppResult<i32>;
 
-    fn insert_version(
+    async fn insert_version(
         &self,
         version: ProductVersionState,
         capabilities: Vec<ProductCapabilityRecord>,
         capability_time: DateTime<Utc>,
-    ) -> PersistenceFuture<'_, ProductVersionWriteResult>;
+    ) -> ryframe_kernel::AppResult<ProductVersionWriteResult>;
 
-    fn lock_version(
+    async fn lock_version(
         &self,
         plan_id: i64,
         version: i32,
-    ) -> PersistenceFuture<'_, ProductVersionState>;
+    ) -> ryframe_kernel::AppResult<ProductVersionState>;
 
-    fn capabilities(&self, version_id: i64) -> PersistenceFuture<'_, Vec<ProductCapabilityRecord>>;
+    async fn capabilities(
+        &self,
+        version_id: i64,
+    ) -> ryframe_kernel::AppResult<Vec<ProductCapabilityRecord>>;
 
-    fn replace_draft_version(
+    async fn replace_draft_version(
         &self,
         version: ProductVersionState,
         capabilities: Vec<ProductCapabilityRecord>,
         capability_time: DateTime<Utc>,
-    ) -> PersistenceFuture<'_, ProductVersionWriteResult>;
+    ) -> ryframe_kernel::AppResult<ProductVersionWriteResult>;
 
-    fn transition_version(
+    async fn transition_version(
         &self,
         version: ProductVersionState,
         expected_status: &str,
         target_status: &str,
-    ) -> PersistenceFuture<'_, ProductVersionState>;
+    ) -> ryframe_kernel::AppResult<ProductVersionState>;
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
+#[async_trait::async_trait]
 pub trait ProductWritePort: Send + Sync {
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn ProductWriteTransaction>>;
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn ProductWriteTransaction>>;
 }

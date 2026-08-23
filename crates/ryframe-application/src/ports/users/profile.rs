@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-use crate::{ControlTransaction, PersistenceFuture};
+use crate::PersistenceTransaction;
 
 #[derive(Debug)]
 pub struct ProfileRecord {
@@ -41,14 +41,15 @@ pub struct ProfileAvatarFile {
     pub state: ProfileAvatarState,
 }
 
-pub trait ProfileTransaction: ControlTransaction + Sync {
-    fn find_user_for_update<'a>(
+#[async_trait::async_trait]
+pub trait ProfileTransaction: PersistenceTransaction + Sync {
+    async fn find_user_for_update<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-    ) -> PersistenceFuture<'a, Option<ProfileUserState>>;
+    ) -> ryframe_kernel::AppResult<Option<ProfileUserState>>;
 
-    fn update_profile<'a>(
+    async fn update_profile<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
@@ -56,70 +57,69 @@ pub trait ProfileTransaction: ControlTransaction + Sync {
         email: String,
         phone: String,
         preferred_locale: Option<String>,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()>;
+    async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()>;
 
-    fn update_password<'a>(
+    async fn update_password<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
         password_hash: String,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn increment_user_authorization_version<'a>(
+    async fn increment_user_authorization_version<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-    ) -> PersistenceFuture<'a, Vec<(i64, i32)>>;
+    ) -> ryframe_kernel::AppResult<Vec<(i64, i32)>>;
 
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn find_avatar_file_for_update<'a>(
+    async fn find_avatar_file_for_update<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
-    ) -> PersistenceFuture<'a, Option<ProfileAvatarFile>>;
+    ) -> ryframe_kernel::AppResult<Option<ProfileAvatarFile>>;
 
-    fn restore_avatar_file<'a>(
+    async fn restore_avatar_file<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn update_avatar<'a>(
+    async fn update_avatar<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
         avatar_url: String,
         avatar_file_id: i64,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn count_avatar_references<'a>(
+    async fn count_avatar_references<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
-    ) -> PersistenceFuture<'a, u64>;
+    ) -> ryframe_kernel::AppResult<u64>;
 
-    fn mark_avatar_orphan<'a>(
+    async fn mark_avatar_orphan<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
         now: DateTime<Utc>,
         cleanup_after: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
-
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    ) -> ryframe_kernel::AppResult<bool>;
 }
 
+#[async_trait::async_trait]
 pub trait ProfilePersistencePort: Send + Sync {
-    fn find_profile<'a>(
+    async fn find_profile<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-    ) -> PersistenceFuture<'a, Option<ProfileRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<ProfileRecord>>;
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn ProfileTransaction>>;
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn ProfileTransaction>>;
 }

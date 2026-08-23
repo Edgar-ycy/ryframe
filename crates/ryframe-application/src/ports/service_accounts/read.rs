@@ -1,8 +1,6 @@
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 
-use crate::PersistenceFuture;
-
 #[derive(Debug)]
 pub struct ServiceAccountRecord {
     pub id: i64,
@@ -63,40 +61,41 @@ pub struct ServiceDelegationRecord {
     pub created_at: DateTime<Utc>,
 }
 
+#[async_trait::async_trait]
 pub trait ServiceAccountReadPort: Send + Sync {
-    fn list_accounts<'a>(
+    async fn list_accounts<'a>(
         &'a self,
         tenant_id: &'a str,
         page: ValidatedPageQuery,
-    ) -> PersistenceFuture<'a, PageResult<ServiceAccountRecord>>;
+    ) -> ryframe_kernel::AppResult<PageResult<ServiceAccountRecord>>;
 
-    fn account_detail<'a>(
+    async fn account_detail<'a>(
         &'a self,
         tenant_id: &'a str,
         account_id: i64,
-    ) -> PersistenceFuture<'a, Option<ServiceAccountDetailRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<ServiceAccountDetailRecord>>;
 
-    fn enabled_account_role_ids<'a>(
+    async fn enabled_account_role_ids<'a>(
         &'a self,
         tenant_id: &'a str,
         account_id: i64,
-    ) -> PersistenceFuture<'a, Option<Vec<i64>>>;
+    ) -> ryframe_kernel::AppResult<Option<Vec<i64>>>;
 
-    fn enabled_account_credentials<'a>(
+    async fn enabled_account_credentials<'a>(
         &'a self,
         tenant_id: &'a str,
         account_id: i64,
-    ) -> PersistenceFuture<'a, Option<Vec<ServiceCredentialRecord>>>;
+    ) -> ryframe_kernel::AppResult<Option<Vec<ServiceCredentialRecord>>>;
 
-    fn delegations_for_user<'a>(
+    async fn delegations_for_user<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-    ) -> PersistenceFuture<'a, Vec<ServiceDelegationRecord>>;
+    ) -> ryframe_kernel::AppResult<Vec<ServiceDelegationRecord>>;
 
-    fn list_delegations<'a>(
+    async fn list_delegations<'a>(
         &'a self,
         tenant_id: &'a str,
         page: ValidatedPageQuery,
-    ) -> PersistenceFuture<'a, PageResult<ServiceDelegationRecord>>;
+    ) -> ryframe_kernel::AppResult<PageResult<ServiceDelegationRecord>>;
 }

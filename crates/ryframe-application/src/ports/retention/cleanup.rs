@@ -2,8 +2,6 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 
-use crate::PersistenceFuture;
-
 /// 数据保留用例允许清理的固定资源。
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum RetentionResource {
@@ -64,27 +62,31 @@ pub struct ExpiredImportArtifact {
     pub file_id: i64,
 }
 
+#[async_trait::async_trait]
 pub trait RetentionCleanupPersistencePort: Send + Sync {
-    fn preview<'a>(
+    async fn preview<'a>(
         &'a self,
         cutoffs: &'a [RetentionCutoff],
         current_run_id: Option<i64>,
-    ) -> PersistenceFuture<'a, BTreeMap<String, u64>>;
+    ) -> ryframe_kernel::AppResult<BTreeMap<String, u64>>;
 
-    fn cleanup_resource(
+    async fn cleanup_resource(
         &self,
         cutoff: RetentionCutoff,
         batch_size: usize,
         maximum: usize,
         current_run_id: Option<i64>,
-    ) -> PersistenceFuture<'_, RetentionCleanupResult>;
+    ) -> ryframe_kernel::AppResult<RetentionCleanupResult>;
 
-    fn count_expired_import_artifacts(&self, before: DateTime<Utc>) -> PersistenceFuture<'_, u64>;
+    async fn count_expired_import_artifacts(
+        &self,
+        before: DateTime<Utc>,
+    ) -> ryframe_kernel::AppResult<u64>;
 
-    fn list_expired_import_artifacts(
+    async fn list_expired_import_artifacts(
         &self,
         before: DateTime<Utc>,
         after_id: Option<i64>,
         limit: usize,
-    ) -> PersistenceFuture<'_, Vec<ExpiredImportArtifact>>;
+    ) -> ryframe_kernel::AppResult<Vec<ExpiredImportArtifact>>;
 }

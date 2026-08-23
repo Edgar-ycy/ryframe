@@ -3,8 +3,6 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 
-use crate::PersistenceFuture;
-
 #[derive(Clone, Debug)]
 pub struct TenantCapacityRecord {
     pub tenant_id: String,
@@ -39,21 +37,22 @@ pub struct TenantUsageFilter<'a> {
     pub capacity_status: Option<&'a str>,
 }
 
+#[async_trait::async_trait]
 pub trait TenantUsagePersistencePort: Send + Sync {
-    fn page<'a>(
+    async fn page<'a>(
         &'a self,
         filter: TenantUsageFilter<'a>,
         page: &'a ValidatedPageQuery,
         calculated_at: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, PageResult<TenantCapacityRecord>>;
+    ) -> ryframe_kernel::AppResult<PageResult<TenantCapacityRecord>>;
 
-    fn find<'a>(
+    async fn find<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, Option<TenantCapacityRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<TenantCapacityRecord>>;
 
-    fn aggregate<'a>(
+    async fn aggregate<'a>(
         &'a self,
         tenant_ids: &'a [String],
-    ) -> PersistenceFuture<'a, BTreeMap<String, TenantUsageAggregateRecord>>;
+    ) -> ryframe_kernel::AppResult<BTreeMap<String, TenantUsageAggregateRecord>>;
 }

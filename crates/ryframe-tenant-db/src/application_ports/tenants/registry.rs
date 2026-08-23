@@ -1,15 +1,12 @@
 use std::sync::Arc;
 
-use ryframe_application::{
-    PersistenceFuture,
-    ports::{
-        authorization::AuthorizationMirrorTransaction,
-        product::ProductTransactionPort,
-        tenants::{
-            ProvisionTenantRecord, TenantAdminRecord, TenantPersistencePort,
-            TenantProductAssignmentRecord, TenantProvisionRequestRecord,
-            TenantProvisioningPlacement, TenantRecord, TenantTransaction,
-        },
+use ryframe_application::ports::{
+    authorization::AuthorizationMirrorTransaction,
+    product::ProductTransactionPort,
+    tenants::{
+        ProvisionTenantRecord, TenantAdminRecord, TenantPersistencePort,
+        TenantProductAssignmentRecord, TenantProvisionRequestRecord, TenantProvisioningPlacement,
+        TenantRecord, TenantTransaction,
     },
 };
 use ryframe_db::{
@@ -37,44 +34,43 @@ pub fn port(database: ControlDatabaseCluster) -> Arc<dyn TenantPersistencePort> 
     Arc::new(TenantPersistence { database })
 }
 
+#[async_trait::async_trait]
 impl TenantPersistencePort for TenantPersistence {
-    fn list(&self) -> PersistenceFuture<'_, Vec<TenantRecord>> {
-        Box::pin(async move {
-            let database = self
-                .database
-                .select_read(ReadConsistency::Eventual)
-                .connection;
-            TenantRepository
-                .list_all(&database)
-                .await
-                .map(|records| records.into_iter().map(map_tenant).collect())
-        })
+    async fn list(&self) -> ryframe_kernel::AppResult<Vec<TenantRecord>> {
+        let database = self
+            .database
+            .select_read(ReadConsistency::Eventual)
+            .connection;
+        TenantRepository
+            .list_all(&database)
+            .await
+            .map(|records| records.into_iter().map(map_tenant).collect())
     }
 
-    fn find<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, Option<TenantRecord>> {
-        Box::pin(async move {
-            TenantRepository
-                .find_by_tenant_id(self.database.write(), tenant_id)
-                .await
-                .map(|record| record.map(map_tenant))
-        })
+    async fn find<'a>(
+        &'a self,
+        tenant_id: &'a str,
+    ) -> ryframe_kernel::AppResult<Option<TenantRecord>> {
+        TenantRepository
+            .find_by_tenant_id(self.database.write(), tenant_id)
+            .await
+            .map(|record| record.map(map_tenant))
     }
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn TenantTransaction>> {
-        Box::pin(async move {
-            let transaction = self
-                .database
-                .write()
-                .begin()
-                .await
-                .map_err(database_error)?;
-            Ok(Box::new(TenantWorkUnit {
-                transaction: transaction.into(),
-            }) as Box<dyn TenantTransaction>)
-        })
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn TenantTransaction>> {
+        let transaction = self
+            .database
+            .write()
+            .begin()
+            .await
+            .map_err(database_error)?;
+        Ok(Box::new(TenantWorkUnit {
+            transaction: transaction.into(),
+        }) as Box<dyn TenantTransaction>)
     }
 }
 
+#[async_trait::async_trait]
 impl TenantTransaction for TenantWorkUnit {
     fn product(&self) -> &dyn ProductTransactionPort {
         &self.transaction
@@ -84,206 +80,178 @@ impl TenantTransaction for TenantWorkUnit {
         &self.transaction
     }
 
-    fn lock_optional_tenant<'a>(
+    async fn lock_optional_tenant<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, Option<TenantRecord>> {
-        Box::pin(async move {
-            TenantRepository
-                .lock_optional_tenant_in_txn(&self.transaction, tenant_id)
-                .await
-                .map(|record| record.map(map_tenant))
-        })
+    ) -> ryframe_kernel::AppResult<Option<TenantRecord>> {
+        TenantRepository
+            .lock_optional_tenant_in_txn(&self.transaction, tenant_id)
+            .await
+            .map(|record| record.map(map_tenant))
     }
 
-    fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, TenantRecord> {
-        Box::pin(async move {
-            TenantRepository
-                .lock_tenant_in_txn(&self.transaction, tenant_id)
-                .await
-                .map(map_tenant)
-        })
+    async fn lock_tenant<'a>(
+        &'a self,
+        tenant_id: &'a str,
+    ) -> ryframe_kernel::AppResult<TenantRecord> {
+        TenantRepository
+            .lock_tenant_in_txn(&self.transaction, tenant_id)
+            .await
+            .map(map_tenant)
     }
 
-    fn lock_tenant_with_limits<'a>(
+    async fn lock_tenant_with_limits<'a>(
         &'a self,
         tenant_id: &'a str,
         max_users: i32,
         max_roles: i32,
         max_storage_mb: i64,
-    ) -> PersistenceFuture<'a, TenantRecord> {
-        Box::pin(async move {
-            TenantRepository
-                .lock_and_validate_resource_limits_in_txn(
-                    &self.transaction,
-                    tenant_id,
-                    max_users,
-                    max_roles,
-                    max_storage_mb,
-                )
-                .await
-                .map(map_tenant)
-        })
+    ) -> ryframe_kernel::AppResult<TenantRecord> {
+        TenantRepository
+            .lock_and_validate_resource_limits_in_txn(
+                &self.transaction,
+                tenant_id,
+                max_users,
+                max_roles,
+                max_storage_mb,
+            )
+            .await
+            .map(map_tenant)
     }
 
-    fn lock_provision_request<'a>(
+    async fn lock_provision_request<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, Option<TenantProvisionRequestRecord>> {
-        Box::pin(async move {
-            TenantProvisioningRepository
-                .lock_provision_request_in_txn(&self.transaction, tenant_id)
-                .await
-                .map(|record| {
-                    record.map(|request| TenantProvisionRequestRecord {
-                        request_token: request.request_token,
-                        admin_password_hash: request.admin_password_hash,
-                    })
+    ) -> ryframe_kernel::AppResult<Option<TenantProvisionRequestRecord>> {
+        TenantProvisioningRepository
+            .lock_provision_request_in_txn(&self.transaction, tenant_id)
+            .await
+            .map(|record| {
+                record.map(|request| TenantProvisionRequestRecord {
+                    request_token: request.request_token,
+                    admin_password_hash: request.admin_password_hash,
                 })
-        })
+            })
     }
 
-    fn provision(&self, record: ProvisionTenantRecord) -> PersistenceFuture<'_, ()> {
-        Box::pin(async move {
-            TenantProvisioningRepository
-                .provision_in_transaction(&self.transaction, map_provision(record))
-                .await
-                .map(|_| ())
-        })
+    async fn provision(&self, record: ProvisionTenantRecord) -> ryframe_kernel::AppResult<()> {
+        TenantProvisioningRepository
+            .provision_in_transaction(&self.transaction, map_provision(record))
+            .await
+            .map(|_| ())
     }
 
-    fn assign_initial_product<'a>(
+    async fn assign_initial_product<'a>(
         &'a self,
         tenant_id: &'a str,
         plan_version_id: i64,
         changed_by: i64,
-    ) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            ProductRepository
-                .assign_initial_in_txn(&self.transaction, tenant_id, plan_version_id, changed_by)
-                .await
-                .map(|_| ())
-        })
+    ) -> ryframe_kernel::AppResult<()> {
+        ProductRepository
+            .assign_initial_in_txn(&self.transaction, tenant_id, plan_version_id, changed_by)
+            .await
+            .map(|_| ())
     }
 
-    fn product_assignment<'a>(
+    async fn product_assignment<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, Option<TenantProductAssignmentRecord>> {
-        Box::pin(async move {
-            ProductRepository
-                .assignment(&self.transaction, tenant_id)
-                .await
-                .map(|record| {
-                    record.map(|assignment| TenantProductAssignmentRecord {
-                        plan_version_id: assignment.plan_version_id,
-                    })
+    ) -> ryframe_kernel::AppResult<Option<TenantProductAssignmentRecord>> {
+        ProductRepository
+            .assignment(&self.transaction, tenant_id)
+            .await
+            .map(|record| {
+                record.map(|assignment| TenantProductAssignmentRecord {
+                    plan_version_id: assignment.plan_version_id,
                 })
-        })
+            })
     }
 
-    fn find_admin<'a>(
+    async fn find_admin<'a>(
         &'a self,
         tenant_id: &'a str,
         username: &'a str,
-    ) -> PersistenceFuture<'a, Option<TenantAdminRecord>> {
-        Box::pin(async move {
-            TenantProvisioningRepository
-                .find_user_by_username(&self.transaction, tenant_id, username)
-                .await
-                .map(|record| {
-                    record.map(|user| TenantAdminRecord {
-                        password_hash: user.password_hash,
-                    })
+    ) -> ryframe_kernel::AppResult<Option<TenantAdminRecord>> {
+        TenantProvisioningRepository
+            .find_user_by_username(&self.transaction, tenant_id, username)
+            .await
+            .map(|record| {
+                record.map(|user| TenantAdminRecord {
+                    password_hash: user.password_hash,
                 })
-        })
+            })
     }
 
-    fn save_tenant(&self, tenant: TenantRecord) -> PersistenceFuture<'_, TenantRecord> {
-        Box::pin(async move {
-            map_tenant_model(tenant)
-                .into_active_model()
-                .reset_all()
-                .update(&self.transaction)
-                .await
-                .map(map_tenant)
-                .map_err(database_error)
-        })
+    async fn save_tenant(&self, tenant: TenantRecord) -> ryframe_kernel::AppResult<TenantRecord> {
+        map_tenant_model(tenant)
+            .into_active_model()
+            .reset_all()
+            .update(&self.transaction)
+            .await
+            .map(map_tenant)
+            .map_err(database_error)
     }
 
-    fn update_status<'a>(
+    async fn update_status<'a>(
         &'a self,
         tenant_id: &'a str,
         status: &'a str,
-    ) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            TenantRepository
-                .update_status(&self.transaction, tenant_id, status)
-                .await
-        })
+    ) -> ryframe_kernel::AppResult<()> {
+        TenantRepository
+            .update_status(&self.transaction, tenant_id, status)
+            .await
     }
 
-    fn create_pending<'a>(
+    async fn create_pending<'a>(
         &'a self,
         placement: &'a TenantProvisioningPlacement,
-    ) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            TenantDataPlacementRepository
-                .create_pending(&self.transaction, &to_infrastructure_placement(placement))
-                .await
-                .map_err(map_error)
-        })
+    ) -> ryframe_kernel::AppResult<()> {
+        TenantDataPlacementRepository
+            .create_pending(&self.transaction, &to_infrastructure_placement(placement))
+            .await
+            .map_err(map_error)
     }
 
-    fn create_or_resume_pending<'a>(
+    async fn create_or_resume_pending<'a>(
         &'a self,
         placement: &'a TenantProvisioningPlacement,
-    ) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            TenantDataPlacementRepository
-                .create_or_resume_pending(
-                    &self.transaction,
-                    &to_infrastructure_placement(placement),
-                )
-                .await
-                .map_err(map_error)
-        })
+    ) -> ryframe_kernel::AppResult<()> {
+        TenantDataPlacementRepository
+            .create_or_resume_pending(&self.transaction, &to_infrastructure_placement(placement))
+            .await
+            .map_err(map_error)
     }
 
-    fn activate_placement<'a>(
+    async fn activate_placement<'a>(
         &'a self,
         placement: &'a TenantProvisioningPlacement,
-    ) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            TenantDataPlacementRepository
-                .activate(&self.transaction, &to_infrastructure_placement(placement))
-                .await
-                .map_err(map_error)
-        })
+    ) -> ryframe_kernel::AppResult<()> {
+        TenantDataPlacementRepository
+            .activate(&self.transaction, &to_infrastructure_placement(placement))
+            .await
+            .map_err(map_error)
     }
 
-    fn fail_placement<'a>(
+    async fn fail_placement<'a>(
         &'a self,
         placement: &'a TenantProvisioningPlacement,
-    ) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            TenantDataPlacementRepository
-                .fail(&self.transaction, &to_infrastructure_placement(placement))
-                .await
-                .map_err(map_error)
-        })
+    ) -> ryframe_kernel::AppResult<()> {
+        TenantDataPlacementRepository
+            .fail(&self.transaction, &to_infrastructure_placement(placement))
+            .await
+            .map_err(map_error)
     }
 
-    fn commit_audited(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move { self.transaction.commit_audited().await })
+    async fn commit_audited(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
+        self.transaction.commit_audited().await
     }
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move { self.transaction.commit().await.map_err(database_error) })
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
+        self.transaction.commit().await.map_err(database_error)
     }
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move { self.transaction.rollback().await.map_err(database_error) })
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
+        self.transaction.rollback().await.map_err(database_error)
     }
 }
 

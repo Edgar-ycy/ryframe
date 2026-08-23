@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 
-use crate::ports::system::MessageInboxFilter;
+use crate::{TransactionAuditMode, ports::system::MessageInboxFilter};
 
 use super::{MessageDelivery, MessageInbox, MessageService};
 
@@ -135,7 +135,9 @@ impl MessageService {
         let updated = transaction
             .acknowledge(tenant_id, user_id, message_ids, now)
             .await?;
-        transaction.commit().await?;
+        transaction
+            .commit(TransactionAuditMode::CurrentRequest)
+            .await?;
         Ok(updated)
     }
 
@@ -149,7 +151,9 @@ impl MessageService {
             .mark_read(tenant_id, actor.user_id, message_id, now)
             .await?
         {
-            transaction.commit().await
+            transaction
+                .commit(TransactionAuditMode::CurrentRequest)
+                .await
         } else {
             transaction.rollback().await?;
             Err(AppError::NotFound("消息不存在或不属于当前用户".into()))
@@ -165,7 +169,9 @@ impl MessageService {
         let updated = transaction
             .mark_all_read(tenant_id, actor.user_id, now)
             .await?;
-        transaction.commit().await?;
+        transaction
+            .commit(TransactionAuditMode::CurrentRequest)
+            .await?;
         Ok(updated)
     }
 
@@ -184,7 +190,9 @@ impl MessageService {
         let deleted = transaction
             .soft_delete(tenant_id, actor.user_id, &message_ids, now)
             .await?;
-        transaction.commit().await?;
+        transaction
+            .commit(TransactionAuditMode::CurrentRequest)
+            .await?;
         Ok(deleted)
     }
 
@@ -205,6 +213,8 @@ impl MessageService {
         }
         let transaction = self.persistence.begin().await?;
         transaction.mark_enqueued(message_id, now).await?;
-        transaction.commit().await
+        transaction
+            .commit(TransactionAuditMode::CurrentRequest)
+            .await
     }
 }

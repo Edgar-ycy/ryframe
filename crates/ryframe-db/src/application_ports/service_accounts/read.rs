@@ -15,12 +15,9 @@ use sea_orm::{
 
 use super::account_record;
 
-use ryframe_application::{
-    PersistenceFuture,
-    ports::service_accounts::{
-        ServiceAccountDetailRecord, ServiceAccountReadPort, ServiceAccountRecord,
-        ServiceCredentialRecord, ServiceDelegationRecord,
-    },
+use ryframe_application::ports::service_accounts::{
+    ServiceAccountDetailRecord, ServiceAccountReadPort, ServiceAccountRecord,
+    ServiceCredentialRecord, ServiceDelegationRecord,
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn ServiceAccountReadPort> {
@@ -31,147 +28,136 @@ struct DatabaseServiceAccountRead {
     database: ControlDatabaseCluster,
 }
 
+#[async_trait::async_trait]
 impl ServiceAccountReadPort for DatabaseServiceAccountRead {
-    fn list_accounts<'a>(
+    async fn list_accounts<'a>(
         &'a self,
         tenant_id: &'a str,
         page: ValidatedPageQuery,
-    ) -> PersistenceFuture<'a, PageResult<ServiceAccountRecord>> {
-        Box::pin(async move {
-            let database = self
-                .database
-                .select_read(ReadConsistency::Eventual)
-                .connection;
-            let result = ServiceAccountRepository
-                .find_by_page(&database, tenant_id, page)
-                .await?;
-            Ok(PageResult {
-                records: result.records.into_iter().map(account_record).collect(),
-                total: result.total,
-                page: result.page,
-                page_size: result.page_size,
-            })
+    ) -> ryframe_kernel::AppResult<PageResult<ServiceAccountRecord>> {
+        let database = self
+            .database
+            .select_read(ReadConsistency::Eventual)
+            .connection;
+        let result = ServiceAccountRepository
+            .find_by_page(&database, tenant_id, page)
+            .await?;
+        Ok(PageResult {
+            records: result.records.into_iter().map(account_record).collect(),
+            total: result.total,
+            page: result.page,
+            page_size: result.page_size,
         })
     }
 
-    fn account_detail<'a>(
+    async fn account_detail<'a>(
         &'a self,
         tenant_id: &'a str,
         account_id: i64,
-    ) -> PersistenceFuture<'a, Option<ServiceAccountDetailRecord>> {
-        Box::pin(async move {
-            let database = self
-                .database
-                .select_read(ReadConsistency::Strong)
-                .connection;
-            let Some(account) = ServiceAccountRepository
-                .find_by_id(&database, tenant_id, account_id)
-                .await?
-            else {
-                return Ok(None);
-            };
-            let role_ids = ServiceAccountRepository
-                .role_ids(&database, tenant_id, account_id)
-                .await?;
-            Ok(Some(ServiceAccountDetailRecord {
-                account: account_record(account),
-                role_ids,
-            }))
-        })
+    ) -> ryframe_kernel::AppResult<Option<ServiceAccountDetailRecord>> {
+        let database = self
+            .database
+            .select_read(ReadConsistency::Strong)
+            .connection;
+        let Some(account) = ServiceAccountRepository
+            .find_by_id(&database, tenant_id, account_id)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let role_ids = ServiceAccountRepository
+            .role_ids(&database, tenant_id, account_id)
+            .await?;
+        Ok(Some(ServiceAccountDetailRecord {
+            account: account_record(account),
+            role_ids,
+        }))
     }
 
-    fn enabled_account_role_ids<'a>(
+    async fn enabled_account_role_ids<'a>(
         &'a self,
         tenant_id: &'a str,
         account_id: i64,
-    ) -> PersistenceFuture<'a, Option<Vec<i64>>> {
-        Box::pin(async move {
-            let database = self
-                .database
-                .select_read(ReadConsistency::Strong)
-                .connection;
-            let Some(account) = ServiceAccountRepository
-                .find_by_id(&database, tenant_id, account_id)
-                .await?
-                .filter(service_account::Model::is_enabled)
-            else {
-                return Ok(None);
-            };
-            let role_ids = ServiceAccountRepository
-                .role_ids(&database, tenant_id, account.id)
-                .await?;
-            Ok(Some(role_ids))
-        })
+    ) -> ryframe_kernel::AppResult<Option<Vec<i64>>> {
+        let database = self
+            .database
+            .select_read(ReadConsistency::Strong)
+            .connection;
+        let Some(account) = ServiceAccountRepository
+            .find_by_id(&database, tenant_id, account_id)
+            .await?
+            .filter(service_account::Model::is_enabled)
+        else {
+            return Ok(None);
+        };
+        let role_ids = ServiceAccountRepository
+            .role_ids(&database, tenant_id, account.id)
+            .await?;
+        Ok(Some(role_ids))
     }
 
-    fn enabled_account_credentials<'a>(
+    async fn enabled_account_credentials<'a>(
         &'a self,
         tenant_id: &'a str,
         account_id: i64,
-    ) -> PersistenceFuture<'a, Option<Vec<ServiceCredentialRecord>>> {
-        Box::pin(async move {
-            let database = self
-                .database
-                .select_read(ReadConsistency::Strong)
-                .connection;
-            let enabled = ServiceAccountRepository
-                .find_by_id(&database, tenant_id, account_id)
-                .await?
-                .is_some_and(|account| account.is_enabled());
-            if !enabled {
-                return Ok(None);
-            }
-            let credentials = ServiceCredentialRepository
-                .list_for_account(&database, tenant_id, account_id)
-                .await?
-                .into_iter()
-                .map(credential_record)
-                .collect();
-            Ok(Some(credentials))
-        })
+    ) -> ryframe_kernel::AppResult<Option<Vec<ServiceCredentialRecord>>> {
+        let database = self
+            .database
+            .select_read(ReadConsistency::Strong)
+            .connection;
+        let enabled = ServiceAccountRepository
+            .find_by_id(&database, tenant_id, account_id)
+            .await?
+            .is_some_and(|account| account.is_enabled());
+        if !enabled {
+            return Ok(None);
+        }
+        let credentials = ServiceCredentialRepository
+            .list_for_account(&database, tenant_id, account_id)
+            .await?
+            .into_iter()
+            .map(credential_record)
+            .collect();
+        Ok(Some(credentials))
     }
 
-    fn delegations_for_user<'a>(
+    async fn delegations_for_user<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-    ) -> PersistenceFuture<'a, Vec<ServiceDelegationRecord>> {
-        Box::pin(async move {
-            let database = self
-                .database
-                .select_read(ReadConsistency::Strong)
-                .connection;
-            let rows = ServiceDelegationRepository
-                .list_for_user(&database, tenant_id, user_id)
-                .await?;
-            delegations_with_capabilities(&database, rows).await
-        })
+    ) -> ryframe_kernel::AppResult<Vec<ServiceDelegationRecord>> {
+        let database = self
+            .database
+            .select_read(ReadConsistency::Strong)
+            .connection;
+        let rows = ServiceDelegationRepository
+            .list_for_user(&database, tenant_id, user_id)
+            .await?;
+        delegations_with_capabilities(&database, rows).await
     }
 
-    fn list_delegations<'a>(
+    async fn list_delegations<'a>(
         &'a self,
         tenant_id: &'a str,
         page: ValidatedPageQuery,
-    ) -> PersistenceFuture<'a, PageResult<ServiceDelegationRecord>> {
-        Box::pin(async move {
-            let database = self
-                .database
-                .select_read(ReadConsistency::Strong)
-                .connection;
-            let total = service_delegation::Entity::find()
-                .filter(service_delegation::Column::TenantId.eq(tenant_id));
-            let total = total.count(&database).await.map_err(database_error)?;
-            let rows = service_delegation::Entity::find()
-                .filter(service_delegation::Column::TenantId.eq(tenant_id))
-                .order_by_desc(service_delegation::Column::CreatedAt)
-                .offset(page.offset())
-                .limit(page.page_size())
-                .all(&database)
-                .await
-                .map_err(database_error)?;
-            let records = delegations_with_capabilities(&database, rows).await?;
-            Ok(PageResult::new(records, total, &page))
-        })
+    ) -> ryframe_kernel::AppResult<PageResult<ServiceDelegationRecord>> {
+        let database = self
+            .database
+            .select_read(ReadConsistency::Strong)
+            .connection;
+        let total = service_delegation::Entity::find()
+            .filter(service_delegation::Column::TenantId.eq(tenant_id));
+        let total = total.count(&database).await.map_err(database_error)?;
+        let rows = service_delegation::Entity::find()
+            .filter(service_delegation::Column::TenantId.eq(tenant_id))
+            .order_by_desc(service_delegation::Column::CreatedAt)
+            .offset(page.offset())
+            .limit(page.page_size())
+            .all(&database)
+            .await
+            .map_err(database_error)?;
+        let records = delegations_with_capabilities(&database, rows).await?;
+        Ok(PageResult::new(records, total, &page))
     }
 }
 

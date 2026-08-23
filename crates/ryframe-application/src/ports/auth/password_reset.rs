@@ -1,8 +1,6 @@
 use chrono::{DateTime, Utc};
 use ryframe_kernel::DataScopeContext;
 
-use crate::PersistenceFuture;
-
 pub const PASSWORD_RESET_STATUS_PENDING: &str = "pending";
 
 #[derive(Clone, Debug)]
@@ -36,84 +34,86 @@ pub struct PasswordResetUserState {
     pub has_super_role: bool,
 }
 
+#[async_trait::async_trait]
 pub trait PasswordResetTransaction: Send + Sync {
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()>;
+    async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()>;
 
-    fn lock_manageable_user<'a>(
+    async fn lock_manageable_user<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
         scope: &'a DataScopeContext,
-    ) -> PersistenceFuture<'a, Option<PasswordResetUserState>>;
+    ) -> ryframe_kernel::AppResult<Option<PasswordResetUserState>>;
 
-    fn insert_request(
+    async fn insert_request(
         &self,
         request: NewPasswordResetRequest,
-    ) -> PersistenceFuture<'_, PasswordResetRequestRecord>;
+    ) -> ryframe_kernel::AppResult<PasswordResetRequestRecord>;
 
-    fn lock_request<'a>(
+    async fn lock_request<'a>(
         &'a self,
         tenant_id: &'a str,
         request_id: i64,
-    ) -> PersistenceFuture<'a, Option<PasswordResetRequestRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<PasswordResetRequestRecord>>;
 
-    fn lock_user_state<'a>(
+    async fn lock_user_state<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-    ) -> PersistenceFuture<'a, Option<PasswordResetUserState>>;
+    ) -> ryframe_kernel::AppResult<Option<PasswordResetUserState>>;
 
-    fn expire_pending<'a>(
+    async fn expire_pending<'a>(
         &'a self,
         tenant_id: &'a str,
         request_id: i64,
         evaluated_at: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn complete_pending<'a>(
+    async fn complete_pending<'a>(
         &'a self,
         tenant_id: &'a str,
         request_id: i64,
         completed_at: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn update_password<'a>(
+    async fn update_password<'a>(
         &'a self,
         tenant_id: &'a str,
         expected: &'a PasswordResetUserState,
         password_hash: String,
         next_status: String,
         updated_at: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn record_user_mirror_update<'a>(
+    async fn record_user_mirror_update<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
         authorization_version: i32,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
+#[async_trait::async_trait]
 pub trait PasswordResetPersistencePort: Send + Sync {
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn find_request<'a>(
+    async fn find_request<'a>(
         &'a self,
         tenant_id: &'a str,
         request_id: i64,
-    ) -> PersistenceFuture<'a, Option<PasswordResetRequestRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<PasswordResetRequestRecord>>;
 
-    fn find_user_state<'a>(
+    async fn find_user_state<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-    ) -> PersistenceFuture<'a, Option<PasswordResetUserState>>;
+    ) -> ryframe_kernel::AppResult<Option<PasswordResetUserState>>;
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn PasswordResetTransaction>>;
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn PasswordResetTransaction>>;
 }

@@ -15,13 +15,10 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY_PATH = ROOT / "architecture" / "crate-boundaries.toml"
-PERSISTENCE_FUTURE_ALLOWLIST_PATH = (
-    ROOT / "crates" / "ryframe-application" / "persistence-future-allowlist.toml"
+LEGACY_PERSISTENCE_API_NAMES = (
+    "Persistence" + "Future",
+    "Control" + "Transaction",
 )
-PERSISTENCE_FUTURE_CORE_FILES = {
-    "crates/ryframe-application/src/lib.rs",
-    "crates/ryframe-application/src/persistence.rs",
-}
 DOCUMENT_LIMITS = {
     "README.md": 120,
     "docs/api.md": 180,
@@ -595,126 +592,23 @@ def product_rust_sources(
     return sorted(sources)
 
 
-def validate_persistence_future_usage(
+def validate_legacy_persistence_apis(
     root: Path,
     sources: Iterable[Path],
-    allowlist_path: Path,
     errors: list[str],
-) -> tuple[int, int, int]:
-    """限制旧 Future 别名只能出现在定义、导出或明确登记的复杂流程。"""
+) -> tuple[int, int]:
+    """旧持久化异步接口一律禁止重新进入产品源码。"""
 
-    source_paths = {path.resolve() for path in sources if path.is_file()}
-    source_by_relative = {
-        path.relative_to(root).as_posix(): path for path in sorted(source_paths)
-    }
-    try:
-        policy = tomllib.loads(allowlist_path.read_text(encoding="utf-8"))
-    except (OSError, tomllib.TOMLDecodeError) as error:
-        errors.append(
-            "无法读取 PersistenceFuture 白名单 "
-            f"{allowlist_path.relative_to(root).as_posix()}: {error}"
-        )
-        return len(source_paths), 0, 0
-
-    if policy.get("version") != 1:
-        errors.append("PersistenceFuture 白名单 version 必须为 1")
-    exceptions = policy.get("exception")
-    if not isinstance(exceptions, list):
-        errors.append("PersistenceFuture 白名单 exception 必须是 table 数组")
-        exceptions = []
-
-    seen_ids: set[str] = set()
-    seen_patterns: set[str] = set()
-    matched_by_pattern: dict[str, set[str]] = {}
-    allowlisted_sources: set[str] = set()
-    for index, exception in enumerate(exceptions):
-        label = f"PersistenceFuture exception[{index}]"
-        if not isinstance(exception, dict):
-            errors.append(f"{label} 必须是 TOML table")
-            continue
-        exception_id = exception.get("id")
-        if not isinstance(exception_id, str) or not exception_id.strip():
-            errors.append(f"{label}.id 必须是非空字符串")
-        elif exception_id in seen_ids:
-            errors.append(f"PersistenceFuture 白名单 id 重复: {exception_id}")
-        else:
-            seen_ids.add(exception_id)
-        reason = exception.get("reason")
-        if not isinstance(reason, str) or not reason.strip():
-            errors.append(f"{label}.reason 必须说明复杂事务边界")
-        patterns = exception.get("paths")
-        if not isinstance(patterns, list) or not patterns:
-            errors.append(f"{label}.paths 必须是非空字符串数组")
-            continue
-        for pattern in patterns:
-            if not isinstance(pattern, str) or not pattern.strip():
-                errors.append(f"{label}.paths 只能包含非空字符串")
-                continue
-            normalized = pattern.replace("\\", "/")
-            path_parts = Path(normalized).parts
-            if Path(normalized).is_absolute() or ".." in path_parts:
-                errors.append(f"PersistenceFuture 白名单路径越出仓库: {pattern}")
-                continue
-            if normalized in seen_patterns:
-                errors.append(f"PersistenceFuture 白名单路径重复: {normalized}")
-                continue
-            seen_patterns.add(normalized)
-            try:
-                matches = {
-                    candidate.resolve()
-                    for candidate in root.glob(normalized)
-                    if candidate.is_file() and candidate.suffix == ".rs"
-                }
-            except (OSError, ValueError) as error:
-                errors.append(
-                    f"PersistenceFuture 白名单路径无效: {normalized}（{error}）"
-                )
-                continue
-            product_matches = matches & source_paths
-            if not product_matches:
-                errors.append(
-                    f"PersistenceFuture 白名单路径未命中产品 Rust 源码: {normalized}"
-                )
-                continue
-            active_matches = {
-                path.relative_to(root).as_posix()
-                for path in product_matches
-                if "PersistenceFuture" in path.read_text(encoding="utf-8")
-            }
-            if not active_matches:
-                errors.append(
-                    f"PersistenceFuture 白名单路径已失效，应删除: {normalized}"
-                )
-                continue
-            for relative in sorted(active_matches):
-                previous = matched_by_pattern.setdefault(relative, set())
-                if previous:
-                    errors.append(
-                        "PersistenceFuture 白名单重复覆盖源码: "
-                        f"{relative}（{', '.join(sorted(previous | {normalized}))}）"
-                    )
-                previous.add(normalized)
-            allowlisted_sources.update(active_matches)
-
-    usage_sources = {
-        relative
-        for relative, path in source_by_relative.items()
-        if "PersistenceFuture" in path.read_text(encoding="utf-8")
-    }
-    for relative in sorted(
-        usage_sources - PERSISTENCE_FUTURE_CORE_FILES - allowlisted_sources
-    ):
-        errors.append(f"产品源码不得新增 PersistenceFuture: {relative}")
-
-    for relative in sorted(PERSISTENCE_FUTURE_CORE_FILES & usage_sources):
-        source = source_by_relative[relative].read_text(encoding="utf-8")
-        if relative.endswith("/persistence.rs"):
-            if "pub type PersistenceFuture" not in source:
-                errors.append("PersistenceFuture 定义文件缺少公开类型别名")
-        elif not re.search(r"\bPersistenceFuture\b", source):
-            errors.append("PersistenceFuture 导出文件缺少公开导出")
-
-    return len(source_paths), len(usage_sources), len(allowlisted_sources)
+    source_paths = sorted({path.resolve() for path in sources if path.is_file()})
+    violations = 0
+    for path in source_paths:
+        source = path.read_text(encoding="utf-8")
+        relative = path.relative_to(root).as_posix()
+        for name in LEGACY_PERSISTENCE_API_NAMES:
+            if re.search(rf"\b{re.escape(name)}\b", source):
+                errors.append(f"产品源码不得使用已删除的持久化接口 {name}: {relative}")
+                violations += 1
+    return len(source_paths), violations
 
 
 def validate_tenant_data_boundaries(errors: list[str]) -> None:
@@ -852,8 +746,7 @@ def main() -> int:
     checked_test_sources = 0
     integration_targets = 0
     persistence_sources = 0
-    persistence_usage_sources = 0
-    persistence_allowlisted_sources = 0
+    legacy_persistence_violations = 0
     if active and packages:
         actual_edges = validate_active_workspace(
             active_profile, active, packages, errors
@@ -864,14 +757,9 @@ def main() -> int:
         checked_test_sources, integration_targets = validate_test_layout(
             test_layout, packages, errors
         )
-        (
-            persistence_sources,
-            persistence_usage_sources,
-            persistence_allowlisted_sources,
-        ) = validate_persistence_future_usage(
+        persistence_sources, legacy_persistence_violations = validate_legacy_persistence_apis(
             ROOT,
             product_rust_sources(ROOT, active, packages),
-            PERSISTENCE_FUTURE_ALLOWLIST_PATH,
             errors,
         )
 
@@ -904,9 +792,8 @@ def main() -> int:
         f"(source_files={checked_test_sources}, integration_targets={integration_targets})."
     )
     print(
-        "PersistenceFuture architecture gate passed "
-        f"(source_files={persistence_sources}, usage_files={persistence_usage_sources}, "
-        f"allowlisted_files={persistence_allowlisted_sources})."
+        "Legacy persistence API gate passed "
+        f"(source_files={persistence_sources}, violations={legacy_persistence_violations})."
     )
     if ran_tenant_checks:
         print("Tenant-data architecture boundaries are valid.")

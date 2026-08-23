@@ -12,7 +12,7 @@ use sea_orm::{
 };
 
 use ryframe_application::{
-    EnqueueJob, EnqueueJobResult, PersistenceFuture,
+    EnqueueJob, EnqueueJobResult,
     ports::jobs::{
         ExecutionTenantScope, JobScheduleExecutionReadFilter, JobScheduleExecutionRecord,
         JobSchedulePersistencePort, JobScheduleReadFilter, JobScheduleReadPort, JobScheduleRecord,
@@ -34,114 +34,108 @@ struct DatabaseJobSchedulePersistence {
     repository: JobScheduleRepository,
 }
 
+#[async_trait::async_trait]
 impl JobScheduleReadPort for DatabaseJobSchedulePersistence {
-    fn page<'a>(
+    async fn page<'a>(
         &'a self,
         tenant_id: &'a str,
         filter: JobScheduleReadFilter<'a>,
         page: ValidatedPageQuery,
-    ) -> PersistenceFuture<'a, PageResult<JobScheduleRecord>> {
-        Box::pin(async move {
-            let result = self
-                .repository
-                .list(
-                    self.database.write(),
-                    tenant_id,
-                    JobScheduleFilter {
-                        name: filter.name,
-                        handler_key: filter.handler_key,
-                        enabled: filter.enabled,
-                    },
-                    &page,
-                )
-                .await?;
-            Ok(PageResult::new(
-                result.records.into_iter().map(to_schedule).collect(),
-                result.total,
+    ) -> ryframe_kernel::AppResult<PageResult<JobScheduleRecord>> {
+        let result = self
+            .repository
+            .list(
+                self.database.write(),
+                tenant_id,
+                JobScheduleFilter {
+                    name: filter.name,
+                    handler_key: filter.handler_key,
+                    enabled: filter.enabled,
+                },
                 &page,
-            ))
-        })
+            )
+            .await?;
+        Ok(PageResult::new(
+            result.records.into_iter().map(to_schedule).collect(),
+            result.total,
+            &page,
+        ))
     }
 
-    fn find<'a>(
+    async fn find<'a>(
         &'a self,
         tenant_id: &'a str,
         schedule_id: i64,
-    ) -> PersistenceFuture<'a, Option<JobScheduleRecord>> {
-        Box::pin(async move {
-            Ok(self
-                .repository
-                .find_for_tenant(self.database.write(), tenant_id, schedule_id)
-                .await?
-                .map(to_schedule))
-        })
+    ) -> ryframe_kernel::AppResult<Option<JobScheduleRecord>> {
+        Ok(self
+            .repository
+            .find_for_tenant(self.database.write(), tenant_id, schedule_id)
+            .await?
+            .map(to_schedule))
     }
 
-    fn execution_page<'a>(
+    async fn execution_page<'a>(
         &'a self,
         tenant_id: &'a str,
         schedule_id: i64,
         filter: JobScheduleExecutionReadFilter<'a>,
         page: ValidatedPageQuery,
-    ) -> PersistenceFuture<'a, PageResult<JobScheduleExecutionRecord>> {
-        Box::pin(async move {
-            let result = self
-                .repository
-                .list_executions(
-                    self.database.write(),
-                    tenant_id,
-                    schedule_id,
-                    JobScheduleExecutionFilter {
-                        trigger_kind: filter.trigger_kind,
-                        outcome: filter.outcome,
-                        background_job_status: filter.background_job_status,
-                    },
-                    &page,
-                )
-                .await?;
-            let job_ids = result
-                .records
-                .iter()
-                .filter_map(|execution| execution.background_job_id)
-                .collect::<Vec<_>>();
-            let statuses = self
-                .repository
-                .background_job_statuses(self.database.write(), &job_ids)
-                .await?;
-            let records = result
-                .records
-                .into_iter()
-                .map(|execution| {
-                    let status = execution
-                        .background_job_id
-                        .and_then(|job_id| statuses.get(&job_id).cloned());
-                    to_execution(execution, status)
-                })
-                .collect();
-            Ok(PageResult::new(records, result.total, &page))
-        })
+    ) -> ryframe_kernel::AppResult<PageResult<JobScheduleExecutionRecord>> {
+        let result = self
+            .repository
+            .list_executions(
+                self.database.write(),
+                tenant_id,
+                schedule_id,
+                JobScheduleExecutionFilter {
+                    trigger_kind: filter.trigger_kind,
+                    outcome: filter.outcome,
+                    background_job_status: filter.background_job_status,
+                },
+                &page,
+            )
+            .await?;
+        let job_ids = result
+            .records
+            .iter()
+            .filter_map(|execution| execution.background_job_id)
+            .collect::<Vec<_>>();
+        let statuses = self
+            .repository
+            .background_job_statuses(self.database.write(), &job_ids)
+            .await?;
+        let records = result
+            .records
+            .into_iter()
+            .map(|execution| {
+                let status = execution
+                    .background_job_id
+                    .and_then(|job_id| statuses.get(&job_id).cloned());
+                to_execution(execution, status)
+            })
+            .collect();
+        Ok(PageResult::new(records, result.total, &page))
     }
 }
 
+#[async_trait::async_trait]
 impl JobSchedulePersistencePort for DatabaseJobSchedulePersistence {
-    fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move { crate::repositories::database_utc_now(self.database.write()).await })
+    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
+        crate::repositories::database_utc_now(self.database.write()).await
     }
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn JobScheduleTransaction>> {
-        Box::pin(async move {
-            let transaction = self
-                .database
-                .write()
-                .begin()
-                .await
-                .map_err(database_error)?;
-            Ok(Box::new(DatabaseJobScheduleTransaction {
-                transaction,
-                schedule_repository: JobScheduleRepository,
-                job_repository: BackgroundJobRepository,
-            }) as Box<dyn JobScheduleTransaction>)
-        })
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn JobScheduleTransaction>> {
+        let transaction = self
+            .database
+            .write()
+            .begin()
+            .await
+            .map_err(database_error)?;
+        Ok(Box::new(DatabaseJobScheduleTransaction {
+            transaction,
+            schedule_repository: JobScheduleRepository,
+            job_repository: BackgroundJobRepository,
+        }) as Box<dyn JobScheduleTransaction>)
     }
 }
 
@@ -151,179 +145,158 @@ struct DatabaseJobScheduleTransaction {
     job_repository: BackgroundJobRepository,
 }
 
+#[async_trait::async_trait]
 impl JobScheduleTransaction for DatabaseJobScheduleTransaction {
-    fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            let row = self
-                .transaction
-                .query_one_raw(sea_orm::Statement::from_sql_and_values(
-                    sea_orm::DbBackend::MySql,
-                    "SELECT tenant_id FROM sys_tenant WHERE tenant_id = ? FOR UPDATE",
-                    [tenant_id.into()],
-                ))
-                .await
-                .map_err(database_error)?;
-            if row.is_none() {
-                return Err(AppError::NotFound("当前租户不存在".into()));
-            }
-            Ok(())
-        })
+    async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()> {
+        let row = self
+            .transaction
+            .query_one_raw(sea_orm::Statement::from_sql_and_values(
+                sea_orm::DbBackend::MySql,
+                "SELECT tenant_id FROM sys_tenant WHERE tenant_id = ? FOR UPDATE",
+                [tenant_id.into()],
+            ))
+            .await
+            .map_err(database_error)?;
+        if row.is_none() {
+            return Err(AppError::NotFound("当前租户不存在".into()));
+        }
+        Ok(())
     }
 
-    fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move { crate::repositories::database_utc_now(&self.transaction).await })
+    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
+        crate::repositories::database_utc_now(&self.transaction).await
     }
 
-    fn count_enabled<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, u64> {
-        Box::pin(async move {
-            self.schedule_repository
-                .count_enabled(&self.transaction, tenant_id)
-                .await
-        })
+    async fn count_enabled<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<u64> {
+        self.schedule_repository
+            .count_enabled(&self.transaction, tenant_id)
+            .await
     }
 
-    fn lock_schedule<'a>(
+    async fn lock_schedule<'a>(
         &'a self,
         tenant_id: &'a str,
         schedule_id: i64,
-    ) -> PersistenceFuture<'a, Option<JobScheduleRecord>> {
-        Box::pin(async move {
-            Ok(self
-                .schedule_repository
-                .lock_for_tenant(&self.transaction, tenant_id, schedule_id)
-                .await?
-                .map(to_schedule))
-        })
+    ) -> ryframe_kernel::AppResult<Option<JobScheduleRecord>> {
+        Ok(self
+            .schedule_repository
+            .lock_for_tenant(&self.transaction, tenant_id, schedule_id)
+            .await?
+            .map(to_schedule))
     }
 
-    fn lock_next_due<'a>(
+    async fn lock_next_due<'a>(
         &'a self,
         now: chrono::DateTime<chrono::Utc>,
         tenant_scope: &'a ExecutionTenantScope,
-    ) -> PersistenceFuture<'a, Option<JobScheduleRecord>> {
-        Box::pin(async move {
-            let tenant_scope = database_scope(tenant_scope);
-            Ok(self
-                .schedule_repository
-                .lock_next_due(&self.transaction, now, &tenant_scope)
-                .await?
-                .map(to_schedule))
-        })
+    ) -> ryframe_kernel::AppResult<Option<JobScheduleRecord>> {
+        let tenant_scope = database_scope(tenant_scope);
+        Ok(self
+            .schedule_repository
+            .lock_next_due(&self.transaction, now, &tenant_scope)
+            .await?
+            .map(to_schedule))
     }
 
-    fn has_active_job(&self, schedule_id: i64) -> PersistenceFuture<'_, bool> {
-        Box::pin(async move {
-            self.schedule_repository
-                .has_active_job(&self.transaction, schedule_id)
-                .await
-        })
+    async fn has_active_job(&self, schedule_id: i64) -> ryframe_kernel::AppResult<bool> {
+        self.schedule_repository
+            .has_active_job(&self.transaction, schedule_id)
+            .await
     }
 
-    fn find_execution_by_fire_key<'a>(
+    async fn find_execution_by_fire_key<'a>(
         &'a self,
         schedule_id: i64,
         fire_key: &'a str,
-    ) -> PersistenceFuture<'a, Option<JobScheduleExecutionRecord>> {
-        Box::pin(async move {
-            let execution = self
-                .schedule_repository
-                .find_execution_by_fire_key(&self.transaction, schedule_id, fire_key)
-                .await?;
-            execution_record(&self.transaction, execution).await
-        })
+    ) -> ryframe_kernel::AppResult<Option<JobScheduleExecutionRecord>> {
+        let execution = self
+            .schedule_repository
+            .find_execution_by_fire_key(&self.transaction, schedule_id, fire_key)
+            .await?;
+        execution_record(&self.transaction, execution).await
     }
 
-    fn insert_schedule(
+    async fn insert_schedule(
         &self,
         schedule: JobScheduleRecord,
-    ) -> PersistenceFuture<'_, JobScheduleRecord> {
-        Box::pin(async move {
-            schedule_active(schedule)
-                .insert(&self.transaction)
-                .await
-                .map(to_schedule)
-                .map_err(database_error)
-        })
+    ) -> ryframe_kernel::AppResult<JobScheduleRecord> {
+        schedule_active(schedule)
+            .insert(&self.transaction)
+            .await
+            .map(to_schedule)
+            .map_err(database_error)
     }
 
-    fn save_schedule(
+    async fn save_schedule(
         &self,
         schedule: JobScheduleRecord,
-    ) -> PersistenceFuture<'_, JobScheduleRecord> {
-        Box::pin(async move {
-            schedule_active(schedule)
-                .update(&self.transaction)
-                .await
-                .map(to_schedule)
-                .map_err(database_error)
-        })
+    ) -> ryframe_kernel::AppResult<JobScheduleRecord> {
+        schedule_active(schedule)
+            .update(&self.transaction)
+            .await
+            .map(to_schedule)
+            .map_err(database_error)
     }
 
-    fn insert_execution<'a>(
+    async fn insert_execution<'a>(
         &'a self,
         schedule: &'a JobScheduleRecord,
         execution: NewJobScheduleExecution,
-    ) -> PersistenceFuture<'a, JobScheduleExecutionRecord> {
-        Box::pin(async move {
-            let execution = job_schedule_execution::ActiveModel {
-                id: Set(execution.id),
-                tenant_id: Set(schedule.tenant_id.clone()),
-                schedule_id: Set(schedule.id),
-                schedule_name_snapshot: Set(schedule.name.clone()),
-                handler_key_snapshot: Set(schedule.handler_key.clone()),
-                fire_key: Set(execution.fire_key),
-                trigger_kind: Set(execution.trigger_kind),
-                scheduled_for: Set(execution.scheduled_for),
-                outcome: Set(execution.outcome),
-                background_job_id: Set(None),
-                detail: Set(execution.detail),
-                created_at: Set(execution.created_at),
-            }
-            .insert(&self.transaction)
-            .await
-            .map_err(database_error)?;
-            Ok(to_execution(execution, None))
-        })
+    ) -> ryframe_kernel::AppResult<JobScheduleExecutionRecord> {
+        let execution = job_schedule_execution::ActiveModel {
+            id: Set(execution.id),
+            tenant_id: Set(schedule.tenant_id.clone()),
+            schedule_id: Set(schedule.id),
+            schedule_name_snapshot: Set(schedule.name.clone()),
+            handler_key_snapshot: Set(schedule.handler_key.clone()),
+            fire_key: Set(execution.fire_key),
+            trigger_kind: Set(execution.trigger_kind),
+            scheduled_for: Set(execution.scheduled_for),
+            outcome: Set(execution.outcome),
+            background_job_id: Set(None),
+            detail: Set(execution.detail),
+            created_at: Set(execution.created_at),
+        }
+        .insert(&self.transaction)
+        .await
+        .map_err(database_error)?;
+        Ok(to_execution(execution, None))
     }
 
-    fn attach_background_job(
+    async fn attach_background_job(
         &self,
         execution: JobScheduleExecutionRecord,
         background_job_id: i64,
-    ) -> PersistenceFuture<'_, JobScheduleExecutionRecord> {
-        Box::pin(async move {
-            let mut active = execution_active(execution);
-            active.background_job_id = Set(Some(background_job_id));
-            let execution = active
-                .update(&self.transaction)
-                .await
-                .map_err(database_error)?;
-            execution_record(&self.transaction, Some(execution))
-                .await?
-                .ok_or_else(|| AppError::Internal("调度执行记录更新后丢失".into()))
+    ) -> ryframe_kernel::AppResult<JobScheduleExecutionRecord> {
+        let mut active = execution_active(execution);
+        active.background_job_id = Set(Some(background_job_id));
+        let execution = active
+            .update(&self.transaction)
+            .await
+            .map_err(database_error)?;
+        execution_record(&self.transaction, Some(execution))
+            .await?
+            .ok_or_else(|| AppError::Internal("调度执行记录更新后丢失".into()))
+    }
+
+    async fn enqueue(&self, command: EnqueueJob) -> ryframe_kernel::AppResult<EnqueueJobResult> {
+        let now = crate::repositories::database_utc_now(&self.transaction).await?;
+        let result = self
+            .job_repository
+            .enqueue_in_transaction(&self.transaction, database_enqueue(command), now)
+            .await?;
+        Ok(EnqueueJobResult {
+            job_id: result.job.id,
+            inserted: result.inserted,
         })
     }
 
-    fn enqueue(&self, command: EnqueueJob) -> PersistenceFuture<'_, EnqueueJobResult> {
-        Box::pin(async move {
-            let now = crate::repositories::database_utc_now(&self.transaction).await?;
-            let result = self
-                .job_repository
-                .enqueue_in_transaction(&self.transaction, database_enqueue(command), now)
-                .await?;
-            Ok(EnqueueJobResult {
-                job_id: result.job.id,
-                inserted: result.inserted,
-            })
-        })
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
+        self.transaction.commit().await.map_err(database_error)
     }
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move { self.transaction.commit().await.map_err(database_error) })
-    }
-
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move { self.transaction.rollback().await.map_err(database_error) })
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
+        self.transaction.rollback().await.map_err(database_error)
     }
 }
 

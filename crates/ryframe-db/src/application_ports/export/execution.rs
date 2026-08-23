@@ -8,12 +8,9 @@ use crate::{
 use ryframe_kernel::AppError;
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
-use ryframe_application::{
-    PersistenceFuture,
-    ports::export::{
-        ExportBackgroundLease, ExportExecutionPersistencePort, ExportExecutionRecord,
-        ExportExecutionState, ExportExecutionTransaction, ExportStartDecision,
-    },
+use ryframe_application::ports::export::{
+    ExportBackgroundLease, ExportExecutionPersistencePort, ExportExecutionRecord,
+    ExportExecutionState, ExportExecutionTransaction, ExportStartDecision,
 };
 
 struct DatabaseExportExecutionPersistence {
@@ -28,107 +25,97 @@ pub fn port(database: ControlDatabaseCluster) -> Arc<dyn ExportExecutionPersiste
     Arc::new(DatabaseExportExecutionPersistence { database })
 }
 
+#[async_trait::async_trait]
 impl ExportExecutionPersistencePort for DatabaseExportExecutionPersistence {
-    fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move { crate::repositories::database_utc_now(self.database.write()).await })
+    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
+        crate::repositories::database_utc_now(self.database.write()).await
     }
 
-    fn find_by_background_job(
+    async fn find_by_background_job(
         &self,
         background_job_id: i64,
-    ) -> PersistenceFuture<'_, Option<ExportExecutionRecord>> {
-        Box::pin(async move {
-            ExportJobRepository
-                .find_by_background_job_id(self.database.write(), background_job_id)
-                .await
-                .map(|record| record.map(map_execution_record))
-        })
+    ) -> ryframe_kernel::AppResult<Option<ExportExecutionRecord>> {
+        ExportJobRepository
+            .find_by_background_job_id(self.database.write(), background_job_id)
+            .await
+            .map(|record| record.map(map_execution_record))
     }
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn ExportExecutionTransaction>> {
-        Box::pin(async move {
-            let transaction = self
-                .database
-                .write()
-                .begin()
-                .await
-                .map_err(database_error)?;
-            Ok(Box::new(DatabaseExportExecutionTransaction { transaction })
-                as Box<dyn ExportExecutionTransaction>)
-        })
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn ExportExecutionTransaction>> {
+        let transaction = self
+            .database
+            .write()
+            .begin()
+            .await
+            .map_err(database_error)?;
+        Ok(Box::new(DatabaseExportExecutionTransaction { transaction })
+            as Box<dyn ExportExecutionTransaction>)
     }
 
-    fn update_exported_rows(
+    async fn update_exported_rows(
         &self,
         export_id: i64,
         exported_rows: i64,
         now: chrono::DateTime<chrono::Utc>,
-    ) -> PersistenceFuture<'_, bool> {
-        Box::pin(async move {
-            ExportJobRepository
-                .update_exported_rows(self.database.write(), export_id, exported_rows, now)
-                .await
-        })
+    ) -> ryframe_kernel::AppResult<bool> {
+        ExportJobRepository
+            .update_exported_rows(self.database.write(), export_id, exported_rows, now)
+            .await
     }
 
-    fn find_background_lease(
+    async fn find_background_lease(
         &self,
         background_job_id: i64,
-    ) -> PersistenceFuture<'_, Option<ExportBackgroundLease>> {
-        Box::pin(async move {
-            BackgroundJobRepository
-                .find_by_id(self.database.write(), background_job_id)
-                .await
-                .map(|record| record.map(map_background_lease))
-        })
+    ) -> ryframe_kernel::AppResult<Option<ExportBackgroundLease>> {
+        BackgroundJobRepository
+            .find_by_id(self.database.write(), background_job_id)
+            .await
+            .map(|record| record.map(map_background_lease))
     }
 
-    fn find_export_state(
+    async fn find_export_state(
         &self,
         export_id: i64,
-    ) -> PersistenceFuture<'_, Option<ExportExecutionState>> {
-        Box::pin(async move {
-            ExportJobRepository
-                .find_by_id(self.database.write(), export_id)
-                .await
-                .map(|record| {
-                    record.map(|record| ExportExecutionState {
-                        status: record.status,
-                        delete_pending_at: record.delete_pending_at,
-                    })
+    ) -> ryframe_kernel::AppResult<Option<ExportExecutionState>> {
+        ExportJobRepository
+            .find_by_id(self.database.write(), export_id)
+            .await
+            .map(|record| {
+                record.map(|record| ExportExecutionState {
+                    status: record.status,
+                    delete_pending_at: record.delete_pending_at,
                 })
-        })
+            })
     }
 }
 
+#[async_trait::async_trait]
 impl ExportExecutionTransaction for DatabaseExportExecutionTransaction {
-    fn try_start<'a>(
+    async fn try_start<'a>(
         &'a self,
         export_id: i64,
         tenant_id: &'a str,
         maximum_running: u64,
         now: chrono::DateTime<chrono::Utc>,
-    ) -> PersistenceFuture<'a, ExportStartDecision> {
-        Box::pin(async move {
-            ExportJobRepository
-                .try_mark_running_in_transaction(
-                    &self.transaction,
-                    export_id,
-                    tenant_id,
-                    maximum_running,
-                    now,
-                )
-                .await
-                .map(map_start_decision)
-        })
+    ) -> ryframe_kernel::AppResult<ExportStartDecision> {
+        ExportJobRepository
+            .try_mark_running_in_transaction(
+                &self.transaction,
+                export_id,
+                tenant_id,
+                maximum_running,
+                now,
+            )
+            .await
+            .map(map_start_decision)
     }
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move { super::super::audit::commit_current_audit(self.transaction).await })
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
+        super::super::audit::commit_current_audit(self.transaction).await
     }
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move { self.transaction.rollback().await.map_err(database_error) })
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
+        self.transaction.rollback().await.map_err(database_error)
     }
 }
 

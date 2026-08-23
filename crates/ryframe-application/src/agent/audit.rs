@@ -1,7 +1,5 @@
 use chrono::{DateTime, Utc};
 
-use crate::PersistenceFuture;
-
 #[derive(Debug)]
 pub struct AgentAccessAuditDraft {
     pub id: i64,
@@ -44,6 +42,7 @@ pub struct AgentAccessAuditRecord {
     pub completed_at: DateTime<Utc>,
 }
 
+#[async_trait::async_trait]
 pub trait AgentAuditWritePort: Send + Sync {
-    fn record_failure(&self, audit: AgentAccessAuditDraft) -> PersistenceFuture<'_, ()>;
+    async fn record_failure(&self, audit: AgentAccessAuditDraft) -> ryframe_kernel::AppResult<()>;
 }

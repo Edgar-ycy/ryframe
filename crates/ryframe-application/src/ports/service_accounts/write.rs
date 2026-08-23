@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-use crate::{PersistenceFuture, ports::authorization::AuthorizationMirrorTransaction};
+use crate::ports::authorization::AuthorizationMirrorTransaction;
 
 use super::{ServiceAccountPermissionSnapshot, ServiceAccountRecord};
 
@@ -77,133 +77,135 @@ impl ServiceDelegationWriteRecord {
     pub const STATUS_REVOKED: &'static str = "revoked";
 }
 
+#[async_trait::async_trait]
 pub trait ServiceAccountWriteTransaction: Send + Sync {
     fn authorization_mirror(&self) -> &dyn AuthorizationMirrorTransaction;
 
-    fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()>;
+    async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()>;
 
-    fn account_code_exists<'a>(
+    async fn account_code_exists<'a>(
         &'a self,
         tenant_id: &'a str,
         code: &'a str,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn department_exists<'a>(
+    async fn department_exists<'a>(
         &'a self,
         tenant_id: &'a str,
         dept_id: i64,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn lock_account<'a>(
+    async fn lock_account<'a>(
         &'a self,
         tenant_id: &'a str,
         account_id: i64,
-    ) -> PersistenceFuture<'a, Option<ServiceAccountRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<ServiceAccountRecord>>;
 
-    fn insert_account<'a>(
+    async fn insert_account<'a>(
         &'a self,
         tenant_id: &'a str,
         account: ServiceAccountRecord,
-    ) -> PersistenceFuture<'a, ServiceAccountRecord>;
+    ) -> ryframe_kernel::AppResult<ServiceAccountRecord>;
 
-    fn save_account<'a>(
+    async fn save_account<'a>(
         &'a self,
         tenant_id: &'a str,
         account: ServiceAccountRecord,
-    ) -> PersistenceFuture<'a, ServiceAccountRecord>;
+    ) -> ryframe_kernel::AppResult<ServiceAccountRecord>;
 
-    fn replace_roles<'a>(
+    async fn replace_roles<'a>(
         &'a self,
         tenant_id: &'a str,
         account_id: i64,
         role_ids: &'a [i64],
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn find_idempotent_credential<'a>(
+    async fn find_idempotent_credential<'a>(
         &'a self,
         tenant_id: &'a str,
         account_id: i64,
         idempotency_key_hash: &'a [u8],
-    ) -> PersistenceFuture<'a, Option<ServiceCredentialWriteRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<ServiceCredentialWriteRecord>>;
 
-    fn count_active_credentials_at<'a>(
+    async fn count_active_credentials_at<'a>(
         &'a self,
         tenant_id: &'a str,
         account_id: i64,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, u64>;
+    ) -> ryframe_kernel::AppResult<u64>;
 
-    fn insert_credential<'a>(
+    async fn insert_credential<'a>(
         &'a self,
         tenant_id: &'a str,
         account_id: i64,
         credential: ServiceCredentialWriteRecord,
-    ) -> PersistenceFuture<'a, ServiceCredentialWriteRecord>;
+    ) -> ryframe_kernel::AppResult<ServiceCredentialWriteRecord>;
 
-    fn lock_credential<'a>(
+    async fn lock_credential<'a>(
         &'a self,
         tenant_id: &'a str,
         account_id: i64,
         credential_id: i64,
-    ) -> PersistenceFuture<'a, Option<ServiceCredentialWriteRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<ServiceCredentialWriteRecord>>;
 
-    fn save_credential<'a>(
+    async fn save_credential<'a>(
         &'a self,
         tenant_id: &'a str,
         account_id: i64,
         credential: ServiceCredentialWriteRecord,
-    ) -> PersistenceFuture<'a, ServiceCredentialWriteRecord>;
+    ) -> ryframe_kernel::AppResult<ServiceCredentialWriteRecord>;
 
-    fn lock_user<'a>(
+    async fn lock_user<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-    ) -> PersistenceFuture<'a, Option<ServiceAccountUserRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<ServiceAccountUserRecord>>;
 
-    fn permission_snapshot<'a>(
+    async fn permission_snapshot<'a>(
         &'a self,
         tenant_id: &'a str,
         account_id: i64,
         user_id: i64,
-    ) -> PersistenceFuture<'a, ServiceAccountPermissionSnapshot>;
+    ) -> ryframe_kernel::AppResult<ServiceAccountPermissionSnapshot>;
 
-    fn find_idempotent_delegation<'a>(
+    async fn find_idempotent_delegation<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
         idempotency_key_hash: &'a [u8],
-    ) -> PersistenceFuture<'a, Option<ServiceDelegationWriteRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<ServiceDelegationWriteRecord>>;
 
-    fn delegation_identity<'a>(
+    async fn delegation_identity<'a>(
         &'a self,
         tenant_id: &'a str,
         delegation_id: i64,
-    ) -> PersistenceFuture<'a, Option<ServiceDelegationIdentity>>;
+    ) -> ryframe_kernel::AppResult<Option<ServiceDelegationIdentity>>;
 
-    fn lock_delegation<'a>(
+    async fn lock_delegation<'a>(
         &'a self,
         tenant_id: &'a str,
         delegation_id: i64,
-    ) -> PersistenceFuture<'a, Option<ServiceDelegationWriteRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<ServiceDelegationWriteRecord>>;
 
-    fn insert_delegation<'a>(
+    async fn insert_delegation<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
         delegation: ServiceDelegationWriteRecord,
-    ) -> PersistenceFuture<'a, ServiceDelegationWriteRecord>;
+    ) -> ryframe_kernel::AppResult<ServiceDelegationWriteRecord>;
 
-    fn save_delegation<'a>(
+    async fn save_delegation<'a>(
         &'a self,
         tenant_id: &'a str,
         delegation: ServiceDelegationWriteRecord,
-    ) -> PersistenceFuture<'a, ServiceDelegationWriteRecord>;
+    ) -> ryframe_kernel::AppResult<ServiceDelegationWriteRecord>;
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
+#[async_trait::async_trait]
 pub trait ServiceAccountWritePort: Send + Sync {
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn ServiceAccountWriteTransaction>>;
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn ServiceAccountWriteTransaction>>;
 }

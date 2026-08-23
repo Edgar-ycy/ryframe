@@ -1,8 +1,6 @@
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 
-use crate::PersistenceFuture;
-
 #[derive(Debug)]
 pub struct ServiceAccessAuditRecord {
     pub id: i64,
@@ -29,10 +27,11 @@ pub struct ServiceAccessAuditRecord {
     pub completed_at: DateTime<Utc>,
 }
 
+#[async_trait::async_trait]
 pub trait ServiceAccountAuditReadPort: Send + Sync {
-    fn list<'a>(
+    async fn list<'a>(
         &'a self,
         tenant_id: &'a str,
         page: ValidatedPageQuery,
-    ) -> PersistenceFuture<'a, PageResult<ServiceAccessAuditRecord>>;
+    ) -> ryframe_kernel::AppResult<PageResult<ServiceAccessAuditRecord>>;
 }

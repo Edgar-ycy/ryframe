@@ -262,7 +262,6 @@ fn rendering_is_deterministic_readable_and_split_by_responsibility() {
         .find(|asset| asset.path.ends_with("device/port.rs"))
         .expect("应生成异步端口");
     assert!(port.content.contains("#[async_trait]"));
-    assert!(!port.content.contains("PersistenceFuture"));
     assert!(!port.content.contains("Box::pin"));
     let fake = first
         .assets

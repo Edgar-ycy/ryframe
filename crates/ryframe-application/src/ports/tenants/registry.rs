@@ -1,8 +1,7 @@
 use chrono::{DateTime, Utc};
 
 use crate::{
-    PersistenceFuture, ports::authorization::AuthorizationMirrorTransaction,
-    ports::product::ProductTransactionPort,
+    ports::authorization::AuthorizationMirrorTransaction, ports::product::ProductTransactionPort,
 };
 
 use super::provisioning::TenantProvisioningPlacement;
@@ -69,91 +68,99 @@ pub struct ProvisionTenantRecord {
 }
 
 /// 租户管理用例所拥有的控制库工作单元。
+#[async_trait::async_trait]
 pub trait TenantTransaction: Send + Sync {
     fn product(&self) -> &dyn ProductTransactionPort;
 
     fn authorization_mirror(&self) -> &dyn AuthorizationMirrorTransaction;
 
-    fn lock_optional_tenant<'a>(
+    async fn lock_optional_tenant<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, Option<TenantRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<TenantRecord>>;
 
-    fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, TenantRecord>;
+    async fn lock_tenant<'a>(
+        &'a self,
+        tenant_id: &'a str,
+    ) -> ryframe_kernel::AppResult<TenantRecord>;
 
-    fn lock_tenant_with_limits<'a>(
+    async fn lock_tenant_with_limits<'a>(
         &'a self,
         tenant_id: &'a str,
         max_users: i32,
         max_roles: i32,
         max_storage_mb: i64,
-    ) -> PersistenceFuture<'a, TenantRecord>;
+    ) -> ryframe_kernel::AppResult<TenantRecord>;
 
-    fn lock_provision_request<'a>(
+    async fn lock_provision_request<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, Option<TenantProvisionRequestRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<TenantProvisionRequestRecord>>;
 
-    fn provision(&self, record: ProvisionTenantRecord) -> PersistenceFuture<'_, ()>;
+    async fn provision(&self, record: ProvisionTenantRecord) -> ryframe_kernel::AppResult<()>;
 
-    fn assign_initial_product<'a>(
+    async fn assign_initial_product<'a>(
         &'a self,
         tenant_id: &'a str,
         plan_version_id: i64,
         changed_by: i64,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn product_assignment<'a>(
+    async fn product_assignment<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, Option<TenantProductAssignmentRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<TenantProductAssignmentRecord>>;
 
-    fn find_admin<'a>(
+    async fn find_admin<'a>(
         &'a self,
         tenant_id: &'a str,
         username: &'a str,
-    ) -> PersistenceFuture<'a, Option<TenantAdminRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<TenantAdminRecord>>;
 
-    fn save_tenant(&self, tenant: TenantRecord) -> PersistenceFuture<'_, TenantRecord>;
+    async fn save_tenant(&self, tenant: TenantRecord) -> ryframe_kernel::AppResult<TenantRecord>;
 
-    fn update_status<'a>(
+    async fn update_status<'a>(
         &'a self,
         tenant_id: &'a str,
         status: &'a str,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn create_pending<'a>(
+    async fn create_pending<'a>(
         &'a self,
         placement: &'a TenantProvisioningPlacement,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn create_or_resume_pending<'a>(
+    async fn create_or_resume_pending<'a>(
         &'a self,
         placement: &'a TenantProvisioningPlacement,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn activate_placement<'a>(
+    async fn activate_placement<'a>(
         &'a self,
         placement: &'a TenantProvisioningPlacement,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn fail_placement<'a>(
+    async fn fail_placement<'a>(
         &'a self,
         placement: &'a TenantProvisioningPlacement,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn commit_audited(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn commit_audited(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 /// 租户管理用例所需的持久化端口。
+#[async_trait::async_trait]
 pub trait TenantPersistencePort: Send + Sync {
-    fn list(&self) -> PersistenceFuture<'_, Vec<TenantRecord>>;
+    async fn list(&self) -> ryframe_kernel::AppResult<Vec<TenantRecord>>;
 
-    fn find<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, Option<TenantRecord>>;
+    async fn find<'a>(
+        &'a self,
+        tenant_id: &'a str,
+    ) -> ryframe_kernel::AppResult<Option<TenantRecord>>;
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn TenantTransaction>>;
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn TenantTransaction>>;
 }

@@ -7,12 +7,9 @@ use crate::{
 };
 use chrono::{DateTime, Utc};
 
-use ryframe_application::{
-    PersistenceFuture,
-    ports::retention::{
-        ExpiredImportArtifact, RetentionCleanupPersistencePort, RetentionCleanupResult,
-        RetentionCutoff, RetentionResource,
-    },
+use ryframe_application::ports::retention::{
+    ExpiredImportArtifact, RetentionCleanupPersistencePort, RetentionCleanupResult,
+    RetentionCutoff, RetentionResource,
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn RetentionCleanupPersistencePort> {
@@ -23,73 +20,69 @@ struct DatabaseRetentionCleanupPersistence {
     database: ControlDatabaseCluster,
 }
 
+#[async_trait::async_trait]
 impl RetentionCleanupPersistencePort for DatabaseRetentionCleanupPersistence {
-    fn preview<'a>(
+    async fn preview<'a>(
         &'a self,
         cutoffs: &'a [RetentionCutoff],
         current_run_id: Option<i64>,
-    ) -> PersistenceFuture<'a, BTreeMap<String, u64>> {
-        Box::pin(async move {
-            let database_cutoffs = cutoffs
-                .iter()
-                .copied()
-                .map(to_database_cutoff)
-                .collect::<Vec<_>>();
-            DataRetentionRepository
-                .preview(self.database.write(), &database_cutoffs, current_run_id)
-                .await
-        })
+    ) -> ryframe_kernel::AppResult<BTreeMap<String, u64>> {
+        let database_cutoffs = cutoffs
+            .iter()
+            .copied()
+            .map(to_database_cutoff)
+            .collect::<Vec<_>>();
+        DataRetentionRepository
+            .preview(self.database.write(), &database_cutoffs, current_run_id)
+            .await
     }
 
-    fn cleanup_resource(
+    async fn cleanup_resource(
         &self,
         cutoff: RetentionCutoff,
         batch_size: usize,
         maximum: usize,
         current_run_id: Option<i64>,
-    ) -> PersistenceFuture<'_, RetentionCleanupResult> {
-        Box::pin(async move {
-            DataRetentionRepository
-                .cleanup_resource(
-                    self.database.write(),
-                    to_database_cutoff(cutoff),
-                    batch_size,
-                    maximum,
-                    current_run_id,
-                )
-                .await
-                .map(from_database_result)
-        })
+    ) -> ryframe_kernel::AppResult<RetentionCleanupResult> {
+        DataRetentionRepository
+            .cleanup_resource(
+                self.database.write(),
+                to_database_cutoff(cutoff),
+                batch_size,
+                maximum,
+                current_run_id,
+            )
+            .await
+            .map(from_database_result)
     }
 
-    fn count_expired_import_artifacts(&self, before: DateTime<Utc>) -> PersistenceFuture<'_, u64> {
-        Box::pin(async move {
-            UserImportRepository
-                .count_expired_artifacts(self.database.write(), before)
-                .await
-        })
+    async fn count_expired_import_artifacts(
+        &self,
+        before: DateTime<Utc>,
+    ) -> ryframe_kernel::AppResult<u64> {
+        UserImportRepository
+            .count_expired_artifacts(self.database.write(), before)
+            .await
     }
 
-    fn list_expired_import_artifacts(
+    async fn list_expired_import_artifacts(
         &self,
         before: DateTime<Utc>,
         after_id: Option<i64>,
         limit: usize,
-    ) -> PersistenceFuture<'_, Vec<ExpiredImportArtifact>> {
-        Box::pin(async move {
-            UserImportRepository
-                .list_expired_artifacts_after_id(self.database.write(), before, after_id, limit)
-                .await
-                .map(|artifacts| {
-                    artifacts
-                        .into_iter()
-                        .map(|artifact| ExpiredImportArtifact {
-                            tenant_id: artifact.tenant_id,
-                            file_id: artifact.file_id,
-                        })
-                        .collect()
-                })
-        })
+    ) -> ryframe_kernel::AppResult<Vec<ExpiredImportArtifact>> {
+        UserImportRepository
+            .list_expired_artifacts_after_id(self.database.write(), before, after_id, limit)
+            .await
+            .map(|artifacts| {
+                artifacts
+                    .into_iter()
+                    .map(|artifact| ExpiredImportArtifact {
+                        tenant_id: artifact.tenant_id,
+                        file_id: artifact.file_id,
+                    })
+                    .collect()
+            })
     }
 }
 

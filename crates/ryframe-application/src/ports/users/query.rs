@@ -1,8 +1,6 @@
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{DataScopeContext, ExportCursorWindow, PageResult, ValidatedPageQuery};
 
-use crate::PersistenceFuture;
-
 pub const USER_QUERY_STATUS_NORMAL: &str = "1";
 
 #[derive(Clone, Debug)]
@@ -48,48 +46,49 @@ pub struct UserQueryFilter<'a> {
     pub dept_id: Option<i64>,
 }
 
+#[async_trait::async_trait]
 pub trait UserQueryReadPort: Send + Sync {
-    fn export_batch<'a>(
+    async fn export_batch<'a>(
         &'a self,
         tenant_id: &'a str,
         filter: UserQueryFilter<'a>,
         scope: &'a DataScopeContext,
         window: ExportCursorWindow,
-    ) -> PersistenceFuture<'a, Vec<UserQueryRecord>>;
+    ) -> ryframe_kernel::AppResult<Vec<UserQueryRecord>>;
 
-    fn page<'a>(
+    async fn page<'a>(
         &'a self,
         tenant_id: &'a str,
         query: ValidatedPageQuery,
         filter: UserQueryFilter<'a>,
         scope: &'a DataScopeContext,
-    ) -> PersistenceFuture<'a, PageResult<UserQueryRecord>>;
+    ) -> ryframe_kernel::AppResult<PageResult<UserQueryRecord>>;
 
-    fn options<'a>(
+    async fn options<'a>(
         &'a self,
         tenant_id: &'a str,
         query: Option<&'a str>,
         scope: &'a DataScopeContext,
         limit: u64,
-    ) -> PersistenceFuture<'a, Vec<UserQueryRecord>>;
+    ) -> ryframe_kernel::AppResult<Vec<UserQueryRecord>>;
 
-    fn detail<'a>(
+    async fn detail<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
         scope: &'a DataScopeContext,
-    ) -> PersistenceFuture<'a, Option<UserQueryDetailRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<UserQueryDetailRecord>>;
 
-    fn is_accessible<'a>(
+    async fn is_accessible<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
         scope: &'a DataScopeContext,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn is_super_admin<'a>(
+    async fn is_super_admin<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 }

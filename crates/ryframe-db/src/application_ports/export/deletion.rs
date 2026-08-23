@@ -5,7 +5,7 @@ use ryframe_kernel::AppError;
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
 use ryframe_application::{
-    EnqueueJob, PersistenceFuture,
+    EnqueueJob,
     ports::export::{ExportDeletionPersistencePort, ExportDeletionTransaction},
 };
 
@@ -21,70 +21,66 @@ pub fn port(database: ControlDatabaseCluster) -> Arc<dyn ExportDeletionPersisten
     Arc::new(DatabaseExportDeletionPersistence { database })
 }
 
+#[async_trait::async_trait]
 impl ExportDeletionPersistencePort for DatabaseExportDeletionPersistence {
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn ExportDeletionTransaction>> {
-        Box::pin(async move {
-            let transaction = self
-                .database
-                .write()
-                .begin()
-                .await
-                .map_err(database_error)?;
-            Ok(Box::new(DatabaseExportDeletionTransaction { transaction })
-                as Box<dyn ExportDeletionTransaction>)
-        })
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn ExportDeletionTransaction>> {
+        let transaction = self
+            .database
+            .write()
+            .begin()
+            .await
+            .map_err(database_error)?;
+        Ok(Box::new(DatabaseExportDeletionTransaction { transaction })
+            as Box<dyn ExportDeletionTransaction>)
     }
 }
 
+#[async_trait::async_trait]
 impl ExportDeletionTransaction for DatabaseExportDeletionTransaction {
-    fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move { crate::repositories::database_utc_now(&self.transaction).await })
+    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
+        crate::repositories::database_utc_now(&self.transaction).await
     }
 
-    fn mark_delete_pending<'a>(
+    async fn mark_delete_pending<'a>(
         &'a self,
         tenant_id: &'a str,
         requester_id: i64,
         ids: &'a [i64],
         now: chrono::DateTime<chrono::Utc>,
-    ) -> PersistenceFuture<'a, u64> {
-        Box::pin(async move {
-            ExportJobRepository
-                .mark_delete_pending_in_transaction(
-                    &self.transaction,
-                    tenant_id,
-                    requester_id,
-                    ids,
-                    now,
-                )
-                .await
-                .map(|result| result.removed_unread_count)
-        })
+    ) -> ryframe_kernel::AppResult<u64> {
+        ExportJobRepository
+            .mark_delete_pending_in_transaction(
+                &self.transaction,
+                tenant_id,
+                requester_id,
+                ids,
+                now,
+            )
+            .await
+            .map(|result| result.removed_unread_count)
     }
 
-    fn enqueue_cleanup(
+    async fn enqueue_cleanup(
         &self,
         command: EnqueueJob,
         now: chrono::DateTime<chrono::Utc>,
-    ) -> PersistenceFuture<'_, ()> {
-        Box::pin(async move {
-            BackgroundJobRepository
-                .enqueue_in_transaction(
-                    &self.transaction,
-                    super::super::jobs::database_enqueue(command),
-                    now,
-                )
-                .await
-                .map(|_| ())
-        })
+    ) -> ryframe_kernel::AppResult<()> {
+        BackgroundJobRepository
+            .enqueue_in_transaction(
+                &self.transaction,
+                super::super::jobs::database_enqueue(command),
+                now,
+            )
+            .await
+            .map(|_| ())
     }
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move { super::super::audit::commit_current_audit(self.transaction).await })
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
+        super::super::audit::commit_current_audit(self.transaction).await
     }
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move { self.transaction.rollback().await.map_err(database_error) })
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
+        self.transaction.rollback().await.map_err(database_error)
     }
 }
 

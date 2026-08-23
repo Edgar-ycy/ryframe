@@ -2,8 +2,11 @@ use chrono::Duration;
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use serde_json::Value;
 
-use crate::ports::system::{
-    MessageAudienceRecord, MessageAudienceRecordKind, MessageOutboxRecord, PublishMessageRecord,
+use crate::{
+    TransactionAuditMode,
+    ports::system::{
+        MessageAudienceRecord, MessageAudienceRecordKind, MessageOutboxRecord, PublishMessageRecord,
+    },
 };
 
 use super::{
@@ -104,7 +107,9 @@ impl MessageService {
         let inserted = published.inserted;
         let recipient_count = published.recipient_count;
         let message = MessageTemplate::from_record(published.message, None, None);
-        transaction.commit().await?;
+        transaction
+            .commit(TransactionAuditMode::CurrentRequest)
+            .await?;
         if inserted {
             self.queue.notify_outbox().await;
         }

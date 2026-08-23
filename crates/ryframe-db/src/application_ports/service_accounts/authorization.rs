@@ -13,12 +13,9 @@ use sea_orm::{
     ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
 };
 
-use ryframe_application::{
-    PersistenceFuture,
-    ports::service_accounts::{
-        ServiceAccountAuthorizationReadPort, ServiceAccountPermissionSnapshot,
-        ServiceDelegationTargetRecord, ServiceDelegationTargetSet,
-    },
+use ryframe_application::ports::service_accounts::{
+    ServiceAccountAuthorizationReadPort, ServiceAccountPermissionSnapshot,
+    ServiceDelegationTargetRecord, ServiceDelegationTargetSet,
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn ServiceAccountAuthorizationReadPort> {
@@ -29,110 +26,105 @@ struct DatabaseServiceAccountAuthorizationPersistence {
     database: ControlDatabaseCluster,
 }
 
+#[async_trait::async_trait]
 impl ServiceAccountAuthorizationReadPort for DatabaseServiceAccountAuthorizationPersistence {
-    fn permission_snapshot<'a>(
+    async fn permission_snapshot<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
         account_id: i64,
-    ) -> PersistenceFuture<'a, Option<ServiceAccountPermissionSnapshot>> {
-        Box::pin(async move {
-            let database = self
-                .database
-                .select_read(ReadConsistency::Strong)
-                .connection;
-            let account = ServiceAccountRepository
-                .find_by_id(&database, tenant_id, account_id)
-                .await?;
-            if !account.is_some_and(|account| account.is_enabled()) {
-                return Ok(None);
-            }
-            let user_roles = RoleRepository
-                .find_user_roles(&database, tenant_id, user_id)
-                .await?;
-            let user_role_ids = user_roles
-                .into_iter()
-                .map(|role| role.id)
-                .collect::<Vec<_>>();
-            let user_permissions = permission_codes(&database, tenant_id, &user_role_ids).await?;
+    ) -> ryframe_kernel::AppResult<Option<ServiceAccountPermissionSnapshot>> {
+        let database = self
+            .database
+            .select_read(ReadConsistency::Strong)
+            .connection;
+        let account = ServiceAccountRepository
+            .find_by_id(&database, tenant_id, account_id)
+            .await?;
+        if !account.is_some_and(|account| account.is_enabled()) {
+            return Ok(None);
+        }
+        let user_roles = RoleRepository
+            .find_user_roles(&database, tenant_id, user_id)
+            .await?;
+        let user_role_ids = user_roles
+            .into_iter()
+            .map(|role| role.id)
+            .collect::<Vec<_>>();
+        let user_permissions = permission_codes(&database, tenant_id, &user_role_ids).await?;
 
-            let account_role_ids = ServiceAccountRepository
-                .role_ids(&database, tenant_id, account_id)
-                .await?;
-            let enabled_account_role_ids =
-                enabled_role_ids(&database, tenant_id, account_role_ids.iter().copied()).await?;
-            let account_permissions =
-                permission_codes(&database, tenant_id, &enabled_account_role_ids).await?;
-            Ok(Some(ServiceAccountPermissionSnapshot {
-                user_permissions,
-                account_permissions,
-            }))
-        })
+        let account_role_ids = ServiceAccountRepository
+            .role_ids(&database, tenant_id, account_id)
+            .await?;
+        let enabled_account_role_ids =
+            enabled_role_ids(&database, tenant_id, account_role_ids.iter().copied()).await?;
+        let account_permissions =
+            permission_codes(&database, tenant_id, &enabled_account_role_ids).await?;
+        Ok(Some(ServiceAccountPermissionSnapshot {
+            user_permissions,
+            account_permissions,
+        }))
     }
 
-    fn delegation_targets<'a>(
+    async fn delegation_targets<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
         limit: u64,
-    ) -> PersistenceFuture<'a, ServiceDelegationTargetSet> {
-        Box::pin(async move {
-            let database = self
-                .database
-                .select_read(ReadConsistency::Strong)
-                .connection;
-            let user_roles = RoleRepository
-                .find_user_roles(&database, tenant_id, user_id)
-                .await?;
-            let user_role_ids = user_roles
-                .into_iter()
-                .map(|role| role.id)
-                .collect::<Vec<_>>();
-            let user_permissions = permission_codes(&database, tenant_id, &user_role_ids).await?;
+    ) -> ryframe_kernel::AppResult<ServiceDelegationTargetSet> {
+        let database = self
+            .database
+            .select_read(ReadConsistency::Strong)
+            .connection;
+        let user_roles = RoleRepository
+            .find_user_roles(&database, tenant_id, user_id)
+            .await?;
+        let user_role_ids = user_roles
+            .into_iter()
+            .map(|role| role.id)
+            .collect::<Vec<_>>();
+        let user_permissions = permission_codes(&database, tenant_id, &user_role_ids).await?;
 
-            let account_query = service_account::Entity::find()
-                .filter(service_account::Column::TenantId.eq(tenant_id))
-                .filter(service_account::Column::Status.eq(service_account::Model::STATUS_NORMAL))
-                .filter(
-                    service_account::Column::DelFlag.eq(service_account::Model::DEL_FLAG_NORMAL),
-                );
-            if account_query
-                .clone()
-                .count(&database)
-                .await
-                .map_err(database_error)?
-                > limit
-            {
-                return Err(AppError::Validation(format!(
-                    "当前租户可用服务账号超过 {limit} 个，请由管理员收敛账号数量"
-                )));
-            }
-            let accounts = account_query
-                .order_by_asc(service_account::Column::Code)
-                .all(&database)
-                .await
-                .map_err(database_error)?;
-            let account_ids = accounts
-                .iter()
-                .map(|account| account.id)
-                .collect::<Vec<_>>();
-            let account_permissions =
-                account_permission_codes(&database, tenant_id, &account_ids).await?;
-            Ok(ServiceDelegationTargetSet {
-                user_permissions,
-                accounts: accounts
-                    .into_iter()
-                    .map(|account| ServiceDelegationTargetRecord {
-                        account_id: account.id,
-                        code: account.code,
-                        name: account.name,
-                        permission_codes: account_permissions
-                            .get(&account.id)
-                            .cloned()
-                            .unwrap_or_default(),
-                    })
-                    .collect(),
-            })
+        let account_query = service_account::Entity::find()
+            .filter(service_account::Column::TenantId.eq(tenant_id))
+            .filter(service_account::Column::Status.eq(service_account::Model::STATUS_NORMAL))
+            .filter(service_account::Column::DelFlag.eq(service_account::Model::DEL_FLAG_NORMAL));
+        if account_query
+            .clone()
+            .count(&database)
+            .await
+            .map_err(database_error)?
+            > limit
+        {
+            return Err(AppError::Validation(format!(
+                "当前租户可用服务账号超过 {limit} 个，请由管理员收敛账号数量"
+            )));
+        }
+        let accounts = account_query
+            .order_by_asc(service_account::Column::Code)
+            .all(&database)
+            .await
+            .map_err(database_error)?;
+        let account_ids = accounts
+            .iter()
+            .map(|account| account.id)
+            .collect::<Vec<_>>();
+        let account_permissions =
+            account_permission_codes(&database, tenant_id, &account_ids).await?;
+        Ok(ServiceDelegationTargetSet {
+            user_permissions,
+            accounts: accounts
+                .into_iter()
+                .map(|account| ServiceDelegationTargetRecord {
+                    account_id: account.id,
+                    code: account.code,
+                    name: account.name,
+                    permission_codes: account_permissions
+                        .get(&account.id)
+                        .cloned()
+                        .unwrap_or_default(),
+                })
+                .collect(),
         })
     }
 }

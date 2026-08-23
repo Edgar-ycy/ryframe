@@ -1,27 +1,32 @@
 use chrono::{DateTime, Utc};
 
-use crate::{EnqueueJob, PersistenceFuture};
+use crate::EnqueueJob;
 
 /// 导出记录整批删除受理所需的控制库事务。
+#[async_trait::async_trait]
 pub trait ExportDeletionTransaction: Send + Sync {
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn mark_delete_pending<'a>(
+    async fn mark_delete_pending<'a>(
         &'a self,
         tenant_id: &'a str,
         requester_id: i64,
         ids: &'a [i64],
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, u64>;
+    ) -> ryframe_kernel::AppResult<u64>;
 
-    fn enqueue_cleanup(&self, command: EnqueueJob, now: DateTime<Utc>)
-    -> PersistenceFuture<'_, ()>;
+    async fn enqueue_cleanup(
+        &self,
+        command: EnqueueJob,
+        now: DateTime<Utc>,
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
+#[async_trait::async_trait]
 pub trait ExportDeletionPersistencePort: Send + Sync {
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn ExportDeletionTransaction>>;
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn ExportDeletionTransaction>>;
 }

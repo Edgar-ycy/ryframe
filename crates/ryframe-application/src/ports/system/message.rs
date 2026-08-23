@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-use crate::{ControlTransaction, PersistenceFuture};
+use crate::PersistenceTransaction;
 
 #[derive(Debug)]
 pub struct MessageRecord {
@@ -95,75 +95,85 @@ pub struct MessageInboxFilter<'a> {
     pub now: DateTime<Utc>,
 }
 
-pub trait MessageTransaction: ControlTransaction + Sync {
-    fn publish(
+#[async_trait::async_trait]
+pub trait MessageTransaction: PersistenceTransaction + Sync {
+    async fn publish(
         &self,
         command: PublishMessageRecord,
         max_recipients: u64,
-    ) -> PersistenceFuture<'_, PublishedMessageRecord>;
+    ) -> ryframe_kernel::AppResult<PublishedMessageRecord>;
 
-    fn record_outbox(&self, event: MessageOutboxRecord) -> PersistenceFuture<'_, ()>;
+    async fn record_outbox(&self, event: MessageOutboxRecord) -> ryframe_kernel::AppResult<()>;
 
-    fn acknowledge<'a>(
+    async fn acknowledge<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
         message_ids: &'a [i64],
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, u64>;
+    ) -> ryframe_kernel::AppResult<u64>;
 
-    fn mark_read<'a>(
+    async fn mark_read<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
         message_id: i64,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn mark_all_read<'a>(
+    async fn mark_all_read<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, u64>;
+    ) -> ryframe_kernel::AppResult<u64>;
 
-    fn soft_delete<'a>(
+    async fn soft_delete<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
         message_ids: &'a [i64],
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, u64>;
+    ) -> ryframe_kernel::AppResult<u64>;
 
-    fn mark_enqueued(&self, message_id: i64, now: DateTime<Utc>) -> PersistenceFuture<'_, u64>;
+    async fn mark_enqueued(
+        &self,
+        message_id: i64,
+        now: DateTime<Utc>,
+    ) -> ryframe_kernel::AppResult<u64>;
 
-    fn delete_expired_batch(
+    async fn delete_expired_batch(
         &self,
         now: DateTime<Utc>,
         batch_size: u64,
-    ) -> PersistenceFuture<'_, u64>;
-
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    ) -> ryframe_kernel::AppResult<u64>;
 }
 
+#[async_trait::async_trait]
 pub trait MessagePersistencePort: Send + Sync {
-    fn inbox<'a>(&'a self, filter: MessageInboxFilter<'a>) -> PersistenceFuture<'a, MessagePage>;
+    async fn inbox<'a>(
+        &'a self,
+        filter: MessageInboxFilter<'a>,
+    ) -> ryframe_kernel::AppResult<MessagePage>;
 
-    fn unacknowledged_recipients<'a>(
+    async fn unacknowledged_recipients<'a>(
         &'a self,
         message_id: i64,
         user_ids: Option<&'a [i64]>,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, Vec<MessageRecipientRecord>>;
+    ) -> ryframe_kernel::AppResult<Vec<MessageRecipientRecord>>;
 
-    fn unread_count<'a>(
+    async fn unread_count<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, u64>;
+    ) -> ryframe_kernel::AppResult<u64>;
 
-    fn find_message(&self, message_id: i64) -> PersistenceFuture<'_, Option<MessageRecord>>;
+    async fn find_message(
+        &self,
+        message_id: i64,
+    ) -> ryframe_kernel::AppResult<Option<MessageRecord>>;
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn MessageTransaction>>;
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn MessageTransaction>>;
 }

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 
-use crate::{PersistenceFuture, ports::retention::RetentionCleanupResult};
+use crate::ports::retention::RetentionCleanupResult;
 
 pub const TENANT_CONFIG_PACKAGE_RESOURCE: &str = "tenant_config_packages";
 pub const TENANT_CONFIG_SNAPSHOT_RESOURCE: &str = "tenant_config_snapshots";
@@ -22,20 +22,24 @@ impl TenantConfigArtifactCounts {
     }
 }
 
+#[async_trait::async_trait]
 pub trait TenantConfigRetentionPersistencePort: Send + Sync {
-    fn preview(&self, now: DateTime<Utc>) -> PersistenceFuture<'_, TenantConfigArtifactCounts>;
+    async fn preview(
+        &self,
+        now: DateTime<Utc>,
+    ) -> ryframe_kernel::AppResult<TenantConfigArtifactCounts>;
 
-    fn cleanup_packages(
+    async fn cleanup_packages(
         &self,
         before: DateTime<Utc>,
         batch_size: usize,
         maximum: usize,
-    ) -> PersistenceFuture<'_, RetentionCleanupResult>;
+    ) -> ryframe_kernel::AppResult<RetentionCleanupResult>;
 
-    fn cleanup_snapshots(
+    async fn cleanup_snapshots(
         &self,
         before: DateTime<Utc>,
         batch_size: usize,
         maximum: usize,
-    ) -> PersistenceFuture<'_, RetentionCleanupResult>;
+    ) -> ryframe_kernel::AppResult<RetentionCleanupResult>;
 }

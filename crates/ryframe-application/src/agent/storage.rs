@@ -3,7 +3,6 @@ use std::collections::BTreeSet;
 use chrono::{DateTime, Utc};
 
 use super::{AgentAccessAuditRecord, AgentAuthorizationSnapshot, AgentRowScope};
-use crate::PersistenceFuture;
 
 #[derive(Debug)]
 pub struct AgentTenantRecord {
@@ -133,81 +132,86 @@ pub struct AgentDictionaryPageRecord {
     pub total: u64,
 }
 
+#[async_trait::async_trait]
 pub trait AgentPersistenceTransaction: Send + Sync {
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, AgentTenantRecord>;
+    async fn lock_tenant<'a>(
+        &'a self,
+        tenant_id: &'a str,
+    ) -> ryframe_kernel::AppResult<AgentTenantRecord>;
 
-    fn lock_account<'a>(
+    async fn lock_account<'a>(
         &'a self,
         tenant_id: &'a str,
         account_id: i64,
-    ) -> PersistenceFuture<'a, Option<AgentAccountRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<AgentAccountRecord>>;
 
-    fn lock_credential<'a>(
+    async fn lock_credential<'a>(
         &'a self,
         tenant_id: &'a str,
         account_id: i64,
         key_id: &'a str,
-    ) -> PersistenceFuture<'a, Option<AgentCredentialRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<AgentCredentialRecord>>;
 
-    fn lock_delegation<'a>(
+    async fn lock_delegation<'a>(
         &'a self,
         tenant_id: &'a str,
         delegation_id: i64,
-    ) -> PersistenceFuture<'a, Option<AgentDelegationRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<AgentDelegationRecord>>;
 
-    fn require_capability<'a>(
+    async fn require_capability<'a>(
         &'a self,
         tenant_id: &'a str,
         capability_code: &'a str,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn authorization_snapshot<'a>(
+    async fn authorization_snapshot<'a>(
         &'a self,
         tenant_id: &'a str,
         account_id: i64,
         represented_user_id: Option<i64>,
-    ) -> PersistenceFuture<'a, AgentAuthorizationSnapshot>;
+    ) -> ryframe_kernel::AppResult<AgentAuthorizationSnapshot>;
 
-    fn users_page<'a>(
+    async fn users_page<'a>(
         &'a self,
         tenant_id: &'a str,
         scope: AgentRowScope,
         offset: u64,
         limit: u64,
-    ) -> PersistenceFuture<'a, AgentQueryPage<AgentUserRecord>>;
+    ) -> ryframe_kernel::AppResult<AgentQueryPage<AgentUserRecord>>;
 
-    fn departments_page<'a>(
+    async fn departments_page<'a>(
         &'a self,
         tenant_id: &'a str,
         scope: AgentRowScope,
         offset: u64,
         limit: u64,
-    ) -> PersistenceFuture<'a, AgentQueryPage<AgentDepartmentRecord>>;
+    ) -> ryframe_kernel::AppResult<AgentQueryPage<AgentDepartmentRecord>>;
 
-    fn posts_page<'a>(
+    async fn posts_page<'a>(
         &'a self,
         tenant_id: &'a str,
         offset: u64,
         limit: u64,
-    ) -> PersistenceFuture<'a, AgentQueryPage<AgentPostRecord>>;
+    ) -> ryframe_kernel::AppResult<AgentQueryPage<AgentPostRecord>>;
 
-    fn dictionary_page<'a>(
+    async fn dictionary_page<'a>(
         &'a self,
         tenant_id: &'a str,
         type_code: &'a str,
         offset: u64,
         limit: u64,
-    ) -> PersistenceFuture<'a, Option<AgentDictionaryPageRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<AgentDictionaryPageRecord>>;
 
-    fn insert_audit(&self, audit: AgentAccessAuditRecord) -> PersistenceFuture<'_, ()>;
+    async fn insert_audit(&self, audit: AgentAccessAuditRecord) -> ryframe_kernel::AppResult<()>;
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
+#[async_trait::async_trait]
 pub trait AgentPersistencePort: Send + Sync {
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn AgentPersistenceTransaction>>;
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn AgentPersistenceTransaction>>;
 }

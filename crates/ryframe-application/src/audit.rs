@@ -10,7 +10,6 @@ use std::{
 use ryframe_kernel::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 
-use crate::PersistenceFuture;
 use crate::jobs::JobQueue;
 use crate::system::{OperLogStatus, RecordOperLogCommand};
 
@@ -153,12 +152,13 @@ pub fn bind_current_audit() -> Option<(AuditOperationEvent, AuditTransactionBind
     Some((event, AuditTransactionBinding { context }))
 }
 
+#[async_trait::async_trait]
 pub trait AuditOutboxPersistencePort: Send + Sync {
-    fn record<'a>(
+    async fn record<'a>(
         &'a self,
         event: &'a AuditOperationEvent,
         max_attempts: i32,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 }
 
 /// 由 HTTP 边界使用的独立短事务 Outbox 写入器。

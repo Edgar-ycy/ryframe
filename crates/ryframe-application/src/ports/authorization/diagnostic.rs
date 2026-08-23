@@ -1,7 +1,5 @@
 use chrono::{DateTime, Utc};
 
-use crate::PersistenceFuture;
-
 #[derive(Clone, Debug)]
 pub struct DiagnosticRoleRecord {
     pub id: i64,
@@ -52,39 +50,43 @@ pub struct DiagnosticDepartmentRecord {
     pub name: String,
 }
 
+#[async_trait::async_trait]
 pub trait AuthorizationDiagnosticReadPort: Send + Sync {
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn user_tenant_id(&self, user_id: i64) -> PersistenceFuture<'_, Option<String>>;
+    async fn user_tenant_id(&self, user_id: i64) -> ryframe_kernel::AppResult<Option<String>>;
 
-    fn assigned_roles<'a>(
+    async fn assigned_roles<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-    ) -> PersistenceFuture<'a, Vec<DiagnosticRoleRecord>>;
+    ) -> ryframe_kernel::AppResult<Vec<DiagnosticRoleRecord>>;
 
-    fn permissions<'a>(
+    async fn permissions<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, Vec<DiagnosticPermissionRecord>>;
+    ) -> ryframe_kernel::AppResult<Vec<DiagnosticPermissionRecord>>;
 
-    fn role_permissions<'a>(
+    async fn role_permissions<'a>(
         &'a self,
         tenant_id: &'a str,
         role_id: i64,
-    ) -> PersistenceFuture<'a, Vec<DiagnosticPermissionRecord>>;
+    ) -> ryframe_kernel::AppResult<Vec<DiagnosticPermissionRecord>>;
 
-    fn menus<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, Vec<DiagnosticMenuRecord>>;
+    async fn menus<'a>(
+        &'a self,
+        tenant_id: &'a str,
+    ) -> ryframe_kernel::AppResult<Vec<DiagnosticMenuRecord>>;
 
-    fn accessible_menu_ids<'a>(
+    async fn accessible_menu_ids<'a>(
         &'a self,
         tenant_id: &'a str,
         permission_codes: &'a [String],
-    ) -> PersistenceFuture<'a, Vec<i64>>;
+    ) -> ryframe_kernel::AppResult<Vec<i64>>;
 
-    fn departments<'a>(
+    async fn departments<'a>(
         &'a self,
         tenant_id: &'a str,
         ids: &'a [i64],
-    ) -> PersistenceFuture<'a, Vec<DiagnosticDepartmentRecord>>;
+    ) -> ryframe_kernel::AppResult<Vec<DiagnosticDepartmentRecord>>;
 }

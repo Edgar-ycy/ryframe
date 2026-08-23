@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 
-use crate::{EnqueueJob, EnqueueJobResult, PersistenceFuture};
+use crate::{EnqueueJob, EnqueueJobResult};
 
 use super::ExecutionTenantScope;
 
@@ -67,87 +67,90 @@ pub struct NewJobScheduleExecution {
     pub created_at: DateTime<Utc>,
 }
 
+#[async_trait::async_trait]
 pub trait JobScheduleReadPort: Send + Sync {
-    fn page<'a>(
+    async fn page<'a>(
         &'a self,
         tenant_id: &'a str,
         filter: JobScheduleReadFilter<'a>,
         page: ValidatedPageQuery,
-    ) -> PersistenceFuture<'a, PageResult<JobScheduleRecord>>;
+    ) -> ryframe_kernel::AppResult<PageResult<JobScheduleRecord>>;
 
-    fn find<'a>(
+    async fn find<'a>(
         &'a self,
         tenant_id: &'a str,
         schedule_id: i64,
-    ) -> PersistenceFuture<'a, Option<JobScheduleRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<JobScheduleRecord>>;
 
-    fn execution_page<'a>(
+    async fn execution_page<'a>(
         &'a self,
         tenant_id: &'a str,
         schedule_id: i64,
         filter: JobScheduleExecutionReadFilter<'a>,
         page: ValidatedPageQuery,
-    ) -> PersistenceFuture<'a, PageResult<JobScheduleExecutionRecord>>;
+    ) -> ryframe_kernel::AppResult<PageResult<JobScheduleExecutionRecord>>;
 }
 
+#[async_trait::async_trait]
 pub trait JobScheduleTransaction: Send + Sync {
-    fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()>;
+    async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()>;
 
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn count_enabled<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, u64>;
+    async fn count_enabled<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<u64>;
 
-    fn lock_schedule<'a>(
+    async fn lock_schedule<'a>(
         &'a self,
         tenant_id: &'a str,
         schedule_id: i64,
-    ) -> PersistenceFuture<'a, Option<JobScheduleRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<JobScheduleRecord>>;
 
-    fn lock_next_due<'a>(
+    async fn lock_next_due<'a>(
         &'a self,
         now: DateTime<Utc>,
         tenant_scope: &'a ExecutionTenantScope,
-    ) -> PersistenceFuture<'a, Option<JobScheduleRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<JobScheduleRecord>>;
 
-    fn has_active_job(&self, schedule_id: i64) -> PersistenceFuture<'_, bool>;
+    async fn has_active_job(&self, schedule_id: i64) -> ryframe_kernel::AppResult<bool>;
 
-    fn find_execution_by_fire_key<'a>(
+    async fn find_execution_by_fire_key<'a>(
         &'a self,
         schedule_id: i64,
         fire_key: &'a str,
-    ) -> PersistenceFuture<'a, Option<JobScheduleExecutionRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<JobScheduleExecutionRecord>>;
 
-    fn insert_schedule(
+    async fn insert_schedule(
         &self,
         schedule: JobScheduleRecord,
-    ) -> PersistenceFuture<'_, JobScheduleRecord>;
+    ) -> ryframe_kernel::AppResult<JobScheduleRecord>;
 
-    fn save_schedule(
+    async fn save_schedule(
         &self,
         schedule: JobScheduleRecord,
-    ) -> PersistenceFuture<'_, JobScheduleRecord>;
+    ) -> ryframe_kernel::AppResult<JobScheduleRecord>;
 
-    fn insert_execution<'a>(
+    async fn insert_execution<'a>(
         &'a self,
         schedule: &'a JobScheduleRecord,
         execution: NewJobScheduleExecution,
-    ) -> PersistenceFuture<'a, JobScheduleExecutionRecord>;
+    ) -> ryframe_kernel::AppResult<JobScheduleExecutionRecord>;
 
-    fn attach_background_job(
+    async fn attach_background_job(
         &self,
         execution: JobScheduleExecutionRecord,
         background_job_id: i64,
-    ) -> PersistenceFuture<'_, JobScheduleExecutionRecord>;
+    ) -> ryframe_kernel::AppResult<JobScheduleExecutionRecord>;
 
-    fn enqueue(&self, command: EnqueueJob) -> PersistenceFuture<'_, EnqueueJobResult>;
+    async fn enqueue(&self, command: EnqueueJob) -> ryframe_kernel::AppResult<EnqueueJobResult>;
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
+#[async_trait::async_trait]
 pub trait JobSchedulePersistencePort: JobScheduleReadPort {
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn JobScheduleTransaction>>;
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn JobScheduleTransaction>>;
 }

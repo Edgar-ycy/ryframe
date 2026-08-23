@@ -5,9 +5,8 @@ use chrono::{DateTime, Utc};
 use ryframe_kernel::AppError;
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
-use ryframe_application::{
-    PersistenceFuture,
-    ports::files::{FileCleanupPersistencePort, FileCleanupRecord, FileCleanupTransaction},
+use ryframe_application::ports::files::{
+    FileCleanupPersistencePort, FileCleanupRecord, FileCleanupTransaction,
 };
 
 struct DatabaseFileCleanupPersistence {
@@ -22,236 +21,212 @@ pub fn port(database: ControlDatabaseCluster) -> Arc<dyn FileCleanupPersistenceP
     Arc::new(DatabaseFileCleanupPersistence { database })
 }
 
+#[async_trait::async_trait]
 impl FileCleanupPersistencePort for DatabaseFileCleanupPersistence {
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn FileCleanupTransaction>> {
-        Box::pin(async move {
-            let transaction = self
-                .database
-                .write()
-                .begin()
-                .await
-                .map_err(database_error)?;
-            Ok(Box::new(DatabaseFileCleanupTransaction { transaction })
-                as Box<dyn FileCleanupTransaction>)
-        })
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn FileCleanupTransaction>> {
+        let transaction = self
+            .database
+            .write()
+            .begin()
+            .await
+            .map_err(database_error)?;
+        Ok(Box::new(DatabaseFileCleanupTransaction { transaction })
+            as Box<dyn FileCleanupTransaction>)
     }
 
-    fn find<'a>(
+    async fn find<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
-    ) -> PersistenceFuture<'a, Option<FileCleanupRecord>> {
-        Box::pin(async move {
-            FileRepository
-                .find_by_id_any_status(self.database.write(), tenant_id, file_id)
-                .await
-                .map(|record| record.map(map_record))
-        })
+    ) -> ryframe_kernel::AppResult<Option<FileCleanupRecord>> {
+        FileRepository
+            .find_by_id_any_status(self.database.write(), tenant_id, file_id)
+            .await
+            .map(|record| record.map(map_record))
     }
 
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>> {
-        Box::pin(async move { crate::repositories::database_utc_now(self.database.write()).await })
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>> {
+        crate::repositories::database_utc_now(self.database.write()).await
     }
 
-    fn find_stale_config_packages(
+    async fn find_stale_config_packages(
         &self,
         ready_before: DateTime<Utc>,
         limit: u64,
-    ) -> PersistenceFuture<'_, Vec<FileCleanupRecord>> {
-        Box::pin(async move {
-            FileRepository
-                .find_stale_unreferenced_config_packages(self.database.write(), ready_before, limit)
-                .await
-                .map(|records| records.into_iter().map(map_record).collect())
-        })
+    ) -> ryframe_kernel::AppResult<Vec<FileCleanupRecord>> {
+        FileRepository
+            .find_stale_unreferenced_config_packages(self.database.write(), ready_before, limit)
+            .await
+            .map(|records| records.into_iter().map(map_record).collect())
     }
 
-    fn find_expired_reservations(
+    async fn find_expired_reservations(
         &self,
         now: DateTime<Utc>,
         limit: u64,
-    ) -> PersistenceFuture<'_, Vec<FileCleanupRecord>> {
-        Box::pin(async move {
-            FileRepository
-                .find_expired_reservations(self.database.write(), now, limit)
-                .await
-                .map(|records| records.into_iter().map(map_record).collect())
-        })
+    ) -> ryframe_kernel::AppResult<Vec<FileCleanupRecord>> {
+        FileRepository
+            .find_expired_reservations(self.database.write(), now, limit)
+            .await
+            .map(|records| records.into_iter().map(map_record).collect())
     }
 
-    fn begin_expired_cleanup<'a>(
+    async fn begin_expired_cleanup<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
         now: DateTime<Utc>,
         cleanup_after: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool> {
-        Box::pin(async move {
-            FileRepository
-                .begin_expired_cleanup(
-                    self.database.write(),
-                    tenant_id,
-                    file_id,
-                    now,
-                    cleanup_after,
-                )
-                .await
-        })
+    ) -> ryframe_kernel::AppResult<bool> {
+        FileRepository
+            .begin_expired_cleanup(
+                self.database.write(),
+                tenant_id,
+                file_id,
+                now,
+                cleanup_after,
+            )
+            .await
     }
 
-    fn claim_expired_cleanup<'a>(
+    async fn claim_expired_cleanup<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
         claim_token: &'a str,
         claimed_at: DateTime<Utc>,
         claim_until: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool> {
-        Box::pin(async move {
-            FileRepository
-                .claim_expired_cleanup(
-                    self.database.write(),
-                    tenant_id,
-                    file_id,
-                    claim_token,
-                    claimed_at,
-                    claim_until,
-                )
-                .await
-        })
+    ) -> ryframe_kernel::AppResult<bool> {
+        FileRepository
+            .claim_expired_cleanup(
+                self.database.write(),
+                tenant_id,
+                file_id,
+                claim_token,
+                claimed_at,
+                claim_until,
+            )
+            .await
     }
 
-    fn begin_owned_cleanup<'a>(
+    async fn begin_owned_cleanup<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
         reservation_token: &'a str,
         cleanup_after: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool> {
-        Box::pin(async move {
-            FileRepository
-                .begin_cleanup(
-                    self.database.write(),
-                    tenant_id,
-                    file_id,
-                    reservation_token,
-                    cleanup_after,
-                )
-                .await
-        })
+    ) -> ryframe_kernel::AppResult<bool> {
+        FileRepository
+            .begin_cleanup(
+                self.database.write(),
+                tenant_id,
+                file_id,
+                reservation_token,
+                cleanup_after,
+            )
+            .await
     }
 
-    fn defer_claim<'a>(
+    async fn defer_claim<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
         claim_token: &'a str,
         updated_at: DateTime<Utc>,
         retry_at: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool> {
-        Box::pin(async move {
-            FileRepository
-                .defer_cleanup_claim(
-                    self.database.write(),
-                    tenant_id,
-                    file_id,
-                    claim_token,
-                    updated_at,
-                    retry_at,
-                )
-                .await
-        })
+    ) -> ryframe_kernel::AppResult<bool> {
+        FileRepository
+            .defer_cleanup_claim(
+                self.database.write(),
+                tenant_id,
+                file_id,
+                claim_token,
+                updated_at,
+                retry_at,
+            )
+            .await
     }
 
-    fn complete_claim<'a>(
+    async fn complete_claim<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
         claim_token: &'a str,
-    ) -> PersistenceFuture<'a, bool> {
-        Box::pin(async move {
-            FileRepository
-                .complete_cleanup_claim(self.database.write(), tenant_id, file_id, claim_token)
-                .await
-        })
+    ) -> ryframe_kernel::AppResult<bool> {
+        FileRepository
+            .complete_cleanup_claim(self.database.write(), tenant_id, file_id, claim_token)
+            .await
     }
 }
 
+#[async_trait::async_trait]
 impl FileCleanupTransaction for DatabaseFileCleanupTransaction {
-    fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            TenantRepository
-                .lock_tenant_in_txn(&self.transaction, tenant_id)
-                .await
-                .map(|_| ())
-        })
+    async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()> {
+        TenantRepository
+            .lock_tenant_in_txn(&self.transaction, tenant_id)
+            .await
+            .map(|_| ())
     }
 
-    fn find_for_update<'a>(
+    async fn find_for_update<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
-    ) -> PersistenceFuture<'a, Option<FileCleanupRecord>> {
-        Box::pin(async move {
-            FileRepository
-                .find_by_id_any_status_for_update(&self.transaction, tenant_id, file_id)
-                .await
-                .map(|record| record.map(map_record))
-        })
+    ) -> ryframe_kernel::AppResult<Option<FileCleanupRecord>> {
+        FileRepository
+            .find_by_id_any_status_for_update(&self.transaction, tenant_id, file_id)
+            .await
+            .map(|record| record.map(map_record))
     }
 
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>> {
-        Box::pin(async move { crate::repositories::database_utc_now(&self.transaction).await })
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>> {
+        crate::repositories::database_utc_now(&self.transaction).await
     }
 
-    fn claim_expired_import<'a>(
+    async fn claim_expired_import<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
         claim_token: &'a str,
         expired_before: DateTime<Utc>,
         claim_until: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool> {
-        Box::pin(async move {
-            FileRepository
-                .claim_ready_expired_import_artifact_in_txn(
-                    &self.transaction,
-                    tenant_id,
-                    file_id,
-                    claim_token,
-                    expired_before,
-                    claim_until,
-                )
-                .await
-        })
+    ) -> ryframe_kernel::AppResult<bool> {
+        FileRepository
+            .claim_ready_expired_import_artifact_in_txn(
+                &self.transaction,
+                tenant_id,
+                file_id,
+                claim_token,
+                expired_before,
+                claim_until,
+            )
+            .await
     }
 
-    fn mark_unreferenced_config_package<'a>(
+    async fn mark_unreferenced_config_package<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
         now: DateTime<Utc>,
         cleanup_after: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool> {
-        Box::pin(async move {
-            FileRepository
-                .mark_unreferenced_config_package_for_cleanup_in_txn(
-                    &self.transaction,
-                    tenant_id,
-                    file_id,
-                    now,
-                    cleanup_after,
-                )
-                .await
-        })
+    ) -> ryframe_kernel::AppResult<bool> {
+        FileRepository
+            .mark_unreferenced_config_package_for_cleanup_in_txn(
+                &self.transaction,
+                tenant_id,
+                file_id,
+                now,
+                cleanup_after,
+            )
+            .await
     }
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move { self.transaction.commit().await.map_err(database_error) })
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
+        self.transaction.commit().await.map_err(database_error)
     }
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move { self.transaction.rollback().await.map_err(database_error) })
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
+        self.transaction.rollback().await.map_err(database_error)
     }
 }
 

@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 
-use crate::{PersistenceFuture, ports::jobs::BackgroundJobTransaction};
+use crate::ports::jobs::BackgroundJobTransaction;
 
 #[derive(Debug)]
 pub struct UserImportDepartmentRecord {
@@ -154,140 +154,149 @@ pub struct UserImportReadFilter<'a> {
     pub status: Option<&'a str>,
 }
 
+#[async_trait::async_trait]
 pub trait UserImportTransaction: BackgroundJobTransaction {
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()>;
+    async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()>;
 
-    fn find_by_idempotency<'a>(
+    async fn find_by_idempotency<'a>(
         &'a self,
         tenant_id: &'a str,
         idempotency_key_hash: &'a str,
-    ) -> PersistenceFuture<'a, Option<UserImportJobRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<UserImportJobRecord>>;
 
-    fn requester_username<'a>(
+    async fn requester_username<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-    ) -> PersistenceFuture<'a, Option<String>>;
+    ) -> ryframe_kernel::AppResult<Option<String>>;
 
-    fn active_count<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, u64>;
+    async fn active_count<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<u64>;
 
-    fn lock_source<'a>(
+    async fn lock_source<'a>(
         &'a self,
         tenant_id: &'a str,
         source_file_id: i64,
-    ) -> PersistenceFuture<'a, Option<UserImportSourceRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<UserImportSourceRecord>>;
 
-    fn restore_source<'a>(
+    async fn restore_source<'a>(
         &'a self,
         tenant_id: &'a str,
         source_file_id: i64,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn create(
+    async fn create(
         &self,
         job: NewUserImportJob,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'_, UserImportJobRecord>;
+    ) -> ryframe_kernel::AppResult<UserImportJobRecord>;
 
-    fn mark_source_for_cleanup<'a>(
+    async fn mark_source_for_cleanup<'a>(
         &'a self,
         tenant_id: &'a str,
         source_file_id: i64,
         now: DateTime<Utc>,
         cleanup_after: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn lock_configuration(&self, import_id: i64) -> PersistenceFuture<'_, Option<String>>;
+    async fn lock_configuration(&self, import_id: i64)
+    -> ryframe_kernel::AppResult<Option<String>>;
 
-    fn lock_authorization<'a>(
+    async fn lock_authorization<'a>(
         &'a self,
         tenant_id: &'a str,
         requester_user_id: i64,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, UserImportAuthorizationSnapshot>;
+    ) -> ryframe_kernel::AppResult<UserImportAuthorizationSnapshot>;
 
-    fn existing_usernames<'a>(
+    async fn existing_usernames<'a>(
         &'a self,
         tenant_id: &'a str,
         usernames: &'a [String],
-    ) -> PersistenceFuture<'a, Vec<String>>;
+    ) -> ryframe_kernel::AppResult<Vec<String>>;
 
-    fn ensure_user_quota<'a>(
+    async fn ensure_user_quota<'a>(
         &'a self,
         tenant_id: &'a str,
         additional_users: usize,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn insert_users<'a>(
+    async fn insert_users<'a>(
         &'a self,
         tenant_id: &'a str,
         users: Vec<NewImportedUser>,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn insert_rows(&self, rows: Vec<NewUserImportRow>) -> PersistenceFuture<'_, ()>;
+    async fn insert_rows(&self, rows: Vec<NewUserImportRow>) -> ryframe_kernel::AppResult<()>;
 
-    fn lock(&self, import_id: i64) -> PersistenceFuture<'_, Option<UserImportJobRecord>>;
+    async fn lock(&self, import_id: i64) -> ryframe_kernel::AppResult<Option<UserImportJobRecord>>;
 
-    fn save(&self, record: UserImportJobRecord) -> PersistenceFuture<'_, UserImportJobRecord>;
+    async fn save(
+        &self,
+        record: UserImportJobRecord,
+    ) -> ryframe_kernel::AppResult<UserImportJobRecord>;
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
+#[async_trait::async_trait]
 pub trait UserImportPersistencePort: Send + Sync {
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn UserImportTransaction>>;
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn UserImportTransaction>>;
 
-    fn list_departments<'a>(
+    async fn list_departments<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, Vec<UserImportDepartmentRecord>>;
+    ) -> ryframe_kernel::AppResult<Vec<UserImportDepartmentRecord>>;
 
-    fn list<'a>(
+    async fn list<'a>(
         &'a self,
         tenant_id: &'a str,
         page: ValidatedPageQuery,
         filter: UserImportReadFilter<'a>,
-    ) -> PersistenceFuture<'a, PageResult<UserImportJobRecord>>;
+    ) -> ryframe_kernel::AppResult<PageResult<UserImportJobRecord>>;
 
-    fn find<'a>(
+    async fn find<'a>(
         &'a self,
         tenant_id: &'a str,
         import_id: i64,
-    ) -> PersistenceFuture<'a, Option<UserImportJobRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<UserImportJobRecord>>;
 
-    fn find_global(&self, import_id: i64) -> PersistenceFuture<'_, Option<UserImportJobRecord>>;
+    async fn find_global(
+        &self,
+        import_id: i64,
+    ) -> ryframe_kernel::AppResult<Option<UserImportJobRecord>>;
 
-    fn find_by_background_job(
+    async fn find_by_background_job(
         &self,
         background_job_id: i64,
-    ) -> PersistenceFuture<'_, Option<UserImportJobRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<UserImportJobRecord>>;
 
-    fn rows<'a>(
+    async fn rows<'a>(
         &'a self,
         tenant_id: &'a str,
         import_id: i64,
         page: ValidatedPageQuery,
-    ) -> PersistenceFuture<'a, PageResult<UserImportRowRecord>>;
+    ) -> ryframe_kernel::AppResult<PageResult<UserImportRowRecord>>;
 
-    fn all_rows<'a>(
+    async fn all_rows<'a>(
         &'a self,
         tenant_id: &'a str,
         import_id: i64,
-    ) -> PersistenceFuture<'a, Vec<UserImportRowRecord>>;
+    ) -> ryframe_kernel::AppResult<Vec<UserImportRowRecord>>;
 
-    fn requester_usernames<'a>(
+    async fn requester_usernames<'a>(
         &'a self,
         tenant_id: &'a str,
         user_ids: &'a [i64],
-    ) -> PersistenceFuture<'a, Vec<(i64, String)>>;
+    ) -> ryframe_kernel::AppResult<Vec<(i64, String)>>;
 
-    fn request_cancel<'a>(
+    async fn request_cancel<'a>(
         &'a self,
         tenant_id: &'a str,
         import_id: i64,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 }

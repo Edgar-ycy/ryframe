@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
 
-use crate::{PersistenceFuture, ports::jobs::BackgroundJobTransaction};
+use crate::ports::jobs::BackgroundJobTransaction;
 
 pub const MIGRATION_STATE_PRECHECKING: &str = "prechecking";
 pub const MIGRATION_STATE_QUEUED: &str = "queued";
@@ -224,144 +224,158 @@ pub struct TenantMigrationContextRecord {
 }
 
 /// 租户数据迁移状态机所拥有的控制库工作单元。
+#[async_trait::async_trait]
 pub trait TenantDataMigrationTransaction: Send + Sync {
     fn background_jobs(&self) -> &dyn BackgroundJobTransaction;
 
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn acquire_lease(&self, lease: TenantOperationLeaseRecord) -> PersistenceFuture<'_, ()>;
+    async fn acquire_lease(
+        &self,
+        lease: TenantOperationLeaseRecord,
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn renew_lease<'a>(
+    async fn renew_lease<'a>(
         &'a self,
         tenant_id: &'a str,
         owner_token: &'a str,
         expires_at: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn release_lease<'a>(
+    async fn release_lease<'a>(
         &'a self,
         tenant_id: &'a str,
         owner_token: &'a str,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn lock_tenant<'a>(
+    async fn lock_tenant<'a>(
         &'a self,
         tenant_id: &'a str,
         owner_token: Option<&'a str>,
-    ) -> PersistenceFuture<'a, TenantMigrationContextRecord>;
+    ) -> ryframe_kernel::AppResult<TenantMigrationContextRecord>;
 
-    fn increment_runtime_epoch<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, i64>;
-
-    fn lock_placement<'a>(
+    async fn increment_runtime_epoch<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, TenantDataPlacementRecord>;
+    ) -> ryframe_kernel::AppResult<i64>;
 
-    fn save_placement(
+    async fn lock_placement<'a>(
+        &'a self,
+        tenant_id: &'a str,
+    ) -> ryframe_kernel::AppResult<TenantDataPlacementRecord>;
+
+    async fn save_placement(
         &self,
         placement: TenantDataPlacementRecord,
-    ) -> PersistenceFuture<'_, TenantDataPlacementRecord>;
+    ) -> ryframe_kernel::AppResult<TenantDataPlacementRecord>;
 
-    fn lock_migration(&self, id: i64) -> PersistenceFuture<'_, TenantDataMigrationRecord>;
+    async fn lock_migration(&self, id: i64)
+    -> ryframe_kernel::AppResult<TenantDataMigrationRecord>;
 
-    fn lock_active_migration_for_tenant<'a>(
+    async fn lock_active_migration_for_tenant<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, Option<TenantDataMigrationRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<TenantDataMigrationRecord>>;
 
-    fn insert_migration(
+    async fn insert_migration(
         &self,
         command: CreateTenantDataMigrationRecord,
-    ) -> PersistenceFuture<'_, TenantDataMigrationRecord>;
+    ) -> ryframe_kernel::AppResult<TenantDataMigrationRecord>;
 
-    fn save_migration(
+    async fn save_migration(
         &self,
         migration: TenantDataMigrationRecord,
-    ) -> PersistenceFuture<'_, TenantDataMigrationRecord>;
+    ) -> ryframe_kernel::AppResult<TenantDataMigrationRecord>;
 
-    fn lock_item(&self, id: i64) -> PersistenceFuture<'_, TenantDataMigrationItemRecord>;
+    async fn lock_item(&self, id: i64) -> ryframe_kernel::AppResult<TenantDataMigrationItemRecord>;
 
-    fn save_item(
+    async fn save_item(
         &self,
         item: TenantDataMigrationItemRecord,
-    ) -> PersistenceFuture<'_, TenantDataMigrationItemRecord>;
+    ) -> ryframe_kernel::AppResult<TenantDataMigrationItemRecord>;
 
-    fn has_validated_backup<'a>(
+    async fn has_validated_backup<'a>(
         &'a self,
         migration: &'a TenantDataMigrationRecord,
         not_before: DateTime<Utc>,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 /// 租户数据迁移状态机所需的控制库持久化端口。
+#[async_trait::async_trait]
 pub trait TenantDataMigrationPersistencePort: Send + Sync {
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn occupied_target_keys<'a>(
+    async fn occupied_target_keys<'a>(
         &'a self,
         configured_target_keys: &'a [String],
-    ) -> PersistenceFuture<'a, HashSet<String>>;
+    ) -> ryframe_kernel::AppResult<HashSet<String>>;
 
-    fn placement<'a>(
+    async fn placement<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, Option<TenantDataPlacementRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<TenantDataPlacementRecord>>;
 
-    fn migration(&self, id: i64) -> PersistenceFuture<'_, Option<TenantDataMigrationRecord>>;
+    async fn migration(
+        &self,
+        id: i64,
+    ) -> ryframe_kernel::AppResult<Option<TenantDataMigrationRecord>>;
 
-    fn migrations_for_tenant<'a>(
+    async fn migrations_for_tenant<'a>(
         &'a self,
         tenant_id: &'a str,
         limit: u64,
-    ) -> PersistenceFuture<'a, Vec<TenantDataMigrationRecord>>;
+    ) -> ryframe_kernel::AppResult<Vec<TenantDataMigrationRecord>>;
 
-    fn recoverable_migrations(
+    async fn recoverable_migrations(
         &self,
         after_id: Option<i64>,
         limit: u64,
-    ) -> PersistenceFuture<'_, Vec<TenantDataMigrationRecord>>;
+    ) -> ryframe_kernel::AppResult<Vec<TenantDataMigrationRecord>>;
 
-    fn migration_by_create_key<'a>(
+    async fn migration_by_create_key<'a>(
         &'a self,
         key_hash: &'a str,
-    ) -> PersistenceFuture<'a, Option<TenantDataMigrationRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<TenantDataMigrationRecord>>;
 
-    fn active_migration_for_tenant<'a>(
+    async fn active_migration_for_tenant<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, Option<TenantDataMigrationRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<TenantDataMigrationRecord>>;
 
-    fn items(&self, migration_id: i64)
-    -> PersistenceFuture<'_, Vec<TenantDataMigrationItemRecord>>;
+    async fn items(
+        &self,
+        migration_id: i64,
+    ) -> ryframe_kernel::AppResult<Vec<TenantDataMigrationItemRecord>>;
 
-    fn insert_item(
+    async fn insert_item(
         &self,
         item: TenantDataMigrationItemRecord,
-    ) -> PersistenceFuture<'_, TenantDataMigrationItemRecord>;
+    ) -> ryframe_kernel::AppResult<TenantDataMigrationItemRecord>;
 
-    fn save_item(
+    async fn save_item(
         &self,
         item: TenantDataMigrationItemRecord,
-    ) -> PersistenceFuture<'_, TenantDataMigrationItemRecord>;
+    ) -> ryframe_kernel::AppResult<TenantDataMigrationItemRecord>;
 
-    fn backup_points_for_target<'a>(
+    async fn backup_points_for_target<'a>(
         &'a self,
         target_key: &'a str,
         tenant_id: Option<&'a str>,
         limit: u64,
-    ) -> PersistenceFuture<'a, Vec<TenantDataBackupPointRecord>>;
+    ) -> ryframe_kernel::AppResult<Vec<TenantDataBackupPointRecord>>;
 
-    fn has_validated_backup<'a>(
+    async fn has_validated_backup<'a>(
         &'a self,
         migration: &'a TenantDataMigrationRecord,
         not_before: DateTime<Utc>,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn TenantDataMigrationTransaction>>;
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn TenantDataMigrationTransaction>>;
 }

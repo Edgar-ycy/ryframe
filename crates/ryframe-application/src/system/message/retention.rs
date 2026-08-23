@@ -1,5 +1,7 @@
 use ryframe_kernel::AppResult;
 
+use crate::TransactionAuditMode;
+
 use super::MessageService;
 
 const RETENTION_BATCH_SIZE: u64 = 500;
@@ -15,7 +17,7 @@ impl MessageService {
             let batch = transaction
                 .delete_expired_batch(now, RETENTION_BATCH_SIZE)
                 .await?;
-            transaction.commit().await?;
+            transaction.commit(TransactionAuditMode::Skip).await?;
             deleted = deleted.saturating_add(batch);
             if batch < RETENTION_BATCH_SIZE {
                 return Ok(deleted);

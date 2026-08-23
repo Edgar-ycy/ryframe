@@ -1,8 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-use crate::PersistenceFuture;
-
 #[derive(Debug)]
 pub struct ExportExecutionRecord {
     pub id: i64,
@@ -40,45 +38,47 @@ pub enum ExportStartDecision {
     NotRunnable,
 }
 
+#[async_trait::async_trait]
 pub trait ExportExecutionTransaction: Send + Sync {
-    fn try_start<'a>(
+    async fn try_start<'a>(
         &'a self,
         export_id: i64,
         tenant_id: &'a str,
         maximum_running: u64,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, ExportStartDecision>;
+    ) -> ryframe_kernel::AppResult<ExportStartDecision>;
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 /// Worker 执行导出时使用的控制库状态端口。
+#[async_trait::async_trait]
 pub trait ExportExecutionPersistencePort: Send + Sync {
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn find_by_background_job(
+    async fn find_by_background_job(
         &self,
         background_job_id: i64,
-    ) -> PersistenceFuture<'_, Option<ExportExecutionRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<ExportExecutionRecord>>;
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn ExportExecutionTransaction>>;
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn ExportExecutionTransaction>>;
 
-    fn update_exported_rows(
+    async fn update_exported_rows(
         &self,
         export_id: i64,
         exported_rows: i64,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'_, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn find_background_lease(
+    async fn find_background_lease(
         &self,
         background_job_id: i64,
-    ) -> PersistenceFuture<'_, Option<ExportBackgroundLease>>;
+    ) -> ryframe_kernel::AppResult<Option<ExportBackgroundLease>>;
 
-    fn find_export_state(
+    async fn find_export_state(
         &self,
         export_id: i64,
-    ) -> PersistenceFuture<'_, Option<ExportExecutionState>>;
+    ) -> ryframe_kernel::AppResult<Option<ExportExecutionState>>;
 }

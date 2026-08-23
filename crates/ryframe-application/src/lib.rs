@@ -52,10 +52,7 @@ pub use jobs::{
     ScheduledJobTargetRegistry, ScheduledJobTargetScope, UpdateJobSchedule,
     validate_persisted_schedule_configuration,
 };
-pub use persistence::{
-    ControlTransaction, PersistenceFuture, PersistenceTransaction, TransactionAuditMode,
-    complete_transaction,
-};
+pub use persistence::{PersistenceTransaction, TransactionAuditMode, complete_transaction};
 pub use principal_resolver::PrincipalResolver;
 pub use request_tenant_context::{TenantContext, with_tenant_context};
 pub use runtime_policy::{

@@ -1,7 +1,5 @@
 use chrono::{DateTime, Utc};
 
-use crate::PersistenceFuture;
-
 #[derive(Debug)]
 pub struct ExportCleanupRecord {
     pub id: i64,
@@ -26,47 +24,56 @@ pub enum ExportCleanupFileLookup {
     Found(ExportCleanupFile),
 }
 
+#[async_trait::async_trait]
 pub trait ExportCleanupTransaction: Send + Sync {
-    fn lock_export(&self, export_id: i64) -> PersistenceFuture<'_, Option<ExportCleanupRecord>>;
+    async fn lock_export(
+        &self,
+        export_id: i64,
+    ) -> ryframe_kernel::AppResult<Option<ExportCleanupRecord>>;
 
-    fn hard_delete_file<'a>(
+    async fn hard_delete_file<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn delete_pending_export(&self, export_id: i64) -> PersistenceFuture<'_, bool>;
+    async fn delete_pending_export(&self, export_id: i64) -> ryframe_kernel::AppResult<bool>;
 
-    fn mark_expired(&self, export_id: i64, now: DateTime<Utc>) -> PersistenceFuture<'_, bool>;
+    async fn mark_expired(
+        &self,
+        export_id: i64,
+        now: DateTime<Utc>,
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 /// 导出墓碑与过期结果清理使用的控制库端口。
+#[async_trait::async_trait]
 pub trait ExportCleanupPersistencePort: Send + Sync {
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn list_delete_pending(
+    async fn list_delete_pending(
         &self,
         after_id: Option<i64>,
         limit: u64,
-    ) -> PersistenceFuture<'_, Vec<ExportCleanupRecord>>;
+    ) -> ryframe_kernel::AppResult<Vec<ExportCleanupRecord>>;
 
-    fn list_expired(
+    async fn list_expired(
         &self,
         now: DateTime<Utc>,
         after_id: Option<i64>,
         limit: u64,
-    ) -> PersistenceFuture<'_, Vec<ExportCleanupRecord>>;
+    ) -> ryframe_kernel::AppResult<Vec<ExportCleanupRecord>>;
 
-    fn lookup_result_file<'a>(
+    async fn lookup_result_file<'a>(
         &'a self,
         tenant_id: &'a str,
         export_id: i64,
         file_id: i64,
-    ) -> PersistenceFuture<'a, ExportCleanupFileLookup>;
+    ) -> ryframe_kernel::AppResult<ExportCleanupFileLookup>;
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn ExportCleanupTransaction>>;
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn ExportCleanupTransaction>>;
 }

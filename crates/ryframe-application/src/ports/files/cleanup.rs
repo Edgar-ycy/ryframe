@@ -1,7 +1,5 @@
 use chrono::{DateTime, Utc};
 
-use crate::PersistenceFuture;
-
 pub const FILE_DEL_FLAG_NORMAL: &str = "0";
 pub const FILE_UPLOAD_STATUS_PENDING: &str = "pending";
 pub const FILE_UPLOAD_STATUS_CLEANUP: &str = "cleanup";
@@ -20,101 +18,103 @@ pub struct FileCleanupRecord {
 }
 
 /// 内部文件清理声明所使用的控制库事务。
+#[async_trait::async_trait]
 pub trait FileCleanupTransaction: Send + Sync {
-    fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()>;
+    async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()>;
 
-    fn find_for_update<'a>(
+    async fn find_for_update<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
-    ) -> PersistenceFuture<'a, Option<FileCleanupRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<FileCleanupRecord>>;
 
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn claim_expired_import<'a>(
+    async fn claim_expired_import<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
         claim_token: &'a str,
         expired_before: DateTime<Utc>,
         claim_until: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn mark_unreferenced_config_package<'a>(
+    async fn mark_unreferenced_config_package<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
         now: DateTime<Utc>,
         cleanup_after: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 /// 内部文件清理所需的持久化端口。
+#[async_trait::async_trait]
 pub trait FileCleanupPersistencePort: Send + Sync {
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn FileCleanupTransaction>>;
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn FileCleanupTransaction>>;
 
-    fn find<'a>(
+    async fn find<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
-    ) -> PersistenceFuture<'a, Option<FileCleanupRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<FileCleanupRecord>>;
 
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn find_stale_config_packages(
+    async fn find_stale_config_packages(
         &self,
         ready_before: DateTime<Utc>,
         limit: u64,
-    ) -> PersistenceFuture<'_, Vec<FileCleanupRecord>>;
+    ) -> ryframe_kernel::AppResult<Vec<FileCleanupRecord>>;
 
-    fn find_expired_reservations(
+    async fn find_expired_reservations(
         &self,
         now: DateTime<Utc>,
         limit: u64,
-    ) -> PersistenceFuture<'_, Vec<FileCleanupRecord>>;
+    ) -> ryframe_kernel::AppResult<Vec<FileCleanupRecord>>;
 
-    fn begin_expired_cleanup<'a>(
+    async fn begin_expired_cleanup<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
         now: DateTime<Utc>,
         cleanup_after: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn claim_expired_cleanup<'a>(
+    async fn claim_expired_cleanup<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
         claim_token: &'a str,
         claimed_at: DateTime<Utc>,
         claim_until: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn begin_owned_cleanup<'a>(
+    async fn begin_owned_cleanup<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
         reservation_token: &'a str,
         cleanup_after: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn defer_claim<'a>(
+    async fn defer_claim<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
         claim_token: &'a str,
         updated_at: DateTime<Utc>,
         retry_at: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn complete_claim<'a>(
+    async fn complete_claim<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
         claim_token: &'a str,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 }

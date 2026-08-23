@@ -5,12 +5,8 @@ use crate::{
     TenantUsagePageFilter, TenantUsageRepository, entities::tenant,
 };
 
-use ryframe_application::{
-    PersistenceFuture,
-    ports::tenants::{
-        TenantCapacityRecord, TenantUsageAggregateRecord, TenantUsageFilter,
-        TenantUsagePersistencePort,
-    },
+use ryframe_application::ports::tenants::{
+    TenantCapacityRecord, TenantUsageAggregateRecord, TenantUsageFilter, TenantUsagePersistencePort,
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn TenantUsagePersistencePort> {
@@ -21,73 +17,68 @@ struct DatabaseTenantUsagePersistence {
     database: ControlDatabaseCluster,
 }
 
+#[async_trait::async_trait]
 impl TenantUsagePersistencePort for DatabaseTenantUsagePersistence {
-    fn page<'a>(
+    async fn page<'a>(
         &'a self,
         filter: TenantUsageFilter<'a>,
         page: &'a ryframe_kernel::ValidatedPageQuery,
         calculated_at: chrono::DateTime<chrono::Utc>,
-    ) -> PersistenceFuture<'a, ryframe_kernel::PageResult<TenantCapacityRecord>> {
-        Box::pin(async move {
-            let database = self
-                .database
-                .select_read(ReadConsistency::Strong)
-                .connection;
-            let result = TenantUsageRepository
-                .page(
-                    &database,
-                    TenantUsagePageFilter {
-                        tenant_id: filter.tenant_id,
-                        name: filter.name,
-                        status: filter.status,
-                        expiration_status: filter.expiration_status,
-                        capacity_status: filter.capacity_status,
-                    },
-                    page,
-                    calculated_at,
-                )
-                .await?;
-            Ok(ryframe_kernel::PageResult {
-                records: result.records.into_iter().map(to_tenant_record).collect(),
-                total: result.total,
-                page: result.page,
-                page_size: result.page_size,
-            })
+    ) -> ryframe_kernel::AppResult<ryframe_kernel::PageResult<TenantCapacityRecord>> {
+        let database = self
+            .database
+            .select_read(ReadConsistency::Strong)
+            .connection;
+        let result = TenantUsageRepository
+            .page(
+                &database,
+                TenantUsagePageFilter {
+                    tenant_id: filter.tenant_id,
+                    name: filter.name,
+                    status: filter.status,
+                    expiration_status: filter.expiration_status,
+                    capacity_status: filter.capacity_status,
+                },
+                page,
+                calculated_at,
+            )
+            .await?;
+        Ok(ryframe_kernel::PageResult {
+            records: result.records.into_iter().map(to_tenant_record).collect(),
+            total: result.total,
+            page: result.page,
+            page_size: result.page_size,
         })
     }
 
-    fn find<'a>(
+    async fn find<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, Option<TenantCapacityRecord>> {
-        Box::pin(async move {
-            let database = self
-                .database
-                .select_read(ReadConsistency::Strong)
-                .connection;
-            Ok(TenantRepository
-                .find_by_tenant_id(&database, tenant_id)
-                .await?
-                .map(to_tenant_record))
-        })
+    ) -> ryframe_kernel::AppResult<Option<TenantCapacityRecord>> {
+        let database = self
+            .database
+            .select_read(ReadConsistency::Strong)
+            .connection;
+        Ok(TenantRepository
+            .find_by_tenant_id(&database, tenant_id)
+            .await?
+            .map(to_tenant_record))
     }
 
-    fn aggregate<'a>(
+    async fn aggregate<'a>(
         &'a self,
         tenant_ids: &'a [String],
-    ) -> PersistenceFuture<'a, BTreeMap<String, TenantUsageAggregateRecord>> {
-        Box::pin(async move {
-            let database = self
-                .database
-                .select_read(ReadConsistency::Strong)
-                .connection;
-            Ok(TenantUsageRepository
-                .aggregate_for_tenants(&database, tenant_ids)
-                .await?
-                .into_iter()
-                .map(to_aggregate_entry)
-                .collect())
-        })
+    ) -> ryframe_kernel::AppResult<BTreeMap<String, TenantUsageAggregateRecord>> {
+        let database = self
+            .database
+            .select_read(ReadConsistency::Strong)
+            .connection;
+        Ok(TenantUsageRepository
+            .aggregate_for_tenants(&database, tenant_ids)
+            .await?
+            .into_iter()
+            .map(to_aggregate_entry)
+            .collect())
     }
 }
 

@@ -1,8 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-use crate::PersistenceFuture;
-
 #[derive(Debug)]
 pub struct ExportRequesterRecord {
     pub id: i64,
@@ -34,60 +32,62 @@ pub struct ExportDownloadFile {
 }
 
 /// 申请人取消导出时使用的控制库事务。
+#[async_trait::async_trait]
 pub trait ExportRequesterTransaction: Send + Sync {
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn cancel<'a>(
+    async fn cancel<'a>(
         &'a self,
         tenant_id: &'a str,
         requester_id: i64,
         export_id: i64,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 /// 面向导出申请人的查询与状态变更端口。
+#[async_trait::async_trait]
 pub trait ExportRequesterPersistencePort: Send + Sync {
-    fn find<'a>(
+    async fn find<'a>(
         &'a self,
         tenant_id: &'a str,
         requester_id: i64,
         export_id: i64,
-    ) -> PersistenceFuture<'a, Option<ExportRequesterRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<ExportRequesterRecord>>;
 
-    fn list_recent<'a>(
+    async fn list_recent<'a>(
         &'a self,
         tenant_id: &'a str,
         requester_id: i64,
         limit: u64,
-    ) -> PersistenceFuture<'a, Vec<ExportRequesterRecord>>;
+    ) -> ryframe_kernel::AppResult<Vec<ExportRequesterRecord>>;
 
-    fn list_recent_for_notifications<'a>(
+    async fn list_recent_for_notifications<'a>(
         &'a self,
         tenant_id: &'a str,
         requester_id: i64,
         limit: u64,
-    ) -> PersistenceFuture<'a, Vec<ExportRequesterRecord>>;
+    ) -> ryframe_kernel::AppResult<Vec<ExportRequesterRecord>>;
 
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn mark_notifications_read<'a>(
+    async fn mark_notifications_read<'a>(
         &'a self,
         tenant_id: &'a str,
         requester_id: i64,
         ids: &'a [i64],
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, u64>;
+    ) -> ryframe_kernel::AppResult<u64>;
 
-    fn find_download_file<'a>(
+    async fn find_download_file<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
-    ) -> PersistenceFuture<'a, Option<ExportDownloadFile>>;
+    ) -> ryframe_kernel::AppResult<Option<ExportDownloadFile>>;
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn ExportRequesterTransaction>>;
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn ExportRequesterTransaction>>;
 }

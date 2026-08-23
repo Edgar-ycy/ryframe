@@ -5,7 +5,7 @@ use ryframe_kernel::{ActorContext, AppError, AppResult};
 use serde::Serialize;
 
 use crate::{
-    AuthorizationCache,
+    AuthorizationCache, TransactionAuditMode,
     ports::users::{ProfileAvatarState, ProfilePersistencePort, ProfileTransaction},
 };
 
@@ -99,7 +99,9 @@ impl ProfileService {
                 normalize_preferred_locale(preferred_locale)?,
             )
             .await?;
-        transaction.commit().await
+        transaction
+            .commit(TransactionAuditMode::CurrentRequest)
+            .await
     }
 
     /// 修改密码。
@@ -129,7 +131,9 @@ impl ProfileService {
         let versions = transaction
             .increment_user_authorization_version(tenant_id, actor.user_id)
             .await?;
-        transaction.commit().await?;
+        transaction
+            .commit(TransactionAuditMode::CurrentRequest)
+            .await?;
         self.authorization_cache
             .sync_user_versions(tenant_id, &versions)
             .await
@@ -154,7 +158,11 @@ impl ProfileService {
             )
             .await;
         match result {
-            Ok(()) => transaction.commit().await,
+            Ok(()) => {
+                transaction
+                    .commit(TransactionAuditMode::CurrentRequest)
+                    .await
+            }
             Err(error) => {
                 if let Err(rollback_error) = transaction.rollback().await {
                     tracing::error!(%rollback_error, "头像关联事务回滚失败");
@@ -249,7 +257,11 @@ impl ProfileService {
             .schedule_avatar_cleanup_in_transaction(transaction.as_ref(), tenant_id, avatar_file_id)
             .await;
         match result {
-            Ok(true) => transaction.commit().await,
+            Ok(true) => {
+                transaction
+                    .commit(TransactionAuditMode::CurrentRequest)
+                    .await
+            }
             Ok(false) => transaction.rollback().await,
             Err(error) => {
                 if let Err(rollback_error) = transaction.rollback().await {

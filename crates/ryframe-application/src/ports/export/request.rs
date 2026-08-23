@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use ryframe_kernel::{ActorContext, ExportQuerySnapshot};
 use serde_json::Value;
 
-use crate::{EnqueueJob, PersistenceFuture, system::ExportSelection};
+use crate::{EnqueueJob, system::ExportSelection};
 
 use super::ExportRequesterRecord;
 
@@ -23,36 +23,42 @@ pub struct CreateExportRecord {
 }
 
 /// 导出申请创建所需的控制库一致性事务。
+#[async_trait::async_trait]
 pub trait ExportRequestTransaction: Send + Sync {
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn find_active<'a>(
+    async fn find_active<'a>(
         &'a self,
         tenant_id: &'a str,
         requester_id: i64,
         request_fingerprint: &'a str,
-    ) -> PersistenceFuture<'a, Option<ExportRequesterRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<ExportRequesterRecord>>;
 
-    fn summarize_selection<'a>(
+    async fn summarize_selection<'a>(
         &'a self,
         tenant_id: &'a str,
         actor: &'a ActorContext,
         selection: &'a ExportSelection,
-    ) -> PersistenceFuture<'a, ExportQuerySnapshot>;
+    ) -> ryframe_kernel::AppResult<ExportQuerySnapshot>;
 
-    fn enqueue_job(&self, command: EnqueueJob, now: DateTime<Utc>) -> PersistenceFuture<'_, i64>;
+    async fn enqueue_job(
+        &self,
+        command: EnqueueJob,
+        now: DateTime<Utc>,
+    ) -> ryframe_kernel::AppResult<i64>;
 
-    fn create_export(
+    async fn create_export(
         &self,
         command: CreateExportRecord,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'_, ExportRequesterRecord>;
+    ) -> ryframe_kernel::AppResult<ExportRequesterRecord>;
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
+#[async_trait::async_trait]
 pub trait ExportRequestPersistencePort: Send + Sync {
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn ExportRequestTransaction>>;
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn ExportRequestTransaction>>;
 }

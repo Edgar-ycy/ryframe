@@ -1,7 +1,5 @@
 use chrono::{DateTime, Utc};
 
-use crate::PersistenceFuture;
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FileUploadCommitMode {
     CurrentRequest,
@@ -30,74 +28,76 @@ pub struct FileUploadRecord {
 }
 
 /// 文件上传预留与完成状态所使用的控制库事务。
+#[async_trait::async_trait]
 pub trait FileUploadTransaction: Send + Sync {
-    fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, ()>;
+    async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()>;
 
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn find_by_sha256_for_update<'a>(
+    async fn find_by_sha256_for_update<'a>(
         &'a self,
         tenant_id: &'a str,
         bucket: &'a str,
         file_sha256: &'a str,
-    ) -> PersistenceFuture<'a, Option<FileUploadRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<FileUploadRecord>>;
 
-    fn restore_for_reference<'a>(
+    async fn restore_for_reference<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
         bucket: &'a str,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn ensure_storage_quota<'a>(
+    async fn ensure_storage_quota<'a>(
         &'a self,
         tenant_id: &'a str,
         additional_bytes: u64,
-    ) -> PersistenceFuture<'a, ()>;
+    ) -> ryframe_kernel::AppResult<()>;
 
-    fn insert<'a>(
+    async fn insert<'a>(
         &'a self,
         tenant_id: &'a str,
         record: FileUploadRecord,
-    ) -> PersistenceFuture<'a, FileUploadRecord>;
+    ) -> ryframe_kernel::AppResult<FileUploadRecord>;
 
-    fn mark_ready<'a>(
+    async fn mark_ready<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
         reservation_token: &'a str,
         updated_at: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn commit(self: Box<Self>, mode: FileUploadCommitMode) -> PersistenceFuture<'static, ()>;
+    async fn commit(self: Box<Self>, mode: FileUploadCommitMode) -> ryframe_kernel::AppResult<()>;
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 /// 文件上传状态机所需的持久化端口。
+#[async_trait::async_trait]
 pub trait FileUploadPersistencePort: Send + Sync {
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn FileUploadTransaction>>;
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn FileUploadTransaction>>;
 
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn renew_pending<'a>(
+    async fn renew_pending<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
         reservation_token: &'a str,
         expires_at: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn find_any<'a>(
+    async fn find_any<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
-    ) -> PersistenceFuture<'a, Option<FileUploadRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<FileUploadRecord>>;
 
-    fn find_ready<'a>(
+    async fn find_ready<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
-    ) -> PersistenceFuture<'a, Option<FileUploadRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<FileUploadRecord>>;
 }

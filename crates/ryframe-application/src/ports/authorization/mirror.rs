@@ -1,7 +1,5 @@
 use chrono::{DateTime, Utc};
 
-use crate::PersistenceFuture;
-
 /// 写入授权镜像 Outbox 的应用事件。
 #[derive(Debug)]
 pub struct AuthorizationMirrorEvent {
@@ -17,28 +15,32 @@ pub struct AuthorizationMirrorEvent {
 }
 
 /// 业务写事务提供的授权版本与镜像事件原子持久化能力。
+#[async_trait::async_trait]
 pub trait AuthorizationMirrorTransaction: Send + Sync {
-    fn increment_user_versions<'a>(
+    async fn increment_user_versions<'a>(
         &'a self,
         tenant_id: &'a str,
         user_ids: &'a [i64],
-    ) -> PersistenceFuture<'a, u64>;
+    ) -> ryframe_kernel::AppResult<u64>;
 
-    fn user_versions<'a>(
+    async fn user_versions<'a>(
         &'a self,
         tenant_id: &'a str,
         user_ids: &'a [i64],
-    ) -> PersistenceFuture<'a, Vec<(i64, i32)>>;
+    ) -> ryframe_kernel::AppResult<Vec<(i64, i32)>>;
 
-    fn increment_tenant_epoch<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, i32>;
+    async fn increment_tenant_epoch<'a>(
+        &'a self,
+        tenant_id: &'a str,
+    ) -> ryframe_kernel::AppResult<i32>;
 
-    fn increment_namespace_version<'a>(
+    async fn increment_namespace_version<'a>(
         &'a self,
         tenant_id: &'a str,
         namespace: &'a str,
-    ) -> PersistenceFuture<'a, i64>;
+    ) -> ryframe_kernel::AppResult<i64>;
 
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn record(&self, event: AuthorizationMirrorEvent) -> PersistenceFuture<'_, ()>;
+    async fn record(&self, event: AuthorizationMirrorEvent) -> ryframe_kernel::AppResult<()>;
 }

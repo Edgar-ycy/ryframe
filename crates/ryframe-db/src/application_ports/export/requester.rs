@@ -6,12 +6,9 @@ use crate::{
 use ryframe_kernel::AppError;
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
-use ryframe_application::{
-    PersistenceFuture,
-    ports::export::{
-        ExportDownloadFile, ExportRequesterPersistencePort, ExportRequesterRecord,
-        ExportRequesterTransaction,
-    },
+use ryframe_application::ports::export::{
+    ExportDownloadFile, ExportRequesterPersistencePort, ExportRequesterRecord,
+    ExportRequesterTransaction,
 };
 
 struct DatabaseExportRequesterPersistence {
@@ -26,146 +23,134 @@ pub fn port(database: ControlDatabaseCluster) -> Arc<dyn ExportRequesterPersiste
     Arc::new(DatabaseExportRequesterPersistence { database })
 }
 
+#[async_trait::async_trait]
 impl ExportRequesterPersistencePort for DatabaseExportRequesterPersistence {
-    fn find<'a>(
+    async fn find<'a>(
         &'a self,
         tenant_id: &'a str,
         requester_id: i64,
         export_id: i64,
-    ) -> PersistenceFuture<'a, Option<ExportRequesterRecord>> {
-        Box::pin(async move {
-            let database = self
-                .database
-                .select_read(ReadConsistency::Strong)
-                .connection;
-            ExportJobRepository
-                .find_by_id_for_requester(&database, tenant_id, requester_id, export_id)
-                .await
-                .map(|record| record.map(super::mapping::requester_record))
-        })
+    ) -> ryframe_kernel::AppResult<Option<ExportRequesterRecord>> {
+        let database = self
+            .database
+            .select_read(ReadConsistency::Strong)
+            .connection;
+        ExportJobRepository
+            .find_by_id_for_requester(&database, tenant_id, requester_id, export_id)
+            .await
+            .map(|record| record.map(super::mapping::requester_record))
     }
 
-    fn list_recent<'a>(
+    async fn list_recent<'a>(
         &'a self,
         tenant_id: &'a str,
         requester_id: i64,
         limit: u64,
-    ) -> PersistenceFuture<'a, Vec<ExportRequesterRecord>> {
-        Box::pin(async move {
-            let database = self
-                .database
-                .select_read(ReadConsistency::Eventual)
-                .connection;
-            ExportJobRepository
-                .list_for_requester(&database, tenant_id, requester_id, limit)
-                .await
-                .map(|records| {
-                    records
-                        .into_iter()
-                        .map(super::mapping::requester_record)
-                        .collect()
-                })
-        })
+    ) -> ryframe_kernel::AppResult<Vec<ExportRequesterRecord>> {
+        let database = self
+            .database
+            .select_read(ReadConsistency::Eventual)
+            .connection;
+        ExportJobRepository
+            .list_for_requester(&database, tenant_id, requester_id, limit)
+            .await
+            .map(|records| {
+                records
+                    .into_iter()
+                    .map(super::mapping::requester_record)
+                    .collect()
+            })
     }
 
-    fn list_recent_for_notifications<'a>(
+    async fn list_recent_for_notifications<'a>(
         &'a self,
         tenant_id: &'a str,
         requester_id: i64,
         limit: u64,
-    ) -> PersistenceFuture<'a, Vec<ExportRequesterRecord>> {
-        Box::pin(async move {
-            let database = self
-                .database
-                .select_read(ReadConsistency::Strong)
-                .connection;
-            ExportJobRepository
-                .list_for_requester(&database, tenant_id, requester_id, limit)
-                .await
-                .map(|records| {
-                    records
-                        .into_iter()
-                        .map(super::mapping::requester_record)
-                        .collect()
-                })
-        })
+    ) -> ryframe_kernel::AppResult<Vec<ExportRequesterRecord>> {
+        let database = self
+            .database
+            .select_read(ReadConsistency::Strong)
+            .connection;
+        ExportJobRepository
+            .list_for_requester(&database, tenant_id, requester_id, limit)
+            .await
+            .map(|records| {
+                records
+                    .into_iter()
+                    .map(super::mapping::requester_record)
+                    .collect()
+            })
     }
 
-    fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move { crate::repositories::database_utc_now(self.database.write()).await })
+    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
+        crate::repositories::database_utc_now(self.database.write()).await
     }
 
-    fn mark_notifications_read<'a>(
+    async fn mark_notifications_read<'a>(
         &'a self,
         tenant_id: &'a str,
         requester_id: i64,
         ids: &'a [i64],
         now: chrono::DateTime<chrono::Utc>,
-    ) -> PersistenceFuture<'a, u64> {
-        Box::pin(async move {
-            ExportJobRepository
-                .mark_notifications_read(self.database.write(), tenant_id, requester_id, ids, now)
-                .await
-        })
+    ) -> ryframe_kernel::AppResult<u64> {
+        ExportJobRepository
+            .mark_notifications_read(self.database.write(), tenant_id, requester_id, ids, now)
+            .await
     }
 
-    fn find_download_file<'a>(
+    async fn find_download_file<'a>(
         &'a self,
         tenant_id: &'a str,
         file_id: i64,
-    ) -> PersistenceFuture<'a, Option<ExportDownloadFile>> {
-        Box::pin(async move {
-            FileRepository
-                .find_by_id(self.database.write(), tenant_id, file_id)
-                .await
-                .map(|file| {
-                    file.map(|file| ExportDownloadFile {
-                        bucket: file.bucket,
-                        storage_path: file.storage_path,
-                    })
+    ) -> ryframe_kernel::AppResult<Option<ExportDownloadFile>> {
+        FileRepository
+            .find_by_id(self.database.write(), tenant_id, file_id)
+            .await
+            .map(|file| {
+                file.map(|file| ExportDownloadFile {
+                    bucket: file.bucket,
+                    storage_path: file.storage_path,
                 })
-        })
+            })
     }
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn ExportRequesterTransaction>> {
-        Box::pin(async move {
-            let transaction = self
-                .database
-                .write()
-                .begin()
-                .await
-                .map_err(database_error)?;
-            Ok(Box::new(DatabaseExportRequesterTransaction { transaction })
-                as Box<dyn ExportRequesterTransaction>)
-        })
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn ExportRequesterTransaction>> {
+        let transaction = self
+            .database
+            .write()
+            .begin()
+            .await
+            .map_err(database_error)?;
+        Ok(Box::new(DatabaseExportRequesterTransaction { transaction })
+            as Box<dyn ExportRequesterTransaction>)
     }
 }
 
+#[async_trait::async_trait]
 impl ExportRequesterTransaction for DatabaseExportRequesterTransaction {
-    fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move { crate::repositories::database_utc_now(&self.transaction).await })
+    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
+        crate::repositories::database_utc_now(&self.transaction).await
     }
 
-    fn cancel<'a>(
+    async fn cancel<'a>(
         &'a self,
         tenant_id: &'a str,
         requester_id: i64,
         export_id: i64,
         now: chrono::DateTime<chrono::Utc>,
-    ) -> PersistenceFuture<'a, bool> {
-        Box::pin(async move {
-            ExportJobRepository
-                .cancel_for_requester(&self.transaction, tenant_id, requester_id, export_id, now)
-                .await
-        })
+    ) -> ryframe_kernel::AppResult<bool> {
+        ExportJobRepository
+            .cancel_for_requester(&self.transaction, tenant_id, requester_id, export_id, now)
+            .await
     }
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move { super::super::audit::commit_current_audit(self.transaction).await })
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
+        super::super::audit::commit_current_audit(self.transaction).await
     }
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move { self.transaction.rollback().await.map_err(database_error) })
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
+        self.transaction.rollback().await.map_err(database_error)
     }
 }
 

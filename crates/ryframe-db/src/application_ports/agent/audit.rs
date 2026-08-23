@@ -4,9 +4,8 @@ use crate::{ControlDatabaseCluster, ServiceAccessAuditRepository, entities::serv
 use ryframe_kernel::AppError;
 use sea_orm::TransactionTrait;
 
-use ryframe_application::{
-    PersistenceFuture,
-    agent::{AgentAccessAuditDraft, AgentAccessAuditRecord, AgentAuditWritePort},
+use ryframe_application::agent::{
+    AgentAccessAuditDraft, AgentAccessAuditRecord, AgentAuditWritePort,
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn AgentAuditWritePort> {
@@ -17,35 +16,34 @@ struct DatabaseAgentAuditWrite {
     database: ControlDatabaseCluster,
 }
 
+#[async_trait::async_trait]
 impl AgentAuditWritePort for DatabaseAgentAuditWrite {
-    fn record_failure(&self, audit: AgentAccessAuditDraft) -> PersistenceFuture<'_, ()> {
-        Box::pin(async move {
-            let transaction = self
-                .database
-                .write()
-                .begin()
-                .await
-                .map_err(database_error)?;
-            let result = async {
-                let completed_at = crate::repositories::database_utc_now(&transaction).await?;
-                let audit = audit.complete(completed_at);
-                ServiceAccessAuditRepository
-                    .insert(&transaction, model(audit))
-                    .await?;
+    async fn record_failure(&self, audit: AgentAccessAuditDraft) -> ryframe_kernel::AppResult<()> {
+        let transaction = self
+            .database
+            .write()
+            .begin()
+            .await
+            .map_err(database_error)?;
+        let result = async {
+            let completed_at = crate::repositories::database_utc_now(&transaction).await?;
+            let audit = audit.complete(completed_at);
+            ServiceAccessAuditRepository
+                .insert(&transaction, model(audit))
+                .await?;
+            Ok(())
+        }
+        .await;
+        match result {
+            Ok(()) => {
+                transaction.commit().await.map_err(database_error)?;
                 Ok(())
             }
-            .await;
-            match result {
-                Ok(()) => {
-                    transaction.commit().await.map_err(database_error)?;
-                    Ok(())
-                }
-                Err(error) => {
-                    let _ = transaction.rollback().await;
-                    Err(error)
-                }
+            Err(error) => {
+                let _ = transaction.rollback().await;
+                Err(error)
             }
-        })
+        }
     }
 }
 

@@ -1,7 +1,5 @@
 use chrono::{DateTime, Utc};
 
-use crate::PersistenceFuture;
-
 #[derive(Clone, Debug)]
 pub struct IdentityTenantRecord {
     pub tenant_id: String,
@@ -49,57 +47,58 @@ pub struct IdentityRoleRecord {
     pub data_scope: String,
 }
 
+#[async_trait::async_trait]
 pub trait IdentityAuthorizationReadPort: Send + Sync {
-    fn tenant<'a>(
+    async fn tenant<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> PersistenceFuture<'a, Option<IdentityTenantRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<IdentityTenantRecord>>;
 
-    fn user_by_id<'a>(
+    async fn user_by_id<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-    ) -> PersistenceFuture<'a, Option<IdentityUserRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<IdentityUserRecord>>;
 
-    fn user_by_username<'a>(
+    async fn user_by_username<'a>(
         &'a self,
         tenant_id: &'a str,
         username: &'a str,
-    ) -> PersistenceFuture<'a, Option<IdentityUserRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<IdentityUserRecord>>;
 
-    fn roles<'a>(
+    async fn roles<'a>(
         &'a self,
         tenant_id: &'a str,
         user_id: i64,
-    ) -> PersistenceFuture<'a, Vec<IdentityRoleRecord>>;
+    ) -> ryframe_kernel::AppResult<Vec<IdentityRoleRecord>>;
 
-    fn permission_codes<'a>(
+    async fn permission_codes<'a>(
         &'a self,
         tenant_id: &'a str,
         role_ids: &'a [i64],
-    ) -> PersistenceFuture<'a, Vec<String>>;
+    ) -> ryframe_kernel::AppResult<Vec<String>>;
 
-    fn department_name<'a>(
+    async fn department_name<'a>(
         &'a self,
         tenant_id: &'a str,
         dept_id: i64,
-    ) -> PersistenceFuture<'a, Option<String>>;
+    ) -> ryframe_kernel::AppResult<Option<String>>;
 
-    fn department_ancestors<'a>(
+    async fn department_ancestors<'a>(
         &'a self,
         tenant_id: &'a str,
         dept_id: i64,
-    ) -> PersistenceFuture<'a, Option<String>>;
+    ) -> ryframe_kernel::AppResult<Option<String>>;
 
-    fn role_department_ids<'a>(
+    async fn role_department_ids<'a>(
         &'a self,
         tenant_id: &'a str,
         role_ids: &'a [i64],
-    ) -> PersistenceFuture<'a, Vec<i64>>;
+    ) -> ryframe_kernel::AppResult<Vec<i64>>;
 
-    fn child_department_ids<'a>(
+    async fn child_department_ids<'a>(
         &'a self,
         tenant_id: &'a str,
         dept_id: i64,
-    ) -> PersistenceFuture<'a, Vec<i64>>;
+    ) -> ryframe_kernel::AppResult<Vec<i64>>;
 }

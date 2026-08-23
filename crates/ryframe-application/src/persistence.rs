@@ -1,14 +1,5 @@
-use std::{future::Future, pin::Pin};
-
 use async_trait::async_trait;
 use ryframe_kernel::AppResult;
-
-pub type PersistenceFuture<'a, T> = Pin<Box<dyn Future<Output = AppResult<T>> + Send + 'a>>;
-
-/// 由应用用例控制提交时机的控制库事务。
-pub trait ControlTransaction: Send {
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()>;
-}
 
 /// 提交事务时采用的审计策略。
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

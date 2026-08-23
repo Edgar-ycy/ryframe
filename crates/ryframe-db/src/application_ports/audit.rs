@@ -9,7 +9,7 @@ use ryframe_application::{
 };
 use ryframe_application::{
     AUDIT_OPERATION_OUTBOX_EVENT_TYPE, AuditOperationEvent, AuditOutboxPersistencePort,
-    AuditTransactionBinding, PersistenceFuture,
+    AuditTransactionBinding,
 };
 
 pub fn outbox(database: ControlDatabaseCluster) -> Arc<dyn AuditOutboxPersistencePort> {
@@ -20,28 +20,27 @@ struct DatabaseAuditOutboxPersistence {
     database: ControlDatabaseCluster,
 }
 
+#[async_trait::async_trait]
 impl AuditOutboxPersistencePort for DatabaseAuditOutboxPersistence {
-    fn record<'a>(
+    async fn record<'a>(
         &'a self,
         event: &'a AuditOperationEvent,
         max_attempts: i32,
-    ) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            let transaction = self
-                .database
-                .write()
-                .begin()
-                .await
-                .map_err(database_error)?;
-            let result = record_event_in_transaction(&transaction, event, max_attempts).await;
-            match result {
-                Ok(()) => transaction.commit().await.map_err(database_error),
-                Err(error) => {
-                    let _ = transaction.rollback().await;
-                    Err(error)
-                }
+    ) -> ryframe_kernel::AppResult<()> {
+        let transaction = self
+            .database
+            .write()
+            .begin()
+            .await
+            .map_err(database_error)?;
+        let result = record_event_in_transaction(&transaction, event, max_attempts).await;
+        match result {
+            Ok(()) => transaction.commit().await.map_err(database_error),
+            Err(error) => {
+                let _ = transaction.rollback().await;
+                Err(error)
             }
-        })
+        }
     }
 }
 

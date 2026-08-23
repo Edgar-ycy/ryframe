@@ -3,7 +3,7 @@ use std::time::Duration as StdDuration;
 use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 
-use crate::{EnqueueJob, EnqueueJobResult, PersistenceFuture};
+use crate::{EnqueueJob, EnqueueJobResult};
 
 use super::ExecutionTenantScope;
 
@@ -110,111 +110,116 @@ pub enum TenantConfigJobKind {
 }
 
 /// 已由调用方持有的控制库事务提供的任务原子写能力。
+#[async_trait::async_trait]
 pub trait BackgroundJobTransaction: Send + Sync {
-    fn enqueue(&self, command: EnqueueJob) -> PersistenceFuture<'_, EnqueueJobResult>;
+    async fn enqueue(&self, command: EnqueueJob) -> ryframe_kernel::AppResult<EnqueueJobResult>;
 
-    fn reactivate_linked<'a>(
+    async fn reactivate_linked<'a>(
         &'a self,
         job_id: i64,
         expected_job_type: &'a str,
         payload_key: &'a str,
         expected_resource_id: i64,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 }
 
 /// 后台任务队列使用的控制库持久化端口。
+#[async_trait::async_trait]
 pub trait BackgroundJobPersistencePort: Send + Sync {
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn claim_next<'a>(
+    async fn claim_next<'a>(
         &'a self,
         worker_id: &'a str,
         lease_duration: Duration,
         now: DateTime<Utc>,
         tenant_scope: &'a ExecutionTenantScope,
-    ) -> PersistenceFuture<'a, Option<ClaimedJobRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<ClaimedJobRecord>>;
 
-    fn dead_letter<'a>(
+    async fn dead_letter<'a>(
         &'a self,
         job_id: i64,
         worker_id: &'a str,
         error_message: &'a str,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn renew_lease<'a>(
+    async fn renew_lease<'a>(
         &'a self,
         job_id: i64,
         worker_id: &'a str,
         lease_duration: Duration,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn complete<'a>(
+    async fn complete<'a>(
         &'a self,
         job_id: i64,
         worker_id: &'a str,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn defer_retryable_conflict<'a>(
+    async fn defer_retryable_conflict<'a>(
         &'a self,
         job_id: i64,
         worker_id: &'a str,
         available_at: DateTime<Utc>,
         error_message: &'a str,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn fail<'a>(&'a self, command: FailJobCommand<'a>) -> PersistenceFuture<'a, JobFailureOutcome>;
+    async fn fail<'a>(
+        &'a self,
+        command: FailJobCommand<'a>,
+    ) -> ryframe_kernel::AppResult<JobFailureOutcome>;
 
-    fn stats_for_types<'a>(
+    async fn stats_for_types<'a>(
         &'a self,
         job_types: &'a [String],
         tenant_scope: &'a ExecutionTenantScope,
-    ) -> PersistenceFuture<'a, Vec<BackgroundJobTypeStats>>;
+    ) -> ryframe_kernel::AppResult<Vec<BackgroundJobTypeStats>>;
 
-    fn recover_expired_leases<'a>(
+    async fn recover_expired_leases<'a>(
         &'a self,
         now: DateTime<Utc>,
         tenant_scope: &'a ExecutionTenantScope,
-    ) -> PersistenceFuture<'a, RecoveredJobLeases>;
+    ) -> ryframe_kernel::AppResult<RecoveredJobLeases>;
 
-    fn enqueue(&self, command: EnqueueJob) -> PersistenceFuture<'_, EnqueueJobResult>;
+    async fn enqueue(&self, command: EnqueueJob) -> ryframe_kernel::AppResult<EnqueueJobResult>;
 
-    fn list<'a>(
+    async fn list<'a>(
         &'a self,
         filter: BackgroundJobReadFilter<'a>,
         page: ValidatedPageQuery,
-    ) -> PersistenceFuture<'a, PageResult<BackgroundJobRecord>>;
+    ) -> ryframe_kernel::AppResult<PageResult<BackgroundJobRecord>>;
 
-    fn stats<'a>(
+    async fn stats<'a>(
         &'a self,
         filter: BackgroundJobReadFilter<'a>,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, BackgroundJobStatsRecord>;
+    ) -> ryframe_kernel::AppResult<BackgroundJobStatsRecord>;
 
-    fn find_for_tenant<'a>(
+    async fn find_for_tenant<'a>(
         &'a self,
         tenant_id: &'a str,
         include_platform: bool,
         job_id: i64,
-    ) -> PersistenceFuture<'a, Option<BackgroundJobRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<BackgroundJobRecord>>;
 
-    fn retry_dead<'a>(
+    async fn retry_dead<'a>(
         &'a self,
         tenant_id: &'a str,
         include_platform: bool,
         job_id: i64,
         retried_by: i64,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool>;
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn tenant_config_job_owner<'a>(
+    async fn tenant_config_job_owner<'a>(
         &'a self,
         tenant_id: &'a str,
         job_id: i64,
         kind: TenantConfigJobKind,
-    ) -> PersistenceFuture<'a, Option<i64>>;
+    ) -> ryframe_kernel::AppResult<Option<i64>>;
 }

@@ -19,7 +19,7 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use super::super::transaction::DatabasePortTransaction;
 
 use ryframe_application::{
-    EnqueueJob, EnqueueJobResult, PersistenceFuture,
+    EnqueueJob, EnqueueJobResult,
     ports::jobs::{
         BackgroundJobPersistencePort, BackgroundJobReadFilter, BackgroundJobRecord,
         BackgroundJobStatsRecord, BackgroundJobTransaction, BackgroundJobTypeStats,
@@ -42,286 +42,259 @@ struct DatabaseJobQueuePersistence {
     repository: BackgroundJobRepository,
 }
 
+#[async_trait::async_trait]
 impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>> {
-        Box::pin(async move { crate::repositories::database_utc_now(self.database.write()).await })
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>> {
+        crate::repositories::database_utc_now(self.database.write()).await
     }
 
-    fn claim_next<'a>(
+    async fn claim_next<'a>(
         &'a self,
         worker_id: &'a str,
         lease_duration: Duration,
         now: DateTime<Utc>,
         tenant_scope: &'a ExecutionTenantScope,
-    ) -> PersistenceFuture<'a, Option<ClaimedJobRecord>> {
-        Box::pin(async move {
-            self.repository
-                .claim_next(
-                    self.database.write(),
-                    worker_id,
-                    lease_duration,
-                    now,
-                    &database_scope(tenant_scope),
-                )
-                .await
-                .map(|job| job.map(to_claimed_record))
-        })
+    ) -> ryframe_kernel::AppResult<Option<ClaimedJobRecord>> {
+        self.repository
+            .claim_next(
+                self.database.write(),
+                worker_id,
+                lease_duration,
+                now,
+                &database_scope(tenant_scope),
+            )
+            .await
+            .map(|job| job.map(to_claimed_record))
     }
 
-    fn dead_letter<'a>(
+    async fn dead_letter<'a>(
         &'a self,
         job_id: i64,
         worker_id: &'a str,
         error_message: &'a str,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool> {
-        Box::pin(async move {
-            self.repository
-                .dead_letter(self.database.write(), job_id, worker_id, error_message, now)
-                .await
-        })
+    ) -> ryframe_kernel::AppResult<bool> {
+        self.repository
+            .dead_letter(self.database.write(), job_id, worker_id, error_message, now)
+            .await
     }
 
-    fn renew_lease<'a>(
+    async fn renew_lease<'a>(
         &'a self,
         job_id: i64,
         worker_id: &'a str,
         lease_duration: Duration,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool> {
-        Box::pin(async move {
-            self.repository
-                .renew_lease(
-                    self.database.write(),
-                    job_id,
-                    worker_id,
-                    lease_duration,
-                    now,
-                )
-                .await
-        })
+    ) -> ryframe_kernel::AppResult<bool> {
+        self.repository
+            .renew_lease(
+                self.database.write(),
+                job_id,
+                worker_id,
+                lease_duration,
+                now,
+            )
+            .await
     }
 
-    fn complete<'a>(
+    async fn complete<'a>(
         &'a self,
         job_id: i64,
         worker_id: &'a str,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool> {
-        Box::pin(async move {
-            self.repository
-                .complete(self.database.write(), job_id, worker_id, now)
-                .await
-        })
+    ) -> ryframe_kernel::AppResult<bool> {
+        self.repository
+            .complete(self.database.write(), job_id, worker_id, now)
+            .await
     }
 
-    fn defer_retryable_conflict<'a>(
+    async fn defer_retryable_conflict<'a>(
         &'a self,
         job_id: i64,
         worker_id: &'a str,
         available_at: DateTime<Utc>,
         error_message: &'a str,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool> {
-        Box::pin(async move {
-            self.repository
-                .defer_retryable_conflict(
-                    self.database.write(),
-                    job_id,
-                    worker_id,
-                    available_at,
-                    error_message,
-                    now,
-                )
-                .await
-        })
+    ) -> ryframe_kernel::AppResult<bool> {
+        self.repository
+            .defer_retryable_conflict(
+                self.database.write(),
+                job_id,
+                worker_id,
+                available_at,
+                error_message,
+                now,
+            )
+            .await
     }
 
-    fn fail<'a>(&'a self, command: FailJobCommand<'a>) -> PersistenceFuture<'a, JobFailureOutcome> {
-        Box::pin(async move {
-            self.repository
-                .fail(
-                    self.database.write(),
-                    FailBackgroundJob {
-                        job_id: command.job_id,
-                        worker_id: command.worker_id,
-                        retry_at: command.retry_at,
-                        error_message: command.error_message,
-                        force_dead: command.force_dead,
-                        now: command.now,
-                    },
-                )
-                .await
-                .map(to_failure_outcome)
-        })
+    async fn fail<'a>(
+        &'a self,
+        command: FailJobCommand<'a>,
+    ) -> ryframe_kernel::AppResult<JobFailureOutcome> {
+        self.repository
+            .fail(
+                self.database.write(),
+                FailBackgroundJob {
+                    job_id: command.job_id,
+                    worker_id: command.worker_id,
+                    retry_at: command.retry_at,
+                    error_message: command.error_message,
+                    force_dead: command.force_dead,
+                    now: command.now,
+                },
+            )
+            .await
+            .map(to_failure_outcome)
     }
 
-    fn stats_for_types<'a>(
+    async fn stats_for_types<'a>(
         &'a self,
         job_types: &'a [String],
         tenant_scope: &'a ExecutionTenantScope,
-    ) -> PersistenceFuture<'a, Vec<BackgroundJobTypeStats>> {
-        Box::pin(async move {
-            self.repository
-                .stats_for_types(
-                    self.database.write(),
-                    job_types,
-                    &database_scope(tenant_scope),
-                )
-                .await
-                .map(|stats| stats.into_iter().map(to_type_stats).collect())
-        })
+    ) -> ryframe_kernel::AppResult<Vec<BackgroundJobTypeStats>> {
+        self.repository
+            .stats_for_types(
+                self.database.write(),
+                job_types,
+                &database_scope(tenant_scope),
+            )
+            .await
+            .map(|stats| stats.into_iter().map(to_type_stats).collect())
     }
 
-    fn recover_expired_leases<'a>(
+    async fn recover_expired_leases<'a>(
         &'a self,
         now: DateTime<Utc>,
         tenant_scope: &'a ExecutionTenantScope,
-    ) -> PersistenceFuture<'a, RecoveredJobLeases> {
-        Box::pin(async move {
-            self.repository
-                .recover_expired_leases(self.database.write(), now, &database_scope(tenant_scope))
-                .await
-                .map(|value| RecoveredJobLeases {
-                    requeued: value.requeued,
-                    dead: value.dead,
-                })
-        })
+    ) -> ryframe_kernel::AppResult<RecoveredJobLeases> {
+        self.repository
+            .recover_expired_leases(self.database.write(), now, &database_scope(tenant_scope))
+            .await
+            .map(|value| RecoveredJobLeases {
+                requeued: value.requeued,
+                dead: value.dead,
+            })
     }
 
-    fn enqueue(&self, command: EnqueueJob) -> PersistenceFuture<'_, EnqueueJobResult> {
-        Box::pin(async move {
-            let now = crate::repositories::database_utc_now(self.database.write()).await?;
-            self.repository
-                .enqueue(self.database.write(), database_enqueue(command), now)
-                .await
-                .map(to_enqueue_result)
-        })
+    async fn enqueue(&self, command: EnqueueJob) -> ryframe_kernel::AppResult<EnqueueJobResult> {
+        let now = crate::repositories::database_utc_now(self.database.write()).await?;
+        self.repository
+            .enqueue(self.database.write(), database_enqueue(command), now)
+            .await
+            .map(to_enqueue_result)
     }
 
-    fn list<'a>(
+    async fn list<'a>(
         &'a self,
         filter: BackgroundJobReadFilter<'a>,
         page: ValidatedPageQuery,
-    ) -> PersistenceFuture<'a, PageResult<BackgroundJobRecord>> {
-        Box::pin(async move {
-            let result = self
-                .repository
-                .list(self.database.write(), database_filter(filter), &page)
-                .await?;
-            Ok(PageResult::new(
-                result.records.into_iter().map(to_job_record).collect(),
-                result.total,
-                &page,
-            ))
-        })
+    ) -> ryframe_kernel::AppResult<PageResult<BackgroundJobRecord>> {
+        let result = self
+            .repository
+            .list(self.database.write(), database_filter(filter), &page)
+            .await?;
+        Ok(PageResult::new(
+            result.records.into_iter().map(to_job_record).collect(),
+            result.total,
+            &page,
+        ))
     }
 
-    fn stats<'a>(
+    async fn stats<'a>(
         &'a self,
         filter: BackgroundJobReadFilter<'a>,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, BackgroundJobStatsRecord> {
-        Box::pin(async move {
-            self.repository
-                .stats_filtered(self.database.write(), database_filter(filter), now)
-                .await
-                .map(to_stats_record)
-        })
+    ) -> ryframe_kernel::AppResult<BackgroundJobStatsRecord> {
+        self.repository
+            .stats_filtered(self.database.write(), database_filter(filter), now)
+            .await
+            .map(to_stats_record)
     }
 
-    fn find_for_tenant<'a>(
+    async fn find_for_tenant<'a>(
         &'a self,
         tenant_id: &'a str,
         include_platform: bool,
         job_id: i64,
-    ) -> PersistenceFuture<'a, Option<BackgroundJobRecord>> {
-        Box::pin(async move {
-            self.repository
-                .find_by_id_for_tenant(self.database.write(), tenant_id, include_platform, job_id)
-                .await
-                .map(|job| job.map(to_job_record))
-        })
+    ) -> ryframe_kernel::AppResult<Option<BackgroundJobRecord>> {
+        self.repository
+            .find_by_id_for_tenant(self.database.write(), tenant_id, include_platform, job_id)
+            .await
+            .map(|job| job.map(to_job_record))
     }
 
-    fn retry_dead<'a>(
+    async fn retry_dead<'a>(
         &'a self,
         tenant_id: &'a str,
         include_platform: bool,
         job_id: i64,
         retried_by: i64,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool> {
-        Box::pin(async move {
-            self.repository
-                .retry_dead(
-                    self.database.write(),
-                    tenant_id,
-                    include_platform,
-                    job_id,
-                    retried_by,
-                    now,
-                )
-                .await
-        })
+    ) -> ryframe_kernel::AppResult<bool> {
+        self.repository
+            .retry_dead(
+                self.database.write(),
+                tenant_id,
+                include_platform,
+                job_id,
+                retried_by,
+                now,
+            )
+            .await
     }
 
-    fn tenant_config_job_owner<'a>(
+    async fn tenant_config_job_owner<'a>(
         &'a self,
         tenant_id: &'a str,
         job_id: i64,
         kind: TenantConfigJobKind,
-    ) -> PersistenceFuture<'a, Option<i64>> {
-        Box::pin(async move {
-            match kind {
-                TenantConfigJobKind::Export => tenant_config_bundle::Entity::find()
-                    .filter(tenant_config_bundle::Column::TenantId.eq(tenant_id))
-                    .filter(tenant_config_bundle::Column::BackgroundJobId.eq(job_id))
-                    .one(self.database.write())
-                    .await
-                    .map_err(database_error)
-                    .map(|bundle| bundle.map(|bundle| bundle.created_by)),
-                TenantConfigJobKind::Preview
-                | TenantConfigJobKind::Apply
-                | TenantConfigJobKind::Rollback => {
-                    transfer_job_owner(self.database.write(), tenant_id, job_id, kind).await
-                }
+    ) -> ryframe_kernel::AppResult<Option<i64>> {
+        match kind {
+            TenantConfigJobKind::Export => tenant_config_bundle::Entity::find()
+                .filter(tenant_config_bundle::Column::TenantId.eq(tenant_id))
+                .filter(tenant_config_bundle::Column::BackgroundJobId.eq(job_id))
+                .one(self.database.write())
+                .await
+                .map_err(database_error)
+                .map(|bundle| bundle.map(|bundle| bundle.created_by)),
+            TenantConfigJobKind::Preview
+            | TenantConfigJobKind::Apply
+            | TenantConfigJobKind::Rollback => {
+                transfer_job_owner(self.database.write(), tenant_id, job_id, kind).await
             }
-        })
+        }
     }
 }
 
+#[async_trait::async_trait]
 impl BackgroundJobTransaction for DatabasePortTransaction {
-    fn enqueue(&self, command: EnqueueJob) -> PersistenceFuture<'_, EnqueueJobResult> {
-        Box::pin(async move {
-            let now = crate::repositories::database_utc_now(self).await?;
-            BackgroundJobRepository
-                .enqueue_in_transaction(self, database_enqueue(command), now)
-                .await
-                .map(to_enqueue_result)
-        })
+    async fn enqueue(&self, command: EnqueueJob) -> ryframe_kernel::AppResult<EnqueueJobResult> {
+        let now = crate::repositories::database_utc_now(self).await?;
+        BackgroundJobRepository
+            .enqueue_in_transaction(self, database_enqueue(command), now)
+            .await
+            .map(to_enqueue_result)
     }
 
-    fn reactivate_linked<'a>(
+    async fn reactivate_linked<'a>(
         &'a self,
         job_id: i64,
         expected_job_type: &'a str,
         payload_key: &'a str,
         expected_resource_id: i64,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'a, bool> {
-        Box::pin(async move {
-            BackgroundJobRepository
-                .reactivate_linked_in_txn(
-                    self,
-                    job_id,
-                    expected_job_type,
-                    payload_key,
-                    expected_resource_id,
-                    now,
-                )
-                .await
-        })
+    ) -> ryframe_kernel::AppResult<bool> {
+        BackgroundJobRepository
+            .reactivate_linked_in_txn(
+                self,
+                job_id,
+                expected_job_type,
+                payload_key,
+                expected_resource_id,
+                now,
+            )
+            .await
     }
 }
 

@@ -1,7 +1,5 @@
 use chrono::{DateTime, Utc};
 
-use crate::PersistenceFuture;
-
 #[derive(Debug, Eq, PartialEq)]
 pub struct ExportArtifactState {
     pub status: String,
@@ -42,24 +40,32 @@ pub struct CompleteExportArtifact {
 }
 
 /// 导出结果落账所需的控制库事务。
+#[async_trait::async_trait]
 pub trait ExportArtifactTransaction: Send + Sync {
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn lock_export(&self, export_id: i64) -> PersistenceFuture<'_, Option<ExportArtifactState>>;
+    async fn lock_export(
+        &self,
+        export_id: i64,
+    ) -> ryframe_kernel::AppResult<Option<ExportArtifactState>>;
 
-    fn insert_ready_file<'a>(
+    async fn insert_ready_file<'a>(
         &'a self,
         tenant_id: &'a str,
         file: ExportArtifactFileDraft,
-    ) -> PersistenceFuture<'a, ExportArtifactFileRecord>;
+    ) -> ryframe_kernel::AppResult<ExportArtifactFileRecord>;
 
-    fn mark_succeeded(&self, command: CompleteExportArtifact) -> PersistenceFuture<'_, bool>;
+    async fn mark_succeeded(
+        &self,
+        command: CompleteExportArtifact,
+    ) -> ryframe_kernel::AppResult<bool>;
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
+#[async_trait::async_trait]
 pub trait ExportArtifactPersistencePort: Send + Sync {
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn ExportArtifactTransaction>>;
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn ExportArtifactTransaction>>;
 }

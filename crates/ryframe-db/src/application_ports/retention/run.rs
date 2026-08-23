@@ -7,7 +7,6 @@ use sea_orm::TransactionTrait;
 use super::super::transaction::DatabasePortTransaction;
 
 use ryframe_application::{
-    PersistenceFuture,
     ports::jobs::BackgroundJobTransaction,
     ports::retention::{RetentionRunPersistencePort, RetentionRunRecord, RetentionRunTransaction},
 };
@@ -28,128 +27,117 @@ struct DatabaseRetentionRunTransaction {
     transaction: DatabasePortTransaction,
 }
 
+#[async_trait::async_trait]
 impl RetentionRunPersistencePort for DatabaseRetentionRunPersistence {
-    fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move { crate::repositories::database_utc_now(self.database.write()).await })
+    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
+        crate::repositories::database_utc_now(self.database.write()).await
     }
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn RetentionRunTransaction>> {
-        Box::pin(async move {
-            let transaction = self
-                .database
-                .write()
-                .begin()
-                .await
-                .map_err(database_error)?;
-            Ok(Box::new(DatabaseRetentionRunTransaction {
-                transaction: transaction.into(),
-            }) as Box<dyn RetentionRunTransaction>)
-        })
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn RetentionRunTransaction>> {
+        let transaction = self
+            .database
+            .write()
+            .begin()
+            .await
+            .map_err(database_error)?;
+        Ok(Box::new(DatabaseRetentionRunTransaction {
+            transaction: transaction.into(),
+        }) as Box<dyn RetentionRunTransaction>)
     }
 
-    fn insert_if_missing(
+    async fn insert_if_missing(
         &self,
         record: RetentionRunRecord,
-    ) -> PersistenceFuture<'_, RetentionRunRecord> {
-        Box::pin(async move {
-            self.repository
-                .insert_run_if_missing(self.database.write(), to_model(record))
-                .await
-                .map(to_record)
-        })
+    ) -> ryframe_kernel::AppResult<RetentionRunRecord> {
+        self.repository
+            .insert_run_if_missing(self.database.write(), to_model(record))
+            .await
+            .map(to_record)
     }
 
-    fn update(&self, record: RetentionRunRecord) -> PersistenceFuture<'_, RetentionRunRecord> {
-        Box::pin(async move {
-            self.repository
-                .update_run(self.database.write(), to_model(record))
-                .await
-                .map(to_record)
-        })
+    async fn update(
+        &self,
+        record: RetentionRunRecord,
+    ) -> ryframe_kernel::AppResult<RetentionRunRecord> {
+        self.repository
+            .update_run(self.database.write(), to_model(record))
+            .await
+            .map(to_record)
     }
 
-    fn list(
+    async fn list(
         &self,
         page: ValidatedPageQuery,
-    ) -> PersistenceFuture<'_, PageResult<RetentionRunRecord>> {
-        Box::pin(async move {
-            let result = self
-                .repository
-                .list_runs(self.database.write(), &page)
-                .await?;
-            Ok(PageResult::new(
-                result.records.into_iter().map(to_record).collect(),
-                result.total,
-                &page,
-            ))
-        })
+    ) -> ryframe_kernel::AppResult<PageResult<RetentionRunRecord>> {
+        let result = self
+            .repository
+            .list_runs(self.database.write(), &page)
+            .await?;
+        Ok(PageResult::new(
+            result.records.into_iter().map(to_record).collect(),
+            result.total,
+            &page,
+        ))
     }
 }
 
+#[async_trait::async_trait]
 impl RetentionRunTransaction for DatabaseRetentionRunTransaction {
-    fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move { crate::repositories::database_utc_now(&self.transaction).await })
+    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
+        crate::repositories::database_utc_now(&self.transaction).await
     }
 
     fn background_jobs(&self) -> &dyn BackgroundJobTransaction {
         &self.transaction
     }
 
-    fn find_by_background_job(
+    async fn find_by_background_job(
         &self,
         background_job_id: i64,
-    ) -> PersistenceFuture<'_, Option<RetentionRunRecord>> {
-        Box::pin(async move {
-            DataRetentionRepository
-                .find_run_by_background_job(&self.transaction, background_job_id)
-                .await
-                .map(|record| record.map(to_record))
-        })
+    ) -> ryframe_kernel::AppResult<Option<RetentionRunRecord>> {
+        DataRetentionRepository
+            .find_run_by_background_job(&self.transaction, background_job_id)
+            .await
+            .map(|record| record.map(to_record))
     }
 
-    fn insert_if_missing(
+    async fn insert_if_missing(
         &self,
         record: RetentionRunRecord,
-    ) -> PersistenceFuture<'_, RetentionRunRecord> {
-        Box::pin(async move {
-            DataRetentionRepository
-                .insert_run_if_missing(&self.transaction, to_model(record))
-                .await
-                .map(to_record)
-        })
+    ) -> ryframe_kernel::AppResult<RetentionRunRecord> {
+        DataRetentionRepository
+            .insert_run_if_missing(&self.transaction, to_model(record))
+            .await
+            .map(to_record)
     }
 
-    fn lock_by_background_job(
+    async fn lock_by_background_job(
         &self,
         background_job_id: i64,
-    ) -> PersistenceFuture<'_, Option<RetentionRunRecord>> {
-        Box::pin(async move {
-            DataRetentionRepository
-                .lock_run_by_background_job_in_txn(&self.transaction, background_job_id)
-                .await
-                .map(|record| record.map(to_record))
-        })
+    ) -> ryframe_kernel::AppResult<Option<RetentionRunRecord>> {
+        DataRetentionRepository
+            .lock_run_by_background_job_in_txn(&self.transaction, background_job_id)
+            .await
+            .map(|record| record.map(to_record))
     }
 
-    fn begin_run(
+    async fn begin_run(
         &self,
         record: RetentionRunRecord,
         now: chrono::DateTime<chrono::Utc>,
-    ) -> PersistenceFuture<'_, Option<RetentionRunRecord>> {
-        Box::pin(async move {
-            DataRetentionRepository
-                .begin_run_in_txn(&self.transaction, to_model(record), now)
-                .await
-                .map(|record| record.map(to_record))
-        })
+    ) -> ryframe_kernel::AppResult<Option<RetentionRunRecord>> {
+        DataRetentionRepository
+            .begin_run_in_txn(&self.transaction, to_model(record), now)
+            .await
+            .map(|record| record.map(to_record))
     }
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move { self.transaction.commit_audited().await })
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
+        self.transaction.commit_audited().await
     }
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move { self.transaction.rollback().await.map_err(database_error) })
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
+        self.transaction.rollback().await.map_err(database_error)
     }
 }
 

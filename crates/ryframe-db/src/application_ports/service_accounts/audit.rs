@@ -4,9 +4,8 @@ use crate::{ControlDatabaseCluster, ReadConsistency, entities::service_access_au
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect};
 
-use ryframe_application::{
-    PersistenceFuture,
-    ports::service_accounts::{ServiceAccessAuditRecord, ServiceAccountAuditReadPort},
+use ryframe_application::ports::service_accounts::{
+    ServiceAccessAuditRecord, ServiceAccountAuditReadPort,
 };
 
 pub fn port(database: ControlDatabaseCluster) -> Arc<dyn ServiceAccountAuditReadPort> {
@@ -17,35 +16,34 @@ struct DatabaseServiceAccountAuditPersistence {
     database: ControlDatabaseCluster,
 }
 
+#[async_trait::async_trait]
 impl ServiceAccountAuditReadPort for DatabaseServiceAccountAuditPersistence {
-    fn list<'a>(
+    async fn list<'a>(
         &'a self,
         tenant_id: &'a str,
         page: ValidatedPageQuery,
-    ) -> PersistenceFuture<'a, PageResult<ServiceAccessAuditRecord>> {
-        Box::pin(async move {
-            let database = self
-                .database
-                .select_read(ReadConsistency::Eventual)
-                .connection;
-            let total = service_access_audit::Entity::find()
-                .filter(service_access_audit::Column::TenantId.eq(tenant_id))
-                .count(&database)
-                .await
-                .map_err(database_error)?;
-            let records = service_access_audit::Entity::find()
-                .filter(service_access_audit::Column::TenantId.eq(tenant_id))
-                .order_by_desc(service_access_audit::Column::StartedAt)
-                .offset(page.offset())
-                .limit(page.page_size())
-                .all(&database)
-                .await
-                .map_err(database_error)?
-                .into_iter()
-                .map(to_record)
-                .collect();
-            Ok(PageResult::new(records, total, &page))
-        })
+    ) -> ryframe_kernel::AppResult<PageResult<ServiceAccessAuditRecord>> {
+        let database = self
+            .database
+            .select_read(ReadConsistency::Eventual)
+            .connection;
+        let total = service_access_audit::Entity::find()
+            .filter(service_access_audit::Column::TenantId.eq(tenant_id))
+            .count(&database)
+            .await
+            .map_err(database_error)?;
+        let records = service_access_audit::Entity::find()
+            .filter(service_access_audit::Column::TenantId.eq(tenant_id))
+            .order_by_desc(service_access_audit::Column::StartedAt)
+            .offset(page.offset())
+            .limit(page.page_size())
+            .all(&database)
+            .await
+            .map_err(database_error)?
+            .into_iter()
+            .map(to_record)
+            .collect();
+        Ok(PageResult::new(records, total, &page))
     }
 }
 

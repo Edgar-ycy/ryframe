@@ -13,7 +13,6 @@ use ryframe_kernel::AppError;
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
 use ryframe_application::{
-    PersistenceFuture,
     agent::{
         AgentAccessAuditRecord, AgentAccountRecord, AgentAuthorizationSnapshot,
         AgentCredentialRecord, AgentDelegationRecord, AgentDepartmentRecord,
@@ -41,237 +40,212 @@ struct DatabaseAgentTransaction {
     product: Arc<ProductService>,
 }
 
+#[async_trait::async_trait]
 impl AgentPersistencePort for DatabaseAgentPersistence {
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn AgentPersistenceTransaction>> {
-        Box::pin(async move {
-            let transaction = self
-                .database
-                .write()
-                .begin()
-                .await
-                .map_err(database_error)?;
-            Ok(Box::new(DatabaseAgentTransaction {
-                transaction,
-                product: Arc::clone(&self.product),
-            }) as Box<dyn AgentPersistenceTransaction>)
-        })
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn AgentPersistenceTransaction>> {
+        let transaction = self
+            .database
+            .write()
+            .begin()
+            .await
+            .map_err(database_error)?;
+        Ok(Box::new(DatabaseAgentTransaction {
+            transaction,
+            product: Arc::clone(&self.product),
+        }) as Box<dyn AgentPersistenceTransaction>)
     }
 }
 
+#[async_trait::async_trait]
 impl AgentPersistenceTransaction for DatabaseAgentTransaction {
-    fn database_now(&self) -> PersistenceFuture<'_, chrono::DateTime<chrono::Utc>> {
-        Box::pin(async move { crate::repositories::database_utc_now(&self.transaction).await })
+    async fn database_now(&self) -> ryframe_kernel::AppResult<chrono::DateTime<chrono::Utc>> {
+        crate::repositories::database_utc_now(&self.transaction).await
     }
 
-    fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> PersistenceFuture<'a, AgentTenantRecord> {
-        Box::pin(async move {
-            ServiceAccountRepository
-                .lock_tenant_in_txn(&self.transaction, tenant_id, ServiceAccountLock::Share)
-                .await
-                .map(tenant_record)
-        })
+    async fn lock_tenant<'a>(
+        &'a self,
+        tenant_id: &'a str,
+    ) -> ryframe_kernel::AppResult<AgentTenantRecord> {
+        ServiceAccountRepository
+            .lock_tenant_in_txn(&self.transaction, tenant_id, ServiceAccountLock::Share)
+            .await
+            .map(tenant_record)
     }
 
-    fn lock_account<'a>(
+    async fn lock_account<'a>(
         &'a self,
         tenant_id: &'a str,
         account_id: i64,
-    ) -> PersistenceFuture<'a, Option<AgentAccountRecord>> {
-        Box::pin(async move {
-            ServiceAccountRepository
-                .find_by_id_in_txn(
-                    &self.transaction,
-                    tenant_id,
-                    account_id,
-                    ServiceAccountLock::Share,
-                )
-                .await
-                .map(|account| account.map(account_record))
-        })
+    ) -> ryframe_kernel::AppResult<Option<AgentAccountRecord>> {
+        ServiceAccountRepository
+            .find_by_id_in_txn(
+                &self.transaction,
+                tenant_id,
+                account_id,
+                ServiceAccountLock::Share,
+            )
+            .await
+            .map(|account| account.map(account_record))
     }
 
-    fn lock_credential<'a>(
+    async fn lock_credential<'a>(
         &'a self,
         tenant_id: &'a str,
         account_id: i64,
         key_id: &'a str,
-    ) -> PersistenceFuture<'a, Option<AgentCredentialRecord>> {
-        Box::pin(async move {
-            ServiceCredentialRepository
-                .find_by_key_id_for_share(&self.transaction, tenant_id, account_id, key_id)
-                .await
-                .map(|credential| credential.map(credential_record))
-        })
+    ) -> ryframe_kernel::AppResult<Option<AgentCredentialRecord>> {
+        ServiceCredentialRepository
+            .find_by_key_id_for_share(&self.transaction, tenant_id, account_id, key_id)
+            .await
+            .map(|credential| credential.map(credential_record))
     }
 
-    fn lock_delegation<'a>(
+    async fn lock_delegation<'a>(
         &'a self,
         tenant_id: &'a str,
         delegation_id: i64,
-    ) -> PersistenceFuture<'a, Option<AgentDelegationRecord>> {
-        Box::pin(async move {
-            let Some(delegation) = ServiceDelegationRepository
-                .find_by_id_for_share(&self.transaction, tenant_id, delegation_id)
-                .await?
-            else {
-                return Ok(None);
-            };
-            let capability_keys = ServiceDelegationRepository
-                .capability_keys_for_share(&self.transaction, tenant_id, delegation.id)
-                .await?
-                .into_iter()
-                .collect::<BTreeSet<_>>();
-            Ok(Some(delegation_record(delegation, capability_keys)))
-        })
+    ) -> ryframe_kernel::AppResult<Option<AgentDelegationRecord>> {
+        let Some(delegation) = ServiceDelegationRepository
+            .find_by_id_for_share(&self.transaction, tenant_id, delegation_id)
+            .await?
+        else {
+            return Ok(None);
+        };
+        let capability_keys = ServiceDelegationRepository
+            .capability_keys_for_share(&self.transaction, tenant_id, delegation.id)
+            .await?
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        Ok(Some(delegation_record(delegation, capability_keys)))
     }
 
-    fn require_capability<'a>(
+    async fn require_capability<'a>(
         &'a self,
         tenant_id: &'a str,
         capability_code: &'a str,
-    ) -> PersistenceFuture<'a, ()> {
-        Box::pin(async move {
-            let snapshot = ProductRepository
-                .tenant_product(&self.transaction, tenant_id)
-                .await?
-                .map(super::super::product::tenant_snapshot)
-                .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
-            self.product
-                .require_capability_snapshot(snapshot, capability_code)
-                .map(|_| ())
-        })
+    ) -> ryframe_kernel::AppResult<()> {
+        let snapshot = ProductRepository
+            .tenant_product(&self.transaction, tenant_id)
+            .await?
+            .map(super::super::product::tenant_snapshot)
+            .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
+        self.product
+            .require_capability_snapshot(snapshot, capability_code)
+            .map(|_| ())
     }
 
-    fn authorization_snapshot<'a>(
+    async fn authorization_snapshot<'a>(
         &'a self,
         tenant_id: &'a str,
         account_id: i64,
         represented_user_id: Option<i64>,
-    ) -> PersistenceFuture<'a, AgentAuthorizationSnapshot> {
-        Box::pin(async move {
-            ServiceAuthorizationRepository
-                .lock_snapshot_in_txn(
-                    &self.transaction,
-                    tenant_id,
-                    account_id,
-                    represented_user_id,
-                )
-                .await
-                .map(super::mapping::authorization_snapshot)
-        })
+    ) -> ryframe_kernel::AppResult<AgentAuthorizationSnapshot> {
+        ServiceAuthorizationRepository
+            .lock_snapshot_in_txn(
+                &self.transaction,
+                tenant_id,
+                account_id,
+                represented_user_id,
+            )
+            .await
+            .map(super::mapping::authorization_snapshot)
     }
 
-    fn users_page<'a>(
+    async fn users_page<'a>(
         &'a self,
         tenant_id: &'a str,
         scope: AgentRowScope,
         offset: u64,
         limit: u64,
-    ) -> PersistenceFuture<'a, AgentQueryPage<AgentUserRecord>> {
-        Box::pin(async move {
-            AgentQueryRepository
-                .users_page(
-                    &self.transaction,
-                    tenant_id,
-                    &super::mapping::row_scope(scope),
-                    offset,
-                    limit,
-                )
-                .await
-                .map(|page| AgentQueryPage {
-                    records: page.records.into_iter().map(user_record).collect(),
-                    total: page.total,
-                })
-        })
+    ) -> ryframe_kernel::AppResult<AgentQueryPage<AgentUserRecord>> {
+        AgentQueryRepository
+            .users_page(
+                &self.transaction,
+                tenant_id,
+                &super::mapping::row_scope(scope),
+                offset,
+                limit,
+            )
+            .await
+            .map(|page| AgentQueryPage {
+                records: page.records.into_iter().map(user_record).collect(),
+                total: page.total,
+            })
     }
 
-    fn departments_page<'a>(
+    async fn departments_page<'a>(
         &'a self,
         tenant_id: &'a str,
         scope: AgentRowScope,
         offset: u64,
         limit: u64,
-    ) -> PersistenceFuture<'a, AgentQueryPage<AgentDepartmentRecord>> {
-        Box::pin(async move {
-            AgentQueryRepository
-                .departments_page(
-                    &self.transaction,
-                    tenant_id,
-                    &super::mapping::row_scope(scope),
-                    offset,
-                    limit,
-                )
-                .await
-                .map(|page| AgentQueryPage {
-                    records: page.records.into_iter().map(department_record).collect(),
-                    total: page.total,
-                })
-        })
+    ) -> ryframe_kernel::AppResult<AgentQueryPage<AgentDepartmentRecord>> {
+        AgentQueryRepository
+            .departments_page(
+                &self.transaction,
+                tenant_id,
+                &super::mapping::row_scope(scope),
+                offset,
+                limit,
+            )
+            .await
+            .map(|page| AgentQueryPage {
+                records: page.records.into_iter().map(department_record).collect(),
+                total: page.total,
+            })
     }
 
-    fn posts_page<'a>(
+    async fn posts_page<'a>(
         &'a self,
         tenant_id: &'a str,
         offset: u64,
         limit: u64,
-    ) -> PersistenceFuture<'a, AgentQueryPage<AgentPostRecord>> {
-        Box::pin(async move {
-            AgentQueryRepository
-                .posts_page(&self.transaction, tenant_id, offset, limit)
-                .await
-                .map(|page| AgentQueryPage {
-                    records: page.records.into_iter().map(post_record).collect(),
-                    total: page.total,
-                })
-        })
+    ) -> ryframe_kernel::AppResult<AgentQueryPage<AgentPostRecord>> {
+        AgentQueryRepository
+            .posts_page(&self.transaction, tenant_id, offset, limit)
+            .await
+            .map(|page| AgentQueryPage {
+                records: page.records.into_iter().map(post_record).collect(),
+                total: page.total,
+            })
     }
 
-    fn dictionary_page<'a>(
+    async fn dictionary_page<'a>(
         &'a self,
         tenant_id: &'a str,
         type_code: &'a str,
         offset: u64,
         limit: u64,
-    ) -> PersistenceFuture<'a, Option<AgentDictionaryPageRecord>> {
-        Box::pin(async move {
-            AgentQueryRepository
-                .dictionary_by_type_code_page(
-                    &self.transaction,
-                    tenant_id,
-                    type_code,
-                    offset,
-                    limit,
-                )
-                .await
-                .map(|page| {
-                    page.map(|page| AgentDictionaryPageRecord {
-                        type_code: page.dict_type.code,
-                        records: page
-                            .records
-                            .into_iter()
-                            .map(dictionary_item_record)
-                            .collect(),
-                        total: page.total,
-                    })
+    ) -> ryframe_kernel::AppResult<Option<AgentDictionaryPageRecord>> {
+        AgentQueryRepository
+            .dictionary_by_type_code_page(&self.transaction, tenant_id, type_code, offset, limit)
+            .await
+            .map(|page| {
+                page.map(|page| AgentDictionaryPageRecord {
+                    type_code: page.dict_type.code,
+                    records: page
+                        .records
+                        .into_iter()
+                        .map(dictionary_item_record)
+                        .collect(),
+                    total: page.total,
                 })
-        })
+            })
     }
 
-    fn insert_audit(&self, audit: AgentAccessAuditRecord) -> PersistenceFuture<'_, ()> {
-        Box::pin(async move {
-            ServiceAccessAuditRepository
-                .insert(&self.transaction, super::audit::model(audit))
-                .await
-                .map(|_| ())
-        })
+    async fn insert_audit(&self, audit: AgentAccessAuditRecord) -> ryframe_kernel::AppResult<()> {
+        ServiceAccessAuditRepository
+            .insert(&self.transaction, super::audit::model(audit))
+            .await
+            .map(|_| ())
     }
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move { self.transaction.commit().await.map_err(database_error) })
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
+        self.transaction.commit().await.map_err(database_error)
     }
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()> {
-        Box::pin(async move { self.transaction.rollback().await.map_err(database_error) })
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
+        self.transaction.rollback().await.map_err(database_error)
     }
 }
 

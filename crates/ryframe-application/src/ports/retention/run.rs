@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 
-use crate::{PersistenceFuture, ports::jobs::BackgroundJobTransaction};
+use crate::ports::jobs::BackgroundJobTransaction;
 
 #[derive(Clone, Debug)]
 pub struct RetentionRunRecord {
@@ -31,51 +31,56 @@ impl RetentionRunRecord {
     pub const STATUS_FAILED: &'static str = "failed";
 }
 
+#[async_trait::async_trait]
 pub trait RetentionRunTransaction: Send + Sync {
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
     fn background_jobs(&self) -> &dyn BackgroundJobTransaction;
 
-    fn find_by_background_job(
+    async fn find_by_background_job(
         &self,
         background_job_id: i64,
-    ) -> PersistenceFuture<'_, Option<RetentionRunRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<RetentionRunRecord>>;
 
-    fn insert_if_missing(
+    async fn insert_if_missing(
         &self,
         record: RetentionRunRecord,
-    ) -> PersistenceFuture<'_, RetentionRunRecord>;
+    ) -> ryframe_kernel::AppResult<RetentionRunRecord>;
 
-    fn lock_by_background_job(
+    async fn lock_by_background_job(
         &self,
         background_job_id: i64,
-    ) -> PersistenceFuture<'_, Option<RetentionRunRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<RetentionRunRecord>>;
 
-    fn begin_run(
+    async fn begin_run(
         &self,
         record: RetentionRunRecord,
         now: DateTime<Utc>,
-    ) -> PersistenceFuture<'_, Option<RetentionRunRecord>>;
+    ) -> ryframe_kernel::AppResult<Option<RetentionRunRecord>>;
 
-    fn commit(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 
-    fn rollback(self: Box<Self>) -> PersistenceFuture<'static, ()>;
+    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
+#[async_trait::async_trait]
 pub trait RetentionRunPersistencePort: Send + Sync {
-    fn database_now(&self) -> PersistenceFuture<'_, DateTime<Utc>>;
+    async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
-    fn begin(&self) -> PersistenceFuture<'_, Box<dyn RetentionRunTransaction>>;
+    async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn RetentionRunTransaction>>;
 
-    fn insert_if_missing(
+    async fn insert_if_missing(
         &self,
         record: RetentionRunRecord,
-    ) -> PersistenceFuture<'_, RetentionRunRecord>;
+    ) -> ryframe_kernel::AppResult<RetentionRunRecord>;
 
-    fn update(&self, record: RetentionRunRecord) -> PersistenceFuture<'_, RetentionRunRecord>;
+    async fn update(
+        &self,
+        record: RetentionRunRecord,
+    ) -> ryframe_kernel::AppResult<RetentionRunRecord>;
 
-    fn list(
+    async fn list(
         &self,
         page: ValidatedPageQuery,
-    ) -> PersistenceFuture<'_, PageResult<RetentionRunRecord>>;
+    ) -> ryframe_kernel::AppResult<PageResult<RetentionRunRecord>>;
 }

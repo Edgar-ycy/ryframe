@@ -14,12 +14,9 @@ use sea_orm::{
     sea_query::{Expr, LockType, SimpleExpr},
 };
 
-use ryframe_application::{
-    PersistenceFuture,
-    ports::{
-        retention::RetentionCleanupResult,
-        tenant_config::{TenantConfigArtifactCounts, TenantConfigRetentionPersistencePort},
-    },
+use ryframe_application::ports::{
+    retention::RetentionCleanupResult,
+    tenant_config::{TenantConfigArtifactCounts, TenantConfigRetentionPersistencePort},
 };
 
 pub const ACTIVE_TRANSFER_PREDICATE: &str = "NOT EXISTS (SELECT 1 FROM sys_tenant_config_transfer transfer WHERE transfer.tenant_id = sys_tenant_config_bundle.tenant_id AND transfer.bundle_id = sys_tenant_config_bundle.id AND transfer.status IN ('preview_pending', 'previewing', 'apply_pending', 'applying'))";
@@ -34,33 +31,33 @@ struct DatabaseTenantConfigRetentionPersistence {
     database: ControlDatabaseCluster,
 }
 
+#[async_trait::async_trait]
 impl TenantConfigRetentionPersistencePort for DatabaseTenantConfigRetentionPersistence {
-    fn preview(&self, now: DateTime<Utc>) -> PersistenceFuture<'_, TenantConfigArtifactCounts> {
-        Box::pin(async move { self.preview_counts(now).await })
+    async fn preview(
+        &self,
+        now: DateTime<Utc>,
+    ) -> ryframe_kernel::AppResult<TenantConfigArtifactCounts> {
+        self.preview_counts(now).await
     }
 
-    fn cleanup_packages(
+    async fn cleanup_packages(
         &self,
         before: DateTime<Utc>,
         batch_size: usize,
         maximum: usize,
-    ) -> PersistenceFuture<'_, RetentionCleanupResult> {
-        Box::pin(async move {
-            self.cleanup_expired_packages(before, batch_size, maximum)
-                .await
-        })
+    ) -> ryframe_kernel::AppResult<RetentionCleanupResult> {
+        self.cleanup_expired_packages(before, batch_size, maximum)
+            .await
     }
 
-    fn cleanup_snapshots(
+    async fn cleanup_snapshots(
         &self,
         before: DateTime<Utc>,
         batch_size: usize,
         maximum: usize,
-    ) -> PersistenceFuture<'_, RetentionCleanupResult> {
-        Box::pin(async move {
-            self.cleanup_expired_snapshots(before, batch_size, maximum)
-                .await
-        })
+    ) -> ryframe_kernel::AppResult<RetentionCleanupResult> {
+        self.cleanup_expired_snapshots(before, batch_size, maximum)
+            .await
     }
 }
 
