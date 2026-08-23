@@ -109,18 +109,19 @@ fn api_and_worker_wire_probe_to_read_only_dependency_checks() {
     let api_storage = include_str!("../src/boot/storage.rs");
     let api_redis = include_str!("../src/boot/redis.rs");
     let api_main = include_str!("../src/main.rs");
-    let worker = include_str!("../src/bin/ryframe_worker.rs");
+    let worker_main = include_str!("../src/bin/ryframe_worker.rs");
+    let worker_runtime = include_str!("../src/bin/ryframe_worker/runtime.rs");
 
     assert!(api_main.contains("effective_migration_mode("));
     assert!(api_storage.contains("|| storage.ensure_bucket(bucket)"));
     assert!(api_storage.contains("|| storage.readiness_check(bucket)"));
     assert!(api_redis.contains("|| client.ensure_scope_ownership(&ownership_marker)"));
     assert!(api_redis.contains("|| client.verify_scope_ownership(&ownership_marker)"));
-    assert!(worker.contains("process_startup::effective_migration_mode("));
-    assert!(worker.contains("|| storage.ensure_bucket(bucket)"));
-    assert!(worker.contains("|| storage.readiness_check(bucket)"));
-    assert!(worker.contains("|| client.ensure_scope_ownership(&ownership_marker)"));
-    assert!(worker.contains("|| client.verify_scope_ownership(&ownership_marker)"));
+    assert!(worker_main.contains("process_startup::effective_migration_mode("));
+    assert!(worker_runtime.contains("|| storage.ensure_bucket(bucket)"));
+    assert!(worker_runtime.contains("|| storage.readiness_check(bucket)"));
+    assert!(worker_runtime.contains("|| client.ensure_scope_ownership(&ownership_marker)"));
+    assert!(worker_runtime.contains("|| client.verify_scope_ownership(&ownership_marker)"));
 }
 
 #[tokio::test]
