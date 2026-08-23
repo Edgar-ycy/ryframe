@@ -2,109 +2,21 @@
 //!
 //! 提供异步 Redis 连接管理器和常用操作封装。
 //! 当 Redis 未配置时，调用方应回退到内存存储。
+mod connection;
+mod telemetry;
 
-use std::{
-    future::Future,
-    sync::Arc,
-    time::{Duration, Instant},
-};
+use std::{sync::Arc, time::Duration};
+
+use connection::{build_client, redis_timeout_error};
+use telemetry::{RedisOperation, trace_redis_operation};
 
 use redis::{
     AsyncCommands, FromRedisValue, Pipeline,
     aio::{ConnectionManager, ConnectionManagerConfig, MultiplexedConnection},
 };
 use ryframe_config::RedisConfig;
-use tracing::Instrument;
 
 const SCAN_BATCH_SIZE: usize = 256;
-/// Redis 客户端 span 使用的固定操作集合，禁止将键和参数内容作为属性。
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum RedisOperation {
-    Connect,
-    Subscribe,
-    Set,
-    SetEx,
-    Get,
-    Mget,
-    Del,
-    Publish,
-    GetAndDel,
-    Exists,
-    Ttl,
-    Ping,
-    ConfigGet,
-    Scan,
-    DeleteByPattern,
-    Hset,
-    Hgetall,
-    Hdel,
-    Expire,
-    Incr,
-    Decr,
-    Transaction,
-}
-
-impl RedisOperation {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::Connect => "CONNECT",
-            Self::Subscribe => "SUBSCRIBE",
-            Self::Set => "SET",
-            Self::SetEx => "SET_EX",
-            Self::Get => "GET",
-            Self::Mget => "MGET",
-            Self::Del => "DEL",
-            Self::Publish => "PUBLISH",
-            Self::GetAndDel => "GET_AND_DEL",
-            Self::Exists => "EXISTS",
-            Self::Ttl => "TTL",
-            Self::Ping => "PING",
-            Self::ConfigGet => "CONFIG_GET",
-            Self::Scan => "SCAN",
-            Self::DeleteByPattern => "DELETE_BY_PATTERN",
-            Self::Hset => "HSET",
-            Self::Hgetall => "HGETALL",
-            Self::Hdel => "HDEL",
-            Self::Expire => "EXPIRE",
-            Self::Incr => "INCR",
-            Self::Decr => "DECR",
-            Self::Transaction => "TRANSACTION",
-        }
-    }
-}
-
-fn redis_operation_span(operation: RedisOperation) -> tracing::Span {
-    tracing::info_span!(
-        "redis.command",
-        otel.name = operation.as_str(),
-        otel.kind = "client",
-        db.system.name = "redis",
-        db.operation.name = operation.as_str(),
-        redis.result = tracing::field::Empty,
-    )
-}
-
-async fn trace_redis_operation<T>(
-    operation: RedisOperation,
-    future: impl Future<Output = Result<T, redis::RedisError>>,
-) -> Result<T, redis::RedisError> {
-    let started = Instant::now();
-    let span = redis_operation_span(operation);
-    let result = future.instrument(span.clone()).await;
-    let result_label = redis_result_label(&result);
-    span.record("redis.result", result_label);
-    crate::metrics::observe_connector_operation(
-        "redis",
-        operation.as_str(),
-        result_label,
-        started.elapsed(),
-    );
-    result
-}
-
-fn redis_result_label<T>(result: &Result<T, redis::RedisError>) -> &'static str {
-    if result.is_ok() { "success" } else { "error" }
-}
 
 fn prepare_mget_command(keys: &[String]) -> redis::Cmd {
     let mut command = redis::cmd("MGET");
@@ -586,50 +498,4 @@ impl RedisClient {
         let key = self.scoped_key(key.as_ref());
         trace_redis_operation(RedisOperation::Decr, conn.decr(key, 1)).await
     }
-}
-
-fn redis_timeout_error(message: &'static str) -> redis::RedisError {
-    redis::RedisError::from(std::io::Error::new(std::io::ErrorKind::TimedOut, message))
-}
-
-async fn build_client(config: &RedisConfig) -> Result<redis::Client, redis::RedisError> {
-    let url = config.connection_url();
-    if !config.tls {
-        return redis::Client::open(url);
-    }
-
-    let root_cert = read_optional_pem(config.tls_ca.as_deref()).await?;
-    let client_tls = match (
-        config.tls_client_cert.as_deref(),
-        config.tls_client_key.as_deref(),
-    ) {
-        (Some(cert), Some(key)) => Some(redis::ClientTlsConfig {
-            client_cert: read_pem(cert).await?,
-            client_key: read_pem(key).await?,
-        }),
-        _ => None,
-    };
-    redis::Client::build_with_tls(
-        url,
-        redis::TlsCertificates {
-            client_tls,
-            root_cert,
-        },
-    )
-}
-
-async fn read_optional_pem(path: Option<&str>) -> Result<Option<Vec<u8>>, redis::RedisError> {
-    match path.filter(|path| !path.trim().is_empty()) {
-        Some(path) => read_pem(path).await.map(Some),
-        None => Ok(None),
-    }
-}
-
-async fn read_pem(path: &str) -> Result<Vec<u8>, redis::RedisError> {
-    tokio::fs::read(path).await.map_err(|error| {
-        redis::RedisError::from(std::io::Error::new(
-            error.kind(),
-            format!("unable to read Redis TLS file {path}: {error}"),
-        ))
-    })
 }
