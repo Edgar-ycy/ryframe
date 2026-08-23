@@ -61,17 +61,17 @@ mod command {
 
     #[test]
     fn redis_reset_source_excludes_broad_deletion_commands() {
-        let source = include_str!("../src/reset/runtime/resources.rs");
+        let source = include_str!("../src/reset/runtime/resources/redis.rs");
         let forbidden = [
             ["FLUSH", "DB"].concat(),
             ["FLUSH", "ALL"].concat(),
-            format!("redis::cmd({:?})", "KEYS"),
+            format!("::redis::cmd({:?})", "KEYS"),
         ];
         for command in forbidden {
             assert!(!source.contains(&command), "禁止使用 Redis 广域删除命令");
         }
-        assert!(source.contains("redis::cmd(\"SCAN\")"));
-        assert!(source.contains("redis::cmd(\"UNLINK\")"));
+        assert!(source.contains("::redis::cmd(\"SCAN\")"));
+        assert!(source.contains("::redis::cmd(\"UNLINK\")"));
         assert!(source.contains(".ryframe-reset-probe:"));
         assert!(source.contains("pub async fn prove_capabilities"));
         assert!(source.contains("raw_unlink_exact"));

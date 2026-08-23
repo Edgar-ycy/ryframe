@@ -1,11 +1,11 @@
 use std::collections::BTreeSet;
 
-use ryframe_config::{DbConnection, PhysicalDatabase};
+use ryframe_config::DbConnection;
 use sea_orm::{
     ConnectionTrait, DatabaseConnection, DatabaseTransaction, DbBackend, Statement, TryGetable,
 };
 
-use crate::reset::{ResetError, ResetResult};
+use crate::reset::{ResetError, ResetResult, model::PhysicalDatabase};
 
 use super::{
     DatabaseHandle, EMPTY_CONTROL_TABLES, REQUIRED_GLOBAL_PRIVILEGES, SeedCredentials,
@@ -24,7 +24,7 @@ pub(super) async fn connect_target(
     })
 }
 
-async fn database_exists<C>(db: &C, name: &str) -> ResetResult<bool>
+pub(super) async fn database_exists<C>(db: &C, name: &str) -> ResetResult<bool>
 where
     C: ConnectionTrait + ?Sized,
 {
@@ -265,7 +265,7 @@ pub fn quote_identifier(identifier: &str) -> ResetResult<String> {
     Ok(format!("`{identifier}`"))
 }
 
-async fn scalar_i64<C, const N: usize>(
+pub(super) async fn scalar_i64<C, const N: usize>(
     db: &C,
     sql: &str,
     values: [sea_orm::Value; N],

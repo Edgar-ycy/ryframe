@@ -1,6 +1,6 @@
 use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 
-use redis::aio::ConnectionManager;
+use ::redis::aio::ConnectionManager;
 use ryframe_adapters::{
     RedisClient,
     storage::{

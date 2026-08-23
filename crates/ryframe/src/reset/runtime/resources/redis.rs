@@ -325,7 +325,7 @@ async fn scan_and_unlink_scope(
         if pages >= MAX_REDIS_SCAN_PAGES {
             return Err(ResetError::new("Redis SCAN 超过安全页数上限"));
         }
-        let (next, mut keys): (u64, Vec<String>) = redis::cmd("SCAN")
+        let (next, mut keys): (u64, Vec<String>) = ::redis::cmd("SCAN")
             .arg(cursor)
             .arg("MATCH")
             .arg(pattern)
@@ -340,7 +340,7 @@ async fn scan_and_unlink_scope(
             guard.assert_locks_held().await?;
             redis.verify_sentinel_unchanged().await?;
             redis.verify_ownership_before_purge(resource, false).await?;
-            let mut command = redis::cmd("UNLINK");
+            let mut command = ::redis::cmd("UNLINK");
             for key in &keys {
                 command.arg(key);
             }
@@ -371,7 +371,7 @@ async fn scan_scope_keys(
         if pages >= MAX_REDIS_SCAN_PAGES {
             return Err(ResetError::new("Redis 验证 SCAN 超过安全页数上限"));
         }
-        let (next, batch): (u64, Vec<String>) = redis::cmd("SCAN")
+        let (next, batch): (u64, Vec<String>) = ::redis::cmd("SCAN")
             .arg(cursor)
             .arg("MATCH")
             .arg(pattern)
@@ -419,7 +419,7 @@ async fn raw_get_bounded(
     if max_bytes == 0 || max_bytes > i64::MAX as usize {
         return Err(ResetError::new("Redis 有界读取上限无效"));
     }
-    let initial_length: u64 = redis::cmd("STRLEN")
+    let initial_length: u64 = ::redis::cmd("STRLEN")
         .arg(key)
         .query_async(&mut connection)
         .await
@@ -427,7 +427,7 @@ async fn raw_get_bounded(
     if initial_length > max_bytes as u64 {
         return Err(ResetError::new("Redis 控制键超过有界读取上限"));
     }
-    let value: Vec<u8> = redis::cmd("GETRANGE")
+    let value: Vec<u8> = ::redis::cmd("GETRANGE")
         .arg(key)
         .arg(0)
         .arg(max_bytes as i64)
@@ -437,7 +437,7 @@ async fn raw_get_bounded(
     if value.len() > max_bytes {
         return Err(ResetError::new("Redis 控制键在读取期间超过上限"));
     }
-    let exists: bool = redis::cmd("EXISTS")
+    let exists: bool = ::redis::cmd("EXISTS")
         .arg(key)
         .query_async(&mut connection)
         .await
@@ -449,7 +449,7 @@ async fn raw_get_bounded(
             Err(ResetError::new("Redis 控制键在读取期间发生变化"))
         };
     }
-    let final_length: u64 = redis::cmd("STRLEN")
+    let final_length: u64 = ::redis::cmd("STRLEN")
         .arg(key)
         .query_async(&mut connection)
         .await
@@ -464,7 +464,7 @@ async fn raw_get_bounded(
 }
 
 async fn raw_set(mut connection: ConnectionManager, key: &str, value: &[u8]) -> ResetResult<()> {
-    redis::cmd("SET")
+    ::redis::cmd("SET")
         .arg(key)
         .arg(value)
         .query_async(&mut connection)
@@ -480,7 +480,7 @@ async fn raw_unlink_exact(
     if !key.starts_with(namespace) {
         return Err(ResetError::new("Redis 精确 UNLINK 键不属于当前 namespace"));
     }
-    redis::cmd("UNLINK")
+    ::redis::cmd("UNLINK")
         .arg(key)
         .query_async(&mut connection)
         .await

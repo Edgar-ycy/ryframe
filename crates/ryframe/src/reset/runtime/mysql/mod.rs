@@ -1,13 +1,13 @@
 use std::collections::BTreeSet;
 
 use ryframe_config::{AppConfig, DbConnection};
-use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
+use sea_orm::{ConnectionTrait, DatabaseConnection, DatabaseTransaction, TransactionTrait};
 
 use crate::reset::{
     ResetError, ResetResult,
     engine::{PhaseEvidence, ResourceProgress},
     ledger::ResetLedger,
-    model::{ResetManifest, database_resource_key, sha256_hex},
+    model::{PhysicalDatabase, ResetManifest, database_resource_key, sha256_hex},
 };
 
 mod identity;
@@ -18,9 +18,9 @@ use identity::{
     validate_physical_database_identities,
 };
 use operations::{
-    connect_target, verify_database_ownership_before_recreate, verify_empty_control_resources,
-    verify_empty_external_tenant, verify_global_privileges, verify_seed_hashes,
-    verify_server_writable, write_seed_hashes,
+    connect_target, database_exists, scalar_i64, verify_database_ownership_before_recreate,
+    verify_empty_control_resources, verify_empty_external_tenant, verify_global_privileges,
+    verify_seed_hashes, verify_server_writable, write_seed_hashes,
 };
 
 pub use identity::{parse_lower_case_table_names, same_credentials};
