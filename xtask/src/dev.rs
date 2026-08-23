@@ -14,7 +14,7 @@ use std::{
 
 use crate::{
     Result, doctor,
-    process::{ChildGroup, spawn_pnpm_with_env, stop_child},
+    process::{ChildGroup, child_command, spawn_pnpm_with_env, stop_child},
     watch::{SourceWatcher, WatchEvent},
     workspace::root_dir,
 };
@@ -152,7 +152,7 @@ pub(crate) fn run(frontend_dir: &Path) -> Result<()> {
 
 fn build_candidate(group: &ChildGroup, root: &Path, shutdown: &AtomicBool) -> Result<BuildResult> {
     let started = Instant::now();
-    let mut build = Command::new("cargo");
+    let mut build = child_command("cargo");
     build
         .args([
             "build",

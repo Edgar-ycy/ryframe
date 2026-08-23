@@ -1,5 +1,7 @@
 use std::{
-    env, fs,
+    env,
+    ffi::OsStr,
+    fs,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     time::Instant,
@@ -193,7 +195,7 @@ pub(crate) fn run_with_env(
 ) -> Result<()> {
     let started = Instant::now();
     println!("→ {executable} {}", args.join(" "));
-    let status = Command::new(executable)
+    let status = child_command(executable)
         .args(args)
         .envs(environment.iter().copied())
         .current_dir(dir)
@@ -246,7 +248,7 @@ pub(crate) fn run_pnpm_with_env(
 }
 
 pub(crate) fn command_output(dir: &Path, executable: &str, args: &[&str]) -> Result<String> {
-    let output = Command::new(executable)
+    let output = child_command(executable)
         .args(args)
         .current_dir(dir)
         .output()?;
@@ -256,6 +258,16 @@ pub(crate) fn command_output(dir: &Path, executable: &str, args: &[&str]) -> Res
     }
     String::from_utf8(output.stdout)
         .map_err(|error| format!("{executable} 输出不是 UTF-8：{error}").into())
+}
+
+/// 仓库任务不能把 xtask 自身的 Cargo 包上下文泄漏给嵌套命令。
+/// 部分依赖的构建脚本会跟踪这些变量，泄漏后会让完全相同的构建缓存反复失效。
+pub(crate) fn child_command(executable: impl AsRef<OsStr>) -> Command {
+    let mut command = Command::new(executable);
+    command
+        .env_remove("CARGO_MANIFEST_DIR")
+        .env_remove("CARGO_MANIFEST_PATH");
+    command
 }
 
 pub(crate) fn command_version_output(dir: &Path, executable: &str) -> Result<String> {
