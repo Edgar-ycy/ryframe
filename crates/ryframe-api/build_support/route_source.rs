@@ -9,7 +9,7 @@ use std::{
 
 use syn::{Attribute, Expr, ExprLit, Item, Lit, LitStr, Meta, Token, punctuated::Punctuated};
 
-use super::{CompiledRoute, SUPPORTED_HTTP_METHODS};
+use super::model::{CompiledRoute, SUPPORTED_HTTP_METHODS};
 
 pub(super) fn collect_rust_files(
     root: &Path,
