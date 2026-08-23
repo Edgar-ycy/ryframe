@@ -151,15 +151,26 @@ impl TenantRateLimitReadPort for TenantRateLimitReader {
 /// 构造所有 Service 实例
 ///
 /// 依赖注入顺序：Repository → Redis → Service。
+pub struct ServiceInfrastructure<'a> {
+    pub redis_client: &'a Option<RedisClient>,
+    pub object_storage: Arc<dyn ArtifactStore>,
+    pub rate_limiter: Arc<RateLimiter>,
+    pub starts_background_tasks: bool,
+}
+
 pub async fn build_all(
     database: &ControlDatabaseCluster,
     tenant_data: Arc<TenantDatabaseRouter>,
     config: &AppConfig,
     policies: &ApplicationPolicies,
-    redis_client: &Option<RedisClient>,
-    object_storage: Arc<dyn ArtifactStore>,
-    rate_limiter: Arc<RateLimiter>,
+    infrastructure: ServiceInfrastructure<'_>,
 ) -> Result<AppServices, AppError> {
+    let ServiceInfrastructure {
+        redis_client,
+        object_storage,
+        rate_limiter,
+        starts_background_tasks,
+    } = infrastructure;
     let mut generated_ports = GeneratedPersistencePorts::default();
     ryframe_db::generated::register_ports(database.clone(), &mut generated_ports);
     ryframe_tenant_db::generated::register_ports(
@@ -167,7 +178,6 @@ pub async fn build_all(
         &mut generated_ports,
     );
     let generated = GeneratedServices::try_new(generated_ports)?;
-
     let authorization_cache =
         super::authorization_cache::cache(redis_client.clone(), policies.cache);
     let identity_read = ryframe_db::application_ports::auth::identity(database.clone());
@@ -320,7 +330,9 @@ pub async fn build_all(
         object_storage.clone(),
         super::file_content::processor(),
     ));
-    file.spawn_upload_janitor();
+    if starts_background_tasks {
+        file.spawn_upload_janitor();
+    }
     let job_queue = Arc::new(
         JobQueue::new(ryframe_db::application_ports::jobs::queue(database.clone()))
             .with_wakeup_transport(super::jobs::job_wakeup_transport(redis_client.as_ref())),
@@ -461,7 +473,9 @@ pub async fn build_all(
         })
     } else {
         let store = InMemoryCaptchaStore::new(300);
-        store.spawn_gc();
+        if starts_background_tasks {
+            store.spawn_gc();
+        }
         Arc::new(store)
     };
 

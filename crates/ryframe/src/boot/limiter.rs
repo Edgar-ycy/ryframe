@@ -35,7 +35,11 @@ pub fn http_limiter(limiter: Arc<RateLimiter>) -> Arc<dyn HttpRateLimiter> {
 }
 
 /// 初始化固定窗口限流器。
-pub fn init(config: &AppConfig, redis_client: &Option<RedisClient>) -> AppResult<LimiterState> {
+pub fn init(
+    config: &AppConfig,
+    redis_client: &Option<RedisClient>,
+    starts_background_tasks: bool,
+) -> AppResult<LimiterState> {
     let limiter = if let Some(redis) = redis_client {
         Arc::new(RateLimiter::new_redis(
             redis.clone(),
@@ -47,7 +51,9 @@ pub fn init(config: &AppConfig, redis_client: &Option<RedisClient>) -> AppResult
             config.rate_limit.capacity,
             config.rate_limit.window_secs,
         ));
-        l.spawn_gc();
+        if starts_background_tasks {
+            l.spawn_gc();
+        }
         l
     };
 

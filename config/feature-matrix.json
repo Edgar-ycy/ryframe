@@ -9,6 +9,9 @@
         "destructive-reset",
         "file-maintenance",
         "runtime-swagger-ui"
+      ],
+      "test_targets": [
+        "reset_contract"
       ]
     },
     {
@@ -16,7 +19,17 @@
       "minimal": [],
       "maximal": [
         "runtime-swagger-ui"
-      ]
+      ],
+      "test_targets": []
+    },
+    {
+      "package": "xtask",
+      "minimal": [],
+      "maximal": [
+        "default",
+        "resource"
+      ],
+      "test_targets": []
     }
   ]
 }

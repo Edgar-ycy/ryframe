@@ -8,12 +8,28 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+default = []
+resource = ["dep:ryframe-generator"]
+
 [dependencies]
+chrono = { workspace = true }
+notify = "8.2"
+ryframe-generator = { path = "../crates/ryframe-generator", optional = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 tokio = { workspace = true, features = ["rt", "signal"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
 
 [lints]
 workspace = true

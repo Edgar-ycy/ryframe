@@ -12,6 +12,7 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
+use ryframe::boot::startup as process_startup;
 use ryframe_adapters::RedisClient;
 use ryframe_adapters::storage::{
     LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage, ScopedObjectStorage,
@@ -67,13 +68,16 @@ async fn main() -> Result<(), AppError> {
     ryframe_application::set_authorization_cache_lookup_hook(
         ryframe_adapters::metrics::record_authorization_cache_lookup,
     );
-    let run_once = match std::env::args().skip(1).collect::<Vec<_>>().as_slice() {
-        [] => false,
-        [command] if command == "--once" => true,
-        _ => return Err(AppError::Config("用法: ryframe-worker [--once]".into())),
-    };
+    let run_mode =
+        process_startup::parse_worker_run_mode(&std::env::args().skip(1).collect::<Vec<_>>())?;
     let environment = Environment::from_env()?;
     let config = AppConfig::load_from_env(environment)?;
+    if run_mode == process_startup::WorkerRunMode::Probe && config.environment.is_production() {
+        return Err(AppError::Config(
+            "Worker 探活模式只允许本地开发和隔离检查使用".into(),
+        ));
+    }
+    let allows_initialization_writes = run_mode.allows_initialization_writes();
     let application_policies =
         process_application_policy::ApplicationPolicies::from_config(&config)?;
     if config.jobs.mode != JobWorkerMode::External {
@@ -90,7 +94,9 @@ async fn main() -> Result<(), AppError> {
         ryframe_adapters::snowflake::try_next_snowflake_id().map_err(AppError::from)
     })?;
     let (_logger_guard, _telemetry_guard) = process_logging::init(&config)?;
-    ryframe_adapters::metrics::spawn_process_metrics_updater();
+    if allows_initialization_writes {
+        ryframe_adapters::metrics::spawn_process_metrics_updater();
+    }
 
     let primary = ryframe_db::connection::connect_with_sql_logging(
         &config.database.primary,
@@ -102,7 +108,10 @@ async fn main() -> Result<(), AppError> {
     let database = ControlDatabaseCluster::single(primary);
     install_database_metrics(&database);
 
-    match config.database.migration_mode {
+    match process_startup::effective_migration_mode(
+        allows_initialization_writes,
+        config.database.migration_mode,
+    ) {
         MigrationMode::Auto => ryframe_db::migration::up(database.write())
             .await
             .map_err(|error| AppError::Database(format!("数据库迁移失败: {error}")))?,
@@ -117,7 +126,7 @@ async fn main() -> Result<(), AppError> {
         .await
         .map_err(|error| AppError::Internal(format!("数据库结构指纹校验失败: {error}")))?;
     let tenant_data = Arc::new(tenant_data::build_router(database.clone(), &config)?);
-    tenant_data::verify_current_targets(&tenant_data).await?;
+    tenant_data::verify_current_targets(&tenant_data, allows_initialization_writes).await?;
     if let Some(tenant_id) = config.multi_tenancy.fixed_tenant_id() {
         ryframe_db::TenantRepository
             .ensure_available(database.write(), tenant_id)
@@ -130,10 +139,10 @@ async fn main() -> Result<(), AppError> {
         tracing::info!(tenant_id, "Worker 已启用单租户模式");
     }
 
-    let redis = connect_redis_for_worker(&config).await?;
+    let redis = connect_redis_for_worker(&config, allows_initialization_writes).await?;
     let authorization_cache =
         process_authorization_cache::cache(redis.clone(), application_policies.cache);
-    let object_storage = connect_storage_for_worker(&config).await?;
+    let object_storage = connect_storage_for_worker(&config, allows_initialization_writes).await?;
 
     let queue = Arc::new(
         JobQueue::new(ryframe_db::application_ports::jobs::queue(database.clone()))
@@ -198,7 +207,9 @@ async fn main() -> Result<(), AppError> {
         object_storage.clone(),
         process_file_content::processor(),
     ));
-    file.spawn_upload_janitor();
+    if run_mode != process_startup::WorkerRunMode::Probe {
+        file.spawn_upload_janitor();
+    }
     let export = Arc::new(
         ExportService::new(
             ExportPersistencePorts::new(
@@ -297,7 +308,7 @@ async fn main() -> Result<(), AppError> {
         None
     };
 
-    if run_once {
+    if run_mode == process_startup::WorkerRunMode::Once {
         let scheduled = if let Some(schedules) = schedules.as_ref() {
             schedules.scan_due_once().await?
         } else {
@@ -336,6 +347,15 @@ async fn main() -> Result<(), AppError> {
         shutdown_receiver.clone(),
     )
     .await?;
+    if run_mode == process_startup::WorkerRunMode::Probe {
+        tracing::info!("Worker 候选依赖与健康探针已就绪；探活模式不消费后台任务");
+        shutdown_signal(shutdown_sender.clone()).await;
+        let _ = shutdown_sender.send(true);
+        let shutdown_deadline = tokio::time::Instant::now() + SHUTDOWN_GRACE_PERIOD;
+        wait_for_tasks_until(&mut health_tasks, "Worker 健康服务", shutdown_deadline).await;
+        _telemetry_guard.shutdown();
+        return Ok(());
+    }
     let mut worker_tasks = worker.spawn(shutdown_receiver.clone());
     if let Some(schedules) = schedules {
         worker_tasks.push(schedules.spawn(shutdown_receiver.clone()));
@@ -360,26 +380,34 @@ async fn main() -> Result<(), AppError> {
     let _ = shutdown_sender.send(true);
 
     let shutdown_deadline = tokio::time::Instant::now() + SHUTDOWN_GRACE_PERIOD;
-    for task in &mut worker_tasks {
-        if tokio::time::timeout_at(shutdown_deadline, &mut *task)
-            .await
-            .is_err()
-        {
-            tracing::warn!("后台任务 Worker 未在总宽限时间内退出，已中止");
-            task.abort();
-        }
-    }
-    for task in &mut health_tasks {
-        if tokio::time::timeout_at(shutdown_deadline, &mut *task)
-            .await
-            .is_err()
-        {
-            tracing::warn!("Worker 健康服务未在总宽限期内停止");
-            task.abort();
-        }
-    }
+    wait_for_worker_shutdown_until(&mut worker_tasks, &mut health_tasks, shutdown_deadline).await;
     _telemetry_guard.shutdown();
     Ok(())
+}
+
+async fn wait_for_tasks_until(
+    tasks: &mut [tokio::task::JoinHandle<()>],
+    label: &str,
+    shutdown_deadline: tokio::time::Instant,
+) {
+    for task in tasks {
+        if tokio::time::timeout_at(shutdown_deadline, &mut *task)
+            .await
+            .is_err()
+        {
+            tracing::warn!(%label, "进程任务未在总宽限时间内退出，已中止");
+            task.abort();
+        }
+    }
+}
+
+async fn wait_for_worker_shutdown_until(
+    worker_tasks: &mut [tokio::task::JoinHandle<()>],
+    health_tasks: &mut [tokio::task::JoinHandle<()>],
+    shutdown_deadline: tokio::time::Instant,
+) {
+    wait_for_tasks_until(worker_tasks, "后台任务 Worker", shutdown_deadline).await;
+    wait_for_tasks_until(health_tasks, "Worker 健康服务", shutdown_deadline).await;
 }
 
 #[derive(Clone)]
@@ -486,6 +514,7 @@ fn has_valid_metrics_token(headers: &HeaderMap, expected: &str) -> bool {
 /// 初始化 worker 的 Redis 连接；可选 Redis 故障只降级为收件箱补拉。
 async fn connect_storage_for_worker(
     config: &AppConfig,
+    allows_initialization_writes: bool,
 ) -> Result<Arc<dyn ArtifactStore>, AppError> {
     let raw_storage: Arc<dyn ObjectStorage> = match config.object_storage.backend {
         StorageBackend::Local => Arc::new(LocalObjectStorage::new(
@@ -508,14 +537,21 @@ async fn connect_storage_for_worker(
         config.scope_id.as_str(),
     ));
     for bucket in [EXPORT_BUCKET, IMPORT_BUCKET, CONFIG_PACKAGE_BUCKET] {
-        storage.ensure_bucket(bucket).await.map_err(|error| {
-            AppError::ServiceUnavailable(format!("Worker 对象存储不可用: {error}"))
-        })?;
+        process_startup::provision_or_verify(
+            allows_initialization_writes,
+            || storage.ensure_bucket(bucket),
+            || storage.readiness_check(bucket),
+        )
+        .await
+        .map_err(|error| AppError::ServiceUnavailable(format!("Worker 对象存储不可用: {error}")))?;
     }
     Ok(process_artifact_store::application_store(storage))
 }
 
-async fn connect_redis_for_worker(config: &AppConfig) -> Result<Option<RedisClient>, AppError> {
+async fn connect_redis_for_worker(
+    config: &AppConfig,
+    allows_initialization_writes: bool,
+) -> Result<Option<RedisClient>, AppError> {
     let Some(redis_config) = config.redis.as_ref() else {
         return Ok(None);
     };
@@ -524,19 +560,25 @@ async fn connect_redis_for_worker(config: &AppConfig) -> Result<Option<RedisClie
     }
     match RedisClient::connect(redis_config).await {
         Ok(client) => match client.ping().await {
-            Ok(_) => match client
-                .ensure_scope_ownership(&redis_config.scope_id().ownership_marker("redis"))
+            Ok(_) => {
+                let ownership_marker = redis_config.scope_id().ownership_marker("redis");
+                match process_startup::provision_or_verify(
+                    allows_initialization_writes,
+                    || client.ensure_scope_ownership(&ownership_marker),
+                    || client.verify_scope_ownership(&ownership_marker),
+                )
                 .await
-            {
-                Ok(()) => Ok(Some(client)),
-                Err(error) if redis_config.mode == RedisMode::Required => Err(AppError::Config(
-                    format!("Worker Redis scope 所有权校验失败: {error}"),
-                )),
-                Err(error) => {
-                    tracing::warn!(%error, "Worker Redis scope 所有权校验失败，消息将通过收件箱补拉");
-                    Ok(None)
+                {
+                    Ok(()) => Ok(Some(client)),
+                    Err(error) if redis_config.mode == RedisMode::Required => Err(
+                        AppError::Config(format!("Worker Redis scope 所有权校验失败: {error}")),
+                    ),
+                    Err(error) => {
+                        tracing::warn!(%error, "Worker Redis scope 所有权校验失败，消息将通过收件箱补拉");
+                        Ok(None)
+                    }
                 }
-            },
+            }
             Err(error) if redis_config.mode == RedisMode::Required => Err(
                 AppError::ServiceUnavailable(format!("Worker Redis PING 失败: {error}")),
             ),
@@ -618,4 +660,30 @@ fn install_job_metrics(queue: &JobQueue) {
         Arc::new(ryframe_adapters::metrics::set_job_wakeup_listener_up),
         Arc::new(ryframe_adapters::metrics::record_job_wakeup_protocol_error),
     )));
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{future, time::Duration};
+
+    use super::wait_for_worker_shutdown_until;
+
+    #[tokio::test]
+    async fn worker_and_health_tasks_share_expired_shutdown_deadline() {
+        let mut worker_tasks = vec![tokio::spawn(future::pending::<()>())];
+        let mut health_tasks = vec![tokio::spawn(future::pending::<()>())];
+        let shared_deadline = tokio::time::Instant::now() - Duration::from_secs(1);
+
+        wait_for_worker_shutdown_until(&mut worker_tasks, &mut health_tasks, shared_deadline).await;
+
+        let worker = worker_tasks.pop().expect("应保留 Worker 任务句柄");
+        let health = health_tasks.pop().expect("应保留健康任务句柄");
+        assert!(
+            worker
+                .await
+                .expect_err("Worker 任务应被中止")
+                .is_cancelled()
+        );
+        assert!(health.await.expect_err("健康任务应被中止").is_cancelled());
+    }
 }

@@ -34,10 +34,17 @@ pub fn build_router(
 }
 
 /// 校验当前 placement 实际引用的目标。单目标故障只降级其租户，不影响控制面启动。
-pub async fn verify_current_targets(router: &TenantDatabaseRouter) -> Result<(), AppError> {
+pub async fn verify_current_targets(
+    router: &TenantDatabaseRouter,
+    starts_background_tasks: bool,
+) -> Result<(), AppError> {
     let router = Arc::new(router.clone());
-    spawn_target_health_updater(router.clone());
-    spawn_metrics_updater(router);
+    if starts_background_tasks {
+        spawn_target_health_updater(router.clone());
+        spawn_metrics_updater(router);
+    } else {
+        run_target_health_snapshot(&router).await;
+    }
     Ok(())
 }
 

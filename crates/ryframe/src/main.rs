@@ -13,6 +13,9 @@ const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(5);
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
+    let run_mode =
+        boot::startup::parse_api_run_mode(&std::env::args().skip(1).collect::<Vec<_>>())?;
+    let starts_background_tasks = run_mode.starts_background_tasks();
     ryframe_api::metrics::install(ryframe_api::metrics::ApiMetricsHooks {
         begin_http_request: ryframe_adapters::metrics::begin_http_request,
         finish_http_request: ryframe_adapters::metrics::finish_http_request,
@@ -44,6 +47,11 @@ async fn main() -> Result<(), AppError> {
 
     let environment = Environment::from_env()?;
     let config = AppConfig::load_from_env(environment)?;
+    if run_mode == boot::startup::ApiRunMode::Probe && config.environment.is_production() {
+        return Err(AppError::Config(
+            "API 探活模式只允许本地开发和隔离检查使用".into(),
+        ));
+    }
     let application_policies = boot::application_policy::ApplicationPolicies::from_config(&config)?;
     ryframe_api::validate_runtime_features(config.api_docs.enabled)?;
     ryframe_adapters::snowflake::initialize(config.snowflake_worker_id)
@@ -63,11 +71,16 @@ async fn main() -> Result<(), AppError> {
         environment = %config.environment,
         "configuration loaded"
     );
-    ryframe_adapters::metrics::spawn_process_metrics_updater();
+    if starts_background_tasks {
+        ryframe_adapters::metrics::spawn_process_metrics_updater();
+    }
 
     let database = boot::datasource::connect(&config).await?;
     install_database_metrics(&database);
-    match config.database.migration_mode {
+    match boot::startup::effective_migration_mode(
+        starts_background_tasks,
+        config.database.migration_mode,
+    ) {
         MigrationMode::Auto => ryframe_db::migration::up(database.write())
             .await
             .map_err(|error| AppError::Database(format!("database migration failed: {error}")))?,
@@ -83,7 +96,8 @@ async fn main() -> Result<(), AppError> {
     boot::datasource::verify_schema(&database).await?;
     let tenant_database_router =
         Arc::new(boot::tenant_data::build_router(database.clone(), &config)?);
-    boot::tenant_data::verify_current_targets(&tenant_database_router).await?;
+    boot::tenant_data::verify_current_targets(&tenant_database_router, starts_background_tasks)
+        .await?;
     if let Some(tenant_id) = config.multi_tenancy.fixed_tenant_id() {
         ryframe_db::TenantRepository
             .ensure_available(database.write(), tenant_id)
@@ -95,25 +109,31 @@ async fn main() -> Result<(), AppError> {
             })?;
         tracing::info!(tenant_id, "已启用单租户模式");
     }
-    let replica_health_monitor = boot::datasource::spawn_replica_health_monitor(
-        database.clone(),
-        config.database.replicas.clone(),
-        config.database.sql_log_level,
-        config.database.sql_slow_threshold_ms,
-    );
+    let replica_health_monitor = starts_background_tasks.then(|| {
+        boot::datasource::spawn_replica_health_monitor(
+            database.clone(),
+            config.database.replicas.clone(),
+            config.database.sql_log_level,
+            config.database.sql_slow_threshold_ms,
+        )
+    });
 
     let config_arc = Arc::new(config.clone());
-    let redis = boot::redis::init(&config.redis, config.environment).await?;
-    let object_storage = boot::storage::init(&config).await?;
-    let limit = boot::limiter::init(&config, &redis.client)?;
+    let redis =
+        boot::redis::init(&config.redis, config.environment, starts_background_tasks).await?;
+    let object_storage = boot::storage::init(&config, starts_background_tasks).await?;
+    let limit = boot::limiter::init(&config, &redis.client, starts_background_tasks)?;
     let services = boot::services::build_all(
         &database,
         Arc::clone(&tenant_database_router),
         &config,
         &application_policies,
-        &redis.client,
-        object_storage,
-        limit.limiter.clone(),
+        boot::services::ServiceInfrastructure {
+            redis_client: &redis.client,
+            object_storage,
+            rate_limiter: limit.limiter.clone(),
+            starts_background_tasks,
+        },
     )
     .await?;
     install_job_metrics(&services.job_queue);
@@ -137,16 +157,24 @@ async fn main() -> Result<(), AppError> {
     let readiness_redis = redis.client.clone();
     let readiness_file = state.services.file.clone();
     let readiness_cache = state.monitor.readiness.clone();
-    let message_listener = boot::message_listener::spawn(
-        &state.message_hub,
-        redis.client.clone(),
-        services.message.clone(),
-        services.tenant_data.clone(),
-        state.settings.messaging.enabled,
-    );
-    let mut message_replay_scheduler = state
-        .message_hub
-        .spawn_replay_scheduler(services.message.clone(), shutdown_receiver.clone());
+    let message_listener = starts_background_tasks
+        .then(|| {
+            boot::message_listener::spawn(
+                &state.message_hub,
+                redis.client.clone(),
+                services.message.clone(),
+                services.tenant_data.clone(),
+                state.settings.messaging.enabled,
+            )
+        })
+        .flatten();
+    let mut message_replay_scheduler = starts_background_tasks
+        .then(|| {
+            state
+                .message_hub
+                .spawn_replay_scheduler(services.message.clone(), shutdown_receiver.clone())
+        })
+        .flatten();
     let router = app::build_app(state, limit.rate_limit_state)?;
 
     let addr = format!("{}:{}", config.app.host, config.app.port);
@@ -162,59 +190,66 @@ async fn main() -> Result<(), AppError> {
         readiness_cache,
         shutdown_receiver.clone(),
     );
-    let mut worker_tasks = match config.jobs.mode {
-        JobWorkerMode::Embedded => {
-            let execution_tenant_scope =
-                boot::jobs::execution_tenant_scope(application_policies.multi_tenancy);
-            let worker = boot::jobs::build_job_worker(
-                services.job_queue.clone(),
-                &application_policies.job_worker,
-                execution_tenant_scope.clone(),
-                boot::jobs::JobWorkerDependencies {
-                    export: services.export.clone(),
-                    message: services.message.clone(),
-                    data_retention: services.data_retention.clone(),
-                    user_import: services.user_import.clone(),
-                    tenant_config_transfer: services.tenant_config_transfer.clone(),
-                    tenant_data_migration: services.tenant_data_migration.clone(),
-                    redis: redis.client.clone(),
-                    messaging_enabled: application_policies.messaging.enabled(),
-                },
-            )?;
-            if let Some(schedules) = services.job_schedules.as_ref() {
-                boot::jobs::validate_schedule_targets(&worker, schedules.target_registry())?;
-            }
-            tracing::info!(
-                concurrency = config.jobs.concurrency,
-                "已启动内置后台任务 Worker"
-            );
-            let mut tasks = worker.spawn(shutdown_receiver.clone());
-            if let Some(schedules) = services.job_schedules.clone() {
-                tasks.push(schedules.spawn(shutdown_receiver.clone()));
-            } else {
-                tracing::info!("Cron 调度已关闭，内置 Worker 仅消费普通后台任务");
-            }
-            let authorization_cache =
-                boot::authorization_cache::cache(redis.client.clone(), application_policies.cache);
-            tasks.extend(
-                OutboxWorker::new(
+    let mut worker_tasks = if !starts_background_tasks {
+        tracing::info!("API 候选探活模式不启动消息、清理、回放或后台任务循环");
+        Vec::new()
+    } else {
+        match config.jobs.mode {
+            JobWorkerMode::Embedded => {
+                let execution_tenant_scope =
+                    boot::jobs::execution_tenant_scope(application_policies.multi_tenancy);
+                let worker = boot::jobs::build_job_worker(
                     services.job_queue.clone(),
-                    outbox_persistence,
                     &application_policies.job_worker,
-                    execution_tenant_scope,
-                )?
-                .with_authorization_cache(authorization_cache)
-                .spawn(shutdown_receiver),
-            );
-            tasks
-        }
-        JobWorkerMode::External => {
-            tracing::info!("后台任务由独立 ryframe-worker 进程消费");
-            Vec::new()
-        }
-        JobWorkerMode::Disabled => {
-            tracing::warn!("后台任务 Worker 已禁用，仅应在隔离环境使用");
-            Vec::new()
+                    execution_tenant_scope.clone(),
+                    boot::jobs::JobWorkerDependencies {
+                        export: services.export.clone(),
+                        message: services.message.clone(),
+                        data_retention: services.data_retention.clone(),
+                        user_import: services.user_import.clone(),
+                        tenant_config_transfer: services.tenant_config_transfer.clone(),
+                        tenant_data_migration: services.tenant_data_migration.clone(),
+                        redis: redis.client.clone(),
+                        messaging_enabled: application_policies.messaging.enabled(),
+                    },
+                )?;
+                if let Some(schedules) = services.job_schedules.as_ref() {
+                    boot::jobs::validate_schedule_targets(&worker, schedules.target_registry())?;
+                }
+                tracing::info!(
+                    concurrency = config.jobs.concurrency,
+                    "已启动内置后台任务 Worker"
+                );
+                let mut tasks = worker.spawn(shutdown_receiver.clone());
+                if let Some(schedules) = services.job_schedules.clone() {
+                    tasks.push(schedules.spawn(shutdown_receiver.clone()));
+                } else {
+                    tracing::info!("Cron 调度已关闭，内置 Worker 仅消费普通后台任务");
+                }
+                let authorization_cache = boot::authorization_cache::cache(
+                    redis.client.clone(),
+                    application_policies.cache,
+                );
+                tasks.extend(
+                    OutboxWorker::new(
+                        services.job_queue.clone(),
+                        outbox_persistence,
+                        &application_policies.job_worker,
+                        execution_tenant_scope,
+                    )?
+                    .with_authorization_cache(authorization_cache)
+                    .spawn(shutdown_receiver),
+                );
+                tasks
+            }
+            JobWorkerMode::External => {
+                tracing::info!("后台任务由独立 ryframe-worker 进程消费");
+                Vec::new()
+            }
+            JobWorkerMode::Disabled => {
+                tracing::warn!("后台任务 Worker 已禁用，仅应在隔离环境使用");
+                Vec::new()
+            }
         }
     };
 
@@ -289,7 +324,9 @@ async fn main() -> Result<(), AppError> {
         tracing::warn!("消息共享补拉调度器未在宽限期内停止");
         scheduler.abort();
     }
-    replica_health_monitor.abort();
+    if let Some(replica_health_monitor) = replica_health_monitor {
+        replica_health_monitor.abort();
+    }
     if let Some(listener) = message_listener {
         listener.abort();
     }

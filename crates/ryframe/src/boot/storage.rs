@@ -10,8 +10,11 @@ use ryframe_application::system::{
 use ryframe_config::{AppConfig, StorageBackend};
 use ryframe_kernel::{AppError, AppResult};
 
-/// 初始化对象存储，并在启动阶段验证连接、凭据和业务桶。
-pub async fn init(config: &AppConfig) -> AppResult<Arc<dyn ArtifactStore>> {
+/// 初始化对象存储；普通服务可建立业务桶，探活进程只执行只读就绪校验。
+pub async fn init(
+    config: &AppConfig,
+    allows_initialization_writes: bool,
+) -> AppResult<Arc<dyn ArtifactStore>> {
     let storage_config = &config.object_storage;
     let raw_storage: Arc<dyn ObjectStorage> = match storage_config.backend {
         StorageBackend::Local => Arc::new(LocalObjectStorage::new(&storage_config.local_base_dir)),
@@ -39,7 +42,13 @@ pub async fn init(config: &AppConfig) -> AppResult<Arc<dyn ArtifactStore>> {
         IMPORT_BUCKET,
         CONFIG_PACKAGE_BUCKET,
     ] {
-        storage.ensure_bucket(bucket).await.map_err(|error| {
+        super::startup::provision_or_verify(
+            allows_initialization_writes,
+            || storage.ensure_bucket(bucket),
+            || storage.readiness_check(bucket),
+        )
+        .await
+        .map_err(|error| {
             AppError::Internal(format!(
                 "{} 对象存储检查失败（bucket={bucket}）: {error}",
                 storage_config.backend.as_str()

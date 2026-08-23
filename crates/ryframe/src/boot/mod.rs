@@ -30,6 +30,8 @@ pub mod refresh_sessions;
 pub mod services;
 pub mod session_security;
 pub mod spreadsheet;
+#[doc(hidden)]
+pub mod startup;
 pub mod storage;
 pub mod tenant_config_archive;
 pub mod tenant_data;

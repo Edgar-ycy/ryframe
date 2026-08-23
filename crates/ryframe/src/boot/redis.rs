@@ -8,7 +8,11 @@ pub struct RedisState {
     pub token_blacklist: TokenBlacklist,
 }
 
-pub async fn init(config: &Option<RedisConfig>, environment: Environment) -> AppResult<RedisState> {
+pub async fn init(
+    config: &Option<RedisConfig>,
+    environment: Environment,
+    starts_background_tasks: bool,
+) -> AppResult<RedisState> {
     let mode = config
         .as_ref()
         .map_or(RedisMode::Disabled, |config| config.mode);
@@ -19,7 +23,7 @@ pub async fn init(config: &Option<RedisConfig>, environment: Environment) -> App
             None
         }
         (RedisMode::Required | RedisMode::Optional, Some(redis_config)) => {
-            match connect_and_verify(redis_config).await {
+            match connect_and_verify(redis_config, starts_background_tasks).await {
                 Ok(client) => Some(client),
                 Err(error) if mode.is_required() => return Err(error),
                 Err(error) => {
@@ -38,7 +42,7 @@ pub async fn init(config: &Option<RedisConfig>, environment: Environment) -> App
     }
 
     let token_blacklist = TokenBlacklist::new(client.clone());
-    if client.is_none() {
+    if client.is_none() && starts_background_tasks {
         token_blacklist.spawn_gc();
     }
     Ok(RedisState {
@@ -47,7 +51,10 @@ pub async fn init(config: &Option<RedisConfig>, environment: Environment) -> App
     })
 }
 
-async fn connect_and_verify(config: &RedisConfig) -> AppResult<RedisClient> {
+async fn connect_and_verify(
+    config: &RedisConfig,
+    allows_initialization_writes: bool,
+) -> AppResult<RedisClient> {
     let client = RedisClient::connect(config).await.map_err(|error| {
         AppError::ServiceUnavailable(format!("Redis connection failed: {error}"))
     })?;
@@ -55,14 +62,18 @@ async fn connect_and_verify(config: &RedisConfig) -> AppResult<RedisClient> {
         .ping()
         .await
         .map_err(|error| AppError::ServiceUnavailable(format!("Redis PING failed: {error}")))?;
-    client
-        .ensure_scope_ownership(&config.scope_id().ownership_marker("redis"))
-        .await
-        .map_err(|error| {
-            AppError::Config(format!(
-                "Redis scope ownership verification failed: {error}"
-            ))
-        })?;
+    let ownership_marker = config.scope_id().ownership_marker("redis");
+    super::startup::provision_or_verify(
+        allows_initialization_writes,
+        || client.ensure_scope_ownership(&ownership_marker),
+        || client.verify_scope_ownership(&ownership_marker),
+    )
+    .await
+    .map_err(|error| {
+        AppError::Config(format!(
+            "Redis scope ownership verification failed: {error}"
+        ))
+    })?;
     tracing::info!(mode = ?config.mode, host = %config.host, port = config.port, "Redis is ready");
     Ok(client)
 }
