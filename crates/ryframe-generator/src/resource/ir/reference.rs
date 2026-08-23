@@ -1,0 +1,128 @@
+use std::collections::BTreeSet;
+
+use super::{FieldIr, ResourceError, ResourceSpec, field_error, is_safe_symbol, validate_ir_value};
+
+pub(super) fn validate_references(
+    resource: &str,
+    source_path: &str,
+    spec: &ResourceSpec,
+    fields: &BTreeSet<String>,
+    field_specs: &[FieldIr],
+) -> Result<(), ResourceError> {
+    if spec.database.primary_key.is_empty() {
+        return Err(
+            ResourceError::new("主键不能为空", "在 database.primary_key 中声明字段")
+                .with_resource(resource)
+                .with_file(source_path),
+        );
+    }
+    let mut primary = BTreeSet::new();
+    for field in &spec.database.primary_key {
+        ensure_field_reference(resource, source_path, fields, field, "主键")?;
+        if !primary.insert(field) {
+            return Err(field_error(
+                resource,
+                field,
+                source_path,
+                "主键字段重复",
+                "从 database.primary_key 删除重复项",
+            ));
+        }
+    }
+    let mut index_names = BTreeSet::new();
+    for index in &spec.database.indexes {
+        if !is_safe_symbol(&index.name) || index.fields.is_empty() {
+            return Err(ResourceError::new(
+                format!("索引 `{}` 名称无效或字段为空", index.name),
+                "使用安全索引名并至少声明一个字段",
+            )
+            .with_resource(resource)
+            .with_file(source_path));
+        }
+        if !index_names.insert(&index.name) {
+            return Err(ResourceError::new(
+                format!("索引 `{}` 重复", index.name),
+                "为每个索引使用唯一名称",
+            )
+            .with_resource(resource)
+            .with_file(source_path));
+        }
+        let mut index_fields = BTreeSet::new();
+        for field in &index.fields {
+            ensure_field_reference(resource, source_path, fields, field, "索引")?;
+            if !index_fields.insert(field) {
+                return Err(field_error(
+                    resource,
+                    field,
+                    source_path,
+                    format!("索引 `{}` 中字段重复", index.name),
+                    "删除索引中的重复字段",
+                ));
+            }
+        }
+    }
+    if let Some(soft_delete) = &spec.database.soft_delete {
+        ensure_field_reference(resource, source_path, fields, &soft_delete.field, "软删除")?;
+        let field = field_specs
+            .iter()
+            .find(|field| field.name == soft_delete.field)
+            .expect("字段引用已校验");
+        validate_ir_value(
+            resource,
+            source_path,
+            field,
+            &soft_delete.active,
+            "soft_delete.active",
+        )?;
+        validate_ir_value(
+            resource,
+            source_path,
+            field,
+            &soft_delete.deleted,
+            "soft_delete.deleted",
+        )?;
+        if soft_delete.active == soft_delete.deleted {
+            return Err(field_error(
+                resource,
+                &soft_delete.field,
+                source_path,
+                "软删除 active 与 deleted 值相同",
+                "为有效和删除状态使用不同值",
+            ));
+        }
+    }
+    if let Some(audit) = &spec.database.audit {
+        for field in [
+            Some(&audit.created_at),
+            audit.created_by.as_ref(),
+            Some(&audit.updated_at),
+            audit.updated_by.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            ensure_field_reference(resource, source_path, fields, field, "审计")?;
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn ensure_field_reference(
+    resource: &str,
+    source_path: &str,
+    fields: &BTreeSet<String>,
+    field: &str,
+    owner: &str,
+) -> Result<(), ResourceError> {
+    if fields.contains(field) {
+        Ok(())
+    } else {
+        Err(field_error(
+            resource,
+            field,
+            source_path,
+            format!("{owner}引用了未声明字段"),
+            "补充 fields 条目，或修正引用名称",
+        ))
+    }
+}
