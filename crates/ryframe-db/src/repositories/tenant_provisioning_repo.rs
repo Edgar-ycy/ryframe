@@ -8,8 +8,9 @@ use sea_orm::{
 };
 
 use crate::entities::{
-    config, dept, dict_data, dict_type, menu, permission, role, role_permission, tenant,
-    tenant_provision_request, user, user_role,
+    config, dept, dict_data, dict_type, menu, permission, role, role_permission,
+    tenant::{self, provision_request as tenant_provision_request},
+    user, user_role,
 };
 use crate::generated::entities::post;
 use crate::repositories::cache_namespace_version_repo::{

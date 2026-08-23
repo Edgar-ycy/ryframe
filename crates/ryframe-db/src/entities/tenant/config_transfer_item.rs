@@ -1,3 +1,5 @@
+//! 租户配置迁移明细实体。
+
 use chrono::{DateTime, Utc};
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};

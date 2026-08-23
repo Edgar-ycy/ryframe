@@ -1,26 +1,22 @@
+//! 租户长操作租约实体。
+
 use chrono::{DateTime, Utc};
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// 控制库中租户业务数据的权威放置记录。
+/// 所有会改变租户运行时或配置状态的长操作共享的单租户租约。
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Serialize, Deserialize)]
-#[sea_orm(table_name = "sys_tenant_data_placement")]
+#[sea_orm(table_name = "sys_tenant_operation_lease")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub tenant_id: String,
-    pub current_target_key: String,
-    pub placement_generation: i64,
-    pub state: String,
-    pub switch_token: String,
+    pub owner_token: String,
+    pub operation: String,
+    pub resource_type: String,
+    pub resource_id: String,
+    pub expires_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-}
-
-impl Model {
-    pub const STATE_PROVISIONING: &str = "provisioning";
-    pub const STATE_ACTIVE: &str = "active";
-    pub const STATE_MAINTENANCE: &str = "maintenance";
-    pub const STATE_FAILED: &str = "failed";
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

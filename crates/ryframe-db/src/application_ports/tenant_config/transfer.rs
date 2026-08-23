@@ -4,8 +4,12 @@ use crate::{
     CONFIG_CACHE_NAMESPACE, CacheNamespaceVersionRepository, ControlDatabaseCluster,
     TenantConfigTransferRepository,
     entities::{
-        background_job, tenant, tenant_config_bundle, tenant_config_transfer,
-        tenant_config_transfer_item, tenant_operation_lease,
+        background_job,
+        tenant::{
+            self, config_bundle as tenant_config_bundle, config_transfer as tenant_config_transfer,
+            config_transfer_item as tenant_config_transfer_item,
+            operation_lease as tenant_operation_lease,
+        },
     },
 };
 use ryframe_kernel::{AppError, PageResult};

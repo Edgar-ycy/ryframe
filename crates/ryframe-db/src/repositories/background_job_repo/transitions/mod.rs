@@ -10,8 +10,11 @@ use sea_orm::{
 
 use crate::{
     entities::{
-        background_job, data_retention_run, export_job, tenant_config_bundle,
-        tenant_config_transfer, user_import_job,
+        background_job, data_retention_run, export_job,
+        tenant::{
+            config_bundle as tenant_config_bundle, config_transfer as tenant_config_transfer,
+        },
+        user_import_job,
     },
     repositories::{DataRetentionRepository, ExecutionTenantFilter},
 };

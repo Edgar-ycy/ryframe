@@ -1,3 +1,5 @@
+//! 租户开通幂等请求实体。
+
 use chrono::{DateTime, Utc};
 use sea_orm::entity::prelude::*;
 

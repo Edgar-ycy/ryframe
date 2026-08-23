@@ -5,7 +5,12 @@ use crate::{
     BackgroundJobStats as DatabaseJobStats, BackgroundJobTypeStats as DatabaseTypeStats,
     ControlDatabaseCluster, EnqueueBackgroundJob, EnqueueBackgroundJobResult, FailBackgroundJob,
     JobFailureDisposition as DatabaseFailureOutcome,
-    entities::{background_job, tenant_config_bundle, tenant_config_transfer},
+    entities::{
+        background_job,
+        tenant::{
+            config_bundle as tenant_config_bundle, config_transfer as tenant_config_transfer,
+        },
+    },
 };
 use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};

@@ -17,9 +17,10 @@ use ryframe_db::{
     TenantOperationLeaseRepository, TenantRepository, ValidatedTenantDataBackup,
     application_ports::transaction::DatabasePortTransaction,
     database_utc_now,
-    entities::{
-        tenant_data_backup_point, tenant_data_migration, tenant_data_migration_item,
-        tenant_data_placement, tenant_operation_lease,
+    entities::tenant::{
+        data_backup_point as tenant_data_backup_point, data_migration as tenant_data_migration,
+        data_migration_item as tenant_data_migration_item, data_placement as tenant_data_placement,
+        operation_lease as tenant_operation_lease,
     },
 };
 use ryframe_kernel::AppError;

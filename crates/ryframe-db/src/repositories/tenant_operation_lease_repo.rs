@@ -5,8 +5,9 @@ use sea_orm::{
     sea_query::{Condition, Expr, LockType},
 };
 
-use crate::entities::{
-    tenant, tenant_config_transfer, tenant_data_migration, tenant_operation_lease,
+use crate::entities::tenant::{
+    self, config_transfer as tenant_config_transfer, data_migration as tenant_data_migration,
+    operation_lease as tenant_operation_lease,
 };
 
 /// 跨配置迁移、产品变更等操作共享的单租户租约仓储。

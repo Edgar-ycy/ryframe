@@ -1,3 +1,17 @@
+//! 租户核心记录及其控制面附属实体。
+
+pub mod capability_override;
+pub mod config_bundle;
+pub mod config_transfer;
+pub mod config_transfer_item;
+pub mod data_backup_point;
+pub mod data_migration;
+pub mod data_migration_item;
+pub mod data_placement;
+pub mod operation_lease;
+pub mod product_plan;
+pub mod provision_request;
+
 use chrono::{DateTime, Utc};
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};

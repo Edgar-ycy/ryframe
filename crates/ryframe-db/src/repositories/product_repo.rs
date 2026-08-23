@@ -8,8 +8,11 @@ use sea_orm::{
 };
 
 use crate::entities::{
-    product_plan, product_plan_capability, product_plan_version, tenant,
-    tenant_capability_override, tenant_product_plan,
+    product_plan, product_plan_capability, product_plan_version,
+    tenant::{
+        self, capability_override as tenant_capability_override,
+        product_plan as tenant_product_plan,
+    },
 };
 
 #[derive(Clone, Debug)]

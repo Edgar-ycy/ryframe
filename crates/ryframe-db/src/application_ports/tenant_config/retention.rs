@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    ControlDatabaseCluster, FileRepository, TenantRepository, tenant_config_bundle,
-    tenant_config_transfer,
+    ControlDatabaseCluster, FileRepository, TenantRepository,
+    tenant::{config_bundle as tenant_config_bundle, config_transfer as tenant_config_transfer},
 };
 use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::{AppError, AppResult};

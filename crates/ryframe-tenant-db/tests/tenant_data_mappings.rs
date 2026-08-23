@@ -1,8 +1,9 @@
 use ryframe_application::ports::tenant_data::{
     TenantDataCleanupOwnership as ApplicationCleanupOwnership, TenantDataTargetHealth,
 };
-use ryframe_db::entities::{
-    tenant_data_migration, tenant_data_migration_item, tenant_data_placement,
+use ryframe_db::entities::tenant::{
+    data_migration as tenant_data_migration, data_migration_item as tenant_data_migration_item,
+    data_placement as tenant_data_placement,
 };
 use ryframe_tenant_db::{
     TenantDataCleanupOwnership, TenantDatabaseTargetHealthStatus,

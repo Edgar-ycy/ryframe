@@ -9,9 +9,9 @@ use sea_orm::{
 };
 use std::collections::HashSet;
 
-use crate::entities::{
-    tenant_data_backup_point, tenant_data_migration, tenant_data_migration_item,
-    tenant_data_placement,
+use crate::entities::tenant::{
+    data_backup_point as tenant_data_backup_point, data_migration as tenant_data_migration,
+    data_migration_item as tenant_data_migration_item, data_placement as tenant_data_placement,
 };
 
 #[derive(Clone, Debug)]

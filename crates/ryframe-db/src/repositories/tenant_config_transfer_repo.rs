@@ -7,9 +7,10 @@ use sea_orm::{
 };
 
 use crate::{
-    entities::{
-        tenant, tenant_config_bundle, tenant_config_transfer, tenant_config_transfer_item,
-        tenant_operation_lease,
+    entities::tenant::{
+        self, config_bundle as tenant_config_bundle, config_transfer as tenant_config_transfer,
+        config_transfer_item as tenant_config_transfer_item,
+        operation_lease as tenant_operation_lease,
     },
     repositories::TenantOperationLeaseRepository,
 };

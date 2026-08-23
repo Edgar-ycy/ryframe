@@ -1,3 +1,5 @@
+//! 租户数据备份点实体。
+
 use chrono::{DateTime, Utc};
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};

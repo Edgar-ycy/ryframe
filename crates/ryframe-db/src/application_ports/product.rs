@@ -7,7 +7,11 @@ use crate::{
     ControlDatabaseCluster, ProductRepository, ReadConsistency, TenantOperationLeaseRepository,
     entities::{
         menu, permission, product_plan, product_plan_capability, product_plan_version, role,
-        role_permission, tenant_capability_override, tenant_operation_lease,
+        role_permission,
+        tenant::{
+            capability_override as tenant_capability_override,
+            operation_lease as tenant_operation_lease,
+        },
     },
 };
 use chrono::{DateTime, Utc};

@@ -12,7 +12,10 @@ use ryframe_db::{
         retention::{database_resource_key, retention_run_model, retention_run_record},
         tenant_config::{ACTIVE_TRANSFER_PREDICATE, INACTIVE_ROLLBACK_PREDICATE},
     },
-    entities::{tenant_config_bundle, tenant_config_transfer, tenant_config_transfer_item},
+    entities::tenant::{
+        config_bundle as tenant_config_bundle, config_transfer as tenant_config_transfer,
+        config_transfer_item as tenant_config_transfer_item,
+    },
 };
 use serde_json::json;
 

@@ -7,7 +7,7 @@ use chrono::{DateTime, Duration, Utc};
 use ryframe_config::{AppConfig, Environment, TenantDatabaseTargetMode};
 use ryframe_db::{
     ControlDatabaseCluster, RegisterTenantDataBackupPoint, TenantDataRepository,
-    tenant_data_backup_point,
+    entities::tenant::data_backup_point as tenant_data_backup_point,
 };
 use ryframe_tenant_db::TenantDatabaseRouter;
 use sea_orm::{DbBackend, FromQueryResult, Statement};

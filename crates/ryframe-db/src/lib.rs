@@ -43,11 +43,8 @@ pub use entities::{
     message_audience, message_recipient, notice, oper_log, outbox_event, password_reset_request,
     permission, product_plan, product_plan_capability, product_plan_version, role, role_dept,
     role_permission, service_access_audit, service_account, service_account_role,
-    service_credential, service_delegation, service_delegation_capability, sys_file, tenant,
-    tenant_capability_override, tenant_config_bundle, tenant_config_transfer,
-    tenant_config_transfer_item, tenant_data_backup_point, tenant_data_migration,
-    tenant_data_migration_item, tenant_data_placement, tenant_operation_lease, tenant_product_plan,
-    user, user_import_job, user_import_row_result, user_role,
+    service_credential, service_delegation, service_delegation_capability, sys_file, tenant, user,
+    user_import_job, user_import_row_result, user_role,
 };
 pub use repositories::{
     AgentDictionaryPage, AgentQueryPage, AgentQueryRepository, AgentRowScope, BackgroundJobFilter,
