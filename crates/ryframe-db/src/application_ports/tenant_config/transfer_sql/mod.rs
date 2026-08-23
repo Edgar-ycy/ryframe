@@ -23,9 +23,10 @@ use sea_orm::{
 use crate::{
     FileRepository,
     entities::{
-        config, dept, dict_data, dict_type, menu, permission, post, role, role_dept,
-        role_permission, tenant, tenant_config_transfer_item, user, user_role,
+        config, dept, dict_data, dict_type, menu, permission, role, role_dept, role_permission,
+        tenant, tenant_config_transfer_item, user, user_role,
     },
+    generated::entities::post,
 };
 
 mod apply_resources;

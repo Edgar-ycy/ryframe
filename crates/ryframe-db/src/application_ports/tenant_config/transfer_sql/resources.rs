@@ -17,7 +17,7 @@ where
     let department_paths = build_department_paths(&departments)?;
     let posts = post::Entity::find()
         .filter(post::Column::TenantId.eq(tenant_id))
-        .filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL))
+        .filter(post::Column::DelFlag.eq(post::SOFT_DELETE_ACTIVE))
         .all(db)
         .await
         .map_err(database_error)?;

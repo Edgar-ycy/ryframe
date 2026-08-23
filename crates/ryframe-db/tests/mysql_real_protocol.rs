@@ -10,7 +10,8 @@ use std::{
 };
 
 use ryframe_config::{DbConnection, DbTlsMode};
-use ryframe_db::{PostRepository, Repository, connection};
+use ryframe_db::{ControlDatabaseCluster, connection, generated};
+use ryframe_kernel::{AppError, PaginationPolicy, ValidatedPageQuery};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement, TransactionTrait};
 
 const ENABLE_ENV: &str = "RYFRAME_MYSQL_INTEGRATION";
@@ -228,7 +229,7 @@ async fn select_for_update_serializes_concurrent_updates() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn post_repository_enforces_tenant_isolation() {
+async fn generated_post_port_enforces_tenant_isolation() {
     run_mysql_test("tenant", |database| async move {
         execute(
             &database,
@@ -253,18 +254,19 @@ async fn post_repository_enforces_tenant_isolation() {
              (id, tenant_id, name, code, sort, status, remark, del_flag, created_at, updated_at) \
              VALUES \
              (101, 'tenant-a', '岗位 A', 'shared-code', 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)), \
+             (102, 'tenant-a', '岗位停用', 'disabled-code', 2, '0', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)), \
              (202, 'tenant-b', '岗位 B', 'shared-code', 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))",
         )
         .await?;
 
-        let repository = PostRepository;
-        let tenant_a = repository
-            .find_by_code(&database, "tenant-a", "shared-code")
+        let persistence = generated::post::port(ControlDatabaseCluster::single(database.clone()));
+        let tenant_a = persistence
+            .find_by_id("tenant-a", 101)
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| "tenant-a 未读取到自己的岗位".to_owned())?;
-        let tenant_b = repository
-            .find_by_code(&database, "tenant-b", "shared-code")
+        let tenant_b = persistence
+            .find_by_id("tenant-b", 202)
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| "tenant-b 未读取到自己的岗位".to_owned())?;
@@ -275,12 +277,94 @@ async fn post_repository_enforces_tenant_isolation() {
             ));
         }
 
-        let cross_tenant = repository
-            .find_by_id(&database, "tenant-a", 202)
+        let cross_tenant = persistence
+            .find_by_id("tenant-a", 202)
             .await
             .map_err(|error| error.to_string())?;
         if cross_tenant.is_some() {
             return Err("岗位仓储允许 tenant-a 按主键读取 tenant-b 数据".to_owned());
+        }
+        let page = ValidatedPageQuery::new(1, 10, PaginationPolicy::new(10, 100))
+            .map_err(|error| error.to_string())?;
+        let list = |status| ryframe_application::generated::post::PostFilter {
+            name: None,
+            code: None,
+            status,
+        };
+        let without_filter = persistence
+            .find_by_page("tenant-a", page, list(None))
+            .await
+            .map_err(|error| error.to_string())?;
+        let empty_filter = persistence
+            .find_by_page("tenant-a", page, list(Some("")))
+            .await
+            .map_err(|error| error.to_string())?;
+        let active_only = persistence
+            .find_by_page("tenant-a", page, list(Some("1")))
+            .await
+            .map_err(|error| error.to_string())?;
+        if without_filter.total != 2 || empty_filter.total != 2 || active_only.total != 1 {
+            return Err(format!(
+                "岗位状态过滤语义不一致: none={}, empty={}, active={}",
+                without_filter.total, empty_filter.total, active_only.total
+            ));
+        }
+
+        let mut cross_tenant_insert = tenant_b.clone();
+        cross_tenant_insert.id = 303;
+        cross_tenant_insert.code = "cross-tenant-insert".into();
+        let insert_transaction = persistence
+            .begin("tenant-a")
+            .await
+            .map_err(|error| error.to_string())?;
+        let insert_error = insert_transaction
+            .insert(cross_tenant_insert)
+            .await
+            .expect_err("跨租户岗位不得写入");
+        if !matches!(
+            &insert_error,
+            AppError::Authorization(message) if message == "岗位事务租户不匹配"
+        ) {
+            return Err(format!("跨租户岗位写入返回了错误类型: {insert_error}"));
+        }
+        insert_transaction
+            .rollback()
+            .await
+            .map_err(|error| error.to_string())?;
+        if persistence
+            .find_by_id("tenant-b", 303)
+            .await
+            .map_err(|error| error.to_string())?
+            .is_some()
+        {
+            return Err("跨租户岗位写入拒绝后仍产生了数据".into());
+        }
+
+        let update_transaction = persistence
+            .begin("tenant-a")
+            .await
+            .map_err(|error| error.to_string())?;
+        let update_error = update_transaction
+            .update(tenant_b.clone())
+            .await
+            .expect_err("跨租户岗位不得更新");
+        if !matches!(
+            &update_error,
+            AppError::Authorization(message) if message == "岗位事务租户不匹配"
+        ) {
+            return Err(format!("跨租户岗位更新返回了错误类型: {update_error}"));
+        }
+        update_transaction
+            .rollback()
+            .await
+            .map_err(|error| error.to_string())?;
+        let unchanged = persistence
+            .find_by_id("tenant-b", 202)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "跨租户更新拒绝后岗位丢失".to_owned())?;
+        if unchanged.name != tenant_b.name || unchanged.code != tenant_b.code {
+            return Err("跨租户更新拒绝后岗位内容发生变化".into());
         }
         Ok(())
     })

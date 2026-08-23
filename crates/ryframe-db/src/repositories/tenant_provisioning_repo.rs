@@ -8,9 +8,10 @@ use sea_orm::{
 };
 
 use crate::entities::{
-    config, dept, dict_data, dict_type, menu, permission, post, role, role_permission, tenant,
+    config, dept, dict_data, dict_type, menu, permission, role, role_permission, tenant,
     tenant_provision_request, user, user_role,
 };
+use crate::generated::entities::post;
 use crate::repositories::cache_namespace_version_repo::{
     CONFIG_CACHE_NAMESPACE, CacheNamespaceVersionRepository,
 };
@@ -144,7 +145,7 @@ impl TenantProvisioningRepository {
             .collect::<Vec<_>>();
         let system_posts = post::Entity::find()
             .filter(post::Column::TenantId.eq(TEMPLATE_TENANT_ID))
-            .filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL))
+            .filter(post::Column::DelFlag.eq(post::SOFT_DELETE_ACTIVE))
             .all(transaction)
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;

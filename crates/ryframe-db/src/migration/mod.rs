@@ -6,18 +6,19 @@ use sea_orm::{
 };
 use sea_orm_migration::prelude::*;
 
+mod access_catalog;
 mod m20260820_000000_control_baseline;
 mod schema;
 mod seeder;
 
+pub use access_catalog::{
+    AccessMenu, access_menus, access_permission_codes, access_permission_names,
+};
 pub use m20260820_000000_control_baseline::ddl_statements as control_ddl_statements;
 pub use schema::{
     expected_extra, extract_column_type, normalize_column_type, verify_current_schema,
 };
-pub use seeder::{
-    AccessMenu, access_menus, access_permission_codes, access_permission_names, mysql_snapshot_sql,
-    seed, validate_seed_statements,
-};
+pub use seeder::{mysql_snapshot_sql, seed, validate_seed_statements};
 
 const MIGRATION_LOCK_SQL_PREFIX: &str = "ryframe:migration:";
 pub const CONTROL_MIGRATION_LEDGER: &str = "seaql_migrations";

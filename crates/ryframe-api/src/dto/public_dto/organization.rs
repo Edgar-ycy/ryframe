@@ -5,8 +5,8 @@ use utoipa::ToSchema;
 use ryframe_application::system::{
     ConfigVo as ServiceConfigVo, DeptTreeNode as ServiceDeptTreeNode, DeptVo as ServiceDeptVo,
     DictDataVo as ServiceDictDataVo, DictTypeVo as ServiceDictTypeVo, NoticeVo as ServiceNoticeVo,
-    OptionItem as ServiceOptionItem, OptionList as ServiceOptionList, PostVo as ServicePostVo,
-    RoleVo as ServiceRoleVo, TenantVo as ServiceTenantVo,
+    OptionItem as ServiceOptionItem, OptionList as ServiceOptionList, RoleVo as ServiceRoleVo,
+    TenantVo as ServiceTenantVo,
 };
 
 /// 参数配置响应。
@@ -257,41 +257,6 @@ impl From<ServiceOptionList> for OptionList {
         Self {
             items: items.into_iter().map(OptionItem::from).collect(),
             has_more,
-        }
-    }
-}
-
-/// 岗位响应。
-#[derive(Debug, Serialize, ToSchema)]
-pub struct PostVo {
-    pub id: String,
-    pub name: String,
-    pub code: String,
-    pub sort: i32,
-    pub status: String,
-    pub remark: Option<String>,
-    pub created_at: DateTime<Utc>,
-}
-
-impl From<ServicePostVo> for PostVo {
-    fn from(value: ServicePostVo) -> Self {
-        let ServicePostVo {
-            id,
-            name,
-            code,
-            sort,
-            status,
-            remark,
-            created_at,
-        } = value;
-        Self {
-            id,
-            name,
-            code,
-            sort,
-            status,
-            remark,
-            created_at,
         }
     }
 }

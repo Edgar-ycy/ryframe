@@ -4,14 +4,15 @@ use crate::TrustedProxySet;
 use ryframe_application::{
     AuditOutbox, AuthService, JobQueue, JobScheduleService,
     agent::AgentService,
+    generated::GeneratedServices,
     ports::tenants::TenantRuntimeReadPort,
     system::{
         AuthorizationDiagnosticService, CaptchaStore, ConfigService, DataRetentionService,
         DeptService, DictService, ExportService, FileService, LoginInfoService, MenuService,
         MessageService, NoticeService, OnlineUserService, OperLogService, OverviewService,
-        PermissionService, PostService, ProductService, ProfileService, RoleService,
-        ServiceAccountService, TenantConfigTransferService, TenantDataMigrationService,
-        TenantService, TenantUsageService, UserImportService, UserService, WebSocketTicketService,
+        PermissionService, ProductService, ProfileService, RoleService, ServiceAccountService,
+        TenantConfigTransferService, TenantDataMigrationService, TenantService, TenantUsageService,
+        UserImportService, UserService, WebSocketTicketService,
     },
 };
 use ryframe_kernel::Localizer;
@@ -36,7 +37,7 @@ pub struct AppServices {
     pub permission: Arc<PermissionService>,
     pub menu: Arc<MenuService>,
     pub dept: Arc<DeptService>,
-    pub post: Arc<PostService>,
+    pub generated: GeneratedServices,
     pub config: Arc<ConfigService>,
     pub dict: Arc<DictService>,
     pub export: Arc<ExportService>,

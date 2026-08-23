@@ -10,7 +10,6 @@ mod notice;
 mod oper_log;
 mod overview;
 mod permission;
-mod post;
 mod role_read;
 mod role_write;
 
@@ -40,6 +39,5 @@ pub use overview::{
 pub use permission::{
     PermissionReadPort, PermissionRecord, PermissionWritePort, PermissionWriteTransaction,
 };
-pub use post::{PostFilter, PostPersistencePort, PostRecord, PostTransaction};
 pub use role_read::{RoleFilter, RoleReadPort, RoleRecord};
 pub use role_write::{RolePermissionRef, RoleWritePort, RoleWriteTransaction};

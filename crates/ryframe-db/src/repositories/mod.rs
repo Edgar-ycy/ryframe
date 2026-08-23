@@ -25,7 +25,7 @@ pub mod outbox_event_repo;
 pub mod overview_repo;
 pub mod password_reset_request_repo;
 pub mod permission_repo;
-pub mod post_repo;
+pub mod post_export_repo;
 pub mod product_repo;
 pub mod role_repo;
 pub mod service_access_audit_repo;
@@ -79,7 +79,7 @@ pub use outbox_event_repo::{OutboxEventRepository, OutboxFailureDisposition, Rec
 pub use overview_repo::{OverviewRepository, OverviewTrendCount, ScheduleOverviewStats};
 pub use password_reset_request_repo::PasswordResetRequestRepository;
 pub use permission_repo::PermissionRepository;
-pub use post_repo::{PostFilter, PostRepository};
+pub use post_export_repo::{PostExportFilter, PostExportRepository};
 pub use product_repo::{ProductPlanVersionBundle, ProductRepository, TenantProductBundle};
 pub use role_repo::{RoleFilter, RoleRepository};
 pub use service_access_audit_repo::ServiceAccessAuditRepository;

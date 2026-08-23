@@ -106,7 +106,14 @@ pub(super) fn system_router(
         )
         .nest("/menus", menu_handler::menu_router(state.clone()))
         .nest("/depts", dept_handler::dept_router(state.clone()))
-        .nest("/posts", post_handler::post_router(state.clone()))
+        .merge(crate::generated::generated_router(
+            &state.services.generated,
+            state.settings.pagination,
+        ))
+        .nest(
+            "/posts",
+            post_export_handler::post_export_router(state.clone()),
+        )
         .nest("/configs", config_handler::config_router(state.clone()))
         .nest("/dict", dict_handler::dict_router(state.clone()))
         .nest("/notices", notice_handler::notice_router(state.clone()))

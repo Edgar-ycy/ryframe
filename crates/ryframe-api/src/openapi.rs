@@ -131,12 +131,7 @@ use utoipa::OpenApi;
         crate::handlers::dept_handler::update,
         crate::handlers::dept_handler::remove,
         // 岗位管理
-        crate::handlers::post_handler::list,
-        crate::handlers::post_handler::detail,
-        crate::handlers::post_handler::create,
-        crate::handlers::post_handler::update,
-        crate::handlers::post_handler::remove,
-        crate::handlers::post_handler::request_post_export,
+        crate::handlers::post_export_handler::request_post_export,
         // 菜单管理
         crate::handlers::menu_handler::tree,
         crate::handlers::menu_handler::list_page,
@@ -372,10 +367,6 @@ use utoipa::OpenApi;
         crate::dto::dept_dto::UpdateDeptDto,
         crate::dto::public_dto::DeptVo,
         crate::dto::public_dto::DeptTreeNode,
-        // 岗位 DTO
-        crate::dto::post_dto::CreatePostDto,
-        crate::dto::post_dto::UpdatePostDto,
-        crate::dto::public_dto::PostVo,
         // 菜单 DTO
         crate::dto::menu_dto::CreateMenuDto,
         crate::dto::menu_dto::UpdateMenuDto,
@@ -747,6 +738,20 @@ fn agent_capability_contract() -> serde_json::Value {
 
 impl utoipa::Modify for ApiDocModifier {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        let mut generated = <crate::generated::GeneratedOpenApi as utoipa::OpenApi>::openapi();
+        let generated_extensions = generated.extensions.take();
+        openapi.merge(generated);
+        if let Some(generated_extensions) = generated_extensions {
+            let extensions = openapi.extensions.get_or_insert_default();
+            let generated_extensions: std::collections::HashMap<_, _> = generated_extensions.into();
+            for (name, value) in generated_extensions {
+                assert!(
+                    extensions.insert(name.clone(), value).is_none(),
+                    "生成 OpenAPI 扩展与手写扩展冲突: {name}"
+                );
+            }
+        }
+
         if let Some(components) = openapi.components.as_mut() {
             components.add_security_scheme(
                 "bearer",

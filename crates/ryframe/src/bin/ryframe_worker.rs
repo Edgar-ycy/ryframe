@@ -23,8 +23,9 @@ use ryframe_application::{
     system::{
         CONFIG_PACKAGE_BUCKET, ConfigService, DataRetentionService, DictService, EXPORT_BUCKET,
         ExportPersistencePorts, ExportResourceServices, ExportService, FileService, IMPORT_BUCKET,
-        LoginInfoService, MessageService, OperLogService, PostService, ProductService, RoleService,
-        TenantConfigTransferService, TenantDataMigrationService, UserImportService, UserService,
+        LoginInfoService, MessageService, OperLogService, PostExportService, ProductService,
+        RoleService, TenantConfigTransferService, TenantDataMigrationService, UserImportService,
+        UserService,
     },
 };
 use ryframe_config::{
@@ -170,8 +171,8 @@ async fn main() -> Result<(), AppError> {
             Arc::clone(&product),
         ),
     ));
-    let post = Arc::new(PostService::new(
-        ryframe_db::application_ports::system::post(database.clone()),
+    let post_export = Arc::new(PostExportService::new(
+        ryframe_db::application_ports::export::post(database.clone()),
     ));
     let config_service = Arc::new(ConfigService::new(
         ryframe_db::application_ports::system::config(
@@ -211,7 +212,7 @@ async fn main() -> Result<(), AppError> {
             ExportResourceServices {
                 users: Arc::clone(&user),
                 roles: role,
-                posts: post,
+                posts: post_export,
                 configs: config_service,
                 dicts: dict,
                 oper_logs: oper_log,

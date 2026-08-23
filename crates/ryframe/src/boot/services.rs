@@ -5,13 +5,14 @@ use ryframe_api::AppServices;
 use ryframe_application::{
     AuditOutbox, AuthService, JobQueue, JobScheduleService,
     agent::{AgentService, AgentServiceDependencies, service_capability_descriptors},
+    generated::{GeneratedPersistencePorts, GeneratedServices},
     ports::files::ArtifactStore,
     system::{
         AuthorizationDiagnosticService, CaptchaStore, CaptchaStoreFuture, ConfigService,
         DataRetentionService, DeptService, DictCacheStore, DictCacheStoreFuture, DictService,
         ExportPersistencePorts, ExportResourceServices, ExportService, FileService,
         InMemoryCaptchaStore, LoginInfoService, MenuService, MessageService, NoticeService,
-        OnlineUserService, OperLogService, OverviewService, PermissionService, PostService,
+        OnlineUserService, OperLogService, OverviewService, PermissionService, PostExportService,
         ProductService, ProfileService, RoleService, ServiceAccountReadDependencies,
         ServiceAccountService, TenantConfigTransferService, TenantDataMigrationService,
         TenantRateLimitReadFuture, TenantRateLimitReadPort, TenantRateLimitSnapshot, TenantService,
@@ -159,6 +160,14 @@ pub async fn build_all(
     object_storage: Arc<dyn ArtifactStore>,
     rate_limiter: Arc<RateLimiter>,
 ) -> Result<AppServices, AppError> {
+    let mut generated_ports = GeneratedPersistencePorts::default();
+    ryframe_db::generated::register_ports(database.clone(), &mut generated_ports);
+    ryframe_tenant_db::generated::register_ports(
+        Arc::<TenantDatabaseRouter>::clone(&tenant_data),
+        &mut generated_ports,
+    );
+    let generated = GeneratedServices::try_new(generated_ports)?;
+
     let authorization_cache =
         super::authorization_cache::cache(redis_client.clone(), policies.cache);
     let identity_read = ryframe_db::application_ports::auth::identity(database.clone());
@@ -279,8 +288,8 @@ pub async fn build_all(
         ),
         authorization_cache.clone(),
     ));
-    let post = Arc::new(PostService::new(
-        ryframe_db::application_ports::system::post(database.clone()),
+    let post_export = Arc::new(PostExportService::new(
+        ryframe_db::application_ports::export::post(database.clone()),
     ));
     let config_service = Arc::new(ConfigService::new(
         ryframe_db::application_ports::system::config(
@@ -424,7 +433,7 @@ pub async fn build_all(
             ExportResourceServices {
                 users: Arc::clone(&user),
                 roles: Arc::clone(&role),
-                posts: Arc::clone(&post),
+                posts: post_export,
                 configs: Arc::clone(&config_service),
                 dicts: Arc::clone(&dict),
                 oper_logs: Arc::clone(&oper_log),
@@ -469,7 +478,7 @@ pub async fn build_all(
         permission,
         menu,
         dept,
-        post,
+        generated,
         config: config_service,
         dict,
         export,

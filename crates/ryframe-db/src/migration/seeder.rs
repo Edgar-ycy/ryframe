@@ -1,8 +1,10 @@
-use std::collections::BTreeMap;
-
 use sea_orm::{ConnectionTrait, DbBackend, DbErr, Statement, TryGetable};
 
 use crate::migration::m20260820_000000_control_baseline::{ddl_statements, seed_statements};
+
+use super::access_catalog::{
+    access_menus, access_permission_codes, access_permission_names, seed_access_catalog,
+};
 
 /// 插入规范的引导记录，而不覆盖运行中的变更。
 ///
@@ -25,261 +27,6 @@ where
     seed_retention_schedule(db).await?;
     verify_seed_identities(db).await?;
     verify_seed_relationships(db).await
-}
-
-const ACCESS_CATALOG: &str = include_str!("../../../../catalog/access.toml");
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct AccessMenu<'a> {
-    pub route_key: &'a str,
-    pub name: &'a str,
-    pub menu_type: &'a str,
-    pub permission: Option<&'a str>,
-}
-
-impl AccessMenu<'_> {
-    pub fn parent_route_key(&self) -> Option<&str> {
-        (self.menu_type == "C")
-            .then(|| self.route_key.split_once('.').map(|(parent, _)| parent))
-            .flatten()
-    }
-}
-
-async fn seed_access_catalog<C>(db: &C) -> Result<(), DbErr>
-where
-    C: ConnectionTrait + ?Sized,
-{
-    let permissions = access_permission_codes()?;
-    let permission_names = access_permission_names()?;
-    for (index, code) in permissions.iter().enumerate() {
-        let index = i32::try_from(index)
-            .map_err(|_| DbErr::Custom("访问目录权限数量超出基线可表示范围".into()))?;
-        let id = 10_000_i64 + i64::from(index);
-        let name = permission_names.get(code).copied().unwrap_or(code);
-        db.execute_raw(Statement::from_sql_and_values(
-            DbBackend::MySql,
-            "INSERT INTO `sys_permission` \
-             (`id`, `tenant_id`, `name`, `code`, `parent_id`, `perm_type`, `icon`, `sort`, `status`, `created_at`, `updated_at`) \
-             VALUES (?, 'system', ?, ?, NULL, 'api', NULL, ?, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)) \
-             ON DUPLICATE KEY UPDATE `name` = IF(`name` = `code`, VALUES(`name`), `name`)",
-            [id.into(), name.into(), (*code).into(), index.into()],
-        ))
-        .await?;
-    }
-
-    for (index, menu) in access_menus()?.iter().enumerate() {
-        let index = i32::try_from(index)
-            .map_err(|_| DbErr::Custom("访问目录菜单数量超出基线可表示范围".into()))?;
-        let permission_id = match menu.permission {
-            Some(code) => permission_id(db, code).await?,
-            None => None,
-        };
-        let parent_id = match menu.parent_route_key() {
-            Some(route_key) => menu_id(db, route_key).await?,
-            None => None,
-        };
-        if let Some(id) = menu_id(db, menu.route_key).await? {
-            db.execute_raw(Statement::from_sql_and_values(
-                DbBackend::MySql,
-                "UPDATE `sys_menu` SET `name` = IF(`name` = `route_key`, ?, `name`), \
-                 `parent_id` = ?, `menu_type` = ?, `perm_id` = ?, `status` = '1', \
-                 `del_flag` = '0', `updated_at` = UTC_TIMESTAMP(6) \
-                 WHERE `id` = ? AND `tenant_id` = 'system'",
-                [
-                    menu.name.into(),
-                    parent_id.into(),
-                    menu.menu_type.into(),
-                    permission_id.into(),
-                    id.into(),
-                ],
-            ))
-            .await?;
-            continue;
-        }
-        let id = 20_000_i64 + i64::from(index);
-        db.execute_raw(Statement::from_sql_and_values(
-            DbBackend::MySql,
-            "INSERT INTO `sys_menu` \
-             (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) \
-             VALUES (?, 'system', ?, ?, ?, ?, ?, NULL, ?, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))",
-            [
-                id.into(),
-                menu.name.into(),
-                parent_id.into(),
-                menu.menu_type.into(),
-                permission_id.into(),
-                menu.route_key.into(),
-                index.into(),
-            ],
-        ))
-        .await?;
-    }
-    Ok(())
-}
-
-pub fn access_permission_codes() -> Result<Vec<&'static str>, DbErr> {
-    let mut values = Vec::new();
-    let mut inside = false;
-    for line in ACCESS_CATALOG.lines().map(str::trim) {
-        if line == "permissions = [" && !inside {
-            inside = true;
-            continue;
-        }
-        if !inside {
-            continue;
-        }
-        if line == "]" {
-            break;
-        }
-        let value = line.trim_end_matches(',').trim_matches('"');
-        if !is_permission_code(value) {
-            return Err(DbErr::Custom("访问目录包含非法权限编码，拒绝初始化".into()));
-        }
-        values.push(value);
-    }
-    if values.is_empty() {
-        return Err(DbErr::Custom("访问目录没有权限定义".into()));
-    }
-    Ok(values)
-}
-
-pub fn access_permission_names() -> Result<BTreeMap<&'static str, &'static str>, DbErr> {
-    let permissions = access_permission_codes()?;
-    let mut names = BTreeMap::new();
-    let mut inside = false;
-    for line in ACCESS_CATALOG.lines().map(str::trim) {
-        if line == "[permission_names]" {
-            inside = true;
-            continue;
-        }
-        if !inside {
-            continue;
-        }
-        if line.starts_with('[') {
-            break;
-        }
-        if line.is_empty() {
-            continue;
-        }
-        let Some((code, name)) = catalog_map_entry(line) else {
-            return Err(DbErr::Custom("访问目录包含非法权限名称，拒绝初始化".into()));
-        };
-        if !permissions.contains(&code)
-            || name.trim() != name
-            || name.is_empty()
-            || name.chars().count() > 64
-            || names.insert(code, name).is_some()
-        {
-            return Err(DbErr::Custom("访问目录包含非法权限名称，拒绝初始化".into()));
-        }
-    }
-    Ok(names)
-}
-
-pub fn access_menus() -> Result<Vec<AccessMenu<'static>>, DbErr> {
-    let mut menus = Vec::new();
-    let mut current = None;
-    for line in ACCESS_CATALOG.lines().map(str::trim) {
-        if line == "[[menus]]" {
-            if let Some(menu) = current.take() {
-                menus.push(menu);
-            }
-            current = Some(AccessMenu {
-                route_key: "",
-                name: "",
-                menu_type: "",
-                permission: None,
-            });
-            continue;
-        }
-        if line.starts_with("[[") {
-            if let Some(menu) = current.take() {
-                menus.push(menu);
-            }
-            continue;
-        }
-        let Some(menu) = current.as_mut() else {
-            continue;
-        };
-        if let Some(value) = catalog_string_value(line, "route_key") {
-            menu.route_key = value;
-        } else if let Some(value) = catalog_string_value(line, "name") {
-            menu.name = value;
-        } else if let Some(value) = catalog_string_value(line, "menu_type") {
-            menu.menu_type = value;
-        } else if let Some(value) = catalog_string_value(line, "permission") {
-            menu.permission = Some(value);
-        }
-    }
-    if let Some(menu) = current {
-        menus.push(menu);
-    }
-    if menus.iter().any(|menu| {
-        menu.route_key.is_empty()
-            || menu.name.is_empty()
-            || menu.name.chars().count() > 64
-            || !matches!(menu.menu_type, "M" | "C")
-            || !menu
-                .route_key
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || b"-._".contains(&byte))
-    }) {
-        return Err(DbErr::Custom("访问目录包含非法菜单定义".into()));
-    }
-    Ok(menus)
-}
-
-fn catalog_string_value(line: &'static str, key: &str) -> Option<&'static str> {
-    let value = line
-        .strip_prefix(key)?
-        .trim_start()
-        .strip_prefix('=')?
-        .trim();
-    value.strip_prefix('"')?.strip_suffix('"')
-}
-
-fn catalog_map_entry(line: &'static str) -> Option<(&'static str, &'static str)> {
-    let (key, value) = line.split_once('=')?;
-    let key = key.trim().strip_prefix('"')?.strip_suffix('"')?;
-    let value = value.trim().strip_prefix('"')?.strip_suffix('"')?;
-    is_permission_code(key).then_some((key, value))
-}
-
-fn is_permission_code(value: &str) -> bool {
-    !value.is_empty()
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b":-*._".contains(&byte))
-}
-
-async fn permission_id<C>(db: &C, code: &str) -> Result<Option<i64>, DbErr>
-where
-    C: ConnectionTrait + ?Sized,
-{
-    let row = db
-        .query_one_raw(Statement::from_sql_and_values(
-            DbBackend::MySql,
-            "SELECT `id` FROM `sys_permission` \
-             WHERE `tenant_id` = 'system' AND `code` = ? LIMIT 1",
-            [code.into()],
-        ))
-        .await?;
-    Ok(row.map(|row| i64::try_get_by_index(&row, 0)).transpose()?)
-}
-
-async fn menu_id<C>(db: &C, route_key: &str) -> Result<Option<i64>, DbErr>
-where
-    C: ConnectionTrait + ?Sized,
-{
-    let row = db
-        .query_one_raw(Statement::from_sql_and_values(
-            DbBackend::MySql,
-            "SELECT `id` FROM `sys_menu` \
-             WHERE `tenant_id` = 'system' AND `route_key` = ? LIMIT 1",
-            [route_key.into()],
-        ))
-        .await?;
-    Ok(row.map(|row| i64::try_get_by_index(&row, 0)).transpose()?)
 }
 
 async fn seed_product_baseline<C>(db: &C) -> Result<(), DbErr>
@@ -393,7 +140,10 @@ fn access_catalog_snapshot_statements() -> Result<Vec<String>, DbErr> {
         .iter()
         .enumerate()
         .map(|(index, code)| {
-            let name = permission_names.get(code).copied().unwrap_or(code);
+            let name = permission_names
+                .get(code)
+                .map(String::as_str)
+                .unwrap_or(code.as_str());
             format!(
                 "({}, 'system', '{}', '{}', NULL, 'api', NULL, {}, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))",
                 10_000 + index,
@@ -411,7 +161,7 @@ fn access_catalog_snapshot_statements() -> Result<Vec<String>, DbErr> {
     )];
 
     for (index, menu) in access_menus()?.iter().enumerate() {
-        let permission_id = menu.permission.map_or_else(
+        let permission_id = menu.permission.as_deref().map_or_else(
             || "NULL".to_owned(),
             |code| {
                 format!(
@@ -439,13 +189,18 @@ fn access_catalog_snapshot_statements() -> Result<Vec<String>, DbErr> {
             menu.menu_type,
             permission_id,
             menu.route_key,
-            index,
+            menu.sort(),
             menu.route_key,
         ));
         statements.push(format!(
-            "UPDATE `sys_menu` SET `name` = IF(`name` = `route_key`, '{}', `name`), `parent_id` = {}, `menu_type` = '{}', `perm_id` = {}, `status` = '1', `del_flag` = '0' \
+            "UPDATE `sys_menu` SET `name` = IF(`name` = `route_key`, '{}', `name`), `parent_id` = {}, `menu_type` = '{}', `perm_id` = {}, `sort` = {}, `status` = '1', `del_flag` = '0' \
              WHERE `tenant_id` = 'system' AND `route_key` = '{}'",
-            menu_name, parent_id, menu.menu_type, permission_id, menu.route_key,
+            menu_name,
+            parent_id,
+            menu.menu_type,
+            permission_id,
+            menu.sort(),
+            menu.route_key,
         ));
     }
     Ok(statements)

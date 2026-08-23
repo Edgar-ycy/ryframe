@@ -17,7 +17,6 @@ pub mod option_dto;
 pub mod overview_dto;
 mod password_validation;
 pub mod permission_dto;
-pub mod post_dto;
 pub mod product_dto;
 pub mod profile_dto;
 pub mod public_dto;

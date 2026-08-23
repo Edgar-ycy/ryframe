@@ -4,7 +4,12 @@ use sea_orm::{
     QuerySelect,
 };
 
-use crate::entities::{dept, dict_data, dict_type, post, user};
+use crate::{
+    entities::{dept, dict_data, dict_type, user},
+    generated::entities::post,
+};
+
+const POST_STATUS_ACTIVE: &str = "1";
 
 /// 已在服务层求交集后的最终行范围；服务账号的 SelfOnly 必须转换为 Empty。
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -221,8 +226,8 @@ impl AgentQueryRepository {
     {
         let mut select = post::Entity::find()
             .filter(post::Column::TenantId.eq(tenant_id))
-            .filter(post::Column::Status.eq(post::Model::STATUS_NORMAL))
-            .filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL));
+            .filter(post::Column::Status.eq(POST_STATUS_ACTIVE))
+            .filter(post::Column::DelFlag.eq(post::SOFT_DELETE_ACTIVE));
         if let Some(after_id) = after_id {
             select = select.filter(post::Column::Id.gt(after_id));
         }
@@ -246,8 +251,8 @@ impl AgentQueryRepository {
     {
         let select = post::Entity::find()
             .filter(post::Column::TenantId.eq(tenant_id))
-            .filter(post::Column::Status.eq(post::Model::STATUS_NORMAL))
-            .filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL));
+            .filter(post::Column::Status.eq(POST_STATUS_ACTIVE))
+            .filter(post::Column::DelFlag.eq(post::SOFT_DELETE_ACTIVE));
         let total = select.clone().count(db).await.map_err(database_error)?;
         let records = select
             .order_by_asc(post::Column::Id)

@@ -30,7 +30,7 @@ pub use navigation::{
 };
 pub use organization::{
     ConfigVo, DeptTreeNode, DeptVo, DictDataVo, DictTypeVo, NoticeVo, OptionItem, OptionList,
-    PostVo, RoleVo, TenantVo,
+    RoleVo, TenantVo,
 };
 pub use overview::{
     MonitorOverviewDatabasePoolVo, MonitorOverviewDependenciesVo, MonitorOverviewDependencyVo,

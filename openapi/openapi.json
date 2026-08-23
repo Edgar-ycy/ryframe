@@ -4320,7 +4320,6 @@
             "type": "integer"
           },
           "data": {
-            "description": "岗位响应。",
             "properties": {
               "code": {
                 "type": "string"
@@ -14274,7 +14273,6 @@
         "properties": {
           "items": {
             "items": {
-              "description": "岗位响应。",
               "properties": {
                 "code": {
                   "type": "string"
@@ -15880,8 +15878,47 @@
         ],
         "type": "object"
       },
+      "PostListQuery": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "page": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "PostVo": {
-        "description": "岗位响应。",
         "properties": {
           "code": {
             "type": "string"
@@ -34968,7 +35005,6 @@
         "operationId": "get_system_posts",
         "parameters": [
           {
-            "description": "页码，从 1 开始；未提供时由运行时 TOML 策略解析。",
             "in": "query",
             "name": "page",
             "required": false,
@@ -34979,7 +35015,6 @@
             }
           },
           {
-            "description": "公共 API 仅接受 snake_case 形式的 `page_size`，并受\n`pagination.max_page_size` 限制（默认值为 100）。",
             "in": "query",
             "name": "page_size",
             "required": false,
@@ -35023,7 +35058,7 @@
                 }
               }
             },
-            "description": "岗位列表",
+            "description": "列表",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -35057,7 +35092,6 @@
             "bearer": []
           }
         ],
-        "summary": "岗位列表分页查询",
         "tags": [
           "岗位管理"
         ]
@@ -35117,7 +35151,6 @@
             "bearer": []
           }
         ],
-        "summary": "创建岗位",
         "tags": [
           "岗位管理"
         ]
@@ -35252,7 +35285,6 @@
             "bearer": []
           }
         ],
-        "summary": "删除岗位",
         "tags": [
           "岗位管理"
         ]
@@ -35278,7 +35310,7 @@
                 }
               }
             },
-            "description": "岗位详情",
+            "description": "详情",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -35312,7 +35344,6 @@
             "bearer": []
           }
         ],
-        "summary": "岗位详情",
         "tags": [
           "岗位管理"
         ]
@@ -35382,7 +35413,6 @@
             "bearer": []
           }
         ],
-        "summary": "更新岗位",
         "tags": [
           "岗位管理"
         ]
@@ -40680,6 +40710,279 @@
     "value": "/api/v1",
     "version": 1
   },
+  "x-ryframe-crud-resources": {
+    "resources": [
+      {
+        "access": {
+          "capability": "system.post",
+          "permissions": {
+            "create": "system:post:add",
+            "delete": "system:post:remove",
+            "list": "system:post:list",
+            "read": "system:post:list",
+            "update": "system:post:edit"
+          }
+        },
+        "api": {
+          "operations": {
+            "create": "post_system_posts",
+            "delete": "delete_system_posts_by_id",
+            "list": "get_system_posts",
+            "read": "get_system_posts_by_id",
+            "update": "put_system_posts_by_id"
+          },
+          "path": "/api/v1/system/posts"
+        },
+        "extension_permissions": {
+          "export": "system:post:export"
+        },
+        "fields": [
+          {
+            "enum_values": {},
+            "labels": {
+              "en": "Post ID",
+              "zh_cn": "岗位编号"
+            },
+            "name": "id",
+            "nullable": false,
+            "order": 10,
+            "usage": {
+              "create": false,
+              "create_optional": false,
+              "filter": false,
+              "list": true,
+              "read": true,
+              "sort": false,
+              "update": false,
+              "update_optional": false
+            },
+            "validation": {
+              "max_length": null,
+              "maximum": null,
+              "min_length": null,
+              "minimum": null,
+              "required": false
+            },
+            "value_type": "i64",
+            "widget": "hidden",
+            "wire_type": "string"
+          },
+          {
+            "enum_values": {},
+            "labels": {
+              "en": "Post name",
+              "zh_cn": "岗位名称"
+            },
+            "name": "name",
+            "nullable": false,
+            "order": 30,
+            "usage": {
+              "create": true,
+              "create_optional": false,
+              "filter": true,
+              "list": true,
+              "read": true,
+              "sort": false,
+              "update": true,
+              "update_optional": false
+            },
+            "validation": {
+              "max_length": 64,
+              "maximum": null,
+              "min_length": 1,
+              "minimum": null,
+              "required": true
+            },
+            "value_type": "string",
+            "widget": "text",
+            "wire_type": "string"
+          },
+          {
+            "enum_values": {},
+            "labels": {
+              "en": "Post code",
+              "zh_cn": "岗位编码"
+            },
+            "name": "code",
+            "nullable": false,
+            "order": 40,
+            "usage": {
+              "create": true,
+              "create_optional": false,
+              "filter": true,
+              "list": true,
+              "read": true,
+              "sort": false,
+              "update": false,
+              "update_optional": false
+            },
+            "validation": {
+              "max_length": 64,
+              "maximum": null,
+              "min_length": 1,
+              "minimum": null,
+              "required": true
+            },
+            "value_type": "string",
+            "widget": "text",
+            "wire_type": "string"
+          },
+          {
+            "enum_values": {},
+            "labels": {
+              "en": "Display order",
+              "zh_cn": "显示顺序"
+            },
+            "name": "sort",
+            "nullable": false,
+            "order": 50,
+            "usage": {
+              "create": true,
+              "create_optional": true,
+              "filter": false,
+              "list": true,
+              "read": true,
+              "sort": true,
+              "update": true,
+              "update_optional": true
+            },
+            "validation": {
+              "max_length": null,
+              "maximum": 999,
+              "min_length": null,
+              "minimum": 0,
+              "required": false
+            },
+            "value_type": "i32",
+            "widget": "number",
+            "wire_type": "i32"
+          },
+          {
+            "enum_values": {
+              "0": {
+                "en": "Disabled",
+                "zh_cn": "停用"
+              },
+              "1": {
+                "en": "Active",
+                "zh_cn": "正常"
+              }
+            },
+            "labels": {
+              "en": "Status",
+              "zh_cn": "状态"
+            },
+            "name": "status",
+            "nullable": false,
+            "order": 60,
+            "usage": {
+              "create": false,
+              "create_optional": false,
+              "filter": true,
+              "list": true,
+              "read": true,
+              "sort": false,
+              "update": true,
+              "update_optional": false
+            },
+            "validation": {
+              "max_length": null,
+              "maximum": null,
+              "min_length": null,
+              "minimum": null,
+              "required": true
+            },
+            "value_type": "string",
+            "widget": "select",
+            "wire_type": "string"
+          },
+          {
+            "enum_values": {},
+            "labels": {
+              "en": "Remark",
+              "zh_cn": "备注"
+            },
+            "name": "remark",
+            "nullable": true,
+            "order": 70,
+            "usage": {
+              "create": false,
+              "create_optional": false,
+              "filter": false,
+              "list": false,
+              "read": true,
+              "sort": false,
+              "update": false,
+              "update_optional": false
+            },
+            "validation": {
+              "max_length": 512,
+              "maximum": null,
+              "min_length": null,
+              "minimum": null,
+              "required": false
+            },
+            "value_type": "string",
+            "widget": "textarea",
+            "wire_type": "string"
+          },
+          {
+            "enum_values": {},
+            "labels": {
+              "en": "Created at",
+              "zh_cn": "创建时间"
+            },
+            "name": "created_at",
+            "nullable": false,
+            "order": 90,
+            "usage": {
+              "create": false,
+              "create_optional": false,
+              "filter": false,
+              "list": true,
+              "read": true,
+              "sort": false,
+              "update": false,
+              "update_optional": false
+            },
+            "validation": {
+              "max_length": null,
+              "maximum": null,
+              "min_length": null,
+              "minimum": null,
+              "required": false
+            },
+            "value_type": "date_time",
+            "widget": "date_time",
+            "wire_type": "date_time"
+          }
+        ],
+        "labels": {
+          "en": "Post",
+          "zh_cn": "岗位"
+        },
+        "menu": {
+          "icon": null,
+          "key": "system.post",
+          "labels": {
+            "en": "Posts",
+            "zh_cn": "岗位管理"
+          },
+          "order": 8,
+          "parent": "system"
+        },
+        "module": "system",
+        "name": "post",
+        "profile": "flat_crud",
+        "route": {
+          "key": "system.post",
+          "path": "/system/post"
+        },
+        "storage": "control_row"
+      }
+    ],
+    "version": 1
+  },
   "x-ryframe-menu-routes": {
     "routes": [
       {
@@ -40694,209 +40997,11 @@
       {
         "capability_code": null,
         "menu_type": "M",
-        "name": "系统管理",
-        "page_key": null,
-        "permission_code": null,
-        "route_key": "system",
-        "title_key": "system"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "M",
         "name": "系统监控",
         "page_key": null,
         "permission_code": null,
         "route_key": "monitor",
         "title_key": "systemMonitor"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "M",
-        "name": "平台管理",
-        "page_key": null,
-        "permission_code": null,
-        "route_key": "platform",
-        "title_key": "platform"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "C",
-        "name": "用户管理",
-        "page_key": "system.user",
-        "permission_code": "system:user:list",
-        "route_key": "system.user",
-        "title_key": "user"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "C",
-        "name": "角色管理",
-        "page_key": "system.role",
-        "permission_code": "system:role:list",
-        "route_key": "system.role",
-        "title_key": "role"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "C",
-        "name": "菜单管理",
-        "page_key": "system.menu",
-        "permission_code": "system:menu:list",
-        "route_key": "system.menu",
-        "title_key": "menu"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "C",
-        "name": "部门管理",
-        "page_key": "system.dept",
-        "permission_code": "system:dept:list",
-        "route_key": "system.dept",
-        "title_key": "dept"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "C",
-        "name": "岗位管理",
-        "page_key": "system.post",
-        "permission_code": "system:post:list",
-        "route_key": "system.post",
-        "title_key": "post"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "C",
-        "name": "字典管理",
-        "page_key": "system.dict",
-        "permission_code": "system:dict:list",
-        "route_key": "system.dict",
-        "title_key": "dict"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "C",
-        "name": "参数设置",
-        "page_key": "system.config",
-        "permission_code": "system:config:list",
-        "route_key": "system.config",
-        "title_key": "config"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "C",
-        "name": "配置迁移",
-        "page_key": "system.config-transfer",
-        "permission_code": "system:config-transfer:list",
-        "route_key": "system.config-transfer",
-        "title_key": "configTransfer"
-      },
-      {
-        "capability_code": "system.service_accounts",
-        "menu_type": "C",
-        "name": "服务账号",
-        "page_key": "system.service-accounts",
-        "permission_code": "system:service-account:list",
-        "route_key": "system.service-accounts",
-        "title_key": "serviceAccounts"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "C",
-        "name": "产品套餐",
-        "page_key": "platform.product-plans",
-        "permission_code": "platform:product-plan:list",
-        "route_key": "platform.product-plans",
-        "title_key": "productPlans"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "C",
-        "name": "数据目标",
-        "page_key": "platform.data-targets",
-        "permission_code": "tenant:data-placement:view",
-        "route_key": "platform.data-targets",
-        "title_key": "dataTargets"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "C",
-        "name": "租户管理",
-        "page_key": "platform.tenant",
-        "permission_code": "tenant:list",
-        "route_key": "platform.tenant",
-        "title_key": "tenant"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "C",
-        "name": "通知公告",
-        "page_key": "system.notice",
-        "permission_code": "system:notice:list",
-        "route_key": "system.notice",
-        "title_key": "notice"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "C",
-        "name": "权限管理",
-        "page_key": "system.perm",
-        "permission_code": "system:perm:list",
-        "route_key": "system.perm",
-        "title_key": "permission"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "C",
-        "name": "权限诊断",
-        "page_key": "system.authorization-diagnostics",
-        "permission_code": "system:authorization-diagnostic:list",
-        "route_key": "system.authorization-diagnostics",
-        "title_key": "authorizationDiagnostics"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "C",
-        "name": "操作日志",
-        "page_key": "system.operlog",
-        "permission_code": "system:operlog:list",
-        "route_key": "system.operlog",
-        "title_key": "operlog"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "C",
-        "name": "登录日志",
-        "page_key": "system.logininfor",
-        "permission_code": "system:logininfor:list",
-        "route_key": "system.logininfor",
-        "title_key": "loginlog"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "C",
-        "name": "在线用户",
-        "page_key": "monitor.online",
-        "permission_code": "monitor:online:list",
-        "route_key": "monitor.online",
-        "title_key": "online"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "C",
-        "name": "服务监控",
-        "page_key": "monitor.server",
-        "permission_code": "monitor:server:list",
-        "route_key": "monitor.server",
-        "title_key": "server"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "C",
-        "name": "运行时监控",
-        "page_key": "monitor.runtime",
-        "permission_code": "monitor:runtime:list",
-        "route_key": "monitor.runtime",
-        "title_key": "runtimeMonitor"
       },
       {
         "capability_code": null,
@@ -40928,11 +41033,20 @@
       {
         "capability_code": null,
         "menu_type": "C",
-        "name": "定时任务",
-        "page_key": "monitor.schedules",
-        "permission_code": "monitor:schedule:list",
-        "route_key": "monitor.schedules",
-        "title_key": "schedules"
+        "name": "在线用户",
+        "page_key": "monitor.online",
+        "permission_code": "monitor:online:list",
+        "route_key": "monitor.online",
+        "title_key": "online"
+      },
+      {
+        "capability_code": null,
+        "menu_type": "C",
+        "name": "运维总览",
+        "page_key": "monitor.overview",
+        "permission_code": "monitor:overview:list",
+        "route_key": "monitor.overview",
+        "title_key": "overview"
       },
       {
         "capability_code": null,
@@ -40946,11 +41060,200 @@
       {
         "capability_code": null,
         "menu_type": "C",
-        "name": "运维总览",
-        "page_key": "monitor.overview",
-        "permission_code": "monitor:overview:list",
-        "route_key": "monitor.overview",
-        "title_key": "overview"
+        "name": "运行时监控",
+        "page_key": "monitor.runtime",
+        "permission_code": "monitor:runtime:list",
+        "route_key": "monitor.runtime",
+        "title_key": "runtimeMonitor"
+      },
+      {
+        "capability_code": null,
+        "menu_type": "C",
+        "name": "定时任务",
+        "page_key": "monitor.schedules",
+        "permission_code": "monitor:schedule:list",
+        "route_key": "monitor.schedules",
+        "title_key": "schedules"
+      },
+      {
+        "capability_code": null,
+        "menu_type": "C",
+        "name": "服务监控",
+        "page_key": "monitor.server",
+        "permission_code": "monitor:server:list",
+        "route_key": "monitor.server",
+        "title_key": "server"
+      },
+      {
+        "capability_code": null,
+        "menu_type": "M",
+        "name": "平台管理",
+        "page_key": null,
+        "permission_code": null,
+        "route_key": "platform",
+        "title_key": "platform"
+      },
+      {
+        "capability_code": null,
+        "menu_type": "C",
+        "name": "数据目标",
+        "page_key": "platform.data-targets",
+        "permission_code": "tenant:data-placement:view",
+        "route_key": "platform.data-targets",
+        "title_key": "dataTargets"
+      },
+      {
+        "capability_code": null,
+        "menu_type": "C",
+        "name": "产品套餐",
+        "page_key": "platform.product-plans",
+        "permission_code": "platform:product-plan:list",
+        "route_key": "platform.product-plans",
+        "title_key": "productPlans"
+      },
+      {
+        "capability_code": null,
+        "menu_type": "C",
+        "name": "租户管理",
+        "page_key": "platform.tenant",
+        "permission_code": "tenant:list",
+        "route_key": "platform.tenant",
+        "title_key": "tenant"
+      },
+      {
+        "capability_code": null,
+        "menu_type": "M",
+        "name": "系统管理",
+        "page_key": null,
+        "permission_code": null,
+        "route_key": "system",
+        "title_key": "system"
+      },
+      {
+        "capability_code": null,
+        "menu_type": "C",
+        "name": "权限诊断",
+        "page_key": "system.authorization-diagnostics",
+        "permission_code": "system:authorization-diagnostic:list",
+        "route_key": "system.authorization-diagnostics",
+        "title_key": "authorizationDiagnostics"
+      },
+      {
+        "capability_code": null,
+        "menu_type": "C",
+        "name": "参数设置",
+        "page_key": "system.config",
+        "permission_code": "system:config:list",
+        "route_key": "system.config",
+        "title_key": "config"
+      },
+      {
+        "capability_code": null,
+        "menu_type": "C",
+        "name": "配置迁移",
+        "page_key": "system.config-transfer",
+        "permission_code": "system:config-transfer:list",
+        "route_key": "system.config-transfer",
+        "title_key": "configTransfer"
+      },
+      {
+        "capability_code": null,
+        "menu_type": "C",
+        "name": "部门管理",
+        "page_key": "system.dept",
+        "permission_code": "system:dept:list",
+        "route_key": "system.dept",
+        "title_key": "dept"
+      },
+      {
+        "capability_code": null,
+        "menu_type": "C",
+        "name": "字典管理",
+        "page_key": "system.dict",
+        "permission_code": "system:dict:list",
+        "route_key": "system.dict",
+        "title_key": "dict"
+      },
+      {
+        "capability_code": null,
+        "menu_type": "C",
+        "name": "登录日志",
+        "page_key": "system.logininfor",
+        "permission_code": "system:logininfor:list",
+        "route_key": "system.logininfor",
+        "title_key": "loginlog"
+      },
+      {
+        "capability_code": null,
+        "menu_type": "C",
+        "name": "菜单管理",
+        "page_key": "system.menu",
+        "permission_code": "system:menu:list",
+        "route_key": "system.menu",
+        "title_key": "menu"
+      },
+      {
+        "capability_code": null,
+        "menu_type": "C",
+        "name": "通知公告",
+        "page_key": "system.notice",
+        "permission_code": "system:notice:list",
+        "route_key": "system.notice",
+        "title_key": "notice"
+      },
+      {
+        "capability_code": null,
+        "menu_type": "C",
+        "name": "操作日志",
+        "page_key": "system.operlog",
+        "permission_code": "system:operlog:list",
+        "route_key": "system.operlog",
+        "title_key": "operlog"
+      },
+      {
+        "capability_code": null,
+        "menu_type": "C",
+        "name": "权限管理",
+        "page_key": "system.perm",
+        "permission_code": "system:perm:list",
+        "route_key": "system.perm",
+        "title_key": "permission"
+      },
+      {
+        "capability_code": null,
+        "menu_type": "C",
+        "name": "岗位管理",
+        "page_key": "system.post",
+        "permission_code": "system:post:list",
+        "route_key": "system.post",
+        "title_key": "post"
+      },
+      {
+        "capability_code": null,
+        "menu_type": "C",
+        "name": "角色管理",
+        "page_key": "system.role",
+        "permission_code": "system:role:list",
+        "route_key": "system.role",
+        "title_key": "role"
+      },
+      {
+        "capability_code": "system.service_accounts",
+        "menu_type": "C",
+        "name": "服务账号",
+        "page_key": "system.service-accounts",
+        "permission_code": "system:service-account:list",
+        "route_key": "system.service-accounts",
+        "title_key": "serviceAccounts"
+      },
+      {
+        "capability_code": null,
+        "menu_type": "C",
+        "name": "用户管理",
+        "page_key": "system.user",
+        "permission_code": "system:user:list",
+        "route_key": "system.user",
+        "title_key": "user"
       }
     ],
     "version": 2

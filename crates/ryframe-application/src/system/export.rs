@@ -15,7 +15,7 @@ use crate::{
 };
 
 use super::{
-    ConfigService, DictService, LoginInfoService, OperLogService, PostService, RoleService,
+    ConfigService, DictService, LoginInfoService, OperLogService, PostExportService, RoleService,
     UserService,
 };
 
@@ -79,7 +79,7 @@ pub struct ExportService {
     requester_persistence: Arc<dyn ExportRequesterPersistencePort>,
     users: Arc<UserService>,
     roles: Arc<RoleService>,
-    posts: Arc<PostService>,
+    posts: Arc<PostExportService>,
     configs: Arc<ConfigService>,
     dicts: Arc<DictService>,
     oper_logs: Arc<OperLogService>,
@@ -103,11 +103,11 @@ pub struct ExportPersistencePorts {
     requester: Arc<dyn ExportRequesterPersistencePort>,
 }
 
-/// 导出七类资源所复用的应用服务，由组合根统一装配。
+/// 导出七类资源所需的应用服务，由组合根统一装配。
 pub struct ExportResourceServices {
     pub users: Arc<UserService>,
     pub roles: Arc<RoleService>,
-    pub posts: Arc<PostService>,
+    pub posts: Arc<PostExportService>,
     pub configs: Arc<ConfigService>,
     pub dicts: Arc<DictService>,
     pub oper_logs: Arc<OperLogService>,

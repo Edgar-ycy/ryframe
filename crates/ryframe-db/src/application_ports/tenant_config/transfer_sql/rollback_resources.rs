@@ -298,13 +298,13 @@ async fn soft_delete_simple_extras(
     let post_codes = created_keys(created, "post").collect::<BTreeSet<_>>();
     for mut item in post::Entity::find()
         .filter(post::Column::TenantId.eq(tenant_id))
-        .filter(post::Column::DelFlag.eq(post::Model::DEL_FLAG_NORMAL))
+        .filter(post::Column::DelFlag.eq(post::SOFT_DELETE_ACTIVE))
         .all(transaction)
         .await
         .map_err(database_error)?
     {
         if post_codes.contains(&normalize_stable_key(&item.code)) {
-            item.del_flag = post::Model::DEL_FLAG_DELETED.to_owned();
+            item.del_flag = post::SOFT_DELETE_DELETED.to_owned();
             item.updated_at = now;
             post::ActiveModel::from(item)
                 .reset_all()

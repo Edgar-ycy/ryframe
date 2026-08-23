@@ -320,7 +320,7 @@ impl ExportService {
             ExportSelection::Posts(filters) => {
                 let batch = self
                     .posts
-                    .find_export_batch(
+                    .find_batch(
                         actor,
                         filters.name(),
                         filters.code(),

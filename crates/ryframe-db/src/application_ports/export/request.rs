@@ -3,8 +3,8 @@ use std::sync::Arc;
 use crate::{
     BackgroundJobRepository, ConfigFilter, ConfigRepository, ControlDatabaseCluster,
     CreateExportJob, DictTypeFilter, DictTypeRepository, ExportJobRepository, LoginInfoFilter,
-    LoginInfoRepository, OperLogFilter, OperLogRepository, PostFilter, PostRepository, RoleFilter,
-    RoleRepository, UserFilter, UserRepository,
+    LoginInfoRepository, OperLogFilter, OperLogRepository, PostExportFilter, PostExportRepository,
+    RoleFilter, RoleRepository, UserFilter, UserRepository,
 };
 use ryframe_kernel::{ActorContext, AppError, ExportQuerySnapshot};
 use sea_orm::{DatabaseTransaction, TransactionTrait};
@@ -107,11 +107,11 @@ impl ExportRequestTransaction for DatabaseExportRequestTransaction {
                         .await
                 }
                 ExportSelection::Posts(filter) => {
-                    PostRepository
-                        .summarize_export(
+                    PostExportRepository
+                        .summarize(
                             &self.transaction,
                             tenant_id,
-                            &PostFilter {
+                            &PostExportFilter {
                                 name: filter.name(),
                                 code: filter.code(),
                                 status: filter.status(),

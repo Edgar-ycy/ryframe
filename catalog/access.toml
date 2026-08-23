@@ -62,11 +62,6 @@ permissions = [
     "system:perm:list",
     "system:perm:remove",
     "system:perm:sync",
-    "system:post:add",
-    "system:post:edit",
-    "system:post:export",
-    "system:post:list",
-    "system:post:remove",
     "system:role:add",
     "system:role:edit",
     "system:role:export",
@@ -436,14 +431,6 @@ title_key = "dept"
 menu_type = "C"
 page_key = "system.dept"
 permission = "system:dept:list"
-
-[[menus]]
-route_key = "system.post"
-name = "岗位管理"
-title_key = "post"
-menu_type = "C"
-page_key = "system.post"
-permission = "system:post:list"
 
 [[menus]]
 route_key = "system.dict"

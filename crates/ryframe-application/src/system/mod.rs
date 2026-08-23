@@ -13,7 +13,7 @@ pub mod notice;
 pub mod oper_log;
 mod option;
 pub mod permission;
-pub mod post;
+mod post_export;
 pub mod product;
 pub mod product_capability_catalog;
 pub mod role;
@@ -68,7 +68,7 @@ pub use permission::{
     CreatePermissionCommand, PermissionService, PermissionSyncReport, PermissionTreeNode,
     PermissionType, PermissionVo, UpdatePermissionCommand,
 };
-pub use post::{PostListParams, PostService, PostVo};
+pub use post_export::PostExportService;
 pub use product::{
     ApplyProductChangeCommand, CapabilityCatalogVo, CapabilityOverrideInput, CapabilityOverrideVo,
     CapabilityRequirement, CapabilitySnapshotInput, CreateProductPlanCommand,

@@ -1,5 +1,29 @@
 use ryframe_api::{openapi::ApiDoc, permission_catalog::*};
 
+#[test]
+fn generated_post_router_composes_with_manual_export_extension() {
+    use std::sync::Arc;
+
+    use axum::{Router, routing::post};
+    use ryframe_application::generated::{
+        GeneratedServices,
+        post::{PostFakePersistence, PostService},
+    };
+    use ryframe_kernel::PaginationPolicy;
+
+    let services = GeneratedServices {
+        post: Arc::new(PostService::new(Arc::new(PostFakePersistence::default()))),
+    };
+    let export = Router::new().route("/exports", post(|| async {}));
+
+    let _router: Router = Router::new()
+        .merge(ryframe_api::generated::generated_router(
+            &services,
+            PaginationPolicy::new(20, 200),
+        ))
+        .nest("/posts", export);
+}
+
 mod permission_catalog {
     use std::collections::BTreeSet;
 
@@ -31,6 +55,61 @@ mod permission_catalog {
                 .map(|route| (route.method, route.path))
                 .collect::<BTreeSet<_>>()
                 .len()
+        );
+    }
+
+    #[test]
+    fn generated_post_access_is_merged_once_without_product_capability() {
+        for permission in [
+            "system:post:add",
+            "system:post:edit",
+            "system:post:export",
+            "system:post:list",
+            "system:post:remove",
+        ] {
+            assert_eq!(
+                permission_codes()
+                    .iter()
+                    .filter(|candidate| **candidate == permission)
+                    .count(),
+                1,
+                "生成权限必须且只能合并一次: {permission}"
+            );
+        }
+
+        let menus = menu_routes()
+            .iter()
+            .filter(|menu| menu.route_key == "system.post")
+            .collect::<Vec<_>>();
+        assert_eq!(menus.len(), 1, "生成岗位菜单必须且只能合并一次");
+        assert_eq!(menus[0].name, "岗位管理");
+        assert_eq!(menus[0].page_key, Some("system.post"));
+        assert_eq!(menus[0].permission_code, Some("system:post:list"));
+        assert_eq!(menus[0].capability_code, None);
+
+        let post_routes = route_policies()
+            .iter()
+            .filter(|route| route.path.starts_with("/api/v1/system/posts"))
+            .map(|route| (route.method, route.path, route.permission_code))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            post_routes,
+            BTreeSet::from([
+                (
+                    "DELETE",
+                    "/api/v1/system/posts/{id}",
+                    Some("system:post:remove"),
+                ),
+                ("GET", "/api/v1/system/posts", Some("system:post:list")),
+                ("GET", "/api/v1/system/posts/{id}", Some("system:post:list"),),
+                ("POST", "/api/v1/system/posts", Some("system:post:add")),
+                (
+                    "POST",
+                    "/api/v1/system/posts/exports",
+                    Some("system:post:export"),
+                ),
+                ("PUT", "/api/v1/system/posts/{id}", Some("system:post:edit"),),
+            ])
         );
     }
 
@@ -181,5 +260,44 @@ mod openapi {
             .filter_map(Value::as_str)
             .collect::<Vec<_>>();
         assert_eq!(values, ["user_assignment", "service_account_assignment"]);
+    }
+
+    #[test]
+    fn generated_post_crud_and_manual_export_share_one_openapi_document() {
+        let document = serde_json::to_value(ApiDoc::openapi()).expect("OpenAPI 必须可序列化");
+        let paths = document["paths"]
+            .as_object()
+            .expect("OpenAPI 必须包含 paths");
+
+        assert_eq!(
+            paths["/api/v1/system/posts"]["get"]["operationId"],
+            "get_system_posts"
+        );
+        assert_eq!(
+            paths["/api/v1/system/posts"]["post"]["operationId"],
+            "post_system_posts"
+        );
+        assert_eq!(
+            paths["/api/v1/system/posts/{id}"]["get"]["operationId"],
+            "get_system_posts_by_id"
+        );
+        assert_eq!(
+            paths["/api/v1/system/posts/{id}"]["put"]["operationId"],
+            "put_system_posts_by_id"
+        );
+        assert_eq!(
+            paths["/api/v1/system/posts/{id}"]["delete"]["operationId"],
+            "delete_system_posts_by_id"
+        );
+        assert_eq!(
+            paths["/api/v1/system/posts/exports"]["post"]["operationId"],
+            "post_system_posts_exports"
+        );
+
+        let resources = document["x-ryframe-crud-resources"]["resources"]
+            .as_array()
+            .expect("OpenAPI 必须保留生成 CRUD 资源扩展");
+        assert_eq!(resources.len(), 1);
+        assert_eq!(resources[0]["name"], "post");
     }
 }

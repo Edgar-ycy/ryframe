@@ -35,6 +35,73 @@ struct AccessCatalog {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct GeneratedAccessCatalog {
+    version: u32,
+    #[serde(default)]
+    resources: Vec<GeneratedResource>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GeneratedResource {
+    name: String,
+    module: String,
+    capability: String,
+    labels: GeneratedLabels,
+    menu: GeneratedMenu,
+    route: GeneratedRoute,
+    permissions: GeneratedPermissions,
+    #[serde(default)]
+    extension_permissions: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GeneratedLabels {
+    zh_cn: String,
+    en: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GeneratedMenu {
+    key: String,
+    parent: String,
+    order: u32,
+    labels: GeneratedLabels,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GeneratedRoute {
+    key: String,
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GeneratedPermissions {
+    create: String,
+    read: String,
+    list: String,
+    update: String,
+    delete: String,
+}
+
+impl GeneratedPermissions {
+    fn values(&self) -> [&str; 5] {
+        [
+            &self.create,
+            &self.read,
+            &self.list,
+            &self.update,
+            &self.delete,
+        ]
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct MenuEntry {
     route_key: String,
     name: String,
@@ -117,11 +184,26 @@ fn main() -> Result<(), Box<dyn Error>> {
         .parent()
         .and_then(Path::parent)
         .ok_or("ryframe-api 必须位于工作区 crates 目录下")?;
-    let catalog_path = workspace_root.join("catalog").join("access.toml");
+    let catalog_root = workspace_root.join("catalog");
+    let catalog_path = catalog_root.join("access.toml");
+    let generated_catalog_path = catalog_root.join("access.generated.toml");
     println!("cargo:rerun-if-changed={}", catalog_path.display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        generated_catalog_path.display()
+    );
     let catalog_source = fs::read_to_string(&catalog_path)?;
-    let catalog: AccessCatalog = toml::from_str(&catalog_source)
+    let mut catalog: AccessCatalog = toml::from_str(&catalog_source)
         .map_err(|error| format!("{} 不是有效的访问目录: {error}", catalog_path.display()))?;
+    let generated_catalog_source = fs::read_to_string(&generated_catalog_path)?;
+    let generated_catalog: GeneratedAccessCatalog = toml::from_str(&generated_catalog_source)
+        .map_err(|error| {
+            format!(
+                "{} 不是有效的生成访问目录: {error}",
+                generated_catalog_path.display()
+            )
+        })?;
+    merge_generated_catalog(&mut catalog, generated_catalog)?;
     validate_catalog(&catalog)?;
 
     let source_root = manifest_dir.join("src");
@@ -178,6 +260,122 @@ fn main() -> Result<(), Box<dyn Error>> {
         generated,
     )?;
     Ok(())
+}
+
+fn merge_generated_catalog(
+    catalog: &mut AccessCatalog,
+    mut generated: GeneratedAccessCatalog,
+) -> Result<(), Box<dyn Error>> {
+    if generated.version != CATALOG_VERSION {
+        return Err(format!(
+            "生成访问目录版本必须为 {CATALOG_VERSION}，实际为 {}",
+            generated.version
+        )
+        .into());
+    }
+
+    generated
+        .resources
+        .sort_by(|left, right| left.name.cmp(&right.name));
+    let mut generated_names = BTreeSet::new();
+    let mut generated_permissions = BTreeSet::new();
+    let mut generated_menu_keys = BTreeSet::new();
+    let manual_permissions = catalog.permissions.iter().cloned().collect::<BTreeSet<_>>();
+    let manual_menu_keys = catalog
+        .menus
+        .iter()
+        .map(|menu| menu.route_key.clone())
+        .collect::<BTreeSet<_>>();
+
+    for resource in generated.resources {
+        validate_identifier("生成资源名称", &resource.name)?;
+        validate_identifier("生成资源模块", &resource.module)?;
+        validate_code("生成资源能力码", &resource.capability, '.')?;
+        validate_generated_label("生成资源中文标签", &resource.labels.zh_cn)?;
+        validate_generated_label("生成资源英文标签", &resource.labels.en)?;
+        if !generated_names.insert(resource.name.clone()) {
+            return Err(format!("生成资源名称重复: {}", resource.name).into());
+        }
+
+        validate_identifier("生成菜单 route_key", &resource.menu.key)?;
+        validate_identifier("生成菜单 parent", &resource.menu.parent)?;
+        validate_generated_label("生成菜单中文标签", &resource.menu.labels.zh_cn)?;
+        validate_generated_label("生成菜单英文标签", &resource.menu.labels.en)?;
+        if resource.menu.order == 0 {
+            return Err(format!("生成菜单 {} 的 order 必须大于 0", resource.menu.key).into());
+        }
+        if resource.route.key != resource.menu.key {
+            return Err(format!(
+                "生成资源 {} 的 route.key 必须与 menu.key 一致",
+                resource.name
+            )
+            .into());
+        }
+        validate_identifier("生成页面 route_key", &resource.route.key)?;
+        if !resource.route.path.starts_with('/')
+            || resource.route.path.chars().any(char::is_whitespace)
+        {
+            return Err(format!(
+                "生成资源 {} 的前端路由必须是无空白的绝对路径",
+                resource.name
+            )
+            .into());
+        }
+        if !manual_menu_keys.contains(&resource.menu.parent) {
+            return Err(format!(
+                "生成菜单 {} 的父菜单 {} 不存在于手写访问目录",
+                resource.menu.key, resource.menu.parent
+            )
+            .into());
+        }
+        if manual_menu_keys.contains(&resource.menu.key)
+            || !generated_menu_keys.insert(resource.menu.key.clone())
+        {
+            return Err(format!("生成菜单 route_key 冲突: {}", resource.menu.key).into());
+        }
+
+        let resource_permissions = resource
+            .permissions
+            .values()
+            .into_iter()
+            .chain(resource.extension_permissions.values().map(String::as_str))
+            .map(str::to_owned)
+            .collect::<BTreeSet<_>>();
+        for permission in &resource_permissions {
+            validate_code("生成权限码", permission, ':')?;
+            if manual_permissions.contains(permission)
+                || !generated_permissions.insert(permission.clone())
+            {
+                return Err(format!("生成权限码与其他资源或手写目录冲突: {permission}").into());
+            }
+        }
+        catalog.permissions.extend(resource_permissions);
+        let list_permission = resource.permissions.list.clone();
+        catalog.menus.push(MenuEntry {
+            route_key: resource.menu.key,
+            name: resource.menu.labels.zh_cn,
+            title_key: resource.name,
+            menu_type: "C".to_owned(),
+            page_key: Some(resource.route.key),
+            permission: Some(list_permission),
+            // CRUD 清单中的 capability 是前端安全元数据，不隐式创建产品能力门禁。
+            capability: None,
+        });
+    }
+
+    catalog.permissions.sort();
+    catalog
+        .menus
+        .sort_by(|left, right| left.route_key.cmp(&right.route_key));
+    Ok(())
+}
+
+fn validate_generated_label(label: &str, value: &str) -> Result<(), Box<dyn Error>> {
+    if value.trim() != value || value.is_empty() || value.chars().count() > 64 {
+        Err(format!("{label}格式无效").into())
+    } else {
+        Ok(())
+    }
 }
 
 fn configure_build_commit() -> Result<(), Box<dyn Error>> {

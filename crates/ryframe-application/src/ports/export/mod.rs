@@ -4,6 +4,7 @@ mod artifact;
 mod cleanup;
 mod deletion;
 mod execution;
+mod post;
 mod request;
 mod requester;
 
@@ -20,6 +21,7 @@ pub use execution::{
     ExportBackgroundLease, ExportExecutionPersistencePort, ExportExecutionRecord,
     ExportExecutionState, ExportExecutionTransaction, ExportStartDecision,
 };
+pub use post::{PostExportReadFilter, PostExportReadPort, PostExportRow};
 pub use request::{CreateExportRecord, ExportRequestPersistencePort, ExportRequestTransaction};
 pub use requester::{
     ExportDownloadFile, ExportRequesterPersistencePort, ExportRequesterRecord,

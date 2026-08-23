@@ -5,9 +5,9 @@ use crate::{
     ServiceAccountLock, ServiceAccountRepository, ServiceAuthorizationRepository,
     ServiceCredentialRepository, ServiceDelegationRepository,
     entities::{
-        dept, dict_data, post, service_account, service_credential, service_delegation, tenant,
-        user,
+        dept, dict_data, service_account, service_credential, service_delegation, tenant, user,
     },
+    generated::entities::post,
 };
 use ryframe_kernel::AppError;
 use sea_orm::{DatabaseTransaction, TransactionTrait};

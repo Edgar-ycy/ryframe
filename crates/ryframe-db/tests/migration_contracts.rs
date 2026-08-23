@@ -39,23 +39,34 @@ fn ownership_marker_is_stable_and_inputs_are_bounded() {
 #[test]
 fn access_catalog_seed_is_complete_and_unambiguous() {
     let permissions = access_permission_codes().expect("访问目录权限应可解析");
-    let permission_set = permissions.iter().copied().collect::<BTreeSet<_>>();
+    let permission_set = permissions
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
     assert_eq!(permission_set.len(), permissions.len());
+    assert!(permissions.windows(2).all(|pair| pair[0] < pair[1]));
     assert!(permissions.iter().all(|code| code.len() <= 64));
     assert!(permission_set.contains("tenant:capability:override"));
     let permission_names = access_permission_names().expect("权限中文名称应可解析");
     assert_eq!(
-        permission_names.get("tenant:data-migration:list"),
-        Some(&"租户数据迁移查询")
+        permission_names
+            .get("tenant:data-migration:list")
+            .map(String::as_str),
+        Some("租户数据迁移查询")
     );
     assert!(
         permission_names
             .keys()
-            .all(|code| permission_set.contains(code))
+            .all(|code| permission_set.contains(code.as_str()))
     );
     assert!(permission_names.values().all(|name| !name.is_empty()));
 
     let menus = access_menus().expect("访问目录菜单应可解析");
+    assert!(
+        menus
+            .windows(2)
+            .all(|pair| pair[0].route_key < pair[1].route_key)
+    );
     let mut preceding_routes = BTreeSet::new();
     for menu in &menus {
         assert!(menu.route_key.len() <= 64);
@@ -64,18 +75,53 @@ fn access_catalog_seed_is_complete_and_unambiguous() {
         if let Some(parent) = menu.parent_route_key() {
             assert!(preceding_routes.contains(parent));
         }
-        preceding_routes.insert(menu.route_key);
+        preceding_routes.insert(menu.route_key.as_str());
     }
     let route_keys = menus
         .iter()
-        .map(|menu| menu.route_key)
+        .map(|menu| menu.route_key.as_str())
         .collect::<BTreeSet<_>>();
     assert_eq!(route_keys.len(), menus.len());
     for menu in menus {
-        if let Some(permission) = menu.permission {
+        if let Some(permission) = menu.permission.as_deref() {
             assert!(permission_set.contains(permission));
         }
     }
+}
+
+#[test]
+fn generated_post_access_is_owned_once_by_the_merged_seed_catalog() {
+    let permissions = access_permission_codes().expect("合并权限目录应可解析");
+    for permission in [
+        "system:post:add",
+        "system:post:edit",
+        "system:post:export",
+        "system:post:list",
+        "system:post:remove",
+    ] {
+        assert_eq!(
+            permissions
+                .iter()
+                .filter(|candidate| **candidate == permission)
+                .count(),
+            1,
+            "生成岗位权限必须且只能归属一次: {permission}"
+        );
+    }
+
+    let menus = access_menus().expect("合并菜单目录应可解析");
+    let post_menus = menus
+        .iter()
+        .filter(|menu| menu.route_key == "system.post")
+        .collect::<Vec<_>>();
+    assert_eq!(post_menus.len(), 1, "生成岗位菜单必须且只能归属一次");
+    assert_eq!(post_menus[0].name, "岗位管理");
+    assert_eq!(
+        post_menus[0].permission.as_deref(),
+        Some("system:post:list")
+    );
+    assert_eq!(post_menus[0].parent_route_key(), Some("system"));
+    assert_eq!(post_menus[0].sort(), 8);
 }
 
 #[test]

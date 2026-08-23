@@ -158,7 +158,7 @@ async fn upsert_simple_resources(
             sort: item.sort,
             status: item.status.clone(),
             remark: item.remark.clone(),
-            del_flag: post::Model::DEL_FLAG_NORMAL.to_owned(),
+            del_flag: post::SOFT_DELETE_ACTIVE.to_owned(),
             created_at: existing.as_ref().map(|item| item.created_at).unwrap_or(now),
             updated_at: now,
         };

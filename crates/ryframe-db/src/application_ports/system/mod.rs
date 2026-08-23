@@ -8,7 +8,6 @@ mod notice;
 mod oper_log;
 mod overview;
 mod permission;
-mod post;
 mod role_read;
 mod role_write;
 
@@ -23,6 +22,5 @@ pub(crate) use oper_log::insert_event_in_transaction as insert_oper_log;
 pub use oper_log::port as oper_log;
 pub use overview::port as overview;
 pub use permission::{read_port as permission_read, write_port as permission_write};
-pub use post::port as post;
 pub use role_read::port as role_read;
 pub use role_write::port as role_write;
