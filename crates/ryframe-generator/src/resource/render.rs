@@ -422,10 +422,16 @@ fn render_storage_mod(resources: &[&ResourceIr], storage: StorageKind, header: &
     };
     let registrations = selected
         .iter()
-        .map(|resource| {
+        .enumerate()
+        .map(|(index, resource)| {
+            let argument = if index + 1 == selected.len() {
+                parameter_name.to_owned()
+            } else {
+                format!("{parameter_name}.clone()")
+            };
             format!(
-                "    ports.{name} = Some({name}::port({parameter_name}.clone()));",
-                name = resource.name
+                "    ports.{name} = Some({name}::port({argument}));",
+                name = resource.name,
             )
         })
         .collect::<Vec<_>>()

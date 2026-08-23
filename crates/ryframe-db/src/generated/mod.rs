@@ -15,7 +15,7 @@ pub fn register_ports(
     database: crate::ControlDatabaseCluster,
     ports: &mut GeneratedPersistencePorts,
 ) {
-    ports.post = Some(post::port(database.clone()));
+    ports.post = Some(post::port(database));
 }
 
 pub fn migrations() -> Vec<Box<dyn MigrationTrait>> {

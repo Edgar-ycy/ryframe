@@ -126,8 +126,8 @@ content_hash = "71b44ae50c1f318c3b6b85c8449625d2b6712e47e2d247c708a385fa15881f0c
 resource = "__catalog__"
 root = "backend"
 path = "crates/ryframe-db/src/generated/mod.rs"
-source_hash = "5b0035afea1d8ce42d02d29d5b94e55cf19c9193ee8aea865d4ba1461d0974ea"
-content_hash = "5b0035afea1d8ce42d02d29d5b94e55cf19c9193ee8aea865d4ba1461d0974ea"
+source_hash = "81a6d31602d2f739bc2c93abbf728bdd54b90e42ce1a2f7aede18f6102f42aaa"
+content_hash = "81a6d31602d2f739bc2c93abbf728bdd54b90e42ce1a2f7aede18f6102f42aaa"
 
 [[entries]]
 resource = "post"

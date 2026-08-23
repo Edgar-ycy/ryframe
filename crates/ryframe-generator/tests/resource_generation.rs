@@ -100,6 +100,12 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
             .content
             .contains("pub use super::post::entity as post;")
     );
+    assert!(
+        database_mod
+            .content
+            .contains("ports.post = Some(post::port(database));")
+    );
+    assert!(!database_mod.content.contains("database.clone()"));
     let fake = content("post/fake.rs");
     assert!(fake.contains("LockConfiguration"));
     assert!(fake.contains("FindByCode"));
