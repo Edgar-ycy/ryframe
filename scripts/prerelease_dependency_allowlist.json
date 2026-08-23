@@ -6,9 +6,9 @@
       "name": "sea-orm-arrow",
       "version": "2.0.0-rc.3",
       "source": "Cargo.lock",
-      "review_after": "2026-08-23",
-      "reason": "SeaORM 2.0.0 records this optional Arrow integration in Cargo.lock, but the feature is not enabled and upstream has not published a stable sea-orm-arrow release.",
-      "evidence": "https://docs.rs/crate/sea-orm-arrow/latest"
+      "review_after": "2026-11-21",
+      "reason": "2026-08-23 复审：SeaORM 2.0.0 仅在 Cargo.lock 记录可选 Arrow 集成，当前依赖图未启用；上游最新仍为 2.0.0-rc.4，尚无稳定版。",
+      "evidence": "https://crates.io/crates/sea-orm-arrow"
     }
   ]
 }
