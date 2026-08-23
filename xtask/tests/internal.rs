@@ -412,11 +412,11 @@ mod check_tests {
     use super::check::{
         BACKEND_POLICY_SCRIPTS, BackendSnapshotProfile, CONSUMER_OWNED_COMMANDS,
         FRONTEND_FULL_NON_CONSUMER_COMMANDS, FRONTEND_ONLY_CONTRACT_COMMANDS, FrontendProfile,
-        PYTHON_TEST_ARGS, WORKSPACE_CLIPPY_ARGS, WorkspaceGraph, changed_paths, classify_changes,
-        complete_verify_selection, consumer_contract_arguments, consumer_contract_plan,
-        feature_operation_args, feature_test_args, frontend_profile_commands,
-        load_consumer_contract_plan, load_workspace_graph, needs_consumer_contract,
-        reverse_dependency_closure, validate_feature_combination,
+        PYTHON_TEST_ARGS, WORKSPACE_CLIPPY_ARGS, WORKSPACE_TEST_ARGS, WorkspaceGraph,
+        changed_paths, classify_changes, complete_verify_selection, consumer_contract_arguments,
+        consumer_contract_plan, feature_operation_args, feature_test_args,
+        frontend_profile_commands, load_consumer_contract_plan, load_workspace_graph,
+        needs_consumer_contract, reverse_dependency_closure, validate_feature_combination,
     };
 
     static NEXT_REPOSITORY: AtomicU64 = AtomicU64::new(1);
@@ -525,6 +525,10 @@ mod check_tests {
                 "-D",
                 "clippy::redundant_clone",
             ]
+        );
+        assert_eq!(
+            WORKSPACE_TEST_ARGS,
+            ["test", "--locked", "--workspace", "--jobs", "2"]
         );
     }
 
@@ -2186,12 +2190,15 @@ fn default_frontend_is_sibling_of_backend() {
 }
 
 #[test]
-fn daily_cargo_aliases_cannot_rewrite_the_lockfile() {
+fn daily_cargo_aliases_lock_dependencies_and_isolate_the_runner() {
     let config = std::fs::read_to_string(workspace::root_dir().join(".cargo/config.toml")).unwrap();
-    for alias in ["xtask", "dev", "verify", "resource", "api-sync", "migrate"] {
-        let prefix = format!("{alias} = \"run --locked ");
+    for alias in ["xtask", "dev", "verify", "api-sync", "migrate"] {
+        let prefix = format!("{alias} = \"run --locked --target-dir target/xtask-run ");
         assert!(config.lines().any(|line| line.starts_with(&prefix)));
     }
+    assert!(config.lines().any(|line| {
+        line.starts_with("resource = \"run --locked --target-dir target/xtask-resource ")
+    }));
 }
 
 #[cfg(feature = "resource")]

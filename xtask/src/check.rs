@@ -42,6 +42,7 @@ pub(crate) const WORKSPACE_CLIPPY_ARGS: &[&str] = &[
     "-D",
     "clippy::redundant_clone",
 ];
+pub(crate) const WORKSPACE_TEST_ARGS: &[&str] = &["test", "--locked", "--workspace", "--jobs", "2"];
 
 static NEXT_VERIFY_ARTIFACT: AtomicU64 = AtomicU64::new(1);
 
@@ -249,7 +250,7 @@ fn full_verify(scope: CheckScope, frontend_dir: &Path) -> Result<()> {
             &["scripts/check_migration_history.py", "--require-frozen"],
         )?;
         feature_matrix()?;
-        run_process(&root_dir(), "cargo", &["test", "--locked", "--workspace"])?;
+        run_process(&root_dir(), "cargo", WORKSPACE_TEST_ARGS)?;
         resource_workspace_compilation(frontend_dir)?;
     }
     if matches!(scope, CheckScope::Backend) {
