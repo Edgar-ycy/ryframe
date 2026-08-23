@@ -24,7 +24,7 @@ use crate::{
         TenantConfigArchivePort, TenantConfigBundleRecord, TenantConfigOperationLeaseRecord,
         TenantConfigRequesterRecord, TenantConfigTransferItemRecord,
         TenantConfigTransferPersistencePort, TenantConfigTransferRecord,
-        TenantConfigTransferTransaction, TenantConfigurationFenceRecord,
+        TenantConfigurationFenceRecord,
     },
 };
 
