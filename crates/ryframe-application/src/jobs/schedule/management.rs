@@ -156,7 +156,9 @@ impl JobScheduleService {
                 deleted: false,
             })
             .await?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::CurrentRequest)
+            .await?;
         Ok(schedule.into())
     }
 
@@ -217,7 +219,9 @@ impl JobScheduleService {
         current.version = command.version + 1;
         current.updated_at = now;
         let updated = transaction.save_schedule(current).await?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::CurrentRequest)
+            .await?;
         Ok(updated.into())
     }
 
@@ -262,7 +266,9 @@ impl JobScheduleService {
         current.version = version + 1;
         current.updated_at = now;
         let updated = transaction.save_schedule(current).await?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::CurrentRequest)
+            .await?;
         Ok(updated.into())
     }
 
@@ -289,7 +295,9 @@ impl JobScheduleService {
         current.version = version + 1;
         current.updated_at = now;
         transaction.save_schedule(current).await?;
-        transaction.commit().await
+        transaction
+            .commit(crate::TransactionAuditMode::CurrentRequest)
+            .await
     }
 
     pub async fn run_now(
@@ -311,7 +319,9 @@ impl JobScheduleService {
             .find_execution_by_fire_key(id, &fire_key)
             .await?
         {
-            transaction.commit().await?;
+            transaction
+                .commit(crate::TransactionAuditMode::CurrentRequest)
+                .await?;
             return Ok(existing.into());
         }
         let target = self.resolve_target(tenant_id, &schedule.handler_key, true)?;
@@ -355,7 +365,9 @@ impl JobScheduleService {
         schedule.last_run_at = Some(now);
         schedule.updated_at = now;
         transaction.save_schedule(schedule).await?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::CurrentRequest)
+            .await?;
         self.record_trigger(OUTCOME_ENQUEUED);
         self.queue.notify_background_jobs().await;
         Ok(execution.into())

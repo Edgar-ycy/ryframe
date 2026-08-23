@@ -60,7 +60,7 @@ pub struct ManageableUserState {
 }
 
 #[async_trait::async_trait]
-pub trait UserWriteTransaction: Send + Sync {
+pub trait UserWriteTransaction: crate::PersistenceTransaction + Send + Sync {
     async fn lock_configuration<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()>;
 
     async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()>;
@@ -114,10 +114,6 @@ pub trait UserWriteTransaction: Send + Sync {
         tenant_id: &'a str,
         user_ids: &'a [i64],
     ) -> ryframe_kernel::AppResult<u64>;
-
-    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
-
-    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 #[async_trait::async_trait]

@@ -90,7 +90,9 @@ impl ServiceAccountService {
         .await;
         match result {
             Ok((saved, epoch)) => {
-                transaction.commit().await?;
+                transaction
+                    .commit(crate::TransactionAuditMode::CurrentRequest)
+                    .await?;
                 self.sync_committed_authorization_state(tenant_id, epoch, &[])
                     .await;
                 Ok(saved.into())
@@ -136,7 +138,9 @@ impl ServiceAccountService {
         .await;
         match result {
             Ok((saved, epoch)) => {
-                transaction.commit().await?;
+                transaction
+                    .commit(crate::TransactionAuditMode::CurrentRequest)
+                    .await?;
                 self.sync_committed_authorization_state(tenant_id, epoch, &[])
                     .await;
                 Ok(saved.into())
@@ -179,7 +183,9 @@ impl ServiceAccountService {
         .await;
         match result {
             Ok(epoch) => {
-                transaction.commit().await?;
+                transaction
+                    .commit(crate::TransactionAuditMode::CurrentRequest)
+                    .await?;
                 self.sync_committed_authorization_state(tenant_id, epoch, &[])
                     .await;
                 Ok(())
@@ -211,7 +217,9 @@ impl ServiceAccountService {
         .await;
         match result {
             Ok(epoch) => {
-                transaction.commit().await?;
+                transaction
+                    .commit(crate::TransactionAuditMode::CurrentRequest)
+                    .await?;
                 self.sync_committed_authorization_state(tenant_id, epoch, &[])
                     .await;
                 Ok(())

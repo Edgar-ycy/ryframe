@@ -19,7 +19,7 @@ pub struct FileCleanupRecord {
 
 /// 内部文件清理声明所使用的控制库事务。
 #[async_trait::async_trait]
-pub trait FileCleanupTransaction: Send + Sync {
+pub trait FileCleanupTransaction: crate::PersistenceTransaction + Send + Sync {
     async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()>;
 
     async fn find_for_update<'a>(
@@ -46,10 +46,6 @@ pub trait FileCleanupTransaction: Send + Sync {
         now: DateTime<Utc>,
         cleanup_after: DateTime<Utc>,
     ) -> ryframe_kernel::AppResult<bool>;
-
-    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
-
-    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 /// 内部文件清理所需的持久化端口。

@@ -69,7 +69,9 @@ impl ExportService {
                 return Err(error);
             }
         };
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::Skip)
+            .await?;
         match disposition {
             ExportStartDecision::Started => {}
             ExportStartDecision::AlreadyRunning => {

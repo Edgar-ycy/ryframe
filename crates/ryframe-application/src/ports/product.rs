@@ -164,7 +164,7 @@ pub trait ProductTransactionPort: Send + Sync {
 }
 
 #[async_trait::async_trait]
-pub trait ProductWriteTransaction: Send + Sync {
+pub trait ProductWriteTransaction: crate::PersistenceTransaction + Send + Sync {
     async fn lock_change_tenant<'a>(
         &'a self,
         tenant_id: &'a str,
@@ -261,10 +261,6 @@ pub trait ProductWriteTransaction: Send + Sync {
         expected_status: &str,
         target_status: &str,
     ) -> ryframe_kernel::AppResult<ProductVersionState>;
-
-    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
-
-    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 #[async_trait::async_trait]

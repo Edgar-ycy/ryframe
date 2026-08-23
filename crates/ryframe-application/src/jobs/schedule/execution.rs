@@ -11,7 +11,9 @@ impl JobScheduleService {
                 .lock_next_due(now, &self.execution_tenant_scope)
                 .await?
             else {
-                transaction.commit().await?;
+                transaction
+                    .commit(crate::TransactionAuditMode::Skip)
+                    .await?;
                 break;
             };
             let result = match self.validate_persisted_schedule(&schedule, now) {
@@ -28,7 +30,9 @@ impl JobScheduleService {
                     }
                 }
             };
-            transaction.commit().await?;
+            transaction
+                .commit(crate::TransactionAuditMode::Skip)
+                .await?;
             self.record_trigger(result.outcome);
             if result.enqueued {
                 triggered += 1;

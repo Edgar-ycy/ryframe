@@ -19,7 +19,7 @@ impl UserImportService {
         }
         import.updated_at = now;
         let saved = transaction.save(import).await?;
-        transaction.commit().await?;
+        transaction.commit(crate::TransactionAuditMode::Skip).await?;
         Ok(saved)
     }
 
@@ -38,7 +38,7 @@ impl UserImportService {
         import.total_rows = total;
         import.updated_at = now;
         transaction.save(import).await?;
-        transaction.commit().await
+        transaction.commit(crate::TransactionAuditMode::Skip).await
     }
 
     async fn finalize_import(&self, import_id: i64) -> AppResult<UserImportJobRecord> {
@@ -64,7 +64,7 @@ impl UserImportService {
         import.updated_at = now;
         import.last_error = None;
         let saved = transaction.save(import).await?;
-        transaction.commit().await?;
+        transaction.commit(crate::TransactionAuditMode::Skip).await?;
         Ok(saved)
     }
 
@@ -100,7 +100,7 @@ impl UserImportService {
         import.updated_at = now;
         import.last_error = error.map(truncate_error);
         let saved = transaction.save(import).await?;
-        transaction.commit().await?;
+        transaction.commit(crate::TransactionAuditMode::Skip).await?;
         Ok(saved)
     }
 }

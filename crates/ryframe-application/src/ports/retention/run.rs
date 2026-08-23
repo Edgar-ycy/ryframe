@@ -32,7 +32,7 @@ impl RetentionRunRecord {
 }
 
 #[async_trait::async_trait]
-pub trait RetentionRunTransaction: Send + Sync {
+pub trait RetentionRunTransaction: crate::PersistenceTransaction + Send + Sync {
     async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
     fn background_jobs(&self) -> &dyn BackgroundJobTransaction;
@@ -57,10 +57,6 @@ pub trait RetentionRunTransaction: Send + Sync {
         record: RetentionRunRecord,
         now: DateTime<Utc>,
     ) -> ryframe_kernel::AppResult<Option<RetentionRunRecord>>;
-
-    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
-
-    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 #[async_trait::async_trait]

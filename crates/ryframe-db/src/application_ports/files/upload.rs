@@ -7,8 +7,9 @@ use chrono::{DateTime, Utc};
 use ryframe_kernel::AppError;
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
-use ryframe_application::ports::files::{
-    FileUploadCommitMode, FileUploadPersistencePort, FileUploadRecord, FileUploadTransaction,
+use ryframe_application::{
+    PersistenceTransaction, TransactionAuditMode,
+    ports::files::{FileUploadPersistencePort, FileUploadRecord, FileUploadTransaction},
 };
 
 struct DatabaseFileUploadPersistence {
@@ -156,13 +157,16 @@ impl FileUploadTransaction for DatabaseFileUploadTransaction {
             )
             .await
     }
+}
 
-    async fn commit(self: Box<Self>, mode: FileUploadCommitMode) -> ryframe_kernel::AppResult<()> {
+#[async_trait::async_trait]
+impl PersistenceTransaction for DatabaseFileUploadTransaction {
+    async fn commit(self: Box<Self>, mode: TransactionAuditMode) -> ryframe_kernel::AppResult<()> {
         match mode {
-            FileUploadCommitMode::CurrentRequest => {
+            TransactionAuditMode::CurrentRequest => {
                 super::super::audit::commit_current_audit(self.transaction).await
             }
-            FileUploadCommitMode::Unbound => {
+            TransactionAuditMode::Skip => {
                 FileRepository
                     .commit_upload_reservation(self.transaction)
                     .await

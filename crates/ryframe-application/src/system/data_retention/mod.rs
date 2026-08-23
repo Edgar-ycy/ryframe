@@ -224,7 +224,9 @@ impl DataRetentionService {
         .await;
         match result {
             Ok(run) => {
-                transaction.commit().await?;
+                transaction
+                    .commit(crate::TransactionAuditMode::Skip)
+                    .await?;
                 self.queue.notify_background_jobs().await;
                 Ok(run.into())
             }

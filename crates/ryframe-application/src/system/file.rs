@@ -4,11 +4,14 @@ use chrono::{DateTime, Utc};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use sha2::{Digest, Sha256};
 
-use crate::ports::files::{
-    ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, FILE_DEL_FLAG_NORMAL,
-    FILE_UPLOAD_STATUS_CLEANUP, FILE_UPLOAD_STATUS_PENDING, FILE_UPLOAD_STATUS_READY,
-    FileCleanupPersistencePort, FileContentProcessor, FileDownloadPersistencePort,
-    FileUploadCommitMode, FileUploadPersistencePort, FileUploadRecord, ProcessedFileContent,
+use crate::{
+    TransactionAuditMode,
+    ports::files::{
+        ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, FILE_DEL_FLAG_NORMAL,
+        FILE_UPLOAD_STATUS_CLEANUP, FILE_UPLOAD_STATUS_PENDING, FILE_UPLOAD_STATUS_READY,
+        FileCleanupPersistencePort, FileContentProcessor, FileDownloadPersistencePort,
+        FileUploadPersistencePort, FileUploadRecord, ProcessedFileContent,
+    },
 };
 
 mod policy;
@@ -159,7 +162,7 @@ impl FileService {
             tenant_id,
             &actor.username,
             command,
-            FileUploadCommitMode::CurrentRequest,
+            TransactionAuditMode::CurrentRequest,
         )
         .await
     }
@@ -178,7 +181,7 @@ impl FileService {
             tenant_id,
             uploaded_by,
             command,
-            FileUploadCommitMode::CurrentRequest,
+            TransactionAuditMode::CurrentRequest,
         )
         .await
     }
@@ -193,13 +196,8 @@ impl FileService {
         if tenant_id.is_empty() || tenant_id.len() > 64 {
             return Err(AppError::Validation("内部文件租户标识无效".into()));
         }
-        self.upload_for_tenant(
-            tenant_id,
-            uploaded_by,
-            command,
-            FileUploadCommitMode::Unbound,
-        )
-        .await
+        self.upload_for_tenant(tenant_id, uploaded_by, command, TransactionAuditMode::Skip)
+            .await
     }
 
     /// 上传由服务端生成或已经完成格式校验的配置包，不接受客户端 bucket。
@@ -234,7 +232,7 @@ impl FileService {
         tenant_id: &str,
         uploaded_by: &str,
         command: UploadCommand<'_>,
-        commit_mode: FileUploadCommitMode,
+        commit_mode: TransactionAuditMode,
     ) -> AppResult<UploadResponse> {
         let UploadCommand {
             original_name,
@@ -459,7 +457,7 @@ impl FileService {
 
         // 先持久化不可恢复的清理声明，再触碰对象存储。提交响应不明时必须从主库验证
         // 令牌，只有能够证明本实例拥有清理权才允许删除对象。
-        if let Err(commit_error) = transaction.commit().await {
+        if let Err(commit_error) = transaction.commit(crate::TransactionAuditMode::Skip).await {
             let verified = self.cleanup.find(tenant_id, file_id).await;
             match verified {
                 Ok(Some(current))
@@ -563,7 +561,9 @@ impl FileService {
             )
             .await?;
         if marked {
-            transaction.commit().await?;
+            transaction
+                .commit(crate::TransactionAuditMode::Skip)
+                .await?;
         } else {
             transaction.rollback().await?;
         }

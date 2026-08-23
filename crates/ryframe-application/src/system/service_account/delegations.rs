@@ -177,7 +177,9 @@ impl ServiceAccountService {
         .await;
         match result {
             Ok((saved, token, epoch, versions)) => {
-                transaction.commit().await?;
+                transaction
+                    .commit(crate::TransactionAuditMode::CurrentRequest)
+                    .await?;
                 if let Some(epoch) = epoch {
                     self.sync_committed_authorization_state(tenant_id, epoch, &versions)
                         .await;
@@ -301,7 +303,9 @@ impl ServiceAccountService {
         .await;
         match result {
             Ok((epoch, versions)) => {
-                transaction.commit().await?;
+                transaction
+                    .commit(crate::TransactionAuditMode::CurrentRequest)
+                    .await?;
                 self.sync_committed_authorization_state(tenant_id, epoch, &versions)
                     .await;
                 Ok(())

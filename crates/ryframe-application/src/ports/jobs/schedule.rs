@@ -92,7 +92,7 @@ pub trait JobScheduleReadPort: Send + Sync {
 }
 
 #[async_trait::async_trait]
-pub trait JobScheduleTransaction: Send + Sync {
+pub trait JobScheduleTransaction: crate::PersistenceTransaction + Send + Sync {
     async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()>;
 
     async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
@@ -142,10 +142,6 @@ pub trait JobScheduleTransaction: Send + Sync {
     ) -> ryframe_kernel::AppResult<JobScheduleExecutionRecord>;
 
     async fn enqueue(&self, command: EnqueueJob) -> ryframe_kernel::AppResult<EnqueueJobResult>;
-
-    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
-
-    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 #[async_trait::async_trait]

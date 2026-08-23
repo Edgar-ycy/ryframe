@@ -78,7 +78,7 @@ impl ServiceDelegationWriteRecord {
 }
 
 #[async_trait::async_trait]
-pub trait ServiceAccountWriteTransaction: Send + Sync {
+pub trait ServiceAccountWriteTransaction: crate::PersistenceTransaction + Send + Sync {
     fn authorization_mirror(&self) -> &dyn AuthorizationMirrorTransaction;
 
     async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()>;
@@ -199,10 +199,6 @@ pub trait ServiceAccountWriteTransaction: Send + Sync {
         tenant_id: &'a str,
         delegation: ServiceDelegationWriteRecord,
     ) -> ryframe_kernel::AppResult<ServiceDelegationWriteRecord>;
-
-    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
-
-    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 #[async_trait::async_trait]

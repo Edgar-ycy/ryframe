@@ -45,7 +45,9 @@ impl ServiceAccountService {
         .await;
         match result {
             Ok(epoch) => {
-                transaction.commit().await?;
+                transaction
+                    .commit(crate::TransactionAuditMode::CurrentRequest)
+                    .await?;
                 self.sync_committed_authorization_state(tenant_id, epoch, &[])
                     .await;
                 Ok(())

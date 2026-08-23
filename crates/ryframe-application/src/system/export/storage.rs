@@ -91,7 +91,7 @@ impl ExportService {
         .await;
 
         match result {
-            Ok(_) => match transaction.commit().await {
+            Ok(_) => match transaction.commit(crate::TransactionAuditMode::Skip).await {
                 Ok(()) => Ok(()),
                 Err(error) => {
                     self.compensate_uncommitted_object(export_id, &key).await;

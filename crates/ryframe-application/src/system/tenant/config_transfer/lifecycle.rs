@@ -101,7 +101,7 @@ impl TenantConfigTransferService {
         }
         transfer.updated_at = transaction.database_now().await?;
         transaction.update_transfer(transfer).await?;
-        transaction.commit().await
+        transaction.commit(crate::TransactionAuditMode::Skip).await
     }
 
     pub(super) async fn bundle_requester(&self, tenant_id: &str, bundle_id: i64) -> AppResult<i64> {
@@ -166,7 +166,9 @@ impl TenantConfigTransferService {
                 updated_at: now,
             })
             .await?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::Skip)
+            .await?;
         Ok(OperationLease {
             service: self.clone(),
             tenant_id: tenant_id.to_owned(),
@@ -182,7 +184,7 @@ impl TenantConfigTransferService {
     ) -> AppResult<()> {
         let transaction = self.persistence.begin().await?;
         transaction.release_lease(tenant_id, owner_token).await?;
-        transaction.commit().await
+        transaction.commit(crate::TransactionAuditMode::Skip).await
     }
 
     pub(super) async fn renew_operation_lease(
@@ -209,7 +211,7 @@ impl TenantConfigTransferService {
         }
         .await;
         match operation {
-            Ok(()) => transaction.commit().await,
+            Ok(()) => transaction.commit(crate::TransactionAuditMode::Skip).await,
             Err(error) => {
                 transaction.rollback().await?;
                 Err(error)

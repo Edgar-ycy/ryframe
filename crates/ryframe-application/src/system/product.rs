@@ -154,7 +154,9 @@ impl ProductService {
                 updated_at: now,
             })
             .await?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::CurrentRequest)
+            .await?;
         Ok(Self::plan_state_vo(plan, Vec::new()))
     }
 
@@ -174,7 +176,9 @@ impl ProductService {
         plan.status = command.status;
         plan.updated_at = Utc::now();
         let plan = transaction.save_plan(plan).await?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::CurrentRequest)
+            .await?;
         let versions = self.versions(actor, plan_id).await?;
         Ok(Self::plan_state_vo(plan, versions))
     }
@@ -212,7 +216,9 @@ impl ProductService {
                 now,
             )
             .await?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::CurrentRequest)
+            .await?;
         Self::version_state_vo(result.version, result.capabilities)
     }
 
@@ -240,7 +246,9 @@ impl ProductService {
         let result = transaction
             .replace_draft_version(version, capability_records(capabilities), Utc::now())
             .await?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::CurrentRequest)
+            .await?;
         Self::version_state_vo(result.version, result.capabilities)
     }
 
@@ -266,7 +274,9 @@ impl ProductService {
         let saved = transaction
             .transition_version(version, VERSION_DRAFT, VERSION_PUBLISHED)
             .await?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::CurrentRequest)
+            .await?;
         Self::version_state_vo(saved, capabilities)
     }
 
@@ -291,7 +301,9 @@ impl ProductService {
         let saved = transaction
             .transition_version(version, VERSION_PUBLISHED, VERSION_RETIRED)
             .await?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::CurrentRequest)
+            .await?;
         Self::version_state_vo(saved, capabilities)
     }
 
@@ -460,7 +472,9 @@ impl ProductService {
         transaction
             .release_change_lease(tenant_id, &owner_token)
             .await?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::CurrentRequest)
+            .await?;
         if let Some(authorization_epoch) = authorization_epoch {
             self.authorization_cache
                 .sync_tenant_epoch(tenant_id, authorization_epoch)

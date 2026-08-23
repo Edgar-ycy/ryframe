@@ -4,10 +4,13 @@ use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sha2::{Digest, Sha256};
 
-use crate::ports::files::{
-    ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, FILE_DEL_FLAG_NORMAL,
-    FILE_UPLOAD_STATUS_CLEANUP, FILE_UPLOAD_STATUS_PENDING, FILE_UPLOAD_STATUS_READY,
-    FileCleanupPersistencePort, FileCleanupRecord, FileUploadCommitMode, FileUploadRecord,
+use crate::{
+    TransactionAuditMode,
+    ports::files::{
+        ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, FILE_DEL_FLAG_NORMAL,
+        FILE_UPLOAD_STATUS_CLEANUP, FILE_UPLOAD_STATUS_PENDING, FILE_UPLOAD_STATUS_READY,
+        FileCleanupPersistencePort, FileCleanupRecord, FileUploadRecord,
+    },
 };
 
 use super::{
@@ -319,7 +322,7 @@ impl FileService {
             }
             ReservationTransactionOutcome::Restored(restored) => {
                 // 该分支包含状态写入，必须提交；不能与只读去重的 `Ready` 分支合并回滚。
-                match transaction.commit(FileUploadCommitMode::Unbound).await {
+                match transaction.commit(TransactionAuditMode::Skip).await {
                     Ok(()) => Ok(ReservationOutcome::Ready(restored)),
                     Err(commit_error) => {
                         match self.uploads.find_any(tenant_id, restored.id).await {
@@ -363,7 +366,7 @@ impl FileService {
                 Ok(ReservationOutcome::InProgress(existing))
             }
             ReservationTransactionOutcome::Reserved(saved) => {
-                match transaction.commit(FileUploadCommitMode::Unbound).await {
+                match transaction.commit(TransactionAuditMode::Skip).await {
                     Ok(()) => Ok(ReservationOutcome::Reserved(saved)),
                     Err(commit_error) => {
                         // 丢失 COMMIT 响应时结果不明确。尚未写入对象，因此需在 PUT 前
@@ -410,7 +413,7 @@ impl FileService {
         &self,
         mut existing: FileUploadRecord,
         expected_sha256: &str,
-        commit_mode: FileUploadCommitMode,
+        commit_mode: TransactionAuditMode,
     ) -> AppResult<UploadResponse> {
         if existing.upload_status == FILE_UPLOAD_STATUS_CLEANUP {
             return Err(AppError::Conflict(
@@ -517,7 +520,7 @@ impl FileService {
     pub(super) async fn finalize_upload(
         &self,
         guard: &mut UploadReservationGuard,
-        commit_mode: FileUploadCommitMode,
+        commit_mode: TransactionAuditMode,
     ) -> AppResult<()> {
         let reservation = guard.reservation();
         let reservation_token = reservation

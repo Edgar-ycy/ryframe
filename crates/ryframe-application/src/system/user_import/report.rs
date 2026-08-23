@@ -79,7 +79,7 @@ impl UserImportService {
             current.updated_at = now;
             current.last_error = None;
             transaction.save(current).await?;
-            transaction.commit().await?;
+            transaction.commit(crate::TransactionAuditMode::Skip).await?;
         } else {
             // 并发执行已经关联报告，或人工重投已使任务离开终态时，本次上传可能成为
             // 无引用对象。只为确实没有任何引用的文件建立可恢复墓碑。
@@ -92,7 +92,7 @@ impl UserImportService {
                 )
                 .await?;
             if marked {
-                transaction.commit().await?;
+                transaction.commit(crate::TransactionAuditMode::Skip).await?;
             } else {
                 transaction.rollback().await?;
             }
@@ -138,6 +138,6 @@ impl UserImportService {
         import.last_error = Some(truncate_error(error));
         import.updated_at = now;
         transaction.save(import).await?;
-        transaction.commit().await
+        transaction.commit(crate::TransactionAuditMode::Skip).await
     }
 }

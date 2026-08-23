@@ -39,7 +39,7 @@ pub enum ExportStartDecision {
 }
 
 #[async_trait::async_trait]
-pub trait ExportExecutionTransaction: Send + Sync {
+pub trait ExportExecutionTransaction: crate::PersistenceTransaction + Send + Sync {
     async fn try_start<'a>(
         &'a self,
         export_id: i64,
@@ -47,10 +47,6 @@ pub trait ExportExecutionTransaction: Send + Sync {
         maximum_running: u64,
         now: DateTime<Utc>,
     ) -> ryframe_kernel::AppResult<ExportStartDecision>;
-
-    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
-
-    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 /// Worker 执行导出时使用的控制库状态端口。

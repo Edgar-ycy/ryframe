@@ -52,7 +52,9 @@ impl ExportService {
         .await;
         let removed_unread_count = match result {
             Ok(removed_unread_count) => {
-                transaction.commit().await?;
+                transaction
+                    .commit(crate::TransactionAuditMode::CurrentRequest)
+                    .await?;
                 if let Some(job_queue) = &self.job_queue {
                     job_queue.notify_background_jobs().await;
                 }
@@ -170,7 +172,9 @@ impl ExportService {
         .await;
         match result {
             Ok((export, inserted)) => {
-                transaction.commit().await?;
+                transaction
+                    .commit(crate::TransactionAuditMode::CurrentRequest)
+                    .await?;
                 if inserted && let Some(job_queue) = &self.job_queue {
                     job_queue.notify_background_jobs().await;
                 }
@@ -302,7 +306,9 @@ impl ExportService {
                 "导出任务已完成、已过期或状态已变化".into(),
             ));
         }
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::CurrentRequest)
+            .await?;
         self.find_for_requester(actor, id).await
     }
 

@@ -347,7 +347,9 @@ impl TenantDataMigrationService {
         let mut migration = transaction.lock_migration(snapshot.id).await?;
         ensure_not_cancel_requested(&migration)?;
         if migration.state == TenantDataMigrationRecord::STATE_QUIESCING {
-            transaction.commit().await?;
+            transaction
+                .commit(crate::TransactionAuditMode::Skip)
+                .await?;
             return Ok(migration);
         }
         if migration.state != TenantDataMigrationRecord::STATE_QUEUED {
@@ -380,7 +382,9 @@ impl TenantDataMigrationService {
         migration.quiesced_at.get_or_insert(now);
         migration.updated_at = now;
         migration = transaction.save_migration(migration).await?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::Skip)
+            .await?;
         if changed {
             self.authorization_cache
                 .publish_tenant_context_changed(&migration.tenant_id, tenant.authorization_epoch)
@@ -413,7 +417,9 @@ impl TenantDataMigrationService {
         let mut migration = transaction.lock_migration(snapshot.id).await?;
         ensure_not_cancel_requested(&migration)?;
         if migration.state == TenantDataMigrationRecord::STATE_ACTIVATING {
-            transaction.commit().await?;
+            transaction
+                .commit(crate::TransactionAuditMode::Skip)
+                .await?;
             return Ok(migration);
         }
         if migration.state != TenantDataMigrationRecord::STATE_CUTTING_OVER {
@@ -441,7 +447,9 @@ impl TenantDataMigrationService {
         migration.cut_over_at.get_or_insert(now);
         migration.updated_at = now;
         migration = transaction.save_migration(migration).await?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::Skip)
+            .await?;
         self.authorization_cache
             .publish_tenant_context_changed(&migration.tenant_id, tenant.authorization_epoch)
             .await;
@@ -463,7 +471,9 @@ impl TenantDataMigrationService {
         let mut migration = transaction.lock_migration(snapshot.id).await?;
         ensure_not_cancel_requested(&migration)?;
         if migration.state == TenantDataMigrationRecord::STATE_SUCCEEDED {
-            transaction.commit().await?;
+            transaction
+                .commit(crate::TransactionAuditMode::Skip)
+                .await?;
             return Ok(migration);
         }
         if migration.state != TenantDataMigrationRecord::STATE_ACTIVATING {
@@ -493,7 +503,9 @@ impl TenantDataMigrationService {
         migration.succeeded_at.get_or_insert(now);
         migration.updated_at = now;
         migration = transaction.save_migration(migration).await?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::Skip)
+            .await?;
         if changed {
             self.authorization_cache
                 .publish_tenant_context_changed(&migration.tenant_id, tenant.authorization_epoch)
@@ -512,7 +524,9 @@ impl TenantDataMigrationService {
             .await?;
         let mut migration = transaction.lock_migration(snapshot.id).await?;
         if migration.state == TenantDataMigrationRecord::STATE_RETENTION_PENDING {
-            transaction.commit().await?;
+            transaction
+                .commit(crate::TransactionAuditMode::Skip)
+                .await?;
             return Ok(migration);
         }
         if migration.state != TenantDataMigrationRecord::STATE_SUCCEEDED {
@@ -530,7 +544,9 @@ impl TenantDataMigrationService {
         transaction
             .release_lease(&migration.tenant_id, &migration.switch_token)
             .await?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::Skip)
+            .await?;
         Ok(migration)
     }
 
@@ -550,7 +566,9 @@ impl TenantDataMigrationService {
         let mut migration = transaction.lock_migration(snapshot.id).await?;
         ensure_not_cancel_requested(&migration)?;
         if migration.state == state {
-            transaction.commit().await?;
+            transaction
+                .commit(crate::TransactionAuditMode::Skip)
+                .await?;
             return Ok(migration);
         }
         if migration.state != snapshot.state {
@@ -563,7 +581,9 @@ impl TenantDataMigrationService {
         migration.updated_at = now;
         update(&mut migration, now);
         migration = transaction.save_migration(migration).await?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::Skip)
+            .await?;
         Ok(migration)
     }
 
@@ -662,7 +682,9 @@ impl TenantDataMigrationService {
             .await?;
         let current = transaction.lock_migration(snapshot.id).await?;
         self.ensure_migration_contract(&current)?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::Skip)
+            .await?;
         Ok(current)
     }
 
@@ -683,7 +705,7 @@ impl TenantDataMigrationService {
                 current.state
             )));
         }
-        transaction.commit().await
+        transaction.commit(crate::TransactionAuditMode::Skip).await
     }
 
     pub(super) async fn renew_operation_lease(

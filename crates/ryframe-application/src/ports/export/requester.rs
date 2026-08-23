@@ -33,7 +33,7 @@ pub struct ExportDownloadFile {
 
 /// 申请人取消导出时使用的控制库事务。
 #[async_trait::async_trait]
-pub trait ExportRequesterTransaction: Send + Sync {
+pub trait ExportRequesterTransaction: crate::PersistenceTransaction + Send + Sync {
     async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
     async fn cancel<'a>(
@@ -43,10 +43,6 @@ pub trait ExportRequesterTransaction: Send + Sync {
         export_id: i64,
         now: DateTime<Utc>,
     ) -> ryframe_kernel::AppResult<bool>;
-
-    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
-
-    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 /// 面向导出申请人的查询与状态变更端口。

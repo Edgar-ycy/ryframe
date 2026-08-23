@@ -511,7 +511,9 @@ impl TenantDataMigrationService {
         migration.background_job_id = Some(queued.job_id);
         migration.updated_at = now;
         migration = transaction.save_migration(migration).await?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::CurrentRequest)
+            .await?;
         self.queue.notify_background_jobs().await;
         self.migration_view(migration).await
     }

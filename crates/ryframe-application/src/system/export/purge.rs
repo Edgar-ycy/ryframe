@@ -136,7 +136,9 @@ async fn finish_transaction(
 ) -> AppResult<bool> {
     match result {
         Ok(true) => {
-            transaction.commit().await?;
+            transaction
+                .commit(crate::TransactionAuditMode::Skip)
+                .await?;
             Ok(true)
         }
         Ok(false) => {

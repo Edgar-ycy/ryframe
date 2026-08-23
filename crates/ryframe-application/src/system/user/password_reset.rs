@@ -54,7 +54,9 @@ impl UserService {
         .await;
         match result {
             Ok(request) => {
-                transaction.commit().await?;
+                transaction
+                    .commit(crate::TransactionAuditMode::CurrentRequest)
+                    .await?;
                 Ok(PasswordResetRequestOutcome { request, token })
             }
             Err(error) => {
@@ -113,14 +115,18 @@ impl UserService {
             .await;
         match result {
             Ok(PasswordResetCompletion::Expired) => {
-                transaction.commit().await?;
+                transaction
+                    .commit(crate::TransactionAuditMode::CurrentRequest)
+                    .await?;
                 Err(AppError::Validation("密码重置请求已过期".into()))
             }
             Ok(PasswordResetCompletion::Completed {
                 user_id,
                 authorization_version,
             }) => {
-                transaction.commit().await?;
+                transaction
+                    .commit(crate::TransactionAuditMode::CurrentRequest)
+                    .await?;
                 self.authorization_cache
                     .sync_user_versions(tenant_id, &[(user_id, authorization_version)])
                     .await?;

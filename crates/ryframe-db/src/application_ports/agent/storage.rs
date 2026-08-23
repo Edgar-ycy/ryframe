@@ -239,8 +239,15 @@ impl AgentPersistenceTransaction for DatabaseAgentTransaction {
             .await
             .map(|_| ())
     }
+}
 
-    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
+#[async_trait::async_trait]
+impl ryframe_application::PersistenceTransaction for DatabaseAgentTransaction {
+    async fn commit(
+        self: Box<Self>,
+        audit_mode: ryframe_application::TransactionAuditMode,
+    ) -> ryframe_kernel::AppResult<()> {
+        let _ = audit_mode;
         self.transaction.commit().await.map_err(database_error)
     }
 

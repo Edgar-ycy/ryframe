@@ -119,7 +119,7 @@ impl UserImportService {
             import.completed_at = Some(now);
             import.updated_at = now;
             transaction.save(import).await?;
-            transaction.commit().await?;
+            transaction.commit(crate::TransactionAuditMode::Skip).await?;
             return Ok(CommitBatchOutcome::Committed);
         }
         if usize::try_from(import.processed_rows).ok() != Some(expected_offset) {
@@ -219,7 +219,7 @@ impl UserImportService {
         import.updated_at = now;
         import.last_error = None;
         transaction.save(import).await?;
-        transaction.commit().await?;
+        transaction.commit(crate::TransactionAuditMode::Skip).await?;
         Ok(CommitBatchOutcome::Committed)
     }
 }

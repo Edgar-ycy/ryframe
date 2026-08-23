@@ -367,9 +367,22 @@ impl ServiceAccountWriteTransaction for DatabaseServiceAccountWriteTransaction {
             .map(|saved| delegation_record(saved, capability_keys))
             .map_err(database_error)
     }
+}
 
-    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
-        self.transaction.commit_audited().await
+#[async_trait::async_trait]
+impl ryframe_application::PersistenceTransaction for DatabaseServiceAccountWriteTransaction {
+    async fn commit(
+        self: Box<Self>,
+        audit_mode: ryframe_application::TransactionAuditMode,
+    ) -> ryframe_kernel::AppResult<()> {
+        match audit_mode {
+            ryframe_application::TransactionAuditMode::CurrentRequest => {
+                self.transaction.commit_audited().await
+            }
+            ryframe_application::TransactionAuditMode::Skip => {
+                self.transaction.commit().await.map_err(database_error)
+            }
+        }
     }
 
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {

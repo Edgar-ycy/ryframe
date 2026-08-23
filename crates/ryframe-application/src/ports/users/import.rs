@@ -155,7 +155,7 @@ pub struct UserImportReadFilter<'a> {
 }
 
 #[async_trait::async_trait]
-pub trait UserImportTransaction: BackgroundJobTransaction {
+pub trait UserImportTransaction: crate::PersistenceTransaction + BackgroundJobTransaction {
     async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
     async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()>;
@@ -237,10 +237,6 @@ pub trait UserImportTransaction: BackgroundJobTransaction {
         &self,
         record: UserImportJobRecord,
     ) -> ryframe_kernel::AppResult<UserImportJobRecord>;
-
-    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
-
-    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 #[async_trait::async_trait]

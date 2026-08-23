@@ -89,7 +89,7 @@ impl TenantConfigTransferService {
         }
         .await;
         match operation {
-            Ok(_) => transaction.commit().await,
+            Ok(_) => transaction.commit(crate::TransactionAuditMode::Skip).await,
             Err(error) => {
                 transaction.rollback().await?;
                 Err(error)

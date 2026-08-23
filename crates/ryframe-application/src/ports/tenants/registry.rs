@@ -69,7 +69,7 @@ pub struct ProvisionTenantRecord {
 
 /// 租户管理用例所拥有的控制库工作单元。
 #[async_trait::async_trait]
-pub trait TenantTransaction: Send + Sync {
+pub trait TenantTransaction: crate::PersistenceTransaction + Send + Sync {
     fn product(&self) -> &dyn ProductTransactionPort;
 
     fn authorization_mirror(&self) -> &dyn AuthorizationMirrorTransaction;
@@ -144,12 +144,6 @@ pub trait TenantTransaction: Send + Sync {
         &'a self,
         placement: &'a TenantProvisioningPlacement,
     ) -> ryframe_kernel::AppResult<()>;
-
-    async fn commit_audited(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
-
-    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
-
-    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 /// 租户管理用例所需的持久化端口。

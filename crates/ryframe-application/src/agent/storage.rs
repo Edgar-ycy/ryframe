@@ -133,7 +133,7 @@ pub struct AgentDictionaryPageRecord {
 }
 
 #[async_trait::async_trait]
-pub trait AgentPersistenceTransaction: Send + Sync {
+pub trait AgentPersistenceTransaction: crate::PersistenceTransaction + Send + Sync {
     async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
     async fn lock_tenant<'a>(
@@ -205,10 +205,6 @@ pub trait AgentPersistenceTransaction: Send + Sync {
     ) -> ryframe_kernel::AppResult<Option<AgentDictionaryPageRecord>>;
 
     async fn insert_audit(&self, audit: AgentAccessAuditRecord) -> ryframe_kernel::AppResult<()>;
-
-    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
-
-    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 #[async_trait::async_trait]

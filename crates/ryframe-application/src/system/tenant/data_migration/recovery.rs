@@ -59,7 +59,9 @@ impl TenantDataMigrationService {
             transaction
                 .release_lease(&migration.tenant_id, &migration.switch_token)
                 .await?;
-            transaction.commit().await?;
+            transaction
+                .commit(crate::TransactionAuditMode::Skip)
+                .await?;
             return Ok(false);
         }
         if let Some(job_id) = migration.background_job_id
@@ -75,7 +77,9 @@ impl TenantDataMigrationService {
                 )
                 .await?
         {
-            transaction.commit().await?;
+            transaction
+                .commit(crate::TransactionAuditMode::Skip)
+                .await?;
             return Ok(false);
         }
         let recovery_generation = migration
@@ -108,7 +112,9 @@ impl TenantDataMigrationService {
         migration.background_job_id = Some(queued.job_id);
         migration.updated_at = now;
         transaction.save_migration(migration).await?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::Skip)
+            .await?;
         Ok(true)
     }
 }
@@ -164,7 +170,9 @@ impl TenantDataMigrationService {
         transaction
             .release_lease(&migration.tenant_id, &migration.switch_token)
             .await?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::Skip)
+            .await?;
         Ok(migration)
     }
 
@@ -225,7 +233,9 @@ impl TenantDataMigrationService {
         transaction
             .release_lease(&migration.tenant_id, &migration.switch_token)
             .await?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::Skip)
+            .await?;
         Ok(migration)
     }
 }
@@ -242,7 +252,9 @@ impl TenantDataMigrationService {
             .await?;
         let current = transaction.lock_migration(snapshot.id).await?;
         validate_recovery_intent(&current, intent)?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::Skip)
+            .await?;
         Ok(current)
     }
 
@@ -283,7 +295,9 @@ impl TenantDataMigrationService {
                 .increment_runtime_epoch(&migration.tenant_id)
                 .await?;
         }
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::Skip)
+            .await?;
         if changed {
             self.authorization_cache
                 .publish_tenant_context_changed(&migration.tenant_id, tenant.authorization_epoch)
@@ -413,7 +427,9 @@ impl TenantDataMigrationService {
                     .ok_or_else(|| AppError::Internal("cleanup row count overflow".into()))?;
                 item.updated_at = now;
                 item = transaction.save_item(item).await?;
-                transaction.commit().await?;
+                transaction
+                    .commit(crate::TransactionAuditMode::Skip)
+                    .await?;
                 if deleted < 500 {
                     break;
                 }
@@ -431,7 +447,9 @@ impl TenantDataMigrationService {
             checkpoint.updated_at = checkpoint_now;
             checkpoint_transaction.save_migration(checkpoint).await?;
         }
-        checkpoint_transaction.commit().await?;
+        checkpoint_transaction
+            .commit(crate::TransactionAuditMode::Skip)
+            .await?;
         self.tenant_migration.finish_cleanup(cleanup_fence).await
     }
 
@@ -467,7 +485,9 @@ impl TenantDataMigrationService {
             intent.updated_at = now;
             intent = intent_transaction.save_migration(intent).await?;
         }
-        intent_transaction.commit().await?;
+        intent_transaction
+            .commit(crate::TransactionAuditMode::Skip)
+            .await?;
         snapshot = intent;
 
         // 补偿由 Worker 串行：先恢复源 fence/placement，再按表分批清理
@@ -514,7 +534,9 @@ impl TenantDataMigrationService {
         transaction
             .release_lease(&migration.tenant_id, &migration.switch_token)
             .await?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::Skip)
+            .await?;
         Ok(())
     }
 }

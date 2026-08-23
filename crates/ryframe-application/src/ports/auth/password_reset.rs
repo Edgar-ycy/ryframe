@@ -35,7 +35,7 @@ pub struct PasswordResetUserState {
 }
 
 #[async_trait::async_trait]
-pub trait PasswordResetTransaction: Send + Sync {
+pub trait PasswordResetTransaction: crate::PersistenceTransaction + Send + Sync {
     async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
     async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()>;
@@ -93,10 +93,6 @@ pub trait PasswordResetTransaction: Send + Sync {
         user_id: i64,
         authorization_version: i32,
     ) -> ryframe_kernel::AppResult<()>;
-
-    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
-
-    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 #[async_trait::async_trait]

@@ -157,7 +157,7 @@ impl TenantConfigTransferService {
         .await;
         match operation {
             Ok((epoch, namespace_version)) => {
-                if let Err(error) = transaction.commit().await {
+                if let Err(error) = transaction.commit(crate::TransactionAuditMode::Skip).await {
                     let _ = lease.release().await;
                     return Err(error);
                 }

@@ -40,7 +40,9 @@ impl TenantDataMigrationService {
             intent_transaction
                 .release_lease(&intent.tenant_id, &intent.switch_token)
                 .await?;
-            intent_transaction.commit().await?;
+            intent_transaction
+                .commit(crate::TransactionAuditMode::CurrentRequest)
+                .await?;
             if same_key {
                 return self.migration_view(intent).await;
             }
@@ -84,7 +86,9 @@ impl TenantDataMigrationService {
         {
             return Err(AppError::Conflict("迁移权威后台任务关联无效".into()));
         }
-        intent_transaction.commit().await?;
+        intent_transaction
+            .commit(crate::TransactionAuditMode::CurrentRequest)
+            .await?;
         snapshot = intent;
         self.queue.notify_background_jobs().await;
         self.migration_view(snapshot).await
@@ -143,7 +147,9 @@ impl TenantDataMigrationService {
             intent_transaction
                 .release_lease(&intent.tenant_id, &intent.switch_token)
                 .await?;
-            intent_transaction.commit().await?;
+            intent_transaction
+                .commit(crate::TransactionAuditMode::CurrentRequest)
+                .await?;
             if same_key {
                 return self.migration_view(intent).await;
             }
@@ -197,7 +203,9 @@ impl TenantDataMigrationService {
         {
             return Err(AppError::Conflict("迁移权威后台任务关联无效".into()));
         }
-        intent_transaction.commit().await?;
+        intent_transaction
+            .commit(crate::TransactionAuditMode::CurrentRequest)
+            .await?;
         snapshot = intent;
         self.queue.notify_background_jobs().await;
         self.migration_view(snapshot).await

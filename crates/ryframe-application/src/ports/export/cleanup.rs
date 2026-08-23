@@ -25,7 +25,7 @@ pub enum ExportCleanupFileLookup {
 }
 
 #[async_trait::async_trait]
-pub trait ExportCleanupTransaction: Send + Sync {
+pub trait ExportCleanupTransaction: crate::PersistenceTransaction + Send + Sync {
     async fn lock_export(
         &self,
         export_id: i64,
@@ -44,10 +44,6 @@ pub trait ExportCleanupTransaction: Send + Sync {
         export_id: i64,
         now: DateTime<Utc>,
     ) -> ryframe_kernel::AppResult<bool>;
-
-    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
-
-    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 /// 导出墓碑与过期结果清理使用的控制库端口。

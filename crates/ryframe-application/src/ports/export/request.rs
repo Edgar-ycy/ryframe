@@ -24,7 +24,7 @@ pub struct CreateExportRecord {
 
 /// 导出申请创建所需的控制库一致性事务。
 #[async_trait::async_trait]
-pub trait ExportRequestTransaction: Send + Sync {
+pub trait ExportRequestTransaction: crate::PersistenceTransaction + Send + Sync {
     async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
     async fn find_active<'a>(
@@ -52,10 +52,6 @@ pub trait ExportRequestTransaction: Send + Sync {
         command: CreateExportRecord,
         now: DateTime<Utc>,
     ) -> ryframe_kernel::AppResult<ExportRequesterRecord>;
-
-    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
-
-    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 #[async_trait::async_trait]

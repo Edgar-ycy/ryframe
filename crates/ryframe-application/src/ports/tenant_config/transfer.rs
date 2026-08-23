@@ -141,7 +141,7 @@ pub struct TenantConfigRequesterRecord {
 
 /// 租户配置迁移用例所拥有的控制库工作单元。
 #[async_trait::async_trait]
-pub trait TenantConfigTransferTransaction: Send + Sync {
+pub trait TenantConfigTransferTransaction: crate::PersistenceTransaction + Send + Sync {
     fn background_jobs(&self) -> &dyn BackgroundJobTransaction;
 
     fn product(&self) -> &dyn ProductTransactionPort;
@@ -306,12 +306,6 @@ pub trait TenantConfigTransferTransaction: Send + Sync {
         tenant_id: &'a str,
         candidates: &'a [i64],
     ) -> ryframe_kernel::AppResult<BTreeSet<i64>>;
-
-    async fn commit_audited(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
-
-    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
-
-    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 /// 租户配置迁移用例所需的控制库持久化端口。

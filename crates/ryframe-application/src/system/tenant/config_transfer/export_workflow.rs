@@ -31,7 +31,9 @@ impl TenantConfigTransferService {
         bundle.status = TenantConfigBundleRecord::STATUS_RUNNING.to_owned();
         bundle.updated_at = transaction.database_now().await?;
         transaction.update_bundle(bundle).await?;
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::Skip)
+            .await?;
 
         // 在租户配置行锁保护下从同一事务读取全部资源，避免包内混合两个版本。
         let source_transaction = self.persistence.begin().await?;
@@ -65,7 +67,9 @@ impl TenantConfigTransferService {
         let (source_resources, required_capabilities, source_tenant_name, generated_at) =
             match source_result {
                 Ok(source) => {
-                    source_transaction.commit().await?;
+                    source_transaction
+                        .commit(crate::TransactionAuditMode::Skip)
+                        .await?;
                     source
                 }
                 Err(error) => {
@@ -152,7 +156,7 @@ impl TenantConfigTransferService {
         .await;
         match operation {
             Ok(_) => {
-                if let Err(error) = transaction.commit().await {
+                if let Err(error) = transaction.commit(crate::TransactionAuditMode::Skip).await {
                     // COMMIT 响应丢失时结果可能已经持久化。引用保护会在已绑定成功时拒绝
                     // 清理，而在事务确实未提交时把孤儿文件纳入延迟回收。
                     let _ = self

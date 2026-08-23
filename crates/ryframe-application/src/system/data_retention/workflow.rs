@@ -42,10 +42,14 @@ impl DataRetentionService {
         // 后台任务可能在业务清理已经提交后丢失租约，并由管理员重新投递。完成态是可靠事实，
         // 通过行锁原子确认后直接返回，避免再次执行永久删除或重写原完成时间。
         let Some(mut run) = transaction.begin_run(run, now).await? else {
-            transaction.commit().await?;
+            transaction
+                .commit(crate::TransactionAuditMode::Skip)
+                .await?;
             return Ok(());
         };
-        transaction.commit().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::Skip)
+            .await?;
         let overview = self.overview_at(now);
         run.policy_snapshot = serde_json::to_value(&overview).map_err(json_error)?;
         let cutoffs = self.cutoffs(now);

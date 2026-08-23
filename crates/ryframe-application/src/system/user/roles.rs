@@ -32,7 +32,9 @@ impl UserService {
         .await;
         match result {
             Ok(versions) => {
-                transaction.commit().await?;
+                transaction
+                    .commit(crate::TransactionAuditMode::CurrentRequest)
+                    .await?;
                 self.authorization_cache
                     .sync_user_versions(tenant_id, &versions)
                     .await

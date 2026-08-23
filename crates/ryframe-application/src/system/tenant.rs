@@ -207,7 +207,9 @@ impl TenantService {
             transaction.create_pending(&pending).await?;
             false
         };
-        transaction.commit_audited().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::CurrentRequest)
+            .await?;
         if already_enabled {
             return self
                 .persistence
@@ -336,7 +338,9 @@ impl TenantService {
                 plan_version_id,
             )
             .await?;
-        transaction.commit_audited().await
+        transaction
+            .commit(crate::TransactionAuditMode::CurrentRequest)
+            .await
     }
 
     async fn finalize_provisioning(&self, pending: &TenantProvisioningPlacement) -> AppResult<()> {
@@ -344,7 +348,7 @@ impl TenantService {
         let tenant = transaction.lock_tenant(&pending.tenant_id).await?;
         if tenant.status == TENANT_STATUS_ENABLED {
             transaction.activate_placement(pending).await?;
-            return transaction.commit().await;
+            return transaction.commit(crate::TransactionAuditMode::Skip).await;
         }
         if tenant.status != TENANT_STATUS_PROVISIONING {
             return Err(AppError::Conflict(
@@ -355,7 +359,7 @@ impl TenantService {
         transaction
             .update_status(&pending.tenant_id, TENANT_STATUS_ENABLED)
             .await?;
-        transaction.commit().await
+        transaction.commit(crate::TransactionAuditMode::Skip).await
     }
 
     async fn mark_provisioning_failed(&self, pending: &TenantProvisioningPlacement) {
@@ -376,7 +380,7 @@ impl TenantService {
         .await;
         match result {
             Ok(()) => {
-                if let Err(error) = transaction.commit().await {
+                if let Err(error) = transaction.commit(crate::TransactionAuditMode::Skip).await {
                     tracing::error!(tenant_id = %pending.tenant_id, %error, "租户 provisioning 失败补偿提交失败");
                 }
             }
@@ -434,7 +438,9 @@ impl TenantService {
             .authorization_cache
             .increment_tenant_epoch_in_transaction(transaction.authorization_mirror(), tenant_id)
             .await?;
-        transaction.commit_audited().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::CurrentRequest)
+            .await?;
         self.authorization_cache
             .sync_tenant_epoch(tenant_id, authorization_epoch)
             .await?;
@@ -470,14 +476,18 @@ impl TenantService {
             ));
         }
         if current.status == status {
-            return transaction.commit_audited().await;
+            return transaction
+                .commit(crate::TransactionAuditMode::CurrentRequest)
+                .await;
         }
         transaction.update_status(tenant_id, &status).await?;
         let authorization_epoch = self
             .authorization_cache
             .increment_tenant_epoch_in_transaction(transaction.authorization_mirror(), tenant_id)
             .await?;
-        transaction.commit_audited().await?;
+        transaction
+            .commit(crate::TransactionAuditMode::CurrentRequest)
+            .await?;
         self.authorization_cache
             .sync_tenant_epoch(tenant_id, authorization_epoch)
             .await

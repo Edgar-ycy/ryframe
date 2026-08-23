@@ -119,7 +119,9 @@ impl AgentService {
         .await;
         match result {
             Ok((body, principal)) => {
-                transaction.commit().await?;
+                transaction
+                    .commit(crate::TransactionAuditMode::CurrentRequest)
+                    .await?;
                 Ok(AgentSuccess { body, principal })
             }
             Err(error) => {

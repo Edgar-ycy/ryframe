@@ -96,7 +96,7 @@ impl UserImportService {
             .await?;
         let job = job_vo_with_requester(existing, requester_username);
         // 幂等重放同样属于成功写请求；短事务绑定审计，避免产生 transaction_unbound 告警。
-        transaction.commit().await?;
+        transaction.commit(crate::TransactionAuditMode::CurrentRequest).await?;
         Ok(Some(job))
     }
 
@@ -127,7 +127,7 @@ impl UserImportService {
                 .requester_username(tenant_id, existing.requester_user_id)
                 .await?;
             let job = job_vo_with_requester(existing, requester_username);
-            transaction.commit().await?;
+            transaction.commit(crate::TransactionAuditMode::CurrentRequest).await?;
             return Ok(RequestUserImportOutcome {
                 job,
                 inserted: false,
@@ -190,7 +190,7 @@ impl UserImportService {
                 now,
             )
             .await?;
-        transaction.commit().await?;
+        transaction.commit(crate::TransactionAuditMode::CurrentRequest).await?;
         self.queue.notify_background_jobs().await;
         Ok(RequestUserImportOutcome {
             job: job_vo_with_requester(job, Some(actor.username.clone())),
@@ -230,7 +230,7 @@ impl UserImportService {
         .await;
         match result {
             // 该事务只负责失败补偿，不能把主请求提前标记为审计成功。
-            Ok(true) => transaction.commit().await,
+            Ok(true) => transaction.commit(crate::TransactionAuditMode::CurrentRequest).await,
             Ok(false) => transaction.rollback().await,
             Err(error) => {
                 if let Err(rollback_error) = transaction.rollback().await {

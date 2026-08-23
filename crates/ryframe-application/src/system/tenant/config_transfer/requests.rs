@@ -83,7 +83,9 @@ impl TenantConfigTransferService {
         .await;
         match operation {
             Ok((bundle, inserted)) => {
-                transaction.commit_audited().await?;
+                transaction
+                    .commit(crate::TransactionAuditMode::CurrentRequest)
+                    .await?;
                 self.queue.notify_background_jobs().await;
                 Ok(RequestTenantConfigBundleOutcome {
                     bundle: bundle.into(),
@@ -195,7 +197,9 @@ impl TenantConfigTransferService {
         .await;
         match result {
             Ok(Some((existing, bundle))) => {
-                transaction.commit_audited().await?;
+                transaction
+                    .commit(crate::TransactionAuditMode::CurrentRequest)
+                    .await?;
                 Ok(Some((existing, bundle)))
             }
             Ok(None) => {
@@ -275,7 +279,9 @@ impl TenantConfigTransferService {
         .await;
         match operation {
             Ok((transfer, bundle, inserted)) => {
-                transaction.commit_audited().await?;
+                transaction
+                    .commit(crate::TransactionAuditMode::CurrentRequest)
+                    .await?;
                 Ok(RequestTenantConfigTransferOutcome {
                     transfer: TenantConfigTransferVo::from_models(transfer, &bundle)?,
                     inserted,
@@ -377,7 +383,9 @@ impl TenantConfigTransferService {
         .await;
         match operation {
             Ok((transfer, bundle, inserted)) => {
-                transaction.commit_audited().await?;
+                transaction
+                    .commit(crate::TransactionAuditMode::CurrentRequest)
+                    .await?;
                 Ok(RequestTenantConfigTransferOutcome {
                     transfer: TenantConfigTransferVo::from_models(transfer, &bundle)?,
                     inserted,
@@ -503,7 +511,9 @@ impl TenantConfigTransferService {
         .await;
         match result {
             Ok((transfer, bundle)) => {
-                transaction.commit_audited().await?;
+                transaction
+                    .commit(crate::TransactionAuditMode::CurrentRequest)
+                    .await?;
                 self.queue.notify_background_jobs().await;
                 TenantConfigTransferVo::from_models(transfer, &bundle)
             }

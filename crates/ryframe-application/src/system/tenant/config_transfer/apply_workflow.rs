@@ -101,7 +101,10 @@ impl TenantConfigTransferService {
         let (snapshot_resources, snapshot_capabilities, snapshot_tenant_name, snapshot_time) =
             match snapshot_result {
                 Ok(value) => {
-                    if let Err(error) = snapshot_transaction.commit().await {
+                    if let Err(error) = snapshot_transaction
+                        .commit(crate::TransactionAuditMode::Skip)
+                        .await
+                    {
                         let _ = lease.release().await;
                         return Err(error);
                     }
@@ -299,7 +302,7 @@ impl TenantConfigTransferService {
         .await;
         match operation {
             Ok((authorization_epoch, namespace_version)) => {
-                if let Err(error) = transaction.commit().await {
+                if let Err(error) = transaction.commit(crate::TransactionAuditMode::Skip).await {
                     let _ = self
                         .file
                         .schedule_unreferenced_config_package_cleanup(tenant_id, snapshot_file_id)

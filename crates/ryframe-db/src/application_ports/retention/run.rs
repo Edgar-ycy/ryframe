@@ -131,9 +131,22 @@ impl RetentionRunTransaction for DatabaseRetentionRunTransaction {
             .await
             .map(|record| record.map(to_record))
     }
+}
 
-    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
-        self.transaction.commit_audited().await
+#[async_trait::async_trait]
+impl ryframe_application::PersistenceTransaction for DatabaseRetentionRunTransaction {
+    async fn commit(
+        self: Box<Self>,
+        audit_mode: ryframe_application::TransactionAuditMode,
+    ) -> ryframe_kernel::AppResult<()> {
+        match audit_mode {
+            ryframe_application::TransactionAuditMode::CurrentRequest => {
+                self.transaction.commit_audited().await
+            }
+            ryframe_application::TransactionAuditMode::Skip => {
+                self.transaction.commit().await.map_err(database_error)
+            }
+        }
     }
 
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {

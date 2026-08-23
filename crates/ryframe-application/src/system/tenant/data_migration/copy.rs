@@ -209,7 +209,9 @@ impl TenantDataMigrationService {
             item.target_digest = Some(next_digest);
             item.updated_at = progress_now;
             item = progress_transaction.save_item(item).await?;
-            progress_transaction.commit().await?;
+            progress_transaction
+                .commit(crate::TransactionAuditMode::Skip)
+                .await?;
             if batch.rows.len() < COPY_BATCH_SIZE as usize {
                 break;
             }

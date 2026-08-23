@@ -41,7 +41,7 @@ pub struct CompleteExportArtifact {
 
 /// 导出结果落账所需的控制库事务。
 #[async_trait::async_trait]
-pub trait ExportArtifactTransaction: Send + Sync {
+pub trait ExportArtifactTransaction: crate::PersistenceTransaction + Send + Sync {
     async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
 
     async fn lock_export(
@@ -59,10 +59,6 @@ pub trait ExportArtifactTransaction: Send + Sync {
         &self,
         command: CompleteExportArtifact,
     ) -> ryframe_kernel::AppResult<bool>;
-
-    async fn commit(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
-
-    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 #[async_trait::async_trait]

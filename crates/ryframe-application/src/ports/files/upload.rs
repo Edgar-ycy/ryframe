@@ -1,11 +1,5 @@
 use chrono::{DateTime, Utc};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FileUploadCommitMode {
-    CurrentRequest,
-    Unbound,
-}
-
 #[derive(Debug, Eq, PartialEq)]
 pub struct FileUploadRecord {
     pub id: i64,
@@ -29,7 +23,7 @@ pub struct FileUploadRecord {
 
 /// 文件上传预留与完成状态所使用的控制库事务。
 #[async_trait::async_trait]
-pub trait FileUploadTransaction: Send + Sync {
+pub trait FileUploadTransaction: crate::PersistenceTransaction + Send + Sync {
     async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()>;
 
     async fn database_now(&self) -> ryframe_kernel::AppResult<DateTime<Utc>>;
@@ -68,10 +62,6 @@ pub trait FileUploadTransaction: Send + Sync {
         reservation_token: &'a str,
         updated_at: DateTime<Utc>,
     ) -> ryframe_kernel::AppResult<bool>;
-
-    async fn commit(self: Box<Self>, mode: FileUploadCommitMode) -> ryframe_kernel::AppResult<()>;
-
-    async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()>;
 }
 
 /// 文件上传状态机所需的持久化端口。
