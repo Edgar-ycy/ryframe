@@ -26,6 +26,39 @@ class SelectFrontendCommitTests(unittest.TestCase):
             sha.lower(),
         )
 
+    def test_accepts_windows_and_legacy_line_endings(self) -> None:
+        sha = "C" * 40
+        for body in (
+            f"说明\r\nFrontend-Commit: {sha}\r\n",
+            f"说明\rFrontend-Commit: {sha}\r",
+            f"说明\nFrontend-Commit: {sha}",
+        ):
+            with self.subTest(body=repr(body)):
+                self.assertEqual(
+                    MODULE.select_frontend_ref(body, True),
+                    sha.lower(),
+                )
+
+    def test_windows_prefers_valid_marker_when_contract_is_unchanged(self) -> None:
+        sha = "B" * 40
+        self.assertEqual(
+            MODULE.select_frontend_ref(
+                f"说明\nFrontend-Commit: {sha}\n",
+                False,
+                prefer_marker=True,
+            ),
+            sha.lower(),
+        )
+        self.assertEqual(
+            MODULE.select_frontend_ref("没有配套提交", False, prefer_marker=True),
+            "main",
+        )
+
+    def test_windows_rejects_invalid_marker_instead_of_silently_using_main(self) -> None:
+        for body in ("Frontend-Commit: abc123", "Frontend-Commit: " + "1" * 41):
+            with self.subTest(body=body), self.assertRaises(ValueError):
+                MODULE.select_frontend_ref(body, False, prefer_marker=True)
+
     def test_rejects_missing_or_short_sha(self) -> None:
         for body in ("", "Frontend-Commit: abc123"):
             with self.subTest(body=body), self.assertRaises(ValueError):

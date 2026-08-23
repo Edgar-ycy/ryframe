@@ -16,17 +16,30 @@ MARKER_PATTERN = re.compile(
 MARKER_MENTION_PATTERN = re.compile(r"Frontend-Commit", re.IGNORECASE)
 
 
-def select_frontend_ref(body: str, contract_changed: bool) -> str:
-    """契约未变化时使用 main，变化时要求唯一且严格的完整提交 SHA。"""
+def select_frontend_ref(
+    body: str,
+    contract_changed: bool,
+    *,
+    prefer_marker: bool = False,
+) -> str:
+    """选择前端提交；Windows 可优先使用显式 marker，消费契约保持原语义。"""
 
-    if not contract_changed:
+    body = body.replace("\r\n", "\n").replace("\r", "\n")
+    if not contract_changed and not prefer_marker:
         return "main"
 
     matches = MARKER_PATTERN.findall(body)
     mentions = MARKER_MENTION_PATTERN.findall(body)
+    if not contract_changed and not mentions:
+        return "main"
     if len(matches) != 1 or len(mentions) != 1:
+        if contract_changed:
+            raise ValueError(
+                "OpenAPI 已变化；PR 正文必须且只能包含一行 "
+                "Frontend-Commit: <40 位 SHA>"
+            )
         raise ValueError(
-            "OpenAPI 已变化；PR 正文必须且只能包含一行 "
+            "Frontend-Commit marker 无效；PR 正文必须且只能包含一行 "
             "Frontend-Commit: <40 位 SHA>"
         )
     return matches[0].lower()
@@ -39,6 +52,11 @@ def parse_args() -> argparse.Namespace:
         "--contract-changed",
         choices=("true", "false"),
         required=True,
+    )
+    parser.add_argument(
+        "--prefer-marker",
+        action="store_true",
+        help="存在合法 Frontend-Commit 时优先使用，供 Windows smoke 使用",
     )
     return parser.parse_args()
 
@@ -54,7 +72,13 @@ def main() -> None:
         body = ""
     if not isinstance(body, str):
         raise ValueError("pull_request.body 必须是字符串或 null")
-    print(select_frontend_ref(body, args.contract_changed == "true"))
+    print(
+        select_frontend_ref(
+            body,
+            args.contract_changed == "true",
+            prefer_marker=args.prefer_marker,
+        )
+    )
 
 
 if __name__ == "__main__":

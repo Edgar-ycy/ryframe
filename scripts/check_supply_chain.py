@@ -4,22 +4,39 @@ import argparse
 import datetime as dt
 import json
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
+try:
+    import yaml
+    from yaml.constructor import ConstructorError
+    from yaml.nodes import MappingNode
+except ModuleNotFoundError:
+    yaml = None
+    ConstructorError = None
+    MappingNode = None
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_POLICY = ROOT / "scripts" / "supply_chain_policy.json"
 DEFAULT_WORKFLOWS = ROOT / ".github" / "workflows"
-TOOL_NAMES = ("cargo-audit", "cargo-deny", "cargo-cyclonedx", "trivy")
+TOOL_NAMES = ("cargo-audit", "cargo-deny", "cargo-cyclonedx", "sccache", "trivy")
 SEMVER = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 ACTION_REF = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@[0-9a-f]{40}")
-CONTAINER_ACTION_REF = re.compile(
-    r"docker://[A-Za-z0-9_.:/-]+@sha256:[0-9a-f]{64}"
+REUSABLE_WORKFLOW_REF = re.compile(
+    r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/\.github/workflows/"
+    r"[A-Za-z0-9_.-]+\.ya?ml@[0-9a-f]{40}"
 )
-USES_LINE = re.compile(r"^\s*(?:-\s*)?uses:\s*([^\s#]+)", re.MULTILINE)
+LOCAL_ACTION_REF = re.compile(r"\./[A-Za-z0-9_./-]+")
+LOCAL_REUSABLE_WORKFLOW_REF = re.compile(
+    r"\./\.github/workflows/[A-Za-z0-9_.-]+\.ya?ml"
+)
+CONTAINER_ACTION_REF = re.compile(r"docker://[A-Za-z0-9_.:/-]+@sha256:[0-9a-f]{64}")
+INSTALL_TOOL_REF = re.compile(r"([A-Za-z0-9_.-]+)@([0-9]+\.[0-9]+\.[0-9]+)")
+SERVICE_IMAGE_REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:[0-9a-f]{64}")
 
 
 class PolicyError(ValueError):
@@ -63,7 +80,9 @@ def _expiry(value: Any, label: str, today: dt.date) -> dt.date:
     return expires
 
 
-def load_policy(path: Path = DEFAULT_POLICY, *, today: dt.date | None = None) -> dict[str, Any]:
+def load_policy(
+    path: Path = DEFAULT_POLICY, *, today: dt.date | None = None
+) -> dict[str, Any]:
     check_date = today or dt.date.today()
     try:
         policy = _object(json.loads(path.read_text(encoding="utf-8")), "供应链策略")
@@ -77,6 +96,7 @@ def load_policy(path: Path = DEFAULT_POLICY, *, today: dt.date | None = None) ->
             "tools",
             "vulnerability_gate",
             "dependency_graph_exceptions",
+            "service_images",
         },
         "供应链策略",
     )
@@ -89,14 +109,49 @@ def load_policy(path: Path = DEFAULT_POLICY, *, today: dt.date | None = None) ->
         if not isinstance(version, str) or SEMVER.fullmatch(version) is None:
             raise PolicyError(f"工具 {name} 必须固定到完整三段版本")
 
+    seen_services: set[tuple[str, str, str]] = set()
+    for index, item in enumerate(_list(policy["service_images"], "service_images")):
+        service_image = _object(item, f"服务镜像[{index}]")
+        _exact_keys(
+            service_image,
+            {"workflow", "job", "service", "image"},
+            f"服务镜像[{index}]",
+        )
+        workflow = _text(service_image["workflow"], f"服务镜像[{index}].workflow")
+        if (
+            Path(workflow).name != workflow
+            or re.fullmatch(r"[A-Za-z0-9_.-]+\.ya?ml", workflow) is None
+        ):
+            raise PolicyError(f"服务镜像[{index}].workflow 必须是安全的工作流文件名")
+        job = _text(service_image["job"], f"服务镜像[{index}].job")
+        service = _text(service_image["service"], f"服务镜像[{index}].service")
+        image = _text(service_image["image"], f"服务镜像[{index}].image")
+        image_name = image.partition("@sha256:")[0]
+        if (
+            SERVICE_IMAGE_REF.fullmatch(image) is None
+            or ":" not in image_name.rsplit("/", 1)[-1]
+        ):
+            raise PolicyError(
+                f"服务镜像[{index}].image 必须固定到完整 tag 和 sha256 digest"
+            )
+        identity = (workflow, job, service)
+        if identity in seen_services:
+            raise PolicyError(f"服务镜像[{index}] 重复声明 {workflow}/{job}/{service}")
+        seen_services.add(identity)
+
     gate = _object(policy["vulnerability_gate"], "vulnerability_gate")
     _exact_keys(gate, {"severities", "exceptions"}, "vulnerability_gate")
     severities = _list(gate["severities"], "vulnerability_gate.severities")
-    if len(severities) != len(set(severities)) or set(severities) != {"HIGH", "CRITICAL"}:
+    if len(severities) != len(set(severities)) or set(severities) != {
+        "HIGH",
+        "CRITICAL",
+    }:
         raise PolicyError("漏洞门禁必须且只能覆盖 HIGH、CRITICAL")
 
     seen_vulnerabilities: set[tuple[str, str, str, str | None]] = set()
-    for index, item in enumerate(_list(gate["exceptions"], "vulnerability_gate.exceptions")):
+    for index, item in enumerate(
+        _list(gate["exceptions"], "vulnerability_gate.exceptions")
+    ):
         exception = _object(item, f"漏洞例外[{index}]")
         allowed = {
             "id",
@@ -157,17 +212,594 @@ def load_policy(path: Path = DEFAULT_POLICY, *, today: dt.date | None = None) ->
     return policy
 
 
-def _step_block(lines: list[str], uses_index: int) -> str:
-    uses_line = lines[uses_index]
-    indent = len(uses_line) - len(uses_line.lstrip())
-    step_indent = max(0, indent - 2)
-    end = len(lines)
-    marker = re.compile(rf"^ {{{step_indent}}}-\s")
-    for index in range(uses_index + 1, len(lines)):
-        if marker.match(lines[index]):
-            end = index
+if yaml is not None:
+
+    class StrictWorkflowLoader(yaml.SafeLoader):
+        """保留 YAML alias 语义，并拒绝会遮蔽安全配置的重复键。"""
+
+        yaml_implicit_resolvers = {
+            key: [
+                (tag, pattern)
+                for tag, pattern in resolvers
+                if tag != "tag:yaml.org,2002:bool"
+            ]
+            for key, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+        }
+
+        def construct_mapping(self, node: Any, deep: bool = False) -> dict[Any, Any]:
+            if not isinstance(node, MappingNode):
+                raise ConstructorError(
+                    None,
+                    None,
+                    "期望 YAML 对象",
+                    node.start_mark,
+                )
+            self.flatten_mapping(node)
+            mapping: dict[Any, Any] = {}
+            for key_node, value_node in node.value:
+                key = self.construct_object(key_node, deep=deep)
+                try:
+                    duplicate = key in mapping
+                except TypeError as exc:
+                    raise ConstructorError(
+                        "构造 YAML 对象时",
+                        node.start_mark,
+                        "对象键必须可哈希",
+                        key_node.start_mark,
+                    ) from exc
+                if duplicate:
+                    raise ConstructorError(
+                        "构造 YAML 对象时",
+                        node.start_mark,
+                        f"发现重复键 {key!r}",
+                        key_node.start_mark,
+                    )
+                mapping[key] = self.construct_object(value_node, deep=deep)
+            return mapping
+
+    StrictWorkflowLoader.add_implicit_resolver(
+        "tag:yaml.org,2002:bool",
+        re.compile(r"^(?:true|false)$", re.IGNORECASE),
+        list("tTfF"),
+    )
+
+
+def _load_workflow(path: Path, text: str) -> tuple[dict[str, Any] | None, list[str]]:
+    """完整解析工作流；缺少解析器或遇到未知结构时失败关闭。"""
+
+    if yaml is None:
+        return None, [f"{path}: 缺少 PyYAML，无法安全校验工作流供应链配置"]
+    try:
+        document = yaml.load(text, Loader=StrictWorkflowLoader)
+    except yaml.YAMLError as exc:
+        return None, [f"{path}: 工作流 YAML 无法安全解析：{exc}"]
+    if not isinstance(document, dict):
+        return None, [f"{path}: 工作流根节点必须是对象"]
+    return document, []
+
+
+def _workflow_jobs(
+    path: Path,
+    document: dict[str, Any],
+) -> tuple[list[tuple[str, dict[str, Any]]], list[str]]:
+    jobs = document.get("jobs")
+    if not isinstance(jobs, dict):
+        return [], [f"{path}: jobs 必须是对象"]
+
+    valid: list[tuple[str, dict[str, Any]]] = []
+    errors: list[str] = []
+    for job_name, job in jobs.items():
+        if not isinstance(job_name, str) or not isinstance(job, dict):
+            errors.append(f"{path}: jobs 中的任务名称和配置必须分别是字符串、对象")
+            continue
+        valid.append((job_name, job))
+    return valid, errors
+
+
+def _collect_service_images(
+    path: Path,
+    jobs: list[tuple[str, dict[str, Any]]],
+) -> tuple[dict[tuple[str, str, str], str], list[str]]:
+    images: dict[tuple[str, str, str], str] = {}
+    errors: list[str] = []
+    for job_name, job in jobs:
+        if "services" not in job:
+            continue
+        services = job["services"]
+        if not isinstance(services, dict):
+            errors.append(f"{path}: job {job_name} 的 services 必须是对象")
+            continue
+        for service_name, service in services.items():
+            if not isinstance(service_name, str) or not isinstance(service, dict):
+                errors.append(
+                    f"{path}: job {job_name} 的 service 名称和配置必须分别是字符串、对象"
+                )
+                continue
+            image = service.get("image")
+            if image is None:
+                errors.append(
+                    f"{path}: job {job_name} 的 service {service_name} 缺少固定 image"
+                )
+                continue
+            if not isinstance(image, str):
+                errors.append(
+                    f"{path}: job {job_name} 的 service {service_name} "
+                    f"镜像未固定到 sha256 digest：{image!r}"
+                )
+                continue
+            images[(path.name, job_name, service_name)] = image
+            if SERVICE_IMAGE_REF.fullmatch(image) is None:
+                errors.append(
+                    f"{path}: job {job_name} 的 service {service_name} "
+                    f"镜像未固定到 sha256 digest：{image!r}"
+                )
+    return images, errors
+
+
+def _validate_service_images(
+    path: Path,
+    jobs: list[tuple[str, dict[str, Any]]],
+) -> list[str]:
+    _, errors = _collect_service_images(path, jobs)
+    return errors
+
+
+def _expected_service_images(
+    policy: dict[str, Any],
+) -> dict[tuple[str, str, str], str]:
+    return {
+        (item["workflow"], item["job"], item["service"]): item["image"]
+        for item in policy["service_images"]
+    }
+
+
+def _compare_service_images(
+    expected: dict[tuple[str, str, str], str],
+    actual: dict[tuple[str, str, str], str],
+) -> list[str]:
+    errors: list[str] = []
+    for workflow, job, service in sorted(expected.keys() - actual.keys()):
+        errors.append(
+            f"策略声明的服务镜像不存在于工作流：{workflow}/{job}/{service}"
+        )
+    for workflow, job, service in sorted(actual.keys() - expected.keys()):
+        errors.append(
+            f"工作流服务镜像未在策略声明：{workflow}/{job}/{service}"
+        )
+    for identity in sorted(expected.keys() & actual.keys()):
+        expected_image = expected[identity]
+        actual_image = actual[identity]
+        if expected_image == actual_image:
+            continue
+        workflow, job, service = identity
+        errors.append(
+            f"服务镜像引用漂移 {workflow}/{job}/{service}："
+            f"期望 {expected_image}，实际 {actual_image}"
+        )
+    return errors
+
+
+def _valid_local_reference(reference: str, pattern: re.Pattern[str]) -> bool:
+    return pattern.fullmatch(reference) is not None and ".." not in reference.split("/")
+
+
+def _validate_action_reference(
+    path: Path,
+    location: str,
+    reference: Any,
+    *,
+    reusable_workflow: bool,
+) -> list[str]:
+    if not isinstance(reference, str):
+        return [f"{path}: {location}.uses 必须是静态字符串"]
+
+    if reusable_workflow:
+        valid = (
+            _valid_local_reference(reference, LOCAL_REUSABLE_WORKFLOW_REF)
+            if reference.startswith("./")
+            else REUSABLE_WORKFLOW_REF.fullmatch(reference) is not None
+        )
+    elif reference.startswith("./"):
+        valid = _valid_local_reference(reference, LOCAL_ACTION_REF)
+    elif reference.startswith("docker://"):
+        valid = CONTAINER_ACTION_REF.fullmatch(reference) is not None
+    else:
+        valid = ACTION_REF.fullmatch(reference) is not None
+
+    if valid:
+        return []
+    kind = "可复用工作流" if reusable_workflow else "action"
+    return [
+        f"{path}: {location} 的 {kind} 未固定到提交 SHA 或镜像 digest：{reference!r}"
+    ]
+
+
+def _validate_install_action(
+    path: Path,
+    location: str,
+    step: dict[str, Any],
+    policy: dict[str, Any],
+) -> tuple[list[str], list[tuple[str, str]]]:
+    errors: list[str] = []
+    installed: list[tuple[str, str]] = []
+    configuration = step.get("with")
+    if not isinstance(configuration, dict):
+        return [f"{path}: {location} 的 install-action.with 必须是对象"], installed
+    if configuration.get("fallback") != "none":
+        errors.append(f"{path}: {location} 的 install-action 必须禁用 fallback")
+
+    raw_tools = configuration.get("tool")
+    if not isinstance(raw_tools, str) or not raw_tools.strip():
+        errors.append(f"{path}: {location} 的 install-action.tool 必须是非空字符串")
+        return errors, installed
+
+    seen: set[str] = set()
+    for raw_tool in raw_tools.split(","):
+        specification = raw_tool.strip()
+        matched = INSTALL_TOOL_REF.fullmatch(specification)
+        if matched is None:
+            errors.append(
+                f"{path}: {location} 的 install-action 工具未固定到完整版本："
+                f"{specification!r}"
+            )
+            continue
+        name, version = matched.groups()
+        if name in seen:
+            errors.append(f"{path}: {location} 的 install-action 重复声明工具 {name}")
+            continue
+        seen.add(name)
+        expected = policy["tools"].get(name)
+        if expected is None:
+            errors.append(f"{path}: {location} 的工具 {name} 未在供应链策略声明")
+            continue
+        if version != expected:
+            errors.append(f"工具 {name} 版本漂移：期望 {expected}，实际 {version}")
+            continue
+        installed.append((name, version))
+    return errors, installed
+
+
+def _validate_action_uses(
+    path: Path,
+    jobs: list[tuple[str, dict[str, Any]]],
+    policy: dict[str, Any],
+) -> tuple[
+    list[str],
+    list[tuple[str, str]],
+    list[str],
+    list[tuple[Path, str, str]],
+]:
+    errors: list[str] = []
+    installed: list[tuple[str, str]] = []
+    references: list[str] = []
+    run_blocks: list[tuple[Path, str, str]] = []
+    for job_name, job in jobs:
+        job_location = f"jobs.{job_name}"
+        if "uses" in job:
+            reference = job["uses"]
+            errors.extend(
+                _validate_action_reference(
+                    path,
+                    job_location,
+                    reference,
+                    reusable_workflow=True,
+                )
+            )
+            if isinstance(reference, str):
+                references.append(reference)
+
+        if "steps" not in job:
+            continue
+        steps = job["steps"]
+        if not isinstance(steps, list):
+            errors.append(f"{path}: {job_location}.steps 必须是数组")
+            continue
+        for index, step in enumerate(steps):
+            location = f"{job_location}.steps[{index}]"
+            if not isinstance(step, dict):
+                errors.append(f"{path}: {location} 必须是对象")
+                continue
+            if "run" in step:
+                run = step["run"]
+                if not isinstance(run, str):
+                    errors.append(f"{path}: {location}.run 必须是静态字符串")
+                else:
+                    run_blocks.append((path, location, run))
+            if "uses" not in step:
+                continue
+            reference = step["uses"]
+            errors.extend(
+                _validate_action_reference(
+                    path,
+                    location,
+                    reference,
+                    reusable_workflow=False,
+                )
+            )
+            if not isinstance(reference, str):
+                continue
+            references.append(reference)
+            if reference.lower().startswith("taiki-e/install-action@"):
+                install_errors, install_tools = _validate_install_action(
+                    path,
+                    location,
+                    step,
+                    policy,
+                )
+                errors.extend(install_errors)
+                installed.extend(install_tools)
+    return errors, installed, references, run_blocks
+
+
+def _logical_command_lines(script: str) -> list[str]:
+    """合并 Bash、PowerShell 和 cmd 的显式续行，保留真正的命令边界。"""
+
+    normalized = re.sub(r"(?:\\|`|\^)\r?\n[ \t]*", " ", script)
+    return [line.strip() for line in normalized.splitlines() if line.strip()]
+
+
+def _shell_command_segments(line: str) -> list[list[str]]:
+    lexer = shlex.shlex(line, posix=True, punctuation_chars="();&|")
+    lexer.whitespace_split = True
+    lexer.commenters = "#"
+    segments: list[list[str]] = []
+    current: list[str] = []
+    for token in lexer:
+        if token and not token.strip("();&|"):
+            if current:
+                segments.append(current)
+                current = []
+        else:
+            current.append(token)
+    if current:
+        segments.append(current)
+    return segments
+
+
+def _command_tokens(tokens: list[str]) -> list[str]:
+    """移除不会改变可执行文件身份的静态 shell 前缀。"""
+
+    command = list(tokens)
+    while command:
+        first = command[0]
+        if first in {
+            "!",
+            "command",
+            "do",
+            "elif",
+            "if",
+            "sudo",
+            "then",
+            "until",
+            "while",
+        }:
+            command.pop(0)
+            continue
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", first):
+            command.pop(0)
+            continue
+        break
+    return command
+
+
+def _gate_command_tokens(tokens: list[str]) -> list[str]:
+    """供应链必备命令只能位于非注释命令行的静态起点。"""
+
+    command = list(tokens)
+    while command and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", command[0]):
+        command.pop(0)
+    if command and command[0] == "command":
+        command.pop(0)
+    return command
+
+
+def _has_option(tokens: list[str], name: str, value: str) -> bool:
+    for index, token in enumerate(tokens):
+        if token == f"{name}={value}":
+            return True
+        if token == name and index + 1 < len(tokens) and tokens[index + 1] == value:
+            return True
+    return False
+
+
+def _has_value_option(tokens: list[str], name: str) -> bool:
+    for index, token in enumerate(tokens):
+        if token.startswith(f"{name}=") and token != f"{name}=":
+            return True
+        if (
+            token == name
+            and index + 1 < len(tokens)
+            and not tokens[index + 1].startswith("-")
+        ):
+            return True
+    return False
+
+
+DOCKER_RUN_FLAG_OPTIONS = {
+    "--detach",
+    "--init",
+    "--interactive",
+    "--privileged",
+    "--read-only",
+    "--rm",
+    "--sig-proxy",
+    "--tty",
+    "-d",
+    "-i",
+    "-t",
+}
+DOCKER_RUN_VALUE_OPTIONS = {
+    "--add-host",
+    "--cap-add",
+    "--cap-drop",
+    "--cpus",
+    "--entrypoint",
+    "--env",
+    "--env-file",
+    "--hostname",
+    "--label",
+    "--memory",
+    "--mount",
+    "--name",
+    "--network",
+    "--platform",
+    "--publish",
+    "--pull",
+    "--restart",
+    "--security-opt",
+    "--user",
+    "--volume",
+    "--workdir",
+    "-e",
+    "-h",
+    "-l",
+    "-m",
+    "-p",
+    "-u",
+    "-v",
+    "-w",
+}
+DOCKER_PULL_FLAG_OPTIONS = {"--all-tags", "--quiet", "-a", "-q"}
+DOCKER_PULL_VALUE_OPTIONS = {"--platform"}
+
+
+def _docker_image(tokens: list[str]) -> tuple[str | None, str | None]:
+    operation = tokens[1]
+    if operation == "run":
+        flags = DOCKER_RUN_FLAG_OPTIONS
+        values = DOCKER_RUN_VALUE_OPTIONS
+    else:
+        flags = DOCKER_PULL_FLAG_OPTIONS
+        values = DOCKER_PULL_VALUE_OPTIONS
+
+    index = 2
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
             break
-    return "\n".join(lines[uses_index:end])
+        if token in flags:
+            index += 1
+            continue
+        if token in values:
+            if index + 1 >= len(tokens):
+                return None, f"选项 {token} 缺少值"
+            index += 2
+            continue
+        if token.startswith("--") and "=" in token:
+            index += 1
+            continue
+        if token.startswith("-"):
+            return None, f"无法识别选项 {token}"
+        return token, None
+    if index < len(tokens):
+        return tokens[index], None
+    return None, "缺少镜像参数"
+
+
+def _validate_run_commands(
+    run_blocks: list[tuple[Path, str, str]],
+) -> list[str]:
+    errors: list[str] = []
+    cargo_cyclonedx = False
+    trivy_cyclonedx = False
+    trivy_report = False
+
+    for path, location, script in run_blocks:
+        for line in _logical_command_lines(script):
+            if line.startswith("#"):
+                continue
+            try:
+                segments = _shell_command_segments(line)
+            except ValueError as exc:
+                if re.search(
+                    r"\b(?:cargo\s+cyclonedx|trivy\s+image|"
+                    r"check_supply_chain\.py|docker\s+(?:run|pull))\b",
+                    line,
+                ):
+                    errors.append(f"{path}: {location}.run 无法安全解析命令：{exc}")
+                continue
+            for segment_index, raw_tokens in enumerate(segments):
+                tokens = _command_tokens(raw_tokens)
+                gate_tokens = (
+                    _gate_command_tokens(raw_tokens) if segment_index == 0 else []
+                )
+                if len(gate_tokens) >= 2 and gate_tokens[:2] == ["cargo", "cyclonedx"]:
+                    if _has_option(gate_tokens, "--format", "json"):
+                        cargo_cyclonedx = True
+                    continue
+                if len(gate_tokens) >= 2 and gate_tokens[:2] == ["trivy", "image"]:
+                    if _has_option(gate_tokens, "--format", "cyclonedx"):
+                        trivy_cyclonedx = True
+                    continue
+                if (
+                    len(gate_tokens) >= 2
+                    and gate_tokens[0] in {"python", "python.exe", "python3", "py"}
+                    and gate_tokens[1]
+                    in {
+                        "scripts/check_supply_chain.py",
+                        "./scripts/check_supply_chain.py",
+                    }
+                ):
+                    if _has_value_option(gate_tokens, "--trivy-report"):
+                        trivy_report = True
+                    continue
+                if (
+                    len(tokens) >= 2
+                    and tokens[0] == "docker"
+                    and tokens[1]
+                    in {
+                        "pull",
+                        "run",
+                    }
+                ):
+                    image, image_error = _docker_image(tokens)
+                    if image_error is not None:
+                        errors.append(
+                            f"{path}: {location}.run 的 docker {tokens[1]} "
+                            f"无法安全识别镜像：{image_error}"
+                        )
+                    elif image is None or SERVICE_IMAGE_REF.fullmatch(image) is None:
+                        errors.append(
+                            f"{path}: {location}.run 的 docker {tokens[1]} "
+                            "镜像未固定到 sha256 digest"
+                        )
+
+    if not cargo_cyclonedx:
+        errors.append("工作流缺少供应链门禁：cargo cyclonedx --format json")
+    if not trivy_cyclonedx:
+        errors.append("工作流缺少供应链门禁：trivy image --format cyclonedx")
+    if not trivy_report:
+        errors.append(
+            "工作流缺少供应链门禁：python scripts/check_supply_chain.py "
+            "--trivy-report <报告>"
+        )
+    return errors
+
+
+def validate_service_images(path: Path, text: str) -> list[str]:
+    """校验 jobs.*.services.*.image 使用不可变 OCI digest。"""
+
+    document, errors = _load_workflow(path, text)
+    if document is None:
+        return errors
+    jobs, job_errors = _workflow_jobs(path, document)
+    return [*errors, *job_errors, *_validate_service_images(path, jobs)]
+
+
+def validate_action_uses(
+    path: Path,
+    text: str,
+    policy: dict[str, Any],
+) -> list[str]:
+    """从 YAML AST 校验 job-level workflow 与 step action 引用。"""
+
+    document, errors = _load_workflow(path, text)
+    if document is None:
+        return errors
+    jobs, job_errors = _workflow_jobs(path, document)
+    action_errors, _, _, _ = _validate_action_uses(path, jobs, policy)
+    return [*errors, *job_errors, *action_errors]
 
 
 def validate_workflows(workflow_dir: Path, policy: dict[str, Any]) -> list[str]:
@@ -176,64 +808,46 @@ def validate_workflows(workflow_dir: Path, policy: dict[str, Any]) -> list[str]:
     if not files:
         return [f"没有找到工作流：{workflow_dir}"]
 
-    combined: list[str] = []
+    installed_tools: list[tuple[str, str]] = []
+    action_references: list[str] = []
+    run_blocks: list[tuple[Path, str, str]] = []
+    service_images: dict[tuple[str, str, str], str] = {}
     for path in files:
         text = path.read_text(encoding="utf-8")
-        combined.append(text)
-        for match in USES_LINE.finditer(text):
-            reference = match.group(1).strip("'\"")
-            if reference.startswith("./"):
-                continue
-            valid = (
-                CONTAINER_ACTION_REF.fullmatch(reference)
-                if reference.startswith("docker://")
-                else ACTION_REF.fullmatch(reference)
-            )
-            if valid is None:
-                line = text.count("\n", 0, match.start()) + 1
-                errors.append(f"{path}:{line} action 未固定到提交 SHA 或镜像 digest：{reference}")
+        document, parse_errors = _load_workflow(path, text)
+        errors.extend(parse_errors)
+        if document is not None:
+            jobs, job_errors = _workflow_jobs(path, document)
+            errors.extend(job_errors)
+            workflow_images, image_errors = _collect_service_images(path, jobs)
+            errors.extend(image_errors)
+            service_images.update(workflow_images)
+            (
+                action_errors,
+                workflow_tools,
+                workflow_references,
+                workflow_runs,
+            ) = _validate_action_uses(path, jobs, policy)
+            errors.extend(action_errors)
+            installed_tools.extend(workflow_tools)
+            action_references.extend(workflow_references)
+            run_blocks.extend(workflow_runs)
 
-        lines = text.splitlines()
-        for index, line in enumerate(lines):
-            if "uses: taiki-e/install-action@" not in line:
-                continue
-            block = _step_block(lines, index)
-            if re.search(r"^\s*fallback:\s*none\s*$", block, re.MULTILINE) is None:
-                errors.append(f"{path}:{index + 1} install-action 必须禁用 fallback")
-            if not any(f"{name}@" in block for name in TOOL_NAMES):
-                errors.append(f"{path}:{index + 1} install-action 未声明固定版本工具")
+    errors.extend(
+        _compare_service_images(_expected_service_images(policy), service_images)
+    )
 
-        for match in re.finditer(r"\bdocker\s+(?:run|pull)\b", text):
-            start = match.start()
-            tail = text[start:]
-            boundary = re.search(r"\n\s{6}-\s", tail)
-            block = tail[: boundary.start()] if boundary else tail
-            if re.search(r"@sha256:[0-9a-f]{64}\b", block) is None:
-                line = text.count("\n", 0, start) + 1
-                errors.append(f"{path}:{line} docker 外部镜像未固定到 sha256 digest")
-
-    all_workflows = "\n".join(combined)
     for name, version in policy["tools"].items():
-        occurrences = re.findall(rf"\b{re.escape(name)}@([^\s,]+)", all_workflows)
+        occurrences = [actual for tool, actual in installed_tools if tool == name]
         if not occurrences:
             errors.append(f"工作流没有安装策略声明的工具 {name}@{version}")
-        for actual in occurrences:
-            if actual != version:
-                errors.append(f"工具 {name} 版本漂移：期望 {version}，实际 {actual}")
-        bare = re.search(rf"^\s*tool:\s*{re.escape(name)}\s*$", all_workflows, re.MULTILINE)
-        if bare is not None:
-            errors.append(f"工具 {name} 使用了自动升级写法")
 
-    required_snippets = (
-        "cargo cyclonedx",
-        "trivy image",
-        "--format cyclonedx",
-        "--trivy-report",
-        "actions/upload-artifact@",
-    )
-    for snippet in required_snippets:
-        if snippet not in all_workflows:
-            errors.append(f"工作流缺少供应链门禁：{snippet}")
+    errors.extend(_validate_run_commands(run_blocks))
+    if not any(
+        reference.startswith("actions/upload-artifact@")
+        for reference in action_references
+    ):
+        errors.append("工作流缺少供应链门禁：actions/upload-artifact")
     return errors
 
 
@@ -251,7 +865,9 @@ def validate_cyclonedx(path: Path, *, require_reproducible: bool = False) -> lis
     if not isinstance(components, list) or not components:
         errors.append("SBOM 必须包含非空 components")
     metadata = document.get("metadata")
-    if not isinstance(metadata, dict) or not isinstance(metadata.get("component"), dict):
+    if not isinstance(metadata, dict) or not isinstance(
+        metadata.get("component"), dict
+    ):
         errors.append("SBOM 必须声明顶层 metadata.component")
     if require_reproducible and document.get("serialNumber") is not None:
         errors.append("可复现 SBOM 不得包含随机 serialNumber")
@@ -260,7 +876,9 @@ def validate_cyclonedx(path: Path, *, require_reproducible: bool = False) -> lis
 
 def evaluate_trivy_report(report_path: Path, policy: dict[str, Any]) -> list[str]:
     try:
-        report = _object(json.loads(report_path.read_text(encoding="utf-8")), "Trivy 报告")
+        report = _object(
+            json.loads(report_path.read_text(encoding="utf-8")), "Trivy 报告"
+        )
     except (OSError, json.JSONDecodeError, PolicyError) as exc:
         return [f"无法读取 Trivy 报告 {report_path}: {exc}"]
     results = report.get("Results")
@@ -297,7 +915,9 @@ def evaluate_trivy_report(report_path: Path, policy: dict[str, Any]) -> list[str
                     exception["id"] == advisory_id
                     and exception["package"] == package
                     and exception["installed_version"] == installed
-                    and (exception.get("target") is None or exception["target"] == target)
+                    and (
+                        exception.get("target") is None or exception["target"] == target
+                    )
                 ):
                     used.add(index)
                     matched = True

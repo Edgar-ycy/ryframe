@@ -5,6 +5,7 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+    types: [ opened, synchronize, reopened, edited ]
   schedule:
     - cron: "17 3 * * 1"
   workflow_dispatch:
@@ -30,18 +31,52 @@ jobs:
   # ============================================================
   check:
     name: Check & Lint (Linux)
-    # 周计划只刷新依赖安全结果，避免对未变化的源码重复执行编译与静态门禁。
-    if: ${{ github.event_name != 'schedule' }}
     runs-on: ubuntu-latest
     env:
       RUSTFLAGS: "-Dwarnings"
+      RUSTC_WRAPPER: sccache
+      SCCACHE_DIR: ${{ runner.temp }}/sccache
+      SCCACHE_CACHE_SIZE: 4G
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+
+      - name: 固定 CI Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: 安装固定并校验哈希的 CI Python 依赖
+        run: >-
+          python -m pip install
+          --disable-pip-version-check
+          --force-reinstall
+          --no-deps
+          --only-binary=:all:
+          --require-hashes
+          --requirement scripts/requirements-ci.txt
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with:
           components: rustfmt, clippy
+
+      - name: Install pinned sccache
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
+        with:
+          tool: sccache@0.17.0
+          fallback: none
+
+      - name: Restore sccache artifacts
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ${{ runner.temp }}/sccache
+          key: v2-sccache-${{ runner.os }}-${{ runner.arch }}-check-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            v2-sccache-${{ runner.os }}-${{ runner.arch }}-check-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
+            v2-sccache-${{ runner.os }}-${{ runner.arch }}-check-
+            v2-sccache-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Rust cache
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
@@ -73,6 +108,28 @@ jobs:
       - name: Check workspace architecture and production source size
         run: python scripts/check_architecture.py
 
+      - name: Enforce append-only migration history
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          trusted_ref=HEAD
+          if [[ "$EVENT_NAME" == "pull_request" && -n "$PR_BASE_SHA" ]]; then
+            trusted_ref="$PR_BASE_SHA"
+          elif [[ "$EVENT_NAME" == "push" \
+            && -n "$PUSH_BEFORE_SHA" \
+            && ! "$PUSH_BEFORE_SHA" =~ ^0+$ ]]; then
+            trusted_ref="$PUSH_BEFORE_SHA"
+          elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            trusted_ref="$(git rev-parse --verify HEAD^)"
+          fi
+          python scripts/check_migration_history.py \
+            --require-frozen \
+            --trusted-ref "$trusted_ref"
+
       - name: Check permission bindings
         run: python scripts/check_permission_routes.py
 
@@ -82,6 +139,9 @@ jobs:
       # 全目标静态检查覆盖正式测试，并显式阻止无意义克隆重新进入代码库。
       - name: Clippy (all targets, redundant clones denied)
         run: cargo clippy --locked --workspace --all-targets -- -D warnings -D clippy::redundant_clone
+
+      - name: Check registered feature combinations
+        run: cargo xtask feature-matrix
 
       - name: Test workspace
         run: cargo test --locked --workspace
@@ -97,6 +157,103 @@ jobs:
           diff --unified openapi/openapi.json "$generated_openapi"
           diff --unified sql/ryframe_config.sql "$generated_mysql"
 
+      - name: Report sccache statistics
+        if: ${{ always() }}
+        continue-on-error: true
+        run: |
+          sccache --show-stats
+          sccache --stop-server
+
+  # ============================================================
+  # MySQL 与 Redis 真实协议
+  # ============================================================
+  integration:
+    name: MySQL 8.4 & Redis 7.4 Integration
+    runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_DIR: ${{ runner.temp }}/sccache
+      SCCACHE_CACHE_SIZE: 4G
+      RYFRAME_INTEGRATION_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+      RYFRAME_MYSQL_INTEGRATION: "1"
+      RYFRAME_MYSQL_HOST: 127.0.0.1
+      RYFRAME_MYSQL_PORT: "3306"
+      RYFRAME_MYSQL_USERNAME: root
+      RYFRAME_MYSQL_PASSWORD: ryframe-ci-password
+      RYFRAME_REDIS_INTEGRATION: "1"
+      RYFRAME_REDIS_HOST: 127.0.0.1
+      RYFRAME_REDIS_PORT: "6379"
+      RYFRAME_REDIS_DATABASE: "15"
+    services:
+      mysql:
+        image: mysql:8.4.11@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
+        env:
+          MYSQL_ROOT_PASSWORD: ryframe-ci-password
+          MYSQL_ROOT_HOST: "%"
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --host=127.0.0.1 --user=root --password=ryframe-ci-password --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+      redis:
+        image: redis:7.4.9@sha256:a8f08480e1f88f2647fed492d1178c06abb0d0c1fbf02c682a61e2f483fb3954
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=20
+    steps:
+      - name: 检出后端源码
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+
+      - name: 安装固定版本 sccache
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
+        with:
+          tool: sccache@0.17.0
+          fallback: none
+
+      - name: 恢复 sccache 编译产物
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ${{ runner.temp }}/sccache
+          key: v2-sccache-${{ runner.os }}-${{ runner.arch }}-integration-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            v2-sccache-${{ runner.os }}-${{ runner.arch }}-integration-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
+            v2-sccache-${{ runner.os }}-${{ runner.arch }}-integration-
+            v2-sccache-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: 缓存 Cargo 依赖
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: v3-rust-${{ runner.os }}-${{ runner.arch }}-integration-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            v3-rust-${{ runner.os }}-${{ runner.arch }}-integration-
+            v3-rust-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: 验证 MySQL 事务、约束、行锁与租户隔离
+        run: cargo test --locked -p ryframe-db --test mysql_real_protocol -- --nocapture
+
+      - name: 验证 Redis TTL、幂等、命名空间与故障错误
+        run: cargo test --locked -p ryframe-adapters --test redis_real_protocol -- --nocapture
+
+      - name: 输出 sccache 统计
+        if: ${{ always() }}
+        continue-on-error: true
+        run: |
+          sccache --show-stats
+          sccache --stop-server
+
   # ============================================================
   # 同步前端消费契约
   # ============================================================
@@ -104,6 +261,10 @@ jobs:
     name: Frontend Consumer Contract
     if: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_DIR: ${{ runner.temp }}/sccache
+      SCCACHE_CACHE_SIZE: 4G
     steps:
       - name: 检出后端 PR 提交
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -114,6 +275,22 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+
+      - name: 安装固定版本 sccache
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
+        with:
+          tool: sccache@0.17.0
+          fallback: none
+
+      - name: 恢复 sccache 编译产物
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ${{ runner.temp }}/sccache
+          key: v2-sccache-${{ runner.os }}-${{ runner.arch }}-consumer-contract-${{ hashFiles('backend/rust-toolchain.toml', 'backend/Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            v2-sccache-${{ runner.os }}-${{ runner.arch }}-consumer-contract-${{ hashFiles('backend/rust-toolchain.toml', 'backend/Cargo.lock') }}-
+            v2-sccache-${{ runner.os }}-${{ runner.arch }}-consumer-contract-
+            v2-sccache-${{ runner.os }}-${{ runner.arch }}-
 
       - name: 生成并分类候选契约
         id: contract
@@ -157,6 +334,37 @@ jobs:
           ref: ${{ steps.frontend-ref.outputs.ref }}
           path: frontend
 
+      - name: 固定前端实际检出提交
+        id: frontend-commit
+        shell: bash
+        env:
+          REQUESTED_REF: ${{ steps.frontend-ref.outputs.ref }}
+        run: |
+          set -euo pipefail
+          resolved="$(git -C frontend rev-parse --verify HEAD)"
+          if [[ "$REQUESTED_REF" =~ ^[0-9a-f]{40}$ && "$resolved" != "$REQUESTED_REF" ]]; then
+            echo "::error::前端实际检出提交与请求 SHA 不一致"
+            exit 1
+          fi
+          echo "commit=$resolved" >> "$GITHUB_OUTPUT"
+          echo "前端消费者固定为 $resolved"
+
+      - name: 验证前端正式契约来源提交
+        id: formal-source
+        shell: bash
+        env:
+          BACKEND_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          source_commit="$(python backend/scripts/verify_frontend_contract_source.py \
+            --backend-worktree backend \
+            --backend-head "$BACKEND_HEAD" \
+            --backend-repository "Edgar-ycy/ryframe" \
+            --source-metadata frontend/openapi/source.json \
+            --frontend-openapi frontend/openapi/openapi.json \
+            --candidate-openapi "$RUNNER_TEMP/candidate-openapi.json")"
+          echo "commit=$source_commit" >> "$GITHUB_OUTPUT"
+
       - name: Setup default Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
@@ -175,14 +383,166 @@ jobs:
       - name: 校验前端消费契约
         working-directory: frontend
         env:
-          BACKEND_COMMIT: ${{ github.event.pull_request.head.sha }}
-          CONTRACT_CHANGED: ${{ steps.contract.outputs.changed }}
+          BACKEND_COMMIT: ${{ steps.formal-source.outputs.commit }}
         run: >-
           pnpm consumer:check --
+          --mode formal
           --openapi "$RUNNER_TEMP/candidate-openapi.json"
           --backend-commit "$BACKEND_COMMIT"
           --backend-repository "Edgar-ycy/ryframe"
-          --require-pin "$CONTRACT_CHANGED"
+          --require-pin "true"
+
+      - name: 输出 sccache 统计
+        if: ${{ always() }}
+        continue-on-error: true
+        run: |
+          sccache --show-stats
+          sccache --stop-server
+
+  # ============================================================
+  # Windows 静态冒烟
+  # ============================================================
+  windows-smoke:
+    name: Windows Smoke
+    if: ${{ github.event_name != 'schedule' }}
+    runs-on: windows-latest
+    env:
+      RUSTC_WRAPPER: sccache
+      SCCACHE_DIR: ${{ runner.temp }}\sccache
+      SCCACHE_CACHE_SIZE: 4G
+    steps:
+      - name: 检出后端源码
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          path: ryframe
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+
+      - name: 安装固定版本 sccache
+        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
+        with:
+          tool: sccache@0.17.0
+          fallback: none
+
+      - name: 恢复 sccache 编译产物
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ${{ runner.temp }}\sccache
+          key: v2-sccache-${{ runner.os }}-${{ runner.arch }}-windows-smoke-${{ hashFiles('ryframe/rust-toolchain.toml', 'ryframe/Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            v2-sccache-${{ runner.os }}-${{ runner.arch }}-windows-smoke-${{ hashFiles('ryframe/rust-toolchain.toml', 'ryframe/Cargo.lock') }}-
+            v2-sccache-${{ runner.os }}-${{ runner.arch }}-windows-smoke-
+            v2-sccache-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: 生成并分类 Windows 候选契约
+        if: ${{ github.event_name == 'pull_request' }}
+        id: windows-contract
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          candidate="$RUNNER_TEMP/windows-candidate-openapi.json"
+          baseline="$RUNNER_TEMP/windows-baseline-openapi.json"
+          cargo run --locked --manifest-path ryframe/Cargo.toml \
+            -p ryframe-api --bin export_openapi -- "$candidate"
+          cmp --silent ryframe/openapi/openapi.json "$candidate" || {
+            echo "::error::后端 PR 未提交最新 OpenAPI 快照"
+            exit 1
+          }
+          git -C ryframe show "$BASE_SHA:openapi/openapi.json" > "$baseline"
+          if cmp --silent "$baseline" "$candidate"; then
+            changed=false
+          else
+            changed=true
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
+      - name: 选择配套前端提交
+        id: windows-frontend-ref
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CONTRACT_CHANGED: ${{ steps.windows-contract.outputs.changed }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            frontend_ref="$(python ryframe/scripts/select_frontend_commit.py \
+              --event "$GITHUB_EVENT_PATH" \
+              --contract-changed "$CONTRACT_CHANGED" \
+              --prefer-marker)"
+          else
+            frontend_ref=main
+          fi
+          echo "ref=$frontend_ref" >> "$GITHUB_OUTPUT"
+
+      - name: 检出前端真实 Workspace
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: Edgar-ycy/ryframe-vue3
+          ref: ${{ steps.windows-frontend-ref.outputs.ref }}
+          path: ryframe-vue3
+
+      - name: 固定 Windows 前端实际检出提交
+        id: windows-frontend-commit
+        shell: bash
+        env:
+          REQUESTED_REF: ${{ steps.windows-frontend-ref.outputs.ref }}
+        run: |
+          set -euo pipefail
+          resolved="$(git -C ryframe-vue3 rev-parse --verify HEAD)"
+          if [[ "$REQUESTED_REF" =~ ^[0-9a-f]{40}$ && "$resolved" != "$REQUESTED_REF" ]]; then
+            echo "::error::Windows 前端实际检出提交与请求 SHA 不一致"
+            exit 1
+          fi
+          echo "commit=$resolved" >> "$GITHUB_OUTPUT"
+          echo "Windows 前端 Workspace 固定为 $resolved"
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version-file: ryframe-vue3/.node-version
+          package-manager-cache: false
+
+      - name: 安装 pnpm
+        uses: ./ryframe-vue3/.github/actions/setup-pnpm
+        with:
+          working-directory: ryframe-vue3
+
+      - name: 安装前端依赖
+        working-directory: ryframe-vue3
+        run: pnpm install --frozen-lockfile
+
+      - name: 检查 Windows 产品二进制
+        working-directory: ryframe
+        run: cargo check --locked -p ryframe --all-targets
+
+      - name: 检查 Windows 开发工具
+        working-directory: ryframe
+        run: cargo check --locked -p xtask --all-targets
+
+      - name: 验证 Windows Job Object 回收后代进程
+        working-directory: ryframe
+        run: cargo test --locked -p xtask --test process_windows -- --nocapture
+
+      # 真实前后端副本同时验证生成幂等性、四层 Rust 切片编译和 vue-tsc。
+      - name: 验证资源生成真实 Workspace
+        working-directory: ryframe
+        run: >-
+          cargo test --locked
+          -p ryframe-generator
+          --test resource_workspace_compilation
+          -- --ignored --nocapture
+
+      - name: 输出 sccache 统计
+        if: ${{ always() }}
+        continue-on-error: true
+        run: |
+          sccache --show-stats
+          sccache --stop-server
 
   # ============================================================
   # 安全检查
@@ -192,6 +552,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      - name: 固定 CI Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: 安装固定并校验哈希的 CI Python 依赖
+        run: >-
+          python -m pip install
+          --disable-pip-version-check
+          --force-reinstall
+          --no-deps
+          --only-binary=:all:
+          --require-hashes
+          --requirement scripts/requirements-ci.txt
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
@@ -229,6 +604,21 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 0
+
+      - name: 固定 CI Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: 安装固定并校验哈希的 CI Python 依赖
+        run: >-
+          python -m pip install
+          --disable-pip-version-check
+          --force-reinstall
+          --no-deps
+          --only-binary=:all:
+          --require-hashes
+          --requirement scripts/requirements-ci.txt
 
       - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
@@ -325,6 +715,23 @@ jobs:
             esac
           fi
           echo "required=$required" >> "$GITHUB_OUTPUT"
+
+      - name: 固定 CI Python 3.12
+        if: steps.deployment-changes.outputs.required == 'true'
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: 安装固定并校验哈希的 CI Python 依赖
+        if: steps.deployment-changes.outputs.required == 'true'
+        run: >-
+          python -m pip install
+          --disable-pip-version-check
+          --force-reinstall
+          --no-deps
+          --only-binary=:all:
+          --require-hashes
+          --requirement scripts/requirements-ci.txt
 
       - name: 校验部署资产静态边界
         if: steps.deployment-changes.outputs.required == 'true'
@@ -447,3 +854,29 @@ jobs:
           path: ${{ runner.temp }}/supply-chain
           if-no-files-found: error
           retention-days: 30
+
+  # 分支保护只绑定这个稳定名称；事件不适用的 job 可以 skipped，失败和取消均拒绝。
+  required:
+    name: Required
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    needs:
+      - check
+      - integration
+      - consumer-contract
+      - windows-smoke
+      - security-audit
+      - supply-chain
+      - deployment-assets
+    steps:
+      - name: 检出汇总规则
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+
+      - name: 汇总必须门禁
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: >-
+          python scripts/check_required_jobs.py
+          --event "$EVENT_NAME"
+          --needs-json "$NEEDS_JSON"
