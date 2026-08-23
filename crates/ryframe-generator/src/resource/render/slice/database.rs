@@ -35,6 +35,7 @@ pub(super) fn repository(resource: &ResourceIr, header: &str) -> String {
     let commit = commit_body(resource.storage);
     let unique_conflicts = unique_conflict_cases(resource);
     let generic_conflict = format!("{}已存在", resource.labels.zh_cn);
+    let tenant_mismatch = format!("{}事务租户不匹配", resource.labels.zh_cn);
     let tenant_error = if resource.storage == StorageKind::TenantData {
         tenant_error_mapper()
     } else {
@@ -73,6 +74,16 @@ use super::entity;
 
 {declaration}
 
+impl Database{pascal}Transaction {{
+    fn ensure_tenant(&self, tenant_id: &str) -> AppResult<()> {{
+        if self.tenant_id == tenant_id {{
+            Ok(())
+        }} else {{
+            Err(AppError::Authorization({tenant_mismatch:?}.into()))
+        }}
+    }}
+}}
+
 #[async_trait]
 impl {pascal}PersistencePort for Database{pascal}Persistence {{
     async fn find_by_id(
@@ -108,7 +119,10 @@ impl {pascal}PersistencePort for Database{pascal}Persistence {{
 
     async fn begin(&self, tenant_id: &str) -> AppResult<Box<dyn {pascal}Transaction>> {{
 {begin_transaction}
-        Ok(Box::new(Database{pascal}Transaction {{ transaction }}))
+        Ok(Box::new(Database{pascal}Transaction {{
+            tenant_id: tenant_id.to_owned(),
+            transaction,
+        }}))
     }}
 }}
 
@@ -120,6 +134,7 @@ impl {pascal}Transaction for Database{pascal}Transaction {{
         tenant_id: &str,
         id: i64,
     ) -> AppResult<Option<{pascal}Record>> {{
+        self.ensure_tenant(tenant_id)?;
         Ok({id_query}
             .lock(LockType::Update)
             .one(&self.transaction)
@@ -129,6 +144,7 @@ impl {pascal}Transaction for Database{pascal}Transaction {{
     }}
 
     async fn insert(&self, record: {pascal}Record) -> AppResult<{pascal}Record> {{
+        self.ensure_tenant(&record.tenant_id)?;
         entity::ActiveModel::from(to_entity(record))
             .insert(&self.transaction)
             .await
@@ -137,6 +153,7 @@ impl {pascal}Transaction for Database{pascal}Transaction {{
     }}
 
     async fn update(&self, record: {pascal}Record) -> AppResult<{pascal}Record> {{
+        self.ensure_tenant(&record.tenant_id)?;
         entity::ActiveModel::from(to_entity(record))
             .update(&self.transaction)
             .await
@@ -145,6 +162,7 @@ impl {pascal}Transaction for Database{pascal}Transaction {{
     }}
 
     async fn delete(&self, tenant_id: &str, id: i64) -> AppResult<()> {{
+        self.ensure_tenant(tenant_id)?;
 {delete}
     }}
 }}
@@ -247,14 +265,14 @@ fn control_transaction_methods(resource: &ResourceIr) -> String {
                 })
                 .unwrap_or_default();
             format!(
-                "    async fn {method}(\n        &self,\n        tenant_id: &str,\n{arguments}        exclude_id: Option<i64>,\n    ) -> AppResult<Option<{pascal}Record>> {{\n        let mut select = entity::Entity::find()\n            .filter(entity::Column::TenantId.eq(tenant_id))\n{filters}{soft_delete};\n        if let Some(exclude_id) = exclude_id {{\n            select = select.filter(entity::Column::Id.ne(exclude_id));\n        }}\n        Ok(select\n            .lock(LockType::Update)\n            .one(&self.transaction)\n            .await\n            .map_err(database_error)?\n            .map(to_record))\n    }}\n\n",
+                "    async fn {method}(\n        &self,\n        tenant_id: &str,\n{arguments}        exclude_id: Option<i64>,\n    ) -> AppResult<Option<{pascal}Record>> {{\n        self.ensure_tenant(tenant_id)?;\n        let mut select = entity::Entity::find()\n            .filter(entity::Column::TenantId.eq(tenant_id))\n{filters}{soft_delete};\n        if let Some(exclude_id) = exclude_id {{\n            select = select.filter(entity::Column::Id.ne(exclude_id));\n        }}\n        Ok(select\n            .lock(LockType::Update)\n            .one(&self.transaction)\n            .await\n            .map_err(database_error)?\n            .map(to_record))\n    }}\n\n",
                 method = unique_method_name(index),
                 arguments = method_arguments(&fields),
             )
         })
         .collect::<String>();
     format!(
-        "    async fn lock_configuration(&self, tenant_id: &str) -> AppResult<()> {{\n        crate::TenantConfigTransferRepository\n            .lock_tenant_configuration_in_txn(&self.transaction, tenant_id, None)\n            .await\n            .map(|_| ())\n    }}\n\n{unique_methods}    async fn increment_configuration_version(&self, tenant_id: &str) -> AppResult<()> {{\n        crate::TenantConfigTransferRepository\n            .increment_configuration_version_in_txn(&self.transaction, tenant_id)\n            .await\n            .map(|_| ())\n    }}\n"
+        "    async fn lock_configuration(&self, tenant_id: &str) -> AppResult<()> {{\n        self.ensure_tenant(tenant_id)?;\n        crate::TenantConfigTransferRepository\n            .lock_tenant_configuration_in_txn(&self.transaction, tenant_id, None)\n            .await\n            .map(|_| ())\n    }}\n\n{unique_methods}    async fn increment_configuration_version(&self, tenant_id: &str) -> AppResult<()> {{\n        self.ensure_tenant(tenant_id)?;\n        crate::TenantConfigTransferRepository\n            .increment_configuration_version_in_txn(&self.transaction, tenant_id)\n            .await\n            .map(|_| ())\n    }}\n"
     )
 }
 
@@ -269,16 +287,16 @@ fn persistence_parts(resource: &ResourceIr) -> PersistenceParts {
     match resource.storage {
         StorageKind::ControlRow => PersistenceParts {
             declaration: format!(
-                "pub fn port(database: crate::ControlDatabaseCluster) -> Arc<dyn {pascal}PersistencePort> {{\n    Arc::new(Database{pascal}Persistence {{ database }})\n}}\n\nstruct Database{pascal}Persistence {{\n    database: crate::ControlDatabaseCluster,\n}}\n\nstruct Database{pascal}Transaction {{\n    transaction: DatabaseTransaction,\n}}"
+                "pub fn port(database: crate::ControlDatabaseCluster) -> Arc<dyn {pascal}PersistencePort> {{\n    Arc::new(Database{pascal}Persistence {{ database }})\n}}\n\nstruct Database{pascal}Persistence {{\n    database: crate::ControlDatabaseCluster,\n}}\n\nstruct Database{pascal}Transaction {{\n    tenant_id: String,\n    transaction: DatabaseTransaction,\n}}"
             ),
             read_connection: "        let database = self\n            .database\n            .select_read(crate::ReadConsistency::Eventual)\n            .connection;"
                 .into(),
-            begin_transaction: "        let _ = tenant_id;\n        let transaction = self\n            .database\n            .write()\n            .begin()\n            .await\n            .map_err(database_error)?;"
+            begin_transaction: "        let transaction = self\n            .database\n            .write()\n            .begin()\n            .await\n            .map_err(database_error)?;"
                 .into(),
         },
         StorageKind::TenantData => PersistenceParts {
             declaration: format!(
-                "pub fn port(router: Arc<crate::TenantDatabaseRouter>) -> Arc<dyn {pascal}PersistencePort> {{\n    Arc::new(Database{pascal}Persistence {{ router }})\n}}\n\nstruct Database{pascal}Persistence {{\n    router: Arc<crate::TenantDatabaseRouter>,\n}}\n\nstruct Database{pascal}Transaction {{\n    transaction: DatabaseTransaction,\n}}"
+                "pub fn port(router: Arc<crate::TenantDatabaseRouter>) -> Arc<dyn {pascal}PersistencePort> {{\n    Arc::new(Database{pascal}Persistence {{ router }})\n}}\n\nstruct Database{pascal}Persistence {{\n    router: Arc<crate::TenantDatabaseRouter>,\n}}\n\nstruct Database{pascal}Transaction {{\n    tenant_id: String,\n    transaction: DatabaseTransaction,\n}}"
             ),
             read_connection: "        let session = self.router.resolve(tenant_id).await.map_err(tenant_data_error)?;\n        let database = session\n            .select_read(ryframe_db::ReadConsistency::Eventual)\n            .await\n            .map_err(tenant_data_error)?\n            .connection;"
                 .into(),

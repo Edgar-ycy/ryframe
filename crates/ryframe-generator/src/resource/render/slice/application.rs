@@ -230,6 +230,9 @@ pub(super) fn service(resource: &ResourceIr, header: &str) -> String {
 
 pub(super) fn fake(resource: &ResourceIr, header: &str) -> String {
     let pascal = &resource.pascal_name;
+    let tenant_mismatch = format!("{}事务租户不匹配", resource.labels.zh_cn);
+    let (active_record_filter_method, active_record_filter) = fake_active_record_filters(resource);
+    let record_order = fake_record_order(resource);
     let filters = resource
         .fields
         .iter()
@@ -372,7 +375,10 @@ impl {pascal}PersistencePort for {pascal}FakePersistence {{
         let mut state = self.lock();
         state.calls.push({pascal}Call::FindById {{ tenant_id: tenant_id.into(), id }});
         fail_if_requested(&mut state, {pascal}Failure::FindById)?;
-        Ok(state.records.get(&(tenant_id.into(), id)).cloned())
+        Ok(state
+            .records
+            .get(&(tenant_id.into(), id)){active_record_filter_method}
+            .cloned())
     }}
 
     async fn find_by_page(
@@ -390,10 +396,11 @@ impl {pascal}PersistencePort for {pascal}FakePersistence {{
         fail_if_requested(&mut state, {pascal}Failure::FindByPage)?;
         let mut records = state.records.iter().filter_map(|((owner, _), record)| {{
             if owner != tenant_id {{ return None; }}
+{active_record_filter}
 {filters}
             Some(record.clone())
         }}).collect::<Vec<_>>();
-        records.sort_by_key(|record| record.id);
+{record_order}
         let total = records.len() as u64;
         let start = usize::try_from(page.offset()).unwrap_or(usize::MAX).min(records.len());
         let end = start.saturating_add(page.page_size() as usize).min(records.len());
@@ -429,6 +436,14 @@ struct FakeTransaction {{
 }}
 
 impl FakeTransaction {{
+    fn ensure_tenant(&self, tenant_id: &str) -> AppResult<()> {{
+        if self.tenant_id == tenant_id {{
+            Ok(())
+        }} else {{
+            Err(AppError::Authorization({tenant_mismatch:?}.into()))
+        }}
+    }}
+
     fn lock_state(&self) -> MutexGuard<'_, FakeState> {{
         self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
     }}
@@ -446,6 +461,7 @@ impl {pascal}Transaction for FakeTransaction {{
         tenant_id: &str,
         id: i64,
     ) -> AppResult<Option<{pascal}Record>> {{
+        self.ensure_tenant(tenant_id)?;
         {{
             let mut state = self.lock_state();
             state.calls.push({pascal}Call::FindByIdForUpdate {{ tenant_id: tenant_id.into(), id }});
@@ -455,6 +471,7 @@ impl {pascal}Transaction for FakeTransaction {{
     }}
 
     async fn insert(&self, record: {pascal}Record) -> AppResult<{pascal}Record> {{
+        self.ensure_tenant(&record.tenant_id)?;
         {{
             let mut state = self.lock_state();
             state.calls.push({pascal}Call::Insert {{ record: record.clone() }});
@@ -465,6 +482,7 @@ impl {pascal}Transaction for FakeTransaction {{
     }}
 
     async fn update(&self, record: {pascal}Record) -> AppResult<{pascal}Record> {{
+        self.ensure_tenant(&record.tenant_id)?;
         {{
             let mut state = self.lock_state();
             state.calls.push({pascal}Call::Update {{ record: record.clone() }});
@@ -475,6 +493,7 @@ impl {pascal}Transaction for FakeTransaction {{
     }}
 
     async fn delete(&self, tenant_id: &str, id: i64) -> AppResult<()> {{
+        self.ensure_tenant(tenant_id)?;
         {{
             let mut state = self.lock_state();
             state.calls.push({pascal}Call::Delete {{ tenant_id: tenant_id.into(), id }});
@@ -516,6 +535,47 @@ impl PersistenceTransaction for FakeTransaction {{
     )
 }
 
+fn fake_active_record_filters(resource: &ResourceIr) -> (String, String) {
+    let Some(soft_delete) = &resource.soft_delete else {
+        return (String::new(), String::new());
+    };
+    let field = resource
+        .fields
+        .iter()
+        .find(|field| field.name == soft_delete.field)
+        .expect("软删除字段已经在 Resource IR 中校验");
+    let active = match (&soft_delete.active, field.value_type) {
+        (toml::Value::String(value), super::ValueType::String) => format!("{value:?}"),
+        _ => rust_literal(&soft_delete.active, field.value_type),
+    };
+    (
+        format!(
+            "\n            .filter(|record| record.{} == {active})",
+            field.name
+        ),
+        format!(
+            "            if record.{} != {active} {{ return None; }}",
+            field.name
+        ),
+    )
+}
+
+fn fake_record_order(resource: &ResourceIr) -> String {
+    let field = resource
+        .fields
+        .iter()
+        .find(|field| field.usage.sort && field.name != "tenant_id")
+        .map(|field| field.name.as_str())
+        .unwrap_or("id");
+    if field == "id" {
+        "        records.sort_by_key(|record| record.id);".to_owned()
+    } else {
+        format!(
+            "        records.sort_by(|left, right| {{\n            left.{field}\n                .cmp(&right.{field})\n                .then_with(|| left.id.cmp(&right.id))\n        }});"
+        )
+    }
+}
+
 fn command_type(field: &super::FieldIr, optional: bool) -> String {
     let value_type = rust_base_type(field.value_type);
     if optional || field.nullable {
@@ -533,7 +593,7 @@ fn fake_control_parts(resource: &ResourceIr) -> (String, String, String) {
     let mut calls = "    LockConfiguration { tenant_id: String },".to_owned();
     let mut failures = "    LockConfiguration,".to_owned();
     let mut methods = String::from(
-        "    async fn lock_configuration(&self, tenant_id: &str) -> AppResult<()> {\n        let mut state = self.lock_state();\n        state.calls.push(",
+        "    async fn lock_configuration(&self, tenant_id: &str) -> AppResult<()> {\n        self.ensure_tenant(tenant_id)?;\n        let mut state = self.lock_state();\n        state.calls.push(",
     );
     methods.push_str(&format!(
         "{pascal}Call::LockConfiguration {{ tenant_id: tenant_id.into() }});\n        fail_if_requested(&mut state, {pascal}Failure::LockConfiguration)\n    }}\n\n"
@@ -577,13 +637,13 @@ fn fake_control_parts(resource: &ResourceIr) -> (String, String, String) {
             .collect::<Vec<_>>()
             .join(" && ");
         methods.push_str(&format!(
-            "    async fn {method}(\n        &self,\n        tenant_id: &str,\n{arguments}        exclude_id: Option<i64>,\n    ) -> AppResult<Option<{pascal}Record>> {{\n        {{\n            let mut state = self.lock_state();\n            state.calls.push({pascal}Call::{variant} {{ tenant_id: tenant_id.into(), {call_values}, exclude_id }});\n            fail_if_requested(&mut state, {pascal}Failure::{variant})?;\n        }}\n        Ok(self.lock_view().values().find(|record| exclude_id != Some(record.id) && {comparisons}).cloned())\n    }}\n\n"
+            "    async fn {method}(\n        &self,\n        tenant_id: &str,\n{arguments}        exclude_id: Option<i64>,\n    ) -> AppResult<Option<{pascal}Record>> {{\n        self.ensure_tenant(tenant_id)?;\n        {{\n            let mut state = self.lock_state();\n            state.calls.push({pascal}Call::{variant} {{ tenant_id: tenant_id.into(), {call_values}, exclude_id }});\n            fail_if_requested(&mut state, {pascal}Failure::{variant})?;\n        }}\n        Ok(self.lock_view().values().find(|record| exclude_id != Some(record.id) && {comparisons}).cloned())\n    }}\n\n"
         ));
     }
     calls.push_str("\n    IncrementConfigurationVersion { tenant_id: String },");
     failures.push_str("\n    IncrementConfigurationVersion,");
     methods.push_str(&format!(
-        "    async fn increment_configuration_version(&self, tenant_id: &str) -> AppResult<()> {{\n        let mut state = self.lock_state();\n        state.calls.push({pascal}Call::IncrementConfigurationVersion {{ tenant_id: tenant_id.into() }});\n        fail_if_requested(&mut state, {pascal}Failure::IncrementConfigurationVersion)\n    }}\n"
+        "    async fn increment_configuration_version(&self, tenant_id: &str) -> AppResult<()> {{\n        self.ensure_tenant(tenant_id)?;\n        let mut state = self.lock_state();\n        state.calls.push({pascal}Call::IncrementConfigurationVersion {{ tenant_id: tenant_id.into() }});\n        fail_if_requested(&mut state, {pascal}Failure::IncrementConfigurationVersion)\n    }}\n"
     ));
     (calls, failures, methods)
 }

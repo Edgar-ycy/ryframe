@@ -81,6 +81,12 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
     assert!(repository.contains("entity::Column::Status.eq(value)"));
     assert!(!repository.contains("entity::Column::Status.contains(value)"));
     assert!(repository.contains("active.updated_at = Set(chrono::Utc::now())"));
+    assert!(repository.contains("struct DatabasePostTransaction"));
+    assert!(repository.contains("tenant_id: String"));
+    assert!(repository.contains("tenant_id: tenant_id.to_owned()"));
+    assert!(repository.contains("self.ensure_tenant(tenant_id)?"));
+    assert!(repository.contains("self.ensure_tenant(&record.tenant_id)?"));
+    assert!(repository.contains("AppError::Authorization(\"岗位事务租户不匹配\".into())"));
     let entity = content("post/entity.rs");
     assert!(entity.contains("pub const SOFT_DELETE_ACTIVE: &str = \"0\";"));
     assert!(entity.contains("pub const SOFT_DELETE_DELETED: &str = \"2\";"));
@@ -107,6 +113,14 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
     assert!(fake.contains("record.status != value"));
     assert!(fake.contains("filter.status.filter(|value| !value.is_empty())"));
     assert!(fake.contains(".filter(|((owner, _), _)| owner == tenant_id)"));
+    assert!(fake.contains(".filter(|record| record.del_flag == \"0\")"));
+    assert!(fake.contains("record.del_flag != \"0\""));
+    assert!(fake.contains("left.sort"));
+    assert!(fake.contains(".cmp(&right.sort)"));
+    assert!(fake.contains(".then_with(|| left.id.cmp(&right.id))"));
+    assert!(fake.contains("self.ensure_tenant(tenant_id)?"));
+    assert!(fake.contains("self.ensure_tenant(&record.tenant_id)?"));
+    assert!(fake.contains("AppError::Authorization(\"岗位事务租户不匹配\".into())"));
     assert!(!fake.contains(".filter_map(|((owner, id), record)|"));
     let page = content("post/page.vue");
     assert!(page.contains("name=\"actions\""));
