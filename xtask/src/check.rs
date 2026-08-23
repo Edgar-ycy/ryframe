@@ -42,7 +42,16 @@ pub(crate) const WORKSPACE_CLIPPY_ARGS: &[&str] = &[
     "-D",
     "clippy::redundant_clone",
 ];
-pub(crate) const WORKSPACE_TEST_ARGS: &[&str] = &["test", "--locked", "--workspace", "--jobs", "2"];
+pub(crate) const WORKSPACE_TEST_TARGET_DIR: &str = "target/workspace-tests";
+pub(crate) const WORKSPACE_TEST_ARGS: &[&str] = &[
+    "test",
+    "--locked",
+    "--target-dir",
+    WORKSPACE_TEST_TARGET_DIR,
+    "--workspace",
+    "--jobs",
+    "2",
+];
 pub(crate) const FEATURE_MATRIX_TARGET_DIR: &str = "target/feature-matrix";
 
 static NEXT_VERIFY_ARTIFACT: AtomicU64 = AtomicU64::new(1);
@@ -486,6 +495,8 @@ fn resource_workspace_compilation(frontend_dir: &Path) -> Result<()> {
         &[
             "test",
             "--locked",
+            "--target-dir",
+            WORKSPACE_TEST_TARGET_DIR,
             "-p",
             "ryframe-generator",
             "--test",
