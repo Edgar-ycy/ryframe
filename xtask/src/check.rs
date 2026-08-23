@@ -512,11 +512,7 @@ fn backend() -> Result<()> {
     let root = root_dir();
     check_feature_registry(&root)?;
     run_process(&root, "cargo", &["fmt", "--all", "--", "--check"])?;
-    run_process(
-        &root,
-        "cargo",
-        &["check", "--locked", "--workspace", "--lib", "--bins"],
-    )?;
+    // Clippy 会先完成 Workspace 全目标类型检查，无需再执行覆盖范围更小的 cargo check。
     run_process(&root, "cargo", WORKSPACE_CLIPPY_ARGS)?;
     for script in BACKEND_POLICY_SCRIPTS {
         run_process(&root, "python", &[script])?;
