@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
@@ -18,6 +19,16 @@ POLICY_PATH = ROOT / "architecture" / "crate-boundaries.toml"
 LEGACY_PERSISTENCE_API_NAMES = (
     "Persistence" + "Future",
     "Control" + "Transaction",
+)
+TRAIT_DECLARATION = re.compile(
+    r"(?m)^\s*(?:pub(?:\([^)]*\))?\s+)?trait\s+"
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\b[^{}]*\{"
+)
+TRAIT_FUTURE_METHOD = re.compile(
+    r"\b(?P<async>async\s+)?fn\s+(?P<method>[A-Za-z_][A-Za-z0-9_]*)\b"
+    r"[^;{}]*?->\s*[^;{}]*(?:\b[A-Za-z_][A-Za-z0-9_]*Future\b|"
+    r"\bimpl\s+Future\b|\bPin\s*<)[^;{}]*;",
+    re.DOTALL,
 )
 DOCUMENT_LIMITS = {
     "README.md": 120,
@@ -398,6 +409,79 @@ def count_lines(path: Path) -> int:
     return len(content.rstrip("\r\n").splitlines())
 
 
+def frozen_migration_sources(
+    root: Path,
+    lock_relative: str,
+    errors: list[str],
+) -> set[str]:
+    """返回锁定清单中路径和摘要均匹配的冻结迁移源码。"""
+
+    lock_path = (root / lock_relative).resolve()
+    try:
+        lock_path.relative_to(root)
+    except ValueError:
+        errors.append(f"冻结迁移清单路径越出仓库: {lock_relative}")
+        return set()
+    try:
+        document = tomllib.loads(lock_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        errors.append(f"无法读取冻结迁移清单 {lock_relative}: {error}")
+        return set()
+    if document.get("format_version") != 1:
+        errors.append(f"冻结迁移清单 format_version 必须为 1: {lock_relative}")
+    entries = document.get("files")
+    if not isinstance(entries, list) or not entries:
+        errors.append(f"冻结迁移清单 files 必须是非空 table 数组: {lock_relative}")
+        return set()
+
+    frozen: set[str] = set()
+    for index, entry in enumerate(entries):
+        label = f"冻结迁移清单 files[{index}]"
+        if not isinstance(entry, dict):
+            errors.append(f"{label} 必须是 TOML table")
+            continue
+        raw_path = entry.get("path")
+        expected_hash = entry.get("sha256")
+        if not isinstance(raw_path, str) or not raw_path:
+            errors.append(f"{label}.path 必须是非空字符串")
+            continue
+        if not isinstance(expected_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", expected_hash):
+            errors.append(f"{label}.sha256 必须是 64 位小写十六进制摘要")
+            continue
+        source_path = (root / raw_path).resolve()
+        try:
+            relative = source_path.relative_to(root).as_posix()
+        except ValueError:
+            errors.append(f"{label}.path 越出仓库: {raw_path}")
+            continue
+        if not (
+            relative.startswith("crates/")
+            and "/migration/" in relative
+            and relative.endswith(".rs")
+        ):
+            errors.append(f"{label}.path 必须是 crates 下的迁移 Rust 源码: {relative}")
+            continue
+        if relative in frozen:
+            errors.append(f"冻结迁移清单路径重复: {relative}")
+            continue
+        if not source_path.is_file():
+            errors.append(f"冻结迁移源码不存在: {relative}")
+            continue
+        actual_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
+        if actual_hash != expected_hash:
+            errors.append(
+                f"冻结迁移源码哈希不匹配: {relative}（清单 {expected_hash}，实际 {actual_hash}）"
+            )
+            continue
+        frozen.add(relative)
+    return frozen
+
+
+def source_has_generated_marker(path: Path, markers: tuple[str, ...]) -> bool:
+    header = "\n".join(path.read_text(encoding="utf-8").splitlines()[:5])
+    return any(marker in header for marker in markers)
+
+
 def validate_source_size(
     source_size: dict[str, Any],
     profile: dict[str, Any],
@@ -409,74 +493,38 @@ def validate_source_size(
         errors.append("source_size.max_lines 必须是正整数")
         return 0, {}
 
-    raw_generated_exclusions = source_size.get("generated_exclusions", [])
-    generated_exclusions: set[str] = set()
-    if not isinstance(raw_generated_exclusions, list):
-        errors.append("source_size.generated_exclusions 必须是 table 数组")
-        raw_generated_exclusions = []
-    for index, exclusion in enumerate(raw_generated_exclusions):
-        label = f"source_size.generated_exclusions[{index}]"
-        if not isinstance(exclusion, dict):
-            errors.append(f"{label} 必须是 TOML table")
-            continue
-        path = exclusion.get("path")
-        marker = exclusion.get("required_marker")
-        reason = exclusion.get("reason")
-        if not isinstance(path, str) or not path:
-            errors.append(f"{label}.path 必须是非空字符串")
-            continue
-        if path in generated_exclusions:
-            errors.append(f"生成源码排除路径重复: {path}")
-        if not isinstance(marker, str) or not marker:
-            errors.append(f"{label}.required_marker 必须是非空字符串")
-            continue
-        if not isinstance(reason, str) or not reason.strip():
-            errors.append(f"{label}.reason 必须说明生成来源")
-        generated_path = (ROOT / path).resolve()
-        try:
-            generated_path.relative_to(ROOT)
-        except ValueError:
-            errors.append(f"生成源码排除路径越出仓库: {path}")
-            continue
-        if not generated_path.is_file():
-            errors.append(f"生成源码排除路径不存在: {path}")
-        else:
-            header = "\n".join(
-                generated_path.read_text(encoding="utf-8").splitlines()[:5]
-            )
-            if marker not in header:
-                errors.append(f"生成源码排除缺少规定标记: {path}")
-        generated_exclusions.add(path)
+    generated_max_lines = source_size.get("generated_max_lines")
+    if not isinstance(generated_max_lines, int) or generated_max_lines < 1:
+        errors.append("source_size.generated_max_lines 必须是正整数")
+        return 0, {}
+    if generated_max_lines > max_lines:
+        errors.append("source_size.generated_max_lines 不得大于 source_size.max_lines")
 
-    raw_exceptions = source_size.get("legacy_exceptions", [])
-    exceptions: dict[str, int] = {}
-    if not isinstance(raw_exceptions, list):
-        errors.append("source_size.legacy_exceptions 必须是 table 数组")
-        raw_exceptions = []
-    for index, exception in enumerate(raw_exceptions):
-        label = f"source_size.legacy_exceptions[{index}]"
-        if not isinstance(exception, dict):
-            errors.append(f"{label} 必须是 TOML table")
-            continue
-        path = exception.get("path")
-        limit = exception.get("max_lines")
-        reason = exception.get("reason")
-        if not isinstance(path, str) or not path:
-            errors.append(f"{label}.path 必须是非空字符串")
-            continue
-        if path in exceptions:
-            errors.append(f"源码规模豁免路径重复: {path}")
-        if not isinstance(limit, int) or limit <= max_lines:
-            errors.append(f"{label}.max_lines 必须大于全局上限 {max_lines}")
-            continue
-        if not isinstance(reason, str) or not reason.strip():
-            errors.append(f"{label}.reason 必须说明拆分债务")
-        exceptions[path] = limit
+    raw_generated_markers = source_size.get("generated_markers")
+    if not isinstance(raw_generated_markers, list) or not raw_generated_markers:
+        errors.append("source_size.generated_markers 必须是非空字符串数组")
+        generated_markers: tuple[str, ...] = ()
+    else:
+        generated_markers = tuple(
+            marker
+            for marker in raw_generated_markers
+            if isinstance(marker, str) and marker.strip()
+        )
+        if len(generated_markers) != len(raw_generated_markers):
+            errors.append("source_size.generated_markers 只能包含非空字符串")
+
+    lock_relative = source_size.get("frozen_migration_lock")
+    if not isinstance(lock_relative, str) or not lock_relative:
+        errors.append("source_size.frozen_migration_lock 必须是非空字符串")
+        frozen_migrations: set[str] = set()
+    else:
+        frozen_migrations = frozen_migration_sources(ROOT, lock_relative, errors)
+    if "legacy_exceptions" in source_size:
+        errors.append("source_size 不再支持 legacy_exceptions")
 
     scanned_paths: set[str] = set()
-    matched_generated_exclusions: set[str] = set()
     scanned_by_package: dict[str, int] = {}
-    for package_name in sorted(profile.get("products", set())):
+    for package_name in sorted(profile.get("products", set()) | profile.get("tools", set())):
         package = packages.get(package_name)
         if package is None:
             continue
@@ -484,7 +532,7 @@ def validate_source_size(
         try:
             package_root.relative_to(ROOT)
         except ValueError:
-            errors.append(f"生产 crate 位于仓库之外: {package_name}（{package_root}）")
+            errors.append(f"工作区 crate 位于仓库之外: {package_name}（{package_root}）")
             continue
         source_root = package_root / "src"
         candidates = list(source_root.rglob("*.rs")) if source_root.is_dir() else []
@@ -495,27 +543,25 @@ def validate_source_size(
         package_count = 0
         for path in sorted(set(candidates)):
             relative = path.relative_to(ROOT).as_posix()
-            if relative in generated_exclusions:
-                matched_generated_exclusions.add(relative)
-                continue
             scanned_paths.add(relative)
             package_count += 1
             lines = count_lines(path)
-            limit = exceptions.get(relative, max_lines)
+            limit = (
+                generated_max_lines
+                if source_has_generated_marker(path, generated_markers)
+                else max_lines
+            )
+            if relative in frozen_migrations:
+                continue
             if lines > limit:
                 errors.append(f"源码文件超过 {limit} 行: {relative}（{lines} 行）")
-            if relative in exceptions and lines <= max_lines:
-                errors.append(f"源码文件已降至全局上限内，应删除豁免: {relative}")
         if package_count == 0:
-            errors.append(f"生产 crate 没有纳入任何 Rust 源文件: {package_name}")
+            errors.append(f"工作区 crate 没有纳入任何 Rust 源文件: {package_name}")
         scanned_by_package[package_name] = package_count
 
-    stale_exception_paths = set(exceptions) - scanned_paths
-    for path in sorted(stale_exception_paths):
-        errors.append(f"源码规模豁免未命中生产源文件，应删除: {path}")
-    stale_generated_paths = generated_exclusions - matched_generated_exclusions
-    for path in sorted(stale_generated_paths):
-        errors.append(f"生成源码排除未命中生产源文件，应删除: {path}")
+    stale_frozen_paths = frozen_migrations - scanned_paths
+    for path in sorted(stale_frozen_paths):
+        errors.append(f"冻结迁移清单未命中工作区源码: {path}")
     return len(scanned_paths), scanned_by_package
 
 
@@ -532,6 +578,13 @@ def validate_test_layout(
         directory = "tests"
     if test_layout.get("forbid_source_tests") is not True:
         errors.append("test_layout.forbid_source_tests 必须为 true")
+    max_integration_test_lines = test_layout.get("max_integration_test_lines")
+    if (
+        not isinstance(max_integration_test_lines, int)
+        or max_integration_test_lines < 1
+    ):
+        errors.append("test_layout.max_integration_test_lines 必须是正整数")
+        max_integration_test_lines = 1
 
     checked_sources = 0
     integration_targets = 0
@@ -544,6 +597,14 @@ def validate_test_layout(
             continue
 
         test_root = (package_root / directory).resolve()
+        if test_root.is_dir():
+            for path in sorted(test_root.rglob("*.rs")):
+                lines = count_lines(path)
+                if lines > max_integration_test_lines:
+                    errors.append(
+                        f"集成测试文件超过 {max_integration_test_lines} 行: "
+                        f"{path.relative_to(ROOT).as_posix()}（{lines} 行）"
+                    )
         for target in package.get("targets", []):
             if "test" not in target.get("kind", []):
                 continue
@@ -571,13 +632,13 @@ def validate_test_layout(
     return checked_sources, integration_targets
 
 
-def product_rust_sources(
+def workspace_rust_sources(
     root: Path,
     profile: dict[str, Any],
     packages: dict[str, dict[str, Any]],
 ) -> list[Path]:
     sources: set[Path] = set()
-    for package_name in sorted(profile.get("products", set())):
+    for package_name in sorted(profile.get("products", set()) | profile.get("tools", set())):
         package = packages.get(package_name)
         if package is None:
             continue
@@ -589,6 +650,12 @@ def product_rust_sources(
         source_root = package_root / "src"
         if source_root.is_dir():
             sources.update(source_root.rglob("*.rs"))
+        test_root = package_root / "tests"
+        if test_root.is_dir():
+            sources.update(test_root.rglob("*.rs"))
+        build_script = package_root / "build.rs"
+        if build_script.is_file():
+            sources.add(build_script)
     return sorted(sources)
 
 
@@ -597,7 +664,7 @@ def validate_legacy_persistence_apis(
     sources: Iterable[Path],
     errors: list[str],
 ) -> tuple[int, int]:
-    """旧持久化异步接口一律禁止重新进入产品源码。"""
+    """旧持久化异步接口一律禁止重新进入产品、工具和测试源码。"""
 
     source_paths = sorted({path.resolve() for path in sources if path.is_file()})
     violations = 0
@@ -606,7 +673,57 @@ def validate_legacy_persistence_apis(
         relative = path.relative_to(root).as_posix()
         for name in LEGACY_PERSISTENCE_API_NAMES:
             if re.search(rf"\b{re.escape(name)}\b", source):
-                errors.append(f"产品源码不得使用已删除的持久化接口 {name}: {relative}")
+                errors.append(f"工作区源码不得使用已删除的持久化接口 {name}: {relative}")
+                violations += 1
+    return len(source_paths), violations
+
+
+def trait_body(source: str, opening_brace: int) -> str | None:
+    """返回 trait 最外层花括号内容；不完整源码交由 Rust 编译器继续报告。"""
+
+    depth = 1
+    for index, character in enumerate(source[opening_brace + 1 :], opening_brace + 1):
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                return source[opening_brace + 1 : index]
+    return None
+
+
+def validate_async_port_traits(
+    root: Path,
+    sources: Iterable[Path],
+    errors: list[str],
+) -> tuple[int, int]:
+    """禁止端口 trait 通过手写 Future 暴露异步操作。"""
+
+    source_paths = sorted({path.resolve() for path in sources if path.is_file()})
+    violations = 0
+    for path in source_paths:
+        source = path.read_text(encoding="utf-8")
+        if "Future" not in source and "Pin<" not in source:
+            continue
+        relative = path.relative_to(root).as_posix()
+        for declaration in TRAIT_DECLARATION.finditer(source):
+            body = trait_body(source, declaration.end() - 1)
+            if body is None:
+                continue
+            for method in TRAIT_FUTURE_METHOD.finditer(body):
+                line = source.count("\n", 0, declaration.end() + method.start()) + 1
+                trait_name = declaration.group("name")
+                method_name = method.group("method")
+                if method.group("async") is None:
+                    errors.append(
+                        "异步端口 trait 必须使用 async fn，而不得返回手写 Future: "
+                        f"{relative}:{line} {trait_name}::{method_name}"
+                    )
+                else:
+                    errors.append(
+                        "异步端口 trait 不得从 async fn 返回手写 Future: "
+                        f"{relative}:{line} {trait_name}::{method_name}"
+                    )
                 violations += 1
     return len(source_paths), violations
 
@@ -747,6 +864,8 @@ def main() -> int:
     integration_targets = 0
     persistence_sources = 0
     legacy_persistence_violations = 0
+    async_port_sources = 0
+    async_port_violations = 0
     if active and packages:
         actual_edges = validate_active_workspace(
             active_profile, active, packages, errors
@@ -759,7 +878,12 @@ def main() -> int:
         )
         persistence_sources, legacy_persistence_violations = validate_legacy_persistence_apis(
             ROOT,
-            product_rust_sources(ROOT, active, packages),
+            workspace_rust_sources(ROOT, active, packages),
+            errors,
+        )
+        async_port_sources, async_port_violations = validate_async_port_traits(
+            ROOT,
+            workspace_rust_sources(ROOT, active, packages),
             errors,
         )
 
@@ -783,7 +907,7 @@ def main() -> int:
     )
     print(f"Declared architecture profiles are valid ({profile_summary}).")
     print(
-        "Production source-size coverage passed "
+        "Workspace source-size coverage passed "
         f"(crates={len(scanned_by_package)}, files={scanned}, "
         f"max_lines={source_size.get('max_lines')})."
     )
@@ -794,6 +918,10 @@ def main() -> int:
     print(
         "Legacy persistence API gate passed "
         f"(source_files={persistence_sources}, violations={legacy_persistence_violations})."
+    )
+    print(
+        "Async port interface gate passed "
+        f"(source_files={async_port_sources}, violations={async_port_violations})."
     )
     if ran_tenant_checks:
         print("Tenant-data architecture boundaries are valid.")

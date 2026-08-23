@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import shutil
 import sys
@@ -57,6 +58,104 @@ class LegacyPersistenceApiGateTests(unittest.TestCase):
         )
         errors = self.validate()
         self.assertTrue(any(removed_name in error for error in errors))
+
+
+class AsyncPortTraitGateTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = TEST_ROOT / f"async-port-{uuid.uuid4().hex}"
+        self.source_root = self.root / "crates/example/src"
+        self.source_root.mkdir(parents=True)
+        self.source = self.source_root / "port.rs"
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.root)
+
+    def validate(self) -> list[str]:
+        errors: list[str] = []
+        MODULE.validate_async_port_traits(
+            self.root,
+            self.source_root.rglob("*.rs"),
+            errors,
+        )
+        return errors
+
+    def test_accepts_direct_async_trait_method(self) -> None:
+        self.source.write_text(
+            "pub trait Port { async fn execute(&self) -> Result<(), String>; }\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(self.validate(), [])
+
+    def test_rejects_handwritten_future_return(self) -> None:
+        self.source.write_text(
+            "pub type WorkFuture<'a> = core::pin::Pin<Box<dyn core::future::Future<Output = ()> + 'a>>;\n"
+            "pub trait Port { fn execute(&self) -> WorkFuture<'_>; }\n",
+            encoding="utf-8",
+        )
+        errors = self.validate()
+        self.assertTrue(any("Port::execute" in error for error in errors))
+
+
+class FrozenMigrationSourceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = TEST_ROOT / f"frozen-migration-{uuid.uuid4().hex}"
+        self.source = (
+            self.root
+            / "crates/example/src/migration/m20260820_000000_baseline/schema.rs"
+        )
+        self.source.parent.mkdir(parents=True)
+        self.source.write_text("pub const BASELINE: &str = \"stable\";\n", encoding="utf-8")
+        self.lock = self.root / "catalog/migrations.lock.toml"
+        self.lock.parent.mkdir(parents=True)
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.root)
+
+    def write_lock(self, digest: str | None = None) -> None:
+        relative = self.source.relative_to(self.root).as_posix()
+        digest = digest or hashlib.sha256(self.source.read_bytes()).hexdigest()
+        self.lock.write_text(
+            "\n".join(
+                [
+                    "format_version = 1",
+                    'frozen_at = "2026-08-20"',
+                    "",
+                    "[[files]]",
+                    f'path = "{relative}"',
+                    f'sha256 = "{digest}"',
+                    'storage = "control"',
+                    'target = "m20260820_000000_baseline"',
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+    def test_exact_locked_migration_is_eligible_for_size_exclusion(self) -> None:
+        self.write_lock()
+        errors: list[str] = []
+        self.assertEqual(
+            MODULE.frozen_migration_sources(
+                self.root,
+                "catalog/migrations.lock.toml",
+                errors,
+            ),
+            {self.source.relative_to(self.root).as_posix()},
+        )
+        self.assertEqual(errors, [])
+
+    def test_hash_mismatch_does_not_create_an_exclusion(self) -> None:
+        self.write_lock("0" * 64)
+        errors: list[str] = []
+        self.assertEqual(
+            MODULE.frozen_migration_sources(
+                self.root,
+                "catalog/migrations.lock.toml",
+                errors,
+            ),
+            set(),
+        )
+        self.assertTrue(any("哈希不匹配" in error for error in errors))
 
 
 if __name__ == "__main__":
