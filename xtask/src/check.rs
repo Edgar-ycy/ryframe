@@ -35,5 +35,6 @@ pub(crate) use selection::{
 };
 #[allow(unused_imports)]
 pub(crate) use snapshot::{
-    consumer_contract_arguments, consumer_contract_plan, load_consumer_contract_plan,
+    backend_snapshot_export_args, consumer_contract_arguments, consumer_contract_plan,
+    load_consumer_contract_plan,
 };

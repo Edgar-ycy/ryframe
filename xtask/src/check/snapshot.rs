@@ -13,7 +13,7 @@ use crate::{
 };
 
 use super::{
-    execution::run_owned,
+    execution::{BACKEND_VERIFY_TARGET_DIR, run_owned},
     model::{BackendSnapshotProfile, ConsumerContractPlan},
 };
 
@@ -63,16 +63,7 @@ pub(super) fn export_and_verify_backend_snapshots(
         run_owned(
             &root,
             "cargo",
-            &[
-                "run".to_owned(),
-                "--locked".to_owned(),
-                "-p".to_owned(),
-                "ryframe-api".to_owned(),
-                "--bin".to_owned(),
-                "export_openapi".to_owned(),
-                "--".to_owned(),
-                openapi.to_string_lossy().into_owned(),
-            ],
+            &backend_snapshot_export_args("ryframe-api", "export_openapi", openapi),
         )?;
         verify_snapshot(
             "OpenAPI",
@@ -85,16 +76,7 @@ pub(super) fn export_and_verify_backend_snapshots(
         run_owned(
             &root,
             "cargo",
-            &[
-                "run".to_owned(),
-                "--locked".to_owned(),
-                "-p".to_owned(),
-                "ryframe-db".to_owned(),
-                "--bin".to_owned(),
-                "export_mysql_snapshot".to_owned(),
-                "--".to_owned(),
-                mysql.to_string_lossy().into_owned(),
-            ],
+            &backend_snapshot_export_args("ryframe-db", "export_mysql_snapshot", mysql),
         )?;
         verify_snapshot(
             "MySQL 基线",
@@ -104,6 +86,25 @@ pub(super) fn export_and_verify_backend_snapshots(
         )?;
     }
     Ok(snapshots)
+}
+
+pub(crate) fn backend_snapshot_export_args(
+    package: &str,
+    binary: &str,
+    output: &Path,
+) -> Vec<String> {
+    vec![
+        "run".to_owned(),
+        "--locked".to_owned(),
+        "--target-dir".to_owned(),
+        BACKEND_VERIFY_TARGET_DIR.to_owned(),
+        "-p".to_owned(),
+        package.to_owned(),
+        "--bin".to_owned(),
+        binary.to_owned(),
+        "--".to_owned(),
+        output.to_string_lossy().into_owned(),
+    ]
 }
 
 fn verify_snapshot(

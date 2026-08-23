@@ -10,9 +10,9 @@ use super::check::{
     BACKEND_POLICY_SCRIPTS, BACKEND_VERIFY_TARGET_DIR, BackendSnapshotProfile,
     CONSUMER_OWNED_COMMANDS, FRONTEND_FULL_NON_CONSUMER_COMMANDS, FRONTEND_ONLY_CONTRACT_COMMANDS,
     FrontendProfile, PYTHON_TEST_ARGS, RESOURCE_VERIFY_TARGET_DIR, WORKSPACE_CLIPPY_ARGS,
-    WORKSPACE_TEST_ARGS, WorkspaceGraph, changed_paths, classify_changes,
-    complete_verify_selection, consumer_contract_arguments, consumer_contract_plan,
-    feature_operation_args, feature_test_args, frontend_profile_commands,
+    WORKSPACE_TEST_ARGS, WorkspaceGraph, backend_snapshot_export_args, changed_paths,
+    classify_changes, complete_verify_selection, consumer_contract_arguments,
+    consumer_contract_plan, feature_operation_args, feature_test_args, frontend_profile_commands,
     load_consumer_contract_plan, load_workspace_graph, needs_consumer_contract,
     reverse_dependency_closure, validate_feature_combination,
 };
@@ -148,6 +148,29 @@ fn full_gate_discovers_repository_python_tests() {
     );
     assert_eq!(BACKEND_VERIFY_TARGET_DIR, "target/verify/backend");
     assert_eq!(RESOURCE_VERIFY_TARGET_DIR, "target/verify/resource");
+}
+
+#[test]
+fn backend_snapshots_reuse_the_backend_verify_target() {
+    assert_eq!(
+        backend_snapshot_export_args(
+            "ryframe-api",
+            "export_openapi",
+            Path::new("target/xtask/openapi.json"),
+        ),
+        [
+            "run",
+            "--locked",
+            "--target-dir",
+            "target/verify/backend",
+            "-p",
+            "ryframe-api",
+            "--bin",
+            "export_openapi",
+            "--",
+            "target/xtask/openapi.json",
+        ]
+    );
 }
 
 #[test]
