@@ -352,7 +352,12 @@ async fn main() -> Result<(), AppError> {
         shutdown_signal(shutdown_sender.clone()).await;
         let _ = shutdown_sender.send(true);
         let shutdown_deadline = tokio::time::Instant::now() + SHUTDOWN_GRACE_PERIOD;
-        wait_for_tasks_until(&mut health_tasks, "Worker 健康服务", shutdown_deadline).await;
+        process_startup::wait_for_tasks_until(
+            &mut health_tasks,
+            "Worker 健康服务",
+            shutdown_deadline,
+        )
+        .await;
         _telemetry_guard.shutdown();
         return Ok(());
     }
@@ -380,34 +385,16 @@ async fn main() -> Result<(), AppError> {
     let _ = shutdown_sender.send(true);
 
     let shutdown_deadline = tokio::time::Instant::now() + SHUTDOWN_GRACE_PERIOD;
-    wait_for_worker_shutdown_until(&mut worker_tasks, &mut health_tasks, shutdown_deadline).await;
+    process_startup::wait_for_task_groups_until(
+        &mut worker_tasks,
+        "后台任务 Worker",
+        &mut health_tasks,
+        "Worker 健康服务",
+        shutdown_deadline,
+    )
+    .await;
     _telemetry_guard.shutdown();
     Ok(())
-}
-
-async fn wait_for_tasks_until(
-    tasks: &mut [tokio::task::JoinHandle<()>],
-    label: &str,
-    shutdown_deadline: tokio::time::Instant,
-) {
-    for task in tasks {
-        if tokio::time::timeout_at(shutdown_deadline, &mut *task)
-            .await
-            .is_err()
-        {
-            tracing::warn!(%label, "进程任务未在总宽限时间内退出，已中止");
-            task.abort();
-        }
-    }
-}
-
-async fn wait_for_worker_shutdown_until(
-    worker_tasks: &mut [tokio::task::JoinHandle<()>],
-    health_tasks: &mut [tokio::task::JoinHandle<()>],
-    shutdown_deadline: tokio::time::Instant,
-) {
-    wait_for_tasks_until(worker_tasks, "后台任务 Worker", shutdown_deadline).await;
-    wait_for_tasks_until(health_tasks, "Worker 健康服务", shutdown_deadline).await;
 }
 
 #[derive(Clone)]
@@ -660,30 +647,4 @@ fn install_job_metrics(queue: &JobQueue) {
         Arc::new(ryframe_adapters::metrics::set_job_wakeup_listener_up),
         Arc::new(ryframe_adapters::metrics::record_job_wakeup_protocol_error),
     )));
-}
-
-#[cfg(test)]
-mod tests {
-    use std::{future, time::Duration};
-
-    use super::wait_for_worker_shutdown_until;
-
-    #[tokio::test]
-    async fn worker_and_health_tasks_share_expired_shutdown_deadline() {
-        let mut worker_tasks = vec![tokio::spawn(future::pending::<()>())];
-        let mut health_tasks = vec![tokio::spawn(future::pending::<()>())];
-        let shared_deadline = tokio::time::Instant::now() - Duration::from_secs(1);
-
-        wait_for_worker_shutdown_until(&mut worker_tasks, &mut health_tasks, shared_deadline).await;
-
-        let worker = worker_tasks.pop().expect("应保留 Worker 任务句柄");
-        let health = health_tasks.pop().expect("应保留健康任务句柄");
-        assert!(
-            worker
-                .await
-                .expect_err("Worker 任务应被中止")
-                .is_cancelled()
-        );
-        assert!(health.await.expect_err("健康任务应被中止").is_cancelled());
-    }
 }

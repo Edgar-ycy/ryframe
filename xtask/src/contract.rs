@@ -313,7 +313,6 @@ fn contract_managed_paths(frontend_dir: &Path, artifact_paths: &[String]) -> Vec
     paths
 }
 
-#[cfg(test)]
 #[allow(dead_code)]
 pub(crate) fn generated_artifact_paths(frontend_dir: &Path) -> Result<Vec<String>> {
     let manifest = frontend_dir.join("scripts/api-artifacts.mjs");

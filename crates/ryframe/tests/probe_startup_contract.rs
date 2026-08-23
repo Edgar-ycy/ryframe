@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ryframe::boot::startup::{
     ApiRunMode, WorkerRunMode, effective_migration_mode, parse_api_run_mode, parse_worker_run_mode,
-    provision_or_verify,
+    provision_or_verify, wait_for_task_groups_until,
 };
 use ryframe_config::MigrationMode;
 
@@ -121,4 +121,30 @@ fn api_and_worker_wire_probe_to_read_only_dependency_checks() {
     assert!(worker.contains("|| storage.readiness_check(bucket)"));
     assert!(worker.contains("|| client.ensure_scope_ownership(&ownership_marker)"));
     assert!(worker.contains("|| client.verify_scope_ownership(&ownership_marker)"));
+}
+
+#[tokio::test]
+async fn worker_and_health_tasks_share_expired_shutdown_deadline() {
+    let mut worker_tasks = vec![tokio::spawn(std::future::pending::<()>())];
+    let mut health_tasks = vec![tokio::spawn(std::future::pending::<()>())];
+    let shared_deadline = tokio::time::Instant::now() - std::time::Duration::from_secs(1);
+
+    wait_for_task_groups_until(
+        &mut worker_tasks,
+        "后台任务 Worker",
+        &mut health_tasks,
+        "Worker 健康服务",
+        shared_deadline,
+    )
+    .await;
+
+    let worker = worker_tasks.pop().expect("应保留 Worker 任务句柄");
+    let health = health_tasks.pop().expect("应保留健康任务句柄");
+    assert!(
+        worker
+            .await
+            .expect_err("Worker 任务应被中止")
+            .is_cancelled()
+    );
+    assert!(health.await.expect_err("健康任务应被中止").is_cancelled());
 }

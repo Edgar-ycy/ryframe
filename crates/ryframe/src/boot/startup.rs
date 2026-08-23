@@ -77,3 +77,32 @@ where
         verify().await
     }
 }
+
+/// 在同一个绝对截止时间内等待两组进程任务，超时后中止仍未退出的任务。
+pub async fn wait_for_task_groups_until(
+    first_tasks: &mut [tokio::task::JoinHandle<()>],
+    first_label: &str,
+    second_tasks: &mut [tokio::task::JoinHandle<()>],
+    second_label: &str,
+    shutdown_deadline: tokio::time::Instant,
+) {
+    wait_for_tasks_until(first_tasks, first_label, shutdown_deadline).await;
+    wait_for_tasks_until(second_tasks, second_label, shutdown_deadline).await;
+}
+
+/// 等待一组进程任务；总宽限时间耗尽后中止剩余任务。
+pub async fn wait_for_tasks_until(
+    tasks: &mut [tokio::task::JoinHandle<()>],
+    label: &str,
+    shutdown_deadline: tokio::time::Instant,
+) {
+    for task in tasks {
+        if tokio::time::timeout_at(shutdown_deadline, &mut *task)
+            .await
+            .is_err()
+        {
+            tracing::warn!(%label, "进程任务未在总宽限时间内退出，已中止");
+            task.abort();
+        }
+    }
+}
