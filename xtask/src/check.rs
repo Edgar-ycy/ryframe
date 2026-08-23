@@ -43,6 +43,7 @@ pub(crate) const WORKSPACE_CLIPPY_ARGS: &[&str] = &[
     "clippy::redundant_clone",
 ];
 pub(crate) const WORKSPACE_TEST_ARGS: &[&str] = &["test", "--locked", "--workspace", "--jobs", "2"];
+pub(crate) const FEATURE_MATRIX_TARGET_DIR: &str = "target/feature-matrix";
 
 static NEXT_VERIFY_ARTIFACT: AtomicU64 = AtomicU64::new(1);
 
@@ -1215,6 +1216,8 @@ pub(crate) fn feature_test_args(package: &str, features: &[String], target: &str
     let mut args = vec![
         "test".to_owned(),
         "--locked".to_owned(),
+        "--target-dir".to_owned(),
+        FEATURE_MATRIX_TARGET_DIR.to_owned(),
         "-p".to_owned(),
         package.to_owned(),
         "--no-default-features".to_owned(),
@@ -1237,6 +1240,8 @@ pub(crate) fn feature_operation_args(
     let mut args = vec![
         operation.to_owned(),
         "--locked".to_owned(),
+        "--target-dir".to_owned(),
+        FEATURE_MATRIX_TARGET_DIR.to_owned(),
         "-p".to_owned(),
         package.to_owned(),
         "--no-default-features".to_owned(),

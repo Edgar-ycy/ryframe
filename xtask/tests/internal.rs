@@ -471,6 +471,10 @@ mod check_tests {
 
         for args in [&check, &clippy] {
             assert!(args.windows(2).any(|pair| pair == ["-p", "ryframe"]));
+            assert!(
+                args.windows(2)
+                    .any(|pair| { pair == ["--target-dir", "target/feature-matrix"] })
+            );
             assert!(args.contains(&"--all-targets".to_owned()));
             assert!(args.contains(&"--no-default-features".to_owned()));
             assert!(args.contains(&"destructive-reset,file-maintenance".to_owned()));
@@ -478,6 +482,10 @@ mod check_tests {
         let test = feature_test_args("ryframe", &features, "reset_contract");
         assert!(test.windows(2).any(|pair| pair == ["-p", "ryframe"]));
         assert!(test.windows(2).any(|pair| pair == ["--jobs", "2"]));
+        assert!(
+            test.windows(2)
+                .any(|pair| { pair == ["--target-dir", "target/feature-matrix"] })
+        );
         assert!(
             test.windows(2)
                 .any(|pair| pair == ["--test", "reset_contract"])
