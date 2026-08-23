@@ -1,4 +1,4 @@
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{
@@ -12,14 +12,13 @@ use crate::{TransactionAuditMode, complete_transaction};
 const DICT_CACHE_KEY_PREFIX: &str = "sys_dict:data:";
 const CACHE_TTL_SECS: u64 = 3600;
 
-pub type DictCacheStoreFuture<'a, T> = Pin<Box<dyn Future<Output = AppResult<T>> + Send + 'a>>;
-
+#[async_trait::async_trait]
 pub trait DictCacheStore: Send + Sync {
-    fn get<'a>(&'a self, key: &'a str) -> DictCacheStoreFuture<'a, Option<String>>;
+    async fn get(&self, key: &str) -> AppResult<Option<String>>;
 
-    fn put(&self, key: String, value: String, ttl_secs: u64) -> DictCacheStoreFuture<'_, ()>;
+    async fn put(&self, key: String, value: String, ttl_secs: u64) -> AppResult<()>;
 
-    fn remove(&self, key: String) -> DictCacheStoreFuture<'_, ()>;
+    async fn remove(&self, key: String) -> AppResult<()>;
 }
 
 pub fn dict_cache_key(tenant_id: &str, type_code: &str) -> String {

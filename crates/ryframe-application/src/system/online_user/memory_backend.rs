@@ -1,12 +1,10 @@
 use std::{collections::HashMap, sync::Arc};
 
 use chrono::Utc;
+use ryframe_kernel::AppResult;
 use tokio::sync::RwLock;
 
-use super::{
-    OnlineSessionMetadataFuture, OnlineSessionMetadataStore, UserSession, keyspace::session_key,
-    remaining_ttl,
-};
+use super::{OnlineSessionMetadataStore, UserSession, keyspace::session_key, remaining_ttl};
 
 type Sessions = Arc<RwLock<HashMap<String, UserSession>>>;
 
@@ -76,49 +74,32 @@ pub struct InMemoryOnlineSessionMetadata {
     sessions: Sessions,
 }
 
+#[async_trait::async_trait]
 impl OnlineSessionMetadataStore for InMemoryOnlineSessionMetadata {
-    fn add(&self, session: UserSession, _ttl_seconds: u64) -> OnlineSessionMetadataFuture<'_, ()> {
-        Box::pin(async move {
-            add(&self.sessions, session).await;
-            Ok(())
-        })
+    async fn add(&self, session: UserSession, _ttl_seconds: u64) -> AppResult<()> {
+        add(&self.sessions, session).await;
+        Ok(())
     }
 
-    fn remove<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        sid: &'a str,
-    ) -> OnlineSessionMetadataFuture<'a, ()> {
-        Box::pin(async move {
-            remove(&self.sessions, tenant_id, sid).await;
-            Ok(())
-        })
+    async fn remove(&self, tenant_id: &str, sid: &str) -> AppResult<()> {
+        remove(&self.sessions, tenant_id, sid).await;
+        Ok(())
     }
 
-    fn list<'a>(&'a self, tenant_id: &'a str) -> OnlineSessionMetadataFuture<'a, Vec<UserSession>> {
-        Box::pin(async move { Ok(list(&self.sessions, tenant_id).await) })
+    async fn list(&self, tenant_id: &str) -> AppResult<Vec<UserSession>> {
+        Ok(list(&self.sessions, tenant_id).await)
     }
 
-    fn list_for_user<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        user_id: i64,
-    ) -> OnlineSessionMetadataFuture<'a, Vec<UserSession>> {
-        Box::pin(async move { Ok(list_for_user(&self.sessions, tenant_id, user_id).await) })
+    async fn list_for_user(&self, tenant_id: &str, user_id: i64) -> AppResult<Vec<UserSession>> {
+        Ok(list_for_user(&self.sessions, tenant_id, user_id).await)
     }
 
-    fn touch<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        sid: &'a str,
-    ) -> OnlineSessionMetadataFuture<'a, bool> {
-        Box::pin(async move { Ok(touch(&self.sessions, tenant_id, sid).await) })
+    async fn touch(&self, tenant_id: &str, sid: &str) -> AppResult<bool> {
+        Ok(touch(&self.sessions, tenant_id, sid).await)
     }
 
-    fn cleanup_expired(&self) -> OnlineSessionMetadataFuture<'_, ()> {
-        Box::pin(async move {
-            cleanup_expired(&self.sessions).await;
-            Ok(())
-        })
+    async fn cleanup_expired(&self) -> AppResult<()> {
+        cleanup_expired(&self.sessions).await;
+        Ok(())
     }
 }

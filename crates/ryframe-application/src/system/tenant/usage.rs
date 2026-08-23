@@ -1,5 +1,6 @@
-use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{ActorContext, AppError, AppResult, PageResult, ValidatedPageQuery};
 use serde::Serialize;
@@ -19,11 +20,10 @@ pub struct TenantRateLimitSnapshot {
     pub remaining_secs: u64,
 }
 
-pub type TenantRateLimitReadFuture<'a> =
-    Pin<Box<dyn Future<Output = AppResult<Vec<TenantRateLimitSnapshot>>> + Send + 'a>>;
-
+#[async_trait]
 pub trait TenantRateLimitReadPort: Send + Sync {
-    fn snapshot_many<'a>(&'a self, tenant_ids: &'a [String]) -> TenantRateLimitReadFuture<'a>;
+    async fn snapshot_many(&self, tenant_ids: &[String])
+    -> AppResult<Vec<TenantRateLimitSnapshot>>;
 }
 
 #[derive(Clone, Debug, Default)]

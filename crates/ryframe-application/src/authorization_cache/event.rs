@@ -1,5 +1,4 @@
-use std::{future::Future, pin::Pin};
-
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 /// 跨 API 实例广播租户授权纪元变化的 Redis 频道。
@@ -12,14 +11,8 @@ pub struct AuthorizationChangedEvent {
     pub authorization_epoch: i32,
 }
 
-pub type AuthorizationChangePublishFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
-
 /// 授权变化实时通知发布端口。
+#[async_trait]
 pub trait AuthorizationChangePublisher: Send + Sync {
-    fn publish<'a>(
-        &'a self,
-        channel: &'a str,
-        payload: &'a str,
-    ) -> AuthorizationChangePublishFuture<'a>;
+    async fn publish(&self, channel: &str, payload: &str) -> Result<(), String>;
 }

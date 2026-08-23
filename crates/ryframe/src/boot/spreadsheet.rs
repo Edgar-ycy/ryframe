@@ -4,9 +4,8 @@ use ryframe_adapters::excel::{
     ExcelArtifact, ExcelExporter, ExcelImporter, IncrementalExcelWriter,
 };
 use ryframe_application::ports::spreadsheet::{
-    SpreadsheetArtifact, SpreadsheetBatchProgress, SpreadsheetDocumentFuture,
-    SpreadsheetDocumentProcessor, SpreadsheetImportRow, SpreadsheetRow, SpreadsheetWriter,
-    SpreadsheetWriterFactory,
+    SpreadsheetArtifact, SpreadsheetBatchProgress, SpreadsheetDocumentProcessor,
+    SpreadsheetImportRow, SpreadsheetRow, SpreadsheetWriter, SpreadsheetWriterFactory,
 };
 use ryframe_kernel::AppResult;
 
@@ -32,88 +31,81 @@ impl SpreadsheetWriterFactory for SpreadsheetFactoryBridge {
     }
 }
 
+#[async_trait::async_trait]
 impl SpreadsheetDocumentProcessor for SpreadsheetFactoryBridge {
-    fn validate_source(
+    async fn validate_source(
         &self,
         data: Vec<u8>,
         expected_headers: &'static [(&'static str, &'static str)],
-    ) -> SpreadsheetDocumentFuture<'_, Vec<u8>> {
-        Box::pin(async move {
-            tokio::task::spawn_blocking(move || {
-                ExcelImporter::validate_headers_from_bytes(&data, None, expected_headers)?;
-                Ok(data)
-            })
-            .await
-            .map_err(|error| {
-                ryframe_kernel::AppError::Internal(format!("XLSX 内容校验任务异常结束: {error}"))
-            })?
+    ) -> AppResult<Vec<u8>> {
+        tokio::task::spawn_blocking(move || {
+            ExcelImporter::validate_headers_from_bytes(&data, None, expected_headers)?;
+            Ok(data)
         })
+        .await
+        .map_err(|error| {
+            ryframe_kernel::AppError::Internal(format!("XLSX 内容校验任务异常结束: {error}"))
+        })?
     }
 
-    fn read_rows(
+    async fn read_rows(
         &self,
         data: Vec<u8>,
         expected_headers: &'static [(&'static str, &'static str)],
-    ) -> SpreadsheetDocumentFuture<'_, Vec<SpreadsheetImportRow>> {
-        Box::pin(async move {
-            tokio::task::spawn_blocking(move || {
-                ExcelImporter::validate_headers_from_bytes(&data, None, expected_headers)?;
-                ExcelImporter::read_rows_from_bytes::<SpreadsheetRow>(&data, None).map(|rows| {
-                    rows.into_iter()
-                        .map(|row| SpreadsheetImportRow {
-                            row_number: row.row_number,
-                            value: row.value,
-                        })
-                        .collect()
-                })
+    ) -> AppResult<Vec<SpreadsheetImportRow>> {
+        tokio::task::spawn_blocking(move || {
+            ExcelImporter::validate_headers_from_bytes(&data, None, expected_headers)?;
+            ExcelImporter::read_rows_from_bytes::<SpreadsheetRow>(&data, None).map(|rows| {
+                rows.into_iter()
+                    .map(|row| SpreadsheetImportRow {
+                        row_number: row.row_number,
+                        value: row.value,
+                    })
+                    .collect()
             })
-            .await
-            .map_err(|error| {
-                ryframe_kernel::AppError::Internal(format!("用户导入解析任务异常结束: {error}"))
-            })?
         })
+        .await
+        .map_err(|error| {
+            ryframe_kernel::AppError::Internal(format!("用户导入解析任务异常结束: {error}"))
+        })?
     }
 
-    fn export_template(
+    async fn export_template(
         &self,
         sheet_name: &'static str,
         headers: &'static [(&'static str, &'static str)],
         reference_sheet_name: &'static str,
         reference_header: &'static str,
         reference_values: Vec<String>,
-    ) -> SpreadsheetDocumentFuture<'_, Vec<u8>> {
-        Box::pin(async move {
-            tokio::task::spawn_blocking(move || {
-                ExcelExporter::export_template_with_reference(
-                    sheet_name,
-                    headers,
-                    reference_sheet_name,
-                    reference_header,
-                    &reference_values,
-                )
-            })
-            .await
-            .map_err(|error| {
-                ryframe_kernel::AppError::Internal(format!("用户导入模板生成任务异常结束: {error}"))
-            })?
+    ) -> AppResult<Vec<u8>> {
+        tokio::task::spawn_blocking(move || {
+            ExcelExporter::export_template_with_reference(
+                sheet_name,
+                headers,
+                reference_sheet_name,
+                reference_header,
+                &reference_values,
+            )
         })
+        .await
+        .map_err(|error| {
+            ryframe_kernel::AppError::Internal(format!("用户导入模板生成任务异常结束: {error}"))
+        })?
     }
 
-    fn export_rows(
+    async fn export_rows(
         &self,
         rows: Vec<SpreadsheetRow>,
         sheet_name: &'static str,
         headers: &'static [(&'static str, &'static str)],
-    ) -> SpreadsheetDocumentFuture<'_, Vec<u8>> {
-        Box::pin(async move {
-            tokio::task::spawn_blocking(move || {
-                ExcelExporter::export_to_bytes(&rows, sheet_name, headers)
-            })
-            .await
-            .map_err(|error| {
-                ryframe_kernel::AppError::Internal(format!("用户导入报告生成任务异常结束: {error}"))
-            })?
+    ) -> AppResult<Vec<u8>> {
+        tokio::task::spawn_blocking(move || {
+            ExcelExporter::export_to_bytes(&rows, sheet_name, headers)
         })
+        .await
+        .map_err(|error| {
+            ryframe_kernel::AppError::Internal(format!("用户导入报告生成任务异常结束: {error}"))
+        })?
     }
 }
 

@@ -1,6 +1,6 @@
 //! 系统监控的 HTTP 状态、路由、处理器与响应模型。
 
-use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 
 mod readiness;
 
@@ -33,25 +33,19 @@ pub struct DatabaseTopologyHealth {
     pub sources: Vec<DatabaseNodeHealth>,
 }
 
-pub type DatabasePingFuture<'a> = Pin<Box<dyn Future<Output = bool> + Send + 'a>>;
-pub type DatabaseConnectionCountFuture<'a> = Pin<Box<dyn Future<Output = Option<i64>> + Send + 'a>>;
-pub type DatabaseTopologyFuture<'a> =
-    Pin<Box<dyn Future<Output = DatabaseTopologyHealth> + Send + 'a>>;
-
 /// HTTP 监控所需的只读数据库探针，由组合根提供具体实现。
+#[async_trait::async_trait]
 pub trait DatabaseMonitor: Send + Sync {
-    fn ping(&self) -> DatabasePingFuture<'_>;
-    fn active_connections(&self) -> DatabaseConnectionCountFuture<'_>;
-    fn topology_health(&self) -> DatabaseTopologyFuture<'_>;
+    async fn ping(&self) -> bool;
+    async fn active_connections(&self) -> Option<i64>;
+    async fn topology_health(&self) -> DatabaseTopologyHealth;
 }
 
-pub type CacheInfoFuture<'a> = Pin<Box<dyn Future<Output = CacheInfo> + Send + 'a>>;
-pub type CacheCommandStatsFuture<'a> = Pin<Box<dyn Future<Output = CacheCommandStats> + Send + 'a>>;
-
 /// HTTP 缓存监控所需的只读端口。
+#[async_trait::async_trait]
 pub trait CacheMonitor: Send + Sync {
-    fn info(&self) -> CacheInfoFuture<'_>;
-    fn command_stats(&self) -> CacheCommandStatsFuture<'_>;
+    async fn info(&self) -> CacheInfo;
+    async fn command_stats(&self) -> CacheCommandStats;
 }
 
 /// HTTP 系统监控所需的最近一次采样读取端口。

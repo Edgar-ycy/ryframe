@@ -1,26 +1,23 @@
 use std::sync::Arc;
 
 use ryframe_adapters::file_upload::{compress_image, get_content_type, validate_file_signature};
-use ryframe_application::ports::files::{
-    FileContentFuture, FileContentProcessor, ProcessedFileContent,
-};
+use ryframe_application::ports::files::{FileContentProcessor, ProcessedFileContent};
 
 struct FileContentBridge;
 
+#[async_trait::async_trait]
 impl FileContentProcessor for FileContentBridge {
-    fn process(
+    async fn process(
         &self,
         original_name: String,
         data: Vec<u8>,
         compress: bool,
-    ) -> FileContentFuture<'_> {
-        Box::pin(async move {
-            tokio::task::spawn_blocking(move || process_blocking(original_name, data, compress))
-                .await
-                .map_err(|error| {
-                    ryframe_kernel::AppError::Internal(format!("文件内容处理任务失败: {error}"))
-                })?
-        })
+    ) -> ryframe_kernel::AppResult<ProcessedFileContent> {
+        tokio::task::spawn_blocking(move || process_blocking(original_name, data, compress))
+            .await
+            .map_err(|error| {
+                ryframe_kernel::AppError::Internal(format!("文件内容处理任务失败: {error}"))
+            })?
     }
 }
 

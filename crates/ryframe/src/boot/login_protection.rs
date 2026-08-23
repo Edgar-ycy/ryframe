@@ -1,78 +1,68 @@
 use std::sync::Arc;
 
 use ryframe_adapters::RedisClient;
-use ryframe_application::ports::auth::{LoginProtectionFuture, LoginProtectionPort};
+use ryframe_application::ports::auth::LoginProtectionPort;
 use ryframe_kernel::{AppError, AppResult};
 
 struct RedisLoginProtection {
     redis: Option<RedisClient>,
 }
 
+#[async_trait::async_trait]
 impl LoginProtectionPort for RedisLoginProtection {
-    fn ensure_allowed<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        username: &'a str,
-        ip: &'a str,
+    async fn ensure_allowed(
+        &self,
+        tenant_id: &str,
+        username: &str,
+        ip: &str,
         max_attempts: u32,
-    ) -> LoginProtectionFuture<'a> {
-        Box::pin(async move {
-            let Some(redis) = self.redis.as_ref() else {
-                return Ok(());
-            };
-            check_counter(
-                redis,
-                &principal_key(tenant_id, username),
-                max_attempts,
-                "账户",
-            )
-            .await?;
-            check_counter(
-                redis,
-                &ip_key(tenant_id, ip),
-                max_attempts.saturating_mul(2),
-                "IP",
-            )
-            .await
-        })
+    ) -> AppResult<()> {
+        let Some(redis) = self.redis.as_ref() else {
+            return Ok(());
+        };
+        check_counter(
+            redis,
+            &principal_key(tenant_id, username),
+            max_attempts,
+            "账户",
+        )
+        .await?;
+        check_counter(
+            redis,
+            &ip_key(tenant_id, ip),
+            max_attempts.saturating_mul(2),
+            "IP",
+        )
+        .await
     }
 
-    fn record_failure<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        username: &'a str,
-        ip: &'a str,
+    async fn record_failure(
+        &self,
+        tenant_id: &str,
+        username: &str,
+        ip: &str,
         lockout_seconds: u64,
-    ) -> LoginProtectionFuture<'a> {
-        Box::pin(async move {
-            let Some(redis) = self.redis.as_ref() else {
-                return Ok(());
-            };
-            increment(redis, &principal_key(tenant_id, username), lockout_seconds).await?;
-            increment(redis, &ip_key(tenant_id, ip), lockout_seconds).await
-        })
+    ) -> AppResult<()> {
+        let Some(redis) = self.redis.as_ref() else {
+            return Ok(());
+        };
+        increment(redis, &principal_key(tenant_id, username), lockout_seconds).await?;
+        increment(redis, &ip_key(tenant_id, ip), lockout_seconds).await
     }
 
-    fn clear<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        username: &'a str,
-        ip: &'a str,
-    ) -> LoginProtectionFuture<'a> {
-        Box::pin(async move {
-            let Some(redis) = self.redis.as_ref() else {
-                return Ok(());
-            };
-            redis
-                .del(&principal_key(tenant_id, username))
-                .await
-                .map_err(redis_unavailable)?;
-            redis
-                .del(&ip_key(tenant_id, ip))
-                .await
-                .map_err(redis_unavailable)?;
-            Ok(())
-        })
+    async fn clear(&self, tenant_id: &str, username: &str, ip: &str) -> AppResult<()> {
+        let Some(redis) = self.redis.as_ref() else {
+            return Ok(());
+        };
+        redis
+            .del(&principal_key(tenant_id, username))
+            .await
+            .map_err(redis_unavailable)?;
+        redis
+            .del(&ip_key(tenant_id, ip))
+            .await
+            .map_err(redis_unavailable)?;
+        Ok(())
     }
 }
 

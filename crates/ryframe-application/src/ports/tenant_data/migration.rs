@@ -1,5 +1,4 @@
-use std::{future::Future, pin::Pin};
-
+use async_trait::async_trait;
 use ryframe_kernel::AppResult;
 
 #[derive(Clone, Copy, Debug)]
@@ -31,56 +30,48 @@ pub struct TenantDataRowBatch {
     pub next_cursor: Option<Vec<String>>,
 }
 
-pub type TenantDataMigrationFuture<'a, T = ()> =
-    Pin<Box<dyn Future<Output = AppResult<T>> + Send + 'a>>;
-
 /// 租户数据迁移的目标 fence、清理与 catalog 生命周期端口。
+#[async_trait]
 pub trait TenantDataMigrationPort: Send + Sync {
     fn catalog_tables(&self) -> Vec<TenantDataCatalogTable>;
 
-    fn prepare_target<'a>(&'a self, fence: TenantDataFence<'a>) -> TenantDataMigrationFuture<'a>;
-    fn clear_prepared_target<'a>(
-        &'a self,
-        fence: TenantDataFence<'a>,
-    ) -> TenantDataMigrationFuture<'a>;
-    fn freeze_fence<'a>(&'a self, fence: TenantDataFence<'a>) -> TenantDataMigrationFuture<'a>;
-    fn activate_fence<'a>(&'a self, fence: TenantDataFence<'a>) -> TenantDataMigrationFuture<'a>;
-    fn assert_frozen_fence<'a>(
-        &'a self,
-        fence: TenantDataFence<'a>,
-    ) -> TenantDataMigrationFuture<'a>;
-    fn cleanup_ownership<'a>(
-        &'a self,
-        fence: TenantDataFence<'a>,
-    ) -> TenantDataMigrationFuture<'a, TenantDataCleanupOwnership>;
-    fn delete_rows_batch<'a>(
-        &'a self,
-        fence: TenantDataFence<'a>,
-        table: &'a str,
+    async fn prepare_target(&self, fence: TenantDataFence<'_>) -> AppResult<()>;
+    async fn clear_prepared_target(&self, fence: TenantDataFence<'_>) -> AppResult<()>;
+    async fn freeze_fence(&self, fence: TenantDataFence<'_>) -> AppResult<()>;
+    async fn activate_fence(&self, fence: TenantDataFence<'_>) -> AppResult<()>;
+    async fn assert_frozen_fence(&self, fence: TenantDataFence<'_>) -> AppResult<()>;
+    async fn cleanup_ownership(
+        &self,
+        fence: TenantDataFence<'_>,
+    ) -> AppResult<TenantDataCleanupOwnership>;
+    async fn delete_rows_batch(
+        &self,
+        fence: TenantDataFence<'_>,
+        table: &str,
         batch_size: u32,
-    ) -> TenantDataMigrationFuture<'a, u64>;
-    fn finish_cleanup<'a>(&'a self, fence: TenantDataFence<'a>) -> TenantDataMigrationFuture<'a>;
+    ) -> AppResult<u64>;
+    async fn finish_cleanup(&self, fence: TenantDataFence<'_>) -> AppResult<()>;
 
-    fn read_rows_batch<'a>(
-        &'a self,
-        target_key: &'a str,
-        tenant_id: &'a str,
-        table: &'a str,
-        cursor: Option<&'a [String]>,
+    async fn read_rows_batch(
+        &self,
+        target_key: &str,
+        tenant_id: &str,
+        table: &str,
+        cursor: Option<&[String]>,
         batch_size: u32,
-    ) -> TenantDataMigrationFuture<'a, TenantDataRowBatch>;
+    ) -> AppResult<TenantDataRowBatch>;
 
-    fn write_rows_batch<'a>(
-        &'a self,
-        fence: TenantDataFence<'a>,
-        table: &'a str,
-        rows: &'a [TenantDataRow],
-    ) -> TenantDataMigrationFuture<'a>;
+    async fn write_rows_batch(
+        &self,
+        fence: TenantDataFence<'_>,
+        table: &str,
+        rows: &[TenantDataRow],
+    ) -> AppResult<()>;
 
-    fn verify_foreign_keys<'a>(
-        &'a self,
-        target_key: &'a str,
-        tenant_id: &'a str,
-        table: &'a str,
-    ) -> TenantDataMigrationFuture<'a>;
+    async fn verify_foreign_keys(
+        &self,
+        target_key: &str,
+        tenant_id: &str,
+        table: &str,
+    ) -> AppResult<()>;
 }

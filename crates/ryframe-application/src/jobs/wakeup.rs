@@ -1,5 +1,4 @@
 use std::{
-    future::Future,
     pin::Pin,
     sync::{
         Arc, RwLock,
@@ -8,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use async_trait::async_trait;
 use futures_util::{Stream, StreamExt};
 use serde::Deserialize;
 use tokio::{sync::watch, task::JoinHandle};
@@ -18,13 +18,13 @@ use super::metrics::JobMetricsObserver;
 pub const JOB_WAKEUP_REDIS_CHANNEL: &str = "ryframe:jobs:wakeup";
 
 pub type JobWakeupStream = Pin<Box<dyn Stream<Item = Result<String, String>> + Send>>;
-pub type JobWakeupFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
 
 /// 后台任务跨进程唤醒传输端口。
+#[async_trait]
 pub trait JobWakeupTransport: Send + Sync {
-    fn publish<'a>(&'a self, channel: &'a str, payload: &'a str) -> JobWakeupFuture<'a, ()>;
+    async fn publish(&self, channel: &str, payload: &str) -> Result<(), String>;
 
-    fn subscribe<'a>(&'a self, channel: &'a str) -> JobWakeupFuture<'a, JobWakeupStream>;
+    async fn subscribe(&self, channel: &str) -> Result<JobWakeupStream, String>;
 }
 
 const WAKEUP_PROTOCOL_VERSION: u8 = 1;

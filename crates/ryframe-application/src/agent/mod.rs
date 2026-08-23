@@ -11,9 +11,7 @@ pub use audit::{AgentAccessAuditDraft, AgentAccessAuditRecord, AgentAuditWritePo
 pub use identity::{
     AgentCredentialHint, AgentDelegationHint, AgentIdentityReadPort, AgentLimitHints,
 };
-pub use limiter::{
-    AgentConcurrencyLease, AgentLeaseReleaseFuture, AgentLimitFuture, AgentLimitInput, AgentLimiter,
-};
+pub use limiter::{AgentConcurrencyLease, AgentLimitInput, AgentLimiter};
 pub use registry::{AgentCapability, AgentCapabilityDescriptor, service_capability_descriptors};
 pub use scope::{
     AgentAuthorizationSnapshot, AgentDepartmentSnapshot, AgentPermissionSnapshot,

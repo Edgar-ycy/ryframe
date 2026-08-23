@@ -9,9 +9,8 @@ use ryframe_adapters::{
 use ryframe_api::{
     AppServices, HttpRuntimeSettings, TrustedProxySet,
     monitor::{
-        CacheCommandStats, CacheCommandStatsFuture, CacheCommandStatsStatus, CacheInfo,
-        CacheInfoFuture, CacheKeysInfo, CacheMonitor, DependencyHealthCache, RedisMemoryInfo,
-        RedisServerInfo, ServerInfo, ServerInfoMonitor,
+        CacheCommandStats, CacheCommandStatsStatus, CacheInfo, CacheKeysInfo, CacheMonitor,
+        DependencyHealthCache, RedisMemoryInfo, RedisServerInfo, ServerInfo, ServerInfoMonitor,
     },
     runtime::{RuntimeComponents, UploadCircuitBreaker},
     settings::{
@@ -54,35 +53,32 @@ struct CacheMonitorBridge {
     redis_configured: bool,
 }
 
+#[async_trait::async_trait]
 impl CacheMonitor for CacheMonitorBridge {
-    fn info(&self) -> CacheInfoFuture<'_> {
-        Box::pin(async move {
-            map_cache_info(runtime_monitor::get_cache_info(self.redis.as_ref()).await)
-        })
+    async fn info(&self) -> CacheInfo {
+        map_cache_info(runtime_monitor::get_cache_info(self.redis.as_ref()).await)
     }
 
-    fn command_stats(&self) -> CacheCommandStatsFuture<'_> {
-        Box::pin(async move {
-            let stats = match self.redis.as_ref() {
-                Some(redis) => runtime_monitor::get_cache_command_stats(redis).await,
-                None if self.redis_configured => runtime_monitor::CacheCommandStats::unavailable(),
-                None => runtime_monitor::CacheCommandStats::not_configured(),
-            };
-            CacheCommandStats {
-                status: match stats.status {
-                    runtime_monitor::CacheCommandStatsStatus::Available => {
-                        CacheCommandStatsStatus::Available
-                    }
-                    runtime_monitor::CacheCommandStatsStatus::NotConfigured => {
-                        CacheCommandStatsStatus::NotConfigured
-                    }
-                    runtime_monitor::CacheCommandStatsStatus::Unavailable => {
-                        CacheCommandStatsStatus::Unavailable
-                    }
-                },
-                commands: stats.commands,
-            }
-        })
+    async fn command_stats(&self) -> CacheCommandStats {
+        let stats = match self.redis.as_ref() {
+            Some(redis) => runtime_monitor::get_cache_command_stats(redis).await,
+            None if self.redis_configured => runtime_monitor::CacheCommandStats::unavailable(),
+            None => runtime_monitor::CacheCommandStats::not_configured(),
+        };
+        CacheCommandStats {
+            status: match stats.status {
+                runtime_monitor::CacheCommandStatsStatus::Available => {
+                    CacheCommandStatsStatus::Available
+                }
+                runtime_monitor::CacheCommandStatsStatus::NotConfigured => {
+                    CacheCommandStatsStatus::NotConfigured
+                }
+                runtime_monitor::CacheCommandStatsStatus::Unavailable => {
+                    CacheCommandStatsStatus::Unavailable
+                }
+            },
+            commands: stats.commands,
+        }
     }
 }
 

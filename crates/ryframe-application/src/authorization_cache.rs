@@ -6,8 +6,7 @@ mod types;
 
 pub use backend::AuthorizationCache;
 pub use event::{
-    AUTHORIZATION_CHANGED_REDIS_CHANNEL, AuthorizationChangePublishFuture,
-    AuthorizationChangePublisher, AuthorizationChangedEvent,
+    AUTHORIZATION_CHANGED_REDIS_CHANNEL, AuthorizationChangePublisher, AuthorizationChangedEvent,
 };
 pub use types::{
     AuthorizationCacheBackend, AuthorizationCacheLookup, AuthorizationMirrorUpdate,

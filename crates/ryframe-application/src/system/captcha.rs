@@ -1,7 +1,5 @@
 use std::{
     collections::HashMap,
-    future::Future,
-    pin::Pin,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -14,12 +12,11 @@ struct CaptchaEntry {
     created_at: Instant,
 }
 
-pub type CaptchaStoreFuture<'a, T> = Pin<Box<dyn Future<Output = AppResult<T>> + Send + 'a>>;
-
+#[async_trait::async_trait]
 pub trait CaptchaStore: Send + Sync {
-    fn set(&self, id: String, answer: String) -> CaptchaStoreFuture<'_, ()>;
+    async fn set(&self, id: String, answer: String) -> AppResult<()>;
 
-    fn verify<'a>(&'a self, id: &'a str, code: &'a str) -> CaptchaStoreFuture<'a, bool>;
+    async fn verify(&self, id: &str, code: &str) -> AppResult<bool>;
 }
 
 #[derive(Clone)]
@@ -52,26 +49,23 @@ impl InMemoryCaptchaStore {
     }
 }
 
+#[async_trait::async_trait]
 impl CaptchaStore for InMemoryCaptchaStore {
-    fn set(&self, id: String, answer: String) -> CaptchaStoreFuture<'_, ()> {
-        Box::pin(async move {
-            self.inner.lock().await.insert(
-                id,
-                CaptchaEntry {
-                    answer,
-                    created_at: Instant::now(),
-                },
-            );
-            Ok(())
-        })
+    async fn set(&self, id: String, answer: String) -> AppResult<()> {
+        self.inner.lock().await.insert(
+            id,
+            CaptchaEntry {
+                answer,
+                created_at: Instant::now(),
+            },
+        );
+        Ok(())
     }
 
-    fn verify<'a>(&'a self, id: &'a str, code: &'a str) -> CaptchaStoreFuture<'a, bool> {
-        Box::pin(async move {
-            let Some(entry) = self.inner.lock().await.remove(id) else {
-                return Ok(false);
-            };
-            Ok(entry.created_at.elapsed() <= self.ttl && entry.answer.eq_ignore_ascii_case(code))
-        })
+    async fn verify(&self, id: &str, code: &str) -> AppResult<bool> {
+        let Some(entry) = self.inner.lock().await.remove(id) else {
+            return Ok(false);
+        };
+        Ok(entry.created_at.elapsed() <= self.ttl && entry.answer.eq_ignore_ascii_case(code))
     }
 }

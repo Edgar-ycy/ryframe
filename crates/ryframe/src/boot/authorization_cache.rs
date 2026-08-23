@@ -5,8 +5,8 @@ use redis::AsyncCommands;
 use ryframe_adapters::RedisClient;
 use ryframe_application::{
     AUTHORIZATION_SNAPSHOT_TTL_SECS, AuthorizationCache, AuthorizationCacheBackend,
-    AuthorizationCacheLookup, AuthorizationChangePublishFuture, AuthorizationChangePublisher,
-    AuthorizationSnapshot, CacheAvailabilityPolicy, NamespaceCacheLookup, TenantCacheLookup,
+    AuthorizationCacheLookup, AuthorizationChangePublisher, AuthorizationSnapshot,
+    CacheAvailabilityPolicy, NamespaceCacheLookup, TenantCacheLookup,
 };
 
 use super::authorization_cache_keyspace::{
@@ -18,19 +18,14 @@ struct RedisAuthorizationCacheBackend {
     redis: RedisClient,
 }
 
+#[async_trait]
 impl AuthorizationChangePublisher for RedisAuthorizationCacheBackend {
-    fn publish<'a>(
-        &'a self,
-        channel: &'a str,
-        payload: &'a str,
-    ) -> AuthorizationChangePublishFuture<'a> {
-        Box::pin(async move {
-            self.redis
-                .publish(channel, payload)
-                .await
-                .map(|_| ())
-                .map_err(|error| error.to_string())
-        })
+    async fn publish(&self, channel: &str, payload: &str) -> Result<(), String> {
+        self.redis
+            .publish(channel, payload)
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
 }
 

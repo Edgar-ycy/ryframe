@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use redis::AsyncCommands;
 use ryframe_adapters::RedisClient;
-use ryframe_application::agent::{
-    AgentConcurrencyLease, AgentLeaseReleaseFuture, AgentLimitFuture, AgentLimitInput, AgentLimiter,
-};
+use ryframe_application::agent::{AgentConcurrencyLease, AgentLimitInput, AgentLimiter};
 use ryframe_auth::stable_scope_digest;
 use ryframe_kernel::{AppError, AppResult};
 
@@ -26,20 +25,19 @@ pub fn redis_limiter(redis: RedisClient) -> Arc<dyn AgentLimiter> {
     Arc::new(RedisAgentLimiter { redis })
 }
 
+#[async_trait]
 impl AgentLimiter for RedisAgentLimiter {
-    fn guard_pre_auth_ip<'a>(&'a self, ip: &'a str, limit: u32) -> AgentLimitFuture<'a, ()> {
-        Box::pin(async move { self.guard_ip(ip, limit).await })
+    async fn guard_pre_auth_ip(&self, ip: &str, limit: u32) -> AppResult<()> {
+        self.guard_ip(ip, limit).await
     }
 
-    fn acquire<'a>(
-        &'a self,
-        input: AgentLimitInput<'a>,
-    ) -> AgentLimitFuture<'a, Box<dyn AgentConcurrencyLease>> {
-        Box::pin(async move {
-            self.acquire_lease(input)
-                .await
-                .map(|lease| Box::new(lease) as Box<dyn AgentConcurrencyLease>)
-        })
+    async fn acquire(
+        &self,
+        input: AgentLimitInput<'_>,
+    ) -> AppResult<Box<dyn AgentConcurrencyLease>> {
+        self.acquire_lease(input)
+            .await
+            .map(|lease| Box::new(lease) as Box<dyn AgentConcurrencyLease>)
     }
 }
 
@@ -250,15 +248,14 @@ impl RedisAgentLimiter {
     }
 }
 
+#[async_trait]
 impl AgentConcurrencyLease for RedisAgentConcurrencyLease {
-    fn release(self: Box<Self>) -> AgentLeaseReleaseFuture {
-        Box::pin(async move {
-            let mut connection = self.redis.conn().clone();
-            let result: redis::RedisResult<usize> = connection.zrem(&self.key, &self.owner).await;
-            if result.is_err() {
-                tracing::warn!("Agent 并发租约释放失败，将由 TTL 自动回收");
-            }
-        })
+    async fn release(self: Box<Self>) {
+        let mut connection = self.redis.conn().clone();
+        let result: redis::RedisResult<usize> = connection.zrem(&self.key, &self.owner).await;
+        if result.is_err() {
+            tracing::warn!("Agent 并发租约释放失败，将由 TTL 自动回收");
+        }
     }
 }
 

@@ -1,5 +1,4 @@
-use std::{future::Future, pin::Pin};
-
+use async_trait::async_trait;
 use ryframe_kernel::AppResult;
 
 /// 应用层可识别的租户业务数据状态。
@@ -70,10 +69,8 @@ impl TenantRuntimeSnapshot {
     }
 }
 
-pub type TenantRuntimeReadFuture<'a> =
-    Pin<Box<dyn Future<Output = AppResult<TenantRuntimeSnapshot>> + Send + 'a>>;
-
 /// 租户运行时快照读取端口，具体控制库路由由组合根注入。
+#[async_trait]
 pub trait TenantRuntimeReadPort: Send + Sync {
-    fn runtime_snapshot<'a>(&'a self, tenant_id: &'a str) -> TenantRuntimeReadFuture<'a>;
+    async fn runtime_snapshot(&self, tenant_id: &str) -> AppResult<TenantRuntimeSnapshot>;
 }

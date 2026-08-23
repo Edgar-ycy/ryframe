@@ -1,9 +1,9 @@
 use std::sync::{Arc, Mutex, RwLock};
 
+use async_trait::async_trait;
 use futures_util::stream;
 use ryframe_application::jobs::{
-    JOB_WAKEUP_REDIS_CHANNEL, JobWakeupFuture, JobWakeupStream, JobWakeupTransport, QueueWakeup,
-    WakeupQueue,
+    JOB_WAKEUP_REDIS_CHANNEL, JobWakeupStream, JobWakeupTransport, QueueWakeup, WakeupQueue,
 };
 
 #[derive(Default)]
@@ -11,19 +11,18 @@ struct RecordingTransport {
     published: Mutex<Vec<(String, String)>>,
 }
 
+#[async_trait]
 impl JobWakeupTransport for RecordingTransport {
-    fn publish<'a>(&'a self, channel: &'a str, payload: &'a str) -> JobWakeupFuture<'a, ()> {
-        Box::pin(async move {
-            self.published
-                .lock()
-                .expect("记录锁不应中毒")
-                .push((channel.to_owned(), payload.to_owned()));
-            Ok(())
-        })
+    async fn publish(&self, channel: &str, payload: &str) -> Result<(), String> {
+        self.published
+            .lock()
+            .expect("记录锁不应中毒")
+            .push((channel.to_owned(), payload.to_owned()));
+        Ok(())
     }
 
-    fn subscribe<'a>(&'a self, _channel: &'a str) -> JobWakeupFuture<'a, JobWakeupStream> {
-        Box::pin(async { Ok(Box::pin(stream::empty()) as JobWakeupStream) })
+    async fn subscribe(&self, _channel: &str) -> Result<JobWakeupStream, String> {
+        Ok(Box::pin(stream::empty()) as JobWakeupStream)
     }
 }
 

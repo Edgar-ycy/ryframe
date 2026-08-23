@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ryframe_adapters::TokenBlacklist;
 use ryframe_api::session_security::{
-    AccessRevocationStore, RefreshSessionControl, SessionRevocation, SessionSecurityFuture,
+    AccessRevocationStore, RefreshSessionControl, SessionRevocation,
 };
 use ryframe_application::ports::auth::{
     RefreshSessionPort, RefreshSessionRevocation as ApplicationSessionRevocation,
@@ -12,13 +12,14 @@ struct AccessRevocationStoreBridge {
     store: TokenBlacklist,
 }
 
+#[async_trait::async_trait]
 impl AccessRevocationStore for AccessRevocationStoreBridge {
-    fn is_revoked<'a>(&'a self, jti: &'a str) -> SessionSecurityFuture<'a, bool> {
-        Box::pin(async move { self.store.try_is_blacklisted(jti).await })
+    async fn is_revoked(&self, jti: &str) -> ryframe_kernel::AppResult<bool> {
+        self.store.try_is_blacklisted(jti).await
     }
 
-    fn revoke<'a>(&'a self, jti: &'a str, ttl_seconds: u64) -> SessionSecurityFuture<'a, ()> {
-        Box::pin(async move { self.store.try_blacklist(jti, ttl_seconds).await })
+    async fn revoke(&self, jti: &str, ttl_seconds: u64) -> ryframe_kernel::AppResult<()> {
+        self.store.try_blacklist(jti, ttl_seconds).await
     }
 }
 
@@ -26,66 +27,61 @@ struct RefreshSessionControlBridge {
     store: Arc<dyn RefreshSessionPort>,
 }
 
+#[async_trait::async_trait]
 impl RefreshSessionControl for RefreshSessionControlBridge {
-    fn is_active_for_identity<'a>(
-        &'a self,
-        sid: &'a str,
-        tenant_id: &'a str,
+    async fn is_active_for_identity(
+        &self,
+        sid: &str,
+        tenant_id: &str,
         user_id: i64,
-    ) -> SessionSecurityFuture<'a, bool> {
-        Box::pin(async move {
-            self.store
-                .is_active_for_identity(sid, tenant_id, user_id)
-                .await
-        })
+    ) -> ryframe_kernel::AppResult<bool> {
+        self.store
+            .is_active_for_identity(sid, tenant_id, user_id)
+            .await
     }
 
-    fn revoke<'a>(&'a self, sid: &'a str) -> SessionSecurityFuture<'a, bool> {
-        Box::pin(async move { self.store.revoke(sid).await })
+    async fn revoke(&self, sid: &str) -> ryframe_kernel::AppResult<bool> {
+        self.store.revoke(sid).await
     }
 
-    fn revoke_for_tenant<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        sid: &'a str,
-    ) -> SessionSecurityFuture<'a, bool> {
-        Box::pin(async move { self.store.revoke_for_tenant(tenant_id, sid).await })
+    async fn revoke_for_tenant(
+        &self,
+        tenant_id: &str,
+        sid: &str,
+    ) -> ryframe_kernel::AppResult<bool> {
+        self.store.revoke_for_tenant(tenant_id, sid).await
     }
 
-    fn revoke_for_user<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn revoke_for_user(
+        &self,
+        tenant_id: &str,
         user_id: i64,
-        sid: &'a str,
-    ) -> SessionSecurityFuture<'a, SessionRevocation> {
-        Box::pin(async move {
-            self.store
-                .revoke_for_user(tenant_id, user_id, sid)
-                .await
-                .map(map_session_revocation)
-        })
+        sid: &str,
+    ) -> ryframe_kernel::AppResult<SessionRevocation> {
+        self.store
+            .revoke_for_user(tenant_id, user_id, sid)
+            .await
+            .map(map_session_revocation)
     }
 
-    fn session_sids_for_user<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn session_sids_for_user(
+        &self,
+        tenant_id: &str,
         user_id: i64,
-    ) -> SessionSecurityFuture<'a, Vec<String>> {
-        Box::pin(async move { self.store.session_sids_for_user(tenant_id, user_id).await })
+    ) -> ryframe_kernel::AppResult<Vec<String>> {
+        self.store.session_sids_for_user(tenant_id, user_id).await
     }
 
-    fn revoke_other_sessions_for_user<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn revoke_other_sessions_for_user(
+        &self,
+        tenant_id: &str,
         user_id: i64,
-        current_sid: &'a str,
-        candidate_sids: &'a [String],
-    ) -> SessionSecurityFuture<'a, u64> {
-        Box::pin(async move {
-            self.store
-                .revoke_other_sessions_for_user(tenant_id, user_id, current_sid, candidate_sids)
-                .await
-        })
+        current_sid: &str,
+        candidate_sids: &[String],
+    ) -> ryframe_kernel::AppResult<u64> {
+        self.store
+            .revoke_other_sessions_for_user(tenant_id, user_id, current_sid, candidate_sids)
+            .await
     }
 }
 

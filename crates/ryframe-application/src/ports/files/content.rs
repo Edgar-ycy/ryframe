@@ -1,9 +1,4 @@
-use std::{future::Future, pin::Pin};
-
 use ryframe_kernel::AppResult;
-
-pub type FileContentFuture<'a> =
-    Pin<Box<dyn Future<Output = AppResult<ProcessedFileContent>> + Send + 'a>>;
 
 /// 已完成内容校验和可选压缩的上传文件。
 pub struct ProcessedFileContent {
@@ -14,11 +9,12 @@ pub struct ProcessedFileContent {
 }
 
 /// 文件内容校验与图片处理端口。
+#[async_trait::async_trait]
 pub trait FileContentProcessor: Send + Sync {
-    fn process(
+    async fn process(
         &self,
         original_name: String,
         data: Vec<u8>,
         compress: bool,
-    ) -> FileContentFuture<'_>;
+    ) -> AppResult<ProcessedFileContent>;
 }

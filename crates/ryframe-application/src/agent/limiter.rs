@@ -1,9 +1,5 @@
-use std::{future::Future, pin::Pin};
-
+use async_trait::async_trait;
 use ryframe_kernel::AppResult;
-
-pub type AgentLimitFuture<'a, T> = Pin<Box<dyn Future<Output = AppResult<T>> + Send + 'a>>;
-pub type AgentLeaseReleaseFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 
 /// Agent 七维限流决策输入。
 pub struct AgentLimitInput<'a> {
@@ -23,16 +19,18 @@ pub struct AgentLimitInput<'a> {
 }
 
 /// Agent 并发槽位租约。
+#[async_trait]
 pub trait AgentConcurrencyLease: Send {
-    fn release(self: Box<Self>) -> AgentLeaseReleaseFuture;
+    async fn release(self: Box<Self>);
 }
 
 /// Agent 限流与并发租约端口。
+#[async_trait]
 pub trait AgentLimiter: Send + Sync {
-    fn guard_pre_auth_ip<'a>(&'a self, ip: &'a str, limit: u32) -> AgentLimitFuture<'a, ()>;
+    async fn guard_pre_auth_ip(&self, ip: &str, limit: u32) -> AppResult<()>;
 
-    fn acquire<'a>(
-        &'a self,
-        input: AgentLimitInput<'a>,
-    ) -> AgentLimitFuture<'a, Box<dyn AgentConcurrencyLease>>;
+    async fn acquire(
+        &self,
+        input: AgentLimitInput<'_>,
+    ) -> AppResult<Box<dyn AgentConcurrencyLease>>;
 }

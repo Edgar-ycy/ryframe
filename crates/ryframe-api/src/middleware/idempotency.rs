@@ -1,8 +1,6 @@
 //! HTTP 写请求幂等保留与响应重放。
 
 use std::{
-    future::Future,
-    pin::Pin,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -80,41 +78,39 @@ pub enum StoredIdempotencyReservation {
     NonReplayable,
 }
 
-pub type IdempotencyStoreFuture<'a, T> =
-    Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
-
 /// HTTP 幂等状态的外部持久化端口。
+#[async_trait::async_trait]
 pub trait HttpIdempotencyStore: Send + Sync {
-    fn reserve<'a>(
-        &'a self,
-        key: &'a str,
-        fingerprint: &'a str,
+    async fn reserve(
+        &self,
+        key: &str,
+        fingerprint: &str,
         processing_ttl_secs: u64,
-    ) -> IdempotencyStoreFuture<'a, StoredIdempotencyReservation>;
+    ) -> Result<StoredIdempotencyReservation, String>;
 
-    fn begin_execution<'a>(
-        &'a self,
-        key: &'a str,
-        fingerprint: &'a str,
+    async fn begin_execution(
+        &self,
+        key: &str,
+        fingerprint: &str,
         completed_ttl_secs: u64,
-    ) -> IdempotencyStoreFuture<'a, ()>;
+    ) -> Result<(), String>;
 
-    fn complete<'a>(
-        &'a self,
-        key: &'a str,
-        fingerprint: &'a str,
-        response: &'a str,
+    async fn complete(
+        &self,
+        key: &str,
+        fingerprint: &str,
+        response: &str,
         completed_ttl_secs: u64,
-    ) -> IdempotencyStoreFuture<'a, ()>;
+    ) -> Result<(), String>;
 
-    fn mark_non_replayable<'a>(
-        &'a self,
-        key: &'a str,
-        fingerprint: &'a str,
+    async fn mark_non_replayable(
+        &self,
+        key: &str,
+        fingerprint: &str,
         completed_ttl_secs: u64,
-    ) -> IdempotencyStoreFuture<'a, ()>;
+    ) -> Result<(), String>;
 
-    fn release<'a>(&'a self, key: &'a str) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+    async fn release(&self, key: &str);
 }
 
 impl IdempotencyState {

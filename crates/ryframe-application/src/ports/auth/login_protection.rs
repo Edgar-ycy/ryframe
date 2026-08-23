@@ -1,31 +1,23 @@
-use std::{future::Future, pin::Pin};
-
 use ryframe_kernel::AppResult;
 
-pub type LoginProtectionFuture<'a> = Pin<Box<dyn Future<Output = AppResult<()>> + Send + 'a>>;
-
 /// 登录失败计数与临时锁定的出站端口。
+#[async_trait::async_trait]
 pub trait LoginProtectionPort: Send + Sync {
-    fn ensure_allowed<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        username: &'a str,
-        ip: &'a str,
+    async fn ensure_allowed(
+        &self,
+        tenant_id: &str,
+        username: &str,
+        ip: &str,
         max_attempts: u32,
-    ) -> LoginProtectionFuture<'a>;
+    ) -> AppResult<()>;
 
-    fn record_failure<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        username: &'a str,
-        ip: &'a str,
+    async fn record_failure(
+        &self,
+        tenant_id: &str,
+        username: &str,
+        ip: &str,
         lockout_seconds: u64,
-    ) -> LoginProtectionFuture<'a>;
+    ) -> AppResult<()>;
 
-    fn clear<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        username: &'a str,
-        ip: &'a str,
-    ) -> LoginProtectionFuture<'a>;
+    async fn clear(&self, tenant_id: &str, username: &str, ip: &str) -> AppResult<()>;
 }

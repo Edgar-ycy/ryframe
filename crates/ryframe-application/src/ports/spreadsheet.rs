@@ -1,10 +1,9 @@
-use std::{future::Future, path::Path, pin::Pin};
+use std::path::Path;
 
 use ryframe_kernel::AppResult;
 
 pub const SPREADSHEET_MAX_DATA_ROWS: u64 = 1_048_575;
 pub type SpreadsheetRow = serde_json::Value;
-pub type SpreadsheetDocumentFuture<'a, T> = Pin<Box<dyn Future<Output = AppResult<T>> + Send + 'a>>;
 
 pub struct SpreadsheetImportRow {
     pub row_number: usize,
@@ -50,32 +49,33 @@ pub trait SpreadsheetWriterFactory: Send + Sync {
 }
 
 /// XLSX 校验、解析及小型模板和报告生成端口。
+#[async_trait::async_trait]
 pub trait SpreadsheetDocumentProcessor: Send + Sync {
-    fn validate_source(
+    async fn validate_source(
         &self,
         data: Vec<u8>,
         expected_headers: &'static [(&'static str, &'static str)],
-    ) -> SpreadsheetDocumentFuture<'_, Vec<u8>>;
+    ) -> AppResult<Vec<u8>>;
 
-    fn read_rows(
+    async fn read_rows(
         &self,
         data: Vec<u8>,
         expected_headers: &'static [(&'static str, &'static str)],
-    ) -> SpreadsheetDocumentFuture<'_, Vec<SpreadsheetImportRow>>;
+    ) -> AppResult<Vec<SpreadsheetImportRow>>;
 
-    fn export_template(
+    async fn export_template(
         &self,
         sheet_name: &'static str,
         headers: &'static [(&'static str, &'static str)],
         reference_sheet_name: &'static str,
         reference_header: &'static str,
         reference_values: Vec<String>,
-    ) -> SpreadsheetDocumentFuture<'_, Vec<u8>>;
+    ) -> AppResult<Vec<u8>>;
 
-    fn export_rows(
+    async fn export_rows(
         &self,
         rows: Vec<SpreadsheetRow>,
         sheet_name: &'static str,
         headers: &'static [(&'static str, &'static str)],
-    ) -> SpreadsheetDocumentFuture<'_, Vec<u8>>;
+    ) -> AppResult<Vec<u8>>;
 }

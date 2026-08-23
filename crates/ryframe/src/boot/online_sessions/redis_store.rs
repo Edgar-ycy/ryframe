@@ -1,9 +1,7 @@
 use chrono::Utc;
 use redis::AsyncCommands;
 use ryframe_adapters::RedisClient;
-use ryframe_application::system::{
-    OnlineSessionMetadataFuture, OnlineSessionMetadataStore, UserSession,
-};
+use ryframe_application::system::{OnlineSessionMetadataStore, UserSession};
 use ryframe_kernel::{AppError, AppResult};
 
 use super::{
@@ -311,40 +309,29 @@ impl RedisOnlineSessionMetadata {
     }
 }
 
+#[async_trait::async_trait]
 impl OnlineSessionMetadataStore for RedisOnlineSessionMetadata {
-    fn add(&self, session: UserSession, ttl_seconds: u64) -> OnlineSessionMetadataFuture<'_, ()> {
-        Box::pin(async move { add(&self.client, &session, ttl_seconds).await })
+    async fn add(&self, session: UserSession, ttl_seconds: u64) -> AppResult<()> {
+        add(&self.client, &session, ttl_seconds).await
     }
 
-    fn remove<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        sid: &'a str,
-    ) -> OnlineSessionMetadataFuture<'a, ()> {
-        Box::pin(async move { remove(&self.client, tenant_id, sid).await })
+    async fn remove(&self, tenant_id: &str, sid: &str) -> AppResult<()> {
+        remove(&self.client, tenant_id, sid).await
     }
 
-    fn list<'a>(&'a self, tenant_id: &'a str) -> OnlineSessionMetadataFuture<'a, Vec<UserSession>> {
-        Box::pin(async move { list(&self.client, tenant_id).await })
+    async fn list(&self, tenant_id: &str) -> AppResult<Vec<UserSession>> {
+        list(&self.client, tenant_id).await
     }
 
-    fn list_for_user<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        user_id: i64,
-    ) -> OnlineSessionMetadataFuture<'a, Vec<UserSession>> {
-        Box::pin(async move { list_for_user(&self.client, tenant_id, user_id).await })
+    async fn list_for_user(&self, tenant_id: &str, user_id: i64) -> AppResult<Vec<UserSession>> {
+        list_for_user(&self.client, tenant_id, user_id).await
     }
 
-    fn touch<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        sid: &'a str,
-    ) -> OnlineSessionMetadataFuture<'a, bool> {
-        Box::pin(async move { touch(&self.client, tenant_id, sid).await })
+    async fn touch(&self, tenant_id: &str, sid: &str) -> AppResult<bool> {
+        touch(&self.client, tenant_id, sid).await
     }
 
-    fn cleanup_expired(&self) -> OnlineSessionMetadataFuture<'_, ()> {
-        Box::pin(async { Ok(()) })
+    async fn cleanup_expired(&self) -> AppResult<()> {
+        Ok(())
     }
 }

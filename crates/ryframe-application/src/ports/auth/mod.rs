@@ -8,12 +8,12 @@ mod refresh_session;
 pub use identity::{
     IdentityAuthorizationReadPort, IdentityRoleRecord, IdentityTenantRecord, IdentityUserRecord,
 };
-pub use login_protection::{LoginProtectionFuture, LoginProtectionPort};
+pub use login_protection::LoginProtectionPort;
 pub use password_reset::{
     NewPasswordResetRequest, PASSWORD_RESET_STATUS_PENDING, PasswordResetPersistencePort,
     PasswordResetRequestRecord, PasswordResetTransaction, PasswordResetUserState,
 };
 pub use refresh_session::{
-    RefreshSessionFamily, RefreshSessionFuture, RefreshSessionIdentity, RefreshSessionPort,
-    RefreshSessionRevocation, RefreshSessionRotation,
+    RefreshSessionFamily, RefreshSessionIdentity, RefreshSessionPort, RefreshSessionRevocation,
+    RefreshSessionRotation,
 };

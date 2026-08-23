@@ -12,6 +12,7 @@ description.workspace = true
 runtime-swagger-ui = ["dep:utoipa-swagger-ui"]
 
 [dependencies]
+async-trait = { workspace = true }
 ryframe-kernel = { path = "../ryframe-kernel" }
 ryframe-auth = { path = "../ryframe-auth" }
 ryframe-application = { path = "../ryframe-application" }

@@ -1,7 +1,4 @@
-use std::{error::Error, fmt, future::Future, path::Path, pin::Pin, time::Duration};
-
-pub type ArtifactStoreFuture<'a, T> =
-    Pin<Box<dyn Future<Output = Result<T, ArtifactStoreError>> + Send + 'a>>;
+use std::{error::Error, fmt, path::Path, time::Duration};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ArtifactStoreErrorKind {
@@ -39,33 +36,34 @@ impl fmt::Display for ArtifactStoreError {
 
 impl Error for ArtifactStoreError {}
 
+#[async_trait::async_trait]
 pub trait ArtifactStore: Send + Sync {
     fn late_put_completion_bound(&self) -> Duration {
         Duration::from_secs(30)
     }
 
-    fn readiness<'a>(&'a self, bucket: &'a str) -> ArtifactStoreFuture<'a, ()>;
+    async fn readiness(&self, bucket: &str) -> Result<(), ArtifactStoreError>;
 
-    fn ensure_bucket<'a>(&'a self, bucket: &'a str) -> ArtifactStoreFuture<'a, ()>;
+    async fn ensure_bucket(&self, bucket: &str) -> Result<(), ArtifactStoreError>;
 
-    fn put<'a>(
-        &'a self,
-        bucket: &'a str,
-        key: &'a str,
-        data: &'a [u8],
-        content_type: &'a str,
-    ) -> ArtifactStoreFuture<'a, ()>;
+    async fn put(
+        &self,
+        bucket: &str,
+        key: &str,
+        data: &[u8],
+        content_type: &str,
+    ) -> Result<(), ArtifactStoreError>;
 
-    fn put_file<'a>(
-        &'a self,
-        bucket: &'a str,
-        key: &'a str,
-        path: &'a Path,
-        content_type: &'a str,
-        sha256_hex: Option<&'a str>,
-    ) -> ArtifactStoreFuture<'a, ()>;
+    async fn put_file(
+        &self,
+        bucket: &str,
+        key: &str,
+        path: &Path,
+        content_type: &str,
+        sha256_hex: Option<&str>,
+    ) -> Result<(), ArtifactStoreError>;
 
-    fn get<'a>(&'a self, bucket: &'a str, key: &'a str) -> ArtifactStoreFuture<'a, Vec<u8>>;
+    async fn get(&self, bucket: &str, key: &str) -> Result<Vec<u8>, ArtifactStoreError>;
 
-    fn delete<'a>(&'a self, bucket: &'a str, key: &'a str) -> ArtifactStoreFuture<'a, ()>;
+    async fn delete(&self, bucket: &str, key: &str) -> Result<(), ArtifactStoreError>;
 }

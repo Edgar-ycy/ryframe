@@ -1,7 +1,9 @@
+use async_trait::async_trait;
 use ryframe_application::ports::tenant_data::{
-    TenantDataPoolStats, TenantDataTargetAccess, TenantDataTargetFuture, TenantDataTargetHealth,
-    TenantDataTargetMetadata, TenantDataTargetPort,
+    TenantDataPoolStats, TenantDataTargetAccess, TenantDataTargetHealth, TenantDataTargetMetadata,
+    TenantDataTargetPort,
 };
+use ryframe_kernel::AppResult;
 
 use crate::{
     TenantDatabaseRouter, TenantDatabaseTargetHealthStatus, migration::TENANT_DATA_CATALOG,
@@ -9,6 +11,7 @@ use crate::{
 
 use super::super::map_error;
 
+#[async_trait]
 impl TenantDataTargetPort for TenantDatabaseRouter {
     fn contains(&self, target_key: &str) -> bool {
         self.targets().contains(target_key)
@@ -34,87 +37,68 @@ impl TenantDataTargetPort for TenantDatabaseRouter {
         TENANT_DATA_CATALOG.tables().len()
     }
 
-    fn metadata(&self) -> TenantDataTargetFuture<'_, Vec<TenantDataTargetMetadata>> {
-        Box::pin(async move {
-            Ok(self
-                .targets()
-                .metadata()
-                .await
-                .into_iter()
-                .map(|metadata| {
-                    let mode = metadata.mode_code().into();
-                    let kind = metadata.kind_code().into();
-                    TenantDataTargetMetadata {
-                        key: metadata.key,
-                        display_name: metadata.display_name,
-                        region: metadata.region,
-                        mode,
-                        kind,
-                        connected: metadata.connected,
-                        pool_max_connections: metadata.pool_max_connections,
-                        active_leases: metadata.active_leases,
-                        schema_fingerprint: metadata.schema_fingerprint,
-                        health: map_health(metadata.health),
-                        last_verified_at: metadata.last_verified_at.map(Into::into),
-                    }
-                })
-                .collect())
-        })
-    }
-
-    fn pool_stats(&self) -> TenantDataTargetFuture<'_, TenantDataPoolStats> {
-        Box::pin(async move {
-            let stats = self.targets().pool_stats().await;
-            Ok(TenantDataPoolStats {
-                reserved_connections: stats.reserved_connections,
-                max_total_connections: stats.max_total_connections,
-                open_targets: stats.open_targets,
-                opening_targets: stats.opening_targets,
+    async fn metadata(&self) -> AppResult<Vec<TenantDataTargetMetadata>> {
+        Ok(self
+            .targets()
+            .metadata()
+            .await
+            .into_iter()
+            .map(|metadata| {
+                let mode = metadata.mode_code().into();
+                let kind = metadata.kind_code().into();
+                TenantDataTargetMetadata {
+                    key: metadata.key,
+                    display_name: metadata.display_name,
+                    region: metadata.region,
+                    mode,
+                    kind,
+                    connected: metadata.connected,
+                    pool_max_connections: metadata.pool_max_connections,
+                    active_leases: metadata.active_leases,
+                    schema_fingerprint: metadata.schema_fingerprint,
+                    health: map_health(metadata.health),
+                    last_verified_at: metadata.last_verified_at.map(Into::into),
+                }
             })
+            .collect())
+    }
+
+    async fn pool_stats(&self) -> AppResult<TenantDataPoolStats> {
+        let stats = self.targets().pool_stats().await;
+        Ok(TenantDataPoolStats {
+            reserved_connections: stats.reserved_connections,
+            max_total_connections: stats.max_total_connections,
+            open_targets: stats.open_targets,
+            opening_targets: stats.opening_targets,
         })
     }
 
-    fn verify_now<'a>(&'a self, target_key: &'a str) -> TenantDataTargetFuture<'a, ()> {
-        Box::pin(async move {
-            self.verify_target_now_for_catalog(target_key, &TENANT_DATA_CATALOG)
-                .await
-                .map_err(map_error)
-        })
+    async fn verify_now(&self, target_key: &str) -> AppResult<()> {
+        self.verify_target_now_for_catalog(target_key, &TENANT_DATA_CATALOG)
+            .await
+            .map_err(map_error)
     }
 
-    fn validate_catalog<'a>(
-        &'a self,
-        target_key: &'a str,
-    ) -> TenantDataTargetFuture<'a, TenantDataTargetAccess> {
-        Box::pin(async move {
-            self.open_target_for_catalog(target_key, &TENANT_DATA_CATALOG)
-                .await
-                .map(|target| TenantDataTargetAccess {
-                    dedicated: target.is_dedicated(),
-                })
-                .map_err(map_error)
-        })
+    async fn validate_catalog(&self, target_key: &str) -> AppResult<TenantDataTargetAccess> {
+        self.open_target_for_catalog(target_key, &TENANT_DATA_CATALOG)
+            .await
+            .map(|target| TenantDataTargetAccess {
+                dedicated: target.is_dedicated(),
+            })
+            .map_err(map_error)
     }
 
-    fn is_occupied<'a>(&'a self, target_key: &'a str) -> TenantDataTargetFuture<'a, bool> {
-        Box::pin(async move {
-            self.target_occupancy_for_catalog(target_key, &TENANT_DATA_CATALOG)
-                .await
-                .map(|occupancy| occupancy.is_some())
-                .map_err(map_error)
-        })
+    async fn is_occupied(&self, target_key: &str) -> AppResult<bool> {
+        self.target_occupancy_for_catalog(target_key, &TENANT_DATA_CATALOG)
+            .await
+            .map(|occupancy| occupancy.is_some())
+            .map_err(map_error)
     }
 
-    fn tenant_is_empty<'a>(
-        &'a self,
-        target_key: &'a str,
-        tenant_id: &'a str,
-    ) -> TenantDataTargetFuture<'a, bool> {
-        Box::pin(async move {
-            self.tenant_is_empty_on_target_for_catalog(target_key, tenant_id, &TENANT_DATA_CATALOG)
-                .await
-                .map_err(map_error)
-        })
+    async fn tenant_is_empty(&self, target_key: &str, tenant_id: &str) -> AppResult<bool> {
+        self.tenant_is_empty_on_target_for_catalog(target_key, tenant_id, &TENANT_DATA_CATALOG)
+            .await
+            .map_err(map_error)
     }
 }
 

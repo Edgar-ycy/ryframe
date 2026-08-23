@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use futures_util::StreamExt;
 use ryframe_adapters::RedisClient;
 use ryframe_application::{
     CallbackScheduleMetricsObserver, ExportCleanupJobHandler, ExportJobHandler, JobQueue,
-    JobWakeupFuture, JobWakeupStream, JobWakeupTransport, JobWorker, JobWorkerPolicy,
-    MessageDispatchJobHandler, MessageRetentionJobHandler, MessageWakeupFuture,
-    MessageWakeupPublisher, MultiTenancyPolicy, ScheduleMetricsObserver,
-    ScheduledJobTargetRegistry,
+    JobWakeupStream, JobWakeupTransport, JobWorker, JobWorkerPolicy, MessageDispatchJobHandler,
+    MessageRetentionJobHandler, MessageWakeupPublisher, MultiTenancyPolicy,
+    ScheduleMetricsObserver, ScheduledJobTargetRegistry,
     ports::jobs::ExecutionTenantScope,
     system::{
         DataRetentionJobHandler, DataRetentionService, ExportService, MessageService,
@@ -26,31 +26,28 @@ struct RedisJobWakeupTransport {
     client: RedisClient,
 }
 
+#[async_trait]
 impl JobWakeupTransport for RedisJobWakeupTransport {
-    fn publish<'a>(&'a self, channel: &'a str, payload: &'a str) -> JobWakeupFuture<'a, ()> {
-        Box::pin(async move {
-            self.client
-                .publish(channel, payload)
-                .await
-                .map(|_| ())
-                .map_err(|error| error.to_string())
-        })
+    async fn publish(&self, channel: &str, payload: &str) -> Result<(), String> {
+        self.client
+            .publish(channel, payload)
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
 
-    fn subscribe<'a>(&'a self, channel: &'a str) -> JobWakeupFuture<'a, JobWakeupStream> {
-        Box::pin(async move {
-            let subscription = self
-                .client
-                .subscribe(channel)
-                .await
-                .map_err(|error| error.to_string())?;
-            let messages = subscription.into_on_message().map(|message| {
-                message
-                    .get_payload::<String>()
-                    .map_err(|error| error.to_string())
-            });
-            Ok(Box::pin(messages) as JobWakeupStream)
-        })
+    async fn subscribe(&self, channel: &str) -> Result<JobWakeupStream, String> {
+        let subscription = self
+            .client
+            .subscribe(channel)
+            .await
+            .map_err(|error| error.to_string())?;
+        let messages = subscription.into_on_message().map(|message| {
+            message
+                .get_payload::<String>()
+                .map_err(|error| error.to_string())
+        });
+        Ok(Box::pin(messages) as JobWakeupStream)
     }
 }
 
@@ -62,18 +59,17 @@ pub fn job_wakeup_transport(client: Option<&RedisClient>) -> Option<Arc<dyn JobW
     })
 }
 
+#[async_trait]
 impl MessageWakeupPublisher for RedisMessageWakeupPublisher {
-    fn publish(&self, message_id: i64) -> MessageWakeupFuture<'_> {
-        Box::pin(async move {
-            self.client
-                .publish(
-                    ryframe_application::system::MESSAGE_DISPATCH_REDIS_CHANNEL,
-                    message_id.to_string(),
-                )
-                .await
-                .map(|_| ())
-                .map_err(|error| error.to_string())
-        })
+    async fn publish(&self, message_id: i64) -> Result<(), String> {
+        self.client
+            .publish(
+                ryframe_application::system::MESSAGE_DISPATCH_REDIS_CHANNEL,
+                message_id.to_string(),
+            )
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
 }
 

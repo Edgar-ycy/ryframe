@@ -1,10 +1,10 @@
-use ryframe_application::ports::tenants::{
-    TenantProvisioningFuture, TenantProvisioningPlacement, TenantProvisioningPort,
-};
+use async_trait::async_trait;
+use ryframe_application::ports::tenants::{TenantProvisioningPlacement, TenantProvisioningPort};
 use ryframe_kernel::{AppError, AppResult};
 
 use crate::{PendingTenantDataPlacement, TenantDataError, TenantDatabaseRouter};
 
+#[async_trait]
 impl TenantProvisioningPort for TenantDatabaseRouter {
     fn prepare(
         &self,
@@ -18,15 +18,10 @@ impl TenantProvisioningPort for TenantDatabaseRouter {
             .map_err(map_error)
     }
 
-    fn provision_fence<'a>(
-        &'a self,
-        placement: &'a TenantProvisioningPlacement,
-    ) -> TenantProvisioningFuture<'a> {
-        Box::pin(async move {
-            self.provision_pending_fence(&to_infrastructure_placement(placement))
-                .await
-                .map_err(map_error)
-        })
+    async fn provision_fence(&self, placement: &TenantProvisioningPlacement) -> AppResult<()> {
+        self.provision_pending_fence(&to_infrastructure_placement(placement))
+            .await
+            .map_err(map_error)
     }
 }
 

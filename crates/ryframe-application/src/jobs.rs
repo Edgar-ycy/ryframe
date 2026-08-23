@@ -11,7 +11,7 @@ mod worker;
 
 pub use handlers::{
     ExportCleanupJobHandler, ExportJobHandler, MessageDispatchJobHandler,
-    MessageRetentionJobHandler, MessageWakeupFuture, MessageWakeupPublisher,
+    MessageRetentionJobHandler, MessageWakeupPublisher,
 };
 pub use metrics::{CallbackJobMetricsObserver, JobMetricsObserver};
 pub use outbox::{OutboxRunResult, OutboxWorker};
@@ -30,8 +30,7 @@ pub use schedule_targets::{
     ScheduledJobTargetRegistry, ScheduledJobTargetScope,
 };
 pub use wakeup::{
-    JOB_WAKEUP_REDIS_CHANNEL, JobWakeupFuture, JobWakeupStream, JobWakeupTransport, QueueWakeup,
-    WakeupQueue,
+    JOB_WAKEUP_REDIS_CHANNEL, JobWakeupStream, JobWakeupTransport, QueueWakeup, WakeupQueue,
 };
 pub use worker::{ClaimedBackgroundJob, JobHandler, JobRunResult, JobWorker};
 

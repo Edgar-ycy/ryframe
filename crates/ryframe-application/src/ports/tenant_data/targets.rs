@@ -1,5 +1,4 @@
-use std::{future::Future, pin::Pin};
-
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::AppResult;
 
@@ -38,9 +37,8 @@ pub struct TenantDataPoolStats {
     pub opening_targets: usize,
 }
 
-pub type TenantDataTargetFuture<'a, T> = Pin<Box<dyn Future<Output = AppResult<T>> + Send + 'a>>;
-
 /// 租户数据目标目录、健康状态与迁移前置检查端口。
+#[async_trait]
 pub trait TenantDataTargetPort: Send + Sync {
     fn contains(&self, target_key: &str) -> bool;
     fn is_dedicated(&self, target_key: &str) -> Option<bool>;
@@ -49,17 +47,10 @@ pub trait TenantDataTargetPort: Send + Sync {
     fn catalog_fingerprint(&self) -> String;
     fn catalog_table_count(&self) -> usize;
 
-    fn metadata(&self) -> TenantDataTargetFuture<'_, Vec<TenantDataTargetMetadata>>;
-    fn pool_stats(&self) -> TenantDataTargetFuture<'_, TenantDataPoolStats>;
-    fn verify_now<'a>(&'a self, target_key: &'a str) -> TenantDataTargetFuture<'a, ()>;
-    fn validate_catalog<'a>(
-        &'a self,
-        target_key: &'a str,
-    ) -> TenantDataTargetFuture<'a, TenantDataTargetAccess>;
-    fn is_occupied<'a>(&'a self, target_key: &'a str) -> TenantDataTargetFuture<'a, bool>;
-    fn tenant_is_empty<'a>(
-        &'a self,
-        target_key: &'a str,
-        tenant_id: &'a str,
-    ) -> TenantDataTargetFuture<'a, bool>;
+    async fn metadata(&self) -> AppResult<Vec<TenantDataTargetMetadata>>;
+    async fn pool_stats(&self) -> AppResult<TenantDataPoolStats>;
+    async fn verify_now(&self, target_key: &str) -> AppResult<()>;
+    async fn validate_catalog(&self, target_key: &str) -> AppResult<TenantDataTargetAccess>;
+    async fn is_occupied(&self, target_key: &str) -> AppResult<bool>;
+    async fn tenant_is_empty(&self, target_key: &str, tenant_id: &str) -> AppResult<bool>;
 }

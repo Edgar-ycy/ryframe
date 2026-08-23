@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ryframe_adapters::{RedisClient, rate_limit::RateLimiter};
 use ryframe_api::middleware::rate_limit::RateLimitState;
-use ryframe_api::rate_limit::{HttpRateLimiter, RateLimitFuture};
+use ryframe_api::rate_limit::HttpRateLimiter;
 use ryframe_config::AppConfig;
 use ryframe_kernel::AppResult;
 
@@ -16,17 +16,21 @@ struct HttpRateLimiterBridge {
     limiter: Arc<RateLimiter>,
 }
 
+#[async_trait::async_trait]
 impl HttpRateLimiter for HttpRateLimiterBridge {
-    fn acquire<'a>(&'a self, key: &'a str, window_secs: u64, limit: u32) -> RateLimitFuture<'a> {
-        Box::pin(async move {
-            self.limiter
-                .acquire(key, window_secs, limit)
-                .await
-                .map(|decision| ryframe_api::rate_limit::RateLimitDecision {
-                    allowed: decision.allowed,
-                    retry_after_secs: decision.retry_after_secs,
-                })
-        })
+    async fn acquire(
+        &self,
+        key: &str,
+        window_secs: u64,
+        limit: u32,
+    ) -> Result<ryframe_api::rate_limit::RateLimitDecision, String> {
+        self.limiter
+            .acquire(key, window_secs, limit)
+            .await
+            .map(|decision| ryframe_api::rate_limit::RateLimitDecision {
+                allowed: decision.allowed,
+                retry_after_secs: decision.retry_after_secs,
+            })
     }
 }
 

@@ -11,7 +11,7 @@ pub use cleanup::{
     FILE_UPLOAD_STATUS_READY, FileCleanupPersistencePort, FileCleanupRecord,
     FileCleanupTransaction,
 };
-pub use content::{FileContentFuture, FileContentProcessor, ProcessedFileContent};
+pub use content::{FileContentProcessor, ProcessedFileContent};
 pub use download::{FileDownloadPersistencePort, FileDownloadRecord};
-pub use store::{ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind, ArtifactStoreFuture};
+pub use store::{ArtifactStore, ArtifactStoreError, ArtifactStoreErrorKind};
 pub use upload::{FileUploadPersistencePort, FileUploadRecord, FileUploadTransaction};

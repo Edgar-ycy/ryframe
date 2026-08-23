@@ -1,4 +1,4 @@
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::sync::Arc;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ryframe_auth::{RequestPrincipal, jwt::Claims};
@@ -26,13 +26,11 @@ pub struct WebSocketTicketGrant {
     pub expires_in: u64,
 }
 
-pub type WebSocketTicketStoreFuture<'a, T> =
-    Pin<Box<dyn Future<Output = AppResult<T>> + Send + 'a>>;
-
+#[async_trait::async_trait]
 pub trait WebSocketTicketStore: Send + Sync {
-    fn put(&self, key: String, value: String, ttl_secs: u64) -> WebSocketTicketStoreFuture<'_, ()>;
+    async fn put(&self, key: String, value: String, ttl_secs: u64) -> AppResult<()>;
 
-    fn take<'a>(&'a self, key: &'a str) -> WebSocketTicketStoreFuture<'a, Option<String>>;
+    async fn take(&self, key: &str) -> AppResult<Option<String>>;
 }
 
 /// WebSocket 一次性票据的签发与原子消费服务。

@@ -1,4 +1,4 @@
-use std::{cmp::Reverse, future::Future, pin::Pin, sync::Arc};
+use std::{cmp::Reverse, sync::Arc};
 
 use chrono::Utc;
 use ryframe_kernel::{ActorContext, AppError, AppResult, ValidatedPageQuery};
@@ -44,34 +44,20 @@ pub struct UserSession {
     pub absolute_exp: i64,
 }
 
-pub type OnlineSessionMetadataFuture<'a, T> =
-    Pin<Box<dyn Future<Output = AppResult<T>> + Send + 'a>>;
-
 /// 在线设备展示元数据的出站端口。
+#[async_trait::async_trait]
 pub trait OnlineSessionMetadataStore: Send + Sync {
-    fn add(&self, session: UserSession, ttl_seconds: u64) -> OnlineSessionMetadataFuture<'_, ()>;
+    async fn add(&self, session: UserSession, ttl_seconds: u64) -> AppResult<()>;
 
-    fn remove<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        sid: &'a str,
-    ) -> OnlineSessionMetadataFuture<'a, ()>;
+    async fn remove(&self, tenant_id: &str, sid: &str) -> AppResult<()>;
 
-    fn list<'a>(&'a self, tenant_id: &'a str) -> OnlineSessionMetadataFuture<'a, Vec<UserSession>>;
+    async fn list(&self, tenant_id: &str) -> AppResult<Vec<UserSession>>;
 
-    fn list_for_user<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        user_id: i64,
-    ) -> OnlineSessionMetadataFuture<'a, Vec<UserSession>>;
+    async fn list_for_user(&self, tenant_id: &str, user_id: i64) -> AppResult<Vec<UserSession>>;
 
-    fn touch<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        sid: &'a str,
-    ) -> OnlineSessionMetadataFuture<'a, bool>;
+    async fn touch(&self, tenant_id: &str, sid: &str) -> AppResult<bool>;
 
-    fn cleanup_expired(&self) -> OnlineSessionMetadataFuture<'_, ()>;
+    async fn cleanup_expired(&self) -> AppResult<()>;
 }
 
 /// 在线用户管理服务。

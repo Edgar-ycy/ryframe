@@ -1,90 +1,77 @@
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::sync::Arc;
 
 use ryframe_adapters::{
     RedisClient,
     idempotency::{RedisIdempotencyStore, RemoteIdempotencyReservation},
 };
-use ryframe_api::middleware::idempotency::{
-    HttpIdempotencyStore, IdempotencyStoreFuture, StoredIdempotencyReservation,
-};
+use ryframe_api::middleware::idempotency::{HttpIdempotencyStore, StoredIdempotencyReservation};
 
 struct RedisIdempotencyStoreBridge {
     store: RedisIdempotencyStore,
 }
 
+#[async_trait::async_trait]
 impl HttpIdempotencyStore for RedisIdempotencyStoreBridge {
-    fn reserve<'a>(
-        &'a self,
-        key: &'a str,
-        fingerprint: &'a str,
+    async fn reserve(
+        &self,
+        key: &str,
+        fingerprint: &str,
         processing_ttl_secs: u64,
-    ) -> IdempotencyStoreFuture<'a, StoredIdempotencyReservation> {
-        Box::pin(async move {
-            self.store
-                .reserve(key, fingerprint, processing_ttl_secs)
-                .await
-                .map(|reservation| match reservation {
-                    RemoteIdempotencyReservation::Acquired => {
-                        StoredIdempotencyReservation::Acquired
-                    }
-                    RemoteIdempotencyReservation::Processing => {
-                        StoredIdempotencyReservation::Processing
-                    }
-                    RemoteIdempotencyReservation::Conflict => {
-                        StoredIdempotencyReservation::Conflict
-                    }
-                    RemoteIdempotencyReservation::Completed(response) => {
-                        StoredIdempotencyReservation::Completed(response)
-                    }
-                    RemoteIdempotencyReservation::NonReplayable => {
-                        StoredIdempotencyReservation::NonReplayable
-                    }
-                })
-        })
+    ) -> Result<StoredIdempotencyReservation, String> {
+        self.store
+            .reserve(key, fingerprint, processing_ttl_secs)
+            .await
+            .map(|reservation| match reservation {
+                RemoteIdempotencyReservation::Acquired => StoredIdempotencyReservation::Acquired,
+                RemoteIdempotencyReservation::Processing => {
+                    StoredIdempotencyReservation::Processing
+                }
+                RemoteIdempotencyReservation::Conflict => StoredIdempotencyReservation::Conflict,
+                RemoteIdempotencyReservation::Completed(response) => {
+                    StoredIdempotencyReservation::Completed(response)
+                }
+                RemoteIdempotencyReservation::NonReplayable => {
+                    StoredIdempotencyReservation::NonReplayable
+                }
+            })
     }
 
-    fn begin_execution<'a>(
-        &'a self,
-        key: &'a str,
-        fingerprint: &'a str,
+    async fn begin_execution(
+        &self,
+        key: &str,
+        fingerprint: &str,
         completed_ttl_secs: u64,
-    ) -> IdempotencyStoreFuture<'a, ()> {
-        Box::pin(async move {
-            self.store
-                .begin_execution(key, fingerprint, completed_ttl_secs)
-                .await
-        })
+    ) -> Result<(), String> {
+        self.store
+            .begin_execution(key, fingerprint, completed_ttl_secs)
+            .await
     }
 
-    fn complete<'a>(
-        &'a self,
-        key: &'a str,
-        fingerprint: &'a str,
-        response: &'a str,
+    async fn complete(
+        &self,
+        key: &str,
+        fingerprint: &str,
+        response: &str,
         completed_ttl_secs: u64,
-    ) -> IdempotencyStoreFuture<'a, ()> {
-        Box::pin(async move {
-            self.store
-                .complete(key, fingerprint, response, completed_ttl_secs)
-                .await
-        })
+    ) -> Result<(), String> {
+        self.store
+            .complete(key, fingerprint, response, completed_ttl_secs)
+            .await
     }
 
-    fn mark_non_replayable<'a>(
-        &'a self,
-        key: &'a str,
-        fingerprint: &'a str,
+    async fn mark_non_replayable(
+        &self,
+        key: &str,
+        fingerprint: &str,
         completed_ttl_secs: u64,
-    ) -> IdempotencyStoreFuture<'a, ()> {
-        Box::pin(async move {
-            self.store
-                .mark_non_replayable(key, fingerprint, completed_ttl_secs)
-                .await
-        })
+    ) -> Result<(), String> {
+        self.store
+            .mark_non_replayable(key, fingerprint, completed_ttl_secs)
+            .await
     }
 
-    fn release<'a>(&'a self, key: &'a str) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
-        Box::pin(async move { self.store.release(key).await })
+    async fn release(&self, key: &str) {
+        self.store.release(key).await
     }
 }
 

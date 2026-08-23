@@ -3324,6 +3324,7 @@ dependencies = [
 name = "ryframe-api"
 version = "0.11.2"
 dependencies = [
+ "async-trait",
  "axum",
  "axum-extra",
  "base64 0.23.1",

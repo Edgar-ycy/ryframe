@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use ryframe_adapters::{RedisClient, rate_limit::RateLimiter};
 use ryframe_api::AppServices;
 use ryframe_application::{
@@ -8,16 +9,15 @@ use ryframe_application::{
     generated::{GeneratedPersistencePorts, GeneratedServices},
     ports::files::ArtifactStore,
     system::{
-        AuthorizationDiagnosticService, CaptchaStore, CaptchaStoreFuture, ConfigService,
-        DataRetentionService, DeptService, DictCacheStore, DictCacheStoreFuture, DictService,
-        ExportPersistencePorts, ExportResourceServices, ExportService, FileService,
-        InMemoryCaptchaStore, LoginInfoService, MenuService, MessageService, NoticeService,
-        OnlineUserService, OperLogService, OverviewService, PermissionService, PostExportService,
-        ProductService, ProfileService, RoleService, ServiceAccountReadDependencies,
-        ServiceAccountService, TenantConfigTransferService, TenantDataMigrationService,
-        TenantRateLimitReadFuture, TenantRateLimitReadPort, TenantRateLimitSnapshot, TenantService,
-        TenantUsageService, UserImportService, UserService, WebSocketTicketService,
-        WebSocketTicketStore, WebSocketTicketStoreFuture,
+        AuthorizationDiagnosticService, CaptchaStore, ConfigService, DataRetentionService,
+        DeptService, DictCacheStore, DictService, ExportPersistencePorts, ExportResourceServices,
+        ExportService, FileService, InMemoryCaptchaStore, LoginInfoService, MenuService,
+        MessageService, NoticeService, OnlineUserService, OperLogService, OverviewService,
+        PermissionService, PostExportService, ProductService, ProfileService, RoleService,
+        ServiceAccountReadDependencies, ServiceAccountService, TenantConfigTransferService,
+        TenantDataMigrationService, TenantRateLimitReadPort, TenantRateLimitSnapshot,
+        TenantService, TenantUsageService, UserImportService, UserService, WebSocketTicketService,
+        WebSocketTicketStore,
     },
 };
 use ryframe_config::AppConfig;
@@ -44,107 +44,98 @@ struct RedisDictCacheStore {
     client: RedisClient,
 }
 
+#[async_trait]
 impl DictCacheStore for RedisDictCacheStore {
-    fn get<'a>(&'a self, key: &'a str) -> DictCacheStoreFuture<'a, Option<String>> {
-        Box::pin(async move {
-            self.client
-                .get(key)
-                .await
-                .map_err(|error| AppError::ServiceUnavailable(error.to_string()))
-        })
+    async fn get(&self, key: &str) -> Result<Option<String>, AppError> {
+        self.client
+            .get(key)
+            .await
+            .map_err(|error| AppError::ServiceUnavailable(error.to_string()))
     }
 
-    fn put(&self, key: String, value: String, ttl_secs: u64) -> DictCacheStoreFuture<'_, ()> {
-        Box::pin(async move {
-            self.client
-                .set_ex(key, value, ttl_secs)
-                .await
-                .map_err(|error| AppError::ServiceUnavailable(error.to_string()))
-        })
+    async fn put(&self, key: String, value: String, ttl_secs: u64) -> Result<(), AppError> {
+        self.client
+            .set_ex(key, value, ttl_secs)
+            .await
+            .map_err(|error| AppError::ServiceUnavailable(error.to_string()))
     }
 
-    fn remove(&self, key: String) -> DictCacheStoreFuture<'_, ()> {
-        Box::pin(async move {
-            self.client
-                .del(key)
-                .await
-                .map(|_| ())
-                .map_err(|error| AppError::ServiceUnavailable(error.to_string()))
-        })
+    async fn remove(&self, key: String) -> Result<(), AppError> {
+        self.client
+            .del(key)
+            .await
+            .map(|_| ())
+            .map_err(|error| AppError::ServiceUnavailable(error.to_string()))
     }
 }
 
+#[async_trait]
 impl CaptchaStore for RedisCaptchaStore {
-    fn set(&self, id: String, answer: String) -> CaptchaStoreFuture<'_, ()> {
-        Box::pin(async move {
-            let key = format!("{CAPTCHA_KEY_PREFIX}{id}");
-            self.client
-                .set_ex(key, answer, self.ttl_secs)
-                .await
-                .map_err(|error| {
-                    tracing::error!(%error, "Redis SET 验证码失败");
-                    AppError::ServiceUnavailable("验证码服务暂不可用".into())
-                })
-        })
-    }
-
-    fn verify<'a>(&'a self, id: &'a str, code: &'a str) -> CaptchaStoreFuture<'a, bool> {
-        Box::pin(async move {
-            let key = format!("{CAPTCHA_KEY_PREFIX}{id}");
-            self.client
-                .get_and_del(&key)
-                .await
-                .map(|stored| stored.is_some_and(|value| value.eq_ignore_ascii_case(code)))
-                .map_err(|error| {
-                    tracing::error!(%error, "Redis GETDEL 验证码失败");
-                    AppError::ServiceUnavailable("验证码服务暂不可用".into())
-                })
-        })
-    }
-}
-
-impl WebSocketTicketStore for RedisWebSocketTicketStore {
-    fn put(&self, key: String, value: String, ttl_secs: u64) -> WebSocketTicketStoreFuture<'_, ()> {
-        Box::pin(async move {
-            self.client
-                .set_ex(key, value, ttl_secs)
-                .await
-                .map_err(|error| {
-                    AppError::ServiceUnavailable(format!("WebSocket 票据写入失败: {error}"))
-                })
-        })
-    }
-
-    fn take<'a>(&'a self, key: &'a str) -> WebSocketTicketStoreFuture<'a, Option<String>> {
-        Box::pin(async move {
-            self.client.get_and_del(key).await.map_err(|error| {
-                AppError::ServiceUnavailable(format!("WebSocket 票据校验失败: {error}"))
+    async fn set(&self, id: String, answer: String) -> Result<(), AppError> {
+        let key = format!("{CAPTCHA_KEY_PREFIX}{id}");
+        self.client
+            .set_ex(key, answer, self.ttl_secs)
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, "Redis SET 验证码失败");
+                AppError::ServiceUnavailable("验证码服务暂不可用".into())
             })
+    }
+
+    async fn verify(&self, id: &str, code: &str) -> Result<bool, AppError> {
+        let key = format!("{CAPTCHA_KEY_PREFIX}{id}");
+        self.client
+            .get_and_del(&key)
+            .await
+            .map(|stored| stored.is_some_and(|value| value.eq_ignore_ascii_case(code)))
+            .map_err(|error| {
+                tracing::error!(%error, "Redis GETDEL 验证码失败");
+                AppError::ServiceUnavailable("验证码服务暂不可用".into())
+            })
+    }
+}
+
+#[async_trait]
+impl WebSocketTicketStore for RedisWebSocketTicketStore {
+    async fn put(&self, key: String, value: String, ttl_secs: u64) -> Result<(), AppError> {
+        self.client
+            .set_ex(key, value, ttl_secs)
+            .await
+            .map_err(|error| {
+                AppError::ServiceUnavailable(format!("WebSocket 票据写入失败: {error}"))
+            })
+    }
+
+    async fn take(&self, key: &str) -> Result<Option<String>, AppError> {
+        self.client.get_and_del(key).await.map_err(|error| {
+            AppError::ServiceUnavailable(format!("WebSocket 票据校验失败: {error}"))
         })
     }
 }
 
+#[async_trait]
 impl TenantRateLimitReadPort for TenantRateLimitReader {
-    fn snapshot_many<'a>(&'a self, tenant_ids: &'a [String]) -> TenantRateLimitReadFuture<'a> {
-        Box::pin(async move {
-            let keys = tenant_ids
-                .iter()
-                .map(|tenant_id| RateLimiter::tenant_key(tenant_id))
-                .collect::<Vec<_>>();
-            self.limiter
-                .snapshot_many(&keys, 1)
-                .await
-                .map_err(AppError::ServiceUnavailable)
-                .map(|snapshots| {
-                    snapshots
-                        .into_iter()
-                        .map(|snapshot| TenantRateLimitSnapshot {
-                            current: snapshot.current,
-                            remaining_secs: snapshot.remaining_secs,
-                        })
-                        .collect()
-                })
-        })
+    async fn snapshot_many(
+        &self,
+        tenant_ids: &[String],
+    ) -> Result<Vec<TenantRateLimitSnapshot>, AppError> {
+        let keys = tenant_ids
+            .iter()
+            .map(|tenant_id| RateLimiter::tenant_key(tenant_id))
+            .collect::<Vec<_>>();
+        self.limiter
+            .snapshot_many(&keys, 1)
+            .await
+            .map_err(AppError::ServiceUnavailable)
+            .map(|snapshots| {
+                snapshots
+                    .into_iter()
+                    .map(|snapshot| TenantRateLimitSnapshot {
+                        current: snapshot.current,
+                        remaining_secs: snapshot.remaining_secs,
+                    })
+                    .collect()
+            })
     }
 }
 

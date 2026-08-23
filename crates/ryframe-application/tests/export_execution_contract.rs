@@ -9,9 +9,7 @@ use ryframe_kernel::*;
 mod purge {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use ryframe_application::ports::files::{
-        ArtifactStoreError, ArtifactStoreErrorKind, ArtifactStoreFuture,
-    };
+    use ryframe_application::ports::files::{ArtifactStoreError, ArtifactStoreErrorKind};
 
     use super::*;
 
@@ -19,51 +17,50 @@ mod purge {
         attempts: AtomicUsize,
     }
 
+    #[async_trait::async_trait]
     impl ArtifactStore for RetryStorage {
-        fn readiness<'a>(&'a self, _bucket: &'a str) -> ArtifactStoreFuture<'a, ()> {
+        async fn readiness(&self, _bucket: &str) -> Result<(), ArtifactStoreError> {
             unreachable!("测试不检查存储")
         }
 
-        fn ensure_bucket<'a>(&'a self, _bucket: &'a str) -> ArtifactStoreFuture<'a, ()> {
+        async fn ensure_bucket(&self, _bucket: &str) -> Result<(), ArtifactStoreError> {
             unreachable!("测试不创建桶")
         }
 
-        fn put<'a>(
-            &'a self,
-            _bucket: &'a str,
-            _key: &'a str,
-            _data: &'a [u8],
-            _content_type: &'a str,
-        ) -> ArtifactStoreFuture<'a, ()> {
+        async fn put(
+            &self,
+            _bucket: &str,
+            _key: &str,
+            _data: &[u8],
+            _content_type: &str,
+        ) -> Result<(), ArtifactStoreError> {
             unreachable!("测试不写对象")
         }
 
-        fn put_file<'a>(
-            &'a self,
-            _bucket: &'a str,
-            _key: &'a str,
-            _path: &'a std::path::Path,
-            _content_type: &'a str,
-            _sha256_hex: Option<&'a str>,
-        ) -> ArtifactStoreFuture<'a, ()> {
+        async fn put_file(
+            &self,
+            _bucket: &str,
+            _key: &str,
+            _path: &std::path::Path,
+            _content_type: &str,
+            _sha256_hex: Option<&str>,
+        ) -> Result<(), ArtifactStoreError> {
             unreachable!("测试不写对象")
         }
 
-        fn get<'a>(&'a self, _bucket: &'a str, _key: &'a str) -> ArtifactStoreFuture<'a, Vec<u8>> {
+        async fn get(&self, _bucket: &str, _key: &str) -> Result<Vec<u8>, ArtifactStoreError> {
             unreachable!("测试不读对象")
         }
 
-        fn delete<'a>(&'a self, _bucket: &'a str, _key: &'a str) -> ArtifactStoreFuture<'a, ()> {
-            Box::pin(async move {
-                if self.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
-                    Err(ArtifactStoreError::new(
-                        ArtifactStoreErrorKind::Unavailable,
-                        "临时不可用",
-                    ))
-                } else {
-                    Ok(())
-                }
-            })
+        async fn delete(&self, _bucket: &str, _key: &str) -> Result<(), ArtifactStoreError> {
+            if self.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                Err(ArtifactStoreError::new(
+                    ArtifactStoreErrorKind::Unavailable,
+                    "临时不可用",
+                ))
+            } else {
+                Ok(())
+            }
         }
     }
 

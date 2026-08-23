@@ -1,10 +1,6 @@
-use std::{
-    future::Future,
-    pin::Pin,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
 };
 
 use async_trait::async_trait;
@@ -19,10 +15,9 @@ use crate::system::{
 
 type RedisWakeupFailureCallback = dyn Fn() + Send + Sync;
 
-pub type MessageWakeupFuture<'a> = Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
-
+#[async_trait]
 pub trait MessageWakeupPublisher: Send + Sync {
-    fn publish(&self, message_id: i64) -> MessageWakeupFuture<'_>;
+    async fn publish(&self, message_id: i64) -> Result<(), String>;
 }
 
 /// 执行对象存储导出并更新公开导出任务状态的处理器。

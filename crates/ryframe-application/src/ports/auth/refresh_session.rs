@@ -1,8 +1,4 @@
-use std::{future::Future, pin::Pin};
-
 use ryframe_kernel::AppResult;
-
-pub type RefreshSessionFuture<'a, T> = Pin<Box<dyn Future<Output = AppResult<T>> + Send + 'a>>;
 
 #[derive(Debug, Clone)]
 pub struct RefreshSessionFamily {
@@ -41,56 +37,46 @@ pub enum RefreshSessionRotation {
 }
 
 /// 刷新令牌族的权威状态端口。
+#[async_trait::async_trait]
 pub trait RefreshSessionPort: Send + Sync {
-    fn register(&self, family: RefreshSessionFamily) -> RefreshSessionFuture<'_, ()>;
+    async fn register(&self, family: RefreshSessionFamily) -> AppResult<()>;
 
-    fn rotate<'a>(
-        &'a self,
-        sid: &'a str,
-        presented_jti: &'a str,
-        new_jti: &'a str,
+    async fn rotate(
+        &self,
+        sid: &str,
+        presented_jti: &str,
+        new_jti: &str,
         now: i64,
-        attempt_id: &'a str,
-    ) -> RefreshSessionFuture<'a, RefreshSessionRotation>;
+        attempt_id: &str,
+    ) -> AppResult<RefreshSessionRotation>;
 
-    fn identity<'a>(
-        &'a self,
-        sid: &'a str,
-    ) -> RefreshSessionFuture<'a, Option<RefreshSessionIdentity>>;
+    async fn identity(&self, sid: &str) -> AppResult<Option<RefreshSessionIdentity>>;
 
-    fn is_active_for_identity<'a>(
-        &'a self,
-        sid: &'a str,
-        tenant_id: &'a str,
+    async fn is_active_for_identity(
+        &self,
+        sid: &str,
+        tenant_id: &str,
         user_id: i64,
-    ) -> RefreshSessionFuture<'a, bool>;
+    ) -> AppResult<bool>;
 
-    fn revoke<'a>(&'a self, sid: &'a str) -> RefreshSessionFuture<'a, bool>;
+    async fn revoke(&self, sid: &str) -> AppResult<bool>;
 
-    fn revoke_for_tenant<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        sid: &'a str,
-    ) -> RefreshSessionFuture<'a, bool>;
+    async fn revoke_for_tenant(&self, tenant_id: &str, sid: &str) -> AppResult<bool>;
 
-    fn revoke_for_user<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn revoke_for_user(
+        &self,
+        tenant_id: &str,
         user_id: i64,
-        sid: &'a str,
-    ) -> RefreshSessionFuture<'a, RefreshSessionRevocation>;
+        sid: &str,
+    ) -> AppResult<RefreshSessionRevocation>;
 
-    fn session_sids_for_user<'a>(
-        &'a self,
-        tenant_id: &'a str,
-        user_id: i64,
-    ) -> RefreshSessionFuture<'a, Vec<String>>;
+    async fn session_sids_for_user(&self, tenant_id: &str, user_id: i64) -> AppResult<Vec<String>>;
 
-    fn revoke_other_sessions_for_user<'a>(
-        &'a self,
-        tenant_id: &'a str,
+    async fn revoke_other_sessions_for_user(
+        &self,
+        tenant_id: &str,
         user_id: i64,
-        current_sid: &'a str,
-        candidate_sids: &'a [String],
-    ) -> RefreshSessionFuture<'a, u64>;
+        current_sid: &str,
+        candidate_sids: &[String],
+    ) -> AppResult<u64>;
 }

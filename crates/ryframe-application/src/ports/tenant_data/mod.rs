@@ -3,12 +3,12 @@ mod targets;
 mod tracking;
 
 pub use migration::{
-    TenantDataCatalogTable, TenantDataCleanupOwnership, TenantDataFence, TenantDataMigrationFuture,
-    TenantDataMigrationPort, TenantDataRow, TenantDataRowBatch,
+    TenantDataCatalogTable, TenantDataCleanupOwnership, TenantDataFence, TenantDataMigrationPort,
+    TenantDataRow, TenantDataRowBatch,
 };
 pub use targets::{
-    TenantDataPoolStats, TenantDataTargetAccess, TenantDataTargetFuture, TenantDataTargetHealth,
-    TenantDataTargetMetadata, TenantDataTargetPort,
+    TenantDataPoolStats, TenantDataTargetAccess, TenantDataTargetHealth, TenantDataTargetMetadata,
+    TenantDataTargetPort,
 };
 pub use tracking::{
     CreateTenantDataMigrationRecord, MIGRATION_ITEM_CLEANUP_CLEANED,

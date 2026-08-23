@@ -2,8 +2,8 @@ use std::{sync::Arc, time::Duration};
 
 use ryframe_adapters::RedisClient;
 use ryframe_api::monitor::{
-    DatabaseConnectionCountFuture, DatabaseMonitor, DatabaseNodeHealth, DatabasePingFuture,
-    DatabaseTopologyFuture, DatabaseTopologyHealth, DependencyHealthCache, DependencyStatus,
+    DatabaseMonitor, DatabaseNodeHealth, DatabaseTopologyHealth, DependencyHealthCache,
+    DependencyStatus,
 };
 use ryframe_application::system::FileService;
 use ryframe_db::{ControlDatabaseCluster, SeaOrmDatabaseMonitor};
@@ -17,24 +17,23 @@ struct DatabaseMonitorBridge {
     monitor: SeaOrmDatabaseMonitor,
 }
 
+#[async_trait::async_trait]
 impl DatabaseMonitor for DatabaseMonitorBridge {
-    fn ping(&self) -> DatabasePingFuture<'_> {
-        Box::pin(self.monitor.ping())
+    async fn ping(&self) -> bool {
+        self.monitor.ping().await
     }
 
-    fn active_connections(&self) -> DatabaseConnectionCountFuture<'_> {
-        Box::pin(self.monitor.active_connections())
+    async fn active_connections(&self) -> Option<i64> {
+        self.monitor.active_connections().await
     }
 
-    fn topology_health(&self) -> DatabaseTopologyFuture<'_> {
-        Box::pin(async move {
-            let health = self.monitor.topology_health().await;
-            DatabaseTopologyHealth {
-                primary_healthy: health.primary_healthy,
-                replicas: health.replicas.into_iter().map(map_node_health).collect(),
-                sources: health.sources.into_iter().map(map_node_health).collect(),
-            }
-        })
+    async fn topology_health(&self) -> DatabaseTopologyHealth {
+        let health = self.monitor.topology_health().await;
+        DatabaseTopologyHealth {
+            primary_healthy: health.primary_healthy,
+            replicas: health.replicas.into_iter().map(map_node_health).collect(),
+            sources: health.sources.into_iter().map(map_node_health).collect(),
+        }
     }
 }
 
