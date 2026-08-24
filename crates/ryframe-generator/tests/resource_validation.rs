@@ -142,6 +142,27 @@ fn v1_structural_assumptions_are_manifest_errors_not_renderer_panics() {
 }
 
 #[test]
+fn frontend_extension_page_is_a_safe_static_vue_module() {
+    let source = post_source();
+    let unsafe_path = changed(
+        &source,
+        "page = \"@/views/system/post/index.vue\"",
+        "page = \"@/views/../secret.vue\"",
+    );
+    let error = normalize(&unsafe_path, "post").expect_err("页面路径不得逃出 views");
+    assert!(error.contains("frontend 扩展页面路径"));
+    assert!(error.contains("catalog/resources/post.toml"));
+
+    let non_string = changed(
+        &source,
+        "page = \"@/views/system/post/index.vue\"",
+        "page = true",
+    );
+    let error = normalize(&non_string, "post").expect_err("页面路径必须是字符串");
+    assert!(error.contains("必须是字符串"));
+}
+
+#[test]
 fn service_managed_and_form_view_contracts_are_explicit() {
     let device = device_source();
     let editable_tenant = changed(

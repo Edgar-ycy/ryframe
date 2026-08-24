@@ -293,6 +293,13 @@ fn render_frontend(resource: &ResourceIr, assets: &mut Vec<GeneratedAsset>) {
         assets,
         resource,
         AssetRoot::Frontend,
+        format!("src/generated/resources/{name}/registration.ts"),
+        slice::frontend_registration(resource),
+    );
+    push(
+        assets,
+        resource,
+        AssetRoot::Frontend,
         format!("src/generated/resources/{name}/index.ts"),
         format!(
             "{}export * from './api'\nexport * from './fields'\nexport {{ default as {}Page }} from './page.vue'\n",

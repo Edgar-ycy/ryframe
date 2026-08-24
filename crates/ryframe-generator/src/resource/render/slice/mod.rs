@@ -58,6 +58,10 @@ pub(super) fn frontend_page(resource: &ResourceIr) -> String {
     frontend::page(resource)
 }
 
+pub(super) fn frontend_registration(resource: &ResourceIr) -> String {
+    frontend::registration(resource)
+}
+
 pub(super) fn migration(resource: &ResourceIr, header: &str) -> String {
     migration::migration(resource, header)
 }

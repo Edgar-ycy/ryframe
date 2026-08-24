@@ -5,7 +5,7 @@ mod schema;
 mod type_mapping;
 
 /// 生成器版本号；生成边界或端口签名变化时递增。
-pub const GENERATOR_VERSION: &str = "1.1.0";
+pub const GENERATOR_VERSION: &str = "1.2.0";
 
 pub use resource::{
     AccessSpec, ApiSpec, AssetRoot, AuditSpec, DatabaseSpec, EnumValueSpec, ExplainNode,

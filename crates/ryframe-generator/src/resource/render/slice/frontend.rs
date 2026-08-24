@@ -63,6 +63,33 @@ pub(super) fn page(resource: &ResourceIr) -> String {
     render_page(resource)
 }
 
+pub(super) fn registration(resource: &ResourceIr) -> String {
+    let page = resource
+        .frontend_extensions
+        .get("page")
+        .and_then(toml::Value::as_str)
+        .unwrap_or("./page.vue");
+    format!(
+        r#"{}import {{ definePageManifest }} from '@/features/pages'
+
+export const pageManifest = definePageManifest({{
+  pages: [
+    {{
+      routeKey: {:?},
+      permissionCode: {:?},
+      path: {:?},
+      page: () => import({page:?}),
+    }},
+  ],
+}})
+"#,
+        super::super::slash_header(resource),
+        resource.route.key,
+        resource.access.permissions.list,
+        resource.route.path,
+    )
+}
+
 fn render_fields(resource: &ResourceIr) -> String {
     let pascal = &resource.pascal_name;
     let form_fields = resource

@@ -303,6 +303,15 @@ fn copy_directory(source: &Path, target: &Path) {
 }
 
 fn register_device_frontend_contract(frontend: &Path) {
+    let permissions_path = frontend.join("src/api/generated/permissions.ts");
+    let permissions = fs::read_to_string(&permissions_path).expect("应读取候选权限清单");
+    let permissions = permissions.replacen(
+        "export const permissionCatalog = [\n",
+        "export const permissionCatalog = [\n  \"system:device:list\",\n",
+        1,
+    );
+    fs::write(permissions_path, permissions).expect("应写入临时候选权限清单");
+
     let operations_path = frontend.join("src/api/generated/operations.ts");
     let mut operations = fs::read_to_string(&operations_path).expect("应读取候选 operation 清单");
     let fixture = include_str!("fixtures/device_operations.ts.part");

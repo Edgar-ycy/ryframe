@@ -252,3 +252,4 @@ export_permission = "system:post:export"
 
 [extensions.frontend]
 export = "post"
+page = "@/views/system/post/index.vue"

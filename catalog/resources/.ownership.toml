@@ -1,200 +1,208 @@
 format_version = 1
-generator_version = "1.1.0"
+generator_version = "1.2.0"
 
 [[entries]]
 resource = "__catalog__"
 root = "backend"
 path = "catalog/access.generated.toml"
-source_hash = "62b13e787581e2cbf7aff220cdaf65140394d6f5a38a08068a2c4e44ae322c84"
-content_hash = "62b13e787581e2cbf7aff220cdaf65140394d6f5a38a08068a2c4e44ae322c84"
+source_hash = "766c52c222f9d0d3f1e8f7aa12c3b3e119299261914b053a83c3f720143243aa"
+content_hash = "766c52c222f9d0d3f1e8f7aa12c3b3e119299261914b053a83c3f720143243aa"
 
 [[entries]]
 resource = "__catalog__"
 root = "backend"
 path = "crates/ryframe-api/src/generated/crud_resources.rs"
-source_hash = "929813706ba80eb7622a92dee13e9eb9335e9da1ef716b6b06b982b6f35edeae"
-content_hash = "929813706ba80eb7622a92dee13e9eb9335e9da1ef716b6b06b982b6f35edeae"
+source_hash = "1989baa5d4cc6cb1d7c27c37f61e52846165bb34396d92a3eb4141b976c4510c"
+content_hash = "1989baa5d4cc6cb1d7c27c37f61e52846165bb34396d92a3eb4141b976c4510c"
 
 [[entries]]
 resource = "__catalog__"
 root = "backend"
 path = "crates/ryframe-api/src/generated/mod.rs"
-source_hash = "da6e533f29913d434c70406bc0478c27dc6b62c42fb8bde3956be382eb4f7ad9"
-content_hash = "da6e533f29913d434c70406bc0478c27dc6b62c42fb8bde3956be382eb4f7ad9"
+source_hash = "4857049d52a4a0d4b72b69a900936b488cc80485f308beb61ae2a05f2b41058f"
+content_hash = "4857049d52a4a0d4b72b69a900936b488cc80485f308beb61ae2a05f2b41058f"
 
 [[entries]]
 resource = "__catalog__"
 root = "backend"
 path = "crates/ryframe-api/src/generated/openapi.rs"
-source_hash = "377086ef68cfde6cf5ee2c080d3276208630bb5278719d85be6a459556b898cb"
-content_hash = "377086ef68cfde6cf5ee2c080d3276208630bb5278719d85be6a459556b898cb"
+source_hash = "4b043a030ceee17c684067c329e74f887528a738d19bd4f5d534593e94bb3328"
+content_hash = "4b043a030ceee17c684067c329e74f887528a738d19bd4f5d534593e94bb3328"
 
 [[entries]]
 resource = "post"
 root = "backend"
 path = "crates/ryframe-api/src/generated/post/dto.rs"
-source_hash = "882cfe6b6ff4369009676d12336edaf0713a97b5b34ba2d1f0ac5b305e79479f"
+source_hash = "dedbe510d8f1627ba6042a31069ac37c86e72fb4fb91826adbfb3a1aff97179e"
 schema_hash = "2f4af73c2cfc449e270f2cf5eae8104ebe75cf19f7001cbfcf2ac750feb4fdc9"
-content_hash = "b73a9021d19bb3dbd602069581955306fc3388c973c9f8d8989b732a04948df6"
+content_hash = "40fb739664a483b4cbeed4437b7f88b65d45482d2c24fc86523c7a9672a0d1b3"
 
 [[entries]]
 resource = "post"
 root = "backend"
 path = "crates/ryframe-api/src/generated/post/handler.rs"
-source_hash = "882cfe6b6ff4369009676d12336edaf0713a97b5b34ba2d1f0ac5b305e79479f"
+source_hash = "dedbe510d8f1627ba6042a31069ac37c86e72fb4fb91826adbfb3a1aff97179e"
 schema_hash = "2f4af73c2cfc449e270f2cf5eae8104ebe75cf19f7001cbfcf2ac750feb4fdc9"
-content_hash = "fc759e5441be9646ee10deb3b1b2bd5e869b8af90381d59116b8923d364b8147"
+content_hash = "d47ce8baf4b232d23aa143b4ed8f242814d2233c7908252b205f09392cd98f87"
 
 [[entries]]
 resource = "post"
 root = "backend"
 path = "crates/ryframe-api/src/generated/post/mod.rs"
-source_hash = "882cfe6b6ff4369009676d12336edaf0713a97b5b34ba2d1f0ac5b305e79479f"
+source_hash = "dedbe510d8f1627ba6042a31069ac37c86e72fb4fb91826adbfb3a1aff97179e"
 schema_hash = "2f4af73c2cfc449e270f2cf5eae8104ebe75cf19f7001cbfcf2ac750feb4fdc9"
-content_hash = "0b4c66372ae538163d7534895d01e3f7125842f965e513131d7993444eeb79e7"
+content_hash = "d089fa9e7dde381561c127540e5b80e301086ed0ffee941d1385b1d20d439519"
 
 [[entries]]
 resource = "post"
 root = "backend"
 path = "crates/ryframe-api/src/generated/post/openapi.rs"
-source_hash = "882cfe6b6ff4369009676d12336edaf0713a97b5b34ba2d1f0ac5b305e79479f"
+source_hash = "dedbe510d8f1627ba6042a31069ac37c86e72fb4fb91826adbfb3a1aff97179e"
 schema_hash = "2f4af73c2cfc449e270f2cf5eae8104ebe75cf19f7001cbfcf2ac750feb4fdc9"
-content_hash = "b7852c1310ca335cd9f5f1ca99ac5d5b989b1c4a1b1badb04c2f3a4149bfcfae"
+content_hash = "cbeba68b63466504e6f3244c521b29aa885c7c60828e39045583fad1d6e7da11"
 
 [[entries]]
 resource = "__catalog__"
 root = "backend"
 path = "crates/ryframe-api/src/generated/router.rs"
-source_hash = "e2fceffa9fa0d6a65fe69cb2cbe2a0fff8ecf6a7d8cd0da7ed0151dff2ec5d27"
-content_hash = "e2fceffa9fa0d6a65fe69cb2cbe2a0fff8ecf6a7d8cd0da7ed0151dff2ec5d27"
+source_hash = "c3d16ca0fef389ee7e4d2936638df1a113910c0cfe547656ccb4e2112f2112ed"
+content_hash = "c3d16ca0fef389ee7e4d2936638df1a113910c0cfe547656ccb4e2112f2112ed"
 
 [[entries]]
 resource = "__catalog__"
 root = "backend"
 path = "crates/ryframe-application/src/generated/mod.rs"
-source_hash = "3f8489ee8e739f8170a1b6907ada631971237d65570ae227eea7e83b92f981b0"
-content_hash = "3f8489ee8e739f8170a1b6907ada631971237d65570ae227eea7e83b92f981b0"
+source_hash = "7f37bf0580e24f4b2784baa5340272a89b3262be4e82581ae5a2847e1d3f9208"
+content_hash = "7f37bf0580e24f4b2784baa5340272a89b3262be4e82581ae5a2847e1d3f9208"
 
 [[entries]]
 resource = "post"
 root = "backend"
 path = "crates/ryframe-application/src/generated/post/fake.rs"
-source_hash = "882cfe6b6ff4369009676d12336edaf0713a97b5b34ba2d1f0ac5b305e79479f"
+source_hash = "dedbe510d8f1627ba6042a31069ac37c86e72fb4fb91826adbfb3a1aff97179e"
 schema_hash = "2f4af73c2cfc449e270f2cf5eae8104ebe75cf19f7001cbfcf2ac750feb4fdc9"
-content_hash = "84d731a10566dfed25c7caea0c2ac55192f300da6ff6e6dc237f52fe85326d45"
+content_hash = "a9e2f282b2ac39c1c0958755177103e18e7ca84f62026df3f2667e5d7c5b2449"
 
 [[entries]]
 resource = "post"
 root = "backend"
 path = "crates/ryframe-application/src/generated/post/mod.rs"
-source_hash = "882cfe6b6ff4369009676d12336edaf0713a97b5b34ba2d1f0ac5b305e79479f"
+source_hash = "dedbe510d8f1627ba6042a31069ac37c86e72fb4fb91826adbfb3a1aff97179e"
 schema_hash = "2f4af73c2cfc449e270f2cf5eae8104ebe75cf19f7001cbfcf2ac750feb4fdc9"
-content_hash = "e6ede7d895c7c0e2ca2df93517593b55b694abf188d1c17de49e9da7783dda7c"
+content_hash = "378a1930d7dc68d800f076d4a3e3f8cc63a17d7fa2eaac98fb20582757bd4b57"
 
 [[entries]]
 resource = "post"
 root = "backend"
 path = "crates/ryframe-application/src/generated/post/model.rs"
-source_hash = "882cfe6b6ff4369009676d12336edaf0713a97b5b34ba2d1f0ac5b305e79479f"
+source_hash = "dedbe510d8f1627ba6042a31069ac37c86e72fb4fb91826adbfb3a1aff97179e"
 schema_hash = "2f4af73c2cfc449e270f2cf5eae8104ebe75cf19f7001cbfcf2ac750feb4fdc9"
-content_hash = "7219f6f74cd00ac654a311b857f1355833d04725687e35594359140b36bb0a0d"
+content_hash = "cdf54c88c729ab71a098bb0897822356a9d1893c1b95d828023bb11c71e9ea8a"
 
 [[entries]]
 resource = "post"
 root = "backend"
 path = "crates/ryframe-application/src/generated/post/port.rs"
-source_hash = "882cfe6b6ff4369009676d12336edaf0713a97b5b34ba2d1f0ac5b305e79479f"
+source_hash = "dedbe510d8f1627ba6042a31069ac37c86e72fb4fb91826adbfb3a1aff97179e"
 schema_hash = "2f4af73c2cfc449e270f2cf5eae8104ebe75cf19f7001cbfcf2ac750feb4fdc9"
-content_hash = "1c33c95e125d366240d9b82576e767a9b06564e08055888e01ef1f37a1390c2a"
+content_hash = "d76013d024957c5d8cacdac36a9dcd58253997e639f34c0040d3de0f12de4b91"
 
 [[entries]]
 resource = "post"
 root = "backend"
 path = "crates/ryframe-application/src/generated/post/service.rs"
-source_hash = "882cfe6b6ff4369009676d12336edaf0713a97b5b34ba2d1f0ac5b305e79479f"
+source_hash = "dedbe510d8f1627ba6042a31069ac37c86e72fb4fb91826adbfb3a1aff97179e"
 schema_hash = "2f4af73c2cfc449e270f2cf5eae8104ebe75cf19f7001cbfcf2ac750feb4fdc9"
-content_hash = "ef66df66e32f175d0294fac29b92efb1b3d4fffe4793edcd49351ec8ae370172"
+content_hash = "efcd9e23dad2275fb816977350af511290890b9379ea7c8cbc70747d2830b73b"
 
 [[entries]]
 resource = "__catalog__"
 root = "backend"
 path = "crates/ryframe-application/src/generated/services.rs"
-source_hash = "2407ac41de095ef7596bb112360dc586d14900cb941aab4f858ffa750aec3adc"
-content_hash = "2407ac41de095ef7596bb112360dc586d14900cb941aab4f858ffa750aec3adc"
+source_hash = "ec04dc110bc29c4239df5b981bb73cbc69c1dc3b15055b886c1829e00def1a03"
+content_hash = "ec04dc110bc29c4239df5b981bb73cbc69c1dc3b15055b886c1829e00def1a03"
 
 [[entries]]
 resource = "__catalog__"
 root = "backend"
 path = "crates/ryframe-db/src/generated/mod.rs"
-source_hash = "05b985a89007f62e5aac5210406135a0f51863bd5ad1515980cefa41fcd53ceb"
-content_hash = "05b985a89007f62e5aac5210406135a0f51863bd5ad1515980cefa41fcd53ceb"
+source_hash = "a392e3f939146bf0ec79a17f8bd65be284a72828f3a829f1ec0c57c606bd359a"
+content_hash = "a392e3f939146bf0ec79a17f8bd65be284a72828f3a829f1ec0c57c606bd359a"
 
 [[entries]]
 resource = "post"
 root = "backend"
 path = "crates/ryframe-db/src/generated/post/entity.rs"
-source_hash = "882cfe6b6ff4369009676d12336edaf0713a97b5b34ba2d1f0ac5b305e79479f"
+source_hash = "dedbe510d8f1627ba6042a31069ac37c86e72fb4fb91826adbfb3a1aff97179e"
 schema_hash = "2f4af73c2cfc449e270f2cf5eae8104ebe75cf19f7001cbfcf2ac750feb4fdc9"
-content_hash = "264fc5e316f19f60e0cb27f9a8b166f7b2fb65409b67245091e1209b67e33692"
+content_hash = "110af6398dd9602f38e889da25bf59b89d4be257b2cab775dc81c9ebdd3005e9"
 
 [[entries]]
 resource = "post"
 root = "backend"
 path = "crates/ryframe-db/src/generated/post/mod.rs"
-source_hash = "882cfe6b6ff4369009676d12336edaf0713a97b5b34ba2d1f0ac5b305e79479f"
+source_hash = "dedbe510d8f1627ba6042a31069ac37c86e72fb4fb91826adbfb3a1aff97179e"
 schema_hash = "2f4af73c2cfc449e270f2cf5eae8104ebe75cf19f7001cbfcf2ac750feb4fdc9"
-content_hash = "d7f76eadf8f2ffee7ea93ecfc9a845118ac8405cd624ed82ac0f072d607e5121"
+content_hash = "848c2a50c0b4643df27b3af7ba2120ffb0f2dd97e7c6bf89d0ce1eb3ca47d296"
 
 [[entries]]
 resource = "post"
 root = "backend"
 path = "crates/ryframe-db/src/generated/post/repository.rs"
-source_hash = "882cfe6b6ff4369009676d12336edaf0713a97b5b34ba2d1f0ac5b305e79479f"
+source_hash = "dedbe510d8f1627ba6042a31069ac37c86e72fb4fb91826adbfb3a1aff97179e"
 schema_hash = "2f4af73c2cfc449e270f2cf5eae8104ebe75cf19f7001cbfcf2ac750feb4fdc9"
-content_hash = "ac73cc7ea44d72c0aab532390ccb213d62c1cf267bc3ddcf67e85349c3b83692"
+content_hash = "890e3887beb8ec5f72f46b013b0b758c8dbd3eccf29697fd1fd74d87be663ed1"
 
 [[entries]]
 resource = "__catalog__"
 root = "backend"
 path = "crates/ryframe-tenant-db/src/generated/mod.rs"
-source_hash = "8939a9a42b7a4677978a3c4834171e9aee1bdb2308154949c16eccffc55f4c58"
-content_hash = "8939a9a42b7a4677978a3c4834171e9aee1bdb2308154949c16eccffc55f4c58"
+source_hash = "8e417e75aafd15421f9dfcbfca190367b17875894ba14fa34e494f10e9bae7a8"
+content_hash = "8e417e75aafd15421f9dfcbfca190367b17875894ba14fa34e494f10e9bae7a8"
 
 [[entries]]
 resource = "__catalog__"
 root = "frontend"
 path = "src/generated/resources/index.ts"
-source_hash = "a65ab8fa4811cfdc189b042c2b17305b9ad74a05c33af081a3706a6be3711f5a"
-content_hash = "a65ab8fa4811cfdc189b042c2b17305b9ad74a05c33af081a3706a6be3711f5a"
+source_hash = "6fc679b6bea187189cab7916136d9e108589a7dc5888f7211ab24d33c01b62ab"
+content_hash = "6fc679b6bea187189cab7916136d9e108589a7dc5888f7211ab24d33c01b62ab"
 
 [[entries]]
 resource = "post"
 root = "frontend"
 path = "src/generated/resources/post/api.ts"
-source_hash = "882cfe6b6ff4369009676d12336edaf0713a97b5b34ba2d1f0ac5b305e79479f"
+source_hash = "dedbe510d8f1627ba6042a31069ac37c86e72fb4fb91826adbfb3a1aff97179e"
 schema_hash = "2f4af73c2cfc449e270f2cf5eae8104ebe75cf19f7001cbfcf2ac750feb4fdc9"
-content_hash = "ff24935456cf4e80661b5b14834a6e0ed74965834d9fbbf2baf8bd15d5b4c79d"
+content_hash = "f25ea5f63ff02d9bb271f0545236c9c53e7e53a4c697064d74024179f4b2808b"
 
 [[entries]]
 resource = "post"
 root = "frontend"
 path = "src/generated/resources/post/fields.ts"
-source_hash = "882cfe6b6ff4369009676d12336edaf0713a97b5b34ba2d1f0ac5b305e79479f"
+source_hash = "dedbe510d8f1627ba6042a31069ac37c86e72fb4fb91826adbfb3a1aff97179e"
 schema_hash = "2f4af73c2cfc449e270f2cf5eae8104ebe75cf19f7001cbfcf2ac750feb4fdc9"
-content_hash = "f9f6e6f3447f1e1cdd42b5838f89e9bcbc9d755ed9c928f4eb3c0d5c2359b9dd"
+content_hash = "93b19b411fcb490c5faf7cf5d09406ec7cd280b8026e7e795c6bcc0bd437a867"
 
 [[entries]]
 resource = "post"
 root = "frontend"
 path = "src/generated/resources/post/index.ts"
-source_hash = "882cfe6b6ff4369009676d12336edaf0713a97b5b34ba2d1f0ac5b305e79479f"
+source_hash = "dedbe510d8f1627ba6042a31069ac37c86e72fb4fb91826adbfb3a1aff97179e"
 schema_hash = "2f4af73c2cfc449e270f2cf5eae8104ebe75cf19f7001cbfcf2ac750feb4fdc9"
-content_hash = "9e03d343d8cb20a6aac619792a6fadc492bb4c7ccf2077c4291245838c324747"
+content_hash = "4d9c4ff859de64db06252b05a793a7001a4179764007a590145679406c958d59"
 
 [[entries]]
 resource = "post"
 root = "frontend"
 path = "src/generated/resources/post/page.vue"
-source_hash = "882cfe6b6ff4369009676d12336edaf0713a97b5b34ba2d1f0ac5b305e79479f"
+source_hash = "dedbe510d8f1627ba6042a31069ac37c86e72fb4fb91826adbfb3a1aff97179e"
 schema_hash = "2f4af73c2cfc449e270f2cf5eae8104ebe75cf19f7001cbfcf2ac750feb4fdc9"
-content_hash = "18e6bf8aacad845103cccd509eba9aaaedff1dbbb5741e60ae105d9e445bd1ec"
+content_hash = "ab5cd7cb4c6d02e889011bac0eec9dda1058ea8d499834460721a757c1f8782b"
+
+[[entries]]
+resource = "post"
+root = "frontend"
+path = "src/generated/resources/post/registration.ts"
+source_hash = "dedbe510d8f1627ba6042a31069ac37c86e72fb4fb91826adbfb3a1aff97179e"
+schema_hash = "2f4af73c2cfc449e270f2cf5eae8104ebe75cf19f7001cbfcf2ac750feb4fdc9"
+content_hash = "af5556f1b9928de5332260ab3c131a73644c996cb4cdc87f0f6d761fa82fb6e0"

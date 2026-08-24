@@ -165,6 +165,10 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
     assert!(api.contains("export type PostQuery = OperationQuery<'get_system_posts'>"));
     assert!(api.contains("OperationJsonBody<'post_system_posts'>"));
     assert!(!api.contains("export interface PostRecord"));
+    let registration = content("post/registration.ts");
+    assert!(registration.contains("routeKey: \"system.post\""));
+    assert!(registration.contains("permissionCode: \"system:post:list\""));
+    assert!(registration.contains("page: () => import(\"@/views/system/post/index.vue\")"));
     let handler = content("post/handler.rs");
     assert!(handler.contains("tag = \"岗位管理\""));
     assert!(!handler.contains("tag = \"岗位\","));
@@ -234,6 +238,7 @@ fn rendering_is_deterministic_readable_and_split_by_responsibility() {
         "src/generated/resources/device/api.ts",
         "src/generated/resources/device/fields.ts",
         "src/generated/resources/device/page.vue",
+        "src/generated/resources/device/registration.ts",
     ] {
         assert!(
             first.assets.iter().any(|asset| asset.path == expected),

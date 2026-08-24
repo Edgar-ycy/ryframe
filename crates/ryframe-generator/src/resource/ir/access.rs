@@ -99,6 +99,29 @@ pub(super) fn validate_extensions(
             .with_resource(resource)
             .with_file(source_path));
         }
+        if side == "frontend" && key == "page" {
+            let toml::Value::String(page) = value else {
+                return Err(ResourceError::new(
+                    "frontend 扩展 `page` 必须是字符串",
+                    "填写 `@/views/<domain>/<resource>/index.vue` 形式的页面模块路径",
+                )
+                .with_resource(resource)
+                .with_file(source_path));
+            };
+            let valid = page.starts_with("@/views/")
+                && page.ends_with(".vue")
+                && page
+                    .chars()
+                    .all(|value| value.is_ascii_alphanumeric() || "@/_-.".contains(value));
+            if !valid || page.contains("..") {
+                return Err(ResourceError::new(
+                    format!("frontend 扩展页面路径 `{page}` 格式无效"),
+                    "只使用 `@/views/` 下由字母、数字、斜杠、短横线和下划线组成的 Vue 路径",
+                )
+                .with_resource(resource)
+                .with_file(source_path));
+            }
+        }
         if collect_permissions && let Some(name) = key.strip_suffix("_permission") {
             if name.is_empty() || !is_snake_identifier(name) {
                 return Err(ResourceError::new(
