@@ -4,23 +4,20 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use ryframe_adapters::RedisClient;
 use ryframe_application::{
-    CallbackScheduleMetricsObserver, ExportCleanupJobHandler, ExportJobHandler, JobQueue,
-    JobWakeupStream, JobWakeupTransport, JobWorker, JobWorkerPolicy, MessageDispatchJobHandler,
-    MessageRetentionJobHandler, MessageWakeupPublisher, MultiTenancyPolicy,
-    ScheduleMetricsObserver, ScheduledJobTargetRegistry,
+    CallbackScheduleMetricsObserver, JobQueue, JobWakeupStream, JobWakeupTransport, JobWorker,
+    JobWorkerPolicy, MultiTenancyPolicy, ScheduleMetricsObserver, ScheduledJobTargetRegistry,
     ports::jobs::ExecutionTenantScope,
     system::{
-        DataRetentionJobHandler, DataRetentionService, ExportService, MessageService,
-        TenantConfigApplyJobHandler, TenantConfigExportJobHandler, TenantConfigPreviewJobHandler,
-        TenantConfigRollbackJobHandler, TenantConfigTransferService, TenantDataMigrationJobHandler,
-        TenantDataMigrationService, UserImportJobHandler, UserImportService,
+        DataRetentionService, ExportService, MessageService, TenantConfigTransferService,
+        TenantDataMigrationService, UserImportService,
     },
 };
 use ryframe_kernel::{AppError, AppResult};
 
-struct RedisMessageWakeupPublisher {
-    client: RedisClient,
-}
+use super::background_services::BackgroundServices;
+
+mod handlers;
+mod targets;
 
 struct RedisJobWakeupTransport {
     client: RedisClient,
@@ -59,20 +56,6 @@ pub fn job_wakeup_transport(client: Option<&RedisClient>) -> Option<Arc<dyn JobW
     })
 }
 
-#[async_trait]
-impl MessageWakeupPublisher for RedisMessageWakeupPublisher {
-    async fn publish(&self, message_id: i64) -> Result<(), String> {
-        self.client
-            .publish(
-                ryframe_application::system::MESSAGE_DISPATCH_REDIS_CHANNEL,
-                message_id.to_string(),
-            )
-            .await
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    }
-}
-
 /// 构造内置后台任务处理器所需的业务服务。
 pub struct JobWorkerDependencies {
     pub export: Arc<ExportService>,
@@ -85,6 +68,44 @@ pub struct JobWorkerDependencies {
     pub messaging_enabled: bool,
 }
 
+impl JobWorkerDependencies {
+    /// 从 API 已归组服务创建 Worker 依赖，避免进程入口重复枚举具体任务。
+    pub fn from_api_services(
+        services: &ryframe_api::AppServices,
+        redis: Option<RedisClient>,
+        messaging_enabled: bool,
+    ) -> Self {
+        Self {
+            export: services.operations.export.clone(),
+            message: services.content.message.clone(),
+            data_retention: services.operations.data_retention.clone(),
+            user_import: services.identity.user_import.clone(),
+            tenant_config_transfer: services.platform.tenant_config_transfer.clone(),
+            tenant_data_migration: services.platform.tenant_data_migration.clone(),
+            redis,
+            messaging_enabled,
+        }
+    }
+
+    /// 从独立 Worker 的共享后台服务创建依赖。
+    pub fn from_background_services(
+        services: &BackgroundServices,
+        redis: Option<RedisClient>,
+        messaging_enabled: bool,
+    ) -> Self {
+        Self {
+            export: services.export.clone(),
+            message: services.message.clone(),
+            data_retention: services.data_retention.clone(),
+            user_import: services.user_import.clone(),
+            tenant_config_transfer: services.tenant_config_transfer.clone(),
+            tenant_data_migration: services.tenant_data_migration.clone(),
+            redis,
+            messaging_enabled,
+        }
+    }
+}
+
 /// 统一构造 Embedded 与 External 模式使用的后台任务处理器。
 pub fn build_job_worker(
     queue: Arc<JobQueue>,
@@ -92,51 +113,8 @@ pub fn build_job_worker(
     execution_tenant_scope: ExecutionTenantScope,
     dependencies: JobWorkerDependencies,
 ) -> AppResult<JobWorker> {
-    let worker = JobWorker::new(queue, policy, execution_tenant_scope)?
-        .with_handler(Arc::new(ExportJobHandler::new(dependencies.export.clone())))?
-        .with_handler(Arc::new(ExportCleanupJobHandler::new(dependencies.export)))?
-        .with_handler(Arc::new(DataRetentionJobHandler::new(
-            dependencies.data_retention,
-        )))?
-        .with_handler(Arc::new(UserImportJobHandler::new(
-            dependencies.user_import,
-        )))?
-        .with_handler(Arc::new(TenantConfigExportJobHandler::new(
-            dependencies.tenant_config_transfer.clone(),
-        )))?
-        .with_handler(Arc::new(TenantConfigPreviewJobHandler::new(
-            dependencies.tenant_config_transfer.clone(),
-        )))?
-        .with_handler(Arc::new(TenantConfigApplyJobHandler::new(
-            dependencies.tenant_config_transfer.clone(),
-        )))?
-        .with_handler(Arc::new(TenantConfigRollbackJobHandler::new(
-            dependencies.tenant_config_transfer,
-        )))?
-        .with_handler(Arc::new(TenantDataMigrationJobHandler::new(
-            dependencies.tenant_data_migration,
-        )))?;
-    if !dependencies.messaging_enabled {
-        return Ok(worker);
-    }
-    worker
-        .with_handler(Arc::new(
-            MessageDispatchJobHandler::new(
-                dependencies.message.clone(),
-                dependencies.redis.map(|client| {
-                    Arc::new(RedisMessageWakeupPublisher { client })
-                        as Arc<dyn MessageWakeupPublisher>
-                }),
-            )
-            .with_redis_wakeup_failure_observer(Arc::new(|| {
-                ryframe_adapters::metrics::record_redis_degraded("message_dispatch_wakeup");
-            })),
-        ))?
-        .with_handler(Arc::new(
-            MessageRetentionJobHandler::new(dependencies.message).with_deleted_observer(Arc::new(
-                ryframe_adapters::metrics::record_message_retention_deleted,
-            )),
-        ))
+    let built_in_handlers = handlers::built_in(&dependencies);
+    JobWorker::new(queue, policy, execution_tenant_scope)?.with_handlers(built_in_handlers)
 }
 
 /// 将应用的多租户开关转换为后台执行器使用的数据库范围。
@@ -149,7 +127,7 @@ pub fn execution_tenant_scope(policy: MultiTenancyPolicy) -> ExecutionTenantScop
 
 /// 统一构造 API 与 Worker 使用的内置调度目标目录。
 pub fn build_schedule_targets(messaging_enabled: bool) -> AppResult<ScheduledJobTargetRegistry> {
-    ScheduledJobTargetRegistry::built_in(messaging_enabled)
+    ScheduledJobTargetRegistry::new().with_targets(targets::built_in(messaging_enabled))
 }
 
 /// 构造只属于 Cron 功能边界的低基数指标观察者。

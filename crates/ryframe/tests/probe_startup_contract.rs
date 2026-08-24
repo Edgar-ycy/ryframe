@@ -143,6 +143,32 @@ fn api_and_worker_share_background_service_builder() {
     }
 }
 
+#[test]
+fn background_job_handlers_are_grouped_by_domain() {
+    let jobs = include_str!("../src/boot/jobs.rs");
+    let groups = include_str!("../src/boot/jobs/handlers/mod.rs");
+    let api_main = include_str!("../src/main.rs");
+    let worker_main = include_str!("../src/bin/ryframe_worker.rs");
+
+    assert!(jobs.contains("handlers::built_in(&dependencies)"));
+    assert!(jobs.contains("with_handlers(built_in_handlers)"));
+    for concrete_handler in [
+        "ExportJobHandler::new",
+        "DataRetentionJobHandler::new",
+        "TenantConfigExportJobHandler::new",
+        "MessageDispatchJobHandler::new",
+    ] {
+        assert!(!jobs.contains(concrete_handler));
+    }
+    for domain in ["exports", "messages", "retention", "tenant", "users"] {
+        assert!(groups.contains(&format!("handlers.extend({domain}::handlers")));
+    }
+    assert!(api_main.contains("JobWorkerDependencies::from_api_services("));
+    assert!(worker_main.contains("JobWorkerDependencies::from_background_services("));
+    assert!(!api_main.contains("JobWorkerDependencies {"));
+    assert!(!worker_main.contains("JobWorkerDependencies {"));
+}
+
 #[tokio::test]
 async fn worker_and_health_tasks_share_expired_shutdown_deadline() {
     let mut worker_tasks = vec![tokio::spawn(std::future::pending::<()>())];

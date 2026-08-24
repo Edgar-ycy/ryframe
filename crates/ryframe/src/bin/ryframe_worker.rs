@@ -145,16 +145,11 @@ async fn main() -> Result<(), AppError> {
         queue.clone(),
         &application_policies.job_worker,
         execution_tenant_scope.clone(),
-        process_jobs::JobWorkerDependencies {
-            export: background.export.clone(),
-            message: background.message.clone(),
-            data_retention: background.data_retention.clone(),
-            user_import: background.user_import.clone(),
-            tenant_config_transfer: background.tenant_config_transfer.clone(),
-            tenant_data_migration: background.tenant_data_migration.clone(),
-            redis: redis.clone(),
-            messaging_enabled: application_policies.messaging.enabled(),
-        },
+        process_jobs::JobWorkerDependencies::from_background_services(
+            &background,
+            redis.clone(),
+            application_policies.messaging.enabled(),
+        ),
     )?;
     let schedules = background.job_schedules.clone();
     if let Some(schedules) = schedules.as_ref() {

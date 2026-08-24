@@ -73,6 +73,17 @@ impl ScheduledJobTargetRegistry {
         Ok(self)
     }
 
+    /// 按领域批量注册调度目标；任一 handler_key 重复时立即拒绝启动。
+    pub fn with_targets(
+        mut self,
+        targets: impl IntoIterator<Item = Arc<dyn ScheduledJobTarget>>,
+    ) -> AppResult<Self> {
+        for target in targets {
+            self = self.with_target(target)?;
+        }
+        Ok(self)
+    }
+
     pub fn get(&self, handler_key: &str) -> Option<Arc<dyn ScheduledJobTarget>> {
         self.targets.get(handler_key).cloned()
     }
@@ -101,15 +112,16 @@ impl ScheduledJobTargetRegistry {
             })
             .collect()
     }
+}
 
-    pub fn built_in(message_center_enabled: bool) -> AppResult<Self> {
-        Self::new()
-            .with_target(Arc::new(ExportCleanupTarget))?
-            .with_target(Arc::new(DataRetentionTarget))?
-            .with_target(Arc::new(MessageRetentionTarget {
-                available: message_center_enabled,
-            }))
-    }
+/// 运维领域内置的静态调度目标。
+pub fn maintenance_schedule_targets() -> Vec<Arc<dyn ScheduledJobTarget>> {
+    vec![Arc::new(ExportCleanupTarget), Arc::new(DataRetentionTarget)]
+}
+
+/// 消息领域内置的静态调度目标。
+pub fn message_schedule_targets(enabled: bool) -> Vec<Arc<dyn ScheduledJobTarget>> {
+    vec![Arc::new(MessageRetentionTarget { available: enabled })]
 }
 
 struct DataRetentionTarget;

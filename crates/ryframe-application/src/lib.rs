@@ -48,6 +48,7 @@ pub use jobs::{
     MessageRetentionJobHandler, MessageWakeupPublisher, OutboxRunResult, OutboxWorker,
     ScheduleMetricsObserver, ScheduledJobContext, ScheduledJobTarget, ScheduledJobTargetDescriptor,
     ScheduledJobTargetRegistry, ScheduledJobTargetScope, UpdateJobSchedule,
+    maintenance_schedule_targets, message_schedule_targets,
     validate_persisted_schedule_configuration,
 };
 pub use persistence::{PersistenceTransaction, TransactionAuditMode, complete_transaction};

@@ -27,7 +27,8 @@ pub use schedule::{
 pub use schedule_metrics::{CallbackScheduleMetricsObserver, ScheduleMetricsObserver};
 pub use schedule_targets::{
     ScheduledJobContext, ScheduledJobTarget, ScheduledJobTargetDescriptor,
-    ScheduledJobTargetRegistry, ScheduledJobTargetScope,
+    ScheduledJobTargetRegistry, ScheduledJobTargetScope, maintenance_schedule_targets,
+    message_schedule_targets,
 };
 pub use wakeup::{
     JOB_WAKEUP_REDIS_CHANNEL, JobWakeupStream, JobWakeupTransport, QueueWakeup, WakeupQueue,

@@ -167,6 +167,17 @@ impl JobWorker {
         Ok(self)
     }
 
+    /// 按领域批量注册处理器；任一任务类型重复时立即拒绝启动。
+    pub fn with_handlers(
+        mut self,
+        handlers: impl IntoIterator<Item = Arc<dyn JobHandler>>,
+    ) -> AppResult<Self> {
+        for handler in handlers {
+            self = self.with_handler(handler)?;
+        }
+        Ok(self)
+    }
+
     /// 判断当前 Worker 是否已经注册指定任务类型的处理器。
     pub fn has_handler(&self, job_type: &str) -> bool {
         self.handlers.contains_key(job_type)

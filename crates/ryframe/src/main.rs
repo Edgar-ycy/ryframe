@@ -202,16 +202,11 @@ async fn main() -> Result<(), AppError> {
                     services.operations.job_queue.clone(),
                     &application_policies.job_worker,
                     execution_tenant_scope.clone(),
-                    boot::jobs::JobWorkerDependencies {
-                        export: services.operations.export.clone(),
-                        message: services.content.message.clone(),
-                        data_retention: services.operations.data_retention.clone(),
-                        user_import: services.identity.user_import.clone(),
-                        tenant_config_transfer: services.platform.tenant_config_transfer.clone(),
-                        tenant_data_migration: services.platform.tenant_data_migration.clone(),
-                        redis: redis.client.clone(),
-                        messaging_enabled: application_policies.messaging.enabled(),
-                    },
+                    boot::jobs::JobWorkerDependencies::from_api_services(
+                        &services,
+                        redis.client.clone(),
+                        application_policies.messaging.enabled(),
+                    ),
                 )?;
                 if let Some(schedules) = services.operations.job_schedules.as_ref() {
                     boot::jobs::validate_schedule_targets(&worker, schedules.target_registry())?;
