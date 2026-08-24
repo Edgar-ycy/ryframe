@@ -69,6 +69,13 @@ pub(crate) struct WarningBudgets {
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub(crate) struct SoftSourceSize {
+    pub(crate) backend_rust: usize,
+    pub(crate) frontend_composable: usize,
+    pub(crate) frontend_sfc_or_style: usize,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 pub(crate) struct CentralHotspot {
     pub(crate) repository: RepositoryKind,
     pub(crate) path: String,
@@ -80,6 +87,7 @@ pub(crate) struct CentralHotspot {
 pub(crate) struct ChangeSurfacePolicy {
     version: u32,
     pub(crate) warning_budgets: WarningBudgets,
+    pub(crate) soft_source_size: SoftSourceSize,
     #[serde(default)]
     pub(crate) central_hotspots: Vec<CentralHotspot>,
 }
@@ -95,6 +103,13 @@ impl ChangeSurfacePolicy {
             || budgets.combined_handwritten_product == 0
         {
             return Err("修改扩散预算必须大于零".into());
+        }
+        let sizes = &self.soft_source_size;
+        if sizes.backend_rust == 0
+            || sizes.frontend_composable == 0
+            || sizes.frontend_sfc_or_style == 0
+        {
+            return Err("修改文件源码规模提醒阈值必须大于零".into());
         }
         let mut paths = BTreeSet::new();
         for hotspot in &self.central_hotspots {
@@ -211,6 +226,74 @@ pub(crate) fn analyze_change_surface(
         budgets.combined_handwritten_product,
     );
     report
+}
+
+pub(crate) fn append_changed_file_size_warnings(
+    backend_root: &Path,
+    frontend_root: &Path,
+    backend_paths: &[String],
+    frontend_paths: &[String],
+    policy: &ChangeSurfacePolicy,
+    report: &mut ChangeSurfaceReport,
+) -> Result<()> {
+    for path in backend_paths {
+        if !path.ends_with(".rs")
+            || matches!(
+                classify_backend(path),
+                ChangeCategory::Generated | ChangeCategory::Test
+            )
+        {
+            continue;
+        }
+        append_file_size_warning(
+            &mut report.warnings,
+            backend_root,
+            path,
+            policy.soft_source_size.backend_rust,
+            "Rust 源码",
+        )?;
+    }
+    for path in frontend_paths {
+        let file_name = Path::new(path)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        let (limit, label) = if path.ends_with(".ts")
+            && file_name.starts_with("use")
+            && !path.ends_with(".test.ts")
+            && !path.ends_with(".spec.ts")
+        {
+            (policy.soft_source_size.frontend_composable, "Composable")
+        } else if path.ends_with(".vue") || path.ends_with(".scss") {
+            (policy.soft_source_size.frontend_sfc_or_style, "SFC/SCSS")
+        } else {
+            continue;
+        };
+        append_file_size_warning(&mut report.warnings, frontend_root, path, limit, label)?;
+    }
+    Ok(())
+}
+
+fn append_file_size_warning(
+    warnings: &mut Vec<String>,
+    root: &Path,
+    relative: &str,
+    limit: usize,
+    label: &str,
+) -> Result<()> {
+    let path = root.join(relative);
+    if !path.is_file() {
+        return Ok(());
+    }
+    let source = fs::read_to_string(&path)
+        .map_err(|error| format!("读取修改文件 {} 失败：{error}", path.display()))?;
+    let lines = source.lines().count();
+    if lines > limit {
+        warnings.push(format!(
+            "{label} {relative} 共 {lines} 行，超过软提醒阈值 {limit} 行"
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn print_change_surface(report: &ChangeSurfaceReport) {

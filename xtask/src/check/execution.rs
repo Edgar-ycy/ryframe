@@ -11,8 +11,8 @@ use crate::{
 
 use super::{
     change_surface::{
-        analyze_change_surface, enforce_change_surface, load_change_surface_policy,
-        print_change_surface,
+        analyze_change_surface, append_changed_file_size_warnings, enforce_change_surface,
+        load_change_surface_policy, print_change_surface,
     },
     feature::{
         check_feature_registry, feature_matrix_with_jobs, load_feature_registry,
@@ -103,11 +103,17 @@ pub(crate) fn verify(scope: CheckScope, full: bool, frontend_dir: &Path) -> Resu
         let includes_frontend = matches!(scope, CheckScope::All | CheckScope::Frontend);
         let all_backend_changes = changed_paths(&root)?;
         let all_frontend_changes = changed_paths(frontend_dir)?;
-        let change_surface = analyze_change_surface(
+        let policy = load_change_surface_policy(&root)?;
+        let mut change_surface =
+            analyze_change_surface(&all_backend_changes, &all_frontend_changes, &policy);
+        append_changed_file_size_warnings(
+            &root,
+            frontend_dir,
             &all_backend_changes,
             &all_frontend_changes,
-            &load_change_surface_policy(&root)?,
-        );
+            &policy,
+            &mut change_surface,
+        )?;
         print_change_surface(&change_surface);
         enforce_change_surface(&change_surface)?;
 

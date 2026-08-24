@@ -11,9 +11,9 @@ use super::check::{
     CONSUMER_OWNED_COMMANDS, ChangeCategory, ChangeSurfacePolicy,
     FRONTEND_FULL_NON_CONSUMER_COMMANDS, FRONTEND_ONLY_CONTRACT_COMMANDS, FrontendProfile,
     PYTHON_TEST_ARGS, RESOURCE_VERIFY_TARGET_DIR, WORKSPACE_CLIPPY_ARGS, WorkspaceGraph,
-    analyze_change_surface, backend_snapshot_export_args, changed_paths, classify_changes,
-    complete_verify_selection, consumer_contract_arguments, consumer_contract_plan,
-    feature_operation_args, feature_test_args, frontend_profile_commands,
+    analyze_change_surface, append_changed_file_size_warnings, backend_snapshot_export_args,
+    changed_paths, classify_changes, complete_verify_selection, consumer_contract_arguments,
+    consumer_contract_plan, feature_operation_args, feature_test_args, frontend_profile_commands,
     load_change_surface_policy, load_consumer_contract_plan, load_workspace_graph,
     needs_consumer_contract, reverse_dependency_closure, validate_feature_combination,
     verify_job_budget_from, workspace_test_args,
@@ -603,6 +603,63 @@ fn workspace_change_surface_policy_is_valid_and_versioned() {
     let policy = load_change_surface_policy(&super::workspace::root_dir()).unwrap();
     assert!(!policy.central_hotspots.is_empty());
     assert_eq!(policy.warning_budgets.backend_handwritten_product, 7);
+    assert_eq!(policy.soft_source_size.backend_rust, 500);
+}
+
+#[test]
+fn change_surface_warns_only_for_changed_files_over_soft_size_limits() {
+    let id = NEXT_REPOSITORY.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!(
+        "ryframe-xtask-source-size-{}-{id}",
+        std::process::id()
+    ));
+    let backend = root.join("backend");
+    let frontend = root.join("frontend");
+    fs::create_dir_all(backend.join("xtask/src")).unwrap();
+    fs::create_dir_all(frontend.join("src/views/demo")).unwrap();
+    fs::write(backend.join("xtask/src/large.rs"), "line\n".repeat(501)).unwrap();
+    fs::write(
+        frontend.join("src/views/demo/useLarge.ts"),
+        "line\n".repeat(351),
+    )
+    .unwrap();
+    fs::write(
+        frontend.join("src/views/demo/ignored.vue"),
+        "line\n".repeat(501),
+    )
+    .unwrap();
+    let policy = test_change_surface_policy();
+    let backend_paths = ["xtask/src/large.rs".to_owned()];
+    let frontend_paths = ["src/views/demo/useLarge.ts".to_owned()];
+    let mut report = analyze_change_surface(&backend_paths, &frontend_paths, &policy);
+    append_changed_file_size_warnings(
+        &backend,
+        &frontend,
+        &backend_paths,
+        &frontend_paths,
+        &policy,
+        &mut report,
+    )
+    .unwrap();
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("large.rs"))
+    );
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("useLarge.ts"))
+    );
+    assert!(
+        !report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("ignored.vue"))
+    );
+    fs::remove_dir_all(root).unwrap();
 }
 
 fn test_change_surface_policy() -> ChangeSurfacePolicy {
@@ -614,6 +671,11 @@ version = 1
 backend_handwritten_product = 1
 frontend_handwritten_product = 1
 combined_handwritten_product = 1
+
+[soft_source_size]
+backend_rust = 500
+frontend_composable = 350
+frontend_sfc_or_style = 500
 
 [[central_hotspots]]
 repository = "backend"

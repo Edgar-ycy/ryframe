@@ -5,6 +5,11 @@ backend_handwritten_product = 7
 frontend_handwritten_product = 6
 combined_handwritten_product = 10
 
+[soft_source_size]
+backend_rust = 500
+frontend_composable = 350
+frontend_sfc_or_style = 500
+
 [[central_hotspots]]
 repository = "backend"
 path = "crates/ryframe-api/src/openapi.rs"

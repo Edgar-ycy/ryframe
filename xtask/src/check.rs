@@ -23,7 +23,7 @@ pub(crate) use feature::feature_matrix;
 #[allow(unused_imports)]
 pub(crate) use change_surface::{
     ChangeCategory, ChangeSurfacePolicy, ChangeSurfaceReport, RepositoryKind,
-    analyze_change_surface, load_change_surface_policy,
+    analyze_change_surface, append_changed_file_size_warnings, load_change_surface_policy,
 };
 #[allow(unused_imports)]
 pub(crate) use execution::{
