@@ -9,9 +9,10 @@ use std::{
     time::Duration,
 };
 
+use ryframe_application::ports::users::UserQueryReadPort;
 use ryframe_config::{DbConnection, DbTlsMode};
-use ryframe_db::{ControlDatabaseCluster, connection, generated};
-use ryframe_kernel::{AppError, PaginationPolicy, ValidatedPageQuery};
+use ryframe_db::{ControlDatabaseCluster, application_ports, connection, generated};
+use ryframe_kernel::{AppError, DataScope, DataScopeContext, PaginationPolicy, ValidatedPageQuery};
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, Statement, TransactionTrait};
 
 const ENABLE_ENV: &str = "RYFRAME_MYSQL_INTEGRATION";
@@ -369,6 +370,185 @@ async fn generated_post_port_enforces_tenant_isolation() {
         Ok(())
     })
     .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn user_detail_loads_department_with_tenant_and_data_scope() {
+    run_mysql_test("user-department", |database| async move {
+        create_user_detail_tables(&database).await?;
+        seed_user_detail_rows(&database).await?;
+
+        let query: Arc<dyn UserQueryReadPort> =
+            application_ports::users::query(ControlDatabaseCluster::single(database.clone()));
+        let all = DataScopeContext::super_admin(900);
+        let detail = query
+            .detail("tenant-a", 101, &all)
+            .await
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "未读取到 tenant-a 用户详情".to_owned())?;
+        let department = detail
+            .department
+            .ok_or_else(|| "用户详情缺少同租户部门".to_owned())?;
+        if department.id != 10
+            || department.name != "研发部"
+            || department.parent_id != Some(1)
+            || department.ancestors != "0,1"
+            || department.sort != 7
+            || department.remark.as_deref() != Some("核心研发")
+            || detail.user.dept_name.as_deref() != Some("研发部")
+        {
+            return Err(format!("用户详情部门投影不完整：{department:?}"));
+        }
+        if detail.roles.len() != 1
+            || detail.roles[0].id != 301
+            || detail.roles[0].code != "developer"
+        {
+            return Err(format!("用户详情角色不完整：{:?}", detail.roles));
+        }
+
+        for (user_id, label) in [(102, "无部门"), (103, "跨租户部门"), (104, "已删除部门")]
+        {
+            let detail = query
+                .detail("tenant-a", user_id, &all)
+                .await
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| format!("{label}用户详情不存在"))?;
+            if detail.department.is_some() || detail.user.dept_name.is_some() {
+                return Err(format!("{label}用户泄漏了部门信息"));
+            }
+        }
+        if query
+            .detail("tenant-a", 201, &all)
+            .await
+            .map_err(|error| error.to_string())?
+            .is_some()
+        {
+            return Err("tenant-a 可以读取 tenant-b 用户".into());
+        }
+
+        let self_scope = data_scope(DataScope::SelfOnly, 101, Some(10));
+        if query
+            .detail("tenant-a", 101, &self_scope)
+            .await
+            .map_err(|error| error.to_string())?
+            .is_none()
+        {
+            return Err("SelfOnly 无法读取本人".into());
+        }
+        let other_self = data_scope(DataScope::SelfOnly, 102, None);
+        if query
+            .detail("tenant-a", 101, &other_self)
+            .await
+            .map_err(|error| error.to_string())?
+            .is_some()
+        {
+            return Err("SelfOnly 可以读取其他用户".into());
+        }
+        let department_scope = data_scope(DataScope::Dept, 900, Some(10));
+        if query
+            .detail("tenant-a", 101, &department_scope)
+            .await
+            .map_err(|error| error.to_string())?
+            .is_none()
+        {
+            return Err("部门范围无法读取本部门用户".into());
+        }
+        let denied_scope = data_scope(DataScope::Custom, 900, None);
+        if query
+            .detail("tenant-a", 101, &denied_scope)
+            .await
+            .map_err(|error| error.to_string())?
+            .is_some()
+        {
+            return Err("空自定义范围可以读取用户".into());
+        }
+        Ok(())
+    })
+    .await;
+}
+
+async fn create_user_detail_tables(database: &DatabaseConnection) -> Result<(), String> {
+    for sql in [
+        "CREATE TABLE sys_dept (\
+            id BIGINT NOT NULL PRIMARY KEY, tenant_id VARCHAR(64) NOT NULL,\
+            name VARCHAR(64) NOT NULL, parent_id BIGINT NULL, ancestors VARCHAR(512) NOT NULL,\
+            sort INT NOT NULL, status VARCHAR(8) NOT NULL, remark VARCHAR(255) NULL,\
+            del_flag VARCHAR(8) NOT NULL, created_at DATETIME(6) NOT NULL,\
+            updated_at DATETIME(6) NOT NULL\
+        ) ENGINE=InnoDB",
+        "CREATE TABLE sys_user (\
+            id BIGINT NOT NULL PRIMARY KEY, tenant_id VARCHAR(64) NOT NULL,\
+            username VARCHAR(64) NOT NULL, password_hash VARCHAR(255) NOT NULL,\
+            nickname VARCHAR(64) NOT NULL, email VARCHAR(128) NOT NULL, phone VARCHAR(32) NOT NULL,\
+            avatar VARCHAR(512) NULL, avatar_file_id BIGINT NULL, preferred_locale VARCHAR(32) NULL,\
+            status VARCHAR(32) NOT NULL, authorization_version INT NOT NULL, dept_id BIGINT NULL,\
+            remark VARCHAR(255) NULL, login_ip VARCHAR(64) NULL, login_date DATETIME(6) NULL,\
+            del_flag VARCHAR(8) NOT NULL, created_at DATETIME(6) NOT NULL,\
+            updated_at DATETIME(6) NOT NULL\
+        ) ENGINE=InnoDB",
+        "CREATE TABLE sys_role (\
+            id BIGINT NOT NULL PRIMARY KEY, tenant_id VARCHAR(64) NOT NULL, name VARCHAR(64) NOT NULL,\
+            code VARCHAR(64) NOT NULL, is_super TINYINT NOT NULL, data_scope VARCHAR(8) NOT NULL,\
+            status VARCHAR(8) NOT NULL, sort INT NOT NULL, remark VARCHAR(255) NULL,\
+            del_flag VARCHAR(8) NOT NULL, created_at DATETIME(6) NOT NULL,\
+            updated_at DATETIME(6) NOT NULL\
+        ) ENGINE=InnoDB",
+        "CREATE TABLE sys_user_role (\
+            tenant_id VARCHAR(64) NOT NULL, user_id BIGINT NOT NULL, role_id BIGINT NOT NULL,\
+            PRIMARY KEY (tenant_id, user_id, role_id)\
+        ) ENGINE=InnoDB",
+    ] {
+        execute(database, sql).await?;
+    }
+    Ok(())
+}
+
+async fn seed_user_detail_rows(database: &DatabaseConnection) -> Result<(), String> {
+    execute(
+        database,
+        "INSERT INTO sys_dept \
+         (id, tenant_id, name, parent_id, ancestors, sort, status, remark, del_flag, created_at, updated_at) VALUES \
+         (10, 'tenant-a', '研发部', 1, '0,1', 7, '1', '核心研发', '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)), \
+         (11, 'tenant-a', '已删除部门', NULL, '0', 8, '1', NULL, '2', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)), \
+         (20, 'tenant-b', '其他租户部门', NULL, '0', 9, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))",
+    )
+    .await?;
+    execute(
+        database,
+        "INSERT INTO sys_user \
+         (id, tenant_id, username, password_hash, nickname, email, phone, avatar, avatar_file_id, \
+          preferred_locale, status, authorization_version, dept_id, remark, login_ip, login_date, \
+          del_flag, created_at, updated_at) VALUES \
+         (101, 'tenant-a', 'alice', 'hash', 'Alice', '', '', NULL, NULL, NULL, '1', 0, 10, NULL, NULL, NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)), \
+         (102, 'tenant-a', 'bob', 'hash', 'Bob', '', '', NULL, NULL, NULL, '1', 0, NULL, NULL, NULL, NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)), \
+         (103, 'tenant-a', 'carol', 'hash', 'Carol', '', '', NULL, NULL, NULL, '1', 0, 20, NULL, NULL, NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)), \
+         (104, 'tenant-a', 'dave', 'hash', 'Dave', '', '', NULL, NULL, NULL, '1', 0, 11, NULL, NULL, NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)), \
+         (201, 'tenant-b', 'eve', 'hash', 'Eve', '', '', NULL, NULL, NULL, '1', 0, 20, NULL, NULL, NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))",
+    )
+    .await?;
+    execute(
+        database,
+        "INSERT INTO sys_role \
+         (id, tenant_id, name, code, is_super, data_scope, status, sort, remark, del_flag, created_at, updated_at) \
+         VALUES (301, 'tenant-a', '开发者', 'developer', 0, '3', '1', 1, NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))",
+    )
+    .await?;
+    execute(
+        database,
+        "INSERT INTO sys_user_role (tenant_id, user_id, role_id) VALUES ('tenant-a', 101, 301)",
+    )
+    .await
+}
+
+fn data_scope(scope: DataScope, user_id: i64, dept_id: Option<i64>) -> DataScopeContext {
+    DataScopeContext {
+        scope,
+        user_id,
+        dept_id,
+        ancestors: None,
+        custom_dept_ids: Vec::new(),
+        include_self: false,
+    }
 }
 
 async fn run_mysql_test<F, Fut>(test_name: &str, test: F)
