@@ -6,20 +6,16 @@ use ryframe_api::{
     AppServices, ContentServices, IdentityServices, OperationsServices, PlatformServices,
 };
 use ryframe_application::{
-    AuditOutbox, AuthService, JobQueue, JobScheduleService,
+    AuditOutbox, AuthService,
     agent::{AgentService, AgentServiceDependencies, service_capability_descriptors},
     generated::{GeneratedPersistencePorts, GeneratedServices},
     ports::files::ArtifactStore,
     system::{
-        AuthorizationDiagnosticService, CaptchaStore, ConfigService, DataRetentionService,
-        DeptService, DictCacheStore, DictService, ExportPersistencePorts, ExportResourceServices,
-        ExportService, FileService, InMemoryCaptchaStore, LoginInfoService, MenuService,
-        MessageService, NoticeService, OnlineUserService, OperLogService, OverviewService,
-        PermissionService, PostExportService, ProductService, ProfileService, RoleService,
-        ServiceAccountReadDependencies, ServiceAccountService, TenantConfigTransferService,
-        TenantDataMigrationService, TenantRateLimitReadPort, TenantRateLimitSnapshot,
-        TenantService, TenantUsageService, UserImportService, UserService, WebSocketTicketService,
-        WebSocketTicketStore,
+        AuthorizationDiagnosticService, CaptchaStore, DeptService, DictCacheStore,
+        InMemoryCaptchaStore, MenuService, NoticeService, OnlineUserService, PermissionService,
+        ProfileService, ServiceAccountReadDependencies, ServiceAccountService,
+        TenantRateLimitReadPort, TenantRateLimitSnapshot, TenantService, TenantUsageService,
+        WebSocketTicketService, WebSocketTicketStore,
     },
 };
 use ryframe_config::AppConfig;
@@ -28,6 +24,9 @@ use ryframe_kernel::{AppError, CAPTCHA_KEY_PREFIX};
 use ryframe_tenant_db::TenantDatabaseRouter;
 
 use super::application_policy::{ApplicationPolicies, load_pepper_keyring};
+use super::background_services::{
+    BackgroundServiceInfrastructure, BackgroundServices, build as build_background_services,
+};
 
 struct TenantRateLimitReader {
     limiter: Arc<RateLimiter>,
@@ -171,34 +170,42 @@ pub async fn build_all(
         &mut generated_ports,
     );
     let generated = GeneratedServices::try_new(generated_ports)?;
-    let authorization_cache =
-        super::authorization_cache::cache(redis_client.clone(), policies.cache);
-    let identity_read = ryframe_db::application_ports::auth::identity(database.clone());
-    let user = Arc::new(UserService::new(
-        authorization_cache.clone(),
-        Arc::clone(&identity_read),
-        ryframe_db::application_ports::users::query(database.clone()),
-        ryframe_db::application_ports::users::write(database.clone(), authorization_cache.clone()),
-        ryframe_db::application_ports::auth::password_reset(
-            database.clone(),
-            authorization_cache.clone(),
-        ),
-    ));
-    let product = Arc::new(ProductService::new(
-        ryframe_db::application_ports::product::read(database.clone()),
-        ryframe_db::application_ports::product::write(database.clone()),
-        authorization_cache.clone(),
-        policies.service_accounts.enabled() && redis_client.is_some(),
-    ));
-    let role = Arc::new(RoleService::new(
-        authorization_cache.clone(),
-        ryframe_db::application_ports::system::role_read(database.clone()),
-        ryframe_db::application_ports::system::role_write(
-            database.clone(),
-            authorization_cache.clone(),
-            product.clone(),
-        ),
-    ));
+    let background = build_background_services(
+        database,
+        Arc::clone(&tenant_data),
+        policies,
+        BackgroundServiceInfrastructure {
+            redis_client: redis_client.clone(),
+            object_storage,
+            dict_cache: redis_client.as_ref().map(|client| {
+                Arc::new(RedisDictCacheStore {
+                    client: client.clone(),
+                }) as Arc<dyn DictCacheStore>
+            }),
+            starts_background_tasks,
+        },
+    )?;
+    let BackgroundServices {
+        authorization_cache,
+        identity_read,
+        user,
+        product,
+        role,
+        config: config_service,
+        dict,
+        oper_log,
+        login_info,
+        file,
+        job_queue,
+        job_schedules,
+        message,
+        export,
+        data_retention,
+        user_import,
+        tenant_config_transfer,
+        tenant_data_migration,
+        overview,
+    } = background;
     let tenant = Arc::new(TenantService::new(
         ryframe_tenant_db::application_ports::tenants::registry(database.clone()),
         authorization_cache.clone(),
@@ -291,82 +298,8 @@ pub async fn build_all(
         ),
         authorization_cache.clone(),
     ));
-    let post_export = Arc::new(PostExportService::new(
-        ryframe_db::application_ports::export::post(database.clone()),
-    ));
-    let config_service = Arc::new(ConfigService::new(
-        ryframe_db::application_ports::system::config(
-            database.clone(),
-            authorization_cache.clone(),
-        ),
-        authorization_cache.clone(),
-    ));
-
-    let dict = Arc::new(DictService::new(
-        ryframe_db::application_ports::system::dict(database.clone()),
-        redis_client.as_ref().map(|client| {
-            Arc::new(RedisDictCacheStore {
-                client: client.clone(),
-            }) as Arc<dyn DictCacheStore>
-        }),
-    ));
     let notice = Arc::new(NoticeService::new(
         ryframe_db::application_ports::system::notice(database.clone()),
-    ));
-    let oper_log = Arc::new(OperLogService::new(
-        ryframe_db::application_ports::system::oper_log(database.clone()),
-    ));
-    let file = Arc::new(FileService::new(
-        ryframe_db::application_ports::files::cleanup(database.clone()),
-        ryframe_db::application_ports::files::download(database.clone()),
-        ryframe_db::application_ports::files::upload(database.clone()),
-        object_storage.clone(),
-        super::file_content::processor(),
-    ));
-    if starts_background_tasks {
-        file.spawn_upload_janitor();
-    }
-    let job_queue = Arc::new(
-        JobQueue::new(ryframe_db::application_ports::jobs::queue(database.clone()))
-            .with_wakeup_transport(super::jobs::job_wakeup_transport(redis_client.as_ref())),
-    );
-    let tenant_data_migration = Arc::new(TenantDataMigrationService::new(
-        ryframe_tenant_db::application_ports::tenant_data::tracking(database.clone()),
-        Arc::<TenantDatabaseRouter>::clone(&tenant_data),
-        Arc::<TenantDatabaseRouter>::clone(&tenant_data),
-        job_queue.clone(),
-        authorization_cache.clone(),
-    ));
-    let data_retention = Arc::new(DataRetentionService::new(
-        ryframe_db::application_ports::tenant_config::retention(database.clone()),
-        ryframe_db::application_ports::retention::cleanup(database.clone()),
-        ryframe_db::application_ports::retention::run(database.clone()),
-        job_queue.clone(),
-        file.clone(),
-        policies.retention,
-    ));
-    let user_import = Arc::new(UserImportService::new(
-        job_queue.clone(),
-        user.clone(),
-        file.clone(),
-        super::spreadsheet::document_processor(),
-        ryframe_db::application_ports::users::import(database.clone()),
-        policies.user_import,
-    ));
-    let tenant_config_transfer = Arc::new(TenantConfigTransferService::new(
-        ryframe_application::system::TenantConfigTransferDependencies {
-            persistence: ryframe_db::application_ports::tenant_config::transfer(database.clone()),
-            queue: job_queue.clone(),
-            user: user.clone(),
-            file: file.clone(),
-            product: product.clone(),
-            authorization_cache: authorization_cache.clone(),
-            archive: super::tenant_config_archive::codec(),
-        },
-        ryframe_application::system::TenantConfigTransferSettings {
-            target_catalog: ryframe_api::tenant_config_target_catalog()?,
-            config: policies.tenant_config_transfer,
-        },
     ));
     let authorization_diagnostic = Arc::new(AuthorizationDiagnosticService::new(
         ryframe_db::application_ports::authorization::diagnostic(database.clone()),
@@ -374,26 +307,6 @@ pub async fn build_all(
         authorization_cache.clone(),
         policies.messaging.enabled() && redis_client.is_some(),
     ));
-    let overview = Arc::new(OverviewService::new(
-        ryframe_db::application_ports::system::overview(database.clone()),
-        job_queue.clone(),
-        policies.job_runtime,
-    ));
-    let job_schedules = if policies.job_schedule.enabled {
-        let schedule_targets = super::jobs::build_schedule_targets(policies.messaging.enabled())?;
-        Some(Arc::new(
-            JobScheduleService::new(
-                ryframe_db::application_ports::jobs::schedule(database.clone()),
-                job_queue.clone(),
-                super::jobs::execution_tenant_scope(policies.multi_tenancy),
-                schedule_targets,
-                policies.job_schedule,
-            )
-            .with_metrics_observer(super::jobs::build_schedule_metrics_observer()),
-        ))
-    } else {
-        None
-    };
     let audit_outbox = Arc::new(
         AuditOutbox::new(
             ryframe_db::application_ports::audit::outbox(database.clone()),
@@ -401,11 +314,6 @@ pub async fn build_all(
         )
         .with_job_queue(job_queue.clone()),
     );
-    let message = Arc::new(MessageService::new(
-        ryframe_db::application_ports::system::message(database.clone()),
-        job_queue.clone(),
-        policies.messaging,
-    ));
     let websocket_ticket = Arc::new(WebSocketTicketService::new(
         redis_client.as_ref().map(|client| {
             Arc::new(RedisWebSocketTicketStore {
@@ -414,10 +322,6 @@ pub async fn build_all(
         }),
         policies.messaging,
     ));
-    let login_info = Arc::new(LoginInfoService::new(
-        ryframe_db::application_ports::system::login_info(database.clone()),
-    ));
-
     let profile = Arc::new(ProfileService::new(
         ryframe_db::application_ports::users::profile(
             database.clone(),
@@ -425,32 +329,6 @@ pub async fn build_all(
         ),
         authorization_cache,
     ));
-    let export = Arc::new(
-        ExportService::new(
-            ExportPersistencePorts::new(
-                ryframe_db::application_ports::export::artifact(database.clone()),
-                ryframe_db::application_ports::export::cleanup(database.clone()),
-                ryframe_db::application_ports::export::deletion(database.clone()),
-                ryframe_db::application_ports::export::execution(database.clone()),
-                ryframe_db::application_ports::export::request(database.clone()),
-                ryframe_db::application_ports::export::requester(database.clone()),
-            ),
-            ExportResourceServices {
-                users: Arc::clone(&user),
-                roles: Arc::clone(&role),
-                posts: post_export,
-                configs: Arc::clone(&config_service),
-                dicts: Arc::clone(&dict),
-                oper_logs: Arc::clone(&oper_log),
-                login_infos: Arc::clone(&login_info),
-            },
-            object_storage,
-            super::spreadsheet::writer_factory(),
-            policies.export,
-        )
-        .with_job_queue(job_queue.clone()),
-    );
-
     let online_user: Arc<OnlineUserService> = if let Some(redis) = redis_client {
         Arc::new(OnlineUserService::new(
             super::online_sessions::redis_store(redis.clone()),

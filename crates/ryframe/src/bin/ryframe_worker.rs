@@ -12,22 +12,20 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use ryframe::boot::startup as process_startup;
+use ryframe::boot::{
+    application_policy as process_application_policy,
+    background_services::{BackgroundServiceInfrastructure, build as build_background_services},
+    jobs as process_jobs, startup as process_startup,
+};
 use ryframe_adapters::RedisClient;
 use ryframe_adapters::storage::{
     LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage, ScopedObjectStorage,
 };
 use ryframe_api::monitor::DependencyHealthCache;
 use ryframe_application::{
-    CallbackJobMetricsObserver, JobQueue, JobScheduleService, OutboxWorker,
+    CallbackJobMetricsObserver, JobQueue, OutboxWorker,
     ports::files::ArtifactStore,
-    system::{
-        CONFIG_PACKAGE_BUCKET, ConfigService, DataRetentionService, DictService, EXPORT_BUCKET,
-        ExportPersistencePorts, ExportResourceServices, ExportService, FileService, IMPORT_BUCKET,
-        LoginInfoService, MessageService, OperLogService, PostExportService, ProductService,
-        RoleService, TenantConfigTransferService, TenantDataMigrationService, UserImportService,
-        UserService,
-    },
+    system::{CONFIG_PACKAGE_BUCKET, EXPORT_BUCKET, IMPORT_BUCKET},
 };
 use ryframe_config::{
     AppConfig, Environment, JobWorkerMode, MigrationMode, RedisMode, StorageBackend,
@@ -36,26 +34,12 @@ use ryframe_db::{CallbackDatabaseMetricsObserver, ControlDatabaseCluster};
 use ryframe_kernel::AppError;
 use tokio::sync::watch;
 
-#[path = "../boot/authorization_cache_keyspace.rs"]
-mod authorization_cache_keyspace;
-#[path = "../boot/application_policy.rs"]
-mod process_application_policy;
 #[path = "../boot/artifact_store.rs"]
 mod process_artifact_store;
-#[path = "../boot/authorization_cache.rs"]
-mod process_authorization_cache;
-#[path = "../boot/file_content.rs"]
-mod process_file_content;
-#[path = "../boot/jobs.rs"]
-mod process_jobs;
 #[path = "../boot/logging.rs"]
 mod process_logging;
 #[path = "../boot/readiness.rs"]
 mod process_readiness;
-#[path = "../boot/spreadsheet.rs"]
-mod process_spreadsheet;
-#[path = "../boot/tenant_config_archive.rs"]
-mod process_tenant_config_archive;
 #[path = "../boot/tenant_data.rs"]
 mod tenant_data;
 
@@ -140,139 +124,21 @@ async fn main() -> Result<(), AppError> {
     }
 
     let redis = connect_redis_for_worker(&config, allows_initialization_writes).await?;
-    let authorization_cache =
-        process_authorization_cache::cache(redis.clone(), application_policies.cache);
     let object_storage = connect_storage_for_worker(&config, allows_initialization_writes).await?;
-
-    let queue = Arc::new(
-        JobQueue::new(ryframe_db::application_ports::jobs::queue(database.clone()))
-            .with_wakeup_transport(process_jobs::job_wakeup_transport(redis.as_ref())),
-    );
+    let background = build_background_services(
+        &database,
+        Arc::clone(&tenant_data),
+        &application_policies,
+        BackgroundServiceInfrastructure {
+            redis_client: redis.clone(),
+            object_storage,
+            dict_cache: None,
+            starts_background_tasks: run_mode != process_startup::WorkerRunMode::Probe,
+        },
+    )?;
+    let queue = background.job_queue.clone();
     let outbox_persistence = ryframe_db::application_ports::jobs::outbox(database.clone());
     install_job_metrics(&queue);
-    let message = Arc::new(MessageService::new(
-        ryframe_db::application_ports::system::message(database.clone()),
-        queue.clone(),
-        application_policies.messaging,
-    ));
-    let user = Arc::new(UserService::new(
-        authorization_cache.clone(),
-        ryframe_db::application_ports::auth::identity(database.clone()),
-        ryframe_db::application_ports::users::query(database.clone()),
-        ryframe_db::application_ports::users::write(database.clone(), authorization_cache.clone()),
-        ryframe_db::application_ports::auth::password_reset(
-            database.clone(),
-            authorization_cache.clone(),
-        ),
-    ));
-    let product = Arc::new(ProductService::new(
-        ryframe_db::application_ports::product::read(database.clone()),
-        ryframe_db::application_ports::product::write(database.clone()),
-        authorization_cache.clone(),
-        application_policies.service_accounts.enabled() && redis.is_some(),
-    ));
-    let role = Arc::new(RoleService::new(
-        authorization_cache.clone(),
-        ryframe_db::application_ports::system::role_read(database.clone()),
-        ryframe_db::application_ports::system::role_write(
-            database.clone(),
-            authorization_cache.clone(),
-            Arc::clone(&product),
-        ),
-    ));
-    let post_export = Arc::new(PostExportService::new(
-        ryframe_db::application_ports::export::post(database.clone()),
-    ));
-    let config_service = Arc::new(ConfigService::new(
-        ryframe_db::application_ports::system::config(
-            database.clone(),
-            authorization_cache.clone(),
-        ),
-        authorization_cache.clone(),
-    ));
-    let dict = Arc::new(DictService::new(
-        ryframe_db::application_ports::system::dict(database.clone()),
-        None,
-    ));
-    let oper_log = Arc::new(OperLogService::new(
-        ryframe_db::application_ports::system::oper_log(database.clone()),
-    ));
-    let login_info = Arc::new(LoginInfoService::new(
-        ryframe_db::application_ports::system::login_info(database.clone()),
-    ));
-    let file = Arc::new(FileService::new(
-        ryframe_db::application_ports::files::cleanup(database.clone()),
-        ryframe_db::application_ports::files::download(database.clone()),
-        ryframe_db::application_ports::files::upload(database.clone()),
-        object_storage.clone(),
-        process_file_content::processor(),
-    ));
-    if run_mode != process_startup::WorkerRunMode::Probe {
-        file.spawn_upload_janitor();
-    }
-    let export = Arc::new(
-        ExportService::new(
-            ExportPersistencePorts::new(
-                ryframe_db::application_ports::export::artifact(database.clone()),
-                ryframe_db::application_ports::export::cleanup(database.clone()),
-                ryframe_db::application_ports::export::deletion(database.clone()),
-                ryframe_db::application_ports::export::execution(database.clone()),
-                ryframe_db::application_ports::export::request(database.clone()),
-                ryframe_db::application_ports::export::requester(database.clone()),
-            ),
-            ExportResourceServices {
-                users: Arc::clone(&user),
-                roles: role,
-                posts: post_export,
-                configs: config_service,
-                dicts: dict,
-                oper_logs: oper_log,
-                login_infos: login_info,
-            },
-            object_storage,
-            process_spreadsheet::writer_factory(),
-            application_policies.export,
-        )
-        .with_job_queue(queue.clone()),
-    );
-    let data_retention = Arc::new(DataRetentionService::new(
-        ryframe_db::application_ports::tenant_config::retention(database.clone()),
-        ryframe_db::application_ports::retention::cleanup(database.clone()),
-        ryframe_db::application_ports::retention::run(database.clone()),
-        queue.clone(),
-        file.clone(),
-        application_policies.retention,
-    ));
-    let user_import = Arc::new(UserImportService::new(
-        queue.clone(),
-        user.clone(),
-        file.clone(),
-        process_spreadsheet::document_processor(),
-        ryframe_db::application_ports::users::import(database.clone()),
-        application_policies.user_import,
-    ));
-    let tenant_config_transfer = Arc::new(TenantConfigTransferService::new(
-        ryframe_application::system::TenantConfigTransferDependencies {
-            persistence: ryframe_db::application_ports::tenant_config::transfer(database.clone()),
-            queue: queue.clone(),
-            user,
-            file,
-            product,
-            authorization_cache: authorization_cache.clone(),
-            archive: process_tenant_config_archive::codec(),
-        },
-        ryframe_application::system::TenantConfigTransferSettings {
-            target_catalog: ryframe_api::tenant_config_target_catalog()?,
-            config: application_policies.tenant_config_transfer,
-        },
-    ));
-    let tenant_data_migration = Arc::new(TenantDataMigrationService::new(
-        ryframe_tenant_db::application_ports::tenant_data::tracking(database.clone()),
-        Arc::<ryframe_tenant_db::TenantDatabaseRouter>::clone(&tenant_data),
-        Arc::<ryframe_tenant_db::TenantDatabaseRouter>::clone(&tenant_data),
-        queue.clone(),
-        authorization_cache.clone(),
-    ));
     let execution_tenant_scope =
         process_jobs::execution_tenant_scope(application_policies.multi_tenancy);
     let worker = process_jobs::build_job_worker(
@@ -280,33 +146,21 @@ async fn main() -> Result<(), AppError> {
         &application_policies.job_worker,
         execution_tenant_scope.clone(),
         process_jobs::JobWorkerDependencies {
-            export: export.clone(),
-            message: message.clone(),
-            data_retention,
-            user_import,
-            tenant_config_transfer,
-            tenant_data_migration,
+            export: background.export.clone(),
+            message: background.message.clone(),
+            data_retention: background.data_retention.clone(),
+            user_import: background.user_import.clone(),
+            tenant_config_transfer: background.tenant_config_transfer.clone(),
+            tenant_data_migration: background.tenant_data_migration.clone(),
             redis: redis.clone(),
             messaging_enabled: application_policies.messaging.enabled(),
         },
     )?;
-    let schedules = if application_policies.job_schedule.enabled {
-        let schedule_targets =
-            process_jobs::build_schedule_targets(application_policies.messaging.enabled())?;
-        process_jobs::validate_schedule_targets(&worker, &schedule_targets)?;
-        Some(Arc::new(
-            JobScheduleService::new(
-                ryframe_db::application_ports::jobs::schedule(database.clone()),
-                queue.clone(),
-                execution_tenant_scope.clone(),
-                schedule_targets,
-                application_policies.job_schedule,
-            )
-            .with_metrics_observer(process_jobs::build_schedule_metrics_observer()),
-        ))
-    } else {
-        None
-    };
+    let schedules = background.job_schedules.clone();
+    if let Some(schedules) = schedules.as_ref() {
+        process_jobs::validate_schedule_targets(&worker, schedules.target_registry())?;
+    }
+    let authorization_cache = background.authorization_cache;
 
     if run_mode == process_startup::WorkerRunMode::Once {
         let scheduled = if let Some(schedules) = schedules.as_ref() {

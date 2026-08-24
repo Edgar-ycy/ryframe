@@ -124,6 +124,25 @@ fn api_and_worker_wire_probe_to_read_only_dependency_checks() {
     assert!(worker_runtime.contains("|| client.verify_scope_ownership(&ownership_marker)"));
 }
 
+#[test]
+fn api_and_worker_share_background_service_builder() {
+    let api_services = include_str!("../src/boot/services.rs");
+    let shared_services = include_str!("../src/boot/background_services.rs");
+    let worker_main = include_str!("../src/bin/ryframe_worker.rs");
+
+    assert!(api_services.contains("build_background_services("));
+    assert!(worker_main.contains("build_background_services("));
+    for constructor in [
+        "UserService::new",
+        "ExportService::new",
+        "TenantConfigTransferService::new",
+        "TenantDataMigrationService::new",
+    ] {
+        assert!(shared_services.contains(constructor));
+        assert!(!worker_main.contains(constructor));
+    }
+}
+
 #[tokio::test]
 async fn worker_and_health_tasks_share_expired_shutdown_deadline() {
     let mut worker_tasks = vec![tokio::spawn(std::future::pending::<()>())];
