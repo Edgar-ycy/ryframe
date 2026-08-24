@@ -17,6 +17,7 @@ use super::{
     FileService, UploadResponse, map_storage_read_error, map_storage_write_error, run_blocking_task,
 };
 
+mod janitor;
 mod operations;
 
 const RESERVATION_TTL_MINUTES: i64 = 5;
