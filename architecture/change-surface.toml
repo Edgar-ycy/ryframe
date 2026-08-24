@@ -1,0 +1,61 @@
+version = 1
+
+[warning_budgets]
+backend_handwritten_product = 7
+frontend_handwritten_product = 6
+combined_handwritten_product = 10
+
+[[central_hotspots]]
+repository = "backend"
+path = "crates/ryframe-api/src/openapi.rs"
+standard_resource_forbidden = true
+
+[[central_hotspots]]
+repository = "backend"
+path = "crates/ryframe-api/src/router/groups.rs"
+standard_resource_forbidden = true
+
+[[central_hotspots]]
+repository = "backend"
+path = "crates/ryframe-api/src/state.rs"
+standard_resource_forbidden = true
+
+[[central_hotspots]]
+repository = "backend"
+path = "crates/ryframe/src/boot/services.rs"
+standard_resource_forbidden = true
+
+[[central_hotspots]]
+repository = "backend"
+path = "crates/ryframe/src/bin/ryframe_worker.rs"
+standard_resource_forbidden = true
+
+[[central_hotspots]]
+repository = "backend"
+path = "crates/ryframe-application/src/system/mod.rs"
+standard_resource_forbidden = true
+
+[[central_hotspots]]
+repository = "backend"
+path = "catalog/access.toml"
+standard_resource_forbidden = true
+
+[[central_hotspots]]
+repository = "frontend"
+path = "src/router/pageRegistry.ts"
+standard_resource_forbidden = true
+
+[[central_hotspots]]
+repository = "frontend"
+path = "src/router/routes/constant.ts"
+standard_resource_forbidden = true
+
+[[central_hotspots]]
+repository = "frontend"
+path = "src/i18n/messages.ts"
+standard_resource_forbidden = true
+
+[[central_hotspots]]
+repository = "frontend"
+path = "src/features/registry.ts"
+standard_resource_forbidden = true

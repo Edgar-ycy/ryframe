@@ -8,6 +8,10 @@ use crate::{
 };
 
 use super::{
+    change_surface::{
+        analyze_change_surface, enforce_change_surface, load_change_surface_policy,
+        print_change_surface,
+    },
     feature::{
         check_feature_registry, feature_matrix, load_feature_registry, run_feature_operations,
         run_feature_tests, validate_feature_registry,
@@ -99,29 +103,40 @@ pub(crate) fn verify(scope: CheckScope, full: bool, frontend_dir: &Path) -> Resu
     let started = Instant::now();
     let mut mode = if full { "完整" } else { "智能" };
     let result = (|| {
+        let root = root_dir();
+        let includes_backend = matches!(scope, CheckScope::All | CheckScope::Backend);
+        let includes_frontend = matches!(scope, CheckScope::All | CheckScope::Frontend);
+        let all_backend_changes = changed_paths(&root)?;
+        let all_frontend_changes = changed_paths(frontend_dir)?;
+        let change_surface = analyze_change_surface(
+            &all_backend_changes,
+            &all_frontend_changes,
+            &load_change_surface_policy(&root)?,
+        );
+        print_change_surface(&change_surface);
+        enforce_change_surface(&change_surface)?;
+
         if full {
             println!("cargo verify 选择完整门禁：显式传入 --full。");
             return full_verify(scope, frontend_dir);
         }
 
-        let root = root_dir();
-        let includes_backend = matches!(scope, CheckScope::All | CheckScope::Backend);
         let graph = if includes_backend {
             load_workspace_graph(&root)?
         } else {
             WorkspaceGraph::default()
         };
         let backend_changes = if includes_backend {
-            changed_paths(&root)?
+            all_backend_changes.as_slice()
         } else {
-            Vec::new()
+            &[]
         };
-        let frontend_changes = if matches!(scope, CheckScope::All | CheckScope::Frontend) {
-            changed_paths(frontend_dir)?
+        let frontend_changes = if includes_frontend {
+            all_frontend_changes.as_slice()
         } else {
-            Vec::new()
+            &[]
         };
-        let mut selection = classify_changes(&backend_changes, &frontend_changes, &graph);
+        let mut selection = classify_changes(backend_changes, frontend_changes, &graph);
         if let Some(reason) = &selection.full_reason {
             mode = "完整（自动扩大）";
             println!("cargo verify 扩大为完整门禁：{reason}");

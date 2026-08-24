@@ -8,13 +8,14 @@ use std::{
 
 use super::check::{
     BACKEND_POLICY_SCRIPTS, BACKEND_VERIFY_TARGET_DIR, BackendSnapshotProfile,
-    CONSUMER_OWNED_COMMANDS, FRONTEND_FULL_NON_CONSUMER_COMMANDS, FRONTEND_ONLY_CONTRACT_COMMANDS,
-    FrontendProfile, PYTHON_TEST_ARGS, RESOURCE_VERIFY_TARGET_DIR, WORKSPACE_CLIPPY_ARGS,
-    WORKSPACE_TEST_ARGS, WorkspaceGraph, backend_snapshot_export_args, changed_paths,
+    CONSUMER_OWNED_COMMANDS, ChangeCategory, ChangeSurfacePolicy,
+    FRONTEND_FULL_NON_CONSUMER_COMMANDS, FRONTEND_ONLY_CONTRACT_COMMANDS, FrontendProfile,
+    PYTHON_TEST_ARGS, RESOURCE_VERIFY_TARGET_DIR, WORKSPACE_CLIPPY_ARGS, WORKSPACE_TEST_ARGS,
+    WorkspaceGraph, analyze_change_surface, backend_snapshot_export_args, changed_paths,
     classify_changes, complete_verify_selection, consumer_contract_arguments,
     consumer_contract_plan, feature_operation_args, feature_test_args, frontend_profile_commands,
-    load_consumer_contract_plan, load_workspace_graph, needs_consumer_contract,
-    reverse_dependency_closure, validate_feature_combination,
+    load_change_surface_policy, load_consumer_contract_plan, load_workspace_graph,
+    needs_consumer_contract, reverse_dependency_closure, validate_feature_combination,
 };
 
 static NEXT_REPOSITORY: AtomicU64 = AtomicU64::new(1);
@@ -501,6 +502,102 @@ fn actual_workspace_graph_contains_reverse_dependents() {
     assert!(closure.contains("ryframe-application"));
     assert!(closure.contains("ryframe-api"));
     assert!(closure.contains("ryframe"));
+}
+
+#[test]
+fn change_surface_separates_product_tests_generated_assets_and_tools() {
+    let report = analyze_change_surface(
+        &[
+            "crates/ryframe-application/src/system/user.rs".into(),
+            "crates/ryframe-api/src/generated/post.rs".into(),
+            "crates/ryframe-db/tests/user_query.rs".into(),
+            "crates/ryframe-db/src/migration/m20260824_demo.rs".into(),
+            "docs/development.md".into(),
+            "xtask/src/check.rs".into(),
+        ],
+        &[
+            "src/views/system/user/index.vue".into(),
+            "src/api/generated/operations.ts".into(),
+            "tests/unit/user.test.ts".into(),
+            "qodana.yaml".into(),
+        ],
+        &test_change_surface_policy(),
+    );
+
+    assert_eq!(report.backend.count(ChangeCategory::HandwrittenProduct), 1);
+    assert_eq!(report.backend.count(ChangeCategory::Generated), 1);
+    assert_eq!(report.backend.count(ChangeCategory::Test), 1);
+    assert_eq!(report.backend.count(ChangeCategory::Migration), 1);
+    assert_eq!(report.backend.count(ChangeCategory::Documentation), 1);
+    assert_eq!(report.backend.count(ChangeCategory::Tooling), 1);
+    assert_eq!(report.frontend.count(ChangeCategory::HandwrittenProduct), 1);
+    assert_eq!(report.frontend.count(ChangeCategory::Generated), 1);
+    assert_eq!(report.frontend.count(ChangeCategory::Test), 1);
+    assert_eq!(report.frontend.count(ChangeCategory::Tooling), 1);
+    assert!(report.domains.contains("user"));
+}
+
+#[test]
+fn change_surface_warns_over_budget_without_blocking_ordinary_changes() {
+    let report = analyze_change_surface(
+        &[
+            "crates/ryframe-api/src/handlers/user_handler.rs".into(),
+            "crates/ryframe-api/src/openapi.rs".into(),
+        ],
+        &[
+            "src/views/system/user/index.vue".into(),
+            "src/features/user/manifest.ts".into(),
+        ],
+        &test_change_surface_policy(),
+    );
+
+    assert_eq!(report.warnings.len(), 3);
+    assert!(report.violations.is_empty());
+    assert_eq!(
+        report.central_hotspots,
+        ["后端:crates/ryframe-api/src/openapi.rs"]
+    );
+}
+
+#[test]
+fn standard_resource_change_rejects_manual_central_registration() {
+    let report = analyze_change_surface(
+        &[
+            "catalog/resources/device.toml".into(),
+            "crates/ryframe-api/src/openapi.rs".into(),
+        ],
+        &[],
+        &test_change_surface_policy(),
+    );
+
+    assert_eq!(report.violations.len(), 1);
+    assert!(report.violations[0].contains("标准资源变更不得手工修改中央热点"));
+}
+
+#[test]
+fn workspace_change_surface_policy_is_valid_and_versioned() {
+    let policy = load_change_surface_policy(&super::workspace::root_dir()).unwrap();
+    assert!(!policy.central_hotspots.is_empty());
+    assert_eq!(policy.warning_budgets.backend_handwritten_product, 7);
+}
+
+fn test_change_surface_policy() -> ChangeSurfacePolicy {
+    toml::from_str(
+        r#"
+version = 1
+
+[warning_budgets]
+backend_handwritten_product = 1
+frontend_handwritten_product = 1
+combined_handwritten_product = 1
+
+[[central_hotspots]]
+repository = "backend"
+path = "crates/ryframe-api/src/openapi.rs"
+standard_resource_forbidden = true
+"#,
+    )
+    .unwrap()
 }
 
 fn run_git(root: &std::path::Path, args: &[&str]) {

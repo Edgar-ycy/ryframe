@@ -16,9 +16,11 @@ resource = ["dep:ryframe-generator"]
 chrono = { workspace = true }
 notify = "8.2"
 ryframe-generator = { path = "../crates/ryframe-generator", optional = true }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 tokio = { workspace = true, features = ["rt", "signal"] }
+toml = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

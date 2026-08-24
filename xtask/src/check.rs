@@ -1,5 +1,7 @@
 //! 智能检查的命令入口与稳定测试接口。
 
+#[path = "check/change_surface.rs"]
+mod change_surface;
 #[path = "check/execution.rs"]
 mod execution;
 #[path = "check/feature.rs"]
@@ -16,6 +18,11 @@ pub(crate) use execution::{run, verify};
 #[allow(unused_imports)]
 pub(crate) use feature::feature_matrix;
 
+#[allow(unused_imports)]
+pub(crate) use change_surface::{
+    ChangeCategory, ChangeSurfacePolicy, ChangeSurfaceReport, RepositoryKind,
+    analyze_change_surface, load_change_surface_policy,
+};
 #[allow(unused_imports)]
 pub(crate) use execution::{
     BACKEND_POLICY_SCRIPTS, BACKEND_VERIFY_TARGET_DIR, CONSUMER_OWNED_COMMANDS,

@@ -42,7 +42,7 @@ cargo verify
 cargo verify --full
 ```
 
-日常检查使用 `cargo verify`，它根据前后端 Git 变更选择受影响包、反向依赖或前端检查画像；依赖、CI、共享配置和未知变更会自动扩大为完整门禁。提交前使用 `cargo verify --full`，覆盖后端测试、Cargo feature 组合、前端消费契约和浏览器 smoke。`--scope backend|frontend` 可限制主要检查侧，但完整门禁中的资源生成和消费契约仍会跨仓验证。底层 `cargo xtask ...` 是 CI 与维护者使用的内部入口，普通开发不需要记忆。
+日常检查使用 `cargo verify`，它先区分手写产品代码、测试、生成物、迁移、文档与工具，输出涉及领域、中央热点和修改预算提醒，再根据前后端 Git 变更选择受影响包、反向依赖或前端检查画像；标准资源变更不允许继续手改中央注册。依赖、CI、共享配置和未知变更会自动扩大为完整门禁。提交前使用 `cargo verify --full`，覆盖后端测试、Cargo feature 组合、前端消费契约和浏览器 smoke。`--scope backend|frontend` 可限制主要检查侧，但完整门禁中的资源生成和消费契约仍会跨仓验证。底层 `cargo xtask ...` 是 CI 与维护者使用的内部入口，普通开发不需要记忆。
 
 确定性测试必须随代码提交；`.local-tests` 只保存密钥、人工数据、运行结果和环境绑定验收。
 

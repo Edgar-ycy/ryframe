@@ -5223,9 +5223,11 @@ dependencies = [
  "libc",
  "notify",
  "ryframe-generator",
+ "serde",
  "serde_json",
  "sha2 0.11.0",
  "tokio",
+ "toml",
  "windows-sys 0.61.2",
 ]
 

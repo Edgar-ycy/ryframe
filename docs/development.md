@@ -13,7 +13,7 @@ cargo verify --full
 ```
 
 - `cargo dev`：检查工具链后启动 Vite、独立 API 和独立 Worker；启动和每次切换前只执行迁移 `verify`，不会修改数据库。后端变更会在当前服务继续运行时编译到版本化目录，并在隔离端口同时探活 API 与不消费任务的 Worker；任一失败都保留 last-known-good，正式端口启动失败自动恢复旧版本。Windows 用 Job Object 统一回收进程树，按 `Ctrl+C` 停止全部进程。
-- `cargo verify`：根据双仓 Git 变更执行最小安全检查，自动包含后端反向依赖；共享、依赖、CI 和未知变更自动扩大完整门禁。`--scope backend|frontend` 限制主要检查侧；`--full` 下资源生成和消费契约仍会跨前后端验证，避免单侧通过却产生不兼容契约。
+- `cargo verify`：根据双仓 Git 变更执行最小安全检查，自动包含后端反向依赖；执行前会按手写产品代码、测试、生成物、迁移、文档和工具输出修改扩散统计，并列出涉及领域与中央热点。预算超限先给出提醒；标准资源变更若仍手改中央注册则直接失败。共享、依赖、CI 和未知变更自动扩大完整门禁。`--scope backend|frontend` 限制主要检查侧；`--full` 下资源生成和消费契约仍会跨前后端验证，避免单侧通过却产生不兼容契约。
 - `cargo verify --full`：执行后端、前端、消费契约和浏览器 smoke 的完整本地门禁。
 - `cargo api-sync`：从未提交的后端工作树同步候选 OpenAPI 和前端派生文件，不修改正式来源元数据。
 - `cargo api-sync --commit HEAD`：把已提交的正式后端 OpenAPI 同步到前端。
