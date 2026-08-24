@@ -291,7 +291,7 @@ fn register_device_frontend_contract(frontend: &Path) {
     operations.push_str(descriptors);
     fs::write(operations_path, operations).expect("应写入临时候选 operation 清单");
 
-    let schema_path = frontend.join("src/api/generated/schema.ts");
+    let schema_path = frontend.join("src/api/generated/schema/system.ts");
     let mut schema = fs::read_to_string(&schema_path).expect("应读取候选 OpenAPI schema");
     let component_marker = "export interface components {\n    schemas: {\n";
     assert!(

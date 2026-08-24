@@ -12,7 +12,12 @@ use super::contract::{
 
 const CANDIDATE_MANAGED_PATHS: &[&str] = &[
     "openapi/openapi.json",
-    "src/api/generated/schema.ts",
+    "src/api/generated/schema/core.ts",
+    "src/api/generated/schema/system.ts",
+    "src/api/generated/schema/platform.ts",
+    "src/api/generated/schema/monitor.ts",
+    "src/api/generated/schema/agent.ts",
+    "src/api/generated/schema/index.ts",
     "src/api/generated/operations.ts",
     "src/api/generated/permissions.ts",
     "src/api/generated/menuRoutes.ts",
@@ -20,6 +25,7 @@ const CANDIDATE_MANAGED_PATHS: &[&str] = &[
     "src/shared/markdown/noticePolicy.generated.json",
     "src/shared/config/apiPrefix.generated.json",
     "src/api/generated/crudResources.ts",
+    "src/api/generated/ownership.json",
 ];
 
 static NEXT_DIR: AtomicU64 = AtomicU64::new(1);
@@ -222,7 +228,7 @@ fn multi_file_install_failure_restores_every_contract_file() {
     let frontend = TestFrontend::new();
     let paths = [
         frontend.0.join("openapi/candidate.json"),
-        frontend.0.join("src/api/generated/schema.ts"),
+        frontend.0.join("src/api/generated/schema/system.ts"),
         frontend.0.join("src/api/generated/menuRoutes.ts"),
     ];
     for (index, path) in paths.iter().enumerate() {
@@ -272,7 +278,7 @@ fn rollback_preserves_manual_edit_after_contract_install() {
     let frontend = TestFrontend::new();
     let paths = [
         frontend.0.join("openapi/candidate.json"),
-        frontend.0.join("src/api/generated/schema.ts"),
+        frontend.0.join("src/api/generated/schema/system.ts"),
         frontend.0.join("src/api/generated/menuRoutes.ts"),
     ];
     for (index, path) in paths.iter().enumerate() {
@@ -326,7 +332,7 @@ fn contract_success_path_rechecks_targets_before_backup_cleanup() {
     let frontend = TestFrontend::new();
     let paths = [
         frontend.0.join("openapi/candidate.json"),
-        frontend.0.join("src/api/generated/schema.ts"),
+        frontend.0.join("src/api/generated/schema/system.ts"),
     ];
     for (index, path) in paths.iter().enumerate() {
         fs::write(path, format!("before-{index}")).unwrap();
