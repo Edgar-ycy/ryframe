@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, DatabaseTransaction,
-    EntityTrait, QueryFilter, QueryOrder, QuerySelect, sea_query::LockType,
+    ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter,
+    QueryOrder, QuerySelect,
 };
 
 use crate::entities::{
@@ -20,73 +20,16 @@ use crate::repositories::cache_namespace_version_repo::{
 const TEMPLATE_TENANT_ID: &str = "system";
 const PLATFORM_PERMISSION_PREFIX: &str = "platform:";
 
-#[derive(Debug, Clone)]
-pub struct ProvisionTenantCommand {
-    pub provisioning_request_token: String,
-    pub tenant_id: String,
-    pub name: String,
-    pub domain: Option<String>,
-    pub expire_at: Option<DateTime<Utc>>,
-    pub max_users: i32,
-    pub max_roles: i32,
-    pub max_storage_mb: i64,
-    pub max_requests_per_minute: i32,
-    pub admin_username: String,
-    pub admin_password_hash: String,
-    pub enabled_capability_route_keys: Vec<String>,
-    pub enabled_capability_permission_codes: Vec<String>,
-    pub managed_capability_route_keys: Vec<String>,
-    pub managed_capability_permission_codes: Vec<String>,
-    pub default_admin_permission_codes: Vec<String>,
-}
+mod lookup;
+mod model;
+mod support;
+
+pub use model::ProvisionTenantCommand;
+use support::retain_data_for_active_dict_types;
 
 pub struct TenantProvisioningRepository;
 
 impl TenantProvisioningRepository {
-    pub async fn lock_provision_request_in_txn(
-        &self,
-        transaction: &DatabaseTransaction,
-        tenant_id: &str,
-    ) -> AppResult<Option<tenant_provision_request::Model>> {
-        tenant_provision_request::Entity::find_by_id(tenant_id.to_owned())
-            .lock(LockType::Update)
-            .one(transaction)
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))
-    }
-
-    pub async fn admin_username_exists(
-        &self,
-        db: &DatabaseConnection,
-        tenant_id: &str,
-        username: &str,
-    ) -> AppResult<bool> {
-        user::Entity::find()
-            .filter(user::Column::TenantId.eq(tenant_id))
-            .filter(user::Column::Username.eq(username))
-            .one(db)
-            .await
-            .map(|user| user.is_some())
-            .map_err(|error| AppError::Database(error.to_string()))
-    }
-
-    pub async fn find_user_by_username<C>(
-        &self,
-        db: &C,
-        tenant_id: &str,
-        username: &str,
-    ) -> AppResult<Option<user::Model>>
-    where
-        C: sea_orm::ConnectionTrait,
-    {
-        user::Entity::find()
-            .filter(user::Column::TenantId.eq(tenant_id))
-            .filter(user::Column::Username.eq(username))
-            .one(db)
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))
-    }
-
     /// 在调用方事务内初始化租户、管理员、角色及模板数据。
     pub async fn provision_in_transaction(
         &self,
@@ -550,17 +493,4 @@ impl TenantProvisioningRepository {
 
         Ok(tenant)
     }
-}
-
-/// 已软删除的字典类型不得因其复合外键使初始化失败，也不得使数据在未复制类型的
-/// 情况下仍可访问。
-fn retain_data_for_active_dict_types(
-    dictionary_types: &[dict_type::Model],
-    dictionary_data: &mut Vec<dict_data::Model>,
-) {
-    let active_codes: HashSet<&str> = dictionary_types
-        .iter()
-        .map(|dictionary| dictionary.code.as_str())
-        .collect();
-    dictionary_data.retain(|data| active_codes.contains(data.type_code.as_str()));
 }

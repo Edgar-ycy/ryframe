@@ -1,4 +1,3 @@
-use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait,
@@ -7,151 +6,21 @@ use sea_orm::{
     QuerySelect,
     sea_query::{Condition, LockType},
 };
-use std::collections::HashSet;
 
 use crate::entities::tenant::{
     data_backup_point as tenant_data_backup_point, data_migration as tenant_data_migration,
     data_migration_item as tenant_data_migration_item, data_placement as tenant_data_placement,
 };
 
-#[derive(Clone, Debug)]
-pub struct CreateTenantDataMigration {
-    pub id: i64,
-    pub tenant_id: String,
-    pub source_target_key: String,
-    pub target_key: String,
-    pub source_target_mode: String,
-    pub source_target_kind: String,
-    pub target_target_mode: String,
-    pub target_target_kind: String,
-    pub source_generation: i64,
-    pub source_switch_token: String,
-    pub target_generation: i64,
-    pub source_schema_fingerprint: String,
-    pub target_schema_fingerprint: String,
-    pub plan_hash: String,
-    pub create_idempotency_key_hash: String,
-    pub switch_token: String,
-    pub operator_id: i64,
-    pub retention_hours: i32,
-    pub now: DateTime<Utc>,
-}
+mod backups;
+mod occupancy;
 
-#[derive(Clone, Debug)]
-pub struct RegisterTenantDataBackupPoint {
-    pub id: i64,
-    pub scope: String,
-    pub tenant_id: Option<String>,
-    pub target_key: String,
-    pub placement_generation: Option<i64>,
-    pub schema_fingerprint: String,
-    pub provider_ref: String,
-    pub captured_at: DateTime<Utc>,
-    pub checksum: Option<String>,
-    pub validation_status: String,
-    pub retention_until: DateTime<Utc>,
-    pub expires_at: Option<DateTime<Utc>>,
-    pub created_by: Option<i64>,
-    pub now: DateTime<Utc>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct ValidatedTenantDataBackup<'a> {
-    pub tenant_id: &'a str,
-    pub target_key: &'a str,
-    pub target_mode: &'a str,
-    pub target_generation: i64,
-    pub schema_fingerprint: &'a str,
-    pub not_before: DateTime<Utc>,
-    pub now: DateTime<Utc>,
-}
+pub use backups::*;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TenantDataRepository;
 
 impl TenantDataRepository {
-    /// 只读控制库批量快照，供目标列表计算 dedicated 资格；不连接任何目标库。
-    pub async fn occupied_target_keys<C>(
-        &self,
-        db: &C,
-        configured_target_keys: &[String],
-    ) -> AppResult<HashSet<String>>
-    where
-        C: ConnectionTrait,
-    {
-        let configured_target_keys = configured_target_keys
-            .iter()
-            .cloned()
-            .collect::<HashSet<_>>();
-        if configured_target_keys.is_empty() {
-            return Ok(HashSet::new());
-        }
-        if configured_target_keys.len() > 200 {
-            return Err(AppError::Config(
-                "tenant-data target occupancy snapshot exceeds the configured 200-target limit"
-                    .into(),
-            ));
-        }
-        let configured_target_keys = configured_target_keys.into_iter().collect::<Vec<_>>();
-        let result_limit = configured_target_keys.len() as u64;
-        let placements = tenant_data_placement::Entity::find()
-            .select_only()
-            .distinct()
-            .column(tenant_data_placement::Column::CurrentTargetKey)
-            .filter(
-                tenant_data_placement::Column::CurrentTargetKey
-                    .is_in(configured_target_keys.clone()),
-            )
-            .filter(tenant_data_placement::Column::State.is_in([
-                tenant_data_placement::Model::STATE_ACTIVE,
-                tenant_data_placement::Model::STATE_MAINTENANCE,
-                tenant_data_placement::Model::STATE_PROVISIONING,
-            ]))
-            .limit(result_limit)
-            .into_tuple::<String>()
-            .all(db)
-            .await
-            .map_err(database_error)?;
-        let prepared = tenant_data_migration::Entity::find()
-            .select_only()
-            .distinct()
-            .column(tenant_data_migration::Column::TargetKey)
-            .filter(tenant_data_migration::Column::TargetKey.is_in(configured_target_keys.clone()))
-            .filter(tenant_data_migration::Column::State.is_not_in([
-                tenant_data_migration::Model::STATE_FINALIZED,
-                tenant_data_migration::Model::STATE_FAILED,
-                tenant_data_migration::Model::STATE_CANCELLED,
-            ]))
-            .limit(result_limit)
-            .into_tuple::<String>()
-            .all(db)
-            .await
-            .map_err(database_error)?;
-        let retained_sources = tenant_data_migration::Entity::find()
-            .select_only()
-            .distinct()
-            .column(tenant_data_migration::Column::SourceTargetKey)
-            .filter(
-                tenant_data_migration::Column::SourceTargetKey
-                    .is_in(configured_target_keys.clone()),
-            )
-            .filter(tenant_data_migration::Column::State.is_not_in([
-                tenant_data_migration::Model::STATE_FINALIZED,
-                tenant_data_migration::Model::STATE_FAILED,
-                tenant_data_migration::Model::STATE_CANCELLED,
-            ]))
-            .limit(result_limit)
-            .into_tuple::<String>()
-            .all(db)
-            .await
-            .map_err(database_error)?;
-        Ok(placements
-            .into_iter()
-            .chain(prepared)
-            .chain(retained_sources)
-            .collect())
-    }
-
     pub async fn placement<C>(
         &self,
         db: &C,
