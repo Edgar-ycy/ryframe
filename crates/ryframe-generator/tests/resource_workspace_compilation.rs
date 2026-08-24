@@ -149,6 +149,9 @@ fn run_shared_workspace() -> Result<(), String> {
     }
     register_device_frontend_contract(&frontend);
     write_device_fake_transaction_test(&backend);
+    let cargo_target = std::env::var_os("RYFRAME_RESOURCE_WORKSPACE_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| backend_source.join("target/resource-generator-workspace-check"));
 
     let cargo_fmt = Command::new("cargo")
         .args(["fmt", "--all", "--", "--check"])
@@ -170,10 +173,7 @@ fn run_shared_workspace() -> Result<(), String> {
             "ryframe-api",
         ])
         .current_dir(&backend)
-        .env(
-            "CARGO_TARGET_DIR",
-            backend_source.join("target/resource-generator-workspace-check"),
-        )
+        .env("CARGO_TARGET_DIR", &cargo_target)
         .output()
         .expect("应运行临时后端 cargo check");
     assert_command_succeeded("cargo check", &cargo);
@@ -187,10 +187,7 @@ fn run_shared_workspace() -> Result<(), String> {
             "generated_device_fake",
         ])
         .current_dir(&backend)
-        .env(
-            "CARGO_TARGET_DIR",
-            backend_source.join("target/resource-generator-workspace-check"),
-        )
+        .env("CARGO_TARGET_DIR", cargo_target)
         .output()
         .expect("应运行生成 Fake 事务语义测试");
     assert_command_succeeded("generated Device fake transaction test", &fake_test);

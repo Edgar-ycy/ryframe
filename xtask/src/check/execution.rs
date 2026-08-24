@@ -9,6 +9,7 @@ use super::{
     },
     metrics,
     model::{BackendSnapshotProfile, FrontendProfile, WorkspaceGraph},
+    resource::resource_workspace_compilation,
     selection::{
         changed_paths, classify_changes, complete_verify_selection, frontend_profile_commands,
         load_workspace_graph, load_workspace_metadata, needs_consumer_contract, print_selection,
@@ -252,7 +253,7 @@ fn full_verify(scope: CheckScope, frontend_dir: &Path) -> Result<()> {
                 run_process_with_env(&root, "cargo", &args, &environment)
             },
             "resource-workspace",
-            || resource_workspace_compilation(frontend_dir, budget.resource),
+            || resource_workspace_compilation(budget.resource),
         )?;
         verify_backend_snapshots(&snapshots)?;
         Some(snapshots)
@@ -294,29 +295,6 @@ fn frontend_full_non_consumer(frontend_dir: &Path) -> Result<()> {
         run_pnpm(frontend_dir, &[*command])?;
     }
     Ok(())
-}
-
-fn resource_workspace_compilation(frontend_dir: &Path, jobs: usize) -> Result<()> {
-    require_frontend_dependencies(frontend_dir)?;
-    let jobs = jobs.to_string();
-    run_process_with_env(
-        &root_dir(),
-        "cargo",
-        &[
-            "test",
-            "--locked",
-            "--target-dir",
-            RESOURCE_VERIFY_TARGET_DIR,
-            "-p",
-            "ryframe-generator",
-            "--test",
-            "resource_workspace_compilation",
-            "--",
-            "--ignored",
-            "--nocapture",
-        ],
-        &[("CARGO_BUILD_JOBS", jobs.as_str())],
-    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

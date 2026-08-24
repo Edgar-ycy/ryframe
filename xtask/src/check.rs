@@ -10,6 +10,8 @@ mod feature;
 pub(crate) mod metrics;
 #[path = "check/model.rs"]
 mod model;
+#[path = "check/resource.rs"]
+mod resource;
 #[path = "check/selection.rs"]
 mod selection;
 #[path = "check/snapshot.rs"]
@@ -41,6 +43,8 @@ pub(crate) use feature::{
 pub(crate) use model::{
     BackendSnapshotProfile, ConsumerContractPlan, FrontendProfile, VerifySelection, WorkspaceGraph,
 };
+#[allow(unused_imports)]
+pub(crate) use resource::resource_test_executable_from_messages;
 #[allow(unused_imports)]
 pub(crate) use selection::{
     changed_paths, classify_changes, complete_verify_selection, frontend_profile_commands,

@@ -15,8 +15,9 @@ use super::check::{
     changed_paths, classify_changes, complete_verify_selection, consumer_contract_arguments,
     consumer_contract_plan, feature_operation_args, feature_test_args, frontend_profile_commands,
     load_change_surface_policy, load_consumer_contract_plan, load_workspace_graph,
-    minimal_workspace_check_args, needs_consumer_contract, reverse_dependency_closure,
-    validate_feature_combination, verify_job_budget_from, workspace_test_args,
+    minimal_workspace_check_args, needs_consumer_contract, resource_test_executable_from_messages,
+    reverse_dependency_closure, validate_feature_combination, verify_job_budget_from,
+    workspace_test_args,
 };
 
 static NEXT_REPOSITORY: AtomicU64 = AtomicU64::new(1);
@@ -189,6 +190,19 @@ fn verify_job_budget_reserves_capacity_for_both_cargo_branches() {
     );
     assert!(verify_job_budget_from(Some("3"), 22).is_err());
     assert!(verify_job_budget_from(Some("invalid"), 22).is_err());
+}
+
+#[test]
+fn resource_test_executable_is_read_from_cargo_json_messages() {
+    let output = concat!(
+        "{\"reason\":\"compiler-artifact\",\"target\":{\"name\":\"other\"},\"executable\":null}\n",
+        "{\"reason\":\"compiler-artifact\",\"target\":{\"name\":\"resource_workspace_compilation\"},",
+        "\"executable\":\"D:\\\\target\\\\resource-test.exe\"}\n"
+    );
+    assert_eq!(
+        resource_test_executable_from_messages(output).unwrap(),
+        Path::new("D:\\target\\resource-test.exe")
+    );
 }
 
 #[test]
