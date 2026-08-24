@@ -215,19 +215,7 @@ fn full_verify(scope: CheckScope, frontend_dir: &Path) -> Result<()> {
     } else if frontend_enabled {
         frontend_full_non_consumer(frontend_dir)?;
     }
-    let backend_snapshots = if matches!(scope, CheckScope::All | CheckScope::Backend) {
-        Some(export_and_verify_backend_snapshots(
-            &[
-                BackendSnapshotProfile::OpenApiContract,
-                BackendSnapshotProfile::Mysql,
-            ]
-            .into_iter()
-            .collect(),
-        )?)
-    } else {
-        None
-    };
-    if backend_enabled {
+    let backend_snapshots = if backend_enabled {
         run_process(&root_dir(), "python", PYTHON_TEST_ARGS)?;
         run_process(
             &root_dir(),
@@ -251,7 +239,17 @@ fn full_verify(scope: CheckScope, frontend_dir: &Path) -> Result<()> {
             "resource-workspace",
             || resource_workspace_compilation(frontend_dir, budget.resource),
         )?;
-    }
+        Some(export_and_verify_backend_snapshots(
+            &[
+                BackendSnapshotProfile::OpenApiContract,
+                BackendSnapshotProfile::Mysql,
+            ]
+            .into_iter()
+            .collect(),
+        )?)
+    } else {
+        None
+    };
     if matches!(scope, CheckScope::Backend) {
         run_consumer_contract(
             frontend_dir,
