@@ -59,7 +59,9 @@ impl ChildGroup {
 
     pub(crate) fn spawn(&self, command: &mut Command) -> Result<Child> {
         prepare_process_group(command);
-        let mut child = command.spawn()?;
+        let child = command.spawn()?;
+        #[cfg(windows)]
+        let mut child = child;
         #[cfg(windows)]
         {
             if let Err(error) = assign_and_resume_suspended_child(self.job, &child) {
