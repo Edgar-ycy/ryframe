@@ -35,7 +35,7 @@ jobs:
     env:
       RUSTFLAGS: "-Dwarnings"
       RUSTC_WRAPPER: sccache
-      SCCACHE_DIR: ${{ runner.temp }}/sccache
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache
       SCCACHE_CACHE_SIZE: 4G
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -71,7 +71,7 @@ jobs:
       - name: Restore sccache artifacts
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
         with:
-          path: ${{ runner.temp }}/sccache
+          path: ${{ github.workspace }}/.sccache
           key: v2-sccache-${{ runner.os }}-${{ runner.arch }}-check-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             v2-sccache-${{ runner.os }}-${{ runner.arch }}-check-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
@@ -172,7 +172,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RUSTC_WRAPPER: sccache
-      SCCACHE_DIR: ${{ runner.temp }}/sccache
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache
       SCCACHE_CACHE_SIZE: 4G
       RYFRAME_INTEGRATION_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
       RYFRAME_MYSQL_INTEGRATION: "1"
@@ -222,7 +222,7 @@ jobs:
       - name: 恢复 sccache 编译产物
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
         with:
-          path: ${{ runner.temp }}/sccache
+          path: ${{ github.workspace }}/.sccache
           key: v2-sccache-${{ runner.os }}-${{ runner.arch }}-integration-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             v2-sccache-${{ runner.os }}-${{ runner.arch }}-integration-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
@@ -263,7 +263,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RUSTC_WRAPPER: sccache
-      SCCACHE_DIR: ${{ runner.temp }}/sccache
+      SCCACHE_DIR: ${{ github.workspace }}/.sccache
       SCCACHE_CACHE_SIZE: 4G
     steps:
       - name: 检出后端 PR 提交
@@ -285,7 +285,7 @@ jobs:
       - name: 恢复 sccache 编译产物
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
         with:
-          path: ${{ runner.temp }}/sccache
+          path: ${{ github.workspace }}/.sccache
           key: v2-sccache-${{ runner.os }}-${{ runner.arch }}-consumer-contract-${{ hashFiles('backend/rust-toolchain.toml', 'backend/Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             v2-sccache-${{ runner.os }}-${{ runner.arch }}-consumer-contract-${{ hashFiles('backend/rust-toolchain.toml', 'backend/Cargo.lock') }}-
@@ -408,7 +408,7 @@ jobs:
     runs-on: windows-latest
     env:
       RUSTC_WRAPPER: sccache
-      SCCACHE_DIR: ${{ runner.temp }}\sccache
+      SCCACHE_DIR: ${{ github.workspace }}\.sccache
       SCCACHE_CACHE_SIZE: 4G
     steps:
       - name: 检出后端源码
@@ -430,7 +430,7 @@ jobs:
       - name: 恢复 sccache 编译产物
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
         with:
-          path: ${{ runner.temp }}\sccache
+          path: ${{ github.workspace }}\.sccache
           key: v2-sccache-${{ runner.os }}-${{ runner.arch }}-windows-smoke-${{ hashFiles('ryframe/rust-toolchain.toml', 'ryframe/Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             v2-sccache-${{ runner.os }}-${{ runner.arch }}-windows-smoke-${{ hashFiles('ryframe/rust-toolchain.toml', 'ryframe/Cargo.lock') }}-
