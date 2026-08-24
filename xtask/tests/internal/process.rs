@@ -6,11 +6,17 @@ use std::{
 use super::process::{ChildGroup, run, with_process_log};
 
 #[test]
-fn windows_job_object_accepts_and_waits_for_child() {
+fn child_group_accepts_and_waits_for_child() {
     let group = ChildGroup::new().unwrap();
+    #[cfg(windows)]
     let mut command = Command::new("cmd");
+    #[cfg(windows)]
+    command.args(["/C", "exit", "0"]);
+    #[cfg(unix)]
+    let mut command = Command::new("sh");
+    #[cfg(unix)]
+    command.args(["-c", "exit 0"]);
     command
-        .args(["/C", "exit", "0"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
