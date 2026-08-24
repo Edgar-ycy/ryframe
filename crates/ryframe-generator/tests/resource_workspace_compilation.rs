@@ -64,14 +64,10 @@ fn run_shared_workspace() -> Result<(), String> {
     let frontend_parent = frontend_source.join(".local-tests");
     fs::create_dir_all(&backend_parent).expect("应创建后端临时测试目录");
     fs::create_dir_all(&frontend_parent).expect("应创建前端临时测试目录");
-    let backend = tempfile::Builder::new()
-        .prefix("shared-resource-workspace-")
-        .tempdir_in(&backend_parent)
-        .expect("应创建后端临时 Workspace");
-    let frontend = tempfile::Builder::new()
-        .prefix("shared-resource-frontend-")
-        .tempdir_in(&frontend_parent)
-        .expect("应创建前端临时 Workspace");
+    let backend = backend_parent.join("shared-resource-workspace");
+    let frontend = frontend_parent.join("shared-resource-frontend");
+    fs::create_dir_all(&backend).expect("应创建后端临时 Workspace");
+    fs::create_dir_all(&frontend).expect("应创建前端临时 Workspace");
 
     for file in [
         "Cargo.toml",
@@ -79,16 +75,12 @@ fn run_shared_workspace() -> Result<(), String> {
         "rust-toolchain.toml",
         "rustfmt.toml",
     ] {
-        fs::copy(backend_source.join(file), backend.path().join(file))
-            .unwrap_or_else(|error| panic!("复制 {file} 失败：{error}"));
+        sync_file(&backend_source.join(file), &backend.join(file));
     }
     for directory in [".cargo", "catalog", "crates", "vendor", "xtask"] {
-        copy_directory(
-            &backend_source.join(directory),
-            &backend.path().join(directory),
-        );
+        sync_directory(&backend_source.join(directory), &backend.join(directory));
     }
-    prepare_frontend_workspace(&frontend_source, frontend.path());
+    prepare_frontend_workspace(&frontend_source, &frontend);
 
     let mut device =
         load_resource(backend_source.join("crates/ryframe-generator/tests/fixtures/device.toml"))
@@ -108,8 +100,8 @@ fn run_shared_workspace() -> Result<(), String> {
         &catalog,
         "device",
         ResourceWorkspace {
-            backend_root: backend.path(),
-            frontend_root: Some(frontend.path()),
+            backend_root: &backend,
+            frontend_root: Some(&frontend),
         },
     )
     .expect("Device/Post 目录应一次性写入临时 Workspace");
@@ -120,9 +112,9 @@ fn run_shared_workspace() -> Result<(), String> {
         "src/generated/resources/post/page.vue",
     ] {
         let root = if path.starts_with("src/") {
-            frontend.path()
+            &frontend
         } else {
-            backend.path()
+            &backend
         };
         assert!(root.join(path).is_file(), "Post 资产未生成：{path}");
     }
@@ -131,8 +123,8 @@ fn run_shared_workspace() -> Result<(), String> {
             &catalog,
             resource,
             ResourceWorkspace {
-                backend_root: backend.path(),
-                frontend_root: Some(frontend.path()),
+                backend_root: &backend,
+                frontend_root: Some(&frontend),
             },
         )
         .unwrap_or_else(|error| panic!("{resource} 连续生成应成功：{error}"));
@@ -145,11 +137,7 @@ fn run_shared_workspace() -> Result<(), String> {
         "ryframe-tenant-db",
         "ryframe-api",
     ] {
-        let lib = backend
-            .path()
-            .join("crates")
-            .join(crate_name)
-            .join("src/lib.rs");
+        let lib = backend.join("crates").join(crate_name).join("src/lib.rs");
         let mut source = fs::read_to_string(&lib).expect("应读取 crate lib.rs");
         if !source
             .lines()
@@ -159,12 +147,12 @@ fn run_shared_workspace() -> Result<(), String> {
         }
         fs::write(&lib, source).expect("应在临时副本接入 generated module");
     }
-    register_device_frontend_contract(frontend.path());
-    write_device_fake_transaction_test(backend.path());
+    register_device_frontend_contract(&frontend);
+    write_device_fake_transaction_test(&backend);
 
     let cargo_fmt = Command::new("cargo")
         .args(["fmt", "--all", "--", "--check"])
-        .current_dir(backend.path())
+        .current_dir(&backend)
         .output()
         .expect("应检查生成 Rust 资产格式");
     assert_command_succeeded("cargo fmt --check", &cargo_fmt);
@@ -181,7 +169,7 @@ fn run_shared_workspace() -> Result<(), String> {
             "-p",
             "ryframe-api",
         ])
-        .current_dir(backend.path())
+        .current_dir(&backend)
         .env(
             "CARGO_TARGET_DIR",
             backend_source.join("target/resource-generator-workspace-check"),
@@ -198,7 +186,7 @@ fn run_shared_workspace() -> Result<(), String> {
             "--test",
             "generated_device_fake",
         ])
-        .current_dir(backend.path())
+        .current_dir(&backend)
         .env(
             "CARGO_TARGET_DIR",
             backend_source.join("target/resource-generator-workspace-check"),
@@ -207,15 +195,14 @@ fn run_shared_workspace() -> Result<(), String> {
         .expect("应运行生成 Fake 事务语义测试");
     assert_command_succeeded("generated Device fake transaction test", &fake_test);
 
-    assert_frontend_checks(&frontend_source, frontend.path());
+    assert_frontend_checks(&frontend_source, &frontend);
     Ok(())
 }
 
 fn prepare_frontend_workspace(source: &Path, target: &Path) {
-    copy_directory(&source.join("src"), &target.join("src"));
+    sync_directory(&source.join("src"), &target.join("src"));
     for file in ["tsconfig.json", "eslint.config.js", "package.json"] {
-        fs::copy(source.join(file), target.join(file))
-            .unwrap_or_else(|error| panic!("复制前端 {file} 失败：{error}"));
+        sync_file(&source.join(file), &target.join(file));
     }
 }
 
@@ -241,9 +228,29 @@ fn assert_frontend_checks(source: &Path, target: &Path) {
     assert_command_succeeded("Device/Post ESLint", &lint);
 }
 
-fn copy_directory(source: &Path, target: &Path) {
+fn sync_directory(source: &Path, target: &Path) {
     fs::create_dir_all(target)
         .unwrap_or_else(|error| panic!("创建目录 {} 失败：{error}", target.display()));
+    let source_names = fs::read_dir(source)
+        .unwrap_or_else(|error| panic!("读取目录 {} 失败：{error}", source.display()))
+        .map(|entry| entry.expect("应读取目录项").file_name())
+        .collect::<std::collections::BTreeSet<_>>();
+    for entry in fs::read_dir(target)
+        .unwrap_or_else(|error| panic!("读取目录 {} 失败：{error}", target.display()))
+    {
+        let entry = entry.expect("应读取目标目录项");
+        if source_names.contains(&entry.file_name()) {
+            continue;
+        }
+        let path = entry.path();
+        if entry.file_type().expect("应读取目标文件类型").is_dir() {
+            fs::remove_dir_all(&path)
+                .unwrap_or_else(|error| panic!("删除旧目录 {} 失败：{error}", path.display()));
+        } else {
+            fs::remove_file(&path)
+                .unwrap_or_else(|error| panic!("删除旧文件 {} 失败：{error}", path.display()));
+        }
+    }
     let mut entries = fs::read_dir(source)
         .unwrap_or_else(|error| panic!("读取目录 {} 失败：{error}", source.display()))
         .collect::<Result<Vec<_>, _>>()
@@ -253,17 +260,26 @@ fn copy_directory(source: &Path, target: &Path) {
         let source_path = entry.path();
         let target_path = target.join(entry.file_name());
         if entry.file_type().expect("应读取文件类型").is_dir() {
-            copy_directory(&source_path, &target_path);
+            sync_directory(&source_path, &target_path);
         } else {
-            fs::copy(&source_path, &target_path).unwrap_or_else(|error| {
-                panic!(
-                    "复制 {} 到 {} 失败：{error}",
-                    source_path.display(),
-                    target_path.display()
-                )
-            });
+            sync_file(&source_path, &target_path);
         }
     }
+}
+
+fn sync_file(source: &Path, target: &Path) {
+    let unchanged = target.is_file()
+        && fs::read(source).expect("应读取源文件") == fs::read(target).expect("应读取目标文件");
+    if unchanged {
+        return;
+    }
+    fs::copy(source, target).unwrap_or_else(|error| {
+        panic!(
+            "复制 {} 到 {} 失败：{error}",
+            source.display(),
+            target.display()
+        )
+    });
 }
 
 fn register_device_frontend_contract(frontend: &Path) {
