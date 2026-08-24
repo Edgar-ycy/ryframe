@@ -63,6 +63,7 @@ async fn page(
     let (params, query) = query.into_service_params()?;
     let result = state
         .services
+        .platform
         .tenant_usage
         .page(&current_user, params, &query, include_usage)
         .await?;
@@ -99,6 +100,7 @@ async fn detail(
     ensure_system_tenant(&current_user)?;
     let tenant = state
         .services
+        .platform
         .tenant_usage
         .detail(&current_user, &tenant_id, can_view_usage(&current_user))
         .await?;
@@ -129,6 +131,7 @@ async fn usage(
     ensure_system_tenant(&current_user)?;
     let usage = state
         .services
+        .platform
         .tenant_usage
         .usage(&current_user, &tenant_id)
         .await?;
@@ -155,7 +158,7 @@ async fn list(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
 ) -> HttpResult<Json<ApiResponse<Vec<TenantVo>>>> {
-    let tenants = state.services.tenant.list(&current_user).await?;
+    let tenants = state.services.platform.tenant.list(&current_user).await?;
     Ok(Json(ApiResponse::success(
         tenants.into_iter().map(TenantVo::from).collect(),
     )))
@@ -192,6 +195,7 @@ async fn create(
     }
     let model = state
         .services
+        .platform
         .tenant
         .create(
             &current_user,
@@ -230,6 +234,7 @@ async fn update(
     dto.validate()?;
     let updated = state
         .services
+        .platform
         .tenant
         .update(
             &current_user,
@@ -262,6 +267,7 @@ async fn update_status(
 ) -> HttpResult<Json<ApiResponse<()>>> {
     state
         .services
+        .platform
         .tenant
         .update_status(&current_user, &tenant_id, dto.status)
         .await?;

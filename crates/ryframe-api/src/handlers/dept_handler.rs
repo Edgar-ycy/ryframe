@@ -41,6 +41,7 @@ async fn tree(
 ) -> HttpResult<Json<ApiResponse<Vec<DeptTreeNode>>>> {
     state
         .services
+        .identity
         .dept
         .filter_dept_by_user(&current_user)
         .await
@@ -67,6 +68,7 @@ async fn list_page(
     let (page, filter) = query.into_parts(state.settings.pagination)?;
     state
         .services
+        .identity
         .dept
         .find_by_page_filtered(
             &current_user,
@@ -101,6 +103,7 @@ async fn create(
     let parent_id = parse_optional_i64(dto.parent_id)?;
     state
         .services
+        .identity
         .dept
         .create(
             &current_user,
@@ -131,6 +134,7 @@ async fn update(
     let parent_id = parse_optional_i64(dto.parent_id)?;
     state
         .services
+        .identity
         .dept
         .update(
             &current_user,
@@ -161,6 +165,7 @@ async fn detail(
 ) -> HttpResult<Json<ApiResponse<DeptVo>>> {
     let value = state
         .services
+        .identity
         .dept
         .find_by_id(&current_user, id)
         .await?
@@ -178,5 +183,5 @@ async fn remove(
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
-    remove_body!(state, current_user, id, dept)
+    remove_body!(state, current_user, id, identity.dept)
 }

@@ -46,6 +46,7 @@ async fn ensure_can_operate_role(
 ) -> HttpResult<()> {
     let role = state
         .services
+        .identity
         .role
         .get_role_model(current_user, role_id)
         .await?;
@@ -89,6 +90,7 @@ async fn options(
     let query = query.resolve(state.settings.pagination)?;
     state
         .services
+        .identity
         .role
         .find_options(
             &current_user,
@@ -117,6 +119,7 @@ async fn list(
     let (page, filter) = query.into_parts(state.settings.pagination)?;
     state
         .services
+        .identity
         .role
         .find_by_page(&current_user, filter.into_service_params(page))
         .await
@@ -142,7 +145,7 @@ async fn detail(
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
 ) -> HttpResult<Json<ApiResponse<RoleVo>>> {
-    detail_body!(state, current_user, id, role, RoleVo, "角色")
+    detail_body!(state, current_user, id, identity.role, RoleVo, "角色")
 }
 
 /// 创建角色
@@ -158,6 +161,7 @@ async fn create(
     dto.validate()?;
     state
         .services
+        .identity
         .role
         .create(
             &current_user,
@@ -187,6 +191,7 @@ async fn update(
     ensure_can_operate_role(&state, &current_user, id).await?;
     let result = state
         .services
+        .identity
         .role
         .update(
             &current_user,
@@ -211,7 +216,12 @@ async fn remove(
     Path(id): Path<i64>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
     ensure_can_operate_role(&state, &current_user, id).await?;
-    state.services.role.delete(&current_user, id).await?;
+    state
+        .services
+        .identity
+        .role
+        .delete(&current_user, id)
+        .await?;
     Ok(Json(ApiResponse::success_no_data()))
 }
 
@@ -237,7 +247,12 @@ async fn batch_remove(
         ensure_can_operate_role(&state, &current_user, *id).await?;
     }
 
-    state.services.role.delete_many(&current_user, &ids).await?;
+    state
+        .services
+        .identity
+        .role
+        .delete_many(&current_user, &ids)
+        .await?;
     Ok(Json(ApiResponse::success_no_data()))
 }
 
@@ -283,6 +298,7 @@ async fn replace_permissions(
     let perm_ids = parse_i64_strings(&dto.perm_ids)?;
     state
         .services
+        .identity
         .role
         .assign_permissions(&current_user, id, perm_ids)
         .await?;
@@ -303,6 +319,7 @@ async fn get_role_perms(
 ) -> HttpResult<Json<ApiResponse<Vec<String>>>> {
     let perm_ids = state
         .services
+        .identity
         .permission
         .find_role_permission_ids(&current_user, id)
         .await?;
@@ -328,6 +345,7 @@ async fn replace_data_scope(
     let dept_ids = parse_i64_strings(&dto.dept_ids)?;
     state
         .services
+        .identity
         .role
         .replace_data_scope(&current_user, id, &dto.data_scope, dept_ids)
         .await?;

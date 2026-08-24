@@ -75,7 +75,7 @@ pub fn build_app(
     // Agent API 不经过会在业务审计前短路的通用请求体、超时、限流或 CORS 层。
     // 其固定 GET 路由在服务内执行配置限定的总预算、专用原子限流和 fail-closed 审计；
     // OPTIONS 与未知方法也会进入 Agent fallback 并留下最小审计。
-    let agent = if state.services.agent.is_some() {
+    let agent = if state.services.platform.agent.is_some() {
         Router::new()
             .nest(
                 "/api/v1/agent/v1",

@@ -43,6 +43,7 @@ pub async fn complete_password_reset(
     };
     state
         .services
+        .identity
         .user
         .complete_password_reset_request(tenant_id, request_id, &req.token, &req.new_password)
         .await?;

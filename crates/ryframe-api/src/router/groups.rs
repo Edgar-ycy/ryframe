@@ -7,7 +7,7 @@ pub(super) fn monitor_router(
     let public = domains::monitor::public(monitor_state.clone());
     let protected =
         domains::monitor::protected(state.clone(), monitor_state).layer(from_fn_with_state(
-            OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
+            OperLogMiddlewareState::new_arc(state.services.operations.audit_outbox.clone()),
             oper_log_middleware,
         ));
 
@@ -31,14 +31,14 @@ pub(super) fn system_router(
     // 不应让 Redis 可用性成为创建、预览、应用或回滚的前置条件。
     let database_idempotent =
         domains::system::database_idempotent(state.clone()).layer(from_fn_with_state(
-            OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
+            OperLogMiddlewareState::new_arc(state.services.operations.audit_outbox.clone()),
             oper_log_middleware,
         ));
 
     let redis_idempotent = domains::system::redis_idempotent(state.clone())
         // 从内到外注册：内层 layer 先注册
         .layer(from_fn_with_state(
-            OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
+            OperLogMiddlewareState::new_arc(state.services.operations.audit_outbox.clone()),
             oper_log_middleware,
         ))
         .layer(from_fn_with_state(
@@ -50,7 +50,7 @@ pub(super) fn system_router(
     // 中间件外层，确保请求进入审计逻辑前已经可见。
     let independent_online = domains::system::independent_online(state.clone())
         .layer(from_fn_with_state(
-            OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
+            OperLogMiddlewareState::new_arc(state.services.operations.audit_outbox.clone()),
             oper_log_middleware,
         ))
         .layer(Extension(AuditMode::Independent))
@@ -75,7 +75,8 @@ pub(super) fn system_router(
 /// 通用功能路由（文件上传等）
 /// 上传和下载都要求认证主体，并记录操作日志。
 pub(super) fn common_router(state: AppState, idempotency_state: IdempotencyState) -> Router {
-    let oper_log_state = OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone());
+    let oper_log_state =
+        OperLogMiddlewareState::new_arc(state.services.operations.audit_outbox.clone());
 
     let upload = protect(
         domains::common::upload(state.clone()).layer(from_fn_with_state(

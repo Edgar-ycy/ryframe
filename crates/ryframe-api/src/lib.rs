@@ -43,7 +43,9 @@ pub use probes::{livez, readyz};
 pub use request_locale::RequestLocale;
 pub use router::{api_router, auth_router};
 pub use settings::HttpRuntimeSettings;
-pub use state::{AppServices, AppState};
+pub use state::{
+    AppServices, AppState, ContentServices, IdentityServices, OperationsServices, PlatformServices,
+};
 pub use versioning::{ApiVersion, VersionedRouter};
 
 pub const RUNTIME_SWAGGER_UI_AVAILABLE: bool = cfg!(feature = "runtime-swagger-ui");

@@ -31,6 +31,7 @@ async fn list(
 ) -> HttpResult<Json<ApiPageResponse<LoginInfoVo>>> {
     state
         .services
+        .operations
         .login_info
         .find_by_page(
             &current_user,

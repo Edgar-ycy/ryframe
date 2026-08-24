@@ -50,6 +50,7 @@ pub(crate) async fn download_import_template(
 ) -> HttpResult<axum::response::Response> {
     let bytes = state
         .services
+        .identity
         .user_import
         .build_template(&current_user)
         .await

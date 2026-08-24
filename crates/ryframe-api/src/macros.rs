@@ -90,13 +90,13 @@ macro_rules! list_query {
 ///     actor: ryframe_kernel::ActorContext,
 ///     id: i64,
 /// ) -> HttpResult<axum::Json<ApiResponse<String>>> {
-///     detail_body!(state, actor, id, notice, String, "通知公告")
+///     detail_body!(state, actor, id, content.notice, String, "通知公告")
 /// }
 /// ```
 #[macro_export]
 macro_rules! detail_body {
-    ($state:ident, $actor:ident, $id:ident, $service:ident, $vo:ty, $entity:literal) => {{
-        match $state.services.$service.find_by_id(&$actor, $id).await? {
+    ($state:ident, $actor:ident, $id:ident, $($service:ident).+, $vo:ty, $entity:literal) => {{
+        match $state.services.$($service).+.find_by_id(&$actor, $id).await? {
             Some(value) => Ok(axum::Json($crate::http::ApiResponse::<$vo>::success(
                 value.into(),
             ))),
@@ -139,13 +139,13 @@ macro_rules! detail_body {
 ///     actor: ryframe_kernel::ActorContext,
 ///     id: i64,
 /// ) -> HttpResult<axum::Json<ApiResponse<()>>> {
-///     remove_body!(state, actor, id, notice)
+///     remove_body!(state, actor, id, content.notice)
 /// }
 /// ```
 #[macro_export]
 macro_rules! remove_body {
-    ($state:ident, $actor:ident, $id:ident, $service:ident) => {{
-        $state.services.$service.delete(&$actor, $id).await?;
+    ($state:ident, $actor:ident, $id:ident, $($service:ident).+) => {{
+        $state.services.$($service).+.delete(&$actor, $id).await?;
         Ok(axum::Json($crate::http::ApiResponse::success_no_data()))
     }};
 }

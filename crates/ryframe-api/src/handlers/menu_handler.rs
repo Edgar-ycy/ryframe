@@ -50,7 +50,12 @@ async fn tree(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
 ) -> HttpResult<Json<ApiResponse<Vec<MenuTreeNode>>>> {
-    let nodes = state.services.menu.find_tree(&current_user).await?;
+    let nodes = state
+        .services
+        .identity
+        .menu
+        .find_tree(&current_user)
+        .await?;
     let nodes = nodes
         .into_iter()
         .map(MenuTreeNode::try_from)
@@ -73,6 +78,7 @@ async fn list_page(
     let (page, filter) = query.into_parts(state.settings.pagination)?;
     let page = state
         .services
+        .identity
         .menu
         .find_by_page(&current_user, filter.into_service_params(page))
         .await?;
@@ -105,6 +111,7 @@ async fn create(
     let perm_id = parse_optional_i64_str(dto.perm_id.as_deref())?;
     let value = state
         .services
+        .identity
         .menu
         .create(
             &current_user,
@@ -140,6 +147,7 @@ async fn update(
     let perm_id = parse_optional_i64_str(dto.perm_id.as_deref())?;
     let value = state
         .services
+        .identity
         .menu
         .update(
             &current_user,
@@ -174,6 +182,7 @@ async fn detail(
 ) -> HttpResult<Json<ApiResponse<MenuVo>>> {
     let menu = state
         .services
+        .identity
         .menu
         .find_by_id(&current_user, id)
         .await?
@@ -191,5 +200,5 @@ async fn remove(
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
-    remove_body!(state, current_user, id, menu)
+    remove_body!(state, current_user, id, identity.menu)
 }

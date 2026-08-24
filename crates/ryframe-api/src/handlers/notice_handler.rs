@@ -62,6 +62,7 @@ async fn list(
     let (page, filter) = query.into_parts(state.settings.pagination)?;
     state
         .services
+        .content
         .notice
         .find_by_page(&current_user, filter.into_service_params(page))
         .await
@@ -89,7 +90,14 @@ async fn detail(
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
 ) -> HttpResult<Json<ApiResponse<NoticeVo>>> {
-    detail_body!(state, current_user, id, notice, NoticeVo, "通知公告")
+    detail_body!(
+        state,
+        current_user,
+        id,
+        content.notice,
+        NoticeVo,
+        "通知公告"
+    )
 }
 
 /// 创建通知公告
@@ -105,6 +113,7 @@ async fn create(
     dto.validate()?;
     state
         .services
+        .content
         .notice
         .create(
             &current_user,
@@ -134,6 +143,7 @@ async fn update(
     dto.validate()?;
     state
         .services
+        .content
         .notice
         .update(
             &current_user,
@@ -165,6 +175,7 @@ async fn publish_to_message_center(
 ) -> HttpResult<Json<ApiResponse<PublishedMessageVo>>> {
     let notice = state
         .services
+        .content
         .notice
         .find_by_id(&current_user, id)
         .await?
@@ -175,6 +186,7 @@ async fn publish_to_message_center(
 
     state
         .services
+        .content
         .message
         .publish(
             &current_user,
@@ -221,5 +233,5 @@ async fn remove(
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
-    remove_body!(state, current_user, id, notice)
+    remove_body!(state, current_user, id, content.notice)
 }

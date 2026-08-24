@@ -101,7 +101,7 @@ where
     router
         .layer(middleware::from_fn(request_locale_middleware))
         .layer(from_fn_with_state(
-            state.services.online_user.clone(),
+            state.services.identity.online_user.clone(),
             online_user_tracking,
         ))
         .layer(from_fn_with_state(
@@ -142,6 +142,7 @@ async fn tenant_context_headers(
     } else {
         let snapshot = state
             .services
+            .platform
             .tenant_data
             .runtime_snapshot(&tenant_id)
             .await
@@ -184,6 +185,7 @@ async fn capability_guard(
     state
         .app
         .services
+        .platform
         .product
         .require_capability(&tenant_id, state.capability_code)
         .await?;
@@ -233,7 +235,8 @@ async fn online_user_tracking(
 ///   `protected`：认证 → 操作日志 → 处理器
 ///   `profile`：认证 → 操作日志 → 处理器
 pub fn auth_router(state: AppState) -> Router {
-    let oper_log_state = OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone());
+    let oper_log_state =
+        OperLogMiddlewareState::new_arc(state.services.operations.audit_outbox.clone());
 
     // 认证端点可能携带 Cookie、CSRF challenge 或令牌数据，因此绝不进入通用的
     // 操作日志中间件。
@@ -390,7 +393,7 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
     if state.settings.multi_tenancy.enabled {
         let platform = protect(
             domains::platform::router(state.clone()).layer(from_fn_with_state(
-                OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
+                OperLogMiddlewareState::new_arc(state.services.operations.audit_outbox.clone()),
                 oper_log_middleware,
             )),
             &state,
@@ -400,7 +403,7 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
 
     let profile_delegations = protect(
         domains::profile::service_delegations(state.clone()).layer(from_fn_with_state(
-            OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
+            OperLogMiddlewareState::new_arc(state.services.operations.audit_outbox.clone()),
             oper_log_middleware,
         )),
         &state,

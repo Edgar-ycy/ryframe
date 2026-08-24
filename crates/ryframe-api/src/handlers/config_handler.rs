@@ -39,6 +39,7 @@ async fn list(
 ) -> HttpResult<Json<ApiPageResponse<ConfigVo>>> {
     state
         .services
+        .content
         .config
         .find_by_page(
             &current_user,
@@ -69,7 +70,13 @@ async fn detail(
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
 ) -> HttpResult<Json<ApiResponse<ConfigVo>>> {
-    match state.services.config.find_by_id(&current_user, id).await? {
+    match state
+        .services
+        .content
+        .config
+        .find_by_id(&current_user, id)
+        .await?
+    {
         Some(cfg) => Ok(Json(ApiResponse::success(cfg.into()))),
         None => Err(ryframe_kernel::AppError::NotFound("参数配置不存在".into()).into()),
     }
@@ -88,6 +95,7 @@ async fn create(
     dto.validate()?;
     state
         .services
+        .content
         .config
         .create_with_portability(
             &current_user,
@@ -117,6 +125,7 @@ async fn update(
     dto.validate()?;
     state
         .services
+        .content
         .config
         .update_with_portability(&current_user, id, &dto.value, dto.portable)
         .await
@@ -134,7 +143,12 @@ async fn remove(
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
-    state.services.config.delete(&current_user, id).await?;
+    state
+        .services
+        .content
+        .config
+        .delete(&current_user, id)
+        .await?;
     Ok(Json(ApiResponse::success_no_data()))
 }
 
@@ -150,6 +164,7 @@ async fn get_by_key(
 ) -> HttpResult<Json<ApiResponse<String>>> {
     match state
         .services
+        .content
         .config
         .find_by_key(&current_user, &key)
         .await?
@@ -170,7 +185,12 @@ async fn refresh_cache(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
 ) -> HttpResult<Json<ApiResponse<()>>> {
-    state.services.config.clear_cache(&current_user).await?;
+    state
+        .services
+        .content
+        .config
+        .clear_cache(&current_user)
+        .await?;
     Ok(Json(ApiResponse::success_no_data()))
 }
 

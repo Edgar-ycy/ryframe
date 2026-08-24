@@ -41,6 +41,7 @@ pub(crate) async fn overview(
 ) -> HttpResult<Json<ApiResponse<MonitorOverviewVo>>> {
     let core = state
         .services
+        .operations
         .overview
         .snapshot(&current_user)
         .await
@@ -49,7 +50,7 @@ pub(crate) async fn overview(
     let topology = state.monitor.database.topology_health().await;
     let active_connections = state.monitor.database.active_connections().await;
     let readiness = state.monitor.readiness.snapshot();
-    let storage_available = state.services.file.check_storage().await.is_ok();
+    let storage_available = state.services.content.file.check_storage().await.is_ok();
     let redis_configured = state.settings.redis_configured;
     let database_status = if topology.primary_healthy {
         if topology.replicas.iter().all(|node| node.healthy)
@@ -126,6 +127,7 @@ pub(crate) async fn trends(
     let range = OverviewRange::parse(query.range.trim())?;
     state
         .services
+        .operations
         .overview
         .trends(&current_user, range)
         .await

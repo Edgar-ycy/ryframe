@@ -46,6 +46,7 @@ pub async fn tree(
     let perm_type = query.perm_type.map(PermissionType::as_str);
     let tree = state
         .services
+        .identity
         .permission
         .list_all_perms(&current_user, perm_type)
         .await?;
@@ -68,6 +69,7 @@ pub async fn detail(
 ) -> HttpResult<Json<ApiResponse<PermissionVo>>> {
     let item = state
         .services
+        .identity
         .permission
         .find_by_id(&current_user, id)
         .await?;
@@ -91,6 +93,7 @@ pub async fn create(
     let parent_id = parse_optional_i64(dto.parent_id)?;
     let item = state
         .services
+        .identity
         .permission
         .create(
             &current_user,
@@ -123,6 +126,7 @@ pub async fn update(
     let parent_id = parse_optional_i64(dto.parent_id)?;
     let item = state
         .services
+        .identity
         .permission
         .update(
             &current_user,
@@ -151,7 +155,12 @@ pub async fn remove(
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
-    state.services.permission.delete(&current_user, id).await?;
+    state
+        .services
+        .identity
+        .permission
+        .delete(&current_user, id)
+        .await?;
     Ok(Json(ApiResponse::success_no_data()))
 }
 
@@ -165,6 +174,7 @@ pub async fn sync_perm_from_route(
 ) -> HttpResult<Json<ApiResponse<PermissionSyncReport>>> {
     let report = state
         .services
+        .identity
         .permission
         .sync_route_permissions(&current_user, crate::permission_catalog::permission_codes())
         .await?;

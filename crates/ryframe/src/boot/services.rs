@@ -2,7 +2,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use ryframe_adapters::{RedisClient, rate_limit::RateLimiter};
-use ryframe_api::AppServices;
+use ryframe_api::{
+    AppServices, ContentServices, IdentityServices, OperationsServices, PlatformServices,
+};
 use ryframe_application::{
     AuditOutbox, AuthService, JobQueue, JobScheduleService,
     agent::{AgentService, AgentServiceDependencies, service_capability_descriptors},
@@ -471,39 +473,47 @@ pub async fn build_all(
     };
 
     Ok(AppServices {
-        auth,
-        user,
-        role,
-        tenant,
-        product,
-        tenant_data,
-        tenant_usage,
-        service_accounts,
-        agent,
-        permission,
-        menu,
-        dept,
-        generated,
-        config: config_service,
-        dict,
-        export,
-        notice,
-        message,
-        websocket_ticket,
-        oper_log,
-        audit_outbox,
-        job_queue,
-        job_schedules,
-        data_retention,
-        user_import,
-        tenant_config_transfer,
-        tenant_data_migration,
-        authorization_diagnostic,
-        overview,
-        login_info,
-        profile,
-        file,
-        online_user,
-        captcha,
+        identity: IdentityServices {
+            auth,
+            user,
+            role,
+            permission,
+            menu,
+            dept,
+            user_import,
+            authorization_diagnostic,
+            profile,
+            online_user,
+            captcha,
+        },
+        platform: PlatformServices {
+            tenant,
+            product,
+            tenant_data,
+            tenant_usage,
+            service_accounts,
+            agent,
+            tenant_config_transfer,
+            tenant_data_migration,
+        },
+        content: ContentServices {
+            generated,
+            config: config_service,
+            dict,
+            notice,
+            message,
+            websocket_ticket,
+            file,
+        },
+        operations: OperationsServices {
+            export,
+            oper_log,
+            audit_outbox,
+            job_queue,
+            job_schedules,
+            data_retention,
+            overview,
+            login_info,
+        },
     })
 }

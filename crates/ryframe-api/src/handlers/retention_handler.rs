@@ -37,6 +37,7 @@ async fn overview(
 ) -> HttpResult<Json<ApiResponse<DataRetentionOverview>>> {
     state
         .services
+        .operations
         .data_retention
         .overview(&current_user)
         .await
@@ -59,6 +60,7 @@ async fn preview(
 ) -> HttpResult<Json<ApiResponse<DataRetentionPreview>>> {
     state
         .services
+        .operations
         .data_retention
         .preview(&current_user)
         .await
@@ -84,6 +86,7 @@ async fn run(
     let hash = idempotency_key_hash(&headers)?;
     let run = state
         .services
+        .operations
         .data_retention
         .enqueue_manual(&current_user, &hash)
         .await
@@ -104,6 +107,7 @@ async fn runs(
 ) -> HttpResult<Json<ApiPageResponse<DataRetentionRunVo>>> {
     let page = state
         .services
+        .operations
         .data_retention
         .list_runs(&current_user, query.into_page(state.settings.pagination)?)
         .await

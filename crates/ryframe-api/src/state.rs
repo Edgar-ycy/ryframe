@@ -24,41 +24,61 @@ use crate::{
 };
 
 #[derive(Clone)]
-pub struct AppServices {
+pub struct IdentityServices {
     pub auth: Arc<AuthService>,
     pub user: Arc<UserService>,
     pub role: Arc<RoleService>,
+    pub permission: Arc<PermissionService>,
+    pub menu: Arc<MenuService>,
+    pub dept: Arc<DeptService>,
+    pub user_import: Arc<UserImportService>,
+    pub authorization_diagnostic: Arc<AuthorizationDiagnosticService>,
+    pub profile: Arc<ProfileService>,
+    pub online_user: Arc<OnlineUserService>,
+    pub captcha: Arc<dyn CaptchaStore>,
+}
+
+#[derive(Clone)]
+pub struct PlatformServices {
     pub tenant: Arc<TenantService>,
     pub product: Arc<ProductService>,
     pub tenant_data: Arc<dyn TenantRuntimeReadPort>,
     pub tenant_usage: Arc<TenantUsageService>,
     pub service_accounts: Option<Arc<ServiceAccountService>>,
     pub agent: Option<Arc<AgentService>>,
-    pub permission: Arc<PermissionService>,
-    pub menu: Arc<MenuService>,
-    pub dept: Arc<DeptService>,
+    pub tenant_config_transfer: Arc<TenantConfigTransferService>,
+    pub tenant_data_migration: Arc<TenantDataMigrationService>,
+}
+
+#[derive(Clone)]
+pub struct ContentServices {
     pub generated: GeneratedServices,
     pub config: Arc<ConfigService>,
     pub dict: Arc<DictService>,
-    pub export: Arc<ExportService>,
     pub notice: Arc<NoticeService>,
     pub message: Arc<MessageService>,
     pub websocket_ticket: Arc<WebSocketTicketService>,
+    pub file: Arc<FileService>,
+}
+
+#[derive(Clone)]
+pub struct OperationsServices {
+    pub export: Arc<ExportService>,
     pub oper_log: Arc<OperLogService>,
     pub audit_outbox: Arc<AuditOutbox>,
     pub job_queue: Arc<JobQueue>,
     pub job_schedules: Option<Arc<JobScheduleService>>,
     pub data_retention: Arc<DataRetentionService>,
-    pub user_import: Arc<UserImportService>,
-    pub tenant_config_transfer: Arc<TenantConfigTransferService>,
-    pub tenant_data_migration: Arc<TenantDataMigrationService>,
-    pub authorization_diagnostic: Arc<AuthorizationDiagnosticService>,
     pub overview: Arc<OverviewService>,
     pub login_info: Arc<LoginInfoService>,
-    pub profile: Arc<ProfileService>,
-    pub file: Arc<FileService>,
-    pub online_user: Arc<OnlineUserService>,
-    pub captcha: Arc<dyn CaptchaStore>,
+}
+
+#[derive(Clone)]
+pub struct AppServices {
+    pub identity: IdentityServices,
+    pub platform: PlatformServices,
+    pub content: ContentServices,
+    pub operations: OperationsServices,
 }
 
 #[derive(Clone)]

@@ -61,6 +61,7 @@ async fn inbox(
     let cursor = parse_optional_id(query.cursor.as_deref(), "cursor")?;
     state
         .services
+        .content
         .message
         .inbox(&current_user, cursor, limit, query.unread_only)
         .await
@@ -81,6 +82,7 @@ async fn unread_count(
 ) -> HttpResult<Json<ApiResponse<u64>>> {
     state
         .services
+        .content
         .message
         .unread_count(&current_user)
         .await
@@ -121,6 +123,7 @@ async fn publish(
         .collect::<HttpResult<Vec<_>>>()?;
     state
         .services
+        .content
         .message
         .publish(
             &current_user,
@@ -164,6 +167,7 @@ async fn acknowledge(
     let started = std::time::Instant::now();
     state
         .services
+        .content
         .message
         .acknowledge(&current_user, &ids)
         .await
@@ -192,6 +196,7 @@ async fn delete_messages(
         .collect::<HttpResult<Vec<_>>>()?;
     state
         .services
+        .content
         .message
         .delete(&current_user, &ids)
         .await
@@ -215,6 +220,7 @@ async fn mark_read(
     let started = std::time::Instant::now();
     state
         .services
+        .content
         .message
         .mark_read(&current_user, message_id)
         .await
@@ -235,6 +241,7 @@ async fn mark_all_read(
     let started = std::time::Instant::now();
     state
         .services
+        .content
         .message
         .mark_all_read(&current_user)
         .await

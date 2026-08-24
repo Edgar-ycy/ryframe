@@ -32,6 +32,7 @@ pub(crate) async fn list(
     let params = query.into_service_params(state.settings.pagination)?;
     state
         .services
+        .identity
         .user
         .find_by_page(&current_user, params)
         .await
@@ -62,6 +63,7 @@ pub(crate) async fn options(
     let query = query.resolve(state.settings.pagination)?;
     state
         .services
+        .identity
         .user
         .find_options(&current_user, query.q.as_deref(), query.limit)
         .await
@@ -84,6 +86,7 @@ pub(crate) async fn detail(
 ) -> HttpResult<Json<ApiResponse<UserDetailVo>>> {
     let user = state
         .services
+        .identity
         .user
         .find_by_id(&current_user, id)
         .await?
@@ -107,6 +110,7 @@ pub(crate) async fn create(
     let role_ids = parse_i64_strings(&dto.role_ids)?;
     state
         .services
+        .identity
         .user
         .create(
             &current_user,
@@ -141,6 +145,7 @@ pub(crate) async fn update(
     let dept_id = parse_optional_i64(dto.dept_id)?;
     state
         .services
+        .identity
         .user
         .update(
             &current_user,
@@ -180,7 +185,12 @@ pub(crate) async fn replace_roles(
         )?;
     }
 
-    let super_role = state.services.role.get_super_role(&current_user).await?;
+    let super_role = state
+        .services
+        .identity
+        .role
+        .get_super_role(&current_user)
+        .await?;
     if role_ids.contains(&super_role.id) {
         ensure_current_user_permission(
             &current_user,
@@ -190,6 +200,7 @@ pub(crate) async fn replace_roles(
     }
     state
         .services
+        .identity
         .user
         .replace_roles(&current_user, id, role_ids)
         .await?;
@@ -207,7 +218,12 @@ pub(crate) async fn remove(
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
-    state.services.user.delete(&current_user, id).await?;
+    state
+        .services
+        .identity
+        .user
+        .delete(&current_user, id)
+        .await?;
     Ok(Json(ApiResponse::success_no_data()))
 }
 
@@ -226,7 +242,12 @@ pub(crate) async fn batch_remove(
     if ids.is_empty() {
         return Err(AppError::Validation("请选择要删除的用户".into()).into());
     }
-    state.services.user.delete_many(&current_user, &ids).await?;
+    state
+        .services
+        .identity
+        .user
+        .delete_many(&current_user, &ids)
+        .await?;
     Ok(Json(ApiResponse::success_no_data()))
 }
 
@@ -246,6 +267,7 @@ pub(crate) async fn update_status(
     dto.validate()?;
     state
         .services
+        .identity
         .user
         .update_status(&current_user, id, dto.status)
         .await?;

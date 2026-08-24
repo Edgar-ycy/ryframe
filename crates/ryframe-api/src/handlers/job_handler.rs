@@ -37,6 +37,7 @@ async fn list(
 ) -> HttpResult<Json<ApiPageResponse<BackgroundJobVo>>> {
     state
         .services
+        .operations
         .job_queue
         .list_for_tenant(
             &current_user,
@@ -70,6 +71,7 @@ async fn stats(
 ) -> HttpResult<Json<ApiResponse<BackgroundJobQueueStats>>> {
     state
         .services
+        .operations
         .job_queue
         .stats_for_tenant(&current_user)
         .await
@@ -97,6 +99,7 @@ async fn retry_dead(
 ) -> HttpResult<Json<ApiResponse<BackgroundJobVo>>> {
     state
         .services
+        .operations
         .job_queue
         .retry_dead_for_tenant(&current_user, parse_job_id(&id)?)
         .await

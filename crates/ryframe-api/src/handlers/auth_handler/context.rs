@@ -62,22 +62,26 @@ pub(super) async fn build_session_context(
     for _ in 0..SNAPSHOT_RETRIES {
         let before = state
             .services
+            .platform
             .tenant_data
             .runtime_snapshot(&actor.tenant_id)
             .await?;
-        let user = state.services.auth.get_current_user(actor).await?;
+        let user = state.services.identity.auth.get_current_user(actor).await?;
         let service_product = state
             .services
+            .platform
             .product
             .session_context(&actor.tenant_id)
             .await?;
         let excluded_routes = state
             .services
+            .platform
             .product
             .disabled_session_route_keys(&service_product);
         let product = SessionProductContextVo::try_from(service_product)?;
         let menus = state
             .services
+            .identity
             .menu
             .find_session_tree(actor, &user.perms, &excluded_routes)
             .await?
@@ -86,6 +90,7 @@ pub(super) async fn build_session_context(
             .collect::<Result<Vec<_>, _>>()?;
         let after = state
             .services
+            .platform
             .tenant_data
             .runtime_snapshot(&actor.tenant_id)
             .await?;

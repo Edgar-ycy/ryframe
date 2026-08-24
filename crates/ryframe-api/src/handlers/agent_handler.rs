@@ -196,7 +196,7 @@ async fn execute(
     context: AgentHttpContext,
     type_code: Option<String>,
 ) -> Response {
-    let Some(service) = state.services.agent.as_deref() else {
+    let Some(service) = state.services.platform.agent.as_deref() else {
         return HttpAppError::from(AppError::ServiceUnavailable("Agent API 未启用".into()))
             .into_response();
     };
@@ -245,7 +245,7 @@ async fn unregistered(
     client_ip: Option<Extension<ClientIp>>,
     headers: HeaderMap,
 ) -> Response {
-    if let Some(service) = state.services.agent.as_deref() {
+    if let Some(service) = state.services.platform.agent.as_deref() {
         match service
             .audit_unregistered(
                 request_id.0,

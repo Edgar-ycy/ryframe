@@ -37,7 +37,12 @@ pub async fn get_profile(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
 ) -> HttpResult<Json<ApiResponse<UserProfileResponse>>> {
-    let profile = state.services.profile.get_profile(&current_user).await?;
+    let profile = state
+        .services
+        .identity
+        .profile
+        .get_profile(&current_user)
+        .await?;
 
     Ok(Json(ApiResponse::success(profile.into())))
 }
@@ -54,6 +59,7 @@ pub async fn update_profile(
     req.validate()?;
     state
         .services
+        .identity
         .profile
         .update_profile(
             &current_user,
@@ -80,6 +86,7 @@ pub async fn change_password(
 
     state
         .services
+        .identity
         .profile
         .change_password(&current_user, &req.old_password, &req.new_password)
         .await?;
@@ -126,6 +133,7 @@ pub async fn update_avatar(
         avatar_upload = Some(
             state
                 .services
+                .content
                 .file
                 .upload_avatar(
                     &current_user,
@@ -149,12 +157,14 @@ pub async fn update_avatar(
 
     if let Err(error) = state
         .services
+        .identity
         .profile
         .update_avatar(&current_user, avatar_url.clone(), avatar_file_id)
         .await
     {
         if let Err(cleanup_error) = state
             .services
+            .identity
             .profile
             .schedule_unreferenced_avatar_cleanup(&current_user, avatar_file_id)
             .await

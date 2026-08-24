@@ -466,6 +466,7 @@ async fn list_access_audits(
 fn service(state: &AppState) -> HttpResult<&ServiceAccountService> {
     state
         .services
+        .platform
         .service_accounts
         .as_deref()
         .ok_or_else(|| AppError::ServiceUnavailable("服务账号功能未启用".into()).into())

@@ -31,6 +31,7 @@ async fn list(
 ) -> HttpResult<Json<ApiPageResponse<OperLogVo>>> {
     state
         .services
+        .operations
         .oper_log
         .find_by_page(
             &current_user,

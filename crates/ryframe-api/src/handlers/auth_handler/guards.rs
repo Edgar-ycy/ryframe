@@ -150,6 +150,7 @@ pub(super) async fn verify_captcha_if_enabled(
 ) -> HttpResult<()> {
     let captcha_enabled = state
         .services
+        .content
         .config
         .find_public_value(tenant_id, "sys.account.captchaEnabled")
         .await?
@@ -171,6 +172,7 @@ pub(super) async fn verify_captcha_if_enabled(
         .ok_or_else(|| AppError::Validation("验证码不能为空".into()))?;
     let valid = state
         .services
+        .identity
         .captcha
         .verify(captcha_id, captcha_code)
         .await

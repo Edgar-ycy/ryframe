@@ -136,7 +136,7 @@ async fn main() -> Result<(), AppError> {
         },
     )
     .await?;
-    install_job_metrics(&services.job_queue);
+    install_job_metrics(&services.operations.job_queue);
     let outbox_persistence = ryframe_db::application_ports::jobs::outbox(database.clone());
 
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
@@ -155,15 +155,15 @@ async fn main() -> Result<(), AppError> {
     let message_hub = state.message_hub.clone();
     let readiness_database = state.monitor.database.clone();
     let readiness_redis = redis.client.clone();
-    let readiness_file = state.services.file.clone();
+    let readiness_file = state.services.content.file.clone();
     let readiness_cache = state.monitor.readiness.clone();
     let message_listener = starts_background_tasks
         .then(|| {
             boot::message_listener::spawn(
                 &state.message_hub,
                 redis.client.clone(),
-                services.message.clone(),
-                services.tenant_data.clone(),
+                services.content.message.clone(),
+                services.platform.tenant_data.clone(),
                 state.settings.messaging.enabled,
             )
         })
@@ -172,7 +172,7 @@ async fn main() -> Result<(), AppError> {
         .then(|| {
             state
                 .message_hub
-                .spawn_replay_scheduler(services.message.clone(), shutdown_receiver.clone())
+                .spawn_replay_scheduler(services.content.message.clone(), shutdown_receiver.clone())
         })
         .flatten();
     let router = app::build_app(state, limit.rate_limit_state)?;
@@ -199,21 +199,21 @@ async fn main() -> Result<(), AppError> {
                 let execution_tenant_scope =
                     boot::jobs::execution_tenant_scope(application_policies.multi_tenancy);
                 let worker = boot::jobs::build_job_worker(
-                    services.job_queue.clone(),
+                    services.operations.job_queue.clone(),
                     &application_policies.job_worker,
                     execution_tenant_scope.clone(),
                     boot::jobs::JobWorkerDependencies {
-                        export: services.export.clone(),
-                        message: services.message.clone(),
-                        data_retention: services.data_retention.clone(),
-                        user_import: services.user_import.clone(),
-                        tenant_config_transfer: services.tenant_config_transfer.clone(),
-                        tenant_data_migration: services.tenant_data_migration.clone(),
+                        export: services.operations.export.clone(),
+                        message: services.content.message.clone(),
+                        data_retention: services.operations.data_retention.clone(),
+                        user_import: services.identity.user_import.clone(),
+                        tenant_config_transfer: services.platform.tenant_config_transfer.clone(),
+                        tenant_data_migration: services.platform.tenant_data_migration.clone(),
                         redis: redis.client.clone(),
                         messaging_enabled: application_policies.messaging.enabled(),
                     },
                 )?;
-                if let Some(schedules) = services.job_schedules.as_ref() {
+                if let Some(schedules) = services.operations.job_schedules.as_ref() {
                     boot::jobs::validate_schedule_targets(&worker, schedules.target_registry())?;
                 }
                 tracing::info!(
@@ -221,7 +221,7 @@ async fn main() -> Result<(), AppError> {
                     "已启动内置后台任务 Worker"
                 );
                 let mut tasks = worker.spawn(shutdown_receiver.clone());
-                if let Some(schedules) = services.job_schedules.clone() {
+                if let Some(schedules) = services.operations.job_schedules.clone() {
                     tasks.push(schedules.spawn(shutdown_receiver.clone()));
                 } else {
                     tracing::info!("Cron 调度已关闭，内置 Worker 仅消费普通后台任务");
@@ -232,7 +232,7 @@ async fn main() -> Result<(), AppError> {
                 );
                 tasks.extend(
                     OutboxWorker::new(
-                        services.job_queue.clone(),
+                        services.operations.job_queue.clone(),
                         outbox_persistence,
                         &application_policies.job_worker,
                         execution_tenant_scope,

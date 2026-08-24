@@ -58,6 +58,7 @@ async fn delete_records(
     require_idempotency_key(&headers)?;
     let accepted = state
         .services
+        .operations
         .export
         .delete_for_requester(&current_user, request.into_ids()?)
         .await
@@ -80,6 +81,7 @@ async fn unread_notification_count(
     state
         .0
         .services
+        .operations
         .export
         .unread_notification_count(&current_user)
         .await
@@ -111,6 +113,7 @@ async fn mark_notifications_read(
     ids.dedup();
     state
         .services
+        .operations
         .export
         .mark_notifications_read(&current_user, &ids)
         .await
@@ -130,6 +133,7 @@ async fn list(
 ) -> HttpResult<Json<ApiResponse<Vec<ExportJobVo>>>> {
     state
         .services
+        .operations
         .export
         .list_for_requester(&current_user)
         .await
@@ -152,6 +156,7 @@ async fn detail(
 ) -> HttpResult<Json<ApiResponse<ExportJobVo>>> {
     state
         .services
+        .operations
         .export
         .find_for_requester(&current_user, parse_export_id(&id)?)
         .await
@@ -176,6 +181,7 @@ async fn cancel(
 ) -> HttpResult<Json<ApiResponse<ExportJobVo>>> {
     state
         .services
+        .operations
         .export
         .cancel_for_requester(&current_user, parse_export_id(&id)?)
         .await
@@ -197,12 +203,14 @@ async fn download(
 ) -> HttpResult<axum::response::Response> {
     let location = state
         .services
+        .operations
         .export
         .download_location_for_requester(&current_user, parse_export_id(&id)?)
         .await
         .map_err(crate::http::HttpAppError::from)?;
     state
         .services
+        .content
         .file
         .download(&current_user, &location.bucket, &location.path)
         .await
@@ -233,6 +241,7 @@ pub(crate) async fn request_export(
     require_idempotency_key(&headers)?;
     let export = state
         .services
+        .operations
         .export
         .request(
             &current_user,

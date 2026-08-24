@@ -134,6 +134,7 @@ pub async fn verify_captcha_handler(
 
     let valid = state
         .services
+        .identity
         .captcha
         .verify(&req.captcha_id, &req.code)
         .await
@@ -164,6 +165,7 @@ pub async fn get_captcha_config_handler(
     let tenant_id = tenant_id_from_headers(&headers, &state.settings.multi_tenancy)?;
     let enabled = state
         .services
+        .content
         .config
         .find_public_value(&tenant_id, "sys.account.captchaEnabled")
         .await
@@ -220,6 +222,7 @@ async fn issue_captcha(
     let captcha_id = Uuid::now_v7().to_string();
     state
         .services
+        .identity
         .captcha
         .set(captcha_id.clone(), answer)
         .await

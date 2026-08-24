@@ -224,13 +224,13 @@ pub fn assemble(assembly: AppStateAssembly) -> ryframe_api::AppState {
     } = assembly;
     let trusted_proxies = TrustedProxySet::new(&config.proxy.trusted_cidrs)
         .expect("proxy CIDRs were validated during configuration loading");
-    let principal_resolver = services.auth.clone();
+    let principal_resolver = services.identity.auth.clone();
     let settings = Arc::new(http_runtime_settings(&config));
     let access_revocations = super::session_security::access_revocations(token_blacklist);
     let refresh_sessions =
-        super::session_security::refresh_sessions(services.auth.refresh_sessions());
+        super::session_security::refresh_sessions(services.identity.auth.refresh_sessions());
     let auth = ryframe_api::auth_middleware::AuthState {
-        token_settings: services.auth.token_settings(),
+        token_settings: services.identity.auth.token_settings(),
         allow_multiple_tenants: config.multi_tenancy.enabled,
         access_revocations,
         refresh_sessions,

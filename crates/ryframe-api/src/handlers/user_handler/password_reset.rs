@@ -33,6 +33,7 @@ pub(crate) async fn request_password_reset(
     dto.validate()?;
     let outcome = state
         .services
+        .identity
         .user
         .request_password_reset(
             &current_user,

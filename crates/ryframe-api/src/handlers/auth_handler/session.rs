@@ -136,6 +136,7 @@ pub async fn logout(
             })?;
         if let Err(error) = state
             .services
+            .identity
             .online_user
             .remove_user(&claims.tenant_id, &claims.sid)
             .await
@@ -205,6 +206,7 @@ pub async fn refresh(
 
     match state
         .services
+        .identity
         .auth
         .refresh_token(&refresh_token, &rotation_attempt_id)
         .await
@@ -227,6 +229,7 @@ pub async fn refresh(
             };
             state
                 .services
+                .identity
                 .online_user
                 .touch_user_strict(&result.user_info.tenant_id, &result.sid)
                 .await
@@ -308,6 +311,7 @@ pub async fn list_sessions(
 ) -> HttpResult<Json<ApiResponse<Vec<AuthSessionResponse>>>> {
     let mut sessions = state
         .services
+        .identity
         .online_user
         .list_user_sessions(&current_user.tenant_id, current_user.user_id)
         .await?;
@@ -390,6 +394,7 @@ pub async fn revoke_session(
     }
     if let Err(error) = state
         .services
+        .identity
         .online_user
         .remove_user(&current_user.tenant_id, &sid)
         .await
@@ -439,6 +444,7 @@ pub async fn revoke_other_sessions(
     )?;
     let sessions = state
         .services
+        .identity
         .online_user
         .list_user_sessions(&current_user.tenant_id, current_user.user_id)
         .await?;
@@ -468,6 +474,7 @@ pub async fn revoke_other_sessions(
     for sid in candidate_sids.iter().filter(|sid| *sid != &claims.sid) {
         if let Err(error) = state
             .services
+            .identity
             .online_user
             .remove_user(&current_user.tenant_id, sid)
             .await

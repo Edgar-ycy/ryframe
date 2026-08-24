@@ -47,6 +47,7 @@ async fn create(
     let idempotency_hash = idempotency_key_hash(&headers)?;
     if let Some(existing) = state
         .services
+        .identity
         .user_import
         .find_by_idempotency(&current_user, &idempotency_hash)
         .await
@@ -93,7 +94,12 @@ async fn create(
             ))
             .into());
         }
-        let bytes = state.services.user_import.validate_source(bytes).await?;
+        let bytes = state
+            .services
+            .identity
+            .user_import
+            .validate_source(bytes)
+            .await?;
         source = Some((file_name, bytes));
     }
     let (file_name, bytes) =
@@ -101,6 +107,7 @@ async fn create(
     let source_sha256 = hex::encode(Sha256::digest(&bytes));
     let uploaded = state
         .services
+        .identity
         .user_import
         .upload_source(&current_user, file_name.clone(), bytes)
         .await
@@ -111,6 +118,7 @@ async fn create(
         .map_err(|_| AppError::Internal("用户导入源文件标识无效".into()))?;
     let outcome = match state
         .services
+        .identity
         .user_import
         .request(
             &current_user,
@@ -127,6 +135,7 @@ async fn create(
         Err(error) => {
             if let Err(cleanup_error) = state
                 .services
+                .identity
                 .user_import
                 .schedule_unreferenced_source_cleanup(&current_user, source_file_id)
                 .await
@@ -143,6 +152,7 @@ async fn create(
     if !outcome.inserted
         && let Err(cleanup_error) = state
             .services
+            .identity
             .user_import
             .schedule_unreferenced_source_cleanup(&current_user, source_file_id)
             .await
@@ -173,6 +183,7 @@ async fn list(
     let status = query.status.clone();
     let page = state
         .services
+        .identity
         .user_import
         .list(
             &current_user,
@@ -205,6 +216,7 @@ async fn detail(
 ) -> HttpResult<Json<ApiResponse<UserImportJobVo>>> {
     state
         .services
+        .identity
         .user_import
         .get(&current_user, parse_import_id(&id)?)
         .await
@@ -229,6 +241,7 @@ async fn cancel(
 ) -> HttpResult<Json<ApiResponse<UserImportJobVo>>> {
     state
         .services
+        .identity
         .user_import
         .cancel(&current_user, parse_import_id(&id)?)
         .await
@@ -252,6 +265,7 @@ async fn rows(
 ) -> HttpResult<Json<ApiPageResponse<UserImportRowVo>>> {
     let page = state
         .services
+        .identity
         .user_import
         .rows(
             &current_user,
@@ -282,6 +296,7 @@ async fn report(
 ) -> HttpResult<axum::response::Response> {
     let file = state
         .services
+        .identity
         .user_import
         .download_report(&current_user, parse_import_id(&id)?)
         .await

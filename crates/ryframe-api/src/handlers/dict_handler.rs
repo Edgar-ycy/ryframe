@@ -65,6 +65,7 @@ async fn list_types(
     let (page, filter) = query.into_parts(state.settings.pagination)?;
     let page_result = state
         .services
+        .content
         .dict
         .find_types_by_page(&current_user, filter.into_service_params(page))
         .await?;
@@ -94,6 +95,7 @@ async fn create_type(
     dto.validate()?;
     state
         .services
+        .content
         .dict
         .create_type(&current_user, &dto.name, &dto.code)
         .await
@@ -118,6 +120,7 @@ async fn update_type(
     dto.validate()?;
     state
         .services
+        .content
         .dict
         .update_type(&current_user, id, &dto.name, dto.status)
         .await
@@ -137,7 +140,12 @@ async fn delete_type(
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
-    state.services.dict.delete_type(&current_user, id).await?;
+    state
+        .services
+        .content
+        .dict
+        .delete_type(&current_user, id)
+        .await?;
     Ok(Json(ApiResponse::success_no_data()))
 }
 
@@ -160,6 +168,7 @@ async fn list_data(
 ) -> HttpResult<Json<ApiResponse<Vec<DictDataVo>>>> {
     state
         .services
+        .content
         .dict
         .find_data_by_type(&current_user, &query.type_code)
         .await
@@ -184,6 +193,7 @@ async fn list_data_by_type_path(
 ) -> HttpResult<Json<ApiResponse<Vec<DictOptionDto>>>> {
     let data = state
         .services
+        .content
         .dict
         .find_data_by_type(&current_user, &dict_type)
         .await?;
@@ -211,6 +221,7 @@ async fn create_data(
     dto.validate()?;
     state
         .services
+        .content
         .dict
         .create_data(
             &current_user,
@@ -241,6 +252,7 @@ async fn update_data(
     dto.validate()?;
     state
         .services
+        .content
         .dict
         .update_data(
             &current_user,
@@ -267,7 +279,12 @@ async fn delete_data(
     current_user: RequestPrincipal,
     Path(id): Path<i64>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
-    state.services.dict.delete_data(&current_user, id).await?;
+    state
+        .services
+        .content
+        .dict
+        .delete_data(&current_user, id)
+        .await?;
     Ok(Json(ApiResponse::success_no_data()))
 }
 

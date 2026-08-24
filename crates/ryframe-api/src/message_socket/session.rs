@@ -23,7 +23,13 @@ pub async fn upgrade(
     headers: HeaderMap,
 ) -> HttpResult<impl IntoResponse> {
     validate_websocket_origin(&state, &headers)?;
-    let ticket = match state.services.websocket_ticket.consume(&query.ticket).await {
+    let ticket = match state
+        .services
+        .content
+        .websocket_ticket
+        .consume(&query.ticket)
+        .await
+    {
         Ok(ticket) => {
             crate::metrics::record_ws_ticket("consumed");
             ticket
@@ -49,6 +55,7 @@ pub async fn upgrade(
     }
     state
         .services
+        .identity
         .auth
         .validate_websocket_session(
             &ticket.tenant_id,
@@ -59,7 +66,7 @@ pub async fn upgrade(
         )
         .await?;
     let hub = state.message_hub.clone();
-    let service = state.services.message.clone();
+    let service = state.services.content.message.clone();
     Ok(ws.on_upgrade(move |socket| handle_socket(socket, hub, service, ticket)))
 }
 

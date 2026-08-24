@@ -67,6 +67,7 @@ async fn request_package_export(
 ) -> HttpResult<(StatusCode, Json<ApiResponse<TenantConfigBundleVo>>)> {
     let outcome = state
         .services
+        .platform
         .tenant_config_transfer
         .request_package_export(&current_user, &idempotency_key_hash(&headers)?)
         .await
@@ -94,6 +95,7 @@ async fn list_packages(
 ) -> HttpResult<Json<ApiPageResponse<TenantConfigBundleVo>>> {
     let page = state
         .services
+        .platform
         .tenant_config_transfer
         .list_bundles(&current_user, query.into_page(state.settings.pagination)?)
         .await
@@ -125,6 +127,7 @@ async fn get_package(
 ) -> HttpResult<Json<ApiResponse<TenantConfigBundleVo>>> {
     state
         .services
+        .platform
         .tenant_config_transfer
         .get_bundle(&current_user, parse_positive_id(&id, "配置包")?)
         .await
@@ -154,6 +157,7 @@ async fn download_package(
 ) -> HttpResult<axum::response::Response> {
     let file = state
         .services
+        .platform
         .tenant_config_transfer
         .download_bundle(&current_user, parse_positive_id(&id, "配置包")?)
         .await
@@ -248,6 +252,7 @@ async fn upload_transfer(
         package.ok_or_else(|| AppError::Validation("未找到 file 上传字段".into()))?;
     let outcome = state
         .services
+        .platform
         .tenant_config_transfer
         .upload_package_and_create_transfer(&current_user, file_name, data, &idempotency_hash)
         .await
@@ -280,6 +285,7 @@ async fn create_transfer_from_package(
 ) -> HttpResult<(StatusCode, Json<ApiResponse<TenantConfigTransferVo>>)> {
     let outcome = state
         .services
+        .platform
         .tenant_config_transfer
         .create_transfer_from_package(
             &current_user,
@@ -311,6 +317,7 @@ async fn list_transfers(
 ) -> HttpResult<Json<ApiPageResponse<TenantConfigTransferVo>>> {
     let page = state
         .services
+        .platform
         .tenant_config_transfer
         .list_transfers(&current_user, query.into_page(state.settings.pagination)?)
         .await
@@ -342,6 +349,7 @@ async fn get_transfer(
 ) -> HttpResult<Json<ApiResponse<TenantConfigTransferVo>>> {
     state
         .services
+        .platform
         .tenant_config_transfer
         .get_transfer(&current_user, parse_positive_id(&id, "配置迁移")?)
         .await
@@ -370,6 +378,7 @@ async fn list_transfer_items(
 ) -> HttpResult<Json<ApiPageResponse<TenantConfigTransferItemVo>>> {
     let page = state
         .services
+        .platform
         .tenant_config_transfer
         .list_transfer_items(
             &current_user,
@@ -410,6 +419,7 @@ async fn request_preview(
 ) -> HttpResult<(StatusCode, Json<ApiResponse<TenantConfigTransferVo>>)> {
     let transfer = state
         .services
+        .platform
         .tenant_config_transfer
         .request_preview(
             &current_user,
@@ -447,6 +457,7 @@ async fn request_apply(
 ) -> HttpResult<(StatusCode, Json<ApiResponse<TenantConfigTransferVo>>)> {
     let transfer = state
         .services
+        .platform
         .tenant_config_transfer
         .request_apply(
             &current_user,
@@ -491,6 +502,7 @@ async fn request_rollback(
 ) -> HttpResult<(StatusCode, Json<ApiResponse<TenantConfigTransferVo>>)> {
     let transfer = state
         .services
+        .platform
         .tenant_config_transfer
         .request_rollback(
             &current_user,

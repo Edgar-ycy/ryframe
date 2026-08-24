@@ -37,7 +37,7 @@ pub(super) async fn probe_runtime_status(
         (_, 0) => "primary_fallback",
         _ => "round_robin",
     };
-    let storage_connected = state.services.file.check_storage().await.is_ok();
+    let storage_connected = state.services.content.file.check_storage().await.is_ok();
     let storage_config = &state.settings.object_storage;
     let read_selections = crate::metrics::database_read_selection_totals()
         .into_iter()

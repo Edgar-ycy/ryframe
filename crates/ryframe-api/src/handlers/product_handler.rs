@@ -52,6 +52,7 @@ pub(crate) async fn capabilities(
 ) -> HttpResult<Json<ApiResponse<Vec<CapabilityCatalogVo>>>> {
     let values = state
         .services
+        .platform
         .product
         .capability_catalog(&principal)?
         .into_iter()
@@ -79,7 +80,12 @@ async fn list_plans_page(
     query: ProductPlanPageQuery,
 ) -> HttpResult<Json<ApiPageResponse<ProductPlanVo>>> {
     let page = query.validate_page()?;
-    let values = state.services.product.list_plans(&principal).await?;
+    let values = state
+        .services
+        .platform
+        .product
+        .list_plans(&principal)
+        .await?;
     let total = u64::try_from(values.len())
         .map_err(|_| AppError::Internal("产品套餐列表超出分页计数范围".into()))?;
     let offset = usize::try_from(page.offset())
@@ -112,6 +118,7 @@ pub(crate) async fn plan_detail(
 ) -> HttpResult<Json<ApiResponse<ProductPlanVo>>> {
     let value = state
         .services
+        .platform
         .product
         .plan(&principal, parse_positive_id(&plan_id, "plan_id")?)
         .await?;
@@ -131,6 +138,7 @@ pub(crate) async fn create_plan(
     dto.validate()?;
     let value = state
         .services
+        .platform
         .product
         .create_plan(
             &principal,
@@ -158,6 +166,7 @@ pub(crate) async fn update_plan(
     dto.validate()?;
     let value = state
         .services
+        .platform
         .product
         .update_plan(
             &principal,
@@ -183,6 +192,7 @@ pub(crate) async fn list_versions(
 ) -> HttpResult<Json<ApiResponse<Vec<ProductPlanVersionVo>>>> {
     let values = state
         .services
+        .platform
         .product
         .versions(&principal, parse_positive_id(&plan_id, "plan_id")?)
         .await?
@@ -206,6 +216,7 @@ pub(crate) async fn create_version(
     dto.validate()?;
     let value = state
         .services
+        .platform
         .product
         .create_version(
             &principal,
@@ -236,6 +247,7 @@ pub(crate) async fn update_version(
     dto.validate()?;
     let value = state
         .services
+        .platform
         .product
         .update_version(
             &principal,
@@ -265,6 +277,7 @@ pub(crate) async fn publish_version(
 ) -> HttpResult<Json<ApiResponse<ProductPlanVersionVo>>> {
     let value = state
         .services
+        .platform
         .product
         .publish_version(&principal, parse_positive_id(&plan_id, "plan_id")?, version)
         .await?;
@@ -285,6 +298,7 @@ pub(crate) async fn retire_version(
 ) -> HttpResult<Json<ApiResponse<ProductPlanVersionVo>>> {
     let value = state
         .services
+        .platform
         .product
         .retire_version(&principal, parse_positive_id(&plan_id, "plan_id")?, version)
         .await?;
@@ -304,6 +318,7 @@ pub(crate) async fn tenant_context(
 ) -> HttpResult<Json<ApiResponse<ProductContextVo>>> {
     let value = state
         .services
+        .platform
         .product
         .product_context(&principal, &tenant_id)
         .await?;
@@ -327,6 +342,7 @@ pub(crate) async fn preview_tenant_change(
     let capability_override_allowed = has_override_permission(&principal);
     let value = state
         .services
+        .platform
         .product
         .preview_change(
             &principal,
@@ -357,6 +373,7 @@ pub(crate) async fn apply_tenant_change(
     let target = change_target(dto.plan_version_id, dto.overrides)?;
     let value = state
         .services
+        .platform
         .product
         .apply_change(
             &principal,

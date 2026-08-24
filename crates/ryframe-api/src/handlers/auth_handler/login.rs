@@ -82,6 +82,7 @@ async fn record_login_event(
 ) -> AppResult<()> {
     state
         .services
+        .operations
         .login_info
         .record_login(RecordLoginCommand {
             tenant_id: tenant_id.into(),
@@ -109,6 +110,7 @@ async fn add_online_user(
 
     state
         .services
+        .identity
         .online_user
         .add_user(UserSession {
             sid: result.sid.clone(),
@@ -172,12 +174,14 @@ pub async fn login(
 
     state
         .services
+        .identity
         .auth
         .check_brute_force(&tenant_id, &req.username, &ip)
         .await?;
 
     match state
         .services
+        .identity
         .auth
         .login(&tenant_id, &req.username, &req.password)
         .await
@@ -185,6 +189,7 @@ pub async fn login(
         Ok(result) => {
             if let Err(error) = state
                 .services
+                .identity
                 .auth
                 .clear_login_failures(&tenant_id, &req.username, &ip)
                 .await
@@ -250,6 +255,7 @@ pub async fn login(
             if matches!(&error, AppError::Authentication(_))
                 && let Err(record_error) = state
                     .services
+                    .identity
                     .auth
                     .record_login_failure(&tenant_id, &req.username, &ip)
                     .await

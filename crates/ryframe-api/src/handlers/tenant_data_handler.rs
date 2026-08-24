@@ -51,6 +51,7 @@ pub(crate) async fn list_targets(
     let page = query.validate_page()?;
     let values = state
         .services
+        .platform
         .tenant_data_migration
         .list_targets_with_context(
             &principal,
@@ -95,6 +96,7 @@ pub(crate) async fn target_detail(
 ) -> HttpResult<Json<ApiResponse<DataTargetDetail>>> {
     let value = state
         .services
+        .platform
         .tenant_data_migration
         .target_detail(&principal, &target_key)
         .await?;
@@ -117,6 +119,7 @@ pub(crate) async fn backup_points(
 ) -> HttpResult<Json<ApiResponse<Vec<BackupPointView>>>> {
     let values = state
         .services
+        .platform
         .tenant_data_migration
         .backup_points(
             &principal,
@@ -146,6 +149,7 @@ pub(crate) async fn placement(
 ) -> HttpResult<Json<ApiResponse<DataPlacementView>>> {
     let value = state
         .services
+        .platform
         .tenant_data_migration
         .placement(&principal, &tenant_id)
         .await?;
@@ -171,6 +175,7 @@ pub(crate) async fn preview_migration(
     dto.validate()?;
     let value = state
         .services
+        .platform
         .tenant_data_migration
         .preview(
             &principal,
@@ -205,6 +210,7 @@ pub(crate) async fn create_migration(
     dto.validate()?;
     let value = state
         .services
+        .platform
         .tenant_data_migration
         .create(
             &principal,
@@ -235,6 +241,7 @@ pub(crate) async fn list_tenant_migrations(
 ) -> HttpResult<Json<ApiResponse<Vec<MigrationView>>>> {
     let values = state
         .services
+        .platform
         .tenant_data_migration
         .migrations_for_tenant(&principal, &tenant_id, query.limit.unwrap_or(20))
         .await?
@@ -257,6 +264,7 @@ pub(crate) async fn migration_detail(
 ) -> HttpResult<Json<ApiResponse<MigrationView>>> {
     let value = state
         .services
+        .platform
         .tenant_data_migration
         .migration(&principal, parse_id(&migration_id, "migration_id")?)
         .await?;
@@ -278,6 +286,7 @@ pub(crate) async fn cancel_migration(
 ) -> HttpResult<Json<ApiResponse<MigrationView>>> {
     let value = state
         .services
+        .platform
         .tenant_data_migration
         .cancel(
             &principal,
@@ -305,6 +314,7 @@ pub(crate) async fn finalize_migration(
 ) -> HttpResult<Json<ApiResponse<MigrationView>>> {
     let value = state
         .services
+        .platform
         .tenant_data_migration
         .finalize(
             &principal,

@@ -352,7 +352,12 @@ fn parse_schedule_id(value: &str) -> HttpResult<i64> {
 }
 
 fn schedule_service(state: &AppState) -> HttpResult<&ryframe_application::JobScheduleService> {
-    state.services.job_schedules.as_deref().ok_or_else(|| {
-        crate::http::HttpAppError::from(AppError::NotFound("定时任务调度未启用".into()))
-    })
+    state
+        .services
+        .operations
+        .job_schedules
+        .as_deref()
+        .ok_or_else(|| {
+            crate::http::HttpAppError::from(AppError::NotFound("定时任务调度未启用".into()))
+        })
 }

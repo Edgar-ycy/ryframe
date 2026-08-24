@@ -209,6 +209,7 @@ async fn process_multipart_upload(
         // 委托 FileService 处理业务逻辑
         let result = state
             .services
+            .content
             .file
             .upload_single(
                 &current_user,
@@ -258,6 +259,7 @@ pub async fn download_file(
 
     let file = state
         .services
+        .content
         .file
         .download(&current_user, bucket, &query.path)
         .await?;
