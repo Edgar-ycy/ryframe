@@ -1,0 +1,65 @@
+use utoipa::OpenApi;
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        crate::handlers::post_export_handler::request_post_export,
+        crate::handlers::config_handler::list,
+        crate::handlers::config_handler::detail,
+        crate::handlers::config_handler::create,
+        crate::handlers::config_handler::update,
+        crate::handlers::config_handler::remove,
+        crate::handlers::config_handler::get_by_key,
+        crate::handlers::config_handler::refresh_cache,
+        crate::handlers::config_handler::request_config_export,
+        crate::handlers::dict_handler::list_types,
+        crate::handlers::dict_handler::create_type,
+        crate::handlers::dict_handler::update_type,
+        crate::handlers::dict_handler::delete_type,
+        crate::handlers::dict_handler::list_data,
+        crate::handlers::dict_handler::list_data_by_type_path,
+        crate::handlers::dict_handler::create_data,
+        crate::handlers::dict_handler::update_data,
+        crate::handlers::dict_handler::delete_data,
+        crate::handlers::dict_handler::request_dict_type_export,
+        crate::handlers::notice_handler::list,
+        crate::handlers::notice_handler::detail,
+        crate::handlers::notice_handler::create,
+        crate::handlers::notice_handler::update,
+        crate::handlers::notice_handler::publish_to_message_center,
+        crate::handlers::notice_handler::remove,
+        crate::handlers::message_handler::inbox,
+        crate::handlers::message_handler::unread_count,
+        crate::handlers::message_handler::publish,
+        crate::handlers::message_handler::acknowledge,
+        crate::handlers::message_handler::delete_messages,
+        crate::handlers::message_handler::mark_read,
+        crate::handlers::message_handler::mark_all_read
+    ),
+    components(schemas(
+        crate::dto::config_dto::CreateConfigDto,
+        crate::dto::config_dto::UpdateConfigDto,
+        crate::dto::public_dto::ConfigVo,
+        crate::dto::dict_dto::CreateDictTypeDto,
+        crate::dto::dict_dto::UpdateDictTypeDto,
+        crate::dto::dict_dto::CreateDictDataDto,
+        crate::dto::dict_dto::UpdateDictDataDto,
+        crate::dto::dict_dto::DictOptionDto,
+        crate::dto::public_dto::DictTypeVo,
+        crate::dto::public_dto::DictDataVo,
+        crate::dto::notice_dto::CreateNoticeDto,
+        crate::dto::notice_dto::UpdateNoticeDto,
+        crate::dto::public_dto::NoticeVo,
+        crate::dto::message_dto::MessageAudienceDto,
+        crate::dto::message_dto::PublishMessageDto,
+        crate::dto::message_dto::AcknowledgeMessagesDto,
+        crate::message_presenter::MessageVo,
+        crate::message_presenter::MessageInboxPage,
+        crate::message_presenter::PublishedMessageVo
+    ))
+)]
+struct ConfigurationDoc;
+
+pub(super) fn document() -> utoipa::openapi::OpenApi {
+    ConfigurationDoc::openapi()
+}
