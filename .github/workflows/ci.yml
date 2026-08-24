@@ -63,7 +63,7 @@ jobs:
           components: rustfmt, clippy
 
       - name: Install pinned sccache
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
         with:
           tool: sccache@0.17.0
           fallback: none
@@ -214,7 +214,7 @@ jobs:
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
 
       - name: 安装固定版本 sccache
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
         with:
           tool: sccache@0.17.0
           fallback: none
@@ -277,7 +277,7 @@ jobs:
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
 
       - name: 安装固定版本 sccache
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
         with:
           tool: sccache@0.17.0
           fallback: none
@@ -422,7 +422,7 @@ jobs:
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
 
       - name: 安装固定版本 sccache
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
         with:
           tool: sccache@0.17.0
           fallback: none
@@ -572,7 +572,7 @@ jobs:
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
 
       - name: Install cargo-audit
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
         with:
           tool: cargo-audit@0.22.2
           fallback: none
@@ -584,7 +584,7 @@ jobs:
         run: cargo audit --deny warnings
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
         with:
           tool: cargo-deny@0.20.2
           fallback: none
@@ -624,7 +624,7 @@ jobs:
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
 
       - name: 安装固定版本 CycloneDX 工具
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
         with:
           tool: cargo-cyclonedx@0.5.9
           fallback: none
@@ -795,7 +795,7 @@ jobs:
         if: >-
           steps.deployment-changes.outputs.required == 'true' &&
           (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-        uses: taiki-e/install-action@41049aa56687c35e0afa74eed4f09cec4f9afabf
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
         with:
           tool: trivy@0.72.0
           fallback: none
