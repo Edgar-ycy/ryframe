@@ -20,6 +20,11 @@ pub(super) struct FeatureMatrixEntry {
 }
 
 pub(crate) fn feature_matrix() -> Result<()> {
+    let jobs = std::thread::available_parallelism().map_or(2, usize::from);
+    feature_matrix_with_jobs(jobs)
+}
+
+pub(crate) fn feature_matrix_with_jobs(jobs: usize) -> Result<()> {
     let root = root_dir();
     let metadata = load_workspace_metadata(&root)?;
     let registry = load_feature_registry(&root)?;
@@ -28,7 +33,14 @@ pub(crate) fn feature_matrix() -> Result<()> {
     for entry in &registry {
         // 默认 Workspace 门禁已经执行默认 feature 的 Clippy 与测试；最小组合只需证明
         // 全目标可编译，最大组合再覆盖 feature 专属 lint。
-        run_feature_operations(&root, &entry.package, "最小", &entry.minimal, &["check"])?;
+        run_feature_operations(
+            &root,
+            &entry.package,
+            "最小",
+            &entry.minimal,
+            &["check"],
+            jobs,
+        )?;
         if entry.minimal != entry.maximal {
             run_feature_operations(
                 &root,
@@ -36,11 +48,12 @@ pub(crate) fn feature_matrix() -> Result<()> {
                 "最大",
                 &entry.maximal,
                 &["check", "clippy"],
+                jobs,
             )?;
         }
         // 紧跟同一最大组合链接明确指定的测试目标，避免切换到其他包的 feature 后
         // 再次重建共享依赖。默认测试仍由 Workspace 门禁负责。
-        run_feature_tests(&root, entry)?;
+        run_feature_tests(&root, entry, jobs)?;
     }
     Ok(())
 }
@@ -253,16 +266,21 @@ pub(super) fn run_feature_operations(
     label: &str,
     features: &[String],
     operations: &[&str],
+    jobs: usize,
 ) -> Result<()> {
     println!("检查 {package} 的{label} feature 组合。");
     for operation in operations {
-        let args = feature_operation_args(operation, package, features);
+        let args = feature_operation_args(operation, package, features, jobs);
         run_owned(root, "cargo", &args)?;
     }
     Ok(())
 }
 
-pub(super) fn run_feature_tests(root: &Path, entry: &FeatureMatrixEntry) -> Result<()> {
+pub(super) fn run_feature_tests(
+    root: &Path,
+    entry: &FeatureMatrixEntry,
+    jobs: usize,
+) -> Result<()> {
     for target in &entry.test_targets {
         println!(
             "检查 {} 的最大 feature 测试目标 {}。",
@@ -271,13 +289,18 @@ pub(super) fn run_feature_tests(root: &Path, entry: &FeatureMatrixEntry) -> Resu
         run_owned(
             root,
             "cargo",
-            &feature_test_args(&entry.package, &entry.maximal, target),
+            &feature_test_args(&entry.package, &entry.maximal, target, jobs),
         )?;
     }
     Ok(())
 }
 
-pub(crate) fn feature_test_args(package: &str, features: &[String], target: &str) -> Vec<String> {
+pub(crate) fn feature_test_args(
+    package: &str,
+    features: &[String],
+    target: &str,
+    jobs: usize,
+) -> Vec<String> {
     let mut args = vec![
         "test".to_owned(),
         "--locked".to_owned(),
@@ -287,7 +310,7 @@ pub(crate) fn feature_test_args(package: &str, features: &[String], target: &str
         package.to_owned(),
         "--no-default-features".to_owned(),
         "--jobs".to_owned(),
-        "2".to_owned(),
+        jobs.to_string(),
         "--test".to_owned(),
         target.to_owned(),
     ];
@@ -301,6 +324,7 @@ pub(crate) fn feature_operation_args(
     operation: &str,
     package: &str,
     features: &[String],
+    jobs: usize,
 ) -> Vec<String> {
     let mut args = vec![
         operation.to_owned(),
@@ -310,6 +334,8 @@ pub(crate) fn feature_operation_args(
         "-p".to_owned(),
         package.to_owned(),
         "--no-default-features".to_owned(),
+        "--jobs".to_owned(),
+        jobs.to_string(),
     ];
     args.push("--all-targets".to_owned());
     if !features.is_empty() {

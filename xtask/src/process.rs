@@ -11,6 +11,12 @@ use std::{
 
 use crate::{Result, workspace::root_dir};
 
+#[path = "process/logging.rs"]
+mod logging;
+#[allow(unused_imports)]
+pub(crate) use logging::with_process_log;
+use logging::{configure_output, process_log_active};
+
 enum RustcCache {
     ExistingWrapper(OsString),
     Sccache,
@@ -222,17 +228,19 @@ pub(crate) fn run_with_env(
     environment: &[(&str, &str)],
 ) -> Result<()> {
     let started = Instant::now();
-    println!("→ {executable} {}", args.join(" "));
+    let logged = process_log_active();
+    if !logged {
+        println!("→ {executable} {}", args.join(" "));
+    }
     let mut command = child_command(executable);
     configure_cargo_cache(executable, &mut command);
-    let status = command
+    command
         .args(args)
         .envs(environment.iter().copied())
         .current_dir(dir)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status();
+        .stdin(Stdio::inherit());
+    configure_output(&mut command)?;
+    let status = command.status();
     let elapsed = started.elapsed().as_secs_f64();
     let label = format!("{executable} {}", args.join(" "));
     let status = match status {
@@ -244,7 +252,9 @@ pub(crate) fn run_with_env(
     };
     record_step(label, elapsed, status.success());
     if status.success() {
-        println!("✓ {elapsed:.1}s");
+        if !logged {
+            println!("✓ {elapsed:.1}s");
+        }
         Ok(())
     } else {
         Err(format!(
@@ -332,14 +342,17 @@ pub(crate) fn run_pnpm_with_env(
     environment: &[(&str, &str)],
 ) -> Result<()> {
     let started = Instant::now();
-    println!("→ pnpm {}", args.join(" "));
-    let status = pnpm_command(dir)?
+    let logged = process_log_active();
+    if !logged {
+        println!("→ pnpm {}", args.join(" "));
+    }
+    let mut command = pnpm_command(dir)?;
+    command
         .args(args)
         .envs(environment.iter().copied())
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status();
+        .stdin(Stdio::inherit());
+    configure_output(&mut command)?;
+    let status = command.status();
     let elapsed = started.elapsed().as_secs_f64();
     let label = format!("pnpm {}", args.join(" "));
     let status = match status {
@@ -351,7 +364,9 @@ pub(crate) fn run_pnpm_with_env(
     };
     record_step(label, elapsed, status.success());
     if status.success() {
-        println!("✓ {elapsed:.1}s");
+        if !logged {
+            println!("✓ {elapsed:.1}s");
+        }
         Ok(())
     } else {
         Err(format!("命令执行失败（{elapsed:.1}s）：pnpm {}", args.join(" ")).into())

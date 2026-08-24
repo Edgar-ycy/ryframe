@@ -1,37 +1,75 @@
 use std::{
+    any::Any,
     fs,
     path::{Path, PathBuf},
     process::Command,
+    sync::OnceLock,
 };
 
 use ryframe_generator::{
     RelationIr, RelationKind, ResourceWorkspace, load_resource, render_resources, write_resource,
 };
 
+static SHARED_WORKSPACE_RESULT: OnceLock<Result<(), String>> = OnceLock::new();
+
 #[test]
-#[ignore = "完整门禁在临时真实 Workspace 中运行 Cargo 与 vue-tsc"]
+#[ignore = "完整门禁在共享的临时真实 Workspace 中运行 Cargo 与 vue-tsc"]
 fn device_slice_compiles_in_temporary_real_workspaces() {
+    assert_shared_workspace("Device");
+}
+
+#[test]
+#[ignore = "在共享的临时真实 Workspace 中验证 Post 的 application 与 control DB 生成层"]
+fn post_control_slice_compiles_in_temporary_real_workspace() {
+    assert_shared_workspace("Post");
+}
+
+fn assert_shared_workspace(resource: &str) {
+    if let Err(error) = SHARED_WORKSPACE_RESULT.get_or_init(|| {
+        std::panic::catch_unwind(run_shared_workspace)
+            .map_err(panic_message)
+            .and_then(|result| result)
+    }) {
+        panic!("{resource} 共享临时 Workspace 验证失败：{error}");
+    }
+}
+
+fn panic_message(payload: Box<dyn Any + Send>) -> String {
+    payload
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| {
+            payload
+                .downcast_ref::<&str>()
+                .map(|value| (*value).to_owned())
+        })
+        .unwrap_or_else(|| "共享临时 Workspace 发生未知 panic".to_owned())
+}
+
+fn run_shared_workspace() -> Result<(), String> {
     let backend_source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
-        .expect("生成器应位于后端 Workspace/crates")
+        .ok_or("生成器应位于后端 Workspace/crates")?
         .to_path_buf();
     let frontend_source = backend_source
         .parent()
-        .expect("后端应有工作区父目录")
+        .ok_or("后端应有工作区父目录")?
         .join("ryframe-vue3");
-    assert!(frontend_source.join("node_modules").is_dir());
+    if !frontend_source.join("node_modules").is_dir() {
+        return Err("前端 node_modules 不存在".into());
+    }
 
     let backend_parent = backend_source.join(".local-tests");
     let frontend_parent = frontend_source.join(".local-tests");
     fs::create_dir_all(&backend_parent).expect("应创建后端临时测试目录");
     fs::create_dir_all(&frontend_parent).expect("应创建前端临时测试目录");
     let backend = tempfile::Builder::new()
-        .prefix("resource-workspace-")
+        .prefix("shared-resource-workspace-")
         .tempdir_in(&backend_parent)
         .expect("应创建后端临时 Workspace");
     let frontend = tempfile::Builder::new()
-        .prefix("resource-workspace-")
+        .prefix("shared-resource-frontend-")
         .tempdir_in(&frontend_parent)
         .expect("应创建前端临时 Workspace");
 
@@ -74,19 +112,33 @@ fn device_slice_compiles_in_temporary_real_workspaces() {
             frontend_root: Some(frontend.path()),
         },
     )
-    .expect("Device 应写入临时 Workspace");
-    assert!(!first.written.is_empty());
-    let second = write_resource(
-        &catalog,
-        "device",
-        ResourceWorkspace {
-            backend_root: backend.path(),
-            frontend_root: Some(frontend.path()),
-        },
-    )
-    .expect("连续生成应成功");
-    assert!(second.written.is_empty());
-    assert!(second.removed.is_empty());
+    .expect("Device/Post 目录应一次性写入临时 Workspace");
+    assert!(!first.written.is_empty(), "首次生成必须写入资产");
+    for path in [
+        "crates/ryframe-application/src/generated/post/service.rs",
+        "crates/ryframe-db/src/generated/post/repository.rs",
+        "src/generated/resources/post/page.vue",
+    ] {
+        let root = if path.starts_with("src/") {
+            frontend.path()
+        } else {
+            backend.path()
+        };
+        assert!(root.join(path).is_file(), "Post 资产未生成：{path}");
+    }
+    for resource in ["device", "post"] {
+        let repeated = write_resource(
+            &catalog,
+            resource,
+            ResourceWorkspace {
+                backend_root: backend.path(),
+                frontend_root: Some(frontend.path()),
+            },
+        )
+        .unwrap_or_else(|error| panic!("{resource} 连续生成应成功：{error}"));
+        assert!(repeated.written.is_empty(), "{resource} 连续生成不得写入");
+        assert!(repeated.removed.is_empty(), "{resource} 连续生成不得删除");
+    }
     for crate_name in [
         "ryframe-application",
         "ryframe-db",
@@ -155,99 +207,8 @@ fn device_slice_compiles_in_temporary_real_workspaces() {
         .expect("应运行生成 Fake 事务语义测试");
     assert_command_succeeded("generated Device fake transaction test", &fake_test);
 
-    assert_frontend_checks(&frontend_source, frontend.path(), "device");
-}
-
-#[test]
-#[ignore = "在临时真实 Workspace 中验证 Post 的 application 与 control DB 生成层"]
-fn post_control_slice_compiles_in_temporary_real_workspace() {
-    let backend_source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("生成器应位于后端 Workspace/crates")
-        .to_path_buf();
-    let frontend_source = backend_source
-        .parent()
-        .expect("后端应有工作区父目录")
-        .join("ryframe-vue3");
-    assert!(frontend_source.join("node_modules").is_dir());
-    let backend_parent = backend_source.join(".local-tests");
-    let frontend_parent = frontend_source.join(".local-tests");
-    fs::create_dir_all(&backend_parent).expect("应创建后端临时测试目录");
-    fs::create_dir_all(&frontend_parent).expect("应创建前端临时测试目录");
-    let backend = tempfile::Builder::new()
-        .prefix("post-resource-workspace-")
-        .tempdir_in(&backend_parent)
-        .expect("应创建 Post 临时 Workspace");
-    let frontend = tempfile::Builder::new()
-        .prefix("post-resource-frontend-")
-        .tempdir_in(&frontend_parent)
-        .expect("应创建 Post 临时前端输出目录");
-
-    for file in [
-        "Cargo.toml",
-        "Cargo.lock",
-        "rust-toolchain.toml",
-        "rustfmt.toml",
-    ] {
-        fs::copy(backend_source.join(file), backend.path().join(file))
-            .unwrap_or_else(|error| panic!("复制 {file} 失败：{error}"));
-    }
-    for directory in [".cargo", "catalog", "crates", "vendor", "xtask"] {
-        copy_directory(
-            &backend_source.join(directory),
-            &backend.path().join(directory),
-        );
-    }
-    prepare_frontend_workspace(&frontend_source, frontend.path());
-
-    let post =
-        load_resource(backend_source.join("catalog/resources/post.toml")).expect("Post 清单应有效");
-    let catalog = render_resources(&[post]).expect("Post 应能生成");
-    write_resource(
-        &catalog,
-        "post",
-        ResourceWorkspace {
-            backend_root: backend.path(),
-            frontend_root: Some(frontend.path()),
-        },
-    )
-    .expect("Post 应写入临时 Workspace");
-
-    for crate_name in ["ryframe-application", "ryframe-db"] {
-        let lib = backend
-            .path()
-            .join("crates")
-            .join(crate_name)
-            .join("src/lib.rs");
-        let mut source = fs::read_to_string(&lib).expect("应读取 crate lib.rs");
-        if !source
-            .lines()
-            .any(|line| line.trim() == "pub mod generated;")
-        {
-            source.push_str("\npub mod generated;\n");
-        }
-        fs::write(&lib, source).expect("应在临时副本接入 generated module");
-    }
-
-    let cargo_fmt = Command::new("cargo")
-        .args(["fmt", "--all", "--", "--check"])
-        .current_dir(backend.path())
-        .output()
-        .expect("应检查 Post 生成 Rust 资产格式");
-    assert_command_succeeded("Post cargo fmt --check", &cargo_fmt);
-
-    let cargo = Command::new("cargo")
-        .args(["check", "-p", "ryframe-application", "-p", "ryframe-db"])
-        .current_dir(backend.path())
-        .env(
-            "CARGO_TARGET_DIR",
-            backend_source.join("target/resource-generator-workspace-check"),
-        )
-        .output()
-        .expect("应运行 Post 临时后端 cargo check");
-    assert_command_succeeded("Post cargo check", &cargo);
-    assert_frontend_checks(&frontend_source, frontend.path(), "post");
+    assert_frontend_checks(&frontend_source, frontend.path());
+    Ok(())
 }
 
 fn prepare_frontend_workspace(source: &Path, target: &Path) {
@@ -258,23 +219,26 @@ fn prepare_frontend_workspace(source: &Path, target: &Path) {
     }
 }
 
-fn assert_frontend_checks(source: &Path, target: &Path, resource: &str) {
+fn assert_frontend_checks(source: &Path, target: &Path) {
     let vue_tsc = source.join("node_modules/.bin/vue-tsc.cmd");
     let typecheck = Command::new(vue_tsc)
         .args(["--noEmit", "-p", "tsconfig.json"])
         .current_dir(target)
         .output()
         .expect("应运行临时前端 vue-tsc");
-    assert_command_succeeded(&format!("{resource} vue-tsc"), &typecheck);
+    assert_command_succeeded("Device/Post vue-tsc", &typecheck);
 
     let eslint = source.join("node_modules/.bin/eslint.cmd");
-    let generated = format!("src/generated/resources/{resource}");
     let lint = Command::new(eslint)
-        .args([generated.as_str(), "--max-warnings=0"])
+        .args([
+            "src/generated/resources/device",
+            "src/generated/resources/post",
+            "--max-warnings=0",
+        ])
         .current_dir(target)
         .output()
         .expect("应运行临时前端 ESLint");
-    assert_command_succeeded(&format!("{resource} ESLint"), &lint);
+    assert_command_succeeded("Device/Post ESLint", &lint);
 }
 
 fn copy_directory(source: &Path, target: &Path) {

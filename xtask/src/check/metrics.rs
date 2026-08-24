@@ -24,6 +24,21 @@ struct TargetState {
     resource_warm: bool,
 }
 
+#[derive(Clone, Copy, Debug, Serialize)]
+struct SccacheCounters {
+    compile_requests: u64,
+    cache_hits: u64,
+    cache_misses: u64,
+}
+
+#[derive(Debug, Serialize)]
+struct SccacheDelta {
+    compile_requests: u64,
+    cache_hits: u64,
+    cache_misses: u64,
+    hit_rate: Option<f64>,
+}
+
 #[derive(Debug, Serialize)]
 struct VerifyRun {
     version: u8,
@@ -34,6 +49,9 @@ struct VerifyRun {
     backend_dirty: Option<bool>,
     frontend_dirty: Option<bool>,
     rustc_cache: String,
+    sccache_before: Option<SccacheCounters>,
+    sccache_after: Option<SccacheCounters>,
+    sccache_delta: Option<SccacheDelta>,
     targets: TargetState,
     steps: Vec<VerifyStep>,
     total_seconds: f64,
@@ -42,6 +60,7 @@ struct VerifyRun {
 
 struct ActiveVerify {
     root: std::path::PathBuf,
+    sccache_before: Option<SccacheCounters>,
     run: VerifyRun,
 }
 
@@ -49,8 +68,13 @@ static ACTIVE_VERIFY: OnceLock<Mutex<Option<ActiveVerify>>> = OnceLock::new();
 
 pub(crate) fn begin(root: &Path, frontend: &Path, scope: &str, mode: &str) {
     install_step_observer(record_step);
+    let rustc_cache = rustc_cache_label();
+    let sccache_before = (rustc_cache == "sccache")
+        .then(read_sccache_counters)
+        .flatten();
     let active = ActiveVerify {
         root: root.to_path_buf(),
+        sccache_before,
         run: VerifyRun {
             version: 1,
             started_at: Utc::now().to_rfc3339(),
@@ -59,7 +83,10 @@ pub(crate) fn begin(root: &Path, frontend: &Path, scope: &str, mode: &str) {
             mode: mode.to_owned(),
             backend_dirty: git_dirty(root),
             frontend_dirty: git_dirty(frontend),
-            rustc_cache: rustc_cache_label().to_owned(),
+            rustc_cache: rustc_cache.to_owned(),
+            sccache_before,
+            sccache_after: None,
+            sccache_delta: None,
             targets: TargetState {
                 backend_warm: directory_has_entries(&root.join("target/verify/backend")),
                 resource_warm: directory_has_entries(&root.join("target/verify/resource")),
@@ -104,6 +131,13 @@ pub(crate) fn finish(mode: &str, total_seconds: f64, succeeded: bool) {
     active.run.mode = mode.to_owned();
     active.run.total_seconds = total_seconds;
     active.run.status = if succeeded { "passed" } else { "failed" };
+    if active.run.rustc_cache == "sccache" {
+        active.run.sccache_after = read_sccache_counters();
+        active.run.sccache_delta = active
+            .run
+            .sccache_after
+            .and_then(|after| sccache_delta(active.sccache_before, after));
+    }
     if let Err(error) = append_metrics(&active.root, &active.run) {
         eprintln!("写入 verify 指标失败：{error}；检查结果不受影响。");
     }
@@ -149,4 +183,45 @@ fn git_text(root: &Path, args: &[&str]) -> Option<String> {
 fn git_dirty(root: &Path) -> Option<bool> {
     git_text(root, &["status", "--porcelain", "--untracked-files=all"])
         .map(|status| !status.is_empty())
+}
+
+fn read_sccache_counters() -> Option<SccacheCounters> {
+    let output = Command::new("sccache")
+        .args(["--show-stats", "--stats-format", "json"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let stats = document.get("stats")?;
+    Some(SccacheCounters {
+        compile_requests: stats.get("compile_requests")?.as_u64()?,
+        cache_hits: sum_counts(stats.get("cache_hits")?.get("counts")?),
+        cache_misses: sum_counts(stats.get("cache_misses")?.get("counts")?),
+    })
+}
+
+fn sum_counts(value: &serde_json::Value) -> u64 {
+    value
+        .as_object()
+        .into_iter()
+        .flat_map(|counts| counts.values())
+        .filter_map(serde_json::Value::as_u64)
+        .sum()
+}
+
+fn sccache_delta(before: Option<SccacheCounters>, after: SccacheCounters) -> Option<SccacheDelta> {
+    let before = before?;
+    let cache_hits = after.cache_hits.saturating_sub(before.cache_hits);
+    let cache_misses = after.cache_misses.saturating_sub(before.cache_misses);
+    let cacheable = cache_hits.saturating_add(cache_misses);
+    Some(SccacheDelta {
+        compile_requests: after
+            .compile_requests
+            .saturating_sub(before.compile_requests),
+        cache_hits,
+        cache_misses,
+        hit_rate: (cacheable > 0).then(|| cache_hits as f64 / cacheable as f64),
+    })
 }

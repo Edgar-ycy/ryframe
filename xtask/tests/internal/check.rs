@@ -10,12 +10,13 @@ use super::check::{
     BACKEND_POLICY_SCRIPTS, BACKEND_VERIFY_TARGET_DIR, BackendSnapshotProfile,
     CONSUMER_OWNED_COMMANDS, ChangeCategory, ChangeSurfacePolicy,
     FRONTEND_FULL_NON_CONSUMER_COMMANDS, FRONTEND_ONLY_CONTRACT_COMMANDS, FrontendProfile,
-    PYTHON_TEST_ARGS, RESOURCE_VERIFY_TARGET_DIR, WORKSPACE_CLIPPY_ARGS, WORKSPACE_TEST_ARGS,
-    WorkspaceGraph, analyze_change_surface, backend_snapshot_export_args, changed_paths,
-    classify_changes, complete_verify_selection, consumer_contract_arguments,
-    consumer_contract_plan, feature_operation_args, feature_test_args, frontend_profile_commands,
+    PYTHON_TEST_ARGS, RESOURCE_VERIFY_TARGET_DIR, WORKSPACE_CLIPPY_ARGS, WorkspaceGraph,
+    analyze_change_surface, backend_snapshot_export_args, changed_paths, classify_changes,
+    complete_verify_selection, consumer_contract_arguments, consumer_contract_plan,
+    feature_operation_args, feature_test_args, frontend_profile_commands,
     load_change_surface_policy, load_consumer_contract_plan, load_workspace_graph,
     needs_consumer_contract, reverse_dependency_closure, validate_feature_combination,
+    verify_job_budget_from, workspace_test_args,
 };
 
 static NEXT_REPOSITORY: AtomicU64 = AtomicU64::new(1);
@@ -65,8 +66,8 @@ fn feature_matrix_compiles_and_tests_required_feature_targets() {
         "destructive-reset".to_owned(),
         "file-maintenance".to_owned(),
     ];
-    let check = feature_operation_args("check", "ryframe", &features);
-    let clippy = feature_operation_args("clippy", "ryframe", &features);
+    let check = feature_operation_args("check", "ryframe", &features, 8);
+    let clippy = feature_operation_args("clippy", "ryframe", &features, 8);
 
     for args in [&check, &clippy] {
         assert!(args.windows(2).any(|pair| pair == ["-p", "ryframe"]));
@@ -76,11 +77,12 @@ fn feature_matrix_compiles_and_tests_required_feature_targets() {
         );
         assert!(args.contains(&"--all-targets".to_owned()));
         assert!(args.contains(&"--no-default-features".to_owned()));
+        assert!(args.windows(2).any(|pair| pair == ["--jobs", "8"]));
         assert!(args.contains(&"destructive-reset,file-maintenance".to_owned()));
     }
-    let test = feature_test_args("ryframe", &features, "reset_contract");
+    let test = feature_test_args("ryframe", &features, "reset_contract", 8);
     assert!(test.windows(2).any(|pair| pair == ["-p", "ryframe"]));
-    assert!(test.windows(2).any(|pair| pair == ["--jobs", "2"]));
+    assert!(test.windows(2).any(|pair| pair == ["--jobs", "8"]));
     assert!(
         test.windows(2)
             .any(|pair| { pair == ["--target-dir", "target/verify/backend"] })
@@ -136,7 +138,7 @@ fn full_gate_discovers_repository_python_tests() {
         ]
     );
     assert_eq!(
-        WORKSPACE_TEST_ARGS,
+        workspace_test_args(8),
         [
             "test",
             "--locked",
@@ -144,11 +146,33 @@ fn full_gate_discovers_repository_python_tests() {
             "target/verify/backend",
             "--workspace",
             "--jobs",
-            "2",
+            "8",
         ]
     );
     assert_eq!(BACKEND_VERIFY_TARGET_DIR, "target/verify/backend");
     assert_eq!(RESOURCE_VERIFY_TARGET_DIR, "target/verify/resource");
+}
+
+#[test]
+fn verify_job_budget_reserves_capacity_for_both_cargo_branches() {
+    assert_eq!(
+        verify_job_budget_from(None, 22).unwrap(),
+        super::check::VerifyJobBudget {
+            total: 12,
+            backend: 8,
+            resource: 4,
+        }
+    );
+    assert_eq!(
+        verify_job_budget_from(Some("9"), 22).unwrap(),
+        super::check::VerifyJobBudget {
+            total: 9,
+            backend: 6,
+            resource: 3,
+        }
+    );
+    assert!(verify_job_budget_from(Some("3"), 22).is_err());
+    assert!(verify_job_budget_from(Some("invalid"), 22).is_err());
 }
 
 #[test]

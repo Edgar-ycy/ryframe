@@ -1,9 +1,11 @@
-use std::{collections::BTreeSet, path::Path, time::Instant};
+use std::{collections::BTreeSet, env, path::Path, thread, time::Instant};
 
 use crate::{
     Result,
     cli::CheckScope,
-    process::{run as run_process, run_pnpm},
+    process::{
+        run as run_process, run_pnpm, run_with_env as run_process_with_env, with_process_log,
+    },
     workspace::root_dir,
 };
 
@@ -13,8 +15,8 @@ use super::{
         print_change_surface,
     },
     feature::{
-        check_feature_registry, feature_matrix, load_feature_registry, run_feature_operations,
-        run_feature_tests, validate_feature_registry,
+        check_feature_registry, feature_matrix_with_jobs, load_feature_registry,
+        run_feature_operations, run_feature_tests, validate_feature_registry,
     },
     metrics,
     model::{BackendSnapshotProfile, FrontendProfile, WorkspaceGraph},
@@ -59,15 +61,6 @@ pub(crate) const WORKSPACE_CLIPPY_ARGS: &[&str] = &[
 pub(crate) const BACKEND_VERIFY_TARGET_DIR: &str = "target/verify/backend";
 /// 临时资源工作区独立使用的 Cargo 产物目录，避免污染常规后端门禁缓存。
 pub(crate) const RESOURCE_VERIFY_TARGET_DIR: &str = "target/verify/resource";
-pub(crate) const WORKSPACE_TEST_ARGS: &[&str] = &[
-    "test",
-    "--locked",
-    "--target-dir",
-    BACKEND_VERIFY_TARGET_DIR,
-    "--workspace",
-    "--jobs",
-    "2",
-];
 pub(crate) const FRONTEND_FULL_NON_CONSUMER_COMMANDS: &[&str] = &[
     "check:workflows",
     "check:dependencies",
@@ -200,10 +193,20 @@ fn full_verify(scope: CheckScope, frontend_dir: &Path) -> Result<()> {
     if matches!(scope, CheckScope::All | CheckScope::Backend) {
         require_frontend_dependencies(frontend_dir)?;
     }
-    if matches!(scope, CheckScope::All | CheckScope::Backend) {
+    let root = root_dir();
+    let backend_enabled = matches!(scope, CheckScope::All | CheckScope::Backend);
+    let frontend_enabled = matches!(scope, CheckScope::All | CheckScope::Frontend);
+    if backend_enabled && frontend_enabled {
+        run_parallel_tasks(
+            &root,
+            "backend-foundation",
+            backend,
+            "frontend-foundation",
+            || frontend_full_non_consumer(frontend_dir),
+        )?;
+    } else if backend_enabled {
         backend()?;
-    }
-    if matches!(scope, CheckScope::All | CheckScope::Frontend) {
+    } else if frontend_enabled {
         frontend_full_non_consumer(frontend_dir)?;
     }
     let backend_snapshots = if matches!(scope, CheckScope::All | CheckScope::Backend) {
@@ -218,16 +221,30 @@ fn full_verify(scope: CheckScope, frontend_dir: &Path) -> Result<()> {
     } else {
         None
     };
-    if matches!(scope, CheckScope::All | CheckScope::Backend) {
+    if backend_enabled {
         run_process(&root_dir(), "python", PYTHON_TEST_ARGS)?;
         run_process(
             &root_dir(),
             "python",
             &["scripts/check_migration_history.py", "--require-frozen"],
         )?;
-        feature_matrix()?;
-        run_process(&root_dir(), "cargo", WORKSPACE_TEST_ARGS)?;
-        resource_workspace_compilation(frontend_dir)?;
+        let budget = verify_job_budget()?;
+        println!(
+            "完整门禁编译并发：总计={}，主 Workspace={}，资源 Workspace={}",
+            budget.total, budget.backend, budget.resource
+        );
+        run_parallel_tasks(
+            &root,
+            "backend-workspace",
+            || {
+                feature_matrix_with_jobs(budget.backend)?;
+                let args = workspace_test_args(budget.backend);
+                let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+                run_process(&root, "cargo", &args)
+            },
+            "resource-workspace",
+            || resource_workspace_compilation(frontend_dir, budget.resource),
+        )?;
     }
     if matches!(scope, CheckScope::Backend) {
         run_consumer_contract(
@@ -266,9 +283,10 @@ fn frontend_full_non_consumer(frontend_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn resource_workspace_compilation(frontend_dir: &Path) -> Result<()> {
+fn resource_workspace_compilation(frontend_dir: &Path, jobs: usize) -> Result<()> {
     require_frontend_dependencies(frontend_dir)?;
-    run_process(
+    let jobs = jobs.to_string();
+    run_process_with_env(
         &root_dir(),
         "cargo",
         &[
@@ -284,7 +302,91 @@ fn resource_workspace_compilation(frontend_dir: &Path) -> Result<()> {
             "--ignored",
             "--nocapture",
         ],
+        &[("CARGO_BUILD_JOBS", jobs.as_str())],
     )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct VerifyJobBudget {
+    pub(crate) total: usize,
+    pub(crate) backend: usize,
+    pub(crate) resource: usize,
+}
+
+pub(crate) fn verify_job_budget_from(
+    override_value: Option<&str>,
+    available_parallelism: usize,
+) -> Result<VerifyJobBudget> {
+    let total = match override_value {
+        Some(value) => value
+            .parse::<usize>()
+            .ok()
+            .filter(|value| (4..=64).contains(value))
+            .ok_or("RYFRAME_VERIFY_JOBS 必须是 4 到 64 的整数")?,
+        None => available_parallelism.saturating_sub(2).clamp(4, 12),
+    };
+    let backend = ((total * 2).div_ceil(3)).clamp(2, total - 2);
+    Ok(VerifyJobBudget {
+        total,
+        backend,
+        resource: total - backend,
+    })
+}
+
+fn verify_job_budget() -> Result<VerifyJobBudget> {
+    let available = thread::available_parallelism().map_or(4, usize::from);
+    let configured = env::var("RYFRAME_VERIFY_JOBS").ok();
+    verify_job_budget_from(configured.as_deref(), available)
+}
+
+pub(crate) fn workspace_test_args(jobs: usize) -> Vec<String> {
+    [
+        "test",
+        "--locked",
+        "--target-dir",
+        BACKEND_VERIFY_TARGET_DIR,
+        "--workspace",
+        "--jobs",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .chain([jobs.to_string()])
+    .collect()
+}
+
+fn run_parallel_tasks<Left, Right>(
+    root: &Path,
+    left_label: &str,
+    left: Left,
+    right_label: &str,
+    right: Right,
+) -> Result<()>
+where
+    Left: FnOnce() -> Result<()> + Send,
+    Right: FnOnce() -> Result<()> + Send,
+{
+    let logs = root.join("target/verify/logs");
+    let (left_result, right_result) = thread::scope(|scope| {
+        let left_log = logs.join(format!("{left_label}.log"));
+        let right_log = logs.join(format!("{right_label}.log"));
+        let left = scope.spawn(move || {
+            with_process_log(left_label, &left_log, left).map_err(|error| error.to_string())
+        });
+        let right = scope.spawn(move || {
+            with_process_log(right_label, &right_log, right).map_err(|error| error.to_string())
+        });
+        (left.join(), right.join())
+    });
+    let left_result = left_result.map_err(|_| format!("并行任务 {left_label} 发生 panic"))?;
+    let right_result = right_result.map_err(|_| format!("并行任务 {right_label} 发生 panic"))?;
+    match (left_result, right_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(left), Ok(())) => Err(left.into()),
+        (Ok(()), Err(right)) => Err(right.into()),
+        (Err(left), Err(right)) => {
+            Err(format!("并行任务同时失败：{left_label}: {left}；{right_label}: {right}").into())
+        }
+    }
 }
 
 fn require_frontend_dependencies(frontend_dir: &Path) -> Result<()> {
@@ -321,6 +423,7 @@ fn backend_packages(packages: &BTreeSet<String>) -> Result<()> {
     validate_feature_registry(&metadata, &registry)?;
     println!("Cargo feature 注册表检查通过。");
     run_process(&root, "cargo", &["fmt", "--all", "--", "--check"])?;
+    let jobs = verify_job_budget()?.total;
     for operation in ["check", "clippy", "test"] {
         let mut args = vec![operation.to_owned(), "--locked".to_owned()];
         for package in packages {
@@ -330,6 +433,7 @@ fn backend_packages(packages: &BTreeSet<String>) -> Result<()> {
         if operation == "check" || operation == "clippy" {
             args.push("--all-targets".to_owned());
         }
+        args.extend(["--jobs".to_owned(), jobs.to_string()]);
         if operation == "clippy" {
             args.extend([
                 "--".to_owned(),
@@ -351,8 +455,9 @@ fn backend_packages(packages: &BTreeSet<String>) -> Result<()> {
             "最大（智能检查）",
             &entry.maximal,
             &["check", "clippy"],
+            jobs,
         )?;
-        run_feature_tests(&root, entry)?;
+        run_feature_tests(&root, entry, jobs)?;
     }
     for script in [
         "scripts/check_architecture.py",

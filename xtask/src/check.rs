@@ -29,7 +29,8 @@ pub(crate) use change_surface::{
 pub(crate) use execution::{
     BACKEND_POLICY_SCRIPTS, BACKEND_VERIFY_TARGET_DIR, CONSUMER_OWNED_COMMANDS,
     FRONTEND_FULL_NON_CONSUMER_COMMANDS, FRONTEND_ONLY_CONTRACT_COMMANDS, PYTHON_TEST_ARGS,
-    RESOURCE_VERIFY_TARGET_DIR, WORKSPACE_CLIPPY_ARGS, WORKSPACE_TEST_ARGS,
+    RESOURCE_VERIFY_TARGET_DIR, VerifyJobBudget, WORKSPACE_CLIPPY_ARGS, verify_job_budget_from,
+    workspace_test_args,
 };
 #[allow(unused_imports)]
 pub(crate) use feature::{feature_operation_args, feature_test_args, validate_feature_combination};
