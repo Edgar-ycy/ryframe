@@ -3,7 +3,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use super::super::{OptionItem, OptionList};
-use super::{RoleBriefVo, UserDetailVo, UserListParams, UserService, UserVo};
+use super::{UserDetailVo, UserListParams, UserService, UserVo};
 use crate::ports::{
     auth::{IdentityRoleRecord, IdentityTenantRecord, IdentityUserRecord},
     users::UserQueryFilter,
@@ -223,10 +223,7 @@ impl UserService {
         let Some(detail) = self.queries.detail(tenant_id, id, &scope).await? else {
             return Ok(None);
         };
-        Ok(Some(UserDetailVo {
-            user: UserVo::from(detail.user),
-            roles: detail.roles.into_iter().map(RoleBriefVo::from).collect(),
-        }))
+        Ok(Some(detail.into()))
     }
 
     pub async fn ensure_user_accessible(&self, actor: &ActorContext, id: i64) -> AppResult<()> {

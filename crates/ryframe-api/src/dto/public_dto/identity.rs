@@ -8,6 +8,8 @@ use ryframe_application::system::{
     RoleBriefVo as ServiceRoleBriefVo, UserDetailVo as ServiceUserDetailVo, UserVo as ServiceUserVo,
 };
 
+use super::organization::DeptVo;
+
 /// 当前登录用户的公开信息。
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct UserInfo {
@@ -199,14 +201,20 @@ impl From<ServiceRoleBriefVo> for RoleBriefVo {
 pub struct UserDetailVo {
     #[serde(flatten)]
     pub user: UserVo,
+    pub department: Option<DeptVo>,
     pub roles: Vec<RoleBriefVo>,
 }
 
 impl From<ServiceUserDetailVo> for UserDetailVo {
     fn from(value: ServiceUserDetailVo) -> Self {
-        let ServiceUserDetailVo { user, roles } = value;
+        let ServiceUserDetailVo {
+            user,
+            department,
+            roles,
+        } = value;
         Self {
             user: user.into(),
+            department: department.map(Into::into),
             roles: roles.into_iter().map(RoleBriefVo::from).collect(),
         }
     }

@@ -5906,6 +5906,16 @@
               },
               {
                 "properties": {
+                  "department": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/components/schemas/DeptVo"
+                      }
+                    ]
+                  },
                   "roles": {
                     "items": {
                       "$ref": "#/components/schemas/RoleBriefVo"
@@ -19012,6 +19022,16 @@
           },
           {
             "properties": {
+              "department": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DeptVo"
+                  }
+                ]
+              },
               "roles": {
                 "items": {
                   "$ref": "#/components/schemas/RoleBriefVo"

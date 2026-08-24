@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{DataScopeContext, ExportCursorWindow, PageResult, ValidatedPageQuery};
 
+use crate::ports::system::DeptRecord;
+
 pub const USER_QUERY_STATUS_NORMAL: &str = "1";
 
 #[derive(Clone, Debug)]
@@ -35,6 +37,7 @@ pub struct UserQueryRoleRecord {
 #[derive(Debug)]
 pub struct UserQueryDetailRecord {
     pub user: UserQueryRecord,
+    pub department: Option<DeptRecord>,
     pub roles: Vec<UserQueryRoleRecord>,
 }
 

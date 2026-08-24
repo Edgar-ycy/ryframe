@@ -14,9 +14,10 @@ use crate::{
         IdentityAuthorizationReadPort, PasswordResetPersistencePort, PasswordResetRequestRecord,
     },
     ports::users::{
-        UserQueryReadPort, UserQueryRecord, UserQueryRoleRecord, UserWritePersistencePort,
-        UserWriteRecord,
+        UserQueryDetailRecord, UserQueryReadPort, UserQueryRecord, UserQueryRoleRecord,
+        UserWritePersistencePort, UserWriteRecord,
     },
+    system::DeptVo,
 };
 
 pub use crate::ports::users::{
@@ -89,7 +90,18 @@ pub struct PasswordResetRequestOutcome {
 pub struct UserDetailVo {
     #[serde(flatten)]
     pub user: UserVo,
+    pub department: Option<DeptVo>,
     pub roles: Vec<RoleBriefVo>,
+}
+
+impl From<UserQueryDetailRecord> for UserDetailVo {
+    fn from(detail: UserQueryDetailRecord) -> Self {
+        Self {
+            user: detail.user.into(),
+            department: detail.department.map(Into::into),
+            roles: detail.roles.into_iter().map(Into::into).collect(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]

@@ -263,6 +263,24 @@ mod openapi {
     }
 
     #[test]
+    fn user_detail_exposes_an_optional_department_without_a_new_endpoint() {
+        let document = serde_json::to_value(ApiDoc::openapi()).expect("OpenAPI 必须可序列化");
+        let operation = &document["paths"]["/api/v1/system/users/{id}"]["get"];
+        assert_eq!(operation["operationId"], "get_system_users_by_id");
+
+        let department = document["components"]["schemas"]["UserDetailVo"]["allOf"][1]
+            ["properties"]["department"]["oneOf"]
+            .as_array()
+            .expect("用户详情必须声明可空部门对象");
+        assert!(department.iter().any(|schema| schema["type"] == "null"));
+        assert!(
+            department
+                .iter()
+                .any(|schema| schema["$ref"] == "#/components/schemas/DeptVo")
+        );
+    }
+
+    #[test]
     fn generated_post_crud_and_manual_export_share_one_openapi_document() {
         let document = serde_json::to_value(ApiDoc::openapi()).expect("OpenAPI 必须可序列化");
         let paths = document["paths"]

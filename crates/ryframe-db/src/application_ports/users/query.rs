@@ -1,12 +1,13 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    ControlDatabaseCluster, DeptRepository, ReadConsistency, RoleRepository, UserFilter,
-    UserRepository,
+    ControlDatabaseCluster, DeptRepository, ReadConsistency, Repository, RoleRepository,
+    UserFilter, UserRepository,
 };
 use ryframe_kernel::{DataScopeContext, ExportCursorWindow, PageResult, ValidatedPageQuery};
 use sea_orm::DatabaseConnection;
 
+use ryframe_application::ports::system::DeptRecord;
 use ryframe_application::ports::users::{
     UserQueryDetailRecord, UserQueryFilter, UserQueryReadPort, UserQueryRecord, UserQueryRoleRecord,
 };
@@ -101,10 +102,17 @@ impl UserQueryReadPort for DatabaseUserQueryPersistence {
         else {
             return Ok(None);
         };
-        let mut users = fill_department_names(&database, tenant_id, vec![to_user(user)]).await?;
-        let user = users
-            .pop()
-            .ok_or_else(|| ryframe_kernel::AppError::Internal("用户查询结果丢失".into()))?;
+        let department = match user.dept_id {
+            Some(department_id) => DeptRepository
+                .find_by_id(&database, tenant_id, department_id)
+                .await?
+                .map(to_department),
+            None => None,
+        };
+        let mut user = to_user(user);
+        user.dept_name = department
+            .as_ref()
+            .map(|department| department.name.clone());
         let roles = RoleRepository
             .find_user_roles(&database, tenant_id, user_id)
             .await?
@@ -116,7 +124,11 @@ impl UserQueryReadPort for DatabaseUserQueryPersistence {
                 is_super: role.is_super,
             })
             .collect();
-        Ok(Some(UserQueryDetailRecord { user, roles }))
+        Ok(Some(UserQueryDetailRecord {
+            user,
+            department,
+            roles,
+        }))
     }
 
     async fn is_accessible<'a>(
@@ -165,6 +177,20 @@ fn to_user(user: crate::entities::user::Model) -> UserQueryRecord {
         dept_name: None,
         remark: user.remark,
         created_at: user.created_at,
+    }
+}
+
+fn to_department(department: crate::entities::dept::Model) -> DeptRecord {
+    DeptRecord {
+        id: department.id,
+        name: department.name,
+        parent_id: department.parent_id,
+        ancestors: department.ancestors,
+        sort: department.sort,
+        status: department.status,
+        remark: department.remark,
+        created_at: department.created_at,
+        updated_at: department.updated_at,
     }
 }
 
