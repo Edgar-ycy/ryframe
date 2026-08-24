@@ -116,6 +116,20 @@ impl ResourceExplanation {
                     .join(", ")
             ));
         }
+        if !resource.relations.is_empty() {
+            extension_notes.push(format!(
+                "详情关系：{}；由查询端口在同一存储边界内装配",
+                resource
+                    .relations
+                    .iter()
+                    .map(|relation| format!(
+                        "{}({} → {})",
+                        relation.name, relation.local_field, relation.target_resource
+                    ))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
         if extension_notes.is_empty() {
             extension_notes.push("该资源当前不需要手写扩展".into());
         }

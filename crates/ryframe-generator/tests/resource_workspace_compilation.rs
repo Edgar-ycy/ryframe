@@ -4,7 +4,9 @@ use std::{
     process::Command,
 };
 
-use ryframe_generator::{ResourceWorkspace, load_resource, render_resources, write_resource};
+use ryframe_generator::{
+    RelationIr, RelationKind, ResourceWorkspace, load_resource, render_resources, write_resource,
+};
 
 #[test]
 #[ignore = "完整门禁在临时真实 Workspace 中运行 Cargo 与 vue-tsc"]
@@ -50,9 +52,17 @@ fn device_slice_compiles_in_temporary_real_workspaces() {
     }
     prepare_frontend_workspace(&frontend_source, frontend.path());
 
-    let device =
+    let mut device =
         load_resource(backend_source.join("crates/ryframe-generator/tests/fixtures/device.toml"))
             .expect("Device 清单应有效");
+    device.relations.push(RelationIr {
+        name: "parent".into(),
+        pascal_name: "Parent".into(),
+        kind: RelationKind::BelongsTo,
+        local_field: "id".into(),
+        target_resource: "device".into(),
+        target_pascal_name: "Device".into(),
+    });
     let post = load_resource(backend_source.join("catalog/resources/post.toml"))
         .expect("临时 Workspace 中既有的 Post 清单应有效");
     let catalog = render_resources(&[device, post]).expect("Device 与既有资源应能共同生成");
@@ -317,7 +327,9 @@ fn register_device_frontend_contract(frontend: &Path) {
     );
     schema = schema.replacen(
         component_marker,
-        &format!("{component_marker}        DeviceVo: DeviceContractRecord;\n"),
+        &format!(
+            "{component_marker}        DeviceVo: DeviceContractRecord;\n        DeviceDetailVo: DeviceContractRecord & {{ parent?: DeviceContractRecord | null }};\n"
+        ),
         1,
     );
     let marker = "export interface operations {\n";

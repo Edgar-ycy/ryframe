@@ -2,8 +2,13 @@ use super::{FieldIr, ResourceIr, ValueType, rust_base_type};
 
 pub(super) fn dto(resource: &ResourceIr, header: &str) -> String {
     let pascal = &resource.pascal_name;
+    let detail_import = if resource.relations.is_empty() {
+        String::new()
+    } else {
+        format!(", {pascal}Detail")
+    };
     let mut output = format!(
-        "{header}use ryframe_application::generated::{name}::{{Create{pascal}Command, {pascal}ListParams, {pascal}Record, Update{pascal}Command}};\nuse ryframe_kernel::{{PaginationPolicy, ValidatedPageQuery}};\nuse serde::{{Deserialize, Serialize}};\nuse utoipa::{{IntoParams, ToSchema}};\nuse validator::Validate;\n\n",
+        "{header}use ryframe_application::generated::{name}::{{Create{pascal}Command, {pascal}ListParams, {pascal}Record{detail_import}, Update{pascal}Command}};\nuse ryframe_kernel::{{PaginationPolicy, ValidatedPageQuery}};\nuse serde::{{Deserialize, Serialize}};\nuse utoipa::{{IntoParams, ToSchema}};\nuse validator::Validate;\n\n",
         name = resource.name,
     );
     render_enum_validators(resource, &mut output);
@@ -11,6 +16,7 @@ pub(super) fn dto(resource: &ResourceIr, header: &str) -> String {
     render_input(resource, &mut output, false);
     render_list_query(resource, &mut output);
     render_view(resource, &mut output);
+    render_detail_view(resource, &mut output);
     output
 }
 
@@ -165,8 +171,46 @@ fn render_view(resource: &ResourceIr, output: &mut String) {
     output.push_str("        }\n    }\n}\n");
 }
 
+fn render_detail_view(resource: &ResourceIr, output: &mut String) {
+    if resource.relations.is_empty() {
+        return;
+    }
+    let pascal = &resource.pascal_name;
+    output.push_str("\n#[derive(Clone, Debug, Serialize, ToSchema)]\n");
+    output.push_str(&format!("pub struct {pascal}DetailVo {{\n"));
+    output.push_str("    #[serde(flatten)]\n");
+    output.push_str(&format!("    pub record: {pascal}Vo,\n"));
+    for relation in &resource.relations {
+        output.push_str(&format!(
+            "    pub {}: Option<crate::generated::{}::dto::{}Vo>,\n",
+            relation.name, relation.target_resource, relation.target_pascal_name
+        ));
+    }
+    output.push_str("}\n\n");
+    output.push_str(&format!(
+        "impl From<{pascal}Detail> for {pascal}DetailVo {{\n    fn from(value: {pascal}Detail) -> Self {{\n        Self {{\n            record: value.record.into(),\n"
+    ));
+    for relation in &resource.relations {
+        output.push_str(&format!(
+            "            {}: value.{}.map(Into::into),\n",
+            relation.name, relation.name
+        ));
+    }
+    output.push_str("        }\n    }\n}\n");
+}
+
 pub(super) fn handler(resource: &ResourceIr, header: &str) -> String {
     let pascal = &resource.pascal_name;
+    let detail_vo = if resource.relations.is_empty() {
+        format!("{pascal}Vo")
+    } else {
+        format!("{pascal}DetailVo")
+    };
+    let detail_import = if resource.relations.is_empty() {
+        String::new()
+    } else {
+        format!(", {pascal}DetailVo")
+    };
     let permissions = &resource.access.permissions;
     let operations = &resource.api.operations;
     let path = &resource.api.path;
@@ -186,7 +230,7 @@ use validator::Validate;
 use crate::RequestPrincipal;
 use crate::http::{{ApiPageResponse, ApiResponse, HttpAppError, HttpResult}};
 
-use super::dto::{{Create{pascal}Dto, {pascal}ListQuery, {pascal}Vo, Update{pascal}Dto}};
+use super::dto::{{Create{pascal}Dto, {pascal}ListQuery, {pascal}Vo{detail_import}, Update{pascal}Dto}};
 
 #[derive(Clone)]
 pub struct {pascal}HttpState {{
@@ -242,14 +286,14 @@ pub async fn list(
     operation_id = {read_operation:?},
     tag = {tag:?},
     params(("id" = String, Path)),
-    responses((status = 200, description = "详情", body = ApiResponse<{pascal}Vo>)),
+    responses((status = 200, description = "详情", body = ApiResponse<{detail_vo}>)),
     security(("bearer" = []))
 )]
 pub async fn detail(
     State(state): State<{pascal}HttpState>,
     current_user: RequestPrincipal,
     Path(id): Path<String>,
-) -> HttpResult<Json<ApiResponse<{pascal}Vo>>> {{
+) -> HttpResult<Json<ApiResponse<{detail_vo}>>> {{
     let value = state
         .service
         .find_by_id(&current_user, parse_id(&id)?)
@@ -359,6 +403,11 @@ fn parse_id(value: &str) -> HttpResult<i64> {{
 
 pub(super) fn openapi(resource: &ResourceIr, header: &str) -> String {
     let pascal = &resource.pascal_name;
+    let detail_schema = if resource.relations.is_empty() {
+        String::new()
+    } else {
+        format!("        super::dto::{pascal}DetailVo,\n")
+    };
     let metadata = super::super::catalog::crud_resource_metadata(resource);
     let metadata =
         serde_json::to_string_pretty(&metadata).expect("资源元数据只包含可序列化的稳定值");
@@ -379,6 +428,7 @@ pub(super) fn openapi(resource: &ResourceIr, header: &str) -> String {
         super::dto::Update{pascal}Dto,
         super::dto::{pascal}ListQuery,
         super::dto::{pascal}Vo,
+{detail_schema}
     ))
 )]
 pub struct {pascal}OpenApi;

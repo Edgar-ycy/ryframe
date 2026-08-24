@@ -1,6 +1,9 @@
 use std::collections::BTreeSet;
 
-use super::{FieldIr, ResourceError, ResourceSpec, field_error, is_safe_symbol, validate_ir_value};
+use super::{
+    FieldIr, ResourceError, ResourceSpec, ValueType, field_error, is_safe_symbol,
+    is_snake_identifier, validate_ir_value,
+};
 
 pub(super) fn validate_references(
     resource: &str,
@@ -59,6 +62,56 @@ pub(super) fn validate_references(
                     "删除索引中的重复字段",
                 ));
             }
+        }
+    }
+    let mut relation_names = BTreeSet::new();
+    for relation in &spec.relations {
+        if !is_snake_identifier(&relation.name) {
+            return Err(ResourceError::new(
+                format!("关系名 `{}` 不是安全标识符", relation.name),
+                "关系名只使用小写字母、数字和下划线",
+            )
+            .with_resource(resource)
+            .with_file(source_path));
+        }
+        if !relation_names.insert(&relation.name) {
+            return Err(ResourceError::new(
+                format!("关系 `{}` 重复", relation.name),
+                "每个详情关系使用唯一名称",
+            )
+            .with_resource(resource)
+            .with_file(source_path));
+        }
+        if fields.contains(&relation.name) {
+            return Err(field_error(
+                resource,
+                &relation.name,
+                source_path,
+                "关系名与资源字段重名",
+                "为关系使用不会覆盖详情字段的名称",
+            ));
+        }
+        ensure_field_reference(resource, source_path, fields, &relation.local_field, "关系")?;
+        let local_field = field_specs
+            .iter()
+            .find(|field| field.name == relation.local_field)
+            .expect("关系字段引用已校验");
+        if local_field.value_type != ValueType::I64 {
+            return Err(field_error(
+                resource,
+                &relation.local_field,
+                source_path,
+                "belongs_to 关系字段必须是 i64",
+                "将外键字段设为 i64；通过 wire_type=string 保持前端 ID 精度",
+            ));
+        }
+        if !is_snake_identifier(&relation.target_resource) {
+            return Err(ResourceError::new(
+                format!("关系目标 `{}` 不是安全资源名", relation.target_resource),
+                "target_resource 只使用已声明资源的小写 snake_case 名称",
+            )
+            .with_resource(resource)
+            .with_file(source_path));
         }
     }
     if let Some(soft_delete) = &spec.database.soft_delete {

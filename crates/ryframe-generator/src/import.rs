@@ -190,6 +190,7 @@ pub fn draft_resource_from_table(
                 audit: metadata.audit,
             },
             fields,
+            relations: Vec::new(),
             api: metadata.api,
             access: metadata.access,
             menu: metadata.menu,

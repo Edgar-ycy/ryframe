@@ -4,6 +4,11 @@ use super::super::{html_header, slash_header};
 pub(super) fn api(resource: &ResourceIr) -> String {
     let pascal = &resource.pascal_name;
     let operations = &resource.api.operations;
+    let detail_type = if resource.relations.is_empty() {
+        String::new()
+    } else {
+        format!("export type {pascal}Detail = ApiSchema<'{pascal}DetailVo'>\n")
+    };
     format!(
         r#"{}import {{ requestOperation }} from '@/api/operationRequest'
 import {{
@@ -17,7 +22,7 @@ import type {{ ApiSchema, OperationJsonBody, OperationQuery }} from '@/api/contr
 import type {{ Id }} from '@/shared/http/types'
 
 export type {pascal}Record = ApiSchema<'{pascal}Vo'>
-export type {pascal}Query = OperationQuery<'{list_operation}'>
+{detail_type}export type {pascal}Query = OperationQuery<'{list_operation}'>
 export type {pascal}CreateInput = OperationJsonBody<'{create_operation}'>
 export type {pascal}UpdateInput = OperationJsonBody<'{update_operation}'>
 

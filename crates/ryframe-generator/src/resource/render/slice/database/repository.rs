@@ -1,12 +1,14 @@
 use super::super::{ResourceIr, StorageKind};
 use super::queries::*;
 
-pub(crate) fn repository(resource: &ResourceIr, header: &str) -> String {
+pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], header: &str) -> String {
     let pascal = &resource.pascal_name;
     let name = &resource.name;
     let persistence = persistence_parts(resource);
     let base_select = base_select(resource);
     let id_query = id_query(resource, "id");
+    let (detail_type, detail_import, detail_read, relation_mappers) =
+        relation_detail_parts(resource, resources, &id_query);
     let filters = filter_statements(resource);
     let order = order_statements(resource);
     let to_record = mapping(resource, "model");
@@ -41,7 +43,7 @@ pub(crate) fn repository(resource: &ResourceIr, header: &str) -> String {
 
 use async_trait::async_trait;
 use ryframe_application::generated::{name}::{{
-    {pascal}Filter, {pascal}PersistencePort, {pascal}Record, {pascal}Transaction,
+    {pascal}Filter, {pascal}PersistencePort, {pascal}Record{detail_import}, {pascal}Transaction,
 }};
 use ryframe_application::{{PersistenceTransaction, TransactionAuditMode}};
 use ryframe_kernel::{{AppError, AppResult, PageResult, ValidatedPageQuery}};
@@ -70,13 +72,9 @@ impl {pascal}PersistencePort for Database{pascal}Persistence {{
         &self,
         tenant_id: &str,
         id: i64,
-    ) -> AppResult<Option<{pascal}Record>> {{
+    ) -> AppResult<Option<{detail_type}>> {{
 {read_connection}
-        Ok({id_query}
-            .one(&database)
-            .await
-            .map_err(database_error)?
-            .map(to_record))
+{detail_read}
     }}
 
     async fn find_by_page(
@@ -170,6 +168,8 @@ fn to_entity(record: {pascal}Record) -> entity::Model {{
     }}
 }}
 
+{relation_mappers}
+
 fn database_error(error: sea_orm::DbErr) -> AppError {{
     let message = error.to_string();
     let normalized = message.to_ascii_lowercase();
@@ -187,4 +187,95 @@ fn database_error(error: sea_orm::DbErr) -> AppError {{
         pagination = pagination,
         generic_conflict = generic_conflict,
     )
+}
+
+fn relation_detail_parts(
+    resource: &ResourceIr,
+    resources: &[&ResourceIr],
+    id_query: &str,
+) -> (String, String, String, String) {
+    let pascal = &resource.pascal_name;
+    if resource.relations.is_empty() {
+        return (
+            format!("{pascal}Record"),
+            String::new(),
+            format!(
+                "        Ok({id_query}\n            .one(&database)\n            .await\n            .map_err(database_error)?\n            .map(to_record))"
+            ),
+            String::new(),
+        );
+    }
+
+    let mut reads = String::new();
+    let mut fields = String::new();
+    let mut mappers = String::new();
+    for relation in &resource.relations {
+        let target = resources
+            .iter()
+            .copied()
+            .find(|candidate| candidate.name == relation.target_resource)
+            .expect("关系目标已在生成入口校验");
+        let local = resource
+            .fields
+            .iter()
+            .find(|field| field.name == relation.local_field)
+            .expect("关系字段已在 IR 校验");
+        let query = relation_query(target, "relation_id");
+        let mapper = format!("to_{}_record", relation.name);
+        if local.nullable {
+            reads.push_str(&format!(
+                "        let {name} = match record.{local} {{\n            Some(relation_id) => {query}\n                .one(&database)\n                .await\n                .map_err(database_error)?\n                .map({mapper}),\n            None => None,\n        }};\n",
+                name = relation.name,
+                local = relation.local_field,
+            ));
+        } else {
+            reads.push_str(&format!(
+                "        let relation_id = record.{local};\n        let {name} = {query}\n            .one(&database)\n            .await\n            .map_err(database_error)?\n            .map({mapper});\n",
+                name = relation.name,
+                local = relation.local_field,
+            ));
+        }
+        fields.push_str(&format!("            {},\n", relation.name));
+        let mapping = mapping(target, "model");
+        mappers.push_str(&format!(
+            "fn {mapper}(model: crate::generated::{target_name}::entity::Model) -> ryframe_application::generated::{target_name}::{target_pascal}Record {{\n    ryframe_application::generated::{target_name}::{target_pascal}Record {{\n{mapping}\n    }}\n}}\n\n",
+            target_name = target.name,
+            target_pascal = target.pascal_name,
+        ));
+    }
+    let read = format!(
+        "        let Some(record) = {id_query}\n            .one(&database)\n            .await\n            .map_err(database_error)?\n            .map(to_record)\n        else {{\n            return Ok(None);\n        }};\n{reads}        Ok(Some({pascal}Detail {{\n            record,\n{fields}        }}))"
+    );
+    (
+        format!("{pascal}Detail"),
+        format!(", {pascal}Detail"),
+        read,
+        mappers.trim_end().to_owned(),
+    )
+}
+
+fn relation_query(target: &ResourceIr, id: &str) -> String {
+    let mut query = match target.storage {
+        StorageKind::ControlRow => format!(
+            "crate::generated::{name}::entity::Entity::find_by_id({id})",
+            name = target.name
+        ),
+        StorageKind::TenantData => format!(
+            "crate::generated::{name}::entity::Entity::find_by_id((tenant_id.to_owned(), {id}))",
+            name = target.name
+        ),
+    };
+    query.push_str(&format!(
+        "\n                .filter(crate::generated::{name}::entity::Column::TenantId.eq(tenant_id))",
+        name = target.name
+    ));
+    if let Some(soft_delete) = &target.soft_delete {
+        query.push_str(&format!(
+            "\n                .filter(crate::generated::{name}::entity::Column::{column}.eq({active}))",
+            name = target.name,
+            column = super::super::column_variant(&soft_delete.field),
+            active = field_literal(target, &soft_delete.field, &soft_delete.active),
+        ));
+    }
+    query
 }

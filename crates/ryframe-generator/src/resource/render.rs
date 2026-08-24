@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::{ResourceError, ResourceExplanation, ResourceIr, StorageKind};
+use super::{ResourceError, ResourceExplanation, ResourceIr, StorageKind, ValueType};
 
 mod aggregate;
 mod catalog;
@@ -50,7 +50,7 @@ impl GeneratedCatalog {
 
 /// 按资源名确定排序并生成所有受管资产。
 pub fn render_resources(resources: &[ResourceIr]) -> Result<GeneratedCatalog, ResourceError> {
-    let mut ordered = resources.iter().collect::<Vec<_>>();
+    let mut ordered = resources.to_vec();
     ordered.sort_by(|left, right| left.name.cmp(&right.name));
     for pair in ordered.windows(2) {
         if pair[0].name == pair[1].name {
@@ -61,9 +61,11 @@ pub fn render_resources(resources: &[ResourceIr]) -> Result<GeneratedCatalog, Re
             .with_resource(&pair[0].name));
         }
     }
+    validate_relation_targets(&ordered)?;
+    let ordered = ordered.iter().collect::<Vec<_>>();
     let mut assets = Vec::new();
     for resource in &ordered {
-        render_backend(resource, &mut assets);
+        render_backend(resource, &ordered, &mut assets);
         render_frontend(resource, &mut assets);
     }
     aggregate::render(&ordered, &mut assets);
@@ -95,7 +97,11 @@ pub fn render_resources(resources: &[ResourceIr]) -> Result<GeneratedCatalog, Re
     })
 }
 
-fn render_backend(resource: &ResourceIr, assets: &mut Vec<GeneratedAsset>) {
+fn render_backend(
+    resource: &ResourceIr,
+    resources: &[&ResourceIr],
+    assets: &mut Vec<GeneratedAsset>,
+) {
     let name = &resource.name;
     push(
         assets,
@@ -167,7 +173,7 @@ fn render_backend(resource: &ResourceIr, assets: &mut Vec<GeneratedAsset>) {
         resource,
         AssetRoot::Backend,
         format!("crates/{storage_crate}/src/generated/{name}/repository.rs"),
-        slice::database_repository(resource, &rust_header(resource)),
+        slice::database_repository(resource, resources, &rust_header(resource)),
     );
     if resource.bootstrap_migration {
         push(
@@ -210,6 +216,54 @@ fn render_backend(resource: &ResourceIr, assets: &mut Vec<GeneratedAsset>) {
         format!("crates/ryframe-api/src/generated/{name}/openapi.rs"),
         slice::api_openapi(resource, &rust_header(resource)),
     );
+}
+
+fn validate_relation_targets(resources: &[ResourceIr]) -> Result<(), ResourceError> {
+    for resource in resources {
+        for relation in &resource.relations {
+            let target = resources
+                .iter()
+                .find(|candidate| candidate.name == relation.target_resource)
+                .ok_or_else(|| {
+                    ResourceError::new(
+                        format!(
+                            "关系 `{}` 引用了未声明资源 `{}`",
+                            relation.name, relation.target_resource
+                        ),
+                        "在 catalog/resources 中加入目标资源清单，或修正 target_resource",
+                    )
+                    .with_resource(&resource.name)
+                    .with_file(&resource.source_path)
+                })?;
+            if target.storage != resource.storage {
+                return Err(ResourceError::new(
+                    format!(
+                        "关系 `{}` 跨越了 {:?} 与 {:?} 存储",
+                        relation.name, resource.storage, target.storage
+                    ),
+                    "生成关系只允许同一存储边界；跨存储读取放入手写查询切片",
+                )
+                .with_resource(&resource.name)
+                .with_field(&relation.local_field)
+                .with_file(&resource.source_path));
+            }
+            let target_id = target
+                .fields
+                .iter()
+                .find(|field| field.name == "id")
+                .expect("flat_crud 目标资源已经校验 id");
+            if target_id.value_type != ValueType::I64 || target_id.nullable {
+                return Err(ResourceError::new(
+                    format!("关系 `{}` 的目标 id 不是非空 i64", relation.name),
+                    "关系目标必须是已通过 flat_crud 校验的标准资源",
+                )
+                .with_resource(&resource.name)
+                .with_field(&relation.local_field)
+                .with_file(&resource.source_path));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn render_frontend(resource: &ResourceIr, assets: &mut Vec<GeneratedAsset>) {

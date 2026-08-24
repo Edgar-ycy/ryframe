@@ -2,10 +2,10 @@ use std::collections::BTreeSet;
 
 use super::{
     AccessIr, ApiIr, AuditIr, FieldIr, FieldUsageIr, IndexIr, LabelsIr, LabelsSpec, MenuIr,
-    PermissionIr, ResourceError, ResourceIr, ResourceSpec, RouteIr, SoftDeleteIr, ValidationIr,
-    WidgetIr, field_error, is_snake_identifier, normalize_schema, validate_api_and_access,
-    validate_extensions, validate_field, validate_generation_contract, validate_labels,
-    validate_references, validate_storage,
+    PermissionIr, RelationIr, ResourceError, ResourceIr, ResourceSpec, RouteIr, SoftDeleteIr,
+    ValidationIr, WidgetIr, field_error, is_snake_identifier, normalize_schema,
+    validate_api_and_access, validate_extensions, validate_field, validate_generation_contract,
+    validate_labels, validate_references, validate_storage,
 };
 use super::{OperationSpec, PermissionSpec, WidgetSpec};
 
@@ -132,6 +132,20 @@ pub(in crate::resource) fn normalize(
             .then(left.name.cmp(&right.name))
     });
 
+    let mut relations = spec
+        .relations
+        .iter()
+        .map(|relation| RelationIr {
+            name: relation.name.clone(),
+            pascal_name: crate::naming::to_pascal_case(&relation.name),
+            kind: relation.kind,
+            local_field: relation.local_field.clone(),
+            target_resource: relation.target_resource.clone(),
+            target_pascal_name: crate::naming::to_pascal_case(&relation.target_resource),
+        })
+        .collect::<Vec<_>>();
+    relations.sort_by(|left, right| left.name.cmp(&right.name));
+
     validate_references(&resource, &source_path, &spec, &names, &fields)?;
     validate_storage(&resource, &source_path, &spec, &names)?;
     validate_api_and_access(&resource, &source_path, &spec)?;
@@ -189,6 +203,7 @@ pub(in crate::resource) fn normalize(
             updated_by: value.updated_by,
         }),
         fields,
+        relations,
         api: ApiIr {
             path: spec.api.path,
             operations: operations(spec.api.operations),

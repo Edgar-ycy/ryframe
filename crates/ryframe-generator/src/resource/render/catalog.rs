@@ -33,7 +33,7 @@ pub(super) fn crud_resource_metadata(resource: &ResourceIr) -> serde_json::Value
             })
         })
         .collect::<Vec<_>>();
-    serde_json::json!({
+    let mut metadata = serde_json::json!({
         "name": resource.name,
         "module": resource.module,
         "profile": resource.profile,
@@ -45,7 +45,14 @@ pub(super) fn crud_resource_metadata(resource: &ResourceIr) -> serde_json::Value
         "route": &resource.route,
         "labels": &resource.labels,
         "fields": fields,
-    })
+    });
+    if !resource.relations.is_empty() {
+        metadata
+            .as_object_mut()
+            .expect("资源元数据必须是对象")
+            .insert("relations".into(), serde_json::json!(resource.relations));
+    }
+    metadata
 }
 
 pub(super) fn access_catalog(resources: &[&ResourceIr], source: &str) -> String {

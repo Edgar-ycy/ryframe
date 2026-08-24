@@ -28,6 +28,12 @@ pub enum ValueType {
     Json,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RelationKind {
+    BelongsTo,
+}
+
 impl ValueType {
     pub fn rust_type(self, nullable: bool) -> String {
         let value = match self {
@@ -80,6 +86,7 @@ pub struct ResourceIr {
     pub soft_delete: Option<SoftDeleteIr>,
     pub audit: Option<AuditIr>,
     pub fields: Vec<FieldIr>,
+    pub relations: Vec<RelationIr>,
     pub api: ApiIr,
     pub access: AccessIr,
     pub menu: MenuIr,
@@ -90,6 +97,16 @@ pub struct ResourceIr {
     pub frontend_extensions: BTreeMap<String, toml::Value>,
     pub source_path: String,
     pub source_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RelationIr {
+    pub name: String,
+    pub pascal_name: String,
+    pub kind: RelationKind,
+    pub local_field: String,
+    pub target_resource: String,
+    pub target_pascal_name: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

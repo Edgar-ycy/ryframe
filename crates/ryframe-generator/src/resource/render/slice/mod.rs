@@ -38,8 +38,12 @@ pub(super) fn database_entity(resource: &ResourceIr, header: &str) -> String {
     database::entity(resource, header)
 }
 
-pub(super) fn database_repository(resource: &ResourceIr, header: &str) -> String {
-    database::repository(resource, header)
+pub(super) fn database_repository(
+    resource: &ResourceIr,
+    resources: &[&ResourceIr],
+    header: &str,
+) -> String {
+    database::repository(resource, resources, header)
 }
 
 pub(super) fn frontend_api(resource: &ResourceIr) -> String {

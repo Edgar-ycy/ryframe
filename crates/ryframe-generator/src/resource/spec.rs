@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::{ResourceError, ResourceProfile, StorageKind, ValueType};
+use super::{RelationKind, ResourceError, ResourceProfile, StorageKind, ValueType};
 
 /// 资源清单的稳定输入模型。
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -13,12 +13,23 @@ pub struct ResourceSpec {
     pub storage: StorageSpec,
     pub database: DatabaseSpec,
     pub fields: Vec<FieldSpec>,
+    #[serde(default)]
+    pub relations: Vec<RelationSpec>,
     pub api: ApiSpec,
     pub access: AccessSpec,
     pub menu: MenuSpec,
     pub route: RouteSpec,
     #[serde(default)]
     pub extensions: ExtensionSpec,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RelationSpec {
+    pub name: String,
+    pub kind: RelationKind,
+    pub local_field: String,
+    pub target_resource: String,
 }
 
 impl ResourceSpec {

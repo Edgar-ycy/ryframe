@@ -3,6 +3,29 @@ use super::{business_index_fields, method_arguments, unique_business_indexes, un
 
 pub(crate) fn fake(resource: &ResourceIr, header: &str) -> String {
     let pascal = &resource.pascal_name;
+    let detail_type = if resource.relations.is_empty() {
+        format!("{pascal}Record")
+    } else {
+        format!("{pascal}Detail")
+    };
+    let detail_import = if resource.relations.is_empty() {
+        String::new()
+    } else {
+        format!(", {pascal}Detail")
+    };
+    let detail_mapping = if resource.relations.is_empty() {
+        String::new()
+    } else {
+        let relation_fields = resource
+            .relations
+            .iter()
+            .map(|relation| format!("                {}: None,", relation.name))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            ".map(|record| {pascal}Detail {{\n                record,\n{relation_fields}\n            }})"
+        )
+    };
     let tenant_mismatch = format!("{}事务租户不匹配", resource.labels.zh_cn);
     let (active_record_filter_method, active_record_filter) = fake_active_record_filters(resource);
     let record_order = fake_record_order(resource);
@@ -54,7 +77,7 @@ use ryframe_kernel::{{AppError, AppResult, PageResult, ValidatedPageQuery}};
 
 use crate::{{PersistenceTransaction, TransactionAuditMode}};
 
-use super::model::{{{pascal}Filter, {pascal}Record}};
+use super::model::{{{pascal}Filter, {pascal}Record{detail_import}}};
 use super::port::{{{pascal}PersistencePort, {pascal}Transaction}};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -144,14 +167,14 @@ impl {pascal}PersistencePort for {pascal}FakePersistence {{
         &self,
         tenant_id: &str,
         id: i64,
-    ) -> AppResult<Option<{pascal}Record>> {{
+    ) -> AppResult<Option<{detail_type}>> {{
         let mut state = self.lock();
         state.calls.push({pascal}Call::FindById {{ tenant_id: tenant_id.into(), id }});
         fail_if_requested(&mut state, {pascal}Failure::FindById)?;
         Ok(state
             .records
             .get(&(tenant_id.into(), id)){active_record_filter_method}
-            .cloned())
+            .cloned(){detail_mapping})
     }}
 
     async fn find_by_page(

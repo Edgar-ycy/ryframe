@@ -11,6 +11,19 @@ pub(crate) fn model(resource: &ResourceIr, header: &str) -> String {
     }
     output.push_str("}\n\n");
 
+    if !resource.relations.is_empty() {
+        output.push_str("#[derive(Clone, Debug, PartialEq)]\n");
+        output.push_str(&format!("pub struct {pascal}Detail {{\n"));
+        output.push_str(&format!("    pub record: {pascal}Record,\n"));
+        for relation in &resource.relations {
+            output.push_str(&format!(
+                "    pub {}: Option<crate::generated::{}::{}Record>,\n",
+                relation.name, relation.target_resource, relation.target_pascal_name
+            ));
+        }
+        output.push_str("}\n\n");
+    }
+
     output.push_str("#[derive(Clone, Debug)]\n");
     output.push_str(&format!("pub struct Create{pascal}Command {{\n"));
     for field in resource.fields.iter().filter(|field| field.usage.create) {

@@ -13,12 +13,13 @@ mod writer;
 pub use error::ResourceError;
 pub use explain::{ExplainNode, ResourceExplanation};
 pub use ir::{
-    FieldIr, IndexIr, PermissionIr, ResourceIr, ResourceProfile, StorageKind, ValueType, WidgetIr,
+    FieldIr, IndexIr, PermissionIr, RelationIr, RelationKind, ResourceIr, ResourceProfile,
+    StorageKind, ValueType, WidgetIr,
 };
 pub use render::{AssetRoot, GeneratedAsset, GeneratedCatalog, render_resources};
 pub use spec::{
     AccessSpec, ApiSpec, AuditSpec, DatabaseSpec, EnumValueSpec, ExtensionSpec, FieldSpec,
-    FieldUsageSpec, IndexSpec, LabelsSpec, MenuSpec, OperationSpec, PermissionSpec,
+    FieldUsageSpec, IndexSpec, LabelsSpec, MenuSpec, OperationSpec, PermissionSpec, RelationSpec,
     ResourceIdentitySpec, ResourceSpec, RouteSpec, SoftDeleteSpec, StorageSpec, ValidationSpec,
     WidgetSpec,
 };
