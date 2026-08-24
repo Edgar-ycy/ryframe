@@ -15,8 +15,8 @@ use super::check::{
     changed_paths, classify_changes, complete_verify_selection, consumer_contract_arguments,
     consumer_contract_plan, feature_operation_args, feature_test_args, frontend_profile_commands,
     load_change_surface_policy, load_consumer_contract_plan, load_workspace_graph,
-    needs_consumer_contract, reverse_dependency_closure, validate_feature_combination,
-    verify_job_budget_from, workspace_test_args,
+    minimal_workspace_check_args, needs_consumer_contract, reverse_dependency_closure,
+    validate_feature_combination, verify_job_budget_from, workspace_test_args,
 };
 
 static NEXT_REPOSITORY: AtomicU64 = AtomicU64::new(1);
@@ -130,6 +130,7 @@ fn full_gate_discovers_repository_python_tests() {
             "target/verify/backend",
             "--workspace",
             "--all-targets",
+            "--all-features",
             "--",
             "-D",
             "warnings",
@@ -145,12 +146,27 @@ fn full_gate_discovers_repository_python_tests() {
             "--target-dir",
             "target/verify/backend",
             "--workspace",
+            "--all-features",
             "--jobs",
             "8",
         ]
     );
     assert_eq!(BACKEND_VERIFY_TARGET_DIR, "target/verify/backend");
     assert_eq!(RESOURCE_VERIFY_TARGET_DIR, "target/verify/resource");
+    assert_eq!(
+        minimal_workspace_check_args(8),
+        [
+            "check",
+            "--locked",
+            "--target-dir",
+            "target/verify/backend",
+            "--workspace",
+            "--no-default-features",
+            "--all-targets",
+            "--jobs",
+            "8",
+        ]
+    );
 }
 
 #[test]

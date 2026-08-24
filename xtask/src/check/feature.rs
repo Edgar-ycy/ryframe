@@ -30,32 +30,25 @@ pub(crate) fn feature_matrix_with_jobs(jobs: usize) -> Result<()> {
     let registry = load_feature_registry(&root)?;
     validate_feature_registry(&metadata, &registry)?;
 
-    for entry in &registry {
-        // 默认 Workspace 门禁已经执行默认 feature 的 Clippy 与测试；最小组合只需证明
-        // 全目标可编译，最大组合再覆盖 feature 专属 lint。
-        run_feature_operations(
-            &root,
-            &entry.package,
-            "最小",
-            &entry.minimal,
-            &["check"],
-            jobs,
-        )?;
-        if entry.minimal != entry.maximal {
-            run_feature_operations(
-                &root,
-                &entry.package,
-                "最大",
-                &entry.maximal,
-                &["check", "clippy"],
-                jobs,
-            )?;
-        }
-        // 紧跟同一最大组合链接明确指定的测试目标，避免切换到其他包的 feature 后
-        // 再次重建共享依赖。默认测试仍由 Workspace 门禁负责。
-        run_feature_tests(&root, entry, jobs)?;
-    }
-    Ok(())
+    println!("检查 Workspace 的最小 feature 组合。");
+    run_owned(&root, "cargo", &minimal_workspace_check_args(jobs))
+}
+
+pub(crate) fn minimal_workspace_check_args(jobs: usize) -> Vec<String> {
+    [
+        "check",
+        "--locked",
+        "--target-dir",
+        BACKEND_VERIFY_TARGET_DIR,
+        "--workspace",
+        "--no-default-features",
+        "--all-targets",
+        "--jobs",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .chain([jobs.to_string()])
+    .collect()
 }
 
 pub(super) fn check_feature_registry(root: &Path) -> Result<()> {

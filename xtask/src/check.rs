@@ -33,7 +33,10 @@ pub(crate) use execution::{
     workspace_test_args,
 };
 #[allow(unused_imports)]
-pub(crate) use feature::{feature_operation_args, feature_test_args, validate_feature_combination};
+pub(crate) use feature::{
+    feature_operation_args, feature_test_args, minimal_workspace_check_args,
+    validate_feature_combination,
+};
 #[allow(unused_imports)]
 pub(crate) use model::{
     BackendSnapshotProfile, ConsumerContractPlan, FrontendProfile, VerifySelection, WorkspaceGraph,

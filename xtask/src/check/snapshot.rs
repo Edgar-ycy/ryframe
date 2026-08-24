@@ -24,6 +24,25 @@ pub(super) struct BackendSnapshots {
     mysql: Option<PathBuf>,
 }
 
+impl BackendSnapshots {
+    pub(super) fn workspace_test_environment(&self) -> Vec<(&'static str, String)> {
+        let mut environment = Vec::with_capacity(2);
+        if let Some(openapi) = &self.openapi {
+            environment.push((
+                "RYFRAME_VERIFY_OPENAPI_SNAPSHOT_OUTPUT",
+                openapi.to_string_lossy().into_owned(),
+            ));
+        }
+        if let Some(mysql) = &self.mysql {
+            environment.push((
+                "RYFRAME_VERIFY_MYSQL_SNAPSHOT_OUTPUT",
+                mysql.to_string_lossy().into_owned(),
+            ));
+        }
+        environment
+    }
+}
+
 impl Drop for BackendSnapshots {
     fn drop(&mut self) {
         if let Some(path) = &self.openapi {
@@ -36,6 +55,30 @@ impl Drop for BackendSnapshots {
 }
 
 pub(super) fn export_and_verify_backend_snapshots(
+    profiles: &BTreeSet<BackendSnapshotProfile>,
+) -> Result<BackendSnapshots> {
+    let root = root_dir();
+    let snapshots = prepare_backend_snapshots(profiles)?;
+
+    if let Some(openapi) = &snapshots.openapi {
+        run_owned(
+            &root,
+            "cargo",
+            &backend_snapshot_export_args("ryframe-api", "export_openapi", openapi),
+        )?;
+    }
+    if let Some(mysql) = &snapshots.mysql {
+        run_owned(
+            &root,
+            "cargo",
+            &backend_snapshot_export_args("ryframe-db", "export_mysql_snapshot", mysql),
+        )?;
+    }
+    verify_backend_snapshots(&snapshots)?;
+    Ok(snapshots)
+}
+
+pub(super) fn prepare_backend_snapshots(
     profiles: &BTreeSet<BackendSnapshotProfile>,
 ) -> Result<BackendSnapshots> {
     let root = root_dir();
@@ -57,14 +100,12 @@ pub(super) fn export_and_verify_backend_snapshots(
     let mysql = profiles
         .contains(&BackendSnapshotProfile::Mysql)
         .then(|| artifact_dir.join(format!("verify-{suffix}-mysql.sql")));
-    let snapshots = BackendSnapshots { openapi, mysql };
+    Ok(BackendSnapshots { openapi, mysql })
+}
 
+pub(super) fn verify_backend_snapshots(snapshots: &BackendSnapshots) -> Result<()> {
+    let root = root_dir();
     if let Some(openapi) = &snapshots.openapi {
-        run_owned(
-            &root,
-            "cargo",
-            &backend_snapshot_export_args("ryframe-api", "export_openapi", openapi),
-        )?;
         verify_snapshot(
             "OpenAPI",
             &root.join("openapi").join("openapi.json"),
@@ -73,11 +114,6 @@ pub(super) fn export_and_verify_backend_snapshots(
         )?;
     }
     if let Some(mysql) = &snapshots.mysql {
-        run_owned(
-            &root,
-            "cargo",
-            &backend_snapshot_export_args("ryframe-db", "export_mysql_snapshot", mysql),
-        )?;
         verify_snapshot(
             "MySQL 基线",
             &root.join("sql").join("ryframe_config.sql"),
@@ -85,7 +121,7 @@ pub(super) fn export_and_verify_backend_snapshots(
             "cargo run --locked -p ryframe-db --bin export_mysql_snapshot -- sql/ryframe_config.sql",
         )?;
     }
-    Ok(snapshots)
+    Ok(())
 }
 
 pub(crate) fn backend_snapshot_export_args(

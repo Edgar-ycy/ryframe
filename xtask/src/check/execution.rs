@@ -1,14 +1,3 @@
-use std::{collections::BTreeSet, env, path::Path, thread, time::Instant};
-
-use crate::{
-    Result,
-    cli::CheckScope,
-    process::{
-        run as run_process, run_pnpm, run_with_env as run_process_with_env, with_process_log,
-    },
-    workspace::root_dir,
-};
-
 use super::{
     change_surface::{
         analyze_change_surface, append_changed_file_size_warnings, enforce_change_surface,
@@ -24,8 +13,20 @@ use super::{
         changed_paths, classify_changes, complete_verify_selection, frontend_profile_commands,
         load_workspace_graph, load_workspace_metadata, needs_consumer_contract, print_selection,
     },
-    snapshot::{export_and_verify_backend_snapshots, run_consumer_contract},
+    snapshot::{
+        export_and_verify_backend_snapshots, prepare_backend_snapshots, run_consumer_contract,
+        verify_backend_snapshots,
+    },
 };
+use crate::{
+    Result,
+    cli::CheckScope,
+    process::{
+        run as run_process, run_pnpm, run_with_env as run_process_with_env, with_process_log,
+    },
+    workspace::root_dir,
+};
+use std::{collections::BTreeSet, env, path::Path, thread, time::Instant};
 
 pub(crate) const PYTHON_TEST_ARGS: &[&str] = &[
     "-m",
@@ -51,6 +52,7 @@ pub(crate) const WORKSPACE_CLIPPY_ARGS: &[&str] = &[
     BACKEND_VERIFY_TARGET_DIR,
     "--workspace",
     "--all-targets",
+    "--all-features",
     "--",
     "-D",
     "warnings",
@@ -216,6 +218,14 @@ fn full_verify(scope: CheckScope, frontend_dir: &Path) -> Result<()> {
         frontend_full_non_consumer(frontend_dir)?;
     }
     let backend_snapshots = if backend_enabled {
+        let snapshots = prepare_backend_snapshots(
+            &[
+                BackendSnapshotProfile::OpenApiContract,
+                BackendSnapshotProfile::Mysql,
+            ]
+            .into_iter()
+            .collect(),
+        )?;
         run_process(&root_dir(), "python", PYTHON_TEST_ARGS)?;
         run_process(
             &root_dir(),
@@ -234,19 +244,18 @@ fn full_verify(scope: CheckScope, frontend_dir: &Path) -> Result<()> {
                 feature_matrix_with_jobs(budget.backend)?;
                 let args = workspace_test_args(budget.backend);
                 let args = args.iter().map(String::as_str).collect::<Vec<_>>();
-                run_process(&root, "cargo", &args)
+                let environment = snapshots.workspace_test_environment();
+                let environment = environment
+                    .iter()
+                    .map(|(key, value)| (*key, value.as_str()))
+                    .collect::<Vec<_>>();
+                run_process_with_env(&root, "cargo", &args, &environment)
             },
             "resource-workspace",
             || resource_workspace_compilation(frontend_dir, budget.resource),
         )?;
-        Some(export_and_verify_backend_snapshots(
-            &[
-                BackendSnapshotProfile::OpenApiContract,
-                BackendSnapshotProfile::Mysql,
-            ]
-            .into_iter()
-            .collect(),
-        )?)
+        verify_backend_snapshots(&snapshots)?;
+        Some(snapshots)
     } else {
         None
     };
@@ -350,6 +359,7 @@ pub(crate) fn workspace_test_args(jobs: usize) -> Vec<String> {
         "--target-dir",
         BACKEND_VERIFY_TARGET_DIR,
         "--workspace",
+        "--all-features",
         "--jobs",
     ]
     .into_iter()
