@@ -6,6 +6,8 @@ mod change_surface;
 mod execution;
 #[path = "check/feature.rs"]
 mod feature;
+#[path = "check/metrics.rs"]
+pub(crate) mod metrics;
 #[path = "check/model.rs"]
 mod model;
 #[path = "check/selection.rs"]

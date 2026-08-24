@@ -16,6 +16,7 @@ use super::{
         check_feature_registry, feature_matrix, load_feature_registry, run_feature_operations,
         run_feature_tests, validate_feature_registry,
     },
+    metrics,
     model::{BackendSnapshotProfile, FrontendProfile, WorkspaceGraph},
     selection::{
         changed_paths, classify_changes, complete_verify_selection, frontend_profile_commands,
@@ -102,6 +103,7 @@ pub(crate) fn run(scope: CheckScope, frontend_dir: &Path) -> Result<()> {
 pub(crate) fn verify(scope: CheckScope, full: bool, frontend_dir: &Path) -> Result<()> {
     let started = Instant::now();
     let mut mode = if full { "完整" } else { "智能" };
+    metrics::begin(&root_dir(), frontend_dir, scope_label(scope), mode);
     let result = (|| {
         let root = root_dir();
         let includes_backend = matches!(scope, CheckScope::All | CheckScope::Backend);
@@ -175,12 +177,14 @@ pub(crate) fn verify(scope: CheckScope, full: bool, frontend_dir: &Path) -> Resu
         }
         Ok(())
     })();
+    let total_seconds = started.elapsed().as_secs_f64();
     println!(
         "cargo verify {}：范围={}，模式={mode}，总耗时={:.1}s。",
         if result.is_ok() { "完成" } else { "失败" },
         scope_label(scope),
-        started.elapsed().as_secs_f64()
+        total_seconds
     );
+    metrics::finish(mode, total_seconds, result.is_ok());
     result
 }
 

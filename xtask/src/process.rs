@@ -17,8 +17,28 @@ enum RustcCache {
     Cargo,
 }
 
+pub(crate) fn rustc_cache_label() -> &'static str {
+    match RUSTC_CACHE.get_or_init(resolve_rustc_cache) {
+        RustcCache::ExistingWrapper(_) => "existing-wrapper",
+        RustcCache::Sccache => "sccache",
+        RustcCache::Cargo => "cargo",
+    }
+}
+
 static RUSTC_CACHE: OnceLock<RustcCache> = OnceLock::new();
 static RUSTC_CACHE_NOTICE: Once = Once::new();
+type StepObserver = fn(String, f64, bool);
+static STEP_OBSERVER: OnceLock<StepObserver> = OnceLock::new();
+
+pub(crate) fn install_step_observer(observer: StepObserver) {
+    let _ = STEP_OBSERVER.set(observer);
+}
+
+fn record_step(label: String, elapsed: f64, succeeded: bool) {
+    if let Some(observer) = STEP_OBSERVER.get() {
+        observer(label, elapsed, succeeded);
+    }
+}
 
 /// 开发任务的子进程容器。Windows 使用带 `KILL_ON_JOB_CLOSE` 的 Job Object，
 /// 即使 xtask 异常退出也会回收 API、Worker、Vite 及其后代进程。
@@ -212,14 +232,23 @@ pub(crate) fn run_with_env(
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
-        .status()?;
+        .status();
+    let elapsed = started.elapsed().as_secs_f64();
+    let label = format!("{executable} {}", args.join(" "));
+    let status = match status {
+        Ok(status) => status,
+        Err(error) => {
+            record_step(label, elapsed, false);
+            return Err(error.into());
+        }
+    };
+    record_step(label, elapsed, status.success());
     if status.success() {
-        println!("✓ {:.1}s", started.elapsed().as_secs_f64());
+        println!("✓ {elapsed:.1}s");
         Ok(())
     } else {
         Err(format!(
-            "命令执行失败（{:.1}s）：{executable} {}",
-            started.elapsed().as_secs_f64(),
+            "命令执行失败（{elapsed:.1}s）：{executable} {}",
             args.join(" ")
         )
         .into())
@@ -310,17 +339,22 @@ pub(crate) fn run_pnpm_with_env(
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
-        .status()?;
+        .status();
+    let elapsed = started.elapsed().as_secs_f64();
+    let label = format!("pnpm {}", args.join(" "));
+    let status = match status {
+        Ok(status) => status,
+        Err(error) => {
+            record_step(label, elapsed, false);
+            return Err(error.into());
+        }
+    };
+    record_step(label, elapsed, status.success());
     if status.success() {
-        println!("✓ {:.1}s", started.elapsed().as_secs_f64());
+        println!("✓ {elapsed:.1}s");
         Ok(())
     } else {
-        Err(format!(
-            "命令执行失败（{:.1}s）：pnpm {}",
-            started.elapsed().as_secs_f64(),
-            args.join(" ")
-        )
-        .into())
+        Err(format!("命令执行失败（{elapsed:.1}s）：pnpm {}", args.join(" ")).into())
     }
 }
 

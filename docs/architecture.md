@@ -51,7 +51,7 @@ HTTP 请求先在 API 层解析为严格 DTO，再调用 application 用例。�
 
 ## 模块尺度
 
-手写生产源码默认不超过 1000 行。复杂模块按连接、placement、fence、migration、cleanup、session、metrics 等职责拆分；拆分优先使用 crate 内模块，不为薄抽象增加 crate。
+手写 Rust 生产与工具源码不超过 600 行，生成 Rust 文件不超过 500 行，Rust 集成测试不超过 1000 行。前端 Composable 不超过 400 行，Vue SFC/SCSS 不超过 600 行，脚本模块不超过 500 行。复杂模块按连接、placement、fence、migration、cleanup、session、metrics 等职责拆分；拆分优先使用 crate 内模块，不为薄抽象增加 crate。
 
 ## 变更规则
 
