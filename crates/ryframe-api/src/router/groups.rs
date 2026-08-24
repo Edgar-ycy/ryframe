@@ -4,19 +4,12 @@ pub(super) fn monitor_router(
     state: AppState,
     monitor_state: crate::monitor::MonitorState,
 ) -> Router {
-    let public = crate::monitor::public_router(monitor_state.clone());
-    let mut protected = crate::monitor::protected_router(monitor_state)
-        .merge(route!(runtime_status).with_state(state.clone()))
-        .merge(overview_handler::overview_router(state.clone()))
-        .merge(job_handler::job_router(state.clone()))
-        .merge(retention_handler::retention_router(state.clone()));
-    if state.settings.jobs.scheduler_enabled {
-        protected = protected.merge(schedule_handler::schedule_router(state.clone()));
-    }
-    protected = protected.layer(from_fn_with_state(
-        OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
-        oper_log_middleware,
-    ));
+    let public = domains::monitor::public(monitor_state.clone());
+    let protected =
+        domains::monitor::protected(state.clone(), monitor_state).layer(from_fn_with_state(
+            OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
+            oper_log_middleware,
+        ));
 
     public.merge(protect(protected, &state))
 }
@@ -36,100 +29,13 @@ pub(super) fn system_router(
 ) -> Router {
     // 配置迁移写接口已经使用 MySQL 唯一键和后台任务去重实现持久幂等，
     // 不应让 Redis 可用性成为创建、预览、应用或回滚的前置条件。
-    let database_idempotent = Router::new()
-        .nest(
-            "/config-packages",
-            tenant_config_handler::config_package_router(state.clone()),
-        )
-        .nest(
-            "/config-transfers",
-            tenant_config_handler::config_transfer_router(state.clone()),
-        );
-    // 始终挂载稳定路由：外层通用 Capability guard 会先区分部署 501
-    // 和租户产品授权 403，通过后才进入具体 RBAC 和 handler。
-    let database_idempotent = database_idempotent
-        .nest(
-            "/service-accounts",
-            service_account_handler::service_account_router(state.clone()).layer(
-                from_fn_with_state(
-                    CapabilityGuardState::new(
-                        state.clone(),
-                        ryframe_application::system::SERVICE_ACCOUNTS_CAPABILITY,
-                    ),
-                    capability_guard,
-                ),
-            ),
-        )
-        .nest(
-            "/service-delegations",
-            service_account_handler::service_delegation_router(state.clone()).layer(
-                from_fn_with_state(
-                    CapabilityGuardState::new(
-                        state.clone(),
-                        ryframe_application::system::SERVICE_ACCOUNTS_CAPABILITY,
-                    ),
-                    capability_guard,
-                ),
-            ),
-        )
-        .nest(
-            "/service-access-audits",
-            service_account_handler::service_access_audit_router(state.clone()).layer(
-                from_fn_with_state(
-                    CapabilityGuardState::new(
-                        state.clone(),
-                        ryframe_application::system::SERVICE_ACCOUNTS_CAPABILITY,
-                    ),
-                    capability_guard,
-                ),
-            ),
-        );
-    let database_idempotent = database_idempotent.layer(from_fn_with_state(
-        OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
-        oper_log_middleware,
-    ));
+    let database_idempotent =
+        domains::system::database_idempotent(state.clone()).layer(from_fn_with_state(
+            OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
+            oper_log_middleware,
+        ));
 
-    let redis_idempotent = Router::new()
-        .nest(
-            "/authorization-diagnostics",
-            authorization_diagnostic_handler::authorization_diagnostic_router(state.clone()),
-        )
-        .nest("/users", user_handler::user_router(state.clone()))
-        .nest(
-            "/user-imports",
-            user_import_handler::user_import_router(state.clone()),
-        )
-        .nest("/roles", role_handler::role_router(state.clone()))
-        .nest(
-            "/perms",
-            permission_handler::permission_router(state.clone()),
-        )
-        .nest("/menus", menu_handler::menu_router(state.clone()))
-        .nest("/depts", dept_handler::dept_router(state.clone()))
-        .merge(crate::generated::generated_router(
-            &state.services.generated,
-            state.settings.pagination,
-        ))
-        .nest(
-            "/posts",
-            post_export_handler::post_export_router(state.clone()),
-        )
-        .nest("/configs", config_handler::config_router(state.clone()))
-        .nest("/dict", dict_handler::dict_router(state.clone()))
-        .nest("/notices", notice_handler::notice_router(state.clone()))
-        .nest("/messages", message_handler::message_router(state.clone()))
-        .nest(
-            "/operlogs",
-            oper_log_handler::oper_log_router(state.clone()),
-        )
-        .nest(
-            "/loginlogs",
-            login_log_handler::login_log_router(state.clone()),
-        )
-        .nest(
-            "/online",
-            online_user_handler::online_user_router(state.clone()),
-        )
+    let redis_idempotent = domains::system::redis_idempotent(state.clone())
         // 从内到外注册：内层 layer 先注册
         .layer(from_fn_with_state(
             OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
@@ -142,11 +48,7 @@ pub(super) fn system_router(
 
     // 强制下线写入 Redis，不参与数据库业务事务。审计策略必须位于审计
     // 中间件外层，确保请求进入审计逻辑前已经可见。
-    let independent_online = Router::new()
-        .nest(
-            "/online",
-            online_user_handler::force_logout_router(state.clone()),
-        )
+    let independent_online = domains::system::independent_online(state.clone())
         .layer(from_fn_with_state(
             OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
             oper_log_middleware,
@@ -176,7 +78,7 @@ pub(super) fn common_router(state: AppState, idempotency_state: IdempotencyState
     let oper_log_state = OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone());
 
     let upload = protect(
-        common_handler::upload_router(state.clone()).layer(from_fn_with_state(
+        domains::common::upload(state.clone()).layer(from_fn_with_state(
             oper_log_state.clone(),
             oper_log_middleware,
         )),
@@ -184,19 +86,19 @@ pub(super) fn common_router(state: AppState, idempotency_state: IdempotencyState
     );
 
     let download = protect(
-        common_handler::download_router(state.clone()).layer(from_fn_with_state(
+        domains::common::download(state.clone()).layer(from_fn_with_state(
             oper_log_state.clone(),
             oper_log_middleware,
         )),
         &state,
     );
-    let regular_exports = export_handler::export_router(state.clone()).layer(from_fn_with_state(
+    let regular_exports = domains::common::exports(state.clone()).layer(from_fn_with_state(
         oper_log_state.clone(),
         oper_log_middleware,
     ));
     // 通知已读只更新界面状态，不与导出业务事务绑定。后注册的审计策略
     // 位于操作审计外层，确保中间件读取到 Independent。
-    let notification_read = export_handler::notification_read_router(state.clone())
+    let notification_read = domains::common::notification_read(state.clone())
         .layer(from_fn_with_state(oper_log_state, oper_log_middleware))
         .layer(Extension(AuditMode::Independent));
     let exports = protect(

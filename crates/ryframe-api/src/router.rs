@@ -2,15 +2,7 @@ use std::sync::Arc;
 
 use crate::http::{API_PREFIX, ApiResponse, HttpAppError, HttpResult, api_path};
 use crate::{
-    handlers::{
-        auth_handler, authorization_diagnostic_handler, captcha_handler, common_handler,
-        config_handler, dept_handler, dict_handler, export_handler, job_handler, login_log_handler,
-        menu_handler, message_handler, notice_handler, online_user_handler, oper_log_handler,
-        overview_handler, permission_handler, post_export_handler, profile_handler,
-        retention_handler, role_handler, schedule_handler, service_account_handler,
-        service_delegation_profile_handler, tenant_config_handler, user_handler,
-        user_import_handler,
-    },
+    handlers::{auth_handler, captcha_handler, profile_handler},
     middleware::{
         idempotency::{IdempotencyState, idempotency_middleware},
         rate_limit::{RateLimitState, user_rate_limit_middleware},
@@ -31,7 +23,7 @@ use axum::{
 use ryframe_application::system::OnlineUserService;
 use ryframe_auth::jwt::Claims;
 use ryframe_kernel::AppError;
-use ryframe_macro::{get, route};
+use ryframe_macro::get;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -397,39 +389,20 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
 
     if state.settings.multi_tenancy.enabled {
         let platform = protect(
-            Router::new()
-                .nest(
-                    "/tenants",
-                    crate::handlers::tenant_handler::tenant_router(state.clone()),
-                )
-                .merge(crate::handlers::product_handler::product_router(
-                    state.clone(),
-                ))
-                .merge(crate::handlers::tenant_data_handler::tenant_data_router(
-                    state.clone(),
-                ))
-                .layer(from_fn_with_state(
-                    OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
-                    oper_log_middleware,
-                )),
+            domains::platform::router(state.clone()).layer(from_fn_with_state(
+                OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
+                oper_log_middleware,
+            )),
             &state,
         );
         router = router.nest("/platform", platform);
     }
 
     let profile_delegations = protect(
-        service_delegation_profile_handler::service_delegation_profile_router(state.clone())
-            .layer(from_fn_with_state(
-                CapabilityGuardState::new(
-                    state.clone(),
-                    ryframe_application::system::SERVICE_ACCOUNTS_CAPABILITY,
-                ),
-                capability_guard,
-            ))
-            .layer(from_fn_with_state(
-                OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
-                oper_log_middleware,
-            )),
+        domains::profile::service_delegations(state.clone()).layer(from_fn_with_state(
+            OperLogMiddlewareState::new_arc(state.services.audit_outbox.clone()),
+            oper_log_middleware,
+        )),
         &state,
     );
     router = router.nest("/profile/service-delegations", profile_delegations);
@@ -446,6 +419,8 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
     router.layer(middleware::from_fn(request_locale_middleware))
 }
 
+#[path = "router/domains/mod.rs"]
+mod domains;
 mod groups;
 #[path = "router/runtime_status.rs"]
 mod runtime_probe;
