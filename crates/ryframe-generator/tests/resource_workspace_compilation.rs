@@ -24,6 +24,12 @@ fn post_control_slice_compiles_in_temporary_real_workspace() {
     assert_shared_workspace("Post");
 }
 
+#[test]
+#[ignore = "在共享的临时真实 Workspace 中验证 Notice 的标准 CRUD 生成层"]
+fn notice_control_slice_compiles_in_temporary_real_workspace() {
+    assert_shared_workspace("Notice");
+}
+
 fn assert_shared_workspace(resource: &str) {
     if let Err(error) = SHARED_WORKSPACE_RESULT.get_or_init(|| {
         std::panic::catch_unwind(run_shared_workspace)
@@ -95,7 +101,9 @@ fn run_shared_workspace() -> Result<(), String> {
     });
     let post = load_resource(backend_source.join("catalog/resources/post.toml"))
         .expect("临时 Workspace 中既有的 Post 清单应有效");
-    let catalog = render_resources(&[device, post]).expect("Device 与既有资源应能共同生成");
+    let notice = load_resource(backend_source.join("catalog/resources/notice.toml"))
+        .expect("临时 Workspace 中既有的 Notice 清单应有效");
+    let catalog = render_resources(&[device, notice, post]).expect("Device 与既有资源应能共同生成");
     let first = write_resource(
         &catalog,
         "device",
@@ -104,12 +112,17 @@ fn run_shared_workspace() -> Result<(), String> {
             frontend_root: Some(&frontend),
         },
     )
-    .expect("Device/Post 目录应一次性写入临时 Workspace");
+    .expect("Device/Notice/Post 目录应一次性写入临时 Workspace");
     assert!(!first.written.is_empty(), "首次生成必须写入资产");
     for path in [
         "crates/ryframe-application/src/generated/post/service.rs",
+        "crates/ryframe-application/src/generated/notice/service.rs",
+        "crates/ryframe-api/src/generated/notice/handler.rs",
         "crates/ryframe-db/src/generated/post/repository.rs",
+        "crates/ryframe-db/src/generated/notice/repository.rs",
         "src/generated/resources/post/page.vue",
+        "src/generated/resources/notice/page.vue",
+        "src/generated/resources/notice/registration.ts",
     ] {
         let root = if path.starts_with("src/") {
             &frontend
@@ -118,7 +131,7 @@ fn run_shared_workspace() -> Result<(), String> {
         };
         assert!(root.join(path).is_file(), "Post 资产未生成：{path}");
     }
-    for resource in ["device", "post"] {
+    for resource in ["device", "notice", "post"] {
         let repeated = write_resource(
             &catalog,
             resource,
@@ -131,6 +144,13 @@ fn run_shared_workspace() -> Result<(), String> {
         assert!(repeated.written.is_empty(), "{resource} 连续生成不得写入");
         assert!(repeated.removed.is_empty(), "{resource} 连续生成不得删除");
     }
+    let notice_registration =
+        fs::read_to_string(frontend.join("src/generated/resources/notice/registration.ts"))
+            .expect("应读取 Notice 页面注册清单");
+    assert!(
+        notice_registration.contains("@/views/system/notice/index.vue"),
+        "Notice 必须保留强类型自定义页面扩展"
+    );
     for crate_name in [
         "ryframe-application",
         "ryframe-db",
@@ -198,7 +218,13 @@ fn run_shared_workspace() -> Result<(), String> {
 
 fn prepare_frontend_workspace(source: &Path, target: &Path) {
     sync_directory(&source.join("src"), &target.join("src"));
-    for file in ["tsconfig.json", "eslint.config.js", "package.json"] {
+    for file in [
+        "tsconfig.json",
+        "tsconfig.base.json",
+        "tsconfig.app.json",
+        "eslint.config.js",
+        "package.json",
+    ] {
         sync_file(&source.join(file), &target.join(file));
     }
 }
@@ -206,23 +232,24 @@ fn prepare_frontend_workspace(source: &Path, target: &Path) {
 fn assert_frontend_checks(source: &Path, target: &Path) {
     let vue_tsc = source.join("node_modules/.bin/vue-tsc.cmd");
     let typecheck = Command::new(vue_tsc)
-        .args(["--noEmit", "-p", "tsconfig.json"])
+        .args(["--noEmit", "-p", "tsconfig.app.json"])
         .current_dir(target)
         .output()
         .expect("应运行临时前端 vue-tsc");
-    assert_command_succeeded("Device/Post vue-tsc", &typecheck);
+    assert_command_succeeded("Device/Notice/Post vue-tsc", &typecheck);
 
     let eslint = source.join("node_modules/.bin/eslint.cmd");
     let lint = Command::new(eslint)
         .args([
             "src/generated/resources/device",
+            "src/generated/resources/notice",
             "src/generated/resources/post",
             "--max-warnings=0",
         ])
         .current_dir(target)
         .output()
         .expect("应运行临时前端 ESLint");
-    assert_command_succeeded("Device/Post ESLint", &lint);
+    assert_command_succeeded("Device/Notice/Post ESLint", &lint);
 }
 
 fn sync_directory(source: &Path, target: &Path) {
