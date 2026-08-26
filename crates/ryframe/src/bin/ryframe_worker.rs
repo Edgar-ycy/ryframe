@@ -13,9 +13,10 @@ use axum::{
     routing::get,
 };
 use ryframe::boot::{
-    application_policy as process_application_policy,
+    application_policy as process_application_policy, artifact_store as process_artifact_store,
     background_services::{BackgroundServiceInfrastructure, build as build_background_services},
-    jobs as process_jobs, startup as process_startup,
+    jobs as process_jobs, logging as process_logging, readiness as process_readiness,
+    startup as process_startup, tenant_data,
 };
 use ryframe_adapters::RedisClient;
 use ryframe_adapters::storage::{
@@ -33,15 +34,6 @@ use ryframe_config::{
 use ryframe_db::{CallbackDatabaseMetricsObserver, ControlDatabaseCluster};
 use ryframe_kernel::AppError;
 use tokio::sync::watch;
-
-#[path = "../boot/artifact_store.rs"]
-mod process_artifact_store;
-#[path = "../boot/logging.rs"]
-mod process_logging;
-#[path = "../boot/readiness.rs"]
-mod process_readiness;
-#[path = "../boot/tenant_data.rs"]
-mod tenant_data;
 
 /// Worker 进程在收到关闭信号后的全部后台任务总宽限时间。
 const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(5);
