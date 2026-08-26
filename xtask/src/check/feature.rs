@@ -6,7 +6,10 @@ use std::{
 
 use crate::{Result, process::run_owned, workspace::root_dir};
 
-use super::{context::BACKEND_VERIFY_TARGET_DIR, selection::load_workspace_metadata};
+use super::{
+    context::{BACKEND_VERIFY_TARGET_DIR, verify_job_budget},
+    selection::load_workspace_metadata,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct FeatureMatrixEntry {
@@ -18,7 +21,7 @@ pub(super) struct FeatureMatrixEntry {
 
 pub(crate) fn feature_matrix() -> Result<()> {
     let root = root_dir();
-    let jobs = std::thread::available_parallelism().map_or(2, usize::from);
+    let jobs = verify_job_budget()?.total;
     feature_matrix_with_jobs(&root, BACKEND_VERIFY_TARGET_DIR, jobs)
 }
 

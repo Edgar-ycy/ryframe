@@ -14,9 +14,10 @@ use super::check::{
     FrontendProfile, PYTHON_TEST_ARGS, RESOURCE_CI_TARGET_DIR, RESOURCE_VERIFY_TARGET_DIR,
     SMART_BACKEND_OPERATIONS, SMART_FEATURE_OPERATIONS, VerifyTargetPolicy, WORKSPACE_CLIPPY_ARGS,
     WorkspaceGraph, analyze_change_surface, append_changed_file_size_warnings,
-    backend_package_operation_args, backend_snapshot_export_args, changed_paths,
-    ci_environment_from, classify_changes, complete_verify_selection, consumer_contract_arguments,
-    consumer_contract_plan, feature_operation_args, feature_test_args, frontend_profile_commands,
+    backend_package_operation_args, backend_snapshot_export_args, cargo_operation_jobs,
+    changed_paths, ci_environment_from, ci_test_jobs_from, classify_changes,
+    complete_verify_selection, consumer_contract_arguments, consumer_contract_plan,
+    default_test_jobs_from, feature_operation_args, feature_test_args, frontend_profile_commands,
     load_change_surface_policy, load_consumer_contract_plan, load_workspace_graph,
     minimal_workspace_check_args, needs_consumer_contract, package_tests_generate_snapshots,
     resolve_target_dir, resource_test_executable_from_messages, reverse_dependency_closure,
@@ -85,9 +86,15 @@ fn feature_matrix_compiles_and_tests_required_feature_targets() {
         assert!(args.windows(2).any(|pair| pair == ["--jobs", "8"]));
         assert!(args.contains(&"destructive-reset,file-maintenance".to_owned()));
     }
-    let test = feature_test_args("ryframe", &features, "reset_contract", "target", 8);
+    let test = feature_test_args(
+        "ryframe",
+        &features,
+        "reset_contract",
+        "target",
+        default_test_jobs_from(true, 8),
+    );
     assert!(test.windows(2).any(|pair| pair == ["-p", "ryframe"]));
-    assert!(test.windows(2).any(|pair| pair == ["--jobs", "8"]));
+    assert!(test.windows(2).any(|pair| pair == ["--jobs", "4"]));
     assert!(
         test.windows(2)
             .any(|pair| { pair == ["--target-dir", "target"] })
@@ -144,7 +151,7 @@ fn full_gate_discovers_repository_python_tests() {
         ]
     );
     assert_eq!(
-        workspace_test_args("target/verify/backend", 8),
+        workspace_test_args("target/verify/backend", 4),
         [
             "test",
             "--locked",
@@ -153,7 +160,7 @@ fn full_gate_discovers_repository_python_tests() {
             "--workspace",
             "--all-features",
             "--jobs",
-            "8",
+            "4",
         ]
     );
     assert_eq!(BACKEND_SMART_TARGET_DIR, "target");
@@ -217,11 +224,24 @@ fn verify_target_policy_distinguishes_smart_full_and_ci_targets() {
             resource: "target/ci/resource".to_owned(),
         }
     );
-    let clippy = workspace_clippy_args("target/custom-backend");
-    assert!(
-        clippy
-            .windows(2)
-            .any(|pair| pair == ["--target-dir", "target/custom-backend"])
+    assert_eq!(
+        workspace_clippy_args("target/custom-backend", 8),
+        [
+            "clippy",
+            "--locked",
+            "--target-dir",
+            "target/custom-backend",
+            "--workspace",
+            "--all-targets",
+            "--all-features",
+            "--jobs",
+            "8",
+            "--",
+            "-D",
+            "warnings",
+            "-D",
+            "clippy::redundant_clone",
+        ]
     );
 }
 
@@ -249,18 +269,42 @@ fn smart_backend_uses_clippy_and_test_without_redundant_check() {
     let packages = ["ryframe-api".to_owned(), "ryframe-db".to_owned()]
         .into_iter()
         .collect();
-    let clippy = backend_package_operation_args("clippy", &packages, "target", 6);
-    let test = backend_package_operation_args("test", &packages, "target", 6);
+    let clippy = backend_package_operation_args(
+        "clippy",
+        &packages,
+        "target",
+        cargo_operation_jobs("clippy", true, 6),
+    );
+    let test = backend_package_operation_args(
+        "test",
+        &packages,
+        "target",
+        cargo_operation_jobs("test", true, 6),
+    );
     for args in [&clippy, &test] {
         assert!(
             args.windows(2)
                 .any(|pair| pair == ["--target-dir", "target"])
         );
-        assert!(args.windows(2).any(|pair| pair == ["--jobs", "6"]));
         assert!(!args.contains(&"check".to_owned()));
     }
+    assert!(clippy.windows(2).any(|pair| pair == ["--jobs", "6"]));
+    assert!(test.windows(2).any(|pair| pair == ["--jobs", "4"]));
     assert!(clippy.contains(&"--all-targets".to_owned()));
     assert!(!test.contains(&"--all-targets".to_owned()));
+}
+
+#[test]
+fn windows_tests_use_four_jobs_without_reducing_compile_jobs() {
+    assert_eq!(default_test_jobs_from(true, 12), 4);
+    assert_eq!(default_test_jobs_from(true, 3), 4);
+    assert_eq!(default_test_jobs_from(false, 12), 12);
+    assert_eq!(cargo_operation_jobs("clippy", true, 12), 12);
+    assert_eq!(cargo_operation_jobs("test", true, 12), 4);
+    assert_eq!(ci_test_jobs_from(None, true, 12).unwrap(), 4);
+    assert_eq!(ci_test_jobs_from(None, false, 12).unwrap(), 12);
+    assert_eq!(ci_test_jobs_from(Some("6"), true, 12).unwrap(), 6);
+    assert!(ci_test_jobs_from(Some("0"), true, 12).is_err());
 }
 
 #[test]

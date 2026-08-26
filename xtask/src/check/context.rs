@@ -131,7 +131,7 @@ pub(crate) fn verify_job_budget_from(
     })
 }
 
-fn verify_job_budget() -> Result<VerifyJobBudget> {
+pub(super) fn verify_job_budget() -> Result<VerifyJobBudget> {
     let available = thread::available_parallelism().map_or(4, usize::from);
     let configured = env::var("RYFRAME_VERIFY_JOBS").ok();
     verify_job_budget_from(configured.as_deref(), available)

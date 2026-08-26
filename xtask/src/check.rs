@@ -1,5 +1,7 @@
 //! 智能检查的命令入口与稳定测试接口。
 
+#[path = "check/cargo_command.rs"]
+mod cargo_command;
 #[path = "check/change_surface.rs"]
 mod change_surface;
 #[path = "check/context.rs"]
@@ -19,7 +21,13 @@ mod selection;
 #[path = "check/snapshot.rs"]
 mod snapshot;
 
-pub(crate) use execution::{ci_consumer_contract, ci_rust_gate, ci_test_jobs_from};
+pub(crate) use cargo_command::ci_test_jobs_from;
+#[allow(unused_imports)]
+pub(crate) use cargo_command::{
+    WORKSPACE_CLIPPY_ARGS, backend_package_operation_args, cargo_operation_jobs,
+    default_test_jobs_from, workspace_clippy_args, workspace_test_args,
+};
+pub(crate) use execution::{ci_consumer_contract, ci_rust_gate};
 #[allow(unused_imports)]
 pub(crate) use execution::{run, verify};
 #[allow(unused_imports)]
@@ -41,8 +49,7 @@ pub(crate) use context::{
 pub(crate) use execution::{
     BACKEND_POLICY_SCRIPTS, CONSUMER_OWNED_COMMANDS, FRONTEND_FULL_NON_CONSUMER_COMMANDS,
     FRONTEND_ONLY_CONTRACT_COMMANDS, PYTHON_TEST_ARGS, SMART_BACKEND_OPERATIONS,
-    SMART_FEATURE_OPERATIONS, WORKSPACE_CLIPPY_ARGS, backend_package_operation_args,
-    workspace_clippy_args, workspace_test_args,
+    SMART_FEATURE_OPERATIONS,
 };
 #[allow(unused_imports)]
 pub(crate) use feature::{

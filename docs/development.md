@@ -42,7 +42,7 @@ OpenAPI 和 SQL 快照必须由正式命令生成，不手工编辑。
 CI 的稳定内部入口是 `cargo xtask ci plan|preflight|rust-gate|integration|consumer-contract`。
 `plan` 复用本地变更分类和反向依赖图，工作流 YAML 只负责 runner、容器、缓存、权限和 job 条件；
 Clippy、feature matrix、Workspace test 与快照复用同一个 `rust-gate` target，避免跨 job 重编译。
-Windows 全量测试默认 `--jobs 4`，其余编译并发由统一的内存预算计算。CI 使用固定版本
+Windows Cargo 测试默认 `--jobs 4`，其余编译并发由统一的内存预算计算。CI 使用固定版本
 `sccache` 的 GitHub Actions 远端后端，仅缓存 Cargo 依赖而不缓存整个 target。前端分别提供
 `ci:static`、`ci:unit`、`ci:build`、`ci:browser`，由稳定的 `Required` job 汇总。
 
