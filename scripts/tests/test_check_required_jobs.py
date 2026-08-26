@@ -213,7 +213,12 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertNotIn("SCCACHE_DIR:", workflow)
         self.assertNotIn("SCCACHE_CACHE_SIZE:", workflow)
         self.assertNotIn("v2-sccache-", workflow)
-        self.assertEqual(workflow.count("actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea"), 5)
+        self.assertEqual(
+            workflow.count(
+                "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3"
+            ),
+            5,
+        )
 
     def test_full_stack_uses_isolated_reset_and_always_uploads_diagnostics(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
