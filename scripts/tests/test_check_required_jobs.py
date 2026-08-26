@@ -225,6 +225,16 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertIn("startsWith(github.ref, 'refs/tags/v')", block)
         self.assertIn("APP_ENV: test", block)
         self.assertIn('APP_RESET_LEGACY_MYSQL_EXCLUSIVE: "true"', block)
+        self.assertIn(
+            'APP_OBJECT_STORAGE_LOCAL_BASE_DIR=$RUNNER_TEMP/ryframe-full-stack/storage',
+            block,
+        )
+        self.assertIn(
+            'RYFRAME_RESET_STATE_DIR=$RUNNER_TEMP/ryframe-full-stack/reset-state',
+            block,
+        )
+        self.assertNotIn("APP_OBJECT_STORAGE_LOCAL_BASE_DIR: ${{ runner.temp }}", block)
+        self.assertNotIn("RYFRAME_RESET_STATE_DIR: ${{ runner.temp }}", block)
         self.assertIn("python scripts/ci_full_stack.py prepare", block)
         self.assertIn("python scripts/ci_full_stack.py start", block)
         self.assertIn("python scripts/ci_full_stack.py collect", block)
