@@ -66,6 +66,6 @@ cleanup、session、metrics 等职责拆分；拆分优先使用 crate 内模块
 ## 变更规则
 
 - 先定义 application-owned 值对象和端口，再移动实现并翻转依赖。
-- 反向依赖必须在同一可编译提交中原子切换。
+- 反向依赖必须在同一次可编译变更中原子切换。
 - 不保留旧 crate 名、alias、兼容 re-export、双读或旧任务 decoder。
 - 共享服务只显式 `Arc::clone`；普通参数优先借用或移动所有权。
