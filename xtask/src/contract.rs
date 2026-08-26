@@ -14,11 +14,11 @@ pub(crate) use candidate::{api_sync, run};
 
 #[allow(unused_imports)]
 pub(crate) use candidate::{
-    apply_candidate, apply_candidate_with_staging_hook, generated_artifact_paths,
-    validate_candidate_contract,
+    CANDIDATE_GENERATION_ARGS, apply_candidate, apply_candidate_with_staging_hook,
+    generated_artifact_paths, validate_candidate_contract,
 };
 #[allow(unused_imports)]
-pub(crate) use formal::{github_repository_identifier, validate_formal_sync};
+pub(crate) use formal::{FORMAL_SYNC_ARGS, github_repository_identifier, validate_formal_sync};
 #[allow(unused_imports)]
 pub(crate) use model::{ContractFileOperations, Snapshot, sha256_hex};
 #[allow(unused_imports)]

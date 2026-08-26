@@ -5,9 +5,10 @@ use std::{
 };
 
 use super::contract::{
-    ContractFileOperations, Snapshot, apply_candidate, apply_candidate_with_staging_hook,
-    generated_artifact_paths, github_repository_identifier, install_snapshots_with, sha256_hex,
-    validate_candidate_contract, validate_formal_sync, write_atomically_with,
+    CANDIDATE_GENERATION_ARGS, ContractFileOperations, FORMAL_SYNC_ARGS, Snapshot, apply_candidate,
+    apply_candidate_with_staging_hook, generated_artifact_paths, github_repository_identifier,
+    install_snapshots_with, sha256_hex, validate_candidate_contract, validate_formal_sync,
+    write_atomically_with,
 };
 
 const CANDIDATE_MANAGED_PATHS: &[&str] = &[
@@ -29,6 +30,21 @@ const CANDIDATE_MANAGED_PATHS: &[&str] = &[
 ];
 
 static NEXT_DIR: AtomicU64 = AtomicU64::new(1);
+
+#[test]
+fn staging_contract_generation_runs_node_without_package_installation() {
+    assert_eq!(
+        CANDIDATE_GENERATION_ARGS,
+        ["scripts/generate-api-artifacts.mjs", "--write"]
+    );
+    assert_eq!(
+        FORMAL_SYNC_ARGS,
+        [
+            &["scripts/sync-api-contract.mjs"][..],
+            &["scripts/generate-api-artifacts.mjs", "--write"][..],
+        ]
+    );
+}
 
 struct TestFrontend(PathBuf);
 

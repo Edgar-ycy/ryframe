@@ -20,6 +20,9 @@ use super::{
     transaction::{install_snapshots, reject_contract_recovery_artifacts, write_atomically},
 };
 
+pub(crate) const CANDIDATE_GENERATION_ARGS: &[&str] =
+    &["scripts/generate-api-artifacts.mjs", "--write"];
+
 pub(crate) fn run(operation: ContractOperation, frontend_dir: &Path) -> Result<()> {
     match operation {
         ContractOperation::Check => run_pnpm(frontend_dir, &["api:check"]),
@@ -73,7 +76,7 @@ fn sync_candidate(frontend_dir: &Path) -> Result<()> {
     let result = (|| {
         let bytes = canonical_contract(&fs::read(&candidate_path)?)?;
         apply_candidate(&root, frontend_dir, &bytes, |staging| {
-            run_pnpm(staging, &["api:generate"])
+            run_process(staging, "node", CANDIDATE_GENERATION_ARGS)
         })
     })();
     let cleanup_result = fs::remove_file(&candidate_path);
