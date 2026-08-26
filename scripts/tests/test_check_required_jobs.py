@@ -231,7 +231,10 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertIn('ryframe-reset" execute', block)
         self.assertIn("pnpm ci:browser-real", block)
         self.assertEqual(block.count("if: ${{ always() }}"), 2)
+        self.assertIn("frontend/.local-tests/playwright-real/report", block)
         self.assertIn("frontend/.local-tests/playwright-real/results", block)
+        self.assertIn("if-no-files-found: error", block)
+        self.assertNotIn("if-no-files-found: warn", block)
 
     def test_rust_gate_and_integration_use_internal_commands(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")

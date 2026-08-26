@@ -800,7 +800,7 @@ jobs:
             ${{ runner.temp }}/ryframe-full-stack
             frontend/.local-tests/playwright-real/report
             frontend/.local-tests/playwright-real/results
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
 
   # ============================================================
