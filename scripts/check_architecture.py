@@ -38,10 +38,6 @@ DOCUMENT_LIMITS = {
     "docs/development.md": 160,
     "docs/operations.md": 240,
 }
-SOURCE_TEST_MARKERS = (
-    re.compile(r"#\s*\[\s*cfg\s*\([^]]*\btest\b[^]]*\)\s*\]"),
-    re.compile(r"#\s*\[\s*(?:[A-Za-z_][A-Za-z0-9_]*::)*test\b[^]]*\]"),
-)
 TEST_FILE_NAME = re.compile(r"(?:^tests?\.rs$|_tests?\.rs$)", re.IGNORECASE)
 
 
@@ -570,14 +566,16 @@ def validate_test_layout(
     packages: dict[str, dict[str, Any]],
     errors: list[str],
 ) -> tuple[int, int]:
-    """确保测试属于当前 crate，并与生产源码物理隔离。"""
+    """允许私有逻辑就地单测，并保持公开契约测试属于当前 crate。"""
 
     directory = test_layout.get("directory")
     if directory != "tests":
         errors.append("test_layout.directory 必须固定为 tests")
         directory = "tests"
-    if test_layout.get("forbid_source_tests") is not True:
-        errors.append("test_layout.forbid_source_tests 必须为 true")
+    if test_layout.get("allow_colocated_unit_tests") is not True:
+        errors.append("test_layout.allow_colocated_unit_tests 必须为 true")
+    if test_layout.get("forbid_source_test_files") is not True:
+        errors.append("test_layout.forbid_source_test_files 必须为 true")
     max_integration_test_lines = test_layout.get("max_integration_test_lines")
     if (
         not isinstance(max_integration_test_lines, int)
@@ -624,11 +622,10 @@ def validate_test_layout(
         for path in sorted(source_root.rglob("*.rs")):
             checked_sources += 1
             relative = path.relative_to(ROOT).as_posix()
-            source = path.read_text(encoding="utf-8")
-            if any(pattern.search(source) for pattern in SOURCE_TEST_MARKERS):
-                errors.append(f"生产源码不得包含测试属性或测试配置: {relative}")
             if TEST_FILE_NAME.search(path.name):
-                errors.append(f"测试文件必须移至所属 crate/tests: {relative}")
+                errors.append(
+                    f"源码内单测必须与私有实现同文件，独立测试文件移至所属 crate/tests: {relative}"
+                )
     return checked_sources, integration_targets
 
 

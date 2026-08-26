@@ -158,5 +158,64 @@ class FrozenMigrationSourceTests(unittest.TestCase):
         self.assertTrue(any("哈希不匹配" in error for error in errors))
 
 
+class TestLayoutPolicyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = TEST_ROOT / f"test-layout-{uuid.uuid4().hex}"
+        self.package_root = self.root / "crates/example"
+        self.source_root = self.package_root / "src"
+        self.source_root.mkdir(parents=True)
+        self.manifest = self.package_root / "Cargo.toml"
+        self.manifest.write_text("[package]\nname = 'example'\nversion = '0.1.0'\n", encoding="utf-8")
+        self.source = self.source_root / "lib.rs"
+        self.previous_root = MODULE.ROOT
+        MODULE.ROOT = self.root
+
+    def tearDown(self) -> None:
+        MODULE.ROOT = self.previous_root
+        shutil.rmtree(self.root)
+
+    def validate(self) -> list[str]:
+        errors: list[str] = []
+        MODULE.validate_test_layout(
+            {
+                "directory": "tests",
+                "allow_colocated_unit_tests": True,
+                "forbid_source_test_files": True,
+                "max_integration_test_lines": 1000,
+            },
+            {
+                "example": {
+                    "manifest_path": str(self.manifest),
+                    "targets": [
+                        {
+                            "kind": ["lib"],
+                            "src_path": str(self.source),
+                        }
+                    ],
+                }
+            },
+            errors,
+        )
+        return errors
+
+    def test_accepts_colocated_private_unit_tests(self) -> None:
+        self.source.write_text(
+            "fn normalize() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn normalizes() { super::normalize(); }\n}\n",
+            encoding="utf-8",
+        )
+
+        self.assertEqual(self.validate(), [])
+
+    def test_rejects_a_separate_test_module_under_src(self) -> None:
+        self.source.write_text("pub mod model_tests;\n", encoding="utf-8")
+        (self.source_root / "model_tests.rs").write_text(
+            "#[test]\nfn checks_model() {}\n", encoding="utf-8"
+        )
+
+        errors = self.validate()
+
+        self.assertTrue(any("model_tests.rs" in error for error in errors))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -12,10 +12,11 @@ generated_markers = [
 ]
 frozen_migration_lock = "catalog/migrations.lock.toml"
 
-# Rust 测试只能作为所属 crate 的集成测试存在，生产源码不得内嵌测试模块。
+# 私有纯逻辑允许在生产模块中就地单测；公开契约与跨层场景仍放在所属 crate/tests。
 [test_layout]
 directory = "tests"
-forbid_source_tests = true
+allow_colocated_unit_tests = true
+forbid_source_test_files = true
 max_integration_test_lines = 1000
 
 # 当前 12 包过渡图。允许边是上限：删边无需修改本文件，新增边必须先通过架构评审。
