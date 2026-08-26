@@ -9,7 +9,7 @@ use super::context::resolve_target_dir;
 
 const RESOURCE_WORKSPACE_TEST: &str = "resource_workspace_compilation";
 
-pub(super) fn resource_workspace_compilation(
+pub(crate) fn resource_workspace_compilation(
     root: &std::path::Path,
     target_dir: &str,
     jobs: usize,
