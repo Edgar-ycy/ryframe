@@ -1,7 +1,13 @@
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use ryframe_adapters::{RedisClient, rate_limit::RateLimiter};
+use ryframe_adapters::{
+    RedisClient,
+    application_ports::{
+        redis_captcha_store, redis_dict_cache_store, redis_websocket_ticket_store,
+        tenant_rate_limit_reader,
+    },
+    rate_limit::RateLimiter,
+};
 use ryframe_api::{
     AppServices, ContentServices, IdentityServices, OperationsServices, PlatformServices,
 };
@@ -11,134 +17,21 @@ use ryframe_application::{
     generated::{GeneratedPersistencePorts, GeneratedServices},
     ports::files::ArtifactStore,
     system::{
-        AuthorizationDiagnosticService, CaptchaStore, DeptService, DictCacheStore,
-        InMemoryCaptchaStore, MenuService, NoticeService, OnlineUserService, PermissionService,
-        ProfileService, ServiceAccountReadDependencies, ServiceAccountService,
-        TenantRateLimitReadPort, TenantRateLimitSnapshot, TenantService, TenantUsageService,
-        WebSocketTicketService, WebSocketTicketStore,
+        AuthorizationDiagnosticService, CaptchaStore, DeptService, InMemoryCaptchaStore,
+        MenuService, NoticeService, OnlineUserService, PermissionService, ProfileService,
+        ServiceAccountReadDependencies, ServiceAccountService, TenantService, TenantUsageService,
+        WebSocketTicketService,
     },
 };
 use ryframe_config::AppConfig;
 use ryframe_db::ControlDatabaseCluster;
-use ryframe_kernel::{AppError, CAPTCHA_KEY_PREFIX};
+use ryframe_kernel::AppError;
 use ryframe_tenant_db::TenantDatabaseRouter;
 
 use super::application_policy::{ApplicationPolicies, load_pepper_keyring};
 use super::background_services::{
     BackgroundServiceInfrastructure, BackgroundServices, build as build_background_services,
 };
-
-struct TenantRateLimitReader {
-    limiter: Arc<RateLimiter>,
-}
-
-struct RedisWebSocketTicketStore {
-    client: RedisClient,
-}
-
-struct RedisCaptchaStore {
-    client: RedisClient,
-    ttl_secs: u64,
-}
-
-struct RedisDictCacheStore {
-    client: RedisClient,
-}
-
-#[async_trait]
-impl DictCacheStore for RedisDictCacheStore {
-    async fn get(&self, key: &str) -> Result<Option<String>, AppError> {
-        self.client
-            .get(key)
-            .await
-            .map_err(|error| AppError::ServiceUnavailable(error.to_string()))
-    }
-
-    async fn put(&self, key: String, value: String, ttl_secs: u64) -> Result<(), AppError> {
-        self.client
-            .set_ex(key, value, ttl_secs)
-            .await
-            .map_err(|error| AppError::ServiceUnavailable(error.to_string()))
-    }
-
-    async fn remove(&self, key: String) -> Result<(), AppError> {
-        self.client
-            .del(key)
-            .await
-            .map(|_| ())
-            .map_err(|error| AppError::ServiceUnavailable(error.to_string()))
-    }
-}
-
-#[async_trait]
-impl CaptchaStore for RedisCaptchaStore {
-    async fn set(&self, id: String, answer: String) -> Result<(), AppError> {
-        let key = format!("{CAPTCHA_KEY_PREFIX}{id}");
-        self.client
-            .set_ex(key, answer, self.ttl_secs)
-            .await
-            .map_err(|error| {
-                tracing::error!(%error, "Redis SET 验证码失败");
-                AppError::ServiceUnavailable("验证码服务暂不可用".into())
-            })
-    }
-
-    async fn verify(&self, id: &str, code: &str) -> Result<bool, AppError> {
-        let key = format!("{CAPTCHA_KEY_PREFIX}{id}");
-        self.client
-            .get_and_del(&key)
-            .await
-            .map(|stored| stored.is_some_and(|value| value.eq_ignore_ascii_case(code)))
-            .map_err(|error| {
-                tracing::error!(%error, "Redis GETDEL 验证码失败");
-                AppError::ServiceUnavailable("验证码服务暂不可用".into())
-            })
-    }
-}
-
-#[async_trait]
-impl WebSocketTicketStore for RedisWebSocketTicketStore {
-    async fn put(&self, key: String, value: String, ttl_secs: u64) -> Result<(), AppError> {
-        self.client
-            .set_ex(key, value, ttl_secs)
-            .await
-            .map_err(|error| {
-                AppError::ServiceUnavailable(format!("WebSocket 票据写入失败: {error}"))
-            })
-    }
-
-    async fn take(&self, key: &str) -> Result<Option<String>, AppError> {
-        self.client.get_and_del(key).await.map_err(|error| {
-            AppError::ServiceUnavailable(format!("WebSocket 票据校验失败: {error}"))
-        })
-    }
-}
-
-#[async_trait]
-impl TenantRateLimitReadPort for TenantRateLimitReader {
-    async fn snapshot_many(
-        &self,
-        tenant_ids: &[String],
-    ) -> Result<Vec<TenantRateLimitSnapshot>, AppError> {
-        let keys = tenant_ids
-            .iter()
-            .map(|tenant_id| RateLimiter::tenant_key(tenant_id))
-            .collect::<Vec<_>>();
-        self.limiter
-            .snapshot_many(&keys, 1)
-            .await
-            .map_err(AppError::ServiceUnavailable)
-            .map(|snapshots| {
-                snapshots
-                    .into_iter()
-                    .map(|snapshot| TenantRateLimitSnapshot {
-                        current: snapshot.current,
-                        remaining_secs: snapshot.remaining_secs,
-                    })
-                    .collect()
-            })
-    }
-}
 
 /// 构造所有 Service 实例
 ///
@@ -177,11 +70,9 @@ pub async fn build_all(
         BackgroundServiceInfrastructure {
             redis_client: redis_client.clone(),
             object_storage,
-            dict_cache: redis_client.as_ref().map(|client| {
-                Arc::new(RedisDictCacheStore {
-                    client: client.clone(),
-                }) as Arc<dyn DictCacheStore>
-            }),
+            dict_cache: redis_client
+                .as_ref()
+                .map(|client| redis_dict_cache_store(client.clone())),
             starts_background_tasks,
         },
     )?;
@@ -214,9 +105,7 @@ pub async fn build_all(
     ));
     let tenant_usage = Arc::new(TenantUsageService::new(
         ryframe_db::application_ports::tenants::usage(database.clone()),
-        Arc::new(TenantRateLimitReader {
-            limiter: rate_limiter,
-        }),
+        tenant_rate_limit_reader(rate_limiter),
         config.rate_limit.enabled,
         policies.job_schedule.enabled,
     ));
@@ -315,11 +204,9 @@ pub async fn build_all(
         .with_job_queue(job_queue.clone()),
     );
     let websocket_ticket = Arc::new(WebSocketTicketService::new(
-        redis_client.as_ref().map(|client| {
-            Arc::new(RedisWebSocketTicketStore {
-                client: client.clone(),
-            }) as Arc<dyn WebSocketTicketStore>
-        }),
+        redis_client
+            .as_ref()
+            .map(|client| redis_websocket_ticket_store(client.clone())),
         policies.messaging,
     ));
     let profile = Arc::new(ProfileService::new(
@@ -338,10 +225,7 @@ pub async fn build_all(
         Arc::new(OnlineUserService::new_in_memory(refresh_session_port))
     };
     let captcha: Arc<dyn CaptchaStore> = if let Some(redis) = redis_client {
-        Arc::new(RedisCaptchaStore {
-            client: redis.clone(),
-            ttl_secs: 300,
-        })
+        redis_captcha_store(redis.clone(), 300)
     } else {
         let store = InMemoryCaptchaStore::new(300);
         if starts_background_tasks {

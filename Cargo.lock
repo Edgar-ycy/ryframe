@@ -3305,6 +3305,7 @@ dependencies = [
  "redis",
  "reqwest",
  "rust_xlsxwriter",
+ "ryframe-application",
  "ryframe-config",
  "ryframe-kernel",
  "serde",
