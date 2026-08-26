@@ -18,6 +18,7 @@ pub struct AccessMenu {
     pub permission: Option<String>,
     parent_route_key: Option<String>,
     sort: i32,
+    sort_declared: bool,
 }
 
 impl AccessMenu {
@@ -267,6 +268,7 @@ pub fn access_menus() -> Result<Vec<AccessMenu>, DbErr> {
                 permission: None,
                 parent_route_key: None,
                 sort: 0,
+                sort_declared: false,
             });
             continue;
         }
@@ -281,6 +283,9 @@ pub fn access_menus() -> Result<Vec<AccessMenu>, DbErr> {
         };
         if let Some(value) = catalog_string_value(line, "route_key") {
             menu.route_key = value.to_owned();
+        } else if let Some(value) = catalog_i32_value(line, "order") {
+            menu.sort = value;
+            menu.sort_declared = true;
         } else if let Some(value) = catalog_string_value(line, "name") {
             menu.name = value.to_owned();
         } else if let Some(value) = catalog_string_value(line, "menu_type") {
@@ -296,6 +301,8 @@ pub fn access_menus() -> Result<Vec<AccessMenu>, DbErr> {
         menu.route_key.is_empty()
             || menu.name.is_empty()
             || menu.name.chars().count() > 64
+            || !menu.sort_declared
+            || menu.sort < 0
             || !matches!(menu.menu_type.as_str(), "M" | "C")
             || !menu
                 .route_key
@@ -308,15 +315,13 @@ pub fn access_menus() -> Result<Vec<AccessMenu>, DbErr> {
         .into_iter()
         .collect::<BTreeSet<_>>();
     let mut manual_route_keys = BTreeSet::new();
-    for (index, menu) in menus.iter_mut().enumerate() {
+    for menu in &mut menus {
         if !manual_route_keys.insert(menu.route_key.clone()) {
             return Err(DbErr::Custom(format!(
                 "手写访问目录重复拥有菜单 route_key: {}",
                 menu.route_key
             )));
         }
-        menu.sort = i32::try_from(index)
-            .map_err(|_| DbErr::Custom("访问目录菜单数量超出可表示范围".into()))?;
         menu.parent_route_key = (menu.menu_type == "C")
             .then(|| {
                 menu.route_key
@@ -358,6 +363,7 @@ pub fn access_menus() -> Result<Vec<AccessMenu>, DbErr> {
             parent_route_key: Some(resource.menu.parent),
             sort: i32::try_from(resource.menu.order)
                 .map_err(|_| DbErr::Custom("生成菜单 order 超出可表示范围".into()))?,
+            sort_declared: true,
         });
     }
     menus.sort_by(|left, right| left.route_key.cmp(&right.route_key));
@@ -371,6 +377,15 @@ fn catalog_string_value(line: &'static str, key: &str) -> Option<&'static str> {
         .strip_prefix('=')?
         .trim();
     value.strip_prefix('"')?.strip_suffix('"')
+}
+
+fn catalog_i32_value(line: &'static str, key: &str) -> Option<i32> {
+    line.strip_prefix(key)?
+        .trim_start()
+        .strip_prefix('=')?
+        .trim()
+        .parse()
+        .ok()
 }
 
 fn catalog_map_entry(line: &'static str) -> Option<(&'static str, &'static str)> {

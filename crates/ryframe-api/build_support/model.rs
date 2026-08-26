@@ -98,6 +98,7 @@ impl GeneratedPermissions {
 #[serde(deny_unknown_fields)]
 pub(super) struct MenuEntry {
     pub(super) route_key: String,
+    pub(super) order: u32,
     pub(super) name: String,
     pub(super) title_key: String,
     pub(super) menu_type: String,

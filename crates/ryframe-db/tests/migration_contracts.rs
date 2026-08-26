@@ -90,7 +90,7 @@ fn access_catalog_seed_is_complete_and_unambiguous() {
 }
 
 #[test]
-fn generated_post_access_is_owned_once_by_the_merged_seed_catalog() {
+fn generated_resource_access_is_owned_once_by_the_merged_seed_catalog() {
     let permissions = access_permission_codes().expect("合并权限目录应可解析");
     for permission in [
         "system:post:add",
@@ -122,6 +122,24 @@ fn generated_post_access_is_owned_once_by_the_merged_seed_catalog() {
     );
     assert_eq!(post_menus[0].parent_route_key(), Some("system"));
     assert_eq!(post_menus[0].sort(), 8);
+
+    let notice = menus
+        .iter()
+        .find(|menu| menu.route_key == "system.notice")
+        .expect("生成通知菜单必须存在");
+    assert_eq!(notice.name, "通知公告");
+    assert_eq!(notice.permission.as_deref(), Some("system:notice:list"));
+    assert_eq!(notice.parent_route_key(), Some("system"));
+    assert_eq!(notice.sort(), 15);
+    assert_eq!(
+        menus
+            .iter()
+            .find(|menu| menu.route_key == "system.perm")
+            .expect("权限菜单必须存在")
+            .sort(),
+        16,
+        "生成通知菜单不得改变后续手写菜单顺序"
+    );
 }
 
 #[test]

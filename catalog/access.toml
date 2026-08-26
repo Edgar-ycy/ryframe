@@ -373,6 +373,7 @@ policy = "public"
 
 [[menus]]
 route_key = "home"
+order = 0
 name = "首页"
 title_key = "dashboard"
 menu_type = "C"
@@ -380,24 +381,28 @@ page_key = "home"
 
 [[menus]]
 route_key = "system"
+order = 1
 name = "系统管理"
 title_key = "system"
 menu_type = "M"
 
 [[menus]]
 route_key = "monitor"
+order = 2
 name = "系统监控"
 title_key = "systemMonitor"
 menu_type = "M"
 
 [[menus]]
 route_key = "platform"
+order = 3
 name = "平台管理"
 title_key = "platform"
 menu_type = "M"
 
 [[menus]]
 route_key = "system.user"
+order = 4
 name = "用户管理"
 title_key = "user"
 menu_type = "C"
@@ -406,6 +411,7 @@ permission = "system:user:list"
 
 [[menus]]
 route_key = "system.role"
+order = 5
 name = "角色管理"
 title_key = "role"
 menu_type = "C"
@@ -414,6 +420,7 @@ permission = "system:role:list"
 
 [[menus]]
 route_key = "system.menu"
+order = 6
 name = "菜单管理"
 title_key = "menu"
 menu_type = "C"
@@ -422,6 +429,7 @@ permission = "system:menu:list"
 
 [[menus]]
 route_key = "system.dept"
+order = 7
 name = "部门管理"
 title_key = "dept"
 menu_type = "C"
@@ -430,6 +438,7 @@ permission = "system:dept:list"
 
 [[menus]]
 route_key = "system.dict"
+order = 8
 name = "字典管理"
 title_key = "dict"
 menu_type = "C"
@@ -438,6 +447,7 @@ permission = "system:dict:list"
 
 [[menus]]
 route_key = "system.config"
+order = 9
 name = "参数设置"
 title_key = "config"
 menu_type = "C"
@@ -446,6 +456,7 @@ permission = "system:config:list"
 
 [[menus]]
 route_key = "system.config-transfer"
+order = 10
 name = "配置迁移"
 title_key = "configTransfer"
 menu_type = "C"
@@ -454,6 +465,7 @@ permission = "system:config-transfer:list"
 
 [[menus]]
 route_key = "system.service-accounts"
+order = 11
 name = "服务账号"
 title_key = "serviceAccounts"
 menu_type = "C"
@@ -463,6 +475,7 @@ capability = "system.service_accounts"
 
 [[menus]]
 route_key = "platform.product-plans"
+order = 12
 name = "产品套餐"
 title_key = "productPlans"
 menu_type = "C"
@@ -471,6 +484,7 @@ permission = "platform:product-plan:list"
 
 [[menus]]
 route_key = "platform.data-targets"
+order = 13
 name = "数据目标"
 title_key = "dataTargets"
 menu_type = "C"
@@ -479,6 +493,7 @@ permission = "tenant:data-placement:view"
 
 [[menus]]
 route_key = "platform.tenant"
+order = 14
 name = "租户管理"
 title_key = "tenant"
 menu_type = "C"
@@ -487,6 +502,7 @@ permission = "tenant:list"
 
 [[menus]]
 route_key = "system.perm"
+order = 16
 name = "权限管理"
 title_key = "permission"
 menu_type = "C"
@@ -495,6 +511,7 @@ permission = "system:perm:list"
 
 [[menus]]
 route_key = "system.authorization-diagnostics"
+order = 17
 name = "权限诊断"
 title_key = "authorizationDiagnostics"
 menu_type = "C"
@@ -503,6 +520,7 @@ permission = "system:authorization-diagnostic:list"
 
 [[menus]]
 route_key = "system.operlog"
+order = 18
 name = "操作日志"
 title_key = "operlog"
 menu_type = "C"
@@ -511,6 +529,7 @@ permission = "system:operlog:list"
 
 [[menus]]
 route_key = "system.logininfor"
+order = 19
 name = "登录日志"
 title_key = "loginlog"
 menu_type = "C"
@@ -519,6 +538,7 @@ permission = "system:logininfor:list"
 
 [[menus]]
 route_key = "monitor.online"
+order = 20
 name = "在线用户"
 title_key = "online"
 menu_type = "C"
@@ -527,6 +547,7 @@ permission = "monitor:online:list"
 
 [[menus]]
 route_key = "monitor.server"
+order = 21
 name = "服务监控"
 title_key = "server"
 menu_type = "C"
@@ -535,6 +556,7 @@ permission = "monitor:server:list"
 
 [[menus]]
 route_key = "monitor.runtime"
+order = 22
 name = "运行时监控"
 title_key = "runtimeMonitor"
 menu_type = "C"
@@ -543,6 +565,7 @@ permission = "monitor:runtime:list"
 
 [[menus]]
 route_key = "monitor.cache"
+order = 23
 name = "缓存监控"
 title_key = "cache"
 menu_type = "C"
@@ -551,6 +574,7 @@ permission = "monitor:cache:list"
 
 [[menus]]
 route_key = "monitor.db-pool"
+order = 24
 name = "连接池监控"
 title_key = "dbPoolMonitor"
 menu_type = "C"
@@ -559,6 +583,7 @@ permission = "monitor:db-pool:list"
 
 [[menus]]
 route_key = "monitor.jobs"
+order = 25
 name = "后台任务"
 title_key = "jobs"
 menu_type = "C"
@@ -567,6 +592,7 @@ permission = "monitor:job:list"
 
 [[menus]]
 route_key = "monitor.schedules"
+order = 26
 name = "定时任务"
 title_key = "schedules"
 menu_type = "C"
@@ -575,6 +601,7 @@ permission = "monitor:schedule:list"
 
 [[menus]]
 route_key = "monitor.retention"
+order = 27
 name = "数据保留"
 title_key = "retention"
 menu_type = "C"
@@ -583,6 +610,7 @@ permission = "monitor:retention:list"
 
 [[menus]]
 route_key = "monitor.overview"
+order = 28
 name = "运维总览"
 title_key = "overview"
 menu_type = "C"

@@ -112,6 +112,7 @@ fn merge_generated_catalog(
         let list_permission = resource.permissions.list.clone();
         catalog.menus.push(MenuEntry {
             route_key: resource.menu.key,
+            order: resource.menu.order,
             name: resource.menu.labels.zh_cn,
             title_key: resource.name,
             menu_type: "C".to_owned(),
