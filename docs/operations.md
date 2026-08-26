@@ -2,11 +2,18 @@
 
 ## 部署与发布
 
-生产镜像只包含 API、迁移和 Worker 二进制，不包含生成器、文件维护或 reset。基础镜像、CI Action 和工具镜像必须固定完整摘要。
+生产镜像包含 API、迁移和 Worker 二进制，不包含生成器、文件维护或 reset。部署前复制 `deploy/.env.production.example`，在受控环境中填写镜像摘要、服务地址、`APP_SCOPE_ID` 和各密钥文件路径。
 
-发布前必须完成镜像构建、Compose 展开、Nginx 校验、Prometheus 规则校验、SBOM、漏洞和 license 检查，并确认前后端版本一致且已经完成联调。
+先展开 Compose 配置检查最终变量和挂载，再启动服务：
 
-生产升级不得使用破坏性重建。当前版本只接受全新生产库；已有真实生产旧库需要另行设计非破坏升级方案。
+```powershell
+docker compose --env-file deploy/.env.production -f deploy/compose.prod.yml config
+docker compose --env-file deploy/.env.production -f deploy/compose.prod.yml up -d
+```
+
+Compose 会先更新控制库与租户库，再启动 Worker 和 API。启动后检查 API `/livez`、`/readyz`，以及 Worker 健康端口的 `/readyz`。Nginx 只代理 API 的 edge 网络端口，MySQL、Redis 和对象存储保持在内部网络。
+
+当前版本只接受全新生产库。已有真实生产旧库需要先设计并演练非破坏升级方案，不能使用 reset 代替升级。
 
 ## 非生产重建
 
@@ -50,7 +57,7 @@ cargo run --locked -p ryframe --features destructive-reset --bin ryframe-reset -
 
 ## 后台任务
 
-检查 lease、heartbeat、attempt、公开错误和死信状态。重复领取必须由数据库门禁拒绝；修复原因后使用受控重试，不直接改任务终态。
+检查 lease、heartbeat、attempt、公开错误和死信状态。数据库会拒绝重复领取；修复原因后使用受控重试，不直接改任务终态。
 
 ## 定时调度
 

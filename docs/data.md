@@ -2,14 +2,24 @@
 
 ## 数据边界
 
-控制库保存身份、授权、产品、租户目录、任务、文件元数据和 placement。租户业务数据按目标路由进入 shared-control 或独立租户库。SQL 实现分别位于 `ryframe-db` 与 `ryframe-tenant-db`，application 不依赖 SeaORM。
+控制库保存身份、授权、产品、租户目录、任务、文件元数据和 placement。租户业务数据按目标路由进入 shared-control 或独立租户库。
 
-两套迁移 ledger 独立，每套只保留一个全新 baseline：
+控制库与租户库使用独立迁移 ledger：
 
 - 控制库 baseline 由 `ryframe-db` 拥有。
 - 租户 baseline 由 `ryframe-tenant-db` 拥有。
 
-项目不兼容旧数据库结构、旧任务载荷或历史增量迁移。任何真实生产旧库不得直接部署当前版本。
+当前版本面向全新数据库，不兼容旧数据库结构、旧任务载荷或历史增量迁移。真实生产旧库不要直接部署当前版本，应先制定并验证非破坏升级方案。
+
+本地可使用以下命令查看并校验结构：
+
+```powershell
+cargo migrate status
+cargo migrate verify
+cargo migrate verify tenant-data --all
+```
+
+确认迁移内容后，使用 `cargo migrate up` 或 `cargo migrate up tenant-data --all` 更新对应目标。
 
 ## 一致性
 
@@ -29,7 +39,7 @@
 
 ## 资源作用域
 
-每个非生产或生产部署都必须配置稳定 `scope_id`：
+每个部署配置一个稳定且唯一的 `scope_id`：
 
 - Redis key 和 channel 使用 `ryframe:{scope_id}:...`。
 - 对象 key 使用 `{scope_id}/...`。
@@ -41,4 +51,4 @@
 
 租户目标注册、placement、fence、session、migration 和 cleanup 是 `ryframe-tenant-db` 的内部模块。shared-control 目标必须去重，独立目标必须校验物理身份、只读状态和 schema fingerprint。
 
-菜单、权限和能力种子来自 `catalog/access.toml`；配置默认值来自配置结构，不在数据库文档重复维护。
+菜单、权限和能力种子可在 `catalog/access.toml` 查询，配置默认值以配置结构为准。
