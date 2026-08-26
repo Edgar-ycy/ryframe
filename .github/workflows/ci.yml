@@ -728,7 +728,7 @@ jobs:
             "$APP_OBJECT_STORAGE_LOCAL_BASE_DIR/exports" \
             "$APP_OBJECT_STORAGE_LOCAL_BASE_DIR/imports" \
             "$APP_OBJECT_STORAGE_LOCAL_BASE_DIR/config-packages"
-          docker exec "$REDIS_CONTAINER_ID" redis-cli \
+          docker exec "$REDIS_CONTAINER_ID" redis-cli -n "$APP_REDIS_DATABASE" \
             SET "$APP_RESET_REDIS_OUTSIDE_SENTINEL_KEY" ci-sentinel NX >/dev/null
           cargo build --locked -p ryframe --features destructive-reset \
             --bin ryframe-reset --bin ryframe
