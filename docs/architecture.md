@@ -1,71 +1,73 @@
-# 架构
+# 架构与扩展位置
 
-## 依赖原则
+本文帮助业务开发者理解一次请求如何经过 RyFrame，并选择合适的扩展位置。
 
-RyFrame 固定为 12 个 workspace package。所有依赖必须是有向无环图，`architecture/crate-boundaries.toml` 是机器门禁；新增 crate 必须替换现有 crate 并重新确认边界。
+## 运行结构
 
 ```text
-kernel {}
-macro {}
-config { kernel }
-auth { kernel }
-application { kernel, auth }
-
-adapters { kernel, config, application }
-db { kernel, config, macro, application }
-tenant-db { kernel, config, db, application }
-
-api { kernel, auth, application, macro }
-ryframe { kernel, config, auth, application, adapters, db, tenant-db, api }
-
-generator { kernel, config, db, tenant-db }
-xtask { kernel, config, db, tenant-db, generator }
+浏览器 / 客户端
+       │ HTTP / WebSocket
+       ▼
+ryframe-api（路由、DTO、认证提取、OpenAPI）
+       │
+       ▼
+ryframe-application（业务用例、事务、状态机、端口）
+       │
+       ├── ryframe-db / ryframe-tenant-db（控制库与租户库）
+       └── ryframe-adapters（Redis、对象存储、表格、限流、遥测）
+       │
+       ▼
+ryframe（API、Worker、迁移与依赖装配）
 ```
 
-白名单表示允许上限，crate 可以少依赖，但不能越过方向或形成反向边。
+HTTP 层把请求解析为明确的 DTO，再调用 application 用例。用例通过端口访问数据库、Redis 和对象存储，因此业务流程可以在不依赖具体连接实现的情况下测试。API 与 Worker 使用同一组应用服务。
 
-## Crate 职责
+## 模块定位
 
-| Crate | 唯一职责 |
+| 模块 | 开发时用于 |
 |---|---|
-| `ryframe-kernel` | ID、分页、错误和值对象 |
-| `ryframe-config` | 配置结构、加载、环境覆盖和校验 |
-| `ryframe-auth` | 密码、JWT、RBAC 决策与安全类型 |
-| `ryframe-application` | 用例、授权、事务边界、业务端口与状态机 |
-| `ryframe-adapters` | Redis、对象存储、表格、限流、本地化和遥测等非 SQL 实现 |
-| `ryframe-db` | 控制库实体、Repository、应用端口实现和控制库 baseline |
-| `ryframe-tenant-db` | 目标注册、placement、fence、session、租户 Repository 和 tenant baseline |
-| `ryframe-api` | Axum、OpenAPI、DTO、路由、extractor 与 HTTP middleware |
-| `ryframe-macro` | proc-macro |
-| `ryframe` | API、Worker、迁移、重建的组合根与依赖装配 |
-| `ryframe-generator` | 离线代码生成 CLI 与模板 |
-| `xtask` | 架构、契约、生成和发布检查 |
+| `ryframe-kernel` | 通用 ID、分页、错误和值对象 |
+| `ryframe-config` | 配置结构、环境覆盖和校验 |
+| `ryframe-auth` | 密码、JWT 与 RBAC 决策 |
+| `ryframe-application` | 业务用例、事务、状态机和出站端口 |
+| `ryframe-db` | 控制库查询、写入与迁移 |
+| `ryframe-tenant-db` | 租户目标路由、查询、写入与迁移 |
+| `ryframe-adapters` | Redis、对象存储、表格、限流、本地化和遥测 |
+| `ryframe-api` | Axum 路由、DTO、OpenAPI、extractor 和传输中间件 |
+| `ryframe` | API、Worker、迁移和重建的启动装配 |
+| `ryframe-generator` | 标准资源的离线生成 |
 
-## 运行边界
+`ryframe-application::system` 按业务分为四个入口：
 
-HTTP 请求先在 API 层解析为严格 DTO，再调用 application 用例。用例只依赖端口；控制库和租户库分别在 DB crate 实现，Redis、存储和表格能力在 adapters 实现，组合根负责注入。
+- `identity`：用户、角色、权限、部门、档案、导入、验证码和 WebSocket ticket；
+- `platform`：租户、产品、服务账号和授权诊断；
+- `content`：配置、字典、公告、文件、选项和标准内容资源；
+- `operations`：消息、导出、审计日志、登录日志、在线用户、监控和保留策略。
 
-`ryframe-application::system` 只公开四个业务域：`identity`（身份、权限与档案）、`platform`
-（租户、产品、服务账号与授权诊断）、`content`（配置、字典、公告、文件与标准资源）和
-`operations`（消息、导出、日志、在线用户、监控与保留策略）。叶子模块保持私有，外部调用方
-不能依赖历史平铺路径。组合根中的 `AppServices` 使用同样四组结构，`boot` 只选择配置、构造
-实现并注入实例；Redis 应用端口的具体实现归 `ryframe-adapters` 所有。
+查找现有能力时，先从对应业务域的公开服务开始，再进入具体用例。
 
-事务由 application 用例开始和提交。Repository 不自行提交单次 CRUD，也不向 application 暴露 SeaORM 事务、实体或查询构造器。
+## 选择开发方式
 
-权限、菜单、页面键和 capability 的唯一事实源是 `catalog/access.toml`。构建脚本生成类型化目录、OpenAPI 扩展和迁移种子；每条路由必须显式声明 `Public`、`Authenticated`、`Permission` 或 `Capability`。
+字段、筛选、排序和普通 CRUD 行为可由资源清单表达时，使用 `cargo resource`。Post 与 Notice 展示了完整链路；生成结果包含后端持久化、应用服务、API、权限资产和前端标准页面。
 
-## 模块尺度
+需要事务编排、外部连接、异步任务或特殊状态机时，使用自定义用例：
 
-手写 Rust 生产与工具源码不超过 600 行，生成 Rust 文件不超过 500 行，Rust 集成测试不超过
-1000 行。编排函数不超过 80 行，helper 不超过 100 行，其他新增或修改函数不超过 150 行；
-超过上限时按阶段、纯模型或端口职责拆分。前端 Vue SFC 不超过 400 行，Composable 与普通
-TypeScript 不超过 300 行，SCSS 不超过 300 行。复杂模块按连接、placement、fence、migration、
-cleanup、session、metrics 等职责拆分；拆分优先使用 crate 内模块，不为薄抽象增加 crate。
+1. 在 application 的对应业务域定义请求、结果和业务流程。
+2. 需要外部能力时定义端口，在 DB 或 adapters 中实现。
+3. 在组合根构造实现并注入应用服务。
+4. 在 API 层增加 DTO、路由和 OpenAPI 描述；后台执行则由 Worker 调用同一用例。
+5. 同步前端契约并完成联调。
 
-## 变更规则
+标准资源也可以保留一个强类型扩展，例如 Post 导出或 Notice 消息发布；其余常规 CRUD 继续由资源清单生成。
 
-- 先定义 application-owned 值对象和端口，再移动实现并翻转依赖。
-- 反向依赖必须在同一次可编译变更中原子切换。
-- 不保留旧 crate 名、alias、兼容 re-export、双读或旧任务 decoder。
-- 共享服务只显式 `Arc::clone`；普通参数优先借用或移动所有权。
+## 数据与事务
+
+控制库保存身份、授权、租户目录和平台任务；租户业务数据通过目标路由进入 shared-control 或独立租户库。涉及多步写入时，由 application 用例开启并提交事务，同一流程中的 Repository 调用接收同一事务上下文。
+
+列表展示可按场景选择 eventual consistency；权限校验、任务领取、下载和状态转换使用 strong consistency。租户切换和后台任务应继续传递明确的租户与作用域信息。
+
+## 访问控制与契约
+
+路由使用 `Public`、`Authenticated`、`Permission` 或 `Capability` 访问策略。菜单、权限、页面键和 capability 来自 `catalog/access.toml`；业务路由在 API 层关联对应策略。
+
+接口的请求与响应进入 OpenAPI 快照，前端从快照生成 operation descriptor。接口变更后的同步步骤见[开发指南](development.md#api-与前后端联调)。

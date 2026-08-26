@@ -2,13 +2,32 @@
 
 ## 契约入口
 
-`openapi/openapi.json` 是 HTTP 契约的唯一快照。开发环境可按配置启用 Swagger UI；客户端代码只从 OpenAPI 生成，不在文档重复字段表。
+HTTP 接口使用 `/api/v1` 前缀，完整路径、字段和 operation ID 见 `openapi/openapi.json`。开发环境启用 `api_docs.enabled` 并编译 `runtime-swagger-ui` feature 后，可访问 `/api/v1/swagger-ui`；原始文档位于 `/api/v1/api-docs/openapi.json`。
 
 所有请求和响应使用 JSON，时间使用带时区的 RFC3339 并在服务端规范化为 UTC。DTO 默认拒绝未知字段；非法枚举、反向时间范围和越界批量请求在入队前返回 400。
 
+普通响应使用统一包络：
+
+```json
+{
+  "code": 200,
+  "message": "操作成功",
+  "data": {},
+  "request_id": "01K...",
+  "error_key": null,
+  "details": null
+}
+```
+
 ## 认证与授权
 
-会话上下文显式返回 `is_super_admin`。超级管理员只认该权威字段或后端授权投影，不根据角色 code 推断。
+先请求 `/api/v1/auth/csrf` 获取 CSRF token，登录、刷新和退出等会话写操作在 `X-CSRF-Token` 请求头中携带它。登录响应包含短期 access token，长期 refresh token 由 HttpOnly Cookie 保存。受保护接口使用：
+
+```http
+Authorization: Bearer <access_token>
+```
+
+会话上下文显式返回 `is_super_admin`。客户端使用该字段和授权投影展示界面，不根据角色 code 推断超级管理员。
 
 每条路由在访问目录中声明一种策略：
 
@@ -70,4 +89,4 @@ ID 排序去重后必须为 1–100 条。整批先校验租户、申请人、�
 
 ## 契约验证
 
-OpenAPI 改变后运行 `cargo api-sync` 刷新前端派生契约，再执行前端消费者自检与浏览器 smoke。前后端必须在同一次联调中通过，不能只验证单侧。
+OpenAPI 改变后运行 `cargo api-sync` 刷新前端派生契约，再执行前端消费者自检与浏览器 smoke。若调用方提示 operation 不存在或 DTO 不匹配，先重新同步契约，再检查后端导出的 operation ID。

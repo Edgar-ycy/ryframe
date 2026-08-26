@@ -1,21 +1,20 @@
 # RyFrame
 
-RyFrame 是面向企业后台的 Rust 2024 服务端，与 RyFrame-Vue3 配套。项目提供认证授权、系统管理、多租户、异步任务、筛选导出、对象存储和可观测性能力。
+RyFrame 是面向企业后台的 Rust 2024 服务端，与 RyFrame-Vue3 配套使用。它提供认证授权、系统管理、多租户、异步任务、筛选导出、对象存储和可观测性能力。
 
-## 当前边界
+## 环境准备
 
-- Workspace 固定为 10 个产品 crate 与 2 个工具 crate。
-- `ryframe-application` 只包含用例、事务边界和端口。
-- `ryframe-db`、`ryframe-tenant-db` 实现 SQL 持久化。
-- `ryframe-adapters` 只实现非 SQL 出站能力。
-- `ryframe-api` 只负责 HTTP、DTO、OpenAPI 和传输中间件。
-- 在线代码生成已经删除，只保留由 `cargo resource` 驱动的离线资源生成。
+本地开发使用 Windows，需要准备：
 
-依赖方向和每个 crate 的职责见 [架构](docs/architecture.md)。
+- Rust 1.97；
+- MySQL；
+- WSL 中的 Redis；
+- 需要文件能力时启动 Windows RustFS；
+- 前端所需的 Node.js 与 pnpm。
 
-## 本地开始
+配置从 `config/` 中对应环境的文件加载，并可使用 `APP_` 环境变量覆盖。密码、令牌和证书请使用本机环境变量或密钥文件，不要写入配置样例。
 
-本地开发使用 Windows，不使用 Docker 或 WSL 运行应用。需要准备 Rust 1.97、MySQL、WSL 中的 Redis，以及按需启动的 Windows RustFS。
+## 启动开发环境
 
 ```powershell
 $env:APP_ENV = "dev"
@@ -23,9 +22,11 @@ cargo migrate verify
 cargo dev
 ```
 
-`cargo migrate verify` 默认校验控制库；需要更新本地结构时显式运行 `cargo migrate up`。租户数据目标使用 `cargo migrate verify tenant-data --all`。`cargo dev` 统一管理 API、Worker 与 Vite。
+`cargo migrate verify` 校验控制库结构，不修改数据库。需要更新本地数据库时运行 `cargo migrate up`；租户数据目标可使用 `cargo migrate verify tenant-data --all` 校验。
 
-`cargo dev` 已使用 `jobs.mode=external` 同时管理独立 Worker。只在排障时手工启动 Worker，并确保 API 也使用 external 模式：
+`cargo dev` 同时管理 API、Worker 和 Vite，并在后端修改后完成探活再切换版本。按 `Ctrl+C` 可停止整组进程。
+
+只在排障时单独启动 Worker，并让 API 使用 external 任务模式：
 
 ```powershell
 $env:APP_ENV = "dev"
@@ -33,31 +34,35 @@ $env:APP_JOBS_MODE = "external"
 cargo run --locked -p ryframe --bin ryframe-worker
 ```
 
-实际配置字段以 `config/` 中的配置结构和环境变量校验为准。密码、令牌和环境绑定数据只保存在本机密钥管理或 `.local-tests` 中。
+## 开发与检查
 
-## 常用检查
+日常修改后运行：
 
 ```powershell
 cargo verify
+```
+
+准备联调或交付前运行完整检查：
+
+```powershell
 cargo verify --full
 ```
 
-日常检查使用 `cargo verify`，它先区分手写产品代码、测试、生成物、迁移、文档与工具，输出涉及领域、中央热点和修改预算提醒，再根据当前变更选择受影响包、反向依赖或前端检查画像；标准资源变更不允许继续手改中央注册。依赖、CI、共享配置和未知变更会自动扩大为完整门禁。完成开发后使用 `cargo verify --full`，覆盖后端测试、Cargo feature 组合、前端消费契约和浏览器 smoke。`--scope backend|frontend` 可限制主要检查侧，但完整门禁中的资源生成和消费契约仍会跨仓验证。底层 `cargo xtask ...` 是 CI 与维护者使用的内部入口，普通开发不需要记忆。
+`--scope backend|frontend` 可限制主要检查侧。更多迁移、测试和排障命令见[开发指南](docs/development.md)。
 
-确定性测试必须进入自动化门禁；`.local-tests` 只保存密钥、人工数据、运行结果和环境绑定验收。
+## 同步 API 契约
 
-## 契约
-
-后端 OpenAPI 的唯一快照是 `openapi/openapi.json`。前端只通过生成的 operation descriptor 调用接口。接口变化必须同步生成快照并运行前端消费契约检查。
+`openapi/openapi.json` 是后端 HTTP 契约快照。接口变化后同步前端派生契约：
 
 ```powershell
-cargo run --locked -p ryframe-api --bin export_openapi -- openapi/openapi.json
 cargo api-sync
 ```
 
-`cargo api-sync` 从当前后端源码导出候选契约，并刷新前端派生文件。完成后运行前端消费契约检查，确认 operation descriptor 与 OpenAPI 一致。
+完成同步后，在前端运行消费者检查并进行浏览器联调。请求格式、认证方式和稳定错误码见 [API 指南](docs/api.md)。
 
-## 标准资源
+## 开发标准资源
+
+标准 CRUD 资源通过资源清单离线生成。以下命令分别用于预览、写入和查看生成链路：
 
 ```powershell
 cargo resource post
@@ -65,14 +70,14 @@ cargo resource post --write
 cargo resource post --explain
 ```
 
-默认只预览可读 diff；`--write` 安全写入生成资产，并刷新候选 OpenAPI 与前端派生契约；`--explain` 输出从清单到页面的完整调用链。资源清单位于 `catalog/resources/`，复杂业务继续放在普通 Rust 扩展中。
+资源清单位于 `catalog/resources/`。Post 和 Notice 可作为标准资源示例；导出、消息发布等特殊行为使用普通 Rust 用例扩展。完整流程见[开发指南](docs/development.md)。
 
 ## 文档
 
-- [架构](docs/architecture.md)
-- [开发](docs/development.md)
-- [API](docs/api.md)
-- [数据](docs/data.md)
-- [运维](docs/operations.md)
+- [架构与扩展位置](docs/architecture.md)
+- [开发指南](docs/development.md)
+- [API 使用](docs/api.md)
+- [数据与迁移](docs/data.md)
+- [部署与排障](docs/operations.md)
 
-字段、菜单、权限、配置默认值和生成信息分别以 OpenAPI、`catalog/access.toml`、配置结构及命令 `--help` 为准。
+字段、菜单、权限、配置默认值和生成结果分别以 OpenAPI、`catalog/access.toml`、配置结构、资源清单及命令 `--help` 为准。
