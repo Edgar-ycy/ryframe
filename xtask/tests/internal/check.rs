@@ -732,7 +732,7 @@ fn change_surface_separates_product_tests_generated_assets_and_tools() {
             "src/views/system/user/index.vue".into(),
             "src/api/generated/operations.ts".into(),
             "tests/unit/user.test.ts".into(),
-            "qodana.yaml".into(),
+            "vite.config.ts".into(),
         ],
         &test_change_surface_policy(),
     );

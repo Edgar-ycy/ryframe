@@ -410,7 +410,6 @@ fn classify_frontend(path: &str) -> ChangeCategory {
         || path == "pnpm-lock.yaml"
         || path.contains(".config.")
         || path.starts_with("tsconfig")
-        || path == "qodana.yaml"
     {
         ChangeCategory::Tooling
     } else {
