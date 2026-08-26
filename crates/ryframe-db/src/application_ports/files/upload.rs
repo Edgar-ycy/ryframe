@@ -1,10 +1,10 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{
     ControlDatabaseCluster, FileRepository, Repository, TenantRepository, entities::sys_file,
 };
 use chrono::{DateTime, Utc};
-use ryframe_kernel::AppError;
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
 use ryframe_application::{
@@ -27,12 +27,7 @@ pub fn port(database: ControlDatabaseCluster) -> Arc<dyn FileUploadPersistencePo
 #[async_trait::async_trait]
 impl FileUploadPersistencePort for DatabaseFileUploadPersistence {
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn FileUploadTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseFileUploadTransaction { transaction })
             as Box<dyn FileUploadTransaction>)
     }
@@ -175,7 +170,7 @@ impl PersistenceTransaction for DatabaseFileUploadTransaction {
     }
 
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }
 
@@ -221,8 +216,4 @@ pub fn map_model(file: FileUploadRecord) -> sys_file::Model {
         created_at: file.created_at,
         updated_at: file.updated_at,
     }
-}
-
-fn database_error(error: sea_orm::DbErr) -> AppError {
-    AppError::Database(error.to_string())
 }

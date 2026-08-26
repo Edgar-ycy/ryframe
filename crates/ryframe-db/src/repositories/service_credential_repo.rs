@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
@@ -20,7 +21,7 @@ impl ServiceCredentialRepository {
             .filter(service_credential::Column::KeyId.eq(key_id))
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn find_by_id<C>(
@@ -38,7 +39,7 @@ impl ServiceCredentialRepository {
             .filter(service_credential::Column::AccountId.eq(account_id))
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn list_for_account<C>(
@@ -56,7 +57,7 @@ impl ServiceCredentialRepository {
             .order_by_desc(service_credential::Column::CreatedAt)
             .all(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn count_active_at<C>(
@@ -77,7 +78,7 @@ impl ServiceCredentialRepository {
             .filter(service_credential::Column::ExpiresAt.gt(now))
             .count(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn find_idempotent<C>(
@@ -96,7 +97,7 @@ impl ServiceCredentialRepository {
             .filter(service_credential::Column::IdempotencyKeyHash.eq(idempotency_key_hash))
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn find_by_key_id_for_share(
@@ -113,7 +114,7 @@ impl ServiceCredentialRepository {
             .lock(LockType::Share)
             .one(txn)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn insert_in_txn(
@@ -129,7 +130,7 @@ impl ServiceCredentialRepository {
         service_credential::ActiveModel::from(entity)
             .insert(txn)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn revoke_in_txn(
@@ -163,7 +164,7 @@ impl ServiceCredentialRepository {
             .filter(service_credential::Column::Status.eq(service_credential::Model::STATUS_ACTIVE))
             .exec(txn)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(result.rows_affected == 1)
     }
 
@@ -187,10 +188,6 @@ impl ServiceCredentialRepository {
             .exec(db)
             .await
             .map(|_| ())
-            .map_err(database_error)
+            .db()
     }
-}
-
-fn database_error(error: sea_orm::DbErr) -> AppError {
-    AppError::Database(error.to_string())
 }

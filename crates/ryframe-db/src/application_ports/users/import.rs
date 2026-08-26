@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{
@@ -9,9 +10,7 @@ use crate::{
 
 mod model;
 
-use model::{
-    database_error, import_row_model, job_model, job_record, row_record, source_record, user_model,
-};
+use model::{import_row_model, job_model, job_record, row_record, source_record, user_model};
 use ryframe_kernel::{PageResult, ValidatedPageQuery};
 use sea_orm::{EntityTrait, TransactionTrait};
 
@@ -42,12 +41,7 @@ struct DatabaseUserImportTransaction {
 #[async_trait::async_trait]
 impl UserImportPersistencePort for DatabaseUserImportPersistence {
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn UserImportTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseUserImportTransaction {
             transaction: transaction.into(),
         }) as Box<dyn UserImportTransaction>)
@@ -116,7 +110,7 @@ impl UserImportPersistencePort for DatabaseUserImportPersistence {
             .one(self.database.write())
             .await
             .map(|job| job.map(job_record))
-            .map_err(database_error)
+            .db()
     }
 
     async fn find_by_background_job(
@@ -322,7 +316,7 @@ impl UserImportTransaction for DatabaseUserImportTransaction {
         let Some(import) = user_import_job::Entity::find_by_id(import_id)
             .one(&self.transaction)
             .await
-            .map_err(database_error)?
+            .db()?
         else {
             return Ok(None);
         };
@@ -423,13 +417,11 @@ impl ryframe_application::PersistenceTransaction for DatabaseUserImportTransacti
             ryframe_application::TransactionAuditMode::CurrentRequest => {
                 self.transaction.commit_audited().await
             }
-            ryframe_application::TransactionAuditMode::Skip => {
-                self.transaction.commit().await.map_err(database_error)
-            }
+            ryframe_application::TransactionAuditMode::Skip => self.transaction.commit().await.db(),
         }
     }
 
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }

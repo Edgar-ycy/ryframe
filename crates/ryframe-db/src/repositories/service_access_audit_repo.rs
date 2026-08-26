@@ -1,4 +1,5 @@
-use ryframe_kernel::{AppError, AppResult};
+use crate::DbResultExt;
+use ryframe_kernel::AppResult;
 use sea_orm::{ActiveModelTrait, ConnectionTrait};
 
 use crate::entities::service_access_audit;
@@ -18,6 +19,6 @@ impl ServiceAccessAuditRepository {
         service_access_audit::ActiveModel::from(audit)
             .insert(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 }

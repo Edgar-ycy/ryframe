@@ -52,6 +52,7 @@ use sea_orm::{{
     {model_trait}QueryFilter, QueryOrder, QuerySelect, {transaction_trait}sea_query::LockType,
 }};
 
+use crate::DbResultExt;
 use super::entity;
 
 {declaration}
@@ -117,7 +118,7 @@ impl {pascal}Transaction for Database{pascal}Transaction {{
             .lock(LockType::Update)
             .one(&self.transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .map(to_record))
     }}
 
@@ -152,7 +153,7 @@ impl PersistenceTransaction for Database{pascal}Transaction {{
     }}
 
     async fn rollback(self: Box<Self>) -> AppResult<()> {{
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }}
 }}
 
@@ -200,7 +201,7 @@ fn relation_detail_parts(
             format!("{pascal}Record"),
             String::new(),
             format!(
-                "        Ok({id_query}\n            .one(&database)\n            .await\n            .map_err(database_error)?\n            .map(to_record))"
+                "        Ok({id_query}\n            .one(&database)\n            .await\n            .db()?\n            .map(to_record))"
             ),
             String::new(),
         );
@@ -224,13 +225,13 @@ fn relation_detail_parts(
         let mapper = format!("to_{}_record", relation.name);
         if local.nullable {
             reads.push_str(&format!(
-                "        let {name} = match record.{local} {{\n            Some(relation_id) => {query}\n                .one(&database)\n                .await\n                .map_err(database_error)?\n                .map({mapper}),\n            None => None,\n        }};\n",
+                "        let {name} = match record.{local} {{\n            Some(relation_id) => {query}\n                .one(&database)\n                .await\n                .db()?\n                .map({mapper}),\n            None => None,\n        }};\n",
                 name = relation.name,
                 local = relation.local_field,
             ));
         } else {
             reads.push_str(&format!(
-                "        let relation_id = record.{local};\n        let {name} = {query}\n            .one(&database)\n            .await\n            .map_err(database_error)?\n            .map({mapper});\n",
+                "        let relation_id = record.{local};\n        let {name} = {query}\n            .one(&database)\n            .await\n            .db()?\n            .map({mapper});\n",
                 name = relation.name,
                 local = relation.local_field,
             ));
@@ -244,7 +245,7 @@ fn relation_detail_parts(
         ));
     }
     let read = format!(
-        "        let Some(record) = {id_query}\n            .one(&database)\n            .await\n            .map_err(database_error)?\n            .map(to_record)\n        else {{\n            return Ok(None);\n        }};\n{reads}        Ok(Some({pascal}Detail {{\n            record,\n{fields}        }}))"
+        "        let Some(record) = {id_query}\n            .one(&database)\n            .await\n            .db()?\n            .map(to_record)\n        else {{\n            return Ok(None);\n        }};\n{reads}        Ok(Some({pascal}Detail {{\n            record,\n{fields}        }}))"
     );
     (
         format!("{pascal}Detail"),

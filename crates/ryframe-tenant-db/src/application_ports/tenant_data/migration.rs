@@ -7,6 +7,7 @@ use ryframe_application::ports::tenant_data::{
     TenantDataCatalogTable, TenantDataCleanupOwnership as ApplicationCleanupOwnership,
     TenantDataFence, TenantDataMigrationPort, TenantDataRow, TenantDataRowBatch,
 };
+use ryframe_db::DbResultExt;
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{ConnectionTrait, DatabaseTransaction, DbBackend, Statement, TransactionTrait};
 
@@ -191,7 +192,7 @@ impl TenantDataMigrationPort for TenantDatabaseRouter {
                 values,
             ))
             .await
-            .map_err(database_error)?;
+            .db()?;
         let rows = decode_rows(&query_rows, descriptor.checksum_columns.len())?;
         let next_cursor = (!rows.is_empty())
             .then(|| cursor_from_last_row(&rows, descriptor, &business_cursor))
@@ -210,7 +211,7 @@ impl TenantDataMigrationPort for TenantDatabaseRouter {
             .open_target_for_catalog(fence.target_key, &TENANT_DATA_CATALOG)
             .await
             .map_err(map_tenant_data_error)?;
-        let transaction = target.connection().begin().await.map_err(database_error)?;
+        let transaction = target.connection().begin().await.db()?;
         lock_target_fence(&transaction, fence, target.is_dedicated()).await?;
         let column_list = descriptor
             .checksum_columns
@@ -236,9 +237,9 @@ impl TenantDataMigrationPort for TenantDatabaseRouter {
                     row.iter().cloned().map(Into::into),
                 ))
                 .await
-                .map_err(database_error)?;
+                .db()?;
         }
-        transaction.commit().await.map_err(database_error)
+        transaction.commit().await.db()
     }
 
     async fn verify_foreign_keys(
@@ -287,9 +288,9 @@ impl TenantDataMigrationPort for TenantDatabaseRouter {
                     [tenant_id.into()],
                 ))
                 .await
-                .map_err(database_error)?
+                .db()?
                 .ok_or_else(|| AppError::Database("租户数据外键校验无结果".into()))?;
-            if row.try_get_by_index::<i64>(0).map_err(database_error)? != 0 {
+            if row.try_get_by_index::<i64>(0).db()? != 0 {
                 return Err(AppError::Conflict(format!(
                     "租户数据外键校验失败: {}.{}",
                     descriptor.table, foreign_key.name
@@ -342,10 +343,7 @@ fn decode_rows(
     rows.iter()
         .map(|row| {
             (0..column_count)
-                .map(|index| {
-                    row.try_get_by_index::<Option<String>>(index)
-                        .map_err(database_error)
-                })
+                .map(|index| row.try_get_by_index::<Option<String>>(index).db())
                 .collect::<AppResult<Vec<_>>>()
         })
         .collect()
@@ -386,14 +384,12 @@ async fn lock_target_fence(
             [fence.tenant_id.into()],
         ))
         .await
-        .map_err(database_error)?
+        .db()?
         .ok_or_else(|| AppError::TenantDataMaintenance("迁移目标 fence 不存在".into(), 5))?;
-    let target_key: String = row.try_get("", "target_key").map_err(database_error)?;
-    let generation: i64 = row
-        .try_get("", "placement_generation")
-        .map_err(database_error)?;
-    let state: String = row.try_get("", "state").map_err(database_error)?;
-    let token: String = row.try_get("", "switch_token").map_err(database_error)?;
+    let target_key: String = row.try_get("", "target_key").db()?;
+    let generation: i64 = row.try_get("", "placement_generation").db()?;
+    let state: String = row.try_get("", "state").db()?;
+    let token: String = row.try_get("", "switch_token").db()?;
     if target_key != fence.target_key
         || generation != fence.generation
         || state != "frozen"
@@ -410,16 +406,13 @@ async fn lock_target_fence(
                 "SELECT tenant_id, placement_generation, switch_token FROM biz_tenant_target_slot WHERE slot_id = 1 FOR UPDATE",
             ))
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| {
                 AppError::TenantDataTargetUnavailable("专属目标槽不存在".into(), 5)
             })?;
-        let tenant_id: Option<String> = slot.try_get("", "tenant_id").map_err(database_error)?;
-        let slot_generation: Option<i64> = slot
-            .try_get("", "placement_generation")
-            .map_err(database_error)?;
-        let slot_token: Option<String> =
-            slot.try_get("", "switch_token").map_err(database_error)?;
+        let tenant_id: Option<String> = slot.try_get("", "tenant_id").db()?;
+        let slot_generation: Option<i64> = slot.try_get("", "placement_generation").db()?;
+        let slot_token: Option<String> = slot.try_get("", "switch_token").db()?;
         if tenant_id.as_deref() != Some(fence.tenant_id)
             || slot_generation != Some(fence.generation)
             || slot_token.as_deref() != Some(fence.switch_token)
@@ -428,10 +421,6 @@ async fn lock_target_fence(
         }
     }
     Ok(())
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }
 
 pub const fn map_cleanup_ownership(

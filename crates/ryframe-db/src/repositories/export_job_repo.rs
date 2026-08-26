@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
@@ -18,7 +19,7 @@ pub use deletion::MarkExportJobsDeletePending;
 pub use deletion::{validate_candidate_ownership, validate_deletion_candidates};
 pub use support::{decide_export_start, visible_for_requester_query};
 
-use support::{database_error, truncate_error, validate_create_command};
+use support::{truncate_error, validate_create_command};
 
 /// 创建导出任务时写入的不可变请求快照。
 #[derive(Clone, Debug)]
@@ -68,10 +69,7 @@ impl ExportJobRepository {
         db: &DatabaseConnection,
         id: i64,
     ) -> AppResult<Option<export_job::Model>> {
-        export_job::Entity::find_by_id(id)
-            .one(db)
-            .await
-            .map_err(database_error)
+        export_job::Entity::find_by_id(id).one(db).await.db()
     }
 
     /// 在任务入队的同一事务内记录导出请求。
@@ -113,7 +111,7 @@ impl ExportJobRepository {
         }
         .insert(transaction)
         .await
-        .map_err(database_error)
+        .db()
     }
 
     /// 在租户行锁保护下复用同一规范化请求的排队或运行任务。
@@ -129,7 +127,7 @@ impl ExportJobRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
         export_job::Entity::find()
             .filter(export_job::Column::TenantId.eq(tenant_id))
@@ -143,7 +141,7 @@ impl ExportJobRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     /// 读取当前申请人在当前租户可见的导出任务。
@@ -158,7 +156,7 @@ impl ExportJobRepository {
             .filter(export_job::Column::Id.eq(id))
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     /// 按创建时间倒序读取申请人最近的导出任务。
@@ -175,7 +173,7 @@ impl ExportJobRepository {
             .limit(limit.clamp(1, 100))
             .all(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     /// 将申请人已经实际看到的成功或失败通知幂等标记为已查看。
@@ -204,7 +202,7 @@ impl ExportJobRepository {
             .exec(db)
             .await
             .map(|result| result.rows_affected)
-            .map_err(database_error)
+            .db()
     }
 
     /// 根据内部后台任务定位对应的导出任务，供 Worker 使用。
@@ -218,7 +216,7 @@ impl ExportJobRepository {
             .filter(export_job::Column::DeletePendingAt.is_null())
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     /// 在结果落库事务内锁定导出任务，串行化对象写入和最终状态提交。
@@ -231,7 +229,7 @@ impl ExportJobRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     /// 在租户行锁下启动导出，保证同一租户同时最多运行指定数量的任务。
@@ -248,13 +246,13 @@ impl ExportJobRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
         let current = export_job::Entity::find_by_id(id)
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::NotFound("导出任务不存在".into()))?;
         if current.tenant_id != tenant_id {
             return Ok(ExportStartDisposition::NotRunnable);
@@ -265,7 +263,7 @@ impl ExportJobRepository {
             .filter(export_job::Column::DeletePendingAt.is_null())
             .count(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         let disposition = decide_export_start(
             &current.status,
             current.delete_pending_at.is_some(),
@@ -286,7 +284,7 @@ impl ExportJobRepository {
             .filter(export_job::Column::DeletePendingAt.is_null())
             .exec(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(if result.rows_affected == 1 {
             ExportStartDisposition::Started
         } else {
@@ -315,7 +313,7 @@ impl ExportJobRepository {
             .exec(db)
             .await
             .map(|result| result.rows_affected == 1)
-            .map_err(database_error)
+            .db()
     }
 
     /// 将 Worker 成功生成的文件元数据固化为可下载结果。
@@ -363,7 +361,7 @@ impl ExportJobRepository {
             .filter(export_job::Column::DeletePendingAt.is_null())
             .exec(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(result.rows_affected == 1)
     }
 
@@ -398,7 +396,7 @@ impl ExportJobRepository {
             .filter(export_job::Column::DeletePendingAt.is_null())
             .exec(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(result.rows_affected == 1)
     }
 
@@ -428,7 +426,7 @@ impl ExportJobRepository {
             .filter(export_job::Column::DeletePendingAt.is_null())
             .exec(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(result.rows_affected == 1)
     }
 
@@ -465,7 +463,7 @@ impl ExportJobRepository {
             .filter(export_job::Column::DeletePendingAt.is_null())
             .exec(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(result.rows_affected == 1)
     }
 
@@ -486,7 +484,7 @@ impl ExportJobRepository {
         if let Some(after_id) = after_id {
             query = query.filter(export_job::Column::Id.gt(after_id));
         }
-        query.all(db).await.map_err(database_error)
+        query.all(db).await.db()
     }
 
     /// 在文件对象与元数据均清理完成后标记导出任务过期。
@@ -526,7 +524,7 @@ impl ExportJobRepository {
             .filter(export_job::Column::DeletePendingAt.is_null())
             .exec(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(result.rows_affected == 1)
     }
 }

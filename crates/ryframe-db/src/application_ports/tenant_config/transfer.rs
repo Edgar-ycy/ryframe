@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::{collections::BTreeSet, sync::Arc};
 
 use crate::{
@@ -141,7 +142,7 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
             .lock(LockType::Update)
             .one(&self.transaction)
             .await
-            .map_err(database_error)
+            .db()
             .map(|record| record.map(Into::into))
     }
 
@@ -157,7 +158,7 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
             .filter(tenant_config_bundle::Column::IdempotencyKeyHash.eq(idempotency_key_hash))
             .one(&self.transaction)
             .await
-            .map_err(database_error)
+            .db()
             .map(|record| record.map(Into::into))
     }
 
@@ -251,7 +252,7 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
             .filter(tenant::Column::TenantId.eq(tenant_id))
             .one(&self.transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .map(|tenant| tenant.name)
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))
     }
@@ -381,7 +382,7 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
             .filter(background_job::Column::Status.eq(background_job::Model::STATUS_DEAD))
             .all(&self.transaction)
             .await
-            .map_err(database_error)
+            .db()
             .map(|jobs| jobs.into_iter().map(|job| job.id).collect())
     }
 }
@@ -396,17 +397,11 @@ impl ryframe_application::PersistenceTransaction for DatabaseTenantConfigTransfe
             ryframe_application::TransactionAuditMode::CurrentRequest => {
                 self.transaction.commit_audited().await
             }
-            ryframe_application::TransactionAuditMode::Skip => {
-                self.transaction.commit().await.map_err(database_error)
-            }
+            ryframe_application::TransactionAuditMode::Skip => self.transaction.commit().await.db(),
         }
     }
 
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

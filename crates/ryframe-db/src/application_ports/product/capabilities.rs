@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
@@ -9,8 +10,6 @@ use sea_orm::{
 };
 
 use crate::entities::{menu, permission, role, role_permission};
-
-use super::database_error;
 
 const TEMPLATE_TENANT_ID: &str = "system";
 
@@ -50,7 +49,7 @@ async fn sync_permissions(
         .order_by_asc(permission::Column::Id)
         .all(transaction)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let system_by_id = system_permissions
         .iter()
         .map(|permission| (permission.id, permission))
@@ -60,7 +59,7 @@ async fn sync_permissions(
         .order_by_asc(permission::Column::Id)
         .all(transaction)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let mut tenant_ids = tenant_permissions
         .iter()
         .map(|permission| (permission.code.clone(), permission.id))
@@ -88,7 +87,7 @@ async fn sync_permissions(
                     .reset_all()
                     .update(transaction)
                     .await
-                    .map_err(database_error)?;
+                    .db()?;
             }
             continue;
         }
@@ -123,7 +122,7 @@ async fn sync_permissions(
         }
         .insert(transaction)
         .await
-        .map_err(database_error)?;
+        .db()?;
         tenant_ids.insert(source.code.clone(), id);
     }
     Ok(tenant_ids)
@@ -151,7 +150,7 @@ async fn sync_menus(
         .order_by_asc(menu::Column::Id)
         .all(transaction)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let system_by_id = system_menus
         .iter()
         .map(|menu| (menu.id, menu))
@@ -160,7 +159,7 @@ async fn sync_menus(
         .filter(permission::Column::TenantId.eq(TEMPLATE_TENANT_ID))
         .all(transaction)
         .await
-        .map_err(database_error)?
+        .db()?
         .into_iter()
         .map(|permission| (permission.id, permission.code))
         .collect::<HashMap<_, _>>();
@@ -170,7 +169,7 @@ async fn sync_menus(
         .order_by_asc(menu::Column::Id)
         .all(transaction)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let mut tenant_menu_ids = tenant_menus
         .iter()
         .filter_map(|menu| menu.route_key.clone().map(|route_key| (route_key, menu.id)))
@@ -199,7 +198,7 @@ async fn sync_menus(
                     .reset_all()
                     .update(transaction)
                     .await
-                    .map_err(database_error)?;
+                    .db()?;
             }
             continue;
         }
@@ -249,7 +248,7 @@ async fn sync_menus(
         }
         .insert(transaction)
         .await
-        .map_err(database_error)?;
+        .db()?;
         tenant_menu_ids.insert(route_key.to_owned(), id);
     }
     Ok(())
@@ -270,7 +269,7 @@ async fn assign_default_admin_permissions(
         .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
         .one(transaction)
         .await
-        .map_err(database_error)?
+        .db()?
         .ok_or_else(|| AppError::Config(format!("租户 {tenant_id} 缺少 tenant_admin 角色")))?;
     let requested = default_codes
         .iter()
@@ -286,7 +285,7 @@ async fn assign_default_admin_permissions(
         .filter(role_permission::Column::PermId.is_in(requested.iter().copied()))
         .all(transaction)
         .await
-        .map_err(database_error)?
+        .db()?
         .into_iter()
         .map(|relation| relation.perm_id)
         .collect::<HashSet<_>>();
@@ -303,7 +302,7 @@ async fn assign_default_admin_permissions(
         role_permission::Entity::insert_many(additions)
             .exec(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
     }
     Ok(())
 }

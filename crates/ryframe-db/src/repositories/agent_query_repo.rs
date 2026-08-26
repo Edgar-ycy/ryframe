@@ -1,4 +1,5 @@
-use ryframe_kernel::{AppError, AppResult};
+use crate::DbResultExt;
+use ryframe_kernel::AppResult;
 use sea_orm::{
     ColumnTrait, Condition, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
     QuerySelect,
@@ -74,14 +75,14 @@ impl AgentQueryRepository {
             AgentRowScope::User(user_id) => select.filter(user::Column::Id.eq(*user_id)),
             AgentRowScope::Empty => unreachable!(),
         };
-        let total = select.clone().count(db).await.map_err(database_error)?;
+        let total = select.clone().count(db).await.db()?;
         let records = select
             .order_by_asc(user::Column::Id)
             .offset(offset)
             .limit(limit)
             .all(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(AgentQueryPage { records, total })
     }
 
@@ -127,7 +128,7 @@ impl AgentQueryRepository {
             .limit(limit)
             .all(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn departments<C>(
@@ -169,7 +170,7 @@ impl AgentQueryRepository {
             .limit(limit)
             .all(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn departments_page<C>(
@@ -203,14 +204,14 @@ impl AgentQueryRepository {
             }
             AgentRowScope::User(_) | AgentRowScope::Empty => unreachable!(),
         };
-        let total = select.clone().count(db).await.map_err(database_error)?;
+        let total = select.clone().count(db).await.db()?;
         let records = select
             .order_by_asc(dept::Column::Id)
             .offset(offset)
             .limit(limit)
             .all(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(AgentQueryPage { records, total })
     }
 
@@ -236,7 +237,7 @@ impl AgentQueryRepository {
             .limit(limit)
             .all(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn posts_page<C>(
@@ -253,14 +254,14 @@ impl AgentQueryRepository {
             .filter(post::Column::TenantId.eq(tenant_id))
             .filter(post::Column::Status.eq(POST_STATUS_ACTIVE))
             .filter(post::Column::DelFlag.eq(post::SOFT_DELETE_ACTIVE));
-        let total = select.clone().count(db).await.map_err(database_error)?;
+        let total = select.clone().count(db).await.db()?;
         let records = select
             .order_by_asc(post::Column::Id)
             .offset(offset)
             .limit(limit)
             .all(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(AgentQueryPage { records, total })
     }
 
@@ -285,7 +286,7 @@ impl AgentQueryRepository {
             .limit(limit)
             .all(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         let codes = types
             .iter()
             .map(|item| item.code.clone())
@@ -301,7 +302,7 @@ impl AgentQueryRepository {
                 .limit(limit)
                 .all(db)
                 .await
-                .map_err(database_error)?
+                .db()?
         };
         Ok((types, data))
     }
@@ -325,7 +326,7 @@ impl AgentQueryRepository {
             .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL))
             .one(db)
             .await
-            .map_err(database_error)?
+            .db()?
         else {
             return Ok(None);
         };
@@ -342,7 +343,7 @@ impl AgentQueryRepository {
             .limit(limit)
             .all(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(Some((dict_type, data)))
     }
 
@@ -364,7 +365,7 @@ impl AgentQueryRepository {
             .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL))
             .one(db)
             .await
-            .map_err(database_error)?
+            .db()?
         else {
             return Ok(None);
         };
@@ -373,14 +374,14 @@ impl AgentQueryRepository {
             .filter(dict_data::Column::TypeCode.eq(type_code))
             .filter(dict_data::Column::Status.eq(dict_data::Model::STATUS_NORMAL))
             .filter(dict_data::Column::DelFlag.eq(dict_data::Model::DEL_FLAG_NORMAL));
-        let total = select.clone().count(db).await.map_err(database_error)?;
+        let total = select.clone().count(db).await.db()?;
         let records = select
             .order_by_asc(dict_data::Column::Id)
             .offset(offset)
             .limit(limit)
             .all(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(Some(AgentDictionaryPage {
             dict_type,
             records,
@@ -394,8 +395,4 @@ fn empty_page<T>() -> AgentQueryPage<T> {
         records: Vec::new(),
         total: 0,
     }
-}
-
-fn database_error(error: sea_orm::DbErr) -> AppError {
-    AppError::Database(error.to_string())
 }

@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{
@@ -77,12 +78,7 @@ impl UserWritePersistencePort for DatabaseUserWritePersistence {
     }
 
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn UserWriteTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseUserWriteTransaction {
             transaction: transaction.into(),
             authorization_cache: self.authorization_cache.clone(),
@@ -124,7 +120,7 @@ impl UserWriteTransaction for DatabaseUserWriteTransaction {
                 .lock(LockType::Update)
                 .one(&self.transaction)
                 .await
-                .map_err(database_error)?
+                .db()?
                 .is_some(),
             None => true,
         };
@@ -139,7 +135,7 @@ impl UserWriteTransaction for DatabaseUserWriteTransaction {
                 .lock(LockType::Update)
                 .all(&self.transaction)
                 .await
-                .map_err(database_error)?
+                .db()?
                 .into_iter()
                 .map(to_assignment_role)
                 .collect()
@@ -203,7 +199,7 @@ impl UserWriteTransaction for DatabaseUserWriteTransaction {
         let saved = user::ActiveModel::from(model)
             .insert(&self.transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(to_user_record(saved))
     }
 
@@ -225,7 +221,7 @@ impl UserWriteTransaction for DatabaseUserWriteTransaction {
             .reset_all()
             .update(&self.transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(to_user_record(saved))
     }
 
@@ -282,14 +278,12 @@ impl ryframe_application::PersistenceTransaction for DatabaseUserWriteTransactio
             ryframe_application::TransactionAuditMode::CurrentRequest => {
                 self.transaction.commit_audited().await
             }
-            ryframe_application::TransactionAuditMode::Skip => {
-                self.transaction.commit().await.map_err(database_error)
-            }
+            ryframe_application::TransactionAuditMode::Skip => self.transaction.commit().await.db(),
         }
     }
 
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }
 
@@ -313,8 +307,4 @@ pub fn to_user_record(user: user::Model) -> UserWriteRecord {
         remark: user.remark,
         created_at: user.created_at,
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

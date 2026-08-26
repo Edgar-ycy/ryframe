@@ -1,8 +1,8 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{ControlDatabaseCluster, FileRepository, TenantRepository, entities::sys_file};
 use chrono::{DateTime, Utc};
-use ryframe_kernel::AppError;
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
 use ryframe_application::ports::files::{
@@ -24,12 +24,7 @@ pub fn port(database: ControlDatabaseCluster) -> Arc<dyn FileCleanupPersistenceP
 #[async_trait::async_trait]
 impl FileCleanupPersistencePort for DatabaseFileCleanupPersistence {
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn FileCleanupTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseFileCleanupTransaction { transaction })
             as Box<dyn FileCleanupTransaction>)
     }
@@ -229,11 +224,11 @@ impl ryframe_application::PersistenceTransaction for DatabaseFileCleanupTransact
         audit_mode: ryframe_application::TransactionAuditMode,
     ) -> ryframe_kernel::AppResult<()> {
         let _ = audit_mode;
-        self.transaction.commit().await.map_err(database_error)
+        self.transaction.commit().await.db()
     }
 
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }
 
@@ -248,8 +243,4 @@ fn map_record(file: sys_file::Model) -> FileCleanupRecord {
         reservation_expires_at: file.reservation_expires_at,
         del_flag: file.del_flag,
     }
-}
-
-fn database_error(error: sea_orm::DbErr) -> AppError {
-    AppError::Database(error.to_string())
 }

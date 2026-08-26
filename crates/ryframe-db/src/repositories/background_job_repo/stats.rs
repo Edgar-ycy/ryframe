@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::time::Duration as StdDuration;
 
 use chrono::{DateTime, Utc};
@@ -11,7 +12,6 @@ use crate::{entities::background_job, repositories::ExecutionTenantFilter};
 
 use super::{
     BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, BackgroundJobTypeStats,
-    database_error,
 };
 
 const QUEUE_STATS_SQL: &str = r#"
@@ -137,7 +137,7 @@ impl BackgroundJobRepository {
                 values,
             ))
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| {
                 AppError::Database("background job statistics query returned no row".into())
             })?;
@@ -193,10 +193,10 @@ impl BackgroundJobRepository {
                 values,
             ))
             .await
-            .map_err(database_error)?;
+            .db()?;
         let mut grouped = std::collections::BTreeMap::new();
         for row in rows {
-            let job_type: String = row.try_get("", "job_type").map_err(database_error)?;
+            let job_type: String = row.try_get("", "job_type").db()?;
             let ready = read_count(&row, "ready")?;
             let oldest_ready_age = if ready == 0 {
                 None
@@ -248,7 +248,7 @@ impl BackgroundJobRepository {
             .order_by_asc(background_job::Column::Id)
             .one(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(job.map(|job| {
             (now - job.available_at)
                 .to_std()
@@ -319,7 +319,7 @@ fn unique_job_types(job_types: &[String]) -> Vec<String> {
 }
 
 fn read_count(row: &QueryResult, column: &str) -> AppResult<u64> {
-    let value: i64 = row.try_get("", column).map_err(database_error)?;
+    let value: i64 = row.try_get("", column).db()?;
     u64::try_from(value).map_err(|_| {
         AppError::Database(format!(
             "background job statistics column {column} contained a negative value"

@@ -1,4 +1,5 @@
 use super::*;
+use crate::DbResultExt;
 
 mod roles;
 
@@ -29,7 +30,7 @@ pub(crate) async fn apply_resources_in_transaction(
         .filter(dept::Column::TenantId.eq(tenant_id))
         .all(transaction)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let mut department_ids = build_department_paths(&existing_departments)?
         .into_iter()
         .map(|(id, path)| (normalize_department_path(&path), id))
@@ -72,7 +73,7 @@ pub(crate) async fn apply_resources_in_transaction(
             let mut model = dept::Entity::find_by_id(id)
                 .one(transaction)
                 .await
-                .map_err(database_error)?
+                .db()?
                 .ok_or_else(|| AppError::Conflict("部门已不存在".into()))?;
             model.name = item.path.last().cloned().unwrap_or_default();
             model.parent_id = parent_id;
@@ -86,7 +87,7 @@ pub(crate) async fn apply_resources_in_transaction(
                 .reset_all()
                 .update(transaction)
                 .await
-                .map_err(database_error)?;
+                .db()?;
             department_ancestors.insert(id, ancestors);
         } else {
             let id = next_id()?;
@@ -105,7 +106,7 @@ pub(crate) async fn apply_resources_in_transaction(
             })
             .insert(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
             department_ids.insert(normalize_department_path(&item.path), id);
             department_ancestors.insert(id, ancestors);
         }
@@ -147,7 +148,7 @@ async fn upsert_simple_resources(
             .filter(post::Column::TenantId.eq(tenant_id))
             .all(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .into_iter()
             .find(|candidate| {
                 normalize_stable_key(&candidate.code) == normalize_stable_key(&item.code)
@@ -179,7 +180,7 @@ async fn upsert_simple_resources(
             .filter(dict_type::Column::TenantId.eq(tenant_id))
             .all(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .into_iter()
             .find(|candidate| {
                 normalize_stable_key(&candidate.code) == normalize_stable_key(&item.code)
@@ -211,7 +212,7 @@ async fn upsert_simple_resources(
             .filter(dict_data::Column::TenantId.eq(tenant_id))
             .all(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .into_iter()
             .find(|candidate| {
                 normalize_stable_key(&candidate.type_code) == normalize_stable_key(&item.type_code)
@@ -249,7 +250,7 @@ async fn upsert_simple_resources(
             .filter(config::Column::TenantId.eq(tenant_id))
             .all(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .into_iter()
             .find(|candidate| {
                 normalize_stable_key(&candidate.key) == normalize_stable_key(&item.key)
@@ -287,13 +288,9 @@ where
     <<A as ActiveModelTrait>::Entity as EntityTrait>::Model: IntoActiveModel<A>,
 {
     if exists {
-        model
-            .reset_all()
-            .update(transaction)
-            .await
-            .map_err(database_error)?;
+        model.reset_all().update(transaction).await.db()?;
     } else {
-        model.insert(transaction).await.map_err(database_error)?;
+        model.insert(transaction).await.db()?;
     }
     Ok(())
 }
@@ -309,7 +306,7 @@ async fn upsert_permissions(
         .filter(permission::Column::TenantId.eq(tenant_id))
         .all(transaction)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let mut by_code = existing
         .into_iter()
         .map(|item| (normalize_stable_key(&item.code), item))
@@ -401,7 +398,7 @@ async fn upsert_menus(
         .filter(permission::Column::TenantId.eq(tenant_id))
         .all(transaction)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let permission_ids = permissions
         .into_iter()
         .map(|item| (normalize_stable_key(&item.code), item.id))
@@ -411,12 +408,12 @@ async fn upsert_menus(
         .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
         .all(transaction)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let existing_permission_codes = permission::Entity::find()
         .filter(permission::Column::TenantId.eq(tenant_id))
         .all(transaction)
         .await
-        .map_err(database_error)?
+        .db()?
         .into_iter()
         .map(|item| (item.id, item.code))
         .collect::<BTreeMap<_, _>>();

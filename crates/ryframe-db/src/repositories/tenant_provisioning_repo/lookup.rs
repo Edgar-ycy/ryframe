@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, sea_query::LockType};
 
 use super::*;
@@ -12,7 +13,7 @@ impl TenantProvisioningRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     pub async fn admin_username_exists(
@@ -27,7 +28,7 @@ impl TenantProvisioningRepository {
             .one(db)
             .await
             .map(|user| user.is_some())
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     pub async fn find_user_by_username<C>(
@@ -44,6 +45,6 @@ impl TenantProvisioningRepository {
             .filter(user::Column::Username.eq(username))
             .one(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 }

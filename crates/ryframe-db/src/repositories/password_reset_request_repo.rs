@@ -1,5 +1,6 @@
+use crate::DbResultExt;
 use async_trait::async_trait;
-use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
+use ryframe_kernel::{AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
     QueryFilter, QueryOrder,
@@ -21,7 +22,7 @@ impl Repository<password_reset_request::Model, i64> for PasswordResetRequestRepo
             .filter(password_reset_request::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     async fn find_by_page(
@@ -64,7 +65,7 @@ impl Repository<password_reset_request::Model, i64> for PasswordResetRequestRepo
             .filter(password_reset_request::Column::TenantId.eq(tenant_id))
             .exec(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .db()?;
         Ok(())
     }
 }
@@ -82,7 +83,7 @@ impl PasswordResetRequestRepository {
         let result = Self::expire_pending_query(tenant_id, id, evaluated_at)
             .exec(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         Ok(result.rows_affected == 1)
     }
 
@@ -124,7 +125,7 @@ impl PasswordResetRequestRepository {
         let result = Self::complete_pending_query(tenant_id, id, completed_at)
             .exec(txn)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         Ok(result.rows_affected == 1)
     }
 
@@ -172,6 +173,6 @@ impl PasswordResetRequestRepository {
             .order_by_desc(password_reset_request::Column::CreatedAt)
             .all(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 }

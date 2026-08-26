@@ -27,3 +27,4 @@ pub use router::{
     TenantDataTargetVerification, TenantDatabaseRouter,
 };
 pub use ryframe_config::SHARED_CONTROL_TARGET_KEY;
+pub use ryframe_db::DbResultExt;

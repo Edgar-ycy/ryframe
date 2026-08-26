@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{
@@ -256,7 +257,7 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
                 .filter(tenant_config_bundle::Column::BackgroundJobId.eq(job_id))
                 .one(self.database.write())
                 .await
-                .map_err(database_error)
+                .db()
                 .map(|bundle| bundle.map(|bundle| bundle.created_by)),
             TenantConfigJobKind::Preview
             | TenantConfigJobKind::Apply
@@ -425,10 +426,6 @@ async fn transfer_job_owner(
     query
         .one(db)
         .await
-        .map_err(database_error)
+        .db()
         .map(|transfer| transfer.map(|transfer| transfer.requested_by))
-}
-
-fn database_error(error: impl std::fmt::Display) -> ryframe_kernel::AppError {
-    ryframe_kernel::AppError::Database(error.to_string())
 }

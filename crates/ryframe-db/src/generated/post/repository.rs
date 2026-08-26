@@ -18,6 +18,7 @@ use sea_orm::{
 };
 
 use super::entity;
+use crate::DbResultExt;
 
 pub fn port(database: crate::ControlDatabaseCluster) -> Arc<dyn PostPersistencePort> {
     Arc::new(DatabasePostPersistence { database })
@@ -54,7 +55,7 @@ impl PostPersistencePort for DatabasePostPersistence {
             .filter(entity::Column::DelFlag.eq(String::from("0")))
             .one(&database)
             .await
-            .map_err(database_error)?
+            .db()?
             .map(to_record))
     }
 
@@ -92,12 +93,7 @@ impl PostPersistencePort for DatabasePostPersistence {
     }
 
     async fn begin(&self, tenant_id: &str) -> AppResult<Box<dyn PostTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabasePostTransaction {
             tenant_id: tenant_id.to_owned(),
             transaction,
@@ -133,7 +129,7 @@ impl PostTransaction for DatabasePostTransaction {
             .lock(LockType::Update)
             .one(&self.transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .map(to_record))
     }
 
@@ -157,7 +153,7 @@ impl PostTransaction for DatabasePostTransaction {
             .lock(LockType::Update)
             .one(&self.transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .map(to_record))
     }
 
@@ -186,15 +182,12 @@ impl PostTransaction for DatabasePostTransaction {
             .filter(entity::Column::DelFlag.eq(String::from("0")))
             .one(&self.transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::NotFound("资源不存在".into()))?;
         let mut active: entity::ActiveModel = model.into();
         active.del_flag = Set(String::from("2"));
         active.updated_at = Set(chrono::Utc::now());
-        active
-            .update(&self.transaction)
-            .await
-            .map_err(database_error)?;
+        active.update(&self.transaction).await.db()?;
         Ok(())
     }
 }
@@ -206,12 +199,12 @@ impl PersistenceTransaction for DatabasePostTransaction {
             TransactionAuditMode::CurrentRequest => {
                 crate::application_ports::audit::commit_current_audit(self.transaction).await
             }
-            TransactionAuditMode::Skip => self.transaction.commit().await.map_err(database_error),
+            TransactionAuditMode::Skip => self.transaction.commit().await.db(),
         }
     }
 
     async fn rollback(self: Box<Self>) -> AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }
 

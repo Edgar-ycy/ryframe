@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use async_trait::async_trait;
 use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
@@ -40,7 +41,7 @@ impl Repository<service_account::Model, i64> for ServiceAccountRepository {
             .filter(service_account::Column::Id.eq(id))
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     async fn find_by_page(
@@ -91,7 +92,7 @@ impl ServiceAccountRepository {
             .filter(service_account::Column::Code.eq(code))
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     /// 授权栅栏要求事务先锁定租户，再按账号 ID 锁定服务账号。
@@ -106,7 +107,7 @@ impl ServiceAccountRepository {
             .lock(lock.as_lock_type())
             .one(txn)
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))
     }
 
@@ -122,7 +123,7 @@ impl ServiceAccountRepository {
             .lock(lock.as_lock_type())
             .one(txn)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn insert_in_txn(
@@ -171,7 +172,7 @@ impl ServiceAccountRepository {
             .filter(service_account::Column::Id.eq(account_id))
             .exec(txn)
             .await
-            .map_err(database_error)?;
+            .db()?;
         if result.rows_affected != 1 {
             return Err(AppError::NotFound("服务账号不存在".into()));
         }
@@ -192,7 +193,7 @@ impl ServiceAccountRepository {
             .all(db)
             .await
             .map(|rows| rows.into_iter().map(|row| row.role_id).collect())
-            .map_err(database_error)
+            .db()
     }
 
     /// 替换角色前再次拒绝超级角色，数据库复合外键同时阻止跨租户绑定。
@@ -218,7 +219,7 @@ impl ServiceAccountRepository {
                 .lock(LockType::Share)
                 .all(txn)
                 .await
-                .map_err(database_error)?;
+                .db()?;
             if roles.len() != normalized.len() {
                 return Err(AppError::Validation("角色不存在或不属于当前租户".into()));
             }
@@ -231,7 +232,7 @@ impl ServiceAccountRepository {
             .filter(service_account_role::Column::AccountId.eq(account_id))
             .exec(txn)
             .await
-            .map_err(database_error)?;
+            .db()?;
         if !normalized.is_empty() {
             let models = normalized
                 .into_iter()
@@ -243,7 +244,7 @@ impl ServiceAccountRepository {
             service_account_role::Entity::insert_many(models)
                 .exec(txn)
                 .await
-                .map_err(database_error)?;
+                .db()?;
         }
         Ok(())
     }
@@ -253,8 +254,4 @@ fn base_select(tenant_id: &str) -> sea_orm::Select<service_account::Entity> {
     service_account::Entity::find()
         .filter(service_account::Column::TenantId.eq(tenant_id))
         .filter(service_account::Column::DelFlag.eq(service_account::Model::DEL_FLAG_NORMAL))
-}
-
-fn database_error(error: sea_orm::DbErr) -> AppError {
-    AppError::Database(error.to_string())
 }

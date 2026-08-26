@@ -1,10 +1,10 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{
     ControlDatabaseCluster, ExportJobRepository, FileRepository, ReadConsistency,
     entities::export_job,
 };
-use ryframe_kernel::AppError;
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
 use ryframe_application::ports::export::{
@@ -85,12 +85,7 @@ impl ExportCleanupPersistencePort for DatabaseExportCleanupPersistence {
     }
 
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn ExportCleanupTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseExportCleanupTransaction { transaction })
             as Box<dyn ExportCleanupTransaction>)
     }
@@ -142,11 +137,11 @@ impl ryframe_application::PersistenceTransaction for DatabaseExportCleanupTransa
         audit_mode: ryframe_application::TransactionAuditMode,
     ) -> ryframe_kernel::AppResult<()> {
         let _ = audit_mode;
-        self.transaction.commit().await.map_err(database_error)
+        self.transaction.commit().await.db()
     }
 
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }
 
@@ -159,8 +154,4 @@ fn map_cleanup_record(record: export_job::Model) -> ExportCleanupRecord {
         expires_at: record.expires_at,
         delete_pending_at: record.delete_pending_at,
     }
-}
-
-fn database_error(error: sea_orm::DbErr) -> AppError {
-    AppError::Database(error.to_string())
 }

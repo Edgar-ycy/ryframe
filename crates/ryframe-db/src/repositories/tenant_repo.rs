@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait, ExprTrait, PaginatorTrait,
@@ -15,7 +16,7 @@ impl TenantRepository {
             .order_by_asc(tenant::Column::TenantId)
             .all(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 持有租户行锁时检查用户配额。
@@ -33,7 +34,7 @@ impl TenantRepository {
             .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
             .count(txn)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         let limit = u64::try_from(tenant.max_users).unwrap_or_default();
         if limit > 0 && count >= limit {
             return Err(AppError::Validation("已达到租户最大用户数".into()));
@@ -54,7 +55,7 @@ impl TenantRepository {
             .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
             .count(txn)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         let incoming =
             u64::try_from(incoming).map_err(|_| AppError::Validation("导入批次过大".into()))?;
         let limit = u64::try_from(tenant.max_users).unwrap_or_default();
@@ -76,7 +77,7 @@ impl TenantRepository {
         Self::locked_tenant_query(tenant_id)
             .one(txn)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?
+            .db()?
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))
     }
 
@@ -89,10 +90,7 @@ impl TenantRepository {
         txn: &DatabaseTransaction,
         tenant_id: &str,
     ) -> AppResult<Option<tenant::Model>> {
-        Self::locked_tenant_query(tenant_id)
-            .one(txn)
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))
+        Self::locked_tenant_query(tenant_id).one(txn).await.db()
     }
 
     /// 在调用方事务内递增租户授权纪元，并返回递增后的持久化值。
@@ -111,7 +109,7 @@ impl TenantRepository {
             .filter(tenant::Column::TenantId.eq(tenant_id))
             .exec(txn)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         if result.rows_affected != 1 {
             return Err(AppError::NotFound("租户不存在".into()));
         }
@@ -119,7 +117,7 @@ impl TenantRepository {
             .filter(tenant::Column::TenantId.eq(tenant_id))
             .one(txn)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?
+            .db()?
             .map(|tenant| tenant.authorization_epoch)
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))
     }
@@ -140,7 +138,7 @@ impl TenantRepository {
             .filter(tenant::Column::TenantId.eq(tenant_id))
             .exec(txn)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         if result.rows_affected != 1 {
             return Err(AppError::NotFound("租户不存在".into()));
         }
@@ -148,7 +146,7 @@ impl TenantRepository {
             .filter(tenant::Column::TenantId.eq(tenant_id))
             .one(txn)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?
+            .db()?
             .map(|tenant| tenant.runtime_epoch)
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))
     }
@@ -170,7 +168,7 @@ impl TenantRepository {
             .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
             .count(txn)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         let limit = u64::try_from(tenant.max_roles).unwrap_or_default();
         if limit > 0 && count >= limit {
             return Err(AppError::Validation("已达到租户最大角色数".into()));
@@ -193,7 +191,7 @@ impl TenantRepository {
             .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
             .count(txn)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         let user_limit = u64::try_from(max_users).unwrap_or_default();
         if user_limit > 0 && user_count > user_limit {
             return Err(AppError::Validation(format!(
@@ -206,7 +204,7 @@ impl TenantRepository {
             .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
             .count(txn)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         let role_limit = u64::try_from(max_roles).unwrap_or_default();
         if role_limit > 0 && role_count > role_limit {
             return Err(AppError::Validation(format!(
@@ -227,7 +225,7 @@ impl TenantRepository {
             .into_tuple::<Option<i64>>()
             .one(txn)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?
+            .db()?
             .flatten()
             .and_then(|value| u64::try_from(value).ok())
             .unwrap_or_default();
@@ -267,7 +265,7 @@ impl TenantRepository {
             .into_tuple::<Option<i64>>()
             .one(txn)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?
+            .db()?
             .flatten()
             .and_then(|value| u64::try_from(value).ok())
             .unwrap_or_default();
@@ -288,7 +286,7 @@ impl TenantRepository {
             .filter(tenant::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     pub async fn ensure_available(
@@ -344,7 +342,7 @@ impl TenantRepository {
             .filter(tenant::Column::TenantId.eq(&tenant_id))
             .exec(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         if result.rows_affected == 0 {
             return Err(AppError::NotFound("租户不存在".into()));
         }
@@ -369,7 +367,7 @@ impl TenantRepository {
             .filter(tenant::Column::TenantId.eq(tenant_id))
             .exec(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         if result.rows_affected == 0 {
             return Err(AppError::NotFound("租户不存在".into()));
         }

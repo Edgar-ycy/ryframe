@@ -1,5 +1,7 @@
 macro_rules! insert_entity {
     ($entity:ident, $db:expr, $tenant_id:expr, $model:expr) => {{
+        use $crate::DbResultExt as _;
+
         ryframe_kernel::TenantId::parse($tenant_id)?;
         if $model.tenant_id != $tenant_id {
             return Err(ryframe_kernel::AppError::Authorization(
@@ -7,15 +9,14 @@ macro_rules! insert_entity {
             ));
         }
         let active: $entity::ActiveModel = $model.into();
-        active
-            .insert($db)
-            .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))
+        active.insert($db).await.db()
     }};
 }
 
 macro_rules! update_entity {
     ($entity:ident, $db:expr, $tenant_id:expr, $model:expr) => {{
+        use $crate::DbResultExt as _;
+
         ryframe_kernel::TenantId::parse($tenant_id)?;
         if $model.tenant_id != $tenant_id {
             return Err(ryframe_kernel::AppError::Authorization(
@@ -26,21 +27,19 @@ macro_rules! update_entity {
             .filter($entity::Column::TenantId.eq($tenant_id))
             .one($db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
+            .db()?;
         if exists.is_none() {
             return Err(ryframe_kernel::AppError::NotFound("记录不存在".to_string()));
         }
         let active: $entity::ActiveModel = $model.into();
-        active
-            .reset_all()
-            .update($db)
-            .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))
+        active.reset_all().update($db).await.db()
     }};
 }
 
 macro_rules! soft_delete_entity {
     ($entity:ident, $db:expr, $tenant_id:expr, $id:expr) => {{
+        use $crate::DbResultExt as _;
+
         ryframe_kernel::TenantId::parse($tenant_id)?;
         let result = $entity::Entity::update_many()
             .col_expr(
@@ -55,7 +54,7 @@ macro_rules! soft_delete_entity {
             .filter($entity::Column::TenantId.eq($tenant_id))
             .exec($db)
             .await
-            .map_err(|e| ryframe_kernel::AppError::Database(e.to_string()))?;
+            .db()?;
         if result.rows_affected == 0 {
             return Err(ryframe_kernel::AppError::NotFound("记录不存在".to_string()));
         }

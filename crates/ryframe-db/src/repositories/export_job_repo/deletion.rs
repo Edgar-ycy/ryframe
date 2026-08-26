@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
@@ -8,7 +9,7 @@ use sea_orm::{
 
 use crate::entities::{background_job, export_job};
 
-use super::{ExportJobRepository, database_error};
+use super::ExportJobRepository;
 
 /// 整批导出记录进入删除墓碑后的事务结果。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -33,7 +34,7 @@ impl ExportJobRepository {
             .order_by_asc(export_job::Column::Id)
             .all(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         validate_candidate_ownership(&snapshot, ids.len(), tenant_id, requester_id)?;
         let background_ids = snapshot
             .iter()
@@ -45,14 +46,14 @@ impl ExportJobRepository {
             .lock(LockType::Update)
             .all(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         let exports = export_job::Entity::find()
             .filter(export_job::Column::Id.is_in(ids.iter().copied()))
             .order_by_asc(export_job::Column::Id)
             .lock(LockType::Update)
             .all(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         validate_candidate_ownership(&exports, ids.len(), tenant_id, requester_id)?;
         validate_deletion_candidates(&exports, &background_jobs, now)?;
 
@@ -74,7 +75,7 @@ impl ExportJobRepository {
             .filter(export_job::Column::DeletePendingAt.is_null())
             .exec(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         if updated.rows_affected != ids.len() as u64 {
             return Err(AppError::Conflict("导出任务删除状态已变化".into()));
         }
@@ -98,7 +99,7 @@ impl ExportJobRepository {
         if let Some(after_id) = after_id {
             query = query.filter(export_job::Column::Id.gt(after_id));
         }
-        query.all(db).await.map_err(database_error)
+        query.all(db).await.db()
     }
 
     /// 对象与独占文件元数据已删除后，移除仍处于墓碑状态的公开任务记录。
@@ -113,7 +114,7 @@ impl ExportJobRepository {
             .exec(transaction)
             .await
             .map(|result| result.rows_affected == 1)
-            .map_err(database_error)
+            .db()
     }
 }
 

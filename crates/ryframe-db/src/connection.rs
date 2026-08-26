@@ -1,8 +1,9 @@
 use std::{collections::HashSet, time::Duration};
 
+use crate::DbResultExt;
 use log::LevelFilter;
 use ryframe_config::{DbConnection, SqlLogLevel};
-use ryframe_kernel::{AppError, AppResult};
+use ryframe_kernel::AppResult;
 use sea_orm::{ConnectOptions, Database, DatabaseConnection, FromQueryResult, Statement};
 
 /// 根据数据库配置创建连接池
@@ -39,9 +40,7 @@ pub async fn connect_with_sql_logging(
     // 根据配置控制 SQL 日志输出
     configure_sql_logging(&mut opt, sql_log_level, slow_threshold_ms);
 
-    Database::connect(opt)
-        .await
-        .map_err(|e| AppError::Database(format!("数据库连接失败: {}", e)))
+    Database::connect(opt).await.db_context("数据库连接失败")
 }
 
 /// 根据 SqlLogLevel 配置 sqlx 日志
@@ -72,9 +71,7 @@ fn configure_sql_logging(opt: &mut ConnectOptions, level: SqlLogLevel, slow_thre
 
 /// 健康检查：发送一条简单查询验证连接可用
 pub async fn ping(db: &DatabaseConnection) -> AppResult<()> {
-    db.ping()
-        .await
-        .map_err(|e| AppError::Database(format!("数据库健康检查失败: {}", e)))
+    db.ping().await.db_context("数据库健康检查失败")
 }
 
 /// 所有必需的业务表（与初始化 SQL 和迁移保持同步）。

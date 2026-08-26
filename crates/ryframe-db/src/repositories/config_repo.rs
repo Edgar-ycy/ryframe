@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use async_trait::async_trait;
 use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
@@ -29,7 +30,7 @@ impl Repository<config::Model, i64> for ConfigRepository {
             .filter(config::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     async fn find_by_page(
@@ -78,13 +79,13 @@ impl Repository<config::Model, i64> for ConfigRepository {
             .filter(config::Column::TenantId.eq(tenant_id))
             .exec(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .db()?;
         // 重新查询返回最新数据
         config::Entity::find_by_id(entity.id)
             .filter(config::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?
+            .db()?
             .ok_or_else(|| AppError::NotFound("参数配置不存在".into()))
     }
 
@@ -119,7 +120,7 @@ impl ConfigRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     pub async fn insert_in_transaction(
@@ -134,7 +135,7 @@ impl ConfigRepository {
         config::ActiveModel::from(entity)
             .insert(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     pub async fn update_in_transaction(
@@ -159,7 +160,7 @@ impl ConfigRepository {
             .filter(config::Column::DelFlag.eq(config::Model::DEL_FLAG_NORMAL))
             .exec(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         if result.rows_affected != 1 {
             return Err(AppError::NotFound("参数配置不存在".into()));
         }
@@ -167,7 +168,7 @@ impl ConfigRepository {
             .filter(config::Column::TenantId.eq(tenant_id))
             .one(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?
+            .db()?
             .ok_or_else(|| AppError::NotFound("参数配置不存在".into()))
     }
 
@@ -188,7 +189,7 @@ impl ConfigRepository {
             .filter(config::Column::DelFlag.eq(config::Model::DEL_FLAG_NORMAL))
             .exec(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         if result.rows_affected != 1 {
             return Err(AppError::NotFound("参数配置不存在".into()));
         }
@@ -216,7 +217,7 @@ impl ConfigRepository {
             .limit(window.limit())
             .all(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 在同一主库快照内统计导出匹配行并捕获最大主键。
@@ -263,6 +264,6 @@ impl ConfigRepository {
             .filter(config::Column::DelFlag.eq(config::Model::DEL_FLAG_NORMAL))
             .one(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 }

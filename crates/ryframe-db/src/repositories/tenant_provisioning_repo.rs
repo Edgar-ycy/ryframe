@@ -1,7 +1,8 @@
+use crate::DbResultExt;
 use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
-use ryframe_kernel::{AppError, AppResult};
+use ryframe_kernel::AppResult;
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter,
     QueryOrder, QuerySelect,
@@ -69,7 +70,7 @@ impl TenantProvisioningRepository {
             .order_by_asc(menu::Column::Id)
             .all(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?
+            .db()?
             .into_iter()
             // 数据保留是全平台硬删除能力，只能存在于 system 租户。
             .filter(|menu| menu.route_key.as_deref() != Some("monitor.retention"))
@@ -92,32 +93,32 @@ impl TenantProvisioningRepository {
             .filter(post::Column::DelFlag.eq(post::SOFT_DELETE_ACTIVE))
             .all(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         let system_configs = config::Entity::find()
             .filter(config::Column::TenantId.eq(TEMPLATE_TENANT_ID))
             .filter(config::Column::DelFlag.eq(config::Model::DEL_FLAG_NORMAL))
             .all(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         let system_dict_types = dict_type::Entity::find()
             .filter(dict_type::Column::TenantId.eq(TEMPLATE_TENANT_ID))
             .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL))
             .all(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         let mut system_dict_data = dict_data::Entity::find()
             .filter(dict_data::Column::TenantId.eq(TEMPLATE_TENANT_ID))
             .filter(dict_data::Column::DelFlag.eq(dict_data::Model::DEL_FLAG_NORMAL))
             .all(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         let system_depts = dept::Entity::find()
             .filter(dept::Column::TenantId.eq(TEMPLATE_TENANT_ID))
             .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
             .order_by_asc(dept::Column::Id)
             .all(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
 
         retain_data_for_active_dict_types(&system_dict_types, &mut system_dict_data);
         let mut system_permissions = permission::Entity::find()
@@ -131,7 +132,7 @@ impl TenantProvisioningRepository {
             .order_by_asc(permission::Column::Id)
             .all(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         let mut retained_permission_ids = system_permissions
             .iter()
             .filter(|permission| {
@@ -175,7 +176,7 @@ impl TenantProvisioningRepository {
         }
         .insert(transaction)
         .await
-        .map_err(|error| AppError::Database(error.to_string()))?;
+        .db()?;
 
         tenant_provision_request::ActiveModel {
             tenant_id: ActiveValue::Set(tenant_id.clone()),
@@ -186,7 +187,7 @@ impl TenantProvisioningRepository {
         }
         .insert(transaction)
         .await
-        .map_err(|error| AppError::Database(error.to_string()))?;
+        .db()?;
 
         CacheNamespaceVersionRepository
             .insert_initial_in_transaction(transaction, &tenant_id, CONFIG_CACHE_NAMESPACE, now)
@@ -212,7 +213,7 @@ impl TenantProvisioningRepository {
         }
         .insert(transaction)
         .await
-        .map_err(|error| AppError::Database(error.to_string()))?;
+        .db()?;
         role::ActiveModel {
             id: ActiveValue::Set(user_role_id),
             tenant_id: ActiveValue::Set(tenant_id.clone()),
@@ -229,7 +230,7 @@ impl TenantProvisioningRepository {
         }
         .insert(transaction)
         .await
-        .map_err(|error| AppError::Database(error.to_string()))?;
+        .db()?;
 
         user::ActiveModel {
             id: ActiveValue::Set(user_id),
@@ -254,7 +255,7 @@ impl TenantProvisioningRepository {
         }
         .insert(transaction)
         .await
-        .map_err(|error| AppError::Database(error.to_string()))?;
+        .db()?;
         user_role::ActiveModel {
             tenant_id: ActiveValue::Set(tenant_id.clone()),
             user_id: ActiveValue::Set(user_id),
@@ -262,7 +263,7 @@ impl TenantProvisioningRepository {
         }
         .insert(transaction)
         .await
-        .map_err(|error| AppError::Database(error.to_string()))?;
+        .db()?;
 
         let mut permission_ids = HashMap::new();
         let mut role_permissions = Vec::new();
@@ -300,7 +301,7 @@ impl TenantProvisioningRepository {
             }
             .insert(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
 
             if auto_assign {
                 role_permissions.push(role_permission::ActiveModel {
@@ -326,7 +327,7 @@ impl TenantProvisioningRepository {
             role_permission::Entity::insert_many(role_permissions)
                 .exec(transaction)
                 .await
-                .map_err(|error| AppError::Database(error.to_string()))?;
+                .db()?;
         }
 
         let mut menu_ids = HashMap::new();
@@ -357,7 +358,7 @@ impl TenantProvisioningRepository {
             }
             .insert(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
             menu_ids.insert(source.id, id);
         }
 
@@ -382,7 +383,7 @@ impl TenantProvisioningRepository {
             post::Entity::insert_many(posts)
                 .exec(transaction)
                 .await
-                .map_err(|error| AppError::Database(error.to_string()))?;
+                .db()?;
         }
 
         let configs = system_configs
@@ -406,7 +407,7 @@ impl TenantProvisioningRepository {
             config::Entity::insert_many(configs)
                 .exec(transaction)
                 .await
-                .map_err(|error| AppError::Database(error.to_string()))?;
+                .db()?;
         }
 
         let dict_types = system_dict_types
@@ -429,7 +430,7 @@ impl TenantProvisioningRepository {
             dict_type::Entity::insert_many(dict_types)
                 .exec(transaction)
                 .await
-                .map_err(|error| AppError::Database(error.to_string()))?;
+                .db()?;
         }
 
         let dict_data_models = system_dict_data
@@ -455,7 +456,7 @@ impl TenantProvisioningRepository {
             dict_data::Entity::insert_many(dict_data_models)
                 .exec(transaction)
                 .await
-                .map_err(|error| AppError::Database(error.to_string()))?;
+                .db()?;
         }
 
         let mut dept_ids: HashMap<i64, i64> = HashMap::new();
@@ -487,7 +488,7 @@ impl TenantProvisioningRepository {
             }
             .insert(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
             dept_ids.insert(source.id, id);
         }
 

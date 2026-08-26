@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{ControlDatabaseCluster, OutboxEventRepository, RecordOutboxEvent};
@@ -27,15 +28,10 @@ impl AuditOutboxPersistencePort for DatabaseAuditOutboxPersistence {
         event: &'a AuditOperationEvent,
         max_attempts: i32,
     ) -> ryframe_kernel::AppResult<()> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         let result = record_event_in_transaction(&transaction, event, max_attempts).await;
         match result {
-            Ok(()) => transaction.commit().await.map_err(database_error),
+            Ok(()) => transaction.commit().await.db(),
             Err(error) => {
                 let _ = transaction.rollback().await;
                 Err(error)
@@ -60,7 +56,7 @@ pub async fn record_current_audit_in_transaction(
 /// 在提交调用方事务前自动写入当前请求审计事件，并在提交成功后完成绑定标记。
 pub async fn commit_current_audit(transaction: DatabaseTransaction) -> AppResult<()> {
     let binding = record_current_audit_in_transaction(&transaction).await?;
-    transaction.commit().await.map_err(database_error)?;
+    transaction.commit().await.db()?;
     if let Some(binding) = binding {
         binding.mark_committed();
     }
@@ -96,8 +92,4 @@ async fn record_event_in_transaction(
         )
         .await?;
     Ok(())
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

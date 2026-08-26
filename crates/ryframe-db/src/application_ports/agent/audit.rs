@@ -1,7 +1,7 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{ControlDatabaseCluster, ServiceAccessAuditRepository, entities::service_access_audit};
-use ryframe_kernel::AppError;
 use sea_orm::TransactionTrait;
 
 use ryframe_application::agent::{
@@ -19,12 +19,7 @@ struct DatabaseAgentAuditWrite {
 #[async_trait::async_trait]
 impl AgentAuditWritePort for DatabaseAgentAuditWrite {
     async fn record_failure(&self, audit: AgentAccessAuditDraft) -> ryframe_kernel::AppResult<()> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         let result = async {
             let completed_at = crate::repositories::database_utc_now(&transaction).await?;
             let audit = audit.complete(completed_at);
@@ -36,7 +31,7 @@ impl AgentAuditWritePort for DatabaseAgentAuditWrite {
         .await;
         match result {
             Ok(()) => {
-                transaction.commit().await.map_err(database_error)?;
+                transaction.commit().await.db()?;
                 Ok(())
             }
             Err(error) => {
@@ -75,8 +70,4 @@ pub fn model(audit: AgentAccessAuditRecord) -> service_access_audit::Model {
         started_at: draft.started_at,
         completed_at: audit.completed_at,
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
@@ -116,7 +117,7 @@ impl TenantUsageRepository {
                 values.clone(),
             ))
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::Database("租户容量分页统计没有返回记录".into()))?;
         let total = read_count(&total_row, "total")?;
 
@@ -140,9 +141,9 @@ LIMIT ? OFFSET ?
                 record_values,
             ))
             .await
-            .map_err(database_error)?
+            .db()?
             .into_iter()
-            .map(|row| tenant::Model::from_query_result(&row, "").map_err(database_error))
+            .map(|row| tenant::Model::from_query_result(&row, "").db())
             .collect::<AppResult<Vec<_>>>()?;
         Ok(PageResult::new(records, total, page))
     }
@@ -206,11 +207,11 @@ ORDER BY `tenant`.`tenant_id` ASC
             values,
         ))
         .await
-        .map_err(database_error)?
+        .db()?
         .into_iter()
         .map(|row| {
             Ok(TenantUsageAggregate {
-                tenant_id: row.try_get("", "tenant_id").map_err(database_error)?,
+                tenant_id: row.try_get("", "tenant_id").db()?,
                 users: read_count(&row, "used_users")?,
                 roles: read_count(&row, "used_roles")?,
                 storage_bytes: read_count(&row, "used_storage_bytes")?,
@@ -308,11 +309,7 @@ fn contains_like(value: &str) -> String {
 }
 
 fn read_count(row: &QueryResult, column: &str) -> AppResult<u64> {
-    let value: i64 = row.try_get("", column).map_err(database_error)?;
+    let value: i64 = row.try_get("", column).db()?;
     u64::try_from(value)
         .map_err(|_| AppError::Database(format!("租户容量统计字段 {column} 返回了负数")))
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

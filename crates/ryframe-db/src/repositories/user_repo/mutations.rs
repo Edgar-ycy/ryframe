@@ -1,4 +1,5 @@
 use super::*;
+use crate::DbResultExt;
 
 impl UserRepository {
     pub async fn find_by_id_with_data_scope(
@@ -12,10 +13,7 @@ impl UserRepository {
         let Some(select) = Self::apply_data_scope(select, tenant_id, scope_ctx) else {
             return Ok(None);
         };
-        select
-            .one(db)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))
+        select.one(db).await.db()
     }
 
     /// 在一次当前读中解析数据范围访问权限并锁定目标用户。
@@ -30,11 +28,7 @@ impl UserRepository {
         let Some(select) = Self::apply_data_scope(select, tenant_id, scope_ctx) else {
             return Ok(None);
         };
-        select
-            .lock(LockType::Update)
-            .one(txn)
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))
+        select.lock(LockType::Update).one(txn).await.db()
     }
 
     pub async fn find_by_id_for_update(
@@ -48,7 +42,7 @@ impl UserRepository {
             .lock(LockType::Update)
             .one(txn)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     pub async fn update_avatar_in_txn(
@@ -72,7 +66,7 @@ impl UserRepository {
             .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
             .exec(txn)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         if result.rows_affected != 1 {
             return Err(AppError::NotFound("用户不存在".into()));
         }
@@ -89,7 +83,7 @@ impl UserRepository {
             .filter(user::Column::AvatarFileId.eq(avatar_file_id))
             .count(txn)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     pub async fn delete_many<C>(&self, db: &C, tenant_id: &str, ids: &[i64]) -> AppResult<u64>
@@ -110,7 +104,7 @@ impl UserRepository {
             .exec(db)
             .await
             .map(|result| result.rows_affected)
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     pub async fn update_status<C>(
@@ -130,7 +124,7 @@ impl UserRepository {
             .filter(user::Column::TenantId.eq(tenant_id))
             .exec(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .db()?;
         if result.rows_affected == 0 {
             return Err(AppError::NotFound("用户不存在".into()));
         }
@@ -159,7 +153,7 @@ impl UserRepository {
             .exec(db)
             .await
             .map(|result| result.rows_affected)
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     pub async fn find_authorization_versions<C>(
@@ -179,7 +173,7 @@ impl UserRepository {
             .filter(user::Column::Id.is_in(user_ids.iter().copied()))
             .all(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?
+            .db()?
             .into_iter()
             .map(|user| (user.id, user.authorization_version))
             .collect::<Vec<_>>();

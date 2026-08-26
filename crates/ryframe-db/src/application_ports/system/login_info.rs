@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{
@@ -93,12 +94,7 @@ impl LoginInfoPersistencePort for DatabaseLoginInfoPersistence {
     }
 
     async fn begin(&self) -> AppResult<Box<dyn LoginInfoTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseLoginInfoTransaction { transaction }) as Box<dyn LoginInfoTransaction>)
     }
 }
@@ -119,12 +115,12 @@ impl PersistenceTransaction for DatabaseLoginInfoTransaction {
             TransactionAuditMode::CurrentRequest => {
                 super::super::audit::commit_current_audit(self.transaction).await
             }
-            TransactionAuditMode::Skip => self.transaction.commit().await.map_err(database_error),
+            TransactionAuditMode::Skip => self.transaction.commit().await.db(),
         }
     }
 
     async fn rollback(self: Box<Self>) -> AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }
 
@@ -164,8 +160,4 @@ fn to_entity(tenant_id: &str, record: LoginInfoRecord) -> login_info::Model {
         msg: record.message,
         login_time: record.login_time,
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> ryframe_kernel::AppError {
-    ryframe_kernel::AppError::Database(error.to_string())
 }

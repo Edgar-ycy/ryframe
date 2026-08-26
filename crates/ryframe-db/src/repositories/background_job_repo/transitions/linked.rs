@@ -1,4 +1,5 @@
 use super::*;
+use crate::DbResultExt;
 
 impl BackgroundJobRepository {
     pub(super) async fn sync_linked_job_state<C>(
@@ -29,7 +30,7 @@ impl BackgroundJobRepository {
                         ]))
                         .exec(db)
                         .await
-                        .map_err(database_error)?;
+                        .db()?;
                     if result.rows_affected > 0 {
                         return Ok(true);
                     }
@@ -76,7 +77,7 @@ impl BackgroundJobRepository {
                         Expr::value(Option::<String>::None),
                     );
                 }
-                update.exec(db).await.map_err(database_error)?;
+                update.exec(db).await.db()?;
             }
             EXPORT_JOB_TYPE => {
                 let (status, completed_at, statuses) = match disposition {
@@ -137,7 +138,7 @@ impl BackgroundJobRepository {
                         Expr::value(Option::<String>::None),
                     );
                 }
-                update.exec(db).await.map_err(database_error)?;
+                update.exec(db).await.db()?;
             }
             DATA_RETENTION_JOB_TYPE => {
                 Self::ensure_retention_run(db, job, now).await?;
@@ -185,7 +186,7 @@ impl BackgroundJobRepository {
                         Expr::value(Option::<String>::None),
                     );
                 }
-                update.exec(db).await.map_err(database_error)?;
+                update.exec(db).await.db()?;
             }
             TENANT_CONFIG_EXPORT_JOB_TYPE => {
                 let (status, statuses) = match disposition {
@@ -229,7 +230,7 @@ impl BackgroundJobRepository {
                     .exec(db)
                     .await
                     .map(|result| result.rows_affected == 1)
-                    .map_err(database_error)?;
+                    .db()?;
             }
             TENANT_CONFIG_PREVIEW_JOB_TYPE => {
                 linked_transitioned = Self::sync_config_transfer_state(

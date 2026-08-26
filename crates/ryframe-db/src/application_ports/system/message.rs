@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{
@@ -99,17 +100,12 @@ impl MessagePersistencePort for DatabaseMessagePersistence {
         Ok(message::Entity::find_by_id(message_id)
             .one(self.database.write())
             .await
-            .map_err(database_error)?
+            .db()?
             .map(to_message_record))
     }
 
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn MessageTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseMessageTransaction { transaction }) as Box<dyn MessageTransaction>)
     }
 }
@@ -265,12 +261,12 @@ impl PersistenceTransaction for DatabaseMessageTransaction {
             TransactionAuditMode::CurrentRequest => {
                 super::super::audit::commit_current_audit(self.transaction).await
             }
-            TransactionAuditMode::Skip => self.transaction.commit().await.map_err(database_error),
+            TransactionAuditMode::Skip => self.transaction.commit().await.db(),
         }
     }
 
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }
 
@@ -298,8 +294,4 @@ fn to_message_record(message: message::Model) -> MessageRecord {
         published_at: message.published_at,
         expires_at: message.expires_at,
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> ryframe_kernel::AppError {
-    ryframe_kernel::AppError::Database(error.to_string())
 }

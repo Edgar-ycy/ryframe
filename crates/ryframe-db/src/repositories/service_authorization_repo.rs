@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
@@ -42,7 +43,7 @@ impl ServiceAuthorizationRepository {
                     .lock(LockType::Share)
                     .one(txn)
                     .await
-                    .map_err(database_error)?
+                    .db()?
                     .ok_or_else(|| AppError::NotFound("委托用户不存在".into()))?,
             )
         } else {
@@ -55,7 +56,7 @@ impl ServiceAuthorizationRepository {
             .lock(LockType::Share)
             .all(txn)
             .await
-            .map_err(database_error)?;
+            .db()?;
         let user_relations = if let Some(user_id) = represented_user_id {
             user_role::Entity::find()
                 .filter(user_role::Column::TenantId.eq(tenant_id))
@@ -64,7 +65,7 @@ impl ServiceAuthorizationRepository {
                 .lock(LockType::Share)
                 .all(txn)
                 .await
-                .map_err(database_error)?
+                .db()?
         } else {
             Vec::new()
         };
@@ -93,7 +94,7 @@ impl ServiceAuthorizationRepository {
                 .lock(LockType::Share)
                 .all(txn)
                 .await
-                .map_err(database_error)?
+                .db()?
         };
         let permission_relations = if role_ids.is_empty() {
             Vec::new()
@@ -106,7 +107,7 @@ impl ServiceAuthorizationRepository {
                 .lock(LockType::Share)
                 .all(txn)
                 .await
-                .map_err(database_error)?
+                .db()?
         };
         let mut permission_ids = permission_relations
             .iter()
@@ -124,7 +125,7 @@ impl ServiceAuthorizationRepository {
                 .lock(LockType::Share)
                 .all(txn)
                 .await
-                .map_err(database_error)?
+                .db()?
         };
         let role_departments = if role_ids.is_empty() {
             Vec::new()
@@ -137,7 +138,7 @@ impl ServiceAuthorizationRepository {
                 .lock(LockType::Share)
                 .all(txn)
                 .await
-                .map_err(database_error)?
+                .db()?
         };
         let departments = dept::Entity::find()
             .filter(dept::Column::TenantId.eq(tenant_id))
@@ -146,7 +147,7 @@ impl ServiceAuthorizationRepository {
             .lock(LockType::Share)
             .all(txn)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(ServiceAuthorizationSnapshot {
             user,
             account_role_ids,
@@ -158,8 +159,4 @@ impl ServiceAuthorizationRepository {
             departments,
         })
     }
-}
-
-fn database_error(error: sea_orm::DbErr) -> AppError {
-    AppError::Database(error.to_string())
 }

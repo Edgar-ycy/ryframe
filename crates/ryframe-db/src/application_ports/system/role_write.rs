@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{
@@ -46,12 +47,7 @@ struct DatabaseRoleWriteTransaction {
 #[async_trait]
 impl RoleWritePort for DatabaseRoleWrite {
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn RoleWriteTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseRoleWriteTransaction {
             transaction: transaction.into(),
             authorization_cache: self.authorization_cache.clone(),
@@ -92,7 +88,7 @@ impl RoleWriteTransaction for DatabaseRoleWriteTransaction {
             .lock(LockType::Update)
             .one(&self.transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .map(to_record))
     }
 
@@ -126,7 +122,7 @@ impl RoleWriteTransaction for DatabaseRoleWriteTransaction {
             .insert(&self.transaction)
             .await
             .map(to_record)
-            .map_err(database_error)
+            .db()
     }
 
     async fn update(
@@ -140,7 +136,7 @@ impl RoleWriteTransaction for DatabaseRoleWriteTransaction {
             .update(&self.transaction)
             .await
             .map(to_record)
-            .map_err(database_error)
+            .db()
     }
 
     async fn delete_many(&self, tenant_id: &str, ids: &[i64]) -> ryframe_kernel::AppResult<u64> {
@@ -170,7 +166,7 @@ impl RoleWriteTransaction for DatabaseRoleWriteTransaction {
                     })
                     .collect()
             })
-            .map_err(database_error)
+            .db()
     }
 
     async fn ensure_permission_codes_enabled(
@@ -212,7 +208,7 @@ impl RoleWriteTransaction for DatabaseRoleWriteTransaction {
             .all(&self.transaction)
             .await
             .map(|departments| departments.into_iter().map(|dept| dept.id).collect())
-            .map_err(database_error)
+            .db()
     }
 
     async fn replace_data_scope(
@@ -261,12 +257,12 @@ impl PersistenceTransaction for DatabaseRoleWriteTransaction {
     ) -> ryframe_kernel::AppResult<()> {
         match audit_mode {
             TransactionAuditMode::CurrentRequest => self.transaction.commit_audited().await,
-            TransactionAuditMode::Skip => self.transaction.commit().await.map_err(database_error),
+            TransactionAuditMode::Skip => self.transaction.commit().await.db(),
         }
     }
 
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }
 
@@ -300,8 +296,4 @@ fn to_entity(tenant_id: &str, record: RoleRecord) -> role::Model {
         created_at: record.created_at,
         updated_at: record.updated_at,
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> ryframe_kernel::AppError {
-    ryframe_kernel::AppError::Database(error.to_string())
 }

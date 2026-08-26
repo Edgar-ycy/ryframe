@@ -1,4 +1,5 @@
 use super::*;
+use crate::DbResultExt;
 
 pub(super) async fn upsert_roles_and_relations(
     transaction: &sea_orm::DatabaseTransaction,
@@ -12,7 +13,7 @@ pub(super) async fn upsert_roles_and_relations(
         .filter(permission::Column::TenantId.eq(tenant_id))
         .all(transaction)
         .await
-        .map_err(database_error)?
+        .db()?
         .into_iter()
         .map(|item| (normalize_stable_key(&item.code), item.id))
         .collect::<BTreeMap<_, _>>();
@@ -34,7 +35,7 @@ pub(super) async fn upsert_roles_and_relations(
             .filter(role::Column::TenantId.eq(tenant_id))
             .all(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .into_iter()
             .find(|candidate| {
                 normalize_stable_key(&candidate.code) == normalize_stable_key(&item.code)
@@ -63,7 +64,7 @@ pub(super) async fn upsert_roles_and_relations(
             .filter(role_permission::Column::RoleId.eq(role_id))
             .exec(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         let relations = item
             .permission_codes
             .iter()
@@ -83,14 +84,14 @@ pub(super) async fn upsert_roles_and_relations(
             role_permission::Entity::insert_many(relations)
                 .exec(transaction)
                 .await
-                .map_err(database_error)?;
+                .db()?;
         }
         role_dept::Entity::delete_many()
             .filter(role_dept::Column::TenantId.eq(tenant_id))
             .filter(role_dept::Column::RoleId.eq(role_id))
             .exec(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         let departments = item
             .custom_department_paths
             .iter()
@@ -112,7 +113,7 @@ pub(super) async fn upsert_roles_and_relations(
             role_dept::Entity::insert_many(departments)
                 .exec(transaction)
                 .await
-                .map_err(database_error)?;
+                .db()?;
         }
     }
     Ok(())

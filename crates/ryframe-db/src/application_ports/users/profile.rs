@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{
@@ -95,12 +96,7 @@ impl ProfilePersistencePort for DatabaseProfilePersistence {
     }
 
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn ProfileTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseProfileTransaction {
             transaction: transaction.into(),
             authorization_cache: self.authorization_cache.clone(),
@@ -147,7 +143,7 @@ impl ProfileTransaction for DatabaseProfileTransaction {
             .update(&self.transaction)
             .await
             .map(|_| ())
-            .map_err(database_error)
+            .db()
     }
 
     async fn lock_tenant<'a>(&'a self, tenant_id: &'a str) -> ryframe_kernel::AppResult<()> {
@@ -174,7 +170,7 @@ impl ProfileTransaction for DatabaseProfileTransaction {
             .update(&self.transaction)
             .await
             .map(|_| ())
-            .map_err(database_error)
+            .db()
     }
 
     async fn increment_user_authorization_version<'a>(
@@ -281,15 +277,11 @@ impl PersistenceTransaction for DatabaseProfileTransaction {
     ) -> ryframe_kernel::AppResult<()> {
         match audit_mode {
             TransactionAuditMode::CurrentRequest => self.transaction.commit_audited().await,
-            TransactionAuditMode::Skip => self.transaction.commit().await.map_err(database_error),
+            TransactionAuditMode::Skip => self.transaction.commit().await.db(),
         }
     }
 
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> ryframe_kernel::AppError {
-    ryframe_kernel::AppError::Database(error.to_string())
 }

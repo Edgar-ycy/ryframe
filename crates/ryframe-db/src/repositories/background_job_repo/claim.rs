@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
@@ -10,7 +11,7 @@ use sea_orm::{
 
 use crate::{entities::background_job, repositories::ExecutionTenantFilter};
 
-use super::{BackgroundJobRepository, database_error, validate_lease};
+use super::{BackgroundJobRepository, validate_lease};
 
 impl BackgroundJobRepository {
     /// 通过 `FOR UPDATE SKIP LOCKED` 领取一条可执行任务。
@@ -26,15 +27,15 @@ impl BackgroundJobRepository {
         tenant_scope: &ExecutionTenantFilter,
     ) -> AppResult<Option<background_job::Model>> {
         validate_lease(worker_id, lease_duration)?;
-        let txn = db.begin().await.map_err(database_error)?;
+        let txn = db.begin().await.db()?;
 
         let Some(job) = Self::claimable_query(now, tenant_scope)
             .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
             .one(&txn)
             .await
-            .map_err(database_error)?
+            .db()?
         else {
-            txn.commit().await.map_err(database_error)?;
+            txn.commit().await.db()?;
             return Ok(None);
         };
 
@@ -49,9 +50,9 @@ impl BackgroundJobRepository {
         active.lease_until = Set(Some(now + lease_duration));
         active.updated_at = Set(now);
         active.completed_at = Set(None);
-        let claimed = active.update(&txn).await.map_err(database_error)?;
+        let claimed = active.update(&txn).await.db()?;
 
-        txn.commit().await.map_err(database_error)?;
+        txn.commit().await.db()?;
         Ok(Some(claimed))
     }
 

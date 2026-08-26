@@ -1,6 +1,7 @@
 #[macro_use]
 mod macros;
 
+use crate::DbResultExt;
 use ryframe_kernel::{AppError, AppResult, ExportQuerySnapshot};
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QuerySelect, Select, sea_query::Expr};
 
@@ -120,7 +121,7 @@ where
         .into_tuple::<(i64, Option<i64>)>()
         .one(db)
         .await
-        .map_err(|error| AppError::Database(error.to_string()))?
+        .db()?
         .ok_or_else(|| AppError::Database("导出选择聚合未返回结果".into()))?;
     let matched_rows = u64::try_from(matched_rows)
         .map_err(|_| AppError::Database("导出选择聚合返回负数行数".into()))?;

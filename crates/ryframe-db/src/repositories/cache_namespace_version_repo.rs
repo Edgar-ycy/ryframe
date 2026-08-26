@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait, ActiveValue, ColumnTrait, DatabaseConnection, DatabaseTransaction,
@@ -27,7 +28,7 @@ impl CacheNamespaceVersionRepository {
         ))
         .one(db)
         .await
-        .map_err(|error| AppError::Database(error.to_string()))?;
+        .db()?;
         match row {
             Some(row) if row.version >= 0 => Ok(row.version),
             Some(_) => Err(AppError::Database(format!(
@@ -60,7 +61,7 @@ impl CacheNamespaceVersionRepository {
             .filter(cache_namespace_version::Column::Namespace.eq(namespace))
             .exec(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         if result.rows_affected != 1 {
             return Err(AppError::Database(format!(
                 "租户 {tenant_id} 的缓存命名空间 {namespace} 缺少权威版本"
@@ -70,7 +71,7 @@ impl CacheNamespaceVersionRepository {
         cache_namespace_version::Entity::find_by_id((tenant_id.to_owned(), namespace.to_owned()))
             .one(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?
+            .db()?
             .map(|row| row.version)
             .filter(|version| *version >= 0)
             .ok_or_else(|| AppError::Database("缓存命名空间版本无效或已溢出".into()))
@@ -95,7 +96,7 @@ impl CacheNamespaceVersionRepository {
         .insert(transaction)
         .await
         .map(|_| ())
-        .map_err(|error| AppError::Database(error.to_string()))
+        .db()
     }
 }
 

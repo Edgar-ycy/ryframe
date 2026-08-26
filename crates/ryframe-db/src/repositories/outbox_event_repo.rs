@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
@@ -92,7 +93,7 @@ impl OutboxEventRepository {
                     .await?
                     .ok_or_else(|| AppError::Database("Outbox 重复键已报告但记录不可读".into()))
             }
-            Err(error) => Err(database_error(error)),
+            Err(error) => Err(error).db(),
         }
     }
 
@@ -106,14 +107,14 @@ impl OutboxEventRepository {
         tenant_scope: &ExecutionTenantFilter,
     ) -> AppResult<Option<outbox_event::Model>> {
         validate_lease(worker_id, lease_duration)?;
-        let transaction = db.begin().await.map_err(database_error)?;
+        let transaction = db.begin().await.db()?;
         let Some(event) = Self::claimable_query(now, tenant_scope)
             .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
             .one(&transaction)
             .await
-            .map_err(database_error)?
+            .db()?
         else {
-            transaction.commit().await.map_err(database_error)?;
+            transaction.commit().await.db()?;
             return Ok(None);
         };
         let attempts = event
@@ -126,8 +127,8 @@ impl OutboxEventRepository {
         active.lease_owner = Set(Some(worker_id.to_owned()));
         active.lease_until = Set(Some(now + lease_duration));
         active.updated_at = Set(now);
-        let claimed = active.update(&transaction).await.map_err(database_error)?;
-        transaction.commit().await.map_err(database_error)?;
+        let claimed = active.update(&transaction).await.db()?;
+        transaction.commit().await.db()?;
         Ok(Some(claimed))
     }
 
@@ -160,7 +161,7 @@ impl OutboxEventRepository {
             .filter(outbox_event::Column::LeaseUntil.gt(now))
             .exec(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(result.rows_affected == 1)
     }
 
@@ -174,12 +175,12 @@ impl OutboxEventRepository {
         error_message: &str,
         now: DateTime<Utc>,
     ) -> AppResult<OutboxFailureDisposition> {
-        let transaction = db.begin().await.map_err(database_error)?;
+        let transaction = db.begin().await.db()?;
         let Some(event) = Self::owned_running_query(event_id, worker_id)
             .lock(LockType::Update)
             .one(&transaction)
             .await
-            .map_err(database_error)?
+            .db()?
         else {
             rollback_quietly(transaction).await;
             return Ok(OutboxFailureDisposition::LeaseLost);
@@ -204,8 +205,8 @@ impl OutboxEventRepository {
         active.lease_until = Set(None);
         active.last_error = Set(Some(truncate_error(error_message)));
         active.updated_at = Set(now);
-        active.update(&transaction).await.map_err(database_error)?;
-        transaction.commit().await.map_err(database_error)?;
+        active.update(&transaction).await.db()?;
+        transaction.commit().await.db()?;
         Ok(if dead {
             OutboxFailureDisposition::Dead
         } else {
@@ -257,7 +258,7 @@ impl OutboxEventRepository {
             .filter(outbox_event::Column::DedupeKey.eq(dedupe_key))
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     /// 回收已过期的 Worker 租约。
@@ -309,7 +310,7 @@ impl OutboxEventRepository {
         if let Some(condition) = tenant_scope.condition(outbox_event::Column::TenantId) {
             exhausted = exhausted.filter(condition);
         }
-        exhausted.exec(db).await.map_err(database_error)?;
+        exhausted.exec(db).await.db()?;
         let mut retryable = outbox_event::Entity::update_many()
             .col_expr(
                 outbox_event::Column::Status,
@@ -334,7 +335,7 @@ impl OutboxEventRepository {
         if let Some(condition) = tenant_scope.condition(outbox_event::Column::TenantId) {
             retryable = retryable.filter(condition);
         }
-        retryable.exec(db).await.map_err(database_error)?;
+        retryable.exec(db).await.db()?;
         Ok(())
     }
 }
@@ -417,8 +418,4 @@ fn truncate_error(error: &str) -> String {
 fn is_duplicate_key_error(error: &sea_orm::DbErr) -> bool {
     let message = error.to_string();
     message.contains("Duplicate entry") || message.contains("1062")
-}
-
-fn database_error(error: sea_orm::DbErr) -> AppError {
-    AppError::Database(error.to_string())
 }

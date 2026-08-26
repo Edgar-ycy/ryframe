@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{
@@ -5,7 +6,6 @@ use crate::{
     ExportStartDisposition as DatabaseStartDisposition,
     entities::{background_job, export_job},
 };
-use ryframe_kernel::AppError;
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
 use ryframe_application::ports::export::{
@@ -42,12 +42,7 @@ impl ExportExecutionPersistencePort for DatabaseExportExecutionPersistence {
     }
 
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn ExportExecutionTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseExportExecutionTransaction { transaction })
             as Box<dyn ExportExecutionTransaction>)
     }
@@ -121,14 +116,12 @@ impl ryframe_application::PersistenceTransaction for DatabaseExportExecutionTran
             ryframe_application::TransactionAuditMode::CurrentRequest => {
                 super::super::audit::commit_current_audit(self.transaction).await
             }
-            ryframe_application::TransactionAuditMode::Skip => {
-                self.transaction.commit().await.map_err(database_error)
-            }
+            ryframe_application::TransactionAuditMode::Skip => self.transaction.commit().await.db(),
         }
     }
 
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }
 
@@ -164,8 +157,4 @@ pub fn map_start_decision(value: DatabaseStartDisposition) -> ExportStartDecisio
         DatabaseStartDisposition::ConcurrencyLimited => ExportStartDecision::ConcurrencyLimited,
         DatabaseStartDisposition::NotRunnable => ExportStartDecision::NotRunnable,
     }
-}
-
-fn database_error(error: sea_orm::DbErr) -> AppError {
-    AppError::Database(error.to_string())
 }

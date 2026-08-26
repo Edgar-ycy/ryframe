@@ -1,5 +1,6 @@
+use crate::DbResultExt;
 use async_trait::async_trait;
-use ryframe_kernel::{AppError, AppResult, DataScopeContext, PageResult, ValidatedPageQuery};
+use ryframe_kernel::{AppResult, DataScopeContext, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait,
     QueryFilter, QueryOrder,
@@ -29,7 +30,7 @@ impl Repository<notice::Model, i64> for NoticeRepository {
             .filter(notice::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     async fn find_by_page(

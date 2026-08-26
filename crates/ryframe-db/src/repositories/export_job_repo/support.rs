@@ -65,10 +65,6 @@ pub(super) fn truncate_error(error: &str) -> String {
     format!("{}…", &error[..end])
 }
 
-pub(super) fn database_error(error: sea_orm::DbErr) -> AppError {
-    AppError::Database(error.to_string())
-}
-
 pub fn decide_export_start(
     status: &str,
     delete_pending: bool,

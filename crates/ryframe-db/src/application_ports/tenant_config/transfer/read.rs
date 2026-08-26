@@ -1,4 +1,5 @@
 use super::*;
+use crate::DbResultExt;
 
 #[async_trait::async_trait]
 impl TenantConfigTransferPersistencePort for DatabaseTenantConfigTransferPersistence {
@@ -15,7 +16,7 @@ impl TenantConfigTransferPersistencePort for DatabaseTenantConfigTransferPersist
             .filter(tenant_config_bundle::Column::TenantId.eq(tenant_id))
             .count(self.database.write())
             .await
-            .map_err(database_error)?;
+            .db()?;
         let records = TenantConfigTransferRepository
             .list_bundles(
                 self.database.write(),
@@ -39,7 +40,7 @@ impl TenantConfigTransferPersistencePort for DatabaseTenantConfigTransferPersist
             .filter(tenant_config_transfer::Column::TenantId.eq(tenant_id))
             .count(self.database.write())
             .await
-            .map_err(database_error)?;
+            .db()?;
         let records = TenantConfigTransferRepository
             .list_transfers(
                 self.database.write(),
@@ -63,18 +64,14 @@ impl TenantConfigTransferPersistencePort for DatabaseTenantConfigTransferPersist
         let query = tenant_config_transfer_item::Entity::find()
             .filter(tenant_config_transfer_item::Column::TenantId.eq(tenant_id))
             .filter(tenant_config_transfer_item::Column::TransferId.eq(transfer_id));
-        let total = query
-            .clone()
-            .count(self.database.write())
-            .await
-            .map_err(database_error)?;
+        let total = query.clone().count(self.database.write()).await.db()?;
         let records = query
             .order_by_asc(tenant_config_transfer_item::Column::Id)
             .limit(page.page_size())
             .offset(page.offset())
             .all(self.database.write())
             .await
-            .map_err(database_error)?
+            .db()?
             .into_iter()
             .map(Into::into)
             .collect();
@@ -169,12 +166,7 @@ impl TenantConfigTransferPersistencePort for DatabaseTenantConfigTransferPersist
     }
 
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn TenantConfigTransferTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseTenantConfigTransferTransaction {
             transaction: transaction.into(),
         }) as Box<dyn TenantConfigTransferTransaction>)

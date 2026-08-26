@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use ryframe_kernel::{AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{ConnectionTrait, EntityTrait, FromQueryResult, PaginatorTrait, Select};
 /// 使用方式：
@@ -32,15 +33,12 @@ where
     C: ConnectionTrait,
 {
     let paginator = select.paginate(db, query.page_size());
-    let total = paginator
-        .num_items()
-        .await
-        .map_err(|e| ryframe_kernel::AppError::Database(format!("查询总数失败: {}", e)))?;
+    let total = paginator.num_items().await.db_context("查询总数失败")?;
 
     let records = paginator
         .fetch_page(query.page() - 1)
         .await
-        .map_err(|e| ryframe_kernel::AppError::Database(format!("分页查询失败: {}", e)))?;
+        .db_context("分页查询失败")?;
 
     Ok(PageResult::new(records, total, query))
 }

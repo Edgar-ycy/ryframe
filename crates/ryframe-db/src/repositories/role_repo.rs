@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use async_trait::async_trait;
 use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
@@ -36,7 +37,7 @@ impl Repository<role::Model, i64> for RoleRepository {
             .filter(role::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     async fn find_by_page(
@@ -124,7 +125,7 @@ impl RoleRepository {
             .limit(limit)
             .all(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 按主键递增游标读取角色导出批次，避免大偏移分页造成重复或遗漏。
@@ -148,7 +149,7 @@ impl RoleRepository {
             .limit(window.limit())
             .all(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 在同一主库快照内统计导出匹配行并捕获最大主键。
@@ -208,7 +209,7 @@ impl RoleRepository {
             .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
             .exec(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .db()?;
         Ok(result.rows_affected)
     }
 
@@ -225,7 +226,7 @@ impl RoleRepository {
             .lock(LockType::Update)
             .one(txn)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 通过当前锁定读统计可用的超级角色。
@@ -247,7 +248,7 @@ impl RoleRepository {
             .all(txn)
             .await
             .map(|roles| roles.len())
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     async fn user_role_ids<C>(&self, db: &C, tenant_id: &str, user_id: i64) -> AppResult<Vec<i64>>
@@ -259,7 +260,7 @@ impl RoleRepository {
             .filter(user_role::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
             .map(|roles| roles.into_iter().map(|role| role.role_id).collect())
     }
 
@@ -283,7 +284,7 @@ impl RoleRepository {
             .filter(role::Column::Status.eq(role::Model::STATUS_NORMAL))
             .all(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     /// 查询用户拥有的角色列表（包含停用角色，用于危险操作保护）
@@ -308,7 +309,7 @@ impl RoleRepository {
             .filter(role::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     /// 通过锁定的当前读检查超级管理员归属。
@@ -337,7 +338,7 @@ impl RoleRepository {
             .one(txn)
             .await
             .map(|relation| relation.is_some())
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 查询拥有任意指定角色的用户ID列表
@@ -356,7 +357,7 @@ impl RoleRepository {
             .filter(user_role::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?
+            .db()?
             .into_iter()
             .map(|ur| ur.user_id)
             .collect();
@@ -381,7 +382,7 @@ impl RoleRepository {
             .lock(LockType::Update)
             .one(txn)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?
+            .db()?
             .is_some();
         if !user_exists {
             return Err(AppError::NotFound("用户不存在".into()));
@@ -392,7 +393,7 @@ impl RoleRepository {
             .filter(user_role::Column::TenantId.eq(tenant_id))
             .exec(txn)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .db()?;
 
         if !role_ids.is_empty() {
             let models: Vec<user_role::ActiveModel> = role_ids
@@ -407,7 +408,7 @@ impl RoleRepository {
             user_role::Entity::insert_many(models)
                 .exec(txn)
                 .await
-                .map_err(|e| AppError::Database(e.to_string()))?;
+                .db()?;
         }
         Ok(())
     }
@@ -420,15 +421,9 @@ impl RoleRepository {
         user_id: i64,
         role_ids: &[i64],
     ) -> AppResult<()> {
-        let transaction = db
-            .begin()
-            .await
-            .map_err(|error| AppError::Database(format!("开启事务失败: {error}")))?;
+        let transaction = db.begin().await.db_context("开启事务失败")?;
         self.replace_roles_in_txn(&transaction, tenant_id, user_id, role_ids)
             .await?;
-        transaction
-            .commit()
-            .await
-            .map_err(|error| AppError::Database(format!("提交事务失败: {error}")))
+        transaction.commit().await.db_context("提交事务失败")
     }
 }

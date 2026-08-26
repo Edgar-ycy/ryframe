@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{
@@ -139,12 +140,7 @@ impl DatabaseMenuRead {
 #[async_trait]
 impl MenuWritePort for DatabaseMenuWrite {
     async fn begin(&self) -> AppResult<Box<dyn MenuWriteTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseMenuWriteTransaction {
             transaction: transaction.into(),
             authorization_cache: self.authorization_cache.clone(),
@@ -179,7 +175,7 @@ impl MenuWriteTransaction for DatabaseMenuWriteTransaction {
             .one(&self.transaction)
             .await
             .map(|record| record.is_some())
-            .map_err(database_error)
+            .db()
     }
 
     async fn find_by_route_key_for_update(
@@ -194,7 +190,7 @@ impl MenuWriteTransaction for DatabaseMenuWriteTransaction {
             .lock(LockType::Update)
             .one(&self.transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .map(to_record))
     }
 
@@ -225,7 +221,7 @@ impl MenuWriteTransaction for DatabaseMenuWriteTransaction {
             .one(&self.transaction)
             .await
             .map(|record| record.is_some())
-            .map_err(database_error)
+            .db()
     }
 
     async fn delete(&self, tenant_id: &str, id: i64) -> AppResult<()> {
@@ -253,12 +249,12 @@ impl PersistenceTransaction for DatabaseMenuWriteTransaction {
     async fn commit(self: Box<Self>, audit_mode: TransactionAuditMode) -> AppResult<()> {
         match audit_mode {
             TransactionAuditMode::CurrentRequest => self.transaction.commit_audited().await,
-            TransactionAuditMode::Skip => self.transaction.commit().await.map_err(database_error),
+            TransactionAuditMode::Skip => self.transaction.commit().await.db(),
         }
     }
 
     async fn rollback(self: Box<Self>) -> AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }
 
@@ -325,8 +321,4 @@ fn parse_id(value: &str) -> AppResult<i64> {
     value
         .parse()
         .map_err(|_| ryframe_kernel::AppError::Internal("菜单树标识无效".into()))
-}
-
-fn database_error(error: impl std::fmt::Display) -> ryframe_kernel::AppError {
-    ryframe_kernel::AppError::Database(error.to_string())
 }

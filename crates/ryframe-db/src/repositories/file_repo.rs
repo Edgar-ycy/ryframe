@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use async_trait::async_trait;
 use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
@@ -30,7 +31,7 @@ impl Repository<sys_file::Model, i64> for FileRepository {
             .filter(sys_file::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     async fn find_by_page(
@@ -83,7 +84,7 @@ impl FileRepository {
             .filter(sys_file::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 硬删除仅由指定导出任务引用的结果文件元数据。
@@ -103,7 +104,7 @@ impl FileRepository {
             .exec(txn)
             .await
             .map(|result| result.rows_affected == 1)
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     pub async fn insert_in_txn(
@@ -120,9 +121,7 @@ impl FileRepository {
     /// 上传预留必须先持久化，随后才能在数据库事务外写入对象存储；这里故意不绑定
     /// 成功审计，最终 `ready` 状态会与 `audit.operation` Outbox 原子提交。
     pub async fn commit_upload_reservation(&self, txn: DatabaseTransaction) -> AppResult<()> {
-        txn.commit()
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))
+        txn.commit().await.db()
     }
 
     /// 在调用方事务内软删除文件元数据。
@@ -142,7 +141,7 @@ impl FileRepository {
             .filter(sys_file::Column::DelFlag.eq(sys_file::Model::DEL_FLAG_NORMAL))
             .exec(txn)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         if result.rows_affected == 0 {
             return Err(AppError::NotFound("文件不存在".into()));
         }
@@ -164,7 +163,7 @@ impl FileRepository {
             .order_by_desc(sys_file::Column::CreatedAt)
             .all(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     /// 按权威 SHA-256 摘要查找已完成上传的文件。
@@ -178,7 +177,7 @@ impl FileRepository {
         Self::find_by_sha256_query(tenant_id, bucket, file_sha256)
             .one(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     pub async fn find_by_sha256_any_status_in_txn(
@@ -192,7 +191,7 @@ impl FileRepository {
             .lock(LockType::Update)
             .one(txn)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     fn find_by_sha256_query(
@@ -231,7 +230,7 @@ impl FileRepository {
             .filter(sys_file::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 在事务中锁定尚未软删除的文件元数据；可见性由上传状态决定。
@@ -247,7 +246,7 @@ impl FileRepository {
             .lock(LockType::Update)
             .one(txn)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     pub async fn mark_ready<C>(
@@ -285,7 +284,7 @@ impl FileRepository {
             .filter(sys_file::Column::ReservationToken.eq(reservation_token))
             .exec(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         Ok(result.rows_affected == 1)
     }
 
@@ -315,7 +314,7 @@ impl FileRepository {
             .exec(db)
             .await
             .map(|result| result.rows_affected == 1)
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     pub async fn begin_cleanup(
@@ -350,7 +349,7 @@ impl FileRepository {
             .filter(sys_file::Column::ReservationToken.eq(reservation_token))
             .exec(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         Ok(result.rows_affected == 1)
     }
 
@@ -372,7 +371,7 @@ impl FileRepository {
             .limit(limit)
             .all(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 查找已完成上传、经过最长任务运行窗口后仍未被配置包或回滚快照引用的内部文件。
@@ -404,7 +403,7 @@ impl FileRepository {
             .limit(limit)
             .all(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 将过期上传移入清理墓碑，暂不删除对象。新的宽限期可防止原上传者停止续期后
@@ -437,7 +436,7 @@ impl FileRepository {
             .filter(sys_file::Column::ReservationExpiresAt.lte(now))
             .exec(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         Ok(result.rows_affected == 1)
     }
 
@@ -475,7 +474,7 @@ impl FileRepository {
             .exec(db)
             .await
             .map(|result| result.rows_affected == 1)
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 对象删除成功后，仅由仍持有清理令牌的实例删除元数据。
@@ -495,7 +494,7 @@ impl FileRepository {
             .exec(db)
             .await
             .map(|result| result.rows_affected == 1)
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 将失败的清理声明延后到其他到期墓碑之后，避免少量不可用对象独占每次有界扫描。
@@ -525,7 +524,7 @@ impl FileRepository {
             .exec(db)
             .await
             .map(|result| result.rows_affected == 1)
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     pub async fn find_by_storage_path(
@@ -543,6 +542,6 @@ impl FileRepository {
             .filter(sys_file::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 }

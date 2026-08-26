@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 
@@ -51,7 +52,7 @@ impl Repository<menu::Model, i64> for MenuRepository {
             .filter(menu::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     async fn find_by_page(
@@ -107,7 +108,7 @@ impl MenuRepository {
             .order_by_asc(menu::Column::Id)
             .all(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     pub async fn find_by_id_for_update(
@@ -122,7 +123,7 @@ impl MenuRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     pub async fn insert_in_transaction(
@@ -137,7 +138,7 @@ impl MenuRepository {
         menu::ActiveModel::from(entity)
             .insert(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     pub async fn update_in_transaction(
@@ -153,7 +154,7 @@ impl MenuRepository {
             .reset_all()
             .update(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     pub async fn delete_in_transaction(
@@ -173,7 +174,7 @@ impl MenuRepository {
             .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
             .exec(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         if result.rows_affected != 1 {
             return Err(AppError::NotFound("菜单不存在".into()));
         }
@@ -192,7 +193,7 @@ impl MenuRepository {
             .filter(menu::Column::RouteKey.eq(route_key))
             .one(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     pub async fn has_children(
@@ -208,7 +209,7 @@ impl MenuRepository {
             .one(db)
             .await
             .map(|row| row.is_some())
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     pub async fn find_tree(
@@ -222,7 +223,7 @@ impl MenuRepository {
             .order_by_asc(menu::Column::Sort)
             .all(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .db()?;
 
         let permission_codes = self.permission_code_map(db, tenant_id, &all).await?;
         Ok(build_menu_tree(&all, None, &permission_codes))
@@ -261,7 +262,7 @@ impl MenuRepository {
             .order_by_asc(menu::Column::Sort)
             .all(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?
+            .db()?
             .into_iter()
             .filter(|item| {
                 item.route_key
@@ -389,7 +390,7 @@ impl MenuRepository {
             .filter(permission::Column::Status.eq("1"))
             .all(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .db()?;
         Ok(rows.into_iter().map(|row| (row.id, row.code)).collect())
     }
 }

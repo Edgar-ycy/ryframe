@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
@@ -50,7 +51,7 @@ impl UserImportRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn find_by_idempotency(
@@ -64,7 +65,7 @@ impl UserImportRepository {
             .filter(user_import_job::Column::IdempotencyKeyHash.eq(idempotency_key_hash))
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn count_active_in_txn(
@@ -80,7 +81,7 @@ impl UserImportRepository {
             ]))
             .count(transaction)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn create_in_txn(
@@ -116,7 +117,7 @@ impl UserImportRepository {
         })
         .insert(transaction)
         .await
-        .map_err(database_error)
+        .db()
     }
 
     pub async fn find_by_id_for_tenant(
@@ -129,7 +130,7 @@ impl UserImportRepository {
             .filter(user_import_job::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn find_by_background_job(
@@ -141,7 +142,7 @@ impl UserImportRepository {
             .filter(user_import_job::Column::BackgroundJobId.eq(background_job_id))
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn list_for_tenant(
@@ -196,7 +197,7 @@ impl UserImportRepository {
             .order_by_asc(user_import_row_result::Column::RowNumber)
             .all(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn request_cancel(
@@ -217,7 +218,7 @@ impl UserImportRepository {
             ]))
             .exec(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(result.rows_affected == 1)
     }
 
@@ -230,7 +231,7 @@ impl UserImportRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn save_in_txn(
@@ -288,14 +289,14 @@ impl UserImportRepository {
             .filter(user_import_job::Column::Id.eq(id))
             .exec(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         if result.rows_affected != 1 {
             return Err(AppError::NotFound("用户导入任务不存在".into()));
         }
         user_import_job::Entity::find_by_id(id)
             .one(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::NotFound("用户导入任务不存在".into()))
     }
 
@@ -313,7 +314,7 @@ impl UserImportRepository {
         )
         .exec(transaction)
         .await
-        .map_err(database_error)?;
+        .db()?;
         Ok(())
     }
 
@@ -337,11 +338,9 @@ impl UserImportRepository {
                 ],
             ))
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::Database("导入文件统计没有返回记录".into()))?;
-        let count: i64 = row
-            .try_get("", "artifact_count")
-            .map_err(|error| AppError::Database(error.to_string()))?;
+        let count: i64 = row.try_get("", "artifact_count").db()?;
         u64::try_from(count).map_err(|_| AppError::Database("导入文件统计结果无效".into()))
     }
 
@@ -377,16 +376,12 @@ impl UserImportRepository {
             values,
         ))
         .await
-        .map_err(database_error)?
+        .db()?
         .into_iter()
         .map(|row| {
             Ok(UserImportArtifact {
-                tenant_id: row
-                    .try_get("", "tenant_id")
-                    .map_err(|error| AppError::Database(error.to_string()))?,
-                file_id: row
-                    .try_get("", "id")
-                    .map_err(|error| AppError::Database(error.to_string()))?,
+                tenant_id: row.try_get("", "tenant_id").db()?,
+                file_id: row.try_get("", "id").db()?,
             })
         })
         .collect()
@@ -430,8 +425,4 @@ fn validate_create_command(command: &CreateUserImportJob) -> AppResult<()> {
         ));
     }
     Ok(())
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

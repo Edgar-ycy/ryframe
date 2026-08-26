@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{
@@ -130,12 +131,7 @@ impl DatabaseDeptRead {
 #[async_trait]
 impl DeptWritePort for DatabaseDeptWrite {
     async fn begin(&self) -> AppResult<Box<dyn DeptWriteTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseDeptWriteTransaction {
             transaction: transaction.into(),
             authorization_cache: self.authorization_cache.clone(),
@@ -181,7 +177,7 @@ impl DeptWriteTransaction for DatabaseDeptWriteTransaction {
             .all(&self.transaction)
             .await
             .map(|records| records.into_iter().map(to_record).collect())
-            .map_err(database_error)
+            .db()
     }
 
     async fn insert(&self, tenant_id: &str, record: DeptRecord) -> AppResult<DeptRecord> {
@@ -211,7 +207,7 @@ impl DeptWriteTransaction for DatabaseDeptWriteTransaction {
             .one(&self.transaction)
             .await
             .map(|record| record.is_some())
-            .map_err(database_error)
+            .db()
     }
 
     async fn has_reference_for_update(&self, tenant_id: &str, id: i64) -> AppResult<bool> {
@@ -222,7 +218,7 @@ impl DeptWriteTransaction for DatabaseDeptWriteTransaction {
             .lock(LockType::Update)
             .one(&self.transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .is_some();
         if has_user {
             return Ok(true);
@@ -234,7 +230,7 @@ impl DeptWriteTransaction for DatabaseDeptWriteTransaction {
             .one(&self.transaction)
             .await
             .map(|record| record.is_some())
-            .map_err(database_error)
+            .db()
     }
 
     async fn delete(&self, tenant_id: &str, id: i64) -> AppResult<()> {
@@ -262,12 +258,12 @@ impl PersistenceTransaction for DatabaseDeptWriteTransaction {
     async fn commit(self: Box<Self>, audit_mode: TransactionAuditMode) -> AppResult<()> {
         match audit_mode {
             TransactionAuditMode::CurrentRequest => self.transaction.commit_audited().await,
-            TransactionAuditMode::Skip => self.transaction.commit().await.map_err(database_error),
+            TransactionAuditMode::Skip => self.transaction.commit().await.db(),
         }
     }
 
     async fn rollback(self: Box<Self>) -> AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }
 
@@ -323,8 +319,4 @@ fn to_tree_record(node: DatabaseDeptTreeNode) -> ryframe_kernel::AppResult<DeptT
             .map(to_tree_record)
             .collect::<ryframe_kernel::AppResult<_>>()?,
     })
-}
-
-fn database_error(error: impl std::fmt::Display) -> ryframe_kernel::AppError {
-    ryframe_kernel::AppError::Database(error.to_string())
 }

@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::{collections::BTreeSet, sync::Arc};
 
 use crate::{
@@ -114,12 +115,7 @@ impl DatabasePermissionRead {
 #[async_trait]
 impl PermissionWritePort for DatabasePermissionWrite {
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn PermissionWriteTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabasePermissionWriteTransaction {
             transaction: transaction.into(),
             authorization_cache: self.authorization_cache.clone(),
@@ -159,7 +155,7 @@ impl PermissionWriteTransaction for DatabasePermissionWriteTransaction {
             .lock(LockType::Update)
             .one(&self.transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .map(to_record))
     }
 
@@ -174,7 +170,7 @@ impl PermissionWriteTransaction for DatabasePermissionWriteTransaction {
             .all(&self.transaction)
             .await
             .map(|permissions| permissions.into_iter().map(to_record).collect())
-            .map_err(database_error)
+            .db()
     }
 
     async fn insert(
@@ -257,12 +253,12 @@ impl PersistenceTransaction for DatabasePermissionWriteTransaction {
     ) -> ryframe_kernel::AppResult<()> {
         match audit_mode {
             TransactionAuditMode::CurrentRequest => self.transaction.commit_audited().await,
-            TransactionAuditMode::Skip => self.transaction.commit().await.map_err(database_error),
+            TransactionAuditMode::Skip => self.transaction.commit().await.db(),
         }
     }
 
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }
 
@@ -295,8 +291,4 @@ fn to_entity(tenant_id: &str, record: PermissionRecord) -> permission::Model {
         created_at: record.created_at,
         updated_at: record.updated_at,
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> ryframe_kernel::AppError {
-    ryframe_kernel::AppError::Database(error.to_string())
 }

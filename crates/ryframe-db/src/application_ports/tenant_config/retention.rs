@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{
@@ -5,7 +6,7 @@ use crate::{
     tenant::{config_bundle as tenant_config_bundle, config_transfer as tenant_config_transfer},
 };
 use chrono::{DateTime, Duration, Utc};
-use ryframe_kernel::{AppError, AppResult};
+use ryframe_kernel::AppResult;
 use sea_orm::{
     ActiveModelTrait,
     ActiveValue::Set,
@@ -74,14 +75,14 @@ impl DatabaseTenantConfigRetentionPersistence {
             .filter(config_bundle_not_required_by_active_transfer())
             .count(self.database.write())
             .await
-            .map_err(database_error)?;
+            .db()?;
         let snapshots = tenant_config_transfer::Entity::find()
             .filter(tenant_config_transfer::Column::SnapshotFileId.is_not_null())
             .filter(tenant_config_transfer::Column::RollbackExpiresAt.lte(now))
             .filter(config_snapshot_not_used_by_active_rollback())
             .count(self.database.write())
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(TenantConfigArtifactCounts {
             packages,
             snapshots,
@@ -116,7 +117,7 @@ impl DatabaseTenantConfigRetentionPersistence {
                 .limit(u64::try_from(limit).unwrap_or(u64::MAX))
                 .all(self.database.write())
                 .await
-                .map_err(database_error)?;
+                .db()?;
             if candidates.is_empty() {
                 break;
             }
@@ -141,7 +142,7 @@ impl DatabaseTenantConfigRetentionPersistence {
             .filter(config_bundle_not_required_by_active_transfer())
             .count(self.database.write())
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(RetentionCleanupResult { deleted, remaining })
     }
 
@@ -153,12 +154,7 @@ impl DatabaseTenantConfigRetentionPersistence {
         let Some(file_id) = candidate.file_id else {
             return Ok(false);
         };
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         TenantRepository
             .lock_tenant_in_txn(&transaction, &candidate.tenant_id)
             .await?;
@@ -175,9 +171,9 @@ impl DatabaseTenantConfigRetentionPersistence {
             .lock(LockType::Update)
             .one(&transaction)
             .await
-            .map_err(database_error)?
+            .db()?
         else {
-            transaction.rollback().await.map_err(database_error)?;
+            transaction.rollback().await.db()?;
             return Ok(false);
         };
         let mut active: tenant_config_bundle::ActiveModel = current.into();
@@ -185,7 +181,7 @@ impl DatabaseTenantConfigRetentionPersistence {
         active.status = Set(tenant_config_bundle::Model::STATUS_EXPIRED.to_owned());
         let now = crate::repositories::database_utc_now(&transaction).await?;
         active.updated_at = Set(now);
-        active.update(&transaction).await.map_err(database_error)?;
+        active.update(&transaction).await.db()?;
         // 配置包与快照可能共享文件；仅最后一个引用消失的事务创建清理墓碑。
         let _marked_for_cleanup = FileRepository
             .mark_unreferenced_config_package_for_cleanup_in_txn(
@@ -196,7 +192,7 @@ impl DatabaseTenantConfigRetentionPersistence {
                 now + Duration::minutes(15),
             )
             .await?;
-        transaction.commit().await.map_err(database_error)?;
+        transaction.commit().await.db()?;
         Ok(true)
     }
 
@@ -223,7 +219,7 @@ impl DatabaseTenantConfigRetentionPersistence {
                 .limit(u64::try_from(limit).unwrap_or(u64::MAX))
                 .all(self.database.write())
                 .await
-                .map_err(database_error)?;
+                .db()?;
             if candidates.is_empty() {
                 break;
             }
@@ -243,7 +239,7 @@ impl DatabaseTenantConfigRetentionPersistence {
             .filter(config_snapshot_not_used_by_active_rollback())
             .count(self.database.write())
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(RetentionCleanupResult { deleted, remaining })
     }
 
@@ -255,12 +251,7 @@ impl DatabaseTenantConfigRetentionPersistence {
         let Some(file_id) = candidate.snapshot_file_id else {
             return Ok(false);
         };
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         TenantRepository
             .lock_tenant_in_txn(&transaction, &candidate.tenant_id)
             .await?;
@@ -272,16 +263,16 @@ impl DatabaseTenantConfigRetentionPersistence {
             .lock(LockType::Update)
             .one(&transaction)
             .await
-            .map_err(database_error)?
+            .db()?
         else {
-            transaction.rollback().await.map_err(database_error)?;
+            transaction.rollback().await.db()?;
             return Ok(false);
         };
         let mut active: tenant_config_transfer::ActiveModel = current.into();
         active.snapshot_file_id = Set(None);
         let now = crate::repositories::database_utc_now(&transaction).await?;
         active.updated_at = Set(now);
-        active.update(&transaction).await.map_err(database_error)?;
+        active.update(&transaction).await.db()?;
         // 回滚快照沿用同一引用计数规则，避免误删仍被其他记录使用的文件。
         let _marked_for_cleanup = FileRepository
             .mark_unreferenced_config_package_for_cleanup_in_txn(
@@ -292,7 +283,7 @@ impl DatabaseTenantConfigRetentionPersistence {
                 now + Duration::minutes(15),
             )
             .await?;
-        transaction.commit().await.map_err(database_error)?;
+        transaction.commit().await.db()?;
         Ok(true)
     }
 }
@@ -303,8 +294,4 @@ fn config_bundle_not_required_by_active_transfer() -> SimpleExpr {
 
 fn config_snapshot_not_used_by_active_rollback() -> SimpleExpr {
     Expr::cust(INACTIVE_ROLLBACK_PREDICATE)
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

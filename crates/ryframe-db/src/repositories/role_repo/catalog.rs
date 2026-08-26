@@ -1,4 +1,5 @@
 use super::*;
+use crate::DbResultExt;
 
 impl RoleRepository {
     /// 按角色编码查找。
@@ -14,7 +15,7 @@ impl RoleRepository {
             .filter(role::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     pub async fn find_super_role(
@@ -28,7 +29,7 @@ impl RoleRepository {
             .filter(role::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     pub async fn find_by_ids(
@@ -46,7 +47,7 @@ impl RoleRepository {
             .filter(role::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     /// 查询角色关联的自定义数据权限部门 ID 列表。
@@ -64,7 +65,7 @@ impl RoleRepository {
             .all(db)
             .await
             .map(|rows| rows.into_iter().map(|row| row.dept_id).collect())
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     /// 查询多个角色的所有自定义部门 ID（合并去重）。
@@ -84,7 +85,7 @@ impl RoleRepository {
             .filter(role_dept::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?
+            .db()?
             .into_iter()
             .map(|row| row.dept_id)
             .collect::<Vec<_>>();
@@ -120,7 +121,7 @@ impl RoleRepository {
             .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
             .exec(transaction)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .db()?;
         if updated.rows_affected != 1 {
             return Err(AppError::NotFound("角色不存在".into()));
         }
@@ -130,7 +131,7 @@ impl RoleRepository {
             .filter(role_dept::Column::TenantId.eq(tenant_id))
             .exec(transaction)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .db()?;
 
         if !dept_ids.is_empty() {
             let relations = dept_ids.iter().map(|dept_id| role_dept::ActiveModel {
@@ -141,7 +142,7 @@ impl RoleRepository {
             role_dept::Entity::insert_many(relations)
                 .exec(transaction)
                 .await
-                .map_err(|e| AppError::Database(e.to_string()))?;
+                .db()?;
         }
         Ok(())
     }

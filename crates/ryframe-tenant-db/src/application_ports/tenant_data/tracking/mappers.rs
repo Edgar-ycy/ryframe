@@ -10,7 +10,6 @@ use ryframe_db::{
         operation_lease as tenant_operation_lease,
     },
 };
-use ryframe_kernel::AppError;
 
 pub fn map_migration(model: tenant_data_migration::Model) -> TenantDataMigrationRecord {
     TenantDataMigrationRecord {
@@ -261,8 +260,4 @@ pub(super) fn map_lease(record: TenantOperationLeaseRecord) -> tenant_operation_
         created_at: record.created_at,
         updated_at: record.updated_at,
     }
-}
-
-pub(super) fn database_error(error: sea_orm::DbErr) -> AppError {
-    AppError::Database(error.to_string())
 }

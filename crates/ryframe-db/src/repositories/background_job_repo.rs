@@ -13,10 +13,6 @@ pub use types::{
 use chrono::Duration;
 use ryframe_kernel::{AppError, AppResult};
 
-pub(super) fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
-}
-
 pub(super) fn validate_lease(worker_id: &str, lease_duration: Duration) -> AppResult<()> {
     if worker_id.trim().is_empty() || worker_id.len() > 128 {
         return Err(AppError::Validation(

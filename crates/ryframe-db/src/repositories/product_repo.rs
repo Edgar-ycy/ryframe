@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait,
@@ -40,7 +41,7 @@ impl ProductRepository {
             .order_by_asc(product_plan::Column::PlanKey)
             .all(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn list_versions<C>(
@@ -56,7 +57,7 @@ impl ProductRepository {
             .order_by_desc(product_plan_version::Column::Version)
             .all(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn list_capabilities<C>(
@@ -72,7 +73,7 @@ impl ProductRepository {
             .order_by_asc(product_plan_capability::Column::CapabilityCode)
             .all(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn find_plan_by_key<C>(
@@ -87,7 +88,7 @@ impl ProductRepository {
             .filter(product_plan::Column::PlanKey.eq(plan_key))
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn find_plan_by_id<C>(
@@ -98,10 +99,7 @@ impl ProductRepository {
     where
         C: ConnectionTrait,
     {
-        product_plan::Entity::find_by_id(plan_id)
-            .one(db)
-            .await
-            .map_err(database_error)
+        product_plan::Entity::find_by_id(plan_id).one(db).await.db()
     }
 
     pub async fn find_version_by_id<C>(
@@ -115,14 +113,14 @@ impl ProductRepository {
         let Some(version) = product_plan_version::Entity::find_by_id(version_id)
             .one(db)
             .await
-            .map_err(database_error)?
+            .db()?
         else {
             return Ok(None);
         };
         let plan = product_plan::Entity::find_by_id(version.plan_id)
             .one(db)
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::Database("产品套餐版本引用了不存在的套餐".into()))?;
         let capabilities = self.list_capabilities(db, version.id).await?;
         Ok(Some(ProductPlanVersionBundle {
@@ -149,7 +147,7 @@ impl ProductRepository {
             .filter(product_plan_version::Column::Version.eq(version))
             .one(db)
             .await
-            .map_err(database_error)?
+            .db()?
         else {
             return Ok(None);
         };
@@ -173,24 +171,24 @@ impl ProductRepository {
             .filter(tenant::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(database_error)?
+            .db()?
         else {
             return Ok(None);
         };
         let assignment = tenant_product_plan::Entity::find_by_id(tenant_id.to_owned())
             .one(db)
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::Database("租户缺少产品套餐分配".into()))?;
         let version = product_plan_version::Entity::find_by_id(assignment.plan_version_id)
             .one(db)
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::Database("租户引用了不存在的产品套餐版本".into()))?;
         let plan = product_plan::Entity::find_by_id(version.plan_id)
             .one(db)
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::Database("产品套餐版本引用了不存在的套餐".into()))?;
         let capabilities = self.list_capabilities(db, version.id).await?;
         let overrides = tenant_capability_override::Entity::find()
@@ -198,7 +196,7 @@ impl ProductRepository {
             .order_by_asc(tenant_capability_override::Column::CapabilityCode)
             .all(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(Some(TenantProductBundle {
             tenant,
             assignment,
@@ -219,7 +217,7 @@ impl ProductRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::Database("租户缺少产品套餐分配".into()))
     }
 
@@ -242,7 +240,7 @@ impl ProductRepository {
         .insert(transaction)
         .await
         .map(|_| ())
-        .map_err(database_error)
+        .db()
     }
 
     pub async fn assignment<C>(
@@ -256,7 +254,7 @@ impl ProductRepository {
         tenant_product_plan::Entity::find_by_id(tenant_id.to_owned())
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn replace_assignment_and_overrides_in_txn(
@@ -271,12 +269,12 @@ impl ProductRepository {
             .reset_all()
             .update(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         tenant_capability_override::Entity::delete_many()
             .filter(tenant_capability_override::Column::TenantId.eq(&tenant_id))
             .exec(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         if !overrides.is_empty() {
             tenant_capability_override::Entity::insert_many(
                 overrides
@@ -285,7 +283,7 @@ impl ProductRepository {
             )
             .exec(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         }
         Ok(())
     }
@@ -306,7 +304,7 @@ impl ProductRepository {
             .filter(tenant::Column::RuntimeEpoch.eq(expected_epoch))
             .exec(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         if result.rows_affected != 1 {
             return Err(AppError::StaleRuntimeEpoch(
                 "租户运行时上下文已变化，请重新预览产品变更".into(),
@@ -323,7 +321,7 @@ impl ProductRepository {
         product_plan::ActiveModel::from(plan)
             .insert(transaction)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn update_plan_in_txn(
@@ -335,7 +333,7 @@ impl ProductRepository {
             .reset_all()
             .update(transaction)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn lock_plan_in_txn(
@@ -348,7 +346,7 @@ impl ProductRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::NotFound("产品套餐不存在".into()))
     }
 
@@ -361,7 +359,7 @@ impl ProductRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::NotFound("产品套餐不存在".into()))
     }
 
@@ -378,7 +376,7 @@ impl ProductRepository {
             .into_tuple::<i32>()
             .one(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .unwrap_or(0);
         current
             .checked_add(1)
@@ -394,7 +392,7 @@ impl ProductRepository {
         let saved = product_plan_version::ActiveModel::from(version)
             .insert(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         if !capabilities.is_empty() {
             product_plan_capability::Entity::insert_many(
                 capabilities
@@ -403,7 +401,7 @@ impl ProductRepository {
             )
             .exec(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         }
         Ok(saved)
     }
@@ -420,7 +418,7 @@ impl ProductRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::NotFound("产品套餐版本不存在".into()))
     }
 
@@ -433,7 +431,7 @@ impl ProductRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::NotFound("产品套餐版本不存在".into()))
     }
 
@@ -448,7 +446,7 @@ impl ProductRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::NotFound("产品套餐版本不存在".into()))?;
         if current.status != "draft" || version.status != "draft" {
             return Err(AppError::Conflict(
@@ -460,12 +458,12 @@ impl ProductRepository {
             .reset_all()
             .update(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         product_plan_capability::Entity::delete_many()
             .filter(product_plan_capability::Column::PlanVersionId.eq(version_id))
             .exec(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         if !capabilities.is_empty() {
             product_plan_capability::Entity::insert_many(
                 capabilities
@@ -474,7 +472,7 @@ impl ProductRepository {
             )
             .exec(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         }
         Ok(saved)
     }
@@ -490,7 +488,7 @@ impl ProductRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::NotFound("产品套餐版本不存在".into()))?;
         if current.status != expected_status || version.status != target_status {
             return Err(AppError::Conflict(format!(
@@ -502,10 +500,6 @@ impl ProductRepository {
             .reset_all()
             .update(transaction)
             .await
-            .map_err(database_error)
+            .db()
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::collections::HashSet;
 
 use super::*;
@@ -44,7 +45,7 @@ impl TenantDataRepository {
             .into_tuple::<String>()
             .all(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         let prepared = tenant_data_migration::Entity::find()
             .select_only()
             .distinct()
@@ -59,7 +60,7 @@ impl TenantDataRepository {
             .into_tuple::<String>()
             .all(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         let retained_sources = tenant_data_migration::Entity::find()
             .select_only()
             .distinct()
@@ -77,7 +78,7 @@ impl TenantDataRepository {
             .into_tuple::<String>()
             .all(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(placements
             .into_iter()
             .chain(prepared)

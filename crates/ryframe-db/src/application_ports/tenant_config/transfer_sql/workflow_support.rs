@@ -1,4 +1,5 @@
 use super::*;
+use crate::DbResultExt;
 
 pub(crate) async fn ensure_requester_snapshot_in_txn(
     transaction: &sea_orm::DatabaseTransaction,
@@ -18,7 +19,7 @@ pub(crate) async fn ensure_requester_snapshot_in_txn(
         .filter(tenant::Column::TenantId.eq(tenant_id))
         .one(transaction)
         .await
-        .map_err(database_error)?
+        .db()?
         .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
     if !tenant.is_available(database_now) {
         return Err(AppError::Authorization("申请人的租户已停用或到期".into()));
@@ -28,7 +29,7 @@ pub(crate) async fn ensure_requester_snapshot_in_txn(
         .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
         .one(transaction)
         .await
-        .map_err(database_error)?
+        .db()?
         .ok_or_else(|| AppError::NotFound("操作申请人不存在".into()))?;
     if !current_user.is_enabled()
         || current_user.authorization_version != requester.user_authorization_version
@@ -59,14 +60,14 @@ pub(crate) async fn ensure_role_quota_for_plan_in_txn(
         .filter(tenant::Column::TenantId.eq(tenant_id))
         .one(transaction)
         .await
-        .map_err(database_error)?
+        .db()?
         .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
     let active_count = role::Entity::find()
         .filter(role::Column::TenantId.eq(tenant_id))
         .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
         .count(transaction)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let limit = u64::try_from(tenant.max_roles).unwrap_or_default();
     if limit > 0 && active_count.saturating_add(create_count) > limit {
         return Err(AppError::Validation(format!(
@@ -99,7 +100,7 @@ pub(crate) async fn mark_plan_outcome(
         )
         .exec(transaction)
         .await
-        .map_err(database_error)?;
+        .db()?;
     if outcome == TenantConfigTransferItemRecord::OUTCOME_APPLIED {
         tenant_config_transfer_item::Entity::update_many()
             .col_expr(
@@ -118,7 +119,7 @@ pub(crate) async fn mark_plan_outcome(
             )
             .exec(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
     }
     Ok(())
 }

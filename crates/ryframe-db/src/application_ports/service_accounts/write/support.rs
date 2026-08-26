@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::collections::HashSet;
 
 use ryframe_application::ports::service_accounts::{
@@ -147,7 +148,7 @@ where
         .all(transaction)
         .await
         .map(|roles| roles.into_iter().map(|role| role.id).collect())
-        .map_err(database_error)
+        .db()
 }
 
 pub(super) async fn permission_codes(
@@ -163,7 +164,7 @@ pub(super) async fn permission_codes(
         .filter(role_permission::Column::RoleId.is_in(role_ids.iter().copied()))
         .all(transaction)
         .await
-        .map_err(database_error)?
+        .db()?
         .into_iter()
         .map(|row| row.perm_id)
         .collect::<Vec<_>>();
@@ -182,9 +183,5 @@ pub(super) async fn permission_codes(
                 .map(|permission| permission.code)
                 .collect()
         })
-        .map_err(database_error)
-}
-
-pub(super) fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
+        .db()
 }

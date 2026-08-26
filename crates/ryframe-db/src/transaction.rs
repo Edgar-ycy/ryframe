@@ -1,6 +1,7 @@
 use std::future::Future;
 
-use ryframe_kernel::{AppError, AppResult};
+use crate::DbResultExt;
+use ryframe_kernel::AppResult;
 use sea_orm::{DatabaseConnection, DatabaseTransaction, TransactionTrait};
 
 /// 闭包式事务管理器
@@ -36,16 +37,10 @@ impl Transaction {
         F: FnOnce(&DatabaseTransaction) -> Fut,
         Fut: Future<Output = AppResult<()>>,
     {
-        let tx = db
-            .begin()
-            .await
-            .map_err(|e| AppError::Database(format!("开启事务失败: {}", e)))?;
+        let tx = db.begin().await.db_context("开启事务失败")?;
 
         match f(&tx).await {
-            Ok(()) => tx
-                .commit()
-                .await
-                .map_err(|e| AppError::Database(format!("提交事务失败: {}", e))),
+            Ok(()) => tx.commit().await.db_context("提交事务失败"),
             Err(err) => {
                 // rollback 失败不覆盖原始错误
                 if let Err(e) = tx.rollback().await {

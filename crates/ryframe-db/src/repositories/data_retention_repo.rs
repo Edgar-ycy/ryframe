@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
@@ -115,7 +116,7 @@ impl DataRetentionRepository {
             .filter(data_retention_run::Column::BackgroundJobId.eq(model.background_job_id))
             .one(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         if let Some(existing) = existing {
             return Ok(existing);
         }
@@ -129,10 +130,10 @@ impl DataRetentionRepository {
                     .filter(data_retention_run::Column::BackgroundJobId.eq(model.background_job_id))
                     .one(db)
                     .await
-                    .map_err(database_error)?
+                    .db()?
                     .ok_or_else(|| AppError::Conflict("数据保留运行记录正在创建".into()))
             }
-            Err(error) => Err(database_error(error)),
+            Err(error) => Err(error).db(),
         }
     }
 
@@ -148,7 +149,7 @@ impl DataRetentionRepository {
             .filter(data_retention_run::Column::BackgroundJobId.eq(background_job_id))
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     /// 锁定后台任务对应的运行记录，供执行器以幂等方式确认是否仍需清理。
@@ -162,7 +163,7 @@ impl DataRetentionRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     /// 在锁定事务中把可恢复状态切换为运行中；完成态保持不变并返回 `false`。
@@ -187,7 +188,7 @@ impl DataRetentionRepository {
             .reset_all()
             .update(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(Some(saved))
     }
 
@@ -248,14 +249,14 @@ impl DataRetentionRepository {
             .filter(data_retention_run::Column::Id.eq(id))
             .exec(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         if result.rows_affected != 1 {
             return Err(AppError::NotFound("数据保留运行记录不存在".into()));
         }
         data_retention_run::Entity::find_by_id(id)
             .one(db)
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::NotFound("数据保留运行记录不存在".into()))
     }
 
@@ -287,7 +288,7 @@ impl DataRetentionRepository {
         while deleted < maximum as u64 {
             let remaining_limit = (maximum as u64 - deleted) as usize;
             let limit = batch_size.min(remaining_limit);
-            let transaction = db.begin().await.map_err(database_error)?;
+            let transaction = db.begin().await.db()?;
             let (condition, mut values) = condition_and_values(cutoff, current_run_id);
             values.push((limit as u64).into());
             let rows = transaction
@@ -300,13 +301,13 @@ impl DataRetentionRepository {
                     values,
                 ))
                 .await
-                .map_err(database_error)?;
+                .db()?;
             let ids = rows
                 .iter()
                 .map(|row| i64::try_get_by_index(row, 0).map_err(try_get_error))
                 .collect::<AppResult<Vec<_>>>()?;
             if ids.is_empty() {
-                transaction.commit().await.map_err(database_error)?;
+                transaction.commit().await.db()?;
                 break;
             }
             let placeholders = std::iter::repeat_n("?", ids.len())
@@ -322,8 +323,8 @@ impl DataRetentionRepository {
                     ids.iter().copied().map(Into::into),
                 ))
                 .await
-                .map_err(database_error)?;
-            transaction.commit().await.map_err(database_error)?;
+                .db()?;
+            transaction.commit().await.db()?;
             deleted += ids.len() as u64;
             if ids.len() < limit {
                 break;
@@ -350,7 +351,7 @@ impl DataRetentionRepository {
                 values,
             ))
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::Database("数据保留统计没有返回记录".into()))?;
         let count = i64::try_get_by_index(&row, 0).map_err(try_get_error)?;
         u64::try_from(count).map_err(|_| AppError::Database("数据保留统计结果无效".into()))
@@ -370,10 +371,6 @@ fn condition_and_values(
         values.push(current_run_id.into());
     }
     (condition, values)
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }
 
 fn try_get_error(error: sea_orm::TryGetError) -> AppError {

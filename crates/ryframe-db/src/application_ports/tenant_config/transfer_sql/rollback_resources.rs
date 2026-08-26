@@ -1,4 +1,5 @@
 use super::*;
+use crate::DbResultExt;
 
 pub(crate) async fn ensure_rollback_references_safe(
     transaction: &sea_orm::DatabaseTransaction,
@@ -11,7 +12,7 @@ pub(crate) async fn ensure_rollback_references_safe(
         .filter(role::Column::TenantId.eq(tenant_id))
         .all(transaction)
         .await
-        .map_err(database_error)?
+        .db()?
         .into_iter()
         .filter(|item| created_roles.contains(&normalize_stable_key(&item.code)))
         .map(|item| item.id)
@@ -22,7 +23,7 @@ pub(crate) async fn ensure_rollback_references_safe(
             .filter(user_role::Column::RoleId.is_in(extra_role_ids))
             .count(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             > 0
     {
         return Err(AppError::Conflict(
@@ -35,7 +36,7 @@ pub(crate) async fn ensure_rollback_references_safe(
         .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
         .all(transaction)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let paths = build_department_paths(&current_models)?;
     let extra_dept_ids = paths
         .into_iter()
@@ -55,7 +56,7 @@ pub(crate) async fn ensure_rollback_references_safe(
             .filter(user::Column::DeptId.is_in(extra_dept_ids.clone()))
             .count(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             > 0
     {
         return Err(AppError::Conflict(
@@ -73,7 +74,7 @@ pub(crate) async fn ensure_rollback_references_safe(
             ]))
             .all(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .into_iter()
             .map(|item| normalize_stable_key(&item.stable_key))
             .collect::<BTreeSet<_>>();
@@ -81,7 +82,7 @@ pub(crate) async fn ensure_rollback_references_safe(
             .filter(role::Column::TenantId.eq(tenant_id))
             .all(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .into_iter()
             .filter_map(|item| {
                 migrated_role_keys
@@ -94,7 +95,7 @@ pub(crate) async fn ensure_rollback_references_safe(
             .filter(role_dept::Column::DeptId.is_in(extra_dept_ids))
             .all(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .into_iter()
             .any(|relation| !migrated_role_ids.contains(&relation.role_id));
         if unexpected_reference {
@@ -120,7 +121,7 @@ async fn load_created_item_keys(
         )
         .all(transaction)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let mut created = BTreeMap::<String, BTreeSet<String>>::new();
     for item in items {
         let normalized_key = normalize_resource_stable_key(&item.resource_type, &item.stable_key);
@@ -193,7 +194,7 @@ pub(crate) async fn restore_snapshot_in_transaction(
         .filter(role::Column::IsSuper.eq(0))
         .all(transaction)
         .await
-        .map_err(database_error)?
+        .db()?
         .into_iter()
         .filter(|item| created_role_codes.contains(&normalize_stable_key(&item.code)))
         .collect::<Vec<_>>();
@@ -203,13 +204,13 @@ pub(crate) async fn restore_snapshot_in_transaction(
             .filter(role_permission::Column::RoleId.eq(item.id))
             .exec(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         role_dept::Entity::delete_many()
             .filter(role_dept::Column::TenantId.eq(tenant_id))
             .filter(role_dept::Column::RoleId.eq(item.id))
             .exec(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         let mut model = item;
         model.del_flag = role::Model::DEL_FLAG_DELETED.to_owned();
         model.updated_at = now;
@@ -217,14 +218,14 @@ pub(crate) async fn restore_snapshot_in_transaction(
             .reset_all()
             .update(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
     }
 
     let permission_codes = permission::Entity::find()
         .filter(permission::Column::TenantId.eq(tenant_id))
         .all(transaction)
         .await
-        .map_err(database_error)?
+        .db()?
         .into_iter()
         .map(|item| (item.id, item.code))
         .collect::<BTreeMap<_, _>>();
@@ -233,7 +234,7 @@ pub(crate) async fn restore_snapshot_in_transaction(
         .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
         .all(transaction)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let current_menu_keys = build_menu_stable_keys(&current_menus, &permission_codes)?;
     let created_menu_keys = created_keys(&created, "menu").collect::<BTreeSet<_>>();
     for mut item in current_menus {
@@ -247,7 +248,7 @@ pub(crate) async fn restore_snapshot_in_transaction(
                 .reset_all()
                 .update(transaction)
                 .await
-                .map_err(database_error)?;
+                .db()?;
         }
     }
 
@@ -256,7 +257,7 @@ pub(crate) async fn restore_snapshot_in_transaction(
         .filter(permission::Column::TenantId.eq(tenant_id))
         .all(transaction)
         .await
-        .map_err(database_error)?
+        .db()?
         .into_iter()
         .filter(|item| created_permission_codes.contains(&normalize_stable_key(&item.code)))
         .collect::<Vec<_>>();
@@ -266,14 +267,14 @@ pub(crate) async fn restore_snapshot_in_transaction(
             .filter(role_permission::Column::PermId.eq(item.id))
             .count(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             + menu::Entity::find()
                 .filter(menu::Column::TenantId.eq(tenant_id))
                 .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
                 .filter(menu::Column::PermId.eq(item.id))
                 .count(transaction)
                 .await
-                .map_err(database_error)?;
+                .db()?;
         if referenced > 0 {
             return Err(AppError::Conflict(
                 "应用创建的权限仍被引用，不能自动回滚".into(),
@@ -282,7 +283,7 @@ pub(crate) async fn restore_snapshot_in_transaction(
         permission::Entity::delete_by_id(item.id)
             .exec(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
     }
 
     soft_delete_simple_extras(transaction, tenant_id, &created, now).await?;
@@ -301,7 +302,7 @@ async fn soft_delete_simple_extras(
         .filter(post::Column::DelFlag.eq(post::SOFT_DELETE_ACTIVE))
         .all(transaction)
         .await
-        .map_err(database_error)?
+        .db()?
     {
         if post_codes.contains(&normalize_stable_key(&item.code)) {
             item.del_flag = post::SOFT_DELETE_DELETED.to_owned();
@@ -310,7 +311,7 @@ async fn soft_delete_simple_extras(
                 .reset_all()
                 .update(transaction)
                 .await
-                .map_err(database_error)?;
+                .db()?;
         }
     }
     let data_keys = created_keys(created, "dict_data").collect::<BTreeSet<_>>();
@@ -319,7 +320,7 @@ async fn soft_delete_simple_extras(
         .filter(dict_data::Column::DelFlag.eq(dict_data::Model::DEL_FLAG_NORMAL))
         .all(transaction)
         .await
-        .map_err(database_error)?
+        .db()?
     {
         let stable_key = format!("{}:{}:{}", item.type_code.len(), item.type_code, item.value);
         if data_keys.contains(&normalize_stable_key(&stable_key)) {
@@ -329,7 +330,7 @@ async fn soft_delete_simple_extras(
                 .reset_all()
                 .update(transaction)
                 .await
-                .map_err(database_error)?;
+                .db()?;
         }
     }
     let type_codes = created_keys(created, "dict_type").collect::<BTreeSet<_>>();
@@ -338,7 +339,7 @@ async fn soft_delete_simple_extras(
         .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL))
         .all(transaction)
         .await
-        .map_err(database_error)?
+        .db()?
     {
         if type_codes.contains(&normalize_stable_key(&item.code)) {
             item.del_flag = dict_type::Model::DEL_FLAG_DELETED.to_owned();
@@ -347,7 +348,7 @@ async fn soft_delete_simple_extras(
                 .reset_all()
                 .update(transaction)
                 .await
-                .map_err(database_error)?;
+                .db()?;
         }
     }
     let config_keys = created_keys(created, "config").collect::<BTreeSet<_>>();
@@ -357,7 +358,7 @@ async fn soft_delete_simple_extras(
         .filter(config::Column::Portable.eq(true))
         .all(transaction)
         .await
-        .map_err(database_error)?
+        .db()?
     {
         if config_keys.contains(&normalize_stable_key(&item.key)) {
             item.del_flag = config::Model::DEL_FLAG_DELETED.to_owned();
@@ -366,7 +367,7 @@ async fn soft_delete_simple_extras(
                 .reset_all()
                 .update(transaction)
                 .await
-                .map_err(database_error)?;
+                .db()?;
         }
     }
     Ok(())
@@ -384,7 +385,7 @@ async fn soft_delete_department_extras(
         .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
         .all(transaction)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let paths = build_department_paths(&models)?;
     let mut extras = models
         .into_iter()
@@ -408,7 +409,7 @@ async fn soft_delete_department_extras(
             .reset_all()
             .update(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
     }
     Ok(())
 }

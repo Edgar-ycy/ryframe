@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{
@@ -85,12 +86,7 @@ impl DictPersistencePort for DatabaseDictPersistence {
     }
 
     async fn begin(&self) -> AppResult<Box<dyn DictTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseDictTransaction { transaction }) as Box<dyn DictTransaction>)
     }
 }
@@ -116,7 +112,7 @@ impl DictTransaction for DatabaseDictTransaction {
             .lock(LockType::Update)
             .one(&self.transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .map(to_type_record))
     }
 
@@ -131,7 +127,7 @@ impl DictTransaction for DatabaseDictTransaction {
             .lock(LockType::Update)
             .one(&self.transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .map(to_type_record))
     }
 
@@ -182,7 +178,7 @@ impl DictTransaction for DatabaseDictTransaction {
             .lock(LockType::Update)
             .one(&self.transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .map(to_data_record))
     }
 
@@ -237,12 +233,12 @@ impl PersistenceTransaction for DatabaseDictTransaction {
             TransactionAuditMode::CurrentRequest => {
                 super::super::audit::commit_current_audit(self.transaction).await
             }
-            TransactionAuditMode::Skip => self.transaction.commit().await.map_err(database_error),
+            TransactionAuditMode::Skip => self.transaction.commit().await.db(),
         }
     }
 
     async fn rollback(self: Box<Self>) -> AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }
 
@@ -310,8 +306,4 @@ fn to_data_entity(tenant_id: &str, record: DictDataRecord) -> dict_data::Model {
         created_at: record.created_at,
         updated_at: record.updated_at,
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> ryframe_kernel::AppError {
-    ryframe_kernel::AppError::Database(error.to_string())
 }

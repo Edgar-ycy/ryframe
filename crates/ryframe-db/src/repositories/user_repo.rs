@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use async_trait::async_trait;
 use ryframe_kernel::{
     AppError, AppResult, DataScope, DataScopeContext, PageResult, ValidatedPageQuery,
@@ -35,7 +36,7 @@ impl Repository<user::Model, i64> for UserRepository {
             .filter(user::Column::Id.eq(id))
             .one(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     async fn find_by_page(
@@ -93,7 +94,7 @@ impl UserRepository {
             .one(db)
             .await
             .map(|user| user.map(|user| user.tenant_id))
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     fn apply_filters(
@@ -221,7 +222,7 @@ impl UserRepository {
             .limit(limit)
             .all(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     pub async fn find_by_username(
@@ -234,7 +235,7 @@ impl UserRepository {
             .filter(user::Column::Username.eq(username))
             .one(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     pub async fn find_existing_usernames_in_txn(
@@ -255,7 +256,7 @@ impl UserRepository {
             .into_tuple::<String>()
             .all(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 批量读取租户内仍有效用户的账号名称，供历史记录展示申请人而不暴露数据库 ID。
@@ -280,7 +281,7 @@ impl UserRepository {
             .into_tuple::<(i64, String)>()
             .all(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     pub async fn insert_many_in_txn(
@@ -298,7 +299,7 @@ impl UserRepository {
         user::Entity::insert_many(users.into_iter().map(user::ActiveModel::from))
             .exec(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         Ok(())
     }
 
@@ -344,7 +345,7 @@ impl UserRepository {
             .limit(window.limit())
             .all(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 在同一主库快照内统计导出匹配行并捕获最大主键。

@@ -124,7 +124,3 @@ pub(super) fn import_row_model(row: NewUserImportRow) -> user_import_row_result:
         created_at: row.created_at,
     }
 }
-
-pub(super) fn database_error(error: impl std::fmt::Display) -> ryframe_kernel::AppError {
-    ryframe_kernel::AppError::Database(error.to_string())
-}

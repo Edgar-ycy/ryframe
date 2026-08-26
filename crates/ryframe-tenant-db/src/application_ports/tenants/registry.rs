@@ -1,3 +1,4 @@
+use ryframe_db::DbResultExt;
 use std::sync::Arc;
 
 use ryframe_application::ports::{
@@ -14,7 +15,6 @@ use ryframe_db::{
     TenantProvisioningRepository, TenantRepository,
     application_ports::transaction::DatabasePortTransaction, entities::tenant,
 };
-use ryframe_kernel::AppError;
 use sea_orm::{ActiveModelTrait, IntoActiveModel, TransactionTrait};
 
 use crate::TenantDataPlacementRepository;
@@ -58,12 +58,7 @@ impl TenantPersistencePort for TenantPersistence {
     }
 
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn TenantTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(TenantWorkUnit {
             transaction: transaction.into(),
         }) as Box<dyn TenantTransaction>)
@@ -189,7 +184,7 @@ impl TenantTransaction for TenantWorkUnit {
             .update(&self.transaction)
             .await
             .map(map_tenant)
-            .map_err(database_error)
+            .db()
     }
 
     async fn update_status<'a>(
@@ -253,14 +248,12 @@ impl ryframe_application::PersistenceTransaction for TenantWorkUnit {
             ryframe_application::TransactionAuditMode::CurrentRequest => {
                 self.transaction.commit_audited().await
             }
-            ryframe_application::TransactionAuditMode::Skip => {
-                self.transaction.commit().await.map_err(database_error)
-            }
+            ryframe_application::TransactionAuditMode::Skip => self.transaction.commit().await.db(),
         }
     }
 
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }
 
@@ -325,8 +318,4 @@ fn map_provision(record: ProvisionTenantRecord) -> ProvisionTenantCommand {
         managed_capability_permission_codes: record.managed_capability_permission_codes,
         default_admin_permission_codes: record.default_admin_permission_codes,
     }
-}
-
-fn database_error(error: sea_orm::DbErr) -> AppError {
-    AppError::Database(error.to_string())
 }

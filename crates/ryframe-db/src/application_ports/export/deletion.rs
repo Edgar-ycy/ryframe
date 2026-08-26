@@ -1,7 +1,7 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{BackgroundJobRepository, ControlDatabaseCluster, ExportJobRepository};
-use ryframe_kernel::AppError;
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
 use ryframe_application::{
@@ -24,12 +24,7 @@ pub fn port(database: ControlDatabaseCluster) -> Arc<dyn ExportDeletionPersisten
 #[async_trait::async_trait]
 impl ExportDeletionPersistencePort for DatabaseExportDeletionPersistence {
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn ExportDeletionTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseExportDeletionTransaction { transaction })
             as Box<dyn ExportDeletionTransaction>)
     }
@@ -86,17 +81,11 @@ impl ryframe_application::PersistenceTransaction for DatabaseExportDeletionTrans
             ryframe_application::TransactionAuditMode::CurrentRequest => {
                 super::super::audit::commit_current_audit(self.transaction).await
             }
-            ryframe_application::TransactionAuditMode::Skip => {
-                self.transaction.commit().await.map_err(database_error)
-            }
+            ryframe_application::TransactionAuditMode::Skip => self.transaction.commit().await.db(),
         }
     }
 
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
-}
-
-fn database_error(error: sea_orm::DbErr) -> AppError {
-    AppError::Database(error.to_string())
 }

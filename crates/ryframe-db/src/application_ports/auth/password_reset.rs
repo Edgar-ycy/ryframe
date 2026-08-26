@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{
@@ -71,12 +72,7 @@ impl PasswordResetPersistencePort for DatabasePasswordResetPersistence {
     }
 
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn PasswordResetTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabasePasswordResetTransaction {
             transaction: transaction.into(),
             authorization_cache: self.authorization_cache.clone(),
@@ -142,7 +138,7 @@ impl PasswordResetTransaction for DatabasePasswordResetTransaction {
         let saved = password_reset_request::ActiveModel::from(model)
             .insert(&self.transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(to_request_record(saved))
     }
 
@@ -156,7 +152,7 @@ impl PasswordResetTransaction for DatabasePasswordResetTransaction {
             .lock(LockType::Update)
             .one(&self.transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .map(to_request_record))
     }
 
@@ -171,7 +167,7 @@ impl PasswordResetTransaction for DatabasePasswordResetTransaction {
             .lock(LockType::Update)
             .one(&self.transaction)
             .await
-            .map_err(database_error)?
+            .db()?
         else {
             return Ok(None);
         };
@@ -182,7 +178,7 @@ impl PasswordResetTransaction for DatabasePasswordResetTransaction {
             .lock(LockType::Update)
             .all(&self.transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .into_iter()
             .map(|relation| relation.role_id)
             .collect::<Vec<_>>();
@@ -197,7 +193,7 @@ impl PasswordResetTransaction for DatabasePasswordResetTransaction {
                 .lock(LockType::Update)
                 .all(&self.transaction)
                 .await
-                .map_err(database_error)?
+                .db()?
         };
         if roles.len() != role_ids.len() {
             return Err(AppError::Conflict(
@@ -230,7 +226,7 @@ impl PasswordResetTransaction for DatabasePasswordResetTransaction {
             .filter(password_reset_request::Column::ExpiresAt.lte(evaluated_at))
             .exec(&self.transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(result.rows_affected == 1)
     }
 
@@ -268,7 +264,7 @@ impl PasswordResetTransaction for DatabasePasswordResetTransaction {
             .filter(user::Column::AuthorizationVersion.eq(expected.authorization_version))
             .exec(&self.transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(result.rows_affected == 1)
     }
 
@@ -299,14 +295,12 @@ impl ryframe_application::PersistenceTransaction for DatabasePasswordResetTransa
             ryframe_application::TransactionAuditMode::CurrentRequest => {
                 self.transaction.commit_audited().await
             }
-            ryframe_application::TransactionAuditMode::Skip => {
-                self.transaction.commit().await.map_err(database_error)
-            }
+            ryframe_application::TransactionAuditMode::Skip => self.transaction.commit().await.db(),
         }
     }
 
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }
 
@@ -329,8 +323,4 @@ fn to_user_state(model: user::Model, has_super_role: bool) -> PasswordResetUserS
         status: model.status,
         has_super_role,
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

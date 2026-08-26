@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
@@ -7,7 +8,7 @@ use crate::{
         service_account, service_credential, service_delegation, service_delegation_capability,
     },
 };
-use ryframe_kernel::{AppError, PageResult, ValidatedPageQuery};
+use ryframe_kernel::{PageResult, ValidatedPageQuery};
 use sea_orm::{
     ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
     QuerySelect,
@@ -147,7 +148,7 @@ impl ServiceAccountReadPort for DatabaseServiceAccountRead {
             .connection;
         let total = service_delegation::Entity::find()
             .filter(service_delegation::Column::TenantId.eq(tenant_id));
-        let total = total.count(&database).await.map_err(database_error)?;
+        let total = total.count(&database).await.db()?;
         let rows = service_delegation::Entity::find()
             .filter(service_delegation::Column::TenantId.eq(tenant_id))
             .order_by_desc(service_delegation::Column::CreatedAt)
@@ -155,7 +156,7 @@ impl ServiceAccountReadPort for DatabaseServiceAccountRead {
             .limit(page.page_size())
             .all(&database)
             .await
-            .map_err(database_error)?;
+            .db()?;
         let records = delegations_with_capabilities(&database, rows).await?;
         Ok(PageResult::new(records, total, &page))
     }
@@ -179,7 +180,7 @@ async fn delegations_with_capabilities(
         .order_by_asc(service_delegation_capability::Column::CapabilityKey)
         .all(database)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let mut by_delegation = HashMap::<i64, Vec<String>>::new();
     for capability in capabilities {
         by_delegation
@@ -226,8 +227,4 @@ fn delegation_record(
         revoked_at: delegation.revoked_at,
         created_at: delegation.created_at,
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

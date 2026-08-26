@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::AppResult;
 use sea_orm::sea_query::{Expr, SelectStatement};
@@ -8,9 +9,7 @@ use sea_orm::{
 
 use crate::entities::{message, message_recipient};
 
-use super::{
-    MessageInboxQuery, MessageRepository, RecipientMessage, RecipientMessagePage, database_error,
-};
+use super::{MessageInboxQuery, MessageRepository, RecipientMessage, RecipientMessagePage};
 
 impl MessageRepository {
     /// 获取用户收件箱；消息 ID 作为稳定的降序游标。
@@ -57,7 +56,7 @@ impl MessageRepository {
             .limit(limit.saturating_add(1))
             .all(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         let has_more = rows.len() > limit as usize;
         rows.truncate(limit as usize);
         let records = rows
@@ -116,7 +115,7 @@ impl MessageRepository {
             )
             .one(db)
             .await
-            .map_err(database_error)?
+            .db()?
         else {
             return Ok(Vec::new());
         };
@@ -130,7 +129,7 @@ impl MessageRepository {
             recipient_query =
                 recipient_query.filter(message_recipient::Column::UserId.is_in(user_ids));
         }
-        let recipients = recipient_query.all(db).await.map_err(database_error)?;
+        let recipients = recipient_query.all(db).await.db()?;
 
         Ok(recipients
             .into_iter()
@@ -164,7 +163,7 @@ impl MessageRepository {
             )
             .count(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     /// 批量确认用户已收到指定消息。
@@ -195,7 +194,7 @@ impl MessageRepository {
             )
             .exec(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(result.rows_affected)
     }
 
@@ -216,7 +215,7 @@ impl MessageRepository {
             .filter(message_recipient::Column::EnqueuedAt.is_null())
             .exec(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(result.rows_affected)
     }
 
@@ -251,7 +250,7 @@ impl MessageRepository {
             )
             .exec(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         if result.rows_affected > 0 {
             return Ok(true);
         }
@@ -270,7 +269,7 @@ impl MessageRepository {
             )
             .one(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(existing.is_some())
     }
 
@@ -304,7 +303,7 @@ impl MessageRepository {
             )
             .exec(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(result.rows_affected)
     }
 
@@ -331,7 +330,7 @@ impl MessageRepository {
             .filter(message_recipient::Column::DeletedAt.is_null())
             .exec(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(result.rows_affected)
     }
 
@@ -354,7 +353,7 @@ impl MessageRepository {
             .into_tuple::<i64>()
             .all(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         if ids.is_empty() {
             return Ok(0);
         }
@@ -362,7 +361,7 @@ impl MessageRepository {
             .filter(message::Column::Id.is_in(ids))
             .exec(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(result.rows_affected)
     }
 }

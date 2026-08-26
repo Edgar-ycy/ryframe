@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{
@@ -106,12 +107,7 @@ impl ConfigPersistencePort for DatabaseConfigPersistence {
     }
 
     async fn begin(&self) -> AppResult<Box<dyn ConfigTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseConfigTransaction {
             transaction: transaction.into(),
             authorization_cache: self.authorization_cache.clone(),
@@ -140,7 +136,7 @@ impl ConfigTransaction for DatabaseConfigTransaction {
             .lock(LockType::Update)
             .one(&self.transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .map(to_record))
     }
 
@@ -194,12 +190,12 @@ impl PersistenceTransaction for DatabaseConfigTransaction {
     async fn commit(self: Box<Self>, audit_mode: TransactionAuditMode) -> AppResult<()> {
         match audit_mode {
             TransactionAuditMode::CurrentRequest => self.transaction.commit_audited().await,
-            TransactionAuditMode::Skip => self.transaction.commit().await.map_err(database_error),
+            TransactionAuditMode::Skip => self.transaction.commit().await.db(),
         }
     }
 
     async fn rollback(self: Box<Self>) -> AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }
 
@@ -236,8 +232,4 @@ fn to_entity(tenant_id: &str, record: ConfigRecord) -> config::Model {
         created_at: record.created_at,
         updated_at: record.updated_at,
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> ryframe_kernel::AppError {
-    ryframe_kernel::AppError::Database(error.to_string())
 }

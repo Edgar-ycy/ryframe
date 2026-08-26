@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult, DataScopeContext, PageResult, ValidatedPageQuery};
@@ -29,7 +30,7 @@ impl Repository<login_info::Model, i64> for LoginInfoRepository {
             .filter(login_info::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     async fn find_by_page(
@@ -123,7 +124,7 @@ impl LoginInfoRepository {
             .limit(window.limit())
             .all(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 在同一主库快照内统计导出匹配行并捕获最大主键。
@@ -165,7 +166,7 @@ impl LoginInfoRepository {
             .exec(db)
             .await
             .map(|r| r.rows_affected)
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     pub async fn clean_all_in_transaction(
@@ -178,6 +179,6 @@ impl LoginInfoRepository {
             .exec(transaction)
             .await
             .map(|result| result.rows_affected)
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 }

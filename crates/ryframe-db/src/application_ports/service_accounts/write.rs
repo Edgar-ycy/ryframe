@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{
@@ -16,7 +17,7 @@ mod support;
 pub use support::{
     account_model, credential_model, credential_record, delegation_model, delegation_record,
 };
-use support::{database_error, enabled_role_ids, permission_codes};
+use support::{enabled_role_ids, permission_codes};
 
 use super::{super::transaction::DatabasePortTransaction, account_record};
 
@@ -44,12 +45,7 @@ struct DatabaseServiceAccountWriteTransaction {
 #[async_trait::async_trait]
 impl ServiceAccountWritePort for DatabaseServiceAccountWrite {
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn ServiceAccountWriteTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseServiceAccountWriteTransaction {
             transaction: transaction.into(),
         }) as Box<dyn ServiceAccountWriteTransaction>)
@@ -80,7 +76,7 @@ impl ServiceAccountWriteTransaction for DatabaseServiceAccountWriteTransaction {
             .one(&self.transaction)
             .await
             .map(|account| account.is_some())
-            .map_err(database_error)
+            .db()
     }
 
     async fn department_exists<'a>(
@@ -95,7 +91,7 @@ impl ServiceAccountWriteTransaction for DatabaseServiceAccountWriteTransaction {
             .one(&self.transaction)
             .await
             .map(|department| department.is_some())
-            .map_err(database_error)
+            .db()
     }
 
     async fn lock_account<'a>(
@@ -205,7 +201,7 @@ impl ServiceAccountWriteTransaction for DatabaseServiceAccountWriteTransaction {
             .one(&self.transaction)
             .await
             .map(|credential| credential.map(credential_record))
-            .map_err(database_error)
+            .db()
     }
 
     async fn save_credential<'a>(
@@ -221,7 +217,7 @@ impl ServiceAccountWriteTransaction for DatabaseServiceAccountWriteTransaction {
             .update(&self.transaction)
             .await
             .map(credential_record)
-            .map_err(database_error)
+            .db()
     }
 
     async fn lock_user<'a>(
@@ -312,7 +308,7 @@ impl ServiceAccountWriteTransaction for DatabaseServiceAccountWriteTransaction {
                     user_id,
                 })
             })
-            .map_err(database_error)
+            .db()
     }
 
     async fn lock_delegation<'a>(
@@ -325,7 +321,7 @@ impl ServiceAccountWriteTransaction for DatabaseServiceAccountWriteTransaction {
             .lock(LockType::Update)
             .one(&self.transaction)
             .await
-            .map_err(database_error)?
+            .db()?
         else {
             return Ok(None);
         };
@@ -369,7 +365,7 @@ impl ServiceAccountWriteTransaction for DatabaseServiceAccountWriteTransaction {
             .update(&self.transaction)
             .await
             .map(|saved| delegation_record(saved, capability_keys))
-            .map_err(database_error)
+            .db()
     }
 }
 
@@ -383,13 +379,11 @@ impl ryframe_application::PersistenceTransaction for DatabaseServiceAccountWrite
             ryframe_application::TransactionAuditMode::CurrentRequest => {
                 self.transaction.commit_audited().await
             }
-            ryframe_application::TransactionAuditMode::Skip => {
-                self.transaction.commit().await.map_err(database_error)
-            }
+            ryframe_application::TransactionAuditMode::Skip => self.transaction.commit().await.db(),
         }
     }
 
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }

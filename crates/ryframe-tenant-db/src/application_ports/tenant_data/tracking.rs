@@ -1,3 +1,4 @@
+use ryframe_db::DbResultExt;
 use std::sync::Arc;
 
 use ryframe_application::ports::{
@@ -17,9 +18,7 @@ use sea_orm::TransactionTrait;
 
 mod mappers;
 
-use mappers::{
-    database_error, map_backup_point, map_create_migration, map_lease, validated_backup_query,
-};
+use mappers::{map_backup_point, map_create_migration, map_lease, validated_backup_query};
 pub use mappers::{
     map_item, map_item_model, map_migration, map_migration_model, map_placement,
     map_placement_model,
@@ -172,12 +171,7 @@ impl TenantDataMigrationPersistencePort for TenantDataMigrationPersistence {
     }
 
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn TenantDataMigrationTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(TenantDataMigrationWorkUnit {
             transaction: transaction.into(),
         }) as Box<dyn TenantDataMigrationTransaction>)
@@ -347,10 +341,10 @@ impl ryframe_application::PersistenceTransaction for TenantDataMigrationWorkUnit
         audit_mode: ryframe_application::TransactionAuditMode,
     ) -> ryframe_kernel::AppResult<()> {
         let _ = audit_mode;
-        self.transaction.commit().await.map_err(database_error)
+        self.transaction.commit().await.db()
     }
 
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }

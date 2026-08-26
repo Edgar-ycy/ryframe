@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{ControlDatabaseCluster, ReadConsistency, entities::service_access_audit};
@@ -31,7 +32,7 @@ impl ServiceAccountAuditReadPort for DatabaseServiceAccountAuditPersistence {
             .filter(service_access_audit::Column::TenantId.eq(tenant_id))
             .count(&database)
             .await
-            .map_err(database_error)?;
+            .db()?;
         let records = service_access_audit::Entity::find()
             .filter(service_access_audit::Column::TenantId.eq(tenant_id))
             .order_by_desc(service_access_audit::Column::StartedAt)
@@ -39,7 +40,7 @@ impl ServiceAccountAuditReadPort for DatabaseServiceAccountAuditPersistence {
             .limit(page.page_size())
             .all(&database)
             .await
-            .map_err(database_error)?
+            .db()?
             .into_iter()
             .map(to_record)
             .collect();
@@ -72,8 +73,4 @@ fn to_record(audit: service_access_audit::Model) -> ServiceAccessAuditRecord {
         started_at: audit.started_at,
         completed_at: audit.completed_at,
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> ryframe_kernel::AppError {
-    ryframe_kernel::AppError::Database(error.to_string())
 }

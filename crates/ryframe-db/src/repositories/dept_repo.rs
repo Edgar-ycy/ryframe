@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use async_trait::async_trait;
 use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
@@ -38,7 +39,7 @@ impl Repository<dept::Model, i64> for DeptRepository {
             .filter(dept::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     async fn find_by_page(
@@ -93,7 +94,7 @@ impl DeptRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     pub async fn insert_in_transaction(
@@ -108,7 +109,7 @@ impl DeptRepository {
         dept::ActiveModel::from(entity)
             .insert(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     pub async fn update_in_transaction(
@@ -124,7 +125,7 @@ impl DeptRepository {
             .reset_all()
             .update(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     pub async fn delete_in_transaction(
@@ -144,7 +145,7 @@ impl DeptRepository {
             .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
             .exec(transaction)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+            .db()?;
         if result.rows_affected != 1 {
             return Err(AppError::NotFound("部门不存在".into()));
         }
@@ -163,7 +164,7 @@ impl DeptRepository {
             .order_by_asc(dept::Column::Sort)
             .all(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .db()?;
         Ok(build_dept_tree(&all, None))
     }
 
@@ -183,7 +184,7 @@ impl DeptRepository {
             .order_by_asc(dept::Column::Sort)
             .all(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .db()?;
         let mut included = visible_ids.to_vec();
         for item in all.iter().filter(|item| visible_ids.contains(&item.id)) {
             included.extend(
@@ -215,7 +216,7 @@ impl DeptRepository {
             .filter(dept::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .db()?;
         Ok(exists.is_some())
     }
 
@@ -266,7 +267,7 @@ impl DeptRepository {
             .filter(dept::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .db()?;
 
         let mut ids = vec![dept_id];
         for child in children {
@@ -296,7 +297,7 @@ impl DeptRepository {
             .filter(dept::Column::TenantId.eq(tenant_id))
             .all(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     pub async fn is_referenced(
@@ -311,7 +312,7 @@ impl DeptRepository {
             .filter(user::Column::DeptId.eq(dept_id))
             .one(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))?
+            .db()?
             .is_some();
         if has_users {
             return Ok(true);
@@ -323,7 +324,7 @@ impl DeptRepository {
             .one(db)
             .await
             .map(|relation| relation.is_some())
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 带搜索条件的查询（按名称、状态过滤）
@@ -338,7 +339,7 @@ impl DeptRepository {
             .order_by_asc(dept::Column::Sort)
             .all(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     pub async fn find_filtered_by_ids(
@@ -357,7 +358,7 @@ impl DeptRepository {
             .order_by_asc(dept::Column::Sort)
             .all(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     /// 带搜索条件的分页查询

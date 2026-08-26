@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{
@@ -125,12 +126,7 @@ impl JobSchedulePersistencePort for DatabaseJobSchedulePersistence {
     }
 
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn JobScheduleTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseJobScheduleTransaction {
             transaction,
             schedule_repository: JobScheduleRepository,
@@ -156,7 +152,7 @@ impl JobScheduleTransaction for DatabaseJobScheduleTransaction {
                 [tenant_id.into()],
             ))
             .await
-            .map_err(database_error)?;
+            .db()?;
         if row.is_none() {
             return Err(AppError::NotFound("当前租户不存在".into()));
         }
@@ -224,7 +220,7 @@ impl JobScheduleTransaction for DatabaseJobScheduleTransaction {
             .insert(&self.transaction)
             .await
             .map(to_schedule)
-            .map_err(database_error)
+            .db()
     }
 
     async fn save_schedule(
@@ -235,7 +231,7 @@ impl JobScheduleTransaction for DatabaseJobScheduleTransaction {
             .update(&self.transaction)
             .await
             .map(to_schedule)
-            .map_err(database_error)
+            .db()
     }
 
     async fn insert_execution<'a>(
@@ -259,7 +255,7 @@ impl JobScheduleTransaction for DatabaseJobScheduleTransaction {
         }
         .insert(&self.transaction)
         .await
-        .map_err(database_error)?;
+        .db()?;
         Ok(to_execution(execution, None))
     }
 
@@ -270,10 +266,7 @@ impl JobScheduleTransaction for DatabaseJobScheduleTransaction {
     ) -> ryframe_kernel::AppResult<JobScheduleExecutionRecord> {
         let mut active = execution_active(execution);
         active.background_job_id = Set(Some(background_job_id));
-        let execution = active
-            .update(&self.transaction)
-            .await
-            .map_err(database_error)?;
+        let execution = active.update(&self.transaction).await.db()?;
         execution_record(&self.transaction, Some(execution))
             .await?
             .ok_or_else(|| AppError::Internal("调度执行记录更新后丢失".into()))
@@ -299,11 +292,11 @@ impl ryframe_application::PersistenceTransaction for DatabaseJobScheduleTransact
         audit_mode: ryframe_application::TransactionAuditMode,
     ) -> ryframe_kernel::AppResult<()> {
         let _ = audit_mode;
-        self.transaction.commit().await.map_err(database_error)
+        self.transaction.commit().await.db()
     }
 
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }
 
@@ -402,13 +395,9 @@ async fn execution_record(
         Some(job_id) => background_job::Entity::find_by_id(job_id)
             .one(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .map(|job| job.status),
         None => None,
     };
     Ok(Some(to_execution(execution, status)))
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

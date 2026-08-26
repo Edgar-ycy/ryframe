@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{
@@ -5,7 +6,7 @@ use crate::{
     OutboxFailureDisposition, entities::outbox_event,
 };
 use chrono::{DateTime, Duration, Utc};
-use ryframe_kernel::{AppError, AppResult};
+use ryframe_kernel::AppResult;
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
 use ryframe_application::{
@@ -143,19 +144,13 @@ impl OutboxPersistencePort for DatabaseOutboxPersistence {
 }
 
 async fn begin(database: &sea_orm::DatabaseConnection) -> AppResult<DatabaseTransaction> {
-    database
-        .begin()
-        .await
-        .map_err(|error| AppError::Database(error.to_string()))
+    database.begin().await.db()
 }
 
 async fn finish(transaction: DatabaseTransaction, result: AppResult<bool>) -> AppResult<bool> {
     match result {
         Ok(true) => {
-            transaction
-                .commit()
-                .await
-                .map_err(|error| AppError::Database(error.to_string()))?;
+            transaction.commit().await.db()?;
             Ok(true)
         }
         Ok(false) => {

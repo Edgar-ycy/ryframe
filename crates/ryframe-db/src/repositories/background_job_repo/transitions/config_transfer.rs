@@ -1,4 +1,5 @@
 use super::*;
+use crate::DbResultExt;
 
 impl BackgroundJobRepository {
     pub(super) async fn is_tenant_config_job_owner<C>(
@@ -26,7 +27,7 @@ impl BackgroundJobRepository {
                     .one(db)
                     .await
                     .map(|bundle| bundle.is_some())
-                    .map_err(database_error)
+                    .db()
             }
             TENANT_CONFIG_PREVIEW_JOB_TYPE
             | TENANT_CONFIG_APPLY_JOB_TYPE
@@ -51,7 +52,7 @@ impl BackgroundJobRepository {
                     .one(db)
                     .await
                     .map(|transfer| transfer.is_some())
-                    .map_err(database_error)
+                    .db()
             }
             _ => Ok(true),
         }
@@ -172,7 +173,7 @@ impl BackgroundJobRepository {
             .exec(db)
             .await
             .map(|result| result.rows_affected == 1)
-            .map_err(database_error)
+            .db()
     }
 }
 

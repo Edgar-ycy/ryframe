@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::AppResult;
 use sea_orm::{
@@ -21,7 +22,7 @@ use crate::{
 
 use super::{
     BackgroundJobRepository, ExpiredLeaseRecovery, FailBackgroundJob, JobFailureDisposition,
-    database_error, validate_lease,
+    validate_lease,
 };
 
 /// 租约到期且尝试次数耗尽时写入的安全诊断原因。
@@ -93,7 +94,7 @@ impl BackgroundJobRepository {
             .lock(LockType::Update)
             .one(db)
             .await
-            .map_err(database_error)?
+            .db()?
         else {
             return Ok(false);
         };
@@ -116,7 +117,7 @@ impl BackgroundJobRepository {
         active.lease_until = Set(None);
         active.updated_at = Set(now);
         active.completed_at = Set(None);
-        active.update(db).await.map_err(database_error)?;
+        active.update(db).await.db()?;
         Ok(true)
     }
 
@@ -130,7 +131,7 @@ impl BackgroundJobRepository {
         now: DateTime<Utc>,
         tenant_scope: &ExecutionTenantFilter,
     ) -> AppResult<ExpiredLeaseRecovery> {
-        let transaction = db.begin().await.map_err(database_error)?;
+        let transaction = db.begin().await.db()?;
         let mut query = background_job::Entity::find()
             .filter(background_job::Column::Status.eq(background_job::Model::STATUS_RUNNING))
             .filter(background_job::Column::LeaseUntil.lte(now))
@@ -147,7 +148,7 @@ impl BackgroundJobRepository {
             .limit(500)
             .all(&transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         let mut recovery = ExpiredLeaseRecovery::default();
         for job in expired {
             let dead = job.attempts >= job.max_attempts;
@@ -177,14 +178,14 @@ impl BackgroundJobRepository {
             active.last_error = Set(dead.then(|| EXPIRED_LEASE_DEAD_ERROR.to_owned()));
             active.updated_at = Set(now);
             active.completed_at = Set(dead.then_some(now));
-            active.update(&transaction).await.map_err(database_error)?;
+            active.update(&transaction).await.db()?;
             if dead {
                 recovery.dead = recovery.dead.saturating_add(1);
             } else {
                 recovery.requeued = recovery.requeued.saturating_add(1);
             }
         }
-        transaction.commit().await.map_err(database_error)?;
+        transaction.commit().await.db()?;
         Ok(recovery)
     }
 
@@ -219,7 +220,7 @@ impl BackgroundJobRepository {
             .filter(background_job::Column::LeaseUntil.gt(now))
             .exec(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(result.rows_affected == 1)
     }
 
@@ -245,7 +246,7 @@ impl BackgroundJobRepository {
             .filter(background_job::Column::LeaseUntil.gt(now))
             .exec(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(result.rows_affected == 1)
     }
 
@@ -263,12 +264,12 @@ impl BackgroundJobRepository {
             force_dead,
             now,
         } = command;
-        let txn = db.begin().await.map_err(database_error)?;
+        let txn = db.begin().await.db()?;
         let Some(job) = Self::owned_running_query(job_id, worker_id)
             .lock(LockType::Update)
             .one(&txn)
             .await
-            .map_err(database_error)?
+            .db()?
         else {
             rollback_quietly(txn).await;
             return Ok(JobFailureDisposition::LeaseLost);
@@ -304,8 +305,8 @@ impl BackgroundJobRepository {
         active.last_error = Set(Some(truncate_error(error_message)));
         active.updated_at = Set(now);
         active.completed_at = Set(dead.then_some(now));
-        active.update(&txn).await.map_err(database_error)?;
-        txn.commit().await.map_err(database_error)?;
+        active.update(&txn).await.db()?;
+        txn.commit().await.db()?;
 
         Ok(if dead {
             JobFailureDisposition::Dead
@@ -326,12 +327,12 @@ impl BackgroundJobRepository {
         error_message: &str,
         now: DateTime<Utc>,
     ) -> AppResult<bool> {
-        let transaction = db.begin().await.map_err(database_error)?;
+        let transaction = db.begin().await.db()?;
         let Some(job) = Self::owned_running_query(job_id, worker_id)
             .lock(LockType::Update)
             .one(&transaction)
             .await
-            .map_err(database_error)?
+            .db()?
         else {
             rollback_quietly(transaction).await;
             return Ok(false);
@@ -362,8 +363,8 @@ impl BackgroundJobRepository {
         active.last_error = Set(Some(truncate_error(error_message)));
         active.updated_at = Set(now);
         active.completed_at = Set(None);
-        active.update(&transaction).await.map_err(database_error)?;
-        transaction.commit().await.map_err(database_error)?;
+        active.update(&transaction).await.db()?;
+        transaction.commit().await.db()?;
         Ok(true)
     }
 
@@ -376,12 +377,12 @@ impl BackgroundJobRepository {
         error_message: &str,
         now: DateTime<Utc>,
     ) -> AppResult<bool> {
-        let transaction = db.begin().await.map_err(database_error)?;
+        let transaction = db.begin().await.db()?;
         let Some(job) = Self::owned_running_query(job_id, worker_id)
             .lock(LockType::Update)
             .one(&transaction)
             .await
-            .map_err(database_error)?
+            .db()?
         else {
             rollback_quietly(transaction).await;
             return Ok(false);
@@ -405,8 +406,8 @@ impl BackgroundJobRepository {
         active.last_error = Set(Some(truncate_error(error_message)));
         active.updated_at = Set(now);
         active.completed_at = Set(Some(now));
-        active.update(&transaction).await.map_err(database_error)?;
-        transaction.commit().await.map_err(database_error)?;
+        active.update(&transaction).await.db()?;
+        transaction.commit().await.db()?;
         Ok(true)
     }
 
@@ -423,7 +424,7 @@ impl BackgroundJobRepository {
         retry_requested_by: i64,
         now: DateTime<Utc>,
     ) -> AppResult<bool> {
-        let transaction = db.begin().await.map_err(database_error)?;
+        let transaction = db.begin().await.db()?;
         let tenant_scope = if include_platform {
             sea_orm::Condition::any()
                 .add(background_job::Column::TenantId.eq(tenant_id))
@@ -437,7 +438,7 @@ impl BackgroundJobRepository {
             .lock(LockType::Update)
             .one(&transaction)
             .await
-            .map_err(database_error)?
+            .db()?
         else {
             rollback_quietly(transaction).await;
             return Ok(false);
@@ -469,8 +470,8 @@ impl BackgroundJobRepository {
         active.lease_until = Set(None);
         active.updated_at = Set(now);
         active.completed_at = Set(None);
-        active.update(&transaction).await.map_err(database_error)?;
-        transaction.commit().await.map_err(database_error)?;
+        active.update(&transaction).await.db()?;
+        transaction.commit().await.db()?;
         Ok(true)
     }
 

@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -89,13 +90,7 @@ impl ServiceAccountAuthorizationReadPort for DatabaseServiceAccountAuthorization
             .filter(service_account::Column::TenantId.eq(tenant_id))
             .filter(service_account::Column::Status.eq(service_account::Model::STATUS_NORMAL))
             .filter(service_account::Column::DelFlag.eq(service_account::Model::DEL_FLAG_NORMAL));
-        if account_query
-            .clone()
-            .count(&database)
-            .await
-            .map_err(database_error)?
-            > limit
-        {
+        if account_query.clone().count(&database).await.db()? > limit {
             return Err(AppError::Validation(format!(
                 "当前租户可用服务账号超过 {limit} 个，请由管理员收敛账号数量"
             )));
@@ -104,7 +99,7 @@ impl ServiceAccountAuthorizationReadPort for DatabaseServiceAccountAuthorization
             .order_by_asc(service_account::Column::Code)
             .all(&database)
             .await
-            .map_err(database_error)?;
+            .db()?;
         let account_ids = accounts
             .iter()
             .map(|account| account.id)
@@ -161,7 +156,7 @@ where
         .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
         .all(database)
         .await
-        .map_err(database_error)?
+        .db()?
         .into_iter()
         .map(|role| role.id)
         .collect())
@@ -180,7 +175,7 @@ async fn account_permission_codes(
         .filter(service_account_role::Column::AccountId.is_in(account_ids.iter().copied()))
         .all(database)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let enabled_role_ids = enabled_role_ids(
         database,
         tenant_id,
@@ -195,7 +190,7 @@ async fn account_permission_codes(
         .filter(role_permission::Column::RoleId.is_in(enabled_role_ids.iter().copied()))
         .all(database)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let permission_ids = role_permissions
         .iter()
         .map(|relation| relation.perm_id)
@@ -209,7 +204,7 @@ async fn account_permission_codes(
             .filter(permission::Column::Status.eq("1"))
             .all(database)
             .await
-            .map_err(database_error)?
+            .db()?
             .into_iter()
             .map(|permission| (permission.id, permission.code))
             .collect::<HashMap<_, _>>()
@@ -236,8 +231,4 @@ async fn account_permission_codes(
         }
     }
     Ok(result)
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

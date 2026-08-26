@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{ConnectionTrait, DatabaseConnection, Statement, Value};
@@ -177,7 +178,7 @@ WHERE `tenant_id` = ?
                 ],
             ))
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::Database("运维总览调度统计没有返回记录".into()))?;
         let enabled = read_count(&row, "enabled_count")?;
         let lag_microseconds = read_count(&row, "lag_microseconds")?;
@@ -199,15 +200,13 @@ WHERE `tenant_id` = ?
             values,
         ))
         .await
-        .map_err(database_error)?
+        .db()?
         .into_iter()
         .map(|row| {
-            let bucket_index: i64 = row.try_get("", "bucket_index").map_err(database_error)?;
+            let bucket_index: i64 = row.try_get("", "bucket_index").db()?;
             let bucket_index = usize::try_from(bucket_index)
                 .map_err(|_| AppError::Database("运维趋势时间桶索引无效".into()))?;
-            let dimension = row
-                .try_get::<String>("", "dimension")
-                .map_err(database_error)?;
+            let dimension = row.try_get::<String>("", "dimension").db()?;
             Ok(OverviewTrendCount {
                 bucket_index,
                 dimension,
@@ -235,10 +234,6 @@ fn trend_values<const N: usize>(
 }
 
 fn read_count(row: &sea_orm::QueryResult, column: &str) -> AppResult<u64> {
-    let value: i64 = row.try_get("", column).map_err(database_error)?;
+    let value: i64 = row.try_get("", column).db()?;
     u64::try_from(value).map_err(|_| AppError::Database(format!("{column} 统计结果无效")))
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

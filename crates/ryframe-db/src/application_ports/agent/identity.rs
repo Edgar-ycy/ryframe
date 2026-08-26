@@ -1,10 +1,10 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{
     ControlDatabaseCluster, ServiceAccountLock, ServiceAccountRepository,
     ServiceCredentialRepository, ServiceDelegationRepository,
 };
-use ryframe_kernel::AppError;
 use sea_orm::TransactionTrait;
 
 use ryframe_application::agent::{
@@ -60,12 +60,7 @@ impl AgentIdentityReadPort for DatabaseAgentIdentityRead {
         tenant_id: &'a str,
         account_id: i64,
     ) -> ryframe_kernel::AppResult<AgentLimitHints> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         let result = async {
             let tenant = ServiceAccountRepository
                 .lock_tenant_in_txn(&transaction, tenant_id, ServiceAccountLock::Share)
@@ -87,8 +82,4 @@ impl AgentIdentityReadPort for DatabaseAgentIdentityRead {
         let _ = transaction.rollback().await;
         result
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

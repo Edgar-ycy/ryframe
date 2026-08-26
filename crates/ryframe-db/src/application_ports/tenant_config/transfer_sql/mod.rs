@@ -47,7 +47,3 @@ pub(super) use rollback_resources::{
 pub(super) use workflow_support::{
     ensure_requester_snapshot_in_txn, ensure_role_quota_for_plan_in_txn, mark_plan_outcome,
 };
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
-}

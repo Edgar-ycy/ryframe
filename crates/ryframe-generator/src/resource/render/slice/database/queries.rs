@@ -59,7 +59,7 @@ pub(crate) fn control_transaction_methods(resource: &ResourceIr) -> String {
                 })
                 .unwrap_or_default();
             format!(
-                "    async fn {method}(\n        &self,\n        tenant_id: &str,\n{arguments}        exclude_id: Option<i64>,\n    ) -> AppResult<Option<{pascal}Record>> {{\n        self.ensure_tenant(tenant_id)?;\n        let mut select = entity::Entity::find()\n            .filter(entity::Column::TenantId.eq(tenant_id))\n{filters}{soft_delete};\n        if let Some(exclude_id) = exclude_id {{\n            select = select.filter(entity::Column::Id.ne(exclude_id));\n        }}\n        Ok(select\n            .lock(LockType::Update)\n            .one(&self.transaction)\n            .await\n            .map_err(database_error)?\n            .map(to_record))\n    }}\n\n",
+                "    async fn {method}(\n        &self,\n        tenant_id: &str,\n{arguments}        exclude_id: Option<i64>,\n    ) -> AppResult<Option<{pascal}Record>> {{\n        self.ensure_tenant(tenant_id)?;\n        let mut select = entity::Entity::find()\n            .filter(entity::Column::TenantId.eq(tenant_id))\n{filters}{soft_delete};\n        if let Some(exclude_id) = exclude_id {{\n            select = select.filter(entity::Column::Id.ne(exclude_id));\n        }}\n        Ok(select\n            .lock(LockType::Update)\n            .one(&self.transaction)\n            .await\n            .db()?\n            .map(to_record))\n    }}\n\n",
                 method = unique_method_name(index),
                 arguments = method_arguments(&fields),
             )
@@ -85,7 +85,7 @@ pub(crate) fn persistence_parts(resource: &ResourceIr) -> PersistenceParts {
             ),
             read_connection: "        let database = self\n            .database\n            .select_read(crate::ReadConsistency::Eventual)\n            .connection;"
                 .into(),
-            begin_transaction: "        let transaction = self\n            .database\n            .write()\n            .begin()\n            .await\n            .map_err(database_error)?;"
+            begin_transaction: "        let transaction = self\n            .database\n            .write()\n            .begin()\n            .await\n            .db()?;"
                 .into(),
         },
         StorageKind::TenantData => PersistenceParts {
@@ -213,14 +213,14 @@ pub(crate) fn delete_body(resource: &ResourceIr) -> String {
             "chrono::Utc::now()"
         };
         format!(
-            "        let model = {query}\n            .one(&self.transaction)\n            .await\n            .map_err(database_error)?\n            .ok_or_else(|| AppError::NotFound(\"资源不存在\".into()))?;\n        let mut active: entity::ActiveModel = model.into();\n        active.{field} = Set({deleted});\n        active.{updated_at_field} = Set({updated_value});\n        active.update(&self.transaction).await.map_err(database_error)?;\n        Ok(())",
+            "        let model = {query}\n            .one(&self.transaction)\n            .await\n            .db()?\n            .ok_or_else(|| AppError::NotFound(\"资源不存在\".into()))?;\n        let mut active: entity::ActiveModel = model.into();\n        active.{field} = Set({deleted});\n        active.{updated_at_field} = Set({updated_value});\n        active.update(&self.transaction).await.db()?;\n        Ok(())",
             field = soft_delete.field,
             deleted = field_literal(resource, &soft_delete.field, &soft_delete.deleted),
             updated_at_field = audit.updated_at,
         )
     } else {
         format!(
-            "        let model = {query}\n            .one(&self.transaction)\n            .await\n            .map_err(database_error)?\n            .ok_or_else(|| AppError::NotFound(\"资源不存在\".into()))?;\n        model.delete(&self.transaction).await.map_err(database_error)?;\n        Ok(())"
+            "        let model = {query}\n            .one(&self.transaction)\n            .await\n            .db()?\n            .ok_or_else(|| AppError::NotFound(\"资源不存在\".into()))?;\n        model.delete(&self.transaction).await.db()?;\n        Ok(())"
         )
     }
 }
@@ -228,10 +228,10 @@ pub(crate) fn delete_body(resource: &ResourceIr) -> String {
 pub(crate) fn commit_body(storage: StorageKind) -> &'static str {
     match storage {
         StorageKind::ControlRow => {
-            "        match audit_mode {\n            TransactionAuditMode::CurrentRequest => {\n                crate::application_ports::audit::commit_current_audit(self.transaction).await\n            }\n            TransactionAuditMode::Skip => self.transaction.commit().await.map_err(database_error),\n        }"
+            "        match audit_mode {\n            TransactionAuditMode::CurrentRequest => {\n                crate::application_ports::audit::commit_current_audit(self.transaction).await\n            }\n            TransactionAuditMode::Skip => self.transaction.commit().await.db(),\n        }"
         }
         StorageKind::TenantData => {
-            "        let _ = audit_mode;\n        self.transaction.commit().await.map_err(database_error)"
+            "        let _ = audit_mode;\n        self.transaction.commit().await.db()"
         }
     }
 }

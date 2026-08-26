@@ -1,5 +1,6 @@
+use crate::DbResultExt;
 use async_trait::async_trait;
-use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
+use ryframe_kernel::{AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
     EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select,
@@ -32,7 +33,7 @@ impl Repository<dict_type::Model, i64> for DictTypeRepository {
             .filter(dict_type::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     async fn find_by_page(
@@ -139,7 +140,7 @@ impl DictTypeRepository {
             .limit(window.limit())
             .all(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 在同一主库快照内统计导出匹配行并捕获最大主键。
@@ -186,7 +187,7 @@ impl DictTypeRepository {
             .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL))
             .one(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 }
 
@@ -205,7 +206,7 @@ impl Repository<dict_data::Model, i64> for DictDataRepository {
             .filter(dict_data::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     async fn find_by_page(
@@ -290,6 +291,6 @@ impl DictDataRepository {
             .order_by_asc(dict_data::Column::Sort)
             .all(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 }

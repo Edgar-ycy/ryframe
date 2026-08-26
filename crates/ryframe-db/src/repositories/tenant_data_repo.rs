@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
     ActiveModelTrait,
@@ -32,7 +33,7 @@ impl TenantDataRepository {
         tenant_data_placement::Entity::find_by_id(tenant_id.to_owned())
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn lock_placement_in_txn(
@@ -44,7 +45,7 @@ impl TenantDataRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::NotFound("租户数据 placement 不存在".into()))
     }
 
@@ -57,7 +58,7 @@ impl TenantDataRepository {
             .reset_all()
             .update(transaction)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn migration<C>(
@@ -71,7 +72,7 @@ impl TenantDataRepository {
         tenant_data_migration::Entity::find_by_id(id)
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn migrations_for_tenant<C>(
@@ -90,7 +91,7 @@ impl TenantDataRepository {
             .limit(limit)
             .all(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     /// Worker watchdog 的 MySQL 权威扫描：返回必须拥有可恢复任务的迁移。
@@ -128,7 +129,7 @@ impl TenantDataRepository {
             .limit(limit)
             .all(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn lock_migration_in_txn(
@@ -140,7 +141,7 @@ impl TenantDataRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::NotFound("租户数据迁移不存在".into()))
     }
 
@@ -156,7 +157,7 @@ impl TenantDataRepository {
             .filter(tenant_data_migration::Column::CreateIdempotencyKeyHash.eq(key_hash))
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn active_migration_for_tenant<C>(
@@ -177,7 +178,7 @@ impl TenantDataRepository {
             .order_by_desc(tenant_data_migration::Column::CreatedAt)
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn lock_active_migration_for_tenant_in_txn(
@@ -196,7 +197,7 @@ impl TenantDataRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn insert_migration_in_txn(
@@ -253,7 +254,7 @@ impl TenantDataRepository {
         }
         .insert(transaction)
         .await
-        .map_err(database_error)
+        .db()
     }
 
     pub async fn save_migration_in_txn(
@@ -265,7 +266,7 @@ impl TenantDataRepository {
             .reset_all()
             .update(transaction)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn items<C>(
@@ -281,7 +282,7 @@ impl TenantDataRepository {
             .order_by_asc(tenant_data_migration_item::Column::CopyOrder)
             .all(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn insert_item<C>(
@@ -295,7 +296,7 @@ impl TenantDataRepository {
         tenant_data_migration_item::ActiveModel::from(item)
             .insert(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn save_item<C>(
@@ -310,7 +311,7 @@ impl TenantDataRepository {
             .reset_all()
             .update(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn lock_item_in_txn(
@@ -322,7 +323,7 @@ impl TenantDataRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::NotFound("迁移表级检查点不存在".into()))
     }
 
@@ -356,7 +357,7 @@ impl TenantDataRepository {
                     ),
             );
         }
-        query.limit(limit).all(db).await.map_err(database_error)
+        query.limit(limit).all(db).await.db()
     }
 
     pub async fn backup_by_provider_ref<C>(
@@ -371,7 +372,7 @@ impl TenantDataRepository {
             .filter(tenant_data_backup_point::Column::ProviderRef.eq(provider_ref))
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn insert_backup<C>(
@@ -403,7 +404,7 @@ impl TenantDataRepository {
         }
         .insert(db)
         .await
-        .map_err(database_error)
+        .db()
     }
 
     pub async fn validated_backup_for_destination<C>(
@@ -457,10 +458,6 @@ impl TenantDataRepository {
             .order_by_desc(tenant_data_backup_point::Column::CapturedAt)
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::DbResultExt;
 
 impl BackgroundJobRepository {
     pub(super) async fn ensure_retention_run<C>(
@@ -13,7 +14,7 @@ impl BackgroundJobRepository {
             .filter(data_retention_run::Column::BackgroundJobId.eq(job.id))
             .one(db)
             .await
-            .map_err(database_error)?
+            .db()?
             .is_some()
         {
             return Ok(());

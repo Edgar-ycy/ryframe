@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
@@ -7,9 +8,7 @@ use sea_orm::{
 
 use crate::entities::background_job;
 
-use super::{
-    BackgroundJobRepository, EnqueueBackgroundJob, EnqueueBackgroundJobResult, database_error,
-};
+use super::{BackgroundJobRepository, EnqueueBackgroundJob, EnqueueBackgroundJobResult};
 
 impl BackgroundJobRepository {
     pub async fn enqueue(
@@ -106,7 +105,7 @@ impl BackgroundJobRepository {
                     inserted: false,
                 })
             }
-            Err(error) => Err(database_error(error)),
+            Err(error) => Err(error).db(),
         }
     }
 
@@ -115,10 +114,7 @@ impl BackgroundJobRepository {
         db: &DatabaseConnection,
         id: i64,
     ) -> AppResult<Option<background_job::Model>> {
-        background_job::Entity::find_by_id(id)
-            .one(db)
-            .await
-            .map_err(database_error)
+        background_job::Entity::find_by_id(id).one(db).await.db()
     }
 
     /// 查询当前租户可见的单个任务。
@@ -139,7 +135,7 @@ impl BackgroundJobRepository {
         } else {
             query.filter(background_job::Column::TenantId.eq(tenant_id))
         };
-        query.one(db).await.map_err(database_error)
+        query.one(db).await.db()
     }
 
     pub async fn find_by_dedupe_key(
@@ -165,7 +161,7 @@ impl BackgroundJobRepository {
             .filter(background_job::Column::DedupeKey.eq(dedupe_key))
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 }
 

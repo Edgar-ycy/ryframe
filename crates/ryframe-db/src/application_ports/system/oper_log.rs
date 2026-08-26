@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{
@@ -101,12 +102,7 @@ impl OperLogPersistencePort for DatabaseOperLogPersistence {
     }
 
     async fn begin(&self) -> AppResult<Box<dyn OperLogTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseOperLogTransaction { transaction }) as Box<dyn OperLogTransaction>)
     }
 }
@@ -127,12 +123,12 @@ impl PersistenceTransaction for DatabaseOperLogTransaction {
             TransactionAuditMode::CurrentRequest => {
                 super::super::audit::commit_current_audit(self.transaction).await
             }
-            TransactionAuditMode::Skip => self.transaction.commit().await.map_err(database_error),
+            TransactionAuditMode::Skip => self.transaction.commit().await.db(),
         }
     }
 
     async fn rollback(self: Box<Self>) -> AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }
 
@@ -188,8 +184,4 @@ fn to_entity(tenant_id: &str, record: OperLogRecord) -> oper_log::Model {
         oper_time: record.oper_time,
         cost_time: record.cost_time,
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> ryframe_kernel::AppError {
-    ryframe_kernel::AppError::Database(error.to_string())
 }

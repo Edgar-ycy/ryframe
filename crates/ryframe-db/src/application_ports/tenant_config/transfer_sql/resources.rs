@@ -1,4 +1,5 @@
 use super::*;
+use crate::DbResultExt;
 
 pub(crate) async fn load_resources_on<C>(
     db: &C,
@@ -13,61 +14,61 @@ where
         .order_by_asc(dept::Column::Id)
         .all(db)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let department_paths = build_department_paths(&departments)?;
     let posts = post::Entity::find()
         .filter(post::Column::TenantId.eq(tenant_id))
         .filter(post::Column::DelFlag.eq(post::SOFT_DELETE_ACTIVE))
         .all(db)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let dict_types = dict_type::Entity::find()
         .filter(dict_type::Column::TenantId.eq(tenant_id))
         .filter(dict_type::Column::DelFlag.eq(dict_type::Model::DEL_FLAG_NORMAL))
         .all(db)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let dict_data = dict_data::Entity::find()
         .filter(dict_data::Column::TenantId.eq(tenant_id))
         .filter(dict_data::Column::DelFlag.eq(dict_data::Model::DEL_FLAG_NORMAL))
         .all(db)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let configs = config::Entity::find()
         .filter(config::Column::TenantId.eq(tenant_id))
         .filter(config::Column::DelFlag.eq(config::Model::DEL_FLAG_NORMAL))
         .filter(config::Column::Portable.eq(true))
         .all(db)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let permissions = permission::Entity::find()
         .filter(permission::Column::TenantId.eq(tenant_id))
         .all(db)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let menus = menu::Entity::find()
         .filter(menu::Column::TenantId.eq(tenant_id))
         .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
         .all(db)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let roles = role::Entity::find()
         .filter(role::Column::TenantId.eq(tenant_id))
         .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
         .filter(role::Column::IsSuper.eq(0))
         .all(db)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let role_permissions = role_permission::Entity::find()
         .filter(role_permission::Column::TenantId.eq(tenant_id))
         .all(db)
         .await
-        .map_err(database_error)?;
+        .db()?;
     let role_departments = role_dept::Entity::find()
         .filter(role_dept::Column::TenantId.eq(tenant_id))
         .all(db)
         .await
-        .map_err(database_error)?;
+        .db()?;
 
     let permission_codes = permissions
         .iter()

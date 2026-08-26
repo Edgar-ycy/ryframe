@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
@@ -58,7 +59,7 @@ impl TenantConfigTransferRepository {
             .filter(tenant::Column::TenantId.eq(tenant_id))
             .exec(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         if result.rows_affected != 1 {
             return Err(AppError::NotFound("租户不存在".into()));
         }
@@ -66,7 +67,7 @@ impl TenantConfigTransferRepository {
             .filter(tenant::Column::TenantId.eq(tenant_id))
             .one(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .map(|tenant| tenant.configuration_version)
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))
     }
@@ -115,7 +116,7 @@ impl TenantConfigTransferRepository {
         tenant_config_bundle::ActiveModel::from(bundle)
             .insert(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn find_bundle_by_id<C>(
@@ -131,7 +132,7 @@ impl TenantConfigTransferRepository {
             .filter(tenant_config_bundle::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn find_bundles_by_ids<C>(
@@ -151,7 +152,7 @@ impl TenantConfigTransferRepository {
             .filter(tenant_config_bundle::Column::Id.is_in(ids.iter().copied()))
             .all(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn list_bundles(
@@ -169,7 +170,7 @@ impl TenantConfigTransferRepository {
             .offset(offset)
             .all(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn lock_bundle_in_txn(
@@ -183,7 +184,7 @@ impl TenantConfigTransferRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn update_bundle<C>(
@@ -198,7 +199,7 @@ impl TenantConfigTransferRepository {
             .reset_all()
             .update(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn insert_transfer<C>(
@@ -212,7 +213,7 @@ impl TenantConfigTransferRepository {
         tenant_config_transfer::ActiveModel::from(transfer)
             .insert(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn find_transfer_by_id<C>(
@@ -228,7 +229,7 @@ impl TenantConfigTransferRepository {
             .filter(tenant_config_transfer::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn find_transfer_by_idempotency_key<C>(
@@ -247,7 +248,7 @@ impl TenantConfigTransferRepository {
             .filter(tenant_config_transfer::Column::IdempotencyKeyHash.eq(idempotency_key_hash))
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn list_transfers(
@@ -265,7 +266,7 @@ impl TenantConfigTransferRepository {
             .offset(offset)
             .all(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn find_transfer_by_background_job<C>(
@@ -287,7 +288,7 @@ impl TenantConfigTransferRepository {
             )
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn lock_transfer_in_txn(
@@ -301,7 +302,7 @@ impl TenantConfigTransferRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn update_transfer<C>(
@@ -316,7 +317,7 @@ impl TenantConfigTransferRepository {
             .reset_all()
             .update(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     /// 原子替换一次预览的全部项目；调用方应先锁迁移记录。
@@ -338,7 +339,7 @@ impl TenantConfigTransferRepository {
             .filter(tenant_config_transfer_item::Column::TransferId.eq(transfer_id))
             .exec(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         if !items.is_empty() {
             tenant_config_transfer_item::Entity::insert_many(
                 items
@@ -347,7 +348,7 @@ impl TenantConfigTransferRepository {
             )
             .exec(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         }
         Ok(())
     }
@@ -367,10 +368,6 @@ impl TenantConfigTransferRepository {
             .order_by_asc(tenant_config_transfer_item::Column::Id)
             .all(db)
             .await
-            .map_err(database_error)
+            .db()
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

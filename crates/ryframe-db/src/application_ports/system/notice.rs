@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{
@@ -5,7 +6,7 @@ use crate::{
     ReadConsistency, Repository, entities::notice,
 };
 use async_trait::async_trait;
-use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
+use ryframe_kernel::{AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ColumnTrait, EntityTrait, QueryFilter, QuerySelect, TransactionTrait, sea_query::LockType,
 };
@@ -67,12 +68,7 @@ impl NoticePersistencePort for DatabaseNoticePersistence {
     }
 
     async fn begin(&self) -> AppResult<Box<dyn NoticeTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseNoticeTransaction { transaction }) as Box<dyn NoticeTransaction>)
     }
 }
@@ -90,7 +86,7 @@ impl NoticeTransaction for DatabaseNoticeTransaction {
             .lock(LockType::Update)
             .one(&self.transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .map(to_record))
     }
 
@@ -122,12 +118,12 @@ impl PersistenceTransaction for DatabaseNoticeTransaction {
             TransactionAuditMode::CurrentRequest => {
                 super::super::audit::commit_current_audit(self.transaction).await
             }
-            TransactionAuditMode::Skip => self.transaction.commit().await.map_err(database_error),
+            TransactionAuditMode::Skip => self.transaction.commit().await.db(),
         }
     }
 
     async fn rollback(self: Box<Self>) -> AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }
 
@@ -157,8 +153,4 @@ fn to_entity(tenant_id: &str, record: NoticeRecord) -> notice::Model {
         created_at: record.created_at,
         updated_at: record.updated_at,
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

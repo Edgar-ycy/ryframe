@@ -1,6 +1,7 @@
 mod capabilities;
 mod records;
 
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{
@@ -150,12 +151,7 @@ impl ProductReadPort for DatabaseProductRead {
 #[async_trait::async_trait]
 impl ProductWritePort for DatabaseProductWrite {
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn ProductWriteTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseProductWriteTransaction {
             transaction: transaction.into(),
         }) as Box<dyn ProductWriteTransaction>)
@@ -451,17 +447,11 @@ impl ryframe_application::PersistenceTransaction for DatabaseProductWriteTransac
             ryframe_application::TransactionAuditMode::CurrentRequest => {
                 self.transaction.commit_audited().await
             }
-            ryframe_application::TransactionAuditMode::Skip => {
-                self.transaction.commit().await.map_err(database_error)
-            }
+            ryframe_application::TransactionAuditMode::Skip => self.transaction.commit().await.db(),
         }
     }
 
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
-}
-
-pub(super) fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

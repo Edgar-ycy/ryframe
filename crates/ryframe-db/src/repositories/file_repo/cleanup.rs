@@ -1,4 +1,5 @@
-use ryframe_kernel::{AppError, AppResult};
+use crate::DbResultExt;
+use ryframe_kernel::AppResult;
 use sea_orm::{ColumnTrait, Condition, DatabaseTransaction, EntityTrait, QueryFilter};
 
 use crate::entities::sys_file;
@@ -43,7 +44,7 @@ impl FileRepository {
             .exec(txn)
             .await
             .map(|result| result.rows_affected == 1)
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 将未被导入任务引用的私有导入文件改为可恢复的延迟清理墓碑。
@@ -86,7 +87,7 @@ impl FileRepository {
             .exec(txn)
             .await
             .map(|result| result.rows_affected == 1)
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 将未被配置包或配置迁移记录引用的私有文件改为延迟清理墓碑。
@@ -132,7 +133,7 @@ impl FileRepository {
             .exec(txn)
             .await
             .map(|result| result.rows_affected == 1)
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 在延迟清理到期前恢复即将被新导入任务引用的私有文件。
@@ -172,7 +173,7 @@ impl FileRepository {
             .exec(txn)
             .await
             .map(|result| result.rows_affected == 1)
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 在上传去重事务内恢复仍处于宽限期、尚未被清理器声明的文件。
@@ -213,7 +214,7 @@ impl FileRepository {
             .exec(txn)
             .await
             .map(|result| result.rows_affected == 1)
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 在延迟清理尚未到期时恢复头像文件，使并发的去重上传能够安全复用它。
@@ -253,7 +254,7 @@ impl FileRepository {
             .exec(txn)
             .await
             .map(|result| result.rows_affected == 1)
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 在调用方事务内声明一个仍然到期的导入文件进入最终清理。
@@ -316,6 +317,6 @@ impl FileRepository {
             .exec(txn)
             .await
             .map(|result| result.rows_affected == 1)
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 }

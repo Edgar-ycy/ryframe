@@ -1,7 +1,8 @@
+use crate::DbResultExt;
 use std::sync::Arc;
 
 use crate::{ControlDatabaseCluster, DataRetentionRepository, entities::data_retention_run};
-use ryframe_kernel::{AppError, PageResult, ValidatedPageQuery};
+use ryframe_kernel::{PageResult, ValidatedPageQuery};
 use sea_orm::TransactionTrait;
 
 use super::super::transaction::DatabasePortTransaction;
@@ -34,12 +35,7 @@ impl RetentionRunPersistencePort for DatabaseRetentionRunPersistence {
     }
 
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn RetentionRunTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseRetentionRunTransaction {
             transaction: transaction.into(),
         }) as Box<dyn RetentionRunTransaction>)
@@ -143,14 +139,12 @@ impl ryframe_application::PersistenceTransaction for DatabaseRetentionRunTransac
             ryframe_application::TransactionAuditMode::CurrentRequest => {
                 self.transaction.commit_audited().await
             }
-            ryframe_application::TransactionAuditMode::Skip => {
-                self.transaction.commit().await.map_err(database_error)
-            }
+            ryframe_application::TransactionAuditMode::Skip => self.transaction.commit().await.db(),
         }
     }
 
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }
 
@@ -190,8 +184,4 @@ pub fn to_model(record: RetentionRunRecord) -> data_retention_run::Model {
         created_at: record.created_at,
         updated_at: record.updated_at,
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::collections::BTreeSet;
 
 use chrono::{DateTime, Utc};
@@ -12,7 +13,7 @@ use crate::entities::{message, message_audience, message_recipient, role, user, 
 
 use super::{
     MessageAudienceKind, MessageAudienceSelector, MessageRepository, PublishMessageCommand,
-    PublishedMessage, database_error,
+    PublishedMessage,
 };
 
 impl MessageRepository {
@@ -67,13 +68,13 @@ impl MessageRepository {
                     .filter(message::Column::SourceId.eq(source_id))
                     .one(transaction)
                     .await
-                    .map_err(database_error)?
+                    .db()?
                     .ok_or_else(|| AppError::Database("消息幂等键冲突后未读取到已有消息".into()))?;
                 let recipient_count = message_recipient::Entity::find()
                     .filter(message_recipient::Column::MessageId.eq(existing.id))
                     .count(transaction)
                     .await
-                    .map_err(database_error)? as usize;
+                    .db()? as usize;
                 if recipient_count as u64 > max_recipients {
                     return Err(AppError::Validation(format!(
                         "消息收件人数不能超过 {max_recipients}"
@@ -85,7 +86,7 @@ impl MessageRepository {
                     inserted: false,
                 });
             }
-            Err(error) => return Err(database_error(error)),
+            Err(error) => return Err(error).db(),
         };
 
         let audience_models = audiences
@@ -100,7 +101,7 @@ impl MessageRepository {
         message_audience::Entity::insert_many(audience_models)
             .exec(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
 
         let selector_sets =
             validate_audience_targets(transaction, &inserted.tenant_id, &audiences).await?;
@@ -162,7 +163,7 @@ async fn validate_audience_targets(
             .filter(role::Column::DelFlag.eq(role::Model::DEL_FLAG_NORMAL))
             .count(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         if valid_role_count != role_ids.len() as u64 {
             return Err(AppError::Validation("消息目标角色不存在或不可用".into()));
         }
@@ -175,7 +176,7 @@ async fn validate_audience_targets(
             .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
             .count(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         if valid_user_count != user_ids.len() as u64 {
             return Err(AppError::Validation("消息目标用户不存在或不可用".into()));
         }
@@ -248,7 +249,7 @@ async fn insert_recipient_snapshot(
     transaction
         .execute(&insert)
         .await
-        .map_err(database_error)
+        .db()
         .map(|result| result.rows_affected())
 }
 

@@ -3,6 +3,7 @@ pub mod cluster;
 pub mod connection;
 pub mod data_scope;
 pub mod database_monitor;
+mod db_result;
 pub mod entities;
 pub mod generated;
 mod id_generator;
@@ -19,6 +20,7 @@ pub use cluster::{
     ReadConsistency, SelectedDatabase,
 };
 pub use database_monitor::SeaOrmDatabaseMonitor;
+pub use db_result::DbResultExt;
 pub use id_generator::{DatabaseIdGenerator, install as install_id_generator, next_id};
 pub use repository::Repository;
 pub use sql_logger::{DbSpanLayer, SqlLogGuard, SqlLogLayer};

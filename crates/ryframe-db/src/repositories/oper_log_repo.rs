@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult, DataScopeContext, PageResult, ValidatedPageQuery};
@@ -29,7 +30,7 @@ impl Repository<oper_log::Model, i64> for OperLogRepository {
             .filter(oper_log::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     async fn find_by_page(
@@ -72,7 +73,7 @@ impl Repository<oper_log::Model, i64> for OperLogRepository {
             .filter(oper_log::Column::TenantId.eq(tenant_id))
             .exec(db)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+            .db()?;
         Ok(())
     }
 }
@@ -136,7 +137,7 @@ impl OperLogRepository {
                     .filter(oper_log::Column::EventId.eq(&event_id))
                     .one(transaction)
                     .await
-                    .map_err(database_error)?
+                    .db()?
                     .ok_or_else(|| {
                         AppError::Database("操作日志唯一键冲突后未读取到审计事件".into())
                     })?;
@@ -147,7 +148,7 @@ impl OperLogRepository {
                 }
                 Ok(false)
             }
-            Err(error) => Err(database_error(error)),
+            Err(error) => Err(error).db(),
         }
     }
 
@@ -173,7 +174,7 @@ impl OperLogRepository {
             .limit(window.limit())
             .all(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 在同一主库快照内统计导出匹配行并捕获最大主键。
@@ -215,7 +216,7 @@ impl OperLogRepository {
             .exec(db)
             .await
             .map(|r| r.rows_affected)
-            .map_err(|e| AppError::Database(e.to_string()))
+            .db()
     }
 
     pub async fn clean_all_in_transaction(
@@ -228,15 +229,11 @@ impl OperLogRepository {
             .exec(transaction)
             .await
             .map(|result| result.rows_affected)
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 }
 
 fn is_duplicate_key_error(error: &sea_orm::DbErr) -> bool {
     let text = error.to_string().to_ascii_lowercase();
     text.contains("duplicate") || text.contains("1062")
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

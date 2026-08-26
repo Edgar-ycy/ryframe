@@ -1,5 +1,6 @@
+use crate::DbResultExt;
 use chrono::{DateTime, Utc};
-use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
+use ryframe_kernel::{AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, DatabaseTransaction, EntityTrait,
     PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
@@ -74,7 +75,7 @@ impl JobScheduleRepository {
             .filter(job_schedule::Column::DelFlag.eq(job_schedule::Model::DEL_FLAG_NORMAL))
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn lock_for_tenant(
@@ -89,7 +90,7 @@ impl JobScheduleRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub(crate) async fn lock_next_due(
@@ -115,7 +116,7 @@ impl JobScheduleRepository {
             .lock_with_behavior(LockType::Update, LockBehavior::SkipLocked)
             .one(transaction)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn count_enabled<C>(&self, db: &C, tenant_id: &str) -> AppResult<u64>
@@ -128,7 +129,7 @@ impl JobScheduleRepository {
             .filter(job_schedule::Column::DelFlag.eq(job_schedule::Model::DEL_FLAG_NORMAL))
             .count(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn has_active_job<C>(&self, db: &C, schedule_id: i64) -> AppResult<bool>
@@ -145,7 +146,7 @@ impl JobScheduleRepository {
             .one(db)
             .await
             .map(|job| job.is_some())
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn insert<C>(
@@ -156,7 +157,7 @@ impl JobScheduleRepository {
     where
         C: sea_orm::ConnectionTrait,
     {
-        active.insert(db).await.map_err(database_error)
+        active.insert(db).await.db()
     }
 
     pub async fn find_execution_by_fire_key<C>(
@@ -173,7 +174,7 @@ impl JobScheduleRepository {
             .filter(job_schedule_execution::Column::FireKey.eq(fire_key))
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn list_executions(
@@ -220,11 +221,7 @@ impl JobScheduleRepository {
             .filter(background_job::Column::Id.is_in(ids.iter().copied()))
             .all(db)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(jobs.into_iter().map(|job| (job.id, job.status)).collect())
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

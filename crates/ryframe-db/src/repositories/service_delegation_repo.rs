@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
@@ -24,7 +25,7 @@ impl ServiceDelegationRepository {
             .filter(service_delegation::Column::TenantId.eq(tenant_id))
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn list_for_user(
@@ -39,7 +40,7 @@ impl ServiceDelegationRepository {
             .order_by_desc(service_delegation::Column::CreatedAt)
             .all(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn find_idempotent<C>(
@@ -58,7 +59,7 @@ impl ServiceDelegationRepository {
             .filter(service_delegation::Column::IdempotencyKeyHash.eq(idempotency_key_hash))
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     /// 委托令牌没有 selector，因此用有限 Keyring 计算出的 MAC 候选进行等值定位。
@@ -76,7 +77,7 @@ impl ServiceDelegationRepository {
             )
             .one(db)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn find_by_id_for_share(
@@ -90,7 +91,7 @@ impl ServiceDelegationRepository {
             .lock(LockType::Share)
             .one(txn)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn insert_in_txn(
@@ -109,7 +110,7 @@ impl ServiceDelegationRepository {
         service_delegation::ActiveModel::from(entity)
             .insert(txn)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn replace_capabilities_in_txn(
@@ -127,7 +128,7 @@ impl ServiceDelegationRepository {
             .filter(service_delegation_capability::Column::DelegationId.eq(delegation_id))
             .exec(txn)
             .await
-            .map_err(database_error)?;
+            .db()?;
         if !normalized.is_empty() {
             let models = normalized.into_iter().map(|capability_key| {
                 service_delegation_capability::ActiveModel {
@@ -139,7 +140,7 @@ impl ServiceDelegationRepository {
             service_delegation_capability::Entity::insert_many(models)
                 .exec(txn)
                 .await
-                .map_err(database_error)?;
+                .db()?;
         }
         Ok(())
     }
@@ -160,7 +161,7 @@ impl ServiceDelegationRepository {
             .all(db)
             .await
             .map(|rows| rows.into_iter().map(|row| row.capability_key).collect())
-            .map_err(database_error)
+            .db()
     }
 
     /// 在 Agent 授权事务中按稳定键顺序取得委托能力共享锁。
@@ -178,7 +179,7 @@ impl ServiceDelegationRepository {
             .all(txn)
             .await
             .map(|rows| rows.into_iter().map(|row| row.capability_key).collect())
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn revoke_in_txn(
@@ -214,7 +215,7 @@ impl ServiceDelegationRepository {
             .filter(service_delegation::Column::Status.eq(service_delegation::Model::STATUS_ACTIVE))
             .exec(txn)
             .await
-            .map_err(database_error)?;
+            .db()?;
         Ok(result.rows_affected == 1)
     }
 
@@ -238,10 +239,6 @@ impl ServiceDelegationRepository {
             .filter(service_delegation::Column::ExpiresAt.gt(now))
             .count(db)
             .await
-            .map_err(database_error)
+            .db()
     }
-}
-
-fn database_error(error: sea_orm::DbErr) -> AppError {
-    AppError::Database(error.to_string())
 }

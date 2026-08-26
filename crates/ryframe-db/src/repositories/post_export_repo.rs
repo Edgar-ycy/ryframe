@@ -1,4 +1,5 @@
-use ryframe_kernel::{AppError, AppResult, ExportCursorWindow, ExportQuerySnapshot};
+use crate::DbResultExt;
+use ryframe_kernel::{AppResult, ExportCursorWindow, ExportQuerySnapshot};
 use sea_orm::{
     ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select,
 };
@@ -31,7 +32,7 @@ impl PostExportRepository {
         post_export_batch_query(tenant_id, filter, window)
             .all(db)
             .await
-            .map_err(|error| AppError::Database(error.to_string()))
+            .db()
     }
 
     /// 在导出申请的主库事务内统计匹配行并固定最大主键。

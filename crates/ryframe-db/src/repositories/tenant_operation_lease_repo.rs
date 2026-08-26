@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{
@@ -29,14 +30,14 @@ impl TenantOperationLeaseRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
         let now = super::database_utc_now(transaction).await?;
         let lease = tenant_operation_lease::Entity::find_by_id(tenant_id.to_owned())
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         match (owner_token, lease) {
             (Some(owner_token), Some(lease))
                 if lease.expires_at > now && lease.owner_token == owner_token => {}
@@ -49,7 +50,7 @@ impl TenantOperationLeaseRepository {
                 tenant_operation_lease::Entity::delete_by_id(tenant_id.to_owned())
                     .exec(transaction)
                     .await
-                    .map_err(database_error)?;
+                    .db()?;
             }
             (None, Some(_lease)) => {
                 return Err(AppError::TenantOperationConflict(
@@ -72,14 +73,14 @@ impl TenantOperationLeaseRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)?
+            .db()?
             .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
         let now = super::database_utc_now(transaction).await?;
         let existing = tenant_operation_lease::Entity::find_by_id(lease.tenant_id.clone())
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         // TTL 只是崩溃检测机制，不是业务互斥边界。即使 lease 已过期，
         // control 库中未终态的迁移/配置操作仍保留所有权，只允许原资源恢复。
         let active_migration = tenant_data_migration::Entity::find()
@@ -109,7 +110,7 @@ impl TenantOperationLeaseRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         if active_migration
             .as_ref()
             .is_some_and(|migration| migration.switch_token != lease.owner_token)
@@ -129,7 +130,7 @@ impl TenantOperationLeaseRepository {
             .lock(LockType::Update)
             .one(transaction)
             .await
-            .map_err(database_error)?;
+            .db()?;
         if active_config.as_ref().is_some_and(|transfer| {
             lease.resource_type != "tenant_config_transfer"
                 || lease.resource_id.parse::<i64>().ok() != Some(transfer.id)
@@ -173,17 +174,17 @@ impl TenantOperationLeaseRepository {
                 .filter(tenant_operation_lease::Column::TenantId.eq(&tenant_id))
                 .exec(transaction)
                 .await
-                .map_err(database_error)?;
+                .db()?;
             return tenant_operation_lease::Entity::find_by_id(tenant_id)
                 .one(transaction)
                 .await
-                .map_err(database_error)?
+                .db()?
                 .ok_or_else(|| AppError::Conflict("租户操作租约写入失败".into()));
         }
         tenant_operation_lease::ActiveModel::from(lease)
             .insert(transaction)
             .await
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn renew_in_txn(
@@ -209,7 +210,7 @@ impl TenantOperationLeaseRepository {
             .exec(transaction)
             .await
             .map(|result| result.rows_affected == 1)
-            .map_err(database_error)
+            .db()
     }
 
     pub async fn release_in_txn(
@@ -226,10 +227,6 @@ impl TenantOperationLeaseRepository {
             .exec(transaction)
             .await
             .map(|result| result.rows_affected == 1)
-            .map_err(database_error)
+            .db()
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }

@@ -1,3 +1,4 @@
+use crate::DbResultExt;
 use std::{collections::BTreeSet, sync::Arc};
 
 use crate::{
@@ -43,12 +44,7 @@ struct DatabaseAgentTransaction {
 #[async_trait::async_trait]
 impl AgentPersistencePort for DatabaseAgentPersistence {
     async fn begin(&self) -> ryframe_kernel::AppResult<Box<dyn AgentPersistenceTransaction>> {
-        let transaction = self
-            .database
-            .write()
-            .begin()
-            .await
-            .map_err(database_error)?;
+        let transaction = self.database.write().begin().await.db()?;
         Ok(Box::new(DatabaseAgentTransaction {
             transaction,
             product: Arc::clone(&self.product),
@@ -248,11 +244,11 @@ impl ryframe_application::PersistenceTransaction for DatabaseAgentTransaction {
         audit_mode: ryframe_application::TransactionAuditMode,
     ) -> ryframe_kernel::AppResult<()> {
         let _ = audit_mode;
-        self.transaction.commit().await.map_err(database_error)
+        self.transaction.commit().await.db()
     }
 
     async fn rollback(self: Box<Self>) -> ryframe_kernel::AppResult<()> {
-        self.transaction.rollback().await.map_err(database_error)
+        self.transaction.rollback().await.db()
     }
 }
 
@@ -344,8 +340,4 @@ fn dictionary_item_record(item: dict_data::Model) -> AgentDictionaryItemRecord {
         value: item.value,
         sort: item.sort,
     }
-}
-
-fn database_error(error: impl std::fmt::Display) -> AppError {
-    AppError::Database(error.to_string())
 }
