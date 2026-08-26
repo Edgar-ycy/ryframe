@@ -9,17 +9,19 @@ use std::{
 use crate::{
     Result,
     check::{
-        BACKEND_CI_TARGET_DIR, BackendSnapshotProfile, VerifySelection, changed_paths,
-        changed_paths_between, ci_consumer_contract, ci_rust_gate, ci_test_jobs_from,
-        classify_changes, complete_verify_selection, load_workspace_graph,
+        BACKEND_CI_TARGET_DIR, BackendSnapshotProfile, RESOURCE_CI_TARGET_DIR, VerifySelection,
+        changed_paths, changed_paths_between, ci_consumer_contract, ci_rust_gate,
+        ci_test_jobs_from, classify_changes, complete_verify_selection, load_workspace_graph,
+        resource_workspace_compilation,
     },
     cli::CiCommand,
-    process::{run as run_process, run_owned},
+    process::{command_output, run as run_process, run_owned},
     workspace::root_dir,
 };
 
 const FULL_CI_EVENTS: &[&str] = &["push", "schedule", "workflow_dispatch"];
 const INTEGRATION_PACKAGES: &[&str] = &["ryframe-adapters", "ryframe-db", "ryframe-tenant-db"];
+const WINDOWS_RUST_GATE_PROFILE: &str = "windows-smoke";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CiPlan {
@@ -44,10 +46,30 @@ pub(crate) fn run(command: CiCommand, frontend_dir: &Path) -> Result<()> {
     match command {
         CiCommand::Plan => plan(),
         CiCommand::Preflight => preflight(),
-        CiCommand::RustGate => ci_rust_gate(frontend_dir),
+        CiCommand::RustGate => rust_gate(frontend_dir),
         CiCommand::Integration => integration(),
-        CiCommand::ConsumerContract => ci_consumer_contract(frontend_dir),
+        CiCommand::ConsumerContract => consumer_contract(frontend_dir),
     }
+}
+
+fn rust_gate(frontend_dir: &Path) -> Result<()> {
+    match env::var("RYFRAME_CI_RUST_GATE_PROFILE").ok().as_deref() {
+        None | Some("") | Some("standard") => {
+            verify_frontend_checkout_from_environment(frontend_dir)?;
+            ci_rust_gate(frontend_dir)
+        }
+        Some(WINDOWS_RUST_GATE_PROFILE) => windows_smoke(frontend_dir),
+        Some(profile) => Err(format!(
+            "RYFRAME_CI_RUST_GATE_PROFILE 只允许 standard 或 {WINDOWS_RUST_GATE_PROFILE}，实际为 {profile}"
+        )
+        .into()),
+    }
+}
+
+fn consumer_contract(frontend_dir: &Path) -> Result<()> {
+    verify_frontend_checkout_from_environment(frontend_dir)?;
+    verify_formal_contract_source_from_environment(frontend_dir)?;
+    ci_consumer_contract(frontend_dir)
 }
 
 fn plan() -> Result<()> {
@@ -222,6 +244,133 @@ pub(crate) fn preflight_migration_args(base: Option<&str>) -> Vec<String> {
         args.extend(["--trusted-ref".to_owned(), base.to_owned()]);
     }
     args
+}
+
+fn windows_smoke(frontend_dir: &Path) -> Result<()> {
+    verify_frontend_checkout_from_environment(frontend_dir)?;
+    let root = root_dir();
+    let jobs = ci_test_jobs_from(
+        env::var("RYFRAME_CI_TEST_JOBS").ok().as_deref(),
+        true,
+        std::thread::available_parallelism().map_or(4, usize::from),
+    )?;
+    for package in ["ryframe", "xtask"] {
+        run_owned(&root, "cargo", &windows_check_args(package))?;
+    }
+    run_owned(&root, "cargo", &windows_process_test_args(jobs))?;
+    resource_workspace_compilation(&root, RESOURCE_CI_TARGET_DIR, jobs)
+}
+
+pub(crate) fn windows_check_args(package: &str) -> Vec<String> {
+    [
+        "check",
+        "--locked",
+        "--target-dir",
+        BACKEND_CI_TARGET_DIR,
+        "-p",
+        package,
+        "--all-targets",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+
+pub(crate) fn windows_process_test_args(jobs: usize) -> Vec<String> {
+    [
+        "test".to_owned(),
+        "--locked".to_owned(),
+        "--target-dir".to_owned(),
+        BACKEND_CI_TARGET_DIR.to_owned(),
+        "-p".to_owned(),
+        "xtask".to_owned(),
+        "--test".to_owned(),
+        "process_windows".to_owned(),
+        "--jobs".to_owned(),
+        jobs.max(1).to_string(),
+        "--".to_owned(),
+        "--nocapture".to_owned(),
+    ]
+    .into_iter()
+    .collect()
+}
+
+fn verify_frontend_checkout_from_environment(frontend_dir: &Path) -> Result<()> {
+    let Some(requested_ref) = env::var("RYFRAME_CI_FRONTEND_REF")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(());
+    };
+    let resolved = command_output(frontend_dir, "git", &["rev-parse", "--verify", "HEAD"])?;
+    verify_frontend_checkout_ref(&requested_ref, resolved.trim())?;
+    println!("前端 Workspace 固定为 {}。", resolved.trim());
+    Ok(())
+}
+
+pub(crate) fn verify_frontend_checkout_ref(requested_ref: &str, resolved: &str) -> Result<()> {
+    if !valid_git_sha(resolved) {
+        return Err("前端实际检出提交不是 40 位 Git SHA".into());
+    }
+    if valid_git_sha(requested_ref) && !requested_ref.eq_ignore_ascii_case(resolved) {
+        return Err(format!(
+            "前端实际检出提交与请求 SHA 不一致：期望 {requested_ref}，实际 {resolved}"
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn verify_formal_contract_source_from_environment(frontend_dir: &Path) -> Result<()> {
+    let Some(backend_head) = env::var("RYFRAME_CI_BACKEND_HEAD")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return Ok(());
+    };
+    if !valid_git_sha(&backend_head) {
+        return Err("RYFRAME_CI_BACKEND_HEAD 必须是 40 位 Git SHA".into());
+    }
+    let repository = env::var("RYFRAME_CI_BACKEND_REPOSITORY")
+        .unwrap_or_else(|_| "Edgar-ycy/ryframe".to_owned());
+    let candidate = env::var_os("RYFRAME_CI_CANDIDATE_OPENAPI")
+        .map(PathBuf::from)
+        .ok_or("消费契约来源检查缺少 RYFRAME_CI_CANDIDATE_OPENAPI")?;
+    let root = root_dir();
+    run_owned(
+        &root,
+        "python",
+        &formal_contract_source_args(frontend_dir, &backend_head, &repository, &candidate),
+    )
+}
+
+pub(crate) fn formal_contract_source_args(
+    frontend_dir: &Path,
+    backend_head: &str,
+    backend_repository: &str,
+    candidate: &Path,
+) -> Vec<String> {
+    vec![
+        "scripts/verify_frontend_contract_source.py".to_owned(),
+        "--backend-worktree".to_owned(),
+        ".".to_owned(),
+        "--backend-head".to_owned(),
+        backend_head.to_owned(),
+        "--backend-repository".to_owned(),
+        backend_repository.to_owned(),
+        "--source-metadata".to_owned(),
+        frontend_dir
+            .join("openapi/source.json")
+            .to_string_lossy()
+            .into_owned(),
+        "--frontend-openapi".to_owned(),
+        frontend_dir
+            .join("openapi/openapi.json")
+            .to_string_lossy()
+            .into_owned(),
+        "--candidate-openapi".to_owned(),
+        candidate.to_string_lossy().into_owned(),
+    ]
 }
 
 fn integration() -> Result<()> {

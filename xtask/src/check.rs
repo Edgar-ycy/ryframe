@@ -61,7 +61,7 @@ pub(crate) use model::{
     BackendSnapshotProfile, ConsumerContractPlan, FrontendProfile, VerifySelection, WorkspaceGraph,
 };
 #[allow(unused_imports)]
-pub(crate) use resource::resource_test_executable_from_messages;
+pub(crate) use resource::{resource_test_executable_from_messages, resource_workspace_compilation};
 #[allow(unused_imports)]
 pub(crate) use selection::{
     changed_paths, changed_paths_between, classify_changes, complete_verify_selection,

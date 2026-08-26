@@ -1,7 +1,12 @@
 use super::{
     check::{BackendSnapshotProfile, VerifySelection},
-    ci::{ci_plan_for, integration_test_args, parse_changed_paths, preflight_migration_args},
+    ci::{
+        ci_plan_for, formal_contract_source_args, integration_test_args, parse_changed_paths,
+        preflight_migration_args, verify_frontend_checkout_ref, windows_check_args,
+        windows_process_test_args,
+    },
 };
+use std::path::Path;
 
 #[test]
 fn pull_request_edit_runs_only_consumer_contract() {
@@ -111,6 +116,83 @@ fn integration_commands_share_the_ci_target_and_jobs() {
             "4",
             "--",
             "--nocapture",
+        ]
+    );
+}
+
+#[test]
+fn windows_smoke_commands_share_ci_targets_and_limit_test_jobs() {
+    assert_eq!(
+        windows_check_args("ryframe"),
+        [
+            "check",
+            "--locked",
+            "--target-dir",
+            "target/ci/backend",
+            "-p",
+            "ryframe",
+            "--all-targets",
+        ]
+    );
+    assert_eq!(
+        windows_process_test_args(4),
+        [
+            "test",
+            "--locked",
+            "--target-dir",
+            "target/ci/backend",
+            "-p",
+            "xtask",
+            "--test",
+            "process_windows",
+            "--jobs",
+            "4",
+            "--",
+            "--nocapture",
+        ]
+    );
+}
+
+#[test]
+fn frontend_checkout_requires_an_exact_requested_sha() {
+    let requested = "0123456789abcdef0123456789abcdef01234567";
+    assert!(verify_frontend_checkout_ref(requested, requested).is_ok());
+    assert!(verify_frontend_checkout_ref("main", requested).is_ok());
+    assert!(
+        verify_frontend_checkout_ref(requested, "1123456789abcdef0123456789abcdef01234567")
+            .is_err()
+    );
+    assert!(verify_frontend_checkout_ref("main", "not-a-commit").is_err());
+}
+
+#[test]
+fn formal_source_command_receives_all_pinned_contract_inputs() {
+    let frontend = Path::new("../frontend");
+    let candidate = Path::new("artifacts/candidate-openapi.json");
+    let head = "0123456789abcdef0123456789abcdef01234567";
+    let args = formal_contract_source_args(frontend, head, "owner/backend", candidate);
+    assert_eq!(
+        args,
+        [
+            "scripts/verify_frontend_contract_source.py".to_owned(),
+            "--backend-worktree".to_owned(),
+            ".".to_owned(),
+            "--backend-head".to_owned(),
+            head.to_owned(),
+            "--backend-repository".to_owned(),
+            "owner/backend".to_owned(),
+            "--source-metadata".to_owned(),
+            frontend
+                .join("openapi/source.json")
+                .to_string_lossy()
+                .into_owned(),
+            "--frontend-openapi".to_owned(),
+            frontend
+                .join("openapi/openapi.json")
+                .to_string_lossy()
+                .into_owned(),
+            "--candidate-openapi".to_owned(),
+            candidate.to_string_lossy().into_owned(),
         ]
     );
 }

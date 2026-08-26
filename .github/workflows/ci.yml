@@ -120,23 +120,16 @@ jobs:
         working-directory: backend
         shell: bash
         env:
+          EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          set -euo pipefail
-          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
-            if git diff --quiet "$BASE_SHA" HEAD -- openapi/openapi.json; then
-              changed=false
-            else
-              changed=true
-            fi
-            frontend_ref="$(python scripts/select_frontend_commit.py \
-              --event "$GITHUB_EVENT_PATH" \
-              --contract-changed "$changed" \
-              --prefer-marker)"
-          else
-            frontend_ref=main
-          fi
-          echo "ref=$frontend_ref" >> "$GITHUB_OUTPUT"
+        run: >-
+          python scripts/select_frontend_commit.py
+          --event-name "$EVENT_NAME"
+          --event "$GITHUB_EVENT_PATH"
+          --backend-worktree .
+          --base-sha "$BASE_SHA"
+          --prefer-marker
+          --release-ref "$GITHUB_REF"
 
       - name: 检出前端资源 Workspace
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -324,41 +317,19 @@ jobs:
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '')
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '')
 
-      - name: 生成并分类候选契约
-        id: contract
+      - name: 生成候选契约并选择精确前端提交
+        id: frontend-ref
+        working-directory: backend
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          set -euo pipefail
-          candidate="$RUNNER_TEMP/candidate-openapi.json"
-          baseline="$RUNNER_TEMP/baseline-openapi.json"
-          cargo run --locked --manifest-path backend/Cargo.toml \
-            --target-dir backend/target/ci/backend \
-            -p ryframe-api --bin export_openapi -- "$candidate"
-          cmp --silent backend/openapi/openapi.json "$candidate" || {
-            echo "::error::后端 PR 未提交最新 OpenAPI 快照"
-            exit 1
-          }
-          git -C backend show "$BASE_SHA:openapi/openapi.json" > "$baseline"
-          if cmp --silent "$baseline" "$candidate"; then
-            changed=false
-          else
-            changed=true
-          fi
-          echo "changed=$changed" >> "$GITHUB_OUTPUT"
-
-      - name: 选择精确前端提交
-        id: frontend-ref
-        shell: bash
-        env:
-          CONTRACT_CHANGED: ${{ steps.contract.outputs.changed }}
-        run: |
-          set -euo pipefail
-          frontend_ref="$(python backend/scripts/select_frontend_commit.py \
-            --event "$GITHUB_EVENT_PATH" \
-            --contract-changed "$CONTRACT_CHANGED")"
-          echo "ref=$frontend_ref" >> "$GITHUB_OUTPUT"
+        run: >-
+          python scripts/select_frontend_commit.py
+          --event-name pull_request
+          --event "$GITHUB_EVENT_PATH"
+          --backend-worktree .
+          --base-sha "$BASE_SHA"
+          --candidate-openapi "$RUNNER_TEMP/candidate-openapi.json"
 
       - name: 检出前端消费者
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -366,37 +337,6 @@ jobs:
           repository: Edgar-ycy/ryframe-vue3
           ref: ${{ steps.frontend-ref.outputs.ref }}
           path: frontend
-
-      - name: 固定前端实际检出提交
-        id: frontend-commit
-        shell: bash
-        env:
-          REQUESTED_REF: ${{ steps.frontend-ref.outputs.ref }}
-        run: |
-          set -euo pipefail
-          resolved="$(git -C frontend rev-parse --verify HEAD)"
-          if [[ "$REQUESTED_REF" =~ ^[0-9a-f]{40}$ && "$resolved" != "$REQUESTED_REF" ]]; then
-            echo "::error::前端实际检出提交与请求 SHA 不一致"
-            exit 1
-          fi
-          echo "commit=$resolved" >> "$GITHUB_OUTPUT"
-          echo "前端消费者固定为 $resolved"
-
-      - name: 验证前端正式契约来源提交
-        id: formal-source
-        shell: bash
-        env:
-          BACKEND_HEAD: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          source_commit="$(python backend/scripts/verify_frontend_contract_source.py \
-            --backend-worktree backend \
-            --backend-head "$BACKEND_HEAD" \
-            --backend-repository "Edgar-ycy/ryframe" \
-            --source-metadata frontend/openapi/source.json \
-            --frontend-openapi frontend/openapi/openapi.json \
-            --candidate-openapi "$RUNNER_TEMP/candidate-openapi.json")"
-          echo "commit=$source_commit" >> "$GITHUB_OUTPUT"
 
       - name: Setup default Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
@@ -415,6 +355,11 @@ jobs:
 
       - name: 通过内部命令校验正式消费契约
         working-directory: backend
+        env:
+          RYFRAME_CI_BACKEND_HEAD: ${{ github.event.pull_request.head.sha }}
+          RYFRAME_CI_BACKEND_REPOSITORY: Edgar-ycy/ryframe
+          RYFRAME_CI_CANDIDATE_OPENAPI: ${{ runner.temp }}/candidate-openapi.json
+          RYFRAME_CI_FRONTEND_REF: ${{ steps.frontend-ref.outputs.ref }}
         run: cargo xtask ci consumer-contract --frontend-dir ../frontend
 
       - name: 输出 sccache 统计
@@ -462,47 +407,22 @@ jobs:
             core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '')
             core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '')
 
-      - name: 生成并分类 Windows 候选契约
-        if: ${{ github.event_name == 'pull_request' }}
-        id: windows-contract
-        shell: bash
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          set -euo pipefail
-          candidate="$RUNNER_TEMP/windows-candidate-openapi.json"
-          baseline="$RUNNER_TEMP/windows-baseline-openapi.json"
-          cargo run --locked --manifest-path ryframe/Cargo.toml \
-            -p ryframe-api --bin export_openapi -- "$candidate"
-          cmp --silent ryframe/openapi/openapi.json "$candidate" || {
-            echo "::error::后端 PR 未提交最新 OpenAPI 快照"
-            exit 1
-          }
-          git -C ryframe show "$BASE_SHA:openapi/openapi.json" > "$baseline"
-          if cmp --silent "$baseline" "$candidate"; then
-            changed=false
-          else
-            changed=true
-          fi
-          echo "changed=$changed" >> "$GITHUB_OUTPUT"
-
-      - name: 选择配套前端提交
+      - name: 校验候选契约并选择配套前端提交
         id: windows-frontend-ref
+        working-directory: ryframe
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
-          CONTRACT_CHANGED: ${{ steps.windows-contract.outputs.changed }}
-        run: |
-          set -euo pipefail
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            frontend_ref="$(python ryframe/scripts/select_frontend_commit.py \
-              --event "$GITHUB_EVENT_PATH" \
-              --contract-changed "$CONTRACT_CHANGED" \
-              --prefer-marker)"
-          else
-            frontend_ref=main
-          fi
-          echo "ref=$frontend_ref" >> "$GITHUB_OUTPUT"
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: >-
+          python scripts/select_frontend_commit.py
+          --event-name "$EVENT_NAME"
+          --event "$GITHUB_EVENT_PATH"
+          --backend-worktree .
+          --base-sha "$BASE_SHA"
+          --prefer-marker
+          --candidate-openapi "$RUNNER_TEMP/windows-candidate-openapi.json"
+          --release-ref "$GITHUB_REF"
 
       - name: 检出前端真实 Workspace
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -510,21 +430,6 @@ jobs:
           repository: Edgar-ycy/ryframe-vue3
           ref: ${{ steps.windows-frontend-ref.outputs.ref }}
           path: ryframe-vue3
-
-      - name: 固定 Windows 前端实际检出提交
-        id: windows-frontend-commit
-        shell: bash
-        env:
-          REQUESTED_REF: ${{ steps.windows-frontend-ref.outputs.ref }}
-        run: |
-          set -euo pipefail
-          resolved="$(git -C ryframe-vue3 rev-parse --verify HEAD)"
-          if [[ "$REQUESTED_REF" =~ ^[0-9a-f]{40}$ && "$resolved" != "$REQUESTED_REF" ]]; then
-            echo "::error::Windows 前端实际检出提交与请求 SHA 不一致"
-            exit 1
-          fi
-          echo "commit=$resolved" >> "$GITHUB_OUTPUT"
-          echo "Windows 前端 Workspace 固定为 $resolved"
 
       - name: 安装 Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
@@ -541,26 +446,13 @@ jobs:
         working-directory: ryframe-vue3
         run: pnpm install --frozen-lockfile
 
-      - name: 检查 Windows 产品二进制
+      - name: 执行 Windows 产品、工具、进程与资源 Workspace 门禁
         working-directory: ryframe
-        run: cargo check --locked -p ryframe --all-targets
-
-      - name: 检查 Windows 开发工具
-        working-directory: ryframe
-        run: cargo check --locked -p xtask --all-targets
-
-      - name: 验证 Windows Job Object 回收后代进程
-        working-directory: ryframe
-        run: cargo test --locked -p xtask --test process_windows -- --nocapture
-
-      # 真实前后端副本同时验证生成幂等性、四层 Rust 切片编译和 vue-tsc。
-      - name: 验证资源生成真实 Workspace
-        working-directory: ryframe
-        run: >-
-          cargo test --locked
-          -p ryframe-generator
-          --test resource_workspace_compilation
-          -- --ignored --nocapture
+        env:
+          RYFRAME_CI_FRONTEND_REF: ${{ steps.windows-frontend-ref.outputs.ref }}
+          RYFRAME_CI_RUST_GATE_PROFILE: windows-smoke
+          RYFRAME_CI_TEST_JOBS: "4"
+        run: cargo xtask ci rust-gate --frontend-dir ../ryframe-vue3
 
       - name: 输出 sccache 统计
         if: ${{ always() }}
@@ -652,14 +544,12 @@ jobs:
       - name: 选择配套前端引用
         id: frontend-ref
         shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            frontend_ref="$GITHUB_REF_NAME"
-          else
-            frontend_ref=main
-          fi
-          echo "ref=$frontend_ref" >> "$GITHUB_OUTPUT"
+        run: >-
+          python backend/scripts/select_frontend_commit.py
+          --event-name "$GITHUB_EVENT_NAME"
+          --event "$GITHUB_EVENT_PATH"
+          --backend-worktree backend
+          --release-ref "$GITHUB_REF"
 
       - name: 检出配套前端
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -715,59 +605,13 @@ jobs:
 
       - name: 构建并安全初始化临时全栈环境
         working-directory: backend
-        shell: bash
         env:
-          REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
-        run: |
-          set -euo pipefail
-          output_dir="$RUNNER_TEMP/ryframe-full-stack"
-          mkdir --parents "$output_dir"
-          mkdir --parents \
-            "$APP_OBJECT_STORAGE_LOCAL_BASE_DIR/uploads" \
-            "$APP_OBJECT_STORAGE_LOCAL_BASE_DIR/avatar" \
-            "$APP_OBJECT_STORAGE_LOCAL_BASE_DIR/exports" \
-            "$APP_OBJECT_STORAGE_LOCAL_BASE_DIR/imports" \
-            "$APP_OBJECT_STORAGE_LOCAL_BASE_DIR/config-packages"
-          docker exec "$REDIS_CONTAINER_ID" redis-cli -n "$APP_REDIS_DATABASE" \
-            SET "$APP_RESET_REDIS_OUTSIDE_SENTINEL_KEY" ci-sentinel NX >/dev/null
-          cargo build --locked -p ryframe --features destructive-reset \
-            --bin ryframe-reset --bin ryframe
-          plan_output="$($CARGO_TARGET_DIR/debug/ryframe-reset plan)"
-          printf '%s\n' "$plan_output" > "$output_dir/reset-plan.log"
-          plan_hash="$(printf '%s\n' "$plan_output" | sed -n 's/^plan_hash=//p' | tail -n 1)"
-          [[ "$plan_hash" =~ ^[0-9a-f]{64}$ ]] || {
-            echo "::error::未能从 reset plan 读取有效 hash"
-            exit 1
-          }
-          "$CARGO_TARGET_DIR/debug/ryframe-reset" execute \
-            --plan-hash "$plan_hash" \
-            --confirm-reset "RESET-RYFRAME-test-$APP_SCOPE_ID" \
-            > "$output_dir/reset-execute.log" 2>&1
+          RYFRAME_CI_REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
+        run: python scripts/ci_full_stack.py prepare
 
       - name: 启动真实 API 并等待就绪
         working-directory: backend
-        shell: bash
-        run: |
-          set -euo pipefail
-          output_dir="$RUNNER_TEMP/ryframe-full-stack"
-          nohup "$CARGO_TARGET_DIR/debug/ryframe" \
-            > "$output_dir/api.log" 2>&1 &
-          api_pid=$!
-          echo "$api_pid" > "$output_dir/api.pid"
-          for attempt in $(seq 1 90); do
-            if curl --fail --silent http://127.0.0.1:8080/readyz >/dev/null; then
-              exit 0
-            fi
-            kill -0 "$api_pid" || {
-              echo "::error::API 在就绪前退出"
-              tail --lines=200 "$output_dir/api.log"
-              exit 1
-            }
-            sleep 2
-          done
-          echo "::error::API 就绪等待超时"
-          tail --lines=200 "$output_dir/api.log"
-          exit 1
+        run: python scripts/ci_full_stack.py start
 
       - name: 执行真实浏览器全栈流程
         working-directory: frontend
@@ -775,21 +619,11 @@ jobs:
 
       - name: 收集进程与基础设施日志
         if: ${{ always() }}
-        shell: bash
+        working-directory: backend
         env:
-          MYSQL_CONTAINER_ID: ${{ job.services.mysql.id }}
-          REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
-        run: |
-          set +e
-          output_dir="$RUNNER_TEMP/ryframe-full-stack"
-          mkdir --parents "$output_dir"
-          if [[ -f "$output_dir/api.pid" ]]; then
-            kill "$(cat "$output_dir/api.pid")" 2>/dev/null
-          fi
-          docker logs "$MYSQL_CONTAINER_ID" > "$output_dir/mysql.log" 2>&1
-          docker logs "$REDIS_CONTAINER_ID" > "$output_dir/redis.log" 2>&1
-          sccache --show-stats > "$output_dir/sccache.log" 2>&1
-          sccache --stop-server >> "$output_dir/sccache.log" 2>&1
+          RYFRAME_CI_MYSQL_CONTAINER_ID: ${{ job.services.mysql.id }}
+          RYFRAME_CI_REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
+        run: python scripts/ci_full_stack.py collect
 
       - name: 保存全栈诊断产物
         if: ${{ always() }}

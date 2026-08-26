@@ -225,10 +225,13 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertIn("startsWith(github.ref, 'refs/tags/v')", block)
         self.assertIn("APP_ENV: test", block)
         self.assertIn('APP_RESET_LEGACY_MYSQL_EXCLUSIVE: "true"', block)
-        for bucket in ("uploads", "avatar", "exports", "imports", "config-packages"):
-            self.assertIn(f'APP_OBJECT_STORAGE_LOCAL_BASE_DIR/{bucket}', block)
-        self.assertIn('redis-cli -n "$APP_REDIS_DATABASE"', block)
-        self.assertIn('ryframe-reset" execute', block)
+        self.assertIn("python scripts/ci_full_stack.py prepare", block)
+        self.assertIn("python scripts/ci_full_stack.py start", block)
+        self.assertIn("python scripts/ci_full_stack.py collect", block)
+        self.assertNotIn("cargo build --locked", block)
+        self.assertNotIn("ryframe-reset plan", block)
+        self.assertNotIn("nohup", block)
+        self.assertNotIn("curl --fail", block)
         self.assertIn("pnpm ci:browser-real", block)
         self.assertEqual(block.count("if: ${{ always() }}"), 2)
         self.assertIn("frontend/.local-tests/playwright-real/report", block)
@@ -257,21 +260,31 @@ class RequiredJobsTests(unittest.TestCase):
         )[0]
         self.assertIn("scripts/select_frontend_commit.py", windows)
         self.assertIn("--prefer-marker", windows)
+        self.assertIn("--candidate-openapi", windows)
         self.assertIn("ref: ${{ steps.windows-frontend-ref.outputs.ref }}", windows)
         self.assertIn("github.event.pull_request.head.sha || github.sha", windows)
-        self.assertIn("git -C ryframe-vue3 rev-parse --verify HEAD", windows)
+        self.assertIn("RYFRAME_CI_FRONTEND_REF", windows)
+        self.assertIn("RYFRAME_CI_RUST_GATE_PROFILE: windows-smoke", windows)
+        self.assertIn(
+            "cargo xtask ci rust-gate --frontend-dir ../ryframe-vue3", windows
+        )
+        self.assertNotIn("cargo check --locked -p ryframe", windows)
+        self.assertNotIn("--test process_windows", windows)
 
     def test_consumer_job_keeps_formal_source_check_and_uses_xtask(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         consumer = workflow.split("  consumer-contract:", 1)[1].split(
             "  windows-smoke:", 1
         )[0]
-        self.assertIn("scripts/verify_frontend_contract_source.py", consumer)
-        self.assertIn("id: formal-source", consumer)
         self.assertIn("scripts/select_frontend_commit.py", consumer)
-        self.assertIn("git -C frontend rev-parse --verify HEAD", consumer)
+        self.assertIn("--candidate-openapi", consumer)
+        self.assertIn("RYFRAME_CI_BACKEND_HEAD", consumer)
+        self.assertIn("RYFRAME_CI_CANDIDATE_OPENAPI", consumer)
+        self.assertIn("RYFRAME_CI_FRONTEND_REF", consumer)
         self.assertIn("cargo xtask ci consumer-contract --frontend-dir ../frontend", consumer)
         self.assertNotIn("pnpm consumer:check --", consumer)
+        self.assertNotIn("cargo run --locked", consumer)
+        self.assertNotIn("cmp --silent", consumer)
 
     def test_ci_yaml_parser_is_reinstalled_from_hashed_requirement(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
