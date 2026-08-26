@@ -108,5 +108,5 @@ tempfile = "3"
 proc-macro-error2 = { path = "vendor/proc-macro-error2" }
 sqlx = { path = "vendor/sqlx-mysql-only" }
 
-[profile.dev]
+[profile.dev.package.ryframe-adapters]
 opt-level = 1
