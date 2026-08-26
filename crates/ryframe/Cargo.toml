@@ -48,28 +48,34 @@ destructive-reset = ["dep:sha2", "dep:hex", "dep:serde"]
 [[bin]]
 name = "ryframe"
 path = "src/main.rs"
+test = false
 
 [[bin]]
 name = "ryframe-reset"
 path = "src/bin/ryframe_reset.rs"
 required-features = ["destructive-reset"]
+test = false
 
 [[bin]]
 name = "ryframe-migrate"
 path = "src/bin/ryframe_migrate.rs"
+test = false
 
 [[bin]]
 name = "ryframe-tenant-data"
 path = "src/bin/ryframe_tenant_data.rs"
+test = false
 
 [[bin]]
 name = "ryframe-worker"
 path = "src/bin/ryframe_worker.rs"
+test = false
 
 [[bin]]
 name = "ryframe-file-maintenance"
 path = "src/bin/ryframe_file_maintenance.rs"
 required-features = ["file-maintenance"]
+test = false
 
 [lints]
 workspace = true

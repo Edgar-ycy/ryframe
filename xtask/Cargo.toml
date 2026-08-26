@@ -33,5 +33,10 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Threading",
 ] }
 
+[[bin]]
+name = "xtask"
+path = "src/main.rs"
+test = false
+
 [lints]
 workspace = true

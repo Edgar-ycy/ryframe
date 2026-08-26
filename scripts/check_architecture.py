@@ -39,6 +39,9 @@ DOCUMENT_LIMITS = {
     "docs/operations.md": 240,
 }
 TEST_FILE_NAME = re.compile(r"(?:^tests?\.rs$|_tests?\.rs$)", re.IGNORECASE)
+TEST_ATTRIBUTE = re.compile(
+    r"#\s*\[\s*(?:cfg\s*\(\s*test\s*\)|(?:[A-Za-z_][A-Za-z0-9_]*::)?test)\s*\]"
+)
 SYSTEM_DOMAIN_MODULES = {"content", "identity", "operations", "platform"}
 
 
@@ -603,6 +606,24 @@ def validate_test_layout(
     ):
         errors.append("test_layout.max_integration_test_lines 必须是正整数")
         max_integration_test_lines = 1
+    disabled_bin_test_targets = parse_string_set(
+        test_layout.get("disabled_bin_test_targets"),
+        "test_layout.disabled_bin_test_targets",
+        errors,
+    )
+
+    actual_bin_targets = {
+        f"{package_name}:{target.get('name')}"
+        for package_name, package in packages.items()
+        for target in package.get("targets", [])
+        if "bin" in target.get("kind", [])
+    }
+    stale_disabled_bins = disabled_bin_test_targets - actual_bin_targets
+    if stale_disabled_bins:
+        errors.append(
+            "空测试 harness 策略引用不存在的二进制目标: "
+            + ", ".join(sorted(stale_disabled_bins))
+        )
 
     checked_sources = 0
     integration_targets = 0
@@ -624,6 +645,29 @@ def validate_test_layout(
                         f"{path.relative_to(ROOT).as_posix()}（{lines} 行）"
                     )
         for target in package.get("targets", []):
+            if "bin" in target.get("kind", []):
+                target_key = f"{package_name}:{target.get('name')}"
+                test_disabled = target.get("test") is False
+                if test_disabled and target_key not in disabled_bin_test_targets:
+                    errors.append(f"关闭测试 harness 的二进制目标必须登记: {target_key}")
+                if target_key in disabled_bin_test_targets:
+                    if not test_disabled:
+                        errors.append(f"二进制目标必须设置 test = false: {target_key}")
+                    target_path = Path(target["src_path"]).resolve()
+                    target_sources = {target_path}
+                    companion_root = target_path.with_suffix("")
+                    if companion_root.is_dir():
+                        target_sources.update(companion_root.rglob("*.rs"))
+                    package_targets = package.get("targets", [])
+                    if not any("lib" in item.get("kind", []) for item in package_targets):
+                        target_sources.update((package_root / "src").rglob("*.rs"))
+                    for source_path in sorted(target_sources):
+                        source = source_path.read_text(encoding="utf-8")
+                        if TEST_ATTRIBUTE.search(source):
+                            errors.append(
+                                "已关闭测试 harness 的二进制源码不得包含单测: "
+                                f"{source_path.relative_to(ROOT).as_posix()}"
+                            )
             if "test" not in target.get("kind", []):
                 continue
             integration_targets += 1

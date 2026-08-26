@@ -226,7 +226,11 @@ class TestLayoutPolicyTests(unittest.TestCase):
         MODULE.ROOT = self.previous_root
         shutil.rmtree(self.root)
 
-    def validate(self) -> list[str]:
+    def validate(
+        self,
+        targets: list[dict[str, object]] | None = None,
+        disabled_bin_test_targets: list[str] | None = None,
+    ) -> list[str]:
         errors: list[str] = []
         MODULE.validate_test_layout(
             {
@@ -234,11 +238,13 @@ class TestLayoutPolicyTests(unittest.TestCase):
                 "allow_colocated_unit_tests": True,
                 "forbid_source_test_files": True,
                 "max_integration_test_lines": 1000,
+                "disabled_bin_test_targets": disabled_bin_test_targets or [],
             },
             {
                 "example": {
                     "manifest_path": str(self.manifest),
-                    "targets": [
+                    "targets": targets
+                    or [
                         {
                             "kind": ["lib"],
                             "src_path": str(self.source),
@@ -267,6 +273,73 @@ class TestLayoutPolicyTests(unittest.TestCase):
         errors = self.validate()
 
         self.assertTrue(any("model_tests.rs" in error for error in errors))
+
+    def test_accepts_disabled_empty_binary_harness(self) -> None:
+        self.source.write_text("fn main() {}\n", encoding="utf-8")
+        target = {
+            "kind": ["bin"],
+            "name": "tool",
+            "src_path": str(self.source),
+            "test": False,
+        }
+
+        self.assertEqual(self.validate([target], ["example:tool"]), [])
+
+    def test_rejects_tests_inside_disabled_binary_harness(self) -> None:
+        self.source.write_text(
+            "fn main() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn checks() {}\n}\n",
+            encoding="utf-8",
+        )
+        target = {
+            "kind": ["bin"],
+            "name": "tool",
+            "src_path": str(self.source),
+            "test": False,
+        }
+
+        errors = self.validate([target], ["example:tool"])
+
+        self.assertTrue(any("不得包含单测" in error for error in errors))
+
+    def test_rejects_binary_with_default_test_harness(self) -> None:
+        self.source.write_text("fn main() {}\n", encoding="utf-8")
+        target = {
+            "kind": ["bin"],
+            "name": "tool",
+            "src_path": str(self.source),
+            "test": True,
+        }
+
+        errors = self.validate([target], ["example:tool"])
+
+        self.assertTrue(any("test = false" in error for error in errors))
+
+    def test_accepts_binary_with_real_test_harness(self) -> None:
+        self.source.write_text(
+            "fn main() {}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn checks() {}\n}\n",
+            encoding="utf-8",
+        )
+        target = {
+            "kind": ["bin"],
+            "name": "tool",
+            "src_path": str(self.source),
+            "test": True,
+        }
+
+        self.assertEqual(self.validate([target]), [])
+
+    def test_rejects_unlisted_disabled_binary_harness(self) -> None:
+        self.source.write_text("fn main() {}\n", encoding="utf-8")
+        target = {
+            "kind": ["bin"],
+            "name": "tool",
+            "src_path": str(self.source),
+            "test": False,
+        }
+
+        errors = self.validate([target])
+
+        self.assertTrue(any("必须登记" in error for error in errors))
 
 
 if __name__ == "__main__":

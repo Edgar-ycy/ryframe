@@ -31,5 +31,10 @@ tokio = { workspace = true, features = ["time"] }
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
 
+[[bin]]
+name = "export_mysql_snapshot"
+path = "src/bin/export_mysql_snapshot.rs"
+test = false
+
 [lints]
 workspace = true

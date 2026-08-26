@@ -18,6 +18,17 @@ directory = "tests"
 allow_colocated_unit_tests = true
 forbid_source_test_files = true
 max_integration_test_lines = 1000
+disabled_bin_test_targets = [
+    "ryframe:ryframe",
+    "ryframe:ryframe-file-maintenance",
+    "ryframe:ryframe-migrate",
+    "ryframe:ryframe-reset",
+    "ryframe:ryframe-tenant-data",
+    "ryframe:ryframe-worker",
+    "ryframe-api:export_openapi",
+    "ryframe-db:export_mysql_snapshot",
+    "xtask:xtask",
+]
 
 # 当前 12 包过渡图。允许边是上限：删边无需修改本文件，新增边必须先通过架构评审。
 [profiles.transition]
