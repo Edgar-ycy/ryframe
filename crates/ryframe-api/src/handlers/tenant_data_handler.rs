@@ -19,6 +19,7 @@ use crate::{
         DataTargetDetail, DataTargetListQuery, DataTargetSummary, MigrationListQuery,
         MigrationPreview, MigrationPreviewDto, MigrationView,
     },
+    handler_utils::parse_positive_id,
     state::AppState,
 };
 
@@ -182,8 +183,9 @@ pub(crate) async fn preview_migration(
             &tenant_id,
             MigrationPreviewRequest {
                 target_key: dto.target_key,
-                expected_placement_generation: parse_generation(
+                expected_placement_generation: parse_positive_id(
                     &dto.expected_placement_generation,
+                    "expected_placement_generation 无效",
                 )?,
             },
         )
@@ -217,8 +219,9 @@ pub(crate) async fn create_migration(
             &tenant_id,
             CreateMigrationCommand {
                 target_key: dto.target_key,
-                expected_placement_generation: parse_generation(
+                expected_placement_generation: parse_positive_id(
                     &dto.expected_placement_generation,
+                    "expected_placement_generation 无效",
                 )?,
                 plan_hash: dto.plan_hash,
                 idempotency_key: idempotency_key(&headers)?,
@@ -266,7 +269,10 @@ pub(crate) async fn migration_detail(
         .services
         .platform
         .tenant_data_migration
-        .migration(&principal, parse_id(&migration_id, "migration_id")?)
+        .migration(
+            &principal,
+            parse_positive_id(&migration_id, "migration_id 无效")?,
+        )
         .await?;
     Ok(Json(ApiResponse::success(MigrationView::try_from(value)?)))
 }
@@ -290,7 +296,7 @@ pub(crate) async fn cancel_migration(
         .tenant_data_migration
         .cancel(
             &principal,
-            parse_id(&migration_id, "migration_id")?,
+            parse_positive_id(&migration_id, "migration_id 无效")?,
             MigrationActionCommand {
                 idempotency_key: idempotency_key(&headers)?,
             },
@@ -318,7 +324,7 @@ pub(crate) async fn finalize_migration(
         .tenant_data_migration
         .finalize(
             &principal,
-            parse_id(&migration_id, "migration_id")?,
+            parse_positive_id(&migration_id, "migration_id 无效")?,
             MigrationActionCommand {
                 idempotency_key: idempotency_key(&headers)?,
             },
@@ -334,20 +340,4 @@ fn idempotency_key(headers: &HeaderMap) -> Result<String, AppError> {
         .to_str()
         .map(str::to_owned)
         .map_err(|_| AppError::Validation("Idempotency-Key 必须是有效 ASCII".into()))
-}
-
-fn parse_generation(value: &str) -> Result<i64, AppError> {
-    value
-        .parse::<i64>()
-        .ok()
-        .filter(|value| *value > 0)
-        .ok_or_else(|| AppError::Validation("expected_placement_generation 无效".into()))
-}
-
-fn parse_id(value: &str, field: &str) -> Result<i64, AppError> {
-    value
-        .parse::<i64>()
-        .ok()
-        .filter(|value| *value > 0)
-        .ok_or_else(|| AppError::Validation(format!("{field} 无效")))
 }

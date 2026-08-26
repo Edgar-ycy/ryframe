@@ -15,9 +15,11 @@ use crate::{
         export_dto::{DeleteExportJobsDto, ExportDeletionAcceptedDto},
         public_dto::ExportJobVo,
     },
-    handler_utils::excel_response,
+    handler_utils::{excel_response, parse_positive_id, parse_positive_id_list},
     state::AppState,
 };
+
+const INVALID_EXPORT_ID: &str = "导出任务 ID 必须是正整数";
 
 /// 导出任务查询、取消与下载路由。
 pub fn export_router(state: AppState) -> Router {
@@ -104,11 +106,7 @@ async fn mark_notifications_read(
     if request.ids.is_empty() || request.ids.len() > 100 {
         return Err(AppError::Validation("导出通知 ID 数量必须介于 1 和 100 之间".into()).into());
     }
-    let mut ids = request
-        .ids
-        .iter()
-        .map(|id| parse_export_id(id))
-        .collect::<HttpResult<Vec<_>>>()?;
+    let mut ids = parse_positive_id_list(&request.ids, INVALID_EXPORT_ID)?;
     ids.sort_unstable();
     ids.dedup();
     state
@@ -158,7 +156,7 @@ async fn detail(
         .services
         .operations
         .export
-        .find_for_requester(&current_user, parse_export_id(&id)?)
+        .find_for_requester(&current_user, parse_positive_id(&id, INVALID_EXPORT_ID)?)
         .await
         .map_err(crate::http::HttpAppError::from)
         .map(ExportJobVo::from)
@@ -183,7 +181,7 @@ async fn cancel(
         .services
         .operations
         .export
-        .cancel_for_requester(&current_user, parse_export_id(&id)?)
+        .cancel_for_requester(&current_user, parse_positive_id(&id, INVALID_EXPORT_ID)?)
         .await
         .map_err(crate::http::HttpAppError::from)
         .map(|job| ApiResponse::success(job.into()))
@@ -205,7 +203,7 @@ async fn download(
         .services
         .operations
         .export
-        .download_location_for_requester(&current_user, parse_export_id(&id)?)
+        .download_location_for_requester(&current_user, parse_positive_id(&id, INVALID_EXPORT_ID)?)
         .await
         .map_err(crate::http::HttpAppError::from)?;
     state
@@ -219,14 +217,6 @@ async fn download(
             // 导出结果只允许以受控的 Excel 类型返回，不信任通用文件元数据覆盖响应类型。
             excel_response(file.data, &file.original_name)
         })
-}
-
-fn parse_export_id(value: &str) -> HttpResult<i64> {
-    Ok(value
-        .parse::<i64>()
-        .ok()
-        .filter(|id| *id > 0)
-        .ok_or_else(|| AppError::Validation("导出任务 ID 必须是正整数".into()))?)
 }
 
 /// 创建导出任务前必须显式给出幂等键，实际重放语义由系统路由的幂等中间件统一处理。

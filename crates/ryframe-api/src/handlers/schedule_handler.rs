@@ -17,8 +17,11 @@ use crate::{
             UpdateScheduleStatusRequest,
         },
     },
+    handler_utils::parse_positive_id,
     state::AppState,
 };
+
+const INVALID_SCHEDULE_ID: &str = "定时任务 ID 必须是正整数";
 
 /// 定时任务管理路由。
 pub fn schedule_router(state: AppState) -> Router {
@@ -137,7 +140,7 @@ async fn detail(
     Path(id): Path<String>,
 ) -> HttpResult<Json<ApiResponse<JobScheduleVo>>> {
     schedule_service(&state)?
-        .get(&current_user, parse_schedule_id(&id)?)
+        .get(&current_user, parse_positive_id(&id, INVALID_SCHEDULE_ID)?)
         .await
         .map_err(crate::http::HttpAppError::from)
         .map(JobScheduleVo::from)
@@ -198,7 +201,11 @@ async fn update(
     Json(request): Json<UpdateScheduleRequest>,
 ) -> HttpResult<Json<ApiResponse<JobScheduleVo>>> {
     schedule_service(&state)?
-        .update(&current_user, parse_schedule_id(&id)?, request.into())
+        .update(
+            &current_user,
+            parse_positive_id(&id, INVALID_SCHEDULE_ID)?,
+            request.into(),
+        )
         .await
         .map_err(crate::http::HttpAppError::from)
         .map(JobScheduleVo::from)
@@ -230,7 +237,7 @@ async fn update_status(
     schedule_service(&state)?
         .set_enabled(
             &current_user,
-            parse_schedule_id(&id)?,
+            parse_positive_id(&id, INVALID_SCHEDULE_ID)?,
             request.version,
             request.enabled,
         )
@@ -269,7 +276,11 @@ async fn run_now(
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| AppError::Validation("缺少有效的 Idempotency-Key 请求头".into()))?;
     let execution = schedule_service(&state)?
-        .run_now(&current_user, parse_schedule_id(&id)?, key)
+        .run_now(
+            &current_user,
+            parse_positive_id(&id, INVALID_SCHEDULE_ID)?,
+            key,
+        )
         .await?;
     Ok((
         StatusCode::ACCEPTED,
@@ -299,7 +310,11 @@ async fn remove(
     Json(request): Json<ScheduleVersionRequest>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
     schedule_service(&state)?
-        .remove(&current_user, parse_schedule_id(&id)?, request.version)
+        .remove(
+            &current_user,
+            parse_positive_id(&id, INVALID_SCHEDULE_ID)?,
+            request.version,
+        )
         .await?;
     Ok(Json(ApiResponse::success_no_data()))
 }
@@ -327,7 +342,7 @@ async fn executions(
     let page = schedule_service(&state)?
         .executions(
             &current_user,
-            parse_schedule_id(&id)?,
+            parse_positive_id(&id, INVALID_SCHEDULE_ID)?,
             query.into_service_params(state.settings.pagination)?,
         )
         .await?;
@@ -341,14 +356,6 @@ async fn executions(
         page.page_size,
         state.settings.pagination.max_page_size(),
     )))
-}
-
-fn parse_schedule_id(value: &str) -> HttpResult<i64> {
-    Ok(value
-        .parse::<i64>()
-        .ok()
-        .filter(|id| *id > 0)
-        .ok_or_else(|| AppError::Validation("定时任务 ID 必须是正整数".into()))?)
 }
 
 fn schedule_service(state: &AppState) -> HttpResult<&ryframe_application::JobScheduleService> {

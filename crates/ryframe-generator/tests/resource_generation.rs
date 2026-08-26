@@ -87,6 +87,9 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
     assert!(repository.contains("self.ensure_tenant(tenant_id)?"));
     assert!(repository.contains("self.ensure_tenant(&record.tenant_id)?"));
     assert!(repository.contains("AppError::Authorization(\"岗位事务租户不匹配\".into())"));
+    assert!(repository.contains("use crate::DbResultExt;"));
+    assert!(repository.contains(".await\n            .db()?"));
+    assert!(repository.contains(".map_err(database_error)"));
     let entity = content("post/entity.rs");
     assert!(entity.contains("pub const SOFT_DELETE_ACTIVE: &str = \"0\";"));
     assert!(entity.contains("pub const SOFT_DELETE_DELETED: &str = \"2\";"));
@@ -172,6 +175,8 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
     let handler = content("post/handler.rs");
     assert!(handler.contains("tag = \"岗位管理\""));
     assert!(!handler.contains("tag = \"岗位\","));
+    assert!(handler.contains("use crate::handler_utils::parse_id;"));
+    assert!(!handler.contains("fn parse_id(value: &str)"));
     assert!(
         generated
             .assets

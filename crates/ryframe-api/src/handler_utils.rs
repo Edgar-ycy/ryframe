@@ -8,6 +8,11 @@ use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use ryframe_kernel::AppError;
 use sha2::{Digest, Sha256};
 
+pub(crate) use crate::id_parser::{
+    parse_id, parse_optional_id, parse_optional_positive_id, parse_positive_id,
+    parse_positive_id_list,
+};
+
 const XLSX_CONTENT_TYPE: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
 /// 构建采用 RFC 5987 编码的 UTF-8 附件响应头。
@@ -121,8 +126,5 @@ pub(crate) fn parse_optional_i64(id: Option<String>) -> HttpResult<Option<i64>> 
 }
 
 pub(crate) fn parse_optional_i64_str(id: Option<&str>) -> HttpResult<Option<i64>> {
-    id.map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(parse_i64)
-        .transpose()
+    parse_optional_id(id, "ID").map_err(HttpAppError::from)
 }

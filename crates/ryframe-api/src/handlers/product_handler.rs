@@ -21,6 +21,7 @@ use crate::{
         ProductChangePreviewVo, ProductContextVo, ProductPlanPageQuery, ProductPlanVersionVo,
         ProductPlanVo, UpdateProductPlanDto, into_json_object,
     },
+    handler_utils::parse_positive_id,
     state::AppState,
 };
 
@@ -120,7 +121,10 @@ pub(crate) async fn plan_detail(
         .services
         .platform
         .product
-        .plan(&principal, parse_positive_id(&plan_id, "plan_id")?)
+        .plan(
+            &principal,
+            parse_positive_id(&plan_id, "plan_id 必须是正整数十进制字符串")?,
+        )
         .await?;
     Ok(Json(ApiResponse::success(ProductPlanVo::try_from(value)?)))
 }
@@ -170,7 +174,7 @@ pub(crate) async fn update_plan(
         .product
         .update_plan(
             &principal,
-            parse_positive_id(&plan_id, "plan_id")?,
+            parse_positive_id(&plan_id, "plan_id 必须是正整数十进制字符串")?,
             UpdateProductPlanCommand {
                 name: dto.name,
                 description: dto.description,
@@ -194,7 +198,10 @@ pub(crate) async fn list_versions(
         .services
         .platform
         .product
-        .versions(&principal, parse_positive_id(&plan_id, "plan_id")?)
+        .versions(
+            &principal,
+            parse_positive_id(&plan_id, "plan_id 必须是正整数十进制字符串")?,
+        )
         .await?
         .into_iter()
         .map(ProductPlanVersionVo::try_from)
@@ -220,7 +227,7 @@ pub(crate) async fn create_version(
         .product
         .create_version(
             &principal,
-            parse_positive_id(&plan_id, "plan_id")?,
+            parse_positive_id(&plan_id, "plan_id 必须是正整数十进制字符串")?,
             CreateProductPlanVersionCommand {
                 name: dto.name,
                 description: dto.description,
@@ -251,7 +258,7 @@ pub(crate) async fn update_version(
         .product
         .update_version(
             &principal,
-            parse_positive_id(&plan_id, "plan_id")?,
+            parse_positive_id(&plan_id, "plan_id 必须是正整数十进制字符串")?,
             version,
             UpdateProductPlanVersionCommand {
                 name: dto.name,
@@ -279,7 +286,11 @@ pub(crate) async fn publish_version(
         .services
         .platform
         .product
-        .publish_version(&principal, parse_positive_id(&plan_id, "plan_id")?, version)
+        .publish_version(
+            &principal,
+            parse_positive_id(&plan_id, "plan_id 必须是正整数十进制字符串")?,
+            version,
+        )
         .await?;
     Ok(Json(ApiResponse::success(ProductPlanVersionVo::try_from(
         value,
@@ -300,7 +311,11 @@ pub(crate) async fn retire_version(
         .services
         .platform
         .product
-        .retire_version(&principal, parse_positive_id(&plan_id, "plan_id")?, version)
+        .retire_version(
+            &principal,
+            parse_positive_id(&plan_id, "plan_id 必须是正整数十进制字符串")?,
+            version,
+        )
         .await?;
     Ok(Json(ApiResponse::success(ProductPlanVersionVo::try_from(
         value,
@@ -369,7 +384,10 @@ pub(crate) async fn apply_tenant_change(
 ) -> HttpResult<Json<ApiResponse<ProductContextVo>>> {
     dto.validate()?;
     let capability_override_allowed = has_override_permission(&principal);
-    let runtime_epoch = parse_positive_id(&dto.preview_runtime_epoch, "preview_runtime_epoch")?;
+    let runtime_epoch = parse_positive_id(
+        &dto.preview_runtime_epoch,
+        "preview_runtime_epoch 必须是正整数十进制字符串",
+    )?;
     let target = change_target(dto.plan_version_id, dto.overrides)?;
     let value = state
         .services
@@ -409,7 +427,10 @@ fn change_target(
     values: Vec<CapabilityOverrideDto>,
 ) -> Result<ProductChangeTarget, AppError> {
     Ok(ProductChangeTarget {
-        plan_version_id: parse_positive_id(&plan_version_id, "plan_version_id")?,
+        plan_version_id: parse_positive_id(
+            &plan_version_id,
+            "plan_version_id 必须是正整数十进制字符串",
+        )?,
         overrides: values
             .into_iter()
             .map(|value| CapabilityOverrideInput {
@@ -426,12 +447,4 @@ fn change_target(
 fn has_override_permission(principal: &RequestPrincipal) -> bool {
     principal.is_super_admin
         || rbac::has_permission(&principal.permissions, "tenant:capability:override")
-}
-
-fn parse_positive_id(value: &str, field: &str) -> Result<i64, AppError> {
-    value
-        .parse::<i64>()
-        .ok()
-        .filter(|value| *value > 0)
-        .ok_or_else(|| AppError::Validation(format!("{field} 必须是正整数十进制字符串")))
 }

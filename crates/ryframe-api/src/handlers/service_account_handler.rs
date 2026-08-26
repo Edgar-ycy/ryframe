@@ -25,9 +25,16 @@ use crate::{
             ServiceResourcePageQuery, UpdateServiceAccountDto, UpdateServiceAccountStatusDto,
         },
     },
-    handler_utils::{idempotency_key_value, parse_i64_strings},
+    handler_utils::{
+        idempotency_key_value, parse_i64_strings, parse_optional_positive_id, parse_positive_id,
+    },
     state::AppState,
 };
+
+const INVALID_SERVICE_ACCOUNT_ID: &str = "服务账号 ID 无效";
+const INVALID_DEPARTMENT_ID: &str = "部门 ID 无效";
+const INVALID_CREDENTIAL_ID: &str = "API Key ID 无效";
+const INVALID_DELEGATION_ID: &str = "委托 ID 无效";
 
 pub fn service_account_router(state: AppState) -> Router {
     Router::new()
@@ -113,7 +120,14 @@ async fn create_account(
                 code: request.code,
                 name: request.name,
                 description: request.description,
-                dept_id: parse_optional_positive_id(request.dept_id.as_deref(), "部门")?,
+                dept_id: parse_optional_positive_id(
+                    request
+                        .dept_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty()),
+                    INVALID_DEPARTMENT_ID,
+                )?,
                 max_requests_per_minute: request.max_requests_per_minute,
             },
         )
@@ -140,7 +154,10 @@ async fn account_detail(
     Path(id): Path<String>,
 ) -> HttpResult<Json<ApiResponse<ServiceAccountDetailVo>>> {
     let account = service(&state)?
-        .account_detail(&actor, parse_positive_id(&id, "服务账号")?)
+        .account_detail(
+            &actor,
+            parse_positive_id(id.trim(), INVALID_SERVICE_ACCOUNT_ID)?,
+        )
         .await?;
     Ok(Json(ApiResponse::success(account.into())))
 }
@@ -168,11 +185,18 @@ async fn update_account(
     let account = service(&state)?
         .update_account(
             &actor,
-            parse_positive_id(&id, "服务账号")?,
+            parse_positive_id(id.trim(), INVALID_SERVICE_ACCOUNT_ID)?,
             UpdateServiceAccountCommand {
                 name: request.name,
                 description: request.description,
-                dept_id: parse_optional_positive_id(request.dept_id.as_deref(), "部门")?,
+                dept_id: parse_optional_positive_id(
+                    request
+                        .dept_id
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty()),
+                    INVALID_DEPARTMENT_ID,
+                )?,
                 max_requests_per_minute: request.max_requests_per_minute,
             },
         )
@@ -202,7 +226,7 @@ async fn update_account_status(
     service(&state)?
         .update_account_status(
             &actor,
-            parse_positive_id(&id, "服务账号")?,
+            parse_positive_id(id.trim(), INVALID_SERVICE_ACCOUNT_ID)?,
             request.status.as_storage_value().to_owned(),
         )
         .await?;
@@ -228,7 +252,10 @@ async fn remove_account(
     Path(id): Path<String>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
     service(&state)?
-        .delete_account(&actor, parse_positive_id(&id, "服务账号")?)
+        .delete_account(
+            &actor,
+            parse_positive_id(id.trim(), INVALID_SERVICE_ACCOUNT_ID)?,
+        )
         .await?;
     Ok(Json(ApiResponse::success_no_data()))
 }
@@ -252,7 +279,10 @@ async fn account_roles(
     Path(id): Path<String>,
 ) -> HttpResult<Json<ApiResponse<Vec<String>>>> {
     let roles = service(&state)?
-        .account_role_ids(&actor, parse_positive_id(&id, "服务账号")?)
+        .account_role_ids(
+            &actor,
+            parse_positive_id(id.trim(), INVALID_SERVICE_ACCOUNT_ID)?,
+        )
         .await?;
     Ok(Json(ApiResponse::success(roles)))
 }
@@ -280,7 +310,7 @@ async fn replace_account_roles(
     service(&state)?
         .replace_account_roles(
             &actor,
-            parse_positive_id(&id, "服务账号")?,
+            parse_positive_id(id.trim(), INVALID_SERVICE_ACCOUNT_ID)?,
             parse_i64_strings(&request.role_ids)?,
         )
         .await?;
@@ -306,7 +336,10 @@ async fn list_credentials(
     Path(id): Path<String>,
 ) -> HttpResult<Json<ApiResponse<Vec<ServiceCredentialVo>>>> {
     let values = service(&state)?
-        .list_credentials(&actor, parse_positive_id(&id, "服务账号")?)
+        .list_credentials(
+            &actor,
+            parse_positive_id(id.trim(), INVALID_SERVICE_ACCOUNT_ID)?,
+        )
         .await?;
     Ok(Json(ApiResponse::success(
         values.into_iter().map(Into::into).collect(),
@@ -339,7 +372,7 @@ async fn create_credential(
     let value: CreatedServiceCredentialVo = service(&state)?
         .create_credential(
             &actor,
-            parse_positive_id(&id, "服务账号")?,
+            parse_positive_id(id.trim(), INVALID_SERVICE_ACCOUNT_ID)?,
             CreateCredentialCommand {
                 label: request.label,
                 expires_at: request.expires_at,
@@ -373,8 +406,8 @@ async fn revoke_credential(
     service(&state)?
         .revoke_credential(
             &actor,
-            parse_positive_id(&id, "服务账号")?,
-            parse_positive_id(&credential_id, "API Key")?,
+            parse_positive_id(id.trim(), INVALID_SERVICE_ACCOUNT_ID)?,
+            parse_positive_id(credential_id.trim(), INVALID_CREDENTIAL_ID)?,
         )
         .await?;
     Ok(Json(ApiResponse::success_no_data()))
@@ -429,7 +462,7 @@ async fn revoke_delegation(
     Path(id): Path<String>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
     service(&state)?
-        .revoke_managed_delegation(&actor, parse_positive_id(&id, "委托")?)
+        .revoke_managed_delegation(&actor, parse_positive_id(id.trim(), INVALID_DELEGATION_ID)?)
         .await?;
     Ok(Json(ApiResponse::success_no_data()))
 }
@@ -470,23 +503,6 @@ fn service(state: &AppState) -> HttpResult<&ServiceAccountService> {
         .service_accounts
         .as_deref()
         .ok_or_else(|| AppError::ServiceUnavailable("服务账号功能未启用".into()).into())
-}
-
-fn parse_positive_id(value: &str, label: &str) -> HttpResult<i64> {
-    value
-        .trim()
-        .parse::<i64>()
-        .ok()
-        .filter(|id| *id > 0)
-        .ok_or_else(|| AppError::Validation(format!("{label} ID 无效")).into())
-}
-
-fn parse_optional_positive_id(value: Option<&str>, label: &str) -> HttpResult<Option<i64>> {
-    value
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| parse_positive_id(value, label))
-        .transpose()
 }
 
 fn one_time_response<T: serde::Serialize>(value: T) -> Response {

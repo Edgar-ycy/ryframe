@@ -14,6 +14,7 @@ pub mod generated;
 mod handler_utils;
 pub mod handlers;
 pub mod http;
+mod id_parser;
 #[macro_use]
 pub mod macros;
 pub mod message_presenter;

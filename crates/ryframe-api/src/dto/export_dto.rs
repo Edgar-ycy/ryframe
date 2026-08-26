@@ -5,7 +5,9 @@ use ryframe_application::system::{
     ConfigExportFilter, DictTypeExportFilter, ExportSelection, LoginLogExportFilter,
     OperLogExportFilter, PostExportFilter, RoleExportFilter, UserExportFilter,
 };
-use ryframe_kernel::{AppError, AppResult};
+use ryframe_kernel::AppResult;
+
+use crate::handler_utils::{parse_optional_id, parse_positive_id_list};
 
 macro_rules! export_request_dto {
     ($request:ident, $filter:ident) => {
@@ -95,7 +97,7 @@ export_request_dto!(LoginLogExportRequestDto, LoginLogExportFilterDto);
 impl UserExportRequestDto {
     pub fn into_selection(self) -> AppResult<(ExportSelection, bool)> {
         let filter = self.filter;
-        let dept_id = parse_optional_id(filter.dept_id, "部门ID")?;
+        let dept_id = parse_optional_id(filter.dept_id.as_deref(), "部门ID")?;
         Ok((
             ExportSelection::Users(UserExportFilter::new(
                 filter.username,
@@ -190,20 +192,6 @@ impl LoginLogExportRequestDto {
     }
 }
 
-fn parse_optional_id(value: Option<String>, label: &str) -> AppResult<Option<i64>> {
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    let value = value.trim();
-    if value.is_empty() {
-        return Ok(None);
-    }
-    value
-        .parse::<i64>()
-        .map(Some)
-        .map_err(|_| AppError::Validation(format!("无效的{label}: {value}")))
-}
-
 /// 取消导出任务的显式命令体。
 ///
 /// 保留空对象而不是省略请求体，使写操作契约保持一致，并为后续增加取消原因等字段预留空间。
@@ -229,15 +217,7 @@ pub struct DeleteExportJobsDto {
 
 impl DeleteExportJobsDto {
     pub fn into_ids(self) -> AppResult<Vec<i64>> {
-        self.ids
-            .into_iter()
-            .map(|id| {
-                id.parse::<i64>()
-                    .ok()
-                    .filter(|id| *id > 0)
-                    .ok_or_else(|| AppError::Validation("导出任务 ID 必须是正整数".into()))
-            })
-            .collect()
+        parse_positive_id_list(&self.ids, "导出任务 ID 必须是正整数")
     }
 }
 

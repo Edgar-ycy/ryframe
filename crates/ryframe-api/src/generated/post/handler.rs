@@ -16,6 +16,7 @@ use ryframe_macro::{delete, get, post, put, route};
 use validator::Validate;
 
 use crate::RequestPrincipal;
+use crate::handler_utils::parse_id;
 use crate::http::{ApiPageResponse, ApiResponse, HttpAppError, HttpResult};
 
 use super::dto::{CreatePostDto, PostListQuery, PostVo, UpdatePostDto};
@@ -87,7 +88,7 @@ pub async fn detail(
 ) -> HttpResult<Json<ApiResponse<PostVo>>> {
     let value = state
         .service
-        .find_by_id(&current_user, parse_id(&id)?)
+        .find_by_id(&current_user, parse_id(&id, "id 必须是 i64 字符串")?)
         .await
         .map_err(HttpAppError::from)?
         .ok_or_else(|| HttpAppError::from(AppError::NotFound("岗位不存在".into())))?;
@@ -140,7 +141,11 @@ pub async fn update(
     dto.validate()?;
     let value = state
         .service
-        .update(&current_user, parse_id(&id)?, dto.into())
+        .update(
+            &current_user,
+            parse_id(&id, "id 必须是 i64 字符串")?,
+            dto.into(),
+        )
         .await
         .map_err(HttpAppError::from)?;
     Ok(Json(ApiResponse::success(value.into())))
@@ -164,14 +169,8 @@ pub async fn remove(
 ) -> HttpResult<Json<ApiResponse<()>>> {
     state
         .service
-        .delete(&current_user, parse_id(&id)?)
+        .delete(&current_user, parse_id(&id, "id 必须是 i64 字符串")?)
         .await
         .map_err(HttpAppError::from)?;
     Ok(Json(ApiResponse::success_no_data()))
-}
-
-fn parse_id(value: &str) -> HttpResult<i64> {
-    value
-        .parse()
-        .map_err(|_| HttpAppError::from(AppError::Validation("id 必须是 i64 字符串".into())))
 }

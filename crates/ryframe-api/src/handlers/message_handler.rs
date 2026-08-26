@@ -16,6 +16,7 @@ use crate::{
     dto::message_dto::{
         AcknowledgeMessagesDto, DeleteMessagesDto, MessageInboxQuery, PublishMessageDto,
     },
+    handler_utils::{parse_optional_positive_id, parse_positive_id, parse_positive_id_list},
     message_presenter::{
         MessageInboxPage, PublishedMessageVo, into_message_text, render_inbox, render_published,
     },
@@ -58,7 +59,7 @@ async fn inbox(
             AppError::Validation(format!("limit 必须在 1 到 {MAX_INBOX_LIMIT} 之间")).into(),
         );
     }
-    let cursor = parse_optional_id(query.cursor.as_deref(), "cursor")?;
+    let cursor = parse_optional_positive_id(query.cursor.as_deref(), "cursor 必须是正整数 ID")?;
     state
         .services
         .content
@@ -159,11 +160,7 @@ async fn acknowledge(
     Json(dto): Json<AcknowledgeMessagesDto>,
 ) -> HttpResult<Json<ApiResponse<u64>>> {
     dto.validate()?;
-    let ids = dto
-        .ids
-        .iter()
-        .map(|id| parse_id(id, "ids"))
-        .collect::<HttpResult<Vec<_>>>()?;
+    let ids = parse_positive_id_list(&dto.ids, "ids 必须是正整数 ID")?;
     let started = std::time::Instant::now();
     state
         .services
@@ -189,11 +186,7 @@ async fn delete_messages(
     Json(dto): Json<DeleteMessagesDto>,
 ) -> HttpResult<Json<ApiResponse<u64>>> {
     dto.validate()?;
-    let ids = dto
-        .ids
-        .iter()
-        .map(|id| parse_id(id, "ids"))
-        .collect::<HttpResult<Vec<_>>>()?;
+    let ids = parse_positive_id_list(&dto.ids, "ids 必须是正整数 ID")?;
     state
         .services
         .content
@@ -216,7 +209,7 @@ async fn mark_read(
     current_user: RequestPrincipal,
     Path(id): Path<String>,
 ) -> HttpResult<Json<ApiEmptyResponse>> {
-    let message_id = parse_id(&id, "id")?;
+    let message_id = parse_positive_id(&id, "id 必须是正整数 ID")?;
     let started = std::time::Instant::now();
     state
         .services
@@ -278,7 +271,7 @@ fn parse_audience(
                 .target_id
                 .as_deref()
                 .ok_or_else(|| AppError::Validation("角色和用户受众必须提供 target_id".into()))?;
-            parse_id(id, "target_id")?
+            parse_positive_id(id, "target_id 必须是正整数 ID")?
         }
     };
     Ok(MessageAudienceSelector { kind, target_id })
@@ -299,16 +292,4 @@ fn ensure_cross_tenant_publish_authority(
     }
     check_permission(current_user, "platform:message:publish")
         .map_err(crate::http::HttpAppError::from)
-}
-
-fn parse_optional_id(value: Option<&str>, field: &str) -> HttpResult<Option<i64>> {
-    value.map(|value| parse_id(value, field)).transpose()
-}
-
-fn parse_id(value: &str, field: &str) -> HttpResult<i64> {
-    Ok(value
-        .parse::<i64>()
-        .ok()
-        .filter(|id| *id > 0)
-        .ok_or_else(|| AppError::Validation(format!("{field} 必须是正整数 ID")))?)
 }

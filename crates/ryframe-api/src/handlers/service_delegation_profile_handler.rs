@@ -18,7 +18,7 @@ use crate::{
         public_dto::{CreatedServiceDelegationVo, ServiceDelegationVo},
         service_account_dto::CreateServiceDelegationDto,
     },
-    handler_utils::idempotency_key_value,
+    handler_utils::{idempotency_key_value, parse_positive_id},
     state::AppState,
 };
 
@@ -110,7 +110,7 @@ async fn create_my_delegation(
         .create_delegation(
             &actor,
             CreateDelegationCommand {
-                account_id: parse_positive_id(&request.service_account_id)?,
+                account_id: parse_positive_id(request.service_account_id.trim(), "ID 无效")?,
                 capability_keys: request.capability_keys,
                 expires_at: request.expires_at,
                 reason: request.reason,
@@ -141,7 +141,7 @@ async fn revoke_my_delegation(
     Path(id): Path<String>,
 ) -> HttpResult<Json<ApiResponse<()>>> {
     service(&state)?
-        .revoke_my_delegation(&actor, parse_positive_id(&id)?)
+        .revoke_my_delegation(&actor, parse_positive_id(id.trim(), "ID 无效")?)
         .await?;
     Ok(Json(ApiResponse::success_no_data()))
 }
@@ -153,15 +153,6 @@ fn service(state: &AppState) -> HttpResult<&ServiceAccountService> {
         .service_accounts
         .as_deref()
         .ok_or_else(|| AppError::ServiceUnavailable("服务账号功能未启用".into()).into())
-}
-
-fn parse_positive_id(value: &str) -> HttpResult<i64> {
-    value
-        .trim()
-        .parse::<i64>()
-        .ok()
-        .filter(|id| *id > 0)
-        .ok_or_else(|| AppError::Validation("ID 无效".into()).into())
 }
 
 fn one_time_response<T: serde::Serialize>(value: T) -> Response {

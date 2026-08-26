@@ -5,14 +5,16 @@ use crate::{
         job_dto::BackgroundJobPageQuery,
         public_dto::{BackgroundJobQueueStats, BackgroundJobVo},
     },
+    handler_utils::parse_positive_id,
     state::AppState,
 };
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
 };
-use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, route};
+
+const INVALID_JOB_ID: &str = "后台任务 ID 必须是正整数";
 
 /// 后台任务监控路由。
 pub fn job_router(state: AppState) -> Router {
@@ -101,17 +103,9 @@ async fn retry_dead(
         .services
         .operations
         .job_queue
-        .retry_dead_for_tenant(&current_user, parse_job_id(&id)?)
+        .retry_dead_for_tenant(&current_user, parse_positive_id(&id, INVALID_JOB_ID)?)
         .await
         .map_err(crate::http::HttpAppError::from)
         .map(|job| ApiResponse::success(job.into()))
         .map(Json)
-}
-
-fn parse_job_id(value: &str) -> HttpResult<i64> {
-    Ok(value
-        .parse::<i64>()
-        .ok()
-        .filter(|id| *id > 0)
-        .ok_or_else(|| AppError::Validation("后台任务 ID 必须是正整数".into()))?)
 }

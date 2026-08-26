@@ -1,4 +1,5 @@
 use super::*;
+use crate::handler_utils::parse_positive_id_list;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -41,12 +42,6 @@ impl ClientFrameError {
     }
 }
 
-fn parse_acknowledgement_ids(ids: &[String]) -> Result<Vec<i64>, ()> {
-    ids.iter()
-        .map(|id| id.parse::<i64>().ok().filter(|value| *value > 0).ok_or(()))
-        .collect()
-}
-
 pub(super) async fn handle_client_frame(
     service: &MessageService,
     ticket: &WebSocketTicket,
@@ -71,7 +66,7 @@ pub(super) async fn handle_client_frame(
             let _ = queue_text(outbound, serialize_simple_frame("pong"));
         }
         "ack" if !parsed.ids.is_empty() && parsed.ids.len() <= 100 => {
-            let ids = match parse_acknowledgement_ids(&parsed.ids) {
+            let ids = match parse_positive_id_list(&parsed.ids, "消息 ID 必须是正整数") {
                 Ok(ids) => ids,
                 Err(_) => {
                     let _ = queue_text(

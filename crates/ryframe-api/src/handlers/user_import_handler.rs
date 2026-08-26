@@ -16,9 +16,11 @@ use crate::{
         public_dto::{UserImportJobVo, UserImportRowVo},
         user_import_dto::{UserImportPageQuery, UserImportRowPageQuery, UserImportUploadForm},
     },
-    handler_utils::{excel_response, idempotency_key_hash},
+    handler_utils::{excel_response, idempotency_key_hash, parse_positive_id},
     state::AppState,
 };
+
+const INVALID_IMPORT_ID: &str = "用户导入任务 ID 必须是正整数";
 
 pub fn user_import_router(state: AppState) -> Router {
     Router::new()
@@ -218,7 +220,7 @@ async fn detail(
         .services
         .identity
         .user_import
-        .get(&current_user, parse_import_id(&id)?)
+        .get(&current_user, parse_positive_id(&id, INVALID_IMPORT_ID)?)
         .await
         .map_err(crate::http::HttpAppError::from)
         .map(UserImportJobVo::from)
@@ -243,7 +245,7 @@ async fn cancel(
         .services
         .identity
         .user_import
-        .cancel(&current_user, parse_import_id(&id)?)
+        .cancel(&current_user, parse_positive_id(&id, INVALID_IMPORT_ID)?)
         .await
         .map_err(crate::http::HttpAppError::from)
         .map(UserImportJobVo::from)
@@ -269,7 +271,7 @@ async fn rows(
         .user_import
         .rows(
             &current_user,
-            parse_import_id(&id)?,
+            parse_positive_id(&id, INVALID_IMPORT_ID)?,
             query.into_page(state.settings.pagination)?,
         )
         .await
@@ -298,16 +300,8 @@ async fn report(
         .services
         .identity
         .user_import
-        .download_report(&current_user, parse_import_id(&id)?)
+        .download_report(&current_user, parse_positive_id(&id, INVALID_IMPORT_ID)?)
         .await
         .map_err(crate::http::HttpAppError::from)?;
     excel_response(file.data, &file.original_name)
-}
-
-fn parse_import_id(value: &str) -> HttpResult<i64> {
-    Ok(value
-        .parse::<i64>()
-        .ok()
-        .filter(|id| *id > 0)
-        .ok_or_else(|| AppError::Validation("用户导入任务 ID 必须是正整数".into()))?)
 }

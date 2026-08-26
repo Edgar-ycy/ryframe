@@ -18,7 +18,7 @@ use crate::{
             TenantConfigPackageUploadForm, TenantConfigPageQuery,
         },
     },
-    handler_utils::{attachment_response, idempotency_key_hash},
+    handler_utils::{attachment_response, idempotency_key_hash, parse_positive_id},
     state::AppState,
 };
 
@@ -129,7 +129,10 @@ async fn get_package(
         .services
         .platform
         .tenant_config_transfer
-        .get_bundle(&current_user, parse_positive_id(&id, "配置包")?)
+        .get_bundle(
+            &current_user,
+            parse_positive_id(&id, "配置包 ID 必须是正整数")?,
+        )
         .await
         .map_err(crate::http::HttpAppError::from)
         .map(TenantConfigBundleVo::from)
@@ -159,7 +162,10 @@ async fn download_package(
         .services
         .platform
         .tenant_config_transfer
-        .download_bundle(&current_user, parse_positive_id(&id, "配置包")?)
+        .download_bundle(
+            &current_user,
+            parse_positive_id(&id, "配置包 ID 必须是正整数")?,
+        )
         .await
         .map_err(crate::http::HttpAppError::from)?;
     attachment_response(file.data, &file.original_name, CONFIG_PACKAGE_CONTENT_TYPE)
@@ -289,7 +295,7 @@ async fn create_transfer_from_package(
         .tenant_config_transfer
         .create_transfer_from_package(
             &current_user,
-            parse_positive_id(&request.bundle_id, "配置包")?,
+            parse_positive_id(&request.bundle_id, "配置包 ID 必须是正整数")?,
             &idempotency_key_hash(&headers)?,
         )
         .await
@@ -351,7 +357,10 @@ async fn get_transfer(
         .services
         .platform
         .tenant_config_transfer
-        .get_transfer(&current_user, parse_positive_id(&id, "配置迁移")?)
+        .get_transfer(
+            &current_user,
+            parse_positive_id(&id, "配置迁移 ID 必须是正整数")?,
+        )
         .await
         .map_err(crate::http::HttpAppError::from)
         .map(TenantConfigTransferVo::from)
@@ -382,7 +391,7 @@ async fn list_transfer_items(
         .tenant_config_transfer
         .list_transfer_items(
             &current_user,
-            parse_positive_id(&id, "配置迁移")?,
+            parse_positive_id(&id, "配置迁移 ID 必须是正整数")?,
             query.into_page(state.settings.pagination)?,
         )
         .await
@@ -423,7 +432,7 @@ async fn request_preview(
         .tenant_config_transfer
         .request_preview(
             &current_user,
-            parse_positive_id(&id, "配置迁移")?,
+            parse_positive_id(&id, "配置迁移 ID 必须是正整数")?,
             &idempotency_key_hash(&headers)?,
         )
         .await
@@ -461,7 +470,7 @@ async fn request_apply(
         .tenant_config_transfer
         .request_apply(
             &current_user,
-            parse_positive_id(&id, "配置迁移")?,
+            parse_positive_id(&id, "配置迁移 ID 必须是正整数")?,
             ApplyTenantConfigTransferCommand {
                 plan_hash: request.plan_hash,
                 target_configuration_version: request.target_configuration_version,
@@ -506,7 +515,7 @@ async fn request_rollback(
         .tenant_config_transfer
         .request_rollback(
             &current_user,
-            parse_positive_id(&id, "配置迁移")?,
+            parse_positive_id(&id, "配置迁移 ID 必须是正整数")?,
             &idempotency_key_hash(&headers)?,
         )
         .await
@@ -515,14 +524,6 @@ async fn request_rollback(
         StatusCode::ACCEPTED,
         Json(ApiResponse::success(transfer.into())),
     ))
-}
-
-fn parse_positive_id(value: &str, label: &str) -> HttpResult<i64> {
-    Ok(value
-        .parse::<i64>()
-        .ok()
-        .filter(|id| *id > 0)
-        .ok_or_else(|| AppError::Validation(format!("{label} ID 必须是正整数")))?)
 }
 
 fn parse_authorization_epoch(value: &str) -> HttpResult<i32> {
