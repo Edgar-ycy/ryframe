@@ -10,6 +10,60 @@ use super::{
     types::{ActualColumn, ActualForeignKey, ActualIndex, ActualTable},
 };
 
+const USER_TABLES_SQL: &str = concat!(
+    "SELECT TABLE_NAME AS `table_name` FROM information_schema.TABLES ",
+    "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE' ",
+    "AND TABLE_NAME <> 'seaql_migrations' ORDER BY TABLE_NAME",
+);
+
+const ACTUAL_TABLES_SQL: &str = concat!(
+    "SELECT t.TABLE_NAME AS `table_name`, t.ENGINE AS `engine`, ",
+    "c.CHARACTER_SET_NAME AS `character_set_name`, ",
+    "t.TABLE_COLLATION AS `table_collation` ",
+    "FROM information_schema.TABLES t ",
+    "JOIN information_schema.COLLATION_CHARACTER_SET_APPLICABILITY c ",
+    "ON c.COLLATION_NAME = t.TABLE_COLLATION ",
+    "WHERE t.TABLE_SCHEMA = DATABASE() AND t.TABLE_TYPE = 'BASE TABLE'",
+);
+
+const ACTUAL_COLUMNS_SQL: &str = concat!(
+    "SELECT TABLE_NAME AS `table_name`, COLUMN_NAME AS `column_name`, ",
+    "COLUMN_TYPE AS `column_type`, IS_NULLABLE AS `is_nullable`, ",
+    "COLUMN_DEFAULT AS `column_default`, EXTRA AS `extra`, ",
+    "CHARACTER_SET_NAME AS `character_set_name`, ",
+    "COLLATION_NAME AS `collation_name`, ",
+    "GENERATION_EXPRESSION AS `generation_expression` ",
+    "FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()",
+);
+
+const ACTUAL_INDEXES_SQL: &str = concat!(
+    "SELECT TABLE_NAME AS `table_name`, INDEX_NAME AS `index_name`, ",
+    "CAST(NON_UNIQUE AS SIGNED) AS `non_unique`, ",
+    "CAST(SEQ_IN_INDEX AS SIGNED) AS `seq_in_index`, ",
+    "COALESCE(COLUMN_NAME, EXPRESSION) AS `column_expression`, ",
+    "CAST(SUB_PART AS SIGNED) AS `sub_part`, INDEX_TYPE AS `index_type`, ",
+    "IS_VISIBLE AS `is_visible` ",
+    "FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() ",
+    "ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX",
+);
+
+const ACTUAL_FOREIGN_KEYS_SQL: &str = concat!(
+    "SELECT k.TABLE_NAME AS `table_name`, k.CONSTRAINT_NAME AS `constraint_name`, ",
+    "CAST(k.ORDINAL_POSITION AS SIGNED) AS `ordinal_position`, ",
+    "k.COLUMN_NAME AS `column_name`, ",
+    "k.REFERENCED_TABLE_NAME AS `referenced_table_name`, ",
+    "k.REFERENCED_COLUMN_NAME AS `referenced_column_name`, ",
+    "r.UPDATE_RULE AS `update_rule`, r.DELETE_RULE AS `delete_rule` ",
+    "FROM information_schema.KEY_COLUMN_USAGE k ",
+    "JOIN information_schema.REFERENTIAL_CONSTRAINTS r ",
+    "ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA ",
+    "AND r.TABLE_NAME = k.TABLE_NAME ",
+    "AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME ",
+    "WHERE k.CONSTRAINT_SCHEMA = DATABASE() ",
+    "AND k.REFERENCED_TABLE_NAME IS NOT NULL ",
+    "ORDER BY k.TABLE_NAME, k.CONSTRAINT_NAME, k.ORDINAL_POSITION",
+);
+
 pub(crate) async fn user_tables<C>(db: &C) -> Result<Vec<String>, DbErr>
 where
     C: ConnectionTrait + ?Sized,
@@ -17,10 +71,7 @@ where
     let rows = db
         .query_all_raw(Statement::from_string(
             DbBackend::MySql,
-            "SELECT TABLE_NAME AS `table_name` FROM information_schema.TABLES \\
-             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE' \\
-             AND TABLE_NAME <> 'seaql_migrations' ORDER BY TABLE_NAME"
-                .to_owned(),
+            USER_TABLES_SQL.to_owned(),
         ))
         .await?;
     let mut tables = Vec::with_capacity(rows.len());
@@ -37,14 +88,7 @@ where
     let rows = db
         .query_all_raw(Statement::from_string(
             DbBackend::MySql,
-            "SELECT t.TABLE_NAME AS `table_name`, t.ENGINE AS `engine`, \\
-                    c.CHARACTER_SET_NAME AS `character_set_name`, \\
-                    t.TABLE_COLLATION AS `table_collation` \\
-             FROM information_schema.TABLES t \\
-             JOIN information_schema.COLLATION_CHARACTER_SET_APPLICABILITY c \\
-               ON c.COLLATION_NAME = t.TABLE_COLLATION \\
-             WHERE t.TABLE_SCHEMA = DATABASE() AND t.TABLE_TYPE = 'BASE TABLE'"
-                .to_owned(),
+            ACTUAL_TABLES_SQL.to_owned(),
         ))
         .await?;
     let mut tables = BTreeMap::new();
@@ -77,14 +121,7 @@ where
     let rows = db
         .query_all_raw(Statement::from_string(
             DbBackend::MySql,
-            "SELECT TABLE_NAME AS `table_name`, COLUMN_NAME AS `column_name`, \\
-                    COLUMN_TYPE AS `column_type`, IS_NULLABLE AS `is_nullable`, \\
-                    COLUMN_DEFAULT AS `column_default`, EXTRA AS `extra`, \\
-                    CHARACTER_SET_NAME AS `character_set_name`, \\
-                    COLLATION_NAME AS `collation_name`, \\
-                    GENERATION_EXPRESSION AS `generation_expression` \\
-             FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE()"
-                .to_owned(),
+            ACTUAL_COLUMNS_SQL.to_owned(),
         ))
         .await?;
     let mut columns = BTreeMap::new();
@@ -127,15 +164,7 @@ where
     let rows = db
         .query_all_raw(Statement::from_string(
             DbBackend::MySql,
-            "SELECT TABLE_NAME AS `table_name`, INDEX_NAME AS `index_name`, \\
-                    CAST(NON_UNIQUE AS SIGNED) AS `non_unique`, \\
-                    CAST(SEQ_IN_INDEX AS SIGNED) AS `seq_in_index`, \\
-                    COALESCE(COLUMN_NAME, EXPRESSION) AS `column_expression`, \\
-                    CAST(SUB_PART AS SIGNED) AS `sub_part`, INDEX_TYPE AS `index_type`, \\
-                    IS_VISIBLE AS `is_visible` \\
-             FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() \\
-             ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX"
-                .to_owned(),
+            ACTUAL_INDEXES_SQL.to_owned(),
         ))
         .await?;
     let mut indexes = BTreeMap::<(String, String), ActualIndex>::new();
@@ -166,21 +195,7 @@ where
     let rows = db
         .query_all_raw(Statement::from_string(
             DbBackend::MySql,
-            "SELECT k.TABLE_NAME AS `table_name`, k.CONSTRAINT_NAME AS `constraint_name`, \\
-                    CAST(k.ORDINAL_POSITION AS SIGNED) AS `ordinal_position`, \\
-                    k.COLUMN_NAME AS `column_name`, \\
-                    k.REFERENCED_TABLE_NAME AS `referenced_table_name`, \\
-                    k.REFERENCED_COLUMN_NAME AS `referenced_column_name`, \\
-                    r.UPDATE_RULE AS `update_rule`, r.DELETE_RULE AS `delete_rule` \\
-             FROM information_schema.KEY_COLUMN_USAGE k \\
-             JOIN information_schema.REFERENTIAL_CONSTRAINTS r \\
-               ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA \\
-              AND r.TABLE_NAME = k.TABLE_NAME \\
-              AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME \\
-             WHERE k.CONSTRAINT_SCHEMA = DATABASE() \\
-               AND k.REFERENCED_TABLE_NAME IS NOT NULL \\
-             ORDER BY k.TABLE_NAME, k.CONSTRAINT_NAME, k.ORDINAL_POSITION"
-                .to_owned(),
+            ACTUAL_FOREIGN_KEYS_SQL.to_owned(),
         ))
         .await?;
     let mut foreign_keys = BTreeMap::<(String, String), ActualForeignKey>::new();
@@ -205,4 +220,24 @@ where
 
 fn is_tenant_data_object(table: &str) -> bool {
     table == "seaql_tenant_data_migrations" || table.starts_with("biz_")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn schema_queries_do_not_contain_escape_artifacts() {
+        for query in [
+            USER_TABLES_SQL,
+            ACTUAL_TABLES_SQL,
+            ACTUAL_COLUMNS_SQL,
+            ACTUAL_INDEXES_SQL,
+            ACTUAL_FOREIGN_KEYS_SQL,
+        ] {
+            assert!(!query.contains('\\'));
+            assert!(!query.contains('\n'));
+            assert!(!query.contains('\r'));
+        }
+    }
 }
