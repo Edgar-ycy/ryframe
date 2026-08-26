@@ -215,7 +215,7 @@ fn is_frontend_shared_path(path: &str) -> bool {
         || path.starts_with("scripts/")
         || path.starts_with("tsconfig")
         || path.contains(".config.")
-        || matches!(path, ".gitignore" | "eslint.config.js" | "qodana.yaml")
+        || matches!(path, ".gitignore" | "eslint.config.js")
 }
 
 pub(crate) fn reverse_dependency_closure(
