@@ -29,8 +29,8 @@ pub use navigation::{
     PermissionVo,
 };
 pub use organization::{
-    ConfigVo, DeptTreeNode, DeptVo, DictDataVo, DictTypeVo, NoticeVo, OptionItem, OptionList,
-    RoleVo, TenantVo,
+    ConfigVo, DeptTreeNode, DeptVo, DictDataVo, DictTypeVo, OptionItem, OptionList, RoleVo,
+    TenantVo,
 };
 pub use overview::{
     MonitorOverviewDatabasePoolVo, MonitorOverviewDependenciesVo, MonitorOverviewDependencyVo,

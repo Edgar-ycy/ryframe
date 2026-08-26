@@ -208,6 +208,8 @@ pub struct FieldUsageSpec {
     #[serde(default)]
     pub filter: bool,
     #[serde(default)]
+    pub filter_exact: bool,
+    #[serde(default)]
     pub sort: bool,
     #[serde(default)]
     pub sort_desc: bool,

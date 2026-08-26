@@ -227,6 +227,7 @@ fn pending_usage() -> FieldUsageSpec {
         read: false,
         list: false,
         filter: false,
+        filter_exact: false,
         sort: false,
         sort_desc: false,
     }

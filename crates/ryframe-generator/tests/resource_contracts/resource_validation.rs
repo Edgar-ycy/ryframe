@@ -26,6 +26,34 @@ fn changed(source: &str, from: &str, to: &str) -> String {
 }
 
 #[test]
+fn string_filter_can_select_exact_matching_explicitly() {
+    let source = changed(
+        &device_source(),
+        "list = true\nfilter = true\n\n[fields.validation]\nrequired = true\nmin_length = 1",
+        "list = true\nfilter = true\nfilter_exact = true\n\n[fields.validation]\nrequired = true\nmin_length = 1",
+    );
+    let device = normalize(&source, "device").expect("字符串字段应支持精确筛选");
+    let generated = render_resources(&[device]).expect("精确筛选资源应生成");
+    let repository = generated
+        .assets
+        .iter()
+        .find(|asset| asset.path.ends_with("device/repository.rs"))
+        .expect("应生成数据库仓储")
+        .content
+        .as_str();
+    assert!(repository.contains("entity::Column::Name.eq(value)"));
+    assert!(!repository.contains("entity::Column::Name.contains(value)"));
+
+    let invalid = changed(
+        &device_source(),
+        "read = true\nlist = true\nsort = true",
+        "read = true\nlist = true\nfilter_exact = true\nsort = true",
+    );
+    let error = normalize(&invalid, "device").expect_err("非筛选字段不得声明精确筛选");
+    assert!(error.contains("filter_exact 只能用于筛选字段"));
+}
+
+#[test]
 fn editable_widgets_and_patterns_fail_before_rendering() {
     let source = device_source();
     let unsupported = changed(
@@ -339,6 +367,8 @@ en = "Created by"
             .as_str()
     };
     assert!(content("device/model.rs").contains("pub data_scope: &'a DataScopeContext"));
+    assert!(content("device/model.rs").contains("#[derive(Clone, Copy, Debug)]"));
+    assert!(!content("device/model.rs").contains("#[derive(Clone, Copy, Debug, Default)]"));
     assert!(content("device/service.rs").contains("let data_scope = actor.data_scope_context()"));
     assert!(content("device/service.rs").contains("created_by: Some(actor.user_id)"));
     assert!(content("device/service.rs").contains("record.created_by = Some(actor.user_id)"));

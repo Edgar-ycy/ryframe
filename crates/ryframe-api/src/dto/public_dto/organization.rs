@@ -5,8 +5,8 @@ use utoipa::ToSchema;
 use ryframe_application::system::{
     content::{
         ConfigVo as ServiceConfigVo, DictDataVo as ServiceDictDataVo,
-        DictTypeVo as ServiceDictTypeVo, NoticeVo as ServiceNoticeVo,
-        OptionItem as ServiceOptionItem, OptionList as ServiceOptionList,
+        DictTypeVo as ServiceDictTypeVo, OptionItem as ServiceOptionItem,
+        OptionList as ServiceOptionList,
     },
     identity::{
         DeptTreeNode as ServiceDeptTreeNode, DeptVo as ServiceDeptVo, RoleVo as ServiceRoleVo,
@@ -183,41 +183,6 @@ impl From<ServiceDeptTreeNode> for DeptTreeNode {
             sort,
             status,
             children: children.into_iter().map(Self::from).collect(),
-        }
-    }
-}
-
-/// 通知公告响应。
-#[derive(Debug, Serialize, ToSchema)]
-pub struct NoticeVo {
-    pub id: String,
-    pub title: String,
-    pub content_markdown: String,
-    pub notice_type: Option<String>,
-    pub status: String,
-    pub created_by: Option<String>,
-    pub created_at: DateTime<Utc>,
-}
-
-impl From<ServiceNoticeVo> for NoticeVo {
-    fn from(value: ServiceNoticeVo) -> Self {
-        let ServiceNoticeVo {
-            id,
-            title,
-            content_markdown,
-            notice_type,
-            status,
-            created_by,
-            created_at,
-        } = value;
-        Self {
-            id,
-            title,
-            content_markdown,
-            notice_type,
-            status,
-            created_by,
-            created_at,
         }
     }
 }

@@ -84,7 +84,9 @@ pub(super) fn column_variant(name: &str) -> String {
 }
 
 pub(super) fn uses_partial_text_filter(field: &FieldIr) -> bool {
-    field.value_type == ValueType::String && field.enum_values.is_empty()
+    field.value_type == ValueType::String
+        && field.enum_values.is_empty()
+        && !field.usage.filter_exact
 }
 
 pub(super) fn rust_literal(value: &toml::Value, value_type: ValueType) -> String {

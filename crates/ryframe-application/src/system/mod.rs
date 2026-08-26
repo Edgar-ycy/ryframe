@@ -10,7 +10,6 @@ mod log_time_range;
 mod login_info;
 mod menu;
 mod message;
-mod notice;
 mod online_user;
 mod oper_log;
 mod option;

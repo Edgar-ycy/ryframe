@@ -17,7 +17,6 @@ use ryframe_application::{
     generated::{GeneratedPersistencePorts, GeneratedServices},
     ports::files::ArtifactStore,
     system::{
-        content::NoticeService,
         identity::{
             CaptchaStore, DeptService, InMemoryCaptchaStore, MenuService, PermissionService,
             ProfileService, WebSocketTicketService,
@@ -99,7 +98,7 @@ pub async fn build_all(
         starts_background_tasks,
         &background,
     )?;
-    let content = build_content_services(database, policies, redis_client, generated, &background);
+    let content = build_content_services(policies, redis_client, generated, &background);
     let operations = build_operations_services(database, config, &background);
 
     Ok(AppServices {
@@ -292,15 +291,11 @@ fn build_identity_services(
 }
 
 fn build_content_services(
-    database: &ControlDatabaseCluster,
     policies: &ApplicationPolicies,
     redis_client: &Option<RedisClient>,
     generated: GeneratedServices,
     background: &BackgroundServices,
 ) -> ContentServices {
-    let notice = Arc::new(NoticeService::new(
-        ryframe_db::application_ports::system::notice(database.clone()),
-    ));
     let websocket_ticket = Arc::new(WebSocketTicketService::new(
         redis_client
             .as_ref()
@@ -311,7 +306,6 @@ fn build_content_services(
         generated,
         config: Arc::clone(&background.config),
         dict: Arc::clone(&background.dict),
-        notice,
         message: Arc::clone(&background.message),
         websocket_ticket,
         file: Arc::clone(&background.file),

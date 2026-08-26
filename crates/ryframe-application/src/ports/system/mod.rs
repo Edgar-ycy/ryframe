@@ -6,7 +6,6 @@ mod dict;
 mod login_info;
 mod menu;
 mod message;
-mod notice;
 mod oper_log;
 mod overview;
 mod permission;
@@ -31,7 +30,6 @@ pub use message::{
     MessagePage, MessagePersistencePort, MessageRecipientRecord, MessageRecord, MessageTransaction,
     PublishMessageRecord, PublishedMessageRecord,
 };
-pub use notice::{NoticeFilter, NoticePersistencePort, NoticeRecord, NoticeTransaction};
 pub use oper_log::{OperLogFilter, OperLogPersistencePort, OperLogRecord, OperLogTransaction};
 pub use overview::{
     OverviewPersistencePort, OverviewTrendCount, OverviewTrendSeries, ScheduleOverviewStats,

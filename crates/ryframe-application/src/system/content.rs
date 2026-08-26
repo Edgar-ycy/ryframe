@@ -3,6 +3,5 @@
 pub use super::config::*;
 pub use super::dict::*;
 pub use super::file::*;
-pub use super::notice::*;
 pub use super::option::*;
 pub use super::post_export::*;

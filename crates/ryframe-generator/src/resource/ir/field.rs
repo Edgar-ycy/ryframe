@@ -201,6 +201,24 @@ pub(super) fn validate_field(
             "启用 usage.update，或删除 update_optional",
         ));
     }
+    if field.usage.filter_exact && !field.usage.filter {
+        return Err(field_error(
+            resource,
+            &field.name,
+            source_path,
+            "filter_exact 只能用于筛选字段",
+            "同时启用 usage.filter，或删除 filter_exact",
+        ));
+    }
+    if field.usage.filter_exact && field.value_type != ValueType::String {
+        return Err(field_error(
+            resource,
+            &field.name,
+            source_path,
+            "filter_exact 只用于区分字符串精确筛选与包含筛选",
+            "非字符串字段已经使用精确筛选，请删除 filter_exact",
+        ));
+    }
     if field.usage.sort_desc && !field.usage.sort {
         return Err(field_error(
             resource,

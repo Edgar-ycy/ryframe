@@ -1,162 +1,23 @@
-use crate::http::{ApiPageResponse, ApiResponse, HttpResult};
 use axum::{
     Json, Router,
-    extract::{Extension, Path, Query, State},
+    extract::{Extension, Path, State},
 };
-use ryframe_application::system::{
-    content::NoticeListParams,
-    operations::{MessageAudienceKind, MessageAudienceSelector, PublishMessageParams},
+use ryframe_application::system::operations::{
+    MessageAudienceKind, MessageAudienceSelector, PublishMessageParams,
 };
-use ryframe_kernel::AppError;
-use ryframe_kernel::LocalizedText;
-use ryframe_kernel::ValidatedPageQuery;
-use ryframe_macro::{delete, get, post, put, route};
-use validator::Validate;
+use ryframe_kernel::{AppError, LocalizedText};
+use ryframe_macro::{post, route};
 
 use crate::RequestPrincipal;
-use crate::dto::notice_dto::{CreateNoticeDto, UpdateNoticeDto};
-use crate::dto::public_dto::NoticeVo;
+use crate::http::{ApiResponse, HttpResult};
 use crate::message_presenter::{PublishedMessageVo, into_message_text, render_published};
 use crate::request_locale::RequestLocale;
 use crate::state::AppState;
-use crate::{detail_body, list_query, remove_body};
-
-list_query!(pub NoticeListQuery, NoticeFilterQuery {
-    title: String,
-    notice_type: String,
-    status: String,
-});
-
-impl NoticeFilterQuery {
-    fn into_service_params(self, page: ValidatedPageQuery) -> NoticeListParams {
-        NoticeListParams {
-            page,
-            title: self.title,
-            notice_type: self.notice_type,
-            status: self.status,
-        }
-    }
-}
 
 pub fn notice_router(state: AppState) -> Router {
     Router::new()
-        .merge(route!(list))
-        .merge(route!(detail))
-        .merge(route!(create))
-        .merge(route!(update))
         .merge(route!(publish_to_message_center))
-        .merge(route!(remove))
         .with_state(state)
-}
-
-/// 通知公告列表
-#[get("/")]
-#[perm("system:notice:list")]
-#[utoipa::path(get, path = "/api/v1/system/notices", tag = "通知公告",
-    params(NoticeListQuery),
-    responses((status = 200, description = "公告列表", body = ApiPageResponse<NoticeVo>)), security(("bearer" = [])))]
-async fn list(
-    State(state): State<AppState>,
-    current_user: RequestPrincipal,
-    Query(query): Query<NoticeListQuery>,
-) -> HttpResult<Json<ApiPageResponse<NoticeVo>>> {
-    let (page, filter) = query.into_parts(state.settings.pagination)?;
-    state
-        .services
-        .content
-        .notice
-        .find_by_page(&current_user, filter.into_service_params(page))
-        .await
-        .map_err(crate::http::HttpAppError::from)
-        .map(|p| {
-            Json(ApiPageResponse::page(
-                p.records.into_iter().map(NoticeVo::from).collect(),
-                p.total,
-                p.page,
-                p.page_size,
-                state.settings.pagination.max_page_size(),
-            ))
-        })
-}
-
-/// 通知公告详情
-#[get("/{id}")]
-#[perm("system:notice:list")]
-#[utoipa::path(get, path = "/api/v1/system/notices/{id}", tag = "通知公告",
-    params(("id" = String, Path)),
-    responses((status = 200, description = "通知详情", body = ApiResponse<NoticeVo>)),
-    security(("bearer" = [])))]
-async fn detail(
-    State(state): State<AppState>,
-    current_user: RequestPrincipal,
-    Path(id): Path<i64>,
-) -> HttpResult<Json<ApiResponse<NoticeVo>>> {
-    detail_body!(
-        state,
-        current_user,
-        id,
-        content.notice,
-        NoticeVo,
-        "通知公告"
-    )
-}
-
-/// 创建通知公告
-#[post("/")]
-#[perm("system:notice:add")]
-#[utoipa::path(post, path = "/api/v1/system/notices", tag = "通知公告",
-    request_body = CreateNoticeDto, responses((status = 200, description = "创建成功", body = ApiResponse<NoticeVo>)), security(("bearer" = [])))]
-async fn create(
-    State(state): State<AppState>,
-    current_user: RequestPrincipal,
-    Json(dto): Json<CreateNoticeDto>,
-) -> HttpResult<Json<ApiResponse<NoticeVo>>> {
-    dto.validate()?;
-    state
-        .services
-        .content
-        .notice
-        .create(
-            &current_user,
-            &dto.title,
-            &dto.content_markdown,
-            dto.notice_type.as_deref(),
-        )
-        .await
-        .map_err(crate::http::HttpAppError::from)
-        .map(|value| Json(ApiResponse::success(value.into())))
-}
-
-/// 更新通知公告
-#[put("/{id}")]
-#[perm("system:notice:edit")]
-#[utoipa::path(put, path = "/api/v1/system/notices/{id}", tag = "通知公告",
-    params(("id" = String, Path)),
-    request_body = UpdateNoticeDto,
-    responses((status = 200, description = "更新成功", body = ApiResponse<NoticeVo>)),
-    security(("bearer" = [])))]
-async fn update(
-    State(state): State<AppState>,
-    current_user: RequestPrincipal,
-    Path(id): Path<i64>,
-    Json(dto): Json<UpdateNoticeDto>,
-) -> HttpResult<Json<ApiResponse<NoticeVo>>> {
-    dto.validate()?;
-    state
-        .services
-        .content
-        .notice
-        .update(
-            &current_user,
-            id,
-            &dto.title,
-            &dto.content_markdown,
-            dto.notice_type.as_deref(),
-            dto.status,
-        )
-        .await
-        .map_err(crate::http::HttpAppError::from)
-        .map(|value| Json(ApiResponse::success(value.into())))
 }
 
 /// 将已发布公告显式投递到当前租户的消息中心。
@@ -177,6 +38,7 @@ async fn publish_to_message_center(
     let notice = state
         .services
         .content
+        .generated
         .notice
         .find_by_id(&current_user, id)
         .await?
@@ -222,17 +84,4 @@ async fn publish_to_message_center(
         .map(|published| render_published(published, &state.localizer, locale))
         .map(ApiResponse::success)
         .map(Json)
-}
-
-/// 删除通知公告
-#[delete("/{id}")]
-#[perm("system:notice:remove")]
-#[utoipa::path(delete, path = "/api/v1/system/notices/{id}", tag = "通知公告",
-    params(("id" = String, Path)), responses((status = 200, description = "删除成功", body = crate::http::ApiEmptyResponse)), security(("bearer" = [])))]
-async fn remove(
-    State(state): State<AppState>,
-    current_user: RequestPrincipal,
-    Path(id): Path<i64>,
-) -> HttpResult<Json<ApiResponse<()>>> {
-    remove_body!(state, current_user, id, content.notice)
 }

@@ -7,11 +7,15 @@ fn generated_post_router_composes_with_manual_export_extension() {
     use axum::{Router, routing::post};
     use ryframe_application::generated::{
         GeneratedServices,
+        notice::{NoticeFakePersistence, NoticeService},
         post::{PostFakePersistence, PostService},
     };
     use ryframe_kernel::PaginationPolicy;
 
     let services = GeneratedServices {
+        notice: Arc::new(NoticeService::new(Arc::new(
+            NoticeFakePersistence::default(),
+        ))),
         post: Arc::new(PostService::new(Arc::new(PostFakePersistence::default()))),
     };
     let export = Router::new().route("/exports", post(|| async {}));
@@ -281,7 +285,7 @@ mod openapi {
     }
 
     #[test]
-    fn generated_post_crud_and_manual_export_share_one_openapi_document() {
+    fn generated_crud_and_manual_extensions_share_one_openapi_document() {
         let document = serde_json::to_value(ApiDoc::openapi()).expect("OpenAPI 必须可序列化");
         let paths = document["paths"]
             .as_object()
@@ -311,11 +315,22 @@ mod openapi {
             paths["/api/v1/system/posts/exports"]["post"]["operationId"],
             "post_system_posts_exports"
         );
+        assert_eq!(
+            paths["/api/v1/system/notices"]["get"]["operationId"],
+            "get_system_notices"
+        );
+        assert_eq!(
+            paths["/api/v1/system/notices/{id}/publish-message"]["post"]["operationId"],
+            "post_system_notices_by_id_publish_message"
+        );
 
         let resources = document["x-ryframe-crud-resources"]["resources"]
             .as_array()
             .expect("OpenAPI 必须保留生成 CRUD 资源扩展");
-        assert_eq!(resources.len(), 1);
-        assert_eq!(resources[0]["name"], "post");
+        let names = resources
+            .iter()
+            .map(|resource| resource["name"].as_str().expect("资源名必须是字符串"))
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["notice", "post"]);
     }
 }

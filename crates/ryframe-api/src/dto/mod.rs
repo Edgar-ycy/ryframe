@@ -11,7 +11,6 @@ pub mod login_log_dto;
 pub mod menu_dto;
 pub mod message_dto;
 pub mod multipart_dto;
-pub mod notice_dto;
 pub mod oper_log_dto;
 pub mod option_dto;
 pub mod overview_dto;

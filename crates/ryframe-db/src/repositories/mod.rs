@@ -20,7 +20,6 @@ pub mod job_schedule_repo;
 mod login_info_repo;
 pub mod menu_repo;
 pub mod message_repo;
-pub mod notice_repo;
 mod oper_log_repo;
 pub mod outbox_event_repo;
 pub mod overview_repo;
@@ -74,7 +73,6 @@ pub use message_repo::{
     MessageAudienceKind, MessageAudienceSelector, MessageInboxQuery, MessageRepository,
     PublishMessageCommand, PublishedMessage, RecipientMessage, RecipientMessagePage,
 };
-pub use notice_repo::{NoticeFilter, NoticeRepository};
 pub use oper_log_repo::{OperLogFilter, OperLogRepository};
 pub use outbox_event_repo::{OutboxEventRepository, OutboxFailureDisposition, RecordOutboxEvent};
 pub use overview_repo::{OverviewRepository, OverviewTrendCount, ScheduleOverviewStats};

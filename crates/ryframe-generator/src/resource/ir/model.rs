@@ -169,6 +169,8 @@ pub struct FieldUsageIr {
     pub read: bool,
     pub list: bool,
     pub filter: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    pub filter_exact: bool,
     pub sort: bool,
     #[serde(skip_serializing_if = "is_false")]
     pub sort_desc: bool,

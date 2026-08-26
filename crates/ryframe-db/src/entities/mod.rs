@@ -13,7 +13,6 @@ pub mod menu;
 pub mod message;
 pub mod message_audience;
 pub mod message_recipient;
-pub mod notice;
 pub mod oper_log;
 pub mod outbox_event;
 pub mod password_reset_request;

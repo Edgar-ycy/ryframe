@@ -161,8 +161,8 @@ fn notice_policy_contract() -> serde_json::Value {
     serde_json::json!({
         "version": 1,
         "content_markdown": {
-            "min_utf8_bytes": crate::dto::notice_dto::NOTICE_MARKDOWN_MIN_UTF8_BYTES,
-            "max_utf8_bytes": crate::dto::notice_dto::NOTICE_MARKDOWN_MAX_UTF8_BYTES,
+            "min_utf8_bytes": crate::generated::notice::dto::CONTENT_MARKDOWN_MIN_UTF8_BYTES,
+            "max_utf8_bytes": crate::generated::notice::dto::CONTENT_MARKDOWN_MAX_UTF8_BYTES,
         },
     })
 }

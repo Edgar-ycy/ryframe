@@ -7,7 +7,7 @@ use ryframe_application::{
     generated::GeneratedServices,
     ports::tenants::TenantRuntimeReadPort,
     system::{
-        content::{ConfigService, DictService, FileService, NoticeService},
+        content::{ConfigService, DictService, FileService},
         identity::{
             CaptchaStore, DeptService, MenuService, PermissionService, ProfileService, RoleService,
             UserImportService, UserService, WebSocketTicketService,
@@ -63,7 +63,6 @@ pub struct ContentServices {
     pub generated: GeneratedServices,
     pub config: Arc<ConfigService>,
     pub dict: Arc<DictService>,
-    pub notice: Arc<NoticeService>,
     pub message: Arc<MessageService>,
     pub websocket_ticket: Arc<WebSocketTicketService>,
     pub file: Arc<FileService>,

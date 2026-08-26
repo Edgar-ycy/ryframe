@@ -261,7 +261,14 @@ fn render_fields(resource: &ResourceIr) -> String {
         .collect::<String>();
     let edit_form = form_fields
         .iter()
-        .map(|field| format!("      {}: record.{},\n", field.name, field.name))
+        .map(|field| {
+            let value = if field.nullable {
+                format!("record.{} ?? null", field.name)
+            } else {
+                format!("record.{}", field.name)
+            };
+            format!("      {}: {value},\n", field.name)
+        })
         .collect::<String>();
     let create_input = resource
         .fields

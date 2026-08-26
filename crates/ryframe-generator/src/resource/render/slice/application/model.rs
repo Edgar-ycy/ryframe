@@ -67,7 +67,11 @@ pub(crate) fn model(resource: &ResourceIr, header: &str) -> String {
     }
     output.push_str("}\n\n");
 
-    output.push_str("#[derive(Clone, Copy, Debug, Default)]\n");
+    if resource.access.owner_field.is_some() {
+        output.push_str("#[derive(Clone, Copy, Debug)]\n");
+    } else {
+        output.push_str("#[derive(Clone, Copy, Debug, Default)]\n");
+    }
     output.push_str(&format!("pub struct {pascal}Filter<'a> {{\n"));
     if resource.access.owner_field.is_some() {
         output.push_str("    pub data_scope: &'a DataScopeContext,\n");

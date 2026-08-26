@@ -51,10 +51,6 @@ permissions = [
     "system:menu:list",
     "system:menu:remove",
     "system:message:publish",
-    "system:notice:add",
-    "system:notice:edit",
-    "system:notice:list",
-    "system:notice:remove",
     "system:operlog:export",
     "system:operlog:list",
     "system:perm:add",
@@ -488,14 +484,6 @@ title_key = "tenant"
 menu_type = "C"
 page_key = "platform.tenant"
 permission = "tenant:list"
-
-[[menus]]
-route_key = "system.notice"
-name = "通知公告"
-title_key = "notice"
-menu_type = "C"
-page_key = "system.notice"
-permission = "system:notice:list"
 
 [[menus]]
 route_key = "system.perm"

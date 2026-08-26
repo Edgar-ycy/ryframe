@@ -111,6 +111,7 @@ pub(in crate::resource) fn normalize(
                 read: field.usage.read,
                 list: field.usage.list,
                 filter: field.usage.filter,
+                filter_exact: field.usage.filter_exact,
                 sort: field.usage.sort,
                 sort_desc: field.usage.sort_desc,
             },
