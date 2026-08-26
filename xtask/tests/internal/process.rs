@@ -3,7 +3,28 @@ use std::{
     process::{Command, Stdio},
 };
 
-use super::process::{ChildGroup, run, with_process_log};
+use super::process::{ChildGroup, configure_pnpm_environment, run, with_process_log};
+
+#[test]
+fn pnpm_commands_default_to_non_interactive_ci_mode() {
+    let mut command = Command::new("pnpm");
+    configure_pnpm_environment(&mut command, &[]);
+    let ci = command
+        .get_envs()
+        .find(|(key, _)| *key == "CI")
+        .and_then(|(_, value)| value)
+        .and_then(|value| value.to_str());
+    assert_eq!(ci, Some("true"));
+
+    let mut overridden = Command::new("pnpm");
+    configure_pnpm_environment(&mut overridden, &[("CI", "false")]);
+    let ci = overridden
+        .get_envs()
+        .find(|(key, _)| *key == "CI")
+        .and_then(|(_, value)| value)
+        .and_then(|value| value.to_str());
+    assert_eq!(ci, Some("false"));
+}
 
 #[test]
 fn child_group_accepts_and_waits_for_child() {
