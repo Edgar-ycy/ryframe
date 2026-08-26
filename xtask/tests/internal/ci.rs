@@ -46,20 +46,25 @@ fn database_change_selects_rust_integration_and_consumer_gates() {
 }
 
 #[test]
-fn shared_change_and_non_pr_events_expand_to_full_plan() {
+fn shared_pull_request_change_expands_to_full_plan() {
     let mut selection = VerifySelection::default();
     selection.full_reason = Some("共享配置变化".to_owned());
-    for (event, action, selection) in [
-        ("pull_request", "synchronize", &selection),
-        ("push", "", &VerifySelection::default()),
-        ("schedule", "", &VerifySelection::default()),
-        ("workflow_dispatch", "", &VerifySelection::default()),
-    ] {
-        let plan = ci_plan_for(event, action, selection);
+    let plan = ci_plan_for("pull_request", "synchronize", &selection);
+
+    assert!(plan.preflight);
+    assert!(plan.rust_gate);
+    assert!(plan.integration);
+    assert!(plan.consumer_contract);
+}
+
+#[test]
+fn non_pr_events_run_full_backend_gates_without_consumer_contract() {
+    for event in ["push", "schedule", "workflow_dispatch"] {
+        let plan = ci_plan_for(event, "", &VerifySelection::default());
         assert!(plan.preflight, "{event}");
         assert!(plan.rust_gate, "{event}");
         assert!(plan.integration, "{event}");
-        assert!(plan.consumer_contract, "{event}");
+        assert!(!plan.consumer_contract, "{event}");
     }
 }
 

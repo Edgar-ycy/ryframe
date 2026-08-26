@@ -27,16 +27,40 @@ env:
 
 jobs:
   # ============================================================
-  # 代码质量门禁
+  # 变更计划：YAML 只消费 xtask 的选择结果
   # ============================================================
-  check:
-    name: Check & Lint (Linux)
+  plan:
+    name: CI Plan
     runs-on: ubuntu-latest
-    env:
-      RUSTFLAGS: "-Dwarnings"
-      RUSTC_WRAPPER: sccache
-      SCCACHE_DIR: ${{ github.workspace }}/.sccache
-      SCCACHE_CACHE_SIZE: 4G
+    outputs:
+      preflight: ${{ steps.plan.outputs.preflight }}
+      rust_gate: ${{ steps.plan.outputs.rust_gate }}
+      integration: ${{ steps.plan.outputs.integration }}
+      consumer_contract: ${{ steps.plan.outputs.consumer_contract }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+
+      - name: 计算动态门禁计划
+        id: plan
+        env:
+          GITHUB_EVENT_ACTION: ${{ github.event.action }}
+          RYFRAME_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          RYFRAME_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: cargo xtask ci plan
+
+  # ============================================================
+  # 快速策略与格式门禁
+  # ============================================================
+  preflight:
+    name: Preflight
+    needs: plan
+    if: ${{ needs.plan.result == 'success' && needs.plan.outputs.preflight == 'true' }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -57,107 +81,119 @@ jobs:
           --require-hashes
           --requirement scripts/requirements-ci.txt
 
-      - name: Install Rust toolchain
+      - name: 安装 Rust 格式化工具链
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with:
-          components: rustfmt, clippy
+          components: rustfmt
 
-      - name: Install pinned sccache
+      - name: 校验 GitHub Actions 工作流
+        uses: docker://rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9
+
+      - name: 执行仓库快速预检
+        env:
+          RYFRAME_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: cargo xtask ci preflight
+
+  # ============================================================
+  # Rust 单一编译门禁
+  # ============================================================
+  rust-gate:
+    name: Rust Gate
+    needs: plan
+    if: ${{ needs.plan.result == 'success' && needs.plan.outputs.rust_gate == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: "-Dwarnings"
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
+    steps:
+      - name: 检出后端源码
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          path: backend
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: 选择匹配的前端提交
+        id: frontend-ref
+        working-directory: backend
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            if git diff --quiet "$BASE_SHA" HEAD -- openapi/openapi.json; then
+              changed=false
+            else
+              changed=true
+            fi
+            frontend_ref="$(python scripts/select_frontend_commit.py \
+              --event "$GITHUB_EVENT_PATH" \
+              --contract-changed "$changed" \
+              --prefer-marker)"
+          else
+            frontend_ref=main
+          fi
+          echo "ref=$frontend_ref" >> "$GITHUB_OUTPUT"
+
+      - name: 检出前端资源 Workspace
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: Edgar-ycy/ryframe-vue3
+          ref: ${{ steps.frontend-ref.outputs.ref }}
+          path: frontend
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          components: clippy
+
+      - name: 安装固定版本 sccache
         uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
         with:
           tool: sccache@0.17.0
           fallback: none
 
-      - name: Restore sccache artifacts
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+      - name: 配置 sccache GitHub Actions 远端后端
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
         with:
-          path: ${{ github.workspace }}/.sccache
-          key: v2-sccache-${{ runner.os }}-${{ runner.arch }}-check-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            v2-sccache-${{ runner.os }}-${{ runner.arch }}-check-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
-            v2-sccache-${{ runner.os }}-${{ runner.arch }}-check-
-            v2-sccache-${{ runner.os }}-${{ runner.arch }}-
+          script: |
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '')
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '')
 
-      - name: Rust cache
+      - name: 缓存 Cargo 依赖
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
         with:
           path: |
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-          key: v3-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          key: v3-rust-${{ runner.os }}-${{ runner.arch }}-rust-gate-${{ hashFiles('backend/Cargo.lock', 'backend/Cargo.toml') }}
           restore-keys: |
-            v3-rust-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+            v3-rust-${{ runner.os }}-${{ runner.arch }}-rust-gate-
             v3-rust-${{ runner.os }}-${{ runner.arch }}-
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - name: 安装 Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version-file: frontend/.node-version
+          package-manager-cache: false
 
-      - name: Lint GitHub Actions workflows
-        uses: docker://rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9
+      - name: 安装 pnpm
+        uses: ./frontend/.github/actions/setup-pnpm
+        with:
+          working-directory: frontend
 
-      - name: Reject unreviewed prerelease dependencies
-        run: python scripts/check_prerelease_dependencies.py
+      - name: 安装前端生成校验依赖
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
 
-      - name: Test repository policy scripts
-        run: python -m unittest discover -s scripts/tests -p 'test_*.py'
+      - name: 执行 Clippy、feature、Workspace 测试与快照门禁
+        working-directory: backend
+        run: cargo xtask ci rust-gate --frontend-dir ../frontend
 
-      - name: 校验供应链固定版本与例外策略
-        run: python scripts/check_supply_chain.py
-
-      - name: Check workspace architecture and production source size
-        run: python scripts/check_architecture.py
-
-      - name: Enforce append-only migration history
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PUSH_BEFORE_SHA: ${{ github.event.before }}
-        run: |
-          set -euo pipefail
-          trusted_ref=HEAD
-          if [[ "$EVENT_NAME" == "pull_request" && -n "$PR_BASE_SHA" ]]; then
-            trusted_ref="$PR_BASE_SHA"
-          elif [[ "$EVENT_NAME" == "push" \
-            && -n "$PUSH_BEFORE_SHA" \
-            && ! "$PUSH_BEFORE_SHA" =~ ^0+$ ]]; then
-            trusted_ref="$PUSH_BEFORE_SHA"
-          elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
-            trusted_ref="$(git rev-parse --verify HEAD^)"
-          fi
-          python scripts/check_migration_history.py \
-            --require-frozen \
-            --trusted-ref "$trusted_ref"
-
-      - name: Check permission bindings
-        run: python scripts/check_permission_routes.py
-
-      - name: 校验部署资产静态边界
-        run: python scripts/check_deployment_assets.py
-
-      # 全目标静态检查覆盖正式测试，并显式阻止无意义克隆重新进入代码库。
-      - name: Clippy (all targets, redundant clones denied)
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings -D clippy::redundant_clone
-
-      - name: Check registered feature combinations
-        run: cargo xtask feature-matrix
-
-      - name: Test workspace
-        run: cargo test --locked --workspace
-
-      - name: Verify generated OpenAPI and MySQL snapshots
-        shell: bash
-        run: |
-          set -euo pipefail
-          generated_openapi="$RUNNER_TEMP/openapi.json"
-          generated_mysql="$RUNNER_TEMP/ryframe_config.sql"
-          cargo run --locked -p ryframe-api --bin export_openapi -- "$generated_openapi"
-          cargo run --locked -p ryframe-db --bin export_mysql_snapshot -- "$generated_mysql"
-          diff --unified openapi/openapi.json "$generated_openapi"
-          diff --unified sql/ryframe_config.sql "$generated_mysql"
-
-      - name: Report sccache statistics
+      - name: 输出 sccache 远端命中统计
         if: ${{ always() }}
         continue-on-error: true
         run: |
@@ -169,11 +205,12 @@ jobs:
   # ============================================================
   integration:
     name: MySQL 8.4 & Redis 7.4 Integration
+    needs: plan
+    if: ${{ needs.plan.result == 'success' && needs.plan.outputs.integration == 'true' }}
     runs-on: ubuntu-latest
     env:
       RUSTC_WRAPPER: sccache
-      SCCACHE_DIR: ${{ github.workspace }}/.sccache
-      SCCACHE_CACHE_SIZE: 4G
+      SCCACHE_GHA_ENABLED: "true"
       RYFRAME_INTEGRATION_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
       RYFRAME_MYSQL_INTEGRATION: "1"
       RYFRAME_MYSQL_HOST: 127.0.0.1
@@ -219,15 +256,12 @@ jobs:
           tool: sccache@0.17.0
           fallback: none
 
-      - name: 恢复 sccache 编译产物
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+      - name: 配置 sccache GitHub Actions 远端后端
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
         with:
-          path: ${{ github.workspace }}/.sccache
-          key: v2-sccache-${{ runner.os }}-${{ runner.arch }}-integration-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            v2-sccache-${{ runner.os }}-${{ runner.arch }}-integration-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}-
-            v2-sccache-${{ runner.os }}-${{ runner.arch }}-integration-
-            v2-sccache-${{ runner.os }}-${{ runner.arch }}-
+          script: |
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '')
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '')
 
       - name: 缓存 Cargo 依赖
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
@@ -241,11 +275,8 @@ jobs:
             v3-rust-${{ runner.os }}-${{ runner.arch }}-integration-
             v3-rust-${{ runner.os }}-${{ runner.arch }}-
 
-      - name: 验证 MySQL 事务、约束、行锁与租户隔离
-        run: cargo test --locked -p ryframe-db --test mysql_real_protocol -- --nocapture
-
-      - name: 验证 Redis TTL、幂等、命名空间与故障错误
-        run: cargo test --locked -p ryframe-adapters --test redis_real_protocol -- --nocapture
+      - name: 验证 MySQL 与 Redis 真实协议
+        run: cargo xtask ci integration
 
       - name: 输出 sccache 统计
         if: ${{ always() }}
@@ -259,12 +290,15 @@ jobs:
   # ============================================================
   consumer-contract:
     name: Frontend Consumer Contract
-    if: ${{ github.event_name == 'pull_request' }}
+    needs: plan
+    if: >-
+      ${{ needs.plan.result == 'success' &&
+          github.event_name == 'pull_request' &&
+          needs.plan.outputs.consumer_contract == 'true' }}
     runs-on: ubuntu-latest
     env:
       RUSTC_WRAPPER: sccache
-      SCCACHE_DIR: ${{ github.workspace }}/.sccache
-      SCCACHE_CACHE_SIZE: 4G
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - name: 检出后端 PR 提交
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -282,15 +316,12 @@ jobs:
           tool: sccache@0.17.0
           fallback: none
 
-      - name: 恢复 sccache 编译产物
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+      - name: 配置 sccache GitHub Actions 远端后端
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
         with:
-          path: ${{ github.workspace }}/.sccache
-          key: v2-sccache-${{ runner.os }}-${{ runner.arch }}-consumer-contract-${{ hashFiles('backend/rust-toolchain.toml', 'backend/Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            v2-sccache-${{ runner.os }}-${{ runner.arch }}-consumer-contract-${{ hashFiles('backend/rust-toolchain.toml', 'backend/Cargo.lock') }}-
-            v2-sccache-${{ runner.os }}-${{ runner.arch }}-consumer-contract-
-            v2-sccache-${{ runner.os }}-${{ runner.arch }}-
+          script: |
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '')
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '')
 
       - name: 生成并分类候选契约
         id: contract
@@ -302,6 +333,7 @@ jobs:
           candidate="$RUNNER_TEMP/candidate-openapi.json"
           baseline="$RUNNER_TEMP/baseline-openapi.json"
           cargo run --locked --manifest-path backend/Cargo.toml \
+            --target-dir backend/target/ci/backend \
             -p ryframe-api --bin export_openapi -- "$candidate"
           cmp --silent backend/openapi/openapi.json "$candidate" || {
             echo "::error::后端 PR 未提交最新 OpenAPI 快照"
@@ -380,17 +412,9 @@ jobs:
         working-directory: frontend
         run: pnpm install --frozen-lockfile
 
-      - name: 校验前端消费契约
-        working-directory: frontend
-        env:
-          BACKEND_COMMIT: ${{ steps.formal-source.outputs.commit }}
-        run: >-
-          pnpm consumer:check --
-          --mode formal
-          --openapi "$RUNNER_TEMP/candidate-openapi.json"
-          --backend-commit "$BACKEND_COMMIT"
-          --backend-repository "Edgar-ycy/ryframe"
-          --require-pin "true"
+      - name: 通过内部命令校验正式消费契约
+        working-directory: backend
+        run: cargo xtask ci consumer-contract --frontend-dir ../frontend
 
       - name: 输出 sccache 统计
         if: ${{ always() }}
@@ -404,12 +428,15 @@ jobs:
   # ============================================================
   windows-smoke:
     name: Windows Smoke
-    if: ${{ github.event_name != 'schedule' }}
+    needs: plan
+    if: >-
+      ${{ needs.plan.result == 'success' &&
+          github.event.action != 'edited' &&
+          github.event_name != 'schedule' }}
     runs-on: windows-latest
     env:
       RUSTC_WRAPPER: sccache
-      SCCACHE_DIR: ${{ github.workspace }}\.sccache
-      SCCACHE_CACHE_SIZE: 4G
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - name: 检出后端源码
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -427,15 +454,12 @@ jobs:
           tool: sccache@0.17.0
           fallback: none
 
-      - name: 恢复 sccache 编译产物
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+      - name: 配置 sccache GitHub Actions 远端后端
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
         with:
-          path: ${{ github.workspace }}\.sccache
-          key: v2-sccache-${{ runner.os }}-${{ runner.arch }}-windows-smoke-${{ hashFiles('ryframe/rust-toolchain.toml', 'ryframe/Cargo.lock') }}-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-            v2-sccache-${{ runner.os }}-${{ runner.arch }}-windows-smoke-${{ hashFiles('ryframe/rust-toolchain.toml', 'ryframe/Cargo.lock') }}-
-            v2-sccache-${{ runner.os }}-${{ runner.arch }}-windows-smoke-
-            v2-sccache-${{ runner.os }}-${{ runner.arch }}-
+          script: |
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '')
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '')
 
       - name: 生成并分类 Windows 候选契约
         if: ${{ github.event_name == 'pull_request' }}
@@ -549,6 +573,8 @@ jobs:
   # ============================================================
   security-audit:
     name: Security Audit
+    needs: plan
+    if: ${{ needs.plan.result == 'success' && github.event.action != 'edited' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -597,7 +623,11 @@ jobs:
   # ============================================================
   supply-chain:
     name: 后端 CycloneDX 物料清单
-    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    needs: plan
+    if: >-
+      ${{ needs.plan.result == 'success' &&
+          github.event.action != 'edited' &&
+          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     steps:
       - name: 检出后端源码
@@ -663,6 +693,8 @@ jobs:
   # ============================================================
   deployment-assets:
     name: Deployment Assets
+    needs: plan
+    if: ${{ needs.plan.result == 'success' && github.event.action != 'edited' }}
     runs-on: ubuntu-latest
     env:
       DOCKER_BUILDKIT: "1"
@@ -861,7 +893,9 @@ jobs:
     if: ${{ always() }}
     runs-on: ubuntu-latest
     needs:
-      - check
+      - plan
+      - preflight
+      - rust-gate
       - integration
       - consumer-contract
       - windows-smoke
@@ -875,8 +909,10 @@ jobs:
       - name: 汇总必须门禁
         env:
           EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: >-
           python scripts/check_required_jobs.py
           --event "$EVENT_NAME"
+          --action "$EVENT_ACTION"
           --needs-json "$NEEDS_JSON"

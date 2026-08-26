@@ -7,18 +7,36 @@ from collections.abc import Mapping
 from typing import Any
 
 
-ALWAYS_REQUIRED = (
-    "check",
+PLAN_OUTPUTS = (
+    "preflight",
+    "rust_gate",
     "integration",
-    "security-audit",
-    "deployment-assets",
+    "consumer_contract",
 )
-ALL_JOBS = (*ALWAYS_REQUIRED, "consumer-contract", "supply-chain", "windows-smoke")
+PLAN_CONTROLLED_JOBS = {
+    "preflight": "preflight",
+    "rust-gate": "rust_gate",
+    "integration": "integration",
+    "consumer-contract": "consumer_contract",
+}
+ALWAYS_AFTER_PLAN = ("security-audit", "deployment-assets")
+ALL_JOBS = (
+    "plan",
+    *PLAN_CONTROLLED_JOBS,
+    "windows-smoke",
+    *ALWAYS_AFTER_PLAN,
+    "supply-chain",
+)
 EVENTS = ("push", "pull_request", "schedule", "workflow_dispatch")
 RESULTS = ("success", "failure", "cancelled", "skipped")
 
 
-def validate_required_jobs(event: str, results: Mapping[str, str]) -> list[str]:
+def validate_required_jobs(
+    event: str,
+    action: str,
+    results: Mapping[str, str],
+    plan_outputs: Mapping[str, str],
+) -> list[str]:
     errors: list[str] = []
     if event not in EVENTS:
         errors.append(f"不支持的 GitHub 事件：{event}")
@@ -28,15 +46,46 @@ def validate_required_jobs(event: str, results: Mapping[str, str]) -> list[str]:
         errors.append(f"缺少 required job 结果：{', '.join(missing)}")
     if extra:
         errors.append(f"包含未知 required job：{', '.join(extra)}")
+    missing_outputs = sorted(set(PLAN_OUTPUTS) - set(plan_outputs))
+    extra_outputs = sorted(set(plan_outputs) - set(PLAN_OUTPUTS))
+    if missing_outputs:
+        errors.append(f"CI plan 缺少输出：{', '.join(missing_outputs)}")
+    if extra_outputs:
+        errors.append(f"CI plan 包含未知输出：{', '.join(extra_outputs)}")
+    invalid_outputs = sorted(
+        name for name, value in plan_outputs.items() if value not in ("true", "false")
+    )
+    if invalid_outputs:
+        errors.append(f"CI plan 输出必须是 true/false：{', '.join(invalid_outputs)}")
     if errors:
         return errors
 
-    expected = {name: "success" for name in ALWAYS_REQUIRED}
-    expected["consumer-contract"] = "success" if event == "pull_request" else "skipped"
-    expected["supply-chain"] = (
-        "success" if event in ("schedule", "workflow_dispatch") else "skipped"
-    )
-    expected["windows-smoke"] = "skipped" if event == "schedule" else "success"
+    expected = {name: "skipped" for name in ALL_JOBS}
+    expected["plan"] = "success"
+    edited = event == "pull_request" and action == "edited"
+    for job, output in PLAN_CONTROLLED_JOBS.items():
+        enabled = plan_outputs[output] == "true"
+        # 消费契约的精确前端提交选择只定义于 PR。
+        if job == "consumer-contract" and event != "pull_request":
+            enabled = False
+        expected[job] = "success" if enabled else "skipped"
+    if edited:
+        required_edited_plan = {
+            "preflight": "false",
+            "rust_gate": "false",
+            "integration": "false",
+            "consumer_contract": "true",
+        }
+        if dict(plan_outputs) != required_edited_plan:
+            errors.append("pull_request.edited 必须只启用 consumer-contract")
+    else:
+        expected["security-audit"] = "success"
+        expected["deployment-assets"] = "success"
+        expected["windows-smoke"] = "skipped" if event == "schedule" else "success"
+        expected["supply-chain"] = (
+            "success" if event in ("schedule", "workflow_dispatch") else "skipped"
+        )
+
     for name in ALL_JOBS:
         actual = results[name]
         if actual not in RESULTS:
@@ -46,13 +95,18 @@ def validate_required_jobs(event: str, results: Mapping[str, str]) -> list[str]:
     return errors
 
 
-def parse_needs_json(value: str) -> dict[str, str]:
+def _parse_needs_document(value: str) -> dict[str, Any]:
     try:
         document: Any = json.loads(value)
     except json.JSONDecodeError as error:
         raise ValueError(f"needs JSON 无效：{error}") from error
     if not isinstance(document, dict):
         raise ValueError("needs JSON 必须是对象")
+    return document
+
+
+def parse_needs_json(value: str) -> dict[str, str]:
+    document = _parse_needs_document(value)
     results: dict[str, str] = {}
     for name, need in document.items():
         if not isinstance(name, str) or not name:
@@ -66,21 +120,42 @@ def parse_needs_json(value: str) -> dict[str, str]:
     return results
 
 
+def parse_plan_outputs(value: str) -> dict[str, str]:
+    document = _parse_needs_document(value)
+    plan = document.get("plan")
+    if not isinstance(plan, dict):
+        raise ValueError("needs JSON 缺少 plan 对象")
+    outputs = plan.get("outputs")
+    if not isinstance(outputs, dict):
+        raise ValueError("needs JSON 的 plan.outputs 必须是对象")
+    parsed: dict[str, str] = {}
+    for name, enabled in outputs.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError("plan.outputs 名称必须是非空字符串")
+        if not isinstance(enabled, str) or not enabled:
+            raise ValueError(f"plan.outputs.{name} 必须是非空字符串")
+        parsed[name] = enabled
+    return parsed
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="校验 Required 汇总 job 的事件矩阵")
+    parser = argparse.ArgumentParser(description="校验 Required 汇总 job 的动态计划")
     parser.add_argument("--event", required=True)
+    parser.add_argument("--action", default="")
     parser.add_argument("--needs-json", required=True)
     args = parser.parse_args()
     try:
         results = parse_needs_json(args.needs_json)
+        plan_outputs = parse_plan_outputs(args.needs_json)
     except ValueError as error:
         parser.error(str(error))
-    errors = validate_required_jobs(args.event, results)
+    errors = validate_required_jobs(args.event, args.action, results, plan_outputs)
     if errors:
         for error in errors:
             print(error, file=sys.stderr)
         return 1
-    print(f"Required 汇总校验通过（event={args.event}）")
+    action_label = f", action={args.action}" if args.action else ""
+    print(f"Required 汇总校验通过（event={args.event}{action_label}）")
     return 0
 
 

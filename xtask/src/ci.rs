@@ -92,7 +92,13 @@ pub(crate) fn ci_plan_for(event: &str, action: &str, selection: &VerifySelection
             consumer_contract: true,
         };
     }
-    if FULL_CI_EVENTS.contains(&event) || selection.full_reason.is_some() {
+    if FULL_CI_EVENTS.contains(&event) {
+        return CiPlan {
+            consumer_contract: false,
+            ..CiPlan::full()
+        };
+    }
+    if selection.full_reason.is_some() {
         return CiPlan::full();
     }
 
