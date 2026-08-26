@@ -1,0 +1,8 @@
+#[path = "resource_contracts/resource_generation.rs"]
+mod resource_generation;
+#[path = "resource_contracts/resource_import.rs"]
+mod resource_import;
+#[path = "resource_contracts/resource_relations.rs"]
+mod resource_relations;
+#[path = "resource_contracts/resource_validation.rs"]
+mod resource_validation;

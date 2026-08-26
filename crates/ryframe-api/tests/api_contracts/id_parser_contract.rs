@@ -1,4 +1,4 @@
-#[path = "../src/id_parser.rs"]
+#[path = "../../src/id_parser.rs"]
 mod id_parser;
 
 use id_parser::{parse_id, parse_optional_id, parse_optional_positive_id, parse_positive_id_list};
