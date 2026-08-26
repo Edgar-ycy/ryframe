@@ -16,7 +16,7 @@ use crate::{
         TENANT_CONFIG_PACKAGE_RESOURCE, TENANT_CONFIG_SNAPSHOT_RESOURCE,
         TenantConfigArtifactCounts, TenantConfigRetentionPersistencePort,
     },
-    system::FileService,
+    system::file::FileService,
 };
 
 pub const DATA_RETENTION_JOB_TYPE: &str = "system.data_retention.cleanup";

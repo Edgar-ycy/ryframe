@@ -8,7 +8,7 @@ pub(crate) use password_reset::*;
 
 use crate::http::HttpResult;
 use axum::Router;
-use ryframe_application::system::UserListParams;
+use ryframe_application::system::identity::UserListParams;
 use ryframe_auth::rbac;
 use ryframe_kernel::{AppError, PaginationPolicy, ValidatedPageQuery};
 use ryframe_macro::route;

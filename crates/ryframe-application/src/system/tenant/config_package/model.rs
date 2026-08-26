@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 
-use super::super::super::CapabilityRequirement;
+use super::super::super::product::CapabilityRequirement;
 
 /// 清单中的资源计数；关联关系也计入容量上限。
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]

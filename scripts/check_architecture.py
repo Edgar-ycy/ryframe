@@ -39,10 +39,30 @@ DOCUMENT_LIMITS = {
     "docs/operations.md": 240,
 }
 TEST_FILE_NAME = re.compile(r"(?:^tests?\.rs$|_tests?\.rs$)", re.IGNORECASE)
+SYSTEM_DOMAIN_MODULES = {"content", "identity", "operations", "platform"}
 
 
 def read(relative: str) -> str:
     return (ROOT / relative).read_text(encoding="utf-8")
+
+
+def validate_system_domain_surface(root: Path, errors: list[str]) -> None:
+    """确保 system 仅通过四个业务域暴露公开 API。"""
+    module_path = root / "crates/ryframe-application/src/system/mod.rs"
+    if not module_path.is_file():
+        errors.append("缺少 ryframe-application system 模块入口")
+        return
+    source = module_path.read_text(encoding="utf-8")
+    public_modules = set(
+        re.findall(r"(?m)^\s*pub\s+mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;", source)
+    )
+    if public_modules != SYSTEM_DOMAIN_MODULES:
+        errors.append(
+            "system 公开模块必须且只能为四个业务域: "
+            f"expected={sorted(SYSTEM_DOMAIN_MODULES)}, actual={sorted(public_modules)}"
+        )
+    if re.search(r"(?m)^\s*pub\s+use\s+", source):
+        errors.append("system 根模块不得保留兼容 re-export")
 
 
 def business_sources() -> list[Path]:
@@ -850,6 +870,7 @@ def validate_tenant_data_boundaries(errors: list[str]) -> None:
 def main() -> int:
     errors: list[str] = []
     validate_documentation(errors)
+    validate_system_domain_surface(ROOT, errors)
     active_profile, profiles, source_size, test_layout = load_policy(errors)
     metadata = cargo_metadata(errors)
     packages = workspace_packages(metadata) if metadata else {}

@@ -1,6 +1,6 @@
 use chrono::Utc;
 use ryframe_adapters::RedisNamespace;
-use ryframe_application::system::UserSession;
+use ryframe_application::system::operations::UserSession;
 use ryframe_kernel::{AppError, AppResult};
 
 use super::keyspace::session_key;

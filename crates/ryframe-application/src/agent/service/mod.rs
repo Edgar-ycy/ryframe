@@ -26,7 +26,7 @@ use crate::service_identity_secret::{
     IP_DIGEST_DOMAIN, ParsedApiKey, ParsedDelegation, USER_AGENT_DIGEST_DOMAIN, invalid_credential,
     keyed_hash, parse_authorization, parse_delegation,
 };
-use crate::system::SERVICE_ACCOUNTS_CAPABILITY;
+use crate::system::platform::SERVICE_ACCOUNTS_CAPABILITY;
 use crate::{MultiTenancyPolicy, PepperKeyring, ServiceAccountPolicy};
 
 const ACCESS_MODE_UNKNOWN: &str = "unknown";

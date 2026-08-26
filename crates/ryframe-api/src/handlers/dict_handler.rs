@@ -5,7 +5,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
 };
-use ryframe_application::system::DictTypeListParams;
+use ryframe_application::system::content::DictTypeListParams;
 use ryframe_kernel::ValidatedPageQuery;
 use ryframe_macro::{delete, get, post, put, route};
 use serde::Deserialize;

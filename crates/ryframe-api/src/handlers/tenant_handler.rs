@@ -4,7 +4,7 @@ use axum::{
     extract::{Path, Query, State},
     http::HeaderMap,
 };
-use ryframe_application::system::{CreateTenantParams, UpdateTenantParams};
+use ryframe_application::system::platform::{CreateTenantParams, UpdateTenantParams};
 use ryframe_auth::rbac;
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, put, route};

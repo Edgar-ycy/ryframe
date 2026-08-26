@@ -436,7 +436,7 @@ fn permission_contains_wildcard(code: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::{
+    use crate::system::tenant::config_package::{
         PortableDepartment, PortableDictData, PortableMenu, PortablePermission, PortableRole,
     };
 

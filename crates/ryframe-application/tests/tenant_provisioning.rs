@@ -24,10 +24,7 @@ use ryframe_application::{
             TenantProvisioningTemplate, TenantRecord, TenantTransaction,
         },
     },
-    system::{
-        ProductService,
-        tenant::{CreateTenantParams, TenantService, TenantVo},
-    },
+    system::platform::{CreateTenantParams, ProductService, TenantService, TenantVo},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

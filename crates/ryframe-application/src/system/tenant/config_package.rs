@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ryframe_kernel::{AppError, AppResult};
 
-use super::super::CapabilityRequirement;
+use super::super::product::CapabilityRequirement;
 
 mod format;
 mod limits;

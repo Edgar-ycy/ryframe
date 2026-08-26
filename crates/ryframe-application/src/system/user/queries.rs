@@ -2,7 +2,7 @@ use ryframe_kernel::{ActorContext, AppError, AppResult, ExportCursorWindow, Page
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use super::super::{OptionItem, OptionList};
+use super::super::option::{OptionItem, OptionList};
 use super::{UserDetailVo, UserListParams, UserService, UserVo};
 use crate::ports::{
     auth::{IdentityRoleRecord, IdentityTenantRecord, IdentityUserRecord},

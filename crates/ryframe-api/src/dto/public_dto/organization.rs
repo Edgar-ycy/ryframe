@@ -3,10 +3,15 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use ryframe_application::system::{
-    ConfigVo as ServiceConfigVo, DeptTreeNode as ServiceDeptTreeNode, DeptVo as ServiceDeptVo,
-    DictDataVo as ServiceDictDataVo, DictTypeVo as ServiceDictTypeVo, NoticeVo as ServiceNoticeVo,
-    OptionItem as ServiceOptionItem, OptionList as ServiceOptionList, RoleVo as ServiceRoleVo,
-    TenantVo as ServiceTenantVo,
+    content::{
+        ConfigVo as ServiceConfigVo, DictDataVo as ServiceDictDataVo,
+        DictTypeVo as ServiceDictTypeVo, NoticeVo as ServiceNoticeVo,
+        OptionItem as ServiceOptionItem, OptionList as ServiceOptionList,
+    },
+    identity::{
+        DeptTreeNode as ServiceDeptTreeNode, DeptVo as ServiceDeptVo, RoleVo as ServiceRoleVo,
+    },
+    platform::TenantVo as ServiceTenantVo,
 };
 
 /// 参数配置响应。

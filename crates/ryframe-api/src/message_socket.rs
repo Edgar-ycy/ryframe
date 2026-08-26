@@ -18,7 +18,10 @@ use axum::{
 };
 use dashmap::{DashMap, mapref::entry::Entry};
 use futures_util::{SinkExt, StreamExt};
-use ryframe_application::system::{MessageService, MessageTemplate, WebSocketTicket};
+use ryframe_application::system::{
+    identity::WebSocketTicket,
+    operations::{MessageService, MessageTemplate},
+};
 use ryframe_application::{
     AuthorizationChangedEvent,
     ports::tenants::{TenantRuntimeReadPort, TenantRuntimeSnapshot},

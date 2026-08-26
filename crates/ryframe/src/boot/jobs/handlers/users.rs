@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use ryframe_application::{JobHandler, system::UserImportJobHandler};
+use ryframe_application::{JobHandler, system::identity::UserImportJobHandler};
 
 use super::super::JobWorkerDependencies;
 

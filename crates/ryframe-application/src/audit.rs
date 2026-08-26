@@ -11,7 +11,7 @@ use ryframe_kernel::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 
 use crate::jobs::JobQueue;
-use crate::system::{OperLogStatus, RecordOperLogCommand};
+use crate::system::operations::{OperLogStatus, RecordOperLogCommand};
 
 /// 操作审计事件在事务 Outbox 中使用的稳定类型标识。
 pub const AUDIT_OPERATION_OUTBOX_EVENT_TYPE: &str = "audit.operation";

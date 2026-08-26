@@ -5,7 +5,8 @@ use ryframe_adapters::storage::{
 };
 use ryframe_application::ports::files::ArtifactStore;
 use ryframe_application::system::{
-    AVATAR_BUCKET, CONFIG_PACKAGE_BUCKET, EXPORT_BUCKET, IMPORT_BUCKET, UPLOAD_BUCKET,
+    content::{AVATAR_BUCKET, CONFIG_PACKAGE_BUCKET, IMPORT_BUCKET, UPLOAD_BUCKET},
+    operations::EXPORT_BUCKET,
 };
 use ryframe_config::{AppConfig, StorageBackend};
 use ryframe_kernel::{AppError, AppResult};

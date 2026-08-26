@@ -5,7 +5,7 @@ use axum::{
     extract::{DefaultBodyLimit, Multipart, Path, Query, State},
     http::{HeaderMap, StatusCode, header::CONTENT_LENGTH},
 };
-use ryframe_application::system::ApplyTenantConfigTransferCommand;
+use ryframe_application::system::platform::ApplyTenantConfigTransferCommand;
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, route};
 

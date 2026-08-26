@@ -5,7 +5,7 @@ use axum::{
     extract::{Multipart, Path, Query, State},
     http::{HeaderMap, StatusCode},
 };
-use ryframe_application::system::{RequestUserImportCommand, UserImportListParams};
+use ryframe_application::system::identity::{RequestUserImportCommand, UserImportListParams};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, route};
 use sha2::{Digest, Sha256};

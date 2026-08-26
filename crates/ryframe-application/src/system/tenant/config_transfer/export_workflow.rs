@@ -77,7 +77,7 @@ impl TenantConfigTransferService {
                     return Err(error);
                 }
             };
-        let generated = crate::system::build_tenant_config_package(
+        let generated = crate::system::tenant::config_package::build_tenant_config_package(
             Arc::clone(&self.archive),
             source_resources,
             required_capabilities,

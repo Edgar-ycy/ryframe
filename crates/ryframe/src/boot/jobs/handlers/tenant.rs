@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use ryframe_application::{
     JobHandler,
-    system::{
+    system::platform::{
         TenantConfigApplyJobHandler, TenantConfigExportJobHandler, TenantConfigPreviewJobHandler,
         TenantConfigRollbackJobHandler, TenantDataMigrationJobHandler,
     },

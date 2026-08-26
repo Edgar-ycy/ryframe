@@ -9,7 +9,7 @@ use uuid::Uuid;
 use super::backoff::{jittered_delay, next_idle_wait};
 use super::worker::{infrastructure_retry_delay, retry_delay};
 use super::{MESSAGE_PUBLISHED_OUTBOX_EVENT_TYPE, queue::JobQueue};
-use crate::system::MESSAGE_DISPATCH_JOB_TYPE;
+use crate::system::operations::MESSAGE_DISPATCH_JOB_TYPE;
 use crate::{
     AUDIT_OPERATION_OUTBOX_EVENT_TYPE, AUTHORIZATION_MIRROR_OUTBOX_EVENT_TYPE, AuditOperationEvent,
     AuthorizationCache, AuthorizationMirrorUpdate, EnqueueJob,

@@ -19,29 +19,7 @@ use ryframe_application::{
             UserImportDepartmentRecord, UserImportSourceRecord, UserImportSourceState,
         },
     },
-    system::{
-        MessageText, ProductService, SERVICE_ACCOUNTS_CAPABILITY, ServiceCapabilityDescriptor,
-        dept::rewrite_descendant_ancestors,
-        dict::dict_cache_key,
-        file::{
-            ExpiredReservationPlan, map_storage_read_error, map_storage_write_error,
-            plan_expired_reservation,
-        },
-        menu::normalize_route_key,
-        permission::{ensure_tenant_permission_code_boundary, is_platform_permission_code},
-        profile::normalize_preferred_locale,
-        service_account::common_capabilities,
-        tenant::{
-            data_migration::rolling_digest,
-            usage::{expiration_status, percentage_basis_points, quota_status},
-        },
-        user::{
-            ensure_not_super, ensure_pending, normalize_ids, password_reset_next_status,
-            validate_assignment_state, validate_manageable_status,
-        },
-        user_import::{available_department_paths, validate_import_source},
-        validate_message_text_pair,
-    },
+    system::{content::*, identity::*, operations::*, platform::*},
 };
 use ryframe_kernel::{ActorContext, AppError, DataScope};
 
@@ -187,28 +165,28 @@ fn schedule_record_maps_every_public_field() {
 fn diagnostic_reason_prefers_identity_state_and_distinguishes_configuration() {
     let disabled = diagnostic_menu("0", "C", None);
     assert_eq!(
-        ryframe_application::system::authorization_diagnostic::menu_inaccessible_reason(
+        ryframe_application::system::platform::menu_inaccessible_reason(
             &disabled, None, false, false, false,
         )
         .as_deref(),
         Some("tenant_unavailable")
     );
     assert_eq!(
-        ryframe_application::system::authorization_diagnostic::menu_inaccessible_reason(
+        ryframe_application::system::platform::menu_inaccessible_reason(
             &disabled, None, true, false, false,
         )
         .as_deref(),
         Some("user_disabled")
     );
     assert_eq!(
-        ryframe_application::system::authorization_diagnostic::menu_inaccessible_reason(
+        ryframe_application::system::platform::menu_inaccessible_reason(
             &disabled, None, true, true, false,
         )
         .as_deref(),
         Some("menu_disabled")
     );
     assert_eq!(
-        ryframe_application::system::authorization_diagnostic::menu_inaccessible_reason(
+        ryframe_application::system::platform::menu_inaccessible_reason(
             &diagnostic_menu("1", "M", None),
             None,
             true,
@@ -219,7 +197,7 @@ fn diagnostic_reason_prefers_identity_state_and_distinguishes_configuration() {
         Some("no_accessible_child")
     );
     assert_eq!(
-        ryframe_application::system::authorization_diagnostic::menu_inaccessible_reason(
+        ryframe_application::system::platform::menu_inaccessible_reason(
             &diagnostic_menu("1", "C", Some(9)),
             None,
             true,

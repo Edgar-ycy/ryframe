@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use ryframe_application::system::{
-    CaptchaStore, DictCacheStore, TenantRateLimitReadPort, TenantRateLimitSnapshot,
-    WebSocketTicketStore,
+    content::DictCacheStore,
+    identity::{CaptchaStore, WebSocketTicketStore},
+    platform::{TenantRateLimitReadPort, TenantRateLimitSnapshot},
 };
 use ryframe_kernel::{AppError, CAPTCHA_KEY_PREFIX};
 

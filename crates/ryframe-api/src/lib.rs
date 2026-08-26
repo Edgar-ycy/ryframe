@@ -1,4 +1,4 @@
-use ryframe_application::system::TenantConfigTargetCatalog;
+use ryframe_application::system::platform::TenantConfigTargetCatalog;
 use ryframe_kernel::{AppError, AppResult};
 
 #[doc(hidden)]

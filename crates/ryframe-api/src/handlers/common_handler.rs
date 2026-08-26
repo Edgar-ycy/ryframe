@@ -5,7 +5,7 @@ use axum::{
     http::{HeaderMap, header},
     response::IntoResponse,
 };
-use ryframe_application::system::file::{
+use ryframe_application::system::content::{
     AVATAR_BUCKET, DownloadedFile, UPLOAD_BUCKET, UploadPolicy,
 };
 use ryframe_kernel::{AppError, AppResult as KernelAppResult};
@@ -213,7 +213,7 @@ async fn process_multipart_upload(
             .file
             .upload_single(
                 &current_user,
-                ryframe_application::system::UploadCommand {
+                ryframe_application::system::content::UploadCommand {
                     original_name: filename,
                     data: data.to_vec(),
                     policy,

@@ -1,5 +1,7 @@
 use chrono::{DateTime, Utc};
-use ryframe_application::system::{UserImportJobVo as ServiceJob, UserImportRowVo as ServiceRow};
+use ryframe_application::system::identity::{
+    UserImportJobVo as ServiceJob, UserImportRowVo as ServiceRow,
+};
 use serde::Serialize;
 use utoipa::ToSchema;
 

@@ -4,7 +4,7 @@ use ryframe_application::{
     AuthPolicy, CacheAvailabilityPolicy, ExportPolicy, JobRuntimePolicy, JobSchedulePolicy,
     JobWorkerMode, JobWorkerPolicy, MessagingPolicy, MultiTenancyPolicy, PepperKeyring,
     ServiceAccountPolicy, TenantConfigTransferPolicy, UserImportPolicy,
-    system::DataRetentionPolicy,
+    system::operations::DataRetentionPolicy,
 };
 use ryframe_config::{AppConfig, JobWorkerMode as ConfigJobWorkerMode, RedisMode};
 use ryframe_kernel::{AppError, AppResult};

@@ -178,10 +178,10 @@ mod permission_catalog {
     fn capability_catalog_matches_application_contract() {
         assert_eq!(
             capabilities().len(),
-            ryframe_application::system::CAPABILITY_CATALOG.len()
+            ryframe_application::system::platform::CAPABILITY_CATALOG.len()
         );
         for capability in capabilities() {
-            let application = ryframe_application::system::CAPABILITY_CATALOG
+            let application = ryframe_application::system::platform::CAPABILITY_CATALOG
                 .iter()
                 .find(|candidate| candidate.code == capability.code)
                 .expect("访问目录能力必须存在于应用能力目录");

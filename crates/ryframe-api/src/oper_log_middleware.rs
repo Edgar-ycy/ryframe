@@ -16,7 +16,7 @@ use axum::{
 };
 use ryframe_application::{
     AuditOutbox, AuditRequestContext, scope_audit_request,
-    system::{OperLogStatus, RecordOperLogCommand},
+    system::operations::{OperLogStatus, RecordOperLogCommand},
 };
 use uuid::Uuid;
 

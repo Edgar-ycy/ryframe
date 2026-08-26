@@ -5,10 +5,13 @@ use ryframe_application::{
     AuthorizationCache, JobQueue, JobScheduleService,
     ports::{auth::IdentityAuthorizationReadPort, files::ArtifactStore},
     system::{
-        ConfigService, DataRetentionService, DictCacheStore, DictService, ExportPersistencePorts,
-        ExportResourceServices, ExportService, FileService, LoginInfoService, MessageService,
-        OperLogService, OverviewService, PostExportService, ProductService, RoleService,
-        TenantConfigTransferService, TenantDataMigrationService, UserImportService, UserService,
+        content::{ConfigService, DictCacheStore, DictService, FileService, PostExportService},
+        identity::{RoleService, UserImportService, UserService},
+        operations::{
+            DataRetentionService, ExportPersistencePorts, ExportResourceServices, ExportService,
+            LoginInfoService, MessageService, OperLogService, OverviewService,
+        },
+        platform::{ProductService, TenantConfigTransferService, TenantDataMigrationService},
     },
 };
 use ryframe_db::ControlDatabaseCluster;
@@ -146,7 +149,7 @@ pub fn build(
         policies.user_import,
     ));
     let tenant_config_transfer = Arc::new(TenantConfigTransferService::new(
-        ryframe_application::system::TenantConfigTransferDependencies {
+        ryframe_application::system::platform::TenantConfigTransferDependencies {
             persistence: ryframe_db::application_ports::tenant_config::transfer(database.clone()),
             queue: job_queue.clone(),
             user: user.clone(),
@@ -155,7 +158,7 @@ pub fn build(
             authorization_cache: authorization_cache.clone(),
             archive: super::tenant_config_archive::codec(),
         },
-        ryframe_application::system::TenantConfigTransferSettings {
+        ryframe_application::system::platform::TenantConfigTransferSettings {
             target_catalog: ryframe_api::tenant_config_target_catalog()?,
             config: policies.tenant_config_transfer,
         },

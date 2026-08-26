@@ -1,5 +1,5 @@
 use crate::http::HttpResult;
-use ryframe_application::system::LoginInfoQuery;
+use ryframe_application::system::operations::LoginInfoQuery;
 use ryframe_kernel::{PaginationPolicy, ValidatedPageQuery};
 
 crate::list_query!(pub LoginLogPageQuery, LoginLogFilterQuery {

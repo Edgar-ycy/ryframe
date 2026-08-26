@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use ryframe_application::system::{
+use ryframe_application::system::platform::{
     CapabilityCatalogVo as ServiceCapabilityCatalogVo,
     CapabilityOverrideVo as ServiceCapabilityOverrideVo,
     EffectiveCapabilityVo as ServiceEffectiveCapabilityVo,

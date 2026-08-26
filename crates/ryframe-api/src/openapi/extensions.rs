@@ -123,7 +123,7 @@ fn menu_route_contract() -> serde_json::Value {
 }
 
 fn product_capability_contract() -> serde_json::Value {
-    let capabilities = ryframe_application::system::CAPABILITY_CATALOG
+    let capabilities = ryframe_application::system::platform::CAPABILITY_CATALOG
         .iter()
         .map(|descriptor| {
             serde_json::json!({
@@ -184,7 +184,7 @@ fn permission_catalog_contract() -> serde_json::Value {
 fn route_contract() -> serde_json::Value {
     let bindings = crate::permission_catalog::route_capability_bindings();
     let mut endpoint_keys = BTreeSet::new();
-    for descriptor in ryframe_application::system::CAPABILITY_CATALOG {
+    for descriptor in ryframe_application::system::platform::CAPABILITY_CATALOG {
         for permission in descriptor.permission_codes {
             assert!(
                 bindings
@@ -212,7 +212,7 @@ fn route_contract() -> serde_json::Value {
                 binding.method,
                 binding.path
             );
-            let descriptor = ryframe_application::system::CAPABILITY_CATALOG
+            let descriptor = ryframe_application::system::platform::CAPABILITY_CATALOG
                 .iter()
                 .find(|descriptor| descriptor.code == binding.capability_code)
                 .expect("route capability must exist in the compiled catalog");

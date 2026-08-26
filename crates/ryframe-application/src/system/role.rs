@@ -11,7 +11,7 @@ use crate::{
     ports::system::{RoleFilter, RoleReadPort, RoleRecord, RoleWritePort, RoleWriteTransaction},
 };
 
-use super::{OptionItem, OptionList};
+use super::option::{OptionItem, OptionList};
 
 fn first_missing_id<T, F>(requested_ids: &[i64], existing: &[T], id: F) -> Option<i64>
 where

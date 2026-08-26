@@ -15,7 +15,7 @@ use ryframe_application::{
             UserQueryRecord,
         },
     },
-    system::{CaptchaStore, InMemoryCaptchaStore},
+    system::identity::{CaptchaStore, InMemoryCaptchaStore},
 };
 
 fn user(status: &str) -> UserQueryRecord {

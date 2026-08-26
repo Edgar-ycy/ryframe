@@ -4,7 +4,7 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State},
 };
-use ryframe_application::system::{CreatePermissionCommand, UpdatePermissionCommand};
+use ryframe_application::system::identity::{CreatePermissionCommand, UpdatePermissionCommand};
 use ryframe_macro::{delete, get, post, put, route};
 use validator::Validate;
 

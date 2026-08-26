@@ -3,7 +3,7 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State},
 };
-use ryframe_application::system::{
+use ryframe_application::system::platform::{
     ApplyProductChangeCommand, CapabilityOverrideInput, CapabilitySnapshotInput,
     CreateProductPlanCommand, CreateProductPlanVersionCommand, ProductChangeTarget,
     UpdateProductPlanCommand, UpdateProductPlanVersionCommand,

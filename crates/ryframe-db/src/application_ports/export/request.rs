@@ -16,7 +16,7 @@ use ryframe_application::{
         CreateExportRecord, ExportRequestPersistencePort, ExportRequestTransaction,
         ExportRequesterRecord,
     },
-    system::ExportSelection,
+    system::operations::ExportSelection,
 };
 
 struct DatabaseExportRequestPersistence {

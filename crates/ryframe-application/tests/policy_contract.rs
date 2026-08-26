@@ -6,7 +6,7 @@ use ryframe_application::{
 };
 use ryframe_application::{
     ports::auth::IdentityRoleRecord,
-    system::{RoleOptionPurpose, parse_log_time_range},
+    system::{identity::RoleOptionPurpose, operations::parse_log_time_range},
 };
 use ryframe_kernel::{AppError, AppResult};
 

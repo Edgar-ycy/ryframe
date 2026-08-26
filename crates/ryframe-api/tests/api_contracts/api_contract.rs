@@ -188,7 +188,7 @@ mod export_dto {
 
 mod role_dto {
     use axum::{extract::Query, http::Uri};
-    use ryframe_application::system::RoleOptionPurpose;
+    use ryframe_application::system::identity::RoleOptionPurpose;
     use ryframe_kernel::PaginationPolicy;
 
     use super::{RoleOptionPurposeDto, RoleOptionQuery};

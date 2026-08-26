@@ -5,7 +5,9 @@ use ryframe_kernel::{AppError, AppResult};
 use serde::Serialize;
 
 use crate::EnqueueJob;
-use crate::system::{DATA_RETENTION_JOB_TYPE, EXPORT_CLEANUP_JOB_TYPE, MESSAGE_RETENTION_JOB_TYPE};
+use crate::system::operations::{
+    DATA_RETENTION_JOB_TYPE, EXPORT_CLEANUP_JOB_TYPE, MESSAGE_RETENTION_JOB_TYPE,
+};
 
 /// 调度目标允许的租户范围。
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

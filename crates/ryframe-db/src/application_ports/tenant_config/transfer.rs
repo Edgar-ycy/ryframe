@@ -275,14 +275,16 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
     async fn load_resources<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> ryframe_kernel::AppResult<ryframe_application::system::TenantConfigPackageResources> {
+    ) -> ryframe_kernel::AppResult<
+        ryframe_application::system::platform::TenantConfigPackageResources,
+    > {
         super::transfer_sql::load_resources_on(&self.transaction, tenant_id).await
     }
 
     async fn apply_resources<'a>(
         &'a self,
         tenant_id: &'a str,
-        resources: &'a ryframe_application::system::TenantConfigPackageResources,
+        resources: &'a ryframe_application::system::platform::TenantConfigPackageResources,
         plan_items: &'a [TenantConfigTransferItemRecord],
         now: chrono::DateTime<chrono::Utc>,
     ) -> ryframe_kernel::AppResult<()> {
@@ -312,9 +314,9 @@ impl TenantConfigTransferTransaction for DatabaseTenantConfigTransferTransaction
     async fn restore_snapshot<'a>(
         &'a self,
         tenant_id: &'a str,
-        snapshot: &'a ryframe_application::system::TenantConfigPackageResources,
+        snapshot: &'a ryframe_application::system::platform::TenantConfigPackageResources,
         transfer_id: i64,
-        target_catalog: &'a ryframe_application::system::TenantConfigTargetCatalog,
+        target_catalog: &'a ryframe_application::system::platform::TenantConfigTargetCatalog,
         now: chrono::DateTime<chrono::Utc>,
     ) -> ryframe_kernel::AppResult<()> {
         super::transfer_sql::restore_snapshot_in_transaction(

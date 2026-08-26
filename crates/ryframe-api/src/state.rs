@@ -7,12 +7,20 @@ use ryframe_application::{
     generated::GeneratedServices,
     ports::tenants::TenantRuntimeReadPort,
     system::{
-        AuthorizationDiagnosticService, CaptchaStore, ConfigService, DataRetentionService,
-        DeptService, DictService, ExportService, FileService, LoginInfoService, MenuService,
-        MessageService, NoticeService, OnlineUserService, OperLogService, OverviewService,
-        PermissionService, ProductService, ProfileService, RoleService, ServiceAccountService,
-        TenantConfigTransferService, TenantDataMigrationService, TenantService, TenantUsageService,
-        UserImportService, UserService, WebSocketTicketService,
+        content::{ConfigService, DictService, FileService, NoticeService},
+        identity::{
+            CaptchaStore, DeptService, MenuService, PermissionService, ProfileService, RoleService,
+            UserImportService, UserService, WebSocketTicketService,
+        },
+        operations::{
+            DataRetentionService, ExportService, LoginInfoService, MessageService,
+            OnlineUserService, OperLogService, OverviewService,
+        },
+        platform::{
+            AuthorizationDiagnosticService, ProductService, ServiceAccountService,
+            TenantConfigTransferService, TenantDataMigrationService, TenantService,
+            TenantUsageService,
+        },
     },
 };
 use ryframe_kernel::Localizer;

@@ -17,10 +17,16 @@ use ryframe_application::{
     generated::{GeneratedPersistencePorts, GeneratedServices},
     ports::files::ArtifactStore,
     system::{
-        AuthorizationDiagnosticService, CaptchaStore, DeptService, InMemoryCaptchaStore,
-        MenuService, NoticeService, OnlineUserService, PermissionService, ProfileService,
-        ServiceAccountReadDependencies, ServiceAccountService, TenantService, TenantUsageService,
-        WebSocketTicketService,
+        content::NoticeService,
+        identity::{
+            CaptchaStore, DeptService, InMemoryCaptchaStore, MenuService, PermissionService,
+            ProfileService, WebSocketTicketService,
+        },
+        operations::OnlineUserService,
+        platform::{
+            AuthorizationDiagnosticService, ServiceAccountReadDependencies, ServiceAccountService,
+            TenantService, TenantUsageService,
+        },
     },
 };
 use ryframe_config::AppConfig;

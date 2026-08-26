@@ -161,7 +161,9 @@ impl TenantConfigTransferPersistencePort for DatabaseTenantConfigTransferPersist
     async fn load_resources<'a>(
         &'a self,
         tenant_id: &'a str,
-    ) -> ryframe_kernel::AppResult<ryframe_application::system::TenantConfigPackageResources> {
+    ) -> ryframe_kernel::AppResult<
+        ryframe_application::system::platform::TenantConfigPackageResources,
+    > {
         super::super::transfer_sql::load_resources_on(self.database.write(), tenant_id).await
     }
 

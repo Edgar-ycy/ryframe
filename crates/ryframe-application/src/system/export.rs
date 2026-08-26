@@ -15,8 +15,8 @@ use crate::{
 };
 
 use super::{
-    ConfigService, DictService, LoginInfoService, OperLogService, PostExportService, RoleService,
-    UserService,
+    config::ConfigService, dict::DictService, login_info::LoginInfoService,
+    oper_log::OperLogService, post_export::PostExportService, role::RoleService, user::UserService,
 };
 
 mod cleanup;

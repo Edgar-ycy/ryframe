@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use ryframe_kernel::{ActorContext, ExportQuerySnapshot};
 use serde_json::Value;
 
-use crate::{EnqueueJob, system::ExportSelection};
+use crate::{EnqueueJob, system::operations::ExportSelection};
 
 use super::ExportRequesterRecord;
 

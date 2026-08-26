@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::system::ServiceCapabilityDescriptor;
+use crate::system::platform::ServiceCapabilityDescriptor;
 
 /// 编译期固定的 Agent 查询能力，不接受客户端传入 operation、路径或权限码。
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize)]

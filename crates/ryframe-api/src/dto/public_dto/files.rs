@@ -3,7 +3,7 @@ use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::Serialize;
 use utoipa::ToSchema;
 
-use ryframe_application::system::UploadResponse as ServiceUploadResponse;
+use ryframe_application::system::content::UploadResponse as ServiceUploadResponse;
 
 /// 文件上传响应。
 #[derive(Debug, Serialize, ToSchema)]

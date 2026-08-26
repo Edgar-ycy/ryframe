@@ -6,7 +6,7 @@ use axum::{
     http::{HeaderMap, HeaderValue, header},
     response::{IntoResponse, Response},
 };
-use ryframe_application::system::{
+use ryframe_application::system::platform::{
     CreateDelegationCommand, ServiceAccountService, ServiceDelegationTargetVo,
 };
 use ryframe_kernel::AppError;

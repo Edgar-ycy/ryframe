@@ -4,7 +4,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
 };
-use ryframe_application::system::RoleListParams;
+use ryframe_application::system::identity::RoleListParams;
 use ryframe_auth::rbac;
 use ryframe_kernel::AppError;
 use ryframe_kernel::ValidatedPageQuery;

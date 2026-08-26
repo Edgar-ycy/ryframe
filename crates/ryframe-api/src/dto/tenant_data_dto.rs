@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use ryframe_application::system as service;
+use ryframe_application::system::platform as service;
 use ryframe_kernel::{AppError, ValidatedPageQuery};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};

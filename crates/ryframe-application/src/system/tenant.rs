@@ -14,7 +14,7 @@ use serde::Serialize;
 use provisioning::provision_new_tenant_in_transaction;
 use validation::*;
 
-use super::ProductService;
+use super::product::ProductService;
 use crate::{
     AuthorizationCache,
     ports::tenants::{

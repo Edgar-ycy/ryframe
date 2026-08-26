@@ -1,6 +1,6 @@
 use crate::http::HttpResult;
 use chrono::{DateTime, Utc};
-use ryframe_application::system::TenantUsagePageParams;
+use ryframe_application::system::platform::TenantUsagePageParams;
 use ryframe_kernel::{PaginationPolicy, ValidatedPageQuery};
 use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};

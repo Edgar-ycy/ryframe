@@ -19,6 +19,58 @@ TEST_ROOT = SCRIPT.parents[1] / "target" / "script-tests"
 TEST_ROOT.mkdir(parents=True, exist_ok=True)
 
 
+class SystemDomainSurfaceGateTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = TEST_ROOT / f"system-domains-{uuid.uuid4().hex}"
+        self.system_root = self.root / "crates/ryframe-application/src/system"
+        self.system_root.mkdir(parents=True)
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.root)
+
+    def validate(self, source: str) -> list[str]:
+        (self.system_root / "mod.rs").write_text(source, encoding="utf-8")
+        errors: list[str] = []
+        MODULE.validate_system_domain_surface(self.root, errors)
+        return errors
+
+    def test_accepts_only_four_domain_modules(self) -> None:
+        source = "\n".join(
+            [
+                "mod user;",
+                "pub mod content;",
+                "pub mod identity;",
+                "pub mod operations;",
+                "pub mod platform;",
+            ]
+        )
+        self.assertEqual(self.validate(source), [])
+
+    def test_rejects_public_leaf_module(self) -> None:
+        source = "\n".join(
+            [
+                "pub mod content;",
+                "pub mod identity;",
+                "pub mod operations;",
+                "pub mod platform;",
+                "pub mod user;",
+            ]
+        )
+        self.assertTrue(any("公开模块" in error for error in self.validate(source)))
+
+    def test_rejects_root_compatibility_reexport(self) -> None:
+        source = "\n".join(
+            [
+                "pub mod content;",
+                "pub mod identity;",
+                "pub mod operations;",
+                "pub mod platform;",
+                "pub use identity::UserService;",
+            ]
+        )
+        self.assertTrue(any("re-export" in error for error in self.validate(source)))
+
+
 class LegacyPersistenceApiGateTests(unittest.TestCase):
     def setUp(self) -> None:
         self.root = TEST_ROOT / f"architecture-{uuid.uuid4().hex}"

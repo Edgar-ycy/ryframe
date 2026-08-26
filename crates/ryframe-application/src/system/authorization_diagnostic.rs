@@ -15,7 +15,7 @@ use crate::{
     },
 };
 
-use super::UserService;
+use super::user::UserService;
 
 #[derive(Debug, Serialize)]
 pub struct AuthorizationDiagnosticVo {

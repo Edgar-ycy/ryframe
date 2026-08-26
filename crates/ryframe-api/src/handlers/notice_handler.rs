@@ -4,7 +4,8 @@ use axum::{
     extract::{Extension, Path, Query, State},
 };
 use ryframe_application::system::{
-    MessageAudienceKind, MessageAudienceSelector, NoticeListParams, PublishMessageParams,
+    content::NoticeListParams,
+    operations::{MessageAudienceKind, MessageAudienceSelector, PublishMessageParams},
 };
 use ryframe_kernel::AppError;
 use ryframe_kernel::LocalizedText;

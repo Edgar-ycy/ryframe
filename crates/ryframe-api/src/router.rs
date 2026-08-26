@@ -20,7 +20,7 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete as delete_route, get as get_route, post},
 };
-use ryframe_application::system::OnlineUserService;
+use ryframe_application::system::operations::OnlineUserService;
 use ryframe_auth::jwt::Claims;
 use ryframe_kernel::AppError;
 use ryframe_macro::get;

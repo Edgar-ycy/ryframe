@@ -4,7 +4,7 @@ use ryframe_application::{
         system::DeptRecord,
         users::{UserQueryDetailRecord, UserQueryRecord},
     },
-    system::UserDetailVo,
+    system::identity::UserDetailVo,
 };
 
 fn detail(dept_id: Option<i64>, department: Option<DeptRecord>) -> UserQueryDetailRecord {

@@ -7,7 +7,7 @@ use crate::{
     ports::authorization::AuthorizationMirrorTransaction,
     ports::jobs::BackgroundJobTransaction,
     ports::product::ProductTransactionPort,
-    system::{TenantConfigPackageResources, TenantConfigTargetCatalog},
+    system::platform::{TenantConfigPackageResources, TenantConfigTargetCatalog},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

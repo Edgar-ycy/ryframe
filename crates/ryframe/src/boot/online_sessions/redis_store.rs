@@ -1,7 +1,7 @@
 use chrono::Utc;
 use redis::AsyncCommands;
 use ryframe_adapters::RedisClient;
-use ryframe_application::system::{OnlineSessionMetadataStore, UserSession};
+use ryframe_application::system::operations::{OnlineSessionMetadataStore, UserSession};
 use ryframe_kernel::{AppError, AppResult};
 
 use super::{

@@ -2,7 +2,7 @@ use serde::Deserialize;
 use utoipa::ToSchema;
 
 use crate::http::HttpResult;
-use ryframe_application::system::ConfigListParams;
+use ryframe_application::system::content::ConfigListParams;
 use ryframe_kernel::{PaginationPolicy, ValidatedPageQuery};
 
 crate::list_query!(pub ConfigListQuery, ConfigFilterQuery {

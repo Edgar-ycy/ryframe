@@ -3,7 +3,7 @@ use axum::{
     Json, Router,
     extract::{Extension, Path, Query, State},
 };
-use ryframe_application::system::{
+use ryframe_application::system::operations::{
     MessageAudienceKind, MessageAudienceSelector, PublishMessageParams,
 };
 use ryframe_auth::permission::check_permission;

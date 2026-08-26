@@ -6,7 +6,7 @@ use ryframe_api::message_socket::MessageHub;
 use ryframe_application::{
     AUTHORIZATION_CHANGED_REDIS_CHANNEL,
     ports::tenants::TenantRuntimeReadPort,
-    system::{MESSAGE_DISPATCH_REDIS_CHANNEL, MessageService},
+    system::operations::{MESSAGE_DISPATCH_REDIS_CHANNEL, MessageService},
 };
 use tokio::task::JoinHandle;
 

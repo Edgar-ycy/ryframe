@@ -5,7 +5,7 @@ use axum::{
     extract::{Path, Query, State},
     http::HeaderMap,
 };
-use ryframe_application::system::{
+use ryframe_application::system::platform::{
     BackupPointListParams, CreateMigrationCommand, DataTargetListParams, MigrationActionCommand,
     MigrationPreviewRequest,
 };

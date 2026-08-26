@@ -1,16 +1,19 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, Utc};
-use ryframe_application::system::tenant::config_transfer::compare_resources;
+use ryframe_application::system::platform::compare_resources;
 use ryframe_application::{
     next_id,
     ports::tenant_config::{
         TenantConfigRequesterRecord, TenantConfigTransferItemRecord, TenantConfigurationFenceRecord,
     },
     system::{
-        CONFIG_PACKAGE_BUCKET, PortableConfig, PortableDepartment, PortableDictData,
-        PortableDictType, PortableMenu, PortablePermission, PortablePost, PortableRole,
-        TenantConfigPackageResources, TenantConfigTargetCatalog,
+        content::CONFIG_PACKAGE_BUCKET,
+        platform::{
+            PortableConfig, PortableDepartment, PortableDictData, PortableDictType, PortableMenu,
+            PortablePermission, PortablePost, PortableRole, TenantConfigPackageResources,
+            TenantConfigTargetCatalog,
+        },
     },
     tenant_config_stable_key::*,
 };

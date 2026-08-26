@@ -8,8 +8,9 @@ use ryframe_application::{
     JobWorkerPolicy, MultiTenancyPolicy, ScheduleMetricsObserver, ScheduledJobTargetRegistry,
     ports::jobs::ExecutionTenantScope,
     system::{
-        DataRetentionService, ExportService, MessageService, TenantConfigTransferService,
-        TenantDataMigrationService, UserImportService,
+        identity::UserImportService,
+        operations::{DataRetentionService, ExportService, MessageService},
+        platform::{TenantConfigTransferService, TenantDataMigrationService},
     },
 };
 use ryframe_kernel::{AppError, AppResult};

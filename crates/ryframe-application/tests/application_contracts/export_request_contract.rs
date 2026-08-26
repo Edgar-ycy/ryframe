@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use ryframe_application::{ports::export::*, system::export::*};
+use ryframe_application::{ports::export::*, system::operations::*};
 use ryframe_kernel::*;
 
 mod filters {
@@ -278,7 +278,7 @@ mod preflight {
 
 mod types {
     use super::*;
-    use ryframe_application::system::RoleExportFilter;
+    use ryframe_application::system::operations::RoleExportFilter;
 
     #[test]
     fn worker_accepts_only_current_strict_snapshot() {

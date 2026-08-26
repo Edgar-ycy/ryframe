@@ -4,7 +4,9 @@ use chrono::{DateTime, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use sha2::{Digest, Sha256};
 
-use super::super::super::{CAPABILITY_CATALOG, CapabilityRequirement};
+use super::super::super::{
+    product::CapabilityRequirement, product_capability_catalog::CAPABILITY_CATALOG,
+};
 use super::{
     NAME_MAX_CHARS, STABLE_CODE_MAX_BYTES, TRANSFER_STABLE_KEY_MAX_CHARS,
     TenantConfigCatalogSummary, TenantConfigPackageLimits, TenantConfigPackageManifest,

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use ryframe_application::system::{
+use ryframe_application::system::operations::{
     ConfigExportFilter, DictTypeExportFilter, ExportSelection, LoginLogExportFilter,
     OperLogExportFilter, PostExportFilter, RoleExportFilter, UserExportFilter,
 };
@@ -230,8 +230,10 @@ pub struct ExportDeletionAcceptedDto {
     pub removed_unread_count: u64,
 }
 
-impl From<ryframe_application::system::ExportDeletionResult> for ExportDeletionAcceptedDto {
-    fn from(result: ryframe_application::system::ExportDeletionResult) -> Self {
+impl From<ryframe_application::system::operations::ExportDeletionResult>
+    for ExportDeletionAcceptedDto
+{
+    fn from(result: ryframe_application::system::operations::ExportDeletionResult) -> Self {
         Self {
             accepted_ids: result
                 .accepted_ids

@@ -16,7 +16,7 @@ impl MessageWakeupPublisher for RedisMessageWakeupPublisher {
     async fn publish(&self, message_id: i64) -> Result<(), String> {
         self.client
             .publish(
-                ryframe_application::system::MESSAGE_DISPATCH_REDIS_CHANNEL,
+                ryframe_application::system::operations::MESSAGE_DISPATCH_REDIS_CHANNEL,
                 message_id.to_string(),
             )
             .await

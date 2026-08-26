@@ -4,7 +4,7 @@ use axum::{
     Json,
     extract::{Path, Query, State},
 };
-use ryframe_application::system::{CreateUserParams, UpdateUserParams};
+use ryframe_application::system::identity::{CreateUserParams, UpdateUserParams};
 use ryframe_kernel::AppError;
 use ryframe_macro::{delete, get, post, put};
 use validator::Validate;

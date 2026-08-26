@@ -13,12 +13,12 @@ pub(super) fn filter_exportable_resources(
         .iter()
         .map(|requirement| (requirement.code.as_str(), requirement))
         .collect::<BTreeMap<_, _>>();
-    let disabled_permissions = crate::system::CAPABILITY_CATALOG
+    let disabled_permissions = crate::system::product_capability_catalog::CAPABILITY_CATALOG
         .iter()
         .filter(|descriptor| !enabled_by_code.contains_key(descriptor.code))
         .flat_map(|descriptor| descriptor.permission_codes.iter().copied())
         .collect::<BTreeSet<_>>();
-    let disabled_routes = crate::system::CAPABILITY_CATALOG
+    let disabled_routes = crate::system::product_capability_catalog::CAPABILITY_CATALOG
         .iter()
         .filter(|descriptor| !enabled_by_code.contains_key(descriptor.code))
         .flat_map(|descriptor| descriptor.route_keys.iter().copied())
@@ -146,7 +146,7 @@ pub(super) fn filter_exportable_resources(
         role.permission_codes
             .retain(|code| allowed_permissions.contains(code));
     }
-    let required_codes = crate::system::CAPABILITY_CATALOG
+    let required_codes = crate::system::product_capability_catalog::CAPABILITY_CATALOG
         .iter()
         .filter(|descriptor| {
             resources.permissions.iter().any(|permission| {

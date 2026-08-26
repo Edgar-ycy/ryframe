@@ -12,7 +12,7 @@ use sea_orm::{
     TransactionTrait, sea_query::LockType,
 };
 
-use ryframe_application::system::ProductService;
+use ryframe_application::system::platform::ProductService;
 use ryframe_application::{
     AuthorizationCache, PersistenceTransaction, TransactionAuditMode,
     ports::system::{RolePermissionRef, RoleRecord, RoleWritePort, RoleWriteTransaction},

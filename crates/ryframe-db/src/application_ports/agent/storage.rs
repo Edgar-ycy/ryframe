@@ -21,7 +21,7 @@ use ryframe_application::{
         AgentPersistenceTransaction, AgentPostRecord, AgentQueryPage, AgentRowScope,
         AgentTenantRecord, AgentUserRecord,
     },
-    system::ProductService,
+    system::platform::ProductService,
 };
 
 pub fn port(

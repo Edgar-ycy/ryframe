@@ -18,8 +18,10 @@ use uuid::Uuid;
 use validator::Validate;
 
 use super::{
-    DownloadedFile, FileService, IMPORT_BUCKET, UploadCommand, UploadPolicy, UploadResponse,
-    UserService,
+    file::{
+        DownloadedFile, FileService, IMPORT_BUCKET, UploadCommand, UploadPolicy, UploadResponse,
+    },
+    user::UserService,
 };
 use crate::{
     ClaimedBackgroundJob, EnqueueJob, JobHandler, JobQueue,

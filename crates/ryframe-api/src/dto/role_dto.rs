@@ -2,7 +2,7 @@ use crate::{
     dto::option_dto::{OptionQuery, ResolvedOptionQuery},
     http::HttpResult,
 };
-use ryframe_application::system::RoleOptionPurpose;
+use ryframe_application::system::identity::RoleOptionPurpose;
 use ryframe_kernel::PaginationPolicy;
 use serde::Deserialize;
 use utoipa::{IntoParams, ToSchema};

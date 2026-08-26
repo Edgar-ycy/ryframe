@@ -9,7 +9,7 @@ pub(in crate::router) fn service_delegations(state: AppState) -> Router {
         from_fn_with_state(
             CapabilityGuardState::new(
                 state,
-                ryframe_application::system::SERVICE_ACCOUNTS_CAPABILITY,
+                ryframe_application::system::platform::SERVICE_ACCOUNTS_CAPABILITY,
             ),
             capability_guard,
         ),

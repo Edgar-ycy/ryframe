@@ -3,7 +3,7 @@ use axum::{
     Json, Router,
     extract::{Path, Query, State},
 };
-use ryframe_application::system::{CreateDeptCommand, UpdateDeptCommand};
+use ryframe_application::system::identity::{CreateDeptCommand, UpdateDeptCommand};
 use ryframe_macro::{delete, get, post, put, route};
 use validator::Validate;
 

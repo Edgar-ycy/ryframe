@@ -5,7 +5,7 @@ use ryframe_api::monitor::{
     DatabaseMonitor, DatabaseNodeHealth, DatabaseTopologyHealth, DependencyHealthCache,
     DependencyStatus,
 };
-use ryframe_application::system::FileService;
+use ryframe_application::system::content::FileService;
 use ryframe_db::{ControlDatabaseCluster, SeaOrmDatabaseMonitor};
 use tokio::{sync::watch, task::JoinHandle};
 

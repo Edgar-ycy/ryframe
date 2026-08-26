@@ -70,7 +70,7 @@ impl TenantConfigTransferService {
         prepared: &PreparedApply,
         source: RollbackSnapshotSource,
     ) -> AppResult<super::super::lifecycle::RollbackSnapshotFile> {
-        let snapshot = crate::system::build_tenant_config_package(
+        let snapshot = crate::system::tenant::config_package::build_tenant_config_package(
             Arc::clone(&self.archive),
             source.resources,
             source.capabilities,

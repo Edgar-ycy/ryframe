@@ -3,8 +3,8 @@ use serde::Serialize;
 use utoipa::ToSchema;
 
 use ryframe_application::UserInfo as ServiceUserInfo;
-use ryframe_application::system::profile::UserProfileResponse as ServiceUserProfileResponse;
-use ryframe_application::system::{
+use ryframe_application::system::identity::UserProfileResponse as ServiceUserProfileResponse;
+use ryframe_application::system::identity::{
     RoleBriefVo as ServiceRoleBriefVo, UserDetailVo as ServiceUserDetailVo, UserVo as ServiceUserVo,
 };
 

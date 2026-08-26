@@ -9,7 +9,7 @@ use axum::{
 };
 use axum_extra::extract::cookie::CookieJar;
 use ryframe_application::TenantContext;
-use ryframe_application::system::{LoginStatus, RecordLoginCommand};
+use ryframe_application::system::operations::{LoginStatus, RecordLoginCommand};
 use ryframe_kernel::{AppError, AppResult};
 use validator::Validate;
 
@@ -103,7 +103,7 @@ async fn add_online_user(
     ip: &str,
     user_agent: &str,
 ) -> AppResult<()> {
-    use ryframe_application::system::UserSession;
+    use ryframe_application::system::operations::UserSession;
 
     let login_location = crate::client_ip::get_ip_location(ip);
     let now = chrono::Utc::now();

@@ -1,5 +1,5 @@
 use crate::http::HttpResult;
-use ryframe_application::system::OperLogQuery;
+use ryframe_application::system::operations::OperLogQuery;
 use ryframe_kernel::{PaginationPolicy, ValidatedPageQuery};
 
 crate::list_query!(pub OperLogPageQuery, OperLogFilterQuery {

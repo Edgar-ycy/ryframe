@@ -17,7 +17,7 @@ use crate::{
         UserQueryDetailRecord, UserQueryReadPort, UserQueryRecord, UserQueryRoleRecord,
         UserWritePersistencePort, UserWriteRecord,
     },
-    system::DeptVo,
+    system::dept::DeptVo,
 };
 
 pub use crate::ports::users::{
