@@ -4,6 +4,7 @@
 //! CI 的高级入口。每类任务放在独立模块中，避免命令解析、业务编排与进程管理互相耦合。
 
 mod check;
+mod ci;
 mod cli;
 mod contract;
 mod dev;
@@ -51,6 +52,7 @@ fn dispatch(cli: Cli) -> Result<()> {
         Command::Resource(command) => resource::run(&command, &cli.frontend_dir),
         Command::ApiSync(command) => contract::api_sync(&command, &cli.frontend_dir),
         Command::Migrate(command) => migration::run(&command),
+        Command::Ci(command) => ci::run(command, &cli.frontend_dir),
         Command::Help(topic) => {
             cli::print_help(topic.as_deref());
             Ok(())

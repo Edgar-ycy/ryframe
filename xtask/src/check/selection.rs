@@ -33,6 +33,31 @@ pub(crate) fn changed_paths(repository: &Path) -> Result<Vec<String>> {
     Ok(paths)
 }
 
+pub(crate) fn changed_paths_between(
+    repository: &Path,
+    base: &str,
+    head: &str,
+) -> Result<Vec<String>> {
+    if !repository.is_dir() {
+        return Err(format!("Git 工作树不存在：{}", repository.display()).into());
+    }
+    if base.trim().is_empty() || head.trim().is_empty() {
+        return Err("CI 变更范围缺少 base 或 head".into());
+    }
+    let output = command_output(
+        repository,
+        "git",
+        &["diff", "--name-only", "-z", base, head, "--"],
+    )?;
+    Ok(output
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(normalize_relative_path)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect())
+}
+
 fn normalize_relative_path(path: &str) -> String {
     path.replace('\\', "/")
 }

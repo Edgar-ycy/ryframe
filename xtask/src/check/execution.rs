@@ -3,7 +3,10 @@ use super::{
         analyze_change_surface, append_changed_file_size_warnings, enforce_change_surface,
         load_change_surface_policy, print_change_surface,
     },
-    context::{BACKEND_SMART_TARGET_DIR, BACKEND_VERIFY_TARGET_DIR, VerifyExecutionContext},
+    context::{
+        BACKEND_CI_TARGET_DIR, BACKEND_SMART_TARGET_DIR, BACKEND_VERIFY_TARGET_DIR,
+        RESOURCE_CI_TARGET_DIR, VerifyExecutionContext,
+    },
     feature::{
         check_feature_registry, feature_matrix_with_jobs, load_feature_registry,
         run_feature_operations, run_feature_tests, validate_feature_registry,
@@ -322,6 +325,68 @@ fn full_verify(context: &VerifyExecutionContext, scope: CheckScope) -> Result<()
         run_pnpm(frontend_dir, &["test:browser-smoke"])?;
     }
     Ok(())
+}
+
+pub(crate) fn ci_rust_gate(frontend_dir: &Path) -> Result<()> {
+    let root = root_dir();
+    let context = VerifyExecutionContext::new(frontend_dir, true)?;
+    let snapshots = prepare_backend_snapshots(
+        &root,
+        &[
+            BackendSnapshotProfile::OpenApiContract,
+            BackendSnapshotProfile::Mysql,
+        ]
+        .into_iter()
+        .collect(),
+    )?;
+    check_feature_registry(&root)?;
+    run_owned(
+        &root,
+        "cargo",
+        &workspace_clippy_args(BACKEND_CI_TARGET_DIR),
+    )?;
+    feature_matrix_with_jobs(&root, BACKEND_CI_TARGET_DIR, context.jobs.backend)?;
+
+    let test_jobs = ci_test_jobs_from(
+        std::env::var("RYFRAME_CI_TEST_JOBS").ok().as_deref(),
+        cfg!(windows),
+        context.jobs.total,
+    )?;
+    let test_args = workspace_test_args(BACKEND_CI_TARGET_DIR, test_jobs);
+    run_owned_with_env(
+        &root,
+        "cargo",
+        &test_args,
+        &snapshots.workspace_test_environment(),
+    )?;
+    resource_workspace_compilation(&root, RESOURCE_CI_TARGET_DIR, context.jobs.resource)?;
+    verify_backend_snapshots(&root, &snapshots)
+}
+
+pub(crate) fn ci_consumer_contract(frontend_dir: &Path) -> Result<()> {
+    require_frontend_dependencies(frontend_dir)?;
+    let root = root_dir();
+    let profiles = [BackendSnapshotProfile::OpenApiContract]
+        .into_iter()
+        .collect();
+    let snapshots = export_and_verify_backend_snapshots(&root, &profiles, BACKEND_CI_TARGET_DIR)?;
+    run_consumer_contract(&root, frontend_dir, &snapshots)
+}
+
+pub(crate) fn ci_test_jobs_from(
+    configured: Option<&str>,
+    windows: bool,
+    fallback: usize,
+) -> Result<usize> {
+    match configured {
+        Some(value) => value
+            .parse::<usize>()
+            .ok()
+            .filter(|jobs| (1..=64).contains(jobs))
+            .ok_or_else(|| "RYFRAME_CI_TEST_JOBS 必须是 1 到 64 的整数".into()),
+        None if windows => Ok(4),
+        None => Ok(fallback.max(1)),
+    }
 }
 
 fn frontend_full_non_consumer(frontend_dir: &Path) -> Result<()> {

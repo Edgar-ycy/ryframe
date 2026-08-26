@@ -1,12 +1,38 @@
 use std::path::PathBuf;
 
 use super::cli::{
-    ApiSyncCommand, CheckScope, CliError, Command, ContractOperation, MigrationCommand,
+    ApiSyncCommand, CheckScope, CiCommand, CliError, Command, ContractOperation, MigrationCommand,
     MigrationOperation, MigrationTarget, ResourceAction, parse,
 };
 
 fn strings(values: &[&str]) -> Vec<String> {
     values.iter().map(ToString::to_string).collect()
+}
+
+#[test]
+fn parses_ci_internal_commands_exactly() {
+    assert_eq!(
+        parse_command(&["ci", "plan"]).unwrap(),
+        Command::Ci(CiCommand::Plan)
+    );
+    assert_eq!(
+        parse_command(&["ci", "preflight"]).unwrap(),
+        Command::Ci(CiCommand::Preflight)
+    );
+    assert_eq!(
+        parse_command(&["ci", "rust-gate"]).unwrap(),
+        Command::Ci(CiCommand::RustGate)
+    );
+    assert_eq!(
+        parse_command(&["ci", "integration"]).unwrap(),
+        Command::Ci(CiCommand::Integration)
+    );
+    assert_eq!(
+        parse_command(&["ci", "consumer-contract"]).unwrap(),
+        Command::Ci(CiCommand::ConsumerContract)
+    );
+    assert!(parse_command(&["ci"]).is_err());
+    assert!(parse_command(&["ci", "rust-gate", "extra"]).is_err());
 }
 
 fn parse_command(values: &[&str]) -> std::result::Result<Command, CliError> {

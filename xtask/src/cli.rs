@@ -20,7 +20,17 @@ pub(crate) enum Command {
     Resource(ResourceCommand),
     ApiSync(ApiSyncCommand),
     Migrate(MigrationCommand),
+    Ci(CiCommand),
     Help(Option<String>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CiCommand {
+    Plan,
+    Preflight,
+    RustGate,
+    Integration,
+    ConsumerContract,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,6 +205,7 @@ pub(crate) fn parse(mut args: Vec<String>) -> Result<Cli, CliError> {
         "resource" => Command::Resource(parse_resource(&args)?),
         "api-sync" => Command::ApiSync(parse_api_sync(&args)?),
         "migrate" => Command::Migrate(parse_migration(&args)?),
+        "ci" => Command::Ci(parse_ci(&args)?),
         _ => return Err(CliError::new(format!("未知命令：{command_name}"))),
     };
 
@@ -202,6 +213,19 @@ pub(crate) fn parse(mut args: Vec<String>) -> Result<Cli, CliError> {
         frontend_dir,
         command,
     })
+}
+
+fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
+    match args {
+        [command] if command == "plan" => Ok(CiCommand::Plan),
+        [command] if command == "preflight" => Ok(CiCommand::Preflight),
+        [command] if command == "rust-gate" => Ok(CiCommand::RustGate),
+        [command] if command == "integration" => Ok(CiCommand::Integration),
+        [command] if command == "consumer-contract" => Ok(CiCommand::ConsumerContract),
+        _ => Err(CliError::new(
+            "用法：cargo xtask ci <plan|preflight|rust-gate|integration|consumer-contract>",
+        )),
+    }
 }
 
 fn parse_scope_options(args: &[String], allow_full: bool) -> Result<(CheckScope, bool), CliError> {
@@ -468,6 +492,9 @@ pub(crate) fn print_help(topic: Option<&str>) {
             "cargo api-sync [--commit GIT_REF] [--frontend-dir PATH]\n  同步开发候选契约，或固定指定提交的正式契约。"
         }
         Some("migrate") => migration_usage(),
+        Some("ci") => {
+            "cargo xtask ci <plan|preflight|rust-gate|integration|consumer-contract>\n  CI 内部稳定入口。"
+        }
         Some("doctor") => "cargo xtask doctor [--frontend-dir PATH]",
         Some("check") => "cargo xtask check [--scope all|backend|frontend] [--frontend-dir PATH]",
         Some("contract") => "cargo xtask contract check [--frontend-dir PATH]",
@@ -498,6 +525,7 @@ fn general_help() -> &'static str {
   cargo xtask check [--scope all|backend|frontend] [--frontend-dir PATH]\n\
   cargo xtask contract check [--frontend-dir PATH]\n\
   cargo xtask migrate freeze\n\
+  cargo xtask ci <plan|preflight|rust-gate|integration|consumer-contract>\n\
   cargo xtask feature-matrix\n\
   cargo xtask release-verify ...\n\n\
 运行 `cargo <命令> --help` 查看单个日常命令的说明。"

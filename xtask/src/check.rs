@@ -19,6 +19,7 @@ mod selection;
 #[path = "check/snapshot.rs"]
 mod snapshot;
 
+pub(crate) use execution::{ci_consumer_contract, ci_rust_gate, ci_test_jobs_from};
 #[allow(unused_imports)]
 pub(crate) use execution::{run, verify};
 #[allow(unused_imports)]
@@ -56,8 +57,9 @@ pub(crate) use model::{
 pub(crate) use resource::resource_test_executable_from_messages;
 #[allow(unused_imports)]
 pub(crate) use selection::{
-    changed_paths, classify_changes, complete_verify_selection, frontend_profile_commands,
-    load_workspace_graph, needs_consumer_contract, reverse_dependency_closure,
+    changed_paths, changed_paths_between, classify_changes, complete_verify_selection,
+    frontend_profile_commands, load_workspace_graph, needs_consumer_contract,
+    reverse_dependency_closure,
 };
 #[allow(unused_imports)]
 pub(crate) use snapshot::{

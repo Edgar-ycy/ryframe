@@ -4,6 +4,8 @@ use std::error::Error;
 
 #[path = "../src/check.rs"]
 mod check;
+#[path = "../src/ci.rs"]
+mod ci;
 #[path = "../src/cli.rs"]
 mod cli;
 #[path = "../src/contract.rs"]
@@ -33,6 +35,8 @@ type Result<T> = std::result::Result<T, Box<dyn Error>>;
 mod check_tests;
 #[path = "internal/child_environment.rs"]
 mod child_environment_tests;
+#[path = "internal/ci.rs"]
+mod ci_tests;
 #[path = "internal/cli.rs"]
 mod cli_tests;
 #[path = "internal/contract.rs"]
