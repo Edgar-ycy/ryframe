@@ -138,7 +138,7 @@ fn build_platform_services(
         config.rate_limit.enabled,
         policies.job_schedule.enabled,
     ));
-    let (service_accounts, agent) =
+    let service_account_services =
         build_service_account_services(database, config, policies, redis_client, background)?;
     let authorization_diagnostic = Arc::new(AuthorizationDiagnosticService::new(
         ryframe_db::application_ports::authorization::diagnostic(database.clone()),
@@ -152,12 +152,17 @@ fn build_platform_services(
         product: Arc::clone(&background.product),
         tenant_data,
         tenant_usage,
-        service_accounts,
-        agent,
+        service_accounts: service_account_services.management,
+        agent: service_account_services.agent,
         tenant_config_transfer: Arc::clone(&background.tenant_config_transfer),
         tenant_data_migration: Arc::clone(&background.tenant_data_migration),
         authorization_diagnostic,
     })
+}
+
+struct ServiceAccountServices {
+    management: Option<Arc<ServiceAccountService>>,
+    agent: Option<Arc<AgentService>>,
 }
 
 fn build_service_account_services(
@@ -166,15 +171,12 @@ fn build_service_account_services(
     policies: &ApplicationPolicies,
     redis_client: &Option<RedisClient>,
     background: &BackgroundServices,
-) -> Result<
-    (
-        Option<Arc<ServiceAccountService>>,
-        Option<Arc<AgentService>>,
-    ),
-    AppError,
-> {
+) -> Result<ServiceAccountServices, AppError> {
     if !policies.service_accounts.enabled() {
-        return Ok((None, None));
+        return Ok(ServiceAccountServices {
+            management: None,
+            agent: None,
+        });
     }
     let redis = redis_client.clone().ok_or_else(|| {
         AppError::Config("启用服务账号后必须配置 Redis，以保证 Agent 多实例限流一致".into())
@@ -208,7 +210,10 @@ fn build_service_account_services(
             ),
         },
     )?);
-    Ok((Some(management), Some(agent)))
+    Ok(ServiceAccountServices {
+        management: Some(management),
+        agent: Some(agent),
+    })
 }
 
 fn build_identity_services(
