@@ -258,7 +258,7 @@ fn windows_smoke(frontend_dir: &Path) -> Result<()> {
         run_owned(&root, "cargo", &windows_check_args(package))?;
     }
     run_owned(&root, "cargo", &windows_process_test_args(jobs))?;
-    resource_workspace_compilation(&root, RESOURCE_CI_TARGET_DIR, jobs)
+    resource_workspace_compilation(&root, frontend_dir, RESOURCE_CI_TARGET_DIR, jobs)
 }
 
 pub(crate) fn windows_check_args(package: &str) -> Vec<String> {

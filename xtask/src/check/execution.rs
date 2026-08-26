@@ -289,6 +289,7 @@ fn full_verify(context: &VerifyExecutionContext, scope: CheckScope) -> Result<()
             || {
                 resource_workspace_compilation(
                     root,
+                    frontend_dir,
                     context.targets.resource.as_str(),
                     budget.resource,
                 )
@@ -354,7 +355,12 @@ pub(crate) fn ci_rust_gate(frontend_dir: &Path) -> Result<()> {
         &test_args,
         &snapshots.workspace_test_environment(),
     )?;
-    resource_workspace_compilation(&root, RESOURCE_CI_TARGET_DIR, context.jobs.resource)?;
+    resource_workspace_compilation(
+        &root,
+        frontend_dir,
+        RESOURCE_CI_TARGET_DIR,
+        context.jobs.resource,
+    )?;
     verify_backend_snapshots(&root, &snapshots)
 }
 

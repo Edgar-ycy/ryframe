@@ -20,9 +20,9 @@ use super::check::{
     default_test_jobs_from, feature_operation_args, feature_test_args, frontend_profile_commands,
     load_change_surface_policy, load_consumer_contract_plan, load_workspace_graph,
     minimal_workspace_check_args, needs_consumer_contract, package_tests_generate_snapshots,
-    resolve_target_dir, resource_test_executable_from_messages, reverse_dependency_closure,
-    validate_feature_combination, verify_job_budget_from, verify_target_policy_from,
-    workspace_clippy_args, workspace_test_args,
+    resolve_target_dir, resource_test_executable_from_messages, resource_workspace_environment,
+    reverse_dependency_closure, validate_feature_combination, verify_job_budget_from,
+    verify_target_policy_from, workspace_clippy_args, workspace_test_args,
 };
 
 static NEXT_REPOSITORY: AtomicU64 = AtomicU64::new(1);
@@ -339,6 +339,28 @@ fn resource_test_executable_is_read_from_cargo_json_messages() {
     assert_eq!(
         resource_test_executable_from_messages(output).unwrap(),
         Path::new("D:\\target\\resource-test.exe")
+    );
+}
+
+#[test]
+fn resource_workspace_environment_uses_selected_frontend_and_target() {
+    assert_eq!(
+        resource_workspace_environment(
+            Path::new("workspace/frontend"),
+            Path::new("target/ci/resource"),
+            "4",
+        ),
+        [
+            ("CARGO_BUILD_JOBS", "4".to_owned()),
+            (
+                "RYFRAME_RESOURCE_WORKSPACE_FRONTEND_DIR",
+                "workspace/frontend".to_owned(),
+            ),
+            (
+                "RYFRAME_RESOURCE_WORKSPACE_TARGET_DIR",
+                "target/ci/resource".to_owned(),
+            ),
+        ]
     );
 }
 
