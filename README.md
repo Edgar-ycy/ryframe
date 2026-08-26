@@ -33,7 +33,7 @@ $env:APP_JOBS_MODE = "external"
 cargo run --locked -p ryframe --bin ryframe-worker
 ```
 
-实际配置字段以 `config/` 中的配置结构和环境变量校验为准。不要把密码、令牌或环境绑定数据提交到仓库。
+实际配置字段以 `config/` 中的配置结构和环境变量校验为准。密码、令牌和环境绑定数据只保存在本机密钥管理或 `.local-tests` 中。
 
 ## 常用检查
 
@@ -42,21 +42,20 @@ cargo verify
 cargo verify --full
 ```
 
-日常检查使用 `cargo verify`，它先区分手写产品代码、测试、生成物、迁移、文档与工具，输出涉及领域、中央热点和修改预算提醒，再根据前后端 Git 变更选择受影响包、反向依赖或前端检查画像；标准资源变更不允许继续手改中央注册。依赖、CI、共享配置和未知变更会自动扩大为完整门禁。提交前使用 `cargo verify --full`，覆盖后端测试、Cargo feature 组合、前端消费契约和浏览器 smoke。`--scope backend|frontend` 可限制主要检查侧，但完整门禁中的资源生成和消费契约仍会跨仓验证。底层 `cargo xtask ...` 是 CI 与维护者使用的内部入口，普通开发不需要记忆。
+日常检查使用 `cargo verify`，它先区分手写产品代码、测试、生成物、迁移、文档与工具，输出涉及领域、中央热点和修改预算提醒，再根据当前变更选择受影响包、反向依赖或前端检查画像；标准资源变更不允许继续手改中央注册。依赖、CI、共享配置和未知变更会自动扩大为完整门禁。完成开发后使用 `cargo verify --full`，覆盖后端测试、Cargo feature 组合、前端消费契约和浏览器 smoke。`--scope backend|frontend` 可限制主要检查侧，但完整门禁中的资源生成和消费契约仍会跨仓验证。底层 `cargo xtask ...` 是 CI 与维护者使用的内部入口，普通开发不需要记忆。
 
-确定性测试必须随代码提交；`.local-tests` 只保存密钥、人工数据、运行结果和环境绑定验收。
+确定性测试必须进入自动化门禁；`.local-tests` 只保存密钥、人工数据、运行结果和环境绑定验收。
 
 ## 契约
 
-后端 OpenAPI 的唯一快照是 `openapi/openapi.json`。前端只通过生成的 operation descriptor 调用接口。涉及接口的提交必须同步生成快照并运行前端消费契约检查。
+后端 OpenAPI 的唯一快照是 `openapi/openapi.json`。前端只通过生成的 operation descriptor 调用接口。接口变化必须同步生成快照并运行前端消费契约检查。
 
 ```powershell
 cargo run --locked -p ryframe-api --bin export_openapi -- openapi/openapi.json
 cargo api-sync
-cargo api-sync --commit HEAD
 ```
 
-无参数的 `cargo api-sync` 从当前后端工作树导出候选契约，并刷新前端派生文件，不修改 `openapi/source.json` 中的正式来源。正式同步要求后端 OpenAPI 已提交，`--commit` 可接收 `HEAD` 或其他 Git 引用，并会固定为完整提交 SHA。
+`cargo api-sync` 从当前后端源码导出候选契约，并刷新前端派生文件。完成后运行前端消费契约检查，确认 operation descriptor 与 OpenAPI 一致。
 
 ## 标准资源
 
@@ -66,7 +65,7 @@ cargo resource post --write
 cargo resource post --explain
 ```
 
-默认只预览可读 diff；`--write` 安全写入生成资产，并刷新当前工作树的候选 OpenAPI 与前端派生契约；`--explain` 输出从清单到页面的完整调用链。资源清单位于 `catalog/resources/`，复杂业务继续放在普通 Rust 扩展中。
+默认只预览可读 diff；`--write` 安全写入生成资产，并刷新候选 OpenAPI 与前端派生契约；`--explain` 输出从清单到页面的完整调用链。资源清单位于 `catalog/resources/`，复杂业务继续放在普通 Rust 扩展中。
 
 ## 文档
 

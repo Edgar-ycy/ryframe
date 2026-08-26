@@ -4,7 +4,7 @@
 
 生产镜像只包含 API、迁移和 Worker 二进制，不包含生成器、文件维护或 reset。基础镜像、CI Action 和工具镜像必须固定完整摘要。
 
-发布前必须完成镜像构建、Compose 展开、Nginx 校验、Prometheus 规则校验、SBOM、漏洞和 license 检查。前后端使用相同版本号和不可移动的同名 tag；先推前端 tag，再推后端 tag。
+发布前必须完成镜像构建、Compose 展开、Nginx 校验、Prometheus 规则校验、SBOM、漏洞和 license 检查，并确认前后端版本一致且已经完成联调。
 
 生产升级不得使用破坏性重建。当前版本只接受全新生产库；已有真实生产旧库需要另行设计非破坏升级方案。
 
