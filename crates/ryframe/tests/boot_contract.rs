@@ -384,3 +384,81 @@ mod tenant_config_archive {
         assert!(matches!(error, AppError::Validation(_)));
     }
 }
+
+mod service_domains {
+    fn service_fields<'a>(source: &'a str, name: &str) -> Vec<&'a str> {
+        let marker = format!("pub struct {name} {{");
+        let body = source
+            .split_once(&marker)
+            .unwrap_or_else(|| panic!("应声明 {name}"))
+            .1
+            .split_once('}')
+            .expect("服务分组结构应闭合")
+            .0;
+        body.lines()
+            .filter_map(|line| line.trim().strip_prefix("pub "))
+            .filter_map(|line| line.split_once(':').map(|(field, _)| field))
+            .collect()
+    }
+
+    #[test]
+    fn api_services_follow_application_domains() {
+        let source = include_str!("../../ryframe-api/src/state.rs");
+        assert_eq!(
+            service_fields(source, "IdentityServices"),
+            [
+                "auth",
+                "user",
+                "role",
+                "permission",
+                "menu",
+                "dept",
+                "user_import",
+                "profile",
+                "captcha",
+                "websocket_ticket",
+            ]
+        );
+        assert_eq!(
+            service_fields(source, "PlatformServices"),
+            [
+                "tenant",
+                "product",
+                "tenant_data",
+                "tenant_usage",
+                "service_accounts",
+                "agent",
+                "tenant_config_transfer",
+                "tenant_data_migration",
+                "authorization_diagnostic",
+            ]
+        );
+        assert_eq!(
+            service_fields(source, "ContentServices"),
+            ["generated", "config", "dict", "file"]
+        );
+        assert_eq!(
+            service_fields(source, "OperationsServices"),
+            [
+                "message",
+                "online_user",
+                "export",
+                "oper_log",
+                "audit_outbox",
+                "job_queue",
+                "job_schedules",
+                "data_retention",
+                "overview",
+                "login_info",
+            ]
+        );
+    }
+
+    #[test]
+    fn refresh_session_port_is_built_once_at_composition_root() {
+        let source = include_str!("../src/boot/services.rs");
+        assert_eq!(source.matches("refresh_sessions::store(").count(), 1);
+        assert!(source.contains("Arc::clone(&refresh_sessions)"));
+        assert!(source.contains("refresh_sessions,\n        &background"));
+    }
+}

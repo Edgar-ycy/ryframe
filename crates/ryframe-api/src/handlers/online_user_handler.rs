@@ -44,7 +44,7 @@ pub async fn list_online_users_page(
     let response_page_size = page.page_size();
     let (rows, total) = state
         .services
-        .identity
+        .operations
         .online_user
         .list_filtered_page(
             &current_user,
@@ -99,7 +99,7 @@ pub async fn force_logout(
     // 令牌均无法使用。
     if let Err(error) = state
         .services
-        .identity
+        .operations
         .online_user
         .remove_user(&current_user.tenant_id, &sid)
         .await

@@ -40,10 +40,9 @@ pub struct IdentityServices {
     pub menu: Arc<MenuService>,
     pub dept: Arc<DeptService>,
     pub user_import: Arc<UserImportService>,
-    pub authorization_diagnostic: Arc<AuthorizationDiagnosticService>,
     pub profile: Arc<ProfileService>,
-    pub online_user: Arc<OnlineUserService>,
     pub captcha: Arc<dyn CaptchaStore>,
+    pub websocket_ticket: Arc<WebSocketTicketService>,
 }
 
 #[derive(Clone)]
@@ -56,6 +55,7 @@ pub struct PlatformServices {
     pub agent: Option<Arc<AgentService>>,
     pub tenant_config_transfer: Arc<TenantConfigTransferService>,
     pub tenant_data_migration: Arc<TenantDataMigrationService>,
+    pub authorization_diagnostic: Arc<AuthorizationDiagnosticService>,
 }
 
 #[derive(Clone)]
@@ -63,13 +63,13 @@ pub struct ContentServices {
     pub generated: GeneratedServices,
     pub config: Arc<ConfigService>,
     pub dict: Arc<DictService>,
-    pub message: Arc<MessageService>,
-    pub websocket_ticket: Arc<WebSocketTicketService>,
     pub file: Arc<FileService>,
 }
 
 #[derive(Clone)]
 pub struct OperationsServices {
+    pub message: Arc<MessageService>,
+    pub online_user: Arc<OnlineUserService>,
     pub export: Arc<ExportService>,
     pub oper_log: Arc<OperLogService>,
     pub audit_outbox: Arc<AuditOutbox>,

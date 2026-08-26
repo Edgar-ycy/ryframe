@@ -135,7 +135,7 @@ async fn main() -> Result<(), AppError> {
             boot::message_listener::spawn(
                 &state.message_hub,
                 redis.client.clone(),
-                services.content.message.clone(),
+                services.operations.message.clone(),
                 services.platform.tenant_data.clone(),
                 state.settings.messaging.enabled,
             )
@@ -143,9 +143,10 @@ async fn main() -> Result<(), AppError> {
         .flatten();
     let mut message_replay_scheduler = starts_background_tasks
         .then(|| {
-            state
-                .message_hub
-                .spawn_replay_scheduler(services.content.message.clone(), shutdown_receiver.clone())
+            state.message_hub.spawn_replay_scheduler(
+                services.operations.message.clone(),
+                shutdown_receiver.clone(),
+            )
         })
         .flatten();
     let router = app::build_app(state, limit.rate_limit_state)?;

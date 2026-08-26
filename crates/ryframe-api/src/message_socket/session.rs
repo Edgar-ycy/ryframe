@@ -25,7 +25,7 @@ pub async fn upgrade(
     validate_websocket_origin(&state, &headers)?;
     let ticket = match state
         .services
-        .content
+        .identity
         .websocket_ticket
         .consume(&query.ticket)
         .await
@@ -66,7 +66,7 @@ pub async fn upgrade(
         )
         .await?;
     let hub = state.message_hub.clone();
-    let service = state.services.content.message.clone();
+    let service = state.services.operations.message.clone();
     Ok(ws.on_upgrade(move |socket| handle_socket(socket, hub, service, ticket)))
 }
 

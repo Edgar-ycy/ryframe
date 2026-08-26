@@ -15,7 +15,7 @@ use ryframe_application::{
     AuditOutbox, AuthService,
     agent::{AgentService, AgentServiceDependencies, service_capability_descriptors},
     generated::{GeneratedPersistencePorts, GeneratedServices},
-    ports::files::ArtifactStore,
+    ports::{auth::RefreshSessionPort, files::ArtifactStore},
     system::{
         identity::{
             CaptchaStore, DeptService, InMemoryCaptchaStore, MenuService, PermissionService,
@@ -81,6 +81,7 @@ pub async fn build_all(
             starts_background_tasks,
         },
     )?;
+    let refresh_sessions = super::refresh_sessions::store(redis_client.clone());
     let platform = build_platform_services(
         database,
         Arc::clone(&tenant_data),
@@ -96,10 +97,17 @@ pub async fn build_all(
         policies,
         redis_client,
         starts_background_tasks,
+        Arc::clone(&refresh_sessions),
         &background,
     )?;
-    let content = build_content_services(policies, redis_client, generated, &background);
-    let operations = build_operations_services(database, config, &background);
+    let content = build_content_services(generated, &background);
+    let operations = build_operations_services(
+        database,
+        config,
+        redis_client,
+        refresh_sessions,
+        &background,
+    );
 
     Ok(AppServices {
         identity,
@@ -132,6 +140,12 @@ fn build_platform_services(
     ));
     let (service_accounts, agent) =
         build_service_account_services(database, config, policies, redis_client, background)?;
+    let authorization_diagnostic = Arc::new(AuthorizationDiagnosticService::new(
+        ryframe_db::application_ports::authorization::diagnostic(database.clone()),
+        Arc::clone(&background.user),
+        background.authorization_cache.clone(),
+        policies.messaging.enabled() && redis_client.is_some(),
+    ));
 
     Ok(PlatformServices {
         tenant,
@@ -142,6 +156,7 @@ fn build_platform_services(
         agent,
         tenant_config_transfer: Arc::clone(&background.tenant_config_transfer),
         tenant_data_migration: Arc::clone(&background.tenant_data_migration),
+        authorization_diagnostic,
     })
 }
 
@@ -202,6 +217,7 @@ fn build_identity_services(
     policies: &ApplicationPolicies,
     redis_client: &Option<RedisClient>,
     starts_background_tasks: bool,
+    refresh_sessions: Arc<dyn RefreshSessionPort>,
     background: &BackgroundServices,
 ) -> Result<IdentityServices, AppError> {
     let permission = Arc::new(PermissionService::new(
@@ -218,13 +234,12 @@ fn build_identity_services(
         &config.auth.access_token_expire,
         &config.auth.refresh_token_expire,
     )?);
-    let refresh_session_port = super::refresh_sessions::store(redis_client.clone());
     let auth = Arc::new(AuthService::new(
         Arc::clone(&background.identity_read),
         policies.auth,
         token_settings,
         super::login_protection::store(redis_client.clone()),
-        Arc::clone(&refresh_session_port),
+        refresh_sessions,
         background.authorization_cache.clone(),
     ));
     let menu = Arc::new(MenuService::new(
@@ -244,12 +259,6 @@ fn build_identity_services(
         ),
         background.authorization_cache.clone(),
     ));
-    let authorization_diagnostic = Arc::new(AuthorizationDiagnosticService::new(
-        ryframe_db::application_ports::authorization::diagnostic(database.clone()),
-        Arc::clone(&background.user),
-        background.authorization_cache.clone(),
-        policies.messaging.enabled() && redis_client.is_some(),
-    ));
     let profile = Arc::new(ProfileService::new(
         ryframe_db::application_ports::users::profile(
             database.clone(),
@@ -257,24 +266,6 @@ fn build_identity_services(
         ),
         background.authorization_cache.clone(),
     ));
-    let online_user: Arc<OnlineUserService> = if let Some(redis) = redis_client {
-        Arc::new(OnlineUserService::new(
-            super::online_sessions::redis_store(redis.clone()),
-            refresh_session_port,
-        ))
-    } else {
-        Arc::new(OnlineUserService::new_in_memory(refresh_session_port))
-    };
-    let captcha: Arc<dyn CaptchaStore> = if let Some(redis) = redis_client {
-        redis_captcha_store(redis.clone(), 300)
-    } else {
-        let store = InMemoryCaptchaStore::new(300);
-        if starts_background_tasks {
-            store.spawn_gc();
-        }
-        Arc::new(store)
-    };
-
     Ok(IdentityServices {
         auth,
         user: Arc::clone(&background.user),
@@ -283,31 +274,46 @@ fn build_identity_services(
         menu,
         dept,
         user_import: Arc::clone(&background.user_import),
-        authorization_diagnostic,
         profile,
-        online_user,
-        captcha,
+        captcha: build_captcha_store(redis_client, starts_background_tasks),
+        websocket_ticket: build_websocket_ticket_service(redis_client, policies),
     })
 }
 
-fn build_content_services(
-    policies: &ApplicationPolicies,
+fn build_captcha_store(
     redis_client: &Option<RedisClient>,
-    generated: GeneratedServices,
-    background: &BackgroundServices,
-) -> ContentServices {
-    let websocket_ticket = Arc::new(WebSocketTicketService::new(
+    starts_background_tasks: bool,
+) -> Arc<dyn CaptchaStore> {
+    if let Some(redis) = redis_client {
+        return redis_captcha_store(redis.clone(), 300);
+    }
+    let store = InMemoryCaptchaStore::new(300);
+    if starts_background_tasks {
+        store.spawn_gc();
+    }
+    Arc::new(store)
+}
+
+fn build_websocket_ticket_service(
+    redis_client: &Option<RedisClient>,
+    policies: &ApplicationPolicies,
+) -> Arc<WebSocketTicketService> {
+    Arc::new(WebSocketTicketService::new(
         redis_client
             .as_ref()
             .map(|client| redis_websocket_ticket_store(client.clone())),
         policies.messaging,
-    ));
+    ))
+}
+
+fn build_content_services(
+    generated: GeneratedServices,
+    background: &BackgroundServices,
+) -> ContentServices {
     ContentServices {
         generated,
         config: Arc::clone(&background.config),
         dict: Arc::clone(&background.dict),
-        message: Arc::clone(&background.message),
-        websocket_ticket,
         file: Arc::clone(&background.file),
     }
 }
@@ -315,6 +321,8 @@ fn build_content_services(
 fn build_operations_services(
     database: &ControlDatabaseCluster,
     config: &AppConfig,
+    redis_client: &Option<RedisClient>,
+    refresh_sessions: Arc<dyn RefreshSessionPort>,
     background: &BackgroundServices,
 ) -> OperationsServices {
     let audit_outbox = Arc::new(
@@ -324,7 +332,17 @@ fn build_operations_services(
         )
         .with_job_queue(Arc::clone(&background.job_queue)),
     );
+    let online_user: Arc<OnlineUserService> = if let Some(redis) = redis_client {
+        Arc::new(OnlineUserService::new(
+            super::online_sessions::redis_store(redis.clone()),
+            refresh_sessions,
+        ))
+    } else {
+        Arc::new(OnlineUserService::new_in_memory(refresh_sessions))
+    };
     OperationsServices {
+        message: Arc::clone(&background.message),
+        online_user,
         export: Arc::clone(&background.export),
         oper_log: Arc::clone(&background.oper_log),
         audit_outbox,

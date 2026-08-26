@@ -49,7 +49,7 @@ async fn publish_to_message_center(
 
     state
         .services
-        .content
+        .operations
         .message
         .publish(
             &current_user,

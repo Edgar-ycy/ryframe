@@ -110,7 +110,7 @@ async fn add_online_user(
 
     state
         .services
-        .identity
+        .operations
         .online_user
         .add_user(UserSession {
             sid: result.sid.clone(),

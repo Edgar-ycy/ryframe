@@ -78,7 +78,7 @@ impl JobWorkerDependencies {
     ) -> Self {
         Self {
             export: services.operations.export.clone(),
-            message: services.content.message.clone(),
+            message: services.operations.message.clone(),
             data_retention: services.operations.data_retention.clone(),
             user_import: services.identity.user_import.clone(),
             tenant_config_transfer: services.platform.tenant_config_transfer.clone(),

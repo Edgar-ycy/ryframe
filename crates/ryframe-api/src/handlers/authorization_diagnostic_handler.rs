@@ -29,7 +29,7 @@ pub(crate) async fn diagnose_user(
 ) -> HttpResult<Json<ApiResponse<AuthorizationDiagnosticVo>>> {
     state
         .services
-        .identity
+        .platform
         .authorization_diagnostic
         .diagnose(&current_user, id)
         .await

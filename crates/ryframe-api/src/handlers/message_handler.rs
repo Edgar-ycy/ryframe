@@ -62,7 +62,7 @@ async fn inbox(
     let cursor = parse_optional_positive_id(query.cursor.as_deref(), "cursor 必须是正整数 ID")?;
     state
         .services
-        .content
+        .operations
         .message
         .inbox(&current_user, cursor, limit, query.unread_only)
         .await
@@ -83,7 +83,7 @@ async fn unread_count(
 ) -> HttpResult<Json<ApiResponse<u64>>> {
     state
         .services
-        .content
+        .operations
         .message
         .unread_count(&current_user)
         .await
@@ -124,7 +124,7 @@ async fn publish(
         .collect::<HttpResult<Vec<_>>>()?;
     state
         .services
-        .content
+        .operations
         .message
         .publish(
             &current_user,
@@ -164,7 +164,7 @@ async fn acknowledge(
     let started = std::time::Instant::now();
     state
         .services
-        .content
+        .operations
         .message
         .acknowledge(&current_user, &ids)
         .await
@@ -189,7 +189,7 @@ async fn delete_messages(
     let ids = parse_positive_id_list(&dto.ids, "ids 必须是正整数 ID")?;
     state
         .services
-        .content
+        .operations
         .message
         .delete(&current_user, &ids)
         .await
@@ -213,7 +213,7 @@ async fn mark_read(
     let started = std::time::Instant::now();
     state
         .services
-        .content
+        .operations
         .message
         .mark_read(&current_user, message_id)
         .await
@@ -234,7 +234,7 @@ async fn mark_all_read(
     let started = std::time::Instant::now();
     state
         .services
-        .content
+        .operations
         .message
         .mark_all_read(&current_user)
         .await

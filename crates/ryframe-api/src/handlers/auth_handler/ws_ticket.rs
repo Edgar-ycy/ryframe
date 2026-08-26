@@ -47,7 +47,7 @@ pub async fn websocket_ticket(
 ) -> HttpResult<Response> {
     let grant = match state
         .services
-        .content
+        .identity
         .websocket_ticket
         .issue(&current_user, &claims, request_locale.0.as_str())
         .await

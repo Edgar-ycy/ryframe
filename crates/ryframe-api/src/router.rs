@@ -101,7 +101,7 @@ where
     router
         .layer(middleware::from_fn(request_locale_middleware))
         .layer(from_fn_with_state(
-            state.services.identity.online_user.clone(),
+            state.services.operations.online_user.clone(),
             online_user_tracking,
         ))
         .layer(from_fn_with_state(
