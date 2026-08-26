@@ -227,6 +227,7 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertIn('APP_RESET_LEGACY_MYSQL_EXCLUSIVE: "true"', block)
         for bucket in ("uploads", "avatar", "exports", "imports", "config-packages"):
             self.assertIn(f'APP_OBJECT_STORAGE_LOCAL_BASE_DIR/{bucket}', block)
+        self.assertIn('redis-cli -n "$APP_REDIS_DATABASE"', block)
         self.assertIn('ryframe-reset" execute', block)
         self.assertIn("pnpm ci:browser-real", block)
         self.assertEqual(block.count("if: ${{ always() }}"), 2)
