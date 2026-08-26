@@ -2,7 +2,7 @@ use std::{fs, path::Path};
 
 use crate::{
     Result,
-    process::{command_output, run_pnpm_with_env},
+    process::{command_output, run_with_env},
     workspace::root_dir,
 };
 
@@ -15,6 +15,11 @@ use super::{
     model::{CANDIDATE_MARKER, ContractLock, sha256_hex},
     transaction::{install_snapshots, reject_contract_recovery_artifacts},
 };
+
+pub(crate) const FORMAL_SYNC_ARGS: &[&[&str]] = &[
+    &["scripts/sync-api-contract.mjs"],
+    &["scripts/generate-api-artifacts.mjs", "--write"],
+];
 
 pub(super) fn sync_commit(reference: &str, frontend_dir: &Path) -> Result<()> {
     let root = root_dir();
@@ -42,7 +47,9 @@ pub(super) fn sync_commit(reference: &str, frontend_dir: &Path) -> Result<()> {
     reject_contract_recovery_artifacts(&managed_paths)?;
     let before = snapshot_managed_files(&managed_paths)?;
     let staging = prepare_staging_frontend(frontend_dir, &before, &inputs)?;
-    run_pnpm_with_env(&staging.path, &["api:sync"], &environment)?;
+    for args in FORMAL_SYNC_ARGS {
+        run_with_env(&staging.path, "node", args, &environment)?;
+    }
     validate_formal_sync(&staging.path, &repository, &commit, &artifact_paths)?;
     verify_input_snapshots(&inputs)?;
     let desired = desired_frontend_snapshots(&before, frontend_dir, &staging.path)?;
