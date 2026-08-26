@@ -202,10 +202,8 @@ pub(crate) fn run_pnpm_with_env(
         println!("→ pnpm {}", args.join(" "));
     }
     let mut command = pnpm_command(dir)?;
-    command
-        .args(args)
-        .envs(environment.iter().copied())
-        .stdin(Stdio::inherit());
+    configure_pnpm_environment(&mut command, environment);
+    command.args(args).stdin(Stdio::inherit());
     configure_output(&mut command)?;
     let status = command.status();
     let elapsed = started.elapsed().as_secs_f64();
@@ -226,6 +224,15 @@ pub(crate) fn run_pnpm_with_env(
     } else {
         Err(format!("命令执行失败（{elapsed:.1}s）：pnpm {}", args.join(" ")).into())
     }
+}
+
+pub(crate) fn configure_pnpm_environment(command: &mut Command, environment: &[(&str, &str)]) {
+    // verify 会把输出写入独立日志，pnpm 此时没有终端。显式使用 CI 模式可禁止
+    // Corepack 在执行脚本前尝试交互式重建 node_modules。
+    if !environment.iter().any(|(key, _)| *key == "CI") {
+        command.env("CI", "true");
+    }
+    command.envs(environment.iter().copied());
 }
 
 pub(crate) fn command_output(dir: &Path, executable: &str, args: &[&str]) -> Result<String> {
