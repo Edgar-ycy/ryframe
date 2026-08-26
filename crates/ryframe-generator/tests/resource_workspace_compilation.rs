@@ -11,6 +11,7 @@ use ryframe_generator::{
 };
 
 static SHARED_WORKSPACE_RESULT: OnceLock<Result<(), String>> = OnceLock::new();
+const FRONTEND_DIR_ENV: &str = "RYFRAME_RESOURCE_WORKSPACE_FRONTEND_DIR";
 
 #[test]
 #[ignore = "完整门禁在共享的临时真实 Workspace 中运行 Cargo 与 vue-tsc"]
@@ -58,10 +59,9 @@ fn run_shared_workspace() -> Result<(), String> {
         .and_then(Path::parent)
         .ok_or("生成器应位于后端 Workspace/crates")?
         .to_path_buf();
-    let frontend_source = backend_source
-        .parent()
-        .ok_or("后端应有工作区父目录")?
-        .join("ryframe-vue3");
+    let frontend_source = std::env::var_os(FRONTEND_DIR_ENV)
+        .map(PathBuf::from)
+        .ok_or("资源 Workspace 验证缺少前端目录环境变量")?;
     if !frontend_source.join("node_modules").is_dir() {
         return Err("前端 node_modules 不存在".into());
     }
@@ -230,16 +230,18 @@ fn prepare_frontend_workspace(source: &Path, target: &Path) {
 }
 
 fn assert_frontend_checks(source: &Path, target: &Path) {
-    let vue_tsc = source.join("node_modules/.bin/vue-tsc.cmd");
-    let typecheck = Command::new(vue_tsc)
+    let vue_tsc = source.join("node_modules/vue-tsc/bin/vue-tsc.js");
+    let typecheck = Command::new("node")
+        .arg(vue_tsc)
         .args(["--noEmit", "-p", "tsconfig.app.json"])
         .current_dir(target)
         .output()
         .expect("应运行临时前端 vue-tsc");
     assert_command_succeeded("Device/Notice/Post vue-tsc", &typecheck);
 
-    let eslint = source.join("node_modules/.bin/eslint.cmd");
-    let lint = Command::new(eslint)
+    let eslint = source.join("node_modules/eslint/bin/eslint.js");
+    let lint = Command::new("node")
+        .arg(eslint)
         .args([
             "src/generated/resources/device",
             "src/generated/resources/notice",
