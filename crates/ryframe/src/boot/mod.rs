@@ -16,6 +16,7 @@ pub mod artifact_store;
 pub mod authorization_cache;
 pub mod authorization_cache_keyspace;
 pub mod background_services;
+pub mod control_plane;
 pub mod datasource;
 pub mod file_content;
 pub mod idempotency;

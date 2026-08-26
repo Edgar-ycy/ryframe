@@ -112,16 +112,37 @@ fn api_and_worker_wire_probe_to_read_only_dependency_checks() {
     let worker_main = include_str!("../src/bin/ryframe_worker.rs");
     let worker_runtime = include_str!("../src/bin/ryframe_worker/runtime.rs");
 
-    assert!(api_main.contains("effective_migration_mode("));
+    assert!(api_main.contains("control_plane::prepare("));
     assert!(api_storage.contains("|| storage.ensure_bucket(bucket)"));
     assert!(api_storage.contains("|| storage.readiness_check(bucket)"));
     assert!(api_redis.contains("|| client.ensure_scope_ownership(&ownership_marker)"));
     assert!(api_redis.contains("|| client.verify_scope_ownership(&ownership_marker)"));
-    assert!(worker_main.contains("process_startup::effective_migration_mode("));
+    assert!(worker_main.contains("control_plane::prepare("));
     assert!(worker_runtime.contains("|| storage.ensure_bucket(bucket)"));
     assert!(worker_runtime.contains("|| storage.readiness_check(bucket)"));
     assert!(worker_runtime.contains("|| client.ensure_scope_ownership(&ownership_marker)"));
     assert!(worker_runtime.contains("|| client.verify_scope_ownership(&ownership_marker)"));
+}
+
+#[test]
+fn api_and_worker_share_control_plane_preparation() {
+    let shared = include_str!("../src/boot/control_plane.rs");
+    let api_main = include_str!("../src/main.rs");
+    let worker_main = include_str!("../src/bin/ryframe_worker.rs");
+
+    for operation in [
+        "apply_migration(",
+        "verify_schema(",
+        "tenant_data::build_router(",
+        "tenant_data::verify_current_targets(",
+        "verify_fixed_tenant(",
+    ] {
+        assert!(shared.contains(operation));
+        assert!(!api_main.contains(operation));
+        assert!(!worker_main.contains(operation));
+    }
+    assert!(api_main.contains("ControlPlaneStartup::api("));
+    assert!(worker_main.contains("ControlPlaneStartup::worker("));
 }
 
 #[test]

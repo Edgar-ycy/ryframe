@@ -15,8 +15,9 @@ use axum::{
 use ryframe::boot::{
     application_policy as process_application_policy, artifact_store as process_artifact_store,
     background_services::{BackgroundServiceInfrastructure, build as build_background_services},
+    control_plane::{self, ControlPlaneStartup},
     jobs as process_jobs, logging as process_logging, readiness as process_readiness,
-    startup as process_startup, tenant_data,
+    startup as process_startup,
 };
 use ryframe_adapters::RedisClient;
 use ryframe_adapters::storage::{
@@ -31,10 +32,8 @@ use ryframe_application::{
         operations::EXPORT_BUCKET,
     },
 };
-use ryframe_config::{
-    AppConfig, Environment, JobWorkerMode, MigrationMode, RedisMode, StorageBackend,
-};
-use ryframe_db::{CallbackDatabaseMetricsObserver, ControlDatabaseCluster};
+use ryframe_config::{AppConfig, Environment, JobWorkerMode, RedisMode, StorageBackend};
+use ryframe_db::ControlDatabaseCluster;
 use ryframe_kernel::AppError;
 use tokio::sync::watch;
 
@@ -85,38 +84,13 @@ async fn main() -> Result<(), AppError> {
     .await?;
     ryframe_db::connection::ping(&primary).await?;
     let database = ControlDatabaseCluster::single(primary);
-    install_database_metrics(&database);
-
-    match process_startup::effective_migration_mode(
-        allows_initialization_writes,
-        config.database.migration_mode,
-    ) {
-        MigrationMode::Auto => ryframe_db::migration::up(database.write())
-            .await
-            .map_err(|error| AppError::Database(format!("数据库迁移失败: {error}")))?,
-        MigrationMode::Verify => ryframe_db::migration::verify(database.write())
-            .await
-            .map_err(|error| AppError::Database(format!("数据库迁移校验失败: {error}")))?,
-        MigrationMode::Off => {
-            tracing::warn!("隔离环境已关闭数据库迁移校验");
-        }
-    }
-    ryframe_db::migration::verify_current_schema(database.write())
-        .await
-        .map_err(|error| AppError::Internal(format!("数据库结构指纹校验失败: {error}")))?;
-    let tenant_data = Arc::new(tenant_data::build_router(database.clone(), &config)?);
-    tenant_data::verify_current_targets(&tenant_data, allows_initialization_writes).await?;
-    if let Some(tenant_id) = config.multi_tenancy.fixed_tenant_id() {
-        ryframe_db::TenantRepository
-            .ensure_available(database.write(), tenant_id)
-            .await
-            .map_err(|error| {
-                AppError::Config(format!(
-                    "单租户模式要求内置 {tenant_id} 租户存在且可用: {error}"
-                ))
-            })?;
-        tracing::info!(tenant_id, "Worker 已启用单租户模式");
-    }
+    let prepared = control_plane::prepare(
+        &database,
+        &config,
+        ControlPlaneStartup::worker(allows_initialization_writes),
+    )
+    .await?;
+    let tenant_data = prepared.tenant_database_router;
 
     let redis = connect_redis_for_worker(&config, allows_initialization_writes).await?;
     let object_storage = connect_storage_for_worker(&config, allows_initialization_writes).await?;
@@ -248,6 +222,5 @@ mod runtime;
 
 use health::start_health_server;
 use runtime::{
-    connect_redis_for_worker, connect_storage_for_worker, install_database_metrics,
-    install_job_metrics, shutdown_signal,
+    connect_redis_for_worker, connect_storage_for_worker, install_job_metrics, shutdown_signal,
 };

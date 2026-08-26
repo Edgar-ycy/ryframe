@@ -122,22 +122,6 @@ pub(super) async fn shutdown_signal(shutdown_sender: watch::Sender<bool>) {
     let _ = shutdown_sender.send(true);
 }
 
-/// 在 Worker 进程边界将底层数据库事件绑定到 Prometheus 指标。
-pub(super) fn install_database_metrics(database: &ControlDatabaseCluster) {
-    database.set_metrics_observer(Arc::new(CallbackDatabaseMetricsObserver::new(
-        Arc::new(|kind, name, healthy| {
-            ryframe_adapters::metrics::set_database_node_health(name, kind.metric_label(), healthy);
-        }),
-        Arc::new(|target, reason| {
-            ryframe_adapters::metrics::record_database_read_selection(
-                target.metric_label(),
-                reason.metric_label(),
-            );
-        }),
-        Arc::new(ryframe_adapters::metrics::record_database_read_fallback),
-    )));
-}
-
 /// 在 Worker 进程边界将后台任务事件绑定到 Prometheus 指标。
 pub(super) fn install_job_metrics(queue: &JobQueue) {
     queue.set_metrics_observer(Arc::new(CallbackJobMetricsObserver::new(

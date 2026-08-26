@@ -3,8 +3,7 @@ use std::{future::IntoFuture, net::SocketAddr, sync::Arc, time::Duration};
 use ryframe::{app, boot};
 use ryframe_adapters::i18n::LocalizerLoader;
 use ryframe_application::{CallbackJobMetricsObserver, JobQueue, OutboxWorker};
-use ryframe_config::{AppConfig, Environment, JobWorkerMode, MigrationMode};
-use ryframe_db::{CallbackDatabaseMetricsObserver, ControlDatabaseCluster};
+use ryframe_config::{AppConfig, Environment, JobWorkerMode};
 use ryframe_kernel::AppError;
 use tokio::sync::{oneshot, watch};
 
@@ -76,39 +75,13 @@ async fn main() -> Result<(), AppError> {
     }
 
     let database = boot::datasource::connect(&config).await?;
-    install_database_metrics(&database);
-    match boot::startup::effective_migration_mode(
-        starts_background_tasks,
-        config.database.migration_mode,
-    ) {
-        MigrationMode::Auto => ryframe_db::migration::up(database.write())
-            .await
-            .map_err(|error| AppError::Database(format!("database migration failed: {error}")))?,
-        MigrationMode::Verify => ryframe_db::migration::verify(database.write())
-            .await
-            .map_err(|error| {
-                AppError::Database(format!("database migration verification failed: {error}"))
-            })?,
-        MigrationMode::Off => {
-            tracing::warn!("database migration checks are disabled for the isolated environment");
-        }
-    }
-    boot::datasource::verify_schema(&database).await?;
-    let tenant_database_router =
-        Arc::new(boot::tenant_data::build_router(database.clone(), &config)?);
-    boot::tenant_data::verify_current_targets(&tenant_database_router, starts_background_tasks)
-        .await?;
-    if let Some(tenant_id) = config.multi_tenancy.fixed_tenant_id() {
-        ryframe_db::TenantRepository
-            .ensure_available(database.write(), tenant_id)
-            .await
-            .map_err(|error| {
-                AppError::Config(format!(
-                    "单租户模式要求内置 {tenant_id} 租户存在且可用: {error}"
-                ))
-            })?;
-        tracing::info!(tenant_id, "已启用单租户模式");
-    }
+    let control_plane = boot::control_plane::prepare(
+        &database,
+        &config,
+        boot::control_plane::ControlPlaneStartup::api(starts_background_tasks),
+    )
+    .await?;
+    let tenant_database_router = control_plane.tenant_database_router;
     let replica_health_monitor = starts_background_tasks.then(|| {
         boot::datasource::spawn_replica_health_monitor(
             database.clone(),
@@ -369,22 +342,6 @@ async fn shutdown_signal(
     message_hub.shutdown_all();
     let _ = shutdown_sender.send(true);
     tracing::info!("shutdown signal received");
-}
-
-/// 在应用边界将底层数据库事件绑定到 Prometheus 指标。
-fn install_database_metrics(database: &ControlDatabaseCluster) {
-    database.set_metrics_observer(Arc::new(CallbackDatabaseMetricsObserver::new(
-        Arc::new(|kind, name, healthy| {
-            ryframe_adapters::metrics::set_database_node_health(name, kind.metric_label(), healthy);
-        }),
-        Arc::new(|target, reason| {
-            ryframe_adapters::metrics::record_database_read_selection(
-                target.metric_label(),
-                reason.metric_label(),
-            );
-        }),
-        Arc::new(ryframe_adapters::metrics::record_database_read_fallback),
-    )));
 }
 
 /// 在应用边界将后台任务队列事件绑定到 Prometheus 指标。
