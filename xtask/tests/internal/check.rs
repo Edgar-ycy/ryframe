@@ -20,9 +20,9 @@ use super::check::{
     default_test_jobs_from, feature_operation_args, feature_test_args, frontend_profile_commands,
     load_change_surface_policy, load_consumer_contract_plan, load_workspace_graph,
     minimal_workspace_check_args, needs_consumer_contract, package_tests_generate_snapshots,
-    resolve_target_dir, resource_test_executable_from_messages, resource_workspace_environment,
-    reverse_dependency_closure, validate_feature_combination, verify_job_budget_from,
-    verify_target_policy_from, workspace_clippy_args, workspace_test_args,
+    resolve_frontend_dir, resolve_target_dir, resource_test_executable_from_messages,
+    resource_workspace_environment, reverse_dependency_closure, validate_feature_combination,
+    verify_job_budget_from, verify_target_policy_from, workspace_clippy_args, workspace_test_args,
 };
 
 static NEXT_REPOSITORY: AtomicU64 = AtomicU64::new(1);
@@ -361,6 +361,20 @@ fn resource_workspace_environment_uses_selected_frontend_and_target() {
                 "target/ci/resource".to_owned(),
             ),
         ]
+    );
+}
+
+#[test]
+fn resource_frontend_resolution_is_absolute_and_child_process_safe() {
+    let workspace = std::env::current_dir().unwrap();
+    let resolved = resolve_frontend_dir(&workspace.join("xtask"), Path::new("..")).unwrap();
+
+    assert!(resolved.is_absolute());
+    #[cfg(windows)]
+    assert!(
+        !resolved.to_string_lossy().starts_with(r"\\?\"),
+        "传给 Node 的前端路径不得使用 Windows verbatim 前缀：{}",
+        resolved.display()
     );
 }
 

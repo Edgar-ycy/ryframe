@@ -62,7 +62,7 @@ pub(crate) use model::{
 };
 #[allow(unused_imports)]
 pub(crate) use resource::{
-    resource_test_executable_from_messages, resource_workspace_compilation,
+    resolve_frontend_dir, resource_test_executable_from_messages, resource_workspace_compilation,
     resource_workspace_environment,
 };
 #[allow(unused_imports)]
