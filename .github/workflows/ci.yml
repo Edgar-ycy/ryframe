@@ -721,7 +721,13 @@ jobs:
         run: |
           set -euo pipefail
           output_dir="$RUNNER_TEMP/ryframe-full-stack"
-          mkdir --parents "$output_dir" "$APP_OBJECT_STORAGE_LOCAL_BASE_DIR"
+          mkdir --parents "$output_dir"
+          mkdir --parents \
+            "$APP_OBJECT_STORAGE_LOCAL_BASE_DIR/uploads" \
+            "$APP_OBJECT_STORAGE_LOCAL_BASE_DIR/avatar" \
+            "$APP_OBJECT_STORAGE_LOCAL_BASE_DIR/exports" \
+            "$APP_OBJECT_STORAGE_LOCAL_BASE_DIR/imports" \
+            "$APP_OBJECT_STORAGE_LOCAL_BASE_DIR/config-packages"
           docker exec "$REDIS_CONTAINER_ID" redis-cli \
             SET "$APP_RESET_REDIS_OUTSIDE_SENTINEL_KEY" ci-sentinel NX >/dev/null
           cargo build --locked -p ryframe --features destructive-reset \
