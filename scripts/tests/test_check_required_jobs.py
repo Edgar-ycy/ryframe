@@ -29,6 +29,7 @@ def successful_results(
     event: str,
     action: str,
     outputs: dict[str, str],
+    git_ref: str = "",
 ) -> dict[str, str]:
     results = {name: "skipped" for name in MODULE.ALL_JOBS}
     results["plan"] = "success"
@@ -43,6 +44,12 @@ def successful_results(
         results["windows-smoke"] = "skipped" if event == "schedule" else "success"
         results["supply-chain"] = (
             "success" if event in ("schedule", "workflow_dispatch") else "skipped"
+        )
+        results["full-stack-e2e"] = (
+            "success"
+            if event in ("schedule", "workflow_dispatch")
+            or (event == "push" and git_ref.startswith("refs/tags/v"))
+            else "skipped"
         )
     return results
 
@@ -94,6 +101,23 @@ class RequiredJobsTests(unittest.TestCase):
                             "pull_request", "synchronize", results, outputs
                         )
                     )
+
+    def test_full_stack_runs_only_for_scheduled_manual_or_release_tag(self) -> None:
+        outputs = plan_outputs()
+        for event, git_ref, expected in (
+            ("schedule", "refs/heads/main", "success"),
+            ("workflow_dispatch", "refs/heads/main", "success"),
+            ("push", "refs/tags/v1.2.3", "success"),
+            ("push", "refs/heads/main", "skipped"),
+            ("pull_request", "refs/pull/1/merge", "skipped"),
+        ):
+            with self.subTest(event=event, git_ref=git_ref):
+                results = successful_results(event, "", outputs, git_ref)
+                self.assertEqual(results["full-stack-e2e"], expected)
+                self.assertEqual(
+                    MODULE.validate_required_jobs(event, "", results, outputs, git_ref),
+                    [],
+                )
 
     def test_skipped_plan_job_must_match_the_output(self) -> None:
         outputs = plan_outputs(rust_gate="false", integration="false")
@@ -169,6 +193,7 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertIn("python scripts/check_required_jobs.py", required)
         self.assertIn("${{ toJSON(needs) }}", required)
         self.assertIn('--action "$EVENT_ACTION"', required)
+        self.assertIn('--ref "$GIT_REF"', required)
         self.assertNotIn("needs.plan.result", required)
 
     def test_pull_request_edit_skips_every_job_except_plan_contract_required(self) -> None:
@@ -183,12 +208,27 @@ class RequiredJobsTests(unittest.TestCase):
 
     def test_sccache_uses_fixed_remote_backend_without_directory_cache(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        self.assertEqual(workflow.count("tool: sccache@0.17.0"), 4)
-        self.assertEqual(workflow.count('SCCACHE_GHA_ENABLED: "true"'), 4)
+        self.assertEqual(workflow.count("tool: sccache@0.17.0"), 5)
+        self.assertEqual(workflow.count('SCCACHE_GHA_ENABLED: "true"'), 5)
         self.assertNotIn("SCCACHE_DIR:", workflow)
         self.assertNotIn("SCCACHE_CACHE_SIZE:", workflow)
         self.assertNotIn("v2-sccache-", workflow)
-        self.assertEqual(workflow.count("actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea"), 4)
+        self.assertEqual(workflow.count("actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea"), 5)
+
+    def test_full_stack_uses_isolated_reset_and_always_uploads_diagnostics(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        block = workflow.split("\n  full-stack-e2e:\n", 1)[1].split(
+            "\n  security-audit:\n", 1
+        )[0]
+        self.assertIn("github.event_name == 'schedule'", block)
+        self.assertIn("github.event_name == 'workflow_dispatch'", block)
+        self.assertIn("startsWith(github.ref, 'refs/tags/v')", block)
+        self.assertIn("APP_ENV: test", block)
+        self.assertIn('APP_RESET_LEGACY_MYSQL_EXCLUSIVE: "true"', block)
+        self.assertIn('ryframe-reset" execute', block)
+        self.assertIn("pnpm ci:browser-real", block)
+        self.assertEqual(block.count("if: ${{ always() }}"), 2)
+        self.assertIn("frontend/.local-tests/playwright-real/results", block)
 
     def test_rust_gate_and_integration_use_internal_commands(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")

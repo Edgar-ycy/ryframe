@@ -19,6 +19,18 @@
       "job": "integration",
       "service": "redis",
       "image": "redis:7.4.9@sha256:a8f08480e1f88f2647fed492d1178c06abb0d0c1fbf02c682a61e2f483fb3954"
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "full-stack-e2e",
+      "service": "mysql",
+      "image": "mysql:8.4.11@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb"
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "full-stack-e2e",
+      "service": "redis",
+      "image": "redis:7.4.9@sha256:a8f08480e1f88f2647fed492d1178c06abb0d0c1fbf02c682a61e2f483fb3954"
     }
   ],
   "vulnerability_gate": {

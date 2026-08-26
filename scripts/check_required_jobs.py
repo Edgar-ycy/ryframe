@@ -23,6 +23,7 @@ ALWAYS_AFTER_PLAN = ("security-audit", "deployment-assets")
 ALL_JOBS = (
     "plan",
     *PLAN_CONTROLLED_JOBS,
+    "full-stack-e2e",
     "windows-smoke",
     *ALWAYS_AFTER_PLAN,
     "supply-chain",
@@ -36,6 +37,7 @@ def validate_required_jobs(
     action: str,
     results: Mapping[str, str],
     plan_outputs: Mapping[str, str],
+    git_ref: str = "",
 ) -> list[str]:
     errors: list[str] = []
     if event not in EVENTS:
@@ -84,6 +86,12 @@ def validate_required_jobs(
         expected["windows-smoke"] = "skipped" if event == "schedule" else "success"
         expected["supply-chain"] = (
             "success" if event in ("schedule", "workflow_dispatch") else "skipped"
+        )
+        expected["full-stack-e2e"] = (
+            "success"
+            if event in ("schedule", "workflow_dispatch")
+            or (event == "push" and git_ref.startswith("refs/tags/v"))
+            else "skipped"
         )
 
     for name in ALL_JOBS:
@@ -142,6 +150,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="校验 Required 汇总 job 的动态计划")
     parser.add_argument("--event", required=True)
     parser.add_argument("--action", default="")
+    parser.add_argument("--ref", default="")
     parser.add_argument("--needs-json", required=True)
     args = parser.parse_args()
     try:
@@ -149,7 +158,13 @@ def main() -> int:
         plan_outputs = parse_plan_outputs(args.needs_json)
     except ValueError as error:
         parser.error(str(error))
-    errors = validate_required_jobs(args.event, args.action, results, plan_outputs)
+    errors = validate_required_jobs(
+        args.event,
+        args.action,
+        results,
+        plan_outputs,
+        args.ref,
+    )
     if errors:
         for error in errors:
             print(error, file=sys.stderr)

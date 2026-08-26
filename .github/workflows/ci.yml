@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [ main ]
+    tags: [ "v*.*.*" ]
   pull_request:
     branches: [ main ]
     types: [ opened, synchronize, reopened, edited ]
@@ -569,6 +570,234 @@ jobs:
           sccache --stop-server
 
   # ============================================================
+  # 定时、手动与发布标签真实全栈门禁
+  # ============================================================
+  full-stack-e2e:
+    name: Real API MySQL Redis Chrome E2E
+    needs: plan
+    if: >-
+      ${{ needs.plan.result == 'success' &&
+          (github.event_name == 'schedule' ||
+           github.event_name == 'workflow_dispatch' ||
+           startsWith(github.ref, 'refs/tags/v')) }}
+    runs-on: ubuntu-latest
+    env:
+      APP_ENV: test
+      APP_SCOPE_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
+      APP_APP_HOST: 127.0.0.1
+      APP_APP_PORT: "8080"
+      APP_DATABASE_HOST: 127.0.0.1
+      APP_DATABASE_PORT: "3306"
+      APP_DATABASE_NAME: ryframe_e2e_${{ github.run_id }}_${{ github.run_attempt }}
+      APP_DATABASE_USERNAME: root
+      APP_DATABASE_PASSWORD: ryframe-ci-password
+      APP_DATABASE_TLS_MODE: disabled
+      APP_DATABASE_MIGRATION_MODE: auto
+      APP_REDIS_MODE: required
+      APP_REDIS_HOST: 127.0.0.1
+      APP_REDIS_PORT: "6379"
+      APP_REDIS_DATABASE: "14"
+      APP_REDIS_TLS: "false"
+      APP_RESET_CREDENTIAL_VERSION: ci-v1
+      APP_RESET_LEGACY_MYSQL_EXCLUSIVE: "true"
+      APP_RESET_LEGACY_REDIS_EXCLUSIVE: "true"
+      APP_RESET_LEGACY_OBJECT_STORAGE_EXCLUSIVE: "true"
+      APP_RESET_REDIS_OUTSIDE_SENTINEL_KEY: ryframe-ci-outside-sentinel
+      APP_OBJECT_STORAGE_BACKEND: local
+      APP_OBJECT_STORAGE_LOCAL_BASE_DIR: ${{ runner.temp }}/ryframe-full-stack/storage
+      APP_AUTH_JWT_SECRET: ryframe-ci-only-jwt-secret-with-more-than-thirty-two-bytes
+      APP_CORS_ALLOW_ORIGINS: http://127.0.0.1:4174
+      APP_JOBS_MODE: disabled
+      RYFRAME_CODE_SHA: ${{ github.sha }}
+      RYFRAME_RESET_SERVICES_STOPPED: "YES"
+      RYFRAME_RESET_STATE_DIR: ${{ runner.temp }}/ryframe-full-stack/reset-state
+      RYFRAME_RESET_ADMIN_PASSWORD: Valid!Admin123
+      RYFRAME_RESET_USER_PASSWORD: Valid!User123
+      RYFRAME_E2E_TENANT_ID: system
+      RYFRAME_E2E_USERNAME: admin
+      RYFRAME_E2E_PASSWORD: Valid!Admin123
+      VITE_APP_PROXY_TARGET: http://127.0.0.1:8080
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target/ci/full-stack/backend
+    services:
+      mysql:
+        image: mysql:8.4.11@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
+        env:
+          MYSQL_ROOT_PASSWORD: ryframe-ci-password
+          MYSQL_ROOT_HOST: "%"
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --host=127.0.0.1 --user=root --password=ryframe-ci-password --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+      redis:
+        image: redis:7.4.9@sha256:a8f08480e1f88f2647fed492d1178c06abb0d0c1fbf02c682a61e2f483fb3954
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=20
+    steps:
+      - name: 检出后端源码
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          path: backend
+
+      - name: 选择配套前端引用
+        id: frontend-ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            frontend_ref="$GITHUB_REF_NAME"
+          else
+            frontend_ref=main
+          fi
+          echo "ref=$frontend_ref" >> "$GITHUB_OUTPUT"
+
+      - name: 检出配套前端
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: Edgar-ycy/ryframe-vue3
+          ref: ${{ steps.frontend-ref.outputs.ref }}
+          path: frontend
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+
+      - name: 安装固定版本 sccache
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
+        with:
+          tool: sccache@0.17.0
+          fallback: none
+
+      - name: 配置 sccache GitHub Actions 远端后端
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '')
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '')
+
+      - name: 缓存 Cargo 依赖
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: v3-rust-${{ runner.os }}-${{ runner.arch }}-full-stack-${{ hashFiles('backend/Cargo.lock', 'backend/Cargo.toml') }}
+          restore-keys: |
+            v3-rust-${{ runner.os }}-${{ runner.arch }}-full-stack-
+            v3-rust-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version-file: frontend/.node-version
+          package-manager-cache: false
+
+      - name: 安装 pnpm
+        uses: ./frontend/.github/actions/setup-pnpm
+        with:
+          working-directory: frontend
+
+      - name: 安装前端与 Chromium
+        working-directory: frontend
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+
+      - name: 构建并安全初始化临时全栈环境
+        working-directory: backend
+        shell: bash
+        env:
+          REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
+        run: |
+          set -euo pipefail
+          output_dir="$RUNNER_TEMP/ryframe-full-stack"
+          mkdir --parents "$output_dir" "$APP_OBJECT_STORAGE_LOCAL_BASE_DIR"
+          docker exec "$REDIS_CONTAINER_ID" redis-cli \
+            SET "$APP_RESET_REDIS_OUTSIDE_SENTINEL_KEY" ci-sentinel NX >/dev/null
+          cargo build --locked -p ryframe --features destructive-reset \
+            --bin ryframe-reset --bin ryframe
+          plan_output="$($CARGO_TARGET_DIR/debug/ryframe-reset plan)"
+          printf '%s\n' "$plan_output" > "$output_dir/reset-plan.log"
+          plan_hash="$(printf '%s\n' "$plan_output" | sed -n 's/^plan_hash=//p' | tail -n 1)"
+          [[ "$plan_hash" =~ ^[0-9a-f]{64}$ ]] || {
+            echo "::error::未能从 reset plan 读取有效 hash"
+            exit 1
+          }
+          "$CARGO_TARGET_DIR/debug/ryframe-reset" execute \
+            --plan-hash "$plan_hash" \
+            --confirm-reset "RESET-RYFRAME-test-$APP_SCOPE_ID" \
+            > "$output_dir/reset-execute.log" 2>&1
+
+      - name: 启动真实 API 并等待就绪
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          output_dir="$RUNNER_TEMP/ryframe-full-stack"
+          nohup "$CARGO_TARGET_DIR/debug/ryframe" \
+            > "$output_dir/api.log" 2>&1 &
+          api_pid=$!
+          echo "$api_pid" > "$output_dir/api.pid"
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent http://127.0.0.1:8080/readyz >/dev/null; then
+              exit 0
+            fi
+            kill -0 "$api_pid" || {
+              echo "::error::API 在就绪前退出"
+              tail --lines=200 "$output_dir/api.log"
+              exit 1
+            }
+            sleep 2
+          done
+          echo "::error::API 就绪等待超时"
+          tail --lines=200 "$output_dir/api.log"
+          exit 1
+
+      - name: 执行真实浏览器全栈流程
+        working-directory: frontend
+        run: pnpm ci:browser-real
+
+      - name: 收集进程与基础设施日志
+        if: ${{ always() }}
+        shell: bash
+        env:
+          MYSQL_CONTAINER_ID: ${{ job.services.mysql.id }}
+          REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
+        run: |
+          set +e
+          output_dir="$RUNNER_TEMP/ryframe-full-stack"
+          mkdir --parents "$output_dir"
+          if [[ -f "$output_dir/api.pid" ]]; then
+            kill "$(cat "$output_dir/api.pid")" 2>/dev/null
+          fi
+          docker logs "$MYSQL_CONTAINER_ID" > "$output_dir/mysql.log" 2>&1
+          docker logs "$REDIS_CONTAINER_ID" > "$output_dir/redis.log" 2>&1
+          sccache --show-stats > "$output_dir/sccache.log" 2>&1
+          sccache --stop-server >> "$output_dir/sccache.log" 2>&1
+
+      - name: 保存全栈诊断产物
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ryframe-full-stack-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/ryframe-full-stack
+            frontend/.local-tests/playwright-real/report
+            frontend/.local-tests/playwright-real/results
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ============================================================
   # 安全检查
   # ============================================================
   security-audit:
@@ -898,6 +1127,7 @@ jobs:
       - rust-gate
       - integration
       - consumer-contract
+      - full-stack-e2e
       - windows-smoke
       - security-audit
       - supply-chain
@@ -910,9 +1140,11 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           EVENT_ACTION: ${{ github.event.action }}
+          GIT_REF: ${{ github.ref }}
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: >-
           python scripts/check_required_jobs.py
           --event "$EVENT_NAME"
           --action "$EVENT_ACTION"
+          --ref "$GIT_REF"
           --needs-json "$NEEDS_JSON"
