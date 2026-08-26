@@ -117,9 +117,7 @@ async fn update_locks_row_without_configuration_version_transaction_steps() {
                 tenant_id: "tenant-a".into(),
                 id: 8,
             },
-            NoticeCall::Update {
-                record: updated.clone(),
-            },
+            NoticeCall::Update { record: updated },
             NoticeCall::Commit {
                 audit_mode: TransactionAuditMode::CurrentRequest,
             },
