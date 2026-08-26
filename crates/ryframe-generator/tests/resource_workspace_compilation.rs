@@ -359,10 +359,10 @@ fn write_device_fake_transaction_test(backend: &Path) {
     fs::write(
         tests.join("generated_device_fake.rs"),
         r#"use chrono::Utc;
+use ryframe_application::TransactionAuditMode;
 use ryframe_application::generated::device::{
     DeviceFailure, DeviceFakePersistence, DevicePersistencePort, DeviceRecord,
 };
-use ryframe_application::{PersistenceTransaction, TransactionAuditMode};
 
 fn record(id: i64) -> DeviceRecord {
     DeviceRecord {

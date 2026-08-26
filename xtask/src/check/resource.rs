@@ -61,13 +61,15 @@ pub(crate) fn resource_workspace_compilation(
     )
 }
 
-fn resolve_frontend_dir(root: &Path, frontend_dir: &Path) -> Result<PathBuf> {
+pub(crate) fn resolve_frontend_dir(root: &Path, frontend_dir: &Path) -> Result<PathBuf> {
     let candidate = if frontend_dir.is_absolute() {
         frontend_dir.to_path_buf()
     } else {
         root.join(frontend_dir)
     };
-    candidate.canonicalize().map_err(|error| {
+    // Windows 的 canonicalize 会生成 `\\?\` 路径；Node 24 无法把它作为入口脚本路径。
+    // 这里仅需要固定相对路径的基准，不需要解析符号链接或目录联接。
+    std::path::absolute(&candidate).map_err(|error| {
         format!(
             "无法解析资源 Workspace 使用的前端目录 {}：{error}",
             candidate.display()
