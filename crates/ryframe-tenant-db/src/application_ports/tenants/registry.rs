@@ -5,15 +5,15 @@ use ryframe_application::ports::{
     authorization::AuthorizationMirrorTransaction,
     product::ProductTransactionPort,
     tenants::{
-        ProvisionTenantRecord, TenantAdminRecord, TenantPersistencePort,
-        TenantProductAssignmentRecord, TenantProvisionRequestRecord, TenantProvisioningPlacement,
-        TenantRecord, TenantTransaction,
+        ProvisionTenantRecord, TenantAdminRecord, TenantAuthorizationTemplate,
+        TenantBaseCatalogTemplate, TenantPersistencePort, TenantProductAssignmentRecord,
+        TenantProvisionRequestRecord, TenantProvisioningIdentity, TenantProvisioningPlacement,
+        TenantProvisioningTemplate, TenantRecord, TenantTransaction,
     },
 };
 use ryframe_db::{
-    ControlDatabaseCluster, ProductRepository, ProvisionTenantCommand, ReadConsistency,
-    TenantProvisioningRepository, TenantRepository,
-    application_ports::transaction::DatabasePortTransaction, entities::tenant,
+    ControlDatabaseCluster, ProductRepository, ReadConsistency, TenantProvisioningRepository,
+    TenantRepository, application_ports::transaction::DatabasePortTransaction, entities::tenant,
 };
 use sea_orm::{ActiveModelTrait, IntoActiveModel, TransactionTrait};
 
@@ -129,11 +129,41 @@ impl TenantTransaction for TenantWorkUnit {
             })
     }
 
-    async fn provision(&self, record: ProvisionTenantRecord) -> ryframe_kernel::AppResult<()> {
+    async fn load_provisioning_template(
+        &self,
+    ) -> ryframe_kernel::AppResult<TenantProvisioningTemplate> {
         TenantProvisioningRepository
-            .provision_in_transaction(&self.transaction, map_provision(record))
+            .load_template_in_transaction(&self.transaction)
             .await
-            .map(|_| ())
+    }
+
+    async fn initialize_tenant_identity<'a>(
+        &'a self,
+        record: &'a ProvisionTenantRecord,
+    ) -> ryframe_kernel::AppResult<TenantProvisioningIdentity> {
+        TenantProvisioningRepository
+            .initialize_identity_in_transaction(&self.transaction, record)
+            .await
+    }
+
+    async fn copy_tenant_authorization<'a>(
+        &'a self,
+        identity: &'a TenantProvisioningIdentity,
+        template: TenantAuthorizationTemplate,
+    ) -> ryframe_kernel::AppResult<()> {
+        TenantProvisioningRepository
+            .copy_authorization_in_transaction(&self.transaction, identity, template)
+            .await
+    }
+
+    async fn copy_tenant_base_catalogs<'a>(
+        &'a self,
+        identity: &'a TenantProvisioningIdentity,
+        template: TenantBaseCatalogTemplate,
+    ) -> ryframe_kernel::AppResult<()> {
+        TenantProvisioningRepository
+            .copy_base_catalogs_in_transaction(&self.transaction, identity, template)
+            .await
     }
 
     async fn assign_initial_product<'a>(
@@ -296,26 +326,5 @@ pub fn map_tenant_model(tenant: TenantRecord) -> tenant::Model {
         configuration_version: tenant.configuration_version,
         created_at: tenant.created_at,
         updated_at: tenant.updated_at,
-    }
-}
-
-fn map_provision(record: ProvisionTenantRecord) -> ProvisionTenantCommand {
-    ProvisionTenantCommand {
-        provisioning_request_token: record.provisioning_request_token,
-        tenant_id: record.tenant_id,
-        name: record.name,
-        domain: record.domain,
-        expire_at: record.expire_at,
-        max_users: record.max_users,
-        max_roles: record.max_roles,
-        max_storage_mb: record.max_storage_mb,
-        max_requests_per_minute: record.max_requests_per_minute,
-        admin_username: record.admin_username,
-        admin_password_hash: record.admin_password_hash,
-        enabled_capability_route_keys: record.enabled_capability_route_keys,
-        enabled_capability_permission_codes: record.enabled_capability_permission_codes,
-        managed_capability_route_keys: record.managed_capability_route_keys,
-        managed_capability_permission_codes: record.managed_capability_permission_codes,
-        default_admin_permission_codes: record.default_admin_permission_codes,
     }
 }

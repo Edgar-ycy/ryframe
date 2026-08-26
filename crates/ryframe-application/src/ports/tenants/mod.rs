@@ -1,6 +1,7 @@
 mod provisioning;
 mod registry;
 mod runtime;
+mod template;
 mod usage;
 
 pub use provisioning::{TenantProvisioningPlacement, TenantProvisioningPort};
@@ -11,6 +12,12 @@ pub use registry::{
     TenantRecord, TenantTransaction,
 };
 pub use runtime::{TenantBusinessDataState, TenantRuntimeReadPort, TenantRuntimeSnapshot};
+pub use template::{
+    TenantAuthorizationTemplate, TenantBaseCatalogTemplate, TenantConfigTemplate,
+    TenantDepartmentTemplate, TenantDictionaryDataTemplate, TenantDictionaryTypeTemplate,
+    TenantMenuTemplate, TenantPermissionTemplate, TenantPostTemplate, TenantProvisioningIdentity,
+    TenantProvisioningTemplate,
+};
 pub use usage::{
     TenantCapacityRecord, TenantUsageAggregateRecord, TenantUsageFilter, TenantUsagePersistencePort,
 };

@@ -1,6 +1,7 @@
 pub mod config_package;
 pub mod config_transfer;
 pub mod data_migration;
+mod provisioning;
 pub mod usage;
 mod validation;
 
@@ -10,6 +11,7 @@ use chrono::{DateTime, Utc};
 use ryframe_kernel::{ActorContext, AppError, AppResult};
 use serde::Serialize;
 
+use provisioning::provision_new_tenant_in_transaction;
 use validation::*;
 
 use super::ProductService;
@@ -97,6 +99,34 @@ impl ValidatedTenantQuota {
     }
 }
 
+fn build_provision_tenant_record(
+    params: &CreateTenantParams,
+    quota: &ValidatedTenantQuota,
+    pending: &TenantProvisioningPlacement,
+    resources: crate::ports::product::ProvisioningCapabilityResources,
+) -> AppResult<ProvisionTenantRecord> {
+    Ok(ProvisionTenantRecord {
+        provisioning_request_token: pending.switch_token.clone(),
+        tenant_id: params.tenant_id.clone(),
+        name: params.name.clone(),
+        domain: params.domain.clone(),
+        expire_at: params.expire_at,
+        max_users: quota.max_users,
+        max_roles: quota.max_roles,
+        max_storage_mb: quota.max_storage_mb,
+        max_requests_per_minute: quota.max_requests_per_minute,
+        admin_username: params.admin_username.clone(),
+        admin_password_hash: ryframe_auth::password::hash(&params.admin_password)?,
+        // 首事务仅创建租户身份与非能力模板；Capability 资源必须等目标库
+        // fence 成功后再同步，避免数据面尚未就绪时暴露模块入口。
+        enabled_capability_route_keys: Vec::new(),
+        enabled_capability_permission_codes: Vec::new(),
+        managed_capability_route_keys: resources.managed_route_keys,
+        managed_capability_permission_codes: resources.managed_permission_codes,
+        default_admin_permission_codes: Vec::new(),
+    })
+}
+
 #[derive(Debug, Clone)]
 pub struct UpdateTenantParams {
     pub name: String,
@@ -149,19 +179,15 @@ impl TenantService {
         validate_idempotency_key(&params.idempotency_key)?;
         ryframe_auth::password::validate_complexity(&params.admin_password)?;
         let quota = ValidatedTenantQuota::from_create_params(&params)?;
-        let max_users = quota.max_users;
-        let max_roles = quota.max_roles;
-        let max_storage_mb = quota.max_storage_mb;
-        let max_requests_per_minute = quota.max_requests_per_minute;
         let tenant_id = params.tenant_id.clone();
         // switch_token 持久化在 pending placement 中，作为控制库权威的幂等键与
         // 非敏感请求指纹；管理员密码另由已持久化的 Argon2 摘要强校验。
         let switch_token = provisioning_switch_token(
             &params,
-            max_users,
-            max_roles,
-            max_storage_mb,
-            max_requests_per_minute,
+            quota.max_users,
+            quota.max_roles,
+            quota.max_storage_mb,
+            quota.max_requests_per_minute,
         );
         let pending = self.tenant_provisioning.prepare(
             tenant_id.clone(),
@@ -169,79 +195,100 @@ impl TenantService {
             1,
             switch_token,
         )?;
-        let transaction = self.persistence.begin().await?;
-        let existing = transaction.lock_optional_tenant(&tenant_id).await?;
-        let already_enabled = if existing.is_some() {
-            self.resume_provisioning_in_txn(transaction.as_ref(), &params, &quota, &pending)
-                .await?
-        } else {
-            let capability_resources = self
-                .product
-                .provisioning_resources_in_txn(transaction.product(), params.plan_version_id)
-                .await?;
-            let command = ProvisionTenantRecord {
-                provisioning_request_token: pending.switch_token.clone(),
-                tenant_id: tenant_id.clone(),
-                name: params.name.clone(),
-                domain: params.domain.clone(),
-                expire_at: params.expire_at,
-                max_users,
-                max_roles,
-                max_storage_mb,
-                max_requests_per_minute,
-                admin_username: params.admin_username.clone(),
-                admin_password_hash: ryframe_auth::password::hash(&params.admin_password)?,
-                // 首事务仅创建租户身份与非能力模板；Capability 资源必须等目标库
-                // fence 成功后再同步，避免数据面尚未就绪时暴露模块入口。
-                enabled_capability_route_keys: Vec::new(),
-                enabled_capability_permission_codes: Vec::new(),
-                managed_capability_route_keys: capability_resources.managed_route_keys,
-                managed_capability_permission_codes: capability_resources.managed_permission_codes,
-                default_admin_permission_codes: Vec::new(),
-            };
-            transaction.provision(command).await?;
-            transaction
-                .assign_initial_product(&tenant_id, params.plan_version_id, actor.user_id)
-                .await?;
-            transaction.create_pending(&pending).await?;
-            false
-        };
-        transaction
-            .commit(crate::TransactionAuditMode::CurrentRequest)
+        let already_enabled = self
+            .begin_or_resume_provisioning(actor, &params, &quota, &pending)
             .await?;
         if already_enabled {
-            return self
-                .persistence
-                .find(&tenant_id)
-                .await?
-                .map(TenantVo::from)
-                .ok_or_else(|| AppError::NotFound("租户不存在".into()));
+            return self.find_tenant_vo(&tenant_id).await;
         }
 
-        if let Err(error) = self.tenant_provisioning.provision_fence(&pending).await {
-            self.mark_provisioning_failed(&pending).await;
+        self.complete_provisioning_saga(&params, &pending).await?;
+        self.find_tenant_vo(&tenant_id).await
+    }
+
+    async fn begin_or_resume_provisioning(
+        &self,
+        actor: &ActorContext,
+        params: &CreateTenantParams,
+        quota: &ValidatedTenantQuota,
+        pending: &TenantProvisioningPlacement,
+    ) -> AppResult<bool> {
+        let transaction = self.persistence.begin().await?;
+        let operation = async {
+            if transaction
+                .lock_optional_tenant(&params.tenant_id)
+                .await?
+                .is_some()
+            {
+                return self
+                    .resume_provisioning_in_txn(transaction.as_ref(), params, quota, pending)
+                    .await;
+            }
+            self.provision_new_tenant(transaction.as_ref(), actor, params, quota, pending)
+                .await?;
+            Ok(false)
+        };
+        let result = operation.await;
+        crate::complete_transaction(
+            transaction,
+            result,
+            crate::TransactionAuditMode::CurrentRequest,
+        )
+        .await
+    }
+
+    async fn complete_provisioning_saga(
+        &self,
+        params: &CreateTenantParams,
+        pending: &TenantProvisioningPlacement,
+    ) -> AppResult<()> {
+        if let Err(error) = self.tenant_provisioning.provision_fence(pending).await {
+            self.mark_provisioning_failed(pending).await;
             return Err(error);
         }
 
         if let Err(error) = self
-            .sync_provisioning_resources(&pending, params.plan_version_id)
+            .sync_provisioning_resources(pending, params.plan_version_id)
             .await
         {
-            self.mark_provisioning_failed(&pending).await;
+            self.mark_provisioning_failed(pending).await;
             return Err(error);
         }
 
-        let finalization = self.finalize_provisioning(&pending).await;
+        let finalization = self.finalize_provisioning(pending).await;
         if let Err(error) = finalization {
-            self.mark_provisioning_failed(&pending).await;
+            self.mark_provisioning_failed(pending).await;
             return Err(error);
         }
-        let enabled = self
-            .persistence
-            .find(&tenant_id)
+        Ok(())
+    }
+
+    async fn provision_new_tenant(
+        &self,
+        transaction: &dyn TenantTransaction,
+        actor: &ActorContext,
+        params: &CreateTenantParams,
+        quota: &ValidatedTenantQuota,
+        pending: &TenantProvisioningPlacement,
+    ) -> AppResult<()> {
+        let resources = self
+            .product
+            .provisioning_resources_in_txn(transaction.product(), params.plan_version_id)
+            .await?;
+        let record = build_provision_tenant_record(params, quota, pending, resources)?;
+        provision_new_tenant_in_transaction(transaction, &record).await?;
+        transaction
+            .assign_initial_product(&params.tenant_id, params.plan_version_id, actor.user_id)
+            .await?;
+        transaction.create_pending(pending).await
+    }
+
+    async fn find_tenant_vo(&self, tenant_id: &str) -> AppResult<TenantVo> {
+        self.persistence
+            .find(tenant_id)
             .await?
-            .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
-        Ok(TenantVo::from(enabled))
+            .map(TenantVo::from)
+            .ok_or_else(|| AppError::NotFound("租户不存在".into()))
     }
 
     async fn resume_provisioning_in_txn(

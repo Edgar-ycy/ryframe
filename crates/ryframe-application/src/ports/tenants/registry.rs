@@ -5,6 +5,10 @@ use crate::{
 };
 
 use super::provisioning::TenantProvisioningPlacement;
+use super::template::{
+    TenantAuthorizationTemplate, TenantBaseCatalogTemplate, TenantProvisioningIdentity,
+    TenantProvisioningTemplate,
+};
 
 pub const TENANT_STATUS_PROVISIONING: &str = "provisioning";
 pub const TENANT_STATUS_ENABLED: &str = "enabled";
@@ -97,7 +101,26 @@ pub trait TenantTransaction: crate::PersistenceTransaction + Send + Sync {
         tenant_id: &'a str,
     ) -> ryframe_kernel::AppResult<Option<TenantProvisionRequestRecord>>;
 
-    async fn provision(&self, record: ProvisionTenantRecord) -> ryframe_kernel::AppResult<()>;
+    async fn load_provisioning_template(
+        &self,
+    ) -> ryframe_kernel::AppResult<TenantProvisioningTemplate>;
+
+    async fn initialize_tenant_identity<'a>(
+        &'a self,
+        record: &'a ProvisionTenantRecord,
+    ) -> ryframe_kernel::AppResult<TenantProvisioningIdentity>;
+
+    async fn copy_tenant_authorization<'a>(
+        &'a self,
+        identity: &'a TenantProvisioningIdentity,
+        template: TenantAuthorizationTemplate,
+    ) -> ryframe_kernel::AppResult<()>;
+
+    async fn copy_tenant_base_catalogs<'a>(
+        &'a self,
+        identity: &'a TenantProvisioningIdentity,
+        template: TenantBaseCatalogTemplate,
+    ) -> ryframe_kernel::AppResult<()>;
 
     async fn assign_initial_product<'a>(
         &'a self,

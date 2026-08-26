@@ -1,7 +1,14 @@
-use crate::DbResultExt;
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, sea_query::LockType};
+use ryframe_kernel::AppResult;
+use sea_orm::{
+    ColumnTrait, DatabaseConnection, DatabaseTransaction, EntityTrait, QueryFilter, QuerySelect,
+    sea_query::LockType,
+};
 
-use super::*;
+use super::TenantProvisioningRepository;
+use crate::{
+    DbResultExt,
+    entities::{tenant::provision_request as tenant_provision_request, user},
+};
 
 impl TenantProvisioningRepository {
     pub async fn lock_provision_request_in_txn(

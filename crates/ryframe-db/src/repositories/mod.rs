@@ -96,7 +96,7 @@ pub use tenant_data_repo::{
     ValidatedTenantDataBackup,
 };
 pub use tenant_operation_lease_repo::TenantOperationLeaseRepository;
-pub use tenant_provisioning_repo::{ProvisionTenantCommand, TenantProvisioningRepository};
+pub use tenant_provisioning_repo::TenantProvisioningRepository;
 pub use tenant_repo::TenantRepository;
 pub use tenant_usage_repo::{TenantUsageAggregate, TenantUsagePageFilter, TenantUsageRepository};
 pub use user_import_repo::{
