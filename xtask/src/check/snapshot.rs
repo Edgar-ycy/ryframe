@@ -8,14 +8,10 @@ use std::{
 
 use crate::{
     Result,
-    process::{command_output, run_pnpm},
-    workspace::root_dir,
+    process::{command_output, run_owned, run_pnpm},
 };
 
-use super::{
-    execution::{BACKEND_VERIFY_TARGET_DIR, run_owned},
-    model::{BackendSnapshotProfile, ConsumerContractPlan},
-};
+use super::model::{BackendSnapshotProfile, ConsumerContractPlan};
 
 static NEXT_VERIFY_ARTIFACT: AtomicU64 = AtomicU64::new(1);
 
@@ -55,33 +51,34 @@ impl Drop for BackendSnapshots {
 }
 
 pub(super) fn export_and_verify_backend_snapshots(
+    root: &Path,
     profiles: &BTreeSet<BackendSnapshotProfile>,
+    target_dir: &str,
 ) -> Result<BackendSnapshots> {
-    let root = root_dir();
-    let snapshots = prepare_backend_snapshots(profiles)?;
+    let snapshots = prepare_backend_snapshots(root, profiles)?;
 
     if let Some(openapi) = &snapshots.openapi {
         run_owned(
-            &root,
+            root,
             "cargo",
-            &backend_snapshot_export_args("ryframe-api", "export_openapi", openapi),
+            &backend_snapshot_export_args(target_dir, "ryframe-api", "export_openapi", openapi),
         )?;
     }
     if let Some(mysql) = &snapshots.mysql {
         run_owned(
-            &root,
+            root,
             "cargo",
-            &backend_snapshot_export_args("ryframe-db", "export_mysql_snapshot", mysql),
+            &backend_snapshot_export_args(target_dir, "ryframe-db", "export_mysql_snapshot", mysql),
         )?;
     }
-    verify_backend_snapshots(&snapshots)?;
+    verify_backend_snapshots(root, &snapshots)?;
     Ok(snapshots)
 }
 
 pub(super) fn prepare_backend_snapshots(
+    root: &Path,
     profiles: &BTreeSet<BackendSnapshotProfile>,
 ) -> Result<BackendSnapshots> {
-    let root = root_dir();
     let artifact_dir = root.join("target").join("xtask");
     fs::create_dir_all(&artifact_dir).map_err(|error| {
         format!(
@@ -103,8 +100,7 @@ pub(super) fn prepare_backend_snapshots(
     Ok(BackendSnapshots { openapi, mysql })
 }
 
-pub(super) fn verify_backend_snapshots(snapshots: &BackendSnapshots) -> Result<()> {
-    let root = root_dir();
+pub(super) fn verify_backend_snapshots(root: &Path, snapshots: &BackendSnapshots) -> Result<()> {
     if let Some(openapi) = &snapshots.openapi {
         verify_snapshot(
             "OpenAPI",
@@ -125,6 +121,7 @@ pub(super) fn verify_backend_snapshots(snapshots: &BackendSnapshots) -> Result<(
 }
 
 pub(crate) fn backend_snapshot_export_args(
+    target_dir: &str,
     package: &str,
     binary: &str,
     output: &Path,
@@ -133,7 +130,7 @@ pub(crate) fn backend_snapshot_export_args(
         "run".to_owned(),
         "--locked".to_owned(),
         "--target-dir".to_owned(),
-        BACKEND_VERIFY_TARGET_DIR.to_owned(),
+        target_dir.to_owned(),
         "-p".to_owned(),
         package.to_owned(),
         "--bin".to_owned(),
@@ -141,6 +138,20 @@ pub(crate) fn backend_snapshot_export_args(
         "--".to_owned(),
         output.to_string_lossy().into_owned(),
     ]
+}
+
+/// 只有实际运行对应 package 的集成测试时，测试环境变量才能生成所需快照。
+pub(crate) fn package_tests_generate_snapshots(
+    profiles: &BTreeSet<BackendSnapshotProfile>,
+    packages: &BTreeSet<String>,
+) -> bool {
+    profiles.iter().all(|profile| {
+        let producer = match profile {
+            BackendSnapshotProfile::OpenApiContract => "ryframe-api",
+            BackendSnapshotProfile::Mysql => "ryframe-db",
+        };
+        packages.contains(producer)
+    })
 }
 
 fn verify_snapshot(
@@ -173,6 +184,7 @@ fn verify_snapshot(
 }
 
 pub(super) fn run_consumer_contract(
+    backend_root: &Path,
     frontend_dir: &Path,
     backend_snapshots: &BackendSnapshots,
 ) -> Result<()> {
@@ -183,7 +195,7 @@ pub(super) fn run_consumer_contract(
     let candidate = frontend_dir.join("openapi/candidate.json").is_file();
     let candidate_commit = if candidate {
         Some(
-            command_output(&root_dir(), "git", &["rev-parse", "HEAD"])?
+            command_output(backend_root, "git", &["rev-parse", "HEAD"])?
                 .trim()
                 .to_owned(),
         )

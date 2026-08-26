@@ -2,6 +2,8 @@
 
 #[path = "check/change_surface.rs"]
 mod change_surface;
+#[path = "check/context.rs"]
+mod context;
 #[path = "check/execution.rs"]
 mod execution;
 #[path = "check/feature.rs"]
@@ -28,11 +30,18 @@ pub(crate) use change_surface::{
     analyze_change_surface, append_changed_file_size_warnings, load_change_surface_policy,
 };
 #[allow(unused_imports)]
+pub(crate) use context::{
+    BACKEND_CI_TARGET_DIR, BACKEND_SMART_TARGET_DIR, BACKEND_VERIFY_TARGET_DIR,
+    RESOURCE_CI_TARGET_DIR, RESOURCE_VERIFY_TARGET_DIR, VerifyExecutionContext, VerifyJobBudget,
+    VerifyTargetPolicy, ci_environment_from, resolve_target_dir, verify_job_budget_from,
+    verify_target_policy_from,
+};
+#[allow(unused_imports)]
 pub(crate) use execution::{
-    BACKEND_POLICY_SCRIPTS, BACKEND_VERIFY_TARGET_DIR, CONSUMER_OWNED_COMMANDS,
-    FRONTEND_FULL_NON_CONSUMER_COMMANDS, FRONTEND_ONLY_CONTRACT_COMMANDS, PYTHON_TEST_ARGS,
-    RESOURCE_VERIFY_TARGET_DIR, VerifyJobBudget, WORKSPACE_CLIPPY_ARGS, verify_job_budget_from,
-    workspace_test_args,
+    BACKEND_POLICY_SCRIPTS, CONSUMER_OWNED_COMMANDS, FRONTEND_FULL_NON_CONSUMER_COMMANDS,
+    FRONTEND_ONLY_CONTRACT_COMMANDS, PYTHON_TEST_ARGS, SMART_BACKEND_OPERATIONS,
+    SMART_FEATURE_OPERATIONS, WORKSPACE_CLIPPY_ARGS, backend_package_operation_args,
+    workspace_clippy_args, workspace_test_args,
 };
 #[allow(unused_imports)]
 pub(crate) use feature::{
@@ -53,5 +62,5 @@ pub(crate) use selection::{
 #[allow(unused_imports)]
 pub(crate) use snapshot::{
     backend_snapshot_export_args, consumer_contract_arguments, consumer_contract_plan,
-    load_consumer_contract_plan,
+    load_consumer_contract_plan, package_tests_generate_snapshots,
 };

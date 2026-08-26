@@ -3,6 +3,7 @@ use super::{
         analyze_change_surface, append_changed_file_size_warnings, enforce_change_surface,
         load_change_surface_policy, print_change_surface,
     },
+    context::{BACKEND_SMART_TARGET_DIR, BACKEND_VERIFY_TARGET_DIR, VerifyExecutionContext},
     feature::{
         check_feature_registry, feature_matrix_with_jobs, load_feature_registry,
         run_feature_operations, run_feature_tests, validate_feature_registry,
@@ -15,19 +16,17 @@ use super::{
         load_workspace_graph, load_workspace_metadata, needs_consumer_contract, print_selection,
     },
     snapshot::{
-        export_and_verify_backend_snapshots, prepare_backend_snapshots, run_consumer_contract,
-        verify_backend_snapshots,
+        export_and_verify_backend_snapshots, package_tests_generate_snapshots,
+        prepare_backend_snapshots, run_consumer_contract, verify_backend_snapshots,
     },
 };
 use crate::{
     Result,
     cli::CheckScope,
-    process::{
-        run as run_process, run_pnpm, run_with_env as run_process_with_env, with_process_log,
-    },
+    process::{run as run_process, run_owned, run_owned_with_env, run_pnpm, with_process_log},
     workspace::root_dir,
 };
-use std::{collections::BTreeSet, env, path::Path, thread, time::Instant};
+use std::{collections::BTreeSet, path::Path, thread, time::Instant};
 
 pub(crate) const PYTHON_TEST_ARGS: &[&str] = &[
     "-m",
@@ -60,10 +59,6 @@ pub(crate) const WORKSPACE_CLIPPY_ARGS: &[&str] = &[
     "-D",
     "clippy::redundant_clone",
 ];
-/// 完整后端门禁共享的 Cargo 产物目录；feature 指纹由 Cargo 自身隔离。
-pub(crate) const BACKEND_VERIFY_TARGET_DIR: &str = "target/verify/backend";
-/// 临时资源工作区独立使用的 Cargo 产物目录，避免污染常规后端门禁缓存。
-pub(crate) const RESOURCE_VERIFY_TARGET_DIR: &str = "target/verify/resource";
 pub(crate) const FRONTEND_FULL_NON_CONSUMER_COMMANDS: &[&str] = &[
     "check:workflows",
     "check:dependencies",
@@ -83,13 +78,15 @@ pub(crate) const CONSUMER_OWNED_COMMANDS: &[&str] = &[
     "typecheck",
     "test:unit",
 ];
+pub(crate) const SMART_BACKEND_OPERATIONS: &[&str] = &["clippy", "test"];
+pub(crate) const SMART_FEATURE_OPERATIONS: &[&str] = &["clippy"];
 
 pub(crate) fn run(scope: CheckScope, frontend_dir: &Path) -> Result<()> {
     match scope {
-        CheckScope::Backend => backend(),
+        CheckScope::Backend => backend(&root_dir(), BACKEND_SMART_TARGET_DIR),
         CheckScope::Frontend => frontend(frontend_dir),
         CheckScope::All => {
-            backend()?;
+            backend(&root_dir(), BACKEND_SMART_TARGET_DIR)?;
             frontend(frontend_dir)
         }
     }
@@ -99,19 +96,27 @@ pub(crate) fn run(scope: CheckScope, frontend_dir: &Path) -> Result<()> {
 pub(crate) fn verify(scope: CheckScope, full: bool, frontend_dir: &Path) -> Result<()> {
     let started = Instant::now();
     let mut mode = if full { "完整" } else { "智能" };
-    metrics::begin(&root_dir(), frontend_dir, scope_label(scope), mode);
+    let mut context = VerifyExecutionContext::new(frontend_dir, full)?;
+    metrics::begin(
+        &context.root,
+        &context.frontend_dir,
+        scope_label(scope),
+        mode,
+        context.targets.backend.as_str(),
+        context.targets.resource.as_str(),
+    );
     let result = (|| {
-        let root = root_dir();
+        let root = &context.root;
         let includes_backend = matches!(scope, CheckScope::All | CheckScope::Backend);
         let includes_frontend = matches!(scope, CheckScope::All | CheckScope::Frontend);
-        let all_backend_changes = changed_paths(&root)?;
-        let all_frontend_changes = changed_paths(frontend_dir)?;
-        let policy = load_change_surface_policy(&root)?;
+        let all_backend_changes = changed_paths(root)?;
+        let all_frontend_changes = changed_paths(&context.frontend_dir)?;
+        let policy = load_change_surface_policy(root)?;
         let mut change_surface =
             analyze_change_surface(&all_backend_changes, &all_frontend_changes, &policy);
         append_changed_file_size_warnings(
-            &root,
-            frontend_dir,
+            root,
+            &context.frontend_dir,
             &all_backend_changes,
             &all_frontend_changes,
             &policy,
@@ -122,11 +127,11 @@ pub(crate) fn verify(scope: CheckScope, full: bool, frontend_dir: &Path) -> Resu
 
         if full {
             println!("cargo verify 选择完整门禁：显式传入 --full。");
-            return full_verify(scope, frontend_dir);
+            return full_verify(&context, scope);
         }
 
         let graph = if includes_backend {
-            load_workspace_graph(&root)?
+            load_workspace_graph(root)?
         } else {
             WorkspaceGraph::default()
         };
@@ -144,29 +149,62 @@ pub(crate) fn verify(scope: CheckScope, full: bool, frontend_dir: &Path) -> Resu
         if let Some(reason) = &selection.full_reason {
             mode = "完整（自动扩大）";
             println!("cargo verify 扩大为完整门禁：{reason}");
-            return full_verify(scope, frontend_dir);
+            let metrics_root = context.root.clone();
+            context.promote_to_full();
+            metrics::update_targets(
+                &metrics_root,
+                context.targets.backend.as_str(),
+                context.targets.resource.as_str(),
+            );
+            return full_verify(&context, scope);
         }
 
         complete_verify_selection(&mut selection, &graph);
         print_selection(&selection);
+        let package_tests_generate_snapshots = !selection.backend_packages.is_empty()
+            && !selection.backend_snapshot_profiles.is_empty()
+            && package_tests_generate_snapshots(
+                &selection.backend_snapshot_profiles,
+                &selection.backend_packages,
+            );
+        let mut snapshots = if package_tests_generate_snapshots {
+            Some(prepare_backend_snapshots(
+                root,
+                &selection.backend_snapshot_profiles,
+            )?)
+        } else {
+            None
+        };
         if !selection.backend_packages.is_empty() {
-            backend_packages(&selection.backend_packages)?;
+            backend_packages(&context, &selection.backend_packages, snapshots.as_ref())?;
         }
         let mut consumer_contract_ran = false;
         if !selection.backend_snapshot_profiles.is_empty() {
             if needs_consumer_contract(&selection.backend_snapshot_profiles) {
-                require_frontend_dependencies(frontend_dir)?;
+                require_frontend_dependencies(&context.frontend_dir)?;
             }
-            let snapshots =
-                export_and_verify_backend_snapshots(&selection.backend_snapshot_profiles)?;
+            if let Some(generated) = snapshots.as_ref() {
+                verify_backend_snapshots(root, generated)?;
+            } else {
+                // 纯快照变更没有可复用的 package test，保留聚焦导出路径。
+                snapshots = Some(export_and_verify_backend_snapshots(
+                    root,
+                    &selection.backend_snapshot_profiles,
+                    context.targets.backend.as_str(),
+                )?);
+            }
             if needs_consumer_contract(&selection.backend_snapshot_profiles) {
-                run_consumer_contract(frontend_dir, &snapshots)?;
+                run_consumer_contract(
+                    root,
+                    &context.frontend_dir,
+                    snapshots.as_ref().ok_or("后端快照尚未生成")?,
+                )?;
                 consumer_contract_ran = true;
             }
         }
         if !selection.frontend_profiles.is_empty() {
             frontend_profiles(
-                frontend_dir,
+                &context.frontend_dir,
                 &selection.frontend_profiles,
                 consumer_contract_ran,
             )?;
@@ -198,28 +236,30 @@ const fn scope_label(scope: CheckScope) -> &'static str {
     }
 }
 
-fn full_verify(scope: CheckScope, frontend_dir: &Path) -> Result<()> {
+fn full_verify(context: &VerifyExecutionContext, scope: CheckScope) -> Result<()> {
+    let root = &context.root;
+    let frontend_dir = &context.frontend_dir;
     if matches!(scope, CheckScope::All | CheckScope::Backend) {
         require_frontend_dependencies(frontend_dir)?;
     }
-    let root = root_dir();
     let backend_enabled = matches!(scope, CheckScope::All | CheckScope::Backend);
     let frontend_enabled = matches!(scope, CheckScope::All | CheckScope::Frontend);
     if backend_enabled && frontend_enabled {
         run_parallel_tasks(
-            &root,
+            root,
             "backend-foundation",
-            backend,
+            || backend(root, context.targets.backend.as_str()),
             "frontend-foundation",
             || frontend_full_non_consumer(frontend_dir),
         )?;
     } else if backend_enabled {
-        backend()?;
+        backend(root, context.targets.backend.as_str())?;
     } else if frontend_enabled {
         frontend_full_non_consumer(frontend_dir)?;
     }
     let backend_snapshots = if backend_enabled {
         let snapshots = prepare_backend_snapshots(
+            root,
             &[
                 BackendSnapshotProfile::OpenApiContract,
                 BackendSnapshotProfile::Mysql,
@@ -227,41 +267,43 @@ fn full_verify(scope: CheckScope, frontend_dir: &Path) -> Result<()> {
             .into_iter()
             .collect(),
         )?;
-        run_process(&root_dir(), "python", PYTHON_TEST_ARGS)?;
+        run_process(root, "python", PYTHON_TEST_ARGS)?;
         run_process(
-            &root_dir(),
+            root,
             "python",
             &["scripts/check_migration_history.py", "--require-frozen"],
         )?;
-        let budget = verify_job_budget()?;
+        let budget = context.jobs;
         println!(
             "完整门禁编译并发：总计={}，主 Workspace={}，资源 Workspace={}",
             budget.total, budget.backend, budget.resource
         );
         run_parallel_tasks(
-            &root,
+            root,
             "backend-workspace",
             || {
-                feature_matrix_with_jobs(budget.backend)?;
-                let args = workspace_test_args(budget.backend);
-                let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+                feature_matrix_with_jobs(root, context.targets.backend.as_str(), budget.backend)?;
+                let args = workspace_test_args(context.targets.backend.as_str(), budget.backend);
                 let environment = snapshots.workspace_test_environment();
-                let environment = environment
-                    .iter()
-                    .map(|(key, value)| (*key, value.as_str()))
-                    .collect::<Vec<_>>();
-                run_process_with_env(&root, "cargo", &args, &environment)
+                run_owned_with_env(root, "cargo", &args, &environment)
             },
             "resource-workspace",
-            || resource_workspace_compilation(budget.resource),
+            || {
+                resource_workspace_compilation(
+                    root,
+                    context.targets.resource.as_str(),
+                    budget.resource,
+                )
+            },
         )?;
-        verify_backend_snapshots(&snapshots)?;
+        verify_backend_snapshots(root, &snapshots)?;
         Some(snapshots)
     } else {
         None
     };
     if matches!(scope, CheckScope::Backend) {
         run_consumer_contract(
+            root,
             frontend_dir,
             backend_snapshots
                 .as_ref()
@@ -270,7 +312,7 @@ fn full_verify(scope: CheckScope, frontend_dir: &Path) -> Result<()> {
     }
     if matches!(scope, CheckScope::All | CheckScope::Frontend) {
         if let Some(snapshots) = backend_snapshots.as_ref() {
-            run_consumer_contract(frontend_dir, snapshots)?;
+            run_consumer_contract(root, frontend_dir, snapshots)?;
         } else {
             // 前端单侧没有可信的后端工作树候选；由前端状态机校验正式或候选契约。
             for command in FRONTEND_ONLY_CONTRACT_COMMANDS {
@@ -297,45 +339,12 @@ fn frontend_full_non_consumer(frontend_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct VerifyJobBudget {
-    pub(crate) total: usize,
-    pub(crate) backend: usize,
-    pub(crate) resource: usize,
-}
-
-pub(crate) fn verify_job_budget_from(
-    override_value: Option<&str>,
-    available_parallelism: usize,
-) -> Result<VerifyJobBudget> {
-    let total = match override_value {
-        Some(value) => value
-            .parse::<usize>()
-            .ok()
-            .filter(|value| (4..=64).contains(value))
-            .ok_or("RYFRAME_VERIFY_JOBS 必须是 4 到 64 的整数")?,
-        None => available_parallelism.saturating_sub(2).clamp(4, 12),
-    };
-    let backend = ((total * 2).div_ceil(3)).clamp(2, total - 2);
-    Ok(VerifyJobBudget {
-        total,
-        backend,
-        resource: total - backend,
-    })
-}
-
-fn verify_job_budget() -> Result<VerifyJobBudget> {
-    let available = thread::available_parallelism().map_or(4, usize::from);
-    let configured = env::var("RYFRAME_VERIFY_JOBS").ok();
-    verify_job_budget_from(configured.as_deref(), available)
-}
-
-pub(crate) fn workspace_test_args(jobs: usize) -> Vec<String> {
+pub(crate) fn workspace_test_args(target_dir: &str, jobs: usize) -> Vec<String> {
     [
         "test",
         "--locked",
         "--target-dir",
-        BACKEND_VERIFY_TARGET_DIR,
+        target_dir,
         "--workspace",
         "--all-features",
         "--jobs",
@@ -392,14 +401,14 @@ fn require_frontend_dependencies(frontend_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn backend() -> Result<()> {
-    let root = root_dir();
-    check_feature_registry(&root)?;
-    run_process(&root, "cargo", &["fmt", "--all", "--", "--check"])?;
+fn backend(root: &Path, backend_target: &str) -> Result<()> {
+    check_feature_registry(root)?;
+    run_process(root, "cargo", &["fmt", "--all", "--", "--check"])?;
     // Clippy 会先完成 Workspace 全目标类型检查，无需再执行覆盖范围更小的 cargo check。
-    run_process(&root, "cargo", WORKSPACE_CLIPPY_ARGS)?;
+    let clippy = workspace_clippy_args(backend_target);
+    run_owned(root, "cargo", &clippy)?;
     for script in BACKEND_POLICY_SCRIPTS {
-        run_process(&root, "python", &[script])?;
+        run_process(root, "python", &[script])?;
     }
     Ok(())
 }
@@ -408,62 +417,102 @@ fn frontend(frontend_dir: &Path) -> Result<()> {
     run_pnpm(frontend_dir, &["check"])
 }
 
-fn backend_packages(packages: &BTreeSet<String>) -> Result<()> {
-    let root = root_dir();
-    let metadata = load_workspace_metadata(&root)?;
-    let registry = load_feature_registry(&root)?;
+fn backend_packages(
+    context: &VerifyExecutionContext,
+    packages: &BTreeSet<String>,
+    snapshots: Option<&super::snapshot::BackendSnapshots>,
+) -> Result<()> {
+    let root = &context.root;
+    let metadata = load_workspace_metadata(root)?;
+    let registry = load_feature_registry(root)?;
     validate_feature_registry(&metadata, &registry)?;
     println!("Cargo feature 注册表检查通过。");
-    run_process(&root, "cargo", &["fmt", "--all", "--", "--check"])?;
-    let jobs = verify_job_budget()?.total;
-    for operation in ["check", "clippy", "test"] {
-        let mut args = vec![operation.to_owned(), "--locked".to_owned()];
-        for package in packages {
-            args.push("-p".to_owned());
-            args.push(package.clone());
+    run_process(root, "cargo", &["fmt", "--all", "--", "--check"])?;
+    let jobs = context.jobs.total;
+    for &operation in SMART_BACKEND_OPERATIONS {
+        let args = backend_package_operation_args(
+            operation,
+            packages,
+            context.targets.backend.as_str(),
+            jobs,
+        );
+        if operation == "test" {
+            let environment = snapshots
+                .map(super::snapshot::BackendSnapshots::workspace_test_environment)
+                .unwrap_or_default();
+            run_owned_with_env(root, "cargo", &args, &environment)?;
+        } else {
+            run_owned(root, "cargo", &args)?;
         }
-        if operation == "check" || operation == "clippy" {
-            args.push("--all-targets".to_owned());
-        }
-        args.extend(["--jobs".to_owned(), jobs.to_string()]);
-        if operation == "clippy" {
-            args.extend([
-                "--".to_owned(),
-                "-D".to_owned(),
-                "warnings".to_owned(),
-                "-D".to_owned(),
-                "clippy::redundant_clone".to_owned(),
-            ]);
-        }
-        run_owned(&root, "cargo", &args)?;
     }
     for entry in registry
         .iter()
         .filter(|entry| packages.contains(&entry.package))
     {
         run_feature_operations(
-            &root,
+            root,
             &entry.package,
             "最大（智能检查）",
             &entry.maximal,
-            &["check", "clippy"],
+            SMART_FEATURE_OPERATIONS,
+            context.targets.backend.as_str(),
             jobs,
         )?;
-        run_feature_tests(&root, entry, jobs)?;
+        run_feature_tests(root, entry, context.targets.backend.as_str(), jobs)?;
     }
     for script in [
         "scripts/check_architecture.py",
         "scripts/check_migration_history.py",
         "scripts/check_permission_routes.py",
     ] {
-        run_process(&root, "python", &[script])?;
+        run_process(root, "python", &[script])?;
     }
     Ok(())
 }
 
-pub(super) fn run_owned(dir: &Path, executable: &str, args: &[String]) -> Result<()> {
-    let borrowed = args.iter().map(String::as_str).collect::<Vec<_>>();
-    run_process(dir, executable, &borrowed)
+pub(crate) fn backend_package_operation_args(
+    operation: &str,
+    packages: &BTreeSet<String>,
+    target_dir: &str,
+    jobs: usize,
+) -> Vec<String> {
+    let mut args = vec![
+        operation.to_owned(),
+        "--locked".to_owned(),
+        "--target-dir".to_owned(),
+        target_dir.to_owned(),
+    ];
+    for package in packages {
+        args.push("-p".to_owned());
+        args.push(package.clone());
+    }
+    if operation == "clippy" {
+        args.push("--all-targets".to_owned());
+    }
+    args.extend(["--jobs".to_owned(), jobs.to_string()]);
+    if operation == "clippy" {
+        args.extend([
+            "--".to_owned(),
+            "-D".to_owned(),
+            "warnings".to_owned(),
+            "-D".to_owned(),
+            "clippy::redundant_clone".to_owned(),
+        ]);
+    }
+    args
+}
+
+pub(crate) fn workspace_clippy_args(target_dir: &str) -> Vec<String> {
+    WORKSPACE_CLIPPY_ARGS
+        .iter()
+        .map(|argument| {
+            if *argument == BACKEND_VERIFY_TARGET_DIR {
+                target_dir.to_owned()
+            } else {
+                (*argument).to_owned()
+            }
+        })
+        .collect()
 }
 
 fn frontend_profiles(

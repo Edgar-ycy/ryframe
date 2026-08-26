@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
+    ffi::OsStr,
     fs,
     path::Path,
     process::Command,
@@ -7,17 +8,20 @@ use std::{
 };
 
 use super::check::{
-    BACKEND_POLICY_SCRIPTS, BACKEND_VERIFY_TARGET_DIR, BackendSnapshotProfile,
-    CONSUMER_OWNED_COMMANDS, ChangeCategory, ChangeSurfacePolicy,
-    FRONTEND_FULL_NON_CONSUMER_COMMANDS, FRONTEND_ONLY_CONTRACT_COMMANDS, FrontendProfile,
-    PYTHON_TEST_ARGS, RESOURCE_VERIFY_TARGET_DIR, WORKSPACE_CLIPPY_ARGS, WorkspaceGraph,
-    analyze_change_surface, append_changed_file_size_warnings, backend_snapshot_export_args,
-    changed_paths, classify_changes, complete_verify_selection, consumer_contract_arguments,
+    BACKEND_CI_TARGET_DIR, BACKEND_POLICY_SCRIPTS, BACKEND_SMART_TARGET_DIR,
+    BACKEND_VERIFY_TARGET_DIR, BackendSnapshotProfile, CONSUMER_OWNED_COMMANDS, ChangeCategory,
+    ChangeSurfacePolicy, FRONTEND_FULL_NON_CONSUMER_COMMANDS, FRONTEND_ONLY_CONTRACT_COMMANDS,
+    FrontendProfile, PYTHON_TEST_ARGS, RESOURCE_CI_TARGET_DIR, RESOURCE_VERIFY_TARGET_DIR,
+    SMART_BACKEND_OPERATIONS, SMART_FEATURE_OPERATIONS, VerifyTargetPolicy, WORKSPACE_CLIPPY_ARGS,
+    WorkspaceGraph, analyze_change_surface, append_changed_file_size_warnings,
+    backend_package_operation_args, backend_snapshot_export_args, changed_paths,
+    ci_environment_from, classify_changes, complete_verify_selection, consumer_contract_arguments,
     consumer_contract_plan, feature_operation_args, feature_test_args, frontend_profile_commands,
     load_change_surface_policy, load_consumer_contract_plan, load_workspace_graph,
-    minimal_workspace_check_args, needs_consumer_contract, resource_test_executable_from_messages,
-    reverse_dependency_closure, validate_feature_combination, verify_job_budget_from,
-    workspace_test_args,
+    minimal_workspace_check_args, needs_consumer_contract, package_tests_generate_snapshots,
+    resolve_target_dir, resource_test_executable_from_messages, reverse_dependency_closure,
+    validate_feature_combination, verify_job_budget_from, verify_target_policy_from,
+    workspace_clippy_args, workspace_test_args,
 };
 
 static NEXT_REPOSITORY: AtomicU64 = AtomicU64::new(1);
@@ -67,26 +71,26 @@ fn feature_matrix_compiles_and_tests_required_feature_targets() {
         "destructive-reset".to_owned(),
         "file-maintenance".to_owned(),
     ];
-    let check = feature_operation_args("check", "ryframe", &features, 8);
-    let clippy = feature_operation_args("clippy", "ryframe", &features, 8);
+    let check = feature_operation_args("check", "ryframe", &features, "target", 8);
+    let clippy = feature_operation_args("clippy", "ryframe", &features, "target", 8);
 
     for args in [&check, &clippy] {
         assert!(args.windows(2).any(|pair| pair == ["-p", "ryframe"]));
         assert!(
             args.windows(2)
-                .any(|pair| { pair == ["--target-dir", "target/verify/backend"] })
+                .any(|pair| { pair == ["--target-dir", "target"] })
         );
         assert!(args.contains(&"--all-targets".to_owned()));
         assert!(args.contains(&"--no-default-features".to_owned()));
         assert!(args.windows(2).any(|pair| pair == ["--jobs", "8"]));
         assert!(args.contains(&"destructive-reset,file-maintenance".to_owned()));
     }
-    let test = feature_test_args("ryframe", &features, "reset_contract", 8);
+    let test = feature_test_args("ryframe", &features, "reset_contract", "target", 8);
     assert!(test.windows(2).any(|pair| pair == ["-p", "ryframe"]));
     assert!(test.windows(2).any(|pair| pair == ["--jobs", "8"]));
     assert!(
         test.windows(2)
-            .any(|pair| { pair == ["--target-dir", "target/verify/backend"] })
+            .any(|pair| { pair == ["--target-dir", "target"] })
     );
     assert!(
         test.windows(2)
@@ -140,7 +144,7 @@ fn full_gate_discovers_repository_python_tests() {
         ]
     );
     assert_eq!(
-        workspace_test_args(8),
+        workspace_test_args("target/verify/backend", 8),
         [
             "test",
             "--locked",
@@ -152,10 +156,13 @@ fn full_gate_discovers_repository_python_tests() {
             "8",
         ]
     );
+    assert_eq!(BACKEND_SMART_TARGET_DIR, "target");
     assert_eq!(BACKEND_VERIFY_TARGET_DIR, "target/verify/backend");
+    assert_eq!(BACKEND_CI_TARGET_DIR, "target/ci/backend");
     assert_eq!(RESOURCE_VERIFY_TARGET_DIR, "target/verify/resource");
+    assert_eq!(RESOURCE_CI_TARGET_DIR, "target/ci/resource");
     assert_eq!(
-        minimal_workspace_check_args(8),
+        minimal_workspace_check_args("target/verify/backend", 8),
         [
             "check",
             "--locked",
@@ -168,6 +175,92 @@ fn full_gate_discovers_repository_python_tests() {
             "8",
         ]
     );
+}
+
+#[test]
+fn verify_target_policy_distinguishes_smart_full_and_ci_targets() {
+    assert!(!ci_environment_from(None));
+    assert!(!ci_environment_from(Some(OsStr::new(""))));
+    assert!(ci_environment_from(Some(OsStr::new("true"))));
+    assert_eq!(
+        verify_target_policy_from(false, false, None),
+        VerifyTargetPolicy {
+            backend: "target".to_owned(),
+            resource: "target/verify/resource".to_owned(),
+        }
+    );
+    assert_eq!(
+        verify_target_policy_from(false, false, Some(Path::new("target/custom-smart")),),
+        VerifyTargetPolicy {
+            backend: "target/custom-smart".to_owned(),
+            resource: "target/verify/resource".to_owned(),
+        }
+    );
+    assert_eq!(
+        verify_target_policy_from(true, false, Some(Path::new("target/ignored"))),
+        VerifyTargetPolicy {
+            backend: "target/verify/backend".to_owned(),
+            resource: "target/verify/resource".to_owned(),
+        }
+    );
+    assert_eq!(
+        verify_target_policy_from(false, true, Some(Path::new("target/ignored"))),
+        VerifyTargetPolicy {
+            backend: "target/ci/backend".to_owned(),
+            resource: "target/ci/resource".to_owned(),
+        }
+    );
+    assert_eq!(
+        verify_target_policy_from(true, true, Some(Path::new("target/ignored"))),
+        VerifyTargetPolicy {
+            backend: "target/ci/backend".to_owned(),
+            resource: "target/ci/resource".to_owned(),
+        }
+    );
+    let clippy = workspace_clippy_args("target/custom-backend");
+    assert!(
+        clippy
+            .windows(2)
+            .any(|pair| pair == ["--target-dir", "target/custom-backend"])
+    );
+}
+
+#[test]
+fn target_resolution_preserves_absolute_cargo_target_dir() {
+    let root = std::env::current_dir().unwrap();
+    let absolute = root.join("target/external-smart");
+    let policy = verify_target_policy_from(false, false, Some(&absolute));
+
+    assert_eq!(policy.backend, absolute.to_string_lossy());
+    assert_eq!(
+        resolve_target_dir(Path::new("ignored-root"), &policy.backend),
+        absolute
+    );
+    assert_eq!(
+        resolve_target_dir(Path::new("repository"), "target/custom-smart"),
+        Path::new("repository").join("target/custom-smart")
+    );
+}
+
+#[test]
+fn smart_backend_uses_clippy_and_test_without_redundant_check() {
+    assert_eq!(SMART_BACKEND_OPERATIONS, ["clippy", "test"]);
+    assert_eq!(SMART_FEATURE_OPERATIONS, ["clippy"]);
+    let packages = ["ryframe-api".to_owned(), "ryframe-db".to_owned()]
+        .into_iter()
+        .collect();
+    let clippy = backend_package_operation_args("clippy", &packages, "target", 6);
+    let test = backend_package_operation_args("test", &packages, "target", 6);
+    for args in [&clippy, &test] {
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--target-dir", "target"])
+        );
+        assert!(args.windows(2).any(|pair| pair == ["--jobs", "6"]));
+        assert!(!args.contains(&"check".to_owned()));
+    }
+    assert!(clippy.contains(&"--all-targets".to_owned()));
+    assert!(!test.contains(&"--all-targets".to_owned()));
 }
 
 #[test]
@@ -209,6 +302,7 @@ fn resource_test_executable_is_read_from_cargo_json_messages() {
 fn backend_snapshots_reuse_the_backend_verify_target() {
     assert_eq!(
         backend_snapshot_export_args(
+            "target",
             "ryframe-api",
             "export_openapi",
             Path::new("target/xtask/openapi.json"),
@@ -217,7 +311,7 @@ fn backend_snapshots_reuse_the_backend_verify_target() {
             "run",
             "--locked",
             "--target-dir",
-            "target/verify/backend",
+            "target",
             "-p",
             "ryframe-api",
             "--bin",
@@ -226,6 +320,27 @@ fn backend_snapshots_reuse_the_backend_verify_target() {
             "target/xtask/openapi.json",
         ]
     );
+}
+
+#[test]
+fn package_tests_generate_snapshots_only_when_every_producer_runs() {
+    let openapi = [BackendSnapshotProfile::OpenApiContract]
+        .into_iter()
+        .collect();
+    let both = [
+        BackendSnapshotProfile::OpenApiContract,
+        BackendSnapshotProfile::Mysql,
+    ]
+    .into_iter()
+    .collect();
+    let api = ["ryframe-api".to_owned()].into_iter().collect();
+    let producers = ["ryframe-api".to_owned(), "ryframe-db".to_owned()]
+        .into_iter()
+        .collect();
+
+    assert!(package_tests_generate_snapshots(&openapi, &api));
+    assert!(!package_tests_generate_snapshots(&both, &api));
+    assert!(package_tests_generate_snapshots(&both, &producers));
 }
 
 #[test]

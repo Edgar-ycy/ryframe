@@ -11,6 +11,8 @@ use serde::Serialize;
 
 use crate::process::{install_step_observer, rustc_cache_label};
 
+use super::context::resolve_target_dir;
+
 #[derive(Debug, Serialize)]
 struct VerifyStep {
     command: String,
@@ -20,7 +22,9 @@ struct VerifyStep {
 
 #[derive(Debug, Serialize)]
 struct TargetState {
+    backend: String,
     backend_warm: bool,
+    resource: String,
     resource_warm: bool,
 }
 
@@ -66,7 +70,14 @@ struct ActiveVerify {
 
 static ACTIVE_VERIFY: OnceLock<Mutex<Option<ActiveVerify>>> = OnceLock::new();
 
-pub(crate) fn begin(root: &Path, frontend: &Path, scope: &str, mode: &str) {
+pub(crate) fn begin(
+    root: &Path,
+    frontend: &Path,
+    scope: &str,
+    mode: &str,
+    backend_target: &str,
+    resource_target: &str,
+) {
     install_step_observer(record_step);
     let rustc_cache = rustc_cache_label();
     let sccache_before = (rustc_cache == "sccache")
@@ -76,7 +87,7 @@ pub(crate) fn begin(root: &Path, frontend: &Path, scope: &str, mode: &str) {
         root: root.to_path_buf(),
         sccache_before,
         run: VerifyRun {
-            version: 1,
+            version: 2,
             started_at: Utc::now().to_rfc3339(),
             backend_commit: git_text(root, &["rev-parse", "HEAD"]),
             scope: scope.to_owned(),
@@ -87,10 +98,7 @@ pub(crate) fn begin(root: &Path, frontend: &Path, scope: &str, mode: &str) {
             sccache_before,
             sccache_after: None,
             sccache_delta: None,
-            targets: TargetState {
-                backend_warm: directory_has_entries(&root.join("target/verify/backend")),
-                resource_warm: directory_has_entries(&root.join("target/verify/resource")),
-            },
+            targets: target_state(root, backend_target, resource_target),
             steps: Vec::new(),
             total_seconds: 0.0,
             status: "running",
@@ -100,6 +108,27 @@ pub(crate) fn begin(root: &Path, frontend: &Path, scope: &str, mode: &str) {
         *slot = Some(active);
     } else {
         eprintln!("无法初始化 verify 指标记录；检查继续执行。");
+    }
+}
+
+pub(crate) fn update_targets(root: &Path, backend_target: &str, resource_target: &str) {
+    let Some(mutex) = ACTIVE_VERIFY.get() else {
+        return;
+    };
+    let Ok(mut slot) = mutex.lock() else {
+        return;
+    };
+    if let Some(active) = slot.as_mut() {
+        active.run.targets = target_state(root, backend_target, resource_target);
+    }
+}
+
+fn target_state(root: &Path, backend_target: &str, resource_target: &str) -> TargetState {
+    TargetState {
+        backend: backend_target.to_owned(),
+        backend_warm: directory_has_entries(&resolve_target_dir(root, backend_target)),
+        resource: resource_target.to_owned(),
+        resource_warm: directory_has_entries(&resolve_target_dir(root, resource_target)),
     }
 }
 

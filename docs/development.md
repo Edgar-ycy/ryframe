@@ -22,6 +22,8 @@ cargo verify --full
 
 这些短命令由仓库内 `xtask` 实现。`cargo xtask ...` 保留给 CI、发布检查和维护任务，不作为普通开发者需要记忆的公共命令。
 
+单次 `cargo verify` 会固定 Workspace 根目录、并发预算和 Cargo target 策略。本地智能门禁默认复用日常开发的 `target`，并尊重外部 `CARGO_TARGET_DIR`；本地显式或自动扩大的完整门禁固定使用 `target/verify/backend`，临时资源 Workspace 使用 `target/verify/resource`。CI 以既有 `CI` 环境变量判定，忽略外部 `CARGO_TARGET_DIR`，分别固定使用 `target/ci/backend` 与 `target/ci/resource`。xtask 自身仍由 Cargo alias 隔离到 `target/xtask-run`。智能后端门禁执行 Clippy 后直接测试，不再额外运行被 Clippy 覆盖的 `cargo check`。若选中的 package 测试能够生成 OpenAPI 或 MySQL 快照，门禁复用同一次 `cargo test` 的快照；仅修改正式快照且未选中生产 package 时，仍执行聚焦的快照导出命令。
+
 迁移冻结属于提交维护动作，不进入日常命令集。维护者在新迁移实现和测试完成后运行内部命令 `cargo xtask migrate freeze`；它只接受尚未进入 `HEAD` 的新迁移，`cargo verify --full` 和 CI 会拒绝漏冻结，冻结后禁止修改、删除或改名。
 
 架构和生成资产：
@@ -94,7 +96,7 @@ cargo resource post --explain
 
 ## 效率采样
 
-`cargo verify` 会把步骤名称、命令、耗时、结果、范围、提交、工作树状态、Cargo target 状态和 sccache 状态追加到 `target/verify/metrics.jsonl`。该文件和步骤日志只保存在 `target`，不提交。自动门禁按完整成功样本汇总；P50 使用中间两个样本均值，P95 使用保守的 nearest-rank。
+`cargo verify` 会把步骤名称、命令、耗时、结果、范围、提交、工作树状态、实际使用的后端与资源 Cargo target 状态和 sccache 状态追加到 `target/verify/metrics.jsonl`。该文件和步骤日志只保存在 `target`，不提交。自动门禁按完整成功样本汇总；P50 使用中间两个样本均值，P95 使用保守的 nearest-rank。
 
 迁移前自动检查基线（Windows 本机、同一工作树）：2026-08-23 执行 `cargo check --locked -p ryframe-application -p ryframe-db -p ryframe-api --all-targets`，依赖增量检查为 41.16 秒，紧接着的暖缓存检查为 0.70 秒。该数据只代表三层编译反馈，不冒充完整门禁或 CRUD 交付时间；后续采样必须保留命令、提交和冷暖缓存状态。
 

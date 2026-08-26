@@ -3,24 +3,26 @@ use std::path::PathBuf;
 use crate::{
     Result,
     process::{command_output_with_env, run_with_env},
-    workspace::root_dir,
 };
 
-use super::execution::RESOURCE_VERIFY_TARGET_DIR;
+use super::context::resolve_target_dir;
 
 const RESOURCE_WORKSPACE_TEST: &str = "resource_workspace_compilation";
 
-pub(super) fn resource_workspace_compilation(jobs: usize) -> Result<()> {
-    let root = root_dir();
+pub(super) fn resource_workspace_compilation(
+    root: &std::path::Path,
+    target_dir: &str,
+    jobs: usize,
+) -> Result<()> {
     let jobs = jobs.to_string();
     let output = command_output_with_env(
-        &root,
+        root,
         "cargo",
         &[
             "test",
             "--locked",
             "--target-dir",
-            RESOURCE_VERIFY_TARGET_DIR,
+            target_dir,
             "-p",
             "ryframe-generator",
             "--test",
@@ -34,10 +36,10 @@ pub(super) fn resource_workspace_compilation(jobs: usize) -> Result<()> {
     let executable = executable
         .to_str()
         .ok_or("资源 Workspace 测试可执行文件路径不是有效 UTF-8")?;
-    let shared_target = root.join(RESOURCE_VERIFY_TARGET_DIR);
+    let shared_target = resolve_target_dir(root, target_dir);
     let shared_target = shared_target.to_string_lossy().into_owned();
     run_with_env(
-        &root,
+        root,
         executable,
         &["--ignored", "--nocapture"],
         &[

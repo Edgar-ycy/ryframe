@@ -4,12 +4,9 @@ use std::{
     path::Path,
 };
 
-use crate::{Result, workspace::root_dir};
+use crate::{Result, process::run_owned, workspace::root_dir};
 
-use super::{
-    execution::{BACKEND_VERIFY_TARGET_DIR, run_owned},
-    selection::load_workspace_metadata,
-};
+use super::{context::BACKEND_VERIFY_TARGET_DIR, selection::load_workspace_metadata};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct FeatureMatrixEntry {
@@ -20,26 +17,30 @@ pub(super) struct FeatureMatrixEntry {
 }
 
 pub(crate) fn feature_matrix() -> Result<()> {
+    let root = root_dir();
     let jobs = std::thread::available_parallelism().map_or(2, usize::from);
-    feature_matrix_with_jobs(jobs)
+    feature_matrix_with_jobs(&root, BACKEND_VERIFY_TARGET_DIR, jobs)
 }
 
-pub(crate) fn feature_matrix_with_jobs(jobs: usize) -> Result<()> {
-    let root = root_dir();
-    let metadata = load_workspace_metadata(&root)?;
-    let registry = load_feature_registry(&root)?;
+pub(crate) fn feature_matrix_with_jobs(root: &Path, target_dir: &str, jobs: usize) -> Result<()> {
+    let metadata = load_workspace_metadata(root)?;
+    let registry = load_feature_registry(root)?;
     validate_feature_registry(&metadata, &registry)?;
 
     println!("检查 Workspace 的最小 feature 组合。");
-    run_owned(&root, "cargo", &minimal_workspace_check_args(jobs))
+    run_owned(
+        root,
+        "cargo",
+        &minimal_workspace_check_args(target_dir, jobs),
+    )
 }
 
-pub(crate) fn minimal_workspace_check_args(jobs: usize) -> Vec<String> {
+pub(crate) fn minimal_workspace_check_args(target_dir: &str, jobs: usize) -> Vec<String> {
     [
         "check",
         "--locked",
         "--target-dir",
-        BACKEND_VERIFY_TARGET_DIR,
+        target_dir,
         "--workspace",
         "--no-default-features",
         "--all-targets",
@@ -259,11 +260,12 @@ pub(super) fn run_feature_operations(
     label: &str,
     features: &[String],
     operations: &[&str],
+    target_dir: &str,
     jobs: usize,
 ) -> Result<()> {
     println!("检查 {package} 的{label} feature 组合。");
     for operation in operations {
-        let args = feature_operation_args(operation, package, features, jobs);
+        let args = feature_operation_args(operation, package, features, target_dir, jobs);
         run_owned(root, "cargo", &args)?;
     }
     Ok(())
@@ -272,6 +274,7 @@ pub(super) fn run_feature_operations(
 pub(super) fn run_feature_tests(
     root: &Path,
     entry: &FeatureMatrixEntry,
+    target_dir: &str,
     jobs: usize,
 ) -> Result<()> {
     for target in &entry.test_targets {
@@ -282,7 +285,7 @@ pub(super) fn run_feature_tests(
         run_owned(
             root,
             "cargo",
-            &feature_test_args(&entry.package, &entry.maximal, target, jobs),
+            &feature_test_args(&entry.package, &entry.maximal, target, target_dir, jobs),
         )?;
     }
     Ok(())
@@ -292,13 +295,14 @@ pub(crate) fn feature_test_args(
     package: &str,
     features: &[String],
     target: &str,
+    target_dir: &str,
     jobs: usize,
 ) -> Vec<String> {
     let mut args = vec![
         "test".to_owned(),
         "--locked".to_owned(),
         "--target-dir".to_owned(),
-        BACKEND_VERIFY_TARGET_DIR.to_owned(),
+        target_dir.to_owned(),
         "-p".to_owned(),
         package.to_owned(),
         "--no-default-features".to_owned(),
@@ -317,13 +321,14 @@ pub(crate) fn feature_operation_args(
     operation: &str,
     package: &str,
     features: &[String],
+    target_dir: &str,
     jobs: usize,
 ) -> Vec<String> {
     let mut args = vec![
         operation.to_owned(),
         "--locked".to_owned(),
         "--target-dir".to_owned(),
-        BACKEND_VERIFY_TARGET_DIR.to_owned(),
+        target_dir.to_owned(),
         "-p".to_owned(),
         package.to_owned(),
         "--no-default-features".to_owned(),

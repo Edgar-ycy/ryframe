@@ -58,6 +58,24 @@ pub(crate) fn run(dir: &Path, executable: &str, args: &[&str]) -> Result<()> {
     run_with_env(dir, executable, args, &[])
 }
 
+pub(crate) fn run_owned(dir: &Path, executable: &str, args: &[String]) -> Result<()> {
+    run_owned_with_env(dir, executable, args, &[])
+}
+
+pub(crate) fn run_owned_with_env(
+    dir: &Path,
+    executable: &str,
+    args: &[String],
+    environment: &[(&'static str, String)],
+) -> Result<()> {
+    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let environment = environment
+        .iter()
+        .map(|(key, value)| (*key, value.as_str()))
+        .collect::<Vec<_>>();
+    run_with_env(dir, executable, &args, &environment)
+}
+
 pub(crate) fn run_with_env(
     dir: &Path,
     executable: &str,
