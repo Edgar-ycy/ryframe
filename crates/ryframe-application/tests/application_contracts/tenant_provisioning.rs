@@ -1,4 +1,4 @@
-#[path = "tenant_provisioning_support/fixtures.rs"]
+#[path = "../tenant_provisioning_support/fixtures.rs"]
 mod fixtures;
 
 use std::sync::{Arc, Mutex};

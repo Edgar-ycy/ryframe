@@ -6,3 +6,5 @@ mod resource_import;
 mod resource_relations;
 #[path = "resource_contracts/resource_validation.rs"]
 mod resource_validation;
+#[path = "resource_contracts/resource_writer_transaction.rs"]
+mod resource_writer_transaction;

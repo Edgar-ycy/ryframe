@@ -106,11 +106,11 @@ async fn normal_startup_keeps_ensure_and_cleanup_behavior() {
 
 #[test]
 fn api_and_worker_wire_probe_to_read_only_dependency_checks() {
-    let api_storage = include_str!("../src/boot/storage.rs");
-    let api_redis = include_str!("../src/boot/redis.rs");
-    let api_main = include_str!("../src/main.rs");
-    let worker_main = include_str!("../src/bin/ryframe_worker.rs");
-    let worker_runtime = include_str!("../src/bin/ryframe_worker/runtime.rs");
+    let api_storage = include_str!("../../src/boot/storage.rs");
+    let api_redis = include_str!("../../src/boot/redis.rs");
+    let api_main = include_str!("../../src/main.rs");
+    let worker_main = include_str!("../../src/bin/ryframe_worker.rs");
+    let worker_runtime = include_str!("../../src/bin/ryframe_worker/runtime.rs");
 
     assert!(api_main.contains("control_plane::prepare("));
     assert!(api_storage.contains("|| storage.ensure_bucket(bucket)"));
@@ -126,9 +126,9 @@ fn api_and_worker_wire_probe_to_read_only_dependency_checks() {
 
 #[test]
 fn api_and_worker_share_control_plane_preparation() {
-    let shared = include_str!("../src/boot/control_plane.rs");
-    let api_main = include_str!("../src/main.rs");
-    let worker_main = include_str!("../src/bin/ryframe_worker.rs");
+    let shared = include_str!("../../src/boot/control_plane.rs");
+    let api_main = include_str!("../../src/main.rs");
+    let worker_main = include_str!("../../src/bin/ryframe_worker.rs");
 
     for operation in [
         "apply_migration(",
@@ -147,9 +147,9 @@ fn api_and_worker_share_control_plane_preparation() {
 
 #[test]
 fn api_and_worker_share_background_service_builder() {
-    let api_services = include_str!("../src/boot/services.rs");
-    let shared_services = include_str!("../src/boot/background_services.rs");
-    let worker_main = include_str!("../src/bin/ryframe_worker.rs");
+    let api_services = include_str!("../../src/boot/services.rs");
+    let shared_services = include_str!("../../src/boot/background_services.rs");
+    let worker_main = include_str!("../../src/bin/ryframe_worker.rs");
 
     assert!(api_services.contains("build_background_services("));
     assert!(worker_main.contains("build_background_services("));
@@ -166,10 +166,10 @@ fn api_and_worker_share_background_service_builder() {
 
 #[test]
 fn background_job_handlers_are_grouped_by_domain() {
-    let jobs = include_str!("../src/boot/jobs.rs");
-    let groups = include_str!("../src/boot/jobs/handlers/mod.rs");
-    let api_main = include_str!("../src/main.rs");
-    let worker_main = include_str!("../src/bin/ryframe_worker.rs");
+    let jobs = include_str!("../../src/boot/jobs.rs");
+    let groups = include_str!("../../src/boot/jobs/handlers/mod.rs");
+    let api_main = include_str!("../../src/main.rs");
+    let worker_main = include_str!("../../src/bin/ryframe_worker.rs");
 
     assert!(jobs.contains("handlers::built_in(&dependencies)"));
     assert!(jobs.contains("with_handlers(built_in_handlers)"));

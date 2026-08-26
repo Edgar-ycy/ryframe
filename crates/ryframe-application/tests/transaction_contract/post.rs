@@ -39,10 +39,6 @@ fn actor() -> ActorContext {
     }
 }
 
-fn fixed_id() -> AppResult<i64> {
-    Ok(8)
-}
-
 #[tokio::test]
 async fn update_owns_transaction_order() {
     let timestamp = Utc
@@ -149,7 +145,7 @@ async fn create_rolls_back_on_duplicate_code() {
     let persistence = Arc::new(PostFakePersistence::default());
     persistence.insert_record("tenant-a", record(timestamp));
     let service = PostService::new(persistence.clone());
-    ryframe_application::install_id_generator(fixed_id).expect("测试 ID 生成器应安装成功");
+    crate::ensure_test_id_generator();
 
     let error = service
         .create(

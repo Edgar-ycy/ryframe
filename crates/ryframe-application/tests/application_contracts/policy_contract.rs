@@ -8,11 +8,7 @@ use ryframe_application::{
     ports::auth::IdentityRoleRecord,
     system::{identity::RoleOptionPurpose, operations::parse_log_time_range},
 };
-use ryframe_kernel::{AppError, AppResult};
-
-fn fixed_id() -> AppResult<i64> {
-    Ok(43)
-}
+use ryframe_kernel::AppError;
 
 fn role(code: &str, is_super: bool) -> IdentityRoleRecord {
     IdentityRoleRecord {
@@ -42,9 +38,9 @@ fn worker_policy_rejects_heartbeat_outside_lease() {
 
 #[test]
 fn installed_generator_is_used_and_cannot_be_replaced() {
-    install_id_generator(fixed_id).expect("首次安装应成功");
+    crate::ensure_test_id_generator();
     assert_eq!(next_id().expect("ID 应生成成功"), 43);
-    assert!(install_id_generator(fixed_id).is_err());
+    assert!(install_id_generator(crate::fixed_test_id).is_err());
 }
 
 #[test]

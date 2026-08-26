@@ -3,7 +3,7 @@ use std::fs;
 use ryframe_generator::ResourceError;
 use sha2::{Digest, Sha256};
 
-#[path = "../src/resource/writer/transaction.rs"]
+#[path = "../../src/resource/writer/transaction.rs"]
 #[allow(dead_code)]
 mod transaction;
 
