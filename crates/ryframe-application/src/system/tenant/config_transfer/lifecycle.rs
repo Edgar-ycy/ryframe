@@ -46,6 +46,97 @@ impl Drop for OperationLease {
     }
 }
 
+/// 回滚快照只有在写事务成功引用后才能保留；其余路径必须显式安排延迟清理。
+#[must_use = "回滚快照必须显式保留或清理"]
+pub(super) struct RollbackSnapshotFile {
+    service: TenantConfigTransferService,
+    tenant_id: String,
+    file_id: i64,
+    state: RollbackSnapshotState,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RollbackSnapshotState {
+    Pending,
+    Retained,
+    CleanupScheduled,
+}
+
+impl RollbackSnapshotState {
+    const fn requires_cleanup(self) -> bool {
+        matches!(self, Self::Pending)
+    }
+
+    fn retain(&mut self) {
+        if self.requires_cleanup() {
+            *self = Self::Retained;
+        }
+    }
+
+    fn mark_cleanup_scheduled(&mut self) {
+        if self.requires_cleanup() {
+            *self = Self::CleanupScheduled;
+        }
+    }
+}
+
+impl RollbackSnapshotFile {
+    pub(super) fn new(
+        service: TenantConfigTransferService,
+        tenant_id: String,
+        file_id: i64,
+    ) -> Self {
+        Self {
+            service,
+            tenant_id,
+            file_id,
+            state: RollbackSnapshotState::Pending,
+        }
+    }
+
+    pub(super) fn file_id(&self) -> i64 {
+        self.file_id
+    }
+
+    /// 写事务已经引用快照后结束清理生命周期。
+    pub(super) fn retain(&mut self) {
+        self.state.retain();
+    }
+
+    /// 写事务提交前失败时将快照纳入可恢复的延迟清理。
+    pub(super) async fn cleanup(&mut self) {
+        if !self.state.requires_cleanup() {
+            return;
+        }
+        let _ = self
+            .service
+            .file
+            .schedule_unreferenced_config_package_cleanup(&self.tenant_id, self.file_id)
+            .await;
+        self.state.mark_cleanup_scheduled();
+    }
+}
+
+impl Drop for RollbackSnapshotFile {
+    fn drop(&mut self) {
+        if !self.state.requires_cleanup() {
+            return;
+        }
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let service = self.service.clone();
+        let tenant_id = self.tenant_id.clone();
+        let file_id = self.file_id;
+        runtime.spawn(async move {
+            let _ = service
+                .file
+                .schedule_unreferenced_config_package_cleanup(&tenant_id, file_id)
+                .await;
+        });
+    }
+}
+
 impl TenantConfigTransferService {
     pub(super) async fn mark_transfer_running(
         &self,
@@ -234,5 +325,33 @@ impl TenantConfigTransferService {
         self.authorization_cache
             .sync_namespace_version(tenant_id, CONFIG_CACHE_NAMESPACE, namespace_version)
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RollbackSnapshotState;
+
+    #[test]
+    fn retained_snapshot_never_enters_cleanup() {
+        let mut state = RollbackSnapshotState::Pending;
+
+        state.retain();
+        state.mark_cleanup_scheduled();
+
+        assert_eq!(state, RollbackSnapshotState::Retained);
+        assert!(!state.requires_cleanup());
+    }
+
+    #[test]
+    fn snapshot_cleanup_transition_is_idempotent() {
+        let mut state = RollbackSnapshotState::Pending;
+
+        assert!(state.requires_cleanup());
+        state.mark_cleanup_scheduled();
+        state.mark_cleanup_scheduled();
+
+        assert_eq!(state, RollbackSnapshotState::CleanupScheduled);
+        assert!(!state.requires_cleanup());
     }
 }
