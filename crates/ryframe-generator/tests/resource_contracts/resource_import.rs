@@ -22,6 +22,7 @@ fn metadata() -> ResourceDraftMetadata {
         storage: StorageSpec {
             kind: StorageKind::ControlRow,
             tenant_field: None,
+            configuration_versioned: true,
         },
         api: ApiSpec {
             path: "/api/v1/system/devices".into(),
@@ -35,6 +36,7 @@ fn metadata() -> ResourceDraftMetadata {
         },
         access: AccessSpec {
             capability: "system.device".into(),
+            owner_field: None,
             permissions: PermissionSpec {
                 create: "system:device:create".into(),
                 read: "system:device:read".into(),

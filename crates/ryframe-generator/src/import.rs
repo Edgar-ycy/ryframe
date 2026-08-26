@@ -115,6 +115,7 @@ pub fn draft_resource_from_table(
             .unwrap_or(&column.name);
         fields.push(FieldSpec {
             name: column.name.clone(),
+            column: None,
             value_type,
             wire_type: None,
             order,
@@ -227,6 +228,7 @@ fn pending_usage() -> FieldUsageSpec {
         list: false,
         filter: false,
         sort: false,
+        sort_desc: false,
     }
 }
 

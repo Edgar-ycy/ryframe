@@ -15,7 +15,7 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
     let to_entity = mapping(resource, "record");
     let delete = delete_body(resource);
     let commit = commit_body(resource.storage);
-    let unique_conflicts = unique_conflict_cases(resource);
+    let unique_conflicts = unique_conflict_mappings(resource);
     let generic_conflict = format!("{}已存在", resource.labels.zh_cn);
     let tenant_mismatch = format!("{}事务租户不匹配", resource.labels.zh_cn);
     let tenant_error = if resource.storage == StorageKind::TenantData {
@@ -128,7 +128,7 @@ impl {pascal}Transaction for Database{pascal}Transaction {{
             .insert(&self.transaction)
             .await
             .map(to_record)
-            .map_err(database_error)
+            .db_conflicts(&[{unique_conflicts}], {generic_conflict:?})
     }}
 
     async fn update(&self, record: {pascal}Record) -> AppResult<{pascal}Record> {{
@@ -137,7 +137,7 @@ impl {pascal}Transaction for Database{pascal}Transaction {{
             .update(&self.transaction)
             .await
             .map(to_record)
-            .map_err(database_error)
+            .db_conflicts(&[{unique_conflicts}], {generic_conflict:?})
     }}
 
     async fn delete(&self, tenant_id: &str, id: i64) -> AppResult<()> {{
@@ -170,16 +170,6 @@ fn to_entity(record: {pascal}Record) -> entity::Model {{
 }}
 
 {relation_mappers}
-
-fn database_error(error: sea_orm::DbErr) -> AppError {{
-    let message = error.to_string();
-    let normalized = message.to_ascii_lowercase();
-    if normalized.contains("1062") || normalized.contains("duplicate entry") {{
-{unique_conflicts}
-        return AppError::Conflict({generic_conflict:?}.into());
-    }}
-    AppError::Database(message)
-}}
 
 {tenant_error}"#,
         declaration = persistence.declaration,

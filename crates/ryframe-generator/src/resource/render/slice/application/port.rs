@@ -24,9 +24,15 @@ pub(crate) fn port(resource: &ResourceIr, header: &str) -> String {
                 )
             })
             .collect::<String>();
-        format!(
-            "    async fn lock_configuration(&self, tenant_id: &str) -> AppResult<()>;\n{unique_methods}\n    async fn increment_configuration_version(&self, tenant_id: &str) -> AppResult<()>;\n\n"
-        )
+        let (version_methods, increment) = if resource.configuration_versioned {
+            (
+                "    async fn lock_configuration(&self, tenant_id: &str) -> AppResult<()>;\n",
+                "\n    async fn increment_configuration_version(&self, tenant_id: &str) -> AppResult<()>;\n",
+            )
+        } else {
+            ("", "")
+        };
+        format!("{version_methods}{unique_methods}{increment}\n")
     } else {
         String::new()
     };

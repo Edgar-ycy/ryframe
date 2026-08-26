@@ -16,7 +16,7 @@ pub(super) fn migration(resource: &ResourceIr, header: &str) -> String {
         resource
             .primary_key
             .iter()
-            .map(|field| format!("`{field}`"))
+            .map(|field| format!("`{}`", resource.column(field)))
             .collect::<Vec<_>>()
             .join(", ")
     ));
@@ -28,15 +28,16 @@ pub(super) fn migration(resource: &ResourceIr, header: &str) -> String {
             index
                 .fields
                 .iter()
-                .map(|field| format!("`{field}`"))
+                .map(|field| format!("`{}`", resource.column(field)))
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
     }
     if resource.storage == StorageKind::ControlRow {
         definitions.push(format!(
-            "  CONSTRAINT `fk_{}_tenant` FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)",
-            resource.name
+            "  CONSTRAINT `fk_{}_tenant` FOREIGN KEY (`{}`) REFERENCES `sys_tenant` (`tenant_id`)",
+            resource.name,
+            resource.column("tenant_id"),
         ));
     }
     let ddl = format!(
@@ -124,5 +125,5 @@ fn column_definition(field: &super::FieldIr) -> String {
         .as_ref()
         .map(|value| format!(" DEFAULT {}", sql_literal(value)))
         .unwrap_or_default();
-    format!("  `{}` {sql_type} {nullability}{default}", field.name)
+    format!("  `{}` {sql_type} {nullability}{default}", field.column)
 }

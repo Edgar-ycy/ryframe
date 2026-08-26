@@ -105,6 +105,8 @@ pub(super) fn validate_ir_value(
         required: field.validation.required,
         min_length: field.validation.min_length,
         max_length: field.validation.max_length,
+        min_utf8_bytes: field.validation.min_utf8_bytes,
+        max_utf8_bytes: field.validation.max_utf8_bytes,
         minimum: field.validation.minimum,
         maximum: field.validation.maximum,
         pattern: field.validation.pattern.clone(),
@@ -162,6 +164,7 @@ fn validate_value_constraints(
     let invalid = match (value_type, value) {
         (ValueType::String, toml::Value::String(value)) => {
             let length = value.chars().count() as u32;
+            let utf8_bytes = u32::try_from(value.len()).unwrap_or(u32::MAX);
             (validation.required && value.is_empty())
                 || validation
                     .min_length
@@ -169,6 +172,12 @@ fn validate_value_constraints(
                 || validation
                     .max_length
                     .is_some_and(|maximum| length > maximum)
+                || validation
+                    .min_utf8_bytes
+                    .is_some_and(|minimum| utf8_bytes < minimum)
+                || validation
+                    .max_utf8_bytes
+                    .is_some_and(|maximum| utf8_bytes > maximum)
         }
         (ValueType::I32 | ValueType::I64, toml::Value::Integer(value)) => {
             validation.minimum.is_some_and(|minimum| *value < minimum)

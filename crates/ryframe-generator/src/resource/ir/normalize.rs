@@ -57,6 +57,7 @@ pub(in crate::resource) fn normalize(
     }
 
     let mut names = BTreeSet::new();
+    let mut columns = BTreeSet::new();
     let mut orders = BTreeSet::new();
     let input_fields = std::mem::take(&mut spec.fields);
     let mut fields = Vec::with_capacity(input_fields.len());
@@ -69,6 +70,16 @@ pub(in crate::resource) fn normalize(
                 &source_path,
                 "字段名重复",
                 "删除重复字段或为字段改用唯一名称",
+            ));
+        }
+        let column = field.column.clone().unwrap_or_else(|| field.name.clone());
+        if !columns.insert(column.clone()) {
+            return Err(field_error(
+                &resource,
+                &field.name,
+                &source_path,
+                format!("数据库列名 `{column}` 重复"),
+                "为每个字段配置唯一的 column，或删除不必要的别名",
             ));
         }
         if !orders.insert(field.order) {
@@ -84,6 +95,7 @@ pub(in crate::resource) fn normalize(
         let wire_type = field.wire_type.unwrap_or(field.value_type);
         fields.push(FieldIr {
             name: field.name,
+            column,
             value_type: field.value_type,
             wire_type,
             rust_type: field.value_type.rust_type(nullable),
@@ -100,11 +112,14 @@ pub(in crate::resource) fn normalize(
                 list: field.usage.list,
                 filter: field.usage.filter,
                 sort: field.usage.sort,
+                sort_desc: field.usage.sort_desc,
             },
             validation: ValidationIr {
                 required: field.validation.required,
                 min_length: field.validation.min_length,
                 max_length: field.validation.max_length,
+                min_utf8_bytes: field.validation.min_utf8_bytes,
+                max_utf8_bytes: field.validation.max_utf8_bytes,
                 minimum: field.validation.minimum,
                 maximum: field.validation.maximum,
                 pattern: field.validation.pattern,
@@ -185,6 +200,7 @@ pub(in crate::resource) fn normalize(
         profile: spec.resource.profile,
         storage: spec.storage.kind,
         tenant_field: spec.storage.tenant_field,
+        configuration_versioned: spec.storage.configuration_versioned,
         table: spec.database.table,
         primary_key: spec.database.primary_key,
         bootstrap_migration: spec.database.bootstrap_migration,
@@ -210,6 +226,7 @@ pub(in crate::resource) fn normalize(
         },
         access: AccessIr {
             capability: spec.access.capability,
+            owner_field: spec.access.owner_field,
             permissions: permissions(spec.access.permissions),
         },
         menu: MenuIr {

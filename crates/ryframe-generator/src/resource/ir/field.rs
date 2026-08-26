@@ -17,6 +17,17 @@ pub(super) fn validate_field(
             "字段名只使用小写字母、数字和下划线",
         ));
     }
+    if let Some(column) = &field.column
+        && !is_snake_identifier(column)
+    {
+        return Err(field_error(
+            resource,
+            &field.name,
+            source_path,
+            format!("数据库列名 `{column}` 不是安全标识符"),
+            "column 只使用小写字母、数字和下划线",
+        ));
+    }
     if let Some(wire_type) = field.wire_type
         && wire_type != field.value_type
         && !matches!(
@@ -62,6 +73,19 @@ pub(super) fn validate_field(
             "调整长度边界，使最小值不大于最大值",
         ));
     }
+    if let (Some(min), Some(max)) = (
+        field.validation.min_utf8_bytes,
+        field.validation.max_utf8_bytes,
+    ) && min > max
+    {
+        return Err(field_error(
+            resource,
+            &field.name,
+            source_path,
+            "min_utf8_bytes 大于 max_utf8_bytes",
+            "调整 UTF-8 字节长度边界，使最小值不大于最大值",
+        ));
+    }
     if let (Some(min), Some(max)) = (field.validation.minimum, field.validation.maximum)
         && min > max
     {
@@ -91,6 +115,17 @@ pub(super) fn validate_field(
             source_path,
             "字符串校验被用于非 string 字段",
             "移除长度校验，或将 value_type 改为 string",
+        ));
+    }
+    if (field.validation.min_utf8_bytes.is_some() || field.validation.max_utf8_bytes.is_some())
+        && field.value_type != ValueType::String
+    {
+        return Err(field_error(
+            resource,
+            &field.name,
+            source_path,
+            "UTF-8 字节校验被用于非 string 字段",
+            "移除字节长度校验，或将 value_type 改为 string",
         ));
     }
     if (field.validation.minimum.is_some() || field.validation.maximum.is_some())
@@ -164,6 +199,15 @@ pub(super) fn validate_field(
             source_path,
             "update_optional 只能用于 update 字段",
             "启用 usage.update，或删除 update_optional",
+        ));
+    }
+    if field.usage.sort_desc && !field.usage.sort {
+        return Err(field_error(
+            resource,
+            &field.name,
+            source_path,
+            "sort_desc 只能用于默认排序字段",
+            "同时启用 usage.sort，或删除 sort_desc",
         ));
     }
     if field.nullable && field.usage.update_optional {

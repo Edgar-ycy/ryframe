@@ -3,7 +3,12 @@ use super::command_type;
 
 pub(crate) fn model(resource: &ResourceIr, header: &str) -> String {
     let pascal = &resource.pascal_name;
-    let mut output = format!("{header}use ryframe_kernel::ValidatedPageQuery;\n\n");
+    let kernel_import = if resource.access.owner_field.is_some() {
+        "use ryframe_kernel::{DataScopeContext, ValidatedPageQuery};"
+    } else {
+        "use ryframe_kernel::ValidatedPageQuery;"
+    };
+    let mut output = format!("{header}{kernel_import}\n\n");
     output.push_str("#[derive(Clone, Debug, PartialEq)]\n");
     output.push_str(&format!("pub struct {pascal}Record {{\n"));
     for field in &resource.fields {
@@ -64,6 +69,9 @@ pub(crate) fn model(resource: &ResourceIr, header: &str) -> String {
 
     output.push_str("#[derive(Clone, Copy, Debug, Default)]\n");
     output.push_str(&format!("pub struct {pascal}Filter<'a> {{\n"));
+    if resource.access.owner_field.is_some() {
+        output.push_str("    pub data_scope: &'a DataScopeContext,\n");
+    }
     for field in resource
         .fields
         .iter()

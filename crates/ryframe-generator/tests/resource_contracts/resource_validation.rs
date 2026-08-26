@@ -186,10 +186,10 @@ fn service_managed_and_form_view_contracts_are_explicit() {
     let created_by = changed(
         &device,
         "created_at = \"created_at\"\nupdated_at = \"updated_at\"",
-        "created_at = \"created_at\"\ncreated_by = \"id\"\nupdated_at = \"updated_at\"",
+        "created_at = \"created_at\"\ncreated_by = \"name\"\nupdated_at = \"updated_at\"",
     );
-    let error = normalize(&created_by, "device").expect_err("未实现操作者字段不得静默通过");
-    assert!(error.contains("created_by/updated_by"));
+    let error = normalize(&created_by, "device").expect_err("操作者字段必须保存 i64 用户 ID");
+    assert!(error.contains("操作者审计字段必须是 i64"));
 
     let post = post_source();
     let no_default = changed(
@@ -209,6 +209,200 @@ fn service_managed_and_form_view_contracts_are_explicit() {
     let error = normalize(&no_view, "post").expect_err("表单字段必须存在于强类型视图");
     assert!(error.contains("字段 code"));
     assert!(error.contains("read/list"));
+}
+
+#[test]
+fn extended_manifest_contracts_validate_and_render_exact_runtime_behavior() {
+    let aliased = changed(
+        &device_source(),
+        "name = \"name\"\nvalue_type = \"string\"",
+        "name = \"name\"\ncolumn = \"device_name\"\nvalue_type = \"string\"",
+    );
+    let device = normalize(&aliased, "device").expect("安全列别名应通过");
+    let original = normalize(&device_source(), "device").expect("原始 Device 应有效");
+    assert_ne!(
+        device.schema_hash, original.schema_hash,
+        "列别名必须进入 schema hash"
+    );
+    let generated = render_resources(&[device]).expect("列别名资源应生成");
+    let content = |suffix: &str| {
+        generated
+            .assets
+            .iter()
+            .find(|asset| asset.path.ends_with(suffix))
+            .unwrap_or_else(|| panic!("缺少生成资产 {suffix}"))
+            .content
+            .as_str()
+    };
+    assert!(content("device/entity.rs").contains("column_name = \"device_name\""));
+    assert!(content("device/migration.rs").contains("`device_name` VARCHAR(100)"));
+    assert!(content("device/migration.rs").contains("(`tenant_id`, `device_name`)"));
+
+    let duplicate = changed(
+        &aliased,
+        "name = \"status\"\nvalue_type = \"i32\"",
+        "name = \"status\"\ncolumn = \"device_name\"\nvalue_type = \"i32\"",
+    );
+    assert!(
+        normalize(&duplicate, "device")
+            .unwrap_err()
+            .contains("数据库列名 `device_name` 重复")
+    );
+    let unsafe_alias = changed(
+        &aliased,
+        "column = \"device_name\"",
+        "column = \"bad-name\"",
+    );
+    assert!(
+        normalize(&unsafe_alias, "device")
+            .unwrap_err()
+            .contains("不是安全标识符")
+    );
+
+    let bytes = changed(
+        &post_source(),
+        "min_length = 1\nmax_length = 64",
+        "min_length = 1\nmax_length = 64\nmin_utf8_bytes = 2\nmax_utf8_bytes = 128",
+    );
+    let post = normalize(&bytes, "post").expect("UTF-8 字节约束应通过");
+    let generated = render_resources(&[post]).expect("UTF-8 字节约束应生成");
+    let dto = generated
+        .assets
+        .iter()
+        .find(|asset| asset.path.ends_with("post/dto.rs"))
+        .unwrap()
+        .content
+        .as_str();
+    assert!(dto.contains("pub const NAME_MIN_UTF8_BYTES: usize = 2;"));
+    assert!(dto.contains("pub const NAME_MAX_UTF8_BYTES: usize = 128;"));
+    assert!(dto.contains("value.len()"));
+    assert!(dto.contains("custom(function = \"validate_name_utf8_bytes\")"));
+    assert!(dto.contains("#[schema(min_length = 2, max_length = 128)]"));
+
+    let invalid_bytes = changed(&bytes, "min_utf8_bytes = 2", "min_utf8_bytes = 129");
+    assert!(
+        normalize(&invalid_bytes, "post")
+            .unwrap_err()
+            .contains("min_utf8_bytes 大于")
+    );
+    let invalid_sort = changed(&post_source(), "sort = true", "sort_desc = true");
+    assert!(
+        normalize(&invalid_sort, "post")
+            .unwrap_err()
+            .contains("sort_desc 只能用于")
+    );
+}
+
+#[test]
+fn ownership_sort_audit_and_unversioned_control_are_generated_consistently() {
+    let owner_field = r#"[[fields]]
+name = "created_by"
+value_type = "i64"
+order = 45
+nullable = true
+widget = "hidden"
+
+[fields.usage]
+read = true
+list = true
+
+[fields.labels]
+zh_cn = "创建人"
+en = "Created by"
+
+"#;
+    let source = changed(
+        &device_source(),
+        "created_at = \"created_at\"\nupdated_at = \"updated_at\"",
+        "created_at = \"created_at\"\ncreated_by = \"created_by\"\nupdated_at = \"updated_at\"\nupdated_by = \"created_by\"",
+    );
+    let source = changed(
+        &source,
+        "[[fields]]\nname = \"created_at\"",
+        &format!("{owner_field}[[fields]]\nname = \"created_at\""),
+    );
+    let source = changed(
+        &source,
+        "capability = \"system.device\"",
+        "capability = \"system.device\"\nowner_field = \"created_by\"",
+    );
+    let source = changed(&source, "sort = true", "sort = true\nsort_desc = true");
+    let device = normalize(&source, "device").expect("数据范围与操作者审计应通过");
+    let generated = render_resources(&[device]).expect("扩展契约应生成");
+    let content = |suffix: &str| {
+        generated
+            .assets
+            .iter()
+            .find(|asset| asset.path.ends_with(suffix))
+            .unwrap()
+            .content
+            .as_str()
+    };
+    assert!(content("device/model.rs").contains("pub data_scope: &'a DataScopeContext"));
+    assert!(content("device/service.rs").contains("let data_scope = actor.data_scope_context()"));
+    assert!(content("device/service.rs").contains("created_by: Some(actor.user_id)"));
+    assert!(content("device/service.rs").contains("record.created_by = Some(actor.user_id)"));
+    assert!(content("device/repository.rs").contains("owner_id_condition"));
+    assert!(content("device/repository.rs").contains("order_by_desc(entity::Column::Id)"));
+    assert!(content("device/fake.rs").contains("is_some_and"));
+    assert!(content("device/fake.rs").contains("owner_visible"));
+    assert!(content("device/fake.rs").contains("filter.data_scope"));
+    assert!(content("device/fake.rs").contains("pub fn set_owner_department"));
+    assert!(content("device/fake.rs").contains("ancestors.contains(&dept_id)"));
+    assert!(content("device/fake.rs").contains("scope.custom_dept_ids.contains(&dept_id)"));
+    assert!(content("device/fake.rs").contains("std::cmp::Reverse(record.id)"));
+
+    let unversioned = changed(
+        &post_source(),
+        "kind = \"control_row\"",
+        "kind = \"control_row\"\nconfiguration_versioned = false",
+    );
+    let post = normalize(&unversioned, "post").expect("控制库资源应允许关闭配置版本");
+    let generated = render_resources(&[post]).expect("不参与配置版本的资源应生成");
+    for suffix in [
+        "post/service.rs",
+        "post/port.rs",
+        "post/repository.rs",
+        "post/fake.rs",
+    ] {
+        let content = generated
+            .assets
+            .iter()
+            .find(|asset| asset.path.ends_with(suffix))
+            .unwrap()
+            .content
+            .as_str();
+        assert!(
+            !content.contains("lock_configuration"),
+            "{suffix} 不应生成版本锁"
+        );
+        assert!(
+            !content.contains("increment_configuration_version"),
+            "{suffix} 不应递增版本"
+        );
+    }
+}
+
+#[test]
+fn post_fixture_handles_two_schema_edits_and_repeat_render_without_drift() {
+    let original = post_source();
+    let added = changed(
+        &original,
+        "[[fields]]\nname = \"del_flag\"",
+        "[[fields]]\nname = \"description\"\nvalue_type = \"string\"\norder = 75\nnullable = true\nwidget = \"hidden\"\n\n[fields.usage]\nread = true\n\n[fields.validation]\nmax_length = 256\n\n[fields.labels]\nzh_cn = \"说明\"\nen = \"Description\"\n\n[[fields]]\nname = \"del_flag\"",
+    );
+    let added = changed(&added, "order = 80", "order = 81");
+    let validation_changed = changed(&added, "max_length = 64", "max_length = 80");
+    let first = render_resources(&[normalize(&added, "post").expect("字段增加演练应通过")])
+        .expect("字段增加应生成");
+    let second =
+        render_resources(&[normalize(&validation_changed, "post").expect("校验变化演练应通过")])
+            .expect("校验变化应生成");
+    let repeated =
+        render_resources(&[normalize(&validation_changed, "post").expect("重复演练应通过")])
+            .expect("重复生成应成功");
+    assert_ne!(first.assets, second.assets, "校验变化必须反映到生成结果");
+    assert_eq!(second.assets, repeated.assets, "相同清单重复生成必须零差异");
 }
 
 #[test]

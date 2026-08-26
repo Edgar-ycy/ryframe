@@ -13,6 +13,25 @@ pub(super) fn crud_resource_metadata(resource: &ResourceIr) -> serde_json::Value
                 || field.usage.sort
         })
         .map(|field| {
+            let mut validation = serde_json::json!({
+                "required": field.validation.required,
+                "min_length": field.validation.min_length,
+                "max_length": field.validation.max_length,
+                "minimum": field.validation.minimum,
+                "maximum": field.validation.maximum,
+            });
+            if let Some(minimum) = field.validation.min_utf8_bytes {
+                validation
+                    .as_object_mut()
+                    .expect("校验元数据必须是对象")
+                    .insert("min_utf8_bytes".into(), minimum.into());
+            }
+            if let Some(maximum) = field.validation.max_utf8_bytes {
+                validation
+                    .as_object_mut()
+                    .expect("校验元数据必须是对象")
+                    .insert("max_utf8_bytes".into(), maximum.into());
+            }
             serde_json::json!({
                 "name": field.name,
                 "value_type": field.value_type,
@@ -20,13 +39,7 @@ pub(super) fn crud_resource_metadata(resource: &ResourceIr) -> serde_json::Value
                 "nullable": field.nullable,
                 "order": field.order,
                 "usage": &field.usage,
-                "validation": {
-                    "required": field.validation.required,
-                    "min_length": field.validation.min_length,
-                    "max_length": field.validation.max_length,
-                    "minimum": field.validation.minimum,
-                    "maximum": field.validation.maximum,
-                },
+                "validation": validation,
                 "labels": &field.labels,
                 "widget": field.widget,
                 "enum_values": &field.enum_values,

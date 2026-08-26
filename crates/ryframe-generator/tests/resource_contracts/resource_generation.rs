@@ -23,6 +23,10 @@ fn post_manifest_preserves_the_existing_public_contract_and_extensions() {
     let post = load_resource(post_path()).expect("Post 资源清单应有效");
 
     assert_eq!(post.table, "sys_post");
+    assert_eq!(
+        post.schema_hash,
+        "2f4af73c2cfc449e270f2cf5eae8104ebe75cf19f7001cbfcf2ac750feb4fdc9"
+    );
     assert_eq!(post.primary_key, ["id"]);
     assert_eq!(post.api.path, "/api/v1/system/posts");
     assert_eq!(post.api.operations.list, "get_system_posts");
@@ -74,7 +78,7 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
     assert!(repository.contains("increment_configuration_version_in_txn"));
     assert!(repository.contains("order_by_asc(entity::Column::Sort)"));
     assert!(repository.contains("order_by_asc(entity::Column::Id)"));
-    assert!(repository.contains("normalized.contains(\"uk_tenant_code\")"));
+    assert!(repository.contains("(\"uk_tenant_code\", \"岗位编码已存在\")"));
     assert!(repository.contains("岗位编码已存在"));
     assert!(repository.contains("entity::Column::Name.contains(value)"));
     assert!(repository.contains("filter.status.filter(|value| !value.is_empty())"));
@@ -89,7 +93,9 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
     assert!(repository.contains("AppError::Authorization(\"岗位事务租户不匹配\".into())"));
     assert!(repository.contains("use crate::DbResultExt;"));
     assert!(repository.contains(".await\n            .db()?"));
-    assert!(repository.contains(".map_err(database_error)"));
+    assert!(repository.contains(".db_conflicts("));
+    assert!(repository.contains("(\"uk_tenant_code\", \"岗位编码已存在\")"));
+    assert!(!repository.contains("fn database_error("));
     let entity = content("post/entity.rs");
     assert!(entity.contains("pub const SOFT_DELETE_ACTIVE: &str = \"0\";"));
     assert!(entity.contains("pub const SOFT_DELETE_DELETED: &str = \"2\";"));
@@ -301,7 +307,7 @@ fn rendering_is_deterministic_readable_and_split_by_responsibility() {
     assert!(
         repository
             .content
-            .contains("normalized.contains(\"uk_device_tenant_name\")")
+            .contains("(\"uk_device_tenant_name\", \"设备名称已存在\")")
     );
     assert!(repository.content.contains("设备名称已存在"));
     assert!(

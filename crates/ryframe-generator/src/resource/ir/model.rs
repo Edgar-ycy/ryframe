@@ -77,6 +77,7 @@ pub struct ResourceIr {
     pub profile: ResourceProfile,
     pub storage: StorageKind,
     pub tenant_field: Option<String>,
+    pub configuration_versioned: bool,
     pub table: String,
     pub primary_key: Vec<String>,
     pub bootstrap_migration: bool,
@@ -97,6 +98,16 @@ pub struct ResourceIr {
     pub frontend_extensions: BTreeMap<String, toml::Value>,
     pub source_path: String,
     pub source_hash: String,
+}
+
+impl ResourceIr {
+    pub fn column(&self, field: &str) -> &str {
+        self.fields
+            .iter()
+            .find(|candidate| candidate.name == field)
+            .map(|candidate| candidate.column.as_str())
+            .expect("字段引用已由 IR 校验")
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -134,6 +145,7 @@ pub struct AuditIr {
 #[derive(Debug, Clone, Serialize)]
 pub struct FieldIr {
     pub name: String,
+    pub column: String,
     pub value_type: ValueType,
     pub wire_type: ValueType,
     pub rust_type: String,
@@ -158,6 +170,8 @@ pub struct FieldUsageIr {
     pub list: bool,
     pub filter: bool,
     pub sort: bool,
+    #[serde(skip_serializing_if = "is_false")]
+    pub sort_desc: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -165,6 +179,10 @@ pub struct ValidationIr {
     pub required: bool,
     pub min_length: Option<u32>,
     pub max_length: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_utf8_bytes: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_utf8_bytes: Option<u32>,
     pub minimum: Option<i64>,
     pub maximum: Option<i64>,
     pub pattern: Option<String>,
@@ -192,7 +210,13 @@ pub struct ApiIr {
 #[derive(Debug, Clone, Serialize)]
 pub struct AccessIr {
     pub capability: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_field: Option<String>,
     pub permissions: PermissionIr,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, Serialize)]

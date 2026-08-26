@@ -3,7 +3,7 @@ use super::super::{
     uses_partial_text_filter,
 };
 
-pub(crate) fn unique_conflict_cases(resource: &ResourceIr) -> String {
+pub(crate) fn unique_conflict_mappings(resource: &ResourceIr) -> String {
     resource
         .indexes
         .iter()
@@ -19,13 +19,10 @@ pub(crate) fn unique_conflict_cases(resource: &ResourceIr) -> String {
             } else {
                 format!("{labels}已存在")
             };
-            format!(
-                "        if normalized.contains({index:?}) {{\n            return AppError::Conflict({message:?}.into());\n        }}",
-                index = index.name.to_ascii_lowercase(),
-            )
+            format!("({:?}, {message:?})", index.name)
         })
         .collect::<Vec<_>>()
-        .join("\n")
+        .join(", ")
 }
 
 pub(crate) fn control_transaction_methods(resource: &ResourceIr) -> String {
@@ -65,9 +62,15 @@ pub(crate) fn control_transaction_methods(resource: &ResourceIr) -> String {
             )
         })
         .collect::<String>();
-    format!(
-        "    async fn lock_configuration(&self, tenant_id: &str) -> AppResult<()> {{\n        self.ensure_tenant(tenant_id)?;\n        crate::TenantConfigTransferRepository\n            .lock_tenant_configuration_in_txn(&self.transaction, tenant_id, None)\n            .await\n            .map(|_| ())\n    }}\n\n{unique_methods}    async fn increment_configuration_version(&self, tenant_id: &str) -> AppResult<()> {{\n        self.ensure_tenant(tenant_id)?;\n        crate::TenantConfigTransferRepository\n            .increment_configuration_version_in_txn(&self.transaction, tenant_id)\n            .await\n            .map(|_| ())\n    }}\n"
-    )
+    let (lock, increment) = if resource.configuration_versioned {
+        (
+            "    async fn lock_configuration(&self, tenant_id: &str) -> AppResult<()> {\n        self.ensure_tenant(tenant_id)?;\n        crate::TenantConfigTransferRepository\n            .lock_tenant_configuration_in_txn(&self.transaction, tenant_id, None)\n            .await\n            .map(|_| ())\n    }\n\n",
+            "    async fn increment_configuration_version(&self, tenant_id: &str) -> AppResult<()> {\n        self.ensure_tenant(tenant_id)?;\n        crate::TenantConfigTransferRepository\n            .increment_configuration_version_in_txn(&self.transaction, tenant_id)\n            .await\n            .map(|_| ())\n    }\n",
+        )
+    } else {
+        ("", "")
+    };
+    format!("{lock}{unique_methods}{increment}")
 }
 
 pub(crate) struct PersistenceParts {
@@ -145,7 +148,17 @@ pub(crate) fn id_query(resource: &ResourceIr, id: &str) -> String {
 }
 
 pub(crate) fn filter_statements(resource: &ResourceIr) -> String {
-    resource
+    let owner = resource.access.owner_field.as_ref().map(|field| {
+        let module = match resource.storage {
+            StorageKind::ControlRow => "crate",
+            StorageKind::TenantData => "ryframe_db",
+        };
+        format!(
+            "        if let Some(condition) = {module}::data_scope::owner_id_condition(\n            entity::Column::{},\n            tenant_id,\n            filter.data_scope,\n        ) {{\n            select = select.filter(condition);\n        }}",
+            column_variant(field),
+        )
+    });
+    owner.into_iter().chain(resource
         .fields
         .iter()
         .filter(|field| field.usage.filter && field.name != "tenant_id")
@@ -167,7 +180,7 @@ pub(crate) fn filter_statements(resource: &ResourceIr) -> String {
                     field.name
                 )
             }
-        })
+        }))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -177,14 +190,19 @@ pub(crate) fn order_statements(resource: &ResourceIr) -> String {
         .fields
         .iter()
         .find(|field| field.usage.sort && field.name != "tenant_id")
-        .map(|field| field.name.as_str())
-        .unwrap_or("id");
-    if field == "id" {
-        "        select = select.order_by_asc(entity::Column::Id);".into()
+        .map(|field| (field.name.as_str(), field.usage.sort_desc))
+        .unwrap_or(("id", false));
+    let method = if field.1 {
+        "order_by_desc"
+    } else {
+        "order_by_asc"
+    };
+    if field.0 == "id" {
+        format!("        select = select.{method}(entity::Column::Id);")
     } else {
         format!(
-            "        select = select\n            .order_by_asc(entity::Column::{})\n            .order_by_asc(entity::Column::Id);",
-            column_variant(field)
+            "        select = select\n            .{method}(entity::Column::{})\n            .{method}(entity::Column::Id);",
+            column_variant(field.0)
         )
     }
 }

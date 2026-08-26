@@ -161,12 +161,6 @@ pub(super) fn validate_generation_contract(
             "在 database.audit 中声明两个 date_time 字段",
         )
     })?;
-    if audit.created_by.is_some() || audit.updated_by.is_some() {
-        return Err(error(
-            "flat_crud v1 尚未实现 created_by/updated_by",
-            "把操作者主体规则放入强类型 Service 扩展，不要让生成器静默忽略",
-        ));
-    }
     for audit_field in [&audit.created_at, &audit.updated_at] {
         let field = fields
             .iter()
@@ -182,6 +176,21 @@ pub(super) fn validate_generation_contract(
             ));
         }
     }
+    for audit_field in [&audit.created_by, &audit.updated_by].into_iter().flatten() {
+        let field = fields
+            .iter()
+            .find(|field| field.name == **audit_field)
+            .expect("操作者审计字段引用已校验");
+        if field.value_type != ValueType::I64 {
+            return Err(field_error(
+                resource,
+                audit_field,
+                source_path,
+                "操作者审计字段必须是 i64",
+                "将 created_by/updated_by 指向保存用户 ID 的 i64 字段",
+            ));
+        }
+    }
 
     let mut service_managed = BTreeSet::from([
         "id".to_owned(),
@@ -192,6 +201,8 @@ pub(super) fn validate_generation_contract(
     if let Some(soft_delete) = &spec.database.soft_delete {
         service_managed.insert(soft_delete.field.clone());
     }
+    service_managed.extend(audit.created_by.iter().cloned());
+    service_managed.extend(audit.updated_by.iter().cloned());
     for field in fields {
         let editable = field.usage.create || field.usage.update;
         if service_managed.contains(&field.name) && editable {

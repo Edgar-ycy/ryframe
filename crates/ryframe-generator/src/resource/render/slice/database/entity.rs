@@ -9,6 +9,12 @@ pub(crate) fn entity(resource: &ResourceIr, header: &str) -> String {
         if resource.primary_key.contains(&field.name) {
             output.push_str("    #[sea_orm(primary_key, auto_increment = false)]\n");
         }
+        if field.column != field.name {
+            output.push_str(&format!(
+                "    #[sea_orm(column_name = {:?})]\n",
+                field.column
+            ));
+        }
         output.push_str(&format!("    pub {}: {},\n", field.name, field.rust_type));
     }
     output.push_str("}\n\n");

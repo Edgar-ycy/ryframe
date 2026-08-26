@@ -50,21 +50,31 @@ fn database_schema_hash(spec: &ResourceSpec) -> String {
         .fields
         .iter()
         .map(|field| {
-            serde_json::json!({
+            let mut contract = serde_json::json!({
                 "default": field.default,
                 "enum_keys": field.enum_values.keys().collect::<Vec<_>>(),
                 "max_length": field.validation.max_length,
                 "name": field.name,
                 "nullable": field.nullable,
                 "value_type": field.value_type,
-            })
+            });
+            if let Some(column) = &field.column {
+                contract
+                    .as_object_mut()
+                    .expect("字段 schema contract 必须是对象")
+                    .insert("column".into(), serde_json::json!(column));
+            }
+            contract
         })
         .collect::<Vec<_>>();
     let contract = serde_json::json!({
         "fields": fields,
         "indexes": spec.database.indexes,
         "primary_key": spec.database.primary_key,
-        "storage": spec.storage,
+        "storage": {
+            "kind": spec.storage.kind,
+            "tenant_field": spec.storage.tenant_field,
+        },
         "table": spec.database.table,
     });
     hex::encode(Sha256::digest(

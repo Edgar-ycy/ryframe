@@ -112,6 +112,12 @@ pub struct StorageSpec {
     pub kind: StorageKind,
     #[serde(default)]
     pub tenant_field: Option<String>,
+    #[serde(default = "default_true")]
+    pub configuration_versioned: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -165,6 +171,8 @@ pub struct AuditSpec {
 #[serde(deny_unknown_fields)]
 pub struct FieldSpec {
     pub name: String,
+    #[serde(default)]
+    pub column: Option<String>,
     pub value_type: ValueType,
     #[serde(default)]
     pub wire_type: Option<ValueType>,
@@ -201,6 +209,8 @@ pub struct FieldUsageSpec {
     pub filter: bool,
     #[serde(default)]
     pub sort: bool,
+    #[serde(default)]
+    pub sort_desc: bool,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -212,6 +222,10 @@ pub struct ValidationSpec {
     pub min_length: Option<u32>,
     #[serde(default)]
     pub max_length: Option<u32>,
+    #[serde(default)]
+    pub min_utf8_bytes: Option<u32>,
+    #[serde(default)]
+    pub max_utf8_bytes: Option<u32>,
     #[serde(default)]
     pub minimum: Option<i64>,
     #[serde(default)]
@@ -270,6 +284,8 @@ pub struct OperationSpec {
 #[serde(deny_unknown_fields)]
 pub struct AccessSpec {
     pub capability: String,
+    #[serde(default)]
+    pub owner_field: Option<String>,
     pub permissions: PermissionSpec,
 }
 

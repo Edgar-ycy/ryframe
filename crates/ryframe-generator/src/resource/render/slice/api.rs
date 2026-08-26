@@ -1,5 +1,11 @@
 use super::{FieldIr, ResourceIr, ValueType, rust_base_type};
 
+mod validation;
+
+use validation::{
+    render_enum_validators, render_utf8_byte_validators, schema_attribute, validation_attribute,
+};
+
 pub(super) fn dto(resource: &ResourceIr, header: &str) -> String {
     let pascal = &resource.pascal_name;
     let detail_import = if resource.relations.is_empty() {
@@ -11,6 +17,7 @@ pub(super) fn dto(resource: &ResourceIr, header: &str) -> String {
         "{header}use ryframe_application::generated::{name}::{{Create{pascal}Command, {pascal}ListParams, {pascal}Record{detail_import}, Update{pascal}Command}};\nuse ryframe_kernel::{{PaginationPolicy, ValidatedPageQuery}};\nuse serde::{{Deserialize, Serialize}};\nuse utoipa::{{IntoParams, ToSchema}};\nuse validator::Validate;\n\n",
         name = resource.name,
     );
+    render_utf8_byte_validators(resource, &mut output);
     render_enum_validators(resource, &mut output);
     render_input(resource, &mut output, true);
     render_input(resource, &mut output, false);
@@ -18,59 +25,6 @@ pub(super) fn dto(resource: &ResourceIr, header: &str) -> String {
     render_view(resource, &mut output);
     render_detail_view(resource, &mut output);
     output
-}
-
-fn render_enum_validators(resource: &ResourceIr, output: &mut String) {
-    for field in resource
-        .fields
-        .iter()
-        .filter(|field| (field.usage.create || field.usage.update) && !field.enum_values.is_empty())
-    {
-        let (argument_type, values) = match field.value_type {
-            ValueType::String => (
-                "&str",
-                field
-                    .enum_values
-                    .keys()
-                    .map(|value| format!("{value:?}"))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            ),
-            ValueType::I32 => (
-                "i32",
-                field
-                    .enum_values
-                    .keys()
-                    .map(|value| format!("{value}_i32"))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            ),
-            ValueType::I64 => (
-                "i64",
-                field
-                    .enum_values
-                    .keys()
-                    .map(|value| format!("{value}_i64"))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            ),
-            ValueType::Bool => (
-                "bool",
-                field
-                    .enum_values
-                    .keys()
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            ),
-            _ => unreachable!("枚举 value_type 已在 IR 边界校验"),
-        };
-        output.push_str(&format!(
-            "fn validate_{name}_enum(value: {argument_type}) -> Result<(), validator::ValidationError> {{\n    if [{values}].contains(&value) {{\n        Ok(())\n    }} else {{\n        Err(validator::ValidationError::new({error:?}))\n    }}\n}}\n\n",
-            name = field.name,
-            error = format!("invalid_{}", field.name),
-        ));
-    }
 }
 
 fn render_input(resource: &ResourceIr, output: &mut String, create: bool) {
@@ -87,6 +41,9 @@ fn render_input(resource: &ResourceIr, output: &mut String, create: bool) {
         }
     }) {
         if let Some(attribute) = validation_attribute(field) {
+            output.push_str(&format!("    {attribute}\n"));
+        }
+        if let Some(attribute) = schema_attribute(field) {
             output.push_str(&format!("    {attribute}\n"));
         }
         let optional = if create {
@@ -453,55 +410,6 @@ fn view_fields(resource: &ResourceIr) -> impl Iterator<Item = &FieldIr> {
         .fields
         .iter()
         .filter(|field| field.usage.read || field.usage.list)
-}
-
-fn validation_attribute(field: &FieldIr) -> Option<String> {
-    let validation = &field.validation;
-    let mut validators = Vec::new();
-    match field.value_type {
-        ValueType::String
-            if validation.required
-                || validation.min_length.is_some()
-                || validation.max_length.is_some() =>
-        {
-            let mut parts = Vec::new();
-            let minimum = validation
-                .min_length
-                .map(|minimum| minimum.max(u32::from(validation.required)))
-                .or_else(|| validation.required.then_some(1));
-            if let Some(minimum) = minimum {
-                parts.push(format!("min = {minimum}"));
-            }
-            if let Some(maximum) = validation.max_length {
-                parts.push(format!("max = {maximum}"));
-            }
-            validators.push(format!("length({})", parts.join(", ")));
-        }
-        ValueType::I32 | ValueType::I64
-            if validation.minimum.is_some() || validation.maximum.is_some() =>
-        {
-            let mut parts = Vec::new();
-            if let Some(minimum) = validation.minimum {
-                parts.push(format!("min = {minimum}"));
-            }
-            if let Some(maximum) = validation.maximum {
-                parts.push(format!("max = {maximum}"));
-            }
-            validators.push(format!("range({})", parts.join(", ")));
-        }
-        _ => {}
-    }
-    if !field.enum_values.is_empty() {
-        validators.push(format!(
-            "custom(function = \"validate_{}_enum\")",
-            field.name
-        ));
-    }
-    if validators.is_empty() {
-        None
-    } else {
-        Some(format!("#[validate({})]", validators.join(", ")))
-    }
 }
 
 fn wire_base_type(value_type: ValueType) -> &'static str {

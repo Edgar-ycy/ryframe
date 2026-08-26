@@ -157,6 +157,22 @@ pub(super) fn validate_references(
             ensure_field_reference(resource, source_path, fields, field, "审计")?;
         }
     }
+    if let Some(owner_field) = &spec.access.owner_field {
+        ensure_field_reference(resource, source_path, fields, owner_field, "数据范围")?;
+        let field = field_specs
+            .iter()
+            .find(|field| field.name == *owner_field)
+            .expect("数据范围字段引用已校验");
+        if field.value_type != ValueType::I64 {
+            return Err(field_error(
+                resource,
+                owner_field,
+                source_path,
+                "owner_field 必须是 i64 字段",
+                "使用保存用户 ID 的 i64 字段作为 access.owner_field",
+            ));
+        }
+    }
     Ok(())
 }
 

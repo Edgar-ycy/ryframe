@@ -27,6 +27,11 @@ pub(crate) fn fake(resource: &ResourceIr, header: &str) -> String {
         )
     };
     let tenant_mismatch = format!("{}事务租户不匹配", resource.labels.zh_cn);
+    let collections = if resource.access.owner_field.is_some() {
+        "BTreeMap, BTreeSet, VecDeque"
+    } else {
+        "BTreeMap, VecDeque"
+    };
     let (active_record_filter_method, active_record_filter) = fake_active_record_filters(resource);
     let record_order = fake_record_order(resource);
     let filters = resource
@@ -66,10 +71,30 @@ pub(crate) fn fake(resource: &ResourceIr, header: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n");
+    let owner_filter = resource.access.owner_field.as_ref().map(|field| {
+        let owner = resource.fields.iter().find(|candidate| candidate.name == *field).expect("数据范围字段已由 IR 校验");
+        if owner.nullable {
+            format!("            if !record.{field}.is_some_and(|owner_id| owner_visible(owner_id, filter.data_scope, &state.owner_departments)) {{ return None; }}")
+        } else {
+            format!("            if !owner_visible(record.{field}, filter.data_scope, &state.owner_departments) {{ return None; }}")
+        }
+    }).unwrap_or_default();
+    let owner_helper = resource.access.owner_field.as_ref().map(|_| {
+        "\nfn owner_visible(\n    owner_id: i64,\n    scope: &ryframe_kernel::DataScopeContext,\n    departments: &BTreeMap<i64, (Option<i64>, BTreeSet<i64>)>,\n) -> bool {\n    let department = departments.get(&owner_id);\n    match scope.scope {\n        ryframe_kernel::DataScope::All => true,\n        ryframe_kernel::DataScope::SelfOnly => owner_id == scope.user_id,\n        ryframe_kernel::DataScope::Dept => scope.dept_id.is_some_and(|dept_id| {\n            department.is_some_and(|(owner_dept, _)| *owner_dept == Some(dept_id))\n        }),\n        ryframe_kernel::DataScope::DeptAndChildren => scope.dept_id.is_some_and(|dept_id| {\n            department.is_some_and(|(owner_dept, ancestors)| {\n                *owner_dept == Some(dept_id) || ancestors.contains(&dept_id)\n            })\n        }),\n        ryframe_kernel::DataScope::Custom => {\n            (scope.include_self && owner_id == scope.user_id)\n                || department.is_some_and(|(owner_dept, _)| {\n                    owner_dept.is_some_and(|dept_id| scope.custom_dept_ids.contains(&dept_id))\n                })\n        }\n    }\n}\n"
+    }).unwrap_or_default();
+    let owner_state = resource
+        .access
+        .owner_field
+        .as_ref()
+        .map(|_| "    owner_departments: BTreeMap<i64, (Option<i64>, BTreeSet<i64>)>,\n")
+        .unwrap_or_default();
+    let owner_setter = resource.access.owner_field.as_ref().map(|_| {
+        "\n    pub fn set_owner_department(\n        &self,\n        owner_id: i64,\n        department_id: Option<i64>,\n        ancestor_ids: impl IntoIterator<Item = i64>,\n    ) {\n        self.lock().owner_departments.insert(\n            owner_id,\n            (department_id, ancestor_ids.into_iter().collect()),\n        );\n    }\n"
+    }).unwrap_or_default();
     let (control_call_variants, control_failure_variants, control_methods) =
         fake_control_parts(resource);
     format!(
-        r#"{header}use std::collections::{{BTreeMap, VecDeque}};
+        r#"{header}use std::collections::{{{collections}}};
 use std::sync::{{Arc, Mutex, MutexGuard}};
 
 use async_trait::async_trait;
@@ -121,7 +146,7 @@ struct FakeState {{
     records: BTreeMap<(String, i64), {pascal}Record>,
     failures: VecDeque<{pascal}Failure>,
     transactions: Vec<{pascal}TransactionState>,
-}}
+{owner_state}}}
 
 #[derive(Clone, Default)]
 pub struct {pascal}FakePersistence {{
@@ -132,6 +157,7 @@ impl {pascal}FakePersistence {{
     pub fn insert_record(&self, tenant_id: impl Into<String>, record: {pascal}Record) {{
         self.lock().records.insert((tenant_id.into(), record.id), record);
     }}
+{owner_setter}
 
     pub fn fail_next(&self, failure: {pascal}Failure) {{
         self.lock().failures.push_back(failure);
@@ -160,6 +186,7 @@ fn fail_if_requested(
     }}
     Ok(())
 }}
+{owner_helper}
 
 #[async_trait]
 impl {pascal}PersistencePort for {pascal}FakePersistence {{
@@ -193,6 +220,7 @@ impl {pascal}PersistencePort for {pascal}FakePersistence {{
         let mut records = state.records.iter().filter_map(|((owner, _), record)| {{
             if owner != tenant_id {{ return None; }}
 {active_record_filter}
+{owner_filter}
 {filters}
             Some(record.clone())
         }}).collect::<Vec<_>>();
@@ -360,14 +388,26 @@ fn fake_record_order(resource: &ResourceIr) -> String {
         .fields
         .iter()
         .find(|field| field.usage.sort && field.name != "tenant_id")
-        .map(|field| field.name.as_str())
-        .unwrap_or("id");
-    if field == "id" {
-        "        records.sort_by_key(|record| record.id);".to_owned()
+        .map(|field| (field.name.as_str(), field.usage.sort_desc))
+        .unwrap_or(("id", false));
+    if field.0 == "id" {
+        if field.1 {
+            "        records.sort_by_key(|record| std::cmp::Reverse(record.id));".to_owned()
+        } else {
+            "        records.sort_by_key(|record| record.id);".to_owned()
+        }
     } else {
-        format!(
-            "        records.sort_by(|left, right| {{\n            left.{field}\n                .cmp(&right.{field})\n                .then_with(|| left.id.cmp(&right.id))\n        }});"
-        )
+        if field.1 {
+            format!(
+                "        records.sort_by(|left, right| {{\n            right.{field}\n                .cmp(&left.{field})\n                .then_with(|| right.id.cmp(&left.id))\n        }});",
+                field = field.0,
+            )
+        } else {
+            format!(
+                "        records.sort_by(|left, right| {{\n            left.{field}\n                .cmp(&right.{field})\n                .then_with(|| left.id.cmp(&right.id))\n        }});",
+                field = field.0,
+            )
+        }
     }
 }
 fn fake_control_parts(resource: &ResourceIr) -> (String, String, String) {
@@ -375,14 +415,19 @@ fn fake_control_parts(resource: &ResourceIr) -> (String, String, String) {
         return (String::new(), String::new(), String::new());
     }
     let pascal = &resource.pascal_name;
-    let mut calls = "    LockConfiguration { tenant_id: String },".to_owned();
-    let mut failures = "    LockConfiguration,".to_owned();
-    let mut methods = String::from(
-        "    async fn lock_configuration(&self, tenant_id: &str) -> AppResult<()> {\n        self.ensure_tenant(tenant_id)?;\n        let mut state = self.lock_state();\n        state.calls.push(",
-    );
-    methods.push_str(&format!(
-        "{pascal}Call::LockConfiguration {{ tenant_id: tenant_id.into() }});\n        fail_if_requested(&mut state, {pascal}Failure::LockConfiguration)\n    }}\n\n"
-    ));
+    let mut calls = String::new();
+    let mut failures = String::new();
+    let mut methods = String::new();
+    if resource.configuration_versioned {
+        calls.push_str("    LockConfiguration { tenant_id: String },");
+        failures.push_str("    LockConfiguration,");
+        methods.push_str(
+            "    async fn lock_configuration(&self, tenant_id: &str) -> AppResult<()> {\n        self.ensure_tenant(tenant_id)?;\n        let mut state = self.lock_state();\n        state.calls.push(",
+        );
+        methods.push_str(&format!(
+            "{pascal}Call::LockConfiguration {{ tenant_id: tenant_id.into() }});\n        fail_if_requested(&mut state, {pascal}Failure::LockConfiguration)\n    }}\n\n"
+        ));
+    }
     for index in unique_business_indexes(resource) {
         let fields = business_index_fields(resource, index);
         let method = unique_method_name(index);
@@ -425,10 +470,12 @@ fn fake_control_parts(resource: &ResourceIr) -> (String, String, String) {
             "    async fn {method}(\n        &self,\n        tenant_id: &str,\n{arguments}        exclude_id: Option<i64>,\n    ) -> AppResult<Option<{pascal}Record>> {{\n        self.ensure_tenant(tenant_id)?;\n        {{\n            let mut state = self.lock_state();\n            state.calls.push({pascal}Call::{variant} {{ tenant_id: tenant_id.into(), {call_values}, exclude_id }});\n            fail_if_requested(&mut state, {pascal}Failure::{variant})?;\n        }}\n        Ok(self.lock_view().values().find(|record| exclude_id != Some(record.id) && {comparisons}).cloned())\n    }}\n\n"
         ));
     }
-    calls.push_str("\n    IncrementConfigurationVersion { tenant_id: String },");
-    failures.push_str("\n    IncrementConfigurationVersion,");
-    methods.push_str(&format!(
-        "    async fn increment_configuration_version(&self, tenant_id: &str) -> AppResult<()> {{\n        self.ensure_tenant(tenant_id)?;\n        let mut state = self.lock_state();\n        state.calls.push({pascal}Call::IncrementConfigurationVersion {{ tenant_id: tenant_id.into() }});\n        fail_if_requested(&mut state, {pascal}Failure::IncrementConfigurationVersion)\n    }}\n"
-    ));
+    if resource.configuration_versioned {
+        calls.push_str("\n    IncrementConfigurationVersion { tenant_id: String },");
+        failures.push_str("\n    IncrementConfigurationVersion,");
+        methods.push_str(&format!(
+            "    async fn increment_configuration_version(&self, tenant_id: &str) -> AppResult<()> {{\n        self.ensure_tenant(tenant_id)?;\n        let mut state = self.lock_state();\n        state.calls.push({pascal}Call::IncrementConfigurationVersion {{ tenant_id: tenant_id.into() }});\n        fail_if_requested(&mut state, {pascal}Failure::IncrementConfigurationVersion)\n    }}\n"
+        ));
+    }
     (calls, failures, methods)
 }
