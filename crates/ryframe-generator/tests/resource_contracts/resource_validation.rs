@@ -305,6 +305,7 @@ fn extended_manifest_contracts_validate_and_render_exact_runtime_behavior() {
     assert!(dto.contains("pub const NAME_MAX_UTF8_BYTES: usize = 128;"));
     assert!(dto.contains("value.len()"));
     assert!(dto.contains("custom(function = \"validate_name_utf8_bytes\")"));
+    assert!(dto.contains("!(NAME_MIN_UTF8_BYTES..=NAME_MAX_UTF8_BYTES).contains(&bytes)"));
     assert!(dto.contains("#[schema(min_length = 2, max_length = 128)]"));
 
     let invalid_bytes = changed(&bytes, "min_utf8_bytes = 2", "min_utf8_bytes = 129");

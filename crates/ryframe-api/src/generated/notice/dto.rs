@@ -16,7 +16,7 @@ pub const CONTENT_MARKDOWN_MIN_UTF8_BYTES: usize = 1;
 pub const CONTENT_MARKDOWN_MAX_UTF8_BYTES: usize = 60000;
 fn validate_content_markdown_utf8_bytes(value: &str) -> Result<(), validator::ValidationError> {
     let bytes = value.len();
-    if bytes < CONTENT_MARKDOWN_MIN_UTF8_BYTES || bytes > CONTENT_MARKDOWN_MAX_UTF8_BYTES {
+    if !(CONTENT_MARKDOWN_MIN_UTF8_BYTES..=CONTENT_MARKDOWN_MAX_UTF8_BYTES).contains(&bytes) {
         Err(validator::ValidationError::new(
             "invalid_content_markdown_utf8_bytes",
         ))

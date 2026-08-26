@@ -163,7 +163,7 @@ impl PostTransaction for DatabasePostTransaction {
             .insert(&self.transaction)
             .await
             .map(to_record)
-            .map_err(database_error)
+            .db_conflicts(&[("uk_tenant_code", "岗位编码已存在")], "岗位已存在")
     }
 
     async fn update(&self, record: PostRecord) -> AppResult<PostRecord> {
@@ -172,7 +172,7 @@ impl PostTransaction for DatabasePostTransaction {
             .update(&self.transaction)
             .await
             .map(to_record)
-            .map_err(database_error)
+            .db_conflicts(&[("uk_tenant_code", "岗位编码已存在")], "岗位已存在")
     }
 
     async fn delete(&self, tenant_id: &str, id: i64) -> AppResult<()> {
@@ -236,16 +236,4 @@ fn to_entity(record: PostRecord) -> entity::Model {
         created_at: record.created_at,
         updated_at: record.updated_at,
     }
-}
-
-fn database_error(error: sea_orm::DbErr) -> AppError {
-    let message = error.to_string();
-    let normalized = message.to_ascii_lowercase();
-    if normalized.contains("1062") || normalized.contains("duplicate entry") {
-        if normalized.contains("uk_tenant_code") {
-            return AppError::Conflict("岗位编码已存在".into());
-        }
-        return AppError::Conflict("岗位已存在".into());
-    }
-    AppError::Database(message)
 }

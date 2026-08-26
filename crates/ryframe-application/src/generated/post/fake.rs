@@ -169,6 +169,7 @@ impl PostPersistencePort for PostFakePersistence {
                 if record.del_flag != "0" {
                     return None;
                 }
+
                 if let Some(value) = filter.name.filter(|value| !value.is_empty())
                     && !record.name.contains(value)
                 {

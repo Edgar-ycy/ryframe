@@ -15,19 +15,17 @@ pub(super) fn render_utf8_byte_validators(resource: &ResourceIr, output: &mut St
                 "pub const {constant}_MAX_UTF8_BYTES: usize = {maximum};\n"
             ));
         }
-        let minimum = field
-            .validation
-            .min_utf8_bytes
-            .map(|_| format!("bytes < {constant}_MIN_UTF8_BYTES"));
-        let maximum = field
-            .validation
-            .max_utf8_bytes
-            .map(|_| format!("bytes > {constant}_MAX_UTF8_BYTES"));
-        let invalid = [minimum, maximum]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" || ");
+        let invalid = match (
+            field.validation.min_utf8_bytes,
+            field.validation.max_utf8_bytes,
+        ) {
+            (Some(_), Some(_)) => {
+                format!("!({constant}_MIN_UTF8_BYTES..={constant}_MAX_UTF8_BYTES).contains(&bytes)")
+            }
+            (Some(_), None) => format!("bytes < {constant}_MIN_UTF8_BYTES"),
+            (None, Some(_)) => format!("bytes > {constant}_MAX_UTF8_BYTES"),
+            (None, None) => unreachable!("UTF-8 字节校验器必须至少声明一个边界"),
+        };
         output.push_str(&format!(
             "fn validate_{name}_utf8_bytes(value: &str) -> Result<(), validator::ValidationError> {{\n    let bytes = value.len();\n    if {invalid} {{\n        Err(validator::ValidationError::new({error:?}))\n    }} else {{\n        Ok(())\n    }}\n}}\n\n",
             name = field.name,
