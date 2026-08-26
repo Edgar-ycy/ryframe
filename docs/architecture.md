@@ -45,13 +45,23 @@ xtask { kernel, config, db, tenant-db, generator }
 
 HTTP 请求先在 API 层解析为严格 DTO，再调用 application 用例。用例只依赖端口；控制库和租户库分别在 DB crate 实现，Redis、存储和表格能力在 adapters 实现，组合根负责注入。
 
+`ryframe-application::system` 只公开四个业务域：`identity`（身份、权限与档案）、`platform`
+（租户、产品、服务账号与授权诊断）、`content`（配置、字典、公告、文件与标准资源）和
+`operations`（消息、导出、日志、在线用户、监控与保留策略）。叶子模块保持私有，外部调用方
+不能依赖历史平铺路径。组合根中的 `AppServices` 使用同样四组结构，`boot` 只选择配置、构造
+实现并注入实例；Redis 应用端口的具体实现归 `ryframe-adapters` 所有。
+
 事务由 application 用例开始和提交。Repository 不自行提交单次 CRUD，也不向 application 暴露 SeaORM 事务、实体或查询构造器。
 
 权限、菜单、页面键和 capability 的唯一事实源是 `catalog/access.toml`。构建脚本生成类型化目录、OpenAPI 扩展和迁移种子；每条路由必须显式声明 `Public`、`Authenticated`、`Permission` 或 `Capability`。
 
 ## 模块尺度
 
-手写 Rust 生产与工具源码不超过 600 行，生成 Rust 文件不超过 500 行，Rust 集成测试不超过 1000 行。前端 Composable 不超过 400 行，Vue SFC/SCSS 不超过 600 行，脚本模块不超过 500 行。复杂模块按连接、placement、fence、migration、cleanup、session、metrics 等职责拆分；拆分优先使用 crate 内模块，不为薄抽象增加 crate。
+手写 Rust 生产与工具源码不超过 600 行，生成 Rust 文件不超过 500 行，Rust 集成测试不超过
+1000 行。编排函数不超过 80 行，helper 不超过 100 行，其他新增或修改函数不超过 150 行；
+超过上限时按阶段、纯模型或端口职责拆分。前端 Vue SFC 不超过 400 行，Composable 与普通
+TypeScript 不超过 300 行，SCSS 不超过 300 行。复杂模块按连接、placement、fence、migration、
+cleanup、session、metrics 等职责拆分；拆分优先使用 crate 内模块，不为薄抽象增加 crate。
 
 ## 变更规则
 

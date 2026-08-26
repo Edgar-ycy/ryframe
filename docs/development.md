@@ -39,7 +39,16 @@ cargo run --locked -p ryframe-db --bin export_mysql_snapshot -- sql/ryframe_conf
 
 OpenAPI 和 SQL 快照必须由正式命令生成，不手工编辑。
 
-CI 使用固定版本 `sccache` 复用 Rust 编译结果，前端复用 pnpm store 与 Playwright Chromium；真实协议测试只编译对应 crate，不重复执行全 Workspace。前后端分支保护统一绑定稳定的 `Required` job，Windows smoke 只覆盖静态编译、类型与确定性测试，不在 Windows CI 启动 Docker。
+CI 的稳定内部入口是 `cargo xtask ci plan|preflight|rust-gate|integration|consumer-contract`。
+`plan` 复用本地变更分类和反向依赖图，工作流 YAML 只负责 runner、容器、缓存、权限和 job 条件；
+Clippy、feature matrix、Workspace test 与快照复用同一个 `rust-gate` target，避免跨 job 重编译。
+Windows 全量测试默认 `--jobs 4`，其余编译并发由统一的内存预算计算。CI 使用固定版本
+`sccache` 的 GitHub Actions 远端后端，仅缓存 Cargo 依赖而不缓存整个 target。前端分别提供
+`ci:static`、`ci:unit`、`ci:build`、`ci:browser`，由稳定的 `Required` job 汇总。
+
+Playwright Chromium 只在 browser job 安装，失败时始终上传 trace、截图、视频和报告。真实协议
+测试只编译对应 crate；定时、手动与 `v*` 发布标签额外执行真实 API + MySQL + Redis + Chrome
+全栈门禁。Windows smoke 只覆盖静态编译、类型与确定性测试，不在 Windows CI 启动 Docker。
 
 ## 测试
 
@@ -71,17 +80,13 @@ cargo resource post --explain
 
 `--write` 在资源文件安全写入后自动刷新候选 OpenAPI；如果后端尚不能编译或契约生成失败，命令会明确说明资源写入已经完成，并提示修复后运行 `cargo api-sync`。底层生成器仍是工具 crate，不进入生产程序。生成结果必须通过快照、重复生成零差异和编译测试。
 
-### Post 迁移前人工触点基线
+### 标准资源生产基准
 
-2026-08-23 在后端提交 `305a7a7`、前端提交 `321f29e` 上盘点 Post 标准 CRUD。下列是增加字段或排查完整调用链时需要知道的人工触点；OpenAPI、SQL 和 TypeScript 契约派生文件不计入人工文件，但修改后仍需刷新：
-
-- 应用层：`crates/ryframe-application/src/system/post.rs`、`ports/system/post.rs` 及两处 `mod.rs` 注册。
-- 数据库层：`crates/ryframe-db/src/entities/post.rs`、`application_ports/system/post.rs`、`repositories/post_repo.rs`，以及 `lib.rs`、`repositories/mod.rs` 注册。
-- API 层：`dto/post_dto.rs`、`handlers/post_handler.rs`，以及 DTO、Handler、state、router、router group、OpenAPI 共七处中央接入。
-- 权限与初始化：`catalog/access.toml`、控制库 baseline/seeder；字段变化还会刷新 `openapi/openapi.json` 与 `sql/ryframe_config.sql`。
-- 前端：`src/views/system/post/index.vue`、`src/generated/resources/post.ts`、`src/router/pageRegistry.ts`；`src/api/modules/post.ts` 中的导出属于明确的 Post 扩展，不计入通用 CRUD 内核。
-
-这份清单是迁移后的反向验收基线：标准资源应只修改一个 TOML，最多增加一个强类型扩展文件；不再要求开发者记住上述中央注册。旧实现删除后保留本节，便于量化人工触点是否真正减少。
+Post 与 Notice 是标准资源生成链路的两个生产基准。字段、校验、筛选、排序、数据权限、CRUD
+路径与权限从各自资源 TOML 生成；重复执行生成器必须报告零写入。标准 CRUD 不允许手改中央
+Router、页面注册表、权限聚合、应用服务集合或数据库 Repository 注册。Post 导出和 Notice
+消息发布等非标准行为各自保留为单一强类型扩展，不把 Config、Dict、Tenant 或 Schedule
+强行压入 flat CRUD。字段演进以资源 fixture 和生成契约测试为准，不再维护重复的人工字段清单。
 
 ## 提交
 
