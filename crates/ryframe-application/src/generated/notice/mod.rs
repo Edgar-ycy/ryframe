@@ -4,11 +4,13 @@
 // source-sha256: 9c7717ecf319783c9296cc84459c3b661dcadc10a233acf1bf058176b737d151
 // 请勿手工修改；修改资源清单后重新生成。
 
+#[cfg(feature = "test-support")]
 pub mod fake;
 pub mod model;
 pub mod port;
 pub mod service;
 
+#[cfg(feature = "test-support")]
 pub use fake::*;
 pub use model::*;
 pub use port::*;

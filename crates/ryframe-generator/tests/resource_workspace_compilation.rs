@@ -13,6 +13,14 @@ use ryframe_generator::{
 static SHARED_WORKSPACE_RESULT: OnceLock<Result<(), String>> = OnceLock::new();
 const FRONTEND_DIR_ENV: &str = "RYFRAME_RESOURCE_WORKSPACE_FRONTEND_DIR";
 
+struct SharedWorkspace {
+    backend_source: PathBuf,
+    frontend_source: PathBuf,
+    backend: PathBuf,
+    frontend: PathBuf,
+    cargo_target: PathBuf,
+}
+
 #[test]
 #[ignore = "完整门禁在共享的临时真实 Workspace 中运行 Cargo 与 vue-tsc"]
 fn device_slice_compiles_in_temporary_real_workspaces() {
@@ -54,6 +62,17 @@ fn panic_message(payload: Box<dyn Any + Send>) -> String {
 }
 
 fn run_shared_workspace() -> Result<(), String> {
+    let workspace = prepare_shared_workspace()?;
+    generate_resource_slices(&workspace);
+    register_generated_backend_modules(&workspace.backend);
+    register_device_frontend_contract(&workspace.frontend);
+    write_device_fake_transaction_test(&workspace.backend);
+    assert_backend_checks(&workspace);
+    assert_frontend_checks(&workspace.frontend_source, &workspace.frontend);
+    Ok(())
+}
+
+fn prepare_shared_workspace() -> Result<SharedWorkspace, String> {
     let backend_source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
@@ -88,9 +107,25 @@ fn run_shared_workspace() -> Result<(), String> {
     }
     prepare_frontend_workspace(&frontend_source, &frontend);
 
-    let mut device =
-        load_resource(backend_source.join("crates/ryframe-generator/tests/fixtures/device.toml"))
-            .expect("Device 清单应有效");
+    let cargo_target = std::env::var_os("RYFRAME_RESOURCE_WORKSPACE_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| backend_source.join("target/resource-generator-workspace-check"));
+    Ok(SharedWorkspace {
+        backend_source,
+        frontend_source,
+        backend,
+        frontend,
+        cargo_target,
+    })
+}
+
+fn generate_resource_slices(workspace: &SharedWorkspace) {
+    let mut device = load_resource(
+        workspace
+            .backend_source
+            .join("crates/ryframe-generator/tests/fixtures/device.toml"),
+    )
+    .expect("Device 清单应有效");
     device.relations.push(RelationIr {
         name: "parent".into(),
         pascal_name: "Parent".into(),
@@ -99,17 +134,21 @@ fn run_shared_workspace() -> Result<(), String> {
         target_resource: "device".into(),
         target_pascal_name: "Device".into(),
     });
-    let post = load_resource(backend_source.join("catalog/resources/post.toml"))
+    let post = load_resource(workspace.backend_source.join("catalog/resources/post.toml"))
         .expect("临时 Workspace 中既有的 Post 清单应有效");
-    let notice = load_resource(backend_source.join("catalog/resources/notice.toml"))
-        .expect("临时 Workspace 中既有的 Notice 清单应有效");
+    let notice = load_resource(
+        workspace
+            .backend_source
+            .join("catalog/resources/notice.toml"),
+    )
+    .expect("临时 Workspace 中既有的 Notice 清单应有效");
     let catalog = render_resources(&[device, notice, post]).expect("Device 与既有资源应能共同生成");
     let first = write_resource(
         &catalog,
         "device",
         ResourceWorkspace {
-            backend_root: &backend,
-            frontend_root: Some(&frontend),
+            backend_root: &workspace.backend,
+            frontend_root: Some(&workspace.frontend),
         },
     )
     .expect("Device/Notice/Post 目录应一次性写入临时 Workspace");
@@ -125,9 +164,9 @@ fn run_shared_workspace() -> Result<(), String> {
         "src/generated/resources/notice/registration.ts",
     ] {
         let root = if path.starts_with("src/") {
-            &frontend
+            &workspace.frontend
         } else {
-            &backend
+            &workspace.backend
         };
         assert!(root.join(path).is_file(), "Post 资产未生成：{path}");
     }
@@ -136,21 +175,27 @@ fn run_shared_workspace() -> Result<(), String> {
             &catalog,
             resource,
             ResourceWorkspace {
-                backend_root: &backend,
-                frontend_root: Some(&frontend),
+                backend_root: &workspace.backend,
+                frontend_root: Some(&workspace.frontend),
             },
         )
         .unwrap_or_else(|error| panic!("{resource} 连续生成应成功：{error}"));
         assert!(repeated.written.is_empty(), "{resource} 连续生成不得写入");
         assert!(repeated.removed.is_empty(), "{resource} 连续生成不得删除");
     }
-    let notice_registration =
-        fs::read_to_string(frontend.join("src/generated/resources/notice/registration.ts"))
-            .expect("应读取 Notice 页面注册清单");
+    let notice_registration = fs::read_to_string(
+        workspace
+            .frontend
+            .join("src/generated/resources/notice/registration.ts"),
+    )
+    .expect("应读取 Notice 页面注册清单");
     assert!(
         notice_registration.contains("@/views/system/notice/index.vue"),
         "Notice 必须保留强类型自定义页面扩展"
     );
+}
+
+fn register_generated_backend_modules(backend: &Path) {
     for crate_name in [
         "ryframe-application",
         "ryframe-db",
@@ -167,15 +212,12 @@ fn run_shared_workspace() -> Result<(), String> {
         }
         fs::write(&lib, source).expect("应在临时副本接入 generated module");
     }
-    register_device_frontend_contract(&frontend);
-    write_device_fake_transaction_test(&backend);
-    let cargo_target = std::env::var_os("RYFRAME_RESOURCE_WORKSPACE_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| backend_source.join("target/resource-generator-workspace-check"));
+}
 
+fn assert_backend_checks(workspace: &SharedWorkspace) {
     let cargo_fmt = Command::new("cargo")
         .args(["fmt", "--all", "--", "--check"])
-        .current_dir(&backend)
+        .current_dir(&workspace.backend)
         .output()
         .expect("应检查生成 Rust 资产格式");
     assert_command_succeeded("cargo fmt --check", &cargo_fmt);
@@ -192,8 +234,8 @@ fn run_shared_workspace() -> Result<(), String> {
             "-p",
             "ryframe-api",
         ])
-        .current_dir(&backend)
-        .env("CARGO_TARGET_DIR", &cargo_target)
+        .current_dir(&workspace.backend)
+        .env("CARGO_TARGET_DIR", &workspace.cargo_target)
         .output()
         .expect("应运行临时后端 cargo check");
     assert_command_succeeded("cargo check", &cargo);
@@ -203,17 +245,17 @@ fn run_shared_workspace() -> Result<(), String> {
             "test",
             "-p",
             "ryframe-application",
+            "--no-default-features",
+            "--features",
+            "test-support",
             "--test",
             "generated_device_fake",
         ])
-        .current_dir(&backend)
-        .env("CARGO_TARGET_DIR", cargo_target)
+        .current_dir(&workspace.backend)
+        .env("CARGO_TARGET_DIR", &workspace.cargo_target)
         .output()
         .expect("应运行生成 Fake 事务语义测试");
     assert_command_succeeded("generated Device fake transaction test", &fake_test);
-
-    assert_frontend_checks(&frontend_source, &frontend);
-    Ok(())
 }
 
 fn prepare_frontend_workspace(source: &Path, target: &Path) {
@@ -318,19 +360,11 @@ fn register_device_frontend_contract(frontend: &Path) {
     );
     fs::write(permissions_path, permissions).expect("应写入临时候选权限清单");
 
-    let operations_path = frontend.join("src/api/generated/operations.ts");
+    let operations_path = frontend.join("src/api/generated/operations/system.ts");
     let mut operations = fs::read_to_string(&operations_path).expect("应读取候选 operation 清单");
     let fixture = include_str!("fixtures/device_operations.ts.part");
-    let (operation_ids, descriptors) = fixture
-        .split_once("\n\nexport const")
-        .expect("Device operation fixture 应分为 ID 和描述符");
-    operations = operations.replacen(
-        "export type OperationId =\n",
-        &format!("export type OperationId =\n{operation_ids}\n"),
-        1,
-    );
-    operations.push_str("\n\nexport const");
-    operations.push_str(descriptors);
+    operations.push('\n');
+    operations.push_str(fixture);
     fs::write(operations_path, operations).expect("应写入临时候选 operation 清单");
 
     let schema_path = frontend.join("src/api/generated/schema/system.ts");

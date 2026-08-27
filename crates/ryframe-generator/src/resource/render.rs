@@ -102,6 +102,12 @@ fn render_backend(
     resources: &[&ResourceIr],
     assets: &mut Vec<GeneratedAsset>,
 ) {
+    render_application(resource, assets);
+    render_database(resource, resources, assets);
+    render_api(resource, assets);
+}
+
+fn render_application(resource: &ResourceIr, assets: &mut Vec<GeneratedAsset>) {
     let name = &resource.name;
     push(
         assets,
@@ -109,7 +115,7 @@ fn render_backend(
         AssetRoot::Backend,
         format!("crates/ryframe-application/src/generated/{name}/mod.rs"),
         format!(
-            "{}pub mod fake;\npub mod model;\npub mod port;\npub mod service;\n\npub use fake::*;\npub use model::*;\npub use port::*;\npub use service::*;\n",
+            "{}#[cfg(feature = \"test-support\")]\npub mod fake;\npub mod model;\npub mod port;\npub mod service;\n\n#[cfg(feature = \"test-support\")]\npub use fake::*;\npub use model::*;\npub use port::*;\npub use service::*;\n",
             rust_header(resource)
         ),
     );
@@ -141,7 +147,14 @@ fn render_backend(
         format!("crates/ryframe-application/src/generated/{name}/fake.rs"),
         slice::application_fake(resource, &rust_header(resource)),
     );
+}
 
+fn render_database(
+    resource: &ResourceIr,
+    resources: &[&ResourceIr],
+    assets: &mut Vec<GeneratedAsset>,
+) {
+    let name = &resource.name;
     let storage_crate = match resource.storage {
         StorageKind::ControlRow => "ryframe-db",
         StorageKind::TenantData => "ryframe-tenant-db",
@@ -184,7 +197,10 @@ fn render_backend(
             slice::migration(resource, &rust_header(resource)),
         );
     }
+}
 
+fn render_api(resource: &ResourceIr, assets: &mut Vec<GeneratedAsset>) {
+    let name = &resource.name;
     push(
         assets,
         resource,

@@ -37,7 +37,7 @@ fn all_resource_check_plan_is_read_only_and_reaches_zero_diff() {
     let ownership_path = backend.path().join("catalog/resources/.ownership.toml");
     let model_before = fs::read(&model_path).expect("模型文件应存在");
     let ownership_before = fs::read(&ownership_path).expect("ownership 应存在");
-    let mut changed = catalog.clone();
+    let mut changed = catalog;
     changed
         .assets
         .iter_mut()
