@@ -10,8 +10,22 @@ import subprocess
 import sys
 import tomllib
 from collections.abc import Iterable
+from datetime import date
 from pathlib import Path
 from typing import Any
+
+# 该脚本既会被直接执行，也会通过 importlib 从单元测试加载。后一种方式不会
+# 自动把 scripts/ 放入模块搜索路径，因此显式固定同目录模块的解析位置。
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from rust_function_size import (
+    changed_line_ranges,
+    parse_functions,
+    parse_policy as parse_function_size_policy,
+    validate_functions,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -140,6 +154,55 @@ def parse_edges(value: Any, label: str, errors: list[str]) -> set[tuple[str, str
     return result
 
 
+def parse_temporary_edges(
+    value: Any,
+    label: str,
+    errors: list[str],
+) -> set[tuple[str, str]]:
+    if not isinstance(value, list):
+        errors.append(f"{label} 必须是 table 数组")
+        return set()
+    result: set[tuple[str, str]] = set()
+    for index, item in enumerate(value):
+        item_label = f"{label}[{index}]"
+        if not isinstance(item, dict):
+            errors.append(f"{item_label} 必须是 table")
+            continue
+        unknown = set(item) - {"edge", "reason", "expires"}
+        missing = {"edge", "reason", "expires"} - set(item)
+        if unknown:
+            errors.append(f"{item_label} 包含未知字段: {', '.join(sorted(unknown))}")
+        if missing:
+            errors.append(f"{item_label} 缺少字段: {', '.join(sorted(missing))}")
+            continue
+        edge_value = item["edge"]
+        reason = item["reason"]
+        expiry = item["expires"]
+        if not isinstance(edge_value, str):
+            errors.append(f"{item_label}.edge 必须是字符串")
+            continue
+        edge = parse_edge(edge_value, f"{item_label}.edge", errors)
+        if not isinstance(reason, str) or not reason.strip():
+            errors.append(f"{item_label}.reason 必须是非空字符串")
+        try:
+            if type(expiry) is date:
+                expiry_date = expiry
+            elif isinstance(expiry, str):
+                expiry_date = date.fromisoformat(expiry)
+            else:
+                raise TypeError
+        except (TypeError, ValueError):
+            errors.append(f"{item_label}.expires 必须是 YYYY-MM-DD 日期")
+            expiry_date = None
+        if expiry_date is not None and expiry_date < date.today():
+            errors.append(f"{item_label} 已于 {expiry_date.isoformat()} 过期")
+        if edge is not None and edge in result:
+            errors.append(f"{label} 不得包含重复边: {edge_value}")
+        elif edge is not None:
+            result.add(edge)
+    return result
+
+
 def strongly_connected_components(
     nodes: Iterable[str],
     edges: Iterable[tuple[str, str]],
@@ -218,7 +281,7 @@ def validate_profile(name: str, profile: Any, errors: list[str]) -> dict[str, An
         f"{label}.allowed_internal_edges",
         errors,
     )
-    temporary_edges = parse_edges(
+    temporary_edges = parse_temporary_edges(
         profile.get("temporary_product_tool_edges", []),
         f"{label}.temporary_product_tool_edges",
         errors,
@@ -286,15 +349,21 @@ def validate_profile(name: str, profile: Any, errors: list[str]) -> dict[str, An
 
 def load_policy(
     errors: list[str],
-) -> tuple[str, dict[str, dict[str, Any]], dict[str, Any], dict[str, Any]]:
+) -> tuple[
+    str,
+    dict[str, dict[str, Any]],
+    dict[str, Any],
+    dict[str, Any],
+    dict[str, Any],
+]:
     try:
         policy = tomllib.loads(POLICY_PATH.read_text(encoding="utf-8"))
     except (OSError, tomllib.TOMLDecodeError) as error:
         errors.append(f"无法读取架构策略 {POLICY_PATH.relative_to(ROOT)}: {error}")
-        return "", {}, {}, {}
+        return "", {}, {}, {}, {}
 
-    if policy.get("schema_version") != 1:
-        errors.append("架构策略 schema_version 必须为 1")
+    if policy.get("schema_version") != 2:
+        errors.append("架构策略 schema_version 必须为 2")
     active_profile = policy.get("active_profile")
     if not isinstance(active_profile, str) or not active_profile:
         errors.append("架构策略 active_profile 必须是非空字符串")
@@ -318,7 +387,11 @@ def load_policy(
     if not isinstance(test_layout, dict):
         errors.append("架构策略必须声明 test_layout")
         test_layout = {}
-    return active_profile, profiles, source_size, test_layout
+    function_size = policy.get("function_size")
+    if not isinstance(function_size, dict):
+        errors.append("架构策略必须声明 function_size")
+        function_size = {}
+    return active_profile, profiles, source_size, test_layout, function_size
 
 
 def cargo_metadata(errors: list[str]) -> dict[str, Any]:
@@ -394,6 +467,12 @@ def validate_active_workspace(
         errors.append(
             "工作区出现未批准内部依赖边: "
             + ", ".join(f"{a} -> {b}" for a, b in sorted(forbidden_edges))
+        )
+    stale_declared_edges = profile.get("allowed_edges", set()) - actual_edges
+    if stale_declared_edges:
+        errors.append(
+            "架构事实源包含已不存在的内部依赖边: "
+            + ", ".join(f"{a} -> {b}" for a, b in sorted(stale_declared_edges))
         )
 
     actual_product_tool_edges = {
@@ -501,11 +580,22 @@ def source_has_generated_marker(path: Path, markers: tuple[str, ...]) -> bool:
     return any(marker in header for marker in markers)
 
 
+def source_size_level(lines: int, limit: int) -> str | None:
+    if lines >= limit:
+        return "fail"
+    if lines * 10 >= limit * 9:
+        return "strong"
+    if lines * 5 >= limit * 4:
+        return "hint"
+    return None
+
+
 def validate_source_size(
     source_size: dict[str, Any],
     profile: dict[str, Any],
     packages: dict[str, dict[str, Any]],
     errors: list[str],
+    warnings: list[str],
 ) -> tuple[int, dict[str, int]]:
     max_lines = source_size.get("max_lines")
     if not isinstance(max_lines, int) or max_lines < 1:
@@ -572,8 +662,13 @@ def validate_source_size(
             )
             if relative in frozen_migrations:
                 continue
-            if lines > limit:
-                errors.append(f"源码文件超过 {limit} 行: {relative}（{lines} 行）")
+            level = source_size_level(lines, limit)
+            if level == "fail":
+                errors.append(f"源码文件达到 {limit} 行硬上限: {relative}（{lines} 行）")
+            elif level == "strong":
+                warnings.append(f"强警告：{relative} 已达硬上限 90%（{lines}/{limit} 行）")
+            elif level == "hint":
+                warnings.append(f"提示：{relative} 已达硬上限 80%（{lines}/{limit} 行）")
         if package_count == 0:
             errors.append(f"工作区 crate 没有纳入任何 Rust 源文件: {package_name}")
         scanned_by_package[package_name] = package_count
@@ -913,9 +1008,10 @@ def validate_tenant_data_boundaries(errors: list[str]) -> None:
 
 def main() -> int:
     errors: list[str] = []
+    warnings: list[str] = []
     validate_documentation(errors)
     validate_system_domain_surface(ROOT, errors)
-    active_profile, profiles, source_size, test_layout = load_policy(errors)
+    active_profile, profiles, source_size, test_layout, function_size = load_policy(errors)
     metadata = cargo_metadata(errors)
     packages = workspace_packages(metadata) if metadata else {}
     active = profiles.get(active_profile, {})
@@ -928,12 +1024,14 @@ def main() -> int:
     legacy_persistence_violations = 0
     async_port_sources = 0
     async_port_violations = 0
+    checked_functions = 0
+    function_size_violations = 0
     if active and packages:
         actual_edges = validate_active_workspace(
             active_profile, active, packages, errors
         )
         scanned, scanned_by_package = validate_source_size(
-            source_size, active, packages, errors
+            source_size, active, packages, errors, warnings
         )
         checked_test_sources, integration_targets = validate_test_layout(
             test_layout, packages, errors
@@ -948,11 +1046,30 @@ def main() -> int:
             workspace_rust_sources(ROOT, active, packages),
             errors,
         )
+        function_policy = parse_function_size_policy(function_size, errors)
+        if function_policy is not None:
+            rust_sources = workspace_rust_sources(ROOT, active, packages)
+            functions = parse_functions(ROOT, rust_sources, errors)
+            changed = (
+                changed_line_ranges(ROOT, errors)
+                if function_policy.mode == "changed"
+                else None
+            )
+            checked_functions, function_size_violations = validate_functions(
+                function_policy,
+                functions,
+                changed,
+                errors,
+            )
 
     ran_tenant_checks = bool(active.get("run_legacy_checks"))
     if ran_tenant_checks:
         validate_tenant_data_boundaries(errors)
 
+    if warnings:
+        print("Architecture size notices:", file=sys.stderr)
+        for warning in warnings:
+            print(f"  - {warning}", file=sys.stderr)
     if errors:
         print("Architecture check failed:", file=sys.stderr)
         for error in errors:
@@ -984,6 +1101,11 @@ def main() -> int:
     print(
         "Async port interface gate passed "
         f"(source_files={async_port_sources}, violations={async_port_violations})."
+    )
+    print(
+        "Rust function-size AST gate passed "
+        f"(mode={function_size.get('mode')}, functions={checked_functions}, "
+        f"violations={function_size_violations})."
     )
     if ran_tenant_checks:
         print("Tenant-data architecture boundaries are valid.")

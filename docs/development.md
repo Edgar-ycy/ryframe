@@ -21,16 +21,14 @@ cargo migrate verify
 cargo dev
 ```
 
-`cargo dev` 启动 Vite、API 和独立 Worker。后端变化会先编译到新目录，并在隔离端口探活；探活成功后才切换正式端口，失败时继续使用上一个可用版本。按 `Ctrl+C` 停止全部子进程。
+`cargo dev` 启动 Vite、API 和独立 Worker。后端变化会先编译到按会话和代次隔离的新目录，并在隔离端口探活；探活成功后才切换正式端口，失败时继续使用上一个可用版本。再次启动时会清理上次崩溃留下的暂存目录，并校验清单、成对二进制与运行输入快照，恢复最近的完整版本后再后台构建当前源码。按 `Ctrl+C` 停止全部子进程；若 `xtask` 自身变化，命令以退出码 `75` 提示重新运行 `cargo dev`。
 
 常用排障入口：
 
 ```powershell
-cargo run --locked -p ryframe --bin ryframe -- --probe
-cargo run --locked -p ryframe --bin ryframe-worker -- --probe
+cargo run --locked -p ryframe --no-default-features --features bin-api,runtime-swagger-ui --bin ryframe -- --probe
+cargo run --locked -p ryframe --no-default-features --features bin-worker --bin ryframe-worker -- --probe
 ```
-
-探活失败时先检查启动日志，再依次检查数据库结构、Redis、对象存储和端口占用。
 
 ## 数据库迁移
 
@@ -42,7 +40,7 @@ cargo migrate verify
 cargo migrate up
 ```
 
-租户数据可操作全部已登记目标，或只操作一个目标：
+租户数据可操作全部已登记目标，或只操作一个目标；生产部署和非生产重建步骤见[数据指南](data.md)与[运维指南](operations.md)：
 
 ```powershell
 cargo migrate verify tenant-data --all
@@ -55,8 +53,6 @@ cargo migrate verify tenant-data --target <目标键>
 cargo migrate new control <迁移名>
 cargo migrate new tenant-data <迁移名>
 ```
-
-生产部署和非生产重建的安全步骤见[数据指南](data.md)与[运维指南](operations.md)。
 
 ## 开发标准资源
 
@@ -93,9 +89,7 @@ Post 和 Notice 可作为标准 CRUD 示例。导出、发布等特殊动作适�
 3. 在 `ryframe` 的启动装配中构造并注入实现。
 4. 在 `ryframe-api` 增加 DTO、路由和 OpenAPI 描述，或让 Worker 调用应用用例。
 5. 增加覆盖业务成功和失败路径的测试。
-6. 同步前端契约并联调。
-
-模块选择和请求流见[架构说明](architecture.md)。
+6. 同步前端契约并联调；模块选择和请求流见[架构说明](architecture.md)。
 
 ## API 与前后端联调
 
@@ -142,7 +136,19 @@ $env:RYFRAME_REDIS_INTEGRATION = "1"
 cargo test --locked -p ryframe-adapters --test redis_real_protocol -- --nocapture
 ```
 
-测试完成后只清理本次测试创建的精确 schema、key 和对象，不清空共享服务。
+## 开发反馈性能测量
+
+DevEx 测量必须显式选择 suite、工作负载变体、运行次数与冷暖缓存状态，例如 `cargo xtask devex run --suite rust-cold-build --variant api --runs 20 --cache cold`。Rust suite 的变体为 `api`、`worker`、`migrate` 或 `workspace`；`cargo-dev-save` 的变体直接选择 `config-only`、`api-only`、`worker-only`、`shared-runtime`、`locales`、`migration-only` 或 `resource-manifest`，不依赖调用方预设环境变量；resource generator 使用 `all`、`post` 或 `notice`，resource gate 使用 `auto`，前端 suite 使用 `default`。普通 suite 至少采样 5 次，Rust suite 及会触发编译的保存场景至少采样 20 次。`rust-incremental` 会对所选目标的代表性源码执行一次可还原编辑，命令成功或失败后均原子还原。
+
+`cargo-dev-save` 每个样本会先在独立 session、动态端口和隔离运行输入中构建并以只读 probe 模式启动 LKG；MySQL、Redis 或对象存储未就绪时，前置检查直接失败且不产出样本。计时从代表性源码的原子保存开始，完整经过真实 watcher debounce、后台 build/verify、候选 probe、LKG promotion 或 `VerifiedNoRestart`，直到服务再次 ready；前置检查、源码还原和进程清理不计入耗时，也不会自动执行迁移升级。`samples.jsonl` 同时记录保存到就绪耗时、该保存周期实际发起的 Cargo 调用数和就绪类型；`config-only` 必须经过真实 LKG 复用、probe 与切换且 Cargo 调用数为 0。`cold` 表示干净 target 上的首次保存，`warm` 表示复用同一 target 的成熟保存，但每次样本仍使用新的运行 session。
+
+suite 固定为 `rust-cold-build`、`rust-incremental`、`cargo-dev-save`、`resource-generator`、`resource-gate`、`rust-sccache`、`frontend-fast` 和 `frontend-build`。产物只写入 `.local-tests/devex/<日期>/<run-id>/`：`metadata.json` 记录提交、dirty worktree 内容指纹、工具链、target、features、jobs、环境白名单哈希、cache state、可比较的执行面 `compile_surface_fingerprint` 与单独的输入指纹，`samples.jsonl` 保存样本，`summary.json` 和 `summary.md` 保存 P50/P95。正式对比必须使用 `cargo xtask devex paired --base-backend <基线-worktree> --candidate-backend <候选-worktree> ...`，两个测量 worktree 与当前 worktree 必须彼此独立；runner 按 A-B-B-A 交错记录 arm、pair、全局 order 与每侧源码指纹。完成后可分别 `summarize`，`compare --base <基线-run> --candidate <候选-run>` 只接受同一 comparison id 且样本完整、次序可审计的 paired 结果。`rust-sccache` 先预热共享的专用缓存并在预热后采集 before stats，每个正式样本使用独立 Cargo target，避免把 Cargo no-op 误算成缓存命中。
+
+## 资源门禁与编译缓存
+
+`cargo xtask ci resource-gate --frontend-dir ../ryframe-vue3` 直接从 CI 的 base/head SHA 读取资源变化、关系闭包和 ownership，不接收流水线拼接的资源名。缺少合法 base、变更面过大、删除或重命名无法归属，以及 Cargo、toolchain、模板、CI 或架构策略变化时都会自动执行完整门禁。定向模式默认关闭；只有 `scripts/resource_gate_replay.py` 在隔离 worktree 中用至少 20 个真实变更案例证明定向与完整门禁零分歧后，CI 才能设置受控的激活标记。没有回放证据时保持完整回退是预期行为。
+
+Rust CI 关闭 incremental，并为每个 job 保存 sccache JSON 统计，不缓存整个 target。`SCCACHE_BASEDIRS` 目前只用于定时或手动的 AWS-LC 双绝对路径 canary；canary 要求缓存错误为零、warm 命中率至少 80%、不可缓存请求至少减少 50%，且 warm 构建确有耗时改善。达到这些条件前，不把该路径归一化配置扩展到普通 Rust job。
 
 ## 常见问题
 

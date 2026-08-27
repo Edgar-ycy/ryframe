@@ -46,10 +46,7 @@ struct OwnershipEntryWire {
 pub(crate) fn load(root: &Path) -> Result<LoadedRepository, String> {
     let base_ref = configured_base_ref()
         .ok_or_else(|| "缺少 RYFRAME_CI_BASE_SHA 或 GITHUB_BASE_SHA".to_owned())?;
-    let head_ref = env::var("GITHUB_SHA")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| "HEAD".to_owned());
+    let head_ref = configured_head_ref().unwrap_or_else(|| "HEAD".to_owned());
     let base = resolve_commit(root, &base_ref)
         .map_err(|reason| format!("base ref 无效（{base_ref}）：{reason}"))?;
     let head = resolve_commit(root, &head_ref)
@@ -75,14 +72,27 @@ pub(crate) fn load(root: &Path) -> Result<LoadedRepository, String> {
 }
 
 fn configured_base_ref() -> Option<String> {
-    env::var("RYFRAME_CI_BASE_SHA")
-        .ok()
+    preferred_nonempty_ref(
+        env::var("RYFRAME_CI_BASE_SHA").ok().as_deref(),
+        env::var("GITHUB_BASE_SHA").ok().as_deref(),
+    )
+}
+
+fn configured_head_ref() -> Option<String> {
+    preferred_nonempty_ref(
+        env::var("RYFRAME_CI_HEAD_SHA").ok().as_deref(),
+        env::var("GITHUB_SHA").ok().as_deref(),
+    )
+}
+
+pub(crate) fn preferred_nonempty_ref(
+    primary: Option<&str>,
+    fallback: Option<&str>,
+) -> Option<String> {
+    primary
         .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            env::var("GITHUB_BASE_SHA")
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-        })
+        .or_else(|| fallback.filter(|value| !value.trim().is_empty()))
+        .map(str::to_owned)
 }
 
 fn resolve_commit(root: &Path, reference: &str) -> Result<String, String> {

@@ -96,6 +96,18 @@ def contract_changed_from_git(backend_worktree: Path, base_sha: str) -> bool:
     return completed.returncode == 1
 
 
+def commit_exists_in_worktree(backend_worktree: Path, commit: str) -> bool:
+    if COMMIT_PATTERN.fullmatch(commit) is None:
+        return False
+    completed = subprocess.run(
+        ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
+        cwd=backend_worktree,
+        check=False,
+        capture_output=True,
+    )
+    return completed.returncode == 0
+
+
 def generate_and_classify_candidate(
     backend_worktree: Path,
     base_sha: str,
@@ -158,6 +170,7 @@ def select_ci_frontend_ref(
     prefer_marker: bool,
     candidate_path: Path | None,
     release_ref: str | None,
+    fallback_main_on_invalid_base: bool = False,
 ) -> tuple[str, bool]:
     """返回前端引用与 OpenAPI 是否变化。"""
 
@@ -168,7 +181,21 @@ def select_ci_frontend_ref(
                 return match.group(1), False
         return "main", False
 
-    if event_path is None or base_sha is None:
+    if event_path is None:
+        raise FrontendSelectionError("pull_request 选择缺少事件文件或基线提交")
+    if base_sha is None or (
+        fallback_main_on_invalid_base
+        and not commit_exists_in_worktree(backend_worktree, base_sha)
+    ):
+        if fallback_main_on_invalid_base:
+            return (
+                select_frontend_ref(
+                    _pull_request_body(event_path),
+                    False,
+                    prefer_marker=prefer_marker,
+                ),
+                False,
+            )
         raise FrontendSelectionError("pull_request 选择缺少事件文件或基线提交")
     changed = (
         generate_and_classify_candidate(backend_worktree, base_sha, candidate_path)
@@ -201,6 +228,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prefer-marker", action="store_true")
     parser.add_argument("--candidate-openapi", type=Path)
     parser.add_argument("--release-ref")
+    parser.add_argument("--fallback-main-on-invalid-base", action="store_true")
     return parser.parse_args()
 
 
@@ -214,6 +242,7 @@ def main() -> None:
         prefer_marker=args.prefer_marker,
         candidate_path=args.candidate_openapi,
         release_ref=args.release_ref,
+        fallback_main_on_invalid_base=args.fallback_main_on_invalid_base,
     )
     _write_outputs(ref, changed)
 

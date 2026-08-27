@@ -26,7 +26,7 @@ HTTP 层把请求解析为明确的 DTO，再调用 application 用例。用例�
 
 | 模块 | 开发时用于 |
 |---|---|
-| `ryframe-kernel` | 通用 ID、分页、错误和值对象 |
+| `ryframe-kernel` | 通用 ID、Snowflake、分页、错误和值对象 |
 | `ryframe-config` | 配置结构、环境覆盖和校验 |
 | `ryframe-auth` | 密码、JWT 与 RBAC 决策 |
 | `ryframe-application` | 业务用例、事务、状态机和出站端口 |
@@ -36,6 +36,23 @@ HTTP 层把请求解析为明确的 DTO，再调用 application 用例。用例�
 | `ryframe-api` | Axum 路由、DTO、OpenAPI、extractor 和传输中间件 |
 | `ryframe` | API、Worker、迁移和重建的启动装配 |
 | `ryframe-generator` | 标准资源的离线生成；默认构建不包含数据库驱动 |
+
+## 进程编译面
+
+根组合 crate 默认只编译 API 与 Swagger UI。独立进程必须关闭默认 feature，并只选择对应入口，避免把 HTTP、Redis、图片处理和遥测带入迁移工具：
+
+| 进程 | feature |
+|---|---|
+| API | `bin-api`，按需附加 `runtime-swagger-ui` |
+| Worker | `bin-worker` |
+| 控制库迁移 | `bin-migrate` |
+| 租户数据维护 | `bin-tenant-data` |
+| 文件维护 | `bin-file-maintenance` |
+| 非生产重建 | `bin-reset` |
+
+`ryframe-adapters` 默认不启用高成本能力；服务进程显式组合 `image-processing`、`monitoring`、`otel`、`redis` 与 `spreadsheet`。验证码只启用 PNG codec，通用图片处理 codec 仅随 `image-processing` 编译。生成 fake 只在 `ryframe-application/test-support` 下可用，不进入产品进程。
+
+Worker 的健康状态模型与数据库监控端口位于 application，不依赖 `ryframe-api`；HTTP 健康端点只在 Worker 组合根装配。所有二进制在创建 MySQL、Redis、HTTP、对象存储或 OTLP 客户端前统一安装 AWS-LC provider；遇到已安装的不同 provider 时拒绝启动。统一 provider 只描述项目选择的密码学实现，不代表项目自动获得 FIPS 认证。OTLP 的 HTTP protobuf 出站链路只编译 trace、Tokio runtime 与 reqwest client，不包含 logs、metrics 或 blocking client。
 
 `ryframe-application::system` 按业务分为四个入口：
 

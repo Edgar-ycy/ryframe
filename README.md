@@ -31,7 +31,7 @@ cargo dev
 ```powershell
 $env:APP_ENV = "dev"
 $env:APP_JOBS_MODE = "external"
-cargo run --locked -p ryframe --bin ryframe-worker
+cargo run --locked -p ryframe --no-default-features --features bin-worker --bin ryframe-worker
 ```
 
 ## 开发与检查

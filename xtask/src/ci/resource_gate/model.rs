@@ -73,6 +73,7 @@ pub(crate) struct ResourceChangeSet {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum GateStep {
     FullRustGate,
+    FullIntegration,
     FullConsumerContract,
     ResourceDrift,
     ResourceWorkspace,
@@ -83,9 +84,41 @@ pub(crate) enum GateStep {
     OpenApiAndFrontendConsumer,
 }
 
+pub(crate) fn should_run_for_paths(paths: &[String]) -> bool {
+    paths.iter().any(|path| {
+        is_resource_source(path)
+            || path == OWNERSHIP_PATH
+            || is_expected_snapshot(path)
+            || looks_generated(path)
+            || full_invalidation_path(path).is_some()
+    })
+}
+
+pub(crate) fn delegates_generic_ci_path(path: &str) -> bool {
+    full_invalidation_path(path).is_none()
+        && (is_resource_source(path)
+            || path == OWNERSHIP_PATH
+            || is_expected_snapshot(path)
+            || looks_generated(path))
+}
+
+pub(crate) fn full_fallback_reason_for_paths(paths: &[String]) -> Option<String> {
+    paths
+        .iter()
+        .find_map(|path| full_invalidation_path(path).map(|reason| format!("{reason}：{path}")))
+}
+
 pub(crate) fn plan_steps(change_set: &ResourceChangeSet) -> Vec<GateStep> {
     if change_set.ambiguous_reason.is_some() {
-        return vec![GateStep::FullRustGate, GateStep::FullConsumerContract];
+        return vec![
+            GateStep::ResourceDrift,
+            GateStep::FullRustGate,
+            GateStep::FullIntegration,
+            GateStep::ResourceWorkspace,
+            GateStep::PermissionContract,
+            GateStep::MigrationContract,
+            GateStep::FullConsumerContract,
+        ];
     }
     vec![
         GateStep::ResourceDrift,

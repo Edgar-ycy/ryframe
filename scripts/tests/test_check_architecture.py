@@ -210,6 +210,115 @@ class FrozenMigrationSourceTests(unittest.TestCase):
         self.assertTrue(any("哈希不匹配" in error for error in errors))
 
 
+class CrateBoundaryPolicyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = TEST_ROOT / f"crate-boundaries-{uuid.uuid4().hex}"
+        self.root.mkdir()
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.root)
+
+    def packages(self) -> dict[str, dict[str, object]]:
+        first = self.root / "crates/first/Cargo.toml"
+        second = self.root / "crates/second/Cargo.toml"
+        return {
+            "first": {
+                "manifest_path": str(first),
+                "dependencies": [{"path": str(second.parent)}],
+            },
+            "second": {"manifest_path": str(second), "dependencies": []},
+        }
+
+    def profile(self, edges: set[tuple[str, str]]) -> dict[str, object]:
+        return {
+            "packages": {"first", "second"},
+            "products": {"first", "second"},
+            "tools": set(),
+            "allowed_edges": edges,
+            "temporary_edges": set(),
+            "expected_count": 2,
+        }
+
+    def test_active_edges_are_an_exact_fact_source(self) -> None:
+        errors: list[str] = []
+        actual = MODULE.validate_active_workspace(
+            "final",
+            self.profile({("first", "second")}),
+            self.packages(),
+            errors,
+        )
+
+        self.assertEqual(actual, {("first", "second")})
+        self.assertEqual(errors, [])
+
+    def test_rejects_declared_edge_that_no_longer_exists(self) -> None:
+        errors: list[str] = []
+        MODULE.validate_active_workspace(
+            "final",
+            self.profile({("first", "second"), ("second", "first")}),
+            self.packages(),
+            errors,
+        )
+
+        self.assertTrue(any("已不存在" in error for error in errors))
+
+    def test_temporary_edge_requires_reason_and_expiry(self) -> None:
+        errors: list[str] = []
+        parsed = MODULE.parse_temporary_edges(
+            [{"edge": "first -> tool"}],
+            "temporary",
+            errors,
+        )
+
+        self.assertEqual(parsed, set())
+        self.assertTrue(any("缺少字段" in error for error in errors))
+
+    def test_temporary_edge_rejects_expired_registration(self) -> None:
+        errors: list[str] = []
+        parsed = MODULE.parse_temporary_edges(
+            [
+                {
+                    "edge": "first -> tool",
+                    "reason": "等待边界迁移",
+                    "expires": "2000-01-01",
+                }
+            ],
+            "temporary",
+            errors,
+        )
+
+        self.assertEqual(parsed, {("first", "tool")})
+        self.assertTrue(any("过期" in error for error in errors))
+
+    def test_temporary_edge_accepts_complete_future_registration(self) -> None:
+        errors: list[str] = []
+        parsed = MODULE.parse_temporary_edges(
+            [
+                {
+                    "edge": "first -> tool",
+                    "reason": "等待边界迁移",
+                    "expires": "2099-01-01",
+                }
+            ],
+            "temporary",
+            errors,
+        )
+
+        self.assertEqual(parsed, {("first", "tool")})
+        self.assertEqual(errors, [])
+
+
+class SourceSizeThresholdTests(unittest.TestCase):
+    def test_thresholds_warn_at_eighty_and_ninety_percent(self) -> None:
+        self.assertIsNone(MODULE.source_size_level(479, 600))
+        self.assertEqual(MODULE.source_size_level(480, 600), "hint")
+        self.assertEqual(MODULE.source_size_level(540, 600), "strong")
+
+    def test_hard_limit_itself_fails(self) -> None:
+        self.assertEqual(MODULE.source_size_level(599, 600), "strong")
+        self.assertEqual(MODULE.source_size_level(600, 600), "fail")
+
+
 class TestLayoutPolicyTests(unittest.TestCase):
     def setUp(self) -> None:
         self.root = TEST_ROOT / f"test-layout-{uuid.uuid4().hex}"

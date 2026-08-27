@@ -4,3 +4,7 @@ PyYAML==6.0.3 \
     --hash=sha256:ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc \
     --hash=sha256:0f29edc409a6392443abf94b9cf89ce99889a1dd5376d94316ae5145dfedd5d6 \
     --hash=sha256:c458b6d084f9b935061bc36216e8a69a7e293a2f1e68bf956dcd9e6cbcd143f5
+tree-sitter==0.25.2 \
+    --hash=sha256:b43a9e4c89d4d0839de27cd4d6902d33396de700e9ff4c5ab7631f277a85ead9
+tree-sitter-rust==0.24.2 \
+    --hash=sha256:e033c5a93b57c88e0a835880de39fc802909ff69f57aaff6000211c196ea5190

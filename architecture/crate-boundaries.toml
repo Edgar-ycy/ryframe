@@ -1,4 +1,4 @@
-schema_version = 1
+schema_version = 2
 active_profile = "final"
 
 # 源码规模检查从当前 profile 的 product_packages 自动发现所有生产 crate，
@@ -11,6 +11,51 @@ generated_markers = [
     "此文件是 ryframe-generator 的编译输入",
 ]
 frozen_migration_lock = "catalog/migrations.lock.toml"
+
+[function_size]
+mode = "changed"
+public_max_lines = 150
+private_max_lines = 100
+orchestration_max_lines = 80
+max_exception_days = 30
+orchestrations = [
+    { path = "xtask/src/ci/resource_gate.rs", symbol = "run" },
+    { path = "xtask/src/ci/resource_gate.rs", symbol = "execute_plan" },
+    { path = "xtask/src/ci/resource_gate/model.rs", symbol = "plan_steps" },
+    { path = "xtask/src/ci/resource_gate/model.rs", symbol = "analyze" },
+    { path = "xtask/src/ci/resource_gate/repository.rs", symbol = "load" },
+    { path = "xtask/src/devex.rs", symbol = "run" },
+    { path = "xtask/src/devex/run.rs", symbol = "execute" },
+    { path = "xtask/src/devex/run.rs", symbol = "prepare_run" },
+    { path = "xtask/src/devex/run.rs", symbol = "execute_warmup" },
+    { path = "xtask/src/devex/run.rs", symbol = "execute_measurements" },
+    { path = "xtask/src/devex/run.rs", symbol = "execute_sample" },
+    { path = "xtask/src/devex/preflight.rs", symbol = "check" },
+    { path = "xtask/src/devex/metadata.rs", symbol = "collect" },
+    { path = "xtask/src/devex/report.rs", symbol = "summarize" },
+    { path = "xtask/src/devex/report.rs", symbol = "compare" },
+    { path = "xtask/src/dev/model.rs", symbol = "BuildPlan::from_changes" },
+    { path = "xtask/src/dev/orchestrator.rs", symbol = "run" },
+    { path = "xtask/src/dev/orchestrator.rs", symbol = "build_initial_candidate" },
+    { path = "xtask/src/dev/orchestrator.rs", symbol = "supervise" },
+    { path = "xtask/src/dev/orchestrator.rs", symbol = "process_change" },
+    { path = "xtask/src/dev/orchestrator.rs", symbol = "handle_candidate_result" },
+    { path = "xtask/src/dev/build.rs", symbol = "build_candidate" },
+    { path = "xtask/src/dev/build.rs", symbol = "prepare_artifacts" },
+    { path = "xtask/src/dev/build.rs", symbol = "validate_candidate_migration" },
+    { path = "xtask/src/dev/build.rs", symbol = "run_resource_check" },
+    { path = "xtask/src/dev/build/targets.rs", symbol = "build_targets" },
+    { path = "xtask/src/dev/build/targets.rs", symbol = "build_target" },
+    { path = "xtask/src/dev/build.rs", symbol = "run_migration_validation" },
+    { path = "xtask/src/dev/build.rs", symbol = "stage_candidate" },
+    { path = "xtask/src/dev/measure.rs", symbol = "run" },
+    { path = "xtask/src/dev/services.rs", symbol = "probe_candidate" },
+    { path = "xtask/src/dev/services.rs", symbol = "start_services" },
+    { path = "xtask/src/dev/services.rs", symbol = "promote_services" },
+    { path = "xtask/src/dev/services.rs", symbol = "switch_services_with_rollback" },
+    { path = "xtask/src/dev/services.rs", symbol = "restore_last_known_good" },
+]
+exceptions = []
 
 # 私有纯逻辑允许在生产模块中就地单测；公开契约与跨层场景仍放在所属 crate/tests。
 [test_layout]
@@ -30,7 +75,7 @@ disabled_bin_test_targets = [
     "xtask:xtask",
 ]
 
-# 当前 12 包过渡图。允许边是上限：删边无需修改本文件，新增边必须先通过架构评审。
+# 当前 12 包过渡图。依赖边必须与 Cargo metadata 完全一致。
 [profiles.transition]
 expected_package_count = 12
 run_tenant_data_legacy_checks = true
@@ -153,18 +198,12 @@ allowed_internal_edges = [
     "ryframe-db -> ryframe-config",
     "ryframe-db -> ryframe-kernel",
     "ryframe-db -> ryframe-macro",
-    "ryframe-generator -> ryframe-config",
-    "ryframe-generator -> ryframe-db",
     "ryframe-generator -> ryframe-kernel",
     "ryframe-generator -> ryframe-tenant-db",
     "ryframe-tenant-db -> ryframe-application",
     "ryframe-tenant-db -> ryframe-config",
     "ryframe-tenant-db -> ryframe-db",
     "ryframe-tenant-db -> ryframe-kernel",
-    "xtask -> ryframe-config",
-    "xtask -> ryframe-db",
     "xtask -> ryframe-generator",
-    "xtask -> ryframe-kernel",
-    "xtask -> ryframe-tenant-db",
 ]
 temporary_product_tool_edges = []
