@@ -104,9 +104,9 @@ jobs:
     if: ${{ needs.plan.result == 'success' && needs.plan.outputs.rust_gate == 'true' }}
     runs-on: ubuntu-latest
     env:
-      RUSTFLAGS: "-Dwarnings"
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
+      CARGO_INCREMENTAL: "0"
     steps:
       - name: 检出后端源码
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -190,9 +190,28 @@ jobs:
       - name: 输出 sccache 远端命中统计
         if: ${{ always() }}
         continue-on-error: true
+        shell: bash
         run: |
+          stats_file="$RUNNER_TEMP/sccache-rust-gate.json"
+          sccache --show-stats --stats-format=json > "$stats_file"
           sccache --show-stats
           sccache --stop-server
+          {
+            echo "### sccache · Rust Gate"
+            echo
+            echo '```json'
+            cat "$stats_file"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 保存 sccache JSON 统计
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sccache-rust-gate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/sccache-rust-gate.json
+          if-no-files-found: warn
+          retention-days: 14
 
   # ============================================================
   # MySQL 与 Redis 真实协议
@@ -205,6 +224,7 @@ jobs:
     env:
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
+      CARGO_INCREMENTAL: "0"
       RYFRAME_INTEGRATION_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
       RYFRAME_MYSQL_INTEGRATION: "1"
       RYFRAME_MYSQL_HOST: 127.0.0.1
@@ -240,6 +260,9 @@ jobs:
     steps:
       - name: 检出后端源码
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          path: backend
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
@@ -264,20 +287,40 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-          key: v3-rust-${{ runner.os }}-${{ runner.arch }}-integration-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          key: v3-rust-${{ runner.os }}-${{ runner.arch }}-integration-${{ hashFiles('backend/Cargo.lock', 'backend/Cargo.toml') }}
           restore-keys: |
             v3-rust-${{ runner.os }}-${{ runner.arch }}-integration-
             v3-rust-${{ runner.os }}-${{ runner.arch }}-
 
       - name: 验证 MySQL 与 Redis 真实协议
+        working-directory: backend
         run: cargo xtask ci integration
 
       - name: 输出 sccache 统计
         if: ${{ always() }}
         continue-on-error: true
+        shell: bash
         run: |
+          stats_file="$RUNNER_TEMP/sccache-integration.json"
+          sccache --show-stats --stats-format=json > "$stats_file"
           sccache --show-stats
           sccache --stop-server
+          {
+            echo "### sccache · Integration"
+            echo
+            echo '```json'
+            cat "$stats_file"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 保存 sccache JSON 统计
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sccache-integration-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/sccache-integration.json
+          if-no-files-found: warn
+          retention-days: 14
 
   # ============================================================
   # 同步前端消费契约
@@ -293,6 +336,7 @@ jobs:
     env:
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
+      CARGO_INCREMENTAL: "0"
     steps:
       - name: 检出后端 PR 提交
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -365,9 +409,28 @@ jobs:
       - name: 输出 sccache 统计
         if: ${{ always() }}
         continue-on-error: true
+        shell: bash
         run: |
+          stats_file="$RUNNER_TEMP/sccache-consumer-contract.json"
+          sccache --show-stats --stats-format=json > "$stats_file"
           sccache --show-stats
           sccache --stop-server
+          {
+            echo "### sccache · Consumer Contract"
+            echo
+            echo '```json'
+            cat "$stats_file"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 保存 sccache JSON 统计
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sccache-consumer-contract-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/sccache-consumer-contract.json
+          if-no-files-found: warn
+          retention-days: 14
 
   # ============================================================
   # Windows 静态冒烟
@@ -383,6 +446,7 @@ jobs:
     env:
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
+      CARGO_INCREMENTAL: "0"
     steps:
       - name: 检出后端源码
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -457,9 +521,27 @@ jobs:
       - name: 输出 sccache 统计
         if: ${{ always() }}
         continue-on-error: true
+        shell: pwsh
         run: |
+          $statsFile = Join-Path $env:RUNNER_TEMP "sccache-windows-smoke.json"
+          sccache --show-stats --stats-format=json | Set-Content -LiteralPath $statsFile -Encoding utf8
           sccache --show-stats
           sccache --stop-server
+          if (Test-Path -LiteralPath $statsFile) {
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value "### sccache · Windows Smoke`n"
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value '```json'
+            Get-Content -Raw -LiteralPath $statsFile | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+            Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value '```'
+          }
+
+      - name: 保存 sccache JSON 统计
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sccache-windows-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/sccache-windows-smoke.json
+          if-no-files-found: warn
+          retention-days: 14
 
   # ============================================================
   # 定时、手动与发布标签真实全栈门禁
@@ -509,6 +591,7 @@ jobs:
       VITE_APP_PROXY_TARGET: http://127.0.0.1:8080
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
+      CARGO_INCREMENTAL: "0"
       CARGO_TARGET_DIR: ${{ github.workspace }}/target/ci/full-stack/backend
     services:
       mysql:
@@ -620,6 +703,32 @@ jobs:
       - name: 执行真实浏览器全栈流程
         working-directory: frontend
         run: pnpm ci:browser-real
+
+      - name: 输出 sccache 统计
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          stats_file="$RUNNER_TEMP/sccache-full-stack.json"
+          sccache --show-stats --stats-format=json > "$stats_file"
+          sccache --show-stats
+          sccache --stop-server
+          {
+            echo "### sccache · Full Stack"
+            echo
+            echo '```json'
+            cat "$stats_file"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 保存 sccache JSON 统计
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sccache-full-stack-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/sccache-full-stack.json
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: 收集进程与基础设施日志
         if: ${{ always() }}

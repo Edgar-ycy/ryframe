@@ -210,9 +210,15 @@ class RequiredJobsTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertEqual(workflow.count("tool: sccache@0.17.0"), 5)
         self.assertEqual(workflow.count('SCCACHE_GHA_ENABLED: "true"'), 5)
+        self.assertEqual(workflow.count('CARGO_INCREMENTAL: "0"'), 5)
+        self.assertNotIn("RUSTFLAGS:", workflow)
+        self.assertNotIn("SCCACHE_BASEDIRS:", workflow)
         self.assertNotIn("SCCACHE_DIR:", workflow)
         self.assertNotIn("SCCACHE_CACHE_SIZE:", workflow)
         self.assertNotIn("v2-sccache-", workflow)
+        self.assertEqual(workflow.count("--show-stats --stats-format=json"), 5)
+        self.assertEqual(workflow.count("### sccache ·"), 5)
+        self.assertEqual(workflow.count("name: sccache-"), 5)
         self.assertEqual(
             workflow.count(
                 "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3"
@@ -248,11 +254,13 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertNotIn("nohup", block)
         self.assertNotIn("curl --fail", block)
         self.assertIn("pnpm ci:browser-real", block)
-        self.assertEqual(block.count("if: ${{ always() }}"), 2)
+        self.assertEqual(block.count("if: ${{ always() }}"), 4)
+        self.assertIn("sccache-full-stack.json", block)
+        self.assertIn("name: sccache-full-stack-", block)
         self.assertIn("frontend/.local-tests/playwright-real/report", block)
         self.assertIn("frontend/.local-tests/playwright-real/results", block)
-        self.assertIn("if-no-files-found: error", block)
-        self.assertNotIn("if-no-files-found: warn", block)
+        self.assertEqual(block.count("if-no-files-found: error"), 1)
+        self.assertEqual(block.count("if-no-files-found: warn"), 1)
 
     def test_rust_gate_and_integration_use_internal_commands(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
@@ -267,6 +275,9 @@ class RequiredJobsTests(unittest.TestCase):
         )[0]
         self.assertIn("cargo xtask ci integration", integration)
         self.assertNotIn("cargo test --locked -p ryframe-db", integration)
+        self.assertIn("path: backend", integration)
+        self.assertIn("working-directory: backend", integration)
+        self.assertIn("hashFiles('backend/Cargo.lock', 'backend/Cargo.toml')", integration)
 
     def test_windows_smoke_preserves_exact_frontend_selection(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")

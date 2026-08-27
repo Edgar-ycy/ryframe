@@ -1,4 +1,4 @@
-version = 1
+version = 2
 
 [warning_budgets]
 backend_handwritten_product = 7
@@ -6,9 +6,248 @@ frontend_handwritten_product = 6
 combined_handwritten_product = 10
 
 [soft_source_size]
-backend_rust = 500
-frontend_composable = 350
-frontend_sfc_or_style = 500
+warning_percent = 80
+attention_percent = 90
+backend_rust_hard_limit = 600
+frontend_typescript_hard_limit = 300
+frontend_composable_hard_limit = 300
+frontend_sfc_hard_limit = 400
+frontend_style_hard_limit = 300
+frontend_script_hard_limit = 500
+
+[[full_invalidation_paths]]
+repository = "backend"
+match = "exact"
+path = "Cargo.toml"
+reason = "Workspace 依赖与 feature 面变化"
+
+[[full_invalidation_paths]]
+repository = "backend"
+match = "exact"
+path = "Cargo.lock"
+reason = "锁定依赖图变化"
+
+[[full_invalidation_paths]]
+repository = "backend"
+match = "exact"
+path = "rust-toolchain.toml"
+reason = "Rust 工具链变化"
+
+[[full_invalidation_paths]]
+repository = "backend"
+match = "exact"
+path = "build.rs"
+reason = "Workspace 构建脚本变化"
+
+[[full_invalidation_paths]]
+repository = "backend"
+match = "exact"
+path = "deny.toml"
+reason = "供应链策略变化"
+
+[[full_invalidation_paths]]
+repository = "backend"
+match = "exact"
+path = "catalog/access.toml"
+reason = "访问控制事实源变化"
+
+[[full_invalidation_paths]]
+repository = "backend"
+match = "exact"
+path = "catalog/resources/.ownership.toml"
+reason = "生成资产所有权格式或映射变化"
+
+[[full_invalidation_paths]]
+repository = "backend"
+match = "prefix"
+path = ".cargo/"
+reason = "Cargo 编译参数变化"
+
+[[full_invalidation_paths]]
+repository = "backend"
+match = "prefix"
+path = ".github/"
+reason = "自动化门禁或发布流程变化"
+
+[[full_invalidation_paths]]
+repository = "backend"
+match = "prefix"
+path = "architecture/"
+reason = "架构机器策略变化"
+
+[[full_invalidation_paths]]
+repository = "backend"
+match = "prefix"
+path = "config/"
+reason = "运行配置结构或默认值变化"
+
+[[full_invalidation_paths]]
+repository = "backend"
+match = "prefix"
+path = "locales/"
+reason = "后端本地化资源变化"
+
+[[full_invalidation_paths]]
+repository = "backend"
+match = "prefix"
+path = "scripts/"
+reason = "策略与构建辅助脚本变化"
+
+[[full_invalidation_paths]]
+repository = "backend"
+match = "prefix"
+path = "vendor/"
+reason = "本地依赖实现变化"
+
+[[full_invalidation_paths]]
+repository = "backend"
+match = "prefix"
+path = "xtask/"
+reason = "开发与门禁编排变化"
+
+[[full_invalidation_paths]]
+repository = "backend"
+match = "prefix"
+path = "crates/ryframe-generator/"
+reason = "生成器实现或模板变化"
+
+[[full_invalidation_paths]]
+repository = "backend"
+match = "prefix"
+path = "crates/ryframe-macro/"
+reason = "过程宏展开行为变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "exact"
+path = "package.json"
+reason = "前端命令、依赖或运行约束变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "exact"
+path = "pnpm-lock.yaml"
+reason = "前端锁定依赖图变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "exact"
+path = "pnpm-workspace.yaml"
+reason = "前端 Workspace 结构变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "exact"
+path = ".node-version"
+reason = "Node.js 工具链变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "exact"
+path = "index.html"
+reason = "Vite 应用入口变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "exact"
+path = "eslint.config.js"
+reason = "ESLint 门禁策略变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "exact"
+path = "stylelint.config.js"
+reason = "Stylelint 门禁策略变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "exact"
+path = "prettier.config.mjs"
+reason = "格式化策略变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "exact"
+path = "vite.config.ts"
+reason = "生产构建配置变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "exact"
+path = "vitest.config.ts"
+reason = "单元测试运行配置变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "exact"
+path = "vitest.targeted.config.ts"
+reason = "定向测试运行配置变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "exact"
+path = "playwright.config.ts"
+reason = "浏览器测试配置变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "exact"
+path = "playwright.real.config.ts"
+reason = "真实浏览器测试配置变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "exact"
+path = "tsconfig.json"
+reason = "TypeScript 工程入口变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "exact"
+path = "tsconfig.base.json"
+reason = "TypeScript 公共编译配置变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "exact"
+path = "tsconfig.app.json"
+reason = "前端应用类型检查配置变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "exact"
+path = "tsconfig.test.json"
+reason = "前端测试类型检查配置变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "exact"
+path = ".env"
+reason = "默认构建环境变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "exact"
+path = ".env.development"
+reason = "开发构建环境变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "exact"
+path = ".env.production"
+reason = "生产构建环境变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "prefix"
+path = ".github/"
+reason = "前端自动化门禁变化"
+
+[[full_invalidation_paths]]
+repository = "frontend"
+match = "prefix"
+path = "scripts/"
+reason = "前端生成、策略或构建脚本变化"
 
 [[central_hotspots]]
 repository = "backend"
