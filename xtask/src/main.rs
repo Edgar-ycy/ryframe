@@ -8,6 +8,7 @@ mod ci;
 mod cli;
 mod contract;
 mod dev;
+mod devex;
 #[cfg(feature = "resource")]
 mod diff;
 mod doctor;
@@ -53,6 +54,7 @@ fn dispatch(cli: Cli) -> Result<()> {
         Command::ApiSync(command) => contract::api_sync(&command, &cli.frontend_dir),
         Command::Migrate(command) => migration::run(&command),
         Command::Ci(command) => ci::run(command, &cli.frontend_dir),
+        Command::Devex(command) => devex::run(&command, &cli.frontend_dir),
         Command::Help(topic) => {
             cli::print_help(topic.as_deref());
             Ok(())

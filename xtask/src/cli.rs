@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, fmt, path::PathBuf};
 
-use crate::workspace::default_frontend_dir;
+use crate::{devex, workspace::default_frontend_dir};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Cli {
@@ -21,6 +21,7 @@ pub(crate) enum Command {
     ApiSync(ApiSyncCommand),
     Migrate(MigrationCommand),
     Ci(CiCommand),
+    Devex(devex::DevexCommand),
     Help(Option<String>),
 }
 
@@ -213,6 +214,7 @@ pub(crate) fn parse(mut args: Vec<String>) -> Result<Cli, CliError> {
         "api-sync" => Command::ApiSync(parse_api_sync(&args)?),
         "migrate" => Command::Migrate(parse_migration(&args)?),
         "ci" => Command::Ci(parse_ci(&args)?),
+        "devex" => Command::Devex(devex::parse_command(&args).map_err(CliError::new)?),
         _ => return Err(CliError::new(format!("未知命令：{command_name}"))),
     };
 
@@ -505,6 +507,7 @@ pub(crate) fn print_help(topic: Option<&str>) {
         Some("ci") => {
             "cargo xtask ci <plan|preflight|rust-gate|integration|consumer-contract>\n  CI 内部稳定入口。"
         }
+        Some("devex") => devex::usage(),
         Some("doctor") => "cargo xtask doctor [--frontend-dir PATH]",
         Some("check") => "cargo xtask check [--scope all|backend|frontend] [--frontend-dir PATH]",
         Some("contract") => "cargo xtask contract check [--frontend-dir PATH]",
@@ -537,6 +540,7 @@ fn general_help() -> &'static str {
   cargo xtask contract check [--frontend-dir PATH]\n\
   cargo xtask migrate freeze\n\
   cargo xtask ci <plan|preflight|rust-gate|integration|consumer-contract>\n\
+  cargo xtask devex run|summarize|compare ...\n\
   cargo xtask feature-matrix\n\
   cargo xtask release-verify ...\n\n\
 运行 `cargo <命令> --help` 查看单个日常命令的说明。"

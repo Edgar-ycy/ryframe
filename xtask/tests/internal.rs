@@ -12,6 +12,8 @@ mod cli;
 mod contract;
 #[path = "../src/dev.rs"]
 mod dev;
+#[path = "../src/devex.rs"]
+mod devex;
 #[path = "../src/diff.rs"]
 mod diff;
 #[path = "../src/doctor.rs"]
@@ -43,6 +45,8 @@ mod cli_tests;
 mod contract_tests;
 #[path = "internal/dev.rs"]
 mod dev_tests;
+#[path = "internal/devex.rs"]
+mod devex_tests;
 #[path = "internal/diff.rs"]
 mod diff_tests;
 #[path = "internal/doctor.rs"]
