@@ -199,3 +199,10 @@ fn table_import_rejects_unknown_types_instead_of_guessing() {
     assert!(error.contains("geometry"));
     assert!(error.contains("人工选择"));
 }
+
+#[cfg(feature = "schema-import")]
+#[test]
+fn schema_import_feature_exposes_mysql_readers() {
+    let _ = ryframe_generator::import::inspect_existing_table;
+    let _ = ryframe_generator::import::list_existing_tables;
+}

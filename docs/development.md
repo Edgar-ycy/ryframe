@@ -60,22 +60,27 @@ cargo migrate new tenant-data <迁移名>
 
 ## 开发标准资源
 
-资源入口默认只预览差异，`--write` 才写入生成结果，`--explain` 可查看从资源清单到页面的调用链：
+资源入口默认只预览差异；`--check` 只读比较并在存在差异时返回失败，`--write` 才写入生成结果，`--explain` 可查看从资源清单到页面的调用链：
 
 ```powershell
 cargo resource --help
 cargo resource post
+cargo resource post --check
+cargo resource --all --check
 cargo resource post --write
 cargo resource post --explain
 ```
+
+`cargo resource --all --check` 会校验全部受管后端、前端资产和 ownership 清单，适合在提交前确认重复生成零差异。该命令不会创建临时生成文件、刷新 OpenAPI 或连接数据库；发现差异后，先按资源预览，再显式执行对应的 `--write`。
 
 开发新的标准资源时：
 
 1. 在 `catalog/resources/` 增加或修改资源清单。
 2. 预览生成差异，确认字段、校验、筛选、排序和权限。
 3. 使用 `--write` 更新后端、OpenAPI 和前端派生文件。
-4. 在前端补充资源需要的业务交互。
-5. 运行 `cargo verify`，再用浏览器验证新增、查询、编辑和删除流程。
+4. 运行 `cargo resource --all --check` 确认资源目录零差异。
+5. 在前端补充资源需要的业务交互。
+6. 运行 `cargo verify`，再用浏览器验证新增、查询、编辑和删除流程。
 
 Post 和 Notice 可作为标准 CRUD 示例。导出、发布等特殊动作适合保留为自定义强类型用例。
 

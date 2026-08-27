@@ -69,13 +69,20 @@ pub(crate) struct ReleaseOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ResourceAction {
     Preview,
+    Check,
     Write,
     Explain,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ResourceTarget {
+    Named(String),
+    All,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResourceCommand {
-    pub(crate) name: String,
+    pub(crate) target: ResourceTarget,
     pub(crate) action: ResourceAction,
 }
 
@@ -293,26 +300,29 @@ fn parse_release(args: &[String]) -> Result<ReleaseOptions, CliError> {
 }
 
 fn parse_resource(args: &[String]) -> Result<ResourceCommand, CliError> {
-    let Some(name) = args.first() else {
-        return Err(CliError::new(
-            "用法：cargo resource <资源名> [--write|--explain]",
-        ));
-    };
-    validate_name(name)?;
-    let action = match &args[1..] {
-        [] => ResourceAction::Preview,
-        [flag] if flag == "--write" => ResourceAction::Write,
-        [flag] if flag == "--explain" => ResourceAction::Explain,
-        _ => {
-            return Err(CliError::new(
-                "用法：cargo resource <资源名> [--write|--explain]",
-            ));
+    const USAGE: &str =
+        "用法：cargo resource <资源名> [--check|--write|--explain] | cargo resource --all --check";
+    let (target, action) = match args {
+        [all, check] if all == "--all" && check == "--check" => {
+            (ResourceTarget::All, ResourceAction::Check)
         }
+        [name] if name != "--all" => {
+            validate_name(name)?;
+            (ResourceTarget::Named(name.clone()), ResourceAction::Preview)
+        }
+        [name, flag] if name != "--all" => {
+            validate_name(name)?;
+            let action = match flag.as_str() {
+                "--check" => ResourceAction::Check,
+                "--write" => ResourceAction::Write,
+                "--explain" => ResourceAction::Explain,
+                _ => return Err(CliError::new(USAGE)),
+            };
+            (ResourceTarget::Named(name.clone()), action)
+        }
+        _ => return Err(CliError::new(USAGE)),
     };
-    Ok(ResourceCommand {
-        name: name.clone(),
-        action,
-    })
+    Ok(ResourceCommand { target, action })
 }
 
 fn parse_api_sync(args: &[String]) -> Result<ApiSyncCommand, CliError> {
@@ -486,7 +496,7 @@ pub(crate) fn print_help(topic: Option<&str>) {
             "cargo verify [--full] [--scope all|backend|frontend] [--frontend-dir PATH]\n  根据前后端 Git 变更执行最小安全检查；--full 执行完整本地门禁。"
         }
         Some("resource") => {
-            "cargo resource <资源名> [--write|--explain]\n  预览、写入或解释一个资源的生成计划。"
+            "cargo resource <资源名> [--check|--write|--explain]\n  预览、检查、写入或解释一个资源；cargo resource --all --check 只读检查全部资源。"
         }
         Some("api-sync") => {
             "cargo api-sync [--commit GIT_REF] [--frontend-dir PATH]\n  同步开发候选契约，或固定指定提交的正式契约。"
@@ -516,7 +526,8 @@ fn general_help() -> &'static str {
 日常命令：\n\
   cargo dev\n\
   cargo verify [--full] [--scope all|backend|frontend]\n\
-  cargo resource <资源名> [--write|--explain]\n\
+  cargo resource <资源名> [--check|--write|--explain]\n\
+  cargo resource --all --check\n\
   cargo api-sync [--commit GIT_REF]\n\
   cargo migrate <verify|up|status> [control|tenant-data (--all|--target KEY)]\n\
   cargo migrate new <control|tenant-data> <迁移名>\n\n\

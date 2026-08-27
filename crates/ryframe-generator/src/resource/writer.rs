@@ -13,7 +13,7 @@ pub use model::{
     OwnershipEntry, OwnershipManifest, PlanAction, PlannedAsset, ResourceAssetPlan,
     ResourceWorkspace, SafeWriteReport,
 };
-pub use plan::{plan_resource_assets, plan_resource_changes};
+pub use plan::{plan_all_resource_changes, plan_resource_assets, plan_resource_changes};
 
 use ownership::{
     desired_entries, load_manifest, load_manifest_snapshot, manifests_equal, validate_workspace,

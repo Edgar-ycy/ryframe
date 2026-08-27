@@ -51,6 +51,9 @@ mod doctor_tests;
 mod migration_tests;
 #[path = "internal/process.rs"]
 mod process_tests;
+#[cfg(feature = "resource")]
+#[path = "internal/resource.rs"]
+mod resource_tests;
 #[path = "internal/watch.rs"]
 mod watch_tests;
 #[path = "internal/workspace.rs"]

@@ -1,48 +1,15 @@
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{DatabaseBackend, DatabaseConnection, FromQueryResult, Statement};
-use serde::Serialize;
 
-#[derive(Debug, Clone, Serialize)]
-pub struct TableInfo {
-    pub table_name: String,
-    pub comment: Option<String>,
-    pub columns: Vec<ColumnInfo>,
-    pub indexes: Vec<IndexInfo>,
-    pub foreign_keys: Vec<ForeignKeyInfo>,
-    pub foreign_key_dependencies: Vec<String>,
-    pub schema_canonical: String,
-}
+use super::model::{ColumnInfo, ForeignKeyInfo, IndexInfo, TableInfo};
 
-#[derive(Debug, Clone, Serialize)]
-pub struct IndexInfo {
-    pub name: String,
-    pub unique: bool,
-    pub index_type: String,
-    pub columns: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ForeignKeyInfo {
-    pub name: String,
-    pub columns: Vec<String>,
-    pub referenced_table: String,
-    pub referenced_columns: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ColumnInfo {
-    pub name: String,
-    pub data_type: String,
-    pub rust_type: String,
-    pub is_nullable: bool,
-    pub is_primary_key: bool,
-    pub is_unique: bool,
-    pub is_auto_increment: bool,
-    pub comment: Option<String>,
-}
-
-/// 读取单张既有表的结构信息，仅供资源清单导入流程使用。
-pub async fn fetch_table(db: &DatabaseConnection, table_name: &str) -> AppResult<TableInfo> {
+/// 只读取既有 MySQL 表结构，供调用方生成并人工确认资源清单草案。
+///
+/// 本入口不生成产品代码、不写文件，也不推断页面布局或业务事务。
+pub async fn inspect_existing_table(
+    db: &DatabaseConnection,
+    table_name: &str,
+) -> AppResult<TableInfo> {
     // 验证表名只包含字母、数字和下划线，防止注入
     if !table_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
         return Err(AppError::Validation(
@@ -66,7 +33,7 @@ pub async fn fetch_table(db: &DatabaseConnection, table_name: &str) -> AppResult
                 col.column_name
             )));
         }
-        let rust_type = crate::type_mapping::db_to_rust(&col.data_type, col.is_nullable == "YES");
+        let rust_type = super::type_mapping::db_to_rust(&col.data_type, col.is_nullable == "YES");
         let col_info = ColumnInfo {
             name: col.column_name.clone(),
             data_type: col.data_type.clone(),
@@ -107,8 +74,8 @@ pub async fn fetch_table(db: &DatabaseConnection, table_name: &str) -> AppResult
     })
 }
 
-/// 列出数据库中可供显式导入的所有表。
-pub async fn list_tables(db: &DatabaseConnection) -> AppResult<Vec<String>> {
+/// 列出可供显式导入的既有 MySQL 表；结果不触发任何写入。
+pub async fn list_existing_tables(db: &DatabaseConnection) -> AppResult<Vec<String>> {
     let tables = query_tables(db).await?;
     Ok(tables.into_iter().map(|t| t.table_name).collect())
 }

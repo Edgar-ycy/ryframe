@@ -1,5 +1,5 @@
 /// 数据库类型 → Rust 类型映射
-pub fn db_to_rust(db_type: &str, is_nullable: bool) -> String {
+pub(super) fn db_to_rust(db_type: &str, is_nullable: bool) -> String {
     let base = match db_type.to_lowercase().as_str() {
         "varchar" | "char" | "text" | "longtext" | "mediumtext" | "tinytext" | "uuid" => "String",
         "int" | "integer" | "int4" => "i32",

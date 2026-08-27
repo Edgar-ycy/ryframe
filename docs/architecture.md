@@ -35,7 +35,7 @@ HTTP 层把请求解析为明确的 DTO，再调用 application 用例。用例�
 | `ryframe-adapters` | Redis、对象存储、表格、限流、本地化和遥测 |
 | `ryframe-api` | Axum 路由、DTO、OpenAPI、extractor 和传输中间件 |
 | `ryframe` | API、Worker、迁移和重建的启动装配 |
-| `ryframe-generator` | 标准资源的离线生成 |
+| `ryframe-generator` | 标准资源的离线生成；默认构建不包含数据库驱动 |
 
 `ryframe-application::system` 按业务分为四个入口：
 
@@ -48,7 +48,7 @@ HTTP 层把请求解析为明确的 DTO，再调用 application 用例。用例�
 
 ## 选择开发方式
 
-字段、筛选、排序和普通 CRUD 行为可由资源清单表达时，使用 `cargo resource`。Post 与 Notice 展示了完整链路；生成结果包含后端持久化、应用服务、API、权限资产和前端标准页面。
+字段、筛选、排序和普通 CRUD 行为可由资源清单表达时，使用 `cargo resource`。Post 与 Notice 展示了完整链路；生成结果包含后端持久化、应用服务、API、权限资产和前端标准页面。日常资源命令只使用生成器的默认离线能力；既有 MySQL 表结构读取被隔离在可选的 `schema-import` feature 中，只产生待人工确认的草案，不进入默认生成依赖闭包。
 
 需要事务编排、外部连接、异步任务或特殊状态机时，使用自定义用例：
 
