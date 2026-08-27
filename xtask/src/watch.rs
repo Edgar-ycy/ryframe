@@ -1,6 +1,11 @@
 use std::{
+    collections::BTreeSet,
     path::{Path, PathBuf},
-    sync::mpsc::{self, Receiver, RecvTimeoutError},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+        mpsc::{self, Receiver, RecvTimeoutError},
+    },
     time::Duration,
 };
 
@@ -8,14 +13,37 @@ use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::Result;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct SourceRevision(u64);
+
+impl SourceRevision {
+    pub(crate) const fn from_value(value: u64) -> Self {
+        Self(value)
+    }
+
+    pub(crate) fn value(self) -> u64 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ChangeBatch {
+    pub(crate) revision: SourceRevision,
+    pub(crate) paths: BTreeSet<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum WatchEvent {
-    BackendChanged(String),
+    BackendChanged {
+        revision: SourceRevision,
+        path: String,
+    },
     Failed(String),
 }
 
 pub(crate) struct SourceWatcher {
     receiver: Receiver<WatchEvent>,
+    revision: Arc<AtomicU64>,
     _watcher: RecommendedWatcher,
 }
 
@@ -24,6 +52,8 @@ impl SourceWatcher {
         let root = root.to_path_buf();
         let callback_root = root.clone();
         let (sender, receiver) = mpsc::channel();
+        let revision = Arc::new(AtomicU64::new(0));
+        let callback_revision = Arc::clone(&revision);
         let mut watcher =
             notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
                 let event = match result {
@@ -34,12 +64,15 @@ impl SourceWatcher {
                     }
                 };
                 if let Some(path) = first_relevant_path(&callback_root, &event.paths) {
-                    let _ = sender.send(WatchEvent::BackendChanged(path));
+                    let revision = SourceRevision::from_value(
+                        callback_revision.fetch_add(1, Ordering::AcqRel) + 1,
+                    );
+                    let _ = sender.send(WatchEvent::BackendChanged { revision, path });
                 }
             })?;
 
         watcher.watch(&root, RecursiveMode::NonRecursive)?;
-        for relative in ["crates", "config", "catalog", "locales"] {
+        for relative in [".cargo", "crates", "config", "catalog", "locales", "xtask"] {
             let path = root.join(relative);
             if path.is_dir() {
                 watcher.watch(&path, RecursiveMode::Recursive)?;
@@ -47,6 +80,7 @@ impl SourceWatcher {
         }
         Ok(Self {
             receiver,
+            revision,
             _watcher: watcher,
         })
     }
@@ -59,19 +93,33 @@ impl SourceWatcher {
         }
     }
 
+    pub(crate) fn current_revision(&self) -> SourceRevision {
+        SourceRevision::from_value(self.revision.load(Ordering::Acquire))
+    }
+
+    pub(crate) fn is_superseded(&self, expected: SourceRevision) -> bool {
+        self.current_revision() > expected
+    }
+
     pub(crate) fn drain_changes(
         &self,
+        initial_revision: SourceRevision,
         initial_path: String,
         quiet_period: Duration,
-    ) -> Result<WatchEvent> {
-        let mut latest = WatchEvent::BackendChanged(initial_path);
+    ) -> Result<ChangeBatch> {
+        let mut revision = initial_revision;
+        let mut paths = BTreeSet::from([initial_path]);
         loop {
             match self.receiver.recv_timeout(quiet_period) {
-                Ok(WatchEvent::BackendChanged(path)) => {
-                    latest = WatchEvent::BackendChanged(path);
+                Ok(WatchEvent::BackendChanged {
+                    revision: next_revision,
+                    path,
+                }) => {
+                    revision = revision.max(next_revision);
+                    paths.insert(path);
                 }
-                Ok(failed @ WatchEvent::Failed(_)) => return Ok(failed),
-                Err(RecvTimeoutError::Timeout) => return Ok(latest),
+                Ok(WatchEvent::Failed(error)) => return Err(error.into()),
+                Err(RecvTimeoutError::Timeout) => return Ok(ChangeBatch { revision, paths }),
                 Err(RecvTimeoutError::Disconnected) => {
                     return Err("源码监听器意外停止".into());
                 }
@@ -111,6 +159,19 @@ pub(crate) fn is_backend_watch_path(path: &str) -> bool {
         return normalized.ends_with(".rs")
             || normalized.ends_with("cargo.toml")
             || normalized.ends_with("build.rs");
+    }
+    if normalized.starts_with("xtask/") {
+        return normalized.ends_with(".rs")
+            || normalized.ends_with("cargo.toml")
+            || normalized.ends_with("build.rs");
+    }
+    if normalized.starts_with(".cargo/") {
+        return matches!(
+            Path::new(&normalized)
+                .extension()
+                .and_then(|value| value.to_str()),
+            Some("toml")
+        );
     }
     (normalized.starts_with("config/")
         || normalized.starts_with("catalog/")

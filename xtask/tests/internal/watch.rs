@@ -6,8 +6,10 @@ use super::watch::{SourceWatcher, WatchEvent, is_backend_watch_path};
 fn watches_backend_inputs_but_ignores_build_outputs_and_docs() {
     for path in [
         "Cargo.toml",
+        ".cargo/config.toml",
         "crates/ryframe/src/main.rs",
         "crates/ryframe/Cargo.toml",
+        "xtask/src/dev.rs",
         "config/app.dev.toml",
         "catalog/resources/post.toml",
         "locales/zh-CN.toml",
@@ -37,17 +39,19 @@ fn source_watcher_reports_backend_file_change_and_stops_cleanly() {
 
     fs::write(&source, "pub fn after() {}\n").unwrap();
     let event = watcher.recv_timeout(Duration::from_secs(3)).unwrap();
-    let Some(WatchEvent::BackendChanged(path)) = event else {
+    let Some(WatchEvent::BackendChanged { revision, path }) = event else {
         panic!("应收到后端源码变更");
     };
-    let event = watcher
-        .drain_changes(path, Duration::from_millis(100))
+    let batch = watcher
+        .drain_changes(revision, path, Duration::from_millis(100))
         .unwrap();
 
-    assert!(matches!(
-        event,
-        WatchEvent::BackendChanged(path) if path == "crates/demo/src/lib.rs"
-    ));
+    assert_eq!(
+        batch.paths.into_iter().collect::<Vec<_>>(),
+        ["crates/demo/src/lib.rs"]
+    );
+    assert!(batch.revision.value() >= 1);
+    assert_eq!(watcher.current_revision(), batch.revision);
     drop(watcher);
     fs::remove_dir_all(root).unwrap();
 }

@@ -2,35 +2,41 @@ use std::{
     net::{Ipv4Addr, TcpListener},
     path::Path,
     process::Child,
+    sync::atomic::{AtomicBool, Ordering},
     time::Instant,
 };
 
 use crate::{
     Result,
     process::{ChildGroup, stop_child},
+    watch::SourceWatcher,
 };
 
 use super::{
     build::cleanup_binaries,
-    command::{api_command, worker_command},
+    command::{RuntimeInputPaths, api_command, worker_command},
     config::{DevPorts, WorkerIds},
     health::{
         available_ports, combine_failures, http_readyz, start_worker_after_api_ready,
-        wait_healthy_until, wait_services_ready_until,
+        wait_healthy_until, wait_services_ready_until, wait_services_ready_until_controlled,
     },
-    model::{Binaries, HEALTH_TIMEOUT, Services},
+    model::{Binaries, CycleControl, HEALTH_TIMEOUT, ProbeResult, Services},
 };
 
 pub(super) fn probe_candidate(
     group: &ChildGroup,
     root: &Path,
     binaries: &Binaries,
+    lkg: &mut Services,
     worker_ids: WorkerIds,
-) -> Result<()> {
+    shutdown: &AtomicBool,
+    watcher: &SourceWatcher,
+) -> Result<ProbeResult> {
     let (api_port, worker_port) = available_ports()?;
     let mut command = api_command(
         root,
         &binaries.api,
+        RuntimeInputPaths::new(&binaries.config_dir, &binaries.locales_dir),
         api_port,
         worker_port,
         worker_ids.probe_api,
@@ -40,6 +46,7 @@ pub(super) fn probe_candidate(
     let mut worker_command = worker_command(
         root,
         &binaries.worker,
+        RuntimeInputPaths::new(&binaries.config_dir, &binaries.locales_dir),
         worker_port,
         worker_ids.probe_worker,
         true,
@@ -52,21 +59,41 @@ pub(super) fn probe_candidate(
         }
     };
     let health_deadline = Instant::now() + HEALTH_TIMEOUT;
-    let result = wait_services_ready_until(
+    let result = wait_services_ready_until_controlled(
         health_deadline,
         "候选 API",
         "候选 Worker",
-        || ensure_running("候选 API", &mut api),
-        || ensure_running("候选 Worker", &mut worker),
+        || {
+            ensure_running("候选 API", &mut api)?;
+            ensure_running("last-known-good API", &mut lkg.api)
+        },
+        || {
+            ensure_running("候选 Worker", &mut worker)?;
+            ensure_running("last-known-good Worker", &mut lkg.worker)
+        },
         || http_readyz(api_port),
         || http_readyz(worker_port),
+        || {
+            if shutdown.load(Ordering::Acquire) {
+                CycleControl::Shutdown
+            } else if watcher.is_superseded(binaries.source_revision) {
+                CycleControl::Superseded
+            } else {
+                CycleControl::Continue
+            }
+        },
     );
     let api_stop = stop_child(&mut api);
     let worker_stop = stop_child(&mut worker);
-    combine_failures(
+    let control = combine_failures(
         result,
         [("停止候选 API", api_stop), ("停止候选 Worker", worker_stop)],
-    )
+    )?;
+    Ok(match control {
+        CycleControl::Continue => ProbeResult::Ready,
+        CycleControl::Superseded => ProbeResult::Superseded,
+        CycleControl::Shutdown => ProbeResult::Cancelled,
+    })
 }
 
 pub(super) fn start_services(
@@ -79,6 +106,7 @@ pub(super) fn start_services(
     let mut api_command = api_command(
         root,
         &binaries.api,
+        RuntimeInputPaths::new(&binaries.config_dir, &binaries.locales_dir),
         ports.api,
         ports.worker,
         worker_ids.api,
@@ -95,6 +123,7 @@ pub(super) fn start_services(
     let mut worker_command = worker_command(
         root,
         &binaries.worker,
+        RuntimeInputPaths::new(&binaries.config_dir, &binaries.locales_dir),
         ports.worker,
         worker_ids.worker,
         false,
@@ -210,6 +239,19 @@ pub(super) fn ensure_running(label: &str, child: &mut Child) -> Result<()> {
     } else {
         Ok(())
     }
+}
+
+pub(super) fn restore_last_known_good(
+    group: &ChildGroup,
+    root: &Path,
+    services: &mut Services,
+    ports: DevPorts,
+    worker_ids: WorkerIds,
+) -> Result<()> {
+    let binaries = services.binaries.clone();
+    stop_services(services)?;
+    *services = start_services(group, root, binaries, ports, worker_ids)?;
+    Ok(())
 }
 
 fn stop_services(services: &mut Services) -> Result<()> {

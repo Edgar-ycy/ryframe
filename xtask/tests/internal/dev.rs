@@ -5,15 +5,109 @@ use std::{
 };
 
 use super::dev::{
-    api_command, available_ports, combine_failures, start_worker_after_api_ready,
-    switch_services_with_rollback, wait_services_ready_until, worker_command,
+    ArtifactAction, BuildPlan, ChangeKind, CycleControl, RuntimeInputPaths, api_command,
+    available_ports, classify_change, combine_failures, start_worker_after_api_ready,
+    switch_services_with_rollback, wait_services_ready_until, wait_services_ready_until_controlled,
+    worker_command,
 };
+use super::watch::{ChangeBatch, SourceRevision};
+
+#[test]
+fn development_changes_are_classified_by_runtime_impact() {
+    for (path, expected) in [
+        ("config/app.dev.toml", ChangeKind::RuntimeConfig),
+        ("config/app.prod.toml", ChangeKind::IgnoredDevConfig),
+        ("locales/zh-CN.toml", ChangeKind::LocaleCatalog),
+        ("crates/ryframe-api/src/lib.rs", ChangeKind::ApiOnly),
+        (
+            "crates/ryframe/src/bin/ryframe_worker.rs",
+            ChangeKind::WorkerOnly,
+        ),
+        (
+            "crates/ryframe-application/src/lib.rs",
+            ChangeKind::SharedRuntime,
+        ),
+        ("crates/ryframe-db/src/lib.rs", ChangeKind::SharedRuntime),
+        (
+            "crates/ryframe-db/src/migration/mod.rs",
+            ChangeKind::ControlPersistence,
+        ),
+        (
+            "crates/ryframe-tenant-db/src/lib.rs",
+            ChangeKind::SharedRuntime,
+        ),
+        (
+            "crates/ryframe-tenant-db/src/migration/mod.rs",
+            ChangeKind::TenantPersistence,
+        ),
+        ("catalog/resources/post.toml", ChangeKind::ResourceManifest),
+        ("xtask/src/dev.rs", ChangeKind::ToolSelf),
+        ("Cargo.lock", ChangeKind::BuildGraph),
+    ] {
+        assert_eq!(classify_change(path), expected, "错误分类 {path}");
+    }
+}
+
+#[test]
+fn development_plan_unions_every_path_in_the_batch() {
+    let batch = ChangeBatch {
+        revision: SourceRevision::from_value(7),
+        paths: [
+            "crates/ryframe-api/src/lib.rs".to_owned(),
+            "crates/ryframe/src/bin/ryframe_worker.rs".to_owned(),
+        ]
+        .into_iter()
+        .collect(),
+    };
+    let plan = BuildPlan::from_changes(&batch);
+
+    assert_eq!(plan.source_revision.value(), 7);
+    assert_eq!(plan.api, ArtifactAction::Rebuild);
+    assert_eq!(plan.worker, ArtifactAction::Rebuild);
+    assert!(plan.restart_pair);
+    assert!(!plan.migrate);
+}
+
+#[test]
+fn config_only_plan_reuses_binaries_without_cargo() {
+    let batch = ChangeBatch {
+        revision: SourceRevision::from_value(3),
+        paths: ["config/app.dev.toml".to_owned()].into_iter().collect(),
+    };
+    let plan = BuildPlan::from_changes(&batch);
+
+    assert_eq!(plan.api, ArtifactAction::ReuseLkg);
+    assert_eq!(plan.worker, ArtifactAction::ReuseLkg);
+    assert!(plan.restart_pair);
+    assert!(!plan.migrate);
+    assert!(!plan.resource_check);
+}
+
+#[test]
+fn resource_only_plan_checks_without_restarting_services() {
+    let batch = ChangeBatch {
+        revision: SourceRevision::from_value(4),
+        paths: ["catalog/resources/post.toml".to_owned()]
+            .into_iter()
+            .collect(),
+    };
+    let plan = BuildPlan::from_changes(&batch);
+
+    assert_eq!(plan.api, ArtifactAction::NotNeeded);
+    assert_eq!(plan.worker, ArtifactAction::NotNeeded);
+    assert!(!plan.restart_pair);
+    assert!(plan.resource_check);
+}
 
 #[test]
 fn worker_probe_uses_isolated_non_consuming_mode() {
     let command = worker_command(
         Path::new("D:/workspace"),
         Path::new("D:/workspace/worker.exe"),
+        RuntimeInputPaths::new(
+            Path::new("D:/workspace/config"),
+            Path::new("D:/workspace/locales"),
+        ),
         19091,
         4,
         true,
@@ -54,6 +148,14 @@ fn worker_probe_uses_isolated_non_consuming_mode() {
         environment.get("APP_LOGGER_OUTPUT"),
         Some(&Some("stdout".into()))
     );
+    assert_eq!(
+        environment.get("APP_CONFIG_DIR"),
+        Some(&Some("D:/workspace/config".into()))
+    );
+    assert_eq!(
+        environment.get("APP_LOCALES_DIR"),
+        Some(&Some("D:/workspace/locales".into()))
+    );
 }
 
 #[test]
@@ -61,6 +163,10 @@ fn api_probe_uses_explicit_side_effect_free_mode() {
     let command = api_command(
         Path::new("D:/workspace"),
         Path::new("D:/workspace/api.exe"),
+        RuntimeInputPaths::new(
+            Path::new("D:/workspace/config"),
+            Path::new("D:/workspace/locales"),
+        ),
         18080,
         19091,
         3,
@@ -174,10 +280,45 @@ fn services_report_process_exit_before_readiness_work() {
 }
 
 #[test]
+fn controlled_probe_stops_before_more_readiness_work_when_superseded() {
+    let calls = RefCell::new(Vec::new());
+    let control = wait_services_ready_until_controlled(
+        Instant::now() + Duration::from_secs(1),
+        "API",
+        "Worker",
+        || {
+            calls.borrow_mut().push("ensure:api");
+            Ok(())
+        },
+        || {
+            calls.borrow_mut().push("ensure:worker");
+            Ok(())
+        },
+        || {
+            calls.borrow_mut().push("ready:api");
+            false
+        },
+        || {
+            calls.borrow_mut().push("ready:worker");
+            false
+        },
+        || CycleControl::Superseded,
+    )
+    .unwrap();
+
+    assert_eq!(control, CycleControl::Superseded);
+    assert!(calls.into_inner().is_empty());
+}
+
+#[test]
 fn normal_services_start_without_probe_mode() {
     let api = api_command(
         Path::new("D:/workspace"),
         Path::new("D:/workspace/api.exe"),
+        RuntimeInputPaths::new(
+            Path::new("D:/workspace/config"),
+            Path::new("D:/workspace/locales"),
+        ),
         18080,
         19091,
         3,
@@ -186,6 +327,10 @@ fn normal_services_start_without_probe_mode() {
     let worker = worker_command(
         Path::new("D:/workspace"),
         Path::new("D:/workspace/worker.exe"),
+        RuntimeInputPaths::new(
+            Path::new("D:/workspace/config"),
+            Path::new("D:/workspace/locales"),
+        ),
         19091,
         4,
         false,

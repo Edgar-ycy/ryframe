@@ -9,7 +9,7 @@ use std::{
 use crate::Result;
 
 use super::{
-    model::{HEALTH_TIMEOUT, LOOP_INTERVAL},
+    model::{CycleControl, HEALTH_TIMEOUT, LOOP_INTERVAL},
     services::ensure_running,
 };
 
@@ -73,10 +73,10 @@ pub(crate) fn wait_services_ready_until<EA, EW, RA, RW>(
     health_deadline: Instant,
     api_label: &str,
     worker_label: &str,
-    mut ensure_api_running: EA,
-    mut ensure_worker_running: EW,
-    mut api_ready: RA,
-    mut worker_ready: RW,
+    ensure_api_running: EA,
+    ensure_worker_running: EW,
+    api_ready: RA,
+    worker_ready: RW,
 ) -> Result<()>
 where
     EA: FnMut() -> Result<()>,
@@ -84,7 +84,46 @@ where
     RA: FnMut() -> bool,
     RW: FnMut() -> bool,
 {
+    match wait_services_ready_until_controlled(
+        health_deadline,
+        api_label,
+        worker_label,
+        ensure_api_running,
+        ensure_worker_running,
+        api_ready,
+        worker_ready,
+        || CycleControl::Continue,
+    )? {
+        CycleControl::Continue => Ok(()),
+        CycleControl::Superseded | CycleControl::Shutdown => {
+            Err("无控制源的健康检查不应被取消".into())
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn wait_services_ready_until_controlled<EA, EW, RA, RW, C>(
+    health_deadline: Instant,
+    api_label: &str,
+    worker_label: &str,
+    mut ensure_api_running: EA,
+    mut ensure_worker_running: EW,
+    mut api_ready: RA,
+    mut worker_ready: RW,
+    mut control: C,
+) -> Result<CycleControl>
+where
+    EA: FnMut() -> Result<()>,
+    EW: FnMut() -> Result<()>,
+    RA: FnMut() -> bool,
+    RW: FnMut() -> bool,
+    C: FnMut() -> CycleControl,
+{
     loop {
+        let current = control();
+        if current != CycleControl::Continue {
+            return Ok(current);
+        }
         ensure_api_running()?;
         ensure_worker_running()?;
         if Instant::now() >= health_deadline {
@@ -99,7 +138,7 @@ where
         if api_is_ready && worker_is_ready && Instant::now() <= health_deadline {
             ensure_api_running()?;
             ensure_worker_running()?;
-            return Ok(());
+            return Ok(CycleControl::Continue);
         }
         thread::sleep(LOOP_INTERVAL.min(health_deadline.saturating_duration_since(Instant::now())));
     }

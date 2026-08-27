@@ -3,9 +3,25 @@ use std::{
     process::{Command, Stdio},
 };
 
+#[derive(Clone, Copy)]
+pub(crate) struct RuntimeInputPaths<'a> {
+    config_dir: &'a Path,
+    locales_dir: &'a Path,
+}
+
+impl<'a> RuntimeInputPaths<'a> {
+    pub(crate) const fn new(config_dir: &'a Path, locales_dir: &'a Path) -> Self {
+        Self {
+            config_dir,
+            locales_dir,
+        }
+    }
+}
+
 pub(crate) fn api_command(
     root: &Path,
     binary: &Path,
+    runtime_inputs: RuntimeInputPaths<'_>,
     api_port: u16,
     worker_port: u16,
     worker_id: u16,
@@ -14,6 +30,8 @@ pub(crate) fn api_command(
     let mut command = Command::new(binary);
     command
         .env("APP_ENV", "dev")
+        .env("APP_CONFIG_DIR", runtime_inputs.config_dir)
+        .env("APP_LOCALES_DIR", runtime_inputs.locales_dir)
         .env("APP_DATABASE_MIGRATION_MODE", "verify")
         .env("APP_JOBS_MODE", "external")
         .env("APP_APP_PORT", api_port.to_string())
@@ -36,6 +54,7 @@ pub(crate) fn api_command(
 pub(crate) fn worker_command(
     root: &Path,
     binary: &Path,
+    runtime_inputs: RuntimeInputPaths<'_>,
     port: u16,
     worker_id: u16,
     probe: bool,
@@ -43,6 +62,8 @@ pub(crate) fn worker_command(
     let mut command = Command::new(binary);
     command
         .env("APP_ENV", "dev")
+        .env("APP_CONFIG_DIR", runtime_inputs.config_dir)
+        .env("APP_LOCALES_DIR", runtime_inputs.locales_dir)
         .env("APP_DATABASE_MIGRATION_MODE", "verify")
         .env("APP_JOBS_MODE", "external")
         .env("APP_JOBS_HEALTH_PORT", port.to_string())
