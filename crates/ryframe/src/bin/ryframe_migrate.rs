@@ -33,13 +33,14 @@ struct Command {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ryframe::crypto::install_crypto_provider()?;
     let command = parse_command(std::env::args().skip(1).collect())?;
 
     let environment = Environment::from_env()?;
     let config = AppConfig::load_from_env(environment)?;
-    ryframe_adapters::snowflake::initialize(config.snowflake_worker_id)?;
+    ryframe_kernel::snowflake::initialize(config.snowflake_worker_id)?;
     ryframe_db::install_id_generator(|| {
-        ryframe_adapters::snowflake::try_next_snowflake_id().map_err(ryframe_kernel::AppError::from)
+        ryframe_kernel::snowflake::try_next_snowflake_id().map_err(ryframe_kernel::AppError::from)
     })?;
     match command.scope {
         MigrationScope::Control => run_control(command.operation, &config).await?,

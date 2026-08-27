@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
+import os
 import re
 import shlex
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +40,10 @@ LOCAL_REUSABLE_WORKFLOW_REF = re.compile(
 CONTAINER_ACTION_REF = re.compile(r"docker://[A-Za-z0-9_.:/-]+@sha256:[0-9a-f]{64}")
 INSTALL_TOOL_REF = re.compile(r"([A-Za-z0-9_.-]+)@([0-9]+\.[0-9]+\.[0-9]+)")
 SERVICE_IMAGE_REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:[0-9a-f]{64}")
+PACKAGE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+SHA256 = re.compile(r"[0-9a-f]{64}")
+SPDX_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]*")
+PORTABLE_PATH = re.compile(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*")
 
 
 class PolicyError(ValueError):
@@ -80,6 +87,124 @@ def _expiry(value: Any, label: str, today: dt.date) -> dt.date:
     return expires
 
 
+def _portable_path(value: Any, label: str) -> str:
+    path = _text(value, label)
+    parts = path.split("/")
+    if PORTABLE_PATH.fullmatch(path) is None or any(
+        part in {".", ".."} for part in parts
+    ):
+        raise PolicyError(f"{label} 必须是安全的 POSIX 相对路径")
+    return path
+
+
+def _license_identifiers(expression: Any, label: str) -> list[str]:
+    text = _text(expression, label)
+    identifiers = text.split(" OR ")
+    if not identifiers or any(
+        SPDX_IDENTIFIER.fullmatch(identifier) is None for identifier in identifiers
+    ):
+        raise PolicyError(f"{label} 只允许由 SPDX 标识符和 OR 组成")
+    if len(identifiers) != len(set(identifiers)):
+        raise PolicyError(f"{label} 包含重复 SPDX 标识符")
+    return identifiers
+
+
+def _validate_local_patch_policy(policy: dict[str, Any]) -> None:
+    seen_patches: set[str] = set()
+    seen_paths: set[str] = set()
+    entries = _list(policy["local_patch_licenses"], "local_patch_licenses")
+    for index, item in enumerate(entries):
+        label = f"本地 patch 许可证[{index}]"
+        patch = _object(item, label)
+        _exact_keys(
+            patch,
+            {
+                "patch",
+                "package",
+                "version",
+                "path",
+                "license_expression",
+                "license_files",
+            },
+            label,
+        )
+        patch_name = _text(patch["patch"], f"{label}.patch")
+        package = _text(patch["package"], f"{label}.package")
+        version = _text(patch["version"], f"{label}.version")
+        if PACKAGE_NAME.fullmatch(patch_name) is None:
+            raise PolicyError(f"{label}.patch 不是合法 Cargo 包名")
+        if PACKAGE_NAME.fullmatch(package) is None:
+            raise PolicyError(f"{label}.package 不是合法 Cargo 包名")
+        if SEMVER.fullmatch(version) is None:
+            raise PolicyError(f"{label}.version 必须固定到完整三段版本")
+        path = _portable_path(patch["path"], f"{label}.path")
+        patch_identity = patch_name.casefold()
+        path_identity = path.casefold()
+        if patch_identity in seen_patches or path_identity in seen_paths:
+            raise PolicyError(f"{label} 重复声明 patch 或路径")
+        seen_patches.add(patch_identity)
+        seen_paths.add(path_identity)
+
+        declared = set(
+            _license_identifiers(
+                patch["license_expression"], f"{label}.license_expression"
+            )
+        )
+        files = _list(patch["license_files"], f"{label}.license_files")
+        if not files:
+            raise PolicyError(f"{label}.license_files 不得为空")
+        seen_spdx: set[str] = set()
+        seen_files: set[str] = set()
+        for file_index, item in enumerate(files):
+            file_label = f"{label}.license_files[{file_index}]"
+            license_file = _object(item, file_label)
+            _exact_keys(
+                license_file,
+                {"spdx", "file", "sha256", "registry_source"},
+                file_label,
+            )
+            spdx = _text(license_file["spdx"], f"{file_label}.spdx")
+            if SPDX_IDENTIFIER.fullmatch(spdx) is None:
+                raise PolicyError(f"{file_label}.spdx 不是合法 SPDX 标识符")
+            file_path = _portable_path(license_file["file"], f"{file_label}.file")
+            digest = _text(license_file["sha256"], f"{file_label}.sha256")
+            if SHA256.fullmatch(digest) is None:
+                raise PolicyError(f"{file_label}.sha256 必须是小写 SHA-256")
+            if spdx in seen_spdx or file_path.casefold() in seen_files:
+                raise PolicyError(f"{file_label} 重复声明 SPDX 或文件")
+            seen_spdx.add(spdx)
+            seen_files.add(file_path.casefold())
+
+            registry = _object(
+                license_file["registry_source"], f"{file_label}.registry_source"
+            )
+            _exact_keys(
+                registry,
+                {"package", "version", "file"},
+                f"{file_label}.registry_source",
+            )
+            registry_package = _text(
+                registry["package"], f"{file_label}.registry_source.package"
+            )
+            registry_version = _text(
+                registry["version"], f"{file_label}.registry_source.version"
+            )
+            if PACKAGE_NAME.fullmatch(registry_package) is None:
+                raise PolicyError(
+                    f"{file_label}.registry_source.package 不是合法 Cargo 包名"
+                )
+            if SEMVER.fullmatch(registry_version) is None:
+                raise PolicyError(
+                    f"{file_label}.registry_source.version 必须固定到完整三段版本"
+                )
+            _portable_path(registry["file"], f"{file_label}.registry_source.file")
+        if seen_spdx != declared:
+            raise PolicyError(
+                f"{label}.license_files 必须逐项覆盖 license_expression，"
+                f"声明={sorted(declared)}，文件={sorted(seen_spdx)}"
+            )
+
+
 def load_policy(
     path: Path = DEFAULT_POLICY, *, today: dt.date | None = None
 ) -> dict[str, Any]:
@@ -97,17 +222,20 @@ def load_policy(
             "vulnerability_gate",
             "dependency_graph_exceptions",
             "service_images",
+            "local_patch_licenses",
         },
         "供应链策略",
     )
-    if policy["schema_version"] != 1:
-        raise PolicyError("schema_version 只允许为 1")
+    if policy["schema_version"] != 2:
+        raise PolicyError("schema_version 只允许为 2")
 
     tools = _object(policy["tools"], "tools")
     _exact_keys(tools, set(TOOL_NAMES), "tools")
     for name, version in tools.items():
         if not isinstance(version, str) or SEMVER.fullmatch(version) is None:
             raise PolicyError(f"工具 {name} 必须固定到完整三段版本")
+
+    _validate_local_patch_policy(policy)
 
     seen_services: set[tuple[str, str, str]] = set()
     for index, item in enumerate(_list(policy["service_images"], "service_images")):
@@ -210,6 +338,220 @@ def load_policy(
         seen_packages.add(identity)
 
     return policy
+
+
+def _is_link_like(path: Path) -> bool:
+    if path.is_symlink():
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    return bool(is_junction is not None and is_junction())
+
+
+def _resolve_regular_path(
+    base: Path,
+    relative: str,
+    label: str,
+    *,
+    directory: bool,
+) -> tuple[Path | None, str | None]:
+    current = base
+    for part in relative.split("/"):
+        current /= part
+        if current.exists() and _is_link_like(current):
+            return None, f"{label} 不得经过符号链接或目录联接：{current}"
+    try:
+        base_resolved = base.resolve(strict=True)
+        resolved = current.resolve(strict=True)
+    except OSError as exc:
+        return None, f"{label} 不存在或无法读取：{current} ({exc})"
+    if not resolved.is_relative_to(base_resolved):
+        return None, f"{label} 逃逸出允许目录：{resolved}"
+    if directory and not resolved.is_dir():
+        return None, f"{label} 必须是目录：{resolved}"
+    if not directory and not resolved.is_file():
+        return None, f"{label} 必须是普通文件：{resolved}"
+    return resolved, None
+
+
+def _read_toml(path: Path, label: str) -> tuple[dict[str, Any] | None, str | None]:
+    try:
+        document = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
+        return None, f"无法读取 {label} {path}：{exc}"
+    return document, None
+
+
+def _local_path_patches(
+    root: Path,
+) -> tuple[dict[str, tuple[str, str]], list[str]]:
+    manifest, error = _read_toml(root / "Cargo.toml", "Workspace Cargo.toml")
+    if error is not None or manifest is None:
+        return {}, [error or "Workspace Cargo.toml 无法解析"]
+    patch_table = manifest.get("patch", {})
+    if not isinstance(patch_table, dict):
+        return {}, ["Workspace Cargo.toml 的 [patch] 必须是表"]
+    crates_io = patch_table.get("crates-io", {})
+    if not isinstance(crates_io, dict):
+        return {}, ["Workspace Cargo.toml 的 [patch.crates-io] 必须是表"]
+
+    patches: dict[str, tuple[str, str]] = {}
+    errors: list[str] = []
+    for patch_name, specification in crates_io.items():
+        if not isinstance(specification, dict) or "path" not in specification:
+            continue
+        label = f"[patch.crates-io].{patch_name}.path"
+        try:
+            path = _portable_path(specification["path"], label)
+        except PolicyError as exc:
+            errors.append(str(exc))
+            continue
+        identity = str(patch_name).casefold()
+        if identity in patches:
+            errors.append(f"Cargo 本地 patch 名称大小写冲突：{patch_name}")
+            continue
+        patches[identity] = (str(patch_name), path)
+    return patches, errors
+
+
+def _registry_source_paths(
+    cargo_home: Path,
+    source: dict[str, Any],
+) -> list[Path]:
+    registry_root = cargo_home / "registry" / "src"
+    if not registry_root.is_dir():
+        return []
+    package_dir = f"{source['package']}-{source['version']}"
+    return sorted(
+        candidate / package_dir
+        for candidate in registry_root.iterdir()
+        if candidate.is_dir() and (candidate / package_dir).is_dir()
+    )
+
+
+def _validate_registry_copy(
+    cargo_home: Path,
+    source: dict[str, Any],
+    vendor_bytes: bytes,
+    expected_hash: str,
+    label: str,
+) -> list[str]:
+    errors: list[str] = []
+    package_roots = _registry_source_paths(cargo_home, source)
+    for package_root in package_roots:
+        source_path, error = _resolve_regular_path(
+            package_root,
+            source["file"],
+            f"{label} registry 原件",
+            directory=False,
+        )
+        if error is not None or source_path is None:
+            errors.append(error or f"{label} registry 原件无法读取")
+            continue
+        source_bytes = source_path.read_bytes()
+        source_hash = hashlib.sha256(source_bytes).hexdigest()
+        if source_hash != expected_hash or source_bytes != vendor_bytes:
+            errors.append(
+                f"{label} 与精确 registry 原件不一致：{source_path} "
+                f"(期望 {expected_hash}，实际 {source_hash})"
+            )
+    return errors
+
+
+def validate_local_patch_licenses(
+    root: Path,
+    policy: dict[str, Any],
+    *,
+    cargo_home: Path | None = None,
+) -> list[str]:
+    actual, errors = _local_path_patches(root)
+    configured = {
+        patch["patch"].casefold(): patch for patch in policy["local_patch_licenses"]
+    }
+    for identity, (patch_name, path) in actual.items():
+        entry = configured.get(identity)
+        if entry is None:
+            errors.append(f"本地 patch 未登记许可证原件：{patch_name} ({path})")
+        elif entry["path"] != path:
+            errors.append(
+                f"本地 patch 路径与策略不一致：{patch_name} "
+                f"Cargo={path}，策略={entry['path']}"
+            )
+    for identity, entry in configured.items():
+        if identity not in actual:
+            errors.append(
+                f"许可证策略包含不存在的本地 patch：{entry['patch']} ({entry['path']})"
+            )
+
+    selected_cargo_home = cargo_home
+    if selected_cargo_home is None:
+        selected_cargo_home = Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo"))
+    for identity, entry in configured.items():
+        actual_patch = actual.get(identity)
+        if actual_patch is None or actual_patch[1] != entry["path"]:
+            continue
+        crate_root, error = _resolve_regular_path(
+            root,
+            entry["path"],
+            f"本地 patch {entry['patch']}",
+            directory=True,
+        )
+        if error is not None or crate_root is None:
+            errors.append(error or f"本地 patch {entry['patch']} 无法读取")
+            continue
+        manifest, error = _read_toml(
+            crate_root / "Cargo.toml", f"本地 patch {entry['patch']} Cargo.toml"
+        )
+        if error is not None or manifest is None:
+            errors.append(error or f"本地 patch {entry['patch']} Cargo.toml 无法解析")
+            continue
+        package = manifest.get("package")
+        if not isinstance(package, dict):
+            errors.append(f"本地 patch {entry['patch']} 缺少 [package]")
+            continue
+        expected_manifest = {
+            "name": entry["package"],
+            "version": entry["version"],
+            "license": entry["license_expression"],
+        }
+        for field, expected_field in expected_manifest.items():
+            if package.get(field) != expected_field:
+                errors.append(
+                    f"本地 patch {entry['patch']} 的 package.{field} 不一致："
+                    f"期望 {expected_field}，实际 {package.get(field)}"
+                )
+        if "license-file" in package:
+            errors.append(
+                f"本地 patch {entry['patch']} 使用未建模的 package.license-file"
+            )
+
+        for license_file in entry["license_files"]:
+            label = f"本地 patch {entry['patch']} {license_file['spdx']}"
+            path, error = _resolve_regular_path(
+                crate_root,
+                license_file["file"],
+                f"{label} 文件",
+                directory=False,
+            )
+            if error is not None or path is None:
+                errors.append(error or f"{label} 文件无法读取")
+                continue
+            vendor_bytes = path.read_bytes()
+            actual_hash = hashlib.sha256(vendor_bytes).hexdigest()
+            expected_hash = license_file["sha256"]
+            if actual_hash != expected_hash:
+                errors.append(
+                    f"{label} 登记哈希不一致：期望 {expected_hash}，实际 {actual_hash}"
+                )
+            errors.extend(
+                _validate_registry_copy(
+                    selected_cargo_home,
+                    license_file["registry_source"],
+                    vendor_bytes,
+                    expected_hash,
+                    label,
+                )
+            )
+    return errors
 
 
 if yaml is not None:
@@ -359,13 +701,9 @@ def _compare_service_images(
 ) -> list[str]:
     errors: list[str] = []
     for workflow, job, service in sorted(expected.keys() - actual.keys()):
-        errors.append(
-            f"策略声明的服务镜像不存在于工作流：{workflow}/{job}/{service}"
-        )
+        errors.append(f"策略声明的服务镜像不存在于工作流：{workflow}/{job}/{service}")
     for workflow, job, service in sorted(actual.keys() - expected.keys()):
-        errors.append(
-            f"工作流服务镜像未在策略声明：{workflow}/{job}/{service}"
-        )
+        errors.append(f"工作流服务镜像未在策略声明：{workflow}/{job}/{service}")
     for identity in sorted(expected.keys() & actual.keys()):
         expected_image = expected[identity]
         actual_image = actual[identity]
@@ -992,7 +1330,8 @@ def main() -> int:
         print(f"供应链策略无效：{exc}", file=sys.stderr)
         return 1
 
-    errors = validate_workflows(args.workflow_dir, policy)
+    errors = validate_local_patch_licenses(ROOT, policy)
+    errors.extend(validate_workflows(args.workflow_dir, policy))
     if args.cyclonedx is not None:
         errors.extend(
             validate_cyclonedx(

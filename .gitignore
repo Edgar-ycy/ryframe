@@ -7,6 +7,7 @@ uploads/
 *.pdb
 __pycache__/
 *.pyc
+vendor/**/.cargo-ok
 .local-tests/
 /.local-secrets/
 **/mutants.out*/

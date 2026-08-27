@@ -1,8 +1,9 @@
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, time::Duration};
 
 use chrono::{TimeZone, Utc};
 use ryframe_application::{
     ports::{
+        health::{DependencyHealthCache, DependencyStatus},
         jobs::ExecutionTenantScope,
         retention::RetentionResource,
         service_accounts::ServiceAccountRecord,
@@ -17,6 +18,21 @@ use ryframe_application::{
     },
     system::identity::{CaptchaStore, InMemoryCaptchaStore},
 };
+
+#[test]
+fn dependency_health_cache_is_transport_neutral_and_fail_closed() {
+    let cache = DependencyHealthCache::new(true, false, Duration::from_secs(30));
+    let initial = cache.snapshot();
+    assert!(initial.stale);
+    assert_eq!(initial.mysql, DependencyStatus::Unknown);
+    assert_eq!(initial.redis, DependencyStatus::Unknown);
+    assert_eq!(initial.object_storage, DependencyStatus::NotRequired);
+
+    cache.update(true, true, false);
+    let current = cache.snapshot();
+    assert!(!current.stale);
+    assert!(current.is_ready());
+}
 
 fn user(status: &str) -> UserQueryRecord {
     UserQueryRecord {

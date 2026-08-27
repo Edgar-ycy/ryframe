@@ -1,8 +1,10 @@
 //! 运行时监控的非 HTTP 出站实现。
 
+#[cfg(feature = "redis")]
 mod cache;
 mod server_info;
 
+#[cfg(feature = "redis")]
 pub use cache::{
     CacheCommandStats, CacheCommandStatsStatus, CacheInfo, CacheKeysInfo, RedisMemoryInfo,
     RedisServerInfo, get_cache_command_stats, get_cache_info, parse_redis_command_stats,

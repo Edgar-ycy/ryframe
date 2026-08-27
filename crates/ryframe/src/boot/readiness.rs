@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use ryframe_adapters::RedisClient;
-use ryframe_api::monitor::{
+use ryframe_application::ports::health::{
     DatabaseMonitor, DatabaseNodeHealth, DatabaseTopologyHealth, DependencyHealthCache,
     DependencyStatus,
 };

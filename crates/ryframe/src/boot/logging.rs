@@ -97,8 +97,8 @@ pub fn init(config: &AppConfig) -> Result<(LoggerGuard, TelemetryGuard), AppErro
     // 初始化链路追踪（在 subscriber 构建之前）
     let telemetry_guard = init_tracer_provider(&config.telemetry);
     ryframe_application::install_trace_context_port(Arc::new(OpenTelemetryTraceContext))?;
-    let otel_layer = telemetry_guard
-        .tracing_layer(ryframe_api::middleware::request_log::REQUEST_LOG_SPAN_TARGET);
+    let otel_layer =
+        telemetry_guard.tracing_layer(ryframe_application::HTTP_REQUEST_LOG_SPAN_TARGET);
 
     // 构建 subscriber 的顺序很关键：
     // 1. fmt_layer（含 sqlx 过滤器）→ 2. SqlLogLayer → 3. otel(可选) → 4. env_filter

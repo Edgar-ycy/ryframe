@@ -10,7 +10,7 @@ mod id_generator;
 pub mod migration;
 pub mod pagination;
 pub mod repositories;
-mod repository;
+pub mod repository;
 pub mod resource_ownership;
 pub mod sql_logger;
 pub use auto_fill::{AutoFill, FillContext};
@@ -22,8 +22,10 @@ pub use cluster::{
 pub use database_monitor::SeaOrmDatabaseMonitor;
 pub use db_result::DbResultExt;
 pub use id_generator::{DatabaseIdGenerator, install as install_id_generator, next_id};
-pub use repository::Repository;
-pub use sql_logger::{DbSpanLayer, SqlLogGuard, SqlLogLayer};
+pub(crate) use repository::Repository;
+#[cfg(feature = "telemetry")]
+pub use sql_logger::DbSpanLayer;
+pub use sql_logger::{SqlLogGuard, SqlLogLayer};
 pub mod transaction;
 
 #[doc(hidden)]
@@ -38,8 +40,9 @@ pub mod __macro_support {
     }
 }
 
-// 便捷导出
-pub use entities::{
+// 仅供数据库 crate 内部保持简洁；跨 crate 调用必须经 entities/repositories 模块显式表达边界。
+#[allow(unused_imports)]
+pub(crate) use entities::{
     background_job, cache_namespace_version, config, data_retention_run, dept, dict_data,
     dict_type, export_job, job_schedule, job_schedule_execution, login_info, menu, message,
     message_audience, message_recipient, oper_log, outbox_event, password_reset_request,
@@ -48,7 +51,8 @@ pub use entities::{
     service_credential, service_delegation, service_delegation_capability, sys_file, tenant, user,
     user_import_job, user_import_row_result, user_role,
 };
-pub use repositories::{
+#[allow(unused_imports)]
+pub(crate) use repositories::{
     AgentDictionaryPage, AgentQueryPage, AgentQueryRepository, AgentRowScope, BackgroundJobFilter,
     BackgroundJobRepository, BackgroundJobStats, BackgroundJobTypeStats, CONFIG_CACHE_NAMESPACE,
     CacheNamespaceVersionRepository, ConfigFilter, ConfigRepository, CreateExportJob,

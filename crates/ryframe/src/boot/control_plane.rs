@@ -131,7 +131,7 @@ async fn verify_fixed_tenant(
     let Some(tenant_id) = fixed_tenant_to_verify(config.multi_tenancy.fixed_tenant_id()) else {
         return Ok(());
     };
-    ryframe_db::TenantRepository
+    ryframe_db::repositories::TenantRepository
         .ensure_available(database.write(), tenant_id)
         .await
         .map_err(|error| {

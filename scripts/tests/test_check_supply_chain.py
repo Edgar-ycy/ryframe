@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import importlib.util
 import json
 import shutil
@@ -25,9 +26,10 @@ def policy(
     *,
     vulnerabilities: list[dict[str, str]] | None = None,
     service_images: list[dict[str, str]] | None = None,
+    local_patch_licenses: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "tools": {
             "cargo-audit": "0.22.2",
             "cargo-deny": "0.20.2",
@@ -35,6 +37,7 @@ def policy(
             "sccache": "0.17.0",
             "trivy": "0.72.0",
         },
+        "local_patch_licenses": local_patch_licenses or [],
         "service_images": service_images or [],
         "vulnerability_gate": {
             "severities": ["HIGH", "CRITICAL"],
@@ -49,6 +52,41 @@ def policy(
                 "expires": "2099-12-31",
                 "reason": "仅允许保留在锁文件中，不得进入实际构建图",
             }
+        ],
+    }
+
+
+def local_patch_policy_entry(
+    mit: bytes,
+    apache: bytes,
+) -> dict[str, object]:
+    return {
+        "patch": "fixture-patch",
+        "package": "fixture-package",
+        "version": "1.2.3",
+        "path": "vendor/fixture-package",
+        "license_expression": "MIT OR Apache-2.0",
+        "license_files": [
+            {
+                "spdx": "MIT",
+                "file": "LICENSE-MIT",
+                "sha256": hashlib.sha256(mit).hexdigest(),
+                "registry_source": {
+                    "package": "fixture-source",
+                    "version": "1.2.3",
+                    "file": "LICENSE-MIT",
+                },
+            },
+            {
+                "spdx": "Apache-2.0",
+                "file": "LICENSE-APACHE",
+                "sha256": hashlib.sha256(apache).hexdigest(),
+                "registry_source": {
+                    "package": "fixture-source",
+                    "version": "1.2.3",
+                    "file": "LICENSE-APACHE",
+                },
+            },
         ],
     }
 
@@ -97,18 +135,173 @@ class SupplyChainPolicyTests(unittest.TestCase):
         path.write_text(json.dumps(value), encoding="utf-8")
         return path
 
+    def write_local_patch_fixture(
+        self, root: Path
+    ) -> tuple[dict[str, object], Path, Path, Path]:
+        mit = b"fixture MIT license\n"
+        apache = b"fixture Apache license\n"
+        vendor = root / "vendor" / "fixture-package"
+        vendor.mkdir(parents=True)
+        (root / "Cargo.toml").write_text(
+            textwrap.dedent(
+                """
+                [patch.crates-io]
+                fixture-patch = { path = "vendor/fixture-package" }
+                """
+            ).strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        (vendor / "Cargo.toml").write_text(
+            textwrap.dedent(
+                """
+                [package]
+                name = "fixture-package"
+                version = "1.2.3"
+                license = "MIT OR Apache-2.0"
+                """
+            ).strip()
+            + "\n",
+            encoding="utf-8",
+        )
+        (vendor / "LICENSE-MIT").write_bytes(mit)
+        (vendor / "LICENSE-APACHE").write_bytes(apache)
+
+        cargo_home = root / "cargo-home"
+        registry = (
+            cargo_home
+            / "registry"
+            / "src"
+            / "fixture-registry"
+            / "fixture-source-1.2.3"
+        )
+        registry.mkdir(parents=True)
+        (registry / "LICENSE-MIT").write_bytes(mit)
+        (registry / "LICENSE-APACHE").write_bytes(apache)
+        configured = policy(
+            local_patch_licenses=[local_patch_policy_entry(mit, apache)]
+        )
+        return configured, cargo_home, vendor, registry
+
     def test_ci_yaml_parser_requirement_is_exact_and_hashed(self) -> None:
         requirements = (SCRIPT.parent / "requirements-ci.txt").read_text(
             encoding="utf-8"
         )
-        self.assertIn("PyYAML==6.0.3", requirements)
-        self.assertEqual(requirements.count("--hash=sha256:"), 5)
+        for requirement in (
+            "PyYAML==6.0.3",
+            "tree-sitter==0.25.2",
+            "tree-sitter-rust==0.24.2",
+        ):
+            self.assertIn(requirement, requirements)
+        self.assertEqual(requirements.count("--hash=sha256:"), 7)
 
     def test_accepts_complete_future_dated_policy(self) -> None:
         with self.temporary_directory() as raw:
             path = self.write_json(Path(raw), "policy.json", policy())
             loaded = MODULE.load_policy(path, today=dt.date(2026, 8, 20))
         self.assertEqual(loaded["tools"]["trivy"], "0.72.0")
+
+    def test_local_patch_license_matches_registry_and_hash_fallback(self) -> None:
+        with self.temporary_directory() as raw:
+            root = Path(raw)
+            configured, cargo_home, _, _ = self.write_local_patch_fixture(root)
+            policy_path = self.write_json(root, "policy.json", configured)
+            loaded = MODULE.load_policy(policy_path, today=dt.date(2026, 8, 20))
+            self.assertEqual(
+                MODULE.validate_local_patch_licenses(
+                    root, loaded, cargo_home=cargo_home
+                ),
+                [],
+            )
+            empty_cargo_home = root / "empty-cargo-home"
+            empty_cargo_home.mkdir()
+            self.assertEqual(
+                MODULE.validate_local_patch_licenses(
+                    root, loaded, cargo_home=empty_cargo_home
+                ),
+                [],
+            )
+
+    def test_local_patch_license_rejects_vendor_or_registry_drift(self) -> None:
+        with self.temporary_directory() as raw:
+            root = Path(raw)
+            configured, cargo_home, vendor, registry = self.write_local_patch_fixture(
+                root
+            )
+            (vendor / "LICENSE-MIT").write_bytes(b"tampered vendor license\n")
+            errors = MODULE.validate_local_patch_licenses(
+                root, configured, cargo_home=cargo_home
+            )
+            self.assertTrue(any("登记哈希不一致" in error for error in errors))
+
+            (vendor / "LICENSE-MIT").write_bytes(b"fixture MIT license\n")
+            (registry / "LICENSE-APACHE").write_bytes(b"tampered registry license\n")
+            errors = MODULE.validate_local_patch_licenses(
+                root, configured, cargo_home=cargo_home
+            )
+            self.assertTrue(any("registry 原件不一致" in error for error in errors))
+
+    def test_local_patch_license_rejects_missing_source_or_unregistered_patch(
+        self,
+    ) -> None:
+        with self.temporary_directory() as raw:
+            root = Path(raw)
+            configured, cargo_home, vendor, registry = self.write_local_patch_fixture(
+                root
+            )
+            (vendor / "LICENSE-APACHE").unlink()
+            errors = MODULE.validate_local_patch_licenses(
+                root, configured, cargo_home=cargo_home
+            )
+            self.assertTrue(any("Apache-2.0 文件" in error for error in errors))
+            (vendor / "LICENSE-APACHE").write_bytes(b"fixture Apache license\n")
+
+            (registry / "LICENSE-MIT").unlink()
+            errors = MODULE.validate_local_patch_licenses(
+                root, configured, cargo_home=cargo_home
+            )
+            self.assertTrue(any("registry 原件" in error for error in errors))
+
+            (root / "Cargo.toml").write_text(
+                textwrap.dedent(
+                    """
+                    [patch.crates-io]
+                    fixture-patch = { path = "vendor/fixture-package" }
+                    unknown = { path = "vendor/unknown" }
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            errors = MODULE.validate_local_patch_licenses(
+                root, configured, cargo_home=root / "empty-cargo-home"
+            )
+            self.assertTrue(any("未登记许可证原件" in error for error in errors))
+
+    def test_local_patch_policy_requires_complete_safe_license_mapping(self) -> None:
+        mit = b"fixture MIT license\n"
+        apache = b"fixture Apache license\n"
+        invalid_entries = []
+        missing_spdx = local_patch_policy_entry(mit, apache)
+        missing_spdx["license_files"] = missing_spdx["license_files"][:1]
+        invalid_entries.append(missing_spdx)
+        unsafe_path = local_patch_policy_entry(mit, apache)
+        unsafe_path["path"] = "../vendor/fixture-package"
+        invalid_entries.append(unsafe_path)
+        bad_hash = local_patch_policy_entry(mit, apache)
+        bad_hash["license_files"][0]["sha256"] = "A" * 64
+        invalid_entries.append(bad_hash)
+
+        with self.temporary_directory() as raw:
+            root = Path(raw)
+            for index, entry in enumerate(invalid_entries):
+                path = self.write_json(
+                    root,
+                    f"invalid-policy-{index}.json",
+                    policy(local_patch_licenses=[entry]),
+                )
+                with self.subTest(index=index), self.assertRaises(MODULE.PolicyError):
+                    MODULE.load_policy(path, today=dt.date(2026, 8, 20))
 
     def test_rejects_expired_or_ownerless_exception(self) -> None:
         invalid = policy()
@@ -187,9 +380,7 @@ class SupplyChainPolicyTests(unittest.TestCase):
                 workflow_dir,
                 policy(service_images=[expected]),
             )
-            self.assertTrue(
-                any("服务镜像引用漂移" in error for error in digest_errors)
-            )
+            self.assertTrue(any("服务镜像引用漂移" in error for error in digest_errors))
 
             workflow_path.write_text(
                 workflow_with_run_steps(

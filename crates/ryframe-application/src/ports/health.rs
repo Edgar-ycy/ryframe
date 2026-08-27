@@ -3,6 +3,31 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// 数据库节点最近一次健康状态。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DatabaseNodeHealth {
+    pub name: String,
+    pub healthy: bool,
+    pub consecutive_failures: usize,
+    pub consecutive_successes: usize,
+}
+
+/// 数据库拓扑的只读健康快照。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DatabaseTopologyHealth {
+    pub primary_healthy: bool,
+    pub replicas: Vec<DatabaseNodeHealth>,
+    pub sources: Vec<DatabaseNodeHealth>,
+}
+
+/// 进程健康检查所需的数据库中立端口。
+#[async_trait::async_trait]
+pub trait DatabaseMonitor: Send + Sync {
+    async fn ping(&self) -> bool;
+    async fn active_connections(&self) -> Option<i64>;
+    async fn topology_health(&self) -> DatabaseTopologyHealth;
+}
+
 /// 就绪检查中单个依赖的最近状态。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DependencyStatus {

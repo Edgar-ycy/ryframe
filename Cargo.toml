@@ -61,18 +61,12 @@ http = "1"
 
 sysinfo = "0.39"
 
-image = { version = "0.25", default-features = false, features = [
-    "bmp",
-    "gif",
-    "jpeg",
-    "png",
-    "webp",
-] }
+image = { version = "0.25", default-features = false }
 calamine = { version = "0.36" }
 rust_xlsxwriter = { version = "0.98.2" }
 utoipa = { version = "5", features = ["axum_extras", "chrono"] }
 utoipa-swagger-ui = { version = "9.0.2", default-features = false, features = ["vendored"] }
-redis = { version = "1.4", features = ["tokio-rustls-comp", "connection-manager"] }
+redis = { version = "1.4", default-features = false, features = ["tokio-rustls-comp", "connection-manager"] }
 
 regex = "1"
 tower-http = { version = "0.7" }
@@ -84,14 +78,15 @@ prometheus = "0.14"
 lazy_static = "1"
 futures-util = "0.3"
 # OpenTelemetry 链路追踪
-opentelemetry = { version = "0.32", features = ["trace"] }
-opentelemetry_sdk = { version = "0.32", features = ["rt-tokio"] }
-opentelemetry-otlp = { version = "0.32", features = ["http-proto"] }
+opentelemetry = { version = "0.32", default-features = false, features = ["trace"] }
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["trace", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "http-proto", "reqwest-client"] }
 opentelemetry-semantic-conventions = { version = "0.32" }
-tracing-opentelemetry = "0.33"
+tracing-opentelemetry = { version = "0.33", default-features = false }
 # gRPC 传输支持
 # 对象存储 (MinIO/S3)
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
 hmac = "0.13"
 sha2 = "0.11"
 hex = "0.4"
@@ -105,6 +100,7 @@ tempfile = "3"
 # 开发配置：轻微优化以降低 rustc 单态化栈压力，
 # 解决 Windows MSVC 下 ryframe-adapters 测试编译时栈溢出问题
 [patch.crates-io]
+opentelemetry-otlp = { path = "vendor/opentelemetry-otlp" }
 proc-macro-error2 = { path = "vendor/proc-macro-error2" }
 sqlx = { path = "vendor/sqlx-mysql-only" }
 

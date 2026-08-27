@@ -1,16 +1,22 @@
 use std::collections::BTreeMap;
 
+#[cfg(feature = "spreadsheet")]
 use calamine::{Reader, open_workbook_auto};
-use ryframe_adapters::{
-    excel::{IncrementalExcelWriter, XLSX_MAX_DATA_ROWS},
-    i18n::LocalizerLoader,
-};
-use ryframe_kernel::{AppError, Locale, LocalizedText};
+#[cfg(feature = "spreadsheet")]
+use ryframe_adapters::excel::{IncrementalExcelWriter, XLSX_MAX_DATA_ROWS};
+use ryframe_adapters::i18n::LocalizerLoader;
+#[cfg(feature = "spreadsheet")]
+use ryframe_kernel::AppError;
+use ryframe_kernel::{Locale, LocalizedText};
+#[cfg(feature = "spreadsheet")]
 use serde::Serialize;
+#[cfg(feature = "spreadsheet")]
 use sha2::{Digest, Sha256};
 
+#[cfg(feature = "spreadsheet")]
 const HEADERS: &[(&str, &str)] = &[("id", "编号"), ("name", "名称")];
 
+#[cfg(feature = "spreadsheet")]
 #[derive(Serialize)]
 struct Row {
     id: u64,
@@ -36,6 +42,7 @@ fn embedded_resources_load_into_kernel_localizer() {
     assert_eq!(localizer.render(&text, Locale::EnUs), "Welcome Alice");
 }
 
+#[cfg(feature = "spreadsheet")]
 #[test]
 fn incremental_writer_consumes_batches_and_removes_artifact_on_drop() {
     let mut writer = IncrementalExcelWriter::new("测试", HEADERS).expect("创建写入器");
@@ -72,6 +79,7 @@ fn incremental_writer_consumes_batches_and_removes_artifact_on_drop() {
     assert!(!artifact_path.exists());
 }
 
+#[cfg(feature = "spreadsheet")]
 #[test]
 fn incremental_writer_enforces_configured_and_xlsx_row_limits() {
     let mut writer =

@@ -7,8 +7,8 @@ use chrono::Utc;
 
 use crate::{
     Result,
-    cli::{MigrationCommand, MigrationScope, MigrationTarget},
-    process::run as run_process,
+    cli::{MigrationCommand, MigrationOperation, MigrationScope, MigrationTarget},
+    process::{run as run_process, run_owned},
     workspace::root_dir,
 };
 
@@ -35,25 +35,8 @@ pub(crate) fn run(command: &MigrationCommand) -> Result<()> {
             &["scripts/check_migration_history.py", "--freeze"],
         ),
         MigrationCommand::Run { operation, target } => {
-            let operation = operation.as_str();
-            let mut migration_args = match target {
-                MigrationTarget::Control => vec!["control", operation],
-                MigrationTarget::TenantDataAll => vec!["tenant-data", operation, "--all"],
-                MigrationTarget::TenantDataOne(target) => {
-                    vec!["tenant-data", operation, "--target", target]
-                }
-            };
-            let mut args = vec![
-                "run",
-                "--locked",
-                "-p",
-                "ryframe",
-                "--bin",
-                "ryframe-migrate",
-                "--",
-            ];
-            args.append(&mut migration_args);
-            run_process(&root_dir(), "cargo", &args)
+            let args = migration_run_args(*operation, target);
+            run_owned(&root_dir(), "cargo", &args)
         }
         MigrationCommand::New { scope, name } => {
             let _lock = MigrationLock::acquire(&root_dir(), *scope)?;
@@ -61,6 +44,40 @@ pub(crate) fn run(command: &MigrationCommand) -> Result<()> {
             create_migration_under_lock(&root_dir(), *scope, name, &timestamp)
         }
     }
+}
+
+pub(crate) fn migration_run_args(
+    operation: MigrationOperation,
+    target: &MigrationTarget,
+) -> Vec<String> {
+    let mut args = [
+        "run",
+        "--locked",
+        "-p",
+        "ryframe",
+        "--no-default-features",
+        "--features",
+        "bin-migrate",
+        "--bin",
+        "ryframe-migrate",
+        "--",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    let operation = operation.as_str().to_owned();
+    match target {
+        MigrationTarget::Control => args.extend(["control".to_owned(), operation]),
+        MigrationTarget::TenantDataAll => {
+            args.extend(["tenant-data".to_owned(), operation, "--all".to_owned()]);
+        }
+        MigrationTarget::TenantDataOne(target) => args.extend([
+            "tenant-data".to_owned(),
+            operation,
+            "--target".to_owned(),
+            target.clone(),
+        ]),
+    }
+    args
 }
 
 #[allow(dead_code)]

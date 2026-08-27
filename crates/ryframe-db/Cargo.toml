@@ -8,9 +8,13 @@ license.workspace = true
 repository.workspace = true
 description.workspace = true
 
+[features]
+default = []
+telemetry = ["dep:opentelemetry", "dep:opentelemetry-semantic-conventions"]
+
 [dependencies]
 ryframe-kernel = { path = "../ryframe-kernel" }
-ryframe-application = { path = "../ryframe-application" }
+ryframe-application = { path = "../ryframe-application", default-features = false }
 ryframe-config = { path = "../ryframe-config" }
 ryframe-macro = { path = "../ryframe-macro" }
 sea-orm = { workspace = true }
@@ -20,8 +24,8 @@ futures-util = { workspace = true }
 log = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["registry", "std", "fmt"] }
-opentelemetry = { workspace = true }
-opentelemetry-semantic-conventions = { workspace = true }
+opentelemetry = { workspace = true, optional = true }
+opentelemetry-semantic-conventions = { workspace = true, optional = true }
 serde = { workspace = true ,features = ["derive"]}
 serde_json = { workspace = true }
 toml = { workspace = true }

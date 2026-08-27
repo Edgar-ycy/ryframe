@@ -13,14 +13,18 @@ mod request_tenant_context;
 mod runtime_policy;
 mod service_identity_secret;
 pub mod system;
-#[doc(hidden)]
-pub mod tenant_config_stable_key;
+mod tenant_config_stable_key;
 mod trace_context;
 
+/// 数据库实现与组合根所需的窄适配面，不属于业务用例公开 API。
 #[doc(hidden)]
-pub use audit::{
-    AUDIT_AGGREGATE_TYPE, OUTBOX_MAX_ATTEMPTS, bind_current_audit, validate_audit_event,
-};
+pub mod infrastructure {
+    pub use crate::audit::{
+        AUDIT_AGGREGATE_TYPE, OUTBOX_MAX_ATTEMPTS, bind_current_audit, validate_audit_event,
+    };
+    pub use crate::tenant_config_stable_key::*;
+    pub use crate::trace_context::current_trace_context;
+}
 pub use audit::{
     AUDIT_OPERATION_OUTBOX_EVENT_TYPE, AuditOperationEvent, AuditOutbox,
     AuditOutboxPersistencePort, AuditRequestContext, AuditTransactionBinding, record_audit_failure,
@@ -59,9 +63,10 @@ pub use runtime_policy::{
     JobWorkerMode, JobWorkerPolicy, MessagingPolicy, MultiTenancyPolicy, PepperKeyring,
     ServiceAccountPolicy, TenantConfigTransferPolicy, UserImportPolicy, is_valid_tenant_target_key,
 };
-#[doc(hidden)]
-pub use trace_context::current_trace_context;
-pub use trace_context::{PersistedTraceContext, TraceContextPort, install_trace_context_port};
+pub use trace_context::{
+    HTTP_REQUEST_LOG_SPAN_TARGET, PersistedTraceContext, TraceContextPort,
+    install_trace_context_port,
+};
 
 use ryframe_kernel::{ActorContext, AppResult, TenantId};
 

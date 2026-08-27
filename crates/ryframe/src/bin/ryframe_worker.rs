@@ -23,10 +23,14 @@ use ryframe_adapters::RedisClient;
 use ryframe_adapters::storage::{
     LocalObjectStorage, ObjectStorage, S3Config, S3ObjectStorage, ScopedObjectStorage,
 };
-use ryframe_api::monitor::DependencyHealthCache;
 use ryframe_application::{
-    CallbackJobMetricsObserver, JobQueue, OutboxWorker,
-    ports::files::ArtifactStore,
+    AuthorizationCache, CallbackJobMetricsObserver, JobQueue, JobScheduleService, JobWorker,
+    OutboxWorker,
+    ports::{
+        files::ArtifactStore,
+        health::DependencyHealthCache,
+        jobs::{ExecutionTenantScope, OutboxPersistencePort},
+    },
     system::{
         content::{CONFIG_PACKAGE_BUCKET, IMPORT_BUCKET},
         operations::EXPORT_BUCKET,
@@ -40,8 +44,42 @@ use tokio::sync::watch;
 /// Worker 进程在收到关闭信号后的全部后台任务总宽限时间。
 const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(5);
 
+struct WorkerStartup {
+    run_mode: process_startup::WorkerRunMode,
+    config: AppConfig,
+    policies: process_application_policy::ApplicationPolicies,
+}
+
+struct WorkerRuntime {
+    database: ControlDatabaseCluster,
+    redis: Option<RedisClient>,
+    queue: Arc<JobQueue>,
+    schedules: Option<Arc<JobScheduleService>>,
+    worker: JobWorker,
+    outbox_persistence: Arc<dyn OutboxPersistencePort>,
+    execution_tenant_scope: ExecutionTenantScope,
+    authorization_cache: AuthorizationCache,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
+    ryframe::crypto::install_crypto_provider()?;
+    let startup = load_startup()?;
+    let (_logger_guard, telemetry_guard) = process_logging::init(&startup.config)?;
+    if startup.run_mode.allows_initialization_writes() {
+        ryframe_adapters::metrics::spawn_process_metrics_updater();
+    }
+    let runtime = prepare_runtime(&startup).await?;
+    match startup.run_mode {
+        process_startup::WorkerRunMode::Once => run_once(runtime, &startup).await?,
+        process_startup::WorkerRunMode::Probe => run_probe(runtime, &startup).await?,
+        process_startup::WorkerRunMode::Continuous => run_continuous(runtime, &startup).await?,
+    }
+    telemetry_guard.shutdown();
+    Ok(())
+}
+
+fn load_startup() -> Result<WorkerStartup, AppError> {
     ryframe_application::set_audit_failure_hook(ryframe_adapters::metrics::record_audit_failure);
     ryframe_application::set_authorization_cache_lookup_hook(
         ryframe_adapters::metrics::record_authorization_cache_lookup,
@@ -55,7 +93,6 @@ async fn main() -> Result<(), AppError> {
             "Worker 探活模式只允许本地开发和隔离检查使用".into(),
         ));
     }
-    let allows_initialization_writes = run_mode.allows_initialization_writes();
     let application_policies =
         process_application_policy::ApplicationPolicies::from_config(&config)?;
     if config.jobs.mode != JobWorkerMode::External {
@@ -63,19 +100,24 @@ async fn main() -> Result<(), AppError> {
             "ryframe-worker 仅在 jobs.mode = \"external\" 时运行；embedded 由 API 进程消费，disabled 不消费任务".into(),
         ));
     }
-    ryframe_adapters::snowflake::initialize(config.snowflake_worker_id)
+    ryframe_kernel::snowflake::initialize(config.snowflake_worker_id)
         .map_err(|error| AppError::Config(format!("Snowflake 初始化失败: {error}")))?;
     ryframe_db::install_id_generator(|| {
-        ryframe_adapters::snowflake::try_next_snowflake_id().map_err(AppError::from)
+        ryframe_kernel::snowflake::try_next_snowflake_id().map_err(AppError::from)
     })?;
     ryframe_application::install_id_generator(|| {
-        ryframe_adapters::snowflake::try_next_snowflake_id().map_err(AppError::from)
+        ryframe_kernel::snowflake::try_next_snowflake_id().map_err(AppError::from)
     })?;
-    let (_logger_guard, _telemetry_guard) = process_logging::init(&config)?;
-    if allows_initialization_writes {
-        ryframe_adapters::metrics::spawn_process_metrics_updater();
-    }
+    Ok(WorkerStartup {
+        run_mode,
+        config,
+        policies: application_policies,
+    })
+}
 
+async fn prepare_runtime(startup: &WorkerStartup) -> Result<WorkerRuntime, AppError> {
+    let config = &startup.config;
+    let allows_initialization_writes = startup.run_mode.allows_initialization_writes();
     let primary = ryframe_db::connection::connect_with_sql_logging(
         &config.database.primary,
         config.database.sql_log_level,
@@ -86,38 +128,38 @@ async fn main() -> Result<(), AppError> {
     let database = ControlDatabaseCluster::single(primary);
     let prepared = control_plane::prepare(
         &database,
-        &config,
+        config,
         ControlPlaneStartup::worker(allows_initialization_writes),
     )
     .await?;
     let tenant_data = prepared.tenant_database_router;
 
-    let redis = connect_redis_for_worker(&config, allows_initialization_writes).await?;
-    let object_storage = connect_storage_for_worker(&config, allows_initialization_writes).await?;
+    let redis = connect_redis_for_worker(config, allows_initialization_writes).await?;
+    let object_storage = connect_storage_for_worker(config, allows_initialization_writes).await?;
     let background = build_background_services(
         &database,
         Arc::clone(&tenant_data),
-        &application_policies,
+        &startup.policies,
         BackgroundServiceInfrastructure {
             redis_client: redis.clone(),
             object_storage,
             dict_cache: None,
-            starts_background_tasks: run_mode != process_startup::WorkerRunMode::Probe,
+            starts_background_tasks: startup.run_mode != process_startup::WorkerRunMode::Probe,
         },
     )?;
     let queue = background.job_queue.clone();
     let outbox_persistence = ryframe_db::application_ports::jobs::outbox(database.clone());
     install_job_metrics(&queue);
     let execution_tenant_scope =
-        process_jobs::execution_tenant_scope(application_policies.multi_tenancy);
+        process_jobs::execution_tenant_scope(startup.policies.multi_tenancy);
     let worker = process_jobs::build_job_worker(
         queue.clone(),
-        &application_policies.job_worker,
+        &startup.policies.job_worker,
         execution_tenant_scope.clone(),
         process_jobs::JobWorkerDependencies::from_background_services(
             &background,
             redis.clone(),
-            application_policies.messaging.enabled(),
+            startup.policies.messaging.enabled(),
         ),
     )?;
     let schedules = background.job_schedules.clone();
@@ -125,36 +167,51 @@ async fn main() -> Result<(), AppError> {
         process_jobs::validate_schedule_targets(&worker, schedules.target_registry())?;
     }
     let authorization_cache = background.authorization_cache;
-
-    if run_mode == process_startup::WorkerRunMode::Once {
-        let scheduled = if let Some(schedules) = schedules.as_ref() {
-            schedules.scan_due_once().await?
-        } else {
-            0
-        };
-        let outbox_worker = OutboxWorker::new(
-            queue,
-            Arc::clone(&outbox_persistence),
-            &application_policies.job_worker,
-            execution_tenant_scope.clone(),
-        )?
-        .with_authorization_cache(authorization_cache.clone());
-        let outbox_result = outbox_worker.run_once("ryframe-worker-once-outbox").await?;
-        let job_result = worker.run_once("ryframe-worker-once-job").await?;
-        tracing::info!(
-            scheduled,
-            ?outbox_result,
-            ?job_result,
-            "Worker 单次运行已完成"
-        );
-        _telemetry_guard.shutdown();
-        return Ok(());
-    }
-
-    let (shutdown_sender, shutdown_receiver) = watch::channel(false);
-    let mut health_tasks = start_health_server(
+    Ok(WorkerRuntime {
         database,
         redis,
+        queue,
+        schedules,
+        worker,
+        outbox_persistence,
+        execution_tenant_scope,
+        authorization_cache,
+    })
+}
+
+async fn run_once(runtime: WorkerRuntime, startup: &WorkerStartup) -> Result<(), AppError> {
+    let scheduled = if let Some(schedules) = runtime.schedules.as_ref() {
+        schedules.scan_due_once().await?
+    } else {
+        0
+    };
+    let outbox_worker = OutboxWorker::new(
+        runtime.queue,
+        runtime.outbox_persistence,
+        &startup.policies.job_worker,
+        runtime.execution_tenant_scope,
+    )?
+    .with_authorization_cache(runtime.authorization_cache);
+    let outbox_result = outbox_worker.run_once("ryframe-worker-once-outbox").await?;
+    let job_result = runtime.worker.run_once("ryframe-worker-once-job").await?;
+    tracing::info!(
+        scheduled,
+        ?outbox_result,
+        ?job_result,
+        "Worker 单次运行已完成"
+    );
+    Ok(())
+}
+
+async fn start_health_tasks(
+    runtime: &WorkerRuntime,
+    startup: &WorkerStartup,
+    shutdown_receiver: watch::Receiver<bool>,
+) -> Result<Vec<tokio::task::JoinHandle<()>>, AppError> {
+    let config = &startup.config;
+    start_health_server(
+        runtime.database.clone(),
+        runtime.redis.clone(),
         config
             .redis
             .as_ref()
@@ -162,41 +219,43 @@ async fn main() -> Result<(), AppError> {
         Arc::from(config.monitor.metrics_bearer_token.as_str()),
         config.jobs.health_host.clone(),
         config.jobs.health_port,
-        shutdown_receiver.clone(),
+        shutdown_receiver,
     )
-    .await?;
-    if run_mode == process_startup::WorkerRunMode::Probe {
-        tracing::info!("Worker 候选依赖与健康探针已就绪；探活模式不消费后台任务");
-        shutdown_signal(shutdown_sender.clone()).await;
-        let _ = shutdown_sender.send(true);
-        let shutdown_deadline = tokio::time::Instant::now() + SHUTDOWN_GRACE_PERIOD;
-        process_startup::wait_for_tasks_until(
-            &mut health_tasks,
-            "Worker 健康服务",
-            shutdown_deadline,
-        )
-        .await;
-        _telemetry_guard.shutdown();
-        return Ok(());
-    }
-    let mut worker_tasks = worker.spawn(shutdown_receiver.clone());
-    if let Some(schedules) = schedules {
+    .await
+}
+
+async fn run_probe(runtime: WorkerRuntime, startup: &WorkerStartup) -> Result<(), AppError> {
+    let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+    let mut health_tasks = start_health_tasks(&runtime, startup, shutdown_receiver).await?;
+    tracing::info!("Worker 候选依赖与健康探针已就绪；探活模式不消费后台任务");
+    shutdown_signal(shutdown_sender.clone()).await;
+    let _ = shutdown_sender.send(true);
+    let deadline = tokio::time::Instant::now() + SHUTDOWN_GRACE_PERIOD;
+    process_startup::wait_for_tasks_until(&mut health_tasks, "Worker 健康服务", deadline).await;
+    Ok(())
+}
+
+async fn run_continuous(runtime: WorkerRuntime, startup: &WorkerStartup) -> Result<(), AppError> {
+    let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+    let mut health_tasks = start_health_tasks(&runtime, startup, shutdown_receiver.clone()).await?;
+    let mut worker_tasks = runtime.worker.spawn(shutdown_receiver.clone());
+    if let Some(schedules) = runtime.schedules {
         worker_tasks.push(schedules.spawn(shutdown_receiver.clone()));
     } else {
         tracing::info!("Cron 调度已关闭，独立 Worker 仅消费普通后台任务");
     }
     worker_tasks.extend(
         OutboxWorker::new(
-            queue.clone(),
-            outbox_persistence,
-            &application_policies.job_worker,
-            execution_tenant_scope,
+            runtime.queue,
+            runtime.outbox_persistence,
+            &startup.policies.job_worker,
+            runtime.execution_tenant_scope,
         )?
-        .with_authorization_cache(authorization_cache)
+        .with_authorization_cache(runtime.authorization_cache)
         .spawn(shutdown_receiver),
     );
     tracing::info!(
-        concurrency = config.jobs.concurrency,
+        concurrency = startup.config.jobs.concurrency,
         "独立后台任务 Worker 已启动"
     );
     shutdown_signal(shutdown_sender.clone()).await;
@@ -211,7 +270,6 @@ async fn main() -> Result<(), AppError> {
         shutdown_deadline,
     )
     .await;
-    _telemetry_guard.shutdown();
     Ok(())
 }
 

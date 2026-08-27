@@ -2,7 +2,7 @@ use std::net::{IpAddr, Ipv4Addr};
 
 use ryframe_kernel::{
     AppError, ExportCursorWindow, IpCidr, MAX_SNOWFLAKE_WORKER_ID, PageResult, PaginationPolicy,
-    SnowflakeWorkerId, TenantId, ValidatedPageQuery,
+    SnowflakeWorkerId, TenantId, ValidatedPageQuery, snowflake::Snowflake,
 };
 
 const PAGINATION_POLICY: PaginationPolicy = PaginationPolicy::new(10, 100);
@@ -32,6 +32,16 @@ fn snowflake_worker_id_is_bounded_by_encoded_bits() {
     assert!(SnowflakeWorkerId::new(MAX_SNOWFLAKE_WORKER_ID).is_some());
     assert!(SnowflakeWorkerId::new(-1).is_none());
     assert!(SnowflakeWorkerId::new(MAX_SNOWFLAKE_WORKER_ID + 1).is_none());
+}
+
+#[test]
+fn snowflake_generation_is_a_kernel_capability() {
+    let generator = Snowflake::new(7).expect("应创建 Snowflake 生成器");
+    let first = generator.try_next_id().expect("应生成第一个 ID");
+    let second = generator.try_next_id().expect("应生成第二个 ID");
+    assert!(second > first);
+    assert_eq!(Snowflake::extract_worker_id(first), 7);
+    assert!(Snowflake::new(MAX_SNOWFLAKE_WORKER_ID + 1).is_err());
 }
 
 #[test]

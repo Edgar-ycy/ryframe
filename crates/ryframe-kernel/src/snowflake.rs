@@ -1,24 +1,56 @@
-use std::sync::{Mutex, OnceLock};
+use std::{
+    fmt,
+    sync::{Mutex, OnceLock},
+};
 
-use ryframe_kernel::{AppError, MAX_SNOWFLAKE_WORKER_ID};
+use crate::{AppError, MAX_SNOWFLAKE_WORKER_ID};
 
 /// Snowflake ID 生成失败。
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SnowflakeError {
-    #[error("工作机器 ID 必须在 0~{MAX_SNOWFLAKE_WORKER_ID} 之间，当前值: {worker_id}")]
-    InvalidWorkerId { worker_id: i64 },
-    #[error("系统时钟发生回拨（上次时间戳: {last_timestamp}，当前时间戳: {observed_timestamp}）")]
+    InvalidWorkerId {
+        worker_id: i64,
+    },
     ClockMovedBackwards {
         last_timestamp: i64,
         observed_timestamp: i64,
     },
-    #[error("时间戳 {timestamp} 超出 Snowflake 41 位时间范围")]
-    TimestampOutOfRange { timestamp: i64 },
-    #[error("时间戳 {timestamp} 的 4096 个 Snowflake 序列号已耗尽")]
-    SequenceExhausted { timestamp: i64 },
-    #[error("Snowflake 配置无效: {0}")]
+    TimestampOutOfRange {
+        timestamp: i64,
+    },
+    SequenceExhausted {
+        timestamp: i64,
+    },
     Configuration(String),
 }
+
+impl fmt::Display for SnowflakeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidWorkerId { worker_id } => write!(
+                formatter,
+                "工作机器 ID 必须在 0~{MAX_SNOWFLAKE_WORKER_ID} 之间，当前值: {worker_id}"
+            ),
+            Self::ClockMovedBackwards {
+                last_timestamp,
+                observed_timestamp,
+            } => write!(
+                formatter,
+                "系统时钟发生回拨（上次时间戳: {last_timestamp}，当前时间戳: {observed_timestamp}）"
+            ),
+            Self::TimestampOutOfRange { timestamp } => {
+                write!(formatter, "时间戳 {timestamp} 超出 Snowflake 41 位时间范围")
+            }
+            Self::SequenceExhausted { timestamp } => write!(
+                formatter,
+                "时间戳 {timestamp} 的 4096 个 Snowflake 序列号已耗尽"
+            ),
+            Self::Configuration(message) => write!(formatter, "Snowflake 配置无效: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for SnowflakeError {}
 
 /// 雪花算法 ID 生成器。
 ///
@@ -40,7 +72,7 @@ pub enum SnowflakeError {
 /// # 使用方式
 ///
 /// ```text
-/// use ryframe_adapters::snowflake::Snowflake;
+/// use ryframe_kernel::snowflake::Snowflake;
 ///
 /// let sf = Snowflake::new(1).expect("创建雪花算法实例失败");
 /// let id = sf.try_next_id().expect("生成 Snowflake ID 失败");
@@ -216,8 +248,7 @@ pub fn try_next_snowflake_id() -> Result<i64, SnowflakeError> {
 }
 
 impl From<SnowflakeError> for AppError {
-    fn from(error: SnowflakeError) -> Self {
-        tracing::error!(%error, "Snowflake ID 生成失败");
+    fn from(_error: SnowflakeError) -> Self {
         Self::ServiceUnavailable("ID 生成服务暂时不可用，请稍后重试".into())
     }
 }

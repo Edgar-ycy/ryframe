@@ -7,7 +7,6 @@ use ryframe_application::ports::{
     },
 };
 use ryframe_db::{
-    RetentionResource as DatabaseRetentionResource, TenantConfigurationFence,
     application_ports::{
         retention::{database_resource_key, retention_run_model, retention_run_record},
         tenant_config::{ACTIVE_TRANSFER_PREDICATE, INACTIVE_ROLLBACK_PREDICATE},
@@ -16,6 +15,7 @@ use ryframe_db::{
         config_bundle as tenant_config_bundle, config_transfer as tenant_config_transfer,
         config_transfer_item as tenant_config_transfer_item,
     },
+    repositories::{RetentionResource as DatabaseRetentionResource, TenantConfigurationFence},
 };
 use serde_json::json;
 

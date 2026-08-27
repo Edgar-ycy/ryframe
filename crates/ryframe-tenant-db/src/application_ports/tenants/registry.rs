@@ -12,8 +12,10 @@ use ryframe_application::ports::{
     },
 };
 use ryframe_db::{
-    ControlDatabaseCluster, ProductRepository, ReadConsistency, TenantProvisioningRepository,
-    TenantRepository, application_ports::transaction::DatabasePortTransaction, entities::tenant,
+    ControlDatabaseCluster, ReadConsistency,
+    application_ports::transaction::DatabasePortTransaction,
+    entities::tenant,
+    repositories::{ProductRepository, TenantProvisioningRepository, TenantRepository},
 };
 use sea_orm::{ActiveModelTrait, IntoActiveModel, TransactionTrait};
 

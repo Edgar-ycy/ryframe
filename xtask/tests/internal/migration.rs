@@ -5,11 +5,55 @@ use std::{
 };
 
 use super::{
-    cli::MigrationScope,
-    migration::{FileOperations, PlannedWrite, commit_writes_with, create_migration},
+    cli::{MigrationOperation, MigrationScope, MigrationTarget},
+    migration::{
+        FileOperations, PlannedWrite, commit_writes_with, create_migration, migration_run_args,
+    },
 };
 
 static NEXT_DIR: AtomicU64 = AtomicU64::new(1);
+
+#[test]
+fn migration_runner_selects_only_the_migrate_binary_feature() {
+    let prefix = [
+        "run",
+        "--locked",
+        "-p",
+        "ryframe",
+        "--no-default-features",
+        "--features",
+        "bin-migrate",
+        "--bin",
+        "ryframe-migrate",
+        "--",
+    ];
+    let cases = [
+        (
+            MigrationOperation::Verify,
+            MigrationTarget::Control,
+            vec!["control", "verify"],
+        ),
+        (
+            MigrationOperation::Status,
+            MigrationTarget::TenantDataAll,
+            vec!["tenant-data", "status", "--all"],
+        ),
+        (
+            MigrationOperation::Up,
+            MigrationTarget::TenantDataOne("tenant-a".to_owned()),
+            vec!["tenant-data", "up", "--target", "tenant-a"],
+        ),
+    ];
+
+    for (operation, target, suffix) in cases {
+        let expected = prefix
+            .into_iter()
+            .chain(suffix)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        assert_eq!(migration_run_args(operation, &target), expected);
+    }
+}
 
 struct TestRoot(PathBuf);
 

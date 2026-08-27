@@ -13,6 +13,6 @@ pub(crate) use plan::run;
 #[allow(unused_imports)]
 pub(crate) use model::{FileOperations, PlannedWrite};
 #[allow(unused_imports)]
-pub(crate) use plan::create_migration;
+pub(crate) use plan::{create_migration, migration_run_args};
 #[allow(unused_imports)]
 pub(crate) use transaction::commit_writes_with;

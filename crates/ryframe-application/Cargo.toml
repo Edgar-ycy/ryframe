@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 description.workspace = true
 
+[features]
+default = []
+test-support = []
+
 [dependencies]
 ryframe-kernel = { path = "../ryframe-kernel" }
 ryframe-auth = { path = "../ryframe-auth" }

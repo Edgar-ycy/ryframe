@@ -5,11 +5,10 @@ use std::{
     time::Duration,
 };
 
-use ryframe_adapters::{
-    metrics,
-    storage::{
-        ObjectStorage, S3Config, S3ObjectStorage, normalize_sha256, parse_list_objects_response,
-    },
+#[cfg(feature = "monitoring")]
+use ryframe_adapters::metrics;
+use ryframe_adapters::storage::{
+    ObjectStorage, S3Config, S3ObjectStorage, normalize_sha256, parse_list_objects_response,
 };
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncReadExt;
@@ -105,6 +104,7 @@ fn list_response_is_unescaped_bounded_and_prefix_checked() {
     assert!(parse_list_objects_response(too_many, "scope/", 1).is_err());
 }
 
+#[cfg(feature = "monitoring")]
 #[tokio::test]
 async fn s3_metrics_record_each_complete_logical_operation_once() {
     let not_found =
@@ -257,6 +257,7 @@ fn spawn_http_responses(responses: Vec<Vec<u8>>) -> (String, thread::JoinHandle<
     (endpoint.to_string(), server)
 }
 
+#[cfg(feature = "monitoring")]
 fn operation_total(metrics: &str, operation: &str) -> f64 {
     metrics
         .lines()
@@ -267,6 +268,7 @@ fn operation_total(metrics: &str, operation: &str) -> f64 {
         .sum()
 }
 
+#[cfg(feature = "monitoring")]
 fn operation_result_total(metrics: &str, operation: &str, result: &str) -> f64 {
     metrics
         .lines()
@@ -279,6 +281,7 @@ fn operation_result_total(metrics: &str, operation: &str, result: &str) -> f64 {
         .map_or(0.0, metric_value)
 }
 
+#[cfg(feature = "monitoring")]
 fn metric_value(line: &str) -> f64 {
     line.split_whitespace()
         .last()

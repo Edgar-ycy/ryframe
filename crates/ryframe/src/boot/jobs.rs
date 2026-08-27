@@ -71,6 +71,7 @@ pub struct JobWorkerDependencies {
 
 impl JobWorkerDependencies {
     /// 从 API 已归组服务创建 Worker 依赖，避免进程入口重复枚举具体任务。
+    #[cfg(feature = "bin-api")]
     pub fn from_api_services(
         services: &ryframe_api::AppServices,
         redis: Option<RedisClient>,

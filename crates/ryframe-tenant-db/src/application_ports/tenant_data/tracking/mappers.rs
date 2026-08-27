@@ -3,12 +3,12 @@ use ryframe_application::ports::tenant_data::{
     TenantDataMigrationRecord, TenantDataPlacementRecord, TenantOperationLeaseRecord,
 };
 use ryframe_db::{
-    CreateTenantDataMigration, ValidatedTenantDataBackup,
     entities::tenant::{
         data_backup_point as tenant_data_backup_point, data_migration as tenant_data_migration,
         data_migration_item as tenant_data_migration_item, data_placement as tenant_data_placement,
         operation_lease as tenant_operation_lease,
     },
+    repositories::{CreateTenantDataMigration, ValidatedTenantDataBackup},
 };
 
 pub fn map_migration(model: tenant_data_migration::Model) -> TenantDataMigrationRecord {

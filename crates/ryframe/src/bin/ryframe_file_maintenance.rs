@@ -3,7 +3,7 @@
 //! 该命令只用于 FILE-A 单向切换：先校验旧 MD5 并回填 SHA-256，再清空旧版
 //! `del_flag = '3'` 上传预留。常规 API 与 Worker 不启用本二进制所需的 Cargo feature。
 
-#![cfg(feature = "file-maintenance")]
+#![cfg(feature = "bin-file-maintenance")]
 
 use std::{error::Error, sync::Arc};
 
@@ -99,6 +99,7 @@ enum DrainPlan {
 
 #[tokio::main]
 async fn main() -> Result<(), DynError> {
+    ryframe::crypto::install_crypto_provider()?;
     let arguments = parse_args(std::env::args().skip(1))?;
     let environment = Environment::from_required_env()?;
     let config = AppConfig::load_from_env(environment)?;

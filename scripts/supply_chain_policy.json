@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "tools": {
     "cargo-audit": "0.22.2",
     "cargo-deny": "0.20.2",
@@ -7,6 +7,85 @@
     "sccache": "0.17.0",
     "trivy": "0.72.0"
   },
+  "local_patch_licenses": [
+    {
+      "patch": "opentelemetry-otlp",
+      "package": "opentelemetry-otlp",
+      "version": "0.32.0",
+      "path": "vendor/opentelemetry-otlp",
+      "license_expression": "Apache-2.0",
+      "license_files": [
+        {
+          "spdx": "Apache-2.0",
+          "file": "LICENSE-APACHE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "registry_source": {
+            "package": "opentelemetry-proto",
+            "version": "0.32.0",
+            "file": "src/proto/opentelemetry-proto/LICENSE"
+          }
+        }
+      ]
+    },
+    {
+      "patch": "proc-macro-error2",
+      "package": "proc-macro-error2",
+      "version": "2.0.1",
+      "path": "vendor/proc-macro-error2",
+      "license_expression": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "spdx": "MIT",
+          "file": "LICENSE-MIT",
+          "sha256": "544b3aed1fd723d0cadea567affdcfe0431e43e18d997a718f9d67256b814fde",
+          "registry_source": {
+            "package": "proc-macro-error2",
+            "version": "2.0.1",
+            "file": "LICENSE-MIT"
+          }
+        },
+        {
+          "spdx": "Apache-2.0",
+          "file": "LICENSE-APACHE",
+          "sha256": "4665f973ccb9393807a7fb1264add6b3513d19abc6b357e4cb52c6fe59cc6a3b",
+          "registry_source": {
+            "package": "proc-macro-error2",
+            "version": "2.0.1",
+            "file": "LICENSE-APACHE"
+          }
+        }
+      ]
+    },
+    {
+      "patch": "sqlx",
+      "package": "sqlx",
+      "version": "0.9.0",
+      "path": "vendor/sqlx-mysql-only",
+      "license_expression": "MIT OR Apache-2.0",
+      "license_files": [
+        {
+          "spdx": "MIT",
+          "file": "LICENSE-MIT",
+          "sha256": "5abbdd842310c8f1650fcde3a5a51a3e09412b9e5a6eea87519e0db9e32b339d",
+          "registry_source": {
+            "package": "sqlx",
+            "version": "0.9.0",
+            "file": "LICENSE-MIT"
+          }
+        },
+        {
+          "spdx": "Apache-2.0",
+          "file": "LICENSE-APACHE",
+          "sha256": "c8f5453612253e8ea8bad241617fe74c4a6d5d592ba64ff881668c211b50ac99",
+          "registry_source": {
+            "package": "sqlx",
+            "version": "0.9.0",
+            "file": "LICENSE-APACHE"
+          }
+        }
+      ]
+    }
+  ],
   "service_images": [
     {
       "workflow": "ci.yml",
@@ -17,6 +96,18 @@
     {
       "workflow": "ci.yml",
       "job": "integration",
+      "service": "redis",
+      "image": "redis:7.4.9@sha256:a8f08480e1f88f2647fed492d1178c06abb0d0c1fbf02c682a61e2f483fb3954"
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "resource-gate",
+      "service": "mysql",
+      "image": "mysql:8.4.11@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb"
+    },
+    {
+      "workflow": "ci.yml",
+      "job": "resource-gate",
       "service": "redis",
       "image": "redis:7.4.9@sha256:a8f08480e1f88f2647fed492d1178c06abb0d0c1fbf02c682a61e2f483fb3954"
     },

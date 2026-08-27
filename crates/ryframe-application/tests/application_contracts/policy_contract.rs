@@ -1,8 +1,8 @@
 use chrono::{TimeZone, Utc};
 use ryframe_application::{
-    JobWorkerPolicy, PersistedTraceContext, current_trace_context, has_super_admin_role,
-    install_id_generator, is_valid_tenant_target_key, next_id, validate_cache_namespace,
-    validate_persisted_schedule_configuration,
+    JobWorkerPolicy, PersistedTraceContext, has_super_admin_role,
+    infrastructure::current_trace_context, install_id_generator, is_valid_tenant_target_key,
+    next_id, validate_cache_namespace, validate_persisted_schedule_configuration,
 };
 use ryframe_application::{
     ports::auth::IdentityRoleRecord,

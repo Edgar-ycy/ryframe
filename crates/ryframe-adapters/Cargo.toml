@@ -8,8 +8,23 @@ license.workspace = true
 repository.workspace = true
 description.workspace = true
 
+[features]
+default = []
+image-processing = ["dep:image"]
+monitoring = ["dep:prometheus", "dep:sysinfo"]
+otel = [
+    "monitoring",
+    "dep:opentelemetry",
+    "dep:opentelemetry_sdk",
+    "dep:opentelemetry-otlp",
+    "dep:opentelemetry-semantic-conventions",
+    "dep:tracing-opentelemetry",
+]
+redis = ["dep:redis", "monitoring"]
+spreadsheet = ["dep:calamine", "dep:rust_xlsxwriter"]
+
 [dependencies]
-ryframe-application = { path = "../ryframe-application" }
+ryframe-application = { path = "../ryframe-application", default-features = false }
 ryframe-kernel = { path = "../ryframe-kernel" }
 ryframe-config = { path = "../ryframe-config" }
 serde = { workspace = true, features = ["derive"] }
@@ -18,14 +33,14 @@ async-trait = {workspace = true}
 futures-util = { workspace = true }
 hex = { workspace = true }
 hmac = { workspace = true }
-image = { workspace = true }
+image = { workspace = true, optional = true, features = ["bmp", "gif", "jpeg", "png", "webp"] }
 percent-encoding = { workspace = true }
 quick-xml = "0.41.0"
 reqwest = { workspace = true, features = ["stream"] }
 chrono = { workspace = true, features = ["serde"] }
-calamine = { workspace = true }
-redis = { workspace = true }
-sysinfo = { workspace = true }
+calamine = { workspace = true, optional = true }
+redis = { workspace = true, optional = true }
+sysinfo = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["rt", "sync", "time", "fs", "io-util"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -34,18 +49,23 @@ rand = { workspace = true }
 thiserror = { workspace = true }
 sha2 = { workspace = true }
 toml = { workspace = true }
-prometheus = { workspace = true }
+prometheus = { workspace = true, optional = true }
 lazy_static = { workspace = true }
-opentelemetry = { workspace = true }
-opentelemetry_sdk = { workspace = true }
-opentelemetry-otlp = { workspace = true }
-opentelemetry-semantic-conventions = { workspace = true }
-tracing-opentelemetry = { workspace = true }
-rust_xlsxwriter = { workspace = true, features = ["constant_memory"] }
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
+opentelemetry-semantic-conventions = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
+rust_xlsxwriter = { workspace = true, optional = true, features = ["constant_memory"] }
 tempfile = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
+
+[[test]]
+name = "redis_real_protocol"
+path = "tests/redis_real_protocol.rs"
+required-features = ["redis"]
 
 [lints]
 workspace = true
