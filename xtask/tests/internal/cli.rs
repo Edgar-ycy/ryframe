@@ -24,6 +24,10 @@ fn parses_ci_internal_commands_exactly() {
         Command::Ci(CiCommand::RustGate)
     );
     assert_eq!(
+        parse_command(&["ci", "resource-gate"]).unwrap(),
+        Command::Ci(CiCommand::ResourceGate)
+    );
+    assert_eq!(
         parse_command(&["ci", "integration"]).unwrap(),
         Command::Ci(CiCommand::Integration)
     );

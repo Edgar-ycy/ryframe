@@ -19,6 +19,9 @@ use crate::{
     workspace::root_dir,
 };
 
+#[path = "ci/resource_gate.rs"]
+pub(crate) mod resource_gate;
+
 const FULL_CI_EVENTS: &[&str] = &["push", "schedule", "workflow_dispatch"];
 const INTEGRATION_PACKAGES: &[&str] = &["ryframe-adapters", "ryframe-db", "ryframe-tenant-db"];
 const WINDOWS_RUST_GATE_PROFILE: &str = "windows-smoke";
@@ -47,6 +50,7 @@ pub(crate) fn run(command: CiCommand, frontend_dir: &Path) -> Result<()> {
         CiCommand::Plan => plan(),
         CiCommand::Preflight => preflight(),
         CiCommand::RustGate => rust_gate(frontend_dir),
+        CiCommand::ResourceGate => resource_gate::run(frontend_dir),
         CiCommand::Integration => integration(),
         CiCommand::ConsumerContract => consumer_contract(frontend_dir),
     }

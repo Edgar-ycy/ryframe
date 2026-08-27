@@ -30,6 +30,7 @@ pub(crate) enum CiCommand {
     Plan,
     Preflight,
     RustGate,
+    ResourceGate,
     Integration,
     ConsumerContract,
 }
@@ -229,10 +230,11 @@ fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
         [command] if command == "plan" => Ok(CiCommand::Plan),
         [command] if command == "preflight" => Ok(CiCommand::Preflight),
         [command] if command == "rust-gate" => Ok(CiCommand::RustGate),
+        [command] if command == "resource-gate" => Ok(CiCommand::ResourceGate),
         [command] if command == "integration" => Ok(CiCommand::Integration),
         [command] if command == "consumer-contract" => Ok(CiCommand::ConsumerContract),
         _ => Err(CliError::new(
-            "用法：cargo xtask ci <plan|preflight|rust-gate|integration|consumer-contract>",
+            "用法：cargo xtask ci <plan|preflight|rust-gate|resource-gate|integration|consumer-contract>",
         )),
     }
 }
@@ -505,7 +507,7 @@ pub(crate) fn print_help(topic: Option<&str>) {
         }
         Some("migrate") => migration_usage(),
         Some("ci") => {
-            "cargo xtask ci <plan|preflight|rust-gate|integration|consumer-contract>\n  CI 内部稳定入口。"
+            "cargo xtask ci <plan|preflight|rust-gate|resource-gate|integration|consumer-contract>\n  CI 内部稳定入口。"
         }
         Some("devex") => devex::usage(),
         Some("doctor") => "cargo xtask doctor [--frontend-dir PATH]",
@@ -539,7 +541,7 @@ fn general_help() -> &'static str {
   cargo xtask check [--scope all|backend|frontend] [--frontend-dir PATH]\n\
   cargo xtask contract check [--frontend-dir PATH]\n\
   cargo xtask migrate freeze\n\
-  cargo xtask ci <plan|preflight|rust-gate|integration|consumer-contract>\n\
+  cargo xtask ci <plan|preflight|rust-gate|resource-gate|integration|consumer-contract>\n\
   cargo xtask devex run|summarize|compare ...\n\
   cargo xtask feature-matrix\n\
   cargo xtask release-verify ...\n\n\
