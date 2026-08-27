@@ -8,83 +8,54 @@ use std::{
 };
 
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::{Result, process::child_command};
 
-use super::model::{
-    CacheState, DevexRunOptions, DevexSuite, StepDefinition, SuiteDefinition, WorkingDirectory,
-};
+use super::model::{DevexSuite, StepDefinition, SuiteDefinition, WorkingDirectory};
+
+#[path = "metadata/schema.rs"]
+mod schema;
+
+use schema::{CommandMetadata, SourceState, Toolchain};
+pub(super) use schema::{MetadataContext, RunMetadata, SourceFingerprints};
 
 const ENVIRONMENT_WHITELIST: &[&str] = &[
+    "CC",
     "CARGO_BUILD_JOBS",
     "CARGO_ENCODED_RUSTFLAGS",
     "CARGO_INCREMENTAL",
     "CARGO_PROFILE_DEV_CODEGEN_UNITS",
     "CARGO_PROFILE_TEST_CODEGEN_UNITS",
     "CARGO_TARGET_DIR",
+    "CFLAGS",
     "CI",
+    "CMAKE_CXX_COMPILER_LAUNCHER",
+    "CMAKE_C_COMPILER_LAUNCHER",
+    "CXX",
+    "CXXFLAGS",
     "FORCE_COLOR",
     "NO_COLOR",
     "RUSTC_WRAPPER",
     "RUSTFLAGS",
+    "RYFRAME_DEVEX_SAVE_CASE",
+    "RYFRAME_DEVEX_TARGET_ROOT",
+    "RYFRAME_FAST_CHECK_CACHE_ROOT",
+    "RYFRAME_CI_BASE_SHA",
+    "RYFRAME_CI_HEAD_SHA",
+    "GITHUB_BASE_SHA",
+    "GITHUB_SHA",
+    "SCCACHE_BASEDIRS",
+    "SCCACHE_DIR",
+    "SCCACHE_ENDPOINT",
     "SCCACHE_GHA_ENABLED",
+    "SCCACHE_IDLE_TIMEOUT",
+    "SCCACHE_NO_DAEMON",
     "SCCACHE_RECACHE",
+    "SCCACHE_SERVER_PORT",
+    "SCCACHE_SERVER_UDS",
 ];
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub(super) struct RunMetadata {
-    pub(super) schema_version: u8,
-    pub(super) run_id: String,
-    pub(super) started_at: String,
-    pub(super) suite: DevexSuite,
-    pub(super) variant: String,
-    pub(super) cache_state: CacheState,
-    pub(super) requested_runs: usize,
-    pub(super) backend: SourceState,
-    pub(super) frontend: Option<SourceState>,
-    pub(super) toolchain: Toolchain,
-    pub(super) target: String,
-    pub(super) features: Vec<String>,
-    pub(super) jobs: usize,
-    pub(super) environment: BTreeMap<String, String>,
-    pub(super) environment_hash: String,
-    pub(super) commands: Vec<CommandMetadata>,
-    pub(super) compile_surface_fingerprint: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub(super) struct SourceState {
-    commit: Option<String>,
-    dirty: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub(super) struct Toolchain {
-    cargo: String,
-    rustc: String,
-    node: Option<String>,
-    pnpm: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub(super) struct CommandMetadata {
-    working_directory: String,
-    program: String,
-    args: Vec<String>,
-}
-
-pub(super) struct MetadataContext<'a> {
-    pub(super) backend_root: &'a Path,
-    pub(super) frontend_root: &'a Path,
-    pub(super) devex_root: &'a Path,
-    pub(super) run_id: &'a str,
-    pub(super) options: &'a DevexRunOptions,
-    pub(super) definition: SuiteDefinition,
-    pub(super) effective_environment: &'a BTreeMap<String, String>,
-}
 
 pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
     let normalizer = PathNormalizer::new(
@@ -92,11 +63,7 @@ pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
         context.frontend_root,
         context.devex_root,
     );
-    let frontend_suite = context
-        .definition
-        .steps
-        .iter()
-        .any(|step| step.working_directory == WorkingDirectory::Frontend);
+    let frontend_suite = context.definition.requires_frontend;
     let toolchain = Toolchain {
         cargo: version(context.backend_root, "cargo", &["--version"]),
         rustc: version(context.backend_root, "rustc", &["-vV"]),
@@ -109,8 +76,9 @@ pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
             )
         }),
     };
-    let environment_hash = environment_hash(context.effective_environment);
-    let environment = visible_environment(context.effective_environment, &normalizer);
+    let comparable_environment = comparable_environment(context.effective_environment, &normalizer);
+    let environment_hash = environment_hash(&comparable_environment);
+    let environment = visible_environment(&comparable_environment);
     let commands = command_metadata(context.definition.steps);
     let target = rust_host(&toolchain.rustc).unwrap_or_else(|| env::consts::ARCH.to_owned());
     let jobs = context
@@ -119,18 +87,26 @@ pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
         .and_then(|value| value.parse().ok())
         .unwrap_or_else(default_jobs);
     let compile_surface_fingerprint = compile_surface_fingerprint(
-        context.backend_root,
-        context.frontend_root,
         context.options.suite,
+        &context.options.variant,
         &toolchain,
         &target,
         context.definition,
         &commands,
         &environment_hash,
         jobs,
+    )?;
+    let input_fingerprint = input_fingerprint(
+        context.backend_root,
+        context.frontend_root,
+        context.definition,
         &normalizer,
     )?;
 
+    let backend = source_state(context.backend_root)?;
+    let frontend = frontend_suite
+        .then(|| source_state(context.frontend_root))
+        .transpose()?;
     Ok(RunMetadata {
         schema_version: 1,
         run_id: context.run_id.to_owned(),
@@ -139,8 +115,8 @@ pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
         variant: context.options.variant.clone(),
         cache_state: context.options.cache_state,
         requested_runs: context.options.runs,
-        backend: source_state(context.backend_root),
-        frontend: frontend_suite.then(|| source_state(context.frontend_root)),
+        backend,
+        frontend,
         toolchain,
         target,
         features: context
@@ -154,6 +130,8 @@ pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
         environment_hash,
         commands,
         compile_surface_fingerprint,
+        input_fingerprint,
+        pairing: context.pairing,
     })
 }
 
@@ -175,17 +153,33 @@ pub(crate) fn filter_environment(
         .collect()
 }
 
-fn visible_environment(
+fn comparable_environment(
     environment: &BTreeMap<String, String>,
     normalizer: &PathNormalizer,
 ) -> BTreeMap<String, String> {
     environment
         .iter()
         .map(|(key, value)| {
+            let value = if key == "SCCACHE_DIR" {
+                "$RUN_CACHE/sccache".to_owned()
+            } else if key == "SCCACHE_SERVER_PORT" {
+                "$EPHEMERAL_PORT".to_owned()
+            } else {
+                normalizer.normalize_environment_value(value)
+            };
+            (key.clone(), value)
+        })
+        .collect()
+}
+
+fn visible_environment(environment: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    environment
+        .iter()
+        .map(|(key, value)| {
             let value = if matches!(key.as_str(), "RUSTFLAGS" | "CARGO_ENCODED_RUSTFLAGS") {
                 format!("{}（内容仅参与哈希）", sha256(value.as_bytes()))
             } else {
-                normalizer.normalize_environment_value(value)
+                value.clone()
             };
             (key.clone(), value)
         })
@@ -217,42 +211,46 @@ fn command_metadata(steps: &[StepDefinition]) -> Vec<CommandMetadata> {
 
 #[allow(clippy::too_many_arguments)]
 fn compile_surface_fingerprint(
-    backend_root: &Path,
-    frontend_root: &Path,
     suite: DevexSuite,
+    variant: &str,
     toolchain: &Toolchain,
     target: &str,
     definition: SuiteDefinition,
     commands: &[CommandMetadata],
     environment_hash: &str,
     jobs: usize,
-    normalizer: &PathNormalizer,
 ) -> Result<String> {
-    let frontend_suite = definition
-        .steps
-        .iter()
-        .any(|step| step.working_directory == WorkingDirectory::Frontend);
-    let cargo_metadata = (!frontend_suite)
-        .then(|| normalized_cargo_metadata(backend_root, normalizer))
-        .transpose()?;
-    let inputs = if frontend_suite {
-        input_hashes(frontend_root, FRONTEND_COMPILE_INPUTS)
-    } else {
-        rust_input_hashes(backend_root, cargo_metadata.as_ref())
-    }?;
     let document = json!({
         "schema_version": 1,
         "suite": suite,
+        "variant": variant,
         "toolchain": toolchain,
         "target": target,
         "features": definition.features,
         "jobs": jobs,
         "environment_hash": environment_hash,
         "commands": commands,
-        "cargo_metadata": cargo_metadata,
-        "inputs": inputs,
     });
     Ok(sha256(&serde_json::to_vec(&document)?))
+}
+
+fn input_fingerprint(
+    backend_root: &Path,
+    frontend_root: &Path,
+    definition: SuiteDefinition,
+    normalizer: &PathNormalizer,
+) -> Result<String> {
+    let cargo_metadata = normalized_cargo_metadata(backend_root, normalizer)?;
+    let rust_inputs = rust_input_hashes(backend_root, Some(&cargo_metadata))?;
+    let frontend_inputs = definition
+        .requires_frontend
+        .then(|| input_hashes(frontend_root, FRONTEND_COMPILE_INPUTS))
+        .transpose()?;
+    Ok(sha256(&serde_json::to_vec(&json!({
+        "cargo_metadata": cargo_metadata,
+        "rust_inputs": rust_inputs,
+        "frontend_inputs": frontend_inputs,
+    }))?))
 }
 
 fn normalized_cargo_metadata(root: &Path, normalizer: &PathNormalizer) -> Result<Value> {
@@ -343,12 +341,94 @@ fn input_hashes(root: &Path, paths: &[&str]) -> Result<BTreeMap<String, String>>
         .collect()
 }
 
-fn source_state(root: &Path) -> SourceState {
-    SourceState {
-        commit: git_text(root, &["rev-parse", "HEAD"]),
-        dirty: git_text(root, &["status", "--porcelain", "--untracked-files=all"])
-            .map(|status| !status.is_empty()),
+fn source_state(root: &Path) -> Result<SourceState> {
+    let commit = git_text(root, &["rev-parse", "HEAD"])
+        .ok_or_else(|| format!("无法读取源码提交：{}", root.display()))?;
+    let status = git_text(root, &["status", "--porcelain", "--untracked-files=all"])
+        .ok_or_else(|| format!("无法读取源码状态：{}", root.display()))?;
+    Ok(SourceState {
+        commit: Some(commit.clone()),
+        dirty: Some(!status.is_empty()),
+        worktree_fingerprint: worktree_fingerprint(root, &commit)?,
+    })
+}
+
+pub(super) fn collect_source_fingerprints(
+    backend_root: &Path,
+    frontend_root: Option<&Path>,
+) -> Result<SourceFingerprints> {
+    Ok(SourceFingerprints {
+        backend: source_state(backend_root)?.worktree_fingerprint,
+        frontend: frontend_root
+            .map(source_state)
+            .transpose()?
+            .map(|state| state.worktree_fingerprint),
+    })
+}
+
+impl RunMetadata {
+    pub(super) fn source_fingerprints(&self) -> SourceFingerprints {
+        SourceFingerprints {
+            backend: self.backend.worktree_fingerprint.clone(),
+            frontend: self
+                .frontend
+                .as_ref()
+                .map(|state| state.worktree_fingerprint.clone()),
+        }
     }
+}
+
+fn worktree_fingerprint(root: &Path, commit: &str) -> Result<String> {
+    let tracked = git_output(
+        root,
+        &["diff", "--binary", "--no-ext-diff", "HEAD", "--", "."],
+    )?;
+    let untracked = git_output(root, &["ls-files", "--others", "--exclude-standard", "-z"])?;
+    let mut digest = Sha256::new();
+    update_digest(&mut digest, commit.as_bytes());
+    update_digest(&mut digest, &tracked);
+    for raw_path in untracked
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+    {
+        let relative = std::str::from_utf8(raw_path)
+            .map_err(|_| "未跟踪文件路径不是 UTF-8，无法建立源码指纹")?;
+        let relative_path = Path::new(relative);
+        if relative_path.is_absolute()
+            || relative_path.components().any(|component| {
+                matches!(
+                    component,
+                    std::path::Component::ParentDir
+                        | std::path::Component::RootDir
+                        | std::path::Component::Prefix(_)
+                )
+            })
+        {
+            return Err(format!("Git 返回越界的未跟踪路径：{relative}").into());
+        }
+        update_digest(&mut digest, raw_path);
+        update_digest(&mut digest, &fs::read(root.join(relative_path))?);
+    }
+    Ok(format_digest(digest.finalize()))
+}
+
+fn git_output(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
+    let output = Command::new("git").args(args).current_dir(root).output()?;
+    if output.status.success() {
+        Ok(output.stdout)
+    } else {
+        Err(format!(
+            "git {} 失败：{}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+        .into())
+    }
+}
+
+fn update_digest(digest: &mut Sha256, value: &[u8]) {
+    digest.update((value.len() as u64).to_le_bytes());
+    digest.update(value);
 }
 
 fn git_text(root: &Path, args: &[&str]) -> Option<String> {
@@ -393,7 +473,11 @@ pub(super) fn corepack_executable() -> &'static str {
 }
 
 fn sha256(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
+    format_digest(Sha256::digest(bytes))
+}
+
+fn format_digest(digest: impl AsRef<[u8]>) -> String {
+    let digest = digest.as_ref();
     let mut value = String::with_capacity(7 + digest.len() * 2);
     value.push_str("sha256:");
     for byte in digest {

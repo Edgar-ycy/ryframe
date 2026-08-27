@@ -2,7 +2,7 @@ use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex, MutexGuard,
         atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver, RecvTimeoutError},
     },
@@ -36,15 +36,54 @@ pub(crate) struct ChangeBatch {
 pub(crate) enum WatchEvent {
     BackendChanged {
         revision: SourceRevision,
-        path: String,
+        paths: BTreeSet<String>,
     },
     Failed(String),
 }
 
 pub(crate) struct SourceWatcher {
     receiver: Receiver<WatchEvent>,
-    revision: Arc<AtomicU64>,
+    revision: Arc<SourceRevisionTracker>,
     _watcher: RecommendedWatcher,
+}
+
+#[derive(Default)]
+pub(crate) struct SourceRevisionTracker {
+    revision: AtomicU64,
+    event_order: Mutex<()>,
+}
+
+impl SourceRevisionTracker {
+    pub(crate) fn current_revision(&self) -> SourceRevision {
+        SourceRevision::from_value(self.revision.load(Ordering::Acquire))
+    }
+
+    /// 与事件代次分配共享串行化点。返回 `true` 后到达的事件进入下一轮队列，
+    /// 不再撤销已经获准进入正式端口切换临界区的候选。
+    pub(crate) fn final_revision_fence(&self, expected: SourceRevision) -> bool {
+        let _order = self.lock_event_order();
+        self.current_revision() == expected
+    }
+
+    fn lock_event_order(&self) -> MutexGuard<'_, ()> {
+        self.event_order
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    pub(crate) fn record_paths(
+        &self,
+        root: &Path,
+        event_paths: &[PathBuf],
+    ) -> Option<(SourceRevision, BTreeSet<String>)> {
+        let _order = self.lock_event_order();
+        let paths = relevant_paths(root, event_paths);
+        (!paths.is_empty()).then(|| (self.next_revision(), paths))
+    }
+
+    fn next_revision(&self) -> SourceRevision {
+        SourceRevision::from_value(self.revision.fetch_add(1, Ordering::AcqRel) + 1)
+    }
 }
 
 impl SourceWatcher {
@@ -52,7 +91,7 @@ impl SourceWatcher {
         let root = root.to_path_buf();
         let callback_root = root.clone();
         let (sender, receiver) = mpsc::channel();
-        let revision = Arc::new(AtomicU64::new(0));
+        let revision = Arc::new(SourceRevisionTracker::default());
         let callback_revision = Arc::clone(&revision);
         let mut watcher =
             notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
@@ -63,11 +102,10 @@ impl SourceWatcher {
                         return;
                     }
                 };
-                if let Some(path) = first_relevant_path(&callback_root, &event.paths) {
-                    let revision = SourceRevision::from_value(
-                        callback_revision.fetch_add(1, Ordering::AcqRel) + 1,
-                    );
-                    let _ = sender.send(WatchEvent::BackendChanged { revision, path });
+                if let Some((revision, paths)) =
+                    callback_revision.record_paths(&callback_root, &event.paths)
+                {
+                    let _ = sender.send(WatchEvent::BackendChanged { revision, paths });
                 }
             })?;
 
@@ -94,29 +132,33 @@ impl SourceWatcher {
     }
 
     pub(crate) fn current_revision(&self) -> SourceRevision {
-        SourceRevision::from_value(self.revision.load(Ordering::Acquire))
+        self.revision.current_revision()
     }
 
     pub(crate) fn is_superseded(&self, expected: SourceRevision) -> bool {
         self.current_revision() > expected
     }
 
+    pub(crate) fn final_revision_fence(&self, expected: SourceRevision) -> bool {
+        self.revision.final_revision_fence(expected)
+    }
+
     pub(crate) fn drain_changes(
         &self,
         initial_revision: SourceRevision,
-        initial_path: String,
+        initial_paths: BTreeSet<String>,
         quiet_period: Duration,
     ) -> Result<ChangeBatch> {
         let mut revision = initial_revision;
-        let mut paths = BTreeSet::from([initial_path]);
+        let mut paths = initial_paths;
         loop {
             match self.receiver.recv_timeout(quiet_period) {
                 Ok(WatchEvent::BackendChanged {
                     revision: next_revision,
-                    path,
+                    paths: next_paths,
                 }) => {
                     revision = revision.max(next_revision);
-                    paths.insert(path);
+                    paths.extend(next_paths);
                 }
                 Ok(WatchEvent::Failed(error)) => return Err(error.into()),
                 Err(RecvTimeoutError::Timeout) => return Ok(ChangeBatch { revision, paths }),
@@ -128,12 +170,15 @@ impl SourceWatcher {
     }
 }
 
-fn first_relevant_path(root: &Path, paths: &[PathBuf]) -> Option<String> {
-    paths.iter().find_map(|path| {
-        let relative = path.strip_prefix(root).unwrap_or(path);
-        let normalized = relative.to_string_lossy().replace('\\', "/");
-        is_backend_watch_path(&normalized).then_some(normalized)
-    })
+pub(crate) fn relevant_paths(root: &Path, paths: &[PathBuf]) -> BTreeSet<String> {
+    paths
+        .iter()
+        .filter_map(|path| {
+            let relative = path.strip_prefix(root).unwrap_or(path);
+            let normalized = relative.to_string_lossy().replace('\\', "/");
+            is_backend_watch_path(&normalized).then_some(normalized)
+        })
+        .collect()
 }
 
 pub(crate) fn is_backend_watch_path(path: &str) -> bool {

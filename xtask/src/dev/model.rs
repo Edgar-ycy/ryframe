@@ -1,15 +1,15 @@
-use std::{collections::BTreeSet, path::PathBuf, process::Child, time::Duration};
+use std::{collections::BTreeSet, path::PathBuf, time::Duration};
 
 use crate::{
+    process::ManagedChild,
     watch::{ChangeBatch, SourceRevision},
-    workspace::root_dir,
 };
 
-use super::{build::cleanup_binaries, services::stop_all};
+use super::services::stop_all;
 
 pub(super) const HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
 pub(super) const WATCH_DEBOUNCE: Duration = Duration::from_millis(350);
-pub(super) const LOOP_INTERVAL: Duration = Duration::from_millis(200);
+pub(super) const LOOP_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ChangeKind {
@@ -58,6 +58,28 @@ pub(crate) enum ProbeResult {
     Cancelled,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ServiceLaunchMode {
+    Development,
+    Probe,
+}
+
+impl ServiceLaunchMode {
+    pub(super) const fn is_probe(self) -> bool {
+        matches!(self, Self::Probe)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChangeOutcome {
+    Promoted,
+    VerifiedNoRestart,
+    Failed,
+    Superseded,
+    Ignored,
+    Shutdown,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BuildPlan {
     pub(crate) source_revision: SourceRevision,
@@ -96,8 +118,7 @@ impl BuildPlan {
             || reasons.contains(&ChangeKind::UnknownBackend);
         let shared = full
             || reasons.contains(&ChangeKind::SharedRuntime)
-            || reasons.contains(&ChangeKind::ControlPersistence)
-            || reasons.contains(&ChangeKind::TenantPersistence);
+            || reasons.contains(&ChangeKind::ControlPersistence);
         let api_rebuild = shared
             || reasons.contains(&ChangeKind::ApiOnly)
             || reasons.contains(&ChangeKind::LocaleCatalog);
@@ -138,6 +159,13 @@ impl BuildPlan {
     pub(crate) fn is_noop(&self) -> bool {
         !self.restart_pair && !self.migrate && !self.resource_check && !self.tool_self_changed
     }
+
+    pub(crate) fn cargo_invocations(&self) -> usize {
+        usize::from(self.resource_check)
+            + usize::from(self.api == ArtifactAction::Rebuild)
+            + usize::from(self.worker == ArtifactAction::Rebuild)
+            + usize::from(self.migrate)
+    }
 }
 
 fn artifact_action(rebuild: bool, restart_pair: bool) -> ArtifactAction {
@@ -152,6 +180,9 @@ fn artifact_action(rebuild: bool, restart_pair: bool) -> ArtifactAction {
 
 pub(crate) fn classify_change(path: &str) -> ChangeKind {
     let path = path.replace('\\', "/").to_ascii_lowercase();
+    if path.starts_with("xtask/") {
+        return ChangeKind::ToolSelf;
+    }
     if matches!(
         path.as_str(),
         "cargo.toml" | "cargo.lock" | "build.rs" | "rust-toolchain" | "rust-toolchain.toml"
@@ -160,9 +191,6 @@ pub(crate) fn classify_change(path: &str) -> ChangeKind {
         || path.ends_with("/build.rs")
     {
         return ChangeKind::BuildGraph;
-    }
-    if path.starts_with("xtask/") {
-        return ChangeKind::ToolSelf;
     }
     if matches!(
         path.as_str(),
@@ -182,16 +210,19 @@ pub(crate) fn classify_change(path: &str) -> ChangeKind {
     if path.starts_with("catalog/access") {
         return ChangeKind::ControlPersistence;
     }
-    if path.starts_with("crates/ryframe-generator/") || path.starts_with("crates/ryframe-macro/") {
+    if path.starts_with("crates/ryframe-generator/") {
         return ChangeKind::GeneratorTool;
     }
     if path.starts_with("crates/ryframe-api/")
         || path == "crates/ryframe/src/main.rs"
+        || path == "crates/ryframe/src/app.rs"
         || path.starts_with("crates/ryframe/src/app/")
     {
         return ChangeKind::ApiOnly;
     }
-    if path == "crates/ryframe/src/bin/ryframe_worker.rs" {
+    if path == "crates/ryframe/src/bin/ryframe_worker.rs"
+        || path.starts_with("crates/ryframe/src/bin/ryframe_worker/")
+    {
         return ChangeKind::WorkerOnly;
     }
     if path == "crates/ryframe/src/bin/ryframe_migrate.rs" {
@@ -205,6 +236,7 @@ pub(crate) fn classify_change(path: &str) -> ChangeKind {
     }
     if [
         "crates/ryframe-application/",
+        "crates/ryframe-macro/",
         "crates/ryframe-kernel/",
         "crates/ryframe-auth/",
         "crates/ryframe-config/",
@@ -222,31 +254,30 @@ pub(crate) fn classify_change(path: &str) -> ChangeKind {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct Binaries {
-    pub(super) source_revision: SourceRevision,
-    pub(super) api: PathBuf,
-    pub(super) worker: PathBuf,
-    pub(super) generation_dir: PathBuf,
-    pub(super) runtime_dir: PathBuf,
-    pub(super) config_dir: PathBuf,
-    pub(super) locales_dir: PathBuf,
+pub(crate) struct Binaries {
+    pub(crate) source_revision: SourceRevision,
+    pub(crate) api: PathBuf,
+    pub(crate) worker: PathBuf,
+    pub(crate) generation_dir: PathBuf,
+    pub(crate) runtime_dir: PathBuf,
+    pub(crate) config_dir: PathBuf,
+    pub(crate) locales_dir: PathBuf,
 }
 
 pub(super) struct Services {
-    pub(super) api: Child,
-    pub(super) worker: Child,
+    pub(super) api: ManagedChild,
+    pub(super) worker: ManagedChild,
     pub(super) binaries: Binaries,
 }
 
 pub(super) struct RunningProcesses {
     pub(super) services: Services,
-    pub(super) vite: Child,
+    pub(super) vite: ManagedChild,
 }
 
 impl Drop for RunningProcesses {
     fn drop(&mut self) {
         let _ = stop_all(&mut self.services, &mut self.vite);
-        let _ = cleanup_binaries(&root_dir(), &self.services.binaries);
     }
 }
 

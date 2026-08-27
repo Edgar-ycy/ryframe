@@ -16,6 +16,11 @@ pub(super) struct DevPorts {
 }
 
 impl DevPorts {
+    pub(super) fn isolated() -> Result<Self> {
+        let (api, worker) = super::health::available_ports()?;
+        Ok(Self { api, worker })
+    }
+
     pub(super) fn from_environment() -> Result<Self> {
         let ports = Self {
             api: environment_port("APP_APP_PORT", 8080)?,
@@ -49,6 +54,16 @@ pub(super) struct WorkerIds {
 }
 
 impl WorkerIds {
+    pub(super) fn isolated(seed: u16) -> Self {
+        let base = seed % 1020;
+        Self {
+            api: base,
+            worker: base + 1,
+            probe_api: base + 2,
+            probe_worker: base + 3,
+        }
+    }
+
     pub(super) fn from_environment() -> Result<Self> {
         let base = match env::var("SNOWFLAKE_WORKER_ID") {
             Ok(value) => value

@@ -1,17 +1,19 @@
 use std::{
     io::{Read, Write},
     net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream},
-    process::Child,
     thread,
     time::{Duration, Instant},
 };
 
-use crate::Result;
+use crate::{Result, process::ManagedChild};
 
 use super::{
     model::{CycleControl, HEALTH_TIMEOUT, LOOP_INTERVAL},
     services::ensure_running,
 };
+
+const READYZ_CONNECT_TIMEOUT: Duration = Duration::from_millis(200);
+const READYZ_IO_TIMEOUT: Duration = Duration::from_millis(200);
 
 pub(crate) fn combine_failures<T, const N: usize>(
     result: Result<T>,
@@ -46,7 +48,7 @@ pub(crate) fn start_worker_after_api_ready<T>(
 }
 
 pub(super) fn wait_healthy_until(
-    child: &mut Child,
+    child: &mut ManagedChild,
     port: u16,
     label: &str,
     health_deadline: Instant,
@@ -134,7 +136,22 @@ where
             .into());
         }
         let api_is_ready = api_ready();
+        let current = control();
+        if current != CycleControl::Continue {
+            return Ok(current);
+        }
+        if Instant::now() >= health_deadline {
+            return Err(format!(
+                "{api_label} 与 {worker_label} 未在共享 {} 秒截止时间内同时通过 /readyz",
+                HEALTH_TIMEOUT.as_secs()
+            )
+            .into());
+        }
         let worker_is_ready = worker_ready();
+        let current = control();
+        if current != CycleControl::Continue {
+            return Ok(current);
+        }
         if api_is_ready && worker_is_ready && Instant::now() <= health_deadline {
             ensure_api_running()?;
             ensure_worker_running()?;
@@ -146,11 +163,11 @@ where
 
 pub(super) fn http_readyz(port: u16) -> bool {
     let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
-    let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(250)) else {
+    let Ok(mut stream) = TcpStream::connect_timeout(&address, READYZ_CONNECT_TIMEOUT) else {
         return false;
     };
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
-    let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+    let _ = stream.set_read_timeout(Some(READYZ_IO_TIMEOUT));
+    let _ = stream.set_write_timeout(Some(READYZ_IO_TIMEOUT));
     if stream
         .write_all(b"GET /readyz HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
         .is_err()

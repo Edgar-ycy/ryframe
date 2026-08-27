@@ -15,7 +15,7 @@ pub(crate) enum Command {
     Contract { operation: ContractOperation },
     FeatureMatrix,
     ReleaseVerify(ReleaseOptions),
-    Dev,
+    Dev { measure_once: bool },
     Verify { scope: CheckScope, full: bool },
     Resource(ResourceCommand),
     ApiSync(ApiSyncCommand),
@@ -204,8 +204,16 @@ pub(crate) fn parse(mut args: Vec<String>) -> Result<Cli, CliError> {
         }
         "release-verify" => Command::ReleaseVerify(parse_release(&args)?),
         "dev" => {
-            require_empty(&args, "cargo dev")?;
-            Command::Dev
+            let measure_once = match args.as_slice() {
+                [] => false,
+                [flag] if flag == "--measure-once" => true,
+                _ => {
+                    return Err(CliError::new(
+                        "用法：cargo dev [--measure-once]；一次性场景由 RYFRAME_DEVEX_SAVE_CASE 选择",
+                    ));
+                }
+            };
+            Command::Dev { measure_once }
         }
         "verify" => {
             let (scope, full) = parse_scope_options(&args, true)?;
@@ -494,7 +502,8 @@ fn require_empty(args: &[String], usage: &str) -> Result<(), CliError> {
 pub(crate) fn print_help(topic: Option<&str>) {
     let help = match topic {
         Some("dev") => {
-            "cargo dev [--frontend-dir PATH]\n  监听并管理 API、Worker 与 Vite；失败时保留 last-known-good。"
+            "cargo dev [--frontend-dir PATH]\n  监听并管理 API、Worker 与 Vite；失败时保留 last-known-good。\n\
+             RYFRAME_DEVEX_SAVE_CASE=<case> cargo dev --measure-once\n  只运行一次保存反馈测量；case 支持 config-only、api-only、worker-only、shared-runtime、locales、migration-only、resource-manifest。"
         }
         Some("verify") => {
             "cargo verify [--full] [--scope all|backend|frontend] [--frontend-dir PATH]\n  根据前后端 Git 变更执行最小安全检查；--full 执行完整本地门禁。"

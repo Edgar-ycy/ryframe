@@ -1,77 +1,160 @@
-use std::process::{Child, Command};
+use std::{
+    ops::{Deref, DerefMut},
+    process::{Child, Command},
+};
 
 use crate::Result;
 
 use super::prepare_process_group;
 
-/// 开发任务的子进程容器。Windows 使用带 `KILL_ON_JOB_CLOSE` 的 Job Object，
-/// 即使 xtask 异常退出也会回收 API、Worker、Vite 及其后代进程。
-pub(crate) struct ChildGroup {
+/// 开发任务的子进程工厂。每次 spawn 都创建独立的可终止进程树，避免一个构建代次
+/// 借用整个 dev 会话的生命周期。
+pub(crate) struct ChildGroup;
+
+/// 一个直接子进程及其独立进程树所有权。
+pub(crate) struct ManagedChild {
+    child: Child,
     #[cfg(windows)]
     job: windows_sys::Win32::Foundation::HANDLE,
+    #[cfg(unix)]
+    process_group_id: u32,
 }
 
 impl ChildGroup {
     pub(crate) fn new() -> Result<Self> {
-        #[cfg(windows)]
-        {
-            use std::{ffi::c_void, mem};
-            use windows_sys::Win32::{
-                Foundation::{CloseHandle, HANDLE},
-                System::JobObjects::{
-                    CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-                    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-                    SetInformationJobObject,
-                },
-            };
-
-            let job: HANDLE = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
-            if job.is_null() {
-                return Err(format!(
-                    "无法创建 Windows Job Object：{}",
-                    std::io::Error::last_os_error()
-                )
-                .into());
-            }
-            let mut information: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { mem::zeroed() };
-            information.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            let configured = unsafe {
-                SetInformationJobObject(
-                    job,
-                    JobObjectExtendedLimitInformation,
-                    (&raw const information).cast::<c_void>(),
-                    u32::try_from(mem::size_of_val(&information))
-                        .expect("Job Object 配置大小必须可由 u32 表示"),
-                )
-            };
-            if configured == 0 {
-                let error = std::io::Error::last_os_error();
-                unsafe { CloseHandle(job) };
-                return Err(format!("无法配置 Windows Job Object：{error}").into());
-            }
-            Ok(Self { job })
-        }
-        #[cfg(not(windows))]
-        {
-            Ok(Self {})
-        }
+        Ok(Self)
     }
 
-    pub(crate) fn spawn(&self, command: &mut Command) -> Result<Child> {
+    pub(crate) fn spawn(&self, command: &mut Command) -> Result<ManagedChild> {
         prepare_process_group(command);
-        let child = command.spawn()?;
+        #[cfg(windows)]
+        let job = create_kill_on_close_job()?;
+        let child = match command.spawn() {
+            Ok(child) => child,
+            Err(error) => {
+                #[cfg(windows)]
+                unsafe {
+                    windows_sys::Win32::Foundation::CloseHandle(job);
+                }
+                return Err(error.into());
+            }
+        };
+        #[cfg(unix)]
+        let process_group_id = child.id();
         #[cfg(windows)]
         let mut child = child;
         #[cfg(windows)]
         {
-            if let Err(error) = assign_and_resume_suspended_child(self.job, &child) {
+            if let Err(error) = assign_and_resume_suspended_child(job, &child) {
                 let _ = child.kill();
                 let _ = child.wait();
+                unsafe { windows_sys::Win32::Foundation::CloseHandle(job) };
                 return Err(error);
             }
         }
-        Ok(child)
+        Ok(ManagedChild {
+            child,
+            #[cfg(windows)]
+            job,
+            #[cfg(unix)]
+            process_group_id,
+        })
     }
+}
+
+impl Deref for ManagedChild {
+    type Target = Child;
+
+    fn deref(&self) -> &Self::Target {
+        &self.child
+    }
+}
+
+impl DerefMut for ManagedChild {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.child
+    }
+}
+
+impl ManagedChild {
+    #[cfg(windows)]
+    pub(super) fn terminate_tree(&self) -> Result<()> {
+        use windows_sys::Win32::System::JobObjects::TerminateJobObject;
+
+        if unsafe { TerminateJobObject(self.job, 1) } == 0 {
+            return Err(format!(
+                "无法终止 Windows 子进程 Job Object：{}",
+                std::io::Error::last_os_error()
+            )
+            .into());
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    pub(super) const fn process_group_id(&self) -> u32 {
+        self.process_group_id
+    }
+}
+
+impl Drop for ManagedChild {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        {
+            if !self.job.is_null() {
+                unsafe { windows_sys::Win32::Foundation::CloseHandle(self.job) };
+                self.job = std::ptr::null_mut();
+            }
+        }
+        #[cfg(unix)]
+        {
+            let _ = super::signal_process_group(self.process_group_id, libc::SIGKILL);
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = self.child.kill();
+        }
+        let _ = self.child.wait();
+    }
+}
+
+#[cfg(windows)]
+fn create_kill_on_close_job() -> Result<windows_sys::Win32::Foundation::HANDLE> {
+    use std::{ffi::c_void, mem};
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, HANDLE},
+        System::JobObjects::{
+            CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+            SetInformationJobObject,
+        },
+    };
+
+    let job: HANDLE = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    if job.is_null() {
+        return Err(format!(
+            "无法创建 Windows Job Object：{}",
+            std::io::Error::last_os_error()
+        )
+        .into());
+    }
+    let mut information: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { mem::zeroed() };
+    information.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    let configured = unsafe {
+        SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            (&raw const information).cast::<c_void>(),
+            u32::try_from(mem::size_of_val(&information))
+                .expect("Job Object 配置大小必须可由 u32 表示"),
+        )
+    };
+    if configured == 0 {
+        let error = std::io::Error::last_os_error();
+        unsafe { CloseHandle(job) };
+        return Err(format!("无法配置 Windows Job Object：{error}").into());
+    }
+    Ok(job)
 }
 
 #[cfg(windows)]
@@ -160,14 +243,4 @@ fn resume_initial_thread(process_id: u32) -> Result<()> {
     })();
     unsafe { CloseHandle(snapshot) };
     result
-}
-
-#[cfg(windows)]
-impl Drop for ChildGroup {
-    fn drop(&mut self) {
-        if !self.job.is_null() {
-            unsafe { windows_sys::Win32::Foundation::CloseHandle(self.job) };
-            self.job = std::ptr::null_mut();
-        }
-    }
 }

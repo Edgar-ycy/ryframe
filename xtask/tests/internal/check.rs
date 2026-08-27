@@ -16,12 +16,13 @@ use super::check::{
     WORKSPACE_CLIPPY_ARGS, WorkspaceGraph, analyze_change_surface,
     append_changed_file_size_warnings, backend_package_operation_args,
     backend_snapshot_export_args, cargo_operation_jobs, changed_paths, ci_environment_from,
-    ci_test_jobs_from, classify_changes, complete_verify_selection, consumer_contract_arguments,
-    consumer_contract_plan, default_test_jobs_from, feature_operation_args, feature_test_args,
-    frontend_profile_commands, load_change_surface_policy, load_consumer_contract_plan,
-    load_workspace_graph, minimal_workspace_check_args, needs_consumer_contract,
-    package_tests_generate_snapshots, parse_change_surface_policy, resolve_frontend_dir,
-    resolve_target_dir, resource_test_executable_from_messages, resource_workspace_environment,
+    ci_target_policy_from, ci_test_jobs_from, classify_changes, complete_verify_selection,
+    consumer_contract_arguments, consumer_contract_plan, default_test_jobs_from,
+    feature_operation_args, feature_test_args, frontend_profile_commands,
+    load_change_surface_policy, load_consumer_contract_plan, load_workspace_graph,
+    minimal_workspace_check_args, needs_consumer_contract, package_tests_generate_snapshots,
+    parse_change_surface_policy, resolve_frontend_dir, resolve_target_dir,
+    resource_test_executable_from_messages, resource_workspace_environment,
     reverse_dependency_closure, validate_feature_combination, verify_job_budget_from,
     verify_target_policy_from, workspace_clippy_args, workspace_test_args,
 };
@@ -69,10 +70,7 @@ fn feature_combination_rejects_duplicates_and_unknowns() {
 
 #[test]
 fn feature_matrix_compiles_and_tests_required_feature_targets() {
-    let features = vec![
-        "destructive-reset".to_owned(),
-        "file-maintenance".to_owned(),
-    ];
+    let features = vec!["bin-reset".to_owned(), "bin-file-maintenance".to_owned()];
     let check = feature_operation_args("check", "ryframe", &features, "target", 8);
     let clippy = feature_operation_args("clippy", "ryframe", &features, "target", 8);
 
@@ -85,7 +83,7 @@ fn feature_matrix_compiles_and_tests_required_feature_targets() {
         assert!(args.contains(&"--all-targets".to_owned()));
         assert!(args.contains(&"--no-default-features".to_owned()));
         assert!(args.windows(2).any(|pair| pair == ["--jobs", "8"]));
-        assert!(args.contains(&"destructive-reset,file-maintenance".to_owned()));
+        assert!(args.contains(&"bin-reset,bin-file-maintenance".to_owned()));
     }
     let test = feature_test_args(
         "ryframe",
@@ -106,7 +104,7 @@ fn feature_matrix_compiles_and_tests_required_feature_targets() {
     );
     assert!(!test.contains(&"--all-targets".to_owned()));
     assert!(test.contains(&"--no-default-features".to_owned()));
-    assert!(test.contains(&"destructive-reset,file-maintenance".to_owned()));
+    assert!(test.contains(&"bin-reset,bin-file-maintenance".to_owned()));
     assert!(clippy.ends_with(&[
         "--".into(),
         "-D".into(),
@@ -260,6 +258,25 @@ fn target_resolution_preserves_absolute_cargo_target_dir() {
     assert_eq!(
         resolve_target_dir(Path::new("repository"), "target/custom-smart"),
         Path::new("repository").join("target/custom-smart")
+    );
+}
+
+#[test]
+fn devex_ci_target_override_isolated_backend_and_resource_outputs() {
+    let root = Path::new("D:/devex/sample/cache");
+    assert_eq!(
+        ci_target_policy_from(Some(root)),
+        VerifyTargetPolicy {
+            backend: root.join("backend").to_string_lossy().into_owned(),
+            resource: root.join("resource").to_string_lossy().into_owned(),
+        }
+    );
+    assert_eq!(
+        ci_target_policy_from(None),
+        VerifyTargetPolicy {
+            backend: BACKEND_CI_TARGET_DIR.to_owned(),
+            resource: RESOURCE_CI_TARGET_DIR.to_owned(),
+        }
     );
 }
 

@@ -4,14 +4,25 @@ use crate::{Result, workspace::root_dir};
 
 #[path = "devex/run.rs"]
 mod execution;
+#[path = "devex/incremental.rs"]
+mod incremental;
 #[path = "devex/metadata.rs"]
 mod metadata;
 #[path = "devex/model.rs"]
 mod model;
+#[path = "devex/paired.rs"]
+mod paired;
+#[path = "devex/preflight.rs"]
+mod preflight;
 #[path = "devex/report.rs"]
 mod report;
+#[path = "devex/support.rs"]
+mod support;
 
-pub(crate) use model::{CacheState, DevexCommand, DevexRunOptions, DevexSuite};
+#[allow(unused_imports)]
+pub(crate) use model::{
+    CacheState, DevexCommand, DevexPairedOptions, DevexRunOptions, DevexSuite, PairedArm,
+};
 
 pub(crate) fn parse_command(args: &[String]) -> std::result::Result<DevexCommand, String> {
     let Some(operation) = args.first() else {
@@ -19,6 +30,7 @@ pub(crate) fn parse_command(args: &[String]) -> std::result::Result<DevexCommand
     };
     match operation.as_str() {
         "run" => parse_run(&args[1..]),
+        "paired" => parse_paired(&args[1..]),
         "summarize" => match &args[1..] {
             [run] => Ok(DevexCommand::Summarize { run: run.clone() }),
             _ => Err(usage().to_owned()),
@@ -26,6 +38,61 @@ pub(crate) fn parse_command(args: &[String]) -> std::result::Result<DevexCommand
         "compare" => parse_compare(&args[1..]),
         _ => Err(usage().to_owned()),
     }
+}
+
+fn parse_paired(args: &[String]) -> std::result::Result<DevexCommand, String> {
+    let mut baseline_backend = None;
+    let mut candidate_backend = None;
+    let mut baseline_frontend = None;
+    let mut candidate_frontend = None;
+    let mut run_args = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let slot = match args[index].as_str() {
+            "--base-backend" if baseline_backend.is_none() => Some(&mut baseline_backend),
+            "--candidate-backend" if candidate_backend.is_none() => Some(&mut candidate_backend),
+            "--base-frontend" if baseline_frontend.is_none() => Some(&mut baseline_frontend),
+            "--candidate-frontend" if candidate_frontend.is_none() => Some(&mut candidate_frontend),
+            _ => None,
+        };
+        if let Some(slot) = slot {
+            let value = args
+                .get(index + 1)
+                .filter(|value| !value.starts_with("--"))
+                .ok_or_else(|| format!("{} 缺少目录", args[index]))?;
+            *slot = Some(PathBuf::from(value));
+            index += 2;
+        } else {
+            run_args.push(args[index].clone());
+            if let Some(value) = args.get(index + 1) {
+                run_args.push(value.clone());
+            }
+            index += 2;
+        }
+    }
+    let DevexCommand::Run(run) = parse_run(&run_args)? else {
+        unreachable!("parse_run 只会返回 Run")
+    };
+    let has_frontend_pair = baseline_frontend.is_some() && candidate_frontend.is_some();
+    if baseline_frontend.is_some() != candidate_frontend.is_some() {
+        return Err("paired 的 --base-frontend 与 --candidate-frontend 必须成对提供".to_owned());
+    }
+    if run
+        .suite
+        .definition(&run.variant)
+        .map_err(|error| format!("DevEx 变体无效：{error}"))?
+        .requires_frontend
+        && !has_frontend_pair
+    {
+        return Err("该 paired suite 必须显式提供两个前端 worktree".to_owned());
+    }
+    Ok(DevexCommand::Paired(DevexPairedOptions {
+        run,
+        baseline_backend: baseline_backend.ok_or("paired 缺少 --base-backend")?,
+        candidate_backend: candidate_backend.ok_or("paired 缺少 --candidate-backend")?,
+        baseline_frontend,
+        candidate_frontend,
+    }))
 }
 
 fn parse_run(args: &[String]) -> std::result::Result<DevexCommand, String> {
@@ -69,11 +136,25 @@ fn parse_run(args: &[String]) -> std::result::Result<DevexCommand, String> {
             value => return Err(format!("未知或重复参数：{value}")),
         }
     }
+    let suite = suite.ok_or("devex run 缺少 --suite")?;
+    let variant = variant.ok_or("devex run 缺少 --variant")?;
+    let runs = runs.ok_or("devex run 缺少 --runs")?;
+    suite
+        .definition(&variant)
+        .map_err(|error| format!("{error}；可用变体：{}", suite.variant_help()))?;
+    let minimum_runs = suite.minimum_runs(&variant);
+    if runs < minimum_runs {
+        return Err(format!(
+            "suite `{}` 至少需要 {} 次测量，当前为 {runs}",
+            suite.as_str(),
+            minimum_runs
+        ));
+    }
     Ok(DevexCommand::Run(DevexRunOptions {
-        suite: suite.ok_or("devex run 缺少 --suite")?,
-        variant: variant.ok_or("devex run 缺少 --variant")?,
+        suite,
+        variant,
         cache_state: cache_state.ok_or("devex run 缺少 --cache cold|warm")?,
-        runs: runs.ok_or("devex run 缺少 --runs")?,
+        runs,
     }))
 }
 
@@ -121,6 +202,10 @@ pub(crate) fn run(command: &DevexCommand, frontend_dir: &Path) -> Result<()> {
     match command {
         DevexCommand::Run(options) => {
             execution::execute(&root, frontend_dir, options)?;
+        }
+        DevexCommand::Paired(options) => {
+            let (baseline, candidate) = paired::execute(&root, frontend_dir, options)?;
+            println!("{}", report::compare(&baseline, &candidate)?);
         }
         DevexCommand::Summarize { run } => {
             let run_dir = resolve_run_reference(&devex_root, run)?;
@@ -184,6 +269,7 @@ fn resolve_run_reference(devex_root: &Path, reference: &str) -> Result<PathBuf> 
 
 pub(crate) fn usage() -> &'static str {
     "cargo xtask devex run --suite <suite> --variant <name> --runs <1..50> --cache <cold|warm>\n\
+     cargo xtask devex paired --base-backend <dir> --candidate-backend <dir> [--base-frontend <dir> --candidate-frontend <dir>] --suite <suite> --variant <name> --runs <1..50> --cache <cold|warm>\n\
      cargo xtask devex summarize <日期/run-id>\n\
      cargo xtask devex compare --base <日期/run-id> --candidate <日期/run-id>"
 }
@@ -197,6 +283,12 @@ fn suite_names() -> String {
 }
 
 #[allow(unused_imports)]
+pub(crate) use incremental::with_source_edit;
+#[allow(unused_imports)]
 pub(crate) use metadata::{PathNormalizer, filter_environment};
 #[allow(unused_imports)]
+pub(crate) use paired::abba_pair_order;
+#[allow(unused_imports)]
 pub(crate) use report::{compare, distribution, summarize};
+#[allow(unused_imports)]
+pub(crate) use support::sample_target;

@@ -63,6 +63,17 @@ fn preserves_read_only_legacy_check_commands() {
 #[test]
 fn parses_daily_short_commands() {
     assert_eq!(
+        parse_command(&["dev"]).unwrap(),
+        Command::Dev {
+            measure_once: false
+        }
+    );
+    assert_eq!(
+        parse_command(&["dev", "--measure-once"]).unwrap(),
+        Command::Dev { measure_once: true }
+    );
+    assert!(parse_command(&["dev", "--measure-once", "extra"]).is_err());
+    assert_eq!(
         parse_command(&["verify", "--full", "--scope", "frontend"]).unwrap(),
         Command::Verify {
             scope: CheckScope::Frontend,

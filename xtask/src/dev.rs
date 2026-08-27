@@ -1,5 +1,30 @@
 //! 本地开发监督器的命令入口。
 
+use std::{error::Error, fmt};
+
+pub(crate) const TOOL_SELF_CHANGED_EXIT_CODE: i32 = 75;
+
+#[derive(Debug)]
+pub(crate) struct ToolSelfChanged;
+
+impl fmt::Display for ToolSelfChanged {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("xtask 自身已变化，请重新运行 `cargo dev`")
+    }
+}
+
+impl Error for ToolSelfChanged {}
+
+pub(crate) fn tool_self_changed_error() -> Box<dyn Error> {
+    Box::new(ToolSelfChanged)
+}
+
+pub(crate) fn failure_exit_code(error: &(dyn Error + 'static)) -> Option<i32> {
+    error
+        .downcast_ref::<ToolSelfChanged>()
+        .map(|_| TOOL_SELF_CHANGED_EXIT_CODE)
+}
+
 #[path = "dev/build.rs"]
 mod build;
 #[path = "dev/command.rs"]
@@ -8,16 +33,24 @@ mod command;
 mod config;
 #[path = "dev/health.rs"]
 mod health;
+#[path = "dev/measure.rs"]
+mod measure;
 #[path = "dev/model.rs"]
 mod model;
 #[path = "dev/orchestrator.rs"]
 mod orchestrator;
 #[path = "dev/services.rs"]
 mod services;
+#[path = "dev/snapshot.rs"]
+mod snapshot;
 
+#[allow(unused_imports)]
+pub(crate) use measure::run as measure_once;
 #[allow(unused_imports)]
 pub(crate) use orchestrator::run;
 
+#[allow(unused_imports)]
+pub(crate) use build::DEV_API_FEATURES;
 #[allow(unused_imports)]
 pub(crate) use command::{RuntimeInputPaths, api_command, worker_command};
 #[allow(unused_imports)]
@@ -26,6 +59,15 @@ pub(crate) use health::{
     wait_services_ready_until_controlled,
 };
 #[allow(unused_imports)]
-pub(crate) use model::{ArtifactAction, BuildPlan, ChangeKind, CycleControl, classify_change};
+pub(crate) use measure::{
+    RESULT_FILE_NAME, ReadyKind, SaveCase, SaveMeasurement, read_measurement, ready_kind,
+};
+#[allow(unused_imports)]
+pub(crate) use model::{
+    ArtifactAction, Binaries, BuildPlan, ChangeKind, ChangeOutcome, CycleControl,
+    MigrationValidation, classify_change,
+};
 #[allow(unused_imports)]
 pub(crate) use services::switch_services_with_rollback;
+#[allow(unused_imports)]
+pub(crate) use snapshot::DevSession;

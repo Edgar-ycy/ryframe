@@ -7,10 +7,7 @@ use super::{
         analyze_change_surface, append_changed_file_size_warnings, enforce_change_surface,
         load_change_surface_policy, print_change_surface,
     },
-    context::{
-        BACKEND_CI_TARGET_DIR, BACKEND_SMART_TARGET_DIR, RESOURCE_CI_TARGET_DIR,
-        VerifyExecutionContext,
-    },
+    context::{BACKEND_SMART_TARGET_DIR, VerifyExecutionContext, ci_target_policy},
     feature::{
         check_feature_registry, feature_matrix_with_jobs, load_feature_registry,
         run_feature_operations, run_feature_tests, validate_feature_registry,
@@ -326,6 +323,7 @@ fn full_verify(context: &VerifyExecutionContext, scope: CheckScope) -> Result<()
 pub(crate) fn ci_rust_gate(frontend_dir: &Path) -> Result<()> {
     let root = root_dir();
     let context = VerifyExecutionContext::new(frontend_dir, true)?;
+    let targets = ci_target_policy()?;
     let snapshots = prepare_backend_snapshots(
         &root,
         &[
@@ -339,16 +337,16 @@ pub(crate) fn ci_rust_gate(frontend_dir: &Path) -> Result<()> {
     run_owned(
         &root,
         "cargo",
-        &workspace_clippy_args(BACKEND_CI_TARGET_DIR, context.jobs.backend),
+        &workspace_clippy_args(&targets.backend, context.jobs.backend),
     )?;
-    feature_matrix_with_jobs(&root, BACKEND_CI_TARGET_DIR, context.jobs.backend)?;
+    feature_matrix_with_jobs(&root, &targets.backend, context.jobs.backend)?;
 
     let test_jobs = ci_test_jobs_from(
         std::env::var("RYFRAME_CI_TEST_JOBS").ok().as_deref(),
         cfg!(windows),
         context.jobs.total,
     )?;
-    let test_args = workspace_test_args(BACKEND_CI_TARGET_DIR, test_jobs);
+    let test_args = workspace_test_args(&targets.backend, test_jobs);
     run_owned_with_env(
         &root,
         "cargo",
@@ -358,7 +356,7 @@ pub(crate) fn ci_rust_gate(frontend_dir: &Path) -> Result<()> {
     resource_workspace_compilation(
         &root,
         frontend_dir,
-        RESOURCE_CI_TARGET_DIR,
+        &targets.resource,
         context.jobs.resource,
     )?;
     verify_backend_snapshots(&root, &snapshots)
@@ -370,7 +368,8 @@ pub(crate) fn ci_consumer_contract(frontend_dir: &Path) -> Result<()> {
     let profiles = [BackendSnapshotProfile::OpenApiContract]
         .into_iter()
         .collect();
-    let snapshots = export_and_verify_backend_snapshots(&root, &profiles, BACKEND_CI_TARGET_DIR)?;
+    let targets = ci_target_policy()?;
+    let snapshots = export_and_verify_backend_snapshots(&root, &profiles, &targets.backend)?;
     run_consumer_contract(&root, frontend_dir, &snapshots)
 }
 

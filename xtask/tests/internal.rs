@@ -26,6 +26,8 @@ mod process;
 mod release;
 #[path = "../src/resource.rs"]
 mod resource;
+#[path = "../src/source_edit.rs"]
+mod source_edit;
 #[path = "../src/watch.rs"]
 mod watch;
 #[path = "../src/workspace.rs"]
@@ -43,6 +45,8 @@ mod ci_tests;
 mod cli_tests;
 #[path = "internal/contract.rs"]
 mod contract_tests;
+#[path = "internal/dev_snapshot.rs"]
+mod dev_snapshot_tests;
 #[path = "internal/dev.rs"]
 mod dev_tests;
 #[path = "internal/devex.rs"]

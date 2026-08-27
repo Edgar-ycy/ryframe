@@ -43,8 +43,8 @@ pub(crate) use change_surface::{
 pub(crate) use context::{
     BACKEND_CI_TARGET_DIR, BACKEND_SMART_TARGET_DIR, BACKEND_VERIFY_TARGET_DIR,
     RESOURCE_CI_TARGET_DIR, RESOURCE_VERIFY_TARGET_DIR, VerifyExecutionContext, VerifyJobBudget,
-    VerifyTargetPolicy, ci_environment_from, resolve_target_dir, verify_job_budget_from,
-    verify_target_policy_from,
+    VerifyTargetPolicy, ci_environment_from, ci_target_policy, ci_target_policy_from,
+    resolve_target_dir, verify_job_budget_from, verify_target_policy_from,
 };
 #[allow(unused_imports)]
 pub(crate) use execution::{

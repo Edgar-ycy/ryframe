@@ -1,16 +1,23 @@
 use std::{
     cell::RefCell,
+    collections::BTreeSet,
     path::Path,
+    sync::{
+        Arc, Barrier,
+        atomic::{AtomicUsize, Ordering},
+    },
+    thread,
     time::{Duration, Instant},
 };
 
 use super::dev::{
-    ArtifactAction, BuildPlan, ChangeKind, CycleControl, RuntimeInputPaths, api_command,
-    available_ports, classify_change, combine_failures, start_worker_after_api_ready,
-    switch_services_with_rollback, wait_services_ready_until, wait_services_ready_until_controlled,
-    worker_command,
+    ArtifactAction, BuildPlan, ChangeKind, ChangeOutcome, CycleControl, DEV_API_FEATURES,
+    MigrationValidation, ReadyKind, RuntimeInputPaths, SaveCase, TOOL_SELF_CHANGED_EXIT_CODE,
+    api_command, available_ports, classify_change, combine_failures, failure_exit_code, ready_kind,
+    start_worker_after_api_ready, switch_services_with_rollback, tool_self_changed_error,
+    wait_services_ready_until, wait_services_ready_until_controlled, worker_command,
 };
-use super::watch::{ChangeBatch, SourceRevision};
+use super::watch::{ChangeBatch, SourceRevision, SourceRevisionTracker};
 
 #[test]
 fn development_changes_are_classified_by_runtime_impact() {
@@ -19,14 +26,21 @@ fn development_changes_are_classified_by_runtime_impact() {
         ("config/app.prod.toml", ChangeKind::IgnoredDevConfig),
         ("locales/zh-CN.toml", ChangeKind::LocaleCatalog),
         ("crates/ryframe-api/src/lib.rs", ChangeKind::ApiOnly),
+        ("crates/ryframe/src/app.rs", ChangeKind::ApiOnly),
+        ("crates/ryframe/src/app/router.rs", ChangeKind::ApiOnly),
         (
             "crates/ryframe/src/bin/ryframe_worker.rs",
+            ChangeKind::WorkerOnly,
+        ),
+        (
+            "crates/ryframe/src/bin/ryframe_worker/process.rs",
             ChangeKind::WorkerOnly,
         ),
         (
             "crates/ryframe-application/src/lib.rs",
             ChangeKind::SharedRuntime,
         ),
+        ("crates/ryframe-macro/src/lib.rs", ChangeKind::SharedRuntime),
         ("crates/ryframe-db/src/lib.rs", ChangeKind::SharedRuntime),
         (
             "crates/ryframe-db/src/migration/mod.rs",
@@ -42,10 +56,199 @@ fn development_changes_are_classified_by_runtime_impact() {
         ),
         ("catalog/resources/post.toml", ChangeKind::ResourceManifest),
         ("xtask/src/dev.rs", ChangeKind::ToolSelf),
+        ("xtask/Cargo.toml", ChangeKind::ToolSelf),
+        ("xtask/build.rs", ChangeKind::ToolSelf),
         ("Cargo.lock", ChangeKind::BuildGraph),
     ] {
         assert_eq!(classify_change(path), expected, "错误分类 {path}");
     }
+}
+
+#[test]
+fn macro_changes_rebuild_both_runtime_targets() {
+    let plan = BuildPlan::from_changes(&ChangeBatch {
+        revision: SourceRevision::from_value(1),
+        paths: BTreeSet::from(["crates/ryframe-macro/src/lib.rs".to_owned()]),
+    });
+
+    assert_eq!(plan.api, ArtifactAction::Rebuild);
+    assert_eq!(plan.worker, ArtifactAction::Rebuild);
+    assert!(plan.restart_pair);
+    assert!(!plan.resource_check);
+}
+
+#[test]
+fn tool_self_change_has_a_stable_rerun_exit_code() {
+    let error = tool_self_changed_error();
+
+    assert_eq!(failure_exit_code(error.as_ref()), Some(75));
+    assert_eq!(TOOL_SELF_CHANGED_EXIT_CODE, 75);
+    assert_eq!(
+        error.to_string(),
+        "xtask 自身已变化，请重新运行 `cargo dev`"
+    );
+    let ordinary = std::io::Error::other("ordinary failure");
+    assert_eq!(failure_exit_code(&ordinary), None);
+}
+
+#[test]
+fn persistence_changes_have_distinct_build_and_verification_plans() {
+    struct Case {
+        label: &'static str,
+        paths: &'static [&'static str],
+        runtime: ArtifactAction,
+        restart_pair: bool,
+        migration: MigrationValidation,
+    }
+    let cases = [
+        Case {
+            label: "control",
+            paths: &["crates/ryframe-db/src/migration/m20260827.rs"],
+            runtime: ArtifactAction::Rebuild,
+            restart_pair: true,
+            migration: MigrationValidation::StandaloneControl,
+        },
+        Case {
+            label: "tenant",
+            paths: &["crates/ryframe-tenant-db/src/migration/m20260827.rs"],
+            runtime: ArtifactAction::NotNeeded,
+            restart_pair: false,
+            migration: MigrationValidation::StandaloneTenant,
+        },
+        Case {
+            label: "control+tenant",
+            paths: &[
+                "crates/ryframe-db/src/migration/m20260827.rs",
+                "crates/ryframe-tenant-db/src/migration/m20260827.rs",
+            ],
+            runtime: ArtifactAction::Rebuild,
+            restart_pair: true,
+            migration: MigrationValidation::StandaloneControlAndTenant,
+        },
+    ];
+
+    for (revision, case) in cases.into_iter().enumerate() {
+        let batch = ChangeBatch {
+            revision: SourceRevision::from_value(revision as u64 + 1),
+            paths: case.paths.iter().map(|path| (*path).to_owned()).collect(),
+        };
+        let plan = BuildPlan::from_changes(&batch);
+        assert_eq!(plan.api, case.runtime, "{} API 计划错误", case.label);
+        assert_eq!(plan.worker, case.runtime, "{} Worker 计划错误", case.label);
+        assert_eq!(
+            plan.restart_pair, case.restart_pair,
+            "{} 重启计划错误",
+            case.label
+        );
+        assert!(plan.migrate, "{} 必须构建迁移验证目标", case.label);
+        assert_eq!(
+            plan.migration, case.migration,
+            "{} 验证计划错误",
+            case.label
+        );
+    }
+}
+
+#[test]
+fn final_revision_fence_rejects_stale_and_queues_later_changes() {
+    let stale = SourceRevisionTracker::default();
+    let expected = stale.current_revision();
+    record_test_change(&stale);
+    let mut stale_promotions = 0;
+    if stale.final_revision_fence(expected) {
+        stale_promotions += 1;
+    }
+    assert_eq!(stale_promotions, 0, "过期代次不得进入 promotion");
+
+    let queued = SourceRevisionTracker::default();
+    let expected = queued.current_revision();
+    assert!(queued.final_revision_fence(expected));
+    record_test_change(&queued);
+    assert!(
+        queued.current_revision() > expected,
+        "fence 后事件应留给下一轮"
+    );
+}
+
+#[test]
+fn final_revision_fence_has_no_stale_promotion_across_128_races() {
+    for _ in 0..128 {
+        let tracker = Arc::new(SourceRevisionTracker::default());
+        let expected = tracker.current_revision();
+        let barrier = Arc::new(Barrier::new(2));
+        let changed_tracker = Arc::clone(&tracker);
+        let changed_barrier = Arc::clone(&barrier);
+        let changed = thread::spawn(move || {
+            changed_barrier.wait();
+            record_test_change(&changed_tracker)
+        });
+        let promotions = AtomicUsize::new(0);
+
+        barrier.wait();
+        let allowed = tracker.final_revision_fence(expected);
+        if allowed {
+            promotions.fetch_add(1, Ordering::Relaxed);
+        }
+        let changed_revision = changed.join().expect("变更线程不应失败");
+
+        assert!(changed_revision > expected);
+        if !allowed {
+            assert_eq!(
+                promotions.load(Ordering::Relaxed),
+                0,
+                "过期代次 promotion 必须为零"
+            );
+        } else {
+            assert_eq!(
+                promotions.load(Ordering::Relaxed),
+                1,
+                "fence 后事件属于下一轮队列"
+            );
+        }
+    }
+}
+
+fn record_test_change(tracker: &SourceRevisionTracker) -> SourceRevision {
+    let root = Path::new("D:/workspace");
+    tracker
+        .record_paths(root, &[root.join("Cargo.toml")])
+        .expect("测试变更应被 watcher 接受")
+        .0
+}
+
+#[test]
+fn save_cases_drive_the_real_change_plan_and_cargo_count() {
+    assert_eq!(DEV_API_FEATURES, "bin-api,runtime-swagger-ui");
+    for (case, cargo_invocations, expected_ready) in [
+        (SaveCase::ConfigOnly, 0, ReadyKind::Promoted),
+        (SaveCase::ApiOnly, 1, ReadyKind::Promoted),
+        (SaveCase::WorkerOnly, 1, ReadyKind::Promoted),
+        (SaveCase::SharedRuntime, 2, ReadyKind::Promoted),
+        (SaveCase::Locales, 2, ReadyKind::Promoted),
+        (SaveCase::MigrationOnly, 1, ReadyKind::VerifiedNoRestart),
+        (SaveCase::ResourceManifest, 1, ReadyKind::VerifiedNoRestart),
+    ] {
+        let source = case.source();
+        let batch = ChangeBatch {
+            revision: SourceRevision::from_value(1),
+            paths: BTreeSet::from([source.relative.to_owned()]),
+        };
+        let plan = BuildPlan::from_changes(&batch);
+        let outcome = if plan.restart_pair {
+            ChangeOutcome::Promoted
+        } else {
+            ChangeOutcome::VerifiedNoRestart
+        };
+        assert_eq!(plan.cargo_invocations(), cargo_invocations, "{case:?}");
+        assert_eq!(
+            ready_kind(case, outcome).unwrap(),
+            expected_ready,
+            "{case:?}"
+        );
+    }
+    assert!(SaveCase::parse("unknown").is_none());
+    assert!(ready_kind(SaveCase::ConfigOnly, ChangeOutcome::Failed).is_err());
+    assert!(ready_kind(SaveCase::MigrationOnly, ChangeOutcome::Promoted).is_err());
 }
 
 #[test]
@@ -149,6 +352,10 @@ fn worker_probe_uses_isolated_non_consuming_mode() {
         Some(&Some("stdout".into()))
     );
     assert_eq!(
+        environment.get("APP_DATABASE_MIGRATION_MODE"),
+        Some(&Some("verify".into()))
+    );
+    assert_eq!(
         environment.get("APP_CONFIG_DIR"),
         Some(&Some("D:/workspace/config".into()))
     );
@@ -199,6 +406,10 @@ fn api_probe_uses_explicit_side_effect_free_mode() {
     assert_eq!(
         environment.get("APP_LOGGER_OUTPUT"),
         Some(&Some("stdout".into()))
+    );
+    assert_eq!(
+        environment.get("APP_DATABASE_MIGRATION_MODE"),
+        Some(&Some("verify".into()))
     );
 }
 
@@ -308,6 +519,51 @@ fn controlled_probe_stops_before_more_readiness_work_when_superseded() {
 
     assert_eq!(control, CycleControl::Superseded);
     assert!(calls.into_inner().is_empty());
+}
+
+#[test]
+fn controlled_probe_rechecks_between_api_and_worker_requests() {
+    let calls = RefCell::new(Vec::new());
+    let control_checks = AtomicUsize::new(0);
+    let control = wait_services_ready_until_controlled(
+        Instant::now() + Duration::from_secs(1),
+        "API",
+        "Worker",
+        || {
+            calls.borrow_mut().push("ensure:api");
+            Ok(())
+        },
+        || {
+            calls.borrow_mut().push("ensure:worker");
+            Ok(())
+        },
+        || {
+            calls.borrow_mut().push("ready:api");
+            true
+        },
+        || -> bool { panic!("API 探活后的新代次应阻止 Worker 请求") },
+        || {
+            calls.borrow_mut().push("control");
+            if control_checks.fetch_add(1, Ordering::Relaxed) == 0 {
+                CycleControl::Continue
+            } else {
+                CycleControl::Superseded
+            }
+        },
+    )
+    .unwrap();
+
+    assert_eq!(control, CycleControl::Superseded);
+    assert_eq!(
+        calls.into_inner(),
+        [
+            "control",
+            "ensure:api",
+            "ensure:worker",
+            "ready:api",
+            "control"
+        ]
+    );
 }
 
 #[test]
@@ -431,6 +687,70 @@ fn candidate_start_failure_restores_last_known_good() {
         calls.into_inner(),
         ["stop:previous", "start:candidate", "start:previous"]
     );
+}
+
+#[test]
+fn partial_stop_failure_restores_last_known_good_without_starting_candidate() {
+    #[derive(Debug, PartialEq)]
+    struct FakeServices {
+        version: &'static str,
+        api_running: bool,
+        worker_running: bool,
+    }
+
+    let calls = RefCell::new(Vec::new());
+    let mut current = FakeServices {
+        version: "previous",
+        api_running: true,
+        worker_running: true,
+    };
+    let promoted = switch_services_with_rollback(
+        &mut current,
+        |services| {
+            calls.borrow_mut().push("stop:api");
+            services.api_running = false;
+            Err("worker stop failed".into())
+        },
+        || panic!("部分停止失败时不能启动候选服务"),
+        || {
+            calls.borrow_mut().push("start:previous");
+            Ok(FakeServices {
+                version: "previous",
+                api_running: true,
+                worker_running: true,
+            })
+        },
+        || panic!("部分停止失败时不能清理 last-known-good"),
+    )
+    .unwrap();
+
+    assert!(!promoted);
+    assert_eq!(
+        current,
+        FakeServices {
+            version: "previous",
+            api_running: true,
+            worker_running: true,
+        }
+    );
+    assert_eq!(calls.into_inner(), ["stop:api", "start:previous"]);
+}
+
+#[test]
+fn stop_and_restore_failures_are_reported_together() {
+    let mut current = "previous";
+    let error = switch_services_with_rollback(
+        &mut current,
+        |_| Err("worker stop failed".into()),
+        || panic!("停止失败时不能启动候选服务"),
+        || Err("previous restore failed".into()),
+        || panic!("停止失败时不能清理 last-known-good"),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("worker stop failed"));
+    assert!(error.contains("previous restore failed"));
 }
 
 #[test]

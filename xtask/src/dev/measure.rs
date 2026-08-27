@@ -1,0 +1,373 @@
+use std::{
+    collections::BTreeSet,
+    env, fs,
+    path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+    time::{Duration, Instant},
+};
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    Result,
+    process::ChildGroup,
+    source_edit::SourceEdit,
+    watch::{ChangeBatch, SourceWatcher},
+    workspace::root_dir,
+};
+
+use super::{
+    build::cleanup_binaries,
+    config::{DevPorts, WorkerIds, spawn_shutdown_listener},
+    health::combine_failures,
+    model::{BuildPlan, ChangeOutcome, ServiceLaunchMode},
+    orchestrator::{build_initial_candidate, process_change, receive_change},
+    services::{ensure_initial_ports_available, start_services_in_mode, stop_services},
+    snapshot::DevSession,
+};
+
+const CASE_ENV: &str = "RYFRAME_DEVEX_SAVE_CASE";
+const RESULT_ENV: &str = "RYFRAME_DEVEX_SAVE_RESULT_PATH";
+const WATCH_EVENT_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const RESULT_FILE_NAME: &str = "cargo-dev-save-result.json";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum SaveCase {
+    ConfigOnly,
+    ApiOnly,
+    WorkerOnly,
+    SharedRuntime,
+    Locales,
+    MigrationOnly,
+    ResourceManifest,
+}
+
+impl SaveCase {
+    fn from_environment() -> Result<Self> {
+        let value = env::var(CASE_ENV).unwrap_or_else(|_| "shared-runtime".to_owned());
+        Self::parse(&value).ok_or_else(|| {
+            format!(
+                "{CASE_ENV} 只允许 config-only、api-only、worker-only、shared-runtime、locales、migration-only 或 resource-manifest"
+            )
+            .into()
+        })
+    }
+
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "config-only" => Some(Self::ConfigOnly),
+            "api-only" => Some(Self::ApiOnly),
+            "worker-only" => Some(Self::WorkerOnly),
+            "shared-runtime" => Some(Self::SharedRuntime),
+            "locales" => Some(Self::Locales),
+            "migration-only" => Some(Self::MigrationOnly),
+            "resource-manifest" => Some(Self::ResourceManifest),
+            _ => None,
+        }
+    }
+
+    pub(crate) const fn source(self) -> SaveSource {
+        match self {
+            Self::ConfigOnly => SaveSource::toml("config/app.dev.toml"),
+            Self::ApiOnly => SaveSource::rust("crates/ryframe/src/app.rs"),
+            Self::WorkerOnly => SaveSource::rust("crates/ryframe/src/bin/ryframe_worker.rs"),
+            Self::SharedRuntime => SaveSource::rust("crates/ryframe-kernel/src/lib.rs"),
+            Self::Locales => SaveSource::toml("locales/zh-CN.toml"),
+            Self::MigrationOnly => SaveSource::rust("crates/ryframe/src/bin/ryframe_migrate.rs"),
+            Self::ResourceManifest => SaveSource::toml("catalog/resources/post.toml"),
+        }
+    }
+
+    pub(crate) const fn expected_ready(self) -> ReadyKind {
+        match self {
+            Self::ConfigOnly
+            | Self::ApiOnly
+            | Self::WorkerOnly
+            | Self::SharedRuntime
+            | Self::Locales => ReadyKind::Promoted,
+            Self::MigrationOnly | Self::ResourceManifest => ReadyKind::VerifiedNoRestart,
+        }
+    }
+
+    pub(crate) const fn expected_cargo_invocations(self) -> usize {
+        match self {
+            Self::ConfigOnly => 0,
+            Self::ApiOnly | Self::WorkerOnly | Self::MigrationOnly | Self::ResourceManifest => 1,
+            Self::SharedRuntime | Self::Locales => 2,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SaveSource {
+    pub(crate) relative: &'static str,
+    comment_prefix: &'static str,
+}
+
+impl SaveSource {
+    const fn rust(relative: &'static str) -> Self {
+        Self {
+            relative,
+            comment_prefix: "//",
+        }
+    }
+
+    const fn toml(relative: &'static str) -> Self {
+        Self {
+            relative,
+            comment_prefix: "#",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum ReadyKind {
+    Promoted,
+    VerifiedNoRestart,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SaveMeasurement {
+    pub(crate) schema_version: u8,
+    pub(crate) case: SaveCase,
+    pub(crate) started_at: String,
+    pub(crate) save_to_ready_ms: f64,
+    pub(crate) cargo_invocations: usize,
+    pub(crate) ready_kind: ReadyKind,
+}
+
+pub(crate) fn run() -> Result<()> {
+    let root = root_dir();
+    let case = SaveCase::from_environment()?;
+    let result_path = measurement_result_path();
+    let state_root = measurement_state_root(&root, result_path.as_deref());
+    remove_stale_result(result_path.as_deref())?;
+    let measurement = measure(&root, &state_root, case)?;
+    if let Some(path) = result_path.as_deref() {
+        write_measurement(path, &measurement)?;
+    }
+    println!("{}", serde_json::to_string(&measurement)?);
+    Ok(())
+}
+
+fn measure(root: &Path, state_root: &Path, case: SaveCase) -> Result<SaveMeasurement> {
+    let group = ChildGroup::new()?;
+    let watcher = SourceWatcher::new(root)?;
+    let session = DevSession::prepare_isolated(state_root, watcher.current_revision())?;
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let _shutdown_listener = spawn_shutdown_listener(Arc::clone(&shutdown));
+    println!("保存反馈测量前置检查：构建并以只读 probe 模式启动独立 LKG。");
+    let initial = build_initial_candidate(&group, root, &session, shutdown.as_ref(), &watcher)?
+        .ok_or("保存反馈测量前置检查被取消")?;
+    let ports = DevPorts::isolated()?;
+    ensure_initial_ports_available(ports)?;
+    let worker_ids = WorkerIds::isolated(ports.api);
+    let mut services = start_services_in_mode(
+        &group,
+        root,
+        initial,
+        ports,
+        worker_ids,
+        ServiceLaunchMode::Probe,
+    )
+    .map_err(|error| format!("保存反馈测量前置检查失败（配置、依赖或外部服务）：{error}"))?;
+    let result = measure_cycle(
+        &group,
+        root,
+        &session,
+        &watcher,
+        shutdown.as_ref(),
+        &mut services,
+        ports,
+        worker_ids,
+        case,
+    );
+    let binaries = services.binaries.clone();
+    combine_failures(
+        result,
+        [
+            ("停止保存反馈测量服务", stop_services(&mut services)),
+            ("清理保存反馈测量 LKG", cleanup_binaries(&binaries)),
+        ],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn measure_cycle(
+    group: &ChildGroup,
+    root: &Path,
+    session: &DevSession,
+    watcher: &SourceWatcher,
+    shutdown: &AtomicBool,
+    services: &mut super::model::Services,
+    ports: DevPorts,
+    worker_ids: WorkerIds,
+    case: SaveCase,
+) -> Result<SaveMeasurement> {
+    let source = case.source();
+    let path = root.join(source.relative);
+    let label = format!("{}-{}", std::process::id(), Utc::now().timestamp_millis());
+    let (mut edit, started) = SourceEdit::apply(&path, &label, source.comment_prefix)?;
+    let started_at = DateTime::<Utc>::from(started.wall_clock);
+    let outcome = (|| {
+        let batch = wait_for_save_event(watcher, shutdown, source.relative)?;
+        let plan = BuildPlan::from_changes(&batch);
+        let expected_cargo_invocations = plan.cargo_invocations();
+        if expected_cargo_invocations != case.expected_cargo_invocations() {
+            return Err(format!(
+                "保存场景 {case:?} 的 Cargo 计划漂移：期望 {}，实际 {expected_cargo_invocations}",
+                case.expected_cargo_invocations()
+            )
+            .into());
+        }
+        let cargo_counter = AtomicUsize::new(0);
+        let outcome = process_change(
+            group,
+            root,
+            session,
+            watcher,
+            shutdown,
+            services,
+            ports,
+            worker_ids,
+            ServiceLaunchMode::Probe,
+            Some(&cargo_counter),
+            batch,
+        )?;
+        let ready_kind = ready_kind(case, outcome)?;
+        let cargo_invocations = cargo_counter.load(Ordering::Relaxed);
+        if cargo_invocations != expected_cargo_invocations {
+            return Err(format!(
+                "保存周期 Cargo 调用数漂移：计划 {expected_cargo_invocations}，实际 {cargo_invocations}"
+            )
+            .into());
+        }
+        Ok(SaveMeasurement {
+            schema_version: 1,
+            case,
+            started_at: started_at.to_rfc3339(),
+            save_to_ready_ms: started.monotonic.elapsed().as_secs_f64() * 1_000.0,
+            cargo_invocations,
+            ready_kind,
+        })
+    })();
+    finish_source_edit(outcome, &mut edit)
+}
+
+fn wait_for_save_event(
+    watcher: &SourceWatcher,
+    shutdown: &AtomicBool,
+    expected: &str,
+) -> Result<ChangeBatch> {
+    let deadline = Instant::now() + WATCH_EVENT_TIMEOUT;
+    loop {
+        if shutdown.load(Ordering::Acquire) {
+            return Err("保存反馈测量被取消".into());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("监听器未在期限内收到保存事件：{expected}").into());
+        }
+        let Some(batch) = receive_change(watcher)? else {
+            continue;
+        };
+        let expected_paths = BTreeSet::from([expected.to_owned()]);
+        if batch.paths != expected_paths {
+            return Err(format!(
+                "保存反馈测量期间检测到额外源码变更，拒绝污染样本：{:?}",
+                batch.paths
+            )
+            .into());
+        }
+        return Ok(batch);
+    }
+}
+
+pub(crate) fn ready_kind(case: SaveCase, outcome: ChangeOutcome) -> Result<ReadyKind> {
+    let observed = match outcome {
+        ChangeOutcome::Promoted => ReadyKind::Promoted,
+        ChangeOutcome::VerifiedNoRestart => ReadyKind::VerifiedNoRestart,
+        ChangeOutcome::Failed => return Err("保存周期失败，last-known-good 保持运行".into()),
+        ChangeOutcome::Superseded => return Err("保存周期被后续源码代次取代".into()),
+        ChangeOutcome::Ignored => return Err("保存事件被状态机忽略".into()),
+        ChangeOutcome::Shutdown => return Err("保存反馈测量被取消".into()),
+    };
+    if observed == case.expected_ready() {
+        Ok(observed)
+    } else {
+        Err(format!(
+            "保存场景 {case:?} 的就绪结果漂移：期望 {:?}，实际 {observed:?}",
+            case.expected_ready()
+        )
+        .into())
+    }
+}
+
+fn finish_source_edit<T>(outcome: Result<T>, edit: &mut SourceEdit) -> Result<T> {
+    let restore = edit.restore();
+    match (outcome, restore) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+        (Err(operation_error), Err(restore_error)) => Err(format!(
+            "保存反馈测量失败：{operation_error}；源码还原也失败：{restore_error}"
+        )
+        .into()),
+    }
+}
+
+fn measurement_result_path() -> Option<PathBuf> {
+    env::var_os(RESULT_ENV).map(PathBuf::from)
+}
+
+fn measurement_state_root(root: &Path, result_path: Option<&Path>) -> PathBuf {
+    result_path
+        .and_then(Path::parent)
+        .map(|parent| parent.join("cargo-dev-save-state"))
+        .unwrap_or_else(|| {
+            root.join(".local-tests/devex-manual")
+                .join(format!("cargo-dev-save-{}", std::process::id()))
+        })
+}
+
+fn remove_stale_result(path: Option<&Path>) -> Result<()> {
+    if let Some(path) = path {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        match fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+fn write_measurement(path: &Path, measurement: &SaveMeasurement) -> Result<()> {
+    let mut document = serde_json::to_vec_pretty(measurement)?;
+    document.push(b'\n');
+    fs::write(path, document)?;
+    Ok(())
+}
+
+pub(crate) fn read_measurement(path: &Path) -> Result<SaveMeasurement> {
+    let measurement: SaveMeasurement = serde_json::from_slice(&fs::read(path)?)?;
+    if measurement.schema_version != 1
+        || !measurement.save_to_ready_ms.is_finite()
+        || measurement.save_to_ready_ms < 0.0
+        || DateTime::parse_from_rfc3339(&measurement.started_at).is_err()
+        || measurement.ready_kind != measurement.case.expected_ready()
+        || measurement.cargo_invocations != measurement.case.expected_cargo_invocations()
+    {
+        return Err("cargo-dev-save 结果 schema、时间或场景不变量无效".into());
+    }
+    Ok(measurement)
+}

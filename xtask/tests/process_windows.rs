@@ -66,14 +66,14 @@ fn job_descendant_helper() {
 }
 
 #[test]
-fn dropping_job_reclaims_descendant_after_direct_child_exits() {
+fn stopping_command_tree_reclaims_descendant_after_direct_child_exits() {
     let pid_file = std::env::temp_dir().join(format!(
         "ryframe-xtask-job-descendant-{}.pid",
         std::process::id()
     ));
     let _ = fs::remove_file(&pid_file);
 
-    let group = process::ChildGroup::new().expect("应能创建测试 Job Object");
+    let group = process::ChildGroup::new().expect("应能创建命令进程树工厂");
     let mut command = Command::new(std::env::current_exe().expect("应能定位测试程序"));
     command
         .args([HELPER_NAME, "--exact", "--ignored", "--nocapture"])
@@ -113,14 +113,14 @@ fn dropping_job_reclaims_descendant_after_direct_child_exits() {
     assert_eq!(
         unsafe { WaitForSingleObject(descendant.0, 0) },
         WAIT_TIMEOUT,
-        "父辅助进程退出后，后代仍应由 Job Object 持有"
+        "父辅助进程退出后，后代仍应由命令级 Job Object 持有"
     );
 
-    drop(group);
+    process::stop_child(&mut direct_child).expect("应能终止直接父已退出的命令进程树");
     assert_eq!(
         unsafe { WaitForSingleObject(descendant.0, 5_000) },
         WAIT_OBJECT_0,
-        "关闭 Job Object 应回收已脱离直接父进程的后代"
+        "停止命令级 Job Object 应回收已脱离直接父进程的后代"
     );
     let _ = fs::remove_file(pid_file);
 }
