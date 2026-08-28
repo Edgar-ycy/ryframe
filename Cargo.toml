@@ -59,7 +59,7 @@ uuid = "1"
 thiserror = "2"
 http = "1"
 
-sysinfo = "0.39"
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 
 image = { version = "0.25", default-features = false }
 calamine = { version = "0.36" }
@@ -74,7 +74,7 @@ dashmap = "6"
 zip = { version = "8.6", default-features = false, features = [
     "deflate-flate2-zlib-rs",
 ] }
-prometheus = "0.14"
+prometheus = { version = "0.14", default-features = false }
 lazy_static = "1"
 futures-util = "0.3"
 # OpenTelemetry 链路追踪
