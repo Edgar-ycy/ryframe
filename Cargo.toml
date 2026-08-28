@@ -108,5 +108,15 @@ opentelemetry-otlp = { path = "vendor/opentelemetry-otlp" }
 proc-macro-error2 = { path = "vendor/proc-macro-error2" }
 sqlx = { path = "vendor/sqlx-mysql-only" }
 
+[profile.dev]
+# 本地项目代码保留行级调试信息；依赖和构建脚本不生成调试信息，缩短冷构建与链接时间。
+debug = 1
+
+[profile.dev.package."*"]
+debug = 0
+
+[profile.dev.build-override]
+debug = 0
+
 [profile.dev.package.ryframe-adapters]
 opt-level = 1

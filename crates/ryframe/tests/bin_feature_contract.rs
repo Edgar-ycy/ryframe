@@ -136,6 +136,15 @@ fn worker_http_probe_does_not_enable_api_websocket_features() {
 }
 
 #[test]
+fn development_profile_limits_dependency_debug_info() {
+    let manifest = WORKSPACE_MANIFEST.replace("\r\n", "\n");
+    assert!(manifest.contains("[profile.dev]\n# "));
+    assert!(manifest.contains("\ndebug = 1\n"));
+    assert!(manifest.contains("[profile.dev.package.\"*\"]\ndebug = 0"));
+    assert!(manifest.contains("[profile.dev.build-override]\ndebug = 0"));
+}
+
+#[test]
 fn expensive_leaf_capabilities_are_opt_in() {
     assert!(ADAPTERS_MANIFEST.contains("default = []"));
     for feature in [
