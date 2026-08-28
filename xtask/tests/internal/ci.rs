@@ -4,8 +4,8 @@ use super::{
         ci_plan_for, ci_selection_for_paths, formal_contract_source_args,
         integration_test_args_for_target, parse_changed_paths, preflight_migration_args,
         resource_gate::{delegates_generic_ci_path, should_run_for_paths},
-        resource_gate_required_for_ci_range, verify_frontend_checkout_ref, windows_check_args,
-        windows_process_test_args,
+        resource_gate_required_for_ci_range, tls_integration_args, verify_frontend_checkout_ref,
+        windows_check_args, windows_process_test_args,
     },
 };
 use std::path::Path;
@@ -242,6 +242,18 @@ fn integration_commands_share_the_ci_target_and_jobs() {
             "4",
             "--",
             "--nocapture",
+        ]
+    );
+    assert_eq!(
+        tls_integration_args("target/ci/backend", 4),
+        [
+            "scripts/tls_integration_gate.py",
+            "--backend-root",
+            ".",
+            "--target-dir",
+            "target/ci/backend",
+            "--jobs",
+            "4",
         ]
     );
 }

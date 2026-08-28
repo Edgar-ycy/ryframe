@@ -455,7 +455,24 @@ fn integration() -> Result<()> {
             &integration_test_args_for_target(package, target, features, &targets.backend, jobs),
         )?;
     }
+    run_owned(
+        &root,
+        "python",
+        &tls_integration_args(&targets.backend, jobs),
+    )?;
     Ok(())
+}
+
+pub(crate) fn tls_integration_args(target_dir: &str, jobs: usize) -> Vec<String> {
+    vec![
+        "scripts/tls_integration_gate.py".to_owned(),
+        "--backend-root".to_owned(),
+        ".".to_owned(),
+        "--target-dir".to_owned(),
+        target_dir.to_owned(),
+        "--jobs".to_owned(),
+        jobs.max(1).to_string(),
+    ]
 }
 
 pub(crate) fn integration_test_args_for_target(

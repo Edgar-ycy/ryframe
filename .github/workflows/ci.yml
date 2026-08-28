@@ -370,10 +370,10 @@ jobs:
           retention-days: 14
 
   # ============================================================
-  # MySQL 与 Redis 真实协议
+  # MySQL、Redis 与 AWS-LC TLS 真实出站协议
   # ============================================================
   integration:
-    name: MySQL 8.4 & Redis 7.4 Integration
+    name: MySQL 8.4, Redis 7.4 & AWS-LC TLS Integration
     needs: plan
     if: ${{ needs.plan.result == 'success' && needs.plan.outputs.integration == 'true' }}
     runs-on: ubuntu-latest
@@ -391,6 +391,7 @@ jobs:
       RYFRAME_REDIS_HOST: 127.0.0.1
       RYFRAME_REDIS_PORT: "6379"
       RYFRAME_REDIS_DATABASE: "15"
+      RYFRAME_TLS_ARTIFACT_DIR: ${{ runner.temp }}/ryframe-tls-integration
     services:
       mysql:
         image: mysql:8.4.11@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
@@ -423,6 +424,11 @@ jobs:
       - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
 
+      - name: 安装固定 Python 版本
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
       - name: 安装固定版本 sccache
         uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
         with:
@@ -448,9 +454,18 @@ jobs:
             v3-rust-${{ runner.os }}-${{ runner.arch }}-integration-
             v3-rust-${{ runner.os }}-${{ runner.arch }}-
 
-      - name: 验证 MySQL 与 Redis 真实协议
+      - name: 验证 MySQL、Redis 与 AWS-LC TLS 真实出站协议
         working-directory: backend
         run: cargo xtask ci integration
+
+      - name: 保存 AWS-LC TLS fixture 与测试日志
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: tls-integration-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ryframe-tls-integration
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: 输出 sccache 统计
         if: ${{ always() }}

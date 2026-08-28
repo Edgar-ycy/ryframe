@@ -59,6 +59,24 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def create_server(
+    cert: Path,
+    key: Path,
+    host: str,
+    port: int,
+) -> ThreadingHTTPServer:
+    """创建 HTTPS 服务；端口 0 仅供同进程 fixture 原子分配动态端口。"""
+
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(cert, key)
+
+    server = ThreadingHTTPServer((host, port), HttpsFixtureHandler)
+    server.daemon_threads = True
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    return server
+
+
 def main() -> None:
     args = parse_args()
     if args.host not in {"127.0.0.1", "::1"}:
@@ -66,13 +84,7 @@ def main() -> None:
     if not 1 <= args.port <= 65_535:
         raise SystemExit("HTTPS 测试服务端口必须在 1 到 65535 之间")
 
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.minimum_version = ssl.TLSVersion.TLSv1_2
-    context.load_cert_chain(args.cert, args.key)
-
-    server = ThreadingHTTPServer((args.host, args.port), HttpsFixtureHandler)
-    server.daemon_threads = True
-    server.socket = context.wrap_socket(server.socket, server_side=True)
+    server = create_server(args.cert, args.key, args.host, args.port)
     print(f"ready=https://{args.host}:{args.port}", flush=True)
     try:
         server.serve_forever(poll_interval=0.1)

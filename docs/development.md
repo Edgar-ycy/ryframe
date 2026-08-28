@@ -136,6 +136,26 @@ $env:RYFRAME_REDIS_INTEGRATION = "1"
 cargo test --locked -p ryframe-adapters --test redis_real_protocol -- --nocapture
 ```
 
+完整集成门禁还会运行 Redis TLS、S3 HTTPS 和 OTLP HTTPS 三个 AWS-LC 真实出站测试。Windows
+本地需有 `python`、`openssl`，并在 `127.0.0.1` 启动隔离的 MySQL 与 Redis；Redis 建议使用 WSL
+独立实例和数据库 15。门禁只接受回环 Redis，不执行 `KEYS`、`SCAN` 或 `FLUSH`，测试 key 由唯一
+`scope_id` 隔离并精确删除。运行入口与 CI 相同：
+
+```powershell
+$env:RYFRAME_MYSQL_INTEGRATION = "1"
+$env:RYFRAME_REDIS_INTEGRATION = "1"
+$env:RYFRAME_REDIS_DATABASE = "15"
+$env:RYFRAME_INTEGRATION_RUN_ID = "local-aws-lc"
+cargo xtask ci integration
+```
+
+TLS fixture 会生成两日有效的临时 CA，在动态回环端口启动 Redis TLS 代理和 HTTPS 服务；三个测试
+结束或失败后都会停止监听并删除临时证书。日志默认保存在
+`.local-tests/integration/tls/<run-id>/`，历史目录不会覆盖；可用
+`RYFRAME_TLS_ARTIFACT_DIR` 指定日志根目录。CI 对成功和失败运行都上传 14 天，失败摘要会输出每个
+已运行测试的最近日志。`RYFRAME_REDIS_HOST` 不是 `127.0.0.1`、`::1` 或 `localhost` 时门禁直接
+拒绝启动，避免误连共享 Redis。
+
 ## 开发反馈性能测量
 
 DevEx 测量必须显式选择 suite、工作负载变体、运行次数与冷暖缓存状态，例如 `cargo xtask devex run --suite rust-cold-build --variant api --runs 20 --cache cold`。Rust suite 的变体为 `api`、`worker`、`migrate` 或 `workspace`；`cargo-dev-save` 的变体直接选择 `config-only`、`api-only`、`worker-only`、`shared-runtime`、`locales`、`migration-only`、`resource-manifest` 或 `cancellation`，不依赖调用方预设环境变量；resource generator 使用 `all`、`post` 或 `notice`，resource gate 使用 `auto`，前端 suite 使用 `default`。普通 suite 至少采样 5 次，Rust suite 及会触发编译的保存场景至少采样 20 次。`rust-incremental` 会对所选目标的代表性源码执行一次可还原编辑，命令成功或失败后均原子还原。
