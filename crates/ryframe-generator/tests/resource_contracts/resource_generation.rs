@@ -1,9 +1,9 @@
 use std::{fs, path::PathBuf};
 
 use ryframe_generator::{
-    AssetRoot, GeneratedAsset, PlanAction, ResourceSpec, ResourceWorkspace, load_resource,
-    normalize_resource, plan_resource_assets, plan_resource_changes, render_resources,
-    write_resource, write_resources,
+    AssetRoot, GeneratedAsset, GeneratedCatalog, PlanAction, ResourceSpec, ResourceWorkspace,
+    load_resource, normalize_resource, plan_resource_assets, plan_resource_changes,
+    render_resources, write_resource, write_resources,
 };
 
 fn device_path() -> PathBuf {
@@ -12,6 +12,45 @@ fn device_path() -> PathBuf {
 
 fn post_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../catalog/resources/post.toml")
+}
+
+fn assert_control_database_repository_gates(generated: &GeneratedCatalog) {
+    let database_slice = generated
+        .assets
+        .iter()
+        .find(|asset| asset.path == "crates/ryframe-db/src/generated/post/mod.rs")
+        .expect("应生成 control DB 资源入口")
+        .content
+        .as_str();
+    assert!(database_slice.contains("#[cfg(feature = \"repositories\")]\npub mod entity;"));
+    assert!(database_slice.contains("#[cfg(feature = \"repositories\")]\nmod repository;"));
+    assert!(
+        database_slice.contains("#[cfg(feature = \"repositories\")]\npub use repository::port;")
+    );
+    let database_mod = generated
+        .assets
+        .iter()
+        .find(|asset| asset.path == "crates/ryframe-db/src/generated/mod.rs")
+        .expect("应生成 control DB 聚合入口");
+    assert!(
+        database_mod
+            .content
+            .contains("pub use super::post::entity as post;")
+    );
+    assert!(
+        database_mod
+            .content
+            .contains("ports.post = Some(post::port(database));")
+    );
+    assert!(database_mod.content.contains(
+        "#[cfg(feature = \"repositories\")]\nuse ryframe_application::generated::GeneratedPersistencePorts;"
+    ));
+    assert!(
+        database_mod
+            .content
+            .contains("#[cfg(feature = \"repositories\")]\npub fn register_ports(")
+    );
+    assert!(!database_mod.content.contains("database.clone()"));
 }
 
 fn device() -> ryframe_generator::ResourceIr {
@@ -99,22 +138,7 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
     let entity = content("post/entity.rs");
     assert!(entity.contains("pub const SOFT_DELETE_ACTIVE: &str = \"0\";"));
     assert!(entity.contains("pub const SOFT_DELETE_DELETED: &str = \"2\";"));
-    let database_mod = generated
-        .assets
-        .iter()
-        .find(|asset| asset.path == "crates/ryframe-db/src/generated/mod.rs")
-        .expect("应生成 control DB 聚合入口");
-    assert!(
-        database_mod
-            .content
-            .contains("pub use super::post::entity as post;")
-    );
-    assert!(
-        database_mod
-            .content
-            .contains("ports.post = Some(post::port(database));")
-    );
-    assert!(!database_mod.content.contains("database.clone()"));
+    assert_control_database_repository_gates(&generated);
     let fake = content("post/fake.rs");
     assert!(fake.contains("LockConfiguration"));
     assert!(fake.contains("FindByCode"));
@@ -819,6 +843,18 @@ fn control_initial_migration_has_tenant_fk_and_compact_enum_columns() {
             .content
             .contains("Box::new(post::migration::Migration)")
     );
+    assert!(aggregate.content.contains("pub mod post;"));
+    assert!(
+        !aggregate
+            .content
+            .contains("#[cfg(feature = \"repositories\")]\npub mod post;")
+    );
+    let database_slice = generated
+        .assets
+        .iter()
+        .find(|asset| asset.path == "crates/ryframe-db/src/generated/post/mod.rs")
+        .expect("应生成 control 数据库模块");
+    assert!(database_slice.content.contains("pub mod migration;"));
 }
 
 #[test]

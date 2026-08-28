@@ -12,8 +12,8 @@ default-run = "ryframe"
 [dependencies]
 ryframe-kernel = { path = "../ryframe-kernel", optional = true }
 ryframe-config = { path = "../ryframe-config", optional = true }
-ryframe-db = { path = "../ryframe-db", optional = true }
-ryframe-tenant-db = { path = "../ryframe-tenant-db", optional = true }
+ryframe-db = { path = "../ryframe-db", default-features = false, optional = true }
+ryframe-tenant-db = { path = "../ryframe-tenant-db", default-features = false, optional = true }
 ryframe-adapters = { path = "../ryframe-adapters", default-features = false, optional = true }
 ryframe-application = { path = "../ryframe-application", default-features = false, optional = true }
 ryframe-api = { path = "../ryframe-api", default-features = false, optional = true }
@@ -47,7 +47,9 @@ runtime-database = [
     "runtime-crypto",
     "dep:ryframe-config",
     "dep:ryframe-db",
+    "ryframe-db/migration",
     "dep:ryframe-tenant-db",
+    "ryframe-tenant-db/migration",
     "dep:sea-orm",
     "dep:tokio",
     "tokio/macros",
@@ -61,7 +63,9 @@ runtime-services = [
     "ryframe-adapters/redis",
     "dep:ryframe-application",
     "dep:ryframe-auth",
+    "ryframe-db/repositories",
     "ryframe-db/telemetry",
+    "ryframe-tenant-db/repositories",
     "dep:tracing",
     "dep:opentelemetry",
     "dep:tracing-opentelemetry",
@@ -92,11 +96,17 @@ bin-worker = [
     "dep:axum",
 ]
 bin-migrate = ["runtime-database"]
-bin-tenant-data = ["runtime-database", "dep:chrono"]
+bin-tenant-data = [
+    "runtime-database",
+    "ryframe-db/repositories",
+    "ryframe-tenant-db/repositories",
+    "dep:chrono",
+]
 bin-file-maintenance = [
     "runtime-crypto",
     "dep:ryframe-config",
     "dep:ryframe-db",
+    "ryframe-db/repositories",
     "dep:ryframe-adapters",
     "dep:sea-orm",
     "dep:tokio",
@@ -109,6 +119,7 @@ bin-file-maintenance = [
 ]
 bin-reset = [
     "runtime-database",
+    "ryframe-db/repositories",
     "dep:ryframe-adapters",
     "ryframe-adapters/redis",
     "dep:ryframe-application",

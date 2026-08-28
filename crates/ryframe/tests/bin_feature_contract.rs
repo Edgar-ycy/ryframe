@@ -3,17 +3,22 @@ const WORKSPACE_MANIFEST: &str = include_str!("../../../Cargo.toml");
 const ADAPTERS_MANIFEST: &str = include_str!("../../ryframe-adapters/Cargo.toml");
 const APPLICATION_MANIFEST: &str = include_str!("../../ryframe-application/Cargo.toml");
 const DB_MANIFEST: &str = include_str!("../../ryframe-db/Cargo.toml");
+const TENANT_DB_MANIFEST: &str = include_str!("../../ryframe-tenant-db/Cargo.toml");
 const OTLP_MANIFEST: &str = include_str!("../../../vendor/opentelemetry-otlp/Cargo.toml");
 
-fn feature_members(feature: &str) -> &'static str {
+fn manifest_feature_members<'a>(manifest: &'a str, feature: &str) -> &'a str {
     let marker = format!("{feature} = [");
-    let (_, remainder) = MANIFEST
+    let (_, remainder) = manifest
         .split_once(&marker)
-        .unwrap_or_else(|| panic!("根清单缺少 {feature} feature"));
+        .unwrap_or_else(|| panic!("清单缺少 {feature} feature"));
     remainder
         .split_once(']')
         .map(|(members, _)| members)
         .expect("feature 定义必须闭合")
+}
+
+fn feature_members(feature: &str) -> &'static str {
+    manifest_feature_members(MANIFEST, feature)
 }
 
 #[test]
@@ -122,7 +127,58 @@ fn expensive_leaf_capabilities_are_opt_in() {
     assert!(APPLICATION_MANIFEST.contains("default = []"));
     assert!(APPLICATION_MANIFEST.contains("test-support = []"));
     assert!(DB_MANIFEST.contains("default = []"));
+    assert!(DB_MANIFEST.contains("migration = ["));
+    assert!(DB_MANIFEST.contains("repositories = ["));
     assert!(DB_MANIFEST.contains("telemetry = ["));
+    assert!(TENANT_DB_MANIFEST.contains("default = []"));
+    assert!(TENANT_DB_MANIFEST.contains("migration = ["));
+    assert!(TENANT_DB_MANIFEST.contains("repositories = ["));
+}
+
+#[test]
+fn process_features_select_precise_database_surfaces() {
+    let db_migration = manifest_feature_members(DB_MANIFEST, "migration");
+    assert!(db_migration.contains("dep:async-trait"));
+    assert!(!db_migration.contains("ryframe-application"));
+    assert!(!db_migration.contains("ryframe-macro"));
+    assert!(!db_migration.contains("repositories"));
+    let db_repositories = manifest_feature_members(DB_MANIFEST, "repositories");
+    assert!(db_repositories.contains("migration"));
+    assert!(db_repositories.contains("ryframe-application"));
+    assert!(db_repositories.contains("ryframe-macro"));
+
+    let tenant_migration = manifest_feature_members(TENANT_DB_MANIFEST, "migration");
+    assert!(tenant_migration.contains("dep:async-trait"));
+    assert!(tenant_migration.contains("ryframe-db/migration"));
+    assert!(!tenant_migration.contains("ryframe-application"));
+    assert!(!tenant_migration.contains("repositories"));
+    let tenant_repositories = manifest_feature_members(TENANT_DB_MANIFEST, "repositories");
+    assert!(tenant_repositories.contains("migration"));
+    assert!(tenant_repositories.contains("ryframe-db/repositories"));
+    assert!(tenant_repositories.contains("ryframe-application"));
+
+    let database = feature_members("runtime-database");
+    assert!(database.contains("ryframe-db/migration"));
+    assert!(database.contains("ryframe-tenant-db/migration"));
+    assert!(!database.contains("repositories"));
+
+    let services = feature_members("runtime-services");
+    assert!(services.contains("ryframe-db/repositories"));
+    assert!(services.contains("ryframe-tenant-db/repositories"));
+
+    let migrate = feature_members("bin-migrate");
+    assert!(migrate.contains("runtime-database"));
+    assert!(!migrate.contains("repositories"));
+
+    let tenant_data = feature_members("bin-tenant-data");
+    assert!(tenant_data.contains("ryframe-db/repositories"));
+    assert!(tenant_data.contains("ryframe-tenant-db/repositories"));
+
+    let maintenance = feature_members("bin-file-maintenance");
+    assert!(maintenance.contains("ryframe-db/repositories"));
+
+    let reset = feature_members("bin-reset");
+    assert!(reset.contains("ryframe-db/repositories"));
 }
 
 #[test]

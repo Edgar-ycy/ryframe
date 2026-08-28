@@ -165,7 +165,7 @@ fn render_database(
         AssetRoot::Backend,
         format!("crates/{storage_crate}/src/generated/{name}/mod.rs"),
         format!(
-            "{}pub mod entity;\nmod repository;\n{}\npub use repository::port;\n",
+            "{}#[cfg(feature = \"repositories\")]\npub mod entity;\n#[cfg(feature = \"repositories\")]\nmod repository;\n{}\n#[cfg(feature = \"repositories\")]\npub use repository::port;\n",
             rust_header(resource),
             if resource.bootstrap_migration {
                 "pub mod migration;\n"

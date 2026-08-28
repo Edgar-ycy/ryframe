@@ -222,6 +222,23 @@ fn assert_backend_checks(workspace: &SharedWorkspace) {
         .expect("应检查生成 Rust 资产格式");
     assert_command_succeeded("cargo fmt --check", &cargo_fmt);
 
+    let migration = Command::new("cargo")
+        .args([
+            "check",
+            "-p",
+            "ryframe-db",
+            "-p",
+            "ryframe-tenant-db",
+            "--no-default-features",
+            "--features",
+            "ryframe-db/migration,ryframe-tenant-db/migration",
+        ])
+        .current_dir(&workspace.backend)
+        .env("CARGO_TARGET_DIR", &workspace.cargo_target)
+        .output()
+        .expect("应运行生成迁移最小面 cargo check");
+    assert_command_succeeded("cargo check generated migrations", &migration);
+
     let cargo = Command::new("cargo")
         .args([
             "check",
@@ -233,12 +250,15 @@ fn assert_backend_checks(workspace: &SharedWorkspace) {
             "ryframe-tenant-db",
             "-p",
             "ryframe-api",
+            "--no-default-features",
+            "--features",
+            "ryframe-db/repositories,ryframe-tenant-db/repositories",
         ])
         .current_dir(&workspace.backend)
         .env("CARGO_TARGET_DIR", &workspace.cargo_target)
         .output()
         .expect("应运行临时后端 cargo check");
-    assert_command_succeeded("cargo check", &cargo);
+    assert_command_succeeded("cargo check generated repositories", &cargo);
 
     let fake_test = Command::new("cargo")
         .args([

@@ -4,7 +4,10 @@
 // source-sha256: dedbe510d8f1627ba6042a31069ac37c86e72fb4fb91826adbfb3a1aff97179e
 // 请勿手工修改；修改资源清单后重新生成。
 
+#[cfg(feature = "repositories")]
 pub mod entity;
+#[cfg(feature = "repositories")]
 mod repository;
 
+#[cfg(feature = "repositories")]
 pub use repository::port;

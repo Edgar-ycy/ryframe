@@ -2,17 +2,22 @@
 // sources: catalog/resources/notice.toml:9c7717ecf319783c9296cc84459c3b661dcadc10a233acf1bf058176b737d151,catalog/resources/post.toml:dedbe510d8f1627ba6042a31069ac37c86e72fb4fb91826adbfb3a1aff97179e
 // 请勿手工修改；修改资源清单后重新生成。
 
+#[cfg(feature = "repositories")]
 use ryframe_application::generated::GeneratedPersistencePorts;
 use sea_orm_migration::MigrationTrait;
 
+#[cfg(feature = "repositories")]
 pub mod notice;
+#[cfg(feature = "repositories")]
 pub mod post;
 
+#[cfg(feature = "repositories")]
 pub mod entities {
     pub use super::notice::entity as notice;
     pub use super::post::entity as post;
 }
 
+#[cfg(feature = "repositories")]
 pub fn register_ports(
     database: crate::ControlDatabaseCluster,
     ports: &mut GeneratedPersistencePorts,

@@ -58,9 +58,14 @@
       "minimal": [],
       "maximal": [
         "default",
+        "migration",
+        "repositories",
         "telemetry"
       ],
-      "test_targets": []
+      "test_targets": [
+        "mapping_contracts",
+        "mysql_real_protocol"
+      ]
     },
     {
       "package": "ryframe-generator",
@@ -71,6 +76,18 @@
       ],
       "test_targets": [
         "resource_contracts"
+      ]
+    },
+    {
+      "package": "ryframe-tenant-db",
+      "minimal": [],
+      "maximal": [
+        "default",
+        "migration",
+        "repositories"
+      ],
+      "test_targets": [
+        "tenant_mapping_contracts"
       ]
     },
     {

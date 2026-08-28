@@ -157,7 +157,14 @@ fn render_storage_mod(resources: &[&ResourceIr], storage: StorageKind, header: &
         .collect::<Vec<_>>();
     let modules = selected
         .iter()
-        .map(|resource| format!("pub mod {};", resource.name))
+        .map(|resource| {
+            let feature_gate = if resource.bootstrap_migration {
+                ""
+            } else {
+                "#[cfg(feature = \"repositories\")]\n"
+            };
+            format!("{feature_gate}pub mod {};", resource.name)
+        })
         .collect::<Vec<_>>()
         .join("\n");
     let entity_exports = selected
@@ -197,7 +204,7 @@ fn render_storage_mod(resources: &[&ResourceIr], storage: StorageKind, header: &
         .collect::<Vec<_>>()
         .join("\n");
     let arc_import = if storage == StorageKind::TenantData {
-        "use std::sync::Arc;\n\n"
+        "#[cfg(feature = \"repositories\")]\nuse std::sync::Arc;\n\n"
     } else {
         ""
     };
@@ -207,7 +214,7 @@ fn render_storage_mod(resources: &[&ResourceIr], storage: StorageKind, header: &
         String::new()
     };
     format!(
-        "{header}{arc_import}use ryframe_application::generated::GeneratedPersistencePorts;\nuse sea_orm_migration::MigrationTrait;\n\n{modules}\n\npub mod entities {{\n{entity_exports}\n}}\n\npub fn register_ports({parameter_name}: {parameter_type}, ports: &mut GeneratedPersistencePorts) {{\n{empty_body}{registrations}\n}}\n\npub fn migrations() -> Vec<Box<dyn MigrationTrait>> {{\n    vec![\n{migrations}\n    ]\n}}\n"
+        "{header}{arc_import}#[cfg(feature = \"repositories\")]\nuse ryframe_application::generated::GeneratedPersistencePorts;\nuse sea_orm_migration::MigrationTrait;\n\n{modules}\n\n#[cfg(feature = \"repositories\")]\npub mod entities {{\n{entity_exports}\n}}\n\n#[cfg(feature = \"repositories\")]\npub fn register_ports({parameter_name}: {parameter_type}, ports: &mut GeneratedPersistencePorts) {{\n{empty_body}{registrations}\n}}\n\npub fn migrations() -> Vec<Box<dyn MigrationTrait>> {{\n    vec![\n{migrations}\n    ]\n}}\n"
     )
 }
 
