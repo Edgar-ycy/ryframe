@@ -12,6 +12,7 @@ import socket
 import socketserver
 import ssl
 import subprocess
+import sys
 import threading
 import traceback
 from dataclasses import dataclass
@@ -104,10 +105,21 @@ class RedisTlsProxyServer(socketserver.ThreadingTCPServer):
         log: BinaryIO,
     ) -> None:
         self.upstream = upstream
+        self._context = context
         self._log = log
         self._log_lock = threading.Lock()
         super().__init__((LOOPBACK_HOST, 0), RedisTlsProxyHandler)
-        self.socket = context.wrap_socket(self.socket, server_side=True)
+
+    def get_request(self) -> tuple[socket.socket, tuple[str, int]]:
+        raw_socket, client_address = self.socket.accept()
+        self.write_log(f"redis_tcp_accept={client_address!r}\n")
+        try:
+            tls_socket = self._context.wrap_socket(raw_socket, server_side=True)
+        except OSError as error:
+            raw_socket.close()
+            self.write_log(f"redis_tls_handshake_error={client_address!r}: {error}\n")
+            raise
+        return tls_socket, client_address
 
     def write_log(self, message: str) -> None:
         with self._log_lock:
@@ -415,6 +427,7 @@ def _test_environment(ca_cert: Path, fixtures: FixtureServers) -> dict[str, str]
         {
             "NO_PROXY": "127.0.0.1,localhost",
             "no_proxy": "127.0.0.1,localhost",
+            "SSL_CERT_FILE": str(ca_cert),
             "RYFRAME_REDIS_HOST": LOOPBACK_HOST,
             "RYFRAME_REDIS_PORT": str(fixtures.redis_port),
             "RYFRAME_REDIS_DATABASE": os.environ.get(
@@ -435,6 +448,7 @@ def _test_environment(ca_cert: Path, fixtures: FixtureServers) -> dict[str, str]
     )
     environment.pop("RYFRAME_REDIS_TLS_CLIENT_CERT", None)
     environment.pop("RYFRAME_REDIS_TLS_CLIENT_KEY", None)
+    environment.pop("SSL_CERT_DIR", None)
     return environment
 
 
@@ -554,7 +568,15 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+def _configure_console() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def main() -> None:
+    _configure_console()
     args = parse_args()
     try:
         run_gate(

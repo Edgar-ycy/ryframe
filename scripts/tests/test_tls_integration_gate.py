@@ -116,6 +116,7 @@ class TlsIntegrationGateTests(unittest.TestCase):
             {
                 "RYFRAME_REDIS_TLS_CLIENT_CERT": "ambient-cert",
                 "RYFRAME_REDIS_TLS_CLIENT_KEY": "ambient-key",
+                "SSL_CERT_DIR": "ambient-roots",
             },
             clear=True,
         ):
@@ -125,6 +126,8 @@ class TlsIntegrationGateTests(unittest.TestCase):
         self.assertEqual(environment["RYFRAME_REDIS_PORT"], "41001")
         self.assertEqual(environment["RYFRAME_REDIS_DATABASE"], "15")
         self.assertEqual(environment["RYFRAME_REDIS_TLS_INTEGRATION"], "1")
+        self.assertEqual(environment["SSL_CERT_FILE"], "fixture-ca.pem")
+        self.assertNotIn("SSL_CERT_DIR", environment)
         self.assertEqual(
             environment["RYFRAME_S3_HTTPS_ENDPOINT"], "https://127.0.0.1:41002"
         )
@@ -214,10 +217,9 @@ class TlsIntegrationGateTests(unittest.TestCase):
                 upstream.shutdown()
                 upstream.server_close()
                 upstream_thread.join(timeout=3)
-            self.assertIn(
-                "fixtures_stopped=1",
-                (root / "fixtures.log").read_text(encoding="utf-8"),
-            )
+            fixture_log = (root / "fixtures.log").read_text(encoding="utf-8")
+            self.assertIn("redis_tcp_accept=", fixture_log)
+            self.assertIn("fixtures_stopped=1", fixture_log)
 
 
 class TlsIntegrationPolicyTests(unittest.TestCase):
