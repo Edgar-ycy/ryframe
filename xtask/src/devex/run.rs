@@ -11,7 +11,7 @@ use chrono::Utc;
 
 use crate::{
     Result,
-    dev::{RESULT_FILE_NAME, ReadyKind, SaveCase, read_measurement},
+    dev::{ReadyKind, SaveMeasurementContract},
 };
 
 use super::{
@@ -30,6 +30,9 @@ use super::{
         cleanup_successful_sample_target, display_step, metric, sample_target, success_status,
     },
 };
+
+#[path = "run/save.rs"]
+mod save;
 
 pub(super) fn execute(
     backend_root: &Path,
@@ -221,9 +224,25 @@ pub(super) fn execute_warmup(
     options: &DevexRunOptions,
     session: &RunSession,
 ) -> Result<()> {
+    execute_warmup_with_contract(
+        backend_root,
+        frontend_root,
+        options,
+        session,
+        SaveMeasurementContract::Current,
+    )
+}
+
+pub(super) fn execute_warmup_with_contract(
+    backend_root: &Path,
+    frontend_root: &Path,
+    options: &DevexRunOptions,
+    session: &RunSession,
+    save_contract: SaveMeasurementContract,
+) -> Result<()> {
     if options.cache_state == CacheState::Warm {
         let target = session.run_dir.join("cache/warm");
-        let outcome = execute_sample(
+        let outcome = execute_sample_with_contract(
             backend_root,
             frontend_root,
             &target,
@@ -232,6 +251,7 @@ pub(super) fn execute_warmup(
             options.suite,
             &options.variant,
             "warmup",
+            save_contract,
         )?;
         append_sample(
             &session.run_dir,
@@ -345,6 +365,31 @@ pub(super) fn execute_sample(
     variant: &str,
     label: &str,
 ) -> Result<SampleOutcome> {
+    execute_sample_with_contract(
+        backend_root,
+        frontend_root,
+        target,
+        definition,
+        environment,
+        suite,
+        variant,
+        label,
+        SaveMeasurementContract::Current,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn execute_sample_with_contract(
+    backend_root: &Path,
+    frontend_root: &Path,
+    target: &Path,
+    definition: SuiteDefinition,
+    environment: &BTreeMap<String, String>,
+    suite: DevexSuite,
+    variant: &str,
+    label: &str,
+    save_contract: SaveMeasurementContract,
+) -> Result<SampleOutcome> {
     fs::create_dir_all(target)?;
     let started_at = Utc::now();
     let started = Instant::now();
@@ -375,36 +420,10 @@ pub(super) fn execute_sample(
         status,
     };
     if suite == DevexSuite::CargoDevSave && outcome.status.success() {
-        save_measurement_outcome(target, variant, outcome.status)
+        save::measurement_outcome(target, variant, outcome.status, save_contract)
     } else {
         Ok(outcome)
     }
-}
-
-fn save_measurement_outcome(
-    target: &Path,
-    variant: &str,
-    status: ExitStatus,
-) -> Result<SampleOutcome> {
-    let measurement = read_measurement(&target.join(RESULT_FILE_NAME))?;
-    let expected = SaveCase::parse(variant).ok_or("cargo-dev-save 变体无法映射到保存场景")?;
-    if measurement.case != expected {
-        return Err(format!(
-            "cargo-dev-save 结果场景不匹配：期望 {variant}，实际 {:?}",
-            measurement.case
-        )
-        .into());
-    }
-    let started_at = chrono::DateTime::parse_from_rfc3339(&measurement.started_at)
-        .map_err(|error| format!("cargo-dev-save startedAt 无效：{error}"))?
-        .with_timezone(&Utc);
-    Ok(SampleOutcome {
-        started_at,
-        duration_ms: measurement.save_to_ready_ms,
-        cargo_invocations: Some(measurement.cargo_invocations),
-        ready_kind: Some(measurement.ready_kind),
-        status,
-    })
 }
 
 fn execute_steps(

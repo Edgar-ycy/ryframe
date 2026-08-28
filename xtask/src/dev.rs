@@ -60,7 +60,8 @@ pub(crate) use health::{
 };
 #[allow(unused_imports)]
 pub(crate) use measure::{
-    RESULT_FILE_NAME, ReadyKind, SaveCase, SaveMeasurement, read_measurement, ready_kind,
+    RESULT_FILE_NAME, ReadyKind, SaveCase, SaveMeasurement, SaveMeasurementContract,
+    read_measurement, read_measurement_with_contract, ready_kind,
 };
 #[allow(unused_imports)]
 pub(crate) use model::{

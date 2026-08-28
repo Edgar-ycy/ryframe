@@ -5,16 +5,20 @@ use std::{
 };
 
 use chrono::Utc;
+use sha2::{Digest, Sha256};
 
-use crate::Result;
+use crate::{Result, dev::SaveMeasurementContract};
 
 use super::{
     execution::{
-        RunSession, SampleAudit, capture_sccache_stats, execute_sample, execute_warmup,
-        prepare_run_at, sample_record, stop_sccache_server,
+        RunSession, SampleAudit, capture_sccache_stats, execute_sample_with_contract,
+        execute_warmup_with_contract, prepare_run_at, sample_record, stop_sccache_server,
     },
     metadata::collect_source_fingerprints,
-    model::{DevexPairedOptions, DevexRunOptions, PairedArm, PairingMetadata, SuiteDefinition},
+    model::{
+        BaselineContract, BaselineProvenance, DevexPairedOptions, DevexRunOptions, PairedArm,
+        PairingMetadata, SuiteDefinition,
+    },
     preflight,
     report::{SampleKind, append_sample, summarize},
     support::{cleanup_successful_sample_target, sample_target},
@@ -36,6 +40,8 @@ pub(super) fn execute(
         options,
         definition,
     )?;
+    let baseline_provenance =
+        baseline_provenance(&roots.baseline_backend, options.baseline_contract)?;
     preflight::check(
         &roots.baseline_backend,
         &roots.baseline_frontend,
@@ -59,6 +65,8 @@ pub(super) fn execute(
         definition,
         &directories,
         PairedArm::Baseline,
+        options.baseline_contract,
+        baseline_provenance.clone(),
     )?;
     let candidate = prepare_arm(
         &roots.candidate_backend,
@@ -68,9 +76,17 @@ pub(super) fn execute(
         definition,
         &directories,
         PairedArm::Candidate,
+        options.baseline_contract,
+        baseline_provenance,
     )?;
 
-    let execution = execute_samples(&roots, &options.run, &baseline, &candidate);
+    let execution = execute_samples(
+        &roots,
+        &options.run,
+        options.baseline_contract,
+        &baseline,
+        &candidate,
+    );
     let baseline_cleanup = stop_sccache_server(
         &roots.baseline_backend,
         options.run.suite,
@@ -193,6 +209,81 @@ fn ensure_distinct_roots(
     Ok(())
 }
 
+fn baseline_provenance(
+    baseline_root: &Path,
+    contract: Option<BaselineContract>,
+) -> Result<Option<BaselineProvenance>> {
+    let Some(BaselineContract::LegacyCargoDevV1) = contract else {
+        return Ok(None);
+    };
+    let head = git_text(baseline_root, &["rev-parse", "HEAD"])?;
+    if head != BaselineContract::LEGACY_CARGO_DEV_ADAPTER_COMMIT {
+        return Err(format!(
+            "legacy-cargo-dev-v1 基线必须是已审核适配提交 {}，实际为 {head}",
+            BaselineContract::LEGACY_CARGO_DEV_ADAPTER_COMMIT
+        )
+        .into());
+    }
+    let parent = git_text(baseline_root, &["rev-parse", "HEAD^"])?;
+    if parent != BaselineContract::LEGACY_CARGO_DEV_BASE_COMMIT {
+        return Err("legacy-cargo-dev-v1 适配提交不再直接基于 7477b30".into());
+    }
+    if !git_text(
+        baseline_root,
+        &["status", "--porcelain", "--untracked-files=all"],
+    )?
+    .is_empty()
+    {
+        return Err("legacy-cargo-dev-v1 基线 worktree 必须干净".into());
+    }
+    let patch = git_output(
+        baseline_root,
+        &[
+            "diff",
+            "--binary",
+            "--full-index",
+            BaselineContract::LEGACY_CARGO_DEV_BASE_COMMIT,
+            BaselineContract::LEGACY_CARGO_DEV_ADAPTER_COMMIT,
+            "--",
+            ".",
+        ],
+    )?;
+    Ok(Some(BaselineProvenance {
+        base_commit: BaselineContract::LEGACY_CARGO_DEV_BASE_COMMIT.to_owned(),
+        adapter_commit: BaselineContract::LEGACY_CARGO_DEV_ADAPTER_COMMIT.to_owned(),
+        patch_sha256: sha256(&patch),
+    }))
+}
+
+fn git_text(root: &Path, args: &[&str]) -> Result<String> {
+    Ok(String::from_utf8(git_output(root, args)?)?
+        .trim()
+        .to_owned())
+}
+
+fn git_output(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
+    let output = Command::new("git").args(args).current_dir(root).output()?;
+    if output.status.success() {
+        Ok(output.stdout)
+    } else {
+        Err(format!(
+            "无法读取 legacy baseline 证据：git {}\n{}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+        .into())
+    }
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let hex = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("sha256:{hex}")
+}
+
 struct PairedRunDirectories {
     comparison_id: String,
     baseline_id: String,
@@ -210,6 +301,8 @@ fn prepare_arm(
     definition: SuiteDefinition,
     directories: &PairedRunDirectories,
     arm: PairedArm,
+    baseline_contract: Option<BaselineContract>,
+    baseline_provenance: Option<BaselineProvenance>,
 ) -> Result<RunSession> {
     let (run_id, run_dir) = match arm {
         PairedArm::Baseline => (&directories.baseline_id, &directories.baseline_dir),
@@ -226,6 +319,8 @@ fn prepare_arm(
         Some(PairingMetadata {
             comparison_id: directories.comparison_id.clone(),
             arm,
+            baseline_contract,
+            baseline_provenance,
         }),
     )
 }
@@ -233,20 +328,23 @@ fn prepare_arm(
 fn execute_samples(
     roots: &PairedRoots,
     options: &DevexRunOptions,
+    baseline_contract: Option<BaselineContract>,
     baseline: &RunSession,
     candidate: &RunSession,
 ) -> Result<()> {
-    execute_warmup(
+    execute_warmup_with_contract(
         &roots.baseline_backend,
         &roots.baseline_frontend,
         options,
         baseline,
+        save_contract(baseline_contract, PairedArm::Baseline),
     )?;
-    execute_warmup(
+    execute_warmup_with_contract(
         &roots.candidate_backend,
         &roots.candidate_frontend,
         options,
         candidate,
+        save_contract(baseline_contract, PairedArm::Candidate),
     )?;
     capture_sccache_stats(
         &roots.baseline_backend,
@@ -265,7 +363,16 @@ fn execute_samples(
     for pair in 1..=options.runs {
         for (position, arm) in abba_pair_order(pair).into_iter().enumerate() {
             let order = (pair - 1) * 2 + position + 1;
-            execute_measurement(roots, options, baseline, candidate, arm, pair, order)?;
+            execute_measurement(
+                roots,
+                options,
+                baseline_contract,
+                baseline,
+                candidate,
+                arm,
+                pair,
+                order,
+            )?;
         }
     }
     capture_sccache_stats(
@@ -296,6 +403,7 @@ pub(crate) fn abba_pair_order(pair: usize) -> [PairedArm; 2] {
 fn execute_measurement(
     roots: &PairedRoots,
     options: &DevexRunOptions,
+    baseline_contract: Option<BaselineContract>,
     baseline: &RunSession,
     candidate: &RunSession,
     arm: PairedArm,
@@ -324,7 +432,7 @@ fn execute_measurement(
         options.runs * 2,
         options.cache_state.as_str()
     );
-    let outcome = execute_sample(
+    let outcome = execute_sample_with_contract(
         backend_root,
         frontend_root,
         &target,
@@ -333,6 +441,7 @@ fn execute_measurement(
         options.suite,
         &options.variant,
         &label,
+        save_contract(baseline_contract, arm),
     )?;
     let restored = source_fingerprints(backend_root, frontend_root, session)?;
     if restored != expected_fingerprints {
@@ -376,6 +485,18 @@ fn execute_measurement(
         .into());
     }
     Ok(())
+}
+
+fn save_contract(
+    baseline_contract: Option<BaselineContract>,
+    arm: PairedArm,
+) -> SaveMeasurementContract {
+    match (baseline_contract, arm) {
+        (Some(BaselineContract::LegacyCargoDevV1), PairedArm::Baseline) => {
+            SaveMeasurementContract::LegacyConfigOnlyBaseline
+        }
+        _ => SaveMeasurementContract::Current,
+    }
 }
 
 fn source_fingerprints(

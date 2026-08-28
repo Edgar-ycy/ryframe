@@ -7,11 +7,14 @@ use std::{
 
 use super::{
     cli::{Command, parse},
-    dev::{ReadyKind, SaveCase, SaveMeasurement, read_measurement},
+    dev::{
+        ReadyKind, SaveCase, SaveMeasurement, SaveMeasurementContract, read_measurement,
+        read_measurement_with_contract,
+    },
     devex::{
-        CacheState, DevexCommand, DevexSuite, PairedArm, PathNormalizer, abba_pair_order,
-        cleanup_successful_sample_target, compare, distribution, filter_environment, sample_target,
-        summarize, with_source_edit,
+        BaselineContract, CacheState, DevexCommand, DevexSuite, PairedArm, PathNormalizer,
+        abba_pair_order, cleanup_successful_sample_target, compare, distribution,
+        filter_environment, sample_target, summarize, with_source_edit,
     },
     source_edit::SourceEdit,
 };
@@ -194,6 +197,64 @@ fn paired_cli_requires_two_explicit_backend_worktrees() {
 }
 
 #[test]
+fn legacy_baseline_contract_is_closed_to_config_only() {
+    let cli = parse(strings(&[
+        "devex",
+        "paired",
+        "--base-backend",
+        "D:/worktrees/base",
+        "--candidate-backend",
+        "D:/worktrees/candidate",
+        "--baseline-contract",
+        "legacy-cargo-dev-v1",
+        "--suite",
+        "cargo-dev-save",
+        "--variant",
+        "config-only",
+        "--runs",
+        "5",
+        "--cache",
+        "warm",
+    ]))
+    .unwrap();
+    let Command::Devex(DevexCommand::Paired(options)) = cli.command else {
+        panic!("应解析为 DevEx paired");
+    };
+    assert_eq!(
+        options.baseline_contract,
+        Some(BaselineContract::LegacyCargoDevV1)
+    );
+
+    for (suite, variant, contract) in [
+        ("rust-cold-build", "api", "legacy-cargo-dev-v1"),
+        ("cargo-dev-save", "api-only", "legacy-cargo-dev-v1"),
+        ("cargo-dev-save", "config-only", "legacy-cargo-dev-v2"),
+    ] {
+        assert!(
+            parse(strings(&[
+                "devex",
+                "paired",
+                "--base-backend",
+                "D:/worktrees/base",
+                "--candidate-backend",
+                "D:/worktrees/candidate",
+                "--baseline-contract",
+                contract,
+                "--suite",
+                suite,
+                "--variant",
+                variant,
+                "--runs",
+                "20",
+                "--cache",
+                "warm",
+            ]))
+            .is_err()
+        );
+    }
+}
+
+#[test]
 fn suite_variant_selects_the_measured_workload_and_sample_policy() {
     let api = DevexSuite::RustColdBuild.definition("api").unwrap();
     assert_eq!(api.features, &["bin-api"]);
@@ -349,6 +410,36 @@ fn cargo_dev_save_result_is_strict_and_structured() {
 }
 
 #[test]
+fn legacy_config_result_requires_one_cargo_without_relaxing_current_results() {
+    let directory = temporary_directory("legacy-cargo-dev-save-result");
+    let path = directory.join("result.json");
+    let legacy = SaveMeasurement {
+        schema_version: 1,
+        case: SaveCase::ConfigOnly,
+        started_at: "2026-08-27T00:00:00Z".to_owned(),
+        save_to_ready_ms: 42.5,
+        cargo_invocations: 1,
+        ready_kind: ReadyKind::Promoted,
+    };
+    fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+    assert!(read_measurement(&path).is_err());
+    assert_eq!(
+        read_measurement_with_contract(&path, SaveMeasurementContract::LegacyConfigOnlyBaseline)
+            .unwrap(),
+        legacy
+    );
+
+    let mut wrong_case = legacy;
+    wrong_case.case = SaveCase::ApiOnly;
+    fs::write(&path, serde_json::to_vec(&wrong_case).unwrap()).unwrap();
+    assert!(
+        read_measurement_with_contract(&path, SaveMeasurementContract::LegacyConfigOnlyBaseline)
+            .is_err()
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn cli_rejects_under_sampled_and_unknown_variants() {
     let under_sampled = parse(strings(&[
         "devex",
@@ -498,6 +589,20 @@ fn compare_rejects_unpaired_runs() {
 }
 
 #[test]
+fn compare_enforces_legacy_baseline_cargo_counts() {
+    let baseline = fake_legacy_paired_run("legacy-base", PairedArm::Baseline, 1);
+    let candidate = fake_legacy_paired_run("legacy-candidate", PairedArm::Candidate, 0);
+    assert!(compare(&baseline, &candidate).is_ok());
+
+    let invalid = fake_legacy_paired_run("legacy-invalid", PairedArm::Baseline, 0);
+    let error = compare(&invalid, &candidate).unwrap_err().to_string();
+    assert!(error.contains("Cargo=1"), "{error}");
+    for path in [baseline, candidate, invalid] {
+        fs::remove_dir_all(path).unwrap();
+    }
+}
+
+#[test]
 fn sccache_summary_reports_delta_hit_rate_and_errors() {
     let run = fake_run("sccache", "sha256:same", &[100.0]);
     let metadata_path = run.join("metadata.json");
@@ -636,6 +741,84 @@ fn fake_paired_run(
                 "status": "passed",
                 "exit_code": 0,
                 "target_directory": format!("$DEVEX/cache/cold-{pair:03}"),
+                "arm": arm.as_str(),
+                "pair": pair,
+                "order": order,
+                "source_fingerprints": {
+                    "backend": source_fingerprint,
+                    "frontend": null,
+                },
+            })
+            .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(directory.join("samples.jsonl"), format!("{samples}\n")).unwrap();
+    directory
+}
+
+fn fake_legacy_paired_run(name: &str, arm: PairedArm, cargo_invocations: usize) -> PathBuf {
+    let directory = temporary_directory(name);
+    let source_fingerprint = format!("sha256:source-{}", arm.as_str());
+    let metadata = serde_json::json!({
+        "schema_version": 1,
+        "run_id": name,
+        "started_at": "2026-08-27T00:00:00Z",
+        "suite": "cargo-dev-save",
+        "variant": "config-only",
+        "cache_state": "warm",
+        "requested_runs": 2,
+        "backend": {
+            "commit": null,
+            "dirty": false,
+            "worktree_fingerprint": source_fingerprint,
+        },
+        "frontend": null,
+        "toolchain": { "cargo": "cargo", "rustc": "rustc", "node": null, "pnpm": null },
+        "target": "x86_64-pc-windows-msvc",
+        "features": [],
+        "jobs": 4,
+        "environment": {},
+        "environment_hash": "sha256:environment",
+        "commands": [],
+        "compile_surface_fingerprint": "sha256:legacy-same",
+        "input_fingerprint": format!("sha256:{name}"),
+        "pairing": {
+            "comparison_id": "legacy-comparison",
+            "arm": arm.as_str(),
+            "baseline_contract": "legacy-cargo-dev-v1",
+            "baseline_provenance": {
+                "base_commit": BaselineContract::LEGACY_CARGO_DEV_BASE_COMMIT,
+                "adapter_commit": BaselineContract::LEGACY_CARGO_DEV_ADAPTER_COMMIT,
+                "patch_sha256": format!("sha256:{}", "a".repeat(64)),
+            }
+        },
+    });
+    fs::write(
+        directory.join("metadata.json"),
+        serde_json::to_vec(&metadata).unwrap(),
+    )
+    .unwrap();
+    let samples = [1, 2]
+        .into_iter()
+        .map(|pair| {
+            let order = match (pair % 2, arm) {
+                (1, PairedArm::Baseline) | (0, PairedArm::Candidate) => pair * 2 - 1,
+                _ => pair * 2,
+            };
+            serde_json::json!({
+                "schema_version": 1,
+                "run_id": name,
+                "sequence": pair,
+                "kind": "measurement",
+                "cache_state": "warm",
+                "started_at": format!("2026-08-27T00:00:{order:02}Z"),
+                "duration_ms": 100.0 + pair as f64,
+                "cargo_invocations": cargo_invocations,
+                "ready_kind": "promoted",
+                "status": "passed",
+                "exit_code": 0,
+                "target_directory": "$DEVEX/cache/warm",
                 "arm": arm.as_str(),
                 "pair": pair,
                 "order": order,

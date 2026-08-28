@@ -2,6 +2,11 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+#[path = "model/baseline.rs"]
+mod baseline;
+
+pub(crate) use baseline::{BaselineContract, BaselineProvenance};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum DevexSuite {
@@ -303,6 +308,10 @@ impl PairedArm {
 pub(crate) struct PairingMetadata {
     pub(crate) comparison_id: String,
     pub(crate) arm: PairedArm,
+    #[serde(default)]
+    pub(crate) baseline_contract: Option<BaselineContract>,
+    #[serde(default)]
+    pub(crate) baseline_provenance: Option<BaselineProvenance>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -312,6 +321,7 @@ pub(crate) struct DevexPairedOptions {
     pub(crate) candidate_backend: PathBuf,
     pub(crate) baseline_frontend: Option<PathBuf>,
     pub(crate) candidate_frontend: Option<PathBuf>,
+    pub(crate) baseline_contract: Option<BaselineContract>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

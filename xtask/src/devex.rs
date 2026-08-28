@@ -21,7 +21,8 @@ mod support;
 
 #[allow(unused_imports)]
 pub(crate) use model::{
-    CacheState, DevexCommand, DevexPairedOptions, DevexRunOptions, DevexSuite, PairedArm,
+    BaselineContract, CacheState, DevexCommand, DevexPairedOptions, DevexRunOptions, DevexSuite,
+    PairedArm,
 };
 
 pub(crate) fn parse_command(args: &[String]) -> std::result::Result<DevexCommand, String> {
@@ -45,9 +46,25 @@ fn parse_paired(args: &[String]) -> std::result::Result<DevexCommand, String> {
     let mut candidate_backend = None;
     let mut baseline_frontend = None;
     let mut candidate_frontend = None;
+    let mut baseline_contract = None;
     let mut run_args = Vec::new();
     let mut index = 0;
     while index < args.len() {
+        if args[index] == "--baseline-contract" {
+            if baseline_contract.is_some() {
+                return Err("--baseline-contract 不能重复".to_owned());
+            }
+            let value = args
+                .get(index + 1)
+                .filter(|value| !value.starts_with("--"))
+                .ok_or("--baseline-contract 缺少取值")?;
+            baseline_contract = Some(
+                BaselineContract::parse(value)
+                    .ok_or("--baseline-contract 只允许 legacy-cargo-dev-v1")?,
+            );
+            index += 2;
+            continue;
+        }
         let slot = match args[index].as_str() {
             "--base-backend" if baseline_backend.is_none() => Some(&mut baseline_backend),
             "--candidate-backend" if candidate_backend.is_none() => Some(&mut candidate_backend),
@@ -73,6 +90,9 @@ fn parse_paired(args: &[String]) -> std::result::Result<DevexCommand, String> {
     let DevexCommand::Run(run) = parse_run(&run_args)? else {
         unreachable!("parse_run 只会返回 Run")
     };
+    if let Some(contract) = baseline_contract {
+        contract.validate(&run)?;
+    }
     let has_frontend_pair = baseline_frontend.is_some() && candidate_frontend.is_some();
     if baseline_frontend.is_some() != candidate_frontend.is_some() {
         return Err("paired 的 --base-frontend 与 --candidate-frontend 必须成对提供".to_owned());
@@ -92,6 +112,7 @@ fn parse_paired(args: &[String]) -> std::result::Result<DevexCommand, String> {
         candidate_backend: candidate_backend.ok_or("paired 缺少 --candidate-backend")?,
         baseline_frontend,
         candidate_frontend,
+        baseline_contract,
     }))
 }
 
@@ -269,7 +290,7 @@ fn resolve_run_reference(devex_root: &Path, reference: &str) -> Result<PathBuf> 
 
 pub(crate) fn usage() -> &'static str {
     "cargo xtask devex run --suite <suite> --variant <name> --runs <1..50> --cache <cold|warm>\n\
-     cargo xtask devex paired --base-backend <dir> --candidate-backend <dir> [--base-frontend <dir> --candidate-frontend <dir>] --suite <suite> --variant <name> --runs <1..50> --cache <cold|warm>\n\
+     cargo xtask devex paired --base-backend <dir> --candidate-backend <dir> [--base-frontend <dir> --candidate-frontend <dir>] [--baseline-contract legacy-cargo-dev-v1] --suite <suite> --variant <name> --runs <1..50> --cache <cold|warm>\n\
      cargo xtask devex summarize <日期/run-id>\n\
      cargo xtask devex compare --base <日期/run-id> --candidate <日期/run-id>"
 }

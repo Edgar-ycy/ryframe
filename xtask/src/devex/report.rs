@@ -14,6 +14,8 @@ use super::{
     model::{CacheState, DevexSuite, PairedArm, PairingMetadata},
 };
 
+#[path = "report/baseline_contract.rs"]
+mod baseline_contract;
 #[path = "report/markdown.rs"]
 mod markdown;
 
@@ -354,6 +356,14 @@ fn validate_paired_records(
     {
         return Err("DevEx paired comparison id 或 arm 不匹配".into());
     }
+    baseline_contract::validate(
+        baseline,
+        candidate,
+        baseline_records,
+        candidate_records,
+        baseline_pairing,
+        candidate_pairing,
+    )?;
     validate_source_fingerprints(baseline)?;
     validate_source_fingerprints(candidate)?;
     let baseline_samples = measurement_samples(baseline_records);
