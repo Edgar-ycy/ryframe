@@ -499,6 +499,7 @@ fn mutable_control_unique_fields_exclude_the_current_record_on_update() {
 #[test]
 fn access_catalog_contains_lossless_menu_labels_and_named_extension_permissions() {
     let post = normalize(&post_source(), "post").expect("Post 清单应有效");
+    let expected_menu_order = i64::from(post.menu.order);
     assert_eq!(
         post.extension_permissions.get("export").map(String::as_str),
         Some("system:post:export")
@@ -516,7 +517,10 @@ fn access_catalog_contains_lossless_menu_labels_and_named_extension_permissions(
     assert_eq!(value["version"].as_integer(), Some(1));
     assert_eq!(post["labels"]["zh_cn"].as_str(), Some("岗位"));
     assert_eq!(post["menu"]["parent"].as_str(), Some("system"));
-    assert_eq!(post["menu"]["order"].as_integer(), Some(8));
+    assert_eq!(
+        post["menu"]["order"].as_integer(),
+        Some(expected_menu_order)
+    );
     assert_eq!(
         post["extension_permissions"]["export"].as_str(),
         Some("system:post:export")
@@ -533,6 +537,18 @@ fn access_catalog_contains_lossless_menu_labels_and_named_extension_permissions(
 
     let device = normalize(&device_source(), "device").expect("Device 清单应有效");
     let generated = render_resources(&[device]).expect("Device 应生成");
+    let access = generated
+        .assets
+        .iter()
+        .find(|asset| asset.path == "catalog/access.generated.toml")
+        .expect("Device 应生成权限目录")
+        .content
+        .as_str();
+    let access = toml::from_str::<toml::Value>(access).expect("权限目录应是有效 TOML");
+    assert_eq!(
+        access["resources"][0]["menu"]["icon"].as_str(),
+        Some("monitor")
+    );
     let openapi = generated
         .assets
         .iter()

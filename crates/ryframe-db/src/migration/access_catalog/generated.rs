@@ -50,6 +50,8 @@ pub(super) struct GeneratedMenu {
     pub(super) key: String,
     pub(super) parent: String,
     pub(super) order: u32,
+    #[serde(default)]
+    pub(super) icon: Option<String>,
     pub(super) labels: GeneratedLabels,
 }
 
@@ -121,6 +123,9 @@ pub(super) fn generated_access_resources() -> Result<Vec<GeneratedAccessResource
                 "生成菜单 {} 的 order 必须大于 0",
                 resource.menu.key
             )));
+        }
+        if let Some(icon) = &resource.menu.icon {
+            validate_generated_identifier("生成菜单 icon", icon)?;
         }
         if resource.route.key != resource.menu.key {
             return Err(DbErr::Custom(format!(
