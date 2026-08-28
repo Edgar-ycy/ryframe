@@ -4,13 +4,7 @@
 
 本地开发以 Windows 为准。MySQL 和 RustFS 在 Windows 运行，Redis 连接 WSL 中的实例；应用本身直接在 Windows 启动。
 
-选择开发配置后再运行命令：
-
-```powershell
-$env:APP_ENV = "dev"
-```
-
-配置文件位于 `config/`，环境变量使用 `APP_` 前缀覆盖对应字段。外部服务地址、密码、令牌和证书通过本机环境变量或密钥文件提供。所有可用字段和校验范围以配置结构及启动错误为准。
+选择开发配置后再运行命令，例如 `$env:APP_ENV = "dev"`。配置文件位于 `config/`，环境变量使用 `APP_` 前缀覆盖对应字段；外部服务地址、密码、令牌和证书通过本机环境变量或密钥文件提供，所有可用字段和校验范围以配置结构及启动错误为准。
 
 ## 启动与热切换
 
@@ -32,27 +26,19 @@ cargo run --locked -p ryframe --no-default-features --features bin-worker --bin 
 
 ## 数据库迁移
 
-控制库使用默认目标：
+控制库使用默认目标；租户数据可操作全部已登记目标或单个目标；新迁移必须用对应命令创建骨架：
 
 ```powershell
 cargo migrate status
 cargo migrate verify
 cargo migrate up
-```
-
-租户数据可操作全部已登记目标，或只操作一个目标；生产部署和非生产重建步骤见[数据指南](data.md)与[运维指南](operations.md)：
-
-```powershell
 cargo migrate verify tenant-data --all
 cargo migrate verify tenant-data --target <目标键>
-```
-
-创建新的迁移骨架：
-
-```powershell
 cargo migrate new control <迁移名>
 cargo migrate new tenant-data <迁移名>
 ```
+
+生产部署和非生产重建步骤见[数据指南](data.md)与[运维指南](operations.md)。
 
 ## 开发标准资源
 
@@ -93,15 +79,7 @@ Post 和 Notice 可作为标准 CRUD 示例。导出、发布等特殊动作适�
 
 ## API 与前后端联调
 
-接口变化后运行：
-
-```powershell
-cargo api-sync
-```
-
-该命令从当前后端代码生成候选 OpenAPI，并刷新前端 operation descriptor。随后进入前端项目执行消费者检查和浏览器 smoke，确认请求、权限、菜单与页面行为一致。
-
-如果只需要重新导出后端快照，可运行：
+接口变化后运行 `cargo api-sync`，从当前后端代码生成候选 OpenAPI 并刷新前端 operation descriptor；随后进入前端项目执行消费者检查和浏览器 smoke，确认请求、权限、菜单与页面行为一致。只重新导出后端快照时运行：
 
 ```powershell
 cargo run --locked -p ryframe-api --bin export_openapi -- openapi/openapi.json
@@ -136,10 +114,7 @@ $env:RYFRAME_REDIS_INTEGRATION = "1"
 cargo test --locked -p ryframe-adapters --test redis_real_protocol -- --nocapture
 ```
 
-完整集成门禁还会运行 Redis TLS、S3 HTTPS 和 OTLP HTTPS 三个 AWS-LC 真实出站测试。Windows
-本地需有 `python`、`openssl`，并在 `127.0.0.1` 启动隔离的 MySQL 与 Redis；Redis 建议使用 WSL
-独立实例和数据库 15。门禁只接受回环 Redis，不执行 `KEYS`、`SCAN` 或 `FLUSH`，测试 key 由唯一
-`scope_id` 隔离并精确删除。运行入口与 CI 相同：
+完整集成门禁还会运行 Redis TLS、S3 HTTPS 和 OTLP HTTPS 三个 AWS-LC 真实出站测试。Windows 本地需有 `python`、`openssl`，并在 `127.0.0.1` 启动隔离的 MySQL 与 Redis；Redis 建议使用 WSL 独立实例和数据库 15。门禁只接受回环 Redis，不执行 `KEYS`、`SCAN` 或 `FLUSH`，测试 key 由唯一 `scope_id` 隔离并精确删除。运行入口与 CI 相同：
 
 ```powershell
 $env:RYFRAME_MYSQL_INTEGRATION = "1"
@@ -149,12 +124,7 @@ $env:RYFRAME_INTEGRATION_RUN_ID = "local-aws-lc"
 cargo xtask ci integration
 ```
 
-TLS fixture 会生成两日有效的临时 CA，在动态回环端口启动 Redis TLS 代理和 HTTPS 服务；三个测试
-结束或失败后都会停止监听并删除临时证书。日志默认保存在
-`.local-tests/integration/tls/<run-id>/`，历史目录不会覆盖；可用
-`RYFRAME_TLS_ARTIFACT_DIR` 指定日志根目录。CI 对成功和失败运行都上传 14 天，失败摘要会输出每个
-已运行测试的最近日志。`RYFRAME_REDIS_HOST` 不是 `127.0.0.1`、`::1` 或 `localhost` 时门禁直接
-拒绝启动，避免误连共享 Redis。
+TLS fixture 会生成两日有效的临时 CA，在动态回环端口启动 Redis TLS 代理和 HTTPS 服务；三个测试结束或失败后都会停止监听并删除临时证书。日志默认保存在 `.local-tests/integration/tls/<run-id>/`，历史目录不会覆盖；可用 `RYFRAME_TLS_ARTIFACT_DIR` 指定日志根目录。CI 对成功和失败运行都上传 14 天，失败摘要会输出每个已运行测试的最近日志。`RYFRAME_REDIS_HOST` 不是 `127.0.0.1`、`::1` 或 `localhost` 时门禁直接拒绝启动，避免误连共享 Redis。
 
 ## 开发反馈性能测量
 
