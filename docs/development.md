@@ -140,7 +140,7 @@ suite 固定为 `rust-cold-build`、`rust-incremental`、`cargo-dev-save`、`res
 
 ## 资源门禁与编译缓存
 
-`cargo xtask ci resource-gate --frontend-dir ../ryframe-vue3` 直接从 CI 的 base/head SHA 读取资源变化、关系闭包和 ownership，不接收流水线拼接的资源名。缺少合法 base、变更面过大、删除或重命名无法归属，以及 Cargo、toolchain、模板、CI 或架构策略变化时都会自动执行完整门禁。定向模式默认关闭；只有 `scripts/resource_gate_replay.py` 在隔离 worktree 中用至少 20 个真实变更案例证明定向与完整门禁零分歧后，CI 才能设置受控的激活标记。没有回放证据时保持完整回退是预期行为。
+`cargo xtask ci resource-gate --frontend-dir ../ryframe-vue3` 直接从 CI 的 base/head SHA 读取资源变化、关系闭包和 ownership，不接收流水线拼接的资源名。缺少合法 base、变更面过大、删除或重命名无法归属，以及 Cargo、toolchain、模板、CI 或架构策略变化时都会自动执行完整门禁。定向模式默认关闭；只有 `scripts/resource_gate_replay.py` 使用 format 2 清单，在两个独立 Git 仓库的成对后端/前端 worktree 中回放至少 20 个真实变更案例，证明定向与完整门禁零分歧后，CI 才能设置受控的激活标记；调用时必须同时提供 `--repository` 与 `--frontend-repository`。没有回放证据时保持完整回退是预期行为。
 
 Rust CI 关闭 incremental，并为每个 job 保存 sccache JSON 统计，不缓存整个 target。`SCCACHE_BASEDIRS` 目前只用于定时或手动的 AWS-LC 双绝对路径 canary；canary 要求缓存错误为零、warm 命中率至少 80%、不可缓存请求至少减少 50%，且 warm 构建确有耗时改善。达到这些条件前，不把该路径归一化配置扩展到普通 Rust job。
 
