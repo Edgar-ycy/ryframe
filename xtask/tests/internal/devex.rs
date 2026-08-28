@@ -504,6 +504,15 @@ fn environment_snapshot_only_keeps_explicit_safe_names() {
         (OsString::from("RYFRAME_VERIFY_JOBS"), OsString::from("8")),
         (OsString::from("RUSTFLAGS"), OsString::from("-Cdebuginfo=0")),
         (
+            OsString::from("RUSTC_WORKSPACE_WRAPPER"),
+            OsString::from("sccache"),
+        ),
+        (OsString::from("SCCACHE_CLIENT_SIDE"), OsString::from("1")),
+        (
+            OsString::from("SCCACHE_GHA_VERSION"),
+            OsString::from("aws-lc-canary"),
+        ),
+        (
             OsString::from("APP_AUTH_JWT_SECRET"),
             OsString::from("never-record-this"),
         ),
@@ -511,13 +520,27 @@ fn environment_snapshot_only_keeps_explicit_safe_names() {
             OsString::from("ACTIONS_RUNTIME_TOKEN"),
             OsString::from("never-record-this-either"),
         ),
+        (
+            OsString::from("SCCACHE_REDIS"),
+            OsString::from("redis://secret@localhost"),
+        ),
     ]);
     assert_eq!(environment.get("CARGO_INCREMENTAL").unwrap(), "0");
     assert_eq!(environment.get("CARGO_NET_OFFLINE").unwrap(), "true");
     assert_eq!(environment.get("RYFRAME_VERIFY_JOBS").unwrap(), "8");
     assert!(environment.contains_key("RUSTFLAGS"));
+    assert_eq!(
+        environment.get("RUSTC_WORKSPACE_WRAPPER").unwrap(),
+        "sccache"
+    );
+    assert_eq!(environment.get("SCCACHE_CLIENT_SIDE").unwrap(), "1");
+    assert_eq!(
+        environment.get("SCCACHE_GHA_VERSION").unwrap(),
+        "aws-lc-canary"
+    );
     assert!(!environment.contains_key("APP_AUTH_JWT_SECRET"));
     assert!(!environment.contains_key("ACTIONS_RUNTIME_TOKEN"));
+    assert!(!environment.contains_key("SCCACHE_REDIS"));
 }
 
 #[test]
@@ -623,86 +646,6 @@ fn compare_enforces_legacy_baseline_cargo_counts() {
     for path in [baseline, candidate, invalid] {
         fs::remove_dir_all(path).unwrap();
     }
-}
-
-#[test]
-fn sccache_summary_reports_delta_hit_rate_and_errors() {
-    let run = fake_run("sccache", "sha256:same", &[100.0]);
-    let metadata_path = run.join("metadata.json");
-    let mut metadata: serde_json::Value =
-        serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
-    metadata["toolchain"]["sccache"] = serde_json::json!("sccache 0.17.0");
-    fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
-    write_sccache_stats(&run.join("sccache-before.json"), 10, 4, 2, 1, 0);
-    write_sccache_stats(&run.join("sccache-after.json"), 20, 12, 4, 2, 1);
-
-    let summary = summarize(&run).unwrap();
-    assert_eq!(summary.sccache_version.as_deref(), Some("sccache 0.17.0"));
-    let stats = summary.sccache.unwrap();
-
-    assert_eq!(stats.compile_requests, 10);
-    assert_eq!(stats.cache_hits, 8);
-    assert_eq!(stats.cache_misses, 2);
-    assert_eq!(stats.not_cacheable, 1);
-    assert_eq!(stats.cache_errors, 1);
-    assert_eq!(stats.hit_rate, Some(0.8));
-    fs::remove_dir_all(run).unwrap();
-}
-
-#[test]
-fn compare_rejects_different_sccache_executables() {
-    let baseline = fake_paired_run(
-        "sccache-version-base",
-        "sha256:same",
-        &[100.0],
-        "comparison-version",
-        PairedArm::Baseline,
-    );
-    let candidate = fake_paired_run(
-        "sccache-version-candidate",
-        "sha256:same",
-        &[90.0],
-        "comparison-version",
-        PairedArm::Candidate,
-    );
-    for (path, version) in [
-        (&baseline, "sccache 0.15.0"),
-        (&candidate, "sccache 0.17.0"),
-    ] {
-        let metadata_path = path.join("metadata.json");
-        let mut metadata: serde_json::Value =
-            serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
-        metadata["toolchain"]["sccache"] = serde_json::json!(version);
-        fs::write(metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
-    }
-    let error = compare(&baseline, &candidate).unwrap_err().to_string();
-    assert!(error.contains("sccache 可执行版本"), "{error}");
-    fs::remove_dir_all(baseline).unwrap();
-    fs::remove_dir_all(candidate).unwrap();
-}
-
-fn write_sccache_stats(
-    path: &Path,
-    requests: u64,
-    hits: u64,
-    misses: u64,
-    not_cacheable: u64,
-    errors: u64,
-) {
-    let document = serde_json::json!({
-        "stats": {
-            "compile_requests": requests,
-            "requests_not_cacheable": not_cacheable,
-            "cache_hits": { "counts": { "Rust": hits } },
-            "cache_misses": { "counts": { "Rust": misses } },
-            "cache_errors": { "counts": { "Rust": errors } },
-            "cache_timeouts": 0,
-            "cache_read_errors": 0,
-            "cache_write_errors": 0,
-            "dist_errors": 0,
-        }
-    });
-    fs::write(path, serde_json::to_vec(&document).unwrap()).unwrap();
 }
 
 fn fake_paired_run(

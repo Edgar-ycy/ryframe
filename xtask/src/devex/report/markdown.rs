@@ -1,4 +1,4 @@
-use super::RunSummary;
+use super::{Distribution, RunSummary, acceptance::ComparisonCheck, percentage_change};
 
 pub(super) fn render(summary: &RunSummary) -> String {
     let metrics = summary.duration_ms.as_ref().map_or_else(
@@ -68,4 +68,69 @@ pub(super) fn render(summary: &RunSummary) -> String {
         metrics,
         sccache,
     )
+}
+
+pub(super) fn render_comparison(
+    baseline: &RunSummary,
+    candidate: &RunSummary,
+    baseline_duration: &Distribution,
+    candidate_duration: &Distribution,
+    sccache_version: &str,
+    checks: &[ComparisonCheck],
+) -> String {
+    let mut document = format!(
+        "# DevEx 对比\n\n\
+         - suite：`{}`\n\
+         - variant：`{}`\n\
+         - cache：`{}`\n\
+         - paired comparison：`{}`\n\
+         - execution surface：`{}`\n\
+         - sccache executable：`{}`\n\
+         - input：基线 `{}` / 候选 `{}`\n\n\
+         | 指标 | 基线 | 候选 | 变化 |\n\
+         | --- | ---: | ---: | ---: |\n\
+         | P50 | {:.1} ms | {:.1} ms | {} |\n\
+         | P95 | {:.1} ms | {:.1} ms | {} |\n",
+        baseline.suite.as_str(),
+        baseline.variant,
+        baseline.cache_state.as_str(),
+        baseline
+            .pairing
+            .as_ref()
+            .expect("ensure_comparable 已校验 pairing")
+            .comparison_id,
+        baseline.compile_surface_fingerprint,
+        sccache_version,
+        baseline.input_fingerprint,
+        candidate.input_fingerprint,
+        baseline_duration.p50,
+        candidate_duration.p50,
+        percentage_change(baseline_duration.p50, candidate_duration.p50),
+        baseline_duration.p95,
+        candidate_duration.p95,
+        percentage_change(baseline_duration.p95, candidate_duration.p95),
+    );
+    if checks.is_empty() {
+        return document;
+    }
+    document
+        .push_str("\n## 验收判定\n\n| 门禁 | 要求 | 实测 | 结果 |\n| --- | --- | --- | --- |\n");
+    for check in checks {
+        use std::fmt::Write;
+        writeln!(
+            document,
+            "| {} | {} | {} | {} |",
+            check.name,
+            check.requirement,
+            check.observed,
+            if check.passed { "通过" } else { "失败" }
+        )
+        .expect("写入 String 不会失败");
+    }
+    document.push_str(if checks.iter().all(|check| check.passed) {
+        "\n- 总判定：通过\n"
+    } else {
+        "\n- 总判定：失败\n"
+    });
+    document
 }

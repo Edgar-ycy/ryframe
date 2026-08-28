@@ -14,10 +14,14 @@ use super::{
     model::{CacheState, DevexSuite, PairedArm, PairingMetadata},
 };
 
+#[path = "report/acceptance.rs"]
+mod acceptance;
 #[path = "report/baseline_contract.rs"]
 mod baseline_contract;
 #[path = "report/markdown.rs"]
 mod markdown;
+#[path = "report/sccache.rs"]
+mod sccache;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -101,15 +105,6 @@ pub(crate) struct SccacheDelta {
     pub(crate) hit_rate: Option<f64>,
 }
 
-#[derive(Debug, Clone, Copy)]
-struct SccacheCounters {
-    compile_requests: u64,
-    cache_hits: u64,
-    cache_misses: u64,
-    not_cacheable: u64,
-    cache_errors: u64,
-}
-
 pub(super) fn write_metadata(run_dir: &Path, metadata: &RunMetadata) -> Result<()> {
     write_json(run_dir.join("metadata.json"), metadata)
 }
@@ -157,7 +152,7 @@ pub(crate) fn summarize(run_dir: &Path) -> Result<RunSummary> {
         failed,
         duration_ms: distribution(&durations),
         sccache_version: metadata.toolchain.sccache,
-        sccache: read_sccache_delta(run_dir)?,
+        sccache: sccache::read_delta(run_dir, metadata.suite.uses_sccache())?,
         pairing,
         source_fingerprints,
     };
@@ -184,38 +179,30 @@ pub(crate) fn compare(baseline_dir: &Path, candidate_dir: &Path) -> Result<Strin
         .sccache_version
         .as_deref()
         .map_or_else(|| "n/a".to_owned(), ToOwned::to_owned);
-    Ok(format!(
-        "# DevEx 对比\n\n\
-         - suite：`{}`\n\
-         - variant：`{}`\n\
-         - cache：`{}`\n\
-         - paired comparison：`{}`\n\
-         - execution surface：`{}`\n\
-         - sccache executable：`{}`\n\
-         - input：基线 `{}` / 候选 `{}`\n\n\
-         | 指标 | 基线 | 候选 | 变化 |\n\
-         | --- | ---: | ---: | ---: |\n\
-         | P50 | {:.1} ms | {:.1} ms | {} |\n\
-         | P95 | {:.1} ms | {:.1} ms | {} |\n",
-        baseline.suite.as_str(),
-        baseline.variant,
-        baseline.cache_state.as_str(),
-        baseline
-            .pairing
-            .as_ref()
-            .expect("ensure_comparable 已校验 pairing")
-            .comparison_id,
-        baseline.compile_surface_fingerprint,
-        sccache_version,
-        baseline.input_fingerprint,
-        candidate.input_fingerprint,
-        baseline_duration.p50,
-        candidate_duration.p50,
-        percentage_change(baseline_duration.p50, candidate_duration.p50),
-        baseline_duration.p95,
-        candidate_duration.p95,
-        percentage_change(baseline_duration.p95, candidate_duration.p95),
-    ))
+    let checks = acceptance::checks(&baseline, &candidate, baseline_duration, candidate_duration)?;
+    let document = markdown::render_comparison(
+        &baseline,
+        &candidate,
+        baseline_duration,
+        candidate_duration,
+        &sccache_version,
+        &checks,
+    );
+    let violations = checks
+        .iter()
+        .filter(|check| !check.passed)
+        .map(|check| {
+            format!(
+                "- {}：{}（实测 {}）",
+                check.name, check.requirement, check.observed
+            )
+        })
+        .collect::<Vec<_>>();
+    if violations.is_empty() {
+        Ok(document)
+    } else {
+        Err(format!("{document}\n## 未通过项\n\n{}", violations.join("\n")).into())
+    }
 }
 
 pub(crate) fn distribution(values: &[f64]) -> Option<Distribution> {
@@ -476,64 +463,6 @@ fn ensure_complete(label: &str, summary: &RunSummary) -> Result<()> {
         .into());
     }
     Ok(())
-}
-
-fn read_sccache_delta(run_dir: &Path) -> Result<Option<SccacheDelta>> {
-    let before_path = run_dir.join("sccache-before.json");
-    let after_path = run_dir.join("sccache-after.json");
-    if !before_path.is_file() && !after_path.is_file() {
-        return Ok(None);
-    }
-    if !before_path.is_file() || !after_path.is_file() {
-        return Err("sccache 统计快照不完整".into());
-    }
-    let before = parse_sccache_counters(&fs::read(before_path)?)?;
-    let after = parse_sccache_counters(&fs::read(after_path)?)?;
-    let cache_hits = after.cache_hits.saturating_sub(before.cache_hits);
-    let cache_misses = after.cache_misses.saturating_sub(before.cache_misses);
-    let cacheable = cache_hits.saturating_add(cache_misses);
-    Ok(Some(SccacheDelta {
-        compile_requests: after
-            .compile_requests
-            .saturating_sub(before.compile_requests),
-        cache_hits,
-        cache_misses,
-        not_cacheable: after.not_cacheable.saturating_sub(before.not_cacheable),
-        cache_errors: after.cache_errors.saturating_sub(before.cache_errors),
-        hit_rate: (cacheable > 0).then(|| cache_hits as f64 / cacheable as f64),
-    }))
-}
-
-fn parse_sccache_counters(document: &[u8]) -> Result<SccacheCounters> {
-    let value: serde_json::Value = serde_json::from_slice(document)?;
-    let stats = value.get("stats").ok_or("sccache JSON 缺少 stats")?;
-    let scalar = |name: &str| {
-        stats
-            .get(name)
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0)
-    };
-    let counts = |name: &str| {
-        stats
-            .get(name)
-            .and_then(|value| value.get("counts"))
-            .and_then(serde_json::Value::as_object)
-            .into_iter()
-            .flat_map(|values| values.values())
-            .filter_map(serde_json::Value::as_u64)
-            .sum()
-    };
-    Ok(SccacheCounters {
-        compile_requests: scalar("compile_requests"),
-        cache_hits: counts("cache_hits"),
-        cache_misses: counts("cache_misses"),
-        not_cacheable: scalar("requests_not_cacheable"),
-        cache_errors: counts("cache_errors")
-            + scalar("cache_timeouts")
-            + scalar("cache_read_errors")
-            + scalar("cache_write_errors")
-            + scalar("dist_errors"),
-    })
 }
 
 fn percentage_change(baseline: f64, candidate: f64) -> String {
