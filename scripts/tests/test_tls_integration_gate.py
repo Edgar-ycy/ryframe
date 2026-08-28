@@ -77,7 +77,7 @@ class TlsIntegrationGateTests(unittest.TestCase):
                 "-p",
                 "ryframe-adapters",
                 "--features",
-                "redis",
+                "redis-api",
                 "--test",
                 "redis_real_protocol",
                 "--jobs",

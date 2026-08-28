@@ -20,7 +20,8 @@ otel = [
     "dep:opentelemetry-semantic-conventions",
     "dep:tracing-opentelemetry",
 ]
-redis = ["dep:redis", "monitoring"]
+redis-client = ["dep:redis", "monitoring"]
+redis-api = ["redis-client", "dep:dashmap"]
 spreadsheet = ["dep:calamine", "dep:rust_xlsxwriter"]
 
 [dependencies]
@@ -44,7 +45,7 @@ sysinfo = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["rt", "sync", "time", "fs", "io-util"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-dashmap = { workspace = true }
+dashmap = { workspace = true, optional = true }
 rand = { workspace = true }
 thiserror = { workspace = true }
 sha2 = { workspace = true }
@@ -65,7 +66,7 @@ tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
 [[test]]
 name = "redis_real_protocol"
 path = "tests/redis_real_protocol.rs"
-required-features = ["redis"]
+required-features = ["redis-api"]
 
 [[test]]
 name = "otel_https_real"

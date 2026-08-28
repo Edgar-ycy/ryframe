@@ -49,7 +49,7 @@ TESTS = (
         "redis-tls",
         "redis_real_protocol",
         "tls_connection_round_trip_uses_real_redis",
-        "redis",
+        "redis-api",
     ),
     TestSpec(
         "s3-https",

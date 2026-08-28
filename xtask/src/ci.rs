@@ -447,7 +447,7 @@ fn integration() -> Result<()> {
     )?;
     for (package, target, features) in [
         ("ryframe-db", "mysql_real_protocol", Some("repositories")),
-        ("ryframe-adapters", "redis_real_protocol", Some("redis")),
+        ("ryframe-adapters", "redis_real_protocol", Some("redis-api")),
     ] {
         run_owned(
             &root,

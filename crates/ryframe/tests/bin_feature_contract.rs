@@ -163,7 +163,8 @@ fn expensive_leaf_capabilities_are_opt_in() {
         "image-processing",
         "monitoring",
         "otel",
-        "redis",
+        "redis-client",
+        "redis-api",
         "spreadsheet",
     ] {
         assert!(
@@ -174,11 +175,23 @@ fn expensive_leaf_capabilities_are_opt_in() {
     let shared = feature_members("runtime-services");
     let api = feature_members("bin-api");
     let worker = feature_members("bin-worker");
+    let redis_client = manifest_feature_members(ADAPTERS_MANIFEST, "redis-client");
+    let redis_api = manifest_feature_members(ADAPTERS_MANIFEST, "redis-api");
+    assert!(redis_client.contains("dep:redis"));
+    assert!(redis_client.contains("monitoring"));
+    assert!(!redis_client.contains("dep:dashmap"));
+    assert!(redis_api.contains("redis-client"));
+    assert!(redis_api.contains("dep:dashmap"));
+    assert!(ADAPTERS_MANIFEST.contains("dashmap = { workspace = true, optional = true }"));
     assert!(!shared.contains("ryframe-adapters/image-processing"));
+    assert!(shared.contains("ryframe-adapters/redis-client"));
+    assert!(!shared.contains("ryframe-adapters/redis-api"));
     assert!(!shared.contains("ryframe-adapters/spreadsheet"));
     assert!(api.contains("ryframe-adapters/image-processing"));
+    assert!(api.contains("ryframe-adapters/redis-api"));
     assert!(api.contains("ryframe-adapters/spreadsheet"));
     assert!(!worker.contains("ryframe-adapters/image-processing"));
+    assert!(!worker.contains("ryframe-adapters/redis-api"));
     assert!(worker.contains("ryframe-adapters/spreadsheet"));
     assert!(APPLICATION_MANIFEST.contains("default = []"));
     assert!(APPLICATION_MANIFEST.contains("test-support = []"));

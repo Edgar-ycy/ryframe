@@ -225,7 +225,7 @@ fn integration_commands_share_the_ci_target_and_jobs() {
         integration_test_args_for_target(
             "ryframe-adapters",
             "redis_real_protocol",
-            Some("redis"),
+            Some("redis-api"),
             "target/ci/backend",
             4,
         ),
@@ -237,7 +237,7 @@ fn integration_commands_share_the_ci_target_and_jobs() {
             "-p",
             "ryframe-adapters",
             "--features",
-            "redis",
+            "redis-api",
             "--test",
             "redis_real_protocol",
             "--jobs",
