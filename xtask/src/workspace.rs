@@ -1,4 +1,9 @@
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
+use crate::Result;
 
 /// 返回后端 Cargo Workspace 根目录。
 pub(crate) fn root_dir() -> PathBuf {
@@ -14,4 +19,24 @@ pub(crate) fn default_frontend_dir() -> PathBuf {
         .parent()
         .expect("后端 Workspace 必须具有父目录")
         .join("ryframe-vue3")
+}
+
+/// 删除显式隔离根目录内的单个子目录，并拒绝越界或根目录目标。
+pub(crate) fn remove_isolated_directory(root: &Path, target: &Path) -> Result<()> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("无法规范化隔离目录 {}：{error}", root.display()))?;
+    let target = target
+        .canonicalize()
+        .map_err(|error| format!("无法规范化待删除目录 {}：{error}", target.display()))?;
+    if target == root || !target.starts_with(&root) {
+        return Err(format!(
+            "拒绝删除隔离边界外的目录：root={}，target={}",
+            root.display(),
+            target.display()
+        )
+        .into());
+    }
+    fs::remove_dir_all(target)?;
+    Ok(())
 }

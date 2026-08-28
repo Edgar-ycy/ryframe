@@ -3,6 +3,8 @@ use std::{
     process::{Command, ExitStatus},
 };
 
+use crate::{Result, workspace::remove_isolated_directory};
+
 use super::model::{CacheState, DevexSuite, StepDefinition};
 
 pub(crate) fn sample_target(
@@ -18,6 +20,17 @@ pub(crate) fn sample_target(
         CacheState::Cold => run_dir.join(format!("cache/cold-{sequence:03}")),
         CacheState::Warm => run_dir.join("cache/warm"),
     }
+}
+
+pub(crate) fn cleanup_successful_sample_target(
+    run_dir: &Path,
+    target: &Path,
+    cache_state: CacheState,
+) -> Result<()> {
+    if cache_state != CacheState::Cold {
+        return Ok(());
+    }
+    remove_isolated_directory(&run_dir.join("cache"), target)
 }
 
 pub(super) fn display_step(step: &StepDefinition) -> String {

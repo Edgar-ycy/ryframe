@@ -26,7 +26,9 @@ use super::{
     },
     preflight,
     report::{SampleKind, SampleRecord, SampleStatus, append_sample, summarize, write_metadata},
-    support::{display_step, metric, sample_target, success_status},
+    support::{
+        cleanup_successful_sample_target, display_step, metric, sample_target, success_status,
+    },
 };
 
 pub(super) fn execute(
@@ -301,7 +303,9 @@ fn execute_measurements(
                 None,
             ),
         )?;
-        if !outcome.status.success() {
+        if outcome.status.success() {
+            cleanup_successful_sample_target(&session.run_dir, &target, options.cache_state)?;
+        } else {
             summarize(&session.run_dir)?;
             return Err(format!(
                 "suite `{}` 第 {sequence} 个样本失败，记录保留在 {}",

@@ -9,14 +9,31 @@ use super::{
     cli::{Command, parse},
     dev::{ReadyKind, SaveCase, SaveMeasurement, read_measurement},
     devex::{
-        CacheState, DevexCommand, DevexSuite, PairedArm, PathNormalizer, abba_pair_order, compare,
-        distribution, filter_environment, sample_target, summarize, with_source_edit,
+        CacheState, DevexCommand, DevexSuite, PairedArm, PathNormalizer, abba_pair_order,
+        cleanup_successful_sample_target, compare, distribution, filter_environment, sample_target,
+        summarize, with_source_edit,
     },
     source_edit::SourceEdit,
 };
 
 fn strings(values: &[&str]) -> Vec<String> {
     values.iter().map(ToString::to_string).collect()
+}
+
+#[test]
+fn successful_cold_targets_are_removed_but_warm_targets_are_retained() {
+    let run = temporary_directory("cold-target-cleanup");
+    let cold = run.join("cache/cold-001");
+    fs::create_dir_all(&cold).unwrap();
+    fs::write(cold.join("artifact"), b"ok").unwrap();
+    cleanup_successful_sample_target(&run, &cold, CacheState::Cold).unwrap();
+    assert!(!cold.exists());
+
+    let warm = run.join("cache/warm");
+    fs::create_dir_all(&warm).unwrap();
+    cleanup_successful_sample_target(&run, &warm, CacheState::Warm).unwrap();
+    assert!(warm.is_dir());
+    fs::remove_dir_all(run).unwrap();
 }
 
 #[test]

@@ -291,4 +291,4 @@ pub(crate) use paired::abba_pair_order;
 #[allow(unused_imports)]
 pub(crate) use report::{compare, distribution, summarize};
 #[allow(unused_imports)]
-pub(crate) use support::sample_target;
+pub(crate) use support::{cleanup_successful_sample_target, sample_target};

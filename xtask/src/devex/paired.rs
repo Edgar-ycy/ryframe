@@ -17,7 +17,7 @@ use super::{
     model::{DevexPairedOptions, DevexRunOptions, PairedArm, PairingMetadata, SuiteDefinition},
     preflight,
     report::{SampleKind, append_sample, summarize},
-    support::sample_target,
+    support::{cleanup_successful_sample_target, sample_target},
 };
 
 pub(super) fn execute(
@@ -360,7 +360,9 @@ fn execute_measurement(
             }),
         ),
     )?;
-    if !outcome.status.success() {
+    if outcome.status.success() {
+        cleanup_successful_sample_target(&session.run_dir, &target, options.cache_state)?;
+    } else {
         return Err(format!(
             "paired suite `{}` 的 {} 第 {pair} 对样本失败",
             options.suite.as_str(),
