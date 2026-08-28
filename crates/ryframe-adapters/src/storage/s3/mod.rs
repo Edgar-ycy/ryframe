@@ -35,6 +35,8 @@ pub struct S3Config {
     pub access_key: String,
     pub secret_key: String,
     pub use_ssl: bool,
+    /// 额外受信任的 PEM 根证书；用于私有 S3 兼容端点与隔离 TLS 验证。
+    pub root_ca_pem: Option<Vec<u8>>,
     pub region: String,
     pub request_timeout_secs: u64,
 }
@@ -47,6 +49,10 @@ impl fmt::Debug for S3Config {
             .field("access_key", &"<redacted>")
             .field("secret_key", &"<redacted>")
             .field("use_ssl", &self.use_ssl)
+            .field(
+                "root_ca_pem",
+                &self.root_ca_pem.as_ref().map(|_| "<configured>"),
+            )
             .field("region", &self.region)
             .field("request_timeout_secs", &self.request_timeout_secs)
             .finish()
@@ -88,10 +94,13 @@ impl S3ObjectStorage {
 
         let endpoint = normalize_endpoint(&config.endpoint, config.use_ssl)?;
         let request_timeout = Duration::from_secs(config.request_timeout_secs);
-        let client = reqwest::Client::builder()
-            .timeout(request_timeout)
-            .build()
-            .map_err(transport_error)?;
+        let mut client = reqwest::Client::builder().timeout(request_timeout);
+        if let Some(root_ca_pem) = config.root_ca_pem {
+            let certificate =
+                reqwest::Certificate::from_pem(&root_ca_pem).map_err(transport_error)?;
+            client = client.add_root_certificate(certificate);
+        }
+        let client = client.build().map_err(transport_error)?;
         Ok(Self {
             endpoint,
             access_key: config.access_key,

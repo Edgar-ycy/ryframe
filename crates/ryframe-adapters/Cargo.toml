@@ -60,12 +60,17 @@ rust_xlsxwriter = { workspace = true, optional = true, features = ["constant_mem
 tempfile = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt"] }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
 
 [[test]]
 name = "redis_real_protocol"
 path = "tests/redis_real_protocol.rs"
 required-features = ["redis"]
+
+[[test]]
+name = "otel_https_real"
+path = "tests/otel_https_real.rs"
+required-features = ["otel"]
 
 [lints]
 workspace = true

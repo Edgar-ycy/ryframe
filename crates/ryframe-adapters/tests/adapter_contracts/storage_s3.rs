@@ -50,6 +50,7 @@ fn list_request_contains_exact_prefix_cursor_and_limit() {
         access_key: "test-access".to_owned(),
         secret_key: "test-secret".to_owned(),
         use_ssl: false,
+        root_ca_pem: None,
         region: "us-east-1".to_owned(),
         request_timeout_secs: 30,
     })
@@ -74,6 +75,7 @@ fn s3_config_redacts_credentials_and_bounds_timeout() {
         access_key: "access-must-not-leak".to_owned(),
         secret_key: "secret-must-not-leak".to_owned(),
         use_ssl: false,
+        root_ca_pem: None,
         region: "us-east-1".to_owned(),
         request_timeout_secs: 0,
     };
@@ -124,6 +126,7 @@ async fn s3_metrics_record_each_complete_logical_operation_once() {
         access_key: "test-access".to_owned(),
         secret_key: "test-secret".to_owned(),
         use_ssl: false,
+        root_ca_pem: None,
         region: "us-east-1".to_owned(),
         request_timeout_secs: 2,
     })
@@ -188,6 +191,7 @@ async fn s3_service_error_discards_remote_body_and_bucket_location() {
         access_key: "test-access".to_owned(),
         secret_key: "test-secret".to_owned(),
         use_ssl: false,
+        root_ca_pem: None,
         region: "us-east-1".to_owned(),
         request_timeout_secs: 2,
     })
@@ -219,6 +223,7 @@ async fn s3_transport_error_discards_request_url() {
         access_key: "test-access".to_owned(),
         secret_key: "test-secret".to_owned(),
         use_ssl: false,
+        root_ca_pem: None,
         region: "us-east-1".to_owned(),
         request_timeout_secs: 1,
     })

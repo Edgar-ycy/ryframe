@@ -21,12 +21,12 @@ use std::{
 };
 
 use opentelemetry::{KeyValue, global, trace::TracerProvider};
-use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_otlp::{WithExportConfig, WithHttpConfig};
 use opentelemetry_sdk::{
-    Resource,
+    Resource, runtime,
     trace::{
-        BatchConfigBuilder, BatchSpanProcessor, RandomIdGenerator, Sampler, SdkTracer,
-        SdkTracerProvider, SpanData, SpanExporter,
+        BatchConfigBuilder, RandomIdGenerator, Sampler, SdkTracer, SdkTracerProvider, SpanData,
+        SpanExporter, span_processor_with_async_runtime::BatchSpanProcessor,
     },
 };
 use tracing::{info, warn};
@@ -121,6 +121,17 @@ impl Drop for TelemetryGuard {
 /// 返回 TelemetryGuard，必须在程序运行期间保持存活。
 /// 通过 `guard.tracing_layer(local_span_target)` 获取 Layer 注册到 subscriber。
 pub fn init_tracer_provider(config: &TelemetryConfig) -> TelemetryGuard {
+    init_tracer_provider_with_http_client(config, None)
+}
+
+/// 使用可选的显式 HTTP 客户端初始化追踪导出器。
+///
+/// 默认运行时传入 `None` 并使用 AWS-LC rustls 的平台信任库；私有 CA、受控代理或
+/// 隔离 HTTPS 验证可以传入按同一安全策略构造的 reqwest 客户端。
+pub fn init_tracer_provider_with_http_client(
+    config: &TelemetryConfig,
+    http_client: Option<reqwest::Client>,
+) -> TelemetryGuard {
     if !config.enabled {
         set_otel_exporter_degraded(false);
         info!("链路追踪: 未启用");
@@ -134,12 +145,14 @@ pub fn init_tracer_provider(config: &TelemetryConfig) -> TelemetryGuard {
 
     global::set_text_map_propagator(opentelemetry_sdk::propagation::TraceContextPropagator::new());
 
-    let exporter = match opentelemetry_otlp::SpanExporter::builder()
+    let mut exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_http()
         .with_endpoint(&config.endpoint)
-        .with_timeout(Duration::from_secs(config.export_timeout_secs))
-        .build()
-    {
+        .with_timeout(Duration::from_secs(config.export_timeout_secs));
+    if let Some(http_client) = http_client {
+        exporter = exporter.with_http_client(http_client);
+    }
+    let exporter = match exporter.build() {
         Ok(exporter) => exporter,
         Err(_) => {
             record_otel_exporter_failure();
@@ -185,9 +198,10 @@ where
         .with_max_queue_size(config.max_queue_size)
         .with_max_export_batch_size(config.max_queue_size.min(512))
         .build();
-    let span_processor = BatchSpanProcessor::builder(FailureCountingSpanExporter::new(exporter))
-        .with_batch_config(batch_config)
-        .build();
+    let span_processor =
+        BatchSpanProcessor::builder(FailureCountingSpanExporter::new(exporter), runtime::Tokio)
+            .with_batch_config(batch_config)
+            .build();
     let tracer_provider = SdkTracerProvider::builder()
         .with_span_processor(span_processor)
         .with_sampler(Sampler::TraceIdRatioBased(config.sample_ratio))

@@ -25,6 +25,7 @@ pub async fn init(
                 access_key: storage_config.access_key.clone(),
                 secret_key: storage_config.secret_key.clone(),
                 use_ssl: storage_config.use_ssl,
+                root_ca_pem: None,
                 region: storage_config.region.clone(),
                 request_timeout_secs: storage_config.request_timeout_secs,
             })
