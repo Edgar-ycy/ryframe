@@ -132,7 +132,7 @@ impl DevexSuite {
                 "api、worker、migrate 或 workspace"
             }
             Self::CargoDevSave => {
-                "config-only、api-only、worker-only、shared-runtime、locales、migration-only 或 resource-manifest"
+                "config-only、api-only、worker-only、shared-runtime、locales、migration-only、resource-manifest 或 cancellation"
             }
             Self::ResourceGenerator => "all、post 或 notice",
             Self::ResourceGate => "auto",
@@ -212,6 +212,7 @@ fn save_case_environment(variant: &str) -> Result<&'static [(&'static str, &'sta
         "locales" => Ok(&[("RYFRAME_DEVEX_SAVE_CASE", "locales"), RESULT]),
         "migration-only" => Ok(&[("RYFRAME_DEVEX_SAVE_CASE", "migration-only"), RESULT]),
         "resource-manifest" => Ok(&[("RYFRAME_DEVEX_SAVE_CASE", "resource-manifest"), RESULT]),
+        "cancellation" => Ok(&[("RYFRAME_DEVEX_SAVE_CASE", "cancellation"), RESULT]),
         _ => Err("cargo-dev-save 的 --variant 不是已登记保存场景".into()),
     }
 }

@@ -118,6 +118,13 @@ fn stopping_command_tree_reclaims_descendant_after_direct_child_exits() {
 
     process::stop_child(&mut direct_child).expect("应能终止直接父已退出的命令进程树");
     assert_eq!(
+        direct_child
+            .active_process_count()
+            .expect("应能查询 Job Object 活跃进程数"),
+        Some(0),
+        "停止命令返回时 Job Object 不得保留孤儿进程"
+    );
+    assert_eq!(
         unsafe { WaitForSingleObject(descendant.0, 5_000) },
         WAIT_OBJECT_0,
         "停止命令级 Job Object 应回收已脱离直接父进程的后代"

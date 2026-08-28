@@ -78,6 +78,40 @@ impl DerefMut for ManagedChild {
 
 impl ManagedChild {
     #[cfg(windows)]
+    pub(crate) fn active_process_count(&self) -> Result<Option<u32>> {
+        use std::{ffi::c_void, mem};
+        use windows_sys::Win32::System::JobObjects::{
+            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JobObjectBasicAccountingInformation,
+            QueryInformationJobObject,
+        };
+
+        let mut information = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+        let queried = unsafe {
+            QueryInformationJobObject(
+                self.job,
+                JobObjectBasicAccountingInformation,
+                (&raw mut information).cast::<c_void>(),
+                u32::try_from(mem::size_of_val(&information))
+                    .expect("Job Object 统计大小必须可由 u32 表示"),
+                std::ptr::null_mut(),
+            )
+        };
+        if queried == 0 {
+            return Err(format!(
+                "无法查询 Windows 子进程 Job Object：{}",
+                std::io::Error::last_os_error()
+            )
+            .into());
+        }
+        Ok(Some(information.ActiveProcesses))
+    }
+
+    #[cfg(not(windows))]
+    pub(crate) const fn active_process_count(&self) -> Result<Option<u32>> {
+        Ok(None)
+    }
+
+    #[cfg(windows)]
     pub(super) fn terminate_tree(&self) -> Result<()> {
         use windows_sys::Win32::System::JobObjects::TerminateJobObject;
 

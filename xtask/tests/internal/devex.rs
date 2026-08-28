@@ -194,7 +194,14 @@ fn suite_variant_selects_the_measured_workload_and_sample_policy() {
     assert!(DevexSuite::CargoDevSave.definition("baseline").is_err());
     assert_eq!(DevexSuite::RustColdBuild.minimum_runs("api"), 20);
     assert_eq!(DevexSuite::CargoDevSave.minimum_runs("api-only"), 20);
+    assert_eq!(DevexSuite::CargoDevSave.minimum_runs("cancellation"), 20);
     assert_eq!(DevexSuite::CargoDevSave.minimum_runs("config-only"), 5);
+    let cancellation = DevexSuite::CargoDevSave.definition("cancellation").unwrap();
+    assert!(
+        cancellation
+            .environment
+            .contains(&("RYFRAME_DEVEX_SAVE_CASE", "cancellation"))
+    );
     assert_eq!(DevexSuite::FrontendFast.minimum_runs("default"), 5);
 
     let generator = DevexSuite::ResourceGenerator.definition("post").unwrap();

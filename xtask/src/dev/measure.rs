@@ -2,10 +2,12 @@ use std::{
     collections::BTreeSet,
     env, fs,
     path::{Path, PathBuf},
+    process::Stdio,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
+    thread,
     time::{Duration, Instant},
 };
 
@@ -14,14 +16,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Result,
-    process::ChildGroup,
+    process::{ChildGroup, ManagedChild, child_command, stop_child},
     source_edit::SourceEdit,
     watch::{ChangeBatch, SourceWatcher},
-    workspace::root_dir,
+    workspace::{remove_isolated_directory, root_dir},
 };
 
 use super::{
-    build::cleanup_binaries,
+    build::{DEV_API_FEATURES, cleanup_binaries},
     config::{DevPorts, WorkerIds, spawn_shutdown_listener},
     health::combine_failures,
     model::{BuildPlan, ChangeOutcome, ServiceLaunchMode},
@@ -33,6 +35,7 @@ use super::{
 const CASE_ENV: &str = "RYFRAME_DEVEX_SAVE_CASE";
 const RESULT_ENV: &str = "RYFRAME_DEVEX_SAVE_RESULT_PATH";
 const WATCH_EVENT_TIMEOUT: Duration = Duration::from_secs(10);
+const CANCELLATION_DESCENDANT_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) const RESULT_FILE_NAME: &str = "cargo-dev-save-result.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +48,7 @@ pub(crate) enum SaveCase {
     Locales,
     MigrationOnly,
     ResourceManifest,
+    Cancellation,
 }
 
 impl SaveCase {
@@ -52,7 +56,7 @@ impl SaveCase {
         let value = env::var(CASE_ENV).unwrap_or_else(|_| "shared-runtime".to_owned());
         Self::parse(&value).ok_or_else(|| {
             format!(
-                "{CASE_ENV} 只允许 config-only、api-only、worker-only、shared-runtime、locales、migration-only 或 resource-manifest"
+                "{CASE_ENV} 只允许 config-only、api-only、worker-only、shared-runtime、locales、migration-only、resource-manifest 或 cancellation"
             )
             .into()
         })
@@ -67,6 +71,7 @@ impl SaveCase {
             "locales" => Some(Self::Locales),
             "migration-only" => Some(Self::MigrationOnly),
             "resource-manifest" => Some(Self::ResourceManifest),
+            "cancellation" => Some(Self::Cancellation),
             _ => None,
         }
     }
@@ -80,6 +85,7 @@ impl SaveCase {
             Self::Locales => SaveSource::toml("locales/zh-CN.toml"),
             Self::MigrationOnly => SaveSource::rust("crates/ryframe/src/bin/ryframe_migrate.rs"),
             Self::ResourceManifest => SaveSource::toml("catalog/resources/post.toml"),
+            Self::Cancellation => SaveSource::rust("crates/ryframe/src/app.rs"),
         }
     }
 
@@ -91,6 +97,7 @@ impl SaveCase {
             | Self::SharedRuntime
             | Self::Locales => ReadyKind::Promoted,
             Self::MigrationOnly | Self::ResourceManifest => ReadyKind::VerifiedNoRestart,
+            Self::Cancellation => ReadyKind::Superseded,
         }
     }
 
@@ -99,6 +106,7 @@ impl SaveCase {
             Self::ConfigOnly => 0,
             Self::ApiOnly | Self::WorkerOnly | Self::MigrationOnly | Self::ResourceManifest => 1,
             Self::SharedRuntime | Self::Locales => 2,
+            Self::Cancellation => 1,
         }
     }
 }
@@ -130,6 +138,7 @@ impl SaveSource {
 pub(crate) enum ReadyKind {
     Promoted,
     VerifiedNoRestart,
+    Superseded,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -159,6 +168,9 @@ pub(crate) fn run() -> Result<()> {
 }
 
 fn measure(root: &Path, state_root: &Path, case: SaveCase) -> Result<SaveMeasurement> {
+    if case == SaveCase::Cancellation {
+        return measure_cancellation(root, state_root);
+    }
     let group = ChildGroup::new()?;
     let watcher = SourceWatcher::new(root)?;
     let session = DevSession::prepare_isolated(state_root, watcher.current_revision())?;
@@ -198,6 +210,104 @@ fn measure(root: &Path, state_root: &Path, case: SaveCase) -> Result<SaveMeasure
             ("清理保存反馈测量 LKG", cleanup_binaries(&binaries)),
         ],
     )
+}
+
+fn measure_cancellation(root: &Path, state_root: &Path) -> Result<SaveMeasurement> {
+    fs::create_dir_all(state_root)?;
+    let group = ChildGroup::new()?;
+    let watcher = SourceWatcher::new(root)?;
+    let source_revision = watcher.current_revision();
+    let target = state_root.join(format!(
+        "cancellation-{}-{}",
+        std::process::id(),
+        Utc::now().timestamp_millis()
+    ));
+    fs::create_dir(&target)?;
+    let mut child = spawn_cancellation_build(&group, root, &target)?;
+    wait_for_compile_descendant(&mut child, &target)?;
+
+    let source = SaveCase::Cancellation.source();
+    let label = format!(
+        "cancel-{}-{}",
+        std::process::id(),
+        Utc::now().timestamp_millis()
+    );
+    let (mut edit, started) =
+        SourceEdit::apply(&root.join(source.relative), &label, source.comment_prefix)?;
+    let outcome = (|| {
+        let batch = wait_for_save_event(&watcher, &AtomicBool::new(false), source.relative)?;
+        if batch.revision <= source_revision || !watcher.is_superseded(source_revision) {
+            return Err("取消测量未观察到新的源码代次".into());
+        }
+        stop_child(&mut child)?;
+        if child
+            .active_process_count()?
+            .is_some_and(|count| count != 0)
+        {
+            return Err("取消完成后仍有孤儿进程".into());
+        }
+        Ok(SaveMeasurement {
+            schema_version: 1,
+            case: SaveCase::Cancellation,
+            started_at: DateTime::<Utc>::from(started.wall_clock).to_rfc3339(),
+            save_to_ready_ms: started.monotonic.elapsed().as_secs_f64() * 1_000.0,
+            cargo_invocations: 1,
+            ready_kind: ReadyKind::Superseded,
+        })
+    })();
+    let outcome = finish_source_edit(outcome, &mut edit);
+    if outcome.is_ok() {
+        remove_isolated_directory(state_root, &target)?;
+    }
+    outcome
+}
+
+fn spawn_cancellation_build(
+    group: &ChildGroup,
+    root: &Path,
+    target: &Path,
+) -> Result<ManagedChild> {
+    let mut command = child_command("cargo");
+    command
+        .args([
+            "build",
+            "--locked",
+            "-p",
+            "ryframe",
+            "--no-default-features",
+            "--features",
+            DEV_API_FEATURES,
+            "--bin",
+            "ryframe",
+        ])
+        .env("CARGO_TARGET_DIR", target)
+        .env("CARGO_INCREMENTAL", "0")
+        .env_remove("RUSTC_WRAPPER")
+        .env_remove("SCCACHE_RECACHE")
+        .current_dir(root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    group.spawn(&mut command)
+}
+
+fn wait_for_compile_descendant(child: &mut ManagedChild, target: &Path) -> Result<()> {
+    let started = Instant::now();
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Err(format!("取消测量的 Cargo 过早退出：{status}").into());
+        }
+        match child.active_process_count()? {
+            Some(count) if count >= 2 && target.join("debug/.fingerprint").is_dir() => {
+                return Ok(());
+            }
+            None if started.elapsed() >= Duration::from_millis(250) => return Ok(()),
+            _ if started.elapsed() >= CANCELLATION_DESCENDANT_TIMEOUT => {
+                return Err("取消测量未观察到 Cargo 编译后代".into());
+            }
+            _ => thread::sleep(Duration::from_millis(10)),
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -295,7 +405,7 @@ pub(crate) fn ready_kind(case: SaveCase, outcome: ChangeOutcome) -> Result<Ready
         ChangeOutcome::Promoted => ReadyKind::Promoted,
         ChangeOutcome::VerifiedNoRestart => ReadyKind::VerifiedNoRestart,
         ChangeOutcome::Failed => return Err("保存周期失败，last-known-good 保持运行".into()),
-        ChangeOutcome::Superseded => return Err("保存周期被后续源码代次取代".into()),
+        ChangeOutcome::Superseded => ReadyKind::Superseded,
         ChangeOutcome::Ignored => return Err("保存事件被状态机忽略".into()),
         ChangeOutcome::Shutdown => return Err("保存反馈测量被取消".into()),
     };

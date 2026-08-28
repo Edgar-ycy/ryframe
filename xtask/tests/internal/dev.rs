@@ -246,6 +246,15 @@ fn save_cases_drive_the_real_change_plan_and_cargo_count() {
             "{case:?}"
         );
     }
+    assert_eq!(
+        SaveCase::parse("cancellation"),
+        Some(SaveCase::Cancellation)
+    );
+    assert_eq!(SaveCase::Cancellation.expected_cargo_invocations(), 1);
+    assert_eq!(
+        ready_kind(SaveCase::Cancellation, ChangeOutcome::Superseded).unwrap(),
+        ReadyKind::Superseded
+    );
     assert!(SaveCase::parse("unknown").is_none());
     assert!(ready_kind(SaveCase::ConfigOnly, ChangeOutcome::Failed).is_err());
     assert!(ready_kind(SaveCase::MigrationOnly, ChangeOutcome::Promoted).is_err());

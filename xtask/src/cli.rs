@@ -503,7 +503,7 @@ pub(crate) fn print_help(topic: Option<&str>) {
     let help = match topic {
         Some("dev") => {
             "cargo dev [--frontend-dir PATH]\n  监听并管理 API、Worker 与 Vite；失败时保留 last-known-good。\n\
-             RYFRAME_DEVEX_SAVE_CASE=<case> cargo dev --measure-once\n  只运行一次保存反馈测量；case 支持 config-only、api-only、worker-only、shared-runtime、locales、migration-only、resource-manifest。"
+             RYFRAME_DEVEX_SAVE_CASE=<case> cargo dev --measure-once\n  只运行一次保存反馈测量；case 支持 config-only、api-only、worker-only、shared-runtime、locales、migration-only、resource-manifest、cancellation。"
         }
         Some("verify") => {
             "cargo verify [--full] [--scope all|backend|frontend] [--frontend-dir PATH]\n  根据前后端 Git 变更执行最小安全检查；--full 执行完整本地门禁。"

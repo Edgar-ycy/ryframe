@@ -447,6 +447,14 @@ pub(crate) fn stop_child(child: &mut ManagedChild) -> Result<()> {
     #[cfg(windows)]
     {
         child.terminate_tree()?;
+        let _ = child.wait();
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while child.active_process_count()? != Some(0) {
+            if Instant::now() >= deadline {
+                return Err("Windows 子进程树终止后 1 秒内仍有存活进程".into());
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
     }
     #[cfg(unix)]
     {
