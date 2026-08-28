@@ -1,5 +1,6 @@
 const MANIFEST: &str = include_str!("../Cargo.toml");
 const WORKSPACE_MANIFEST: &str = include_str!("../../../Cargo.toml");
+const API_MANIFEST: &str = include_str!("../../ryframe-api/Cargo.toml");
 const ADAPTERS_MANIFEST: &str = include_str!("../../ryframe-adapters/Cargo.toml");
 const APPLICATION_MANIFEST: &str = include_str!("../../ryframe-application/Cargo.toml");
 const DB_MANIFEST: &str = include_str!("../../ryframe-db/Cargo.toml");
@@ -98,6 +99,40 @@ fn every_client_process_installs_crypto_before_loading_configuration() {
 fn worker_source_has_no_api_crate_dependency() {
     assert!(!include_str!("../src/bin/ryframe_worker.rs").contains("ryframe_api"));
     assert!(!include_str!("../src/bin/ryframe_worker/health.rs").contains("ryframe_api"));
+}
+
+#[test]
+fn worker_http_probe_does_not_enable_api_websocket_features() {
+    assert!(WORKSPACE_MANIFEST.contains("axum = { version = \"0.8\", default-features = false }"));
+    assert!(WORKSPACE_MANIFEST.contains(
+        "axum-extra = { version = \"0.12.6\", default-features = false, features = [\"cookie\"] }"
+    ));
+    assert!(MANIFEST.contains(
+        "axum = { workspace = true, optional = true, features = [\"http1\", \"tokio\"] }"
+    ));
+    let api_axum = API_MANIFEST
+        .split_once("axum = { workspace = true, features = [")
+        .and_then(|(_, declaration)| declaration.split_once("] }"))
+        .map(|(features, _)| features)
+        .expect("API 必须显式声明 Axum feature");
+    for feature in [
+        "http1",
+        "json",
+        "matched-path",
+        "multipart",
+        "original-uri",
+        "query",
+        "tokio",
+        "tracing",
+        "ws",
+    ] {
+        assert!(
+            api_axum.contains(&format!("\"{feature}\"")),
+            "API 缺少 Axum feature {feature}"
+        );
+    }
+    assert!(!api_axum.contains("\"form\""));
+    assert!(!api_axum.contains("\"tower-log\""));
 }
 
 #[test]

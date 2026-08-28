@@ -23,8 +23,8 @@ non_ascii_idents = "forbid"
 
 
 [workspace.dependencies]
-axum = { version = "0.8", features = ["ws"] }
-axum-extra = { version = "0.12.6", features = ["cookie"] }
+axum = { version = "0.8", default-features = false }
+axum-extra = { version = "0.12.6", default-features = false, features = ["cookie"] }
 cookie = "0.18"
 tokio = { version = "1", default-features = false }
 async-trait = { version = "0.1" }

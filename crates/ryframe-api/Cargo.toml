@@ -17,7 +17,17 @@ ryframe-kernel = { path = "../ryframe-kernel" }
 ryframe-auth = { path = "../ryframe-auth" }
 ryframe-application = { path = "../ryframe-application", default-features = false }
 ryframe-macro = { path = "../ryframe-macro" }
-axum = { workspace = true, features = ["multipart"] }
+axum = { workspace = true, features = [
+    "http1",
+    "json",
+    "matched-path",
+    "multipart",
+    "original-uri",
+    "query",
+    "tokio",
+    "tracing",
+    "ws",
+] }
 http = { workspace = true }
 tower-http = { workspace = true, features = ["cors", "trace", "compression-gzip", "compression-br"] }
 axum-extra = { workspace = true }
