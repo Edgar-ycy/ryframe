@@ -4,10 +4,11 @@ use super::{
     check::WorkspaceGraph,
     ci::resource_gate::{
         ChangeStatus, ChangedFile, GateStep, OwnershipEntry, OwnershipManifest, ResourceChangeSet,
-        ResourceDefinition, ResourceGateInput, affected_package_args_for_target, analyze,
-        enforce_targeted_activation, parse_name_status, parse_ownership, parse_resource_definition,
-        plan_steps, preferred_nonempty_ref, resource_check_args_for_target, should_run_for_paths,
-        targeted_activation_from, targeted_contract_steps, targeted_test_jobs_from,
+        ResourceDefinition, ResourceGateInput, ResourceGateMode, affected_package_args_for_target,
+        analyze, decision_for, enforce_targeted_activation, parse_name_status, parse_ownership,
+        parse_resource_definition, plan_steps, preferred_nonempty_ref,
+        resource_check_args_for_target, should_run_for_paths, targeted_activation_from,
+        targeted_contract_steps, targeted_test_jobs_from, write_decision_artifact,
     },
 };
 
@@ -154,6 +155,54 @@ fn targeted_execution_stays_fail_closed_until_replay_activation() {
     assert!(!targeted_activation_from(None));
     assert!(!targeted_activation_from(Some("1")));
     assert!(targeted_activation_from(Some("replay-verified-v1")));
+}
+
+#[test]
+fn decision_artifact_records_actual_mode_and_is_atomic() {
+    let targeted = analyze(&input_with_post(
+        Some(&source("post", "title", "post.read", &[])),
+        &source("post", "body", "post.read", &[]),
+    ));
+    let decision = decision_for(&targeted, true);
+    assert!(decision.recognized);
+    assert_eq!(decision.mode, ResourceGateMode::Targeted);
+    assert_eq!(decision.fallback, None);
+    assert!(
+        decision
+            .steps
+            .iter()
+            .any(|step| step == "resource-workspace")
+    );
+
+    let root = std::env::current_dir()
+        .unwrap()
+        .join(".local-tests")
+        .join(format!(
+            "resource-gate-decision-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("decision.json");
+    write_decision_artifact(&path, &decision).unwrap();
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(document["formatVersion"], 1);
+    assert_eq!(document["recognized"], true);
+    assert_eq!(document["mode"], "targeted");
+    assert!(document["fallback"].is_null());
+    assert!(write_decision_artifact(&path, &decision).is_err());
+    assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+    std::fs::remove_dir_all(root).unwrap();
+
+    let fallback = decision_for(&enforce_targeted_activation(targeted, false), false);
+    assert!(!fallback.recognized);
+    assert_eq!(fallback.mode, ResourceGateMode::Full);
+    assert!(fallback.fallback.is_some());
+    assert!(fallback.steps.iter().any(|step| step == "full-rust-gate"));
 }
 
 #[test]

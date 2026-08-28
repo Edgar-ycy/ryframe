@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
+import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -16,14 +19,42 @@ from pathlib import Path
 from typing import Any
 
 
+SCRIPT_PATH = Path(__file__).resolve()
+RUNNER_ROOT = SCRIPT_PATH.parents[1]
 FORMAT_VERSION = 2
 MINIMUM_CASES = 20
 MINIMUM_SUCCESSFUL_CASES = 10
 TARGETED_P95_LIMIT_MS = 60_000
 TARGETED_ACTIVATION = "replay-verified-v1"
+DECISION_FORMAT_VERSION = 1
+FIXED_VERIFY_JOBS = "8"
+FIXED_TEST_JOBS = "4"
 SHA_PATTERN = re.compile(r"[0-9a-fA-F]{40}")
 REQUIRED_CATEGORIES = frozenset(
     {"addition", "field", "permission", "relation", "sql", "rename", "delete"}
+)
+TARGETED_MODES = frozenset({"targeted", "full"})
+RUST_ENVIRONMENT_KEYS = frozenset(
+    {
+        "CARGO_BUILD_JOBS",
+        "CARGO_BUILD_TARGET",
+        "CARGO_ENCODED_RUSTFLAGS",
+        "CARGO_INCREMENTAL",
+        "CARGO_TARGET_DIR",
+        "RUSTC",
+        "RUSTC_BOOTSTRAP",
+        "RUSTC_WORKSPACE_WRAPPER",
+        "RUSTC_WRAPPER",
+        "RUST_BACKTRACE",
+        "RUST_LIB_BACKTRACE",
+        "RUST_LOG",
+        "RUST_MIN_STACK",
+        "RUST_TEST_THREADS",
+        "RUSTDOC",
+        "RUSTDOCFLAGS",
+        "RUSTFLAGS",
+        "RUSTUP_TOOLCHAIN",
+    }
 )
 
 
@@ -39,6 +70,7 @@ class ReplayCase:
     head: str
     frontend_base: str
     frontend_head: str
+    targeted_mode: str
     expected: str
 
 
@@ -54,6 +86,17 @@ class CommandResult:
     passed: bool
     return_code: int
     duration_ms: int
+    order: int
+    decision: ResourceGateDecision
+    target_fingerprint: str
+
+
+@dataclass(frozen=True)
+class ResourceGateDecision:
+    recognized: bool
+    mode: str
+    fallback: str | None
+    steps: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -64,10 +107,46 @@ class ReplayResult:
     head: str
     frontend_base: str
     frontend_head: str
+    targeted_mode: str
     expected: str
     targeted: CommandResult
     full: CommandResult
     matches: bool
+
+
+@dataclass(frozen=True)
+class RepositoryIdentity:
+    root: Path
+    common_dir: Path
+    remote: str | None
+
+
+@dataclass(frozen=True)
+class ReplayTools:
+    corepack: str
+    sccache: str
+    versions: dict[str, str]
+
+
+@dataclass(frozen=True)
+class ReplayEvidence:
+    manifest_fingerprint: str
+    runner_fingerprint: str
+    runner_commit: str
+    environment: dict[str, str]
+    environment_fingerprint: str
+    tools: dict[str, str]
+    tools_fingerprint: str
+    repositories: dict[str, dict[str, str | None]]
+    prime: CommandResult
+    sccache_before: dict[str, Any]
+    sccache_after: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ReplayRun:
+    results: list[ReplayResult]
+    evidence: ReplayEvidence
 
 
 def load_manifest(path: Path) -> ReplayManifest:
@@ -127,6 +206,7 @@ def parse_case(raw: Any, index: int) -> ReplayCase:
             "head",
             "frontendBase",
             "frontendHead",
+            "targetedMode",
             "expected",
         },
         label,
@@ -139,6 +219,8 @@ def parse_case(raw: Any, index: int) -> ReplayCase:
             raise ReplayConfigurationError(f"{label}.{key} 必须是 40 位 Git SHA")
     if raw["expected"] not in ("pass", "fail"):
         raise ReplayConfigurationError(f"{label}.expected 只允许 pass 或 fail")
+    if raw["targetedMode"] not in TARGETED_MODES:
+        raise ReplayConfigurationError(f"{label}.targetedMode 只允许 targeted 或 full")
     return ReplayCase(
         name=raw["name"].strip(),
         category=raw["category"].strip(),
@@ -146,6 +228,7 @@ def parse_case(raw: Any, index: int) -> ReplayCase:
         head=raw["head"].lower(),
         frontend_base=raw["frontendBase"].lower(),
         frontend_head=raw["frontendHead"].lower(),
+        targeted_mode=raw["targetedMode"],
         expected=raw["expected"],
     )
 
@@ -171,6 +254,16 @@ def validate_case_coverage(cases: tuple[ReplayCase, ...]) -> None:
     outcomes = {case.expected for case in cases}
     if outcomes != {"pass", "fail"}:
         raise ReplayConfigurationError("replay 必须同时覆盖预期 pass 与 fail 案例")
+    modes = {case.targeted_mode for case in cases}
+    if modes != TARGETED_MODES:
+        raise ReplayConfigurationError("replay 必须同时覆盖 targeted 与 full 模式")
+    targeted_passes = sum(
+        case.expected == "pass" and case.targeted_mode == "targeted" for case in cases
+    )
+    if targeted_passes < MINIMUM_SUCCESSFUL_CASES:
+        raise ReplayConfigurationError(
+            "replay 至少需要 " f"{MINIMUM_SUCCESSFUL_CASES} 个预期成功的 targeted 案例"
+        )
 
 
 def run_replay(
@@ -178,54 +271,92 @@ def run_replay(
     frontend_repository: Path,
     manifest: ReplayManifest,
     work_root: Path,
-) -> list[ReplayResult]:
-    repository = repository.resolve()
-    frontend_repository = frontend_repository.resolve()
-    if repository == frontend_repository:
-        raise ReplayConfigurationError("前后端 replay 必须使用两个独立 Git 仓库")
-    allowed = (repository / ".local-tests" / "resource-gate-replay").resolve()
+    *,
+    manifest_fingerprint: str,
+    activation_gate: bool,
+) -> ReplayRun:
+    backend = repository_identity(repository, "后端", "Cargo.toml")
+    frontend = repository_identity(frontend_repository, "前端", "package.json")
+    validate_repository_pair(backend, frontend)
+    if not frontend.root.joinpath("pnpm-lock.yaml").is_file():
+        raise ReplayConfigurationError("前端 replay 仓库缺少 pnpm-lock.yaml")
+    allowed = (backend.root / ".local-tests" / "resource-gate-replay").resolve()
     work_root = work_root.resolve()
     if not work_root.is_relative_to(allowed):
         raise ReplayConfigurationError(f"replay work-dir 必须位于 {allowed}")
     allowed.mkdir(parents=True, exist_ok=True)
     work_root.mkdir(parents=True, exist_ok=True)
+    corepack, sccache = resolve_tool_executables()
     session = (work_root / f"r-{uuid.uuid4().hex[:12]}").resolve()
     if not session.is_relative_to(allowed):
         raise ReplayConfigurationError("replay 临时目录逃逸允许范围")
+    cache = (work_root / "cache" / session.name).resolve()
+    if not cache.is_relative_to(allowed):
+        raise ReplayConfigurationError("replay sccache 目录逃逸允许范围")
+    environment = controlled_environment(sccache, cache, activation_gate)
+    tools = collect_tools(backend.root, frontend.root, corepack, sccache, environment)
     session.mkdir()
-    shared_target = (work_root / "target").resolve()
-    if not shared_target.is_relative_to(allowed):
-        raise ReplayConfigurationError("replay 共享 target 逃逸允许范围")
-    results: list[ReplayResult] = []
     try:
-        for case in manifest.cases:
-            verify_commit_range(repository, case.base, case.head, case.name, "后端")
-            verify_commit_range(
-                frontend_repository,
-                case.frontend_base,
-                case.frontend_head,
-                case.name,
-                "前端",
-                allow_unchanged=True,
-            )
-            targeted = execute_in_worktree(
-                repository,
-                frontend_repository,
-                session / "t",
-                case,
-                manifest.targeted_command,
-                shared_target,
-                targeted=True,
-            )
-            full = execute_in_worktree(
-                repository,
-                frontend_repository,
-                session / "f",
-                case,
-                manifest.full_command,
-                shared_target,
-                targeted=False,
-            )
+        cache.mkdir(parents=True)
+    except OSError as error:
+        session.rmdir()
+        raise ReplayConfigurationError(
+            f"无法创建 replay sccache 目录 {cache}：{error}"
+        ) from error
+    results: list[ReplayResult] = []
+    prime: CommandResult | None = None
+    before: dict[str, Any] = {}
+    after: dict[str, Any] = {}
+    global_order = 0
+    sccache_started = False
+    primary_error: BaseException | None = None
+    try:
+        run_sccache(tools.sccache, environment, "--start-server")
+        sccache_started = True
+        prime_case = next(
+            case
+            for case in manifest.cases
+            if case.expected == "pass" and case.targeted_mode == "targeted"
+        )
+        verify_case_ranges(backend, frontend, prime_case)
+        prime = execute_in_worktree(
+            backend.root,
+            frontend.root,
+            session / "prime",
+            prime_case,
+            manifest.targeted_command,
+            environment,
+            tools.corepack,
+            targeted=True,
+            order=0,
+        )
+        require_arm(prime_case, prime, targeted=True, require_pass=True)
+        run_sccache(tools.sccache, environment, "--zero-stats")
+        before = sccache_stats(tools.sccache, environment)
+
+        for index, case in enumerate(manifest.cases, start=1):
+            verify_case_ranges(backend, frontend, case)
+            arms: dict[bool, CommandResult] = {}
+            for targeted in arm_order(index):
+                global_order += 1
+                command = (
+                    manifest.targeted_command if targeted else manifest.full_command
+                )
+                arms[targeted] = execute_in_worktree(
+                    backend.root,
+                    frontend.root,
+                    session / f"case-{index:03}-{'t' if targeted else 'f'}",
+                    case,
+                    command,
+                    environment,
+                    tools.corepack,
+                    targeted=targeted,
+                    order=global_order,
+                )
+                require_arm(case, arms[targeted], targeted=targeted)
+            targeted = arms[True]
+            full = arms[False]
+            expected_pass = case.expected == "pass"
             results.append(
                 ReplayResult(
                     name=case.name,
@@ -234,36 +365,54 @@ def run_replay(
                     head=case.head,
                     frontend_base=case.frontend_base,
                     frontend_head=case.frontend_head,
+                    targeted_mode=case.targeted_mode,
                     expected=case.expected,
                     targeted=targeted,
                     full=full,
                     matches=(
-                        targeted.passed == (case.expected == "pass")
-                        and full.passed == (case.expected == "pass")
+                        targeted.passed == expected_pass
+                        and full.passed == expected_pass
+                        and targeted.decision.mode == case.targeted_mode
+                        and full.decision.mode == "full"
                     ),
                 )
             )
+        after = sccache_stats(tools.sccache, environment)
+        safe_environment = recorded_environment(environment, activation_gate)
+        evidence = ReplayEvidence(
+            manifest_fingerprint=manifest_fingerprint,
+            runner_fingerprint=sha256_file(SCRIPT_PATH),
+            runner_commit=git_output(RUNNER_ROOT, "rev-parse", "HEAD"),
+            environment=safe_environment,
+            environment_fingerprint=sha256_json(safe_environment),
+            tools=tools.versions,
+            tools_fingerprint=sha256_json(tools.versions),
+            repositories={
+                "backend": repository_record(backend),
+                "frontend": repository_record(frontend),
+            },
+            prime=prime,
+            sccache_before=before,
+            sccache_after=after,
+        )
+        return ReplayRun(results, evidence)
+    except BaseException as error:
+        primary_error = error
+        raise
     finally:
-        subprocess.run(
-            ["git", "worktree", "prune"],
-            cwd=repository,
-            check=False,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "worktree", "prune"],
-            cwd=frontend_repository,
-            check=False,
-            capture_output=True,
-        )
+        cleanup_errors: list[str] = []
+        if sccache_started:
+            error = try_sccache_stop(tools.sccache, environment)
+            if error is not None:
+                cleanup_errors.append(error)
+        cleanup_errors.extend(prune_worktrees(backend.root, frontend.root))
+        cleanup_errors.extend(remove_isolated_tree(cache, allowed))
         if session.is_dir():
             try:
                 session.rmdir()
             except OSError as error:
-                raise ReplayConfigurationError(
-                    f"replay 临时目录未完全回收：{session}：{error}"
-                ) from error
-    return results
+                cleanup_errors.append(f"replay 临时目录未完全回收：{session}：{error}")
+        fail_on_cleanup(primary_error, "replay 清理", cleanup_errors)
 
 
 def command_for_frontend(command: tuple[str, ...], frontend: Path) -> tuple[str, ...]:
@@ -277,6 +426,12 @@ def command_for_frontend(command: tuple[str, ...], frontend: Path) -> tuple[str,
         raise ReplayConfigurationError("--frontend-dir 缺少路径参数")
     normalized[option + 1] = str(frontend)
     return tuple(normalized)
+
+
+def arm_order(index: int) -> tuple[bool, bool]:
+    if index < 1:
+        raise ValueError("replay case index 必须从 1 开始")
+    return (True, False) if index % 2 == 1 else (False, True)
 
 
 def verify_commit_range(
@@ -311,73 +466,306 @@ def verify_commit_range(
         )
 
 
+def verify_case_ranges(
+    backend: RepositoryIdentity,
+    frontend: RepositoryIdentity,
+    case: ReplayCase,
+) -> None:
+    verify_commit_range(backend.root, case.base, case.head, case.name, "后端")
+    verify_commit_range(
+        frontend.root,
+        case.frontend_base,
+        case.frontend_head,
+        case.name,
+        "前端",
+        allow_unchanged=True,
+    )
+
+
+def repository_identity(path: Path, label: str, marker: str) -> RepositoryIdentity:
+    root = path.resolve()
+    if not root.is_dir():
+        raise ReplayConfigurationError(f"{label} replay 仓库目录不存在：{root}")
+    top_level = Path(git_output(root, "rev-parse", "--show-toplevel")).resolve()
+    if not same_path(root, top_level):
+        raise ReplayConfigurationError(
+            f"{label} --repository 必须指向 Git 仓库顶层：{top_level}"
+        )
+    if not root.joinpath(marker).is_file():
+        raise ReplayConfigurationError(f"{label} replay 仓库缺少 {marker}")
+    common_value = Path(git_output(root, "rev-parse", "--git-common-dir"))
+    common_dir = (
+        common_value if common_value.is_absolute() else root.joinpath(common_value)
+    ).resolve()
+    remote_result = subprocess.run(
+        ["git", "config", "--get", "remote.origin.url"],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    remote = remote_result.stdout.strip() if remote_result.returncode == 0 else ""
+    return RepositoryIdentity(root, common_dir, sha256_text(remote) if remote else None)
+
+
+def same_path(left: Path, right: Path) -> bool:
+    return os.path.normcase(str(left.resolve())) == os.path.normcase(
+        str(right.resolve())
+    )
+
+
+def validate_repository_pair(
+    backend: RepositoryIdentity, frontend: RepositoryIdentity
+) -> None:
+    if same_path(backend.common_dir, frontend.common_dir):
+        raise ReplayConfigurationError(
+            "前后端 replay 必须使用 git common-dir 不同的独立仓库"
+        )
+
+
+def git_output(root: Path, *arguments: str) -> str:
+    completed = subprocess.run(
+        ["git", *arguments],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if completed.returncode != 0:
+        raise ReplayConfigurationError(
+            f"Git 命令失败（{' '.join(arguments)}）：{completed.stderr.strip()}"
+        )
+    return completed.stdout.strip()
+
+
+def resolve_tool_executables() -> tuple[str, str]:
+    corepack = required_executable("corepack")
+    sccache = required_executable("sccache")
+    return corepack, sccache
+
+
+def collect_tools(
+    backend: Path,
+    frontend: Path,
+    corepack: str,
+    sccache: str,
+    environment: dict[str, str],
+) -> ReplayTools:
+    versions = {
+        "python": sys.version.splitlines()[0],
+        "git": tool_version(backend, "git", environment, "--version"),
+        "cargo": tool_version(backend, "cargo", environment, "--version"),
+        "rustc": tool_version(backend, "rustc", environment, "-vV"),
+        "node": tool_version(frontend, "node", environment, "--version"),
+        "corepack": tool_version(frontend, corepack, environment, "--version"),
+        "pnpm": tool_version(frontend, corepack, environment, "pnpm", "--version"),
+        "sccache": tool_version(backend, sccache, environment, "--version"),
+    }
+    return ReplayTools(corepack, sccache, versions)
+
+
+def required_executable(name: str) -> str:
+    resolved = shutil.which(name)
+    if resolved is None:
+        raise ReplayConfigurationError(f"resource replay 缺少可执行文件：{name}")
+    return str(Path(resolved).resolve())
+
+
+def tool_version(
+    root: Path,
+    program: str,
+    environment: dict[str, str],
+    *arguments: str,
+) -> str:
+    completed = subprocess.run(
+        [program, *arguments],
+        cwd=root,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if completed.returncode != 0:
+        raise ReplayConfigurationError(
+            f"无法读取工具版本 {program}：{completed.stderr.strip()}"
+        )
+    return completed.stdout.strip()
+
+
+def controlled_environment(
+    sccache: str,
+    cache: Path,
+    activation_gate: bool,
+) -> dict[str, str]:
+    environment = os.environ.copy()
+    if activation_gate:
+        for name in ("RYFRAME_MYSQL_INTEGRATION", "RYFRAME_REDIS_INTEGRATION"):
+            if environment.get(name) != "1":
+                raise ReplayConfigurationError(
+                    f"activation replay 要求 {name}=1 并准备隔离服务"
+                )
+        for name in ("RYFRAME_MYSQL_HOST", "RYFRAME_REDIS_HOST"):
+            if environment.get(name) not in {"127.0.0.1", "localhost", "::1"}:
+                raise ReplayConfigurationError(
+                    f"activation replay 要求 {name} 显式使用回环地址"
+                )
+        if environment.get("RYFRAME_REDIS_DATABASE") != "15":
+            raise ReplayConfigurationError(
+                "activation replay 要求 RYFRAME_REDIS_DATABASE=15"
+            )
+    for key in tuple(environment):
+        if (
+            key.startswith("RYFRAME_CI_")
+            or key.startswith("SCCACHE_")
+            or key in RUST_ENVIRONMENT_KEYS
+            or key
+            in {
+                "RYFRAME_DEVEX_TARGET_ROOT",
+                "RYFRAME_RESOURCE_GATE_DECISION_FILE",
+                "RYFRAME_RESOURCE_GATE_TARGETED",
+                "RYFRAME_VERIFY_JOBS",
+            }
+        ):
+            environment.pop(key, None)
+    environment.update(
+        {
+            "CI": "1",
+            "CARGO_INCREMENTAL": "0",
+            "CARGO_TERM_COLOR": "never",
+            "RUSTC_WRAPPER": sccache,
+            "RYFRAME_CI_RUST_GATE_PROFILE": "standard",
+            "RYFRAME_CI_TEST_JOBS": FIXED_TEST_JOBS,
+            "RYFRAME_VERIFY_JOBS": FIXED_VERIFY_JOBS,
+            "SCCACHE_DIR": str(cache),
+            "SCCACHE_SERVER_PORT": str(available_port()),
+        }
+    )
+    return environment
+
+
+def available_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
+
+
+def recorded_environment(
+    environment: dict[str, str], activation_gate: bool
+) -> dict[str, str]:
+    recorded = {
+        key: environment[key]
+        for key in (
+            "CI",
+            "CARGO_INCREMENTAL",
+            "CARGO_TERM_COLOR",
+            "RYFRAME_CI_RUST_GATE_PROFILE",
+            "RYFRAME_CI_TEST_JOBS",
+            "RYFRAME_VERIFY_JOBS",
+        )
+    }
+    recorded.update(
+        {
+            "RUSTC_WRAPPER": "sccache",
+            "SCCACHE_BACKEND": "dedicated-local",
+            "activationGate": str(activation_gate).lower(),
+            "frontendInstall": "corepack pnpm install --offline --frozen-lockfile",
+            "mysqlIntegration": environment.get("RYFRAME_MYSQL_INTEGRATION", "0"),
+            "redisIntegration": environment.get("RYFRAME_REDIS_INTEGRATION", "0"),
+        }
+    )
+    return recorded
+
+
+def run_sccache(program: str, environment: dict[str, str], argument: str) -> None:
+    completed = subprocess.run(
+        [program, argument],
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if completed.returncode != 0:
+        raise ReplayConfigurationError(
+            f"sccache {argument} 失败：{completed.stderr.strip()}"
+        )
+
+
+def sccache_stats(program: str, environment: dict[str, str]) -> dict[str, Any]:
+    completed = subprocess.run(
+        [program, "--show-stats", "--stats-format", "json"],
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if completed.returncode != 0:
+        raise ReplayConfigurationError(f"sccache 统计失败：{completed.stderr.strip()}")
+    try:
+        document = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise ReplayConfigurationError(f"sccache 统计不是合法 JSON：{error}") from error
+    if not isinstance(document, dict):
+        raise ReplayConfigurationError("sccache 统计必须是 JSON 对象")
+    return document
+
+
+def try_sccache_stop(program: str, environment: dict[str, str]) -> str | None:
+    try:
+        run_sccache(program, environment, "--stop-server")
+    except ReplayConfigurationError as error:
+        return str(error)
+    return None
+
+
 def execute_in_worktree(
     repository: Path,
     frontend_repository: Path,
     worktree: Path,
     case: ReplayCase,
     command: tuple[str, ...],
-    shared_target: Path,
+    base_environment: dict[str, str],
+    corepack: str,
     *,
     targeted: bool,
+    order: int,
 ) -> CommandResult:
     backend_worktree = worktree / "b"
     frontend_worktree = worktree / "f"
     worktree.mkdir()
-    add = subprocess.run(
-        [
-            "git",
-            "worktree",
-            "add",
-            "--quiet",
-            "--detach",
-            str(backend_worktree),
-            case.head,
-        ],
-        cwd=repository,
-        check=False,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    if add.returncode != 0:
-        worktree.rmdir()
-        raise ReplayConfigurationError(
-            f"无法创建 replay worktree：{add.stderr.strip()}"
-        )
-    frontend_add = subprocess.run(
-        [
-            "git",
-            "worktree",
-            "add",
-            "--quiet",
-            "--detach",
-            str(frontend_worktree),
-            case.frontend_head,
-        ],
-        cwd=frontend_repository,
-        check=False,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    if frontend_add.returncode != 0:
-        cleanup_worktree(repository, backend_worktree, "后端")
-        worktree.rmdir()
-        raise ReplayConfigurationError(
-            f"无法创建前端 replay worktree：{frontend_add.stderr.strip()}"
-        )
+    backend_created = False
+    frontend_created = False
+    decision_path = worktree / "decision.json"
+    primary_error: BaseException | None = None
     try:
-        environment = os.environ.copy()
+        add_worktree(repository, backend_worktree, case.head, "后端")
+        backend_created = True
+        add_worktree(frontend_repository, frontend_worktree, case.frontend_head, "前端")
+        frontend_created = True
+        install_frontend_dependencies(frontend_worktree, corepack, base_environment)
+        target_root = (
+            backend_worktree / ".local-tests" / "resource-gate-replay-target"
+        ).resolve()
+        if not target_root.is_relative_to(backend_worktree.resolve()):
+            raise ReplayConfigurationError("replay Cargo target 逃逸后端 worktree")
+        environment = base_environment.copy()
         environment.update(
             {
                 "RYFRAME_CI_BASE_SHA": case.base,
                 "RYFRAME_CI_HEAD_SHA": case.head,
                 "RYFRAME_CI_FRONTEND_REF": case.frontend_head,
-                "RYFRAME_RESOURCE_GATE_REPLAY_CASE": case.name,
-                "RYFRAME_DEVEX_TARGET_ROOT": str(shared_target),
+                "RYFRAME_DEVEX_TARGET_ROOT": str(target_root),
+                "RYFRAME_INTEGRATION_RUN_ID": f"resource-replay-{worktree.name}",
+                "RYFRAME_RESOURCE_GATE_DECISION_FILE": str(decision_path.resolve()),
             }
         )
         if targeted:
@@ -393,44 +781,298 @@ def execute_in_worktree(
             capture_output=True,
         )
         duration_ms = (time.perf_counter_ns() - started) // 1_000_000
+        decision = load_decision(decision_path)
         return CommandResult(
             passed=completed.returncode == 0,
             return_code=completed.returncode,
             duration_ms=duration_ms,
+            order=order,
+            decision=decision,
+            target_fingerprint=sha256_text(str(target_root)),
         )
+    except BaseException as error:
+        primary_error = error
+        raise
     finally:
-        cleanup_worktree(frontend_repository, frontend_worktree, "前端")
-        cleanup_worktree(repository, backend_worktree, "后端")
+        cleanup_errors: list[str] = []
+        if decision_path.exists():
+            try:
+                decision_path.unlink()
+            except OSError as error:
+                cleanup_errors.append(f"无法删除 decision artifact：{error}")
+        cleanup_errors.extend(
+            cleanup_created_worktrees(
+                (
+                    (
+                        frontend_created or frontend_worktree.exists(),
+                        frontend_repository,
+                        frontend_worktree,
+                        "前端",
+                    ),
+                    (
+                        backend_created or backend_worktree.exists(),
+                        repository,
+                        backend_worktree,
+                        "后端",
+                    ),
+                )
+            )
+        )
         try:
             worktree.rmdir()
         except OSError as error:
-            raise ReplayConfigurationError(
-                f"replay 临时案例目录未完全回收：{worktree}：{error}"
-            ) from error
+            cleanup_errors.append(f"replay 临时案例目录未完全回收：{worktree}：{error}")
+        fail_on_cleanup(primary_error, "案例清理", cleanup_errors)
 
 
-def cleanup_worktree(repository: Path, worktree: Path, label: str) -> None:
-    cleanup = subprocess.run(
-        ["git", "worktree", "remove", "--force", str(worktree)],
+def add_worktree(repository: Path, worktree: Path, commit: str, label: str) -> None:
+    completed = subprocess.run(
+        ["git", "worktree", "add", "--quiet", "--detach", str(worktree), commit],
         cwd=repository,
         check=False,
         capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
     )
-    if cleanup.returncode != 0:
-        raise ReplayConfigurationError(f"无法回收{label} replay worktree：{worktree}")
+    if completed.returncode != 0:
+        raise ReplayConfigurationError(
+            f"无法创建{label} replay worktree：{completed.stderr.strip()}"
+        )
+
+
+def install_frontend_dependencies(
+    frontend: Path,
+    corepack: str,
+    environment: dict[str, str],
+) -> None:
+    completed = subprocess.run(
+        [corepack, "pnpm", "install", "--offline", "--frozen-lockfile"],
+        cwd=frontend,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if completed.returncode != 0:
+        raise ReplayConfigurationError(
+            "前端 replay 依赖离线安装失败；请先预热 pnpm store："
+            + completed.stderr.strip()
+        )
+    if not frontend.joinpath("node_modules").is_dir():
+        raise ReplayConfigurationError("前端 replay 离线安装后仍缺少 node_modules")
+
+
+def load_decision(path: Path) -> ResourceGateDecision:
+    try:
+        raw: Any = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ReplayConfigurationError(
+            f"无法读取 resource gate decision：{error}"
+        ) from error
+    if not isinstance(raw, dict):
+        raise ReplayConfigurationError("resource gate decision 必须是 JSON 对象")
+    require_exact_keys(
+        raw, {"formatVersion", "recognized", "mode", "fallback", "steps"}, "decision"
+    )
+    if raw["formatVersion"] != DECISION_FORMAT_VERSION:
+        raise ReplayConfigurationError(
+            f"resource gate decision formatVersion 必须为 {DECISION_FORMAT_VERSION}"
+        )
+    if not isinstance(raw["recognized"], bool):
+        raise ReplayConfigurationError("resource gate decision.recognized 必须是布尔值")
+    if raw["mode"] not in TARGETED_MODES:
+        raise ReplayConfigurationError("resource gate decision.mode 非法")
+    fallback = raw["fallback"]
+    if fallback is not None and (not isinstance(fallback, str) or not fallback.strip()):
+        raise ReplayConfigurationError(
+            "resource gate decision.fallback 必须为空或非空字符串"
+        )
+    steps = raw["steps"]
+    if (
+        not isinstance(steps, list)
+        or not steps
+        or any(not isinstance(step, str) or not step for step in steps)
+    ):
+        raise ReplayConfigurationError(
+            "resource gate decision.steps 必须是非空字符串数组"
+        )
+    if raw["mode"] == "targeted" and fallback is not None:
+        raise ReplayConfigurationError("targeted decision 不得包含 fallback")
+    if raw["mode"] == "full" and fallback is None:
+        raise ReplayConfigurationError("full decision 必须包含 fallback")
+    return ResourceGateDecision(raw["recognized"], raw["mode"], fallback, tuple(steps))
+
+
+def require_arm(
+    case: ReplayCase,
+    result: CommandResult,
+    *,
+    targeted: bool,
+    require_pass: bool = False,
+) -> None:
+    if targeted:
+        if not result.decision.recognized:
+            raise ReplayConfigurationError(
+                f"replay {case.name} 的 targeted arm 未识别激活标记"
+            )
+        if result.decision.mode != case.targeted_mode:
+            raise ReplayConfigurationError(
+                f"replay {case.name} 的 targeted mode 应为 {case.targeted_mode}，"
+                f"实际为 {result.decision.mode}"
+            )
+    elif result.decision.recognized or result.decision.mode != "full":
+        raise ReplayConfigurationError(
+            f"replay {case.name} 的 full arm 未执行未激活的完整门禁"
+        )
+    if require_pass and not result.passed:
+        raise ReplayConfigurationError(f"replay prime 案例失败：{case.name}")
+
+
+def cleanup_worktree(repository: Path, worktree: Path, label: str) -> str | None:
+    attempts = 5 if os.name == "nt" else 1
+    last_error = ""
+    for attempt in range(attempts):
+        cleanup = subprocess.run(
+            ["git", "worktree", "remove", "--force", str(worktree)],
+            cwd=repository,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if cleanup.returncode == 0:
+            return None
+        last_error = cleanup.stderr.strip() or str(cleanup.returncode)
+        if os.name == "nt" and attempt + 1 < attempts:
+            time.sleep(0.1 * (2**attempt))
+    if worktree.is_dir():
+        try:
+            worktree.rmdir()
+        except OSError:
+            pass
+        else:
+            prune = subprocess.run(
+                ["git", "worktree", "prune"],
+                cwd=repository,
+                check=False,
+                capture_output=True,
+            )
+            if prune.returncode == 0:
+                return None
+    return f"无法回收{label} replay worktree {worktree}：{last_error}"
+
+
+def cleanup_created_worktrees(
+    entries: tuple[tuple[bool, Path, Path, str], ...],
+) -> list[str]:
+    errors: list[str] = []
+    for created, repository, worktree, label in entries:
+        if not created:
+            continue
+        error = cleanup_worktree(repository, worktree, label)
+        if error is not None:
+            errors.append(error)
+    return errors
+
+
+def fail_on_cleanup(
+    primary: BaseException | None,
+    label: str,
+    errors: list[str],
+) -> None:
+    if not errors:
+        return
+    message = f"{label}失败：" + "；".join(errors)
+    if primary is None:
+        raise ReplayConfigurationError(message)
+    if isinstance(primary, ReplayConfigurationError):
+        raise ReplayConfigurationError(f"{primary}；{message}") from primary
+    primary.add_note(message)
+
+
+def prune_worktrees(*repositories: Path) -> list[str]:
+    errors: list[str] = []
+    for repository in repositories:
+        completed = subprocess.run(
+            ["git", "worktree", "prune"],
+            cwd=repository,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if completed.returncode != 0:
+            errors.append(
+                f"无法 prune {repository}：{completed.stderr.strip() or completed.returncode}"
+            )
+    return errors
+
+
+def remove_isolated_tree(path: Path, allowed: Path) -> list[str]:
+    resolved = path.resolve()
+    if resolved == allowed or not resolved.is_relative_to(allowed):
+        return [f"拒绝清理允许范围外目录：{resolved}"]
+    if not resolved.exists():
+        return []
+    attempts = 5 if os.name == "nt" else 1
+    for attempt in range(attempts):
+        try:
+            shutil.rmtree(resolved)
+            try:
+                resolved.parent.rmdir()
+            except OSError:
+                pass
+            return []
+        except OSError as error:
+            if os.name != "nt" or attempt + 1 == attempts:
+                return [f"无法清理 replay 隔离目录 {resolved}：{error}"]
+            time.sleep(0.1 * (2**attempt))
+    return []
+
+
+def sha256_file(path: Path) -> str:
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def sha256_text(value: str) -> str:
+    return "sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def sha256_json(value: Any) -> str:
+    body = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return sha256_text(body)
+
+
+def repository_record(identity: RepositoryIdentity) -> dict[str, str | None]:
+    return {
+        "rootFingerprint": sha256_text(os.path.normcase(str(identity.root))),
+        "commonDirFingerprint": sha256_text(os.path.normcase(str(identity.common_dir))),
+        "remoteFingerprint": identity.remote,
+    }
 
 
 def write_report(
     path: Path,
-    results: list[ReplayResult],
+    run: ReplayRun,
     *,
     activation_gate: bool = False,
 ) -> None:
+    results = run.results
     zero_divergence = bool(results) and all(result.matches for result in results)
     successful_targeted = [
         result.targeted.duration_ms
         for result in results
-        if result.expected == "pass" and result.targeted.passed
+        if (
+            result.expected == "pass"
+            and result.targeted_mode == "targeted"
+            and result.targeted.passed
+            and result.targeted.decision.mode == "targeted"
+        )
     ]
     targeted_p95_ms = percentile_nearest_rank(successful_targeted, 95)
     targeted_within_budget = (
@@ -449,6 +1091,7 @@ def write_report(
         "activationEligible": (
             activation_gate and zero_divergence and targeted_within_budget
         ),
+        "evidence": asdict(run.evidence),
         "cases": [asdict(result) for result in results],
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -471,7 +1114,12 @@ def activation_performance_error(results: list[ReplayResult]) -> str | None:
     successful = [
         result.targeted.duration_ms
         for result in results
-        if result.expected == "pass" and result.targeted.passed
+        if (
+            result.expected == "pass"
+            and result.targeted_mode == "targeted"
+            and result.targeted.passed
+            and result.targeted.decision.mode == "targeted"
+        )
     ]
     if len(successful) < MINIMUM_SUCCESSFUL_CASES:
         return (
@@ -527,16 +1175,19 @@ def main() -> int:
         manifest = load_manifest(args.manifest)
         if args.activation_gate:
             validate_activation_commands(manifest)
-        results = run_replay(
+        run = run_replay(
             args.repository,
             args.frontend_repository,
             manifest,
             args.work_dir,
+            manifest_fingerprint=sha256_file(args.manifest.resolve()),
+            activation_gate=args.activation_gate,
         )
-        write_report(args.report, results, activation_gate=args.activation_gate)
+        write_report(args.report, run, activation_gate=args.activation_gate)
     except ReplayConfigurationError as error:
         print(error, file=sys.stderr)
         return 2
+    results = run.results
     mismatches = replay_mismatches(results)
     if mismatches:
         print(
@@ -551,7 +1202,12 @@ def main() -> int:
     successful = [
         result.targeted.duration_ms
         for result in results
-        if result.expected == "pass" and result.targeted.passed
+        if (
+            result.expected == "pass"
+            and result.targeted_mode == "targeted"
+            and result.targeted.passed
+            and result.targeted.decision.mode == "targeted"
+        )
     ]
     print(
         f"resource gate replay 零分歧：{len(results)} 个案例，"

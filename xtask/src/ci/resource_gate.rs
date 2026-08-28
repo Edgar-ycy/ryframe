@@ -1,4 +1,14 @@
-use std::{env, path::Path, thread};
+use std::{
+    env,
+    fs::{self, OpenOptions},
+    io::Write,
+    path::{Path, PathBuf},
+    process,
+    sync::atomic::{AtomicU64, Ordering},
+    thread,
+};
+
+use serde::Serialize;
 
 use crate::{
     Result,
@@ -26,8 +36,31 @@ pub(crate) use repository::{
     parse_name_status, parse_ownership, parse_resource_definition, preferred_nonempty_ref,
 };
 
+const DECISION_FORMAT_VERSION: u16 = 1;
+const DECISION_FILE_ENV: &str = "RYFRAME_RESOURCE_GATE_DECISION_FILE";
+static NEXT_DECISION_ARTIFACT: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum ResourceGateMode {
+    Targeted,
+    Full,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ResourceGateDecision {
+    pub(crate) format_version: u16,
+    pub(crate) recognized: bool,
+    pub(crate) mode: ResourceGateMode,
+    pub(crate) fallback: Option<String>,
+    pub(crate) steps: Vec<String>,
+}
+
 pub(crate) fn run(frontend_dir: &Path) -> Result<()> {
     let root = root_dir();
+    let recognized =
+        targeted_activation_from(env::var("RYFRAME_RESOURCE_GATE_TARGETED").ok().as_deref());
     let loaded = match repository::load(&root) {
         Ok(loaded) => loaded,
         Err(reason) => {
@@ -35,14 +68,13 @@ pub(crate) fn run(frontend_dir: &Path) -> Result<()> {
                 ambiguous_reason: Some(reason),
                 ..ResourceChangeSet::default()
             };
+            write_decision_from_environment(&decision_for(&change_set, recognized))?;
             print_change_set(&change_set)?;
             return execute_plan(&root, frontend_dir, None, &change_set);
         }
     };
-    let change_set = enforce_targeted_activation(
-        analyze(&loaded.input),
-        targeted_activation_from(env::var("RYFRAME_RESOURCE_GATE_TARGETED").ok().as_deref()),
-    );
+    let change_set = enforce_targeted_activation(analyze(&loaded.input), recognized);
+    write_decision_from_environment(&decision_for(&change_set, recognized))?;
     println!("resource gate Git 范围：{}..{}", loaded.base, loaded.head);
     print_change_set(&change_set)?;
     execute_plan(&root, frontend_dir, Some(&loaded.base), &change_set)
@@ -65,6 +97,99 @@ pub(crate) fn enforce_targeted_activation(
         );
     }
     change_set
+}
+
+pub(crate) fn decision_for(
+    change_set: &ResourceChangeSet,
+    recognized: bool,
+) -> ResourceGateDecision {
+    ResourceGateDecision {
+        format_version: DECISION_FORMAT_VERSION,
+        recognized,
+        mode: if change_set.ambiguous_reason.is_none() {
+            ResourceGateMode::Targeted
+        } else {
+            ResourceGateMode::Full
+        },
+        fallback: change_set.ambiguous_reason.clone(),
+        steps: plan_steps(change_set)
+            .iter()
+            .map(decision_step_label)
+            .collect(),
+    }
+}
+
+fn decision_step_label(step: &GateStep) -> String {
+    match step {
+        GateStep::FullRustGate => "full-rust-gate".to_owned(),
+        GateStep::FullIntegration => "full-integration".to_owned(),
+        GateStep::FullConsumerContract => "full-consumer-contract".to_owned(),
+        GateStep::ResourceDrift => "resource-drift".to_owned(),
+        GateStep::ResourceWorkspace => "resource-workspace".to_owned(),
+        GateStep::AffectedClippy(packages) => package_step("affected-clippy", packages),
+        GateStep::AffectedTest(packages) => package_step("affected-test", packages),
+        GateStep::PermissionContract => "permission-contract".to_owned(),
+        GateStep::MigrationContract => "migration-contract".to_owned(),
+        GateStep::OpenApiAndFrontendConsumer => "openapi-and-frontend-consumer".to_owned(),
+    }
+}
+
+fn package_step(label: &str, packages: &std::collections::BTreeSet<String>) -> String {
+    format!(
+        "{label}:{}",
+        packages.iter().cloned().collect::<Vec<_>>().join(",")
+    )
+}
+
+fn write_decision_from_environment(decision: &ResourceGateDecision) -> Result<()> {
+    let Some(path) = env::var_os(DECISION_FILE_ENV)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+    else {
+        return Ok(());
+    };
+    if !path.is_absolute() {
+        return Err(format!("{DECISION_FILE_ENV} 必须是绝对路径").into());
+    }
+    write_decision_artifact(&path, decision)
+}
+
+pub(crate) fn write_decision_artifact(path: &Path, decision: &ResourceGateDecision) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or("resource gate decision 路径缺少父目录")?;
+    if !parent.is_dir() {
+        return Err(format!("resource gate decision 父目录不存在：{}", parent.display()).into());
+    }
+    if path.exists() {
+        return Err(format!(
+            "resource gate decision 已存在，拒绝覆盖：{}",
+            path.display()
+        )
+        .into());
+    }
+    let filename = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or("resource gate decision 文件名不是有效 UTF-8")?;
+    let sequence = NEXT_DECISION_ARTIFACT.fetch_add(1, Ordering::Relaxed);
+    let temporary = parent.join(format!(".{filename}.{}-{sequence}.tmp", process::id()));
+    let mut body = serde_json::to_vec_pretty(decision)?;
+    body.push(b'\n');
+    let result = (|| {
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        output.write_all(&body)?;
+        output.sync_all()?;
+        fs::rename(&temporary, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 fn print_change_set(change_set: &ResourceChangeSet) -> Result<()> {

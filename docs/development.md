@@ -140,7 +140,9 @@ suite 固定为 `rust-cold-build`、`rust-incremental`、`cargo-dev-save`、`res
 
 ## 资源门禁与编译缓存
 
-`cargo xtask ci resource-gate --frontend-dir ../ryframe-vue3` 直接从 CI 的 base/head SHA 读取资源变化、关系闭包和 ownership，不接收流水线拼接的资源名。缺少合法 base、变更面过大、删除或重命名无法归属，以及 Cargo、toolchain、模板、CI 或架构策略变化时都会自动执行完整门禁。定向模式默认关闭；只有 `scripts/resource_gate_replay.py` 使用 format 2 清单，在两个独立 Git 仓库的成对后端/前端 worktree 中回放至少 20 个真实变更案例，证明定向与完整门禁零分歧后，CI 才能设置受控的激活标记；调用时必须同时提供 `--repository` 与 `--frontend-repository`。没有回放证据时保持完整回退是预期行为。
+`cargo xtask ci resource-gate --frontend-dir ../ryframe-vue3` 直接从 CI 的 base/head SHA 读取资源变化、关系闭包和 ownership，不接收流水线拼接的资源名。缺少合法 base、变更面过大、删除或重命名无法归属，以及 Cargo、toolchain、模板、CI 或架构策略变化时都会自动执行完整门禁。定向模式默认关闭；只有 `scripts/resource_gate_replay.py` 使用 format 2 清单，在两个 Git common-dir 不同的仓库顶层中回放至少 20 个成对后端/前端提交，证明定向与完整门禁零分歧后，CI 才能设置受控的激活标记；调用时必须同时提供 `--repository` 与 `--frontend-repository`。每个案例必须用 `targetedMode` 明确声明激活臂应实际执行 `targeted` 还是安全回退 `full`，runner 同时要求未激活臂实际为 `full`，不接受两臂都完整回退却冒充定向证据。清单中的每个 head 必须已支持 decision format 1；早于该能力的历史变更需在经审计的新 base 上重建等价 fixture，不得用旧输出推断实际模式。
+
+Replay 会在每个前端 worktree 中于计时前执行 `corepack pnpm install --offline --frozen-lockfile`，因此正式运行前必须预热与各历史 lockfile 匹配的 pnpm store。一次显式 prime 只预热本次运行独占的本地 sccache，不进入样本；每个案例和每个臂使用独立 Cargo target，并按 A-B、B-A 交错执行。Activation 模式固定 standard Rust gate、`CARGO_INCREMENTAL=0`、编译并发 8 和测试并发 4，且要求真实 MySQL、Redis 集成开关均为 `1`、主机为回环地址、Redis 使用隔离的数据库 15。报告记录 Resource Gate 的原子 decision、非敏感环境、工具版本与工具集指纹、manifest、runner 与仓库指纹；缺少 decision、实际模式不符、依赖离线安装失败或清理不完整都会 fail-closed。没有有效回放证据时保持完整回退是预期行为。
 
 Rust CI 关闭 incremental，并为每个 job 保存 sccache JSON 统计，不缓存整个 target。`SCCACHE_BASEDIRS` 目前只用于定时或手动的 AWS-LC 双绝对路径 canary；canary 要求缓存错误为零、warm 命中率至少 80%、不可缓存请求至少减少 50%，且 warm 构建确有耗时改善。达到这些条件前，不把该路径归一化配置扩展到普通 Rust job。
 
