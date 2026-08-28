@@ -7,7 +7,7 @@ use super::{
         ResourceDefinition, ResourceGateInput, affected_package_args_for_target, analyze,
         enforce_targeted_activation, parse_name_status, parse_ownership, parse_resource_definition,
         plan_steps, preferred_nonempty_ref, resource_check_args_for_target, should_run_for_paths,
-        targeted_activation_from,
+        targeted_activation_from, targeted_contract_steps, targeted_test_jobs_from,
     },
 };
 
@@ -32,6 +32,20 @@ fn resource_change_replays_match_the_audited_full_gate_oracle() {
     assert!(cases.len() >= 20, "resource gate 回放案例不得少于 20 个");
     let names = cases.iter().map(|case| case.name).collect::<BTreeSet<_>>();
     assert_eq!(names.len(), cases.len(), "resource gate 回放名称必须唯一");
+    for category in [
+        "新增/",
+        "字段/",
+        "权限/",
+        "关系/",
+        "SQL/",
+        "重命名/",
+        "删除/",
+    ] {
+        assert!(
+            names.iter().any(|name| name.starts_with(category)),
+            "resource gate 回放缺少 {category} 类案例"
+        );
+    }
 
     for case in cases {
         let actual = analyze(&case.input);
@@ -140,6 +154,33 @@ fn targeted_execution_stays_fail_closed_until_replay_activation() {
     assert!(!targeted_activation_from(None));
     assert!(!targeted_activation_from(Some("1")));
     assert!(targeted_activation_from(Some("replay-verified-v1")));
+}
+
+#[test]
+fn targeted_execution_parallelizes_only_the_independent_resource_workspace() {
+    let packages = set(&["ryframe-api", "ryframe-application"]);
+    let contract_steps = targeted_contract_steps(packages.clone());
+    assert_eq!(
+        contract_steps,
+        vec![
+            GateStep::AffectedClippy(packages.clone()),
+            GateStep::AffectedTest(packages.clone()),
+            GateStep::PermissionContract,
+            GateStep::MigrationContract,
+            GateStep::OpenApiAndFrontendConsumer,
+        ]
+    );
+    let mut executed = vec![GateStep::ResourceDrift, GateStep::ResourceWorkspace];
+    executed.extend(contract_steps);
+    assert_eq!(executed, targeted_steps(&packages));
+}
+
+#[test]
+fn targeted_test_jobs_never_exceed_the_backend_branch_budget() {
+    assert_eq!(targeted_test_jobs_from(None, false, 3).unwrap(), 3);
+    assert_eq!(targeted_test_jobs_from(None, true, 2).unwrap(), 2);
+    assert_eq!(targeted_test_jobs_from(Some("6"), false, 4).unwrap(), 4);
+    assert!(targeted_test_jobs_from(Some("0"), false, 4).is_err());
 }
 
 #[test]
@@ -283,6 +324,7 @@ fn ownership_parser_is_strict_and_commands_share_ci_target() {
     let resource_args = resource_check_args_for_target(
         std::path::Path::new("../ryframe-vue3"),
         "target/ci/resource",
+        2,
     );
     assert_eq!(
         resource_args,
@@ -290,14 +332,13 @@ fn ownership_parser_is_strict_and_commands_share_ci_target() {
             "run".to_owned(),
             "--locked".to_owned(),
             "--target-dir".to_owned(),
-            std::path::Path::new("target/ci/resource")
-                .join("driver")
-                .to_string_lossy()
-                .into_owned(),
+            "target/ci/resource".to_owned(),
             "-p".to_owned(),
             "xtask".to_owned(),
             "--features".to_owned(),
             "resource".to_owned(),
+            "--jobs".to_owned(),
+            "2".to_owned(),
             "--".to_owned(),
             "resource".to_owned(),
             "--all".to_owned(),
@@ -698,7 +739,6 @@ fn full_fallback_steps() -> Vec<GateStep> {
         GateStep::ResourceDrift,
         GateStep::FullRustGate,
         GateStep::FullIntegration,
-        GateStep::ResourceWorkspace,
         GateStep::PermissionContract,
         GateStep::MigrationContract,
         GateStep::FullConsumerContract,

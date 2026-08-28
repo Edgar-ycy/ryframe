@@ -18,6 +18,8 @@ from typing import Any
 
 FORMAT_VERSION = 1
 MINIMUM_CASES = 20
+MINIMUM_SUCCESSFUL_CASES = 10
+TARGETED_P95_LIMIT_MS = 60_000
 TARGETED_ACTIVATION = "replay-verified-v1"
 SHA_PATTERN = re.compile(r"[0-9a-fA-F]{40}")
 REQUIRED_CATEGORIES = frozenset(
@@ -168,21 +170,23 @@ def run_replay(
         raise ReplayConfigurationError("replay 临时目录逃逸允许范围")
     session.mkdir()
     results: list[ReplayResult] = []
+    targeted_command = normalize_frontend_command(repository, manifest.targeted_command)
+    full_command = normalize_frontend_command(repository, manifest.full_command)
     try:
-        for index, case in enumerate(manifest.cases):
+        for case in manifest.cases:
             verify_commit_range(repository, case)
             targeted = execute_in_worktree(
                 repository,
-                session / f"{index:02d}-targeted",
+                session / "targeted",
                 case,
-                manifest.targeted_command,
+                targeted_command,
                 targeted=True,
             )
             full = execute_in_worktree(
                 repository,
-                session / f"{index:02d}-full",
+                session / "full",
                 case,
-                manifest.full_command,
+                full_command,
                 targeted=False,
             )
             results.append(
@@ -215,6 +219,23 @@ def run_replay(
                     f"replay 临时目录未完全回收：{session}：{error}"
                 ) from error
     return results
+
+
+def normalize_frontend_command(
+    repository: Path, command: tuple[str, ...]
+) -> tuple[str, ...]:
+    normalized = list(command)
+    try:
+        option = normalized.index("--frontend-dir")
+    except ValueError:
+        return command
+    if option + 1 >= len(normalized):
+        raise ReplayConfigurationError("--frontend-dir 缺少路径参数")
+    frontend = Path(normalized[option + 1])
+    if not frontend.is_absolute():
+        frontend = (repository / frontend).resolve()
+    normalized[option + 1] = str(frontend)
+    return tuple(normalized)
 
 
 def verify_commit_range(repository: Path, case: ReplayCase) -> None:
@@ -303,17 +324,64 @@ def write_report(
     activation_gate: bool = False,
 ) -> None:
     zero_divergence = bool(results) and all(result.matches for result in results)
+    successful_targeted = [
+        result.targeted.duration_ms
+        for result in results
+        if result.expected == "pass" and result.targeted.passed
+    ]
+    targeted_p95_ms = percentile_nearest_rank(successful_targeted, 95)
+    targeted_within_budget = (
+        len(successful_targeted) >= MINIMUM_SUCCESSFUL_CASES
+        and targeted_p95_ms is not None
+        and targeted_p95_ms <= TARGETED_P95_LIMIT_MS
+    )
     document = {
         "formatVersion": FORMAT_VERSION,
         "caseCount": len(results),
+        "successfulTargetedCaseCount": len(successful_targeted),
         "zeroDivergence": zero_divergence,
-        "activationEligible": activation_gate and zero_divergence,
+        "targetedP95Ms": targeted_p95_ms,
+        "targetedP95LimitMs": TARGETED_P95_LIMIT_MS,
+        "targetedWithinBudget": targeted_within_budget,
+        "activationEligible": (
+            activation_gate and zero_divergence and targeted_within_budget
+        ),
         "cases": [asdict(result) for result in results],
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+
+
+def percentile_nearest_rank(samples: list[int], percentile: int) -> int | None:
+    if not samples:
+        return None
+    if not 1 <= percentile <= 100:
+        raise ValueError("percentile 必须在 1..=100")
+    ordered = sorted(samples)
+    rank = (percentile * len(ordered) + 99) // 100
+    return ordered[rank - 1]
+
+
+def activation_performance_error(results: list[ReplayResult]) -> str | None:
+    successful = [
+        result.targeted.duration_ms
+        for result in results
+        if result.expected == "pass" and result.targeted.passed
+    ]
+    if len(successful) < MINIMUM_SUCCESSFUL_CASES:
+        return (
+            "resource gate replay 成功 targeted 案例不足："
+            f"{len(successful)}/{MINIMUM_SUCCESSFUL_CASES}"
+        )
+    p95 = percentile_nearest_rank(successful, 95)
+    if p95 is None or p95 > TARGETED_P95_LIMIT_MS:
+        return (
+            "resource gate targeted P95 超标："
+            f"{p95}ms > {TARGETED_P95_LIMIT_MS}ms"
+        )
+    return None
 
 
 def replay_mismatches(results: list[ReplayResult]) -> list[str]:
@@ -365,7 +433,20 @@ def main() -> int:
     if mismatches:
         print("resource gate replay 存在分歧：" + ", ".join(mismatches), file=sys.stderr)
         return 1
-    print(f"resource gate replay 零分歧：{len(results)} 个案例")
+    if args.activation_gate:
+        performance_error = activation_performance_error(results)
+        if performance_error is not None:
+            print(performance_error, file=sys.stderr)
+            return 1
+    successful = [
+        result.targeted.duration_ms
+        for result in results
+        if result.expected == "pass" and result.targeted.passed
+    ]
+    print(
+        f"resource gate replay 零分歧：{len(results)} 个案例，"
+        f"targeted P95={percentile_nearest_rank(successful, 95)}ms"
+    )
     return 0
 
 

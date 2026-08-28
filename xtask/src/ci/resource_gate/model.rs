@@ -114,7 +114,6 @@ pub(crate) fn plan_steps(change_set: &ResourceChangeSet) -> Vec<GateStep> {
             GateStep::ResourceDrift,
             GateStep::FullRustGate,
             GateStep::FullIntegration,
-            GateStep::ResourceWorkspace,
             GateStep::PermissionContract,
             GateStep::MigrationContract,
             GateStep::FullConsumerContract,

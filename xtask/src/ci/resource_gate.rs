@@ -1,4 +1,4 @@
-use std::{env, path::Path};
+use std::{env, path::Path, thread};
 
 use crate::{
     Result,
@@ -6,7 +6,7 @@ use crate::{
         backend_package_operation_args, ci_target_policy, ci_test_jobs_from,
         resource_workspace_compilation, verify_job_budget_from,
     },
-    process::{run as run_process, run_owned},
+    process::{run as run_process, run_owned, with_process_log},
     workspace::root_dir,
 };
 
@@ -95,71 +95,191 @@ fn execute_plan(
     let available = std::thread::available_parallelism().map_or(4, usize::from);
     let budget =
         verify_job_budget_from(env::var("RYFRAME_VERIFY_JOBS").ok().as_deref(), available)?;
-    let test_jobs = ci_test_jobs_from(
-        env::var("RYFRAME_CI_TEST_JOBS").ok().as_deref(),
+    let configured_test_jobs = env::var("RYFRAME_CI_TEST_JOBS").ok();
+    let test_jobs = targeted_test_jobs_from(
+        configured_test_jobs.as_deref(),
         cfg!(windows),
-        budget.total,
+        budget.backend,
     )?;
     let targets = ci_target_policy()?;
+    if change_set.ambiguous_reason.is_none() {
+        return execute_targeted_plan(
+            root,
+            frontend_dir,
+            base,
+            change_set,
+            budget,
+            test_jobs,
+            &targets,
+        );
+    }
     for step in plan_steps(change_set) {
-        match step {
-            GateStep::FullRustGate => super::rust_gate(frontend_dir)?,
-            GateStep::FullIntegration => super::integration()?,
-            GateStep::FullConsumerContract => super::consumer_contract(frontend_dir)?,
-            GateStep::ResourceDrift => {
-                run_owned(
-                    root,
-                    "cargo",
-                    &resource_check_args_for_target(frontend_dir, &targets.resource),
-                )?;
-            }
-            GateStep::ResourceWorkspace => resource_workspace_compilation(
-                root,
-                frontend_dir,
-                &targets.resource,
-                budget.resource,
-            )?,
-            GateStep::AffectedClippy(packages) => run_owned(
-                root,
-                "cargo",
-                &affected_package_args_for_target(
-                    "clippy",
-                    &packages,
-                    &targets.backend,
-                    budget.backend,
-                ),
-            )?,
-            GateStep::AffectedTest(packages) => run_owned(
-                root,
-                "cargo",
-                &affected_package_args_for_target("test", &packages, &targets.backend, test_jobs),
-            )?,
-            GateStep::PermissionContract => {
-                run_process(root, "python", &["scripts/check_permission_routes.py"])?;
-            }
-            GateStep::MigrationContract => {
-                let args = super::preflight_migration_args(base);
-                run_owned(root, "python", &args)?;
-            }
-            GateStep::OpenApiAndFrontendConsumer => super::consumer_contract(frontend_dir)?,
-        }
+        execute_step(root, frontend_dir, base, &step, budget, test_jobs, &targets)?;
     }
     Ok(())
 }
 
-pub(crate) fn resource_check_args_for_target(frontend_dir: &Path, target_dir: &str) -> Vec<String> {
+pub(crate) fn targeted_test_jobs_from(
+    configured: Option<&str>,
+    windows: bool,
+    backend_budget: usize,
+) -> Result<usize> {
+    Ok(ci_test_jobs_from(configured, windows, backend_budget)?.min(backend_budget))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_targeted_plan(
+    root: &Path,
+    frontend_dir: &Path,
+    base: Option<&str>,
+    change_set: &ResourceChangeSet,
+    budget: crate::check::VerifyJobBudget,
+    test_jobs: usize,
+    targets: &crate::check::VerifyTargetPolicy,
+) -> Result<()> {
+    let packages = change_set.affected_crates.clone();
+    run_parallel_tasks(
+        root,
+        "resource-gate-workspace",
+        || {
+            execute_step(
+                root,
+                frontend_dir,
+                base,
+                &GateStep::ResourceDrift,
+                budget,
+                test_jobs,
+                targets,
+            )?;
+            execute_step(
+                root,
+                frontend_dir,
+                base,
+                &GateStep::ResourceWorkspace,
+                budget,
+                test_jobs,
+                targets,
+            )
+        },
+        "resource-gate-contracts",
+        || {
+            for step in targeted_contract_steps(packages) {
+                execute_step(root, frontend_dir, base, &step, budget, test_jobs, targets)?;
+            }
+            Ok(())
+        },
+    )
+}
+
+pub(crate) fn targeted_contract_steps(
+    packages: std::collections::BTreeSet<String>,
+) -> Vec<GateStep> {
+    vec![
+        GateStep::AffectedClippy(packages.clone()),
+        GateStep::AffectedTest(packages),
+        GateStep::PermissionContract,
+        GateStep::MigrationContract,
+        GateStep::OpenApiAndFrontendConsumer,
+    ]
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_step(
+    root: &Path,
+    frontend_dir: &Path,
+    base: Option<&str>,
+    step: &GateStep,
+    budget: crate::check::VerifyJobBudget,
+    test_jobs: usize,
+    targets: &crate::check::VerifyTargetPolicy,
+) -> Result<()> {
+    match step {
+        GateStep::FullRustGate => super::rust_gate(frontend_dir)?,
+        GateStep::FullIntegration => super::integration()?,
+        GateStep::FullConsumerContract => super::consumer_contract(frontend_dir)?,
+        GateStep::ResourceDrift => {
+            run_owned(
+                root,
+                "cargo",
+                &resource_check_args_for_target(frontend_dir, &targets.resource, budget.resource),
+            )?;
+        }
+        GateStep::ResourceWorkspace => {
+            resource_workspace_compilation(root, frontend_dir, &targets.resource, budget.resource)?
+        }
+        GateStep::AffectedClippy(packages) => run_owned(
+            root,
+            "cargo",
+            &affected_package_args_for_target("clippy", packages, &targets.backend, budget.backend),
+        )?,
+        GateStep::AffectedTest(packages) => run_owned(
+            root,
+            "cargo",
+            &affected_package_args_for_target("test", packages, &targets.backend, test_jobs),
+        )?,
+        GateStep::PermissionContract => {
+            run_process(root, "python", &["scripts/check_permission_routes.py"])?;
+        }
+        GateStep::MigrationContract => {
+            let args = super::preflight_migration_args(base);
+            run_owned(root, "python", &args)?;
+        }
+        GateStep::OpenApiAndFrontendConsumer => super::consumer_contract(frontend_dir)?,
+    }
+    Ok(())
+}
+
+fn run_parallel_tasks<Left, Right>(
+    root: &Path,
+    left_label: &str,
+    left: Left,
+    right_label: &str,
+    right: Right,
+) -> Result<()>
+where
+    Left: FnOnce() -> Result<()> + Send,
+    Right: FnOnce() -> Result<()> + Send,
+{
+    let logs = root.join("target/verify/logs");
+    let (left_result, right_result) = thread::scope(|scope| {
+        let left_log = logs.join(format!("{left_label}.log"));
+        let right_log = logs.join(format!("{right_label}.log"));
+        let left = scope.spawn(move || {
+            with_process_log(left_label, &left_log, left).map_err(|error| error.to_string())
+        });
+        let right = scope.spawn(move || {
+            with_process_log(right_label, &right_log, right).map_err(|error| error.to_string())
+        });
+        (left.join(), right.join())
+    });
+    let left_result = left_result.map_err(|_| format!("并行任务 {left_label} 发生 panic"))?;
+    let right_result = right_result.map_err(|_| format!("并行任务 {right_label} 发生 panic"))?;
+    match (left_result, right_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(left), Ok(())) => Err(left.into()),
+        (Ok(()), Err(right)) => Err(right.into()),
+        (Err(left), Err(right)) => {
+            Err(format!("并行任务同时失败：{left_label}: {left}；{right_label}: {right}").into())
+        }
+    }
+}
+
+pub(crate) fn resource_check_args_for_target(
+    frontend_dir: &Path,
+    target_dir: &str,
+    jobs: usize,
+) -> Vec<String> {
     vec![
         "run".to_owned(),
         "--locked".to_owned(),
         "--target-dir".to_owned(),
-        Path::new(target_dir)
-            .join("driver")
-            .to_string_lossy()
-            .into_owned(),
+        target_dir.to_owned(),
         "-p".to_owned(),
         "xtask".to_owned(),
         "--features".to_owned(),
         "resource".to_owned(),
+        "--jobs".to_owned(),
+        jobs.max(1).to_string(),
         "--".to_owned(),
         "resource".to_owned(),
         "--all".to_owned(),

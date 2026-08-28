@@ -98,6 +98,9 @@ class ResourceGateReplayTests(unittest.TestCase):
             self.assertEqual(document["caseCount"], 20)
             self.assertTrue(document["zeroDivergence"])
             self.assertFalse(document["activationEligible"])
+            self.assertEqual(document["successfulTargetedCaseCount"], 10)
+            self.assertTrue(document["targetedWithinBudget"])
+            self.assertLessEqual(document["targetedP95Ms"], 60_000)
             self.assertEqual(
                 {case["category"] for case in document["cases"]}, set(CATEGORIES)
             )
@@ -187,6 +190,43 @@ class ResourceGateReplayTests(unittest.TestCase):
                     valid_cases,
                 )
             )
+
+    def test_activation_requires_ten_successes_and_p95_at_most_sixty_seconds(self) -> None:
+        def result(index: int, duration_ms: int, passed: bool = True):
+            expected = "pass" if passed else "fail"
+            command = MODULE.CommandResult(passed, 0 if passed else 1, duration_ms)
+            return MODULE.ReplayResult(
+                name=f"case-{index}",
+                category=CATEGORIES[index % len(CATEGORIES)],
+                base=f"{index + 1:040x}",
+                head=f"{index + 101:040x}",
+                expected=expected,
+                targeted=command,
+                full=command,
+                matches=True,
+            )
+
+        too_few = [result(index, 1_000) for index in range(9)]
+        self.assertIn("不足", MODULE.activation_performance_error(too_few))
+        within_budget = [result(index, 10_000 + index) for index in range(10)]
+        self.assertIsNone(MODULE.activation_performance_error(within_budget))
+        over_budget = [*within_budget[:-1], result(10, 60_001)]
+        self.assertIn("P95", MODULE.activation_performance_error(over_budget))
+        self.assertEqual(MODULE.percentile_nearest_rank([3, 1, 2], 95), 3)
+
+    def test_frontend_argument_is_stable_across_temporary_worktrees(self) -> None:
+        command = (
+            "cargo",
+            "xtask",
+            "ci",
+            "resource-gate",
+            "--frontend-dir",
+            "../frontend",
+        )
+        normalized = MODULE.normalize_frontend_command(ROOT, command)
+        self.assertEqual(Path(normalized[-1]), (ROOT / "../frontend").resolve())
+        with self.assertRaisesRegex(MODULE.ReplayConfigurationError, "缺少路径"):
+            MODULE.normalize_frontend_command(ROOT, ("gate", "--frontend-dir"))
 
     def initialize_repository(self, repository: Path) -> None:
         self.git(repository, "init", "--quiet")
