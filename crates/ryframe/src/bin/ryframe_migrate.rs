@@ -188,19 +188,31 @@ async fn run_tenant_data_operation(
 
 fn print_control_status(scope: &str, status: &ryframe_db::migration::MigrationStatus) {
     println!(
-        "scope={scope} applied={} expected={} up_to_date={}",
+        "scope={scope} applied={} expected={} up_to_date={} missing={} unexpected={}",
         status.applied,
         status.expected,
-        status.is_up_to_date()
+        status.is_up_to_date(),
+        display_versions(&status.missing),
+        display_versions(&status.unexpected)
     );
 }
 
 fn print_tenant_data_status(scope: &str, status: &ryframe_tenant_db::migration::MigrationStatus) {
     println!(
-        "scope={scope} applied={} expected={} up_to_date={} schema_fingerprint={}",
+        "scope={scope} applied={} expected={} up_to_date={} schema_fingerprint={} missing={} unexpected={}",
         status.applied,
         status.expected,
         status.is_up_to_date(),
-        status.schema_fingerprint
+        status.schema_fingerprint,
+        display_versions(&status.missing),
+        display_versions(&status.unexpected)
     );
+}
+
+fn display_versions(versions: &[String]) -> String {
+    if versions.is_empty() {
+        "-".into()
+    } else {
+        versions.join(",")
+    }
 }

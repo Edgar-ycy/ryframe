@@ -4,6 +4,7 @@ const API_MANIFEST: &str = include_str!("../../ryframe-api/Cargo.toml");
 const ADAPTERS_MANIFEST: &str = include_str!("../../ryframe-adapters/Cargo.toml");
 const APPLICATION_MANIFEST: &str = include_str!("../../ryframe-application/Cargo.toml");
 const DB_MANIFEST: &str = include_str!("../../ryframe-db/Cargo.toml");
+const MIGRATE_SOURCE: &str = include_str!("../src/bin/ryframe_migrate.rs");
 const TENANT_DB_MANIFEST: &str = include_str!("../../ryframe-tenant-db/Cargo.toml");
 const OTLP_MANIFEST: &str = include_str!("../../../vendor/opentelemetry-otlp/Cargo.toml");
 
@@ -64,11 +65,7 @@ fn every_client_process_installs_crypto_before_loading_configuration() {
             include_str!("../src/bin/ryframe_worker.rs"),
             "Environment::from_env",
         ),
-        (
-            "migrate",
-            include_str!("../src/bin/ryframe_migrate.rs"),
-            "Environment::from_env",
-        ),
+        ("migrate", MIGRATE_SOURCE, "Environment::from_env"),
         (
             "tenant-data",
             include_str!("../src/bin/ryframe_tenant_data.rs"),
@@ -92,6 +89,21 @@ fn every_client_process_installs_crypto_before_loading_configuration() {
             .find(first_client_boundary)
             .unwrap_or_else(|| panic!("{name} 缺少预期客户端边界"));
         assert!(install < boundary, "{name} 在客户端初始化后才安装 provider");
+    }
+}
+
+#[test]
+fn migration_status_cli_reports_exact_version_drift() {
+    for contract in [
+        "display_versions(&status.missing)",
+        "display_versions(&status.unexpected)",
+        "missing={} unexpected={}",
+        "\"-\".into()",
+    ] {
+        assert!(
+            MIGRATE_SOURCE.contains(contract),
+            "迁移状态 CLI 缺少 {contract}"
+        );
     }
 }
 

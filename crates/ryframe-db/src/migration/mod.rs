@@ -1,5 +1,7 @@
 //! 仅支持 MySQL 的控制库新基线。
 
+use std::collections::BTreeSet;
+
 #[cfg(feature = "migration")]
 use sea_orm::TransactionTrait;
 use sea_orm::{
@@ -44,11 +46,38 @@ pub fn expected_migration_names() -> impl Iterator<Item = &'static str> {
 pub struct MigrationStatus {
     pub applied: usize,
     pub expected: usize,
+    pub missing: Vec<String>,
+    pub unexpected: Vec<String>,
 }
 
 impl MigrationStatus {
     pub fn is_up_to_date(&self) -> bool {
-        self.applied == self.expected
+        self.applied == self.expected && self.missing.is_empty() && self.unexpected.is_empty()
+    }
+
+    fn from_versions(applied_versions: Vec<String>, expected_versions: Vec<String>) -> Self {
+        let applied_names = applied_versions
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        let expected_names = expected_versions
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        let missing = expected_names
+            .difference(&applied_names)
+            .map(|name| (*name).to_owned())
+            .collect();
+        let unexpected = applied_names
+            .difference(&expected_names)
+            .map(|name| (*name).to_owned())
+            .collect();
+        Self {
+            applied: applied_versions.len(),
+            expected: expected_versions.len(),
+            missing,
+            unexpected,
+        }
     }
 }
 
@@ -101,16 +130,16 @@ pub async fn up(db: &DatabaseConnection) -> Result<(), DbErr> {
 /// 在不执行 DDL 或初始化写入的情况下，校验迁移账本完整且主库 schema 与当前迁移
 /// 指纹相匹配。
 pub async fn verify(db: &DatabaseConnection) -> Result<(), DbErr> {
-    ensure_mysql(db)?;
-    verify_mysql_80(db).await?;
     let status = status(db).await?;
     if !status.is_up_to_date() {
         return Err(DbErr::Custom(format!(
-            "control migration ledger is not current: applied {}, expected {}; run `ryframe-migrate control up` before starting the API",
-            status.applied, status.expected
+            "control migration ledger is not current: applied {}, expected {}, missing [{}], unexpected [{}]; run `ryframe-migrate control up` before starting the API",
+            status.applied,
+            status.expected,
+            status.missing.join(","),
+            status.unexpected.join(",")
         )));
     }
-    verify_migration_versions(db).await?;
     verify_current_schema(db)
         .await
         .map_err(|error| DbErr::Custom(format!("schema verification failed: {error}")))
@@ -120,7 +149,6 @@ pub async fn verify(db: &DatabaseConnection) -> Result<(), DbErr> {
 pub async fn status(db: &DatabaseConnection) -> Result<MigrationStatus, DbErr> {
     ensure_mysql(db)?;
     verify_mysql_80(db).await?;
-    let expected = expected_migration_names().count();
     let ledger_exists = scalar_i64(
         db,
         "SELECT COUNT(*) FROM information_schema.tables \
@@ -128,12 +156,23 @@ pub async fn status(db: &DatabaseConnection) -> Result<MigrationStatus, DbErr> {
     )
     .await?
         > 0;
-    let applied = if ledger_exists {
-        scalar_i64(db, "SELECT COUNT(*) FROM seaql_migrations").await? as usize
+    let applied_versions = if ledger_exists {
+        MigrationVersionRow::find_by_statement(Statement::from_string(
+            DbBackend::MySql,
+            "SELECT version FROM seaql_migrations ORDER BY version",
+        ))
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|migration| migration.version)
+        .collect()
     } else {
-        0
+        Vec::new()
     };
-    Ok(MigrationStatus { applied, expected })
+    Ok(MigrationStatus::from_versions(
+        applied_versions,
+        expected_migration_names().map(str::to_owned).collect(),
+    ))
 }
 
 #[derive(Debug, FromQueryResult)]
@@ -145,32 +184,6 @@ struct ServerIdentityRow {
 #[derive(Debug, FromQueryResult)]
 struct MigrationVersionRow {
     version: String,
-}
-
-async fn verify_migration_versions(db: &DatabaseConnection) -> Result<(), DbErr> {
-    let actual = MigrationVersionRow::find_by_statement(Statement::from_string(
-        DbBackend::MySql,
-        "SELECT version FROM seaql_migrations ORDER BY version",
-    ))
-    .all(db)
-    .await?
-    .into_iter()
-    .map(|migration| migration.version)
-    .collect::<Vec<_>>();
-    if !migration_versions_match(&actual) {
-        return Err(DbErr::Custom(
-            "control migration ledger versions do not match this application build".into(),
-        ));
-    }
-    Ok(())
-}
-
-fn migration_versions_match(actual: &[String]) -> bool {
-    let mut expected = expected_migration_names()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    expected.sort_unstable();
-    actual == expected
 }
 
 /// 仅接受支持受约束 CHECK 的 MySQL 8.0.16 或更高版本。
@@ -297,12 +310,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ledger_versions_must_match_names_not_only_count() {
-        let mut expected = expected_migration_names()
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        expected.sort_unstable();
-        assert!(migration_versions_match(&expected));
-        assert!(!migration_versions_match(&["wrong-version".into()]));
+    fn migration_status_uses_exact_names_not_only_count() {
+        let current =
+            MigrationStatus::from_versions(vec!["baseline".into()], vec!["baseline".into()]);
+        assert!(current.is_up_to_date());
+        assert!(current.missing.is_empty());
+        assert!(current.unexpected.is_empty());
+
+        let mismatched = MigrationStatus::from_versions(
+            vec!["baseline".into(), "wrong".into()],
+            vec!["baseline".into(), "expected".into()],
+        );
+        assert_eq!(mismatched.applied, mismatched.expected);
+        assert_eq!(mismatched.missing, ["expected"]);
+        assert_eq!(mismatched.unexpected, ["wrong"]);
+        assert!(!mismatched.is_up_to_date());
+
+        let missing = MigrationStatus::from_versions(Vec::new(), vec!["baseline".into()]);
+        assert_eq!(missing.missing, ["baseline"]);
+        assert!(missing.unexpected.is_empty());
+        assert!(!missing.is_up_to_date());
+
+        let unexpected = MigrationStatus::from_versions(vec!["unknown".into()], Vec::new());
+        assert!(unexpected.missing.is_empty());
+        assert_eq!(unexpected.unexpected, ["unknown"]);
+        assert!(!unexpected.is_up_to_date());
+
+        let duplicate = MigrationStatus::from_versions(
+            vec!["baseline".into(), "baseline".into()],
+            vec!["baseline".into()],
+        );
+        assert!(duplicate.missing.is_empty());
+        assert!(duplicate.unexpected.is_empty());
+        assert!(!duplicate.is_up_to_date());
     }
 }

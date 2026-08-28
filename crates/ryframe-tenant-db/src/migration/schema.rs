@@ -2,10 +2,7 @@ use sea_orm::{DatabaseBackend, DatabaseConnection, DbBackend, DbErr, FromQueryRe
 
 use super::catalog::{TENANT_DATA_CATALOG, TENANT_DATA_SCHEMA_FINGERPRINT, TenantDataCatalog};
 use super::normalization::normalize_check_clause;
-use super::{
-    expected_migration_names,
-    status::{TENANT_DATA_MIGRATION_LEDGER, status},
-};
+use super::status::{TENANT_DATA_MIGRATION_LEDGER, status_after_server_validation};
 use catalog::{
     FenceCheckRow, FenceColumnRow, FenceConstraintRow, FenceIndexRow, TenantDataTableRow,
 };
@@ -15,11 +12,6 @@ mod catalog;
 mod target_slot;
 
 pub use catalog::{canonical_table_schema, ensure_local_foreign_key_schema};
-
-#[derive(Debug, FromQueryResult)]
-struct MigrationVersionRow {
-    version: String,
-}
 
 #[derive(Debug, FromQueryResult)]
 struct TableNameRow {
@@ -51,14 +43,16 @@ pub async fn verify_for_catalog(
     catalog
         .validate_structure()
         .map_err(|error| DbErr::Custom(format!("tenant-data catalog is invalid: {error}")))?;
-    let status = status(db).await?;
+    let status = status_after_server_validation(db).await?;
     if !status.is_up_to_date() {
         return Err(DbErr::Custom(format!(
-            "tenant-data migration ledger is not current: applied {}, expected {}; run `ryframe-migrate tenant-data up`",
-            status.applied, status.expected
+            "tenant-data migration ledger is not current: applied {}, expected {}, missing [{}], unexpected [{}]; run `ryframe-migrate tenant-data up`",
+            status.applied,
+            status.expected,
+            status.missing.join(","),
+            status.unexpected.join(",")
         )));
     }
-    verify_migration_versions(db).await?;
     verify_fence_schema(db, catalog).await
 }
 
@@ -399,28 +393,6 @@ async fn verify_resource_ownership_schema(db: &DatabaseConnection) -> Result<(),
     let actual = canonical_table_schema(db, "ryframe_resource_ownership").await?;
     if actual != super::baseline_contract::RESOURCE_OWNERSHIP_SCHEMA_DESCRIPTOR {
         return Err(schema_fingerprint_mismatch("resource ownership marker"));
-    }
-    Ok(())
-}
-
-async fn verify_migration_versions(db: &DatabaseConnection) -> Result<(), DbErr> {
-    let mut expected = expected_migration_names()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    expected.sort_unstable();
-    let actual = MigrationVersionRow::find_by_statement(Statement::from_string(
-        DbBackend::MySql,
-        "SELECT version FROM seaql_tenant_data_migrations ORDER BY version",
-    ))
-    .all(db)
-    .await?
-    .into_iter()
-    .map(|migration| migration.version)
-    .collect::<Vec<_>>();
-    if actual != expected {
-        return Err(DbErr::Custom(
-            "tenant-data migration ledger versions do not match this application build".into(),
-        ));
     }
     Ok(())
 }
