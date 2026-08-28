@@ -233,6 +233,7 @@ class RequiredJobsTests(unittest.TestCase):
         block = workflow.split("\n  resource-gate:\n", 1)[1].split("\n  #", 1)[0]
         self.assertIn("needs.plan.outputs.resource_gate == 'true'", block)
         self.assertIn('RYFRAME_MYSQL_INTEGRATION: "1"', block)
+        self.assertIn('RYFRAME_MYSQL_TLS_INTEGRATION: "1"', block)
         self.assertIn('RYFRAME_REDIS_INTEGRATION: "1"', block)
         self.assertIn("mysql:8.4.11@sha256:", block)
         self.assertIn("redis:7.4.9@sha256:", block)
@@ -381,6 +382,7 @@ class RequiredJobsTests(unittest.TestCase):
             "\n  consumer-contract:\n", 1
         )[0]
         self.assertIn("cargo xtask ci integration", integration)
+        self.assertIn('RYFRAME_MYSQL_TLS_INTEGRATION: "1"', integration)
         self.assertNotIn("cargo test --locked -p ryframe-db", integration)
         self.assertIn("path: backend", integration)
         self.assertIn("working-directory: backend", integration)

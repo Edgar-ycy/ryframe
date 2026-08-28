@@ -108,23 +108,25 @@ cargo test --locked -p ryframe-api
 
 ```powershell
 $env:RYFRAME_MYSQL_INTEGRATION = "1"
+$env:RYFRAME_MYSQL_TLS_INTEGRATION = "1"
 cargo test --locked -p ryframe-db --test mysql_real_protocol -- --nocapture
 
 $env:RYFRAME_REDIS_INTEGRATION = "1"
 cargo test --locked -p ryframe-adapters --test redis_real_protocol -- --nocapture
 ```
 
-完整集成门禁还会运行 Redis TLS、S3 HTTPS 和 OTLP HTTPS 三个 AWS-LC 真实出站测试。Windows 本地需有 `python`、`openssl`，并在 `127.0.0.1` 启动隔离的 MySQL 与 Redis；Redis 建议使用 WSL 独立实例和数据库 15。门禁只接受回环 Redis，不执行 `KEYS`、`SCAN` 或 `FLUSH`，测试 key 由唯一 `scope_id` 隔离并精确删除。运行入口与 CI 相同：
+完整集成门禁会验证 MySQL required TLS，以及 Redis TLS、S3 HTTPS 和 OTLP HTTPS 三个 AWS-LC 真实出站测试。Windows 本地需有 `python`、`openssl`，并在 `127.0.0.1` 启动隔离的 MySQL 与 Redis；Redis 建议使用 WSL 独立实例和数据库 15。门禁只接受回环 Redis，不执行 `KEYS`、`SCAN` 或 `FLUSH`，测试 key 由唯一 `scope_id` 隔离并精确删除。运行入口与 CI 相同：
 
 ```powershell
 $env:RYFRAME_MYSQL_INTEGRATION = "1"
+$env:RYFRAME_MYSQL_TLS_INTEGRATION = "1"
 $env:RYFRAME_REDIS_INTEGRATION = "1"
 $env:RYFRAME_REDIS_DATABASE = "15"
 $env:RYFRAME_INTEGRATION_RUN_ID = "local-aws-lc"
 cargo xtask ci integration
 ```
 
-TLS fixture 会生成两日有效的临时 CA，在动态回环端口启动 Redis TLS 代理和 HTTPS 服务；三个测试结束或失败后都会停止监听并删除临时证书。日志默认保存在 `.local-tests/integration/tls/<run-id>/`，历史目录不会覆盖；可用 `RYFRAME_TLS_ARTIFACT_DIR` 指定日志根目录。CI 对成功和失败运行都上传 14 天，失败摘要会输出每个已运行测试的最近日志。`RYFRAME_REDIS_HOST` 不是 `127.0.0.1`、`::1` 或 `localhost` 时门禁直接拒绝启动，避免误连共享 Redis。
+TLS fixture 会生成两日有效的临时 CA，在动态回环端口启动 Redis TLS 代理和 HTTPS 服务；相关测试结束或失败后都会停止监听并删除临时证书。日志默认保存在 `.local-tests/integration/tls/<run-id>/`，历史目录不会覆盖；可用 `RYFRAME_TLS_ARTIFACT_DIR` 指定日志根目录。CI 对成功和失败运行都上传 14 天，失败摘要会输出每个已运行测试的最近日志。`RYFRAME_REDIS_HOST` 不是 `127.0.0.1`、`::1` 或 `localhost` 时门禁直接拒绝启动，避免误连共享 Redis。
 
 ## 开发反馈性能测量
 

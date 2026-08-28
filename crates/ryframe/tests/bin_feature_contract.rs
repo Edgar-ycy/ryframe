@@ -154,6 +154,11 @@ fn development_profile_limits_dependency_debug_info() {
     assert!(manifest.contains("\ndebug = 1\n"));
     assert!(manifest.contains("[profile.dev.package.\"*\"]\ndebug = 0"));
     assert!(manifest.contains("[profile.dev.build-override]\ndebug = 0"));
+    assert!(
+        manifest.contains("[profile.test.package.ryframe-adapters]\nopt-level = 1"),
+        "Windows adapters 测试的单态化栈保护必须留在 test profile"
+    );
+    assert!(!manifest.contains("[profile.dev.package.ryframe-adapters]"));
 }
 
 #[test]

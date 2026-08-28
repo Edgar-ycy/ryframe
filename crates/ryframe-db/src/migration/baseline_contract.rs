@@ -1,7 +1,11 @@
+// 等价性测试需要把冻结 baseline 作为独立只读事实源再次编译，禁止为消除 lint 修改冻结迁移。
 #[cfg(any(not(feature = "migration"), test))]
+#[allow(clippy::duplicate_mod)]
 #[path = "m20260820_000000_control_baseline/base.rs"]
 mod base;
+// 与上方 base 模块相同，这里有意保留冻结 schema 的独立编译路径。
 #[cfg(any(not(feature = "migration"), test))]
+#[allow(clippy::duplicate_mod)]
 #[path = "m20260820_000000_control_baseline/schema.rs"]
 mod schema;
 

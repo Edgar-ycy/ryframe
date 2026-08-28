@@ -50,7 +50,7 @@ HTTP 层把请求解析为明确的 DTO，再调用 application 用例。用例�
 | 文件维护 | `bin-file-maintenance` |
 | 非生产重建 | `bin-reset` |
 
-`ryframe-adapters` 默认不启用高成本能力；服务进程显式组合 `image-processing`、`monitoring`、`otel`、`redis` 与 `spreadsheet`。验证码只启用 PNG codec，通用图片处理 codec 仅随 `image-processing` 编译。生成 fake 只在 `ryframe-application/test-support` 下可用，不进入产品进程。
+`ryframe-adapters` 默认不启用高成本能力；API 显式组合 `image-processing`、`monitoring`、`otel`、`redis-api` 与 `spreadsheet`，Worker 使用 `monitoring`、`otel`、`redis-client` 与 `spreadsheet`。验证码只启用 PNG codec，通用图片处理 codec 仅随 `image-processing` 编译。生成 fake 只在 `ryframe-application/test-support` 下可用，不进入产品进程。
 
 Worker 的健康状态模型与数据库监控端口位于 application，不依赖 `ryframe-api`；HTTP 健康端点只在 Worker 组合根装配。所有二进制在创建 MySQL、Redis、HTTP、对象存储或 OTLP 客户端前统一安装 AWS-LC provider；遇到已安装的不同 provider 时拒绝启动。统一 provider 只描述项目选择的密码学实现，不代表项目自动获得 FIPS 认证。OTLP 的 HTTP protobuf 出站链路只编译 trace、Tokio runtime 与 reqwest client，不包含 logs、metrics 或 blocking client。
 

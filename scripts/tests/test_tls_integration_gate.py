@@ -231,6 +231,7 @@ class TlsIntegrationPolicyTests(unittest.TestCase):
             "\n  consumer-contract:\n", 1
         )[0]
         self.assertIn("cargo xtask ci integration", integration)
+        self.assertIn('RYFRAME_MYSQL_TLS_INTEGRATION: "1"', integration)
         self.assertIn("RYFRAME_TLS_ARTIFACT_DIR", integration)
         self.assertIn("tls-integration-${{ github.run_id }}", integration)
         self.assertIn("if: ${{ always() }}", integration)

@@ -228,6 +228,7 @@ jobs:
       CARGO_INCREMENTAL: "0"
       RYFRAME_INTEGRATION_RUN_ID: resource-${{ github.run_id }}-${{ github.run_attempt }}
       RYFRAME_MYSQL_INTEGRATION: "1"
+      RYFRAME_MYSQL_TLS_INTEGRATION: "1"
       RYFRAME_MYSQL_HOST: 127.0.0.1
       RYFRAME_MYSQL_PORT: "3306"
       RYFRAME_MYSQL_USERNAME: root
@@ -383,6 +384,7 @@ jobs:
       CARGO_INCREMENTAL: "0"
       RYFRAME_INTEGRATION_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
       RYFRAME_MYSQL_INTEGRATION: "1"
+      RYFRAME_MYSQL_TLS_INTEGRATION: "1"
       RYFRAME_MYSQL_HOST: 127.0.0.1
       RYFRAME_MYSQL_PORT: "3306"
       RYFRAME_MYSQL_USERNAME: root

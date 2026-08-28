@@ -29,7 +29,8 @@
         "image-processing",
         "monitoring",
         "otel",
-        "redis",
+        "redis-api",
+        "redis-client",
         "spreadsheet"
       ],
       "test_targets": []
