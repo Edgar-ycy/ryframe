@@ -130,7 +130,7 @@ TLS fixture 会生成两日有效的临时 CA，在动态回环端口启动 Redi
 
 ## 开发反馈性能测量
 
-DevEx 测量必须显式选择 suite、工作负载变体、运行次数与冷暖缓存状态，例如 `cargo xtask devex run --suite rust-cold-build --variant api --runs 20 --cache cold`。Rust suite 的变体为 `api`、`worker`、`migrate` 或 `workspace`；`cargo-dev-save` 的变体直接选择 `config-only`、`api-only`、`worker-only`、`shared-runtime`、`locales`、`migration-only`、`resource-manifest` 或 `cancellation`，不依赖调用方预设环境变量；resource generator 使用 `all`、`post` 或 `notice`，resource gate 使用 `auto`，Rust gate 和前端 suite 使用 `default`。普通 suite 至少采样 5 次，Rust suite 及会触发编译的保存场景至少采样 20 次。`rust-incremental` 会对所选目标的代表性源码执行一次可还原编辑，命令成功或失败后均原子还原。
+DevEx 测量必须显式选择 suite、工作负载变体、运行次数与冷暖缓存状态，例如 `cargo xtask devex run --suite rust-cold-build --variant api --runs 20 --cache cold`。冷构建和 sccache suite 的变体为 `api`、`worker`、`migrate` 或 `workspace`；`rust-incremental` 额外提供 `application` 变体，用 5 次可还原的代表性 application 编辑检查 12 秒阈值，其余 Rust 编译变体仍至少采样 20 次。`cargo-dev-save` 的变体直接选择 `config-only`、`api-only`、`worker-only`、`shared-runtime`、`locales`、`migration-only`、`resource-manifest` 或 `cancellation`，不依赖调用方预设环境变量；resource generator 使用 `all`、`post` 或 `notice`，resource gate 使用 `auto`，Rust gate 和前端 suite 使用 `default`。其他普通 suite 至少采样 5 次，会触发编译的保存场景至少采样 20 次。`rust-incremental` 会对所选目标的代表性源码执行一次可还原编辑，命令成功或失败后均原子还原。
 
 `cargo-dev-save` 每个样本会先在独立 session、动态端口和隔离运行输入中构建并以只读 probe 模式启动 LKG；MySQL、Redis 或对象存储未就绪时，前置检查直接失败且不产出样本。计时从代表性源码的原子保存开始，完整经过真实 watcher debounce、后台 build/verify、候选 probe、LKG promotion 或 `VerifiedNoRestart`，直到服务再次 ready；前置检查、源码还原和进程清理不计入耗时，也不会自动执行迁移升级。`samples.jsonl` 同时记录保存到就绪耗时、该保存周期实际发起的 Cargo 调用数和就绪类型；`config-only` 必须经过真实 LKG 复用、probe 与切换且 Cargo 调用数为 0。`cold` 表示干净 target 上的首次保存，`warm` 表示复用同一 target 的成熟保存，但每次样本仍使用新的运行 session。
 
@@ -142,7 +142,7 @@ suite 固定为 `rust-cold-build`、`rust-incremental`、`cargo-dev-save`、`res
 
 ## 资源门禁与编译缓存
 
-`cargo xtask ci resource-gate --frontend-dir ../ryframe-vue3` 直接从 CI 的 base/head SHA 读取资源变化、关系闭包和 ownership，不接收流水线拼接的资源名。缺少合法 base、变更面过大、删除或重命名无法归属，以及 Cargo、toolchain、模板、CI 或架构策略变化时都会自动执行完整门禁。定向模式默认关闭；只有 `scripts/resource_gate_replay.py` 使用 format 2 清单，在两个 Git common-dir 不同的仓库顶层中回放至少 20 个成对后端/前端提交，证明定向与完整门禁零分歧后，CI 才能设置受控的激活标记；调用时必须同时提供 `--repository` 与 `--frontend-repository`。每个案例必须用 `targetedMode` 明确声明激活臂应实际执行 `targeted` 还是安全回退 `full`，runner 同时要求未激活臂实际为 `full`，不接受两臂都完整回退却冒充定向证据。清单中的每个 head 必须已支持 decision format 1；早于该能力的历史变更需在经审计的新 base 上重建等价 fixture，不得用旧输出推断实际模式。
+`cargo xtask ci resource-gate --frontend-dir ../ryframe-vue3` 直接从 CI 的 base/head SHA 读取资源变化、关系闭包和 ownership，不接收流水线拼接的资源名。缺少合法 base、变更面过大、删除或重命名无法归属，以及 Cargo、toolchain、模板、CI 或架构策略变化时都会自动执行完整门禁。定向模式默认关闭；只有 `scripts/resource_gate_replay.py` 使用 format 2 清单，在两个 Git common-dir 不同的仓库顶层中回放至少 20 个成对后端/前端提交，证明定向与完整门禁零分歧后，CI 才能设置受控的激活标记；调用时必须同时提供 `--repository` 与 `--frontend-repository`。runner 将每个门禁命令的输出流式写入隔离文件，报告保存输出指纹，并仅为失败结果保留有界日志末尾，避免长回放把完整编译日志常驻 Python 内存。每个案例必须用 `targetedMode` 明确声明激活臂应实际执行 `targeted` 还是安全回退 `full`，runner 同时要求未激活臂实际为 `full`，不接受两臂都完整回退却冒充定向证据。清单中的每个 head 必须已支持 decision format 1；早于该能力的历史变更需在经审计的新 base 上重建等价 fixture，不得用旧输出推断实际模式。
 
 Replay 会在每个前端 worktree 中于计时前执行 `corepack pnpm install --offline --frozen-lockfile`，因此正式运行前必须预热与各历史 lockfile 匹配的 pnpm store。一次显式 prime 只预热本次运行独占的本地 sccache，不进入样本；每个案例和每个臂使用独立 Cargo target，并按 A-B、B-A 交错执行。Activation 模式固定 standard Rust gate、`CARGO_INCREMENTAL=0`、编译并发 8 和测试并发 4，且要求真实 MySQL、Redis 集成开关均为 `1`、主机为回环地址、Redis 使用隔离的数据库 15。报告记录 Resource Gate 的原子 decision、非敏感环境、工具版本与工具集指纹、manifest、runner 与仓库指纹；缺少 decision、实际模式不符、依赖离线安装失败或清理不完整都会 fail-closed。没有有效回放证据时保持完整回退是预期行为。
 

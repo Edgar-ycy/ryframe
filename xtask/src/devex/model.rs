@@ -186,7 +186,6 @@ impl DevexSuite {
         matches!(self, Self::RustGate | Self::RustSccache)
     }
 }
-
 #[derive(Debug, Clone, Copy)]
 enum BuildProfile {
     Build,
@@ -372,19 +371,16 @@ const RUST_BUILD_WORKSPACE: &[StepDefinition] = &[StepDefinition {
     program: "cargo",
     args: &["build", "--locked", "--workspace"],
 }];
-
 const RUST_CHECK_WORKSPACE: &[StepDefinition] = &[StepDefinition {
     working_directory: WorkingDirectory::Backend,
     program: "cargo",
     args: &["check", "--locked", "--workspace"],
 }];
-
 const RUST_CHECK_APPLICATION: &[StepDefinition] = &[StepDefinition {
     working_directory: WorkingDirectory::Backend,
     program: "cargo",
     args: &["check", "--locked", "-p", "ryframe-application"],
 }];
-
 const RUST_BUILD_API: &[StepDefinition] = &[StepDefinition {
     working_directory: WorkingDirectory::Backend,
     program: "cargo",
@@ -475,13 +471,11 @@ const RUST_CHECK_MIGRATE: &[StepDefinition] = &[StepDefinition {
         "ryframe-migrate",
     ],
 }];
-
 const CARGO_DEV_SAVE: &[StepDefinition] = &[StepDefinition {
     working_directory: WorkingDirectory::Backend,
     program: "cargo",
     args: &["dev", "--measure-once"],
 }];
-
 const RESOURCE_GENERATOR_ALL: &[StepDefinition] = &[StepDefinition {
     working_directory: WorkingDirectory::Backend,
     program: "cargo",
@@ -542,7 +536,6 @@ const RESOURCE_GENERATOR_NOTICE: &[StepDefinition] = &[StepDefinition {
         "{frontend}",
     ],
 }];
-
 const RESOURCE_GATE: &[StepDefinition] = &[StepDefinition {
     working_directory: WorkingDirectory::Backend,
     program: "cargo",
@@ -560,7 +553,6 @@ const RESOURCE_GATE: &[StepDefinition] = &[StepDefinition {
         "{frontend}",
     ],
 }];
-
 const RUST_GATE: &[StepDefinition] = &[StepDefinition {
     working_directory: WorkingDirectory::Backend,
     program: "cargo",
@@ -578,13 +570,11 @@ const RUST_GATE: &[StepDefinition] = &[StepDefinition {
         "{frontend}",
     ],
 }];
-
 const FRONTEND_FAST: &[StepDefinition] = &[StepDefinition {
     working_directory: WorkingDirectory::Frontend,
     program: "corepack",
     args: &["pnpm", "check:fast"],
 }];
-
 const FRONTEND_BUILD: &[StepDefinition] = &[StepDefinition {
     working_directory: WorkingDirectory::Frontend,
     program: "corepack",

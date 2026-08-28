@@ -11,6 +11,7 @@ import unittest
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -161,6 +162,13 @@ class ResourceGateReplayTests(unittest.TestCase):
                 for arm in (case["targeted"], case["full"])
             }
             self.assertEqual(len(targets), 40)
+            self.assertTrue(
+                all(
+                    arm["output_fingerprint"].startswith("sha256:")
+                    for case in document["cases"]
+                    for arm in (case["targeted"], case["full"])
+                )
+            )
             installs = [
                 line
                 for line in tool_log.read_text(encoding="utf-8").splitlines()
@@ -236,6 +244,12 @@ class ResourceGateReplayTests(unittest.TestCase):
                 valid_cases[0],
                 self.command_result(True, 1, True, "full"),
                 targeted=False,
+            )
+        failed_prime = self.command_result(False, 1, True, "targeted")
+        failed_prime = replace(failed_prime, failure_tail="精确失败原因")
+        with self.assertRaisesRegex(MODULE.ReplayConfigurationError, "精确失败原因"):
+            MODULE.require_arm(
+                valid_cases[0], failed_prime, targeted=True, require_pass=True
             )
         duplicate_range = (
             *valid_cases[:-1],
@@ -611,6 +625,8 @@ raise SystemExit(0 if Path("status.txt").read_text().strip() == "pass" else 1)
             0,
             decision,
             f"sha256:{duration_ms:064x}",
+            f"sha256:{duration_ms + 1:064x}",
+            None,
         )
 
     def create_fake_tools(self, directory: Path) -> None:

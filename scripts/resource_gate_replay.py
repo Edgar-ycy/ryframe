@@ -89,6 +89,8 @@ class CommandResult:
     order: int
     decision: ResourceGateDecision
     target_fingerprint: str
+    output_fingerprint: str
+    failure_tail: str | None
 
 
 @dataclass(frozen=True)
@@ -745,6 +747,7 @@ def execute_in_worktree(
     backend_created = False
     frontend_created = False
     decision_path = worktree / "decision.json"
+    command_log = worktree / "command.log"
     primary_error: BaseException | None = None
     try:
         add_worktree(repository, backend_worktree, case.head, "后端")
@@ -773,13 +776,15 @@ def execute_in_worktree(
         else:
             environment.pop("RYFRAME_RESOURCE_GATE_TARGETED", None)
         started = time.perf_counter_ns()
-        completed = subprocess.run(
-            list(command_for_frontend(command, frontend_worktree)),
-            cwd=backend_worktree,
-            env=environment,
-            check=False,
-            capture_output=True,
-        )
+        with command_log.open("wb") as output:
+            completed = subprocess.run(
+                list(command_for_frontend(command, frontend_worktree)),
+                cwd=backend_worktree,
+                env=environment,
+                check=False,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+            )
         duration_ms = (time.perf_counter_ns() - started) // 1_000_000
         decision = load_decision(decision_path)
         return CommandResult(
@@ -789,6 +794,10 @@ def execute_in_worktree(
             order=order,
             decision=decision,
             target_fingerprint=sha256_text(str(target_root)),
+            output_fingerprint=sha256_file(command_log),
+            failure_tail=(
+                bounded_log_tail(command_log) if completed.returncode != 0 else None
+            ),
         )
     except BaseException as error:
         primary_error = error
@@ -800,6 +809,11 @@ def execute_in_worktree(
                 decision_path.unlink()
             except OSError as error:
                 cleanup_errors.append(f"无法删除 decision artifact：{error}")
+        if command_log.exists():
+            try:
+                command_log.unlink()
+            except OSError as error:
+                cleanup_errors.append(f"无法删除命令日志：{error}")
         cleanup_errors.extend(
             cleanup_created_worktrees(
                 (
@@ -928,7 +942,19 @@ def require_arm(
             f"replay {case.name} 的 full arm 未执行未激活的完整门禁"
         )
     if require_pass and not result.passed:
-        raise ReplayConfigurationError(f"replay prime 案例失败：{case.name}")
+        detail = f"\n失败日志末尾：\n{result.failure_tail}" if result.failure_tail else ""
+        raise ReplayConfigurationError(f"replay prime 案例失败：{case.name}{detail}")
+
+
+def bounded_log_tail(path: Path, limit: int = 8192) -> str:
+    if limit < 1:
+        raise ValueError("日志末尾上限必须大于 0")
+    with path.open("rb") as source:
+        source.seek(0, os.SEEK_END)
+        length = source.tell()
+        source.seek(max(0, length - limit))
+        body = source.read(limit)
+    return body.decode("utf-8", errors="replace").replace("\x00", "").strip()
 
 
 def cleanup_worktree(repository: Path, worktree: Path, label: str) -> str | None:
