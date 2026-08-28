@@ -14,8 +14,8 @@ use super::{
     devex::{
         BaselineContract, CacheState, DevexCommand, DevexRunOptions, DevexSuite, PairedArm,
         PathNormalizer, abba_pair_order, cleanup_successful_sample_target, compare, distribution,
-        filter_environment, require_frontend_dependencies, sample_target, summarize,
-        with_source_edit,
+        filter_environment, read_resource_gate_decision, require_frontend_dependencies,
+        sample_target, summarize, with_source_edit,
     },
     source_edit::SourceEdit,
 };
@@ -66,6 +66,32 @@ fn rust_gate_preflight_requires_installed_frontend_dependencies() {
     fs::create_dir(frontend.join("node_modules")).unwrap();
     require_frontend_dependencies(&frontend, &options).unwrap();
     fs::remove_dir_all(frontend).unwrap();
+}
+
+#[test]
+fn resource_gate_decision_artifact_must_prove_targeted_mode() {
+    let target = temporary_directory("resource-gate-decision");
+    let valid = target.join("resource-gate-decision-sample-001.json");
+    fs::write(
+        &valid,
+        br#"{"formatVersion":1,"recognized":true,"mode":"targeted","fallback":null,"steps":["resource-drift"]}"#,
+    )
+    .unwrap();
+    let evidence = read_resource_gate_decision(&target, "sample-001").unwrap();
+    assert!(evidence.recognized && evidence.mode == "targeted");
+    assert!(evidence.artifact_sha256.starts_with("sha256:"));
+
+    let invalid = target.join("resource-gate-decision-sample-002.json");
+    fs::write(
+        invalid,
+        br#"{"formatVersion":1,"recognized":true,"mode":"targeted","fallback":null,"steps":[]}"#,
+    )
+    .unwrap();
+    let error = read_resource_gate_decision(&target, "sample-002")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("未证明") && error.contains("targeted"));
+    fs::remove_dir_all(target).unwrap();
 }
 
 #[test]
@@ -146,6 +172,33 @@ fn cli_requires_named_run_and_compare_arguments() {
         .command,
         Command::Devex(DevexCommand::Compare { .. })
     ));
+}
+
+#[test]
+fn cli_rejects_cache_states_that_change_suite_semantics() {
+    for (suite, variant, runs, cache) in [
+        ("rust-cold-build", "api", "20", "warm"),
+        ("rust-incremental", "application", "5", "cold"),
+        ("resource-gate", "auto", "5", "cold"),
+        ("rust-gate", "default", "20", "cold"),
+        ("rust-sccache", "workspace", "20", "cold"),
+    ] {
+        let error = parse(strings(&[
+            "devex",
+            "run",
+            "--suite",
+            suite,
+            "--variant",
+            variant,
+            "--runs",
+            runs,
+            "--cache",
+            cache,
+        ]))
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("只允许 --cache"), "{suite}: {error}");
+    }
 }
 
 #[test]
@@ -276,7 +329,7 @@ fn legacy_baseline_contract_is_closed_to_config_only() {
 }
 
 #[test]
-fn suite_variant_selects_the_measured_workload_and_sample_policy() {
+fn suite_definitions_select_the_measured_workload() {
     let api = DevexSuite::RustColdBuild.definition("api").unwrap();
     assert_eq!(api.features, &["bin-api"]);
     assert_eq!(api.steps.len(), 1);
@@ -301,22 +354,6 @@ fn suite_variant_selects_the_measured_workload_and_sample_policy() {
     let frontend = DevexSuite::FrontendFast.definition("default").unwrap();
     assert_eq!(frontend.steps[0].args, &["pnpm", "check:fast"]);
 
-    assert!(DevexSuite::RustColdBuild.definition("baseline").is_err());
-    assert!(DevexSuite::CargoDevSave.definition("baseline").is_err());
-    assert_eq!(DevexSuite::RustColdBuild.minimum_runs("api"), 20);
-    assert_eq!(DevexSuite::RustIncremental.minimum_runs("application"), 5);
-    assert_eq!(DevexSuite::RustIncremental.minimum_runs("workspace"), 20);
-    assert_eq!(DevexSuite::CargoDevSave.minimum_runs("api-only"), 20);
-    assert_eq!(DevexSuite::CargoDevSave.minimum_runs("cancellation"), 20);
-    assert_eq!(DevexSuite::CargoDevSave.minimum_runs("config-only"), 5);
-    let cancellation = DevexSuite::CargoDevSave.definition("cancellation").unwrap();
-    assert!(
-        cancellation
-            .environment
-            .contains(&("RYFRAME_DEVEX_SAVE_CASE", "cancellation"))
-    );
-    assert_eq!(DevexSuite::FrontendFast.minimum_runs("default"), 5);
-
     let incremental = DevexSuite::RustIncremental
         .definition("application")
         .unwrap();
@@ -335,11 +372,68 @@ fn suite_variant_selects_the_measured_workload_and_sample_policy() {
 
     let generator = DevexSuite::ResourceGenerator.definition("post").unwrap();
     assert!(generator.steps[0].args.contains(&"{target}"));
+    assert!(
+        api.remove_environment
+            .contains(&"CMAKE_C_COMPILER_LAUNCHER")
+    );
+    assert!(
+        api.remove_environment
+            .contains(&"CMAKE_CXX_COMPILER_LAUNCHER")
+    );
+}
+
+#[test]
+fn suite_sample_policy_rejects_semantic_cache_mismatches() {
+    assert!(DevexSuite::RustColdBuild.definition("baseline").is_err());
+    assert!(DevexSuite::CargoDevSave.definition("baseline").is_err());
+    assert_eq!(DevexSuite::RustColdBuild.minimum_runs("api"), 20);
+    assert_eq!(DevexSuite::RustIncremental.minimum_runs("application"), 5);
+    assert_eq!(DevexSuite::RustIncremental.minimum_runs("workspace"), 20);
+    assert_eq!(DevexSuite::CargoDevSave.minimum_runs("api-only"), 20);
+    assert_eq!(DevexSuite::CargoDevSave.minimum_runs("cancellation"), 20);
+    assert_eq!(DevexSuite::CargoDevSave.minimum_runs("config-only"), 5);
+    let cancellation = DevexSuite::CargoDevSave.definition("cancellation").unwrap();
+    assert!(
+        cancellation
+            .environment
+            .contains(&("RYFRAME_DEVEX_SAVE_CASE", "cancellation"))
+    );
+    assert_eq!(DevexSuite::FrontendFast.minimum_runs("default"), 5);
+    assert!(
+        DevexSuite::RustColdBuild
+            .validate_cache_state(CacheState::Cold)
+            .is_ok()
+    );
+    assert!(
+        DevexSuite::RustIncremental
+            .validate_cache_state(CacheState::Warm)
+            .is_ok()
+    );
+    for suite in [
+        DevexSuite::CargoDevSave,
+        DevexSuite::ResourceGenerator,
+        DevexSuite::FrontendFast,
+        DevexSuite::FrontendBuild,
+    ] {
+        assert!(suite.validate_cache_state(CacheState::Cold).is_ok());
+        assert!(suite.validate_cache_state(CacheState::Warm).is_ok());
+    }
+}
+
+#[test]
+fn gate_suite_definitions_preserve_audited_execution_contracts() {
     let gate = DevexSuite::ResourceGate.definition("auto").unwrap();
     assert!(gate.steps[0].args.contains(&"{target}/driver"));
     assert_eq!(
         gate.environment,
-        &[("RYFRAME_DEVEX_TARGET_ROOT", "{target}")]
+        &[
+            ("RYFRAME_DEVEX_TARGET_ROOT", "{target}"),
+            ("RYFRAME_RESOURCE_GATE_TARGETED", "replay-verified-v1"),
+            (
+                "RYFRAME_RESOURCE_GATE_DECISION_FILE",
+                "{target}/resource-gate-decision-{label}.json"
+            )
+        ]
     );
     let rust_gate = DevexSuite::RustGate.definition("default").unwrap();
     assert!(rust_gate.steps[0].args.contains(&"rust-gate"));
@@ -613,6 +707,20 @@ fn summarize_and_compare_validate_the_recorded_compile_surface() {
             .unwrap()
             .contains("DevEx 对比")
     );
+    assert!(candidate.join("comparison.json").is_file());
+    assert!(candidate.join("comparison.md").is_file());
+    let regressed = fake_paired_run(
+        "regressed",
+        "sha256:same",
+        &[95.0, 195.0],
+        "comparison-a",
+        PairedArm::Candidate,
+    );
+    assert!(compare(&baseline, &regressed).is_err());
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(regressed.join("comparison.json")).unwrap()).unwrap();
+    assert_eq!(report["passed"], false);
+    assert!(regressed.join("comparison.md").is_file());
 
     let incompatible = fake_paired_run(
         "incompatible",
@@ -637,7 +745,7 @@ fn summarize_and_compare_validate_the_recorded_compile_surface() {
     fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
     let error = compare(&baseline, &incomplete).unwrap_err().to_string();
     assert!(error.contains("样本不完整"), "{error}");
-    for path in [baseline, candidate, incompatible, incomplete] {
+    for path in [baseline, candidate, regressed, incompatible, incomplete] {
         fs::remove_dir_all(path).unwrap();
     }
 }
@@ -797,7 +905,11 @@ fn fake_legacy_paired_run(name: &str, arm: PairedArm, cargo_invocations: usize) 
                 "kind": "measurement",
                 "cache_state": "warm",
                 "started_at": format!("2026-08-27T00:00:{order:02}Z"),
-                "duration_ms": 100.0 + pair as f64,
+                "duration_ms": if arm == PairedArm::Baseline {
+                    100.0 + pair as f64
+                } else {
+                    20.0 + pair as f64
+                },
                 "cargo_invocations": cargo_invocations,
                 "ready_kind": "promoted",
                 "status": "passed",

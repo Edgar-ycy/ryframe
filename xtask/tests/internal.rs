@@ -49,6 +49,8 @@ mod contract_tests;
 mod dev_snapshot_tests;
 #[path = "internal/dev.rs"]
 mod dev_tests;
+#[path = "internal/devex_acceptance.rs"]
+mod devex_acceptance_tests;
 #[path = "internal/devex_sccache.rs"]
 mod devex_sccache_tests;
 #[path = "internal/devex.rs"]

@@ -40,6 +40,14 @@ pub(super) fn render(summary: &RunSummary) -> String {
                 pairing.arm.as_str()
             )
         });
+    let resource_gate = if summary.resource_gate_targeted_decisions > 0 {
+        format!(
+            "- resource-gate targeted decision：{} 个测量样本\n",
+            summary.resource_gate_targeted_decisions
+        )
+    } else {
+        String::new()
+    };
     format!(
         "# DevEx 测量摘要\n\n\
          - run：`{}`\n\
@@ -48,6 +56,7 @@ pub(super) fn render(summary: &RunSummary) -> String {
          - cache：`{}`\n\
          - execution surface：`{}`\n\
          - input：`{}`\n\
+         {}\
          {}\
          {}\
          - 样本：请求 {}，记录 {}（通过 {}，失败 {}）\n\
@@ -61,6 +70,7 @@ pub(super) fn render(summary: &RunSummary) -> String {
         summary.input_fingerprint,
         pairing,
         sccache_version,
+        resource_gate,
         summary.requested_runs,
         summary.samples,
         summary.passed,

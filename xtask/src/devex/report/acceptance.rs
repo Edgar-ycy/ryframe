@@ -1,3 +1,5 @@
+use serde::Serialize;
+
 use crate::Result;
 
 use super::{
@@ -5,12 +7,13 @@ use super::{
     Distribution, RunSummary, SccacheDelta, percentage_change,
 };
 
-#[derive(Debug)]
-pub(super) struct ComparisonCheck {
-    pub(super) name: &'static str,
-    pub(super) requirement: &'static str,
-    pub(super) observed: String,
-    pub(super) passed: bool,
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ComparisonCheck {
+    pub(crate) name: &'static str,
+    pub(crate) requirement: &'static str,
+    pub(crate) observed: String,
+    pub(crate) passed: bool,
 }
 
 pub(super) fn checks(
@@ -19,14 +22,101 @@ pub(super) fn checks(
     baseline_duration: &Distribution,
     candidate_duration: &Distribution,
 ) -> Result<Vec<ComparisonCheck>> {
-    if baseline.cache_state != CacheState::Warm || !baseline.suite.uses_sccache() {
-        return Ok(Vec::new());
+    let mut checks = duration_acceptance(baseline, baseline_duration, candidate_duration);
+    if baseline.suite.uses_sccache() {
+        checks.extend(sccache_acceptance(baseline, candidate)?);
+    }
+    Ok(checks)
+}
+
+pub(crate) fn duration_acceptance(
+    baseline: &RunSummary,
+    baseline_duration: &Distribution,
+    candidate_duration: &Distribution,
+) -> Vec<ComparisonCheck> {
+    match (baseline.suite, baseline.variant.as_str()) {
+        (DevexSuite::RustColdBuild, "api") => vec![improvement_check(
+            "API 冷构建 P50 改善",
+            ">= 10%",
+            baseline_duration.p50,
+            candidate_duration.p50,
+            0.90,
+        )],
+        (DevexSuite::RustColdBuild, "worker") => vec![improvement_check(
+            "Worker 冷构建 P50 改善",
+            ">= 20%",
+            baseline_duration.p50,
+            candidate_duration.p50,
+            0.80,
+        )],
+        (DevexSuite::RustColdBuild, "migrate") => vec![improvement_check(
+            "migrate 冷构建 P50 改善",
+            ">= 25%",
+            baseline_duration.p50,
+            candidate_duration.p50,
+            0.75,
+        )],
+        (DevexSuite::CargoDevSave, "config-only") => vec![improvement_check(
+            "配置保存 P50 改善",
+            ">= 70%",
+            baseline_duration.p50,
+            candidate_duration.p50,
+            0.30,
+        )],
+        (DevexSuite::CargoDevSave, "api-only" | "worker-only") => {
+            vec![improvement_check(
+                "单目标保存 P50 改善",
+                ">= 30%",
+                baseline_duration.p50,
+                candidate_duration.p50,
+                0.70,
+            )]
+        }
+        (DevexSuite::CargoDevSave, "cancellation") => vec![maximum_check(
+            "过期构建取消 P95",
+            "<= 1000 ms",
+            candidate_duration.p95,
+            1_000.0,
+        )],
+        (DevexSuite::RustIncremental, "application") => vec![maximum_check(
+            "application 增量编辑 P50",
+            "<= 12000 ms",
+            candidate_duration.p50,
+            12_000.0,
+        )],
+        (DevexSuite::FrontendFast, "default") => vec![maximum_check(
+            "前端 check:fast P95",
+            "<= 12000 ms",
+            candidate_duration.p95,
+            12_000.0,
+        )],
+        (DevexSuite::ResourceGate, "auto") if baseline.cache_state == CacheState::Warm => {
+            vec![maximum_check(
+                "Resource gate P95",
+                "<= 60000 ms",
+                candidate_duration.p95,
+                60_000.0,
+            )]
+        }
+        (DevexSuite::RustGate, "default") => {
+            duration_checks(baseline_duration, candidate_duration).to_vec()
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn sccache_acceptance(
+    baseline: &RunSummary,
+    candidate: &RunSummary,
+) -> Result<Vec<ComparisonCheck>> {
+    if baseline.cache_state != CacheState::Warm {
+        return Err("sccache 验收只接受 warm cache".into());
     }
     let baseline_stats = baseline.sccache.as_ref().ok_or("基线缺少 sccache 统计")?;
     let candidate_stats = candidate.sccache.as_ref().ok_or("候选缺少 sccache 统计")?;
     let baseline_cacheable = cacheable_requests(baseline_stats)?;
     let candidate_cacheable = cacheable_requests(candidate_stats)?;
-    let mut checks = vec![
+    Ok(vec![
         positive("基线编译请求", baseline_stats.compile_requests),
         positive("候选编译请求", candidate_stats.compile_requests),
         positive("基线可缓存请求", baseline_cacheable),
@@ -51,11 +141,36 @@ pub(super) fn checks(
                 candidate_stats.not_cacheable,
             ),
         },
-    ];
-    if baseline.suite == DevexSuite::RustGate {
-        checks.extend(duration_checks(baseline_duration, candidate_duration));
+    ])
+}
+
+fn improvement_check(
+    name: &'static str,
+    requirement: &'static str,
+    baseline: f64,
+    candidate: f64,
+    maximum_ratio: f64,
+) -> ComparisonCheck {
+    ComparisonCheck {
+        name,
+        requirement,
+        observed: improvement(baseline, candidate),
+        passed: baseline > 0.0 && candidate <= baseline * maximum_ratio,
     }
-    Ok(checks)
+}
+
+fn maximum_check(
+    name: &'static str,
+    requirement: &'static str,
+    candidate: f64,
+    maximum: f64,
+) -> ComparisonCheck {
+    ComparisonCheck {
+        name,
+        requirement,
+        observed: format!("{candidate:.1} ms"),
+        passed: candidate <= maximum,
+    }
 }
 
 fn duration_checks(baseline: &Distribution, candidate: &Distribution) -> [ComparisonCheck; 2] {

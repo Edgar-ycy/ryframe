@@ -155,6 +155,36 @@ fn helper() {
         self.assertTrue(any("只能缩短" in error for error in errors))
         self.assertTrue(any("例外已失效" in error for error in errors))
 
+    def test_all_mode_requires_empty_exception_registry(self) -> None:
+        raw = {
+            "mode": "all",
+            "public_max_lines": 150,
+            "private_max_lines": 100,
+            "orchestration_max_lines": 80,
+            "max_exception_days": 30,
+            "orchestrations": [],
+            "exceptions": [
+                {
+                    "path": "src/lib.rs",
+                    "symbol": "legacy",
+                    "current_lines": 151,
+                    "reason": "等待拆分的存量函数",
+                    "expires": dt.date.today() + dt.timedelta(days=10),
+                }
+            ],
+        }
+        errors: list[str] = []
+
+        parsed = MODULE.parse_policy(raw, errors)
+
+        self.assertIsNotNone(parsed)
+        self.assertTrue(any("exceptions 清零" in error for error in errors))
+        raw["exceptions"] = []
+        errors = []
+        parsed = MODULE.parse_policy(raw, errors)
+        self.assertIsNotNone(parsed)
+        self.assertEqual(errors, [])
+
 
 class RustChangedRangeTests(unittest.TestCase):
     def test_parses_added_and_modified_ranges_but_ignores_deletion_only_hunks(self) -> None:

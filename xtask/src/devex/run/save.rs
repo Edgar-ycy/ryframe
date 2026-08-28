@@ -32,6 +32,7 @@ pub(super) fn measurement_outcome(
         duration_ms: measurement.save_to_ready_ms,
         cargo_invocations: Some(measurement.cargo_invocations),
         ready_kind: Some(measurement.ready_kind),
+        resource_gate_decision: None,
         status,
     })
 }

@@ -4,8 +4,14 @@ use serde::{Deserialize, Serialize};
 
 #[path = "model/baseline.rs"]
 mod baseline;
+#[path = "model/execution_contract.rs"]
+mod execution_contract;
 
 pub(crate) use baseline::{BaselineContract, BaselineProvenance};
+pub(crate) use execution_contract::{
+    RESOURCE_GATE_DECISION_ENV, RESOURCE_GATE_DECISION_TEMPLATE, RESOURCE_GATE_TARGETED_ACTIVATION,
+    RESOURCE_GATE_TARGETED_ENV,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -58,7 +64,12 @@ impl DevexSuite {
                 steps: rust_steps(variant, BuildProfile::Build)?,
                 features: rust_features(variant)?,
                 environment: &[("CARGO_INCREMENTAL", "0")],
-                remove_environment: &["RUSTC_WRAPPER", "SCCACHE_RECACHE"],
+                remove_environment: &[
+                    "RUSTC_WRAPPER",
+                    "SCCACHE_RECACHE",
+                    "CMAKE_C_COMPILER_LAUNCHER",
+                    "CMAKE_CXX_COMPILER_LAUNCHER",
+                ],
                 requirement: SuiteRequirement::Ready,
                 requires_frontend: false,
             }),
@@ -89,7 +100,14 @@ impl DevexSuite {
             Self::ResourceGate => Ok(SuiteDefinition {
                 steps: exact_variant(variant, "auto", RESOURCE_GATE, self)?,
                 features: &["resource"],
-                environment: &[("RYFRAME_DEVEX_TARGET_ROOT", "{target}")],
+                environment: &[
+                    ("RYFRAME_DEVEX_TARGET_ROOT", "{target}"),
+                    (
+                        RESOURCE_GATE_TARGETED_ENV,
+                        RESOURCE_GATE_TARGETED_ACTIVATION,
+                    ),
+                    (RESOURCE_GATE_DECISION_ENV, RESOURCE_GATE_DECISION_TEMPLATE),
+                ],
                 remove_environment: &[],
                 requirement: SuiteRequirement::FrontendFiles,
                 requires_frontend: true,
@@ -136,15 +154,6 @@ impl DevexSuite {
                 requirement: SuiteRequirement::Frontend,
                 requires_frontend: true,
             }),
-        }
-    }
-
-    pub(crate) fn minimum_runs(self, variant: &str) -> usize {
-        match self {
-            Self::RustIncremental if variant == "application" => 5,
-            Self::RustColdBuild | Self::RustIncremental | Self::RustGate | Self::RustSccache => 20,
-            Self::CargoDevSave if !matches!(variant, "config-only" | "resource-manifest") => 20,
-            _ => 5,
         }
     }
 

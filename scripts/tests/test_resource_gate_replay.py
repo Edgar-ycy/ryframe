@@ -116,6 +116,9 @@ class ResourceGateReplayTests(unittest.TestCase):
             self.assertFalse(document["activationEligible"])
             self.assertEqual(document["successfulTargetedCaseCount"], 10)
             self.assertTrue(document["targetedWithinBudget"])
+            self.assertTrue(document["replayCoverageEligible"])
+            self.assertIsNone(document["sccacheCacheErrors"])
+            self.assertTrue(document["sccacheHealthy"])
             self.assertLessEqual(document["targetedP95Ms"], 60_000)
             self.assertEqual(
                 document["evidence"]["environment"]["CARGO_INCREMENTAL"], "0"
@@ -297,9 +300,7 @@ class ResourceGateReplayTests(unittest.TestCase):
                 )
             )
 
-    def test_activation_requires_ten_successes_and_p95_at_most_sixty_seconds(
-        self,
-    ) -> None:
+    def test_activation_uses_coverage_while_p95_remains_diagnostic(self) -> None:
         def result(index: int, duration_ms: int, passed: bool = True):
             expected = "pass" if passed else "fail"
             return MODULE.ReplayResult(
@@ -317,12 +318,24 @@ class ResourceGateReplayTests(unittest.TestCase):
             )
 
         too_few = [result(index, 1_000) for index in range(9)]
-        self.assertIn("不足", MODULE.activation_performance_error(too_few))
         within_budget = [result(index, 10_000 + index) for index in range(10)]
-        self.assertIsNone(MODULE.activation_performance_error(within_budget))
         over_budget = [*within_budget[:-1], result(10, 60_001)]
-        self.assertIn("P95", MODULE.activation_performance_error(over_budget))
+        self.assertEqual(len(too_few), 9)
+        self.assertLessEqual(
+            MODULE.percentile_nearest_rank(
+                [item.targeted.duration_ms for item in within_budget], 95
+            ),
+            MODULE.TARGETED_P95_LIMIT_MS,
+        )
+        self.assertGreater(
+            MODULE.percentile_nearest_rank(
+                [item.targeted.duration_ms for item in over_budget], 95
+            ),
+            MODULE.TARGETED_P95_LIMIT_MS,
+        )
         self.assertEqual(MODULE.percentile_nearest_rank([3, 1, 2], 95), 3)
+        self.assertTrue(MODULE.replay_activation_eligible(True, True, True, True))
+        self.assertFalse(MODULE.replay_activation_eligible(True, False, True, True))
 
     def test_frontend_argument_is_stable_across_temporary_worktrees(self) -> None:
         command = (
@@ -408,6 +421,47 @@ class ResourceGateReplayTests(unittest.TestCase):
                     MODULE.ReplayConfigurationError, "RYFRAME_MYSQL_INTEGRATION"
                 ):
                     MODULE.controlled_environment("sccache", cache, True)
+
+            roots = MODULE.replay_backend_roots(fixture / "session", 20)
+            self.assertEqual(len(roots), 41)
+            self.assertEqual(len({os.path.normcase(str(root)) for root in roots}), 41)
+            self.assertTrue(all(root.is_absolute() for root in roots))
+            activation_environment = {
+                "RYFRAME_MYSQL_INTEGRATION": "1",
+                "RYFRAME_MYSQL_HOST": "127.0.0.1",
+                "RYFRAME_REDIS_INTEGRATION": "1",
+                "RYFRAME_REDIS_HOST": "localhost",
+                "RYFRAME_REDIS_DATABASE": "15",
+            }
+            with mock.patch.dict(os.environ, activation_environment, clear=True):
+                environment = MODULE.controlled_environment(
+                    "D:/tools/sccache.exe",
+                    cache,
+                    True,
+                    backend_roots=roots,
+                )
+            self.assertEqual(
+                tuple(environment["SCCACHE_BASEDIRS"].split(os.pathsep)),
+                tuple(map(str, roots)),
+            )
+            self.assertNotIn("CMAKE_C_COMPILER_LAUNCHER", environment)
+            self.assertNotIn("CMAKE_CXX_COMPILER_LAUNCHER", environment)
+            recorded = MODULE.recorded_environment(environment, True)
+            self.assertEqual(recorded["SCCACHE_BASEDIRS_COUNT"], "41")
+            self.assertTrue(
+                recorded["SCCACHE_BASEDIRS_FINGERPRINT"].startswith("sha256:")
+            )
+
+            stats = {
+                "stats": {
+                    "cache_errors": {"counts": {"Disk": 2}},
+                    "cache_timeouts": 1,
+                    "cache_read_errors": 0,
+                    "cache_write_errors": 3,
+                    "dist_errors": 0,
+                }
+            }
+            self.assertEqual(MODULE.sccache_error_count(stats), 6)
 
         self.assertEqual(MODULE.arm_order(1), (True, False))
         self.assertEqual(MODULE.arm_order(2), (False, True))

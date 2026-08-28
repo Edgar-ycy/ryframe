@@ -459,7 +459,7 @@ fn execute_measurement(
             SampleKind::Measurement,
             options.cache_state,
             &target,
-            outcome,
+            &outcome,
             &session.normalizer,
             Some(SampleAudit {
                 arm,

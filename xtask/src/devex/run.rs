@@ -18,21 +18,31 @@ use super::{
     incremental::with_source_edit,
     metadata::{
         MetadataContext, PathNormalizer, SourceFingerprints, collect as collect_metadata,
-        corepack_executable, inherited_environment,
+        corepack_executable,
     },
     model::{
         CacheState, DevexRunOptions, DevexSuite, PairedArm, PairingMetadata, StepDefinition,
         SuiteDefinition, WorkingDirectory,
     },
     preflight,
-    report::{SampleKind, SampleRecord, SampleStatus, append_sample, summarize, write_metadata},
+    report::{
+        ResourceGateDecisionEvidence, SampleKind, SampleRecord, SampleStatus, append_sample,
+        summarize, write_metadata,
+    },
     support::{
         cleanup_successful_sample_target, display_step, metric, sample_target, success_status,
     },
 };
 
+#[path = "run/environment.rs"]
+mod environment;
+#[path = "run/resource_gate.rs"]
+mod resource_gate;
 #[path = "run/save.rs"]
 mod save;
+
+use environment::effective_environment;
+pub(crate) use resource_gate::read_resource_gate_decision;
 
 pub(super) fn execute(
     backend_root: &Path,
@@ -262,7 +272,7 @@ pub(super) fn execute_warmup_with_contract(
                 SampleKind::Warmup,
                 options.cache_state,
                 &target,
-                outcome,
+                &outcome,
                 &session.normalizer,
                 session.pairing.as_ref().map(|pairing| SampleAudit {
                     arm: pairing.arm,
@@ -319,7 +329,7 @@ fn execute_measurements(
                 SampleKind::Measurement,
                 options.cache_state,
                 &target,
-                outcome,
+                &outcome,
                 &session.normalizer,
                 None,
             ),
@@ -346,12 +356,13 @@ fn execute_measurements(
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(super) struct SampleOutcome {
     started_at: chrono::DateTime<Utc>,
     duration_ms: f64,
     cargo_invocations: Option<usize>,
     ready_kind: Option<ReadyKind>,
+    resource_gate_decision: Option<ResourceGateDecisionEvidence>,
     pub(super) status: ExitStatus,
 }
 
@@ -413,11 +424,17 @@ pub(super) fn execute_sample_with_contract(
     } else {
         execute()?
     };
+    let resource_gate_decision = if suite == DevexSuite::ResourceGate && status.success() {
+        Some(read_resource_gate_decision(target, label)?)
+    } else {
+        None
+    };
     let outcome = SampleOutcome {
         started_at,
         duration_ms: started.elapsed().as_secs_f64() * 1_000.0,
         cargo_invocations: None,
         ready_kind: None,
+        resource_gate_decision,
         status,
     };
     if suite == DevexSuite::CargoDevSave && outcome.status.success() {
@@ -445,6 +462,7 @@ fn execute_steps(
             target,
             definition,
             environment,
+            label,
         )
         .status()?;
         if !last_status.success() {
@@ -461,6 +479,7 @@ fn step_command(
     target: &Path,
     definition: SuiteDefinition,
     environment: &BTreeMap<String, String>,
+    label: &str,
 ) -> Command {
     let program = if step.program == "corepack" {
         corepack_executable()
@@ -476,6 +495,7 @@ fn step_command(
         .map(|arg| {
             arg.replace("{target}", &target)
                 .replace("{frontend}", &frontend)
+                .replace("{label}", label)
         })
         .collect::<Vec<_>>();
     command
@@ -495,7 +515,8 @@ fn step_command(
             key,
             value
                 .replace("{target}", &target)
-                .replace("{frontend}", &frontend),
+                .replace("{frontend}", &frontend)
+                .replace("{label}", label),
         );
     }
     if step.program == "cargo" {
@@ -511,7 +532,7 @@ pub(super) fn sample_record(
     kind: SampleKind,
     cache_state: CacheState,
     target: &Path,
-    outcome: SampleOutcome,
+    outcome: &SampleOutcome,
     normalizer: &PathNormalizer,
     audit: Option<SampleAudit>,
 ) -> SampleRecord {
@@ -544,6 +565,7 @@ pub(super) fn sample_record(
         pair,
         order,
         source_fingerprints,
+        resource_gate_decision: outcome.resource_gate_decision.clone(),
     }
 }
 
@@ -552,20 +574,6 @@ pub(super) struct SampleAudit {
     pub(super) pair: Option<usize>,
     pub(super) order: Option<usize>,
     pub(super) source_fingerprints: SourceFingerprints,
-}
-
-fn effective_environment(definition: SuiteDefinition) -> BTreeMap<String, String> {
-    let mut environment = inherited_environment();
-    for key in definition.remove_environment {
-        environment.remove(*key);
-    }
-    environment.extend(
-        definition
-            .environment
-            .iter()
-            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned())),
-    );
-    environment
 }
 
 fn create_run_directory(devex_root: &Path, options: &DevexRunOptions) -> Result<(String, PathBuf)> {

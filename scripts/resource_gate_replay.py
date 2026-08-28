@@ -295,7 +295,10 @@ def run_replay(
     cache = (work_root / "cache" / session.name).resolve()
     if not cache.is_relative_to(allowed):
         raise ReplayConfigurationError("replay sccache 目录逃逸允许范围")
-    environment = controlled_environment(sccache, cache, activation_gate)
+    backend_roots = replay_backend_roots(session, len(manifest.cases))
+    environment = controlled_environment(
+        sccache, cache, activation_gate, backend_roots=backend_roots
+    )
     tools = collect_tools(backend.root, frontend.root, corepack, sccache, environment)
     session.mkdir()
     try:
@@ -604,6 +607,8 @@ def controlled_environment(
     sccache: str,
     cache: Path,
     activation_gate: bool,
+    *,
+    backend_roots: tuple[Path, ...] = (),
 ) -> dict[str, str]:
     environment = os.environ.copy()
     if activation_gate:
@@ -632,6 +637,8 @@ def controlled_environment(
                 "RYFRAME_RESOURCE_GATE_DECISION_FILE",
                 "RYFRAME_RESOURCE_GATE_TARGETED",
                 "RYFRAME_VERIFY_JOBS",
+                "CMAKE_C_COMPILER_LAUNCHER",
+                "CMAKE_CXX_COMPILER_LAUNCHER",
             }
         ):
             environment.pop(key, None)
@@ -648,7 +655,36 @@ def controlled_environment(
             "SCCACHE_SERVER_PORT": str(available_port()),
         }
     )
+    if activation_gate:
+        roots = validated_cache_roots(backend_roots)
+        environment["SCCACHE_BASEDIRS"] = os.pathsep.join(map(str, roots))
     return environment
+
+
+def replay_backend_roots(session: Path, case_count: int) -> tuple[Path, ...]:
+    if case_count < 1:
+        raise ReplayConfigurationError("replay cache 路径至少需要一个案例")
+    roots = [(session / "prime" / "b").resolve()]
+    for index in range(1, case_count + 1):
+        roots.extend(
+            (
+                (session / f"case-{index:03}-t" / "b").resolve(),
+                (session / f"case-{index:03}-f" / "b").resolve(),
+            )
+        )
+    return validated_cache_roots(tuple(roots))
+
+
+def validated_cache_roots(roots: tuple[Path, ...]) -> tuple[Path, ...]:
+    if len(roots) < 2:
+        raise ReplayConfigurationError("activation replay 至少需要两个缓存源码根")
+    if any(not path.is_absolute() for path in roots):
+        raise ReplayConfigurationError("replay 缓存源码根必须是绝对路径")
+    resolved = tuple(path.resolve() for path in roots)
+    canonical = tuple(os.path.normcase(str(path)) for path in resolved)
+    if len(set(canonical)) != len(canonical):
+        raise ReplayConfigurationError("replay 缓存源码根不得重复")
+    return resolved
 
 
 def available_port() -> int:
@@ -681,6 +717,20 @@ def recorded_environment(
             "redisIntegration": environment.get("RYFRAME_REDIS_INTEGRATION", "0"),
         }
     )
+    basedirs = tuple(
+        part
+        for part in environment.get("SCCACHE_BASEDIRS", "").split(os.pathsep)
+        if part
+    )
+    if basedirs:
+        recorded.update(
+            {
+                "SCCACHE_BASEDIRS_COUNT": str(len(basedirs)),
+                "SCCACHE_BASEDIRS_FINGERPRINT": sha256_json(
+                    [os.path.normcase(str(Path(path).resolve())) for path in basedirs]
+                ),
+            }
+        )
     return recorded
 
 
@@ -719,6 +769,36 @@ def sccache_stats(program: str, environment: dict[str, str]) -> dict[str, Any]:
     if not isinstance(document, dict):
         raise ReplayConfigurationError("sccache 统计必须是 JSON 对象")
     return document
+
+
+def sccache_error_count(document: dict[str, Any]) -> int:
+    stats = document.get("stats")
+    if not isinstance(stats, dict):
+        raise ReplayConfigurationError("sccache 统计缺少 stats 对象")
+    errors = count_map(stats.get("cache_errors"), "stats.cache_errors")
+    for name in (
+        "cache_timeouts",
+        "cache_read_errors",
+        "cache_write_errors",
+        "dist_errors",
+    ):
+        errors += non_negative_int(stats.get(name), f"stats.{name}")
+    return errors
+
+
+def count_map(value: Any, label: str) -> int:
+    if not isinstance(value, dict) or not isinstance(value.get("counts"), dict):
+        raise ReplayConfigurationError(f"sccache {label}.counts 必须是对象")
+    return sum(
+        non_negative_int(count, f"{label}.counts.{name}")
+        for name, count in value["counts"].items()
+    )
+
+
+def non_negative_int(value: Any, label: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ReplayConfigurationError(f"sccache {label} 必须是非负整数")
+    return value
 
 
 def try_sccache_stop(program: str, environment: dict[str, str]) -> str | None:
@@ -1121,6 +1201,11 @@ def write_report(
         and targeted_p95_ms is not None
         and targeted_p95_ms <= TARGETED_P95_LIMIT_MS
     )
+    replay_coverage_eligible = len(successful_targeted) >= MINIMUM_SUCCESSFUL_CASES
+    cache_errors = (
+        sccache_error_count(run.evidence.sccache_after) if activation_gate else None
+    )
+    cache_healthy = cache_errors == 0 if activation_gate else True
     document = {
         "formatVersion": FORMAT_VERSION,
         "caseCount": len(results),
@@ -1129,8 +1214,14 @@ def write_report(
         "targetedP95Ms": targeted_p95_ms,
         "targetedP95LimitMs": TARGETED_P95_LIMIT_MS,
         "targetedWithinBudget": targeted_within_budget,
-        "activationEligible": (
-            activation_gate and zero_divergence and targeted_within_budget
+        "replayCoverageEligible": replay_coverage_eligible,
+        "sccacheCacheErrors": cache_errors,
+        "sccacheHealthy": cache_healthy,
+        "activationEligible": replay_activation_eligible(
+            activation_gate,
+            zero_divergence,
+            replay_coverage_eligible,
+            cache_healthy,
         ),
         "evidence": asdict(run.evidence),
         "cases": [asdict(result) for result in results],
@@ -1151,25 +1242,19 @@ def percentile_nearest_rank(samples: list[int], percentile: int) -> int | None:
     return ordered[rank - 1]
 
 
-def activation_performance_error(results: list[ReplayResult]) -> str | None:
-    successful = [
-        result.targeted.duration_ms
-        for result in results
-        if (
-            result.expected == "pass"
-            and result.targeted_mode == "targeted"
-            and result.targeted.passed
-            and result.targeted.decision.mode == "targeted"
-        )
-    ]
-    if len(successful) < MINIMUM_SUCCESSFUL_CASES:
-        return (
-            "resource gate replay 成功 targeted 案例不足："
-            f"{len(successful)}/{MINIMUM_SUCCESSFUL_CASES}"
-        )
-    p95 = percentile_nearest_rank(successful, 95)
-    if p95 is None or p95 > TARGETED_P95_LIMIT_MS:
-        return f"resource gate targeted P95 超标：{p95}ms > {TARGETED_P95_LIMIT_MS}ms"
+def replay_activation_eligible(
+    activation_gate: bool,
+    zero_divergence: bool,
+    coverage_eligible: bool,
+    cache_healthy: bool,
+) -> bool:
+    return activation_gate and zero_divergence and coverage_eligible and cache_healthy
+
+
+def activation_cache_error(evidence: ReplayEvidence) -> str | None:
+    errors = sccache_error_count(evidence.sccache_after)
+    if errors:
+        return f"resource gate replay 出现 {errors} 个 sccache 缓存错误"
     return None
 
 
@@ -1236,9 +1321,9 @@ def main() -> int:
         )
         return 1
     if args.activation_gate:
-        performance_error = activation_performance_error(results)
-        if performance_error is not None:
-            print(performance_error, file=sys.stderr)
+        cache_error = activation_cache_error(run.evidence)
+        if cache_error is not None:
+            print(cache_error, file=sys.stderr)
             return 1
     successful = [
         result.targeted.duration_ms

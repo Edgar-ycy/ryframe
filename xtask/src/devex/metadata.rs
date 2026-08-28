@@ -18,8 +18,9 @@ use super::model::{DevexSuite, StepDefinition, SuiteDefinition, WorkingDirectory
 #[path = "metadata/schema.rs"]
 mod schema;
 
+pub(crate) use schema::SourceFingerprints;
 use schema::{CommandMetadata, SourceState, Toolchain};
-pub(super) use schema::{MetadataContext, RunMetadata, SourceFingerprints};
+pub(super) use schema::{MetadataContext, RunMetadata};
 
 const ENVIRONMENT_WHITELIST: &[&str] = &[
     "CC",

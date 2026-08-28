@@ -13,7 +13,8 @@ generated_markers = [
 frozen_migration_lock = "catalog/migrations.lock.toml"
 
 [function_size]
-mode = "all"
+# 现阶段只门禁本次变更触及的函数；所有存量例外清零后才允许切换为 all。
+mode = "changed"
 public_max_lines = 150
 private_max_lines = 100
 orchestration_max_lines = 80

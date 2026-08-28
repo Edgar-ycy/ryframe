@@ -108,6 +108,8 @@ def parse_policy(raw: Any, errors: list[str]) -> FunctionSizePolicy | None:
             "function_size.exceptions 不得重复："
             + ", ".join(f"{path}:{symbol}" for path, symbol in duplicate_exceptions)
         )
+    if mode == "all" and exceptions:
+        errors.append("function_size.mode 只能在 exceptions 清零后切换为 all")
     return FunctionSizePolicy(
         mode=mode,
         public_max_lines=limits["public_max_lines"],

@@ -162,9 +162,11 @@ fn parse_run(args: &[String]) -> std::result::Result<DevexCommand, String> {
     let suite = suite.ok_or("devex run 缺少 --suite")?;
     let variant = variant.ok_or("devex run 缺少 --variant")?;
     let runs = runs.ok_or("devex run 缺少 --runs")?;
+    let cache_state = cache_state.ok_or("devex run 缺少 --cache cold|warm")?;
     suite
         .definition(&variant)
         .map_err(|error| format!("{error}；可用变体：{}", suite.variant_help()))?;
+    suite.validate_cache_state(cache_state)?;
     let minimum_runs = suite.minimum_runs(&variant);
     if runs < minimum_runs {
         return Err(format!(
@@ -176,7 +178,7 @@ fn parse_run(args: &[String]) -> std::result::Result<DevexCommand, String> {
     Ok(DevexCommand::Run(DevexRunOptions {
         suite,
         variant,
-        cache_state: cache_state.ok_or("devex run 缺少 --cache cold|warm")?,
+        cache_state,
         runs,
     }))
 }
@@ -306,11 +308,19 @@ fn suite_names() -> String {
 }
 
 #[allow(unused_imports)]
+pub(crate) use execution::read_resource_gate_decision;
+#[allow(unused_imports)]
 pub(crate) use incremental::with_source_edit;
+#[allow(unused_imports)]
+pub(crate) use metadata::SourceFingerprints;
 #[allow(unused_imports)]
 pub(crate) use metadata::{PathNormalizer, filter_environment};
 #[allow(unused_imports)]
 pub(crate) use paired::abba_pair_order;
+#[allow(unused_imports)]
+pub(crate) use report::{
+    Distribution, ResourceGateDecisionEvidence, RunSummary, duration_acceptance,
+};
 #[allow(unused_imports)]
 pub(crate) use report::{compare, distribution, summarize};
 #[allow(unused_imports)]

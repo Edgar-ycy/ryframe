@@ -1,5 +1,4 @@
 use std::{
-    collections::BTreeSet,
     fs::{self, OpenOptions},
     io::{BufRead, BufReader, Write},
     path::Path,
@@ -22,6 +21,11 @@ mod baseline_contract;
 mod markdown;
 #[path = "report/sccache.rs"]
 mod sccache;
+#[path = "report/validation.rs"]
+mod validation;
+
+pub(crate) use acceptance::duration_acceptance;
+use validation::{validate_execution_contract, validate_samples};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -35,6 +39,29 @@ pub(super) enum SampleKind {
 pub(super) enum SampleStatus {
     Passed,
     Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ResourceGateDecisionEvidence {
+    pub(crate) format_version: u16,
+    pub(crate) recognized: bool,
+    pub(crate) mode: String,
+    pub(crate) fallback: Option<String>,
+    pub(crate) steps: Vec<String>,
+    pub(crate) artifact_sha256: String,
+}
+
+impl ResourceGateDecisionEvidence {
+    pub(crate) fn is_targeted(&self) -> bool {
+        self.format_version == 1
+            && self.recognized
+            && self.mode == "targeted"
+            && self.fallback.is_none()
+            && !self.steps.is_empty()
+            && self.steps.iter().all(|step| !step.trim().is_empty())
+            && valid_sha256(&self.artifact_sha256)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -61,6 +88,8 @@ pub(super) struct SampleRecord {
     pub(super) order: Option<usize>,
     #[serde(default)]
     pub(super) source_fingerprints: Option<SourceFingerprints>,
+    #[serde(default)]
+    pub(super) resource_gate_decision: Option<ResourceGateDecisionEvidence>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -81,9 +110,11 @@ pub(crate) struct RunSummary {
     pub(crate) sccache_version: Option<String>,
     pub(crate) sccache: Option<SccacheDelta>,
     #[serde(default)]
+    pub(crate) resource_gate_targeted_decisions: usize,
+    #[serde(default)]
     pub(crate) pairing: Option<PairingMetadata>,
     #[serde(default)]
-    pub(super) source_fingerprints: SourceFingerprints,
+    pub(crate) source_fingerprints: SourceFingerprints,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -105,6 +136,27 @@ pub(crate) struct SccacheDelta {
     pub(crate) hit_rate: Option<f64>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ComparisonReport<'a> {
+    schema_version: u8,
+    comparison_id: &'a str,
+    suite: DevexSuite,
+    variant: &'a str,
+    cache_state: CacheState,
+    compile_surface_fingerprint: &'a str,
+    baseline_run: &'a str,
+    candidate_run: &'a str,
+    baseline_input_fingerprint: &'a str,
+    candidate_input_fingerprint: &'a str,
+    baseline_duration_ms: &'a Distribution,
+    candidate_duration_ms: &'a Distribution,
+    baseline_resource_gate_targeted_decisions: usize,
+    candidate_resource_gate_targeted_decisions: usize,
+    checks: &'a [acceptance::ComparisonCheck],
+    passed: bool,
+}
+
 pub(super) fn write_metadata(run_dir: &Path, metadata: &RunMetadata) -> Result<()> {
     write_json(run_dir.join("metadata.json"), metadata)
 }
@@ -120,6 +172,7 @@ pub(super) fn append_sample(run_dir: &Path, sample: &SampleRecord) -> Result<()>
 
 pub(crate) fn summarize(run_dir: &Path) -> Result<RunSummary> {
     let metadata = read_metadata(run_dir)?;
+    validate_execution_contract(&metadata)?;
     let records = read_samples(run_dir)?;
     validate_samples(&metadata, &records)?;
     let measurements = records
@@ -153,6 +206,10 @@ pub(crate) fn summarize(run_dir: &Path) -> Result<RunSummary> {
         duration_ms: distribution(&durations),
         sccache_version: metadata.toolchain.sccache,
         sccache: sccache::read_delta(run_dir, metadata.suite.uses_sccache())?,
+        resource_gate_targeted_decisions: measurements
+            .iter()
+            .filter(|sample| sample.resource_gate_decision.is_some())
+            .count(),
         pairing,
         source_fingerprints,
     };
@@ -180,7 +237,7 @@ pub(crate) fn compare(baseline_dir: &Path, candidate_dir: &Path) -> Result<Strin
         .as_deref()
         .map_or_else(|| "n/a".to_owned(), ToOwned::to_owned);
     let checks = acceptance::checks(&baseline, &candidate, baseline_duration, candidate_duration)?;
-    let document = markdown::render_comparison(
+    let mut document = markdown::render_comparison(
         &baseline,
         &candidate,
         baseline_duration,
@@ -198,10 +255,39 @@ pub(crate) fn compare(baseline_dir: &Path, candidate_dir: &Path) -> Result<Strin
             )
         })
         .collect::<Vec<_>>();
-    if violations.is_empty() {
+    let passed = violations.is_empty();
+    if !passed {
+        document.push_str(&format!("\n## 未通过项\n\n{}\n", violations.join("\n")));
+    }
+    let comparison_id = &baseline
+        .pairing
+        .as_ref()
+        .expect("ensure_comparable 已校验 pairing")
+        .comparison_id;
+    let report = ComparisonReport {
+        schema_version: 1,
+        comparison_id,
+        suite: baseline.suite,
+        variant: &baseline.variant,
+        cache_state: baseline.cache_state,
+        compile_surface_fingerprint: &baseline.compile_surface_fingerprint,
+        baseline_run: &baseline.run_id,
+        candidate_run: &candidate.run_id,
+        baseline_input_fingerprint: &baseline.input_fingerprint,
+        candidate_input_fingerprint: &candidate.input_fingerprint,
+        baseline_duration_ms: baseline_duration,
+        candidate_duration_ms: candidate_duration,
+        baseline_resource_gate_targeted_decisions: baseline.resource_gate_targeted_decisions,
+        candidate_resource_gate_targeted_decisions: candidate.resource_gate_targeted_decisions,
+        checks: &checks,
+        passed,
+    };
+    fs::write(candidate_dir.join("comparison.md"), &document)?;
+    write_json(candidate_dir.join("comparison.json"), &report)?;
+    if passed {
         Ok(document)
     } else {
-        Err(format!("{document}\n## 未通过项\n\n{}", violations.join("\n")).into())
+        Err(document.into())
     }
 }
 
@@ -261,36 +347,6 @@ fn read_samples(run_dir: &Path) -> Result<Vec<SampleRecord>> {
             })
         })
         .collect()
-}
-
-fn validate_samples(metadata: &RunMetadata, samples: &[SampleRecord]) -> Result<()> {
-    let mut measurement_sequences = BTreeSet::new();
-    for sample in samples {
-        if sample.schema_version != 1 {
-            return Err(format!("不支持的 DevEx sample schema：{}", sample.schema_version).into());
-        }
-        if sample.run_id != metadata.run_id || sample.cache_state != metadata.cache_state {
-            return Err(format!("样本 {} 与 metadata 不属于同一次运行", sample.sequence).into());
-        }
-        if !sample.duration_ms.is_finite() || sample.duration_ms < 0.0 {
-            return Err(format!("样本 {} 的耗时无效", sample.sequence).into());
-        }
-        if metadata.suite == DevexSuite::CargoDevSave && sample.cargo_invocations.is_none() {
-            return Err(
-                format!("cargo-dev-save 样本 {} 缺少 Cargo 调用数", sample.sequence).into(),
-            );
-        }
-        if metadata.suite == DevexSuite::CargoDevSave && sample.ready_kind.is_none() {
-            return Err(format!("cargo-dev-save 样本 {} 缺少就绪结果", sample.sequence).into());
-        }
-        if sample.kind == SampleKind::Measurement
-            && (!measurement_sequences.insert(sample.sequence)
-                || !(1..=metadata.requested_runs).contains(&sample.sequence))
-        {
-            return Err(format!("测量样本序号无效或重复：{}", sample.sequence).into());
-        }
-    }
-    Ok(())
 }
 
 fn ensure_comparable(
@@ -470,6 +526,12 @@ fn percentage_change(baseline: f64, candidate: f64) -> String {
         return "n/a".to_owned();
     }
     format!("{:+.1}%", (candidate / baseline - 1.0) * 100.0)
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value
+        .strip_prefix("sha256:")
+        .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
 }
 
 fn write_json(path: impl AsRef<Path>, value: &impl Serialize) -> Result<()> {
