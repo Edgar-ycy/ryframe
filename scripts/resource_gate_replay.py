@@ -169,6 +169,9 @@ def run_replay(
     if not session.is_relative_to(allowed):
         raise ReplayConfigurationError("replay 临时目录逃逸允许范围")
     session.mkdir()
+    shared_target = (work_root / "shared-target").resolve()
+    if not shared_target.is_relative_to(allowed):
+        raise ReplayConfigurationError("replay 共享 target 逃逸允许范围")
     results: list[ReplayResult] = []
     targeted_command = normalize_frontend_command(repository, manifest.targeted_command)
     full_command = normalize_frontend_command(repository, manifest.full_command)
@@ -180,6 +183,7 @@ def run_replay(
                 session / "targeted",
                 case,
                 targeted_command,
+                shared_target,
                 targeted=True,
             )
             full = execute_in_worktree(
@@ -187,6 +191,7 @@ def run_replay(
                 session / "full",
                 case,
                 full_command,
+                shared_target,
                 targeted=False,
             )
             results.append(
@@ -265,6 +270,7 @@ def execute_in_worktree(
     worktree: Path,
     case: ReplayCase,
     command: tuple[str, ...],
+    shared_target: Path,
     *,
     targeted: bool,
 ) -> CommandResult:
@@ -286,6 +292,7 @@ def execute_in_worktree(
                 "RYFRAME_CI_BASE_SHA": case.base,
                 "RYFRAME_CI_HEAD_SHA": case.head,
                 "RYFRAME_RESOURCE_GATE_REPLAY_CASE": case.name,
+                "RYFRAME_DEVEX_TARGET_ROOT": str(shared_target),
             }
         )
         if targeted:

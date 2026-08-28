@@ -246,6 +246,9 @@ if mode == "full" and activation is not None:
     raise SystemExit(3)
 if not os.environ.get("RYFRAME_RESOURCE_GATE_REPLAY_CASE"):
     raise SystemExit(4)
+shared_target = Path(os.environ.get("RYFRAME_DEVEX_TARGET_ROOT", ""))
+if not shared_target.is_absolute() or "resource-gate-replay" not in shared_target.parts:
+    raise SystemExit(5)
 raise SystemExit(0 if Path("status.txt").read_text().strip() == "pass" else 1)
 """,
             encoding="utf-8",
