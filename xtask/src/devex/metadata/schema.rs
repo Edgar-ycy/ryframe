@@ -49,6 +49,8 @@ pub(crate) struct SourceFingerprints {
 pub(crate) struct Toolchain {
     pub(crate) cargo: String,
     pub(crate) rustc: String,
+    #[serde(default)]
+    pub(crate) sccache: Option<String>,
     pub(crate) node: Option<String>,
     pub(crate) pnpm: Option<String>,
 }

@@ -13,7 +13,7 @@ pub(crate) fn sample_target(
     cache_state: CacheState,
     sequence: usize,
 ) -> PathBuf {
-    if suite == DevexSuite::RustSccache {
+    if suite.uses_sccache() {
         return run_dir.join(format!("cache/sccache-measure-{sequence:03}"));
     }
     match cache_state {
@@ -25,9 +25,10 @@ pub(crate) fn sample_target(
 pub(crate) fn cleanup_successful_sample_target(
     run_dir: &Path,
     target: &Path,
+    suite: DevexSuite,
     cache_state: CacheState,
 ) -> Result<()> {
-    if cache_state != CacheState::Cold {
+    if cache_state != CacheState::Cold && !suite.uses_sccache() {
         return Ok(());
     }
     remove_isolated_directory(&run_dir.join("cache"), target)

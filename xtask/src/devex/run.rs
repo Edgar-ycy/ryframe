@@ -85,7 +85,7 @@ pub(super) fn capture_sccache_stats(
     run_dir: &Path,
     filename: &str,
 ) -> Result<()> {
-    if suite != DevexSuite::RustSccache {
+    if !suite.uses_sccache() {
         return Ok(());
     }
     let output = Command::new("sccache")
@@ -107,7 +107,7 @@ pub(super) fn stop_sccache_server(
     suite: DevexSuite,
     environment: &BTreeMap<String, String>,
 ) -> Result<()> {
-    if suite != DevexSuite::RustSccache {
+    if !suite.uses_sccache() {
         return Ok(());
     }
     let status = Command::new("sccache")
@@ -167,7 +167,7 @@ pub(super) fn prepare_run_at(
     if definition.steps.iter().any(|step| step.program == "cargo") {
         environment.insert("CARGO_TARGET_DIR".to_owned(), "{target}".to_owned());
     }
-    if options.suite == DevexSuite::RustSccache {
+    if options.suite.uses_sccache() {
         let cache_dir = run_dir.join("cache/sccache");
         fs::create_dir_all(&cache_dir)?;
         environment.insert(
@@ -304,7 +304,12 @@ fn execute_measurements(
             ),
         )?;
         if outcome.status.success() {
-            cleanup_successful_sample_target(&session.run_dir, &target, options.cache_state)?;
+            cleanup_successful_sample_target(
+                &session.run_dir,
+                &target,
+                options.suite,
+                options.cache_state,
+            )?;
         } else {
             summarize(&session.run_dir)?;
             return Err(format!(

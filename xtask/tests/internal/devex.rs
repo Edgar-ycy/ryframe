@@ -21,18 +21,26 @@ fn strings(values: &[&str]) -> Vec<String> {
 }
 
 #[test]
-fn successful_cold_targets_are_removed_but_warm_targets_are_retained() {
+fn successful_targets_follow_suite_storage_policy() {
     let run = temporary_directory("cold-target-cleanup");
     let cold = run.join("cache/cold-001");
     fs::create_dir_all(&cold).unwrap();
     fs::write(cold.join("artifact"), b"ok").unwrap();
-    cleanup_successful_sample_target(&run, &cold, CacheState::Cold).unwrap();
+    cleanup_successful_sample_target(&run, &cold, DevexSuite::RustColdBuild, CacheState::Cold)
+        .unwrap();
     assert!(!cold.exists());
 
     let warm = run.join("cache/warm");
     fs::create_dir_all(&warm).unwrap();
-    cleanup_successful_sample_target(&run, &warm, CacheState::Warm).unwrap();
+    cleanup_successful_sample_target(&run, &warm, DevexSuite::RustIncremental, CacheState::Warm)
+        .unwrap();
     assert!(warm.is_dir());
+
+    let isolated = run.join("cache/sccache-measure-001");
+    fs::create_dir_all(&isolated).unwrap();
+    cleanup_successful_sample_target(&run, &isolated, DevexSuite::RustGate, CacheState::Warm)
+        .unwrap();
+    assert!(!isolated.exists());
     fs::remove_dir_all(run).unwrap();
 }
 
@@ -47,6 +55,7 @@ fn fixed_suite_whitelist_is_complete_and_closed() {
             "cargo-dev-save",
             "resource-generator",
             "resource-gate",
+            "rust-gate",
             "rust-sccache",
             "frontend-fast",
             "frontend-build",
@@ -162,6 +171,26 @@ fn paired_cli_requires_two_explicit_backend_worktrees() {
     .unwrap_err()
     .to_string();
     assert!(error.contains("--candidate-backend"), "{error}");
+
+    let error = parse(strings(&[
+        "devex",
+        "paired",
+        "--base-backend",
+        "D:/worktrees/base",
+        "--candidate-backend",
+        "D:/worktrees/candidate",
+        "--suite",
+        "rust-gate",
+        "--variant",
+        "default",
+        "--runs",
+        "20",
+        "--cache",
+        "warm",
+    ]))
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("两个前端 worktree"), "{error}");
 }
 
 #[test]
@@ -212,6 +241,25 @@ fn suite_variant_selects_the_measured_workload_and_sample_policy() {
         gate.environment,
         &[("RYFRAME_DEVEX_TARGET_ROOT", "{target}")]
     );
+    let rust_gate = DevexSuite::RustGate.definition("default").unwrap();
+    assert!(rust_gate.steps[0].args.contains(&"rust-gate"));
+    assert!(rust_gate.steps[0].args.contains(&"{target}/driver"));
+    assert!(
+        rust_gate
+            .environment
+            .contains(&("RUSTC_WRAPPER", "sccache"))
+    );
+    assert!(
+        rust_gate
+            .environment
+            .contains(&("RYFRAME_CI_RUST_GATE_PROFILE", "standard"))
+    );
+    assert!(
+        rust_gate
+            .remove_environment
+            .contains(&"RYFRAME_CI_FRONTEND_REF")
+    );
+    assert_eq!(DevexSuite::RustGate.minimum_runs("default"), 20);
 }
 
 #[test]
@@ -229,6 +277,10 @@ fn abba_order_and_sccache_targets_are_auditable() {
     assert_ne!(
         sample_target(run, DevexSuite::RustSccache, CacheState::Warm, 1),
         sample_target(run, DevexSuite::RustSccache, CacheState::Warm, 2)
+    );
+    assert_ne!(
+        sample_target(run, DevexSuite::RustGate, CacheState::Warm, 1),
+        sample_target(run, DevexSuite::RustGate, CacheState::Warm, 2)
     );
     assert_eq!(
         sample_target(run, DevexSuite::RustIncremental, CacheState::Warm, 1),
@@ -336,6 +388,7 @@ fn cli_rejects_under_sampled_and_unknown_variants() {
 fn environment_snapshot_only_keeps_explicit_safe_names() {
     let environment = filter_environment([
         (OsString::from("CARGO_INCREMENTAL"), OsString::from("0")),
+        (OsString::from("RYFRAME_VERIFY_JOBS"), OsString::from("8")),
         (OsString::from("RUSTFLAGS"), OsString::from("-Cdebuginfo=0")),
         (
             OsString::from("APP_AUTH_JWT_SECRET"),
@@ -347,6 +400,7 @@ fn environment_snapshot_only_keeps_explicit_safe_names() {
         ),
     ]);
     assert_eq!(environment.get("CARGO_INCREMENTAL").unwrap(), "0");
+    assert_eq!(environment.get("RYFRAME_VERIFY_JOBS").unwrap(), "8");
     assert!(environment.contains_key("RUSTFLAGS"));
     assert!(!environment.contains_key("APP_AUTH_JWT_SECRET"));
     assert!(!environment.contains_key("ACTIONS_RUNTIME_TOKEN"));
@@ -446,10 +500,16 @@ fn compare_rejects_unpaired_runs() {
 #[test]
 fn sccache_summary_reports_delta_hit_rate_and_errors() {
     let run = fake_run("sccache", "sha256:same", &[100.0]);
+    let metadata_path = run.join("metadata.json");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
+    metadata["toolchain"]["sccache"] = serde_json::json!("sccache 0.17.0");
+    fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
     write_sccache_stats(&run.join("sccache-before.json"), 10, 4, 2, 1, 0);
     write_sccache_stats(&run.join("sccache-after.json"), 20, 12, 4, 2, 1);
 
     let summary = summarize(&run).unwrap();
+    assert_eq!(summary.sccache_version.as_deref(), Some("sccache 0.17.0"));
     let stats = summary.sccache.unwrap();
 
     assert_eq!(stats.compile_requests, 10);
@@ -459,6 +519,38 @@ fn sccache_summary_reports_delta_hit_rate_and_errors() {
     assert_eq!(stats.cache_errors, 1);
     assert_eq!(stats.hit_rate, Some(0.8));
     fs::remove_dir_all(run).unwrap();
+}
+
+#[test]
+fn compare_rejects_different_sccache_executables() {
+    let baseline = fake_paired_run(
+        "sccache-version-base",
+        "sha256:same",
+        &[100.0],
+        "comparison-version",
+        PairedArm::Baseline,
+    );
+    let candidate = fake_paired_run(
+        "sccache-version-candidate",
+        "sha256:same",
+        &[90.0],
+        "comparison-version",
+        PairedArm::Candidate,
+    );
+    for (path, version) in [
+        (&baseline, "sccache 0.15.0"),
+        (&candidate, "sccache 0.17.0"),
+    ] {
+        let metadata_path = path.join("metadata.json");
+        let mut metadata: serde_json::Value =
+            serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
+        metadata["toolchain"]["sccache"] = serde_json::json!(version);
+        fs::write(metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    }
+    let error = compare(&baseline, &candidate).unwrap_err().to_string();
+    assert!(error.contains("sccache 可执行版本"), "{error}");
+    fs::remove_dir_all(baseline).unwrap();
+    fs::remove_dir_all(candidate).unwrap();
 }
 
 fn write_sccache_stats(

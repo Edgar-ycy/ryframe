@@ -361,7 +361,12 @@ fn execute_measurement(
         ),
     )?;
     if outcome.status.success() {
-        cleanup_successful_sample_target(&session.run_dir, &target, options.cache_state)?;
+        cleanup_successful_sample_target(
+            &session.run_dir,
+            &target,
+            options.suite,
+            options.cache_state,
+        )?;
     } else {
         return Err(format!(
             "paired suite `{}` 的 {} 第 {pair} 对样本失败",

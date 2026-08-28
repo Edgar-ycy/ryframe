@@ -24,6 +24,12 @@ pub(super) fn render(summary: &RunSummary) -> String {
             hit_rate,
         )
     });
+    let sccache_version = summary
+        .sccache_version
+        .as_deref()
+        .map_or_else(String::new, |version| {
+            format!("- sccache executable：`{version}`\n")
+        });
     let pairing = summary
         .pairing
         .as_ref()
@@ -43,6 +49,7 @@ pub(super) fn render(summary: &RunSummary) -> String {
          - execution surface：`{}`\n\
          - input：`{}`\n\
          {}\
+         {}\
          - 样本：请求 {}，记录 {}（通过 {}，失败 {}）\n\
          - 耗时：{}\n\
          {}",
@@ -53,6 +60,7 @@ pub(super) fn render(summary: &RunSummary) -> String {
         summary.compile_surface_fingerprint,
         summary.input_fingerprint,
         pairing,
+        sccache_version,
         summary.requested_runs,
         summary.samples,
         summary.passed,

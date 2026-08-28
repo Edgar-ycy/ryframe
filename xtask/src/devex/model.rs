@@ -10,18 +10,20 @@ pub(crate) enum DevexSuite {
     CargoDevSave,
     ResourceGenerator,
     ResourceGate,
+    RustGate,
     RustSccache,
     FrontendFast,
     FrontendBuild,
 }
 
 impl DevexSuite {
-    pub(crate) const ALL: [Self; 8] = [
+    pub(crate) const ALL: [Self; 9] = [
         Self::RustColdBuild,
         Self::RustIncremental,
         Self::CargoDevSave,
         Self::ResourceGenerator,
         Self::ResourceGate,
+        Self::RustGate,
         Self::RustSccache,
         Self::FrontendFast,
         Self::FrontendBuild,
@@ -38,6 +40,7 @@ impl DevexSuite {
             Self::CargoDevSave => "cargo-dev-save",
             Self::ResourceGenerator => "resource-generator",
             Self::ResourceGate => "resource-gate",
+            Self::RustGate => "rust-gate",
             Self::RustSccache => "rust-sccache",
             Self::FrontendFast => "frontend-fast",
             Self::FrontendBuild => "frontend-build",
@@ -86,6 +89,19 @@ impl DevexSuite {
                 requirement: SuiteRequirement::FrontendFiles,
                 requires_frontend: true,
             }),
+            Self::RustGate => Ok(SuiteDefinition {
+                steps: exact_variant(variant, "default", RUST_GATE, self)?,
+                features: &[],
+                environment: &[
+                    ("CARGO_INCREMENTAL", "0"),
+                    ("RUSTC_WRAPPER", "sccache"),
+                    ("RYFRAME_CI_RUST_GATE_PROFILE", "standard"),
+                    ("RYFRAME_DEVEX_TARGET_ROOT", "{target}"),
+                ],
+                remove_environment: &["RYFRAME_CI_FRONTEND_REF", "SCCACHE_RECACHE"],
+                requirement: SuiteRequirement::Executable("sccache"),
+                requires_frontend: true,
+            }),
             Self::RustSccache => Ok(SuiteDefinition {
                 steps: rust_steps(variant, BuildProfile::Check)?,
                 features: rust_features(variant)?,
@@ -120,7 +136,7 @@ impl DevexSuite {
 
     pub(crate) fn minimum_runs(self, variant: &str) -> usize {
         match self {
-            Self::RustColdBuild | Self::RustIncremental | Self::RustSccache => 20,
+            Self::RustColdBuild | Self::RustIncremental | Self::RustGate | Self::RustSccache => 20,
             Self::CargoDevSave if !matches!(variant, "config-only" | "resource-manifest") => 20,
             _ => 5,
         }
@@ -136,6 +152,7 @@ impl DevexSuite {
             }
             Self::ResourceGenerator => "all、post 或 notice",
             Self::ResourceGate => "auto",
+            Self::RustGate => "default",
             Self::FrontendFast | Self::FrontendBuild => "default",
         }
     }
@@ -156,6 +173,10 @@ impl DevexSuite {
             }
         };
         Ok(Some(source))
+    }
+
+    pub(crate) const fn uses_sccache(self) -> bool {
+        matches!(self, Self::RustGate | Self::RustSccache)
     }
 }
 
@@ -515,6 +536,24 @@ const RESOURCE_GATE: &[StepDefinition] = &[StepDefinition {
         "--",
         "ci",
         "resource-gate",
+        "--frontend-dir",
+        "{frontend}",
+    ],
+}];
+
+const RUST_GATE: &[StepDefinition] = &[StepDefinition {
+    working_directory: WorkingDirectory::Backend,
+    program: "cargo",
+    args: &[
+        "run",
+        "--locked",
+        "--target-dir",
+        "{target}/driver",
+        "-p",
+        "xtask",
+        "--",
+        "ci",
+        "rust-gate",
         "--frontend-dir",
         "{frontend}",
     ],

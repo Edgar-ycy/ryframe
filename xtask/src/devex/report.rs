@@ -71,6 +71,8 @@ pub(crate) struct RunSummary {
     pub(crate) passed: usize,
     pub(crate) failed: usize,
     pub(crate) duration_ms: Option<Distribution>,
+    #[serde(default)]
+    pub(crate) sccache_version: Option<String>,
     pub(crate) sccache: Option<SccacheDelta>,
     #[serde(default)]
     pub(crate) pairing: Option<PairingMetadata>,
@@ -152,6 +154,7 @@ pub(crate) fn summarize(run_dir: &Path) -> Result<RunSummary> {
         passed,
         failed,
         duration_ms: distribution(&durations),
+        sccache_version: metadata.toolchain.sccache,
         sccache: read_sccache_delta(run_dir)?,
         pairing,
         source_fingerprints,
@@ -175,6 +178,10 @@ pub(crate) fn compare(baseline_dir: &Path, candidate_dir: &Path) -> Result<Strin
         .duration_ms
         .as_ref()
         .ok_or("候选没有成功的测量样本")?;
+    let sccache_version = baseline
+        .sccache_version
+        .as_deref()
+        .map_or_else(|| "n/a".to_owned(), ToOwned::to_owned);
     Ok(format!(
         "# DevEx 对比\n\n\
          - suite：`{}`\n\
@@ -182,6 +189,7 @@ pub(crate) fn compare(baseline_dir: &Path, candidate_dir: &Path) -> Result<Strin
          - cache：`{}`\n\
          - paired comparison：`{}`\n\
          - execution surface：`{}`\n\
+         - sccache executable：`{}`\n\
          - input：基线 `{}` / 候选 `{}`\n\n\
          | 指标 | 基线 | 候选 | 变化 |\n\
          | --- | ---: | ---: | ---: |\n\
@@ -196,6 +204,7 @@ pub(crate) fn compare(baseline_dir: &Path, candidate_dir: &Path) -> Result<Strin
             .expect("ensure_comparable 已校验 pairing")
             .comparison_id,
         baseline.compile_surface_fingerprint,
+        sccache_version,
         baseline.input_fingerprint,
         candidate.input_fingerprint,
         baseline_duration.p50,
@@ -311,6 +320,9 @@ fn ensure_comparable(
     }
     if baseline.cache_state != candidate.cache_state {
         return Err("DevEx 对比要求 cache state 相同".into());
+    }
+    if baseline.sccache_version != candidate.sccache_version {
+        return Err("DevEx 对比要求 sccache 可执行版本相同".into());
     }
     if baseline.compile_surface_fingerprint != candidate.compile_surface_fingerprint {
         return Err("DevEx 对比的 compile_surface_fingerprint 不一致，拒绝生成误导结论".into());

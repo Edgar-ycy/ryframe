@@ -43,7 +43,11 @@ const ENVIRONMENT_WHITELIST: &[&str] = &[
     "RYFRAME_DEVEX_TARGET_ROOT",
     "RYFRAME_FAST_CHECK_CACHE_ROOT",
     "RYFRAME_CI_BASE_SHA",
+    "RYFRAME_CI_FRONTEND_REF",
     "RYFRAME_CI_HEAD_SHA",
+    "RYFRAME_CI_RUST_GATE_PROFILE",
+    "RYFRAME_CI_TEST_JOBS",
+    "RYFRAME_VERIFY_JOBS",
     "GITHUB_BASE_SHA",
     "GITHUB_SHA",
     "SCCACHE_BASEDIRS",
@@ -67,6 +71,11 @@ pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
     let toolchain = Toolchain {
         cargo: version(context.backend_root, "cargo", &["--version"]),
         rustc: version(context.backend_root, "rustc", &["-vV"]),
+        sccache: context
+            .options
+            .suite
+            .uses_sccache()
+            .then(|| version(context.backend_root, "sccache", &["--version"])),
         node: frontend_suite.then(|| version(context.frontend_root, "node", &["--version"])),
         pnpm: frontend_suite.then(|| {
             version(
@@ -81,11 +90,7 @@ pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
     let environment = visible_environment(&comparable_environment);
     let commands = command_metadata(context.definition.steps);
     let target = rust_host(&toolchain.rustc).unwrap_or_else(|| env::consts::ARCH.to_owned());
-    let jobs = context
-        .effective_environment
-        .get("CARGO_BUILD_JOBS")
-        .and_then(|value| value.parse().ok())
-        .unwrap_or_else(default_jobs);
+    let jobs = effective_jobs(context.options.suite, context.effective_environment);
     let compile_surface_fingerprint = compile_surface_fingerprint(
         context.options.suite,
         &context.options.variant,
@@ -462,6 +467,19 @@ fn rust_host(rustc: &str) -> Option<String> {
 
 fn default_jobs() -> usize {
     std::thread::available_parallelism().map_or(1, usize::from)
+}
+
+fn effective_jobs(suite: DevexSuite, environment: &BTreeMap<String, String>) -> usize {
+    if suite == DevexSuite::RustGate {
+        return environment
+            .get("RYFRAME_VERIFY_JOBS")
+            .and_then(|value| value.parse().ok())
+            .unwrap_or_else(|| default_jobs().saturating_sub(2).clamp(4, 12));
+    }
+    environment
+        .get("CARGO_BUILD_JOBS")
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_else(default_jobs)
 }
 
 pub(super) fn corepack_executable() -> &'static str {

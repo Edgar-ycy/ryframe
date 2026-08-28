@@ -16,6 +16,9 @@ pub(super) fn check(
     match definition.requirement {
         SuiteRequirement::Ready => executable_available(backend_root, "cargo", &["--version"]),
         SuiteRequirement::Executable(executable) => {
+            if definition.requires_frontend {
+                require_frontend_manifest(frontend_root, options, "工作区")?;
+            }
             executable_available(backend_root, executable, &["--version"])
         }
         SuiteRequirement::Frontend => {
