@@ -28,8 +28,51 @@ def policy(
     service_images: list[dict[str, str]] | None = None,
     local_patch_licenses: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
+    aws_required_packages = ["aws-lc-rs", "aws-lc-sys"]
+    aws_required_features = {
+        "jsonwebtoken": ["aws_lc_rs"],
+        "reqwest": ["__rustls-aws-lc-rs"],
+        "rustls": ["aws_lc_rs"],
+        "sqlx": ["tls-rustls-aws-lc-rs"],
+        "tokio-rustls": ["aws_lc_rs"],
+    }
+
+    def profile(
+        name: str,
+        package: str,
+        features: list[str],
+        *,
+        required_packages: list[str] | None = None,
+        required_features: dict[str, list[str]] | None = None,
+        forbidden_packages: list[str] | None = None,
+        forbidden_features: dict[str, list[str]] | None = None,
+        maximum: int | None = None,
+    ) -> dict[str, object]:
+        return {
+            "name": name,
+            "command": {
+                "package": package,
+                "no_default_features": True,
+                "features": features,
+                "edges": ["normal", "build"],
+            },
+            "constraints": {
+                "required_packages": list(required_packages or []),
+                "required_features": {
+                    package: list(features)
+                    for package, features in (required_features or {}).items()
+                },
+                "forbidden_packages": list(forbidden_packages or []),
+                "forbidden_features": {
+                    package: list(features)
+                    for package, features in (forbidden_features or {}).items()
+                },
+                "max_unique_packages": maximum,
+            },
+        }
+
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "tools": {
             "cargo-audit": "0.22.2",
             "cargo-deny": "0.20.2",
@@ -45,19 +88,38 @@ def policy(
         },
         "runtime_feature_tree_gate": {
             "profiles": [
-                {"name": "API", "features": ["bin-api", "runtime-swagger-ui"]},
-                {"name": "Worker", "features": ["bin-worker"]},
+                profile(
+                    "API",
+                    "ryframe",
+                    ["bin-api", "runtime-swagger-ui"],
+                    required_packages=aws_required_packages,
+                    required_features=aws_required_features,
+                    forbidden_packages=["ring"],
+                    forbidden_features={"rustls": ["ring"]},
+                ),
+                profile(
+                    "Worker",
+                    "ryframe",
+                    ["bin-worker"],
+                    required_packages=aws_required_packages,
+                    required_features=aws_required_features,
+                    forbidden_packages=["ring", "ryframe-api"],
+                    forbidden_features={"rustls": ["ring"]},
+                ),
+                profile(
+                    "Migrate",
+                    "ryframe",
+                    ["bin-migrate"],
+                    forbidden_packages=["ryframe-api", "axum", "reqwest"],
+                ),
+                profile(
+                    "GeneratorDefault",
+                    "ryframe-generator",
+                    [],
+                    forbidden_packages=["sea-orm", "sqlx", "ryframe-tenant-db", "tokio"],
+                    maximum=90,
+                ),
             ],
-            "required_packages": ["aws-lc-rs", "aws-lc-sys"],
-            "required_features": {
-                "jsonwebtoken": ["aws_lc_rs"],
-                "reqwest": ["__rustls-aws-lc-rs"],
-                "rustls": ["aws_lc_rs"],
-                "sqlx": ["tls-rustls-aws-lc-rs"],
-                "tokio-rustls": ["aws_lc_rs"],
-            },
-            "forbidden_packages": ["ring"],
-            "forbidden_features": {"rustls": ["ring"]},
         },
         "dependency_graph_exceptions": [
             {
@@ -217,11 +279,57 @@ class SupplyChainPolicyTests(unittest.TestCase):
             loaded = MODULE.load_policy(path, today=dt.date(2026, 8, 20))
         self.assertEqual(loaded["tools"]["trivy"], "0.72.0")
 
+    def test_checked_in_feature_profiles_cover_process_and_generator_surfaces(
+        self,
+    ) -> None:
+        loaded = MODULE.load_policy(
+            SCRIPT.parent / "supply_chain_policy.json",
+            today=dt.date(2026, 8, 20),
+        )
+        profiles = {
+            profile["name"]: profile
+            for profile in loaded["runtime_feature_tree_gate"]["profiles"]
+        }
+        self.assertEqual(
+            set(profiles), {"API", "Worker", "Migrate", "GeneratorDefault"}
+        )
+        self.assertIn(
+            "ryframe-api", profiles["Worker"]["constraints"]["forbidden_packages"]
+        )
+        migrate = profiles["Migrate"]
+        self.assertEqual(
+            set(migrate["constraints"]["required_features"]), {"rustls", "sqlx"}
+        )
+        self.assertNotIn(
+            "tokio-rustls", migrate["constraints"]["required_features"]
+        )
+        self.assertTrue(
+            {
+                "ryframe-api",
+                "ryframe-adapters",
+                "axum",
+                "utoipa",
+                "redis",
+                "image",
+                "opentelemetry-otlp",
+                "reqwest",
+            }.issubset(migrate["constraints"]["forbidden_packages"])
+        )
+        generator = profiles["GeneratorDefault"]
+        self.assertEqual(generator["command"]["package"], "ryframe-generator")
+        self.assertEqual(generator["command"]["features"], [])
+        self.assertEqual(generator["constraints"]["max_unique_packages"], 90)
+        self.assertTrue(
+            {"sea-orm", "sqlx", "ryframe-tenant-db", "tokio"}.issubset(
+                generator["constraints"]["forbidden_packages"]
+            )
+        )
+
     def test_runtime_feature_tree_policy_rejects_malformed_contracts(self) -> None:
         invalid_policies = []
         missing_profile_features = policy()
         del missing_profile_features["runtime_feature_tree_gate"]["profiles"][0][
-            "features"
+            "command"
         ]
         invalid_policies.append(missing_profile_features)
         duplicate_profiles = policy()
@@ -230,15 +338,38 @@ class SupplyChainPolicyTests(unittest.TestCase):
         )
         invalid_policies.append(duplicate_profiles)
         overlapping_package = policy()
-        overlapping_package["runtime_feature_tree_gate"]["forbidden_packages"] = [
-            "aws-lc-rs"
-        ]
+        overlapping_package["runtime_feature_tree_gate"]["profiles"][0][
+            "constraints"
+        ]["forbidden_packages"] = ["aws-lc-rs"]
         invalid_policies.append(overlapping_package)
         overlapping_feature = policy()
-        overlapping_feature["runtime_feature_tree_gate"]["forbidden_features"] = {
-            "rustls": ["aws_lc_rs"]
-        }
+        overlapping_feature["runtime_feature_tree_gate"]["profiles"][0][
+            "constraints"
+        ]["forbidden_features"] = {"rustls": ["aws_lc_rs"]}
         invalid_policies.append(overlapping_feature)
+        invalid_boolean = policy()
+        invalid_boolean["runtime_feature_tree_gate"]["profiles"][0]["command"][
+            "no_default_features"
+        ] = "true"
+        invalid_policies.append(invalid_boolean)
+        missing_edge = policy()
+        missing_edge["runtime_feature_tree_gate"]["profiles"][0]["command"][
+            "edges"
+        ] = ["normal"]
+        invalid_policies.append(missing_edge)
+        invalid_maximum = policy()
+        invalid_maximum["runtime_feature_tree_gate"]["profiles"][3]["constraints"][
+            "max_unique_packages"
+        ] = 0
+        invalid_policies.append(invalid_maximum)
+        duplicate_command = policy()
+        duplicate_command["runtime_feature_tree_gate"]["profiles"][1]["command"] = (
+            duplicate_command["runtime_feature_tree_gate"]["profiles"][0]["command"]
+        )
+        invalid_policies.append(duplicate_command)
+        missing_required_profile = policy()
+        missing_required_profile["runtime_feature_tree_gate"]["profiles"].pop()
+        invalid_policies.append(missing_required_profile)
 
         with self.temporary_directory() as raw:
             directory = Path(raw)
@@ -837,7 +968,7 @@ jobs:
         self.assertEqual(len(errors), 1)
         self.assertIn("optional-package v1.2.3", errors[0])
 
-    def test_crypto_feature_tree_accepts_aws_lc_ring_compatibility_features(self) -> None:
+    def test_feature_tree_accepts_aws_lc_ring_compatibility_features(self) -> None:
         tree = """\
 aws-lc-rs v1.17.0|alloc,aws-lc-sys,default,ring-io,ring-sig-verify
 aws-lc-sys v0.41.0|prebuilt-nasm
@@ -848,36 +979,40 @@ sqlx v0.9.0|runtime-tokio,tls-rustls-aws-lc-rs
 tokio-rustls v0.26.4|aws_lc_rs,aws-lc-rs
 """
 
-        gate = policy()["runtime_feature_tree_gate"]
-        self.assertEqual(MODULE.crypto_feature_tree_violations(tree, "API", gate), [])
+        api = policy()["runtime_feature_tree_gate"]["profiles"][0]
+        self.assertEqual(MODULE.feature_tree_violations(tree, api), [])
 
-    def test_crypto_feature_tree_rejects_actual_ring_package_or_provider(self) -> None:
+    def test_feature_tree_rejects_actual_ring_package_or_provider(self) -> None:
         tree = """\
 aws-lc-rs v1.17.0|default,ring-io,ring-sig-verify
 aws-lc-sys v0.41.0|
 jsonwebtoken v11.0.0|aws_lc_rs
 reqwest v0.13.4|__rustls,rustls
 ring v0.17.14|alloc,default
+ryframe-api v0.11.3|
 rustls v0.23.40|ring,std,tls12
 sqlx v0.9.0|tls-rustls-ring
 tokio-rustls v0.26.4|ring
 """
 
-        gate = policy()["runtime_feature_tree_gate"]
-        errors = MODULE.crypto_feature_tree_violations(tree, "Worker", gate)
+        worker = policy()["runtime_feature_tree_gate"]["profiles"][1]
+        errors = MODULE.feature_tree_violations(tree, worker)
         self.assertTrue(any("ring package/provider" in error for error in errors))
+        self.assertTrue(any("ryframe-api" in error for error in errors))
         self.assertTrue(any("reqwest" in error for error in errors))
         self.assertTrue(any("rustls" in error for error in errors))
         self.assertTrue(any("sqlx" in error for error in errors))
 
-    def test_crypto_feature_tree_fails_closed_on_malformed_output(self) -> None:
-        gate = policy()["runtime_feature_tree_gate"]
-        errors = MODULE.crypto_feature_tree_violations("not-a-package\n", "API", gate)
+    def test_feature_tree_fails_closed_on_malformed_or_empty_output(self) -> None:
+        api = policy()["runtime_feature_tree_gate"]["profiles"][0]
+        errors = MODULE.feature_tree_violations("not-a-package\n", api)
 
         self.assertTrue(any("格式无效" in error for error in errors))
+        self.assertTrue(any("没有有效 package" in error for error in errors))
         self.assertTrue(any("缺少 aws-lc-rs" in error for error in errors))
+        self.assertTrue(MODULE.feature_tree_violations("", api))
 
-    def test_crypto_feature_tree_rejects_missing_aws_lc_package_or_feature(self) -> None:
+    def test_feature_tree_rejects_missing_aws_lc_package_or_feature(self) -> None:
         tree = """\
 aws-lc-rs v1.17.0|default,ring-io,ring-sig-verify
 jsonwebtoken v11.0.0|aws_lc_rs
@@ -886,15 +1021,42 @@ rustls v0.23.40|aws_lc_rs
 sqlx v0.9.0|runtime-tokio
 tokio-rustls v0.26.4|aws_lc_rs
 """
-        gate = policy()["runtime_feature_tree_gate"]
-        errors = MODULE.crypto_feature_tree_violations(tree, "Worker", gate)
+        worker = policy()["runtime_feature_tree_gate"]["profiles"][1]
+        errors = MODULE.feature_tree_violations(tree, worker)
 
         self.assertTrue(any("缺少 aws-lc-sys" in error for error in errors))
         self.assertTrue(any("sqlx" in error for error in errors))
 
-    def test_crypto_feature_tree_commands_are_runtime_targeted(self) -> None:
+    def test_feature_tree_enforces_profile_packages_and_unique_closure(self) -> None:
         profiles = policy()["runtime_feature_tree_gate"]["profiles"]
-        self.assertEqual(profiles[0]["features"], ["bin-api", "runtime-swagger-ui"])
+        migrate = profiles[2]
+        migrate_errors = MODULE.feature_tree_violations(
+            "ryframe v0.11.3|bin-migrate\naxum v0.8.0|http1\nreqwest v0.13.4|rustls\n",
+            migrate,
+        )
+        self.assertTrue(any("axum" in error for error in migrate_errors))
+        self.assertTrue(any("reqwest" in error for error in migrate_errors))
+
+        generator = profiles[3]
+        forbidden = MODULE.feature_tree_violations(
+            "ryframe-generator v0.11.3|\ntokio v1.0.0|rt\nsea-orm v2.0.0|\n",
+            generator,
+        )
+        self.assertTrue(any("tokio" in error for error in forbidden))
+        self.assertTrue(any("sea-orm" in error for error in forbidden))
+
+        generator["constraints"]["max_unique_packages"] = 1
+        closure = MODULE.feature_tree_violations(
+            "ryframe-generator v0.11.3|\nserde v1.0.0|derive\nserde v1.0.0|derive (*)\n",
+            generator,
+        )
+        self.assertTrue(any("unique package closure" in error for error in closure))
+
+    def test_feature_tree_commands_are_policy_driven(self) -> None:
+        profiles = policy()["runtime_feature_tree_gate"]["profiles"]
+        self.assertEqual(
+            profiles[0]["command"]["features"], ["bin-api", "runtime-swagger-ui"]
+        )
         expected_prefix = [
             "tree",
             "--locked",
@@ -912,12 +1074,23 @@ tokio-rustls v0.26.4|aws_lc_rs
             "{p}|{f}",
         ]
         self.assertEqual(
-            MODULE.crypto_feature_tree_args(profiles[0]["features"]),
+            MODULE.feature_tree_args(profiles[0]),
             [*expected_prefix, "bin-api,runtime-swagger-ui", *expected_suffix],
         )
         self.assertEqual(
-            MODULE.crypto_feature_tree_args(profiles[1]["features"]),
+            MODULE.feature_tree_args(profiles[1]),
             [*expected_prefix, "bin-worker", *expected_suffix],
+        )
+        self.assertEqual(
+            MODULE.feature_tree_args(profiles[3]),
+            [
+                "tree",
+                "--locked",
+                "-p",
+                "ryframe-generator",
+                "--no-default-features",
+                *expected_suffix,
+            ],
         )
 
     def test_cyclonedx_requires_components_and_reproducible_identity(self) -> None:

@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "tools": {
     "cargo-audit": "0.22.2",
     "cargo-deny": "0.20.2",
@@ -135,47 +135,200 @@
     "profiles": [
       {
         "name": "API",
-        "features": [
-          "bin-api",
-          "runtime-swagger-ui"
-        ]
+        "command": {
+          "package": "ryframe",
+          "no_default_features": true,
+          "features": [
+            "bin-api",
+            "runtime-swagger-ui"
+          ],
+          "edges": [
+            "normal",
+            "build"
+          ]
+        },
+        "constraints": {
+          "required_packages": [
+            "aws-lc-rs",
+            "aws-lc-sys"
+          ],
+          "required_features": {
+            "jsonwebtoken": [
+              "aws_lc_rs"
+            ],
+            "reqwest": [
+              "__rustls-aws-lc-rs"
+            ],
+            "rustls": [
+              "aws_lc_rs"
+            ],
+            "sqlx": [
+              "tls-rustls-aws-lc-rs"
+            ],
+            "tokio-rustls": [
+              "aws_lc_rs"
+            ]
+          },
+          "forbidden_packages": [
+            "ring"
+          ],
+          "forbidden_features": {
+            "rustls": [
+              "ring"
+            ]
+          },
+          "max_unique_packages": null
+        }
       },
       {
         "name": "Worker",
-        "features": [
-          "bin-worker"
-        ]
+        "command": {
+          "package": "ryframe",
+          "no_default_features": true,
+          "features": [
+            "bin-worker"
+          ],
+          "edges": [
+            "normal",
+            "build"
+          ]
+        },
+        "constraints": {
+          "required_packages": [
+            "aws-lc-rs",
+            "aws-lc-sys"
+          ],
+          "required_features": {
+            "jsonwebtoken": [
+              "aws_lc_rs"
+            ],
+            "reqwest": [
+              "__rustls-aws-lc-rs"
+            ],
+            "rustls": [
+              "aws_lc_rs"
+            ],
+            "sqlx": [
+              "tls-rustls-aws-lc-rs"
+            ],
+            "tokio-rustls": [
+              "aws_lc_rs"
+            ]
+          },
+          "forbidden_packages": [
+            "ring",
+            "ryframe-api"
+          ],
+          "forbidden_features": {
+            "rustls": [
+              "ring"
+            ]
+          },
+          "max_unique_packages": null
+        }
+      },
+      {
+        "name": "Migrate",
+        "command": {
+          "package": "ryframe",
+          "no_default_features": true,
+          "features": [
+            "bin-migrate"
+          ],
+          "edges": [
+            "normal",
+            "build"
+          ]
+        },
+        "constraints": {
+          "required_packages": [
+            "aws-lc-rs",
+            "aws-lc-sys"
+          ],
+          "required_features": {
+            "rustls": [
+              "aws_lc_rs"
+            ],
+            "sqlx": [
+              "tls-rustls-aws-lc-rs"
+            ]
+          },
+          "forbidden_packages": [
+            "ring",
+            "ryframe-api",
+            "ryframe-adapters",
+            "axum",
+            "axum-core",
+            "axum-extra",
+            "utoipa",
+            "utoipa-axum",
+            "utoipa-gen",
+            "utoipa-swagger-ui",
+            "utoipa-swagger-ui-vendored",
+            "redis",
+            "image",
+            "opentelemetry",
+            "opentelemetry-http",
+            "opentelemetry-otlp",
+            "opentelemetry-proto",
+            "opentelemetry-semantic-conventions",
+            "opentelemetry_sdk",
+            "tracing-opentelemetry",
+            "reqwest"
+          ],
+          "forbidden_features": {
+            "rustls": [
+              "ring"
+            ]
+          },
+          "max_unique_packages": null
+        }
+      },
+      {
+        "name": "GeneratorDefault",
+        "command": {
+          "package": "ryframe-generator",
+          "no_default_features": true,
+          "features": [],
+          "edges": [
+            "normal",
+            "build"
+          ]
+        },
+        "constraints": {
+          "required_packages": [],
+          "required_features": {},
+          "forbidden_packages": [
+            "sea-orm",
+            "sea-orm-migration",
+            "sqlx",
+            "sqlx-core",
+            "sqlx-mysql",
+            "ryframe-tenant-db",
+            "tokio",
+            "tokio-rustls",
+            "tokio-stream",
+            "tokio-util",
+            "mio",
+            "socket2",
+            "hyper",
+            "hyper-util",
+            "hyper-rustls",
+            "reqwest",
+            "redis",
+            "rustls",
+            "rustls-native-certs",
+            "rustls-platform-verifier",
+            "axum",
+            "tower",
+            "tower-http",
+            "opentelemetry-otlp"
+          ],
+          "forbidden_features": {},
+          "max_unique_packages": 90
+        }
       }
-    ],
-    "required_packages": [
-      "aws-lc-rs",
-      "aws-lc-sys"
-    ],
-    "required_features": {
-      "jsonwebtoken": [
-        "aws_lc_rs"
-      ],
-      "reqwest": [
-        "__rustls-aws-lc-rs"
-      ],
-      "rustls": [
-        "aws_lc_rs"
-      ],
-      "sqlx": [
-        "tls-rustls-aws-lc-rs"
-      ],
-      "tokio-rustls": [
-        "aws_lc_rs"
-      ]
-    },
-    "forbidden_packages": [
-      "ring"
-    ],
-    "forbidden_features": {
-      "rustls": [
-        "ring"
-      ]
-    }
+    ]
   },
   "dependency_graph_exceptions": [
     {
