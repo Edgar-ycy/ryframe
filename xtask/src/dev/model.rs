@@ -114,9 +114,9 @@ impl BuildPlan {
             .iter()
             .map(|path| classify_change(path))
             .collect::<BTreeSet<_>>();
-        let full = reasons.contains(&ChangeKind::BuildGraph)
-            || reasons.contains(&ChangeKind::UnknownBackend);
-        let shared = full
+        let build_graph = reasons.contains(&ChangeKind::BuildGraph);
+        let rebuild_pair = build_graph || reasons.contains(&ChangeKind::UnknownBackend);
+        let shared = rebuild_pair
             || reasons.contains(&ChangeKind::SharedRuntime)
             || reasons.contains(&ChangeKind::ControlPersistence);
         let api_rebuild = shared
@@ -127,12 +127,12 @@ impl BuildPlan {
             || reasons.contains(&ChangeKind::LocaleCatalog);
         let runtime_config = reasons.contains(&ChangeKind::RuntimeConfig);
         let restart_pair = api_rebuild || worker_rebuild || runtime_config;
-        let migrate = full
+        let migrate = build_graph
             || reasons.contains(&ChangeKind::ControlPersistence)
             || reasons.contains(&ChangeKind::TenantPersistence)
             || reasons.contains(&ChangeKind::MigrationTool);
         let migration = if reasons.contains(&ChangeKind::TenantPersistence)
-            && (reasons.contains(&ChangeKind::ControlPersistence) || full)
+            && (reasons.contains(&ChangeKind::ControlPersistence) || build_graph)
         {
             MigrationValidation::StandaloneControlAndTenant
         } else if reasons.contains(&ChangeKind::TenantPersistence) {
@@ -187,6 +187,7 @@ pub(crate) fn classify_change(path: &str) -> ChangeKind {
         path.as_str(),
         "cargo.toml" | "cargo.lock" | "build.rs" | "rust-toolchain" | "rust-toolchain.toml"
     ) || path.starts_with(".cargo/")
+        || path.starts_with("vendor/")
         || path.ends_with("/cargo.toml")
         || path.ends_with("/build.rs")
     {

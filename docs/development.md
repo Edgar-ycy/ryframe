@@ -146,7 +146,7 @@ suite 固定为 `rust-cold-build`、`rust-incremental`、`cargo-dev-save`、`res
 
 Replay 会在每个前端 worktree 中于计时前执行 `corepack pnpm install --offline --frozen-lockfile`，因此正式运行前必须预热与各历史 lockfile 匹配的 pnpm store。一次显式 prime 只预热本次运行独占的本地 sccache，不进入样本；每个案例和每个臂使用独立 Cargo target，并按 A-B、B-A 交错执行。Activation 模式固定 standard Rust gate、`CARGO_INCREMENTAL=0`、编译并发 8 和测试并发 4，且要求真实 MySQL、Redis 集成开关均为 `1`、主机为回环地址、Redis 使用隔离的数据库 15。报告记录 Resource Gate 的原子 decision、非敏感环境、工具版本与工具集指纹、manifest、runner 与仓库指纹；缺少 decision、实际模式不符、依赖离线安装失败或清理不完整都会 fail-closed。没有有效回放证据时保持完整回退是预期行为。
 
-Rust CI 关闭 incremental，并为每个 job 保存 sccache JSON 统计，不缓存整个 target。`SCCACHE_BASEDIRS` 目前只用于定时或手动的 AWS-LC 双绝对路径 canary；canary 要求缓存错误为零、warm 命中率至少 80%、不可缓存请求至少减少 50%，且 warm 构建确有耗时改善。达到这些条件前，不把该路径归一化配置扩展到普通 Rust job。
+CI workflow 在全局关闭 Rust incremental；Linux 后端 job 统一检出到固定的 `backend` 目录，AWS-LC canary 为验证双绝对路径命中而显式使用两个隔离目录。主要 Rust 编译 job 保存 sccache JSON 统计且不缓存整个 target；plan、preflight、Security Audit 与供应链 job 只执行选择、策略或依赖图检查，不启动 sccache。`SCCACHE_BASEDIRS` 目前只用于定时或手动的 AWS-LC 双绝对路径 canary；canary 要求缓存错误为零、warm 命中率至少 80%、不可缓存请求至少减少 50%，且 warm 构建确有耗时改善。达到这些条件前，不把该路径归一化配置扩展到普通 Rust job。
 
 ## 常见问题
 

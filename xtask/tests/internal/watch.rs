@@ -12,6 +12,8 @@ fn watches_backend_inputs_but_ignores_build_outputs_and_docs() {
         ".cargo/config.toml",
         "crates/ryframe/src/main.rs",
         "crates/ryframe/Cargo.toml",
+        "vendor/sqlx-mysql-only/src/lib.rs",
+        "vendor/opentelemetry-otlp/Cargo.toml",
         "xtask/src/dev.rs",
         "config/app.dev.toml",
         "catalog/resources/post.toml",
@@ -23,6 +25,7 @@ fn watches_backend_inputs_but_ignores_build_outputs_and_docs() {
         "target/debug/ryframe.exe",
         ".git/index",
         ".local-tests/result.json",
+        "vendor/sqlx-mysql-only/README.md",
         "docs/development.md",
         "README.md",
     ] {
@@ -39,20 +42,25 @@ fn one_notify_event_preserves_every_relevant_path() {
             root.join("crates/ryframe/src/main.rs"),
             root.join("target/debug/ryframe.exe"),
             root.join("xtask/src/dev.rs"),
+            root.join("vendor/sqlx-mysql-only/src/lib.rs"),
             root.join("crates/ryframe/src/main.rs"),
         ],
     );
 
     assert_eq!(
         paths.into_iter().collect::<Vec<_>>(),
-        ["crates/ryframe/src/main.rs", "xtask/src/dev.rs"]
+        [
+            "crates/ryframe/src/main.rs",
+            "vendor/sqlx-mysql-only/src/lib.rs",
+            "xtask/src/dev.rs",
+        ]
     );
 }
 
 #[test]
-fn source_watcher_reports_backend_file_change_and_stops_cleanly() {
+fn source_watcher_reports_recursive_vendor_change_and_stops_cleanly() {
     let root = std::env::temp_dir().join(format!("ryframe-xtask-watch-{}", std::process::id()));
-    let source = root.join("crates/demo/src/lib.rs");
+    let source = root.join("vendor/demo/src/lib.rs");
     let _ = fs::remove_dir_all(&root);
     fs::create_dir_all(source.parent().unwrap()).unwrap();
     fs::write(&source, "pub fn before() {}\n").unwrap();
@@ -70,7 +78,7 @@ fn source_watcher_reports_backend_file_change_and_stops_cleanly() {
 
     assert_eq!(
         batch.paths.into_iter().collect::<Vec<_>>(),
-        ["crates/demo/src/lib.rs"]
+        ["vendor/demo/src/lib.rs"]
     );
     assert!(batch.revision.value() >= 1);
     assert_eq!(watcher.current_revision(), batch.revision);

@@ -28,6 +28,25 @@ use super::{
     tool_self_changed_error,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CandidateProbeDisposition {
+    Promote,
+    KeepLastKnownGood,
+    Superseded,
+    Shutdown,
+}
+
+pub(crate) fn candidate_probe_disposition(
+    result: &Result<ProbeResult>,
+) -> CandidateProbeDisposition {
+    match result {
+        Ok(ProbeResult::Ready) => CandidateProbeDisposition::Promote,
+        Ok(ProbeResult::Superseded) => CandidateProbeDisposition::Superseded,
+        Ok(ProbeResult::Cancelled) => CandidateProbeDisposition::Shutdown,
+        Err(_) => CandidateProbeDisposition::KeepLastKnownGood,
+    }
+}
+
 pub(crate) fn run(frontend_dir: &Path) -> Result<()> {
     doctor::run(frontend_dir)?;
     let root = root_dir();
@@ -389,20 +408,24 @@ fn handle_candidate_result(
         }
         BuildResult::Ready(candidate) => candidate,
     };
-    match probe_candidate(
+    let probe_result = probe_candidate(
         group, root, &candidate, services, worker_ids, shutdown, watcher,
-    ) {
-        Ok(ProbeResult::Ready) => {}
-        Ok(ProbeResult::Superseded) => {
+    );
+    match candidate_probe_disposition(&probe_result) {
+        CandidateProbeDisposition::Promote => {}
+        CandidateProbeDisposition::Superseded => {
             println!("候选 probe 被更新源码取代，继续使用 last-known-good。");
             let _ = cleanup_binaries(&candidate);
             return Ok(ChangeOutcome::Superseded);
         }
-        Ok(ProbeResult::Cancelled) => {
+        CandidateProbeDisposition::Shutdown => {
             let _ = cleanup_binaries(&candidate);
             return Ok(ChangeOutcome::Shutdown);
         }
-        Err(error) => {
+        CandidateProbeDisposition::KeepLastKnownGood => {
+            let error = probe_result
+                .as_ref()
+                .expect_err("失败 disposition 必须保留 probe 错误");
             println!("候选 API/Worker 未通过隔离健康检查，继续使用 last-known-good：{error}");
             let _ = cleanup_binaries(&candidate);
             if ensure_running("last-known-good API", &mut services.api).is_err()

@@ -19,6 +19,7 @@ permissions:
   contents: read
 
 env:
+  CARGO_INCREMENTAL: "0"
   CARGO_TERM_COLOR: always
   CARGO_HTTP_TIMEOUT: "600"
   CARGO_NET_RETRY: "5"
@@ -33,6 +34,9 @@ jobs:
   plan:
     name: CI Plan
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     outputs:
       preflight: ${{ steps.plan.outputs.preflight }}
       rust_gate: ${{ steps.plan.outputs.rust_gate }}
@@ -43,6 +47,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 0
+          path: backend
 
       - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
@@ -63,10 +68,14 @@ jobs:
     needs: plan
     if: ${{ needs.plan.result == 'success' && needs.plan.outputs.preflight == 'true' }}
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 0
+          path: backend
 
       - name: 固定 CI Python 3.12
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
@@ -90,6 +99,8 @@ jobs:
 
       - name: 校验 GitHub Actions 工作流
         uses: docker://rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9
+        with:
+          args: backend/.github/workflows/ci.yml backend/.github/workflows/release.yml
 
       - name: 执行仓库快速预检
         env:
@@ -107,7 +118,6 @@ jobs:
     env:
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
-      CARGO_INCREMENTAL: "0"
     steps:
       - name: 检出后端源码
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -225,7 +235,6 @@ jobs:
     env:
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
-      CARGO_INCREMENTAL: "0"
       RYFRAME_INTEGRATION_RUN_ID: resource-${{ github.run_id }}-${{ github.run_attempt }}
       RYFRAME_MYSQL_INTEGRATION: "1"
       RYFRAME_MYSQL_TLS_INTEGRATION: "1"
@@ -381,7 +390,6 @@ jobs:
     env:
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
-      CARGO_INCREMENTAL: "0"
       RYFRAME_INTEGRATION_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
       RYFRAME_MYSQL_INTEGRATION: "1"
       RYFRAME_MYSQL_TLS_INTEGRATION: "1"
@@ -509,7 +517,6 @@ jobs:
     env:
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
-      CARGO_INCREMENTAL: "0"
     steps:
       - name: 检出后端 PR 提交
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -619,7 +626,6 @@ jobs:
     env:
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
-      CARGO_INCREMENTAL: "0"
     steps:
       - name: 检出后端源码
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -726,7 +732,6 @@ jobs:
           github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     env:
-      CARGO_INCREMENTAL: "0"
       RUSTC_WRAPPER: ""
       SCCACHE_GHA_ENABLED: "true"
       SCCACHE_GHA_VERSION: aws-lc-native-${{ github.run_id }}-${{ github.run_attempt }}
@@ -914,7 +919,6 @@ jobs:
       VITE_APP_PROXY_TARGET: http://127.0.0.1:8080
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
-      CARGO_INCREMENTAL: "0"
       CARGO_TARGET_DIR: ${{ github.workspace }}/target/ci/full-stack/backend
     services:
       mysql:
@@ -1081,8 +1085,13 @@ jobs:
     needs: plan
     if: ${{ needs.plan.result == 'success' && github.event.action != 'edited' }}
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          path: backend
 
       - name: 固定 CI Python 3.12
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
@@ -1134,11 +1143,15 @@ jobs:
           github.event.action != 'edited' &&
           (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     steps:
       - name: 检出后端源码
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 0
+          path: backend
 
       - name: 固定 CI Python 3.12
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405

@@ -1,23 +1,29 @@
 use std::{
     cell::RefCell,
     collections::BTreeSet,
-    path::Path,
+    fs,
+    path::{Path, PathBuf},
     sync::{
         Arc, Barrier,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread,
     time::{Duration, Instant},
 };
 
 use super::dev::{
-    ArtifactAction, BuildPlan, ChangeKind, ChangeOutcome, CycleControl, DEV_API_FEATURES,
-    MigrationValidation, ReadyKind, RuntimeInputPaths, SaveCase, TOOL_SELF_CHANGED_EXIT_CODE,
-    api_command, available_ports, classify_change, combine_failures, failure_exit_code, ready_kind,
-    start_worker_after_api_ready, switch_services_with_rollback, tool_self_changed_error,
-    wait_services_ready_until, wait_services_ready_until_controlled, worker_command,
+    ArtifactAction, BuildPlan, CandidateProbeDisposition, ChangeKind, ChangeOutcome, CycleControl,
+    DEV_API_FEATURES, MigrationValidation, ProbeResult, ReadyKind, RuntimeInputPaths, SaveCase,
+    StepResult, TOOL_SELF_CHANGED_EXIT_CODE, api_command, available_ports,
+    candidate_probe_disposition, classify_change, combine_failures, failure_exit_code, ready_kind,
+    run_migration_validation, start_worker_after_api_ready, switch_services_with_rollback,
+    tool_self_changed_error, wait_services_ready_until, wait_services_ready_until_controlled,
+    worker_command,
 };
-use super::watch::{ChangeBatch, SourceRevision, SourceRevisionTracker};
+use super::{
+    process::ChildGroup,
+    watch::{ChangeBatch, SourceRevision, SourceRevisionTracker, SourceWatcher},
+};
 
 #[test]
 fn development_changes_are_classified_by_runtime_impact() {
@@ -58,6 +64,11 @@ fn development_changes_are_classified_by_runtime_impact() {
         ("xtask/src/dev.rs", ChangeKind::ToolSelf),
         ("xtask/Cargo.toml", ChangeKind::ToolSelf),
         ("xtask/build.rs", ChangeKind::ToolSelf),
+        ("vendor/sqlx-mysql-only/src/lib.rs", ChangeKind::BuildGraph),
+        (
+            "crates/future-backend/src/lib.rs",
+            ChangeKind::UnknownBackend,
+        ),
         ("Cargo.lock", ChangeKind::BuildGraph),
     ] {
         assert_eq!(classify_change(path), expected, "错误分类 {path}");
@@ -147,6 +158,56 @@ fn persistence_changes_have_distinct_build_and_verification_plans() {
             case.label
         );
     }
+}
+
+#[test]
+fn migration_validation_is_superseded_during_the_running_process() {
+    let root = std::env::temp_dir().join(format!(
+        "ryframe-xtask-migration-supersede-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("config")).unwrap();
+    fs::create_dir_all(root.join("locales")).unwrap();
+    let config = root.join("config/app.dev.toml");
+    fs::write(&config, "[app]\nport = 8080\n").unwrap();
+    let migrate = write_slow_migration_stub(&root);
+    let watcher = SourceWatcher::new(&root).unwrap();
+    thread::sleep(Duration::from_millis(100));
+    let plan = BuildPlan::from_changes(&ChangeBatch {
+        revision: watcher.current_revision(),
+        paths: ["crates/ryframe/src/bin/ryframe_migrate.rs".to_owned()]
+            .into_iter()
+            .collect(),
+    });
+    let changed_config = config.clone();
+    let changed = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(250));
+        fs::write(changed_config, "[app]\nport = 8081\n").unwrap();
+    });
+    let group = ChildGroup::new().unwrap();
+    let shutdown = AtomicBool::new(false);
+    let mut lkg_check = None;
+    let started = Instant::now();
+
+    let result = run_migration_validation(
+        &group,
+        &root,
+        &migrate,
+        &root.join("config"),
+        &root.join("locales"),
+        &shutdown,
+        &watcher,
+        &plan,
+        &mut lkg_check,
+    )
+    .unwrap();
+
+    changed.join().unwrap();
+    assert_eq!(result, StepResult::Superseded);
+    assert!(started.elapsed() < Duration::from_secs(3));
+    drop(watcher);
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -278,6 +339,27 @@ fn development_plan_unions_every_path_in_the_batch() {
     assert_eq!(plan.worker, ArtifactAction::Rebuild);
     assert!(plan.restart_pair);
     assert!(!plan.migrate);
+}
+
+#[test]
+fn unknown_backend_rebuilds_runtime_pair_without_migration_validation() {
+    let plan = BuildPlan::from_changes(&ChangeBatch {
+        revision: SourceRevision::from_value(8),
+        paths: ["crates/future-backend/src/lib.rs".to_owned()]
+            .into_iter()
+            .collect(),
+    });
+
+    assert_eq!(
+        plan.reasons,
+        [ChangeKind::UnknownBackend].into_iter().collect()
+    );
+    assert_eq!(plan.api, ArtifactAction::Rebuild);
+    assert_eq!(plan.worker, ArtifactAction::Rebuild);
+    assert!(plan.restart_pair);
+    assert!(!plan.migrate);
+    assert_eq!(plan.migration, MigrationValidation::None);
+    assert_eq!(plan.cargo_invocations(), 2);
 }
 
 #[test]
@@ -650,6 +732,19 @@ fn probe_reports_health_and_cleanup_failures_together() {
 }
 
 #[test]
+fn invalid_config_probe_keeps_last_known_good_out_of_promotion() {
+    let invalid_config = Err::<ProbeResult, _>("候选配置字段类型无效".into());
+    let disposition = candidate_probe_disposition(&invalid_config);
+    let mut active = "last-known-good";
+    if disposition == CandidateProbeDisposition::Promote {
+        active = "candidate";
+    }
+
+    assert_eq!(disposition, CandidateProbeDisposition::KeepLastKnownGood);
+    assert_eq!(active, "last-known-good");
+}
+
+#[test]
 fn candidate_start_failure_restores_last_known_good() {
     #[derive(Debug, PartialEq)]
     struct FakeServices {
@@ -804,4 +899,23 @@ fn candidate_start_success_cleans_previous_after_start() {
         calls.into_inner(),
         ["stop:previous", "start:candidate", "cleanup:previous"]
     );
+}
+
+#[cfg(windows)]
+fn write_slow_migration_stub(root: &Path) -> PathBuf {
+    let path = root.join("slow-migrate.cmd");
+    fs::write(&path, "@echo off\r\nping -n 31 127.0.0.1 >NUL\r\n").unwrap();
+    path
+}
+
+#[cfg(unix)]
+fn write_slow_migration_stub(root: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = root.join("slow-migrate.sh");
+    fs::write(&path, "#!/bin/sh\nsleep 30\n").unwrap();
+    let mut permissions = fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&path, permissions).unwrap();
+    path
 }

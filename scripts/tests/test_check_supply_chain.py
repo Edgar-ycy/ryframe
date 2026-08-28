@@ -29,7 +29,7 @@ def policy(
     local_patch_licenses: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "tools": {
             "cargo-audit": "0.22.2",
             "cargo-deny": "0.20.2",
@@ -42,6 +42,22 @@ def policy(
         "vulnerability_gate": {
             "severities": ["HIGH", "CRITICAL"],
             "exceptions": vulnerabilities or [],
+        },
+        "runtime_feature_tree_gate": {
+            "profiles": [
+                {"name": "API", "features": ["bin-api", "runtime-swagger-ui"]},
+                {"name": "Worker", "features": ["bin-worker"]},
+            ],
+            "required_packages": ["aws-lc-rs", "aws-lc-sys"],
+            "required_features": {
+                "jsonwebtoken": ["aws_lc_rs"],
+                "reqwest": ["__rustls-aws-lc-rs"],
+                "rustls": ["aws_lc_rs"],
+                "sqlx": ["tls-rustls-aws-lc-rs"],
+                "tokio-rustls": ["aws_lc_rs"],
+            },
+            "forbidden_packages": ["ring"],
+            "forbidden_features": {"rustls": ["ring"]},
         },
         "dependency_graph_exceptions": [
             {
@@ -200,6 +216,36 @@ class SupplyChainPolicyTests(unittest.TestCase):
             path = self.write_json(Path(raw), "policy.json", policy())
             loaded = MODULE.load_policy(path, today=dt.date(2026, 8, 20))
         self.assertEqual(loaded["tools"]["trivy"], "0.72.0")
+
+    def test_runtime_feature_tree_policy_rejects_malformed_contracts(self) -> None:
+        invalid_policies = []
+        missing_profile_features = policy()
+        del missing_profile_features["runtime_feature_tree_gate"]["profiles"][0][
+            "features"
+        ]
+        invalid_policies.append(missing_profile_features)
+        duplicate_profiles = policy()
+        duplicate_profiles["runtime_feature_tree_gate"]["profiles"][1]["name"] = (
+            "API"
+        )
+        invalid_policies.append(duplicate_profiles)
+        overlapping_package = policy()
+        overlapping_package["runtime_feature_tree_gate"]["forbidden_packages"] = [
+            "aws-lc-rs"
+        ]
+        invalid_policies.append(overlapping_package)
+        overlapping_feature = policy()
+        overlapping_feature["runtime_feature_tree_gate"]["forbidden_features"] = {
+            "rustls": ["aws_lc_rs"]
+        }
+        invalid_policies.append(overlapping_feature)
+
+        with self.temporary_directory() as raw:
+            directory = Path(raw)
+            for index, invalid in enumerate(invalid_policies):
+                path = self.write_json(directory, f"runtime-policy-{index}.json", invalid)
+                with self.subTest(index=index), self.assertRaises(MODULE.PolicyError):
+                    MODULE.load_policy(path, today=dt.date(2026, 8, 20))
 
     def test_local_patch_license_matches_registry_and_hash_fallback(self) -> None:
         with self.temporary_directory() as raw:
@@ -790,6 +836,89 @@ jobs:
         )
         self.assertEqual(len(errors), 1)
         self.assertIn("optional-package v1.2.3", errors[0])
+
+    def test_crypto_feature_tree_accepts_aws_lc_ring_compatibility_features(self) -> None:
+        tree = """\
+aws-lc-rs v1.17.0|alloc,aws-lc-sys,default,ring-io,ring-sig-verify
+aws-lc-sys v0.41.0|prebuilt-nasm
+jsonwebtoken v11.0.0|aws_lc_rs
+reqwest v0.13.4|__rustls,__rustls-aws-lc-rs,rustls
+rustls v0.23.40|aws-lc-rs,aws_lc_rs,std,tls12
+sqlx v0.9.0|runtime-tokio,tls-rustls-aws-lc-rs
+tokio-rustls v0.26.4|aws_lc_rs,aws-lc-rs
+"""
+
+        gate = policy()["runtime_feature_tree_gate"]
+        self.assertEqual(MODULE.crypto_feature_tree_violations(tree, "API", gate), [])
+
+    def test_crypto_feature_tree_rejects_actual_ring_package_or_provider(self) -> None:
+        tree = """\
+aws-lc-rs v1.17.0|default,ring-io,ring-sig-verify
+aws-lc-sys v0.41.0|
+jsonwebtoken v11.0.0|aws_lc_rs
+reqwest v0.13.4|__rustls,rustls
+ring v0.17.14|alloc,default
+rustls v0.23.40|ring,std,tls12
+sqlx v0.9.0|tls-rustls-ring
+tokio-rustls v0.26.4|ring
+"""
+
+        gate = policy()["runtime_feature_tree_gate"]
+        errors = MODULE.crypto_feature_tree_violations(tree, "Worker", gate)
+        self.assertTrue(any("ring package/provider" in error for error in errors))
+        self.assertTrue(any("reqwest" in error for error in errors))
+        self.assertTrue(any("rustls" in error for error in errors))
+        self.assertTrue(any("sqlx" in error for error in errors))
+
+    def test_crypto_feature_tree_fails_closed_on_malformed_output(self) -> None:
+        gate = policy()["runtime_feature_tree_gate"]
+        errors = MODULE.crypto_feature_tree_violations("not-a-package\n", "API", gate)
+
+        self.assertTrue(any("格式无效" in error for error in errors))
+        self.assertTrue(any("缺少 aws-lc-rs" in error for error in errors))
+
+    def test_crypto_feature_tree_rejects_missing_aws_lc_package_or_feature(self) -> None:
+        tree = """\
+aws-lc-rs v1.17.0|default,ring-io,ring-sig-verify
+jsonwebtoken v11.0.0|aws_lc_rs
+reqwest v0.13.4|__rustls-aws-lc-rs
+rustls v0.23.40|aws_lc_rs
+sqlx v0.9.0|runtime-tokio
+tokio-rustls v0.26.4|aws_lc_rs
+"""
+        gate = policy()["runtime_feature_tree_gate"]
+        errors = MODULE.crypto_feature_tree_violations(tree, "Worker", gate)
+
+        self.assertTrue(any("缺少 aws-lc-sys" in error for error in errors))
+        self.assertTrue(any("sqlx" in error for error in errors))
+
+    def test_crypto_feature_tree_commands_are_runtime_targeted(self) -> None:
+        profiles = policy()["runtime_feature_tree_gate"]["profiles"]
+        self.assertEqual(profiles[0]["features"], ["bin-api", "runtime-swagger-ui"])
+        expected_prefix = [
+            "tree",
+            "--locked",
+            "-p",
+            "ryframe",
+            "--no-default-features",
+            "--features",
+        ]
+        expected_suffix = [
+            "--edges",
+            "normal,build",
+            "--prefix",
+            "none",
+            "--format",
+            "{p}|{f}",
+        ]
+        self.assertEqual(
+            MODULE.crypto_feature_tree_args(profiles[0]["features"]),
+            [*expected_prefix, "bin-api,runtime-swagger-ui", *expected_suffix],
+        )
+        self.assertEqual(
+            MODULE.crypto_feature_tree_args(profiles[1]["features"]),
+            [*expected_prefix, "bin-worker", *expected_suffix],
+        )
 
     def test_cyclonedx_requires_components_and_reproducible_identity(self) -> None:
         document = {

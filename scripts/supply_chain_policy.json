@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "tools": {
     "cargo-audit": "0.22.2",
     "cargo-deny": "0.20.2",
@@ -130,6 +130,52 @@
       "CRITICAL"
     ],
     "exceptions": []
+  },
+  "runtime_feature_tree_gate": {
+    "profiles": [
+      {
+        "name": "API",
+        "features": [
+          "bin-api",
+          "runtime-swagger-ui"
+        ]
+      },
+      {
+        "name": "Worker",
+        "features": [
+          "bin-worker"
+        ]
+      }
+    ],
+    "required_packages": [
+      "aws-lc-rs",
+      "aws-lc-sys"
+    ],
+    "required_features": {
+      "jsonwebtoken": [
+        "aws_lc_rs"
+      ],
+      "reqwest": [
+        "__rustls-aws-lc-rs"
+      ],
+      "rustls": [
+        "aws_lc_rs"
+      ],
+      "sqlx": [
+        "tls-rustls-aws-lc-rs"
+      ],
+      "tokio-rustls": [
+        "aws_lc_rs"
+      ]
+    },
+    "forbidden_packages": [
+      "ring"
+    ],
+    "forbidden_features": {
+      "rustls": [
+        "ring"
+      ]
+    }
   },
   "dependency_graph_exceptions": [
     {

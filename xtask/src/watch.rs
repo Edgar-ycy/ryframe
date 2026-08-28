@@ -110,7 +110,9 @@ impl SourceWatcher {
             })?;
 
         watcher.watch(&root, RecursiveMode::NonRecursive)?;
-        for relative in [".cargo", "crates", "config", "catalog", "locales", "xtask"] {
+        for relative in [
+            ".cargo", "crates", "config", "catalog", "locales", "vendor", "xtask",
+        ] {
             let path = root.join(relative);
             if path.is_dir() {
                 watcher.watch(&path, RecursiveMode::Recursive)?;
@@ -209,6 +211,14 @@ pub(crate) fn is_backend_watch_path(path: &str) -> bool {
         return normalized.ends_with(".rs")
             || normalized.ends_with("cargo.toml")
             || normalized.ends_with("build.rs");
+    }
+    if normalized.starts_with("vendor/") {
+        return matches!(
+            Path::new(&normalized)
+                .extension()
+                .and_then(|value| value.to_str()),
+            Some("rs" | "toml" | "lock" | "c" | "cc" | "cpp" | "h" | "hpp" | "s" | "asm")
+        );
     }
     if normalized.starts_with(".cargo/") {
         return matches!(

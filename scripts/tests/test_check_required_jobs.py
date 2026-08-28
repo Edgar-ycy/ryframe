@@ -291,7 +291,8 @@ class RequiredJobsTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertEqual(workflow.count("tool: sccache@0.17.0"), 7)
         self.assertEqual(workflow.count('SCCACHE_GHA_ENABLED: "true"'), 7)
-        self.assertEqual(workflow.count('CARGO_INCREMENTAL: "0"'), 7)
+        self.assertEqual(workflow.count('CARGO_INCREMENTAL: "0"'), 1)
+        self.assertIn('env:\n  CARGO_INCREMENTAL: "0"', workflow)
         self.assertNotIn("RUSTFLAGS:", workflow)
         self.assertEqual(workflow.count("SCCACHE_BASEDIRS:"), 1)
         self.assertNotIn("SCCACHE_DIR:", workflow)
@@ -306,6 +307,23 @@ class RequiredJobsTests(unittest.TestCase):
             ),
             7,
         )
+
+    def test_linux_rust_policy_jobs_use_the_fixed_backend_checkout(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        for job in ("plan", "preflight", "security-audit", "supply-chain"):
+            block = workflow.split(f"\n  {job}:\n", 1)[1].split("\n  #", 1)[0]
+            self.assertIn("path: backend", block, job)
+            self.assertIn("defaults:\n      run:\n        working-directory: backend", block, job)
+        preflight = workflow.split("\n  preflight:\n", 1)[1].split("\n  #", 1)[0]
+        self.assertIn(
+            "args: backend/.github/workflows/ci.yml "
+            "backend/.github/workflows/release.yml",
+            preflight,
+        )
+        security = workflow.split("\n  security-audit:\n", 1)[1].split(
+            "\n  #", 1
+        )[0]
+        self.assertIn("--verify-cargo-graph", security)
 
     def test_aws_lc_sccache_canary_is_cross_checkout_and_strict(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")

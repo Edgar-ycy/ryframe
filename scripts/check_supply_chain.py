@@ -41,6 +41,7 @@ CONTAINER_ACTION_REF = re.compile(r"docker://[A-Za-z0-9_.:/-]+@sha256:[0-9a-f]{6
 INSTALL_TOOL_REF = re.compile(r"([A-Za-z0-9_.-]+)@([0-9]+\.[0-9]+\.[0-9]+)")
 SERVICE_IMAGE_REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:[0-9a-f]{64}")
 PACKAGE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+CARGO_FEATURE_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.+-]*")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 SPDX_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]*")
 PORTABLE_PATH = re.compile(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*")
@@ -205,6 +206,101 @@ def _validate_local_patch_policy(policy: dict[str, Any]) -> None:
             )
 
 
+def _unique_names(
+    value: Any,
+    label: str,
+    *,
+    pattern: re.Pattern[str] = PACKAGE_NAME,
+) -> list[str]:
+    names = _list(value, label)
+    normalized: list[str] = []
+    for index, item in enumerate(names):
+        name = _text(item, f"{label}[{index}]")
+        if pattern.fullmatch(name) is None:
+            raise PolicyError(f"{label}[{index}] 不是合法的 Cargo 名称")
+        normalized.append(name)
+    if not normalized or len(normalized) != len(set(normalized)):
+        raise PolicyError(f"{label} 不得为空或包含重复项")
+    return normalized
+
+
+def _feature_contract(value: Any, label: str) -> dict[str, list[str]]:
+    contract = _object(value, label)
+    if not contract:
+        raise PolicyError(f"{label} 不得为空")
+    normalized: dict[str, list[str]] = {}
+    for package, raw_features in contract.items():
+        if not isinstance(package, str) or PACKAGE_NAME.fullmatch(package) is None:
+            raise PolicyError(f"{label} 包含非法的 Cargo 包名")
+        normalized[package] = _unique_names(
+            raw_features,
+            f"{label}.{package}",
+            pattern=CARGO_FEATURE_NAME,
+        )
+    return normalized
+
+
+def _validate_runtime_feature_tree_policy(policy: dict[str, Any]) -> None:
+    gate = _object(policy["runtime_feature_tree_gate"], "runtime_feature_tree_gate")
+    _exact_keys(
+        gate,
+        {
+            "profiles",
+            "required_packages",
+            "required_features",
+            "forbidden_packages",
+            "forbidden_features",
+        },
+        "runtime_feature_tree_gate",
+    )
+    profiles = _list(gate["profiles"], "runtime_feature_tree_gate.profiles")
+    if not profiles:
+        raise PolicyError("runtime_feature_tree_gate.profiles 不得为空")
+    seen_profiles: set[str] = set()
+    for index, item in enumerate(profiles):
+        label = f"runtime_feature_tree_gate.profiles[{index}]"
+        profile = _object(item, label)
+        _exact_keys(profile, {"name", "features"}, label)
+        name = _text(profile["name"], f"{label}.name")
+        if name in seen_profiles:
+            raise PolicyError(f"{label}.name 重复")
+        seen_profiles.add(name)
+        _unique_names(
+            profile["features"],
+            f"{label}.features",
+            pattern=CARGO_FEATURE_NAME,
+        )
+
+    required_packages = set(
+        _unique_names(
+            gate["required_packages"],
+            "runtime_feature_tree_gate.required_packages",
+        )
+    )
+    forbidden_packages = set(
+        _unique_names(
+            gate["forbidden_packages"],
+            "runtime_feature_tree_gate.forbidden_packages",
+        )
+    )
+    if required_packages & forbidden_packages:
+        raise PolicyError("runtime feature tree 的 required/forbidden package 不得重叠")
+    required_features = _feature_contract(
+        gate["required_features"],
+        "runtime_feature_tree_gate.required_features",
+    )
+    forbidden_features = _feature_contract(
+        gate["forbidden_features"],
+        "runtime_feature_tree_gate.forbidden_features",
+    )
+    for package in required_features.keys() & forbidden_features.keys():
+        if set(required_features[package]) & set(forbidden_features[package]):
+            raise PolicyError(
+                "runtime feature tree 的 required/forbidden feature 不得重叠："
+                f"{package}"
+            )
+
+
 def load_policy(
     path: Path = DEFAULT_POLICY, *, today: dt.date | None = None
 ) -> dict[str, Any]:
@@ -223,11 +319,12 @@ def load_policy(
             "dependency_graph_exceptions",
             "service_images",
             "local_patch_licenses",
+            "runtime_feature_tree_gate",
         },
         "供应链策略",
     )
-    if policy["schema_version"] != 2:
-        raise PolicyError("schema_version 只允许为 2")
+    if policy["schema_version"] != 3:
+        raise PolicyError("schema_version 只允许为 3")
 
     tools = _object(policy["tools"], "tools")
     _exact_keys(tools, set(TOOL_NAMES), "tools")
@@ -236,6 +333,7 @@ def load_policy(
             raise PolicyError(f"工具 {name} 必须固定到完整三段版本")
 
     _validate_local_patch_policy(policy)
+    _validate_runtime_feature_tree_policy(policy)
 
     seen_services: set[tuple[str, str, str]] = set()
     for index, item in enumerate(_list(policy["service_images"], "service_images")):
@@ -1284,6 +1382,73 @@ def resolved_graph_violations(tree_output: str, policy: dict[str, Any]) -> list[
     return errors
 
 
+def crypto_feature_tree_violations(
+    tree_output: str,
+    variant: str,
+    gate: dict[str, Any],
+) -> list[str]:
+    features_by_package: dict[str, set[str]] = {}
+    errors: list[str] = []
+    for line_number, raw_line in enumerate(tree_output.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        package, separator, raw_features = line.partition("|")
+        name, version_separator, _ = package.partition(" v")
+        if not separator or not version_separator or not PACKAGE_NAME.fullmatch(name):
+            errors.append(f"{variant} Cargo feature tree 第 {line_number} 行格式无效")
+            continue
+        features = raw_features.removesuffix(" (*)")
+        features_by_package.setdefault(name, set()).update(
+            feature for feature in features.split(",") if feature
+        )
+
+    for package in gate["forbidden_packages"]:
+        if package in features_by_package:
+            errors.append(f"{variant} 定向运行图包含禁止的 {package} package/provider")
+    for package, forbidden in gate["forbidden_features"].items():
+        enabled = set(forbidden) & features_by_package.get(package, set())
+        if enabled:
+            errors.append(
+                f"{variant} 定向运行图启用了禁止的 {package} provider feature："
+                f"{', '.join(sorted(enabled))}"
+            )
+    for package in gate["required_packages"]:
+        if package not in features_by_package:
+            errors.append(f"{variant} 定向运行图缺少 {package}")
+    for package, required_features in gate["required_features"].items():
+        required = set(required_features)
+        actual = features_by_package.get(package)
+        if actual is None:
+            errors.append(f"{variant} 定向运行图缺少 {package}")
+            continue
+        missing = required - actual
+        if missing:
+            errors.append(
+                f"{variant} 定向运行图的 {package} 缺少 AWS-LC feature："
+                f"{', '.join(sorted(missing))}"
+            )
+    return errors
+
+
+def crypto_feature_tree_args(features: list[str]) -> list[str]:
+    return [
+        "tree",
+        "--locked",
+        "-p",
+        "ryframe",
+        "--no-default-features",
+        "--features",
+        ",".join(features),
+        "--edges",
+        "normal,build",
+        "--prefix",
+        "none",
+        "--format",
+        "{p}|{f}",
+    ]
+
+
 def verify_cargo_graph(policy: dict[str, Any]) -> list[str]:
     completed = subprocess.run(
         [
@@ -1308,7 +1473,28 @@ def verify_cargo_graph(policy: dict[str, Any]) -> list[str]:
     )
     if completed.returncode != 0:
         return [f"cargo tree 执行失败：{completed.stderr.strip()}"]
-    return resolved_graph_violations(completed.stdout, policy)
+    errors = resolved_graph_violations(completed.stdout, policy)
+    gate = policy["runtime_feature_tree_gate"]
+    for profile in gate["profiles"]:
+        variant = profile["name"]
+        completed = subprocess.run(
+            ["cargo", *crypto_feature_tree_args(profile["features"])],
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if completed.returncode != 0:
+            errors.append(
+                f"{variant} 定向 cargo tree 执行失败：{completed.stderr.strip()}"
+            )
+            continue
+        errors.extend(
+            crypto_feature_tree_violations(completed.stdout, variant, gate)
+        )
+    return errors
 
 
 def parse_args() -> argparse.Namespace:

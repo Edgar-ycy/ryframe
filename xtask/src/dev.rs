@@ -47,10 +47,10 @@ mod snapshot;
 #[allow(unused_imports)]
 pub(crate) use measure::run as measure_once;
 #[allow(unused_imports)]
-pub(crate) use orchestrator::run;
+pub(crate) use orchestrator::{CandidateProbeDisposition, candidate_probe_disposition, run};
 
 #[allow(unused_imports)]
-pub(crate) use build::DEV_API_FEATURES;
+pub(crate) use build::{DEV_API_FEATURES, StepResult, run_migration_validation};
 #[allow(unused_imports)]
 pub(crate) use command::{RuntimeInputPaths, api_command, worker_command};
 #[allow(unused_imports)]
@@ -66,7 +66,7 @@ pub(crate) use measure::{
 #[allow(unused_imports)]
 pub(crate) use model::{
     ArtifactAction, Binaries, BuildPlan, ChangeKind, ChangeOutcome, CycleControl,
-    MigrationValidation, classify_change,
+    MigrationValidation, ProbeResult, classify_change,
 };
 #[allow(unused_imports)]
 pub(crate) use services::switch_services_with_rollback;

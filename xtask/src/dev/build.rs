@@ -27,7 +27,8 @@ mod targets;
 pub(crate) use targets::DEV_API_FEATURES;
 use targets::{build_targets, requested_targets};
 
-enum StepResult<T> {
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum StepResult<T> {
     Complete(T),
     Failed,
     Superseded,
@@ -258,7 +259,7 @@ pub(super) fn record_cargo_invocation(counter: Option<&AtomicUsize>) {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_migration_validation(
+pub(crate) fn run_migration_validation(
     group: &ChildGroup,
     root: &Path,
     migrate: &Path,
