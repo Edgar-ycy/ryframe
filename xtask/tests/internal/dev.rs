@@ -180,7 +180,7 @@ fn migration_validation_is_superseded_during_the_running_process() {
             .into_iter()
             .collect(),
     });
-    let changed_config = config.clone();
+    let changed_config = config;
     let changed = thread::spawn(move || {
         thread::sleep(Duration::from_millis(250));
         fs::write(changed_config, "[app]\nport = 8081\n").unwrap();

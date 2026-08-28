@@ -304,6 +304,8 @@ fn suite_variant_selects_the_measured_workload_and_sample_policy() {
     assert!(DevexSuite::RustColdBuild.definition("baseline").is_err());
     assert!(DevexSuite::CargoDevSave.definition("baseline").is_err());
     assert_eq!(DevexSuite::RustColdBuild.minimum_runs("api"), 20);
+    assert_eq!(DevexSuite::RustIncremental.minimum_runs("application"), 5);
+    assert_eq!(DevexSuite::RustIncremental.minimum_runs("workspace"), 20);
     assert_eq!(DevexSuite::CargoDevSave.minimum_runs("api-only"), 20);
     assert_eq!(DevexSuite::CargoDevSave.minimum_runs("cancellation"), 20);
     assert_eq!(DevexSuite::CargoDevSave.minimum_runs("config-only"), 5);
@@ -314,6 +316,22 @@ fn suite_variant_selects_the_measured_workload_and_sample_policy() {
             .contains(&("RYFRAME_DEVEX_SAVE_CASE", "cancellation"))
     );
     assert_eq!(DevexSuite::FrontendFast.minimum_runs("default"), 5);
+
+    let incremental = DevexSuite::RustIncremental
+        .definition("application")
+        .unwrap();
+    assert_eq!(
+        incremental.steps[0].args,
+        &["check", "--locked", "-p", "ryframe-application"]
+    );
+    assert_eq!(incremental.features, &["application"]);
+    assert_eq!(
+        DevexSuite::RustIncremental
+            .incremental_source("application")
+            .unwrap(),
+        Some("crates/ryframe-application/src/lib.rs")
+    );
+    assert!(DevexSuite::RustColdBuild.definition("application").is_err());
 
     let generator = DevexSuite::ResourceGenerator.definition("post").unwrap();
     assert!(generator.steps[0].args.contains(&"{target}"));

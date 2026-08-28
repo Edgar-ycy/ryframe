@@ -141,6 +141,7 @@ impl DevexSuite {
 
     pub(crate) fn minimum_runs(self, variant: &str) -> usize {
         match self {
+            Self::RustIncremental if variant == "application" => 5,
             Self::RustColdBuild | Self::RustIncremental | Self::RustGate | Self::RustSccache => 20,
             Self::CargoDevSave if !matches!(variant, "config-only" | "resource-manifest") => 20,
             _ => 5,
@@ -149,9 +150,8 @@ impl DevexSuite {
 
     pub(crate) const fn variant_help(self) -> &'static str {
         match self {
-            Self::RustColdBuild | Self::RustIncremental | Self::RustSccache => {
-                "api、worker、migrate 或 workspace"
-            }
+            Self::RustIncremental => "application、api、worker、migrate 或 workspace",
+            Self::RustColdBuild | Self::RustSccache => "api、worker、migrate 或 workspace",
             Self::CargoDevSave => {
                 "config-only、api-only、worker-only、shared-runtime、locales、migration-only、resource-manifest 或 cancellation"
             }
@@ -167,13 +167,15 @@ impl DevexSuite {
             return Ok(None);
         }
         let source = match variant {
+            "application" => "crates/ryframe-application/src/lib.rs",
             "api" => "crates/ryframe-api/src/lib.rs",
             "worker" => "crates/ryframe/src/bin/ryframe_worker.rs",
             "migrate" => "crates/ryframe/src/bin/ryframe_migrate.rs",
             "workspace" => "crates/ryframe-kernel/src/lib.rs",
             _ => {
                 return Err(
-                    "Rust suite 的 --variant 只允许 api、worker、migrate 或 workspace".into(),
+                    "rust-incremental 的 --variant 只允许 application、api、worker、migrate 或 workspace"
+                        .into(),
                 );
             }
         };
@@ -197,6 +199,7 @@ fn rust_steps(variant: &str, profile: BuildProfile) -> Result<&'static [StepDefi
         (BuildProfile::Build, "worker") => RUST_BUILD_WORKER,
         (BuildProfile::Build, "migrate") => RUST_BUILD_MIGRATE,
         (BuildProfile::Build, "workspace") => RUST_BUILD_WORKSPACE,
+        (BuildProfile::Check, "application") => RUST_CHECK_APPLICATION,
         (BuildProfile::Check, "api") => RUST_CHECK_API,
         (BuildProfile::Check, "worker") => RUST_CHECK_WORKER,
         (BuildProfile::Check, "migrate") => RUST_CHECK_MIGRATE,
@@ -208,6 +211,7 @@ fn rust_steps(variant: &str, profile: BuildProfile) -> Result<&'static [StepDefi
 
 fn rust_features(variant: &str) -> Result<&'static [&'static str], String> {
     match variant {
+        "application" => Ok(&["application"]),
         "api" => Ok(&["bin-api"]),
         "worker" => Ok(&["bin-worker"]),
         "migrate" => Ok(&["bin-migrate"]),
@@ -373,6 +377,12 @@ const RUST_CHECK_WORKSPACE: &[StepDefinition] = &[StepDefinition {
     working_directory: WorkingDirectory::Backend,
     program: "cargo",
     args: &["check", "--locked", "--workspace"],
+}];
+
+const RUST_CHECK_APPLICATION: &[StepDefinition] = &[StepDefinition {
+    working_directory: WorkingDirectory::Backend,
+    program: "cargo",
+    args: &["check", "--locked", "-p", "ryframe-application"],
 }];
 
 const RUST_BUILD_API: &[StepDefinition] = &[StepDefinition {
