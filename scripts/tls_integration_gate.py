@@ -12,7 +12,6 @@ import socket
 import socketserver
 import ssl
 import subprocess
-import tempfile
 import threading
 import traceback
 from dataclasses import dataclass
@@ -483,35 +482,43 @@ def run_gate(
     output_dir = _reserve_output_dir(artifact_root, run_id)
     print(f"tls_integration_artifacts={output_dir.resolve()}", flush=True)
     failures: list[str] = []
+    material_dir = output_dir / "fixture-material"
     try:
         upstream = _redis_endpoint()
         _check_redis(upstream)
-        with tempfile.TemporaryDirectory(prefix="ryframe-tls-fixture-") as temporary:
-            temporary_dir = Path(temporary)
-            ca_cert, server_key = generate_certificates(
-                temporary_dir, output_dir / "openssl.log"
-            )
-            server_cert = temporary_dir / "server.pem"
-            with FixtureServers(
-                server_cert,
-                server_key,
-                upstream,
-                output_dir / "fixtures.log",
-            ) as fixtures:
-                environment = _test_environment(ca_cert, fixtures)
-                for spec in TESTS:
-                    log_path = output_dir / f"{spec.name}.log"
-                    error = _run_test(
-                        test_command(spec, target_dir, jobs),
-                        environment,
-                        log_path,
-                        timeout_seconds,
-                        backend_root,
-                    )
-                    if error is not None:
-                        failures.append(f"{spec.name}: {error}（{log_path}）")
+        material_dir.mkdir()
+        ca_cert, server_key = generate_certificates(
+            material_dir, output_dir / "openssl.log"
+        )
+        server_cert = material_dir / "server.pem"
+        with FixtureServers(
+            server_cert,
+            server_key,
+            upstream,
+            output_dir / "fixtures.log",
+        ) as fixtures:
+            environment = _test_environment(ca_cert, fixtures)
+            for spec in TESTS:
+                log_path = output_dir / f"{spec.name}.log"
+                error = _run_test(
+                    test_command(spec, target_dir, jobs),
+                    environment,
+                    log_path,
+                    timeout_seconds,
+                    backend_root,
+                )
+                if error is not None:
+                    failures.append(f"{spec.name}: {error}（{log_path}）")
     except (OSError, subprocess.SubprocessError, TlsIntegrationError) as error:
         failures.append(str(error))
+    finally:
+        if material_dir.exists():
+            try:
+                shutil.rmtree(material_dir)
+            except OSError as error:
+                failures.append(
+                    f"清理临时 TLS 证书目录失败（{material_dir}）：{error}"
+                )
 
     summary = "\n".join(failures) if failures else "三个 AWS-LC TLS 出站测试全部通过"
     (output_dir / "summary.txt").write_text(summary + "\n", encoding="utf-8", newline="\n")

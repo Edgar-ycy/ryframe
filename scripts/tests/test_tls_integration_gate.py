@@ -170,6 +170,7 @@ class TlsIntegrationGateTests(unittest.TestCase):
             self.assertEqual(len(output_dirs), 1)
             summary = (output_dirs[0] / "summary.txt").read_text(encoding="utf-8")
             self.assertIn("s3-https: 退出码 9", summary)
+            self.assertFalse((output_dirs[0] / "fixture-material").exists())
 
     def test_existing_artifact_directory_is_never_overwritten(self) -> None:
         with test_directory() as root:
