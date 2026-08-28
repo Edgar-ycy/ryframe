@@ -114,7 +114,7 @@ pub(super) fn verify_backend_snapshots(root: &Path, snapshots: &BackendSnapshots
             "MySQL 基线",
             &root.join("sql").join("ryframe_config.sql"),
             mysql,
-            "cargo run --locked -p ryframe-db --bin export_mysql_snapshot -- sql/ryframe_config.sql",
+            "cargo run --locked -p ryframe-db --features migration --bin export_mysql_snapshot -- sql/ryframe_config.sql",
         )?;
     }
     Ok(())
@@ -126,18 +126,24 @@ pub(crate) fn backend_snapshot_export_args(
     binary: &str,
     output: &Path,
 ) -> Vec<String> {
-    vec![
+    let mut args = vec![
         "run".to_owned(),
         "--locked".to_owned(),
         "--target-dir".to_owned(),
         target_dir.to_owned(),
         "-p".to_owned(),
         package.to_owned(),
+    ];
+    if package == "ryframe-db" && binary == "export_mysql_snapshot" {
+        args.extend(["--features".to_owned(), "migration".to_owned()]);
+    }
+    args.extend([
         "--bin".to_owned(),
         binary.to_owned(),
         "--".to_owned(),
         output.to_string_lossy().into_owned(),
-    ]
+    ]);
+    args
 }
 
 /// 只有实际运行对应 package 的集成测试时，测试环境变量才能生成所需快照。

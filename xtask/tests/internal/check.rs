@@ -14,11 +14,10 @@ use super::check::{
     FrontendProfile, PYTHON_TEST_ARGS, RESOURCE_CI_TARGET_DIR, RESOURCE_VERIFY_TARGET_DIR,
     RepositoryKind, SMART_BACKEND_OPERATIONS, SMART_FEATURE_OPERATIONS, VerifyTargetPolicy,
     WORKSPACE_CLIPPY_ARGS, WorkspaceGraph, analyze_change_surface,
-    append_changed_file_size_warnings, backend_package_operation_args,
-    backend_snapshot_export_args, cargo_operation_jobs, changed_paths, ci_environment_from,
-    ci_target_policy_from, ci_test_jobs_from, classify_changes, complete_verify_selection,
-    consumer_contract_arguments, consumer_contract_plan, default_test_jobs_from,
-    feature_operation_args, feature_test_args, frontend_profile_commands,
+    append_changed_file_size_warnings, backend_package_operation_args, cargo_operation_jobs,
+    changed_paths, ci_environment_from, ci_target_policy_from, ci_test_jobs_from, classify_changes,
+    complete_verify_selection, consumer_contract_arguments, consumer_contract_plan,
+    default_test_jobs_from, feature_operation_args, feature_test_args, frontend_profile_commands,
     load_change_surface_policy, load_consumer_contract_plan, load_workspace_graph,
     minimal_workspace_check_args, needs_consumer_contract, package_tests_generate_snapshots,
     parse_change_surface_policy, resolve_frontend_dir, resolve_target_dir,
@@ -393,30 +392,6 @@ fn resource_frontend_resolution_is_absolute_and_child_process_safe() {
         !resolved.to_string_lossy().starts_with(r"\\?\"),
         "传给 Node 的前端路径不得使用 Windows verbatim 前缀：{}",
         resolved.display()
-    );
-}
-
-#[test]
-fn backend_snapshots_reuse_the_backend_verify_target() {
-    assert_eq!(
-        backend_snapshot_export_args(
-            "target",
-            "ryframe-api",
-            "export_openapi",
-            Path::new("target/xtask/openapi.json"),
-        ),
-        [
-            "run",
-            "--locked",
-            "--target-dir",
-            "target",
-            "-p",
-            "ryframe-api",
-            "--bin",
-            "export_openapi",
-            "--",
-            "target/xtask/openapi.json",
-        ]
     );
 }
 

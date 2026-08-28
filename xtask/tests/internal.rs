@@ -35,6 +35,8 @@ mod workspace;
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
+#[path = "internal/check_snapshot.rs"]
+mod check_snapshot_tests;
 #[path = "internal/check.rs"]
 mod check_tests;
 #[path = "internal/child_environment.rs"]

@@ -98,7 +98,7 @@ pub fn mysql_snapshot_sql() -> String {
          -- schema fingerprint: {}\n\
          -- 唯一事实来源：ryframe-db::migration Migrator 与 Seeder。\n\
          -- 仅供审阅：部署和重置工具不得执行此文件。\n\
-         -- 重新生成命令：cargo run -p ryframe-db --bin export_mysql_snapshot -- sql/ryframe_config.sql\n\n",
+         -- 重新生成命令：cargo run --locked -p ryframe-db --features migration --bin export_mysql_snapshot -- sql/ryframe_config.sql\n\n",
         crate::migration::m20260820_000000_control_baseline::schema_fingerprint()
     );
     for statement in ddl_statements() {

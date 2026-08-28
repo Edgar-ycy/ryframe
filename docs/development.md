@@ -83,7 +83,7 @@ Post 和 Notice 可作为标准 CRUD 示例。导出、发布等特殊动作适�
 
 ```powershell
 cargo run --locked -p ryframe-api --bin export_openapi -- openapi/openapi.json
-cargo run --locked -p ryframe-db --bin export_mysql_snapshot -- sql/ryframe_config.sql
+cargo run --locked -p ryframe-db --features migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
 ```
 
 ## 测试与检查

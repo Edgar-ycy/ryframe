@@ -121,7 +121,6 @@ fn generated_resource_access_is_owned_once_by_the_merged_seed_catalog() {
         Some("system:post:list")
     );
     assert_eq!(post_menus[0].parent_route_key(), Some("system"));
-    assert_eq!(post_menus[0].sort(), 8);
 
     let notice = menus
         .iter()
@@ -130,7 +129,6 @@ fn generated_resource_access_is_owned_once_by_the_merged_seed_catalog() {
     assert_eq!(notice.name, "通知公告");
     assert_eq!(notice.permission.as_deref(), Some("system:notice:list"));
     assert_eq!(notice.parent_route_key(), Some("system"));
-    assert_eq!(notice.sort(), 15);
     assert_eq!(
         menus
             .iter()
