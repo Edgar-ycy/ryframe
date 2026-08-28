@@ -24,6 +24,9 @@ pub(crate) use model::{
     BaselineContract, CacheState, DevexCommand, DevexPairedOptions, DevexRunOptions, DevexSuite,
     PairedArm,
 };
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use preflight::require_frontend_dependencies;
 
 pub(crate) fn parse_command(args: &[String]) -> std::result::Result<DevexCommand, String> {
     let Some(operation) = args.first() else {

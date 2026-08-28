@@ -12,9 +12,10 @@ use super::{
         read_measurement_with_contract,
     },
     devex::{
-        BaselineContract, CacheState, DevexCommand, DevexSuite, PairedArm, PathNormalizer,
-        abba_pair_order, cleanup_successful_sample_target, compare, distribution,
-        filter_environment, sample_target, summarize, with_source_edit,
+        BaselineContract, CacheState, DevexCommand, DevexRunOptions, DevexSuite, PairedArm,
+        PathNormalizer, abba_pair_order, cleanup_successful_sample_target, compare, distribution,
+        filter_environment, require_frontend_dependencies, sample_target, summarize,
+        with_source_edit,
     },
     source_edit::SourceEdit,
 };
@@ -45,6 +46,26 @@ fn successful_targets_follow_suite_storage_policy() {
         .unwrap();
     assert!(!isolated.exists());
     fs::remove_dir_all(run).unwrap();
+}
+
+#[test]
+fn rust_gate_preflight_requires_installed_frontend_dependencies() {
+    let frontend = temporary_directory("rust-gate-frontend-preflight");
+    fs::write(frontend.join("package.json"), b"{}\n").unwrap();
+    let options = DevexRunOptions {
+        suite: DevexSuite::RustGate,
+        variant: "default".to_owned(),
+        cache_state: CacheState::Warm,
+        runs: 20,
+    };
+
+    let error = require_frontend_dependencies(&frontend, &options)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("corepack pnpm install --frozen-lockfile"));
+    fs::create_dir(frontend.join("node_modules")).unwrap();
+    require_frontend_dependencies(&frontend, &options).unwrap();
+    fs::remove_dir_all(frontend).unwrap();
 }
 
 #[test]
@@ -479,6 +500,7 @@ fn cli_rejects_under_sampled_and_unknown_variants() {
 fn environment_snapshot_only_keeps_explicit_safe_names() {
     let environment = filter_environment([
         (OsString::from("CARGO_INCREMENTAL"), OsString::from("0")),
+        (OsString::from("CARGO_NET_OFFLINE"), OsString::from("true")),
         (OsString::from("RYFRAME_VERIFY_JOBS"), OsString::from("8")),
         (OsString::from("RUSTFLAGS"), OsString::from("-Cdebuginfo=0")),
         (
@@ -491,6 +513,7 @@ fn environment_snapshot_only_keeps_explicit_safe_names() {
         ),
     ]);
     assert_eq!(environment.get("CARGO_INCREMENTAL").unwrap(), "0");
+    assert_eq!(environment.get("CARGO_NET_OFFLINE").unwrap(), "true");
     assert_eq!(environment.get("RYFRAME_VERIFY_JOBS").unwrap(), "8");
     assert!(environment.contains_key("RUSTFLAGS"));
     assert!(!environment.contains_key("APP_AUTH_JWT_SECRET"));

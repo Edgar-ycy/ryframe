@@ -65,7 +65,8 @@ pub(super) fn execute(
     })();
     let cleanup = stop_sccache_server(backend_root, options.suite, &session.environment);
     if execution.is_err() {
-        summarize(&session.run_dir)?;
+        // 失败样本可能只写入了 sccache before 快照；摘要不完整不得覆盖原始门禁错误。
+        let _ = summarize(&session.run_dir);
     }
     execution?;
     cleanup?;

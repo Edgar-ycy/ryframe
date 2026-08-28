@@ -17,28 +17,38 @@ pub(super) fn check(
         SuiteRequirement::Ready => executable_available(backend_root, "cargo", &["--version"]),
         SuiteRequirement::Executable(executable) => {
             if definition.requires_frontend {
-                require_frontend_manifest(frontend_root, options, "工作区")?;
+                require_frontend_tooling(frontend_root, options)?;
             }
             executable_available(backend_root, executable, &["--version"])
         }
-        SuiteRequirement::Frontend => {
-            require_frontend_manifest(frontend_root, options, "目录")?;
-            if !frontend_root.join("node_modules").is_dir() {
-                return Err(format!(
-                    "suite `{}` 需要已安装的前端依赖；请先在 {} 运行 pnpm install --frozen-lockfile",
-                    options.suite.as_str(),
-                    frontend_root.display()
-                )
-                .into());
-            }
-            executable_available(frontend_root, "node", &["--version"])?;
-            executable_available(frontend_root, corepack_executable(), &["pnpm", "--version"])
-        }
+        SuiteRequirement::Frontend => require_frontend_tooling(frontend_root, options),
         SuiteRequirement::FrontendFiles => {
             require_frontend_manifest(frontend_root, options, "工作区")?;
             executable_available(backend_root, "cargo", &["--version"])
         }
     }
+}
+
+fn require_frontend_tooling(frontend_root: &Path, options: &DevexRunOptions) -> Result<()> {
+    require_frontend_dependencies(frontend_root, options)?;
+    executable_available(frontend_root, "node", &["--version"])?;
+    executable_available(frontend_root, corepack_executable(), &["pnpm", "--version"])
+}
+
+pub(crate) fn require_frontend_dependencies(
+    frontend_root: &Path,
+    options: &DevexRunOptions,
+) -> Result<()> {
+    require_frontend_manifest(frontend_root, options, "目录")?;
+    if frontend_root.join("node_modules").is_dir() {
+        return Ok(());
+    }
+    Err(format!(
+        "suite `{}` 需要已安装的前端依赖；请先在 {} 运行 corepack pnpm install --frozen-lockfile",
+        options.suite.as_str(),
+        frontend_root.display()
+    )
+    .into())
 }
 
 fn require_frontend_manifest(
