@@ -7,7 +7,10 @@ use std::sync::Arc;
 
 #[cfg(feature = "repositories")]
 use ryframe_application::generated::GeneratedPersistencePorts;
+#[cfg(feature = "migration")]
 use sea_orm_migration::MigrationTrait;
+
+pub const MIGRATION_NAMES: &[&str] = &[];
 
 #[cfg(feature = "repositories")]
 pub mod entities {}
@@ -20,6 +23,7 @@ pub fn register_ports(
     let _ = (router, ports);
 }
 
+#[cfg(feature = "migration")]
 pub fn migrations() -> Vec<Box<dyn MigrationTrait>> {
     vec![]
 }

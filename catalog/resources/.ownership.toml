@@ -198,8 +198,8 @@ content_hash = "e6b96eb8fb0ea32c4396bba74796ca07a165a517c2a8b01b825c062d4a26e8a0
 resource = "__catalog__"
 root = "backend"
 path = "crates/ryframe-db/src/generated/mod.rs"
-source_hash = "a745d1330bcf4f35cca3cd9857ae32aefe3ea9581d7d3c2ea8809219b64e89c6"
-content_hash = "a745d1330bcf4f35cca3cd9857ae32aefe3ea9581d7d3c2ea8809219b64e89c6"
+source_hash = "171d2e62fdfeebbfb2ce1c6a9b23dd4ee5884437a04c9d2e03c3ab3e774a618e"
+content_hash = "171d2e62fdfeebbfb2ce1c6a9b23dd4ee5884437a04c9d2e03c3ab3e774a618e"
 
 [[entries]]
 resource = "notice"
@@ -253,8 +253,8 @@ content_hash = "c1b4b2850b209898204f475e2ab8a44547a313451ca2e857eaeb1ad275751301
 resource = "__catalog__"
 root = "backend"
 path = "crates/ryframe-tenant-db/src/generated/mod.rs"
-source_hash = "29050c9ce7e6fae9f632921a5745f6aeb75e1ede602bfb1e7424b4799ed1ec98"
-content_hash = "29050c9ce7e6fae9f632921a5745f6aeb75e1ede602bfb1e7424b4799ed1ec98"
+source_hash = "f8129fa310e9925332b6db8f698947da8469c69e86d12f45b82f975d8a92fcd0"
+content_hash = "f8129fa310e9925332b6db8f698947da8469c69e86d12f45b82f975d8a92fcd0"
 
 [[entries]]
 resource = "__catalog__"

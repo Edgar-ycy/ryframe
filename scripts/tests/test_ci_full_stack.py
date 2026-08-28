@@ -52,7 +52,7 @@ class FullStackCiTests(unittest.TestCase):
             "APP_SCOPE_ID": "ci-12-3",
         }
 
-    def test_prepare_uses_fixed_buckets_redis_db_and_reset_plan(self) -> None:
+    def test_prepare_uses_reset_plan_and_explicit_migration_commands(self) -> None:
         with test_directory() as root:
             commands: list[list[str]] = []
 
@@ -108,13 +108,28 @@ class FullStackCiTests(unittest.TestCase):
                     "ryframe",
                     "--no-default-features",
                     "--features",
+                    "bin-migrate",
+                    "--bin",
+                    "ryframe-migrate",
+                ],
+            )
+            self.assertEqual(
+                commands[3],
+                [
+                    "cargo",
+                    "build",
+                    "--locked",
+                    "-p",
+                    "ryframe",
+                    "--no-default-features",
+                    "--features",
                     "bin-api",
                     "--bin",
                     "ryframe",
                 ],
             )
             self.assertEqual(
-                commands[-1][-5:],
+                commands[-3][-5:],
                 [
                     "execute",
                     "--plan-hash",
@@ -122,6 +137,11 @@ class FullStackCiTests(unittest.TestCase):
                     "--confirm-reset",
                     "RESET-RYFRAME-test-ci-12-3",
                 ],
+            )
+            migrate = str(root / "target/debug/ryframe-migrate")
+            self.assertEqual(commands[-2], [migrate, "control", "up"])
+            self.assertEqual(
+                commands[-1], [migrate, "tenant-data", "up", "--all"]
             )
 
     def test_wait_for_api_stops_on_success_or_process_exit(self) -> None:

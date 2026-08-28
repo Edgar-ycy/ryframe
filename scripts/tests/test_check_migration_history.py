@@ -41,6 +41,7 @@ class MigrationHistoryTests(unittest.TestCase):
         control_generated = self.control.parent / "generated/mod.rs"
         control_generated.parent.mkdir()
         control_generated.write_text(
+            "pub const MIGRATION_NAMES: &[&str] = &[];\n"
             "pub fn migrations() -> Vec<Box<dyn MigrationTrait>> { vec![] }\n",
             encoding="utf-8",
         )
@@ -50,6 +51,7 @@ class MigrationHistoryTests(unittest.TestCase):
         tenant_generated = self.tenant.parent / "generated/mod.rs"
         tenant_generated.parent.mkdir()
         tenant_generated.write_text(
+            "pub const MIGRATION_NAMES: &[&str] = &[];\n"
             "pub fn migrations() -> Vec<Box<dyn MigrationTrait>> { vec![] }\n",
             encoding="utf-8",
         )
@@ -62,12 +64,21 @@ class MigrationHistoryTests(unittest.TestCase):
         )
         (self.control / "mod.rs").write_text(
             "mod m20260820_000000_control_baseline;\n"
+            "const HANDWRITTEN_MIGRATION_NAMES: &[&str] = &[\n"
+            '    "m20260820_000000_control_baseline",\n'
+            "];\n"
+            "pub fn expected_migration_names() {}\n"
             "m20260820_000000_control_baseline::Migration\n"
             "migrations.extend(crate::generated::migrations());\n",
             encoding="utf-8",
         )
         (self.tenant / "mod.rs").write_text(
-            "mod m20260820_000000_tenant_baseline;\n", encoding="utf-8"
+            "mod m20260820_000000_tenant_baseline;\n"
+            "const HANDWRITTEN_MIGRATION_NAMES: &[&str] = &[\n"
+            '    "m20260820_000000_tenant_baseline",\n'
+            "];\n"
+            "pub fn expected_migration_names() {}\n",
+            encoding="utf-8",
         )
         (self.tenant / "runtime.rs").write_text(
             "m20260820_000000_tenant_baseline::Migration\n"
@@ -121,7 +132,12 @@ class MigrationHistoryTests(unittest.TestCase):
         )
         if tenant:
             (self.tenant / "mod.rs").write_text(
-                f"mod m20260820_000000_tenant_baseline;\nmod {name};\n",
+                f"mod m20260820_000000_tenant_baseline;\nmod {name};\n"
+                "const HANDWRITTEN_MIGRATION_NAMES: &[&str] = &[\n"
+                '    "m20260820_000000_tenant_baseline",\n'
+                f'    "{name}",\n'
+                "];\n"
+                "pub fn expected_migration_names() {}\n",
                 encoding="utf-8",
             )
             (self.tenant / "runtime.rs").write_text(
@@ -133,6 +149,11 @@ class MigrationHistoryTests(unittest.TestCase):
             (self.control / "mod.rs").write_text(
                 "mod m20260820_000000_control_baseline;\n"
                 f"mod {name};\n"
+                "const HANDWRITTEN_MIGRATION_NAMES: &[&str] = &[\n"
+                '    "m20260820_000000_control_baseline",\n'
+                f'    "{name}",\n'
+                "];\n"
+                "pub fn expected_migration_names() {}\n"
                 "m20260820_000000_control_baseline::Migration\n"
                 f"{name}::Migration\n"
                 "migrations.extend(crate::generated::migrations());\n",
@@ -202,6 +223,11 @@ class MigrationHistoryTests(unittest.TestCase):
         (self.control / "mod.rs").write_text(
             "mod m20260820_000000_control_baseline;\n"
             f"mod {name};\n"
+            "const HANDWRITTEN_MIGRATION_NAMES: &[&str] = &[\n"
+            '    "m20260820_000000_control_baseline",\n'
+            f'    "{name}",\n'
+            "];\n"
+            "pub fn expected_migration_names() {}\n"
             "m20260820_000000_control_baseline::Migration\n"
             f"{name}::Migration\n",
             encoding="utf-8",
@@ -210,6 +236,19 @@ class MigrationHistoryTests(unittest.TestCase):
         errors = MODULE.verify_append_only(self.root)
 
         self.assertEqual(errors, [])
+
+    def test_forward_migration_requires_read_only_name_registration(self) -> None:
+        name = "m20260823_010203_add_device"
+        self._create_forward(name)
+        registry = self.control / "mod.rs"
+        registry.write_text(
+            registry.read_text(encoding="utf-8").replace(f'    "{name}",\n', ""),
+            encoding="utf-8",
+        )
+
+        errors = MODULE.verify_append_only(self.root)
+
+        self.assertTrue(any("迁移未加入只读名称注册表" in error for error in errors))
 
     def test_forward_migration_with_rollback_body_is_rejected(self) -> None:
         name = "m20260823_010203_add_device"
@@ -337,7 +376,6 @@ class MigrationHistoryTests(unittest.TestCase):
             'async fn down() { Err(DbErr::Custom("追加迁移".into())) }\n',
             encoding="utf-8",
         )
-
         errors = MODULE.freeze(self.root)
 
         self.assertTrue(any("未实现骨架" in error for error in errors))
@@ -348,6 +386,12 @@ class MigrationHistoryTests(unittest.TestCase):
         source.write_text(
             "pub const INITIAL_RESOURCE_MIGRATION: bool = true;\n"
             "async fn down() { Err(DbErr::Custom(\"只允许追加修复\".into())) }\n",
+            encoding="utf-8",
+        )
+        tenant_generated = self.tenant.parent / "generated/mod.rs"
+        tenant_generated.write_text(
+            'pub const MIGRATION_NAMES: &[&str] = &["m_resource_initial_device"];\n'
+            "pub fn migrations() -> Vec<Box<dyn MigrationTrait>> { vec![] }\n",
             encoding="utf-8",
         )
         _document, entries, load_errors = MODULE.load_lock(
@@ -378,6 +422,19 @@ class MigrationHistoryTests(unittest.TestCase):
                 self.root, self.catalog / "migrations.lock.toml"
             ))
         )
+
+    def test_generated_initial_migration_requires_read_only_name_registration(self) -> None:
+        source = self.root / "crates/ryframe-tenant-db/src/generated/device/migration.rs"
+        source.parent.mkdir(parents=True)
+        source.write_text(
+            "pub const INITIAL_RESOURCE_MIGRATION: bool = true;\n"
+            "async fn down() { Err(DbErr::Custom(\"只允许追加修复\".into())) }\n",
+            encoding="utf-8",
+        )
+
+        errors = MODULE.verify_append_only(self.root)
+
+        self.assertTrue(any("generated migration 未加入只读名称注册表" in error for error in errors))
 
     def test_source_and_existing_lock_hash_cannot_change_together(self) -> None:
         self._commit_all("trusted lock")

@@ -4,12 +4,15 @@
 
 #[cfg(feature = "repositories")]
 use ryframe_application::generated::GeneratedPersistencePorts;
+#[cfg(feature = "migration")]
 use sea_orm_migration::MigrationTrait;
 
 #[cfg(feature = "repositories")]
 pub mod notice;
 #[cfg(feature = "repositories")]
 pub mod post;
+
+pub const MIGRATION_NAMES: &[&str] = &[];
 
 #[cfg(feature = "repositories")]
 pub mod entities {
@@ -26,6 +29,7 @@ pub fn register_ports(
     ports.post = Some(post::port(database));
 }
 
+#[cfg(feature = "migration")]
 pub fn migrations() -> Vec<Box<dyn MigrationTrait>> {
     vec![]
 }

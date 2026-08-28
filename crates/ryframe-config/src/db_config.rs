@@ -41,10 +41,8 @@ pub enum SqlLogLevel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum MigrationMode {
-    /// 执行待处理迁移、写入幂等系统数据并校验数据库结构。
-    #[default]
-    Auto,
     /// 仅校验迁移记录和数据库结构，绝不执行 DDL。
+    #[default]
     Verify,
     /// 禁用迁移检查；该模式仅限隔离环境使用。
     Off,
@@ -60,7 +58,7 @@ pub struct DatabaseConfig {
     /// 慢 SQL 判定阈值（毫秒），默认 200。
     #[serde(default = "default_sql_slow_threshold_ms")]
     pub sql_slow_threshold_ms: u64,
-    /// 启动时的迁移行为；省略时非生产环境默认 `auto`，生产环境默认 `verify`。
+    /// 启动时的迁移行为；省略时默认 `verify`，结构变更只由迁移命令执行。
     #[serde(default)]
     pub migration_mode: MigrationMode,
     /// 唯一写库，也是无从库时的读库。

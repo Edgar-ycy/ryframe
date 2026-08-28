@@ -10,20 +10,20 @@ description.workspace = true
 
 [features]
 default = []
-migration = [
+connection = [
     "dep:ryframe-kernel",
     "dep:ryframe-config",
     "dep:sea-orm",
-    "dep:sea-orm-migration",
-    "dep:async-trait",
     "dep:log",
     "dep:serde",
     "dep:toml",
 ]
+migration = ["connection", "dep:sea-orm-migration", "dep:async-trait"]
 repositories = [
-    "migration",
+    "connection",
     "dep:ryframe-application",
     "dep:ryframe-macro",
+    "dep:async-trait",
     "dep:futures-util",
     "dep:tracing",
     "dep:tracing-subscriber",
@@ -69,7 +69,7 @@ test = false
 [[test]]
 name = "mapping_contracts"
 path = "tests/mapping_contracts.rs"
-required-features = ["repositories"]
+required-features = ["repositories", "migration"]
 
 [[test]]
 name = "mysql_real_protocol"

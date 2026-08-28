@@ -1,9 +1,16 @@
 use ryframe_config::{
-    Environment, JobConfig, MAX_EXPORT_ROWS, MAX_XLSX_DATA_ROWS, ObjectStorageConfig, RedisConfig,
-    ResetConfig, ResourceScopeId,
+    Environment, JobConfig, MAX_EXPORT_ROWS, MAX_XLSX_DATA_ROWS, MigrationMode,
+    ObjectStorageConfig, RedisConfig, ResetConfig, ResourceScopeId,
 };
 
 const _: () = assert!(MAX_EXPORT_ROWS <= MAX_XLSX_DATA_ROWS);
+
+#[test]
+fn runtime_migration_mode_defaults_to_verify_and_rejects_removed_auto() {
+    assert_eq!(MigrationMode::default(), MigrationMode::Verify);
+    let removed: Result<MigrationMode, _> = toml::Value::String("auto".into()).try_into();
+    assert!(removed.is_err());
+}
 
 #[test]
 fn export_limit_cannot_exceed_business_or_xlsx_bounds() {

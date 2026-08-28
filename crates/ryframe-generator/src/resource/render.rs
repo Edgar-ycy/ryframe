@@ -168,7 +168,7 @@ fn render_database(
             "{}#[cfg(feature = \"repositories\")]\npub mod entity;\n#[cfg(feature = \"repositories\")]\nmod repository;\n{}\n#[cfg(feature = \"repositories\")]\npub use repository::port;\n",
             rust_header(resource),
             if resource.bootstrap_migration {
-                "pub mod migration;\n"
+                "#[cfg(feature = \"migration\")]\npub mod migration;\n"
             } else {
                 ""
             }

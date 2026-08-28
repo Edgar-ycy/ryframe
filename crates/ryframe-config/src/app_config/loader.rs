@@ -3,14 +3,14 @@ use std::path::Path;
 use ryframe_kernel::{AppError, AppResult};
 
 use super::{
-    defaults::{apply_job_mode_default, apply_migration_mode_default},
+    defaults::apply_job_mode_default,
     environment_overrides::apply_env_overrides,
     security::{
         reject_production_file_secrets, reject_removed_secret_encoding, resolve_snowflake_worker_id,
     },
     validation::reject_removed_database_fields,
 };
-use crate::{AppConfig, Environment, MigrationMode};
+use crate::{AppConfig, Environment};
 
 impl AppConfig {
     /// 加载配置：app.toml → app.{env}.toml → APP_* 环境变量
@@ -24,15 +24,10 @@ impl AppConfig {
         }
         apply_env_overrides(&mut table)?;
         reject_removed_secret_encoding(&table)?;
-        let migration_mode_was_explicit = table
-            .get("database")
-            .and_then(toml::Value::as_table)
-            .is_some_and(|database| database.contains_key("migration_mode"));
         let job_mode_was_explicit = table
             .get("jobs")
             .and_then(toml::Value::as_table)
             .is_some_and(|jobs| jobs.contains_key("mode"));
-        apply_migration_mode_default(&mut table, environment);
         apply_job_mode_default(&mut table, environment);
         reject_removed_database_fields(&table)?;
 
@@ -47,14 +42,6 @@ impl AppConfig {
         }
 
         config.validate()?;
-        if environment.is_production()
-            && migration_mode_was_explicit
-            && config.database.migration_mode != MigrationMode::Verify
-        {
-            return Err(AppError::Config(
-                "production requires database.migration_mode = \"verify\"; run `ryframe-migrate control up` and `ryframe-migrate tenant-data up --all` before starting the API".into(),
-            ));
-        }
         if environment.is_production()
             && job_mode_was_explicit
             && config.jobs.mode != crate::JobWorkerMode::External

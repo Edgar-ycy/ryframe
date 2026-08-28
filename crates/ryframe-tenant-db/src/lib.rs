@@ -5,22 +5,22 @@
 
 #[cfg(feature = "repositories")]
 pub mod application_ports;
-#[cfg(feature = "migration")]
+#[cfg(feature = "connection")]
 mod error;
-#[cfg(feature = "migration")]
+#[cfg(feature = "connection")]
 pub mod generated;
-#[cfg(feature = "migration")]
+#[cfg(feature = "connection")]
 pub mod migration;
 #[cfg(feature = "repositories")]
 mod placement;
 #[cfg(feature = "repositories")]
 mod placement_repo;
-#[cfg(feature = "migration")]
+#[cfg(feature = "connection")]
 mod registry;
 #[cfg(feature = "repositories")]
 mod router;
 
-#[cfg(feature = "migration")]
+#[cfg(feature = "connection")]
 pub use error::TenantDataError;
 #[cfg(feature = "repositories")]
 pub use placement::{
@@ -28,7 +28,7 @@ pub use placement::{
 };
 #[cfg(feature = "repositories")]
 pub use placement_repo::{PendingTenantDataPlacement, TenantDataPlacementRepository};
-#[cfg(feature = "migration")]
+#[cfg(feature = "connection")]
 pub use registry::{
     TenantDatabasePoolLease, TenantDatabasePoolStats, TenantDatabaseTargetHealthStatus,
     TenantDatabaseTargetMetadata, TenantDatabaseTargetRegistry,
@@ -39,7 +39,7 @@ pub use router::{
     TenantDataSession, TenantDataTargetHandle, TenantDataTargetHealth, TenantDataTargetOccupancy,
     TenantDataTargetVerification, TenantDatabaseRouter,
 };
-#[cfg(feature = "migration")]
+#[cfg(feature = "connection")]
 pub use ryframe_config::SHARED_CONTROL_TARGET_KEY;
-#[cfg(feature = "migration")]
+#[cfg(feature = "connection")]
 pub use ryframe_db::DbResultExt;

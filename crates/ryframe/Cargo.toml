@@ -47,9 +47,9 @@ runtime-database = [
     "runtime-crypto",
     "dep:ryframe-config",
     "dep:ryframe-db",
-    "ryframe-db/migration",
+    "ryframe-db/connection",
     "dep:ryframe-tenant-db",
-    "ryframe-tenant-db/migration",
+    "ryframe-tenant-db/connection",
     "dep:sea-orm",
     "dep:tokio",
     "tokio/macros",
@@ -95,7 +95,11 @@ bin-worker = [
     "ryframe-adapters/spreadsheet",
     "dep:axum",
 ]
-bin-migrate = ["runtime-database"]
+bin-migrate = [
+    "runtime-database",
+    "ryframe-db/migration",
+    "ryframe-tenant-db/migration",
+]
 bin-tenant-data = [
     "runtime-database",
     "ryframe-db/repositories",
@@ -119,7 +123,8 @@ bin-file-maintenance = [
 ]
 bin-reset = [
     "runtime-database",
-    "ryframe-db/repositories",
+    "ryframe-db/migration",
+    "ryframe-tenant-db/migration",
     "dep:ryframe-adapters",
     "ryframe-adapters/redis",
     "dep:ryframe-application",

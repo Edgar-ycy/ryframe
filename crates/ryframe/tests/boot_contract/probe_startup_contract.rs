@@ -1,10 +1,9 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use ryframe::boot::startup::{
-    ApiRunMode, WorkerRunMode, effective_migration_mode, parse_api_run_mode, parse_worker_run_mode,
-    provision_or_verify, wait_for_task_groups_until,
+    ApiRunMode, WorkerRunMode, parse_api_run_mode, parse_worker_run_mode, provision_or_verify,
+    wait_for_task_groups_until,
 };
-use ryframe_config::MigrationMode;
 
 fn arguments(values: &[&str]) -> Vec<String> {
     values.iter().map(ToString::to_string).collect()
@@ -30,26 +29,6 @@ fn probe_modes_are_explicit_and_keep_normal_modes() {
     assert_eq!(worker_probe, WorkerRunMode::Probe);
     assert!(!worker_probe.allows_initialization_writes());
     assert!(parse_worker_run_mode(&arguments(&["--probe", "extra"])).is_err());
-}
-
-#[test]
-fn probe_turns_auto_migration_into_read_only_verification() {
-    assert_eq!(
-        effective_migration_mode(false, MigrationMode::Auto),
-        MigrationMode::Verify
-    );
-    assert_eq!(
-        effective_migration_mode(false, MigrationMode::Verify),
-        MigrationMode::Verify
-    );
-    assert_eq!(
-        effective_migration_mode(false, MigrationMode::Off),
-        MigrationMode::Off
-    );
-    assert_eq!(
-        effective_migration_mode(true, MigrationMode::Auto),
-        MigrationMode::Auto
-    );
 }
 
 #[tokio::test]
@@ -143,6 +122,8 @@ fn api_and_worker_share_control_plane_preparation() {
     }
     assert!(api_main.contains("ControlPlaneStartup::api("));
     assert!(worker_main.contains("ControlPlaneStartup::worker("));
+    assert!(shared.contains("ryframe_db::migration::verify("));
+    assert!(!shared.contains("ryframe_db::migration::up("));
 }
 
 #[test]

@@ -159,7 +159,7 @@ fn render_storage_mod(resources: &[&ResourceIr], storage: StorageKind, header: &
         .iter()
         .map(|resource| {
             let feature_gate = if resource.bootstrap_migration {
-                ""
+                "#[cfg(any(feature = \"repositories\", feature = \"migration\"))]\n"
             } else {
                 "#[cfg(feature = \"repositories\")]\n"
             };
@@ -203,6 +203,12 @@ fn render_storage_mod(resources: &[&ResourceIr], storage: StorageKind, header: &
         .map(|resource| format!("        Box::new({}::migration::Migration),", resource.name))
         .collect::<Vec<_>>()
         .join("\n");
+    let migration_names = selected
+        .iter()
+        .filter(|resource| resource.bootstrap_migration)
+        .map(|resource| format!("    {:?},", super::slice::migration_name(resource)))
+        .collect::<Vec<_>>()
+        .join("\n");
     let arc_import = if storage == StorageKind::TenantData {
         "#[cfg(feature = \"repositories\")]\nuse std::sync::Arc;\n\n"
     } else {
@@ -214,7 +220,7 @@ fn render_storage_mod(resources: &[&ResourceIr], storage: StorageKind, header: &
         String::new()
     };
     format!(
-        "{header}{arc_import}#[cfg(feature = \"repositories\")]\nuse ryframe_application::generated::GeneratedPersistencePorts;\nuse sea_orm_migration::MigrationTrait;\n\n{modules}\n\n#[cfg(feature = \"repositories\")]\npub mod entities {{\n{entity_exports}\n}}\n\n#[cfg(feature = \"repositories\")]\npub fn register_ports({parameter_name}: {parameter_type}, ports: &mut GeneratedPersistencePorts) {{\n{empty_body}{registrations}\n}}\n\npub fn migrations() -> Vec<Box<dyn MigrationTrait>> {{\n    vec![\n{migrations}\n    ]\n}}\n"
+        "{header}{arc_import}#[cfg(feature = \"repositories\")]\nuse ryframe_application::generated::GeneratedPersistencePorts;\n#[cfg(feature = \"migration\")]\nuse sea_orm_migration::MigrationTrait;\n\n{modules}\n\npub const MIGRATION_NAMES: &[&str] = &[\n{migration_names}\n];\n\n#[cfg(feature = \"repositories\")]\npub mod entities {{\n{entity_exports}\n}}\n\n#[cfg(feature = \"repositories\")]\npub fn register_ports({parameter_name}: {parameter_type}, ports: &mut GeneratedPersistencePorts) {{\n{empty_body}{registrations}\n}}\n\n#[cfg(feature = \"migration\")]\npub fn migrations() -> Vec<Box<dyn MigrationTrait>> {{\n    vec![\n{migrations}\n    ]\n}}\n"
     )
 }
 

@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use sea_orm::{ConnectionTrait, DbBackend, DbErr, Statement, TryGetable};
+use sea_orm::DbErr;
+#[cfg(feature = "migration")]
+use sea_orm::{ConnectionTrait, DbBackend, Statement, TryGetable};
 
 mod generated;
 
@@ -31,6 +33,7 @@ impl AccessMenu {
     }
 }
 
+#[cfg(feature = "migration")]
 pub(super) async fn seed_access_catalog<C>(db: &C) -> Result<(), DbErr>
 where
     C: ConnectionTrait + ?Sized,
@@ -114,6 +117,7 @@ where
     Ok(())
 }
 
+#[cfg(feature = "migration")]
 async fn permission_id<C>(db: &C, code: &str) -> Result<Option<i64>, DbErr>
 where
     C: ConnectionTrait + ?Sized,
@@ -129,6 +133,7 @@ where
     Ok(row.map(|row| i64::try_get_by_index(&row, 0)).transpose()?)
 }
 
+#[cfg(feature = "migration")]
 async fn next_permission_id<C>(db: &C) -> Result<i64, DbErr>
 where
     C: ConnectionTrait + ?Sized,
@@ -140,6 +145,7 @@ where
     .await
 }
 
+#[cfg(feature = "migration")]
 async fn menu_id<C>(db: &C, route_key: &str) -> Result<Option<i64>, DbErr>
 where
     C: ConnectionTrait + ?Sized,
@@ -155,6 +161,7 @@ where
     Ok(row.map(|row| i64::try_get_by_index(&row, 0)).transpose()?)
 }
 
+#[cfg(feature = "migration")]
 async fn next_menu_id<C>(db: &C) -> Result<i64, DbErr>
 where
     C: ConnectionTrait + ?Sized,
@@ -166,6 +173,7 @@ where
     .await
 }
 
+#[cfg(feature = "migration")]
 async fn next_catalog_id<C>(db: &C, sql: &'static str) -> Result<i64, DbErr>
 where
     C: ConnectionTrait + ?Sized,

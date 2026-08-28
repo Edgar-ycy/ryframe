@@ -2,21 +2,21 @@
 mod auto_fill;
 #[cfg(feature = "repositories")]
 pub mod cluster;
-#[cfg(feature = "migration")]
+#[cfg(feature = "connection")]
 pub mod connection;
 #[cfg(feature = "repositories")]
 pub mod data_scope;
 #[cfg(feature = "repositories")]
 pub mod database_monitor;
-#[cfg(feature = "migration")]
+#[cfg(feature = "connection")]
 mod db_result;
 #[cfg(feature = "repositories")]
 pub mod entities;
-#[cfg(feature = "migration")]
+#[cfg(feature = "connection")]
 pub mod generated;
 #[cfg(feature = "repositories")]
 mod id_generator;
-#[cfg(feature = "migration")]
+#[cfg(feature = "connection")]
 pub mod migration;
 #[cfg(feature = "repositories")]
 pub mod pagination;
@@ -24,7 +24,7 @@ pub mod pagination;
 pub mod repositories;
 #[cfg(feature = "repositories")]
 pub mod repository;
-#[cfg(feature = "repositories")]
+#[cfg(feature = "connection")]
 pub mod resource_ownership;
 #[cfg(feature = "repositories")]
 pub mod sql_logger;
@@ -38,7 +38,7 @@ pub use cluster::{
 };
 #[cfg(feature = "repositories")]
 pub use database_monitor::SeaOrmDatabaseMonitor;
-#[cfg(feature = "migration")]
+#[cfg(feature = "connection")]
 pub use db_result::DbResultExt;
 #[cfg(feature = "repositories")]
 pub use id_generator::{DatabaseIdGenerator, install as install_id_generator, next_id};

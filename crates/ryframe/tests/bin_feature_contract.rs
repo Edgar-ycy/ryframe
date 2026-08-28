@@ -127,39 +127,60 @@ fn expensive_leaf_capabilities_are_opt_in() {
     assert!(APPLICATION_MANIFEST.contains("default = []"));
     assert!(APPLICATION_MANIFEST.contains("test-support = []"));
     assert!(DB_MANIFEST.contains("default = []"));
+    assert!(DB_MANIFEST.contains("connection = ["));
     assert!(DB_MANIFEST.contains("migration = ["));
     assert!(DB_MANIFEST.contains("repositories = ["));
     assert!(DB_MANIFEST.contains("telemetry = ["));
     assert!(TENANT_DB_MANIFEST.contains("default = []"));
+    assert!(TENANT_DB_MANIFEST.contains("connection = ["));
     assert!(TENANT_DB_MANIFEST.contains("migration = ["));
     assert!(TENANT_DB_MANIFEST.contains("repositories = ["));
 }
 
 #[test]
 fn process_features_select_precise_database_surfaces() {
+    let db_connection = manifest_feature_members(DB_MANIFEST, "connection");
+    assert!(db_connection.contains("dep:sea-orm"));
+    assert!(!db_connection.contains("sea-orm-migration"));
+    assert!(!db_connection.contains("ryframe-application"));
+    assert!(!db_connection.contains("ryframe-macro"));
     let db_migration = manifest_feature_members(DB_MANIFEST, "migration");
+    assert!(db_migration.contains("connection"));
+    assert!(db_migration.contains("dep:sea-orm-migration"));
     assert!(db_migration.contains("dep:async-trait"));
     assert!(!db_migration.contains("ryframe-application"));
     assert!(!db_migration.contains("ryframe-macro"));
     assert!(!db_migration.contains("repositories"));
     let db_repositories = manifest_feature_members(DB_MANIFEST, "repositories");
-    assert!(db_repositories.contains("migration"));
+    assert!(db_repositories.contains("connection"));
+    assert!(!db_repositories.contains("migration"));
+    assert!(!db_repositories.contains("sea-orm-migration"));
     assert!(db_repositories.contains("ryframe-application"));
     assert!(db_repositories.contains("ryframe-macro"));
 
+    let tenant_connection = manifest_feature_members(TENANT_DB_MANIFEST, "connection");
+    assert!(tenant_connection.contains("ryframe-db/connection"));
+    assert!(!tenant_connection.contains("sea-orm-migration"));
+    assert!(!tenant_connection.contains("ryframe-application"));
     let tenant_migration = manifest_feature_members(TENANT_DB_MANIFEST, "migration");
+    assert!(tenant_migration.contains("connection"));
+    assert!(tenant_migration.contains("dep:sea-orm-migration"));
     assert!(tenant_migration.contains("dep:async-trait"));
-    assert!(tenant_migration.contains("ryframe-db/migration"));
+    assert!(!tenant_migration.contains("ryframe-db/migration"));
     assert!(!tenant_migration.contains("ryframe-application"));
     assert!(!tenant_migration.contains("repositories"));
     let tenant_repositories = manifest_feature_members(TENANT_DB_MANIFEST, "repositories");
-    assert!(tenant_repositories.contains("migration"));
+    assert!(tenant_repositories.contains("connection"));
+    assert!(!tenant_repositories.contains("migration"));
+    assert!(!tenant_repositories.contains("sea-orm-migration"));
     assert!(tenant_repositories.contains("ryframe-db/repositories"));
     assert!(tenant_repositories.contains("ryframe-application"));
 
     let database = feature_members("runtime-database");
-    assert!(database.contains("ryframe-db/migration"));
-    assert!(database.contains("ryframe-tenant-db/migration"));
+    assert!(database.contains("ryframe-db/connection"));
+    assert!(database.contains("ryframe-tenant-db/connection"));
+    assert!(!database.contains("ryframe-db/migration"));
+    assert!(!database.contains("ryframe-tenant-db/migration"));
     assert!(!database.contains("repositories"));
 
     let services = feature_members("runtime-services");
@@ -168,6 +189,8 @@ fn process_features_select_precise_database_surfaces() {
 
     let migrate = feature_members("bin-migrate");
     assert!(migrate.contains("runtime-database"));
+    assert!(migrate.contains("ryframe-db/migration"));
+    assert!(migrate.contains("ryframe-tenant-db/migration"));
     assert!(!migrate.contains("repositories"));
 
     let tenant_data = feature_members("bin-tenant-data");
@@ -178,7 +201,9 @@ fn process_features_select_precise_database_surfaces() {
     assert!(maintenance.contains("ryframe-db/repositories"));
 
     let reset = feature_members("bin-reset");
-    assert!(reset.contains("ryframe-db/repositories"));
+    assert!(!reset.contains("ryframe-db/repositories"));
+    assert!(reset.contains("ryframe-db/migration"));
+    assert!(reset.contains("ryframe-tenant-db/migration"));
 }
 
 #[test]

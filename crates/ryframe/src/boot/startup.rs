@@ -1,6 +1,5 @@
 use std::future::Future;
 
-use ryframe_config::MigrationMode;
 use ryframe_kernel::AppError;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,18 +43,6 @@ pub fn parse_worker_run_mode(arguments: &[String]) -> Result<WorkerRunMode, AppE
         _ => Err(AppError::Config(
             "用法: ryframe-worker [--once|--probe]".into(),
         )),
-    }
-}
-
-/// 探活进程不得执行 DDL；普通服务仍遵循配置的迁移模式。
-pub const fn effective_migration_mode(
-    allows_initialization_writes: bool,
-    configured: MigrationMode,
-) -> MigrationMode {
-    if !allows_initialization_writes && matches!(configured, MigrationMode::Auto) {
-        MigrationMode::Verify
-    } else {
-        configured
     }
 }
 

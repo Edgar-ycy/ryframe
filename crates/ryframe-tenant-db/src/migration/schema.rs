@@ -1,9 +1,11 @@
 use sea_orm::{DatabaseBackend, DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement};
-use sea_orm_migration::prelude::MigratorTrait;
 
 use super::catalog::{TENANT_DATA_CATALOG, TENANT_DATA_SCHEMA_FINGERPRINT, TenantDataCatalog};
 use super::normalization::normalize_check_clause;
-use super::runtime::{Migrator, TENANT_DATA_MIGRATION_LEDGER, status};
+use super::{
+    expected_migration_names,
+    status::{TENANT_DATA_MIGRATION_LEDGER, status},
+};
 use catalog::{
     FenceCheckRow, FenceColumnRow, FenceConstraintRow, FenceIndexRow, TenantDataTableRow,
 };
@@ -395,16 +397,15 @@ async fn verify_fence_schema(
 
 async fn verify_resource_ownership_schema(db: &DatabaseConnection) -> Result<(), DbErr> {
     let actual = canonical_table_schema(db, "ryframe_resource_ownership").await?;
-    if actual != super::m20260820_000000_tenant_baseline::RESOURCE_OWNERSHIP_SCHEMA_DESCRIPTOR {
+    if actual != super::baseline_contract::RESOURCE_OWNERSHIP_SCHEMA_DESCRIPTOR {
         return Err(schema_fingerprint_mismatch("resource ownership marker"));
     }
     Ok(())
 }
 
 async fn verify_migration_versions(db: &DatabaseConnection) -> Result<(), DbErr> {
-    let mut expected = Migrator::migrations()
-        .into_iter()
-        .map(|migration| migration.name().to_owned())
+    let mut expected = expected_migration_names()
+        .map(str::to_owned)
         .collect::<Vec<_>>();
     expected.sort_unstable();
     let actual = MigrationVersionRow::find_by_statement(Statement::from_string(

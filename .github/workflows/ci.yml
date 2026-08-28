@@ -887,7 +887,7 @@ jobs:
       APP_DATABASE_USERNAME: root
       APP_DATABASE_PASSWORD: ryframe-ci-password
       APP_DATABASE_TLS_MODE: disabled
-      APP_DATABASE_MIGRATION_MODE: auto
+      APP_DATABASE_MIGRATION_MODE: verify
       APP_REDIS_MODE: required
       APP_REDIS_HOST: 127.0.0.1
       APP_REDIS_PORT: "6379"

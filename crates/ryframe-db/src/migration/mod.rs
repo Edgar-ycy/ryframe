@@ -1,27 +1,43 @@
 //! 仅支持 MySQL 的控制库新基线。
 
+#[cfg(feature = "migration")]
+use sea_orm::TransactionTrait;
 use sea_orm::{
-    ConnectionTrait, DatabaseBackend, DatabaseConnection, DbBackend, FromQueryResult, Statement,
-    TransactionTrait, TryGetable,
+    ConnectionTrait, DatabaseBackend, DatabaseConnection, DbBackend, DbErr, FromQueryResult,
+    Statement, TryGetable,
 };
+#[cfg(feature = "migration")]
 use sea_orm_migration::prelude::*;
 
 mod access_catalog;
+mod baseline_contract;
+#[cfg(feature = "migration")]
 mod m20260820_000000_control_baseline;
 mod schema;
+#[cfg(feature = "migration")]
 mod seeder;
 
 pub use access_catalog::{
     AccessMenu, access_menus, access_permission_codes, access_permission_names,
 };
-pub use m20260820_000000_control_baseline::ddl_statements as control_ddl_statements;
+pub use baseline_contract::ddl_statements as control_ddl_statements;
 pub use schema::{
     expected_extra, extract_column_type, normalize_column_type, verify_current_schema,
 };
+#[cfg(feature = "migration")]
 pub use seeder::{mysql_snapshot_sql, seed, validate_seed_statements};
 
+#[cfg(feature = "migration")]
 const MIGRATION_LOCK_SQL_PREFIX: &str = "ryframe:migration:";
 pub const CONTROL_MIGRATION_LEDGER: &str = "seaql_migrations";
+const HANDWRITTEN_MIGRATION_NAMES: &[&str] = &["m20260820_000000_control_baseline"];
+
+pub fn expected_migration_names() -> impl Iterator<Item = &'static str> {
+    HANDWRITTEN_MIGRATION_NAMES
+        .iter()
+        .copied()
+        .chain(crate::generated::MIGRATION_NAMES.iter().copied())
+}
 
 /// 迁移账本状态，适用于部署 CLI 和就绪报告。
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -36,13 +52,15 @@ impl MigrationStatus {
     }
 }
 
+#[cfg(feature = "migration")]
 pub struct Migrator;
 
 /// 当前唯一控制库 baseline 的稳定 schema 指纹。
 pub fn schema_fingerprint() -> String {
-    m20260820_000000_control_baseline::schema_fingerprint()
+    baseline_contract::schema_fingerprint()
 }
 
+#[cfg(feature = "migration")]
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
@@ -60,6 +78,7 @@ impl MigratorTrait for Migrator {
 /// 应用待执行迁移，幂等地初始化系统数据，并校验 schema。
 ///
 /// 这是唯一允许执行 DDL 的操作，供独立部署任务使用，而非生产 API 启动过程。
+#[cfg(feature = "migration")]
 pub async fn up(db: &DatabaseConnection) -> Result<(), DbErr> {
     ensure_mysql(db)?;
     verify_mysql_80(db).await?;
@@ -91,6 +110,7 @@ pub async fn verify(db: &DatabaseConnection) -> Result<(), DbErr> {
             status.applied, status.expected
         )));
     }
+    verify_migration_versions(db).await?;
     verify_current_schema(db)
         .await
         .map_err(|error| DbErr::Custom(format!("schema verification failed: {error}")))
@@ -100,7 +120,7 @@ pub async fn verify(db: &DatabaseConnection) -> Result<(), DbErr> {
 pub async fn status(db: &DatabaseConnection) -> Result<MigrationStatus, DbErr> {
     ensure_mysql(db)?;
     verify_mysql_80(db).await?;
-    let expected = Migrator::migrations().len();
+    let expected = expected_migration_names().count();
     let ledger_exists = scalar_i64(
         db,
         "SELECT COUNT(*) FROM information_schema.tables \
@@ -120,6 +140,37 @@ pub async fn status(db: &DatabaseConnection) -> Result<MigrationStatus, DbErr> {
 struct ServerIdentityRow {
     version: String,
     version_comment: String,
+}
+
+#[derive(Debug, FromQueryResult)]
+struct MigrationVersionRow {
+    version: String,
+}
+
+async fn verify_migration_versions(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let actual = MigrationVersionRow::find_by_statement(Statement::from_string(
+        DbBackend::MySql,
+        "SELECT version FROM seaql_migrations ORDER BY version",
+    ))
+    .all(db)
+    .await?
+    .into_iter()
+    .map(|migration| migration.version)
+    .collect::<Vec<_>>();
+    if !migration_versions_match(&actual) {
+        return Err(DbErr::Custom(
+            "control migration ledger versions do not match this application build".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn migration_versions_match(actual: &[String]) -> bool {
+    let mut expected = expected_migration_names()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    expected.sort_unstable();
+    actual == expected
 }
 
 /// 仅接受支持受约束 CHECK 的 MySQL 8.0.16 或更高版本。
@@ -180,6 +231,7 @@ async fn scalar_i64(db: &DatabaseConnection, sql: &str) -> Result<i64, DbErr> {
         .ok_or_else(|| DbErr::Custom(format!("query returned a NULL scalar value: {sql}")))
 }
 
+#[cfg(feature = "migration")]
 async fn migrate_seed_verify<C>(db: &C) -> Result<(), DbErr>
 where
     C: ConnectionTrait + ?Sized,
@@ -196,6 +248,7 @@ where
         .map_err(|error| DbErr::Custom(format!("schema verification failed: {error}")))
 }
 
+#[cfg(feature = "migration")]
 async fn acquire_migration_lock<C>(db: &C) -> Result<(), DbErr>
 where
     C: ConnectionTrait + ?Sized,
@@ -217,6 +270,7 @@ where
     Ok(())
 }
 
+#[cfg(feature = "migration")]
 async fn release_migration_lock<C>(db: &C) -> Result<(), DbErr>
 where
     C: ConnectionTrait + ?Sized,
@@ -236,4 +290,19 @@ where
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ledger_versions_must_match_names_not_only_count() {
+        let mut expected = expected_migration_names()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        expected.sort_unstable();
+        assert!(migration_versions_match(&expected));
+        assert!(!migration_versions_match(&["wrong-version".into()]));
+    }
 }

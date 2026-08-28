@@ -51,6 +51,42 @@ fn assert_control_database_repository_gates(generated: &GeneratedCatalog) {
             .contains("#[cfg(feature = \"repositories\")]\npub fn register_ports(")
     );
     assert!(!database_mod.content.contains("database.clone()"));
+    assert!(
+        database_mod
+            .content
+            .contains("pub const MIGRATION_NAMES: &[&str] = &[];")
+    );
+}
+
+fn assert_tenant_bootstrap_migration_gates(generated: &GeneratedCatalog) {
+    let aggregate = generated
+        .assets
+        .iter()
+        .find(|asset| asset.path == "crates/ryframe-tenant-db/src/generated/mod.rs")
+        .expect("tenant generated 聚合应存在");
+    assert!(
+        aggregate
+            .content
+            .contains("Box::new(device::migration::Migration)")
+    );
+    assert!(
+        aggregate
+            .content
+            .contains("pub const MIGRATION_NAMES: &[&str] = &[\"m_resource_initial_device\"];")
+    );
+    assert!(aggregate.content.contains(
+        "#[cfg(any(feature = \"repositories\", feature = \"migration\"))]\npub mod device;"
+    ));
+    let database_slice = generated
+        .assets
+        .iter()
+        .find(|asset| asset.path == "crates/ryframe-tenant-db/src/generated/device/mod.rs")
+        .expect("应生成 tenant 数据库模块");
+    assert!(
+        database_slice
+            .content
+            .contains("#[cfg(feature = \"migration\")]\npub mod migration;")
+    );
 }
 
 fn device() -> ryframe_generator::ResourceIr {
@@ -808,56 +844,6 @@ fn named_write_rejects_pending_changes_in_other_managed_resources() {
 }
 
 #[test]
-fn control_initial_migration_has_tenant_fk_and_compact_enum_columns() {
-    let source = fs::read_to_string(post_path())
-        .expect("应读取 Post 清单")
-        .replacen(
-            "primary_key = [\"id\"]",
-            "primary_key = [\"id\"]\nbootstrap_migration = true",
-            1,
-        );
-    let spec = ResourceSpec::parse(&source, "catalog/resources/post.toml")
-        .expect("control fixture TOML 应有效");
-    let post = normalize_resource(spec, "catalog/resources/post.toml", "control-schema")
-        .expect("control fixture 应通过 IR");
-    let generated = render_resources(&[post]).expect("control fixture 应生成");
-    let migration = generated
-        .assets
-        .iter()
-        .find(|asset| asset.path.ends_with("post/migration.rs"))
-        .expect("应生成 control 初始迁移")
-        .content
-        .as_str();
-
-    assert!(migration.contains("CONSTRAINT `fk_post_tenant`"));
-    assert!(migration.contains("REFERENCES `sys_tenant` (`tenant_id`)"));
-    assert!(migration.contains("`tenant_id` VARCHAR(64)"));
-    assert!(migration.contains("`status` VARCHAR(1)"));
-    let aggregate = generated
-        .assets
-        .iter()
-        .find(|asset| asset.path == "crates/ryframe-db/src/generated/mod.rs")
-        .expect("control generated 聚合应存在");
-    assert!(
-        aggregate
-            .content
-            .contains("Box::new(post::migration::Migration)")
-    );
-    assert!(aggregate.content.contains("pub mod post;"));
-    assert!(
-        !aggregate
-            .content
-            .contains("#[cfg(feature = \"repositories\")]\npub mod post;")
-    );
-    let database_slice = generated
-        .assets
-        .iter()
-        .find(|asset| asset.path == "crates/ryframe-db/src/generated/post/mod.rs")
-        .expect("应生成 control 数据库模块");
-    assert!(database_slice.content.contains("pub mod migration;"));
-}
-
-#[test]
 fn initial_migration_is_immutable_and_schema_evolution_requires_new_revision() {
     let backend = tempfile::tempdir().expect("应创建后端临时工作区");
     let frontend = tempfile::tempdir().expect("应创建前端临时工作区");
@@ -868,16 +854,7 @@ fn initial_migration_is_immutable_and_schema_evolution_requires_new_revision() {
     };
     let original = device();
     let rendered = render_resources(std::slice::from_ref(&original)).expect("Device 应生成");
-    let aggregate = rendered
-        .assets
-        .iter()
-        .find(|asset| asset.path == "crates/ryframe-tenant-db/src/generated/mod.rs")
-        .expect("tenant generated 聚合应存在");
-    assert!(
-        aggregate
-            .content
-            .contains("Box::new(device::migration::Migration)")
-    );
+    assert_tenant_bootstrap_migration_gates(&rendered);
     write_resource(&rendered, "device", workspace).expect("首次写入应成功");
     let migration_path = backend
         .path()
