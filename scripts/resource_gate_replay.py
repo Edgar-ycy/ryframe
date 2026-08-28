@@ -786,7 +786,9 @@ def execute_in_worktree(
                 stderr=subprocess.STDOUT,
             )
         duration_ms = (time.perf_counter_ns() - started) // 1_000_000
-        decision = load_decision(decision_path)
+        decision = load_decision_after_command(
+            decision_path, command_log, completed.returncode
+        )
         return CommandResult(
             passed=completed.returncode == 0,
             return_code=completed.returncode,
@@ -918,6 +920,19 @@ def load_decision(path: Path) -> ResourceGateDecision:
     if raw["mode"] == "full" and fallback is None:
         raise ReplayConfigurationError("full decision 必须包含 fallback")
     return ResourceGateDecision(raw["recognized"], raw["mode"], fallback, tuple(steps))
+
+
+def load_decision_after_command(
+    decision_path: Path, command_log: Path, return_code: int
+) -> ResourceGateDecision:
+    try:
+        return load_decision(decision_path)
+    except ReplayConfigurationError as error:
+        tail = bounded_log_tail(command_log)
+        detail = f"\n命令日志末尾：\n{tail}" if tail else ""
+        raise ReplayConfigurationError(
+            f"{error}；命令退出码={return_code}{detail}"
+        ) from error
 
 
 def require_arm(

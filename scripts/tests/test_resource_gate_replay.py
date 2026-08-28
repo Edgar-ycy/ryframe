@@ -357,6 +357,14 @@ class ResourceGateReplayTests(unittest.TestCase):
                 encoding="utf-8",
             )
             decision = MODULE.load_decision(decision_path)
+            command_log = fixture / "command.log"
+            command_log.write_text("前置编译精确失败", encoding="utf-8")
+            with self.assertRaisesRegex(
+                MODULE.ReplayConfigurationError, "前置编译精确失败"
+            ):
+                MODULE.load_decision_after_command(
+                    fixture / "missing-decision.json", command_log, 101
+                )
             self.assertTrue(decision.recognized)
             self.assertEqual(decision.mode, "targeted")
             decision_path.write_text(
