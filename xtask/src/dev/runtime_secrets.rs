@@ -10,6 +10,14 @@ const SENSITIVE_KEYS: &[&str] = &[
     "metrics_bearer_token",
 ];
 
+const ALLOWED_CONFIG_FILES: &[&str] = &[
+    "app.toml",
+    "app.dev.toml",
+    "app.test.toml",
+    "app.prod.toml",
+    "feature-matrix.json",
+];
+
 #[derive(Clone, Copy)]
 struct SecretSpec {
     environment: &'static str,
@@ -60,6 +68,7 @@ impl fmt::Debug for RuntimeSecrets {
 
 impl RuntimeSecrets {
     pub(crate) fn capture(config_dir: &Path) -> Result<Self> {
+        validate_config_tree(config_dir)?;
         let merged = load_development_config(config_dir)?;
         reject_unregistered_file_secrets(&merged, &mut Vec::new())?;
         let mut values = BTreeMap::new();
@@ -216,6 +225,12 @@ fn inspect_table(table: &toml::Table, path: &mut Vec<String>) -> Result<()> {
 }
 
 fn inspect_value(value: &toml::Value, path: &mut Vec<String>) -> Result<()> {
+    match sensitive_value_action(value, path)? {
+        SensitiveValueAction::NotSensitive => {}
+        SensitiveValueAction::RegisteredString | SensitiveValueAction::EmptyUnregisteredString => {
+            return Ok(());
+        }
+    }
     match value {
         toml::Value::Table(table) => inspect_table(table, path),
         toml::Value::Array(items) => {
@@ -226,18 +241,39 @@ fn inspect_value(value: &toml::Value, path: &mut Vec<String>) -> Result<()> {
             path.pop();
             Ok(())
         }
-        toml::Value::String(secret)
-            if SENSITIVE_KEYS.contains(&path.last().map(String::as_str).unwrap_or_default())
-                && !secret.is_empty()
-                && !registered_path(path) =>
-        {
+        _ => Ok(()),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum SensitiveValueAction {
+    NotSensitive,
+    RegisteredString,
+    EmptyUnregisteredString,
+}
+
+fn sensitive_value_action(value: &toml::Value, path: &[String]) -> Result<SensitiveValueAction> {
+    if !SENSITIVE_KEYS.contains(&path.last().map(String::as_str).unwrap_or_default()) {
+        return Ok(SensitiveValueAction::NotSensitive);
+    }
+    match (registered_path(path), value) {
+        (true, toml::Value::String(_)) => Ok(SensitiveValueAction::RegisteredString),
+        (false, toml::Value::String(secret)) if secret.is_empty() => {
+            Ok(SensitiveValueAction::EmptyUnregisteredString)
+        }
+        (false, toml::Value::String(_)) => Err(format!(
+            "运行配置包含未登记的敏感字段 {}；请改用受支持的 APP_* 密钥环境变量",
+            path.join(".")
+        )
+        .into()),
+        (registered, _) => {
+            let ownership = if registered { "已登记" } else { "未登记" };
             Err(format!(
-                "运行配置包含未登记的敏感字段 {}；请改用受支持的 APP_* 密钥环境变量",
+                "运行配置包含{ownership}的敏感字段 {}，但值不是字符串；拒绝建立运行快照",
                 path.join(".")
             )
             .into())
         }
-        _ => Ok(()),
     }
 }
 
@@ -253,21 +289,64 @@ fn registered_path(path: &[String]) -> bool {
 }
 
 fn copy_sanitized_tree(source: &Path, target: &Path) -> Result<()> {
-    if !source.is_dir() {
-        return Err(format!("运行配置目录不存在：{}", source.display()).into());
+    validate_config_tree(source)?;
+    copy_sanitized_directory(source, target)
+}
+
+fn validate_config_tree(root: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(root)
+        .map_err(|error| format!("无法读取运行配置目录 {}：{error}", root.display()))?;
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_dir() {
+        return Err(format!("运行配置快照要求普通目录：{}", root.display()).into());
     }
+    let mut entries = fs::read_dir(root)?.collect::<std::io::Result<Vec<_>>>()?;
+    entries.sort_by_key(|entry| entry.file_name());
+    for entry in entries {
+        validate_config_entry(root, &entry.path(), entry.file_type()?)?;
+    }
+    Ok(())
+}
+
+fn validate_config_entry(root: &Path, path: &Path, file_type: fs::FileType) -> Result<()> {
+    if file_type.is_symlink() {
+        return Err(format!("运行配置快照拒绝符号链接：{}", path.display()).into());
+    }
+    if !file_type.is_file() {
+        return Err(format!("运行配置快照拒绝目录或特殊文件：{}", path.display()).into());
+    }
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| format!("运行配置文件越过快照根目录：{}", path.display()))?;
+    if ALLOWED_CONFIG_FILES
+        .iter()
+        .any(|allowed| relative == Path::new(allowed))
+    {
+        Ok(())
+    } else {
+        Err(format!("运行配置快照拒绝未登记的配置文件：{}", path.display()).into())
+    }
+}
+
+fn copy_sanitized_directory(source: &Path, target: &Path) -> Result<()> {
     fs::create_dir_all(target)?;
     let mut entries = fs::read_dir(source)?.collect::<std::io::Result<Vec<_>>>()?;
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
         let source_path = entry.path();
         let target_path = target.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            copy_sanitized_tree(&source_path, &target_path)?;
-        } else if entry.file_type()?.is_file() && is_toml(&source_path) {
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            return Err(format!("运行配置快照拒绝符号链接：{}", source_path.display()).into());
+        }
+        if !file_type.is_file() {
+            return Err(
+                format!("运行配置快照拒绝目录或特殊文件：{}", source_path.display()).into(),
+            );
+        }
+        if is_toml(&source_path) {
             write_sanitized_toml(&source_path, &target_path)?;
-        } else if entry.file_type()?.is_file() {
-            fs::copy(source_path, target_path)?;
+        } else {
+            fs::copy(&source_path, &target_path)?;
         }
     }
     Ok(())
@@ -297,6 +376,17 @@ fn sanitize_table(table: &mut toml::Table, path: &mut Vec<String>) -> Result<()>
 }
 
 fn sanitize_value(value: &mut toml::Value, path: &mut Vec<String>) -> Result<()> {
+    match sensitive_value_action(value, path)? {
+        SensitiveValueAction::RegisteredString => {
+            let toml::Value::String(secret) = value else {
+                unreachable!("敏感值动作已确认字符串类型");
+            };
+            secret.clear();
+            return Ok(());
+        }
+        SensitiveValueAction::EmptyUnregisteredString => return Ok(()),
+        SensitiveValueAction::NotSensitive => {}
+    }
     match value {
         toml::Value::Table(table) => sanitize_table(table, path),
         toml::Value::Array(items) => {
@@ -305,21 +395,6 @@ fn sanitize_value(value: &mut toml::Value, path: &mut Vec<String>) -> Result<()>
                 sanitize_value(item, path)?;
             }
             path.pop();
-            Ok(())
-        }
-        toml::Value::String(secret)
-            if SENSITIVE_KEYS.contains(&path.last().map(String::as_str).unwrap_or_default()) =>
-        {
-            if !registered_path(path) && !secret.is_empty() {
-                return Err(format!(
-                    "运行配置包含未登记的敏感字段 {}；拒绝建立明文快照",
-                    path.join(".")
-                )
-                .into());
-            }
-            if registered_path(path) {
-                secret.clear();
-            }
             Ok(())
         }
         _ => Ok(()),

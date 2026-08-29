@@ -5,7 +5,7 @@ use std::{
 };
 
 use super::{
-    dev::{Binaries, DevSession, RuntimeSecrets},
+    dev::{Binaries, DevSession, RuntimeSecrets, snapshot_config_tree},
     watch::SourceRevision,
 };
 
@@ -232,6 +232,137 @@ fn unregistered_nested_file_secret_fails_closed_before_snapshot() {
         .to_string();
 
     assert!(error.contains("未登记的敏感字段 database.replicas.[].password"));
+    assert!(!fixture.root.join(".local-tests/dev-runtime").exists());
+}
+
+#[test]
+fn non_string_registered_secret_fails_closed_before_snapshot() {
+    let fixture = SnapshotFixture::new("non-string-secret");
+    fs::write(
+        fixture.root.join("config/app.toml"),
+        "[database.primary]\npassword = 123456\n",
+    )
+    .unwrap();
+
+    let error = DevSession::prepare(&fixture.root, SourceRevision::from_value(0))
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("database.primary.password"));
+    assert!(error.contains("值不是字符串"));
+    assert!(!fixture.root.join(".local-tests/dev-runtime").exists());
+}
+
+#[test]
+fn non_string_unregistered_secret_fails_closed_before_snapshot() {
+    let fixture = SnapshotFixture::new("non-string-unregistered-secret");
+    fs::write(
+        fixture.root.join("config/app.toml"),
+        "[[database.replicas]]\nname = 'replica'\npassword = [123456]\n",
+    )
+    .unwrap();
+
+    let error = DevSession::prepare(&fixture.root, SourceRevision::from_value(0))
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("database.replicas.[].password"));
+    assert!(error.contains("值不是字符串"));
+    assert!(!fixture.root.join(".local-tests/dev-runtime").exists());
+}
+
+#[test]
+fn snapshot_rejects_unregistered_non_toml_files() {
+    let fixture = SnapshotFixture::new("unknown-non-toml");
+    let unknown = fixture.root.join("config/runtime.env");
+    fs::write(&unknown, "API_TOKEN=must-not-persist\n").unwrap();
+    let error = DevSession::prepare(&fixture.root, SourceRevision::from_value(0))
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("拒绝未登记的配置文件"));
+    assert!(!fixture.root.join(".local-tests/dev-runtime").exists());
+}
+
+#[test]
+fn snapshot_rejects_unregistered_toml_files() {
+    let fixture = SnapshotFixture::new("unknown-toml");
+    fs::write(
+        fixture.root.join("config/secrets.toml"),
+        "api_token = 'must-not-persist'\n",
+    )
+    .unwrap();
+
+    let error = DevSession::prepare(&fixture.root, SourceRevision::from_value(0))
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("拒绝未登记的配置文件"));
+    assert!(!fixture.root.join(".local-tests/dev-runtime").exists());
+}
+
+#[test]
+fn snapshot_rejects_config_subdirectories() {
+    let fixture = SnapshotFixture::new("config-subdirectory");
+    fs::create_dir(fixture.root.join("config/nested")).unwrap();
+
+    let error = DevSession::prepare(&fixture.root, SourceRevision::from_value(0))
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("拒绝目录或特殊文件"));
+    assert!(!fixture.root.join(".local-tests/dev-runtime").exists());
+}
+
+#[test]
+fn snapshot_copies_the_registered_feature_matrix() {
+    let fixture = SnapshotFixture::new("feature-matrix");
+    let feature_matrix = fixture.root.join("config/feature-matrix.json");
+    fs::write(&feature_matrix, "{\"version\":1,\"packages\":[]}\n").unwrap();
+    let target = fixture.root.join("snapshot");
+
+    snapshot_config_tree(&fixture.root.join("config"), &target).unwrap();
+
+    assert_eq!(
+        fs::read(target.join("feature-matrix.json")).unwrap(),
+        fs::read(feature_matrix).unwrap()
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn snapshot_rejects_symbolic_links() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = SnapshotFixture::new("config-symlink");
+    let outside = fixture.root.join("outside.toml");
+    fs::write(&outside, "[app]\nname = 'outside'\n").unwrap();
+    symlink(&outside, fixture.root.join("config/linked.toml")).unwrap();
+    let error = DevSession::prepare(&fixture.root, SourceRevision::from_value(0))
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("拒绝符号链接"));
+    assert!(!fixture.root.join(".local-tests/dev-runtime").exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn snapshot_rejects_symbolic_links_when_windows_allows_creation() {
+    use std::os::windows::fs::symlink_file;
+
+    let fixture = SnapshotFixture::new("config-symlink");
+    let outside = fixture.root.join("outside.toml");
+    fs::write(&outside, "[app]\nname = 'outside'\n").unwrap();
+    let linked = fixture.root.join("config/linked.toml");
+    if symlink_file(&outside, &linked).is_err() {
+        return;
+    }
+    let error = DevSession::prepare(&fixture.root, SourceRevision::from_value(0))
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("拒绝符号链接"));
     assert!(!fixture.root.join(".local-tests/dev-runtime").exists());
 }
 
