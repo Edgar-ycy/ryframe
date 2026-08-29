@@ -685,7 +685,10 @@ where
 }
 
 fn database_config(database: &str) -> DbConnection {
-    database_config_with_tls(database, DbTlsMode::Disabled)
+    // 真实协议测试必须走与产品默认配置一致的 AWS-LC TLS 链路。
+    // 使用 disabled 会让 caching_sha2_password 的结果依赖 MySQL 进程内认证缓存，
+    // 从而在冷服务或并行执行时随机退回到未启用的 RSA 认证后端。
+    database_config_with_tls(database, DbTlsMode::Required)
 }
 
 fn database_config_with_tls(database: &str, tls_mode: DbTlsMode) -> DbConnection {

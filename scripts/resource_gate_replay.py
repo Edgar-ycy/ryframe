@@ -614,7 +614,11 @@ def controlled_environment(
 ) -> dict[str, str]:
     environment = os.environ.copy()
     if activation_gate:
-        for name in ("RYFRAME_MYSQL_INTEGRATION", "RYFRAME_REDIS_INTEGRATION"):
+        for name in (
+            "RYFRAME_MYSQL_INTEGRATION",
+            "RYFRAME_MYSQL_TLS_INTEGRATION",
+            "RYFRAME_REDIS_INTEGRATION",
+        ):
             if environment.get(name) != "1":
                 raise ReplayConfigurationError(
                     f"activation replay 要求 {name}=1 并准备隔离服务"
@@ -716,6 +720,9 @@ def recorded_environment(
             "activationGate": str(activation_gate).lower(),
             "frontendInstall": "corepack pnpm install --offline --frozen-lockfile",
             "mysqlIntegration": environment.get("RYFRAME_MYSQL_INTEGRATION", "0"),
+            "mysqlTlsIntegration": environment.get(
+                "RYFRAME_MYSQL_TLS_INTEGRATION", "0"
+            ),
             "redisIntegration": environment.get("RYFRAME_REDIS_INTEGRATION", "0"),
         }
     )

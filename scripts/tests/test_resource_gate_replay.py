@@ -428,6 +428,7 @@ class ResourceGateReplayTests(unittest.TestCase):
             self.assertTrue(all(root.is_absolute() for root in roots))
             activation_environment = {
                 "RYFRAME_MYSQL_INTEGRATION": "1",
+                "RYFRAME_MYSQL_TLS_INTEGRATION": "1",
                 "RYFRAME_MYSQL_HOST": "127.0.0.1",
                 "RYFRAME_REDIS_INTEGRATION": "1",
                 "RYFRAME_REDIS_HOST": "localhost",
@@ -448,6 +449,7 @@ class ResourceGateReplayTests(unittest.TestCase):
             self.assertNotIn("CMAKE_CXX_COMPILER_LAUNCHER", environment)
             recorded = MODULE.recorded_environment(environment, True)
             self.assertEqual(recorded["SCCACHE_BASEDIRS_COUNT"], "41")
+            self.assertEqual(recorded["mysqlTlsIntegration"], "1")
             self.assertTrue(
                 recorded["SCCACHE_BASEDIRS_FINGERPRINT"].startswith("sha256:")
             )
