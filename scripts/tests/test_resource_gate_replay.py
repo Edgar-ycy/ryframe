@@ -472,7 +472,7 @@ class ResourceGateReplayTests(unittest.TestCase):
         with mock.patch.object(
             MODULE, "cleanup_worktree", side_effect=["前端清理失败", None]
         ) as cleanup:
-            errors = MODULE.cleanup_created_worktrees(entries)
+            errors = MODULE.cleanup_created_worktrees(entries, Path("allowed"))
         self.assertEqual(errors, ["前端清理失败"])
         self.assertEqual(cleanup.call_count, 2)
         with self.assertRaisesRegex(
@@ -497,10 +497,95 @@ class ResourceGateReplayTests(unittest.TestCase):
             mock.patch.object(MODULE.time, "sleep") as sleep,
         ):
             self.assertIsNone(
-                MODULE.cleanup_worktree(Path("repository"), Path("worktree"), "Windows")
+                MODULE.cleanup_worktree(
+                    Path("repository"),
+                    Path("worktree"),
+                    "Windows",
+                    Path("allowed"),
+                )
             )
         self.assertEqual(run.call_count, 2)
         sleep.assert_called_once_with(0.1)
+
+    def test_cleanup_worktree_removes_partially_unregistered_directory(self) -> None:
+        with isolated_test_dir("resource-replay-partial-worktree") as fixture:
+            repository = fixture / "repository"
+            worktree = (
+                repository
+                / ".local-tests"
+                / "resource-gate-replay"
+                / "session"
+                / "case"
+                / "b"
+            )
+            worktree.mkdir(parents=True)
+            (worktree / "artifact.txt").write_text("locked then released", encoding="utf-8")
+            failed = subprocess.CompletedProcess(
+                ["git", "worktree", "remove"], 128, "", "is not a working tree"
+            )
+            pruned = subprocess.CompletedProcess(
+                ["git", "worktree", "prune"], 0, "", ""
+            )
+            with (
+                mock.patch.object(MODULE.os, "name", "nt"),
+                mock.patch.object(
+                    MODULE.subprocess,
+                    "run",
+                    side_effect=[failed, failed, failed, failed, failed, pruned],
+                ) as run,
+                mock.patch.object(MODULE.time, "sleep"),
+            ):
+                self.assertIsNone(
+                    MODULE.cleanup_worktree(
+                        repository,
+                        worktree,
+                        "Windows",
+                        worktree.parent,
+                    )
+                )
+            self.assertFalse(worktree.exists())
+            self.assertEqual(run.call_count, 6)
+
+    def test_partial_worktree_cleanup_rejects_out_of_scope_directory(self) -> None:
+        with isolated_test_dir("resource-replay-unsafe-worktree") as fixture:
+            repository = fixture / "repository"
+            worktree = fixture / "outside"
+            repository.mkdir()
+            worktree.mkdir()
+            error = MODULE.remove_partial_worktree_directory(
+                worktree, repository / ".local-tests" / "resource-gate-replay"
+            )
+            self.assertIsNotNone(error)
+            self.assertIn("拒绝清理允许范围外目录", error or "")
+            self.assertTrue(worktree.exists())
+
+    def test_partial_worktree_cleanup_retries_nested_file_disappearance(self) -> None:
+        with isolated_test_dir("resource-replay-flaky-rmtree") as fixture:
+            allowed = fixture / "allowed"
+            worktree = allowed / "case" / "f"
+            worktree.mkdir(parents=True)
+            (worktree / "artifact.txt").write_text("artifact", encoding="utf-8")
+            real_rmtree = MODULE.shutil.rmtree
+            calls = 0
+
+            def flaky_rmtree(path: Path | str, *, onexc: object) -> None:
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    raise FileNotFoundError("深层文件已被并发删除")
+                real_rmtree(path, onexc=onexc)
+
+            with (
+                mock.patch.object(MODULE.os, "name", "nt"),
+                mock.patch.object(MODULE.shutil, "rmtree", side_effect=flaky_rmtree),
+                mock.patch.object(MODULE.time, "sleep") as sleep,
+            ):
+                self.assertIsNone(
+                    MODULE.remove_partial_worktree_directory(worktree, allowed)
+                )
+            self.assertEqual(calls, 2)
+            sleep.assert_called_once_with(0.1)
+            self.assertFalse(worktree.exists())
 
     def test_repository_pair_rejects_shared_git_common_dir(self) -> None:
         with isolated_test_dir("resource-replay-common-dir") as fixture:

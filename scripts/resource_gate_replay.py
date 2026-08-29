@@ -10,10 +10,12 @@ import os
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -911,7 +913,8 @@ def execute_in_worktree(
                         backend_worktree,
                         "后端",
                     ),
-                )
+                ),
+                worktree,
             )
         )
         try:
@@ -1052,7 +1055,12 @@ def bounded_log_tail(path: Path, limit: int = 8192) -> str:
     return body.decode("utf-8", errors="replace").replace("\x00", "").strip()
 
 
-def cleanup_worktree(repository: Path, worktree: Path, label: str) -> str | None:
+def cleanup_worktree(
+    repository: Path,
+    worktree: Path,
+    label: str,
+    allowed: Path,
+) -> str | None:
     attempts = 5 if os.name == "nt" else 1
     last_error = ""
     for attempt in range(attempts):
@@ -1070,31 +1078,83 @@ def cleanup_worktree(repository: Path, worktree: Path, label: str) -> str | None
         last_error = cleanup.stderr.strip() or str(cleanup.returncode)
         if os.name == "nt" and attempt + 1 < attempts:
             time.sleep(0.1 * (2**attempt))
-    if worktree.is_dir():
+    directory_error = remove_partial_worktree_directory(worktree, allowed)
+    if directory_error is not None:
+        return (
+            f"无法回收{label} replay worktree {worktree}："
+            f"{last_error}；{directory_error}"
+        )
+    prune = subprocess.run(
+        ["git", "worktree", "prune"],
+        cwd=repository,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if prune.returncode != 0:
+        detail = prune.stderr.strip() or str(prune.returncode)
+        return f"无法 prune {label} replay worktree：{detail}"
+    return None
+
+
+def remove_partial_worktree_directory(worktree: Path, allowed: Path) -> str | None:
+    allowed = allowed.resolve()
+    resolved = worktree.resolve()
+    if resolved == allowed or not resolved.is_relative_to(allowed):
+        return f"拒绝清理允许范围外目录：{resolved}"
+    attempts = 5 if os.name == "nt" else 1
+    last_error = ""
+    for attempt in range(attempts):
         try:
-            worktree.rmdir()
-        except OSError:
-            pass
+            shutil.rmtree(rmtree_path(resolved), onexc=recover_rmtree_entry)
+        except OSError as error:
+            last_error = str(error)
         else:
-            prune = subprocess.run(
-                ["git", "worktree", "prune"],
-                cwd=repository,
-                check=False,
-                capture_output=True,
-            )
-            if prune.returncode == 0:
+            if not resolved.exists():
                 return None
-    return f"无法回收{label} replay worktree {worktree}：{last_error}"
+            last_error = "删除调用返回成功后目录仍存在"
+        if os.name != "nt" or attempt + 1 == attempts:
+            return f"无法删除残留目录 {resolved}：{last_error}"
+        time.sleep(0.1 * (2**attempt))
+    return f"无法删除残留目录 {resolved}：{last_error}"
+
+
+def rmtree_path(path: Path) -> Path | str:
+    if os.name != "nt":
+        return path
+    value = str(path)
+    if value.startswith("\\\\?\\"):
+        return value
+    if value.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + value[2:]
+    return "\\\\?\\" + value
+
+
+def recover_rmtree_entry(
+    function: Callable[[str], object],
+    path: str,
+    error: BaseException,
+) -> None:
+    if isinstance(error, FileNotFoundError):
+        return
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        function(path)
+    except FileNotFoundError:
+        return
 
 
 def cleanup_created_worktrees(
     entries: tuple[tuple[bool, Path, Path, str], ...],
+    allowed: Path,
 ) -> list[str]:
     errors: list[str] = []
     for created, repository, worktree, label in entries:
         if not created:
             continue
-        error = cleanup_worktree(repository, worktree, label)
+        error = cleanup_worktree(repository, worktree, label, allowed)
         if error is not None:
             errors.append(error)
     return errors
