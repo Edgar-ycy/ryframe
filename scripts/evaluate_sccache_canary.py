@@ -11,6 +11,8 @@ class Counters(NamedTuple):
     requests: int
     hits: int
     misses: int
+    c_cpp_hits: int
+    c_cpp_misses: int
     not_cacheable: int
     errors: int
 
@@ -19,6 +21,8 @@ class Counters(NamedTuple):
             self.requests - previous.requests,
             self.hits - previous.hits,
             self.misses - previous.misses,
+            self.c_cpp_hits - previous.c_cpp_hits,
+            self.c_cpp_misses - previous.c_cpp_misses,
             self.not_cacheable - previous.not_cacheable,
             self.errors - previous.errors,
         )
@@ -43,16 +47,22 @@ def _non_negative_int(value: Any, label: str) -> int:
     return value
 
 
-def _count_map(value: Any, label: str) -> int:
+def _counts(value: Any, label: str) -> dict[str, int]:
     if not isinstance(value, dict):
         raise ValueError(f"{label} 必须是对象")
     counts = value.get("counts")
     if not isinstance(counts, dict):
         raise ValueError(f"{label}.counts 必须是对象")
-    return sum(
-        _non_negative_int(count, f"{label}.counts.{name}")
+    if any(not isinstance(name, str) or not name for name in counts):
+        raise ValueError(f"{label}.counts 的分类名必须是非空字符串")
+    return {
+        name: _non_negative_int(count, f"{label}.counts.{name}")
         for name, count in counts.items()
-    )
+    }
+
+
+def _count_map(value: Any, label: str) -> int:
+    return sum(_counts(value, label).values())
 
 
 def _snapshot(document: dict[str, Any], label: str) -> tuple[Counters, tuple[str, ...]]:
@@ -67,12 +77,16 @@ def _snapshot(document: dict[str, Any], label: str) -> tuple[Counters, tuple[str
         "dist_errors",
     ):
         errors += _non_negative_int(stats.get(name), f"{label}.stats.{name}")
+    cache_hits = _counts(stats.get("cache_hits"), f"{label}.stats.cache_hits")
+    cache_misses = _counts(stats.get("cache_misses"), f"{label}.stats.cache_misses")
     counters = Counters(
         requests=_non_negative_int(
             stats.get("requests_executed"), f"{label}.stats.requests_executed"
         ),
-        hits=_count_map(stats.get("cache_hits"), f"{label}.stats.cache_hits"),
-        misses=_count_map(stats.get("cache_misses"), f"{label}.stats.cache_misses"),
+        hits=sum(cache_hits.values()),
+        misses=sum(cache_misses.values()),
+        c_cpp_hits=cache_hits.get("C/C++", 0),
+        c_cpp_misses=cache_misses.get("C/C++", 0),
         not_cacheable=_non_negative_int(
             stats.get("requests_not_cacheable"),
             f"{label}.stats.requests_not_cacheable",
@@ -137,8 +151,17 @@ def evaluate(
     all_delta = warm.subtract(before)
     cold_ms = _duration_ms(timings, "cold_ms")
     warm_ms = _duration_ms(timings, "warm_ms")
-    cacheable = warm_delta.hits + warm_delta.misses
-    hit_rate = warm_delta.hits / cacheable if cacheable else 0.0
+    cold_c_cpp_cacheable = cold_delta.c_cpp_hits + cold_delta.c_cpp_misses
+    warm_c_cpp_cacheable = warm_delta.c_cpp_hits + warm_delta.c_cpp_misses
+    cold_other_cacheable = cold_delta.hits + cold_delta.misses - cold_c_cpp_cacheable
+    warm_other_cacheable = warm_delta.hits + warm_delta.misses - warm_c_cpp_cacheable
+    if cold_other_cacheable < 0 or warm_other_cacheable < 0:
+        raise ValueError("sccache 编译分类累计计数器发生回退")
+    hit_rate = (
+        warm_delta.c_cpp_hits / warm_c_cpp_cacheable
+        if warm_c_cpp_cacheable
+        else 0.0
+    )
     speedup = (cold_ms - warm_ms) / cold_ms
     if cold_delta.not_cacheable == 0:
         non_cacheable_reduction = 1.0 if warm_delta.not_cacheable == 0 else -1.0
@@ -154,10 +177,17 @@ def evaluate(
         errors.append(f"canary 期间出现 {all_delta.errors} 个缓存错误")
     if warm_delta.requests <= 0:
         errors.append("warm 构建没有经过 sccache 编译请求")
-    if cacheable <= 0:
-        errors.append("warm 构建没有可计算命中率的请求")
+    if cold_other_cacheable or warm_other_cacheable:
+        errors.append(
+            "canary 必须只包含 C/C++ 缓存请求，"
+            f"实际 prime={cold_other_cacheable}、warm={warm_other_cacheable}"
+        )
+    if cold_c_cpp_cacheable <= 0:
+        errors.append("prime 构建没有经过 sccache 的 C/C++ 编译请求")
+    if warm_c_cpp_cacheable <= 0:
+        errors.append("warm 构建没有经过 sccache 的 C/C++ 编译请求")
     elif hit_rate < min_hit_rate:
-        errors.append(f"warm 命中率 {hit_rate:.2%} 低于 {min_hit_rate:.0%}")
+        errors.append(f"warm C/C++ 命中率 {hit_rate:.2%} 低于 {min_hit_rate:.0%}")
     if speedup < min_speedup:
         errors.append(f"warm 耗时改善 {speedup:.2%} 低于 {min_speedup:.0%}")
     if non_cacheable_reduction < min_non_cacheable_reduction:
@@ -167,7 +197,7 @@ def evaluate(
         )
 
     report: dict[str, Any] = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "passed": not errors,
         "thresholds": {
             "minWarmHitRate": min_hit_rate,
@@ -177,15 +207,19 @@ def evaluate(
         "cold": {
             "durationMs": cold_ms,
             "requests": cold_delta.requests,
-            "hits": cold_delta.hits,
-            "misses": cold_delta.misses,
+            "cCppHits": cold_delta.c_cpp_hits,
+            "cCppMisses": cold_delta.c_cpp_misses,
+            "cCppCacheableRequests": cold_c_cpp_cacheable,
+            "otherCacheableRequests": cold_other_cacheable,
             "notCacheable": cold_delta.not_cacheable,
         },
         "warm": {
             "durationMs": warm_ms,
             "requests": warm_delta.requests,
-            "hits": warm_delta.hits,
-            "misses": warm_delta.misses,
+            "cCppHits": warm_delta.c_cpp_hits,
+            "cCppMisses": warm_delta.c_cpp_misses,
+            "cCppCacheableRequests": warm_c_cpp_cacheable,
+            "otherCacheableRequests": warm_other_cacheable,
             "notCacheable": warm_delta.not_cacheable,
             "hitRate": hit_rate,
         },
@@ -206,9 +240,9 @@ def render_markdown(report: dict[str, Any]) -> str:
         "### AWS-LC C/C++ sccache canary",
         "",
         f"- 结果：{status}",
-        f"- cold：{cold['durationMs']:.0f} ms（{cold['requests']} 个请求）",
-        f"- warm：{warm['durationMs']:.0f} ms（{warm['requests']} 个请求）",
-        f"- warm 命中率：{warm['hitRate']:.2%}",
+        f"- cold：{cold['durationMs']:.0f} ms（{cold['cCppCacheableRequests']} 个 C/C++ 请求）",
+        f"- warm：{warm['durationMs']:.0f} ms（{warm['cCppCacheableRequests']} 个 C/C++ 请求）",
+        f"- warm C/C++ 命中率：{warm['hitRate']:.2%}",
         f"- 耗时改善：{report['speedupRatio']:.2%}",
         f"- 不可缓存请求改善：{report['nonCacheableReductionRatio']:.2%}",
         f"- 缓存错误：{report['cacheErrors']}",

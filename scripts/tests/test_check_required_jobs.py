@@ -339,14 +339,26 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertIn("canary/source-a", block)
         self.assertIn("canary/source-b", block)
         self.assertIn("SCCACHE_BASEDIRS:", block)
+        self.assertIn('AWS_LC_SYS_CMAKE_BUILDER: "1"', block)
+        self.assertIn("CMAKE_GENERATOR: Ninja", block)
         self.assertIn("CMAKE_C_COMPILER_LAUNCHER: sccache", block)
         self.assertIn("CMAKE_CXX_COMPILER_LAUNCHER: sccache", block)
         self.assertIn('RUSTC_WRAPPER: ""', block)
         self.assertIn("cargo fetch --locked", block)
         self.assertIn("cargo build --locked -p ryframe-auth --lib", block)
         self.assertEqual(block.count("cargo build --locked -p ryframe-auth --lib"), 2)
-        for artifact in ("before.json", "prime.json", "warm.json", "timings.json"):
+        for artifact in (
+            "before.json",
+            "prime.json",
+            "warm.json",
+            "timings.json",
+            "prime-cmake-cache.txt",
+            "warm-cmake-cache.txt",
+        ):
             self.assertIn(artifact, block)
+        self.assertIn("AWS-LC 只启用 C", block)
+        self.assertIn("实际原生 C/C++ 请求", block)
+        self.assertEqual(block.count("CMAKE_C_COMPILER_LAUNCHER(:[^=]*)?=sccache"), 2)
         self.assertIn("scripts/evaluate_sccache_canary.py", block)
         self.assertIn("--min-hit-rate 0.80", block)
         self.assertIn("--min-speedup 0.05", block)

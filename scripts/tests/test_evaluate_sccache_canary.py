@@ -22,14 +22,15 @@ def snapshot(
     not_cacheable: int = 0,
     errors: int = 0,
     basedirs: tuple[str, str] = (BASE_A, BASE_B),
+    compiler_kind: str = "C/C++",
 ) -> dict[str, object]:
     return {
         "stats": {
             "requests_executed": requests,
             "requests_not_cacheable": not_cacheable,
-            "cache_hits": {"counts": {"C/C++": hits}, "adv_counts": {}},
-            "cache_misses": {"counts": {"C/C++": misses}, "adv_counts": {}},
-            "cache_errors": {"counts": {"C/C++": errors}, "adv_counts": {}},
+            "cache_hits": {"counts": {compiler_kind: hits}, "adv_counts": {}},
+            "cache_misses": {"counts": {compiler_kind: misses}, "adv_counts": {}},
+            "cache_errors": {"counts": {compiler_kind: errors}, "adv_counts": {}},
             "cache_timeouts": 0,
             "cache_read_errors": 0,
             "cache_write_errors": 0,
@@ -59,7 +60,9 @@ class EvaluateSccacheCanaryTests(unittest.TestCase):
         report, errors = self.evaluate()
         self.assertEqual(errors, [])
         self.assertTrue(report["passed"])
+        self.assertEqual(report["schemaVersion"], 2)
         self.assertEqual(report["warm"]["requests"], 100)
+        self.assertEqual(report["warm"]["cCppCacheableRequests"], 100)
         self.assertAlmostEqual(report["warm"]["hitRate"], 0.9)
         self.assertAlmostEqual(report["speedupRatio"], 0.2)
 
@@ -78,6 +81,16 @@ class EvaluateSccacheCanaryTests(unittest.TestCase):
             with self.subTest(marker=marker):
                 _, errors = self.evaluate(warm=warm, timings=timings)
                 self.assertTrue(any(marker in error for error in errors))
+
+    def test_rejects_rust_requests_instead_of_native_compilation(self) -> None:
+        report, errors = self.evaluate(
+            prime=snapshot(100, 0, 100, compiler_kind="Rust"),
+            warm=snapshot(200, 90, 110, compiler_kind="Rust"),
+        )
+        self.assertFalse(report["passed"])
+        self.assertTrue(any("只包含 C/C++" in error for error in errors))
+        self.assertTrue(any("prime" in error and "C/C++" in error for error in errors))
+        self.assertTrue(any("warm" in error and "C/C++" in error for error in errors))
 
     def test_requires_exactly_two_distinct_absolute_basedirs(self) -> None:
         for basedirs in (
@@ -126,7 +139,8 @@ class EvaluateSccacheCanaryTests(unittest.TestCase):
     def test_markdown_contains_threshold_results(self) -> None:
         report, _ = self.evaluate()
         markdown = MODULE.render_markdown(report)
-        self.assertIn("warm 命中率：90.00%", markdown)
+        self.assertIn("warm C/C++ 命中率：90.00%", markdown)
+        self.assertIn("100 个 C/C++ 请求", markdown)
         self.assertIn("耗时改善：20.00%", markdown)
         self.assertIn("不可缓存请求改善：100.00%", markdown)
 

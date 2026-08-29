@@ -719,6 +719,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       RUSTC_WRAPPER: ""
+      AWS_LC_SYS_CMAKE_BUILDER: "1"
+      CMAKE_GENERATOR: Ninja
       SCCACHE_GHA_ENABLED: "true"
       SCCACHE_GHA_VERSION: aws-lc-native-${{ github.run_id }}-${{ github.run_attempt }}
       SCCACHE_BASEDIRS: ${{ github.workspace }}/canary/source-a:${{ github.workspace }}/canary/source-b
@@ -794,10 +796,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          target_dir="$GITHUB_WORKSPACE/canary/source-a/target/aws-lc-canary"
           started_ns=$(date +%s%N)
-          CARGO_TARGET_DIR="$GITHUB_WORKSPACE/canary/source-a/target/aws-lc-canary" \
+          CARGO_TARGET_DIR="$target_dir" \
             cargo build --locked -p ryframe-auth --lib
           ended_ns=$(date +%s%N)
+          cmake_cache=$(find "$target_dir" -type f \
+            -path '*/build/aws-lc-sys-*/out/build/CMakeCache.txt' \
+            -print -quit)
+          test -n "$cmake_cache"
+          # 此依赖面关闭 BUILD_LIBSSL/BUILD_TESTING，AWS-LC 只启用 C；
+          # sccache 将实际原生 C/C++ 请求统一记录为 C/C++ 分类。
+          grep -Eq '^CMAKE_C_COMPILER_LAUNCHER(:[^=]*)?=sccache$' "$cmake_cache"
+          cp "$cmake_cache" \
+            "$RUNNER_TEMP/aws-lc-sccache-canary/prime-cmake-cache.txt"
           echo $(( (ended_ns - started_ns) / 1000000 )) \
             > "$RUNNER_TEMP/aws-lc-sccache-canary/cold-ms.txt"
           sccache --show-stats --stats-format=json \
@@ -808,10 +820,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          target_dir="$GITHUB_WORKSPACE/canary/source-b/target/aws-lc-canary"
           started_ns=$(date +%s%N)
-          CARGO_TARGET_DIR="$GITHUB_WORKSPACE/canary/source-b/target/aws-lc-canary" \
+          CARGO_TARGET_DIR="$target_dir" \
             cargo build --locked -p ryframe-auth --lib
           ended_ns=$(date +%s%N)
+          cmake_cache=$(find "$target_dir" -type f \
+            -path '*/build/aws-lc-sys-*/out/build/CMakeCache.txt' \
+            -print -quit)
+          test -n "$cmake_cache"
+          # CXX launcher 仍预配置供依赖面扩展后使用，当前可执行证据只校验 C。
+          grep -Eq '^CMAKE_C_COMPILER_LAUNCHER(:[^=]*)?=sccache$' "$cmake_cache"
+          cp "$cmake_cache" \
+            "$RUNNER_TEMP/aws-lc-sccache-canary/warm-cmake-cache.txt"
           warm_ms=$(( (ended_ns - started_ns) / 1000000 ))
           cold_ms=$(<"$RUNNER_TEMP/aws-lc-sccache-canary/cold-ms.txt")
           printf '{"cold_ms":%s,"warm_ms":%s}\n' "$cold_ms" "$warm_ms" \
