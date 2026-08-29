@@ -95,7 +95,7 @@ fn missing_device_frontend_contract_is_injected_once() {
 }
 
 #[test]
-fn generated_device_frontend_contract_is_not_reinjected() {
+fn basic_generated_device_frontend_contract_is_upgraded_once() {
     let operation_names = [
         "delete_system_devices_by_id",
         "get_system_devices",
@@ -110,28 +110,62 @@ fn generated_device_frontend_contract_is_not_reinjected() {
         .map(|name| format!("    {name}: {{}}\n"))
         .concat();
     let schema = format!(
-        "ApiPageResponse_DeviceVo:\nApiResponse_DeviceVo:\nCreateDeviceDto:\nUpdateDeviceDto:\n{schema_operations}"
+        concat!(
+            "export interface components {{\n    schemas: {{\n",
+            "        ApiPageResponse_DeviceVo: {{}};\n",
+            "        ApiResponse_DeviceVo: {{ data?: {{ id: string }} }};\n",
+            "        CreateDeviceDto: {{}};\n",
+            "        UpdateDeviceDto: {{}};\n",
+            "    }};\n}}\n",
+            "export interface operations {{\n{schema_operations}}}\n",
+        ),
+        schema_operations = schema_operations,
     );
+    let permissions = "\"system:device:list\"".to_owned();
 
+    let upgraded =
+        prepare_device_frontend_contract(permissions.clone(), operations.clone(), schema)
+            .expect("完整 basic generated 契约应可升级")
+            .expect("首次升级应补充 DeviceDetailVo");
+    assert_eq!(upgraded.0, permissions, "升级不得改写已生成权限清单");
+    assert_eq!(upgraded.1, operations, "升级不得改写已生成 operation");
+    let device_vo_reference = "import(\"./core\").components[\"schemas\"][\"DeviceVo\"]";
+    assert_eq!(
+        upgraded.2.matches(device_vo_reference).count(),
+        2,
+        "DeviceDetailVo 本体与 parent 必须复用现有 DeviceVo 的强类型引用"
+    );
+    assert_eq!(upgraded.2.matches("DeviceDetailVo:").count(), 1);
     assert!(
-        prepare_device_frontend_contract("\"system:device:list\"".into(), operations, schema,)
-            .expect("完整生成契约应可识别")
+        prepare_device_frontend_contract(upgraded.0, upgraded.1, upgraded.2)
+            .expect("升级后的 generated 契约应可识别")
             .is_none(),
-        "真实生成的 Device 契约不得再次注入 fixture"
+        "升级后的 generated 契约必须零修改"
     );
 }
 
 #[test]
 fn partial_device_frontend_contract_fails_closed() {
-    let result = prepare_device_frontend_contract(
-        "export const permissionCatalog = [\n  \"system:device:list\",\n]\n".into(),
-        String::new(),
-        String::new(),
-    );
-    assert!(
-        result.is_err(),
-        "部分存在的 Device 契约必须失败，不能猜测补齐"
-    );
+    let partial_contracts = [
+        (
+            "export const permissionCatalog = [\n  \"system:device:list\",\n]\n",
+            "",
+            "",
+        ),
+        ("", "", "DeviceDetailVo: {}"),
+        (
+            "\"system:device:list\"",
+            "export const get_system_devices = bindJsonOperation({})",
+            "ApiPageResponse_DeviceVo:\nApiResponse_DeviceVo:",
+        ),
+    ];
+    for (permissions, operations, schema) in partial_contracts {
+        assert!(
+            prepare_device_frontend_contract(permissions.into(), operations.into(), schema.into())
+                .is_err(),
+            "部分存在的 Device 契约必须失败，不能猜测补齐"
+        );
+    }
 }
 
 #[test]
@@ -551,8 +585,17 @@ fn prepare_device_frontend_contract(
     mut operations: String,
     mut schema: String,
 ) -> Result<Option<(String, String, String)>, String> {
-    if device_frontend_contract_is_complete(&permissions, &operations, &schema)? {
-        return Ok(None);
+    match device_frontend_contract_state(&permissions, &operations, &schema)? {
+        DeviceFrontendContractState::Complete => return Ok(None),
+        DeviceFrontendContractState::GeneratedBasic => {
+            add_generated_device_detail_schema(&mut schema)?;
+            debug_assert!(
+                device_frontend_contract_is_complete(&permissions, &operations, &schema)
+                    .expect("刚升级的 Device 前端契约应完整")
+            );
+            return Ok(Some((permissions, operations, schema)));
+        }
+        DeviceFrontendContractState::Missing => {}
     }
 
     let permission_marker = "export const permissionCatalog = [\n";
@@ -591,11 +634,47 @@ fn prepare_device_frontend_contract(
     Ok(Some((permissions, operations, schema)))
 }
 
+fn add_generated_device_detail_schema(schema: &mut String) -> Result<(), String> {
+    let component_marker = "export interface components {\n    schemas: {\n";
+    if schema.matches(component_marker).count() != 1 {
+        return Err("OpenAPI schema 必须包含唯一的 components 接口".into());
+    }
+    let detail_schema = concat!(
+        "        DeviceDetailVo: import(\"./core\").components[\"schemas\"][\"DeviceVo\"] & {\n",
+        "            parent?: import(\"./core\").components[\"schemas\"][\"DeviceVo\"] | null;\n",
+        "        };\n",
+    );
+    *schema = schema.replacen(
+        component_marker,
+        &format!("{component_marker}{detail_schema}"),
+        1,
+    );
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DeviceFrontendContractState {
+    Missing,
+    GeneratedBasic,
+    Complete,
+}
+
 fn device_frontend_contract_is_complete(
     permissions: &str,
     operations: &str,
     schema: &str,
 ) -> Result<bool, String> {
+    Ok(matches!(
+        device_frontend_contract_state(permissions, operations, schema)?,
+        DeviceFrontendContractState::Complete
+    ))
+}
+
+fn device_frontend_contract_state(
+    permissions: &str,
+    operations: &str,
+    schema: &str,
+) -> Result<DeviceFrontendContractState, String> {
     const OPERATION_NAMES: [&str; 5] = [
         "delete_system_devices_by_id",
         "get_system_devices",
@@ -614,6 +693,7 @@ fn device_frontend_contract_is_complete(
         "DeviceVo: DeviceContractRecord;",
         "DeviceDetailVo: DeviceContractRecord & {",
     ];
+    const GENERATED_DETAIL_MARKER: &str = "DeviceDetailVo:";
 
     let permission_present = permissions.contains("\"system:device:list\"");
     let operation_constants =
@@ -625,21 +705,32 @@ fn device_frontend_contract_is_complete(
     let common_complete = permission_present
         && operation_constants.iter().all(|present| *present)
         && schema_operations.iter().all(|present| *present);
-    let schema_complete = generated_schema.iter().all(|present| *present)
-        || fixture_schema.iter().all(|present| *present);
-    if common_complete && schema_complete {
-        return Ok(true);
+    let generated_complete = generated_schema.iter().all(|present| *present);
+    let generated_any = generated_schema.iter().any(|present| *present);
+    let fixture_complete = fixture_schema.iter().all(|present| *present);
+    let fixture_any = fixture_schema.iter().any(|present| *present);
+    let generated_detail_present = schema.contains(GENERATED_DETAIL_MARKER);
+    if common_complete && fixture_complete && !generated_any {
+        return Ok(DeviceFrontendContractState::Complete);
+    }
+    if common_complete && generated_complete && !fixture_any {
+        return Ok(if generated_detail_present {
+            DeviceFrontendContractState::Complete
+        } else {
+            DeviceFrontendContractState::GeneratedBasic
+        });
     }
 
     let any_present = permission_present
         || operation_constants.iter().any(|present| *present)
         || schema_operations.iter().any(|present| *present)
-        || generated_schema.iter().any(|present| *present)
-        || fixture_schema.iter().any(|present| *present);
+        || generated_any
+        || fixture_any
+        || generated_detail_present;
     if any_present {
         return Err("只发现部分权限、operation 或 schema 标记，拒绝猜测并重复装配".into());
     }
-    Ok(false)
+    Ok(DeviceFrontendContractState::Missing)
 }
 
 fn write_device_fake_transaction_test(backend: &Path) {
