@@ -39,6 +39,71 @@ fn notice_control_slice_compiles_in_temporary_real_workspace() {
     assert_shared_workspace("Notice");
 }
 
+#[test]
+fn missing_device_frontend_contract_is_injected_once() {
+    let permissions = "export const permissionCatalog = [\n]\n".to_owned();
+    let operations = "import { bindJsonOperation } from '../operationRequest'\n".to_owned();
+    let schema = concat!(
+        "export interface components {\n    schemas: {\n    }\n}\n",
+        "export interface operations {\n}\n",
+    )
+    .to_owned();
+
+    let injected = prepare_device_frontend_contract(permissions, operations, schema)
+        .expect("缺失的 Device 契约应可装配")
+        .expect("首次装配应返回修改内容");
+    assert!(
+        device_frontend_contract_is_complete(&injected.0, &injected.1, &injected.2)
+            .expect("装配后的契约应可判定")
+    );
+    assert!(
+        prepare_device_frontend_contract(injected.0, injected.1, injected.2)
+            .expect("重复装配应成功")
+            .is_none(),
+        "重复装配完整 fixture 契约必须零修改"
+    );
+}
+
+#[test]
+fn generated_device_frontend_contract_is_not_reinjected() {
+    let operation_names = [
+        "delete_system_devices_by_id",
+        "get_system_devices",
+        "get_system_devices_by_id",
+        "post_system_devices",
+        "put_system_devices_by_id",
+    ];
+    let operations = operation_names
+        .map(|name| format!("export const {name} = bindJsonOperation({{}})\n"))
+        .concat();
+    let schema_operations = operation_names
+        .map(|name| format!("    {name}: {{}}\n"))
+        .concat();
+    let schema = format!(
+        "ApiPageResponse_DeviceVo:\nApiResponse_DeviceVo:\nCreateDeviceDto:\nUpdateDeviceDto:\n{schema_operations}"
+    );
+
+    assert!(
+        prepare_device_frontend_contract("\"system:device:list\"".into(), operations, schema,)
+            .expect("完整生成契约应可识别")
+            .is_none(),
+        "真实生成的 Device 契约不得再次注入 fixture"
+    );
+}
+
+#[test]
+fn partial_device_frontend_contract_fails_closed() {
+    let result = prepare_device_frontend_contract(
+        "export const permissionCatalog = [\n  \"system:device:list\",\n]\n".into(),
+        String::new(),
+        String::new(),
+    );
+    assert!(
+        result.is_err(),
+        "部分存在的 Device 契约必须失败，不能猜测补齐"
+    );
+}
+
 fn assert_shared_workspace(resource: &str) {
     if let Err(error) = SHARED_WORKSPACE_RESULT.get_or_init(|| {
         std::panic::catch_unwind(run_shared_workspace)
@@ -373,27 +438,48 @@ fn sync_file(source: &Path, target: &Path) {
 fn register_device_frontend_contract(frontend: &Path) {
     let permissions_path = frontend.join("src/api/generated/permissions.ts");
     let permissions = fs::read_to_string(&permissions_path).expect("应读取候选权限清单");
+    let operations_path = frontend.join("src/api/generated/operations/system.ts");
+    let operations = fs::read_to_string(&operations_path).expect("应读取候选 operation 清单");
+    let schema_path = frontend.join("src/api/generated/schema/system.ts");
+    let schema = fs::read_to_string(&schema_path).expect("应读取候选 OpenAPI schema");
+
+    let Some((permissions, operations, schema)) =
+        prepare_device_frontend_contract(permissions, operations, schema)
+            .unwrap_or_else(|error| panic!("候选 Device 前端契约不完整：{error}"))
+    else {
+        return;
+    };
+    fs::write(permissions_path, permissions).expect("应写入临时候选权限清单");
+    fs::write(operations_path, operations).expect("应写入临时候选 operation 清单");
+    fs::write(schema_path, schema).expect("应写入临时候选 OpenAPI schema");
+}
+
+fn prepare_device_frontend_contract(
+    permissions: String,
+    mut operations: String,
+    mut schema: String,
+) -> Result<Option<(String, String, String)>, String> {
+    if device_frontend_contract_is_complete(&permissions, &operations, &schema)? {
+        return Ok(None);
+    }
+
+    let permission_marker = "export const permissionCatalog = [\n";
+    if !permissions.contains(permission_marker) {
+        return Err("权限清单缺少 permissionCatalog".into());
+    }
     let permissions = permissions.replacen(
-        "export const permissionCatalog = [\n",
+        permission_marker,
         "export const permissionCatalog = [\n  \"system:device:list\",\n",
         1,
     );
-    fs::write(permissions_path, permissions).expect("应写入临时候选权限清单");
 
-    let operations_path = frontend.join("src/api/generated/operations/system.ts");
-    let mut operations = fs::read_to_string(&operations_path).expect("应读取候选 operation 清单");
-    let fixture = include_str!("fixtures/device_operations.ts.part");
     operations.push('\n');
-    operations.push_str(fixture);
-    fs::write(operations_path, operations).expect("应写入临时候选 operation 清单");
+    operations.push_str(include_str!("fixtures/device_operations.ts.part"));
 
-    let schema_path = frontend.join("src/api/generated/schema/system.ts");
-    let mut schema = fs::read_to_string(&schema_path).expect("应读取候选 OpenAPI schema");
     let component_marker = "export interface components {\n    schemas: {\n";
-    assert!(
-        schema.contains(component_marker),
-        "候选 schema 缺少 components 接口"
-    );
+    if !schema.contains(component_marker) {
+        return Err("OpenAPI schema 缺少 components 接口".into());
+    }
     schema = schema.replacen(
         component_marker,
         &format!(
@@ -402,9 +488,66 @@ fn register_device_frontend_contract(frontend: &Path) {
         1,
     );
     let marker = "export interface operations {\n";
-    assert!(schema.contains(marker), "候选 schema 缺少 operations 接口");
+    if !schema.contains(marker) {
+        return Err("OpenAPI schema 缺少 operations 接口".into());
+    }
     let schema = schema.replacen(marker, include_str!("fixtures/device_schema.ts.part"), 1);
-    fs::write(schema_path, schema).expect("应写入临时候选 OpenAPI schema");
+    debug_assert!(
+        device_frontend_contract_is_complete(&permissions, &operations, &schema)
+            .expect("刚装配的 Device 前端契约应完整")
+    );
+    Ok(Some((permissions, operations, schema)))
+}
+
+fn device_frontend_contract_is_complete(
+    permissions: &str,
+    operations: &str,
+    schema: &str,
+) -> Result<bool, String> {
+    const OPERATION_NAMES: [&str; 5] = [
+        "delete_system_devices_by_id",
+        "get_system_devices",
+        "get_system_devices_by_id",
+        "post_system_devices",
+        "put_system_devices_by_id",
+    ];
+    const GENERATED_SCHEMA_MARKERS: [&str; 4] = [
+        "ApiPageResponse_DeviceVo:",
+        "ApiResponse_DeviceVo:",
+        "CreateDeviceDto:",
+        "UpdateDeviceDto:",
+    ];
+    const FIXTURE_SCHEMA_MARKERS: [&str; 3] = [
+        "type DeviceContractRecord = {",
+        "DeviceVo: DeviceContractRecord;",
+        "DeviceDetailVo: DeviceContractRecord & {",
+    ];
+
+    let permission_present = permissions.contains("\"system:device:list\"");
+    let operation_constants =
+        OPERATION_NAMES.map(|name| operations.contains(&format!("export const {name} =")));
+    let schema_operations = OPERATION_NAMES.map(|name| schema.contains(&format!("    {name}: {{")));
+    let generated_schema = GENERATED_SCHEMA_MARKERS.map(|marker| schema.contains(marker));
+    let fixture_schema = FIXTURE_SCHEMA_MARKERS.map(|marker| schema.contains(marker));
+
+    let common_complete = permission_present
+        && operation_constants.iter().all(|present| *present)
+        && schema_operations.iter().all(|present| *present);
+    let schema_complete = generated_schema.iter().all(|present| *present)
+        || fixture_schema.iter().all(|present| *present);
+    if common_complete && schema_complete {
+        return Ok(true);
+    }
+
+    let any_present = permission_present
+        || operation_constants.iter().any(|present| *present)
+        || schema_operations.iter().any(|present| *present)
+        || generated_schema.iter().any(|present| *present)
+        || fixture_schema.iter().any(|present| *present);
+    if any_present {
+        return Err("只发现部分权限、operation 或 schema 标记，拒绝猜测并重复装配".into());
+    }
+    Ok(false)
 }
 
 fn write_device_fake_transaction_test(backend: &Path) {
