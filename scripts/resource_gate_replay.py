@@ -1221,6 +1221,7 @@ def write_report(
             activation_gate,
             zero_divergence,
             replay_coverage_eligible,
+            targeted_within_budget,
             cache_healthy,
         ),
         "evidence": asdict(run.evidence),
@@ -1246,9 +1247,16 @@ def replay_activation_eligible(
     activation_gate: bool,
     zero_divergence: bool,
     coverage_eligible: bool,
+    targeted_within_budget: bool,
     cache_healthy: bool,
 ) -> bool:
-    return activation_gate and zero_divergence and coverage_eligible and cache_healthy
+    return (
+        activation_gate
+        and zero_divergence
+        and coverage_eligible
+        and targeted_within_budget
+        and cache_healthy
+    )
 
 
 def activation_cache_error(evidence: ReplayEvidence) -> str | None:
@@ -1335,9 +1343,22 @@ def main() -> int:
             and result.targeted.decision.mode == "targeted"
         )
     ]
+    targeted_p95_ms = percentile_nearest_rank(successful, 95)
+    if args.activation_gate and (
+        len(successful) < MINIMUM_SUCCESSFUL_CASES
+        or targeted_p95_ms is None
+        or targeted_p95_ms > TARGETED_P95_LIMIT_MS
+    ):
+        print(
+            "resource gate targeted P95 未达激活标准："
+            f"successful={len(successful)}，P95={targeted_p95_ms}ms，"
+            f"上限={TARGETED_P95_LIMIT_MS}ms",
+            file=sys.stderr,
+        )
+        return 1
     print(
         f"resource gate replay 零分歧：{len(results)} 个案例，"
-        f"targeted P95={percentile_nearest_rank(successful, 95)}ms"
+        f"targeted P95={targeted_p95_ms}ms"
     )
     return 0
 
