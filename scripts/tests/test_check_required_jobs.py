@@ -299,7 +299,10 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertNotIn("SCCACHE_CACHE_SIZE:", workflow)
         self.assertNotIn("v2-sccache-", workflow)
         self.assertEqual(workflow.count("--show-stats --stats-format=json"), 9)
-        self.assertEqual(workflow.count("### sccache ·"), 6)
+        self.assertEqual(workflow.count("summarize_sccache_stats.py"), 6)
+        self.assertEqual(workflow.count('--summary "$GITHUB_STEP_SUMMARY"'), 5)
+        self.assertIn("--summary $env:GITHUB_STEP_SUMMARY", workflow)
+        self.assertNotIn('cat "$stats_file"', workflow)
         self.assertEqual(workflow.count("name: sccache-"), 7)
         self.assertEqual(
             workflow.count(
