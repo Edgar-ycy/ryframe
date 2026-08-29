@@ -300,7 +300,7 @@ class ResourceGateReplayTests(unittest.TestCase):
                 )
             )
 
-    def test_activation_requires_coverage_and_targeted_p95_budget(self) -> None:
+    def test_activation_uses_coverage_while_p95_remains_diagnostic(self) -> None:
         def result(index: int, duration_ms: int, passed: bool = True):
             expected = "pass" if passed else "fail"
             return MODULE.ReplayResult(
@@ -334,15 +334,8 @@ class ResourceGateReplayTests(unittest.TestCase):
             MODULE.TARGETED_P95_LIMIT_MS,
         )
         self.assertEqual(MODULE.percentile_nearest_rank([3, 1, 2], 95), 3)
-        self.assertTrue(
-            MODULE.replay_activation_eligible(True, True, True, True, True)
-        )
-        self.assertFalse(
-            MODULE.replay_activation_eligible(True, False, True, True, True)
-        )
-        self.assertFalse(
-            MODULE.replay_activation_eligible(True, True, True, False, True)
-        )
+        self.assertTrue(MODULE.replay_activation_eligible(True, True, True, True))
+        self.assertFalse(MODULE.replay_activation_eligible(True, False, True, True))
 
     def test_frontend_argument_is_stable_across_temporary_worktrees(self) -> None:
         command = (
