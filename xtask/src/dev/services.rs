@@ -17,7 +17,7 @@ use super::{
     config::{DevPorts, WorkerIds},
     health::{
         available_ports, combine_failures, http_readyz, start_worker_after_api_ready,
-        wait_healthy_until, wait_services_ready_until, wait_services_ready_until_controlled,
+        wait_healthy_until, wait_probe_services_ready_until_controlled, wait_services_ready_until,
     },
     model::{Binaries, CycleControl, HEALTH_TIMEOUT, ProbeResult, ServiceLaunchMode, Services},
 };
@@ -35,7 +35,11 @@ pub(super) fn probe_candidate(
     let mut command = api_command(
         root,
         &binaries.api,
-        RuntimeInputPaths::new(&binaries.config_dir, &binaries.locales_dir),
+        RuntimeInputPaths::new(
+            &binaries.config_dir,
+            &binaries.locales_dir,
+            &binaries.runtime_secrets,
+        ),
         api_port,
         worker_port,
         worker_ids.probe_api,
@@ -45,7 +49,11 @@ pub(super) fn probe_candidate(
     let mut worker_command = worker_command(
         root,
         &binaries.worker,
-        RuntimeInputPaths::new(&binaries.config_dir, &binaries.locales_dir),
+        RuntimeInputPaths::new(
+            &binaries.config_dir,
+            &binaries.locales_dir,
+            &binaries.runtime_secrets,
+        ),
         worker_port,
         worker_ids.probe_worker,
         true,
@@ -58,7 +66,7 @@ pub(super) fn probe_candidate(
         }
     };
     let health_deadline = Instant::now() + HEALTH_TIMEOUT;
-    let result = wait_services_ready_until_controlled(
+    let result = wait_probe_services_ready_until_controlled(
         health_deadline,
         "候选 API",
         "候选 Worker",
@@ -70,8 +78,8 @@ pub(super) fn probe_candidate(
             ensure_running("候选 Worker", &mut worker)?;
             ensure_running("last-known-good Worker", &mut lkg.worker)
         },
-        || http_readyz(api_port),
-        || http_readyz(worker_port),
+        api_port,
+        worker_port,
         || {
             if shutdown.load(Ordering::Acquire) {
                 CycleControl::Shutdown
@@ -123,7 +131,11 @@ pub(super) fn start_services_in_mode(
     let mut api_command = api_command(
         root,
         &binaries.api,
-        RuntimeInputPaths::new(&binaries.config_dir, &binaries.locales_dir),
+        RuntimeInputPaths::new(
+            &binaries.config_dir,
+            &binaries.locales_dir,
+            &binaries.runtime_secrets,
+        ),
         ports.api,
         ports.worker,
         worker_ids.api,
@@ -140,7 +152,11 @@ pub(super) fn start_services_in_mode(
     let mut worker_command = worker_command(
         root,
         &binaries.worker,
-        RuntimeInputPaths::new(&binaries.config_dir, &binaries.locales_dir),
+        RuntimeInputPaths::new(
+            &binaries.config_dir,
+            &binaries.locales_dir,
+            &binaries.runtime_secrets,
+        ),
         ports.worker,
         worker_ids.worker,
         mode.is_probe(),

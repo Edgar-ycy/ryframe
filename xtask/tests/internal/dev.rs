@@ -14,11 +14,12 @@ use std::{
 use super::dev::{
     ArtifactAction, BuildContext, BuildPlan, BuildResult, CandidateProbeDisposition, ChangeKind,
     ChangeOutcome, CycleControl, DEV_API_FEATURES, DevSession, MigrationValidation, ProbeResult,
-    ReadyKind, RuntimeInputPaths, SaveCase, StepResult, TOOL_SELF_CHANGED_EXIT_CODE, api_command,
-    available_ports, build_candidate, candidate_probe_disposition, classify_change,
-    combine_failures, failure_exit_code, ready_kind, run_migration_validation,
-    start_worker_after_api_ready, switch_services_with_rollback, tool_self_changed_error,
-    wait_services_ready_until, wait_services_ready_until_controlled, worker_command,
+    ReadyKind, RuntimeInputPaths, RuntimeSecrets, SaveCase, StepResult,
+    TOOL_SELF_CHANGED_EXIT_CODE, api_command, available_ports, build_candidate,
+    candidate_probe_disposition, classify_change, combine_failures, failure_exit_code, ready_kind,
+    run_migration_validation, start_worker_after_api_ready, switch_services_with_rollback,
+    tool_self_changed_error, wait_services_ready_until, wait_services_ready_until_controlled,
+    worker_command,
 };
 use super::{
     process::ChildGroup,
@@ -196,6 +197,7 @@ fn migration_validation_is_superseded_during_the_running_process() {
         &migrate,
         &root.join("config"),
         &root.join("locales"),
+        &RuntimeSecrets::default(),
         &shutdown,
         &watcher,
         &plan,
@@ -445,6 +447,7 @@ fn worker_probe_uses_isolated_non_consuming_mode() {
         RuntimeInputPaths::new(
             Path::new("D:/workspace/config"),
             Path::new("D:/workspace/locales"),
+            &RuntimeSecrets::default(),
         ),
         19091,
         4,
@@ -508,6 +511,7 @@ fn api_probe_uses_explicit_side_effect_free_mode() {
         RuntimeInputPaths::new(
             Path::new("D:/workspace/config"),
             Path::new("D:/workspace/locales"),
+            &RuntimeSecrets::default(),
         ),
         18080,
         19091,
@@ -709,6 +713,7 @@ fn normal_services_start_without_probe_mode() {
         RuntimeInputPaths::new(
             Path::new("D:/workspace/config"),
             Path::new("D:/workspace/locales"),
+            &RuntimeSecrets::default(),
         ),
         18080,
         19091,
@@ -721,6 +726,7 @@ fn normal_services_start_without_probe_mode() {
         RuntimeInputPaths::new(
             Path::new("D:/workspace/config"),
             Path::new("D:/workspace/locales"),
+            &RuntimeSecrets::default(),
         ),
         19091,
         4,

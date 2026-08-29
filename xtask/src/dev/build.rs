@@ -16,6 +16,7 @@ use crate::{
 
 use super::{
     model::{ArtifactAction, Binaries, BuildPlan, BuildResult, MigrationValidation},
+    runtime_secrets::RuntimeSecrets,
     snapshot::DevSession,
     tool_self_changed_error,
 };
@@ -133,7 +134,7 @@ pub(crate) fn build_candidate(
         started.elapsed().as_secs_f64()
     );
     Ok(match candidate {
-        Some(bundle) => BuildResult::Ready(bundle),
+        Some(bundle) => BuildResult::Ready(Box::new(bundle)),
         None => BuildResult::VerifiedNoRestart,
     })
 }
@@ -183,12 +184,20 @@ fn validate_candidate_migration(
     let locales_dir = candidate
         .as_ref()
         .map_or_else(|| root.join("locales"), |bundle| bundle.locales_dir.clone());
+    let captured_secrets;
+    let runtime_secrets = if let Some(bundle) = candidate.as_ref() {
+        bundle.runtime_secrets.as_ref()
+    } else {
+        captured_secrets = RuntimeSecrets::capture(&root.join("config"))?;
+        &captured_secrets
+    };
     let result = run_migration_validation(
         group,
         root,
         migrate,
         &config_dir,
         &locales_dir,
+        runtime_secrets,
         shutdown,
         watcher,
         plan,
@@ -272,6 +281,7 @@ pub(crate) fn run_migration_validation(
     migrate: &Path,
     config_dir: &Path,
     locales_dir: &Path,
+    runtime_secrets: &RuntimeSecrets,
     shutdown: &AtomicBool,
     watcher: &SourceWatcher,
     plan: &BuildPlan,
@@ -293,6 +303,7 @@ pub(crate) fn run_migration_validation(
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
+        runtime_secrets.apply(&mut verify);
         let mut child = group.spawn(&mut verify)?;
         match wait_command(&mut child, shutdown, watcher, plan, lkg_check)? {
             WaitResult::Complete(status) if status.success() => {}

@@ -1,10 +1,11 @@
-use std::{collections::BTreeSet, path::PathBuf, time::Duration};
+use std::{collections::BTreeSet, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::{
     process::ManagedChild,
     watch::{ChangeBatch, SourceRevision},
 };
 
+use super::runtime_secrets::RuntimeSecrets;
 use super::services::stop_all;
 
 pub(super) const HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
@@ -263,6 +264,7 @@ pub(crate) struct Binaries {
     pub(crate) runtime_dir: PathBuf,
     pub(crate) config_dir: PathBuf,
     pub(crate) locales_dir: PathBuf,
+    pub(crate) runtime_secrets: Arc<RuntimeSecrets>,
 }
 
 pub(super) struct Services {
@@ -283,7 +285,7 @@ impl Drop for RunningProcesses {
 }
 
 pub(crate) enum BuildResult {
-    Ready(Binaries),
+    Ready(Box<Binaries>),
     VerifiedNoRestart,
     Failed,
     Superseded,

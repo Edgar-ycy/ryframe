@@ -170,7 +170,7 @@ pub(super) fn build_initial_candidate(
     loop {
         let plan = BuildPlan::initial(watcher.current_revision());
         match build_candidate(&context, &plan, None, None)? {
-            BuildResult::Ready(candidate) => return Ok(Some(candidate)),
+            BuildResult::Ready(candidate) => return Ok(Some(*candidate)),
             BuildResult::Superseded => {
                 println!("初始候选已过期，立即按最新源码重新构建。");
             }
@@ -406,7 +406,7 @@ fn handle_candidate_result(
             println!("候选已被更新的源码代次取代，立即规划下一轮。");
             return Ok(ChangeOutcome::Superseded);
         }
-        BuildResult::Ready(candidate) => candidate,
+        BuildResult::Ready(candidate) => *candidate,
     };
     let probe_result = probe_candidate(
         group, root, &candidate, services, worker_ids, shutdown, watcher,

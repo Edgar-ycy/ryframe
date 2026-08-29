@@ -39,6 +39,8 @@ mod measure;
 mod model;
 #[path = "dev/orchestrator.rs"]
 mod orchestrator;
+#[path = "dev/runtime_secrets.rs"]
+mod runtime_secrets;
 #[path = "dev/services.rs"]
 mod services;
 #[path = "dev/snapshot.rs"]
@@ -57,7 +59,8 @@ pub(crate) use build::{
 pub(crate) use command::{RuntimeInputPaths, api_command, worker_command};
 #[allow(unused_imports)]
 pub(crate) use health::{
-    available_ports, combine_failures, start_worker_after_api_ready, wait_services_ready_until,
+    available_ports, combine_failures, start_worker_after_api_ready,
+    wait_probe_services_ready_until_controlled, wait_services_ready_until,
     wait_services_ready_until_controlled,
 };
 #[allow(unused_imports)]
@@ -70,6 +73,8 @@ pub(crate) use model::{
     ArtifactAction, Binaries, BuildPlan, BuildResult, ChangeKind, ChangeOutcome, CycleControl,
     MigrationValidation, ProbeResult, classify_change,
 };
+#[allow(unused_imports)]
+pub(crate) use runtime_secrets::RuntimeSecrets;
 #[allow(unused_imports)]
 pub(crate) use services::switch_services_with_rollback;
 #[allow(unused_imports)]

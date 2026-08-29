@@ -2,13 +2,17 @@ use std::{
     collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use serde::{Deserialize, Serialize};
 
 use crate::{Result, watch::SourceRevision};
 
-use super::model::Binaries;
+use super::{
+    model::Binaries,
+    runtime_secrets::{RuntimeSecrets, snapshot_config_tree},
+};
 
 #[path = "snapshot/storage.rs"]
 mod storage;
@@ -18,7 +22,7 @@ use storage::{
     valid_session_name,
 };
 
-const SNAPSHOT_FORMAT_VERSION: u32 = 1;
+const SNAPSHOT_FORMAT_VERSION: u32 = 2;
 const BINARY_ROOT: &str = "target/xtask/dev";
 const RUNTIME_ROOT: &str = ".local-tests/dev-runtime";
 
@@ -40,6 +44,7 @@ struct GenerationManifest {
     worker_sha256: String,
     config_sha256: String,
     locales_sha256: String,
+    secret_environment: Vec<String>,
 }
 
 struct GenerationPaths {
@@ -63,7 +68,14 @@ impl DevSession {
     ) -> Result<(Self, Option<Binaries>)> {
         let binary_root = root.join(BINARY_ROOT);
         let runtime_root = root.join(RUNTIME_ROOT);
-        Self::prepare_with_roots(&binary_root, &runtime_root, source_revision, true)
+        let runtime_secrets = RuntimeSecrets::capture(&root.join("config"))?;
+        Self::prepare_with_roots(
+            &binary_root,
+            &runtime_root,
+            source_revision,
+            true,
+            Some(&runtime_secrets),
+        )
     }
 
     pub(crate) fn prepare_isolated(
@@ -72,8 +84,23 @@ impl DevSession {
     ) -> Result<Self> {
         let binary_root = storage_root.join("binaries");
         let runtime_root = storage_root.join("runtime");
-        Self::prepare_with_roots(&binary_root, &runtime_root, source_revision, false)
+        Self::prepare_with_roots(&binary_root, &runtime_root, source_revision, false, None)
             .map(|(session, _)| session)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn prepare_with_runtime_secrets(
+        root: &Path,
+        source_revision: SourceRevision,
+        runtime_secrets: &RuntimeSecrets,
+    ) -> Result<(Self, Option<Binaries>)> {
+        Self::prepare_with_roots(
+            &root.join(BINARY_ROOT),
+            &root.join(RUNTIME_ROOT),
+            source_revision,
+            true,
+            Some(runtime_secrets),
+        )
     }
 
     fn prepare_with_roots(
@@ -81,6 +108,7 @@ impl DevSession {
         runtime_root: &Path,
         source_revision: SourceRevision,
         recover: bool,
+        runtime_secrets: Option<&RuntimeSecrets>,
     ) -> Result<(Self, Option<Binaries>)> {
         fs::create_dir_all(binary_root)?;
         fs::create_dir_all(runtime_root)?;
@@ -91,7 +119,12 @@ impl DevSession {
             cleanup_inactive_sessions(runtime_root)?;
         }
         let recovered = if recover {
-            recover_latest(binary_root, runtime_root, source_revision)?
+            recover_latest(
+                binary_root,
+                runtime_root,
+                source_revision,
+                runtime_secrets.ok_or("恢复 LKG 缺少当前进程密钥环境")?,
+            )?
         } else {
             None
         };
@@ -125,7 +158,7 @@ impl DevSession {
             fs::create_dir(&paths.generation_staged)?;
             fs::create_dir(paths.generation_staged.join("bin"))?;
             fs::create_dir(&paths.runtime_staged)?;
-            self.write_and_commit_generation(
+            let runtime_secrets = self.write_and_commit_generation(
                 &generation,
                 created_unix_nanos,
                 source_revision,
@@ -134,22 +167,25 @@ impl DevSession {
                 config_source,
                 locales_source,
                 &paths,
-            )
+            )?;
+            binaries_from_paths(source_revision, &paths, runtime_secrets)
         })();
-        if let Err(error) = result {
-            let _ = remove_direct_child(
-                &self.generation_parent,
-                &paths.generation_staged,
-                "二进制暂存版本",
-            );
-            let _ = remove_direct_child(
-                &self.runtime_parent,
-                &paths.runtime_staged,
-                "运行输入暂存版本",
-            );
-            return Err(error);
+        match result {
+            Ok(binaries) => Ok(binaries),
+            Err(error) => {
+                let _ = remove_direct_child(
+                    &self.generation_parent,
+                    &paths.generation_staged,
+                    "二进制暂存版本",
+                );
+                let _ = remove_direct_child(
+                    &self.runtime_parent,
+                    &paths.runtime_staged,
+                    "运行输入暂存版本",
+                );
+                Err(error)
+            }
         }
-        binaries_from_paths(source_revision, &paths)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -163,8 +199,9 @@ impl DevSession {
         config_source: &Path,
         locales_source: &Path,
         paths: &GenerationPaths,
-    ) -> Result<()> {
-        copy_tree(config_source, &paths.runtime_staged.join("config"))?;
+    ) -> Result<RuntimeSecrets> {
+        let runtime_secrets =
+            snapshot_config_tree(config_source, &paths.runtime_staged.join("config"))?;
         copy_tree(locales_source, &paths.runtime_staged.join("locales"))?;
         fs::copy(
             api_source,
@@ -200,6 +237,7 @@ impl DevSession {
             )?,
             config_sha256: directory_hash(&paths.runtime_staged.join("config"))?,
             locales_sha256: directory_hash(&paths.runtime_staged.join("locales"))?,
+            secret_environment: runtime_secrets.environment_names(),
         };
         fs::write(
             paths.generation_staged.join("manifest.json"),
@@ -212,7 +250,7 @@ impl DevSession {
             let _ = remove_direct_child(&self.runtime_parent, &paths.runtime_dir, "运行输入版本");
             return Err(error.into());
         }
-        Ok(())
+        Ok(runtime_secrets)
     }
 
     fn generation_paths(&self, generation: &str) -> GenerationPaths {
@@ -231,6 +269,7 @@ fn recover_latest(
     binary_root: &Path,
     runtime_root: &Path,
     source_revision: SourceRevision,
+    runtime_secrets: &RuntimeSecrets,
 ) -> Result<Option<Binaries>> {
     let mut complete = BTreeSet::new();
     let mut recovered = Vec::new();
@@ -249,6 +288,7 @@ fn recover_latest(
                 &session,
                 &generation,
                 &generation_dir,
+                runtime_secrets,
             )? {
                 Some(candidate) => {
                     complete.insert((session.clone(), generation.clone()));
@@ -283,6 +323,7 @@ fn load_generation(
     session: &str,
     generation: &str,
     generation_dir: &Path,
+    runtime_secrets: &RuntimeSecrets,
 ) -> Result<Option<RecoveredGeneration>> {
     let runtime_dir = runtime_root.join(session).join(generation);
     let manifest_path = generation_dir.join("manifest.json");
@@ -325,6 +366,7 @@ fn load_generation(
     {
         return Ok(None);
     }
+    runtime_secrets.require_environment(&manifest.secret_environment)?;
     let paths = GenerationPaths {
         generation_staged: PathBuf::new(),
         generation_dir: generation_dir.to_path_buf(),
@@ -335,7 +377,7 @@ fn load_generation(
         created_unix_nanos,
         session: session.to_owned(),
         generation: generation.to_owned(),
-        binaries: binaries_from_paths(source_revision, &paths)?,
+        binaries: binaries_from_paths(source_revision, &paths, runtime_secrets.clone())?,
     }))
 }
 
@@ -462,6 +504,7 @@ fn remove_empty_directory(path: &Path) -> Result<()> {
 fn binaries_from_paths(
     source_revision: SourceRevision,
     paths: &GenerationPaths,
+    runtime_secrets: RuntimeSecrets,
 ) -> Result<Binaries> {
     Ok(Binaries {
         source_revision,
@@ -477,6 +520,7 @@ fn binaries_from_paths(
         locales_dir: paths.runtime_dir.join("locales"),
         generation_dir: paths.generation_dir.clone(),
         runtime_dir: paths.runtime_dir.clone(),
+        runtime_secrets: Arc::new(runtime_secrets),
     })
 }
 

@@ -5,7 +5,7 @@ use std::{
 };
 
 use super::{
-    dev::{Binaries, DevSession},
+    dev::{Binaries, DevSession, RuntimeSecrets},
     watch::SourceRevision,
 };
 
@@ -165,6 +165,122 @@ fn startup_removes_stale_copying_and_incomplete_generation_pairs() {
     assert!(!incomplete_runtime.exists());
     assert!(active_binary_copying.exists());
     assert!(active_runtime_copying.exists());
+}
+
+#[test]
+fn runtime_config_snapshot_never_persists_registered_secret_values() {
+    let fixture = SnapshotFixture::new("secret-snapshot");
+    let secrets = [
+        "devex-metrics-secret-1",
+        "devex-database-secret-2",
+        "devex-jwt-secret-3",
+        "devex-redis-secret-4",
+        "devex-access-secret-5",
+        "devex-storage-secret-6",
+    ];
+    fs::write(
+        fixture.root.join("config/app.toml"),
+        format!(
+            "[monitor]\nmetrics_bearer_token = '{}'\n\
+             [database.primary]\npassword = '{}'\n\
+             [auth]\njwt_secret = '{}'\n\
+             [redis]\npassword = '{}'\n\
+             [object_storage]\naccess_key = '{}'\nsecret_key = '{}'\n",
+            secrets[0], secrets[1], secrets[2], secrets[3], secrets[4], secrets[5]
+        ),
+    )
+    .unwrap();
+    let (session, _) = DevSession::prepare(&fixture.root, SourceRevision::from_value(0)).unwrap();
+    let binaries = fixture.install(&session, 1);
+
+    let mut persisted = fs::read(binaries.generation_dir.join("manifest.json")).unwrap();
+    persisted.extend(fs::read(&binaries.api).unwrap());
+    persisted.extend(fs::read(&binaries.worker).unwrap());
+    for entry in fs::read_dir(&binaries.config_dir).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_type().unwrap().is_file() {
+            persisted.extend(fs::read(entry.path()).unwrap());
+        }
+    }
+    let persisted = String::from_utf8_lossy(&persisted);
+    for secret in secrets {
+        assert!(
+            !persisted.contains(secret),
+            "运行快照、manifest 与二进制不得持久化敏感值"
+        );
+    }
+    let sanitized = fs::read_to_string(binaries.config_dir.join("app.toml")).unwrap();
+    let document = toml::from_str::<toml::Table>(&sanitized).unwrap();
+    assert_eq!(
+        document["database"]["primary"]["password"].as_str(),
+        Some("")
+    );
+    assert_eq!(document["auth"]["jwt_secret"].as_str(), Some(""));
+}
+
+#[test]
+fn unregistered_nested_file_secret_fails_closed_before_snapshot() {
+    let fixture = SnapshotFixture::new("unregistered-secret");
+    fs::write(
+        fixture.root.join("config/app.toml"),
+        "[[database.replicas]]\nname = 'replica'\npassword = 'must-not-persist'\n",
+    )
+    .unwrap();
+
+    let error = DevSession::prepare(&fixture.root, SourceRevision::from_value(0))
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("未登记的敏感字段 database.replicas.[].password"));
+    assert!(!fixture.root.join(".local-tests/dev-runtime").exists());
+}
+
+#[test]
+fn recovery_fails_closed_when_required_secret_environment_is_missing() {
+    let fixture = SnapshotFixture::new("missing-recovery-secret");
+    fs::write(
+        fixture.root.join("config/app.toml"),
+        "[database.primary]\npassword = 'generation-only-password'\n",
+    )
+    .unwrap();
+    let (session, _) = DevSession::prepare(&fixture.root, SourceRevision::from_value(0)).unwrap();
+    let _binaries = fixture.install(&session, 1);
+    drop(session);
+
+    let error = DevSession::prepare_with_runtime_secrets(
+        &fixture.root,
+        SourceRevision::from_value(2),
+        &RuntimeSecrets::default(),
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("恢复 last-known-good 缺少当前进程密钥环境"));
+    assert!(error.contains("APP_DATABASE_PASSWORD"));
+    assert!(!error.contains("generation-only-password"));
+}
+
+#[test]
+fn runtime_secret_registry_matches_config_secret_override_fact_source() {
+    let spec = fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../crates/ryframe-config/src/app_config/environment_overrides/spec.rs"),
+    )
+    .unwrap();
+    let compact = spec.split_whitespace().collect::<String>();
+    let registered = RuntimeSecrets::registered_environment();
+
+    assert_eq!(
+        compact.matches("EnvOverride::secret(").count(),
+        registered.len(),
+        "新增 config secret override 时必须同步 runtime snapshot 注册表"
+    );
+    for environment in registered {
+        assert!(
+            compact.contains(&format!("EnvOverride::secret(\"{environment}\"")),
+            "runtime snapshot 缺少 config secret override {environment}"
+        );
+    }
 }
 
 struct SnapshotFixture {

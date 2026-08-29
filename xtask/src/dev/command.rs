@@ -3,17 +3,25 @@ use std::{
     process::{Command, Stdio},
 };
 
+use super::runtime_secrets::RuntimeSecrets;
+
 #[derive(Clone, Copy)]
 pub(crate) struct RuntimeInputPaths<'a> {
     config_dir: &'a Path,
     locales_dir: &'a Path,
+    runtime_secrets: &'a RuntimeSecrets,
 }
 
 impl<'a> RuntimeInputPaths<'a> {
-    pub(crate) const fn new(config_dir: &'a Path, locales_dir: &'a Path) -> Self {
+    pub(crate) const fn new(
+        config_dir: &'a Path,
+        locales_dir: &'a Path,
+        runtime_secrets: &'a RuntimeSecrets,
+    ) -> Self {
         Self {
             config_dir,
             locales_dir,
+            runtime_secrets,
         }
     }
 }
@@ -41,6 +49,7 @@ pub(crate) fn api_command(
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
+    runtime_inputs.runtime_secrets.apply(&mut command);
     if probe {
         command.arg("--probe");
         command
@@ -73,6 +82,7 @@ pub(crate) fn worker_command(
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
+    runtime_inputs.runtime_secrets.apply(&mut command);
     if probe {
         command.arg("--probe");
         command

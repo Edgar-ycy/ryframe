@@ -14,6 +14,7 @@ use super::{
 
 const READYZ_CONNECT_TIMEOUT: Duration = Duration::from_millis(200);
 const READYZ_IO_TIMEOUT: Duration = Duration::from_millis(200);
+const PROBE_CONTROL_SLICE: Duration = Duration::from_millis(25);
 
 pub(crate) fn combine_failures<T, const N: usize>(
     result: Result<T>,
@@ -158,6 +159,143 @@ where
             return Ok(CycleControl::Continue);
         }
         thread::sleep(LOOP_INTERVAL.min(health_deadline.saturating_duration_since(Instant::now())));
+    }
+}
+
+/// 候选 probe 使用短 I/O 时间片，并在每个潜在阻塞点后重新读取源码代次。
+/// 该循环不派生后台线程，因此 supersede 或 shutdown 返回时没有探活工作遗留。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn wait_probe_services_ready_until_controlled<EA, EW, C>(
+    health_deadline: Instant,
+    api_label: &str,
+    worker_label: &str,
+    mut ensure_api_running: EA,
+    mut ensure_worker_running: EW,
+    api_port: u16,
+    worker_port: u16,
+    mut control: C,
+) -> Result<CycleControl>
+where
+    EA: FnMut() -> Result<()>,
+    EW: FnMut() -> Result<()>,
+    C: FnMut() -> CycleControl,
+{
+    loop {
+        if let Some(current) = interrupted(&mut control) {
+            return Ok(current);
+        }
+        ensure_api_running()?;
+        ensure_worker_running()?;
+        ensure_before_deadline(health_deadline, api_label, worker_label)?;
+
+        let api_is_ready = match controlled_http_readyz(api_port, health_deadline, &mut control)? {
+            ControlledReady::Ready(ready) => ready,
+            ControlledReady::Interrupted(current) => return Ok(current),
+        };
+        ensure_before_deadline(health_deadline, api_label, worker_label)?;
+        let worker_is_ready =
+            match controlled_http_readyz(worker_port, health_deadline, &mut control)? {
+                ControlledReady::Ready(ready) => ready,
+                ControlledReady::Interrupted(current) => return Ok(current),
+            };
+        if api_is_ready && worker_is_ready {
+            ensure_api_running()?;
+            ensure_worker_running()?;
+            return Ok(CycleControl::Continue);
+        }
+        thread::sleep(
+            PROBE_CONTROL_SLICE.min(health_deadline.saturating_duration_since(Instant::now())),
+        );
+    }
+}
+
+enum ControlledReady {
+    Ready(bool),
+    Interrupted(CycleControl),
+}
+
+fn controlled_http_readyz<C>(
+    port: u16,
+    deadline: Instant,
+    control: &mut C,
+) -> Result<ControlledReady>
+where
+    C: FnMut() -> CycleControl,
+{
+    if let Some(current) = interrupted(control) {
+        return Ok(ControlledReady::Interrupted(current));
+    }
+    let timeout = io_slice(deadline);
+    if timeout.is_zero() {
+        return Ok(ControlledReady::Ready(false));
+    }
+    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+    let mut stream = match TcpStream::connect_timeout(&address, timeout) {
+        Ok(stream) => stream,
+        Err(_) => return after_io(false, control),
+    };
+    if let Some(current) = interrupted(control) {
+        return Ok(ControlledReady::Interrupted(current));
+    }
+    let timeout = io_slice(deadline);
+    if timeout.is_zero() {
+        return Ok(ControlledReady::Ready(false));
+    }
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
+    if stream
+        .write_all(b"GET /readyz HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        .is_err()
+    {
+        return after_io(false, control);
+    }
+    if let Some(current) = interrupted(control) {
+        return Ok(ControlledReady::Interrupted(current));
+    }
+    let timeout = io_slice(deadline);
+    if timeout.is_zero() {
+        return Ok(ControlledReady::Ready(false));
+    }
+    stream.set_read_timeout(Some(timeout))?;
+    let mut response = [0_u8; 64];
+    let ready = stream.read(&mut response).is_ok_and(|length| {
+        response[..length].starts_with(b"HTTP/1.1 200")
+            || response[..length].starts_with(b"HTTP/1.0 200")
+    });
+    after_io(ready, control)
+}
+
+fn after_io<C>(ready: bool, control: &mut C) -> Result<ControlledReady>
+where
+    C: FnMut() -> CycleControl,
+{
+    Ok(match interrupted(control) {
+        Some(current) => ControlledReady::Interrupted(current),
+        None => ControlledReady::Ready(ready),
+    })
+}
+
+fn interrupted<C>(control: &mut C) -> Option<CycleControl>
+where
+    C: FnMut() -> CycleControl,
+{
+    let current = control();
+    (current != CycleControl::Continue).then_some(current)
+}
+
+fn io_slice(deadline: Instant) -> Duration {
+    PROBE_CONTROL_SLICE.min(deadline.saturating_duration_since(Instant::now()))
+}
+
+fn ensure_before_deadline(deadline: Instant, api_label: &str, worker_label: &str) -> Result<()> {
+    if Instant::now() < deadline {
+        Ok(())
+    } else {
+        Err(format!(
+            "{api_label} 与 {worker_label} 未在共享 {} 秒截止时间内同时通过 /readyz",
+            HEALTH_TIMEOUT.as_secs()
+        )
+        .into())
     }
 }
 
