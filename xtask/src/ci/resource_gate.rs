@@ -202,7 +202,7 @@ fn print_change_set(change_set: &ResourceChangeSet) -> Result<()> {
     } else {
         println!(
             "resource gate 定向范围：资源={}，后端输出={}，前端输出={}，crate={}",
-            change_set.relationship_closure.len(),
+            change_set.impacted_resources.len(),
             change_set.owned_backend_paths.len(),
             change_set.owned_frontend_paths.len(),
             change_set.affected_crates.len()

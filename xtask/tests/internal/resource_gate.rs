@@ -117,7 +117,13 @@ fn relation_change_uses_bidirectional_impact_closure() {
 
     assert_eq!(result.ambiguous_reason, None);
     assert!(result.relations_changed);
-    assert_eq!(result.relationship_closure, set(&["notice", "post"]));
+    assert_eq!(result.impacted_resources, set(&["notice", "post"]));
+    let serialized = serde_json::to_value(&result).unwrap();
+    assert_eq!(
+        serialized.get("impactedResources"),
+        Some(&serde_json::json!(["notice", "post"]))
+    );
+    assert!(serialized.get("relationshipClosure").is_none());
 }
 
 #[test]
@@ -733,7 +739,7 @@ fn targeted_oracle(
 ) -> FullGateOracle {
     FullGateOracle::Targeted(ResourceChangeSet {
         source_resources: set(source),
-        relationship_closure: set(closure),
+        impacted_resources: set(closure),
         owned_backend_paths: set(backend),
         owned_frontend_paths: set(frontend),
         affected_crates: set(crates),

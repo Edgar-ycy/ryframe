@@ -60,7 +60,7 @@ pub(crate) struct ResourceGateInput {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ResourceChangeSet {
     pub(crate) source_resources: BTreeSet<String>,
-    pub(crate) relationship_closure: BTreeSet<String>,
+    pub(crate) impacted_resources: BTreeSet<String>,
     pub(crate) owned_backend_paths: BTreeSet<String>,
     pub(crate) owned_frontend_paths: BTreeSet<String>,
     pub(crate) affected_crates: BTreeSet<String>,
@@ -163,17 +163,17 @@ pub(crate) fn analyze(input: &ResourceGateInput) -> ResourceChangeSet {
     }
 
     let relationships = relationship_graph(&input.base_resources, &input.head_resources);
-    result.relationship_closure = relationship_closure(&result.source_resources, &relationships);
-    if result.relationship_closure.len() > MAX_SOURCE_RESOURCES {
-        let count = result.relationship_closure.len();
+    result.impacted_resources = relationship_closure(&result.source_resources, &relationships);
+    if result.impacted_resources.len() > MAX_SOURCE_RESOURCES {
+        let count = result.impacted_resources.len();
         return ambiguous(
             result,
             format!("关系影响后的资源数量超过 {MAX_SOURCE_RESOURCES}：{count}"),
         );
     }
     let total_resources = resource_names(&input.head_resources).len();
-    if total_resources == 0 || result.relationship_closure.len() * 2 > total_resources {
-        let closure_count = result.relationship_closure.len();
+    if total_resources == 0 || result.impacted_resources.len() * 2 > total_resources {
+        let closure_count = result.impacted_resources.len();
         return ambiguous(
             result,
             format!(
@@ -312,8 +312,7 @@ fn collect_owned_paths(
     result: &mut ResourceChangeSet,
 ) -> Option<String> {
     for entry in &input.head_ownership.entries {
-        if entry.resource != "__catalog__" && !result.relationship_closure.contains(&entry.resource)
-        {
+        if entry.resource != "__catalog__" && !result.impacted_resources.contains(&entry.resource) {
             continue;
         }
         match entry.root.as_str() {
