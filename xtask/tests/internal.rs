@@ -65,6 +65,8 @@ mod doctor_tests;
 mod migration_tests;
 #[path = "internal/process.rs"]
 mod process_tests;
+#[path = "internal/resource_gate_cargo_surface.rs"]
+mod resource_gate_cargo_surface_tests;
 #[path = "internal/resource_gate.rs"]
 mod resource_gate_tests;
 #[cfg(feature = "resource")]

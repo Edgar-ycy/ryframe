@@ -264,13 +264,27 @@ fn ownership_parser_is_strict_and_commands_share_ci_target() {
     assert!(parse_ownership(&format!("{ownership}unknown = true\n")).is_err());
 
     let packages = set(&["ryframe-api"]);
-    let clippy = affected_package_args_for_target("clippy", &packages, "target/ci/backend", 3);
+    let clippy =
+        affected_package_args_for_target("clippy", &packages, "target/ci/backend", 3).unwrap();
     assert!(
         clippy
             .windows(2)
             .any(|pair| pair == ["--target-dir", "target/ci/backend"])
     );
-    assert!(clippy.contains(&"--all-features".to_owned()));
+    assert!(clippy.contains(&"--no-default-features".to_owned()));
+    assert!(!clippy.contains(&"--all-features".to_owned()));
+    assert!(!clippy.contains(&"--all-targets".to_owned()));
+    assert!(clippy.windows(2).any(|pair| pair == ["--lib", "--bin"]));
+    assert!(
+        clippy
+            .windows(2)
+            .any(|pair| pair == ["--bin", "export_openapi"])
+    );
+    assert!(
+        clippy
+            .windows(2)
+            .any(|pair| pair == ["--test", "api_contracts"])
+    );
     let resource_args = resource_check_args_for_target(
         std::path::Path::new("../ryframe-vue3"),
         "target/ci/resource",

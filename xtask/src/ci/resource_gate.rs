@@ -13,19 +13,21 @@ use serde::Serialize;
 use crate::{
     Result,
     check::{
-        backend_package_operation_args, ci_target_policy, ci_test_jobs_from,
-        resource_workspace_compilation, targeted_resource_workspace_compilation,
-        verify_job_budget_from,
+        ci_target_policy, ci_test_jobs_from, resource_workspace_compilation,
+        targeted_resource_workspace_compilation, verify_job_budget_from,
     },
     process::{run as run_process, run_owned, with_process_log},
     workspace::root_dir,
 };
 
+#[path = "resource_gate/cargo_surface.rs"]
+mod cargo_surface;
 #[path = "resource_gate/model.rs"]
 mod model;
 #[path = "resource_gate/repository.rs"]
 mod repository;
 
+pub(crate) use cargo_surface::affected_package_args_for_target;
 #[allow(unused_imports)]
 pub(crate) use model::{
     ChangeStatus, ChangedFile, GateStep, OwnershipEntry, OwnershipManifest, ResourceChangeSet,
@@ -333,12 +335,17 @@ fn execute_step(
         GateStep::AffectedClippy(packages) => run_owned(
             root,
             "cargo",
-            &affected_package_args_for_target("clippy", packages, &targets.backend, budget.backend),
+            &affected_package_args_for_target(
+                "clippy",
+                packages,
+                &targets.backend,
+                budget.backend,
+            )?,
         )?,
         GateStep::AffectedTest(packages) => run_owned(
             root,
             "cargo",
-            &affected_package_args_for_target("test", packages, &targets.backend, test_jobs),
+            &affected_package_args_for_target("test", packages, &targets.backend, test_jobs)?,
         )?,
         GateStep::PermissionContract => {
             run_process(root, "python", &["scripts/check_permission_routes.py"])?;
@@ -410,19 +417,4 @@ pub(crate) fn resource_check_args_for_target(
         "--frontend-dir".to_owned(),
         frontend_dir.to_string_lossy().into_owned(),
     ]
-}
-
-pub(crate) fn affected_package_args_for_target(
-    operation: &str,
-    packages: &std::collections::BTreeSet<String>,
-    target_dir: &str,
-    jobs: usize,
-) -> Vec<String> {
-    let mut args = backend_package_operation_args(operation, packages, target_dir, jobs);
-    let position = args
-        .iter()
-        .position(|argument| argument == "--jobs")
-        .unwrap_or(args.len());
-    args.insert(position, "--all-features".to_owned());
-    args
 }
