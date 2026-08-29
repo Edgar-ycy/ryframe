@@ -2,19 +2,57 @@ use std::path::{Path, PathBuf};
 
 use crate::{
     Result,
-    process::{command_output_with_env, run_with_env},
+    process::{command_output_with_env, run_with_env_removed},
 };
 
 use super::context::resolve_target_dir;
 
 const RESOURCE_WORKSPACE_TEST: &str = "resource_workspace_compilation";
 const RESOURCE_WORKSPACE_FRONTEND_DIR: &str = "RYFRAME_RESOURCE_WORKSPACE_FRONTEND_DIR";
+const RESOURCE_WORKSPACE_PROFILE: &str = "RYFRAME_RESOURCE_WORKSPACE_PROFILE";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ResourceWorkspaceProfile {
+    Full,
+    Targeted,
+}
 
 pub(crate) fn resource_workspace_compilation(
     root: &Path,
     frontend_dir: &Path,
     target_dir: &str,
     jobs: usize,
+) -> Result<()> {
+    resource_workspace_compilation_with_profile(
+        root,
+        frontend_dir,
+        target_dir,
+        jobs,
+        ResourceWorkspaceProfile::Full,
+    )
+}
+
+pub(crate) fn targeted_resource_workspace_compilation(
+    root: &Path,
+    frontend_dir: &Path,
+    target_dir: &str,
+    jobs: usize,
+) -> Result<()> {
+    resource_workspace_compilation_with_profile(
+        root,
+        frontend_dir,
+        target_dir,
+        jobs,
+        ResourceWorkspaceProfile::Targeted,
+    )
+}
+
+fn resource_workspace_compilation_with_profile(
+    root: &Path,
+    frontend_dir: &Path,
+    target_dir: &str,
+    jobs: usize,
+    profile: ResourceWorkspaceProfile,
 ) -> Result<()> {
     let frontend_dir = resolve_frontend_dir(root, frontend_dir)?;
     if !frontend_dir.join("node_modules").is_dir() {
@@ -47,17 +85,22 @@ pub(crate) fn resource_workspace_compilation(
         .to_str()
         .ok_or("资源 Workspace 测试可执行文件路径不是有效 UTF-8")?;
     let shared_target = resolve_target_dir(root, target_dir);
-    let owned_environment =
-        resource_workspace_environment(&frontend_dir, &shared_target, jobs.as_str());
+    let owned_environment = resource_workspace_environment_for_profile(
+        &frontend_dir,
+        &shared_target,
+        jobs.as_str(),
+        profile,
+    );
     let environment = owned_environment
         .iter()
         .map(|(key, value)| (*key, value.as_str()))
         .collect::<Vec<_>>();
-    run_with_env(
+    run_with_env_removed(
         root,
         executable,
         &["--ignored", "--nocapture"],
         &environment,
+        &[RESOURCE_WORKSPACE_PROFILE],
     )
 }
 
@@ -78,12 +121,13 @@ pub(crate) fn resolve_frontend_dir(root: &Path, frontend_dir: &Path) -> Result<P
     })
 }
 
-pub(crate) fn resource_workspace_environment(
+pub(crate) fn resource_workspace_environment_for_profile(
     frontend_dir: &Path,
     shared_target: &Path,
     jobs: &str,
-) -> [(&'static str, String); 3] {
-    [
+    profile: ResourceWorkspaceProfile,
+) -> Vec<(&'static str, String)> {
+    let mut environment = vec![
         ("CARGO_BUILD_JOBS", jobs.to_owned()),
         (
             RESOURCE_WORKSPACE_FRONTEND_DIR,
@@ -93,7 +137,11 @@ pub(crate) fn resource_workspace_environment(
             "RYFRAME_RESOURCE_WORKSPACE_TARGET_DIR",
             shared_target.to_string_lossy().into_owned(),
         ),
-    ]
+    ];
+    if profile == ResourceWorkspaceProfile::Targeted {
+        environment.push((RESOURCE_WORKSPACE_PROFILE, "targeted".to_owned()));
+    }
+    environment
 }
 
 pub(crate) fn resource_test_executable_from_messages(output: &str) -> Result<PathBuf> {

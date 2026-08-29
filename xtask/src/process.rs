@@ -82,6 +82,16 @@ pub(crate) fn run_with_env(
     args: &[&str],
     environment: &[(&str, &str)],
 ) -> Result<()> {
+    run_with_env_removed(dir, executable, args, environment, &[])
+}
+
+pub(crate) fn run_with_env_removed(
+    dir: &Path,
+    executable: &str,
+    args: &[&str],
+    environment: &[(&str, &str)],
+    removed_environment: &[&str],
+) -> Result<()> {
     let started = Instant::now();
     let logged = process_log_active();
     let command_executable = resolved_executable(executable, env::var_os("RYFRAME_PYTHON"));
@@ -91,8 +101,11 @@ pub(crate) fn run_with_env(
     }
     let mut command = child_command(&command_executable);
     configure_cargo_cache(executable, &mut command);
+    command.args(args);
+    for key in removed_environment {
+        command.env_remove(key);
+    }
     command
-        .args(args)
         .envs(environment.iter().copied())
         .current_dir(dir)
         .stdin(Stdio::inherit());

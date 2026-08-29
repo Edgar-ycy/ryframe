@@ -14,7 +14,8 @@ use crate::{
     Result,
     check::{
         backend_package_operation_args, ci_target_policy, ci_test_jobs_from,
-        resource_workspace_compilation, verify_job_budget_from,
+        resource_workspace_compilation, targeted_resource_workspace_compilation,
+        verify_job_budget_from,
     },
     process::{run as run_process, run_owned, with_process_log},
     workspace::root_dir,
@@ -276,14 +277,11 @@ fn execute_targeted_plan(
                 test_jobs,
                 targets,
             )?;
-            execute_step(
+            targeted_resource_workspace_compilation(
                 root,
                 frontend_dir,
-                base,
-                &GateStep::ResourceWorkspace,
-                budget,
-                test_jobs,
-                targets,
+                &targets.resource,
+                budget.resource,
             )
         },
         "resource-gate-contracts",

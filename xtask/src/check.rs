@@ -63,8 +63,9 @@ pub(crate) use model::{
 };
 #[allow(unused_imports)]
 pub(crate) use resource::{
-    resolve_frontend_dir, resource_test_executable_from_messages, resource_workspace_compilation,
-    resource_workspace_environment,
+    ResourceWorkspaceProfile, resolve_frontend_dir, resource_test_executable_from_messages,
+    resource_workspace_compilation, resource_workspace_environment_for_profile,
+    targeted_resource_workspace_compilation,
 };
 #[allow(unused_imports)]
 pub(crate) use selection::{

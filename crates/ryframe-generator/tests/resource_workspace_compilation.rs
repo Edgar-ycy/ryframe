@@ -7,11 +7,41 @@ use std::{
 };
 
 use ryframe_generator::{
-    RelationIr, RelationKind, ResourceWorkspace, load_resource, render_resources, write_resource,
+    AssetRoot, OwnershipManifest, RelationIr, RelationKind, ResourceWorkspace, load_resource,
+    render_resources, write_resource,
 };
 
 static SHARED_WORKSPACE_RESULT: OnceLock<Result<(), String>> = OnceLock::new();
 const FRONTEND_DIR_ENV: &str = "RYFRAME_RESOURCE_WORKSPACE_FRONTEND_DIR";
+const PROFILE_ENV: &str = "RYFRAME_RESOURCE_WORKSPACE_PROFILE";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VerificationProfile {
+    Full,
+    Targeted,
+}
+
+impl VerificationProfile {
+    fn from_value(value: Option<&str>) -> Result<Self, String> {
+        match value {
+            None => Ok(Self::Full),
+            Some("targeted") => Ok(Self::Targeted),
+            Some(value) => Err(format!(
+                "资源 Workspace 验证模式 `{value}` 无效；仅 targeted gate 可设置 targeted"
+            )),
+        }
+    }
+
+    fn from_environment() -> Result<Self, String> {
+        let Some(value) = std::env::var_os(PROFILE_ENV) else {
+            return Self::from_value(None);
+        };
+        let value = value.into_string().map_err(|_| {
+            format!("资源 Workspace 验证模式环境变量 {PROFILE_ENV} 不是有效 Unicode")
+        })?;
+        Self::from_value(Some(&value))
+    }
+}
 
 struct SharedWorkspace {
     backend_source: PathBuf,
@@ -104,6 +134,24 @@ fn partial_device_frontend_contract_fails_closed() {
     );
 }
 
+#[test]
+fn verification_profile_defaults_to_full_and_rejects_unknown_values() {
+    assert_eq!(
+        VerificationProfile::from_value(None).unwrap(),
+        VerificationProfile::Full
+    );
+    assert_eq!(
+        VerificationProfile::from_value(Some("targeted")).unwrap(),
+        VerificationProfile::Targeted
+    );
+    for value in ["", "full", "targeted ", "unknown"] {
+        assert!(
+            VerificationProfile::from_value(Some(value)).is_err(),
+            "未知模式 {value:?} 必须失败关闭"
+        );
+    }
+}
+
 fn assert_shared_workspace(resource: &str) {
     if let Err(error) = SHARED_WORKSPACE_RESULT.get_or_init(|| {
         std::panic::catch_unwind(run_shared_workspace)
@@ -127,8 +175,12 @@ fn panic_message(payload: Box<dyn Any + Send>) -> String {
 }
 
 fn run_shared_workspace() -> Result<(), String> {
+    let profile = VerificationProfile::from_environment()?;
     let workspace = prepare_shared_workspace()?;
     generate_resource_slices(&workspace);
+    if profile == VerificationProfile::Targeted {
+        return Ok(());
+    }
     register_generated_backend_modules(&workspace.backend);
     register_device_frontend_contract(&workspace.frontend);
     write_device_fake_transaction_test(&workspace.backend);
@@ -218,6 +270,7 @@ fn generate_resource_slices(workspace: &SharedWorkspace) {
     )
     .expect("Device/Notice/Post 目录应一次性写入临时 Workspace");
     assert!(!first.written.is_empty(), "首次生成必须写入资产");
+    assert_generated_ownership(workspace);
     for path in [
         "crates/ryframe-application/src/generated/post/service.rs",
         "crates/ryframe-application/src/generated/notice/service.rs",
@@ -258,6 +311,45 @@ fn generate_resource_slices(workspace: &SharedWorkspace) {
         notice_registration.contains("@/views/system/notice/index.vue"),
         "Notice 必须保留强类型自定义页面扩展"
     );
+}
+
+fn assert_generated_ownership(workspace: &SharedWorkspace) {
+    let manifest_path = workspace.backend.join("catalog/resources/.ownership.toml");
+    let manifest = fs::read_to_string(&manifest_path).expect("应读取生成后的 ownership manifest");
+    let manifest: OwnershipManifest = toml::from_str(&manifest).expect("ownership manifest 应有效");
+    let selected = ["device", "notice", "post"];
+    let mut roots = std::collections::BTreeSet::new();
+    let mut paths = std::collections::BTreeSet::new();
+    for entry in manifest
+        .entries
+        .iter()
+        .filter(|entry| selected.contains(&entry.resource.as_str()))
+    {
+        assert!(
+            paths.insert((entry.root, entry.path.as_str())),
+            "ownership 不得重复登记路径：{}",
+            entry.path
+        );
+        let root = match entry.root {
+            AssetRoot::Backend => &workspace.backend,
+            AssetRoot::Frontend => &workspace.frontend,
+        };
+        assert!(
+            root.join(&entry.path).is_file(),
+            "ownership 资产不存在：{}",
+            entry.path
+        );
+        roots.insert((entry.resource.as_str(), entry.root));
+    }
+    for resource in selected {
+        for root in [AssetRoot::Backend, AssetRoot::Frontend] {
+            assert!(
+                roots.contains(&(resource, root)),
+                "{resource} 缺少 {} ownership",
+                root.label()
+            );
+        }
+    }
 }
 
 fn register_generated_backend_modules(backend: &Path) {

@@ -12,8 +12,8 @@ use super::check::{
     BACKEND_VERIFY_TARGET_DIR, BackendSnapshotProfile, CONSUMER_OWNED_COMMANDS, ChangeCategory,
     ChangeSurfacePolicy, FRONTEND_FULL_NON_CONSUMER_COMMANDS, FRONTEND_ONLY_CONTRACT_COMMANDS,
     FrontendProfile, PYTHON_TEST_ARGS, RESOURCE_CI_TARGET_DIR, RESOURCE_VERIFY_TARGET_DIR,
-    RepositoryKind, SMART_BACKEND_OPERATIONS, SMART_FEATURE_OPERATIONS, VerifyTargetPolicy,
-    WORKSPACE_CLIPPY_ARGS, WorkspaceGraph, analyze_change_surface,
+    RepositoryKind, ResourceWorkspaceProfile, SMART_BACKEND_OPERATIONS, SMART_FEATURE_OPERATIONS,
+    VerifyTargetPolicy, WORKSPACE_CLIPPY_ARGS, WorkspaceGraph, analyze_change_surface,
     append_changed_file_size_warnings, backend_package_operation_args, cargo_operation_jobs,
     changed_paths, ci_environment_from, ci_target_policy_from, ci_test_jobs_from, classify_changes,
     complete_verify_selection, consumer_contract_arguments, consumer_contract_plan,
@@ -21,7 +21,7 @@ use super::check::{
     load_change_surface_policy, load_consumer_contract_plan, load_workspace_graph,
     minimal_workspace_check_args, needs_consumer_contract, package_tests_generate_snapshots,
     parse_change_surface_policy, resolve_frontend_dir, resolve_target_dir,
-    resource_test_executable_from_messages, resource_workspace_environment,
+    resource_test_executable_from_messages, resource_workspace_environment_for_profile,
     reverse_dependency_closure, validate_feature_combination, verify_job_budget_from,
     verify_target_policy_from, workspace_clippy_args, workspace_test_args,
 };
@@ -362,10 +362,11 @@ fn resource_test_executable_is_read_from_cargo_json_messages() {
 #[test]
 fn resource_workspace_environment_uses_selected_frontend_and_target() {
     assert_eq!(
-        resource_workspace_environment(
+        resource_workspace_environment_for_profile(
             Path::new("workspace/frontend"),
             Path::new("target/ci/resource"),
             "4",
+            ResourceWorkspaceProfile::Full,
         ),
         [
             ("CARGO_BUILD_JOBS", "4".to_owned()),
@@ -379,6 +380,28 @@ fn resource_workspace_environment_uses_selected_frontend_and_target() {
             ),
         ]
     );
+}
+
+#[test]
+fn only_targeted_resource_workspace_sets_the_lightweight_profile() {
+    let full = resource_workspace_environment_for_profile(
+        Path::new("workspace/frontend"),
+        Path::new("target/ci/resource"),
+        "4",
+        ResourceWorkspaceProfile::Full,
+    );
+    assert!(
+        full.iter()
+            .all(|(key, _)| *key != "RYFRAME_RESOURCE_WORKSPACE_PROFILE")
+    );
+
+    let targeted = resource_workspace_environment_for_profile(
+        Path::new("workspace/frontend"),
+        Path::new("target/ci/resource"),
+        "4",
+        ResourceWorkspaceProfile::Targeted,
+    );
+    assert!(targeted.contains(&("RYFRAME_RESOURCE_WORKSPACE_PROFILE", "targeted".to_owned(),)));
 }
 
 #[test]
