@@ -282,7 +282,7 @@ impl Drop for RunningProcesses {
     }
 }
 
-pub(super) enum BuildResult {
+pub(crate) enum BuildResult {
     Ready(Binaries),
     VerifiedNoRestart,
     Failed,

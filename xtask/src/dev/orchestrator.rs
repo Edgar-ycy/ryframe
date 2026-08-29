@@ -166,7 +166,7 @@ pub(super) fn build_initial_candidate(
     shutdown: &AtomicBool,
     watcher: &SourceWatcher,
 ) -> Result<Option<Binaries>> {
-    let context = BuildContext::new(group, root, session, shutdown, watcher);
+    let context = BuildContext::new(group, root, session, shutdown, watcher, Path::new("cargo"));
     loop {
         let plan = BuildPlan::initial(watcher.current_revision());
         match build_candidate(&context, &plan, None, None)? {
@@ -295,7 +295,7 @@ fn build_while_lkg(
     cargo_invocations: Option<&AtomicUsize>,
 ) -> Result<Option<BuildResult>> {
     let previous = services.binaries.clone();
-    let context = BuildContext::new(group, root, session, shutdown, watcher);
+    let context = BuildContext::new(group, root, session, shutdown, watcher, Path::new("cargo"));
     let context = if let Some(counter) = cargo_invocations {
         context.with_cargo_counter(counter)
     } else {

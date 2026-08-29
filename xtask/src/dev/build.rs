@@ -41,22 +41,24 @@ enum WaitResult {
     Cancelled,
 }
 
-pub(super) struct BuildContext<'a> {
+pub(crate) struct BuildContext<'a> {
     pub(super) group: &'a ChildGroup,
     pub(super) root: &'a Path,
     session: &'a DevSession,
     pub(super) shutdown: &'a AtomicBool,
     pub(super) watcher: &'a SourceWatcher,
     pub(super) cargo_invocations: Option<&'a AtomicUsize>,
+    cargo_executable: &'a Path,
 }
 
 impl<'a> BuildContext<'a> {
-    pub(super) const fn new(
+    pub(crate) const fn new(
         group: &'a ChildGroup,
         root: &'a Path,
         session: &'a DevSession,
         shutdown: &'a AtomicBool,
         watcher: &'a SourceWatcher,
+        cargo_executable: &'a Path,
     ) -> Self {
         Self {
             group,
@@ -65,16 +67,21 @@ impl<'a> BuildContext<'a> {
             shutdown,
             watcher,
             cargo_invocations: None,
+            cargo_executable,
         }
     }
 
-    pub(super) fn with_cargo_counter(mut self, counter: &'a AtomicUsize) -> Self {
+    pub(crate) fn with_cargo_counter(mut self, counter: &'a AtomicUsize) -> Self {
         self.cargo_invocations = Some(counter);
         self
     }
+
+    fn cargo_command(&self) -> Command {
+        child_command(self.cargo_executable)
+    }
 }
 
-pub(super) fn build_candidate(
+pub(crate) fn build_candidate(
     context: &BuildContext<'_>,
     plan: &BuildPlan,
     previous: Option<&Binaries>,
@@ -227,7 +234,7 @@ fn run_resource_check(
     plan: &BuildPlan,
     lkg_check: &mut Option<&mut dyn FnMut() -> Result<()>>,
 ) -> Result<StepResult<()>> {
-    let mut command = child_command("cargo");
+    let mut command = context.cargo_command();
     command
         .args(["resource", "--all", "--check"])
         .current_dir(context.root)

@@ -8,7 +8,7 @@ use std::{
 
 use serde_json::Value;
 
-use crate::{Result, process::child_command};
+use crate::Result;
 
 use super::{
     BuildContext, StepResult, WaitResult, build_step_interruption, record_cargo_invocation,
@@ -77,7 +77,7 @@ fn build_target(
     target: CargoTarget,
     lkg_check: &mut Option<&mut dyn FnMut() -> Result<()>>,
 ) -> Result<StepResult<PathBuf>> {
-    let mut build = child_command("cargo");
+    let mut build = context.cargo_command();
     build
         .args([
             "build",

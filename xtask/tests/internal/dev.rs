@@ -12,13 +12,13 @@ use std::{
 };
 
 use super::dev::{
-    ArtifactAction, BuildPlan, CandidateProbeDisposition, ChangeKind, ChangeOutcome, CycleControl,
-    DEV_API_FEATURES, MigrationValidation, ProbeResult, ReadyKind, RuntimeInputPaths, SaveCase,
-    StepResult, TOOL_SELF_CHANGED_EXIT_CODE, api_command, available_ports,
-    candidate_probe_disposition, classify_change, combine_failures, failure_exit_code, ready_kind,
-    run_migration_validation, start_worker_after_api_ready, switch_services_with_rollback,
-    tool_self_changed_error, wait_services_ready_until, wait_services_ready_until_controlled,
-    worker_command,
+    ArtifactAction, BuildContext, BuildPlan, BuildResult, CandidateProbeDisposition, ChangeKind,
+    ChangeOutcome, CycleControl, DEV_API_FEATURES, DevSession, MigrationValidation, ProbeResult,
+    ReadyKind, RuntimeInputPaths, SaveCase, StepResult, TOOL_SELF_CHANGED_EXIT_CODE, api_command,
+    available_ports, build_candidate, candidate_probe_disposition, classify_change,
+    combine_failures, failure_exit_code, ready_kind, run_migration_validation,
+    start_worker_after_api_ready, switch_services_with_rollback, tool_self_changed_error,
+    wait_services_ready_until, wait_services_ready_until_controlled, worker_command,
 };
 use super::{
     process::ChildGroup,
@@ -206,6 +206,50 @@ fn migration_validation_is_superseded_during_the_running_process() {
     changed.join().unwrap();
     assert_eq!(result, StepResult::Superseded);
     assert!(started.elapsed() < Duration::from_secs(3));
+    drop(watcher);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn compile_build_is_superseded_after_fake_cargo_starts() {
+    let root = std::env::temp_dir().join(format!(
+        "ryframe-xtask-compile-supersede-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("config")).unwrap();
+    fs::create_dir_all(root.join("locales")).unwrap();
+    let marker = root.join(".fake-cargo-started");
+    let fake_cargo = write_blocking_cargo_stub(&root);
+    let watcher = SourceWatcher::new(&root).unwrap();
+    let plan = BuildPlan::from_changes(&ChangeBatch {
+        revision: watcher.current_revision(),
+        paths: ["crates/ryframe-api/src/lib.rs".to_owned()]
+            .into_iter()
+            .collect(),
+    });
+    let session =
+        DevSession::prepare_isolated(&root.join("state"), watcher.current_revision()).unwrap();
+    let group = ChildGroup::new().unwrap();
+    let shutdown = AtomicBool::new(false);
+    let cargo_invocations = AtomicUsize::new(0);
+    let context = BuildContext::new(&group, &root, &session, &shutdown, &watcher, &fake_cargo)
+        .with_cargo_counter(&cargo_invocations);
+    let started = Instant::now();
+    let mut lkg_check = || {
+        if started.elapsed() > Duration::from_secs(3) {
+            return Err("fake Cargo 未进入可取消的编译阶段".into());
+        }
+        Ok(())
+    };
+
+    let result = build_candidate(&context, &plan, None, Some(&mut lkg_check)).unwrap();
+
+    assert!(matches!(result, BuildResult::Superseded));
+    assert_eq!(cargo_invocations.load(Ordering::Relaxed), 1);
+    assert!(marker.is_file(), "测试必须先确认 fake Cargo 已启动");
+    assert!(watcher.current_revision() > plan.source_revision);
+    assert!(started.elapsed() < Duration::from_secs(1));
     drop(watcher);
     fs::remove_dir_all(root).unwrap();
 }
@@ -908,12 +952,39 @@ fn write_slow_migration_stub(root: &Path) -> PathBuf {
     path
 }
 
+#[cfg(windows)]
+fn write_blocking_cargo_stub(root: &Path) -> PathBuf {
+    let path = root.join("fake-cargo.cmd");
+    fs::write(
+        &path,
+        "@echo off\r\n>\".fake-cargo-started\" echo started\r\n>\"config\\fake-change.toml\" echo [app]\r\n:wait\r\nping -n 2 127.0.0.1 >NUL\r\ngoto wait\r\n",
+    )
+    .unwrap();
+    path
+}
+
 #[cfg(unix)]
 fn write_slow_migration_stub(root: &Path) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
 
     let path = root.join("slow-migrate.sh");
     fs::write(&path, "#!/bin/sh\nsleep 30\n").unwrap();
+    let mut permissions = fs::metadata(&path).unwrap().permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&path, permissions).unwrap();
+    path
+}
+
+#[cfg(unix)]
+fn write_blocking_cargo_stub(root: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let path = root.join("fake-cargo.sh");
+    fs::write(
+        &path,
+        "#!/bin/sh\n: > .fake-cargo-started\nprintf '[app]\\n' > config/fake-change.toml\nwhile :; do sleep 60; done\n",
+    )
+    .unwrap();
     let mut permissions = fs::metadata(&path).unwrap().permissions();
     permissions.set_mode(0o700);
     fs::set_permissions(&path, permissions).unwrap();
