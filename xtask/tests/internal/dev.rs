@@ -226,9 +226,7 @@ fn compile_build_is_superseded_after_fake_cargo_starts() {
     let watcher = SourceWatcher::new(&root).unwrap();
     let plan = BuildPlan::from_changes(&ChangeBatch {
         revision: watcher.current_revision(),
-        paths: ["crates/ryframe-api/src/lib.rs".to_owned()]
-            .into_iter()
-            .collect(),
+        paths: BTreeSet::from(["crates/ryframe-api/src/lib.rs".to_owned()]),
     });
     let session =
         DevSession::prepare_isolated(&root.join("state"), watcher.current_revision()).unwrap();
@@ -237,21 +235,26 @@ fn compile_build_is_superseded_after_fake_cargo_starts() {
     let cargo_invocations = AtomicUsize::new(0);
     let context = BuildContext::new(&group, &root, &session, &shutdown, &watcher, &fake_cargo)
         .with_cargo_counter(&cargo_invocations);
-    let started = Instant::now();
-    let mut lkg_check = || {
-        if started.elapsed() > Duration::from_secs(3) {
-            return Err("fake Cargo 未进入可取消的编译阶段".into());
-        }
-        Ok(())
+    let build_started = Instant::now();
+    let mut changed_at = None;
+    let result = {
+        let mut lkg_check = || {
+            if changed_at.is_none() && marker.is_file() {
+                fs::write(root.join("config/fake-change.toml"), "[app]\n")?;
+                changed_at = Some(Instant::now());
+            }
+            if build_started.elapsed() > Duration::from_secs(3) {
+                return Err("fake Cargo 未进入可取消的编译阶段".into());
+            }
+            Ok(())
+        };
+        build_candidate(&context, &plan, None, Some(&mut lkg_check)).unwrap()
     };
-
-    let result = build_candidate(&context, &plan, None, Some(&mut lkg_check)).unwrap();
-
+    let changed_at = changed_at.expect("测试必须记录保存时刻");
     assert!(matches!(result, BuildResult::Superseded));
     assert_eq!(cargo_invocations.load(Ordering::Relaxed), 1);
-    assert!(marker.is_file(), "测试必须先确认 fake Cargo 已启动");
     assert!(watcher.current_revision() > plan.source_revision);
-    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(changed_at.elapsed() < Duration::from_secs(1));
     drop(watcher);
     fs::remove_dir_all(root).unwrap();
 }
@@ -963,7 +966,7 @@ fn write_blocking_cargo_stub(root: &Path) -> PathBuf {
     let path = root.join("fake-cargo.cmd");
     fs::write(
         &path,
-        "@echo off\r\n>\".fake-cargo-started\" echo started\r\n>\"config\\fake-change.toml\" echo [app]\r\n:wait\r\nping -n 2 127.0.0.1 >NUL\r\ngoto wait\r\n",
+        "@echo off\r\n>\".fake-cargo-started\" echo started\r\n:wait\r\nping -n 2 127.0.0.1 >NUL\r\ngoto wait\r\n",
     )
     .unwrap();
     path
@@ -972,7 +975,6 @@ fn write_blocking_cargo_stub(root: &Path) -> PathBuf {
 #[cfg(unix)]
 fn write_slow_migration_stub(root: &Path) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
-
     let path = root.join("slow-migrate.sh");
     fs::write(&path, "#!/bin/sh\nsleep 30\n").unwrap();
     let mut permissions = fs::metadata(&path).unwrap().permissions();
@@ -984,11 +986,10 @@ fn write_slow_migration_stub(root: &Path) -> PathBuf {
 #[cfg(unix)]
 fn write_blocking_cargo_stub(root: &Path) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
-
     let path = root.join("fake-cargo.sh");
     fs::write(
         &path,
-        "#!/bin/sh\n: > .fake-cargo-started\nprintf '[app]\\n' > config/fake-change.toml\nwhile :; do sleep 60; done\n",
+        "#!/bin/sh\n: > .fake-cargo-started\nwhile :; do sleep 60; done\n",
     )
     .unwrap();
     let mut permissions = fs::metadata(&path).unwrap().permissions();
