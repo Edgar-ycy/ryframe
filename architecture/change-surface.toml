@@ -36,8 +36,14 @@ reason = "Rust 工具链变化"
 [[full_invalidation_paths]]
 repository = "backend"
 match = "exact"
-path = "build.rs"
-reason = "Workspace 构建脚本变化"
+path = "crates/ryframe-adapters/build.rs"
+reason = "Adapters 构建脚本变化"
+
+[[full_invalidation_paths]]
+repository = "backend"
+match = "exact"
+path = "crates/ryframe-api/build.rs"
+reason = "API 构建脚本变化"
 
 [[full_invalidation_paths]]
 repository = "backend"
@@ -286,7 +292,7 @@ standard_resource_forbidden = true
 
 [[central_hotspots]]
 repository = "frontend"
-path = "src/router/pageRegistry.ts"
+path = "src/features/pageRegistry.ts"
 standard_resource_forbidden = true
 
 [[central_hotspots]]

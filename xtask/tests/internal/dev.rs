@@ -1,30 +1,24 @@
 use std::{
     cell::RefCell,
     collections::BTreeSet,
-    fs,
-    path::{Path, PathBuf},
+    path::Path,
     sync::{
         Arc, Barrier,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
     },
     thread,
     time::{Duration, Instant},
 };
 
 use super::dev::{
-    ArtifactAction, BuildContext, BuildPlan, BuildResult, CandidateProbeDisposition, ChangeKind,
-    ChangeOutcome, CycleControl, DEV_API_FEATURES, DevSession, MigrationValidation, ProbeResult,
-    ReadyKind, RuntimeInputPaths, RuntimeSecrets, SaveCase, StepResult,
-    TOOL_SELF_CHANGED_EXIT_CODE, api_command, available_ports, build_candidate,
+    ArtifactAction, BuildPlan, CandidateProbeDisposition, ChangeKind, ChangeOutcome, CycleControl,
+    DEV_API_FEATURES, MigrationValidation, ProbeResult, ReadyKind, RuntimeInputPaths,
+    RuntimeSecrets, SaveCase, TOOL_SELF_CHANGED_EXIT_CODE, api_command, available_ports,
     candidate_probe_disposition, classify_change, combine_failures, failure_exit_code, ready_kind,
-    run_migration_validation, start_worker_after_api_ready, switch_services_with_rollback,
-    tool_self_changed_error, wait_services_ready_until, wait_services_ready_until_controlled,
-    worker_command,
+    start_worker_after_api_ready, switch_services_with_rollback, tool_self_changed_error,
+    wait_services_ready_until, wait_services_ready_until_controlled, worker_command,
 };
-use super::{
-    process::ChildGroup,
-    watch::{ChangeBatch, SourceRevision, SourceRevisionTracker, SourceWatcher},
-};
+use super::watch::{ChangeBatch, SourceRevision, SourceRevisionTracker};
 
 #[test]
 fn development_changes_are_classified_by_runtime_impact() {
@@ -111,14 +105,18 @@ fn persistence_changes_have_distinct_build_and_verification_plans() {
         runtime: ArtifactAction,
         restart_pair: bool,
         migration: MigrationValidation,
+        cargo_invocations: usize,
+        ready: ReadyKind,
     }
     let cases = [
         Case {
             label: "control",
             paths: &["crates/ryframe-db/src/migration/m20260827.rs"],
-            runtime: ArtifactAction::Rebuild,
+            runtime: ArtifactAction::ReuseLkg,
             restart_pair: true,
             migration: MigrationValidation::StandaloneControl,
+            cargo_invocations: 1,
+            ready: ReadyKind::Promoted,
         },
         Case {
             label: "tenant",
@@ -126,6 +124,8 @@ fn persistence_changes_have_distinct_build_and_verification_plans() {
             runtime: ArtifactAction::NotNeeded,
             restart_pair: false,
             migration: MigrationValidation::StandaloneTenant,
+            cargo_invocations: 1,
+            ready: ReadyKind::VerifiedNoRestart,
         },
         Case {
             label: "control+tenant",
@@ -133,9 +133,11 @@ fn persistence_changes_have_distinct_build_and_verification_plans() {
                 "crates/ryframe-db/src/migration/m20260827.rs",
                 "crates/ryframe-tenant-db/src/migration/m20260827.rs",
             ],
-            runtime: ArtifactAction::Rebuild,
+            runtime: ArtifactAction::ReuseLkg,
             restart_pair: true,
             migration: MigrationValidation::StandaloneControlAndTenant,
+            cargo_invocations: 1,
+            ready: ReadyKind::Promoted,
         },
     ];
 
@@ -158,105 +160,19 @@ fn persistence_changes_have_distinct_build_and_verification_plans() {
             "{} 验证计划错误",
             case.label
         );
-    }
-}
-
-#[test]
-fn migration_validation_is_superseded_during_the_running_process() {
-    let root = std::env::temp_dir().join(format!(
-        "ryframe-xtask-migration-supersede-{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(root.join("config")).unwrap();
-    fs::create_dir_all(root.join("locales")).unwrap();
-    let config = root.join("config/app.dev.toml");
-    fs::write(&config, "[app]\nport = 8080\n").unwrap();
-    let migrate = write_slow_migration_stub(&root);
-    let watcher = SourceWatcher::new(&root).unwrap();
-    thread::sleep(Duration::from_millis(100));
-    let plan = BuildPlan::from_changes(&ChangeBatch {
-        revision: watcher.current_revision(),
-        paths: ["crates/ryframe/src/bin/ryframe_migrate.rs".to_owned()]
-            .into_iter()
-            .collect(),
-    });
-    let changed_config = config;
-    let changed = thread::spawn(move || {
-        thread::sleep(Duration::from_millis(250));
-        fs::write(changed_config, "[app]\nport = 8081\n").unwrap();
-    });
-    let group = ChildGroup::new().unwrap();
-    let shutdown = AtomicBool::new(false);
-    let mut lkg_check = None;
-    let started = Instant::now();
-
-    let result = run_migration_validation(
-        &group,
-        &root,
-        &migrate,
-        &root.join("config"),
-        &root.join("locales"),
-        &RuntimeSecrets::default(),
-        &shutdown,
-        &watcher,
-        &plan,
-        &mut lkg_check,
-    )
-    .unwrap();
-
-    changed.join().unwrap();
-    assert_eq!(result, StepResult::Superseded);
-    assert!(started.elapsed() < Duration::from_secs(3));
-    drop(watcher);
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn compile_build_is_superseded_after_fake_cargo_starts() {
-    let root = std::env::temp_dir().join(format!(
-        "ryframe-xtask-compile-supersede-{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&root);
-    fs::create_dir_all(root.join("config")).unwrap();
-    fs::create_dir_all(root.join("locales")).unwrap();
-    let marker = root.join(".fake-cargo-started");
-    let fake_cargo = write_blocking_cargo_stub(&root);
-    let watcher = SourceWatcher::new(&root).unwrap();
-    let plan = BuildPlan::from_changes(&ChangeBatch {
-        revision: watcher.current_revision(),
-        paths: BTreeSet::from(["crates/ryframe-api/src/lib.rs".to_owned()]),
-    });
-    let session =
-        DevSession::prepare_isolated(&root.join("state"), watcher.current_revision()).unwrap();
-    let group = ChildGroup::new().unwrap();
-    let shutdown = AtomicBool::new(false);
-    let cargo_invocations = AtomicUsize::new(0);
-    let context = BuildContext::new(&group, &root, &session, &shutdown, &watcher, &fake_cargo)
-        .with_cargo_counter(&cargo_invocations);
-    let build_started = Instant::now();
-    let mut changed_at = None;
-    let result = {
-        let mut lkg_check = || {
-            if changed_at.is_none() && marker.is_file() {
-                fs::write(root.join("config/fake-change.toml"), "[app]\n")?;
-                changed_at = Some(Instant::now());
-            }
-            if build_started.elapsed() > Duration::from_secs(3) {
-                return Err("fake Cargo 未进入可取消的编译阶段".into());
-            }
-            Ok(())
+        assert_eq!(
+            plan.cargo_invocations(),
+            case.cargo_invocations,
+            "{} Cargo 调用数错误",
+            case.label
+        );
+        let ready = if plan.restart_pair {
+            ReadyKind::Promoted
+        } else {
+            ReadyKind::VerifiedNoRestart
         };
-        build_candidate(&context, &plan, None, Some(&mut lkg_check)).unwrap()
-    };
-    let changed_at = changed_at.expect("测试必须记录保存时刻");
-    assert!(matches!(result, BuildResult::Superseded));
-    assert_eq!(cargo_invocations.load(Ordering::Relaxed), 1);
-    assert!(watcher.current_revision() > plan.source_revision);
-    assert!(changed_at.elapsed() < Duration::from_secs(1));
-    drop(watcher);
-    fs::remove_dir_all(root).unwrap();
+        assert_eq!(ready, case.ready, "{} ready 语义错误", case.label);
+    }
 }
 
 #[test]
@@ -952,48 +868,4 @@ fn candidate_start_success_cleans_previous_after_start() {
         calls.into_inner(),
         ["stop:previous", "start:candidate", "cleanup:previous"]
     );
-}
-
-#[cfg(windows)]
-fn write_slow_migration_stub(root: &Path) -> PathBuf {
-    let path = root.join("slow-migrate.cmd");
-    fs::write(&path, "@echo off\r\nping -n 31 127.0.0.1 >NUL\r\n").unwrap();
-    path
-}
-
-#[cfg(windows)]
-fn write_blocking_cargo_stub(root: &Path) -> PathBuf {
-    let path = root.join("fake-cargo.cmd");
-    fs::write(
-        &path,
-        "@echo off\r\n>\".fake-cargo-started\" echo started\r\n:wait\r\nping -n 2 127.0.0.1 >NUL\r\ngoto wait\r\n",
-    )
-    .unwrap();
-    path
-}
-
-#[cfg(unix)]
-fn write_slow_migration_stub(root: &Path) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-    let path = root.join("slow-migrate.sh");
-    fs::write(&path, "#!/bin/sh\nsleep 30\n").unwrap();
-    let mut permissions = fs::metadata(&path).unwrap().permissions();
-    permissions.set_mode(0o700);
-    fs::set_permissions(&path, permissions).unwrap();
-    path
-}
-
-#[cfg(unix)]
-fn write_blocking_cargo_stub(root: &Path) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-    let path = root.join("fake-cargo.sh");
-    fs::write(
-        &path,
-        "#!/bin/sh\n: > .fake-cargo-started\nwhile :; do sleep 60; done\n",
-    )
-    .unwrap();
-    let mut permissions = fs::metadata(&path).unwrap().permissions();
-    permissions.set_mode(0o700);
-    fs::set_permissions(&path, permissions).unwrap();
-    path
 }

@@ -1,20 +1,15 @@
 # 开发指南
-
 ## 环境与配置
 
 本地开发以 Windows 为准。MySQL 和 RustFS 在 Windows 运行，Redis 连接 WSL 中的实例；应用本身直接在 Windows 启动。
-
 选择开发配置后再运行命令，例如 `$env:APP_ENV = "dev"`。配置文件位于 `config/`，环境变量使用 `APP_` 前缀覆盖对应字段；外部服务地址、密码、令牌和证书通过本机环境变量或密钥文件提供，所有可用字段和校验范围以配置结构及启动错误为准。
-
 ## 启动与热切换
 
 首次启动先验证数据库结构，再启动开发进程：
-
 ```powershell
 cargo migrate verify
 cargo dev
 ```
-
 `cargo dev` 启动 Vite、API 和独立 Worker。后端变化会先编译到按会话和代次隔离的新目录，并在隔离端口探活；探活成功后才切换正式端口，失败时继续使用上一个可用版本。再次启动时会清理上次崩溃留下的暂存目录，并校验清单、成对二进制与运行输入快照，恢复最近的完整版本后再后台构建当前源码。按 `Ctrl+C` 停止全部子进程；若 `xtask` 自身变化，命令以退出码 `75` 提示重新运行 `cargo dev`。
 
 保存后的动作由整批路径共同决定；同一批包含多类变化时会合并为覆盖全部变化的计划：
@@ -26,7 +21,7 @@ cargo dev
 | API crate 或 API 组合入口 | 只构建 API，复用上一可用 Worker，随后成对探活和切换 |
 | Worker 入口 | 只构建 Worker，复用上一可用 API，随后成对探活和切换 |
 | application、kernel、auth、config、adapters、DB 或共享 boot | 重新构建 API 和 Worker |
-| 控制库迁移或访问目录 | 构建 API、Worker 和 migrate，执行控制库 verify 后探活；不自动升级 |
+| 控制库迁移或访问目录 | 只构建 migrate，复用上一可用 API/Worker，执行控制库 verify 后成对探活和切换；不自动升级 |
 | 租户迁移 | 只构建 migrate，并验证当前配置中明确登记的本地租户目标；不重启服务 |
 | migrate 入口 | 只构建 migrate 并独立 verify；不重启服务 |
 | 资源清单或生成器 | 执行只读 `cargo resource --all --check`；发现漂移即失败，不重启服务 |
@@ -37,12 +32,10 @@ cargo dev
 编译、迁移验证或探活期间出现更新的源码代次时，旧周期会终止并回收完整 Cargo、rustc 与 build-script 进程树，再处理最新路径集合。候选版本开始切换后会先完成切换或恢复上一可用版本；期间的新事件进入队列，不会把过期代次提升为正式版本。配置与本地化资源使用原子运行快照，密钥只通过子进程环境传递，不写入代次清单。
 
 常用排障入口：
-
 ```powershell
 cargo run --locked -p ryframe --no-default-features --features bin-api,runtime-swagger-ui --bin ryframe -- --probe
 cargo run --locked -p ryframe --no-default-features --features bin-worker --bin ryframe-worker -- --probe
 ```
-
 ## 数据库迁移
 
 控制库使用默认目标；租户数据可操作全部已登记目标或单个目标；新迁移必须用对应命令创建骨架：
@@ -56,9 +49,7 @@ cargo migrate verify tenant-data --target <目标键>
 cargo migrate new control <迁移名>
 cargo migrate new tenant-data <迁移名>
 ```
-
 生产部署和非生产重建步骤见[数据指南](data.md)与[运维指南](operations.md)。
-
 ## 开发标准资源
 
 资源入口默认只预览差异；`--check` 只读比较并在存在差异时返回失败，`--write` 才写入生成结果，`--explain` 可查看从资源清单到页面的调用链：
@@ -71,7 +62,6 @@ cargo resource --all --check
 cargo resource post --write
 cargo resource post --explain
 ```
-
 `cargo resource --all --check` 会校验全部受管后端、前端资产和 ownership 清单，适合在提交前确认重复生成零差异。该命令不会创建临时生成文件、刷新 OpenAPI 或连接数据库；发现差异后，先按资源预览，再显式执行对应的 `--write`。
 
 开发新的标准资源时：
@@ -84,7 +74,6 @@ cargo resource post --explain
 6. 运行 `cargo verify`，再用浏览器验证新增、查询、编辑和删除流程。
 
 Post 和 Notice 可作为标准 CRUD 示例。导出、发布等特殊动作适合保留为自定义强类型用例。
-
 ## 开发自定义业务
 
 不能由标准资源表达的流程按以下顺序实现：
@@ -95,16 +84,13 @@ Post 和 Notice 可作为标准 CRUD 示例。导出、发布等特殊动作适�
 4. 在 `ryframe-api` 增加 DTO、路由和 OpenAPI 描述，或让 Worker 调用应用用例。
 5. 增加覆盖业务成功和失败路径的测试。
 6. 同步前端契约并联调；模块选择和请求流见[架构说明](architecture.md)。
-
 ## API 与前后端联调
 
 接口变化后运行 `cargo api-sync`，从当前后端代码生成候选 OpenAPI 并刷新前端 operation descriptor；随后进入前端项目执行消费者检查和浏览器 smoke，确认请求、权限、菜单与页面行为一致。只重新导出后端快照时运行：
-
 ```powershell
 cargo run --locked -p ryframe-api --bin export_openapi -- openapi/openapi.json
 cargo run --locked -p ryframe-db --features migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
 ```
-
 ## 测试与检查
 
 日常修改使用智能检查，联调完成后使用完整检查：
@@ -113,13 +99,11 @@ cargo run --locked -p ryframe-db --features migration --bin export_mysql_snapsho
 cargo verify
 cargo verify --full
 ```
-
 只运行后端或前端主要检查时可添加 `--scope backend` 或 `--scope frontend`。
 
 Rust 函数长度检查使用固定版本的 tree-sitter AST。当前 rollout 采用 `changed` 模式，只对本次新增或修改触及的函数执行 150/100/80 行分类上限；已登记的存量例外无论是否被本次修改都会校验到期时间与“只能缩短”约束。只有 `architecture/crate-boundaries.toml` 中的函数例外全部清零后，策略才允许切换为 `all`，提前切换会直接使架构检查失败。
 
 运行某个模块的测试：
-
 ```powershell
 cargo test --locked -p ryframe-application
 cargo test --locked -p ryframe-api

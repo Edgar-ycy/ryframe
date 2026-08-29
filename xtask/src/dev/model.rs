@@ -117,9 +117,8 @@ impl BuildPlan {
             .collect::<BTreeSet<_>>();
         let build_graph = reasons.contains(&ChangeKind::BuildGraph);
         let rebuild_pair = build_graph || reasons.contains(&ChangeKind::UnknownBackend);
-        let shared = rebuild_pair
-            || reasons.contains(&ChangeKind::SharedRuntime)
-            || reasons.contains(&ChangeKind::ControlPersistence);
+        let control_persistence = reasons.contains(&ChangeKind::ControlPersistence);
+        let shared = rebuild_pair || reasons.contains(&ChangeKind::SharedRuntime);
         let api_rebuild = shared
             || reasons.contains(&ChangeKind::ApiOnly)
             || reasons.contains(&ChangeKind::LocaleCatalog);
@@ -127,13 +126,13 @@ impl BuildPlan {
             || reasons.contains(&ChangeKind::WorkerOnly)
             || reasons.contains(&ChangeKind::LocaleCatalog);
         let runtime_config = reasons.contains(&ChangeKind::RuntimeConfig);
-        let restart_pair = api_rebuild || worker_rebuild || runtime_config;
+        let restart_pair = api_rebuild || worker_rebuild || runtime_config || control_persistence;
         let migrate = build_graph
-            || reasons.contains(&ChangeKind::ControlPersistence)
+            || control_persistence
             || reasons.contains(&ChangeKind::TenantPersistence)
             || reasons.contains(&ChangeKind::MigrationTool);
         let migration = if reasons.contains(&ChangeKind::TenantPersistence)
-            && (reasons.contains(&ChangeKind::ControlPersistence) || build_graph)
+            && (control_persistence || build_graph)
         {
             MigrationValidation::StandaloneControlAndTenant
         } else if reasons.contains(&ChangeKind::TenantPersistence) {

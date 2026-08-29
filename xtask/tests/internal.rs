@@ -49,6 +49,8 @@ mod cli_tests;
 mod contract_tests;
 #[path = "internal/dev_probe_control.rs"]
 mod dev_probe_control_tests;
+#[path = "internal/dev_process_control.rs"]
+mod dev_process_control_tests;
 #[path = "internal/dev_snapshot.rs"]
 mod dev_snapshot_tests;
 #[path = "internal/dev.rs"]
