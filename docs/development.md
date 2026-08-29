@@ -17,6 +17,25 @@ cargo dev
 
 `cargo dev` 启动 Vite、API 和独立 Worker。后端变化会先编译到按会话和代次隔离的新目录，并在隔离端口探活；探活成功后才切换正式端口，失败时继续使用上一个可用版本。再次启动时会清理上次崩溃留下的暂存目录，并校验清单、成对二进制与运行输入快照，恢复最近的完整版本后再后台构建当前源码。按 `Ctrl+C` 停止全部子进程；若 `xtask` 自身变化，命令以退出码 `75` 提示重新运行 `cargo dev`。
 
+保存后的动作由整批路径共同决定；同一批包含多类变化时会合并为覆盖全部变化的计划：
+
+| 变化范围 | `cargo dev` 动作 |
+|---|---|
+| 当前开发运行配置 | 不调用 Cargo；复用上一可用 API/Worker，以原子配置快照探活后成对切换 |
+| 本地化 catalog | 重新构建 API 和 Worker，因为默认文案包含编译期资源 |
+| API crate 或 API 组合入口 | 只构建 API，复用上一可用 Worker，随后成对探活和切换 |
+| Worker 入口 | 只构建 Worker，复用上一可用 API，随后成对探活和切换 |
+| application、kernel、auth、config、adapters、DB 或共享 boot | 重新构建 API 和 Worker |
+| 控制库迁移或访问目录 | 构建 API、Worker 和 migrate，执行控制库 verify 后探活；不自动升级 |
+| 租户迁移 | 只构建 migrate，并验证当前配置中明确登记的本地租户目标；不重启服务 |
+| migrate 入口 | 只构建 migrate 并独立 verify；不重启服务 |
+| 资源清单或生成器 | 执行只读 `cargo resource --all --check`；发现漂移即失败，不重启服务 |
+| Cargo、toolchain、`build.rs` 或本地 vendor | 重新规划并构建 API、Worker 和 migrate |
+| 未识别的后端文件 | 保守地重新构建 API 和 Worker |
+| `xtask` 自身 | 退出码 `75`，提示开发者重新运行 `cargo dev` |
+
+编译、迁移验证或探活期间出现更新的源码代次时，旧周期会终止并回收完整 Cargo、rustc 与 build-script 进程树，再处理最新路径集合。候选版本开始切换后会先完成切换或恢复上一可用版本；期间的新事件进入队列，不会把过期代次提升为正式版本。配置与本地化资源使用原子运行快照，密钥只通过子进程环境传递，不写入代次清单。
+
 常用排障入口：
 
 ```powershell
@@ -132,23 +151,22 @@ TLS fixture 会生成两日有效的临时 CA，在动态回环端口启动 Redi
 
 ## 开发反馈性能测量
 
-DevEx 测量必须显式选择 suite、工作负载变体、运行次数与冷暖缓存状态，例如 `cargo xtask devex run --suite rust-cold-build --variant api --runs 20 --cache cold`。`rust-cold-build` 只接受 `cold`，`rust-incremental`、`resource-gate`、`rust-gate` 和 `rust-sccache` 只接受 `warm`，其他 suite 可按实际工作负载选择 `cold` 或 `warm`；CLI 和摘要阶段均会对语义无效的组合 fail-closed。冷构建和 sccache suite 的变体为 `api`、`worker`、`migrate` 或 `workspace`；`rust-incremental` 额外提供 `application` 变体，用 5 次可还原的代表性 application 编辑检查 12 秒阈值，其余 Rust 编译变体仍至少采样 20 次。`cargo-dev-save` 的变体直接选择 `config-only`、`api-only`、`worker-only`、`shared-runtime`、`locales`、`migration-only`、`resource-manifest` 或 `cancellation`，不依赖调用方预设环境变量；resource generator 使用 `all`、`post` 或 `notice`，resource gate 使用 `auto`，Rust gate 和前端 suite 使用 `default`。其他普通 suite 至少采样 5 次，会触发编译的保存场景至少采样 20 次。`rust-incremental` 会对所选目标的代表性源码执行一次可还原编辑，命令成功或失败后均原子还原。
+需要测量保存反馈、编译、资源门禁或前端构建时，先用 `cargo xtask devex --help` 选择适用的 suite、variant、运行次数与冷暖缓存，再通过统一入口执行和汇总：
 
-`cargo-dev-save` 每个样本会先在独立 session、动态端口和隔离运行输入中构建并以只读 probe 模式启动 LKG；MySQL、Redis 或对象存储未就绪时，前置检查直接失败且不产出样本。计时从代表性源码的原子保存开始，完整经过真实 watcher debounce、后台 build/verify、候选 probe、LKG promotion 或 `VerifiedNoRestart`，直到服务再次 ready；前置检查、源码还原和进程清理不计入耗时，也不会自动执行迁移升级。`samples.jsonl` 同时记录保存到就绪耗时、该保存周期实际发起的 Cargo 调用数和就绪类型；`config-only` 必须经过真实 LKG 复用、probe 与切换且 Cargo 调用数为 0。`cold` 表示干净 target 上的首次保存，`warm` 表示复用同一 target 的成熟保存，但每次样本仍使用新的运行 session。
+```powershell
+cargo xtask devex run --suite <suite> --variant <name> --runs <次数> --cache <cold|warm>
+cargo xtask devex paired --base-backend <基线目录> --candidate-backend <候选目录> --suite <suite> --variant <name> --runs <次数> --cache <cold|warm>
+cargo xtask devex summarize <日期/run-id>
+cargo xtask devex compare --base <日期/run-id> --candidate <日期/run-id>
+```
 
-`cancellation` 不启动 LKG，而是在样本专用冷 target 中启动真实 API Cargo 构建，确认 Job Object 中已出现编译后代后产生新源码代次。耗时从 watcher 可观察的原子保存开始，到整棵 Cargo/rustc/build-script 进程树回收且活跃进程数归零为止；每个正式分布至少记录 20 个样本。成功的冷样本在先写入测量记录后删除已验证边界内的隔离 target，失败样本保留 target 用于诊断。
+测量产物写入 `.local-tests/devex/<日期>/<run-id>/`，其中包含运行环境与源码指纹、逐次样本以及 P50/P95 摘要；涉及编译缓存的 suite 还保存前后统计。runner 会验证 suite 与缓存语义、源码和工具指纹、样本完整性及基线/候选是否可比较；前置依赖未就绪、输入无效、源码在测量中变化、缓存报错或证据缺失时都会失败关闭，不把不完整结果判为达标。`cargo-dev-save` 使用真实 watcher、只读迁移验证和探活流程，不会自动升级数据库。
 
-suite 固定为 `rust-cold-build`、`rust-incremental`、`cargo-dev-save`、`resource-generator`、`resource-gate`、`rust-gate`、`rust-sccache`、`frontend-fast` 和 `frontend-build`。`rust-gate` 精确执行 `cargo xtask ci rust-gate`，不会使用旧的完整 verify 代替；它与 `rust-sccache` 都在预热专用缓存后采集 sccache 前后统计，并让每个正式样本使用独立 Cargo target。成功样本在记录后删除隔离 target，避免把 Cargo no-op 算成命中或让 20 轮门禁无限占用磁盘。
+## 资源门禁
 
-产物只写入 `.local-tests/devex/<日期>/<run-id>/`：`metadata.json` 记录提交、dirty worktree 内容指纹、Cargo、Rust、sccache 可执行版本、target、features、jobs、环境白名单哈希、cache state、可比较的执行面 `compile_surface_fingerprint` 与单独的输入指纹，`samples.jsonl` 保存样本，`summary.json` 和 `summary.md` 保存 P50/P95。`resource-gate` 测量固定注入 `RYFRAME_RESOURCE_GATE_TARGETED=replay-verified-v1`，每个成功样本必须从唯一 decision artifact 读到 format 1、`recognized=true`、`mode=targeted` 且无 fallback 的证据，并把证据与 artifact SHA-256 写入样本。正式对比必须使用 `cargo xtask devex paired --base-backend <基线-worktree> --candidate-backend <候选-worktree> ...`，两个测量 worktree 与当前 worktree 必须彼此独立；前端参与的 suite 还必须提供两份独立前端 worktree。runner 按 A-B-B-A 交错记录 arm、pair、全局 order 与每侧源码指纹。完成后可分别 `summarize`，`compare --base <基线-run> --candidate <候选-run>` 只接受同一 comparison id、相同 sccache 版本且样本完整、次序可审计的 paired 结果。它会对 API/Worker/migrate 冷构建、config/API/Worker 保存、取消、application 增量、`frontend-fast` 和 warm `resource-gate` 应用计划阈值，并无论通过与否都把 `comparison.json` 和 `comparison.md` 持久化到候选 run 目录。
+`cargo xtask ci resource-gate --frontend-dir ../ryframe-vue3` 直接从 CI 的 base/head SHA 计算资源变化、关系闭包和 ownership，不接收调用方拼接的资源名。缺少合法 base、变更面过大、删除或重命名无法归属，以及 Cargo、toolchain、模板、CI 或架构策略变化时会自动执行完整门禁。
 
-## 资源门禁与编译缓存
-
-`cargo xtask ci resource-gate --frontend-dir ../ryframe-vue3` 直接从 CI 的 base/head SHA 读取资源变化、关系闭包和 ownership，不接收流水线拼接的资源名。缺少合法 base、变更面过大、删除或重命名无法归属，以及 Cargo、toolchain、模板、CI 或架构策略变化时都会自动执行完整门禁。定向模式默认关闭；只有 `scripts/resource_gate_replay.py` 使用 format 2 清单，在两个 Git common-dir 不同的仓库顶层中回放至少 20 个成对后端/前端提交，证明定向与完整门禁零分歧后，CI 才能设置受控的激活标记；调用时必须同时提供 `--repository` 与 `--frontend-repository`。runner 将每个门禁命令的输出流式写入隔离文件，报告保存输出指纹，并仅为失败结果保留有界日志末尾，避免长回放把完整编译日志常驻 Python 内存。每个案例必须用 `targetedMode` 明确声明激活臂应实际执行 `targeted` 还是安全回退 `full`，runner 同时要求未激活臂实际为 `full`，不接受两臂都完整回退却冒充定向证据。清单中的每个 head 必须已支持 decision format 1；早于该能力的历史变更需在经审计的新 base 上重建等价 fixture，不得用旧输出推断实际模式。
-
-Replay 会在每个前端 worktree 中于计时前执行 `corepack pnpm install --offline --frozen-lockfile`，因此正式运行前必须预热与各历史 lockfile 匹配的 pnpm store。一次显式 prime 只预热本次运行独占的本地 sccache，不进入样本；每个案例和每个臂使用独立 Cargo target，并按 A-B、B-A 交错执行。Activation 模式在 sccache 启动前登记 prime 与全部 arm 的绝对后端源码根，使 Rust 编译可跨 worktree 复用；这只归一化编译键，不共享 target 或跳过真实命令。该模式固定 standard Rust gate、`CARGO_INCREMENTAL=0`、编译并发 8 和测试并发 4，且要求真实 MySQL、Redis 集成开关均为 `1`、主机为回环地址、Redis 使用隔离的数据库 15。报告记录 Resource Gate 的原子 decision、非敏感环境、缓存根数量与指纹、工具版本与工具集指纹、manifest、runner 与仓库指纹；缓存错误非零、缺少 decision、实际模式不符、依赖离线安装失败或清理不完整都会 fail-closed。独立空 target 的 20 案例回放只判定 targeted/full 正确性与覆盖面；`resource-gate` 的 60 秒 P95 由 DevEx warm suite 单独测量并强制，不把 Cargo 冷启动混入该指标。没有有效回放证据时保持完整回退是预期行为。
-
-CI workflow 在全局关闭 Rust incremental；Linux 后端 job 统一检出到固定的 `backend` 目录，AWS-LC canary 为验证双绝对路径命中而显式使用两个隔离目录。主要 Rust 编译 job 保存 sccache JSON 统计且不缓存整个 target；plan、preflight、Security Audit 与供应链 job 只执行选择、策略或依赖图检查，不启动 sccache。`SCCACHE_BASEDIRS` 仅用于隔离 replay 和定时或手动的 AWS-LC 双绝对路径 canary；canary 要求缓存错误为零、warm 命中率至少 80%、不可缓存请求至少减少 50%，且 warm 构建确有耗时改善。达到这些条件前，不把该路径归一化配置扩展到普通 Rust job。
+定向模式当前默认关闭；只有经过独立后端与前端提交回放、证明定向结果与完整门禁一致后，CI 才能使用受控激活标记。激活证据缺失、过期或无法验证时继续完整回退，不会把完整回退误报为定向通过。CI 的 Rust 编译使用 sccache 并保存统计，但不缓存整个 Cargo target；缓存配置或统计异常不得替代真实门禁结果。
 
 ## 常见问题
 
