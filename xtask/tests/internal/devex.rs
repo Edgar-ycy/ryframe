@@ -911,7 +911,7 @@ fn fake_legacy_paired_run(name: &str, arm: PairedArm, cargo_invocations: usize) 
                     20.0 + pair as f64
                 },
                 "cargo_invocations": cargo_invocations,
-                "ready_kind": "promoted",
+                "ready_kind": if arm == PairedArm::Baseline { "promoted" } else { "verified-no-restart" },
                 "status": "passed",
                 "exit_code": 0,
                 "target_directory": "$DEVEX/cache/warm",

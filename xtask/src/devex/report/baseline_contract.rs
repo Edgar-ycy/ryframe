@@ -53,21 +53,21 @@ fn validate_legacy_cargo_dev(
     {
         return Err("legacy-cargo-dev-v1 baseline 提交或补丁哈希无效".into());
     }
-    validate_save_records("基线", baseline_records, 1)?;
-    validate_save_records("候选", candidate_records, 0)
+    validate_save_records("基线", baseline_records, 1, ReadyKind::Promoted)?;
+    validate_save_records("候选", candidate_records, 0, ReadyKind::VerifiedNoRestart)
 }
 
 fn validate_save_records(
     label: &str,
     records: &[SampleRecord],
     cargo_invocations: usize,
+    ready_kind: ReadyKind,
 ) -> Result<()> {
     if records.iter().any(|sample| {
-        sample.cargo_invocations != Some(cargo_invocations)
-            || sample.ready_kind != Some(ReadyKind::Promoted)
+        sample.cargo_invocations != Some(cargo_invocations) || sample.ready_kind != Some(ready_kind)
     }) {
         return Err(format!(
-            "legacy-cargo-dev-v1 {label}样本必须为 Cargo={cargo_invocations} 且 ready=promoted"
+            "legacy-cargo-dev-v1 {label}样本必须为 Cargo={cargo_invocations} 且 ready={ready_kind:?}"
         )
         .into());
     }
