@@ -271,7 +271,7 @@ class SupplyChainPolicyTests(unittest.TestCase):
             "tree-sitter-rust==0.24.2",
         ):
             self.assertIn(requirement, requirements)
-        self.assertEqual(requirements.count("--hash=sha256:"), 7)
+        self.assertEqual(requirements.count("--hash=sha256:"), 11)
 
     def test_accepts_complete_future_dated_policy(self) -> None:
         with self.temporary_directory() as raw:

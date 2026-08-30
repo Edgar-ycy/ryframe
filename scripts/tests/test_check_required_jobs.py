@@ -272,7 +272,10 @@ class RequiredJobsTests(unittest.TestCase):
             "cargo xtask ci resource-gate --frontend-dir ../frontend", block
         )
         self.assertNotIn("RYFRAME_CI_CHANGED_PATHS", block)
-        self.assertNotIn("RYFRAME_RESOURCE_GATE_TARGETED", block)
+        self.assertIn(
+            "RYFRAME_RESOURCE_GATE_TARGETED: replay-verified-v1",
+            block,
+        )
         self.assertNotIn("--resource", block)
         required = workflow.split("\n  required:\n", 1)[1]
         self.assertIn("- resource-gate", required)

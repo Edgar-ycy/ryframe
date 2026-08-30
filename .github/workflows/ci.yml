@@ -348,6 +348,7 @@ jobs:
           RYFRAME_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           RYFRAME_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           RYFRAME_CI_FRONTEND_REF: ${{ steps.resource-frontend-ref.outputs.ref }}
+          RYFRAME_RESOURCE_GATE_TARGETED: replay-verified-v1
         run: cargo xtask ci resource-gate --frontend-dir ../frontend
 
       - name: 输出 sccache 远端命中统计
