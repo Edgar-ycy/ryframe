@@ -144,7 +144,7 @@ cargo xtask devex summarize <日期/run-id>
 cargo xtask devex compare --base <日期/run-id> --candidate <日期/run-id>
 ```
 
-测量产物写入 `.local-tests/devex/<日期>/<run-id>/`，其中包含运行环境与源码指纹、逐次样本以及 P50/P95 摘要；涉及编译缓存的 suite 还保存前后统计。runner 会验证 suite 与缓存语义、源码和工具指纹、样本完整性及基线/候选是否可比较；前置依赖未就绪、输入无效、源码在测量中变化、缓存报错或证据缺失时都会失败关闭，不把不完整结果判为达标。`cargo-dev-save` 使用真实 watcher、只读迁移验证和探活流程，不会自动升级数据库。
+测量产物写入 `.local-tests/devex/<日期>/<run-id>/`，其中包含运行环境与源码指纹、逐次样本以及 P50/P95 摘要；涉及编译缓存的 suite 还保存前后统计。runner 会验证 suite 与缓存语义、源码和工具指纹、样本完整性及基线/候选是否可比较；前置依赖未就绪、输入无效、源码在测量中变化、缓存报错或证据缺失时都会失败关闭，不把不完整结果判为达标。在 Windows 的深层工作树中，DevEx 会将临时 Cargo target 放入工作区 `.local-tests/d/<摘要>`，避免 build-script 路径过长；测量记录仍只写入上述 DevEx 目录。`cargo-dev-save` 使用真实 watcher、只读迁移验证和探活流程，不会自动升级数据库。
 
 ## 资源门禁
 
