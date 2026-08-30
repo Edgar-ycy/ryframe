@@ -7,7 +7,7 @@ pub(super) fn render(resources: &[&ResourceIr], assets: &mut Vec<GeneratedAsset>
         .map(|resource| format!("{}:{}", resource.source_path, resource.source_hash))
         .collect::<Vec<_>>()
         .join(",");
-    let aggregate = aggregate_header(&source);
+    let aggregate = aggregate_header();
     assets.push(GeneratedAsset {
         resource: "__catalog__".into(),
         root: AssetRoot::Backend,
