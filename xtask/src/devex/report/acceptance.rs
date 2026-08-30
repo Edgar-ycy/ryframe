@@ -130,15 +130,15 @@ fn sccache_acceptance(
             passed: candidate_stats.hit_rate.is_some_and(|rate| rate >= 0.8),
         },
         ComparisonCheck {
-            name: "不可缓存请求改善",
+            name: "实际不可缓存编译改善",
             requirement: ">= 50%（基线为 0 时候选也必须为 0）",
             observed: not_cacheable_observation(
-                baseline_stats.not_cacheable,
-                candidate_stats.not_cacheable,
+                baseline_stats.not_cacheable_compilations,
+                candidate_stats.not_cacheable_compilations,
             ),
             passed: not_cacheable_passes(
-                baseline_stats.not_cacheable,
-                candidate_stats.not_cacheable,
+                baseline_stats.not_cacheable_compilations,
+                candidate_stats.not_cacheable_compilations,
             ),
         },
     ])

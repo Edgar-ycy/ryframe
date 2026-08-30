@@ -13,6 +13,7 @@ struct Counters {
     cache_misses: CounterGroup,
     #[serde(rename = "requests_not_cacheable")]
     not_cacheable: u64,
+    not_cached: BTreeMap<String, u64>,
     cache_errors: CounterGroup,
     cache_timeouts: u64,
     cache_read_errors: u64,
@@ -79,6 +80,20 @@ fn delta(before: Counters, after: Counters) -> Result<SccacheDelta> {
         )?,
         counter_delta(before.dist_errors, after.dist_errors, "dist_errors")?,
     ])?;
+    let not_cacheable = counter_delta(
+        before.not_cacheable,
+        after.not_cacheable,
+        "requests_not_cacheable",
+    )?;
+    let not_cached = counter_map_deltas(&before.not_cached, &after.not_cached, "not_cached")?;
+    let categorized_not_cacheable = checked_sum(not_cached.values().copied())?;
+    if categorized_not_cacheable != not_cacheable {
+        return Err(format!(
+            "sccache 不可缓存请求分类不一致：总数 {not_cacheable}，分类 {categorized_not_cacheable}"
+        )
+        .into());
+    }
+    let not_cacheable_control_probes = control_probe_count(&not_cached)?;
     Ok(SccacheDelta {
         compile_requests: counter_delta(
             before.compile_requests,
@@ -87,11 +102,11 @@ fn delta(before: Counters, after: Counters) -> Result<SccacheDelta> {
         )?,
         cache_hits,
         cache_misses,
-        not_cacheable: counter_delta(
-            before.not_cacheable,
-            after.not_cacheable,
-            "requests_not_cacheable",
-        )?,
+        not_cacheable,
+        not_cacheable_control_probes,
+        not_cacheable_compilations: not_cacheable
+            .checked_sub(not_cacheable_control_probes)
+            .ok_or("sccache 控制探测计数超过不可缓存请求")?,
         cache_errors,
         hit_rate: (cacheable > 0).then(|| cache_hits as f64 / cacheable as f64),
     })
@@ -104,24 +119,46 @@ fn counter_delta(before: u64, after: u64, name: &str) -> Result<u64> {
 }
 
 fn group_delta(before: &CounterGroup, after: &CounterGroup, name: &str) -> Result<u64> {
-    let mut delta = 0_u64;
-    for (category, before_value) in &before.counts {
-        let after_value = after.counts.get(category).copied().unwrap_or(0);
+    checked_sum(group_deltas(before, after, name)?.into_values())
+}
+
+fn group_deltas(
+    before: &CounterGroup,
+    after: &CounterGroup,
+    name: &str,
+) -> Result<BTreeMap<String, u64>> {
+    counter_map_deltas(&before.counts, &after.counts, name)
+}
+
+fn counter_map_deltas(
+    before: &BTreeMap<String, u64>,
+    after: &BTreeMap<String, u64>,
+    name: &str,
+) -> Result<BTreeMap<String, u64>> {
+    let mut deltas = BTreeMap::new();
+    for (category, before_value) in before {
+        let after_value = after.get(category).copied().unwrap_or(0);
         let value = counter_delta(
             *before_value,
             after_value,
             &format!("{name}.counts.{category}"),
         )?;
-        delta = delta.checked_add(value).ok_or("sccache 分类计数增量溢出")?;
+        deltas.insert(category.clone(), value);
     }
-    for (category, after_value) in &after.counts {
-        if !before.counts.contains_key(category) {
-            delta = delta
-                .checked_add(*after_value)
-                .ok_or("sccache 分类计数增量溢出")?;
+    for (category, after_value) in after {
+        if !before.contains_key(category) {
+            deltas.insert(category.clone(), *after_value);
         }
     }
-    Ok(delta)
+    Ok(deltas)
+}
+
+fn control_probe_count(not_cached: &BTreeMap<String, u64>) -> Result<u64> {
+    checked_sum(
+        ["-", "missing input"]
+            .into_iter()
+            .map(|reason| not_cached.get(reason).copied().unwrap_or(0)),
+    )
 }
 
 fn checked_sum(values: impl IntoIterator<Item = u64>) -> Result<u64> {

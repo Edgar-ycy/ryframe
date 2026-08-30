@@ -15,11 +15,13 @@ pub(super) fn render(summary: &RunSummary) -> String {
             .hit_rate
             .map_or_else(|| "n/a".to_owned(), |rate| format!("{:.1}%", rate * 100.0));
         format!(
-            "- sccache：请求 {}，命中 {}，未命中 {}，不可缓存 {}，错误 {}，命中率 {}\n",
+            "- sccache：请求 {}，命中 {}，未命中 {}，不可缓存原始 {}（控制探测 {}，实际编译 {}），错误 {}，命中率 {}\n",
             stats.compile_requests,
             stats.cache_hits,
             stats.cache_misses,
             stats.not_cacheable,
+            stats.not_cacheable_control_probes,
+            stats.not_cacheable_compilations,
             stats.cache_errors,
             hit_rate,
         )

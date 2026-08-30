@@ -15,6 +15,7 @@ fn real_sccache_017_schema_is_accepted() {
         "requests_unsupported_compiler": 0,
         "requests_not_compile": 0,
         "requests_not_cacheable": 0,
+        "not_cached": {},
         "requests_executed": 0,
         "cache_errors": {"counts": {}, "adv_counts": {}},
         "cache_hits": {"counts": {}, "adv_counts": {}},
@@ -53,6 +54,8 @@ fn sccache_summary_reports_delta_hit_rate_and_errors() {
     assert_eq!(stats.cache_hits, 8);
     assert_eq!(stats.cache_misses, 2);
     assert_eq!(stats.not_cacheable, 1);
+    assert_eq!(stats.not_cacheable_control_probes, 0);
+    assert_eq!(stats.not_cacheable_compilations, 1);
     assert_eq!(stats.cache_errors, 1);
     assert_eq!(stats.hit_rate, Some(0.8));
     fs::remove_dir_all(run).unwrap();
@@ -91,6 +94,7 @@ fn sccache_summary_rejects_missing_or_mistyped_required_counters() {
     for field in [
         "compile_requests",
         "requests_not_cacheable",
+        "not_cached",
         "cache_hits",
         "cache_misses",
         "cache_errors",
@@ -128,6 +132,21 @@ fn sccache_summary_rejects_missing_or_mistyped_required_counters() {
     let error = summarize(&no_snapshots).unwrap_err().to_string();
     assert!(error.contains("缺少统计快照"), "{error}");
     fs::remove_dir_all(no_snapshots).unwrap();
+}
+
+#[test]
+fn sccache_summary_excludes_cargo_control_probes_from_compilations() {
+    let run = fake_run("sccache-control-probes", &[100.0]);
+    write_stats(&run.join("sccache-before.json"), 0, 0, 0, 0, 0);
+    let after = run.join("sccache-after.json");
+    write_stats(&after, 20, 8, 2, 10, 0);
+    set_not_cached_reasons(&after, [("crate-type", 4), ("-", 3), ("missing input", 3)]);
+
+    let stats = summarize(&run).unwrap().sccache.unwrap();
+    assert_eq!(stats.not_cacheable, 10);
+    assert_eq!(stats.not_cacheable_control_probes, 6);
+    assert_eq!(stats.not_cacheable_compilations, 4);
+    fs::remove_dir_all(run).unwrap();
 }
 
 #[test]
@@ -231,13 +250,13 @@ fn warm_sccache_comparison_rejects_invalid_evidence_and_regressions() {
             "not-cacheable",
             valid_base,
             FakeStats::new(100, 80, 20, 11, 0),
-            "不可缓存请求改善",
+            "实际不可缓存编译改善",
         ),
         (
             "zero-base-regression",
             FakeStats::new(100, 50, 50, 0, 0),
             FakeStats::new(100, 80, 20, 1, 0),
-            "不可缓存请求改善",
+            "实际不可缓存编译改善",
         ),
     ];
     for (name, baseline, candidate, expected) in cases {
@@ -415,6 +434,7 @@ fn write_stats(
         "stats": {
             "compile_requests": requests,
             "requests_not_cacheable": not_cacheable,
+            "not_cached": { "crate-type": not_cacheable },
             "cache_hits": { "counts": { "Rust": hits } },
             "cache_misses": { "counts": { "Rust": misses } },
             "cache_errors": { "counts": { "Rust": errors } },
@@ -424,6 +444,15 @@ fn write_stats(
             "dist_errors": 0,
         }
     });
+    fs::write(path, serde_json::to_vec(&document).unwrap()).unwrap();
+}
+
+fn set_not_cached_reasons<const N: usize>(path: &Path, reasons: [(&str, u64); N]) {
+    let mut document: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    let reasons = reasons
+        .into_iter()
+        .map(|(reason, count)| (reason.to_owned(), serde_json::Value::from(count)));
+    document["stats"]["not_cached"] = serde_json::Value::Object(reasons.collect());
     fs::write(path, serde_json::to_vec(&document).unwrap()).unwrap();
 }
 

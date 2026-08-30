@@ -131,7 +131,12 @@ pub(crate) struct SccacheDelta {
     pub(crate) compile_requests: u64,
     pub(crate) cache_hits: u64,
     pub(crate) cache_misses: u64,
+    /// sccache 原始 `requests_not_cacheable` 计数，包含 Cargo 的编译器探测。
     pub(crate) not_cacheable: u64,
+    /// `-` 与 `missing input` 探测请求，不属于实际编译。
+    pub(crate) not_cacheable_control_probes: u64,
+    /// 去除控制探测后的实际不可缓存编译请求。
+    pub(crate) not_cacheable_compilations: u64,
     pub(crate) cache_errors: u64,
     pub(crate) hit_rate: Option<f64>,
 }
