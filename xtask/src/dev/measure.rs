@@ -483,12 +483,15 @@ pub(crate) fn read_measurement_with_contract(
     contract: SaveMeasurementContract,
 ) -> Result<SaveMeasurement> {
     let measurement: SaveMeasurement = serde_json::from_slice(&fs::read(path)?)?;
-    let expected_cargo_invocations = match contract {
-        SaveMeasurementContract::Current => measurement.case.expected_cargo_invocations(),
+    let (expected_cargo_invocations, expected_ready_kind) = match contract {
+        SaveMeasurementContract::Current => (
+            measurement.case.expected_cargo_invocations(),
+            measurement.case.expected_ready(),
+        ),
         SaveMeasurementContract::LegacyConfigOnlyBaseline
             if measurement.case == SaveCase::ConfigOnly =>
         {
-            1
+            (1, ReadyKind::Promoted)
         }
         SaveMeasurementContract::LegacyConfigOnlyBaseline => {
             return Err("legacy-cargo-dev-v1 只允许 config-only 测量结果".into());
@@ -498,7 +501,7 @@ pub(crate) fn read_measurement_with_contract(
         || !measurement.save_to_ready_ms.is_finite()
         || measurement.save_to_ready_ms < 0.0
         || DateTime::parse_from_rfc3339(&measurement.started_at).is_err()
-        || measurement.ready_kind != measurement.case.expected_ready()
+        || measurement.ready_kind != expected_ready_kind
         || measurement.cargo_invocations != expected_cargo_invocations
     {
         return Err("cargo-dev-save 结果 schema、时间或场景不变量无效".into());

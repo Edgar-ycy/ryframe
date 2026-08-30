@@ -528,7 +528,7 @@ fn cargo_dev_save_result_is_strict_and_structured() {
         started_at: "2026-08-27T00:00:00Z".to_owned(),
         save_to_ready_ms: 42.5,
         cargo_invocations: 0,
-        ready_kind: ReadyKind::Promoted,
+        ready_kind: ReadyKind::VerifiedNoRestart,
     };
     fs::write(&path, serde_json::to_vec(&expected).unwrap()).unwrap();
     assert_eq!(read_measurement(&path).unwrap(), expected);
