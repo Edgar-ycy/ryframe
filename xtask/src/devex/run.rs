@@ -252,7 +252,7 @@ pub(super) fn execute_warmup_with_contract(
     save_contract: SaveMeasurementContract,
 ) -> Result<()> {
     if options.cache_state == CacheState::Warm {
-        let target = session.run_dir.join("cache/warm");
+        let target = super::support::compiler_target_root(&session.run_dir).join("warm");
         let outcome = execute_sample_with_contract(
             backend_root,
             frontend_root,
