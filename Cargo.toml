@@ -104,6 +104,7 @@ tempfile = "3"
 [patch.crates-io]
 opentelemetry-otlp = { path = "vendor/opentelemetry-otlp" }
 proc-macro-error2 = { path = "vendor/proc-macro-error2" }
+sea-orm = { path = "vendor/sea-orm" }
 sea-orm-migration = { path = "vendor/sea-orm-migration" }
 sqlx = { path = "vendor/sqlx-mysql-only" }
 
