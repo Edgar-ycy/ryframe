@@ -1,5 +1,7 @@
 use std::{collections::BTreeMap, env, fmt, fs, path::Path, process::Command};
 
+use sha2::{Digest, Sha256};
+
 use crate::Result;
 
 const SENSITIVE_KEYS: &[&str] = &[
@@ -52,9 +54,23 @@ const SECRET_SPECS: &[SecretSpec] = &[
 ];
 
 /// 每代运行输入只在内存中持有的密钥环境覆盖；Debug 永不输出值。
-#[derive(Clone, Default)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct RuntimeSecrets {
     values: BTreeMap<&'static str, String>,
+}
+
+/// 比较新的开发配置与 LKG 运行快照。比较前总是重新解析并校验源配置和密钥，
+/// 只在持久化内容与仅内存的密钥投影都没有语义差异时返回 `true`。
+pub(crate) fn runtime_config_matches_snapshot(
+    source: &Path,
+    snapshot: &Path,
+    snapshot_secrets: &RuntimeSecrets,
+) -> Result<bool> {
+    let source_secrets = RuntimeSecrets::capture(source)?;
+    if source_secrets != *snapshot_secrets {
+        return Ok(false);
+    }
+    Ok(sanitized_config_fingerprint(source)? == sanitized_config_fingerprint(snapshot)?)
 }
 
 impl fmt::Debug for RuntimeSecrets {
@@ -293,6 +309,27 @@ fn copy_sanitized_tree(source: &Path, target: &Path) -> Result<()> {
     copy_sanitized_directory(source, target)
 }
 
+fn sanitized_config_fingerprint(root: &Path) -> Result<String> {
+    validate_config_tree(root)?;
+    let mut entries = fs::read_dir(root)?.collect::<std::io::Result<Vec<_>>>()?;
+    entries.sort_by_key(|entry| entry.file_name());
+    let mut digest = Sha256::new();
+    for entry in entries {
+        let path = entry.path();
+        let name = entry.file_name();
+        let bytes = sanitized_config_file(&path)?;
+        digest.update(name.to_string_lossy().as_bytes());
+        digest.update([0]);
+        digest.update(bytes);
+        digest.update([0]);
+    }
+    Ok(digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect())
+}
+
 fn validate_config_tree(root: &Path) -> Result<()> {
     let metadata = fs::symlink_metadata(root)
         .map_err(|error| format!("无法读取运行配置目录 {}：{error}", root.display()))?;
@@ -358,12 +395,19 @@ fn is_toml(path: &Path) -> bool {
 }
 
 fn write_sanitized_toml(source: &Path, target: &Path) -> Result<()> {
+    fs::write(target, sanitized_config_file(source)?)?;
+    Ok(())
+}
+
+fn sanitized_config_file(source: &Path) -> Result<Vec<u8>> {
+    if !is_toml(source) {
+        return Ok(fs::read(source)?);
+    }
     let input = fs::read_to_string(source)?;
     let mut document = toml::from_str::<toml::Table>(&input)
         .map_err(|error| format!("无法解析运行配置 {}：{error}", source.display()))?;
     sanitize_table(&mut document, &mut Vec::new())?;
-    fs::write(target, toml::to_string_pretty(&document)?)?;
-    Ok(())
+    Ok(toml::to_string_pretty(&document)?.into_bytes())
 }
 
 fn sanitize_table(table: &mut toml::Table, path: &mut Vec<String>) -> Result<()> {

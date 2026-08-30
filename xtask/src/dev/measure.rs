@@ -91,12 +91,12 @@ impl SaveCase {
 
     pub(crate) const fn expected_ready(self) -> ReadyKind {
         match self {
-            Self::ConfigOnly
-            | Self::ApiOnly
-            | Self::WorkerOnly
-            | Self::SharedRuntime
-            | Self::Locales => ReadyKind::Promoted,
-            Self::MigrationOnly | Self::ResourceManifest => ReadyKind::VerifiedNoRestart,
+            Self::ApiOnly | Self::WorkerOnly | Self::SharedRuntime | Self::Locales => {
+                ReadyKind::Promoted
+            }
+            Self::ConfigOnly | Self::MigrationOnly | Self::ResourceManifest => {
+                ReadyKind::VerifiedNoRestart
+            }
             Self::Cancellation => ReadyKind::Superseded,
         }
     }

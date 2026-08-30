@@ -5,7 +5,9 @@ use std::{
 };
 
 use super::{
-    dev::{Binaries, DevSession, RuntimeSecrets, snapshot_config_tree},
+    dev::{
+        Binaries, DevSession, RuntimeSecrets, runtime_config_matches_snapshot, snapshot_config_tree,
+    },
     watch::SourceRevision,
 };
 
@@ -326,6 +328,67 @@ fn snapshot_copies_the_registered_feature_matrix() {
     assert_eq!(
         fs::read(target.join("feature-matrix.json")).unwrap(),
         fs::read(feature_matrix).unwrap()
+    );
+}
+
+#[test]
+fn equivalent_config_write_matches_lkg_snapshot_but_semantic_or_secret_change_does_not() {
+    let fixture = SnapshotFixture::new("equivalent-config");
+    fs::write(
+        fixture.root.join("config/app.toml"),
+        "[database.primary]\npassword = 'snapshot-password'\n[app]\nname = 'ryframe'\n",
+    )
+    .unwrap();
+    let (session, _) = DevSession::prepare(&fixture.root, SourceRevision::from_value(0)).unwrap();
+    let binaries = fixture.install(&session, 1);
+    let source = fixture.root.join("config");
+
+    assert!(
+        runtime_config_matches_snapshot(
+            &source,
+            &binaries.config_dir,
+            binaries.runtime_secrets.as_ref(),
+        )
+        .unwrap()
+    );
+
+    fs::write(
+        source.join("app.dev.toml"),
+        "# 保存但没有语义配置变更\n[app]\n",
+    )
+    .unwrap();
+    assert!(
+        runtime_config_matches_snapshot(
+            &source,
+            &binaries.config_dir,
+            binaries.runtime_secrets.as_ref(),
+        )
+        .unwrap()
+    );
+
+    fs::write(source.join("app.dev.toml"), "[app]\nname = 'changed'\n").unwrap();
+    assert!(
+        !runtime_config_matches_snapshot(
+            &source,
+            &binaries.config_dir,
+            binaries.runtime_secrets.as_ref(),
+        )
+        .unwrap()
+    );
+
+    fs::write(
+        source.join("app.toml"),
+        "[database.primary]\npassword = 'changed-secret'\n[app]\nname = 'ryframe'\n",
+    )
+    .unwrap();
+    fs::write(source.join("app.dev.toml"), "[app]\n").unwrap();
+    assert!(
+        !runtime_config_matches_snapshot(
+            &source,
+            &binaries.config_dir,
+            binaries.runtime_secrets.as_ref(),
+        )
+        .unwrap()
     );
 }
 

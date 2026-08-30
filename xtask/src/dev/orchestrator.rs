@@ -20,6 +20,7 @@ use super::{
         Binaries, BuildPlan, BuildResult, ChangeOutcome, LOOP_INTERVAL, ProbeResult,
         RunningProcesses, ServiceLaunchMode, Services, WATCH_DEBOUNCE,
     },
+    runtime_config_matches_snapshot,
     services::{
         ensure_initial_ports_available, ensure_running, ensure_services_ready, probe_candidate,
         promote_services, restore_last_known_good, start_services, stop_all,
@@ -353,6 +354,17 @@ pub(super) fn process_change(
     if plan.is_noop() {
         println!("这些文件不影响当前 dev 运行时，已忽略。");
         return Ok(ChangeOutcome::Ignored);
+    }
+    if plan.is_runtime_config_only()
+        && runtime_config_matches_snapshot(
+            &root.join("config"),
+            &services.binaries.config_dir,
+            services.binaries.runtime_secrets.as_ref(),
+        )?
+    {
+        ensure_services_ready(services, ports)?;
+        println!("配置写入与 LKG 运行快照语义相同，已跳过重启并保持服务就绪。");
+        return Ok(ChangeOutcome::VerifiedNoRestart);
     }
     let Some(result) = build_while_lkg(
         group,

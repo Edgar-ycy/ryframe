@@ -160,6 +160,10 @@ impl BuildPlan {
         !self.restart_pair && !self.migrate && !self.resource_check && !self.tool_self_changed
     }
 
+    pub(crate) fn is_runtime_config_only(&self) -> bool {
+        self.reasons == BTreeSet::from([ChangeKind::RuntimeConfig])
+    }
+
     pub(crate) fn cargo_invocations(&self) -> usize {
         usize::from(self.resource_check)
             + usize::from(self.api == ArtifactAction::Rebuild)

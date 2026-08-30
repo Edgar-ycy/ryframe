@@ -74,7 +74,9 @@ pub(crate) use model::{
     MigrationValidation, ProbeResult, classify_change,
 };
 #[allow(unused_imports)]
-pub(crate) use runtime_secrets::{RuntimeSecrets, snapshot_config_tree};
+pub(crate) use runtime_secrets::{
+    RuntimeSecrets, runtime_config_matches_snapshot, snapshot_config_tree,
+};
 #[allow(unused_imports)]
 pub(crate) use services::switch_services_with_rollback;
 #[allow(unused_imports)]

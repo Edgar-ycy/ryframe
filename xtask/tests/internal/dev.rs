@@ -246,7 +246,7 @@ fn record_test_change(tracker: &SourceRevisionTracker) -> SourceRevision {
 fn save_cases_drive_the_real_change_plan_and_cargo_count() {
     assert_eq!(DEV_API_FEATURES, "bin-api,runtime-swagger-ui");
     for (case, cargo_invocations, expected_ready) in [
-        (SaveCase::ConfigOnly, 0, ReadyKind::Promoted),
+        (SaveCase::ConfigOnly, 0, ReadyKind::VerifiedNoRestart),
         (SaveCase::ApiOnly, 1, ReadyKind::Promoted),
         (SaveCase::WorkerOnly, 1, ReadyKind::Promoted),
         (SaveCase::SharedRuntime, 2, ReadyKind::Promoted),
@@ -260,7 +260,9 @@ fn save_cases_drive_the_real_change_plan_and_cargo_count() {
             paths: BTreeSet::from([source.relative.to_owned()]),
         };
         let plan = BuildPlan::from_changes(&batch);
-        let outcome = if plan.restart_pair {
+        let outcome = if case == SaveCase::ConfigOnly {
+            ChangeOutcome::VerifiedNoRestart
+        } else if plan.restart_pair {
             ChangeOutcome::Promoted
         } else {
             ChangeOutcome::VerifiedNoRestart
@@ -283,6 +285,7 @@ fn save_cases_drive_the_real_change_plan_and_cargo_count() {
     );
     assert!(SaveCase::parse("unknown").is_none());
     assert!(ready_kind(SaveCase::ConfigOnly, ChangeOutcome::Failed).is_err());
+    assert!(ready_kind(SaveCase::ConfigOnly, ChangeOutcome::Promoted).is_err());
     assert!(ready_kind(SaveCase::MigrationOnly, ChangeOutcome::Promoted).is_err());
 }
 
