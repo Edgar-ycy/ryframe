@@ -443,14 +443,13 @@ fn measurement_result_path() -> Option<PathBuf> {
     env::var_os(RESULT_ENV).map(PathBuf::from)
 }
 
-fn measurement_state_root(root: &Path, result_path: Option<&Path>) -> PathBuf {
-    result_path
-        .and_then(Path::parent)
-        .map(|parent| parent.join("cargo-dev-save-state"))
-        .unwrap_or_else(|| {
-            root.join(".local-tests/devex-manual")
-                .join(format!("cargo-dev-save-{}", std::process::id()))
-        })
+fn measurement_state_root(root: &Path, _result_path: Option<&Path>) -> PathBuf {
+    // DevEx 的结果目录包含时间戳、套件和成对测量标识。若把 LKG 二进制也放在
+    // 该目录内，Windows 在 CreateProcess 时可能因完整可执行文件路径过长而返回
+    // ERROR_PATH_NOT_FOUND。结果仍由调用方指定的位置保存，运行态快照则固定放在
+    // 较短的本地隔离根中。
+    root.join(".local-tests/dev-runtime")
+        .join(format!("devex-{}", std::process::id()))
 }
 
 fn remove_stale_result(path: Option<&Path>) -> Result<()> {
