@@ -40,6 +40,13 @@ fn successful_targets_follow_suite_storage_policy() {
         .unwrap();
     assert!(warm.is_dir());
 
+    let sccache = sample_target(&run, DevexSuite::RustSccache, CacheState::Warm, 1);
+    fs::create_dir_all(&sccache).unwrap();
+    fs::write(sccache.join("artifact"), b"ok").unwrap();
+    cleanup_successful_sample_target(&run, &sccache, DevexSuite::RustSccache, CacheState::Warm)
+        .unwrap();
+    assert!(!sccache.exists());
+
     let isolated = run.join("cache/sccache-measure-001");
     fs::create_dir_all(&isolated).unwrap();
     cleanup_successful_sample_target(&run, &isolated, DevexSuite::RustGate, CacheState::Warm)
@@ -468,7 +475,7 @@ fn abba_order_and_sccache_targets_are_auditable() {
         ]
     );
     let run = Path::new("D:/devex/run");
-    assert_ne!(
+    assert_eq!(
         sample_target(run, DevexSuite::RustSccache, CacheState::Warm, 1),
         sample_target(run, DevexSuite::RustSccache, CacheState::Warm, 2)
     );
