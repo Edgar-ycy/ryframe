@@ -770,6 +770,20 @@ fn actual_workspace_graph_contains_reverse_dependents() {
 }
 
 #[test]
+fn resource_workspace_graph_excludes_optional_tooling_dependents() {
+    let graph = super::check::load_resource_workspace_graph(&super::workspace::root_dir()).unwrap();
+    let closure = reverse_dependency_closure(
+        &["ryframe-application".to_owned()].into_iter().collect(),
+        &graph.reverse_dependencies,
+    );
+
+    assert!(closure.contains("ryframe-application"));
+    assert!(closure.contains("ryframe-api"));
+    assert!(!closure.contains("ryframe-generator"));
+    assert!(!closure.contains("xtask"));
+}
+
+#[test]
 fn change_surface_separates_product_tests_generated_assets_and_tools() {
     let report = analyze_change_surface(
         &[

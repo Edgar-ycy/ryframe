@@ -319,6 +319,19 @@ pub(super) fn load_workspace_metadata(root: &Path) -> Result<serde_json::Value> 
 }
 
 pub(crate) fn load_workspace_graph(root: &Path) -> Result<WorkspaceGraph> {
+    load_workspace_graph_with_optional_dependencies(root, true)
+}
+
+/// 资源门禁仅追踪默认运行时会启用的工作区边；可选工具链依赖由资源
+/// workspace 本身单独验证，避免把 xtask 和 schema-import 扩散进业务闭包。
+pub(crate) fn load_resource_workspace_graph(root: &Path) -> Result<WorkspaceGraph> {
+    load_workspace_graph_with_optional_dependencies(root, false)
+}
+
+fn load_workspace_graph_with_optional_dependencies(
+    root: &Path,
+    include_optional_dependencies: bool,
+) -> Result<WorkspaceGraph> {
     let metadata = load_workspace_metadata(root)?;
     let members = metadata
         .get("workspace_members")
@@ -368,6 +381,13 @@ pub(crate) fn load_workspace_graph(root: &Path) -> Result<WorkspaceGraph> {
             .and_then(serde_json::Value::as_array)
             .ok_or("Cargo package 缺少 dependencies")?
             .iter()
+            .filter(|dependency| {
+                include_optional_dependencies
+                    || !dependency
+                        .get("optional")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false)
+            })
             .filter_map(|dependency| dependency.get("name"))
             .filter_map(serde_json::Value::as_str)
             .map(str::to_owned)

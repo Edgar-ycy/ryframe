@@ -70,8 +70,8 @@ pub(crate) use resource::{
 #[allow(unused_imports)]
 pub(crate) use selection::{
     changed_paths, changed_paths_between, classify_changes, complete_verify_selection,
-    frontend_profile_commands, load_workspace_graph, needs_consumer_contract,
-    reverse_dependency_closure,
+    frontend_profile_commands, load_resource_workspace_graph, load_workspace_graph,
+    needs_consumer_contract, reverse_dependency_closure,
 };
 #[allow(unused_imports)]
 pub(crate) use snapshot::{

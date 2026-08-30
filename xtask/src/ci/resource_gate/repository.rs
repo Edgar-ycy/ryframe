@@ -12,7 +12,7 @@ use super::model::{
     ChangeStatus, ChangedFile, OWNERSHIP_PATH, OwnershipEntry, OwnershipManifest,
     ResourceDefinition, ResourceGateInput,
 };
-use crate::check::load_workspace_graph;
+use crate::check::load_resource_workspace_graph;
 
 #[derive(Debug)]
 pub(crate) struct LoadedRepository {
@@ -56,7 +56,7 @@ pub(crate) fn load(root: &Path) -> Result<LoadedRepository, String> {
     let head_resources = load_resources(root, &head)?;
     let base_ownership = load_ownership(root, &base)?;
     let head_ownership = load_ownership(root, &head)?;
-    let workspace_graph = load_workspace_graph(root).map_err(|error| error.to_string())?;
+    let workspace_graph = load_resource_workspace_graph(root).map_err(|error| error.to_string())?;
     Ok(LoadedRepository {
         base,
         head,
