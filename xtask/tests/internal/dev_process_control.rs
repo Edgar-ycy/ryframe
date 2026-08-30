@@ -27,7 +27,8 @@ fn migration_validation_is_superseded_during_the_running_process() {
     fs::create_dir_all(root.join("locales")).unwrap();
     let config = root.join("config/app.dev.toml");
     fs::write(&config, "[app]\nport = 8080\n").unwrap();
-    let migrate = write_slow_migration_stub(&root);
+    let started_marker = root.join(".slow-migrate-started");
+    let migrate = write_slow_migration_stub(&root, &started_marker);
     let watcher = SourceWatcher::new(&root).unwrap();
     thread::sleep(Duration::from_millis(100));
     let plan = BuildPlan::from_changes(&ChangeBatch {
@@ -37,8 +38,17 @@ fn migration_validation_is_superseded_during_the_running_process() {
             .collect(),
     });
     let changed = thread::spawn(move || {
-        thread::sleep(Duration::from_millis(250));
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !started_marker.is_file() {
+            assert!(
+                Instant::now() < deadline,
+                "迁移进程未在时限内启动，无法验证运行中取消"
+            );
+            thread::sleep(Duration::from_millis(20));
+        }
+        let changed_at = Instant::now();
         fs::write(config, "[app]\nport = 8081\n").unwrap();
+        changed_at
     });
     let group = ChildGroup::new().unwrap();
     let shutdown = AtomicBool::new(false);
@@ -58,9 +68,14 @@ fn migration_validation_is_superseded_during_the_running_process() {
     )
     .unwrap();
 
-    changed.join().unwrap();
+    let changed_at = changed.join().unwrap();
     assert_eq!(result, StepResult::Superseded);
-    assert!(started.elapsed() < Duration::from_secs(3));
+    assert!(
+        changed_at.elapsed() < Duration::from_secs(1),
+        "运行中迁移未在一秒内被新 revision 取消：{:?}",
+        changed_at.elapsed()
+    );
+    assert!(started.elapsed() < Duration::from_secs(5));
     drop(watcher);
     fs::remove_dir_all(root).unwrap();
 }
@@ -113,9 +128,16 @@ fn compile_build_is_superseded_after_fake_cargo_starts() {
 }
 
 #[cfg(windows)]
-fn write_slow_migration_stub(root: &Path) -> PathBuf {
+fn write_slow_migration_stub(root: &Path, marker: &Path) -> PathBuf {
     let path = root.join("slow-migrate.cmd");
-    fs::write(&path, "@echo off\r\nping -n 31 127.0.0.1 >NUL\r\n").unwrap();
+    fs::write(
+        &path,
+        format!(
+            "@echo off\r\n>\"{}\" echo started\r\nping -n 31 127.0.0.1 >NUL\r\n",
+            marker.display()
+        ),
+    )
+    .unwrap();
     path
 }
 
@@ -131,10 +153,14 @@ fn write_blocking_cargo_stub(root: &Path) -> PathBuf {
 }
 
 #[cfg(unix)]
-fn write_slow_migration_stub(root: &Path) -> PathBuf {
+fn write_slow_migration_stub(root: &Path, marker: &Path) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let path = root.join("slow-migrate.sh");
-    fs::write(&path, "#!/bin/sh\nsleep 30\n").unwrap();
+    fs::write(
+        &path,
+        format!("#!/bin/sh\n: > {}\nsleep 30\n", marker.display()),
+    )
+    .unwrap();
     let mut permissions = fs::metadata(&path).unwrap().permissions();
     permissions.set_mode(0o700);
     fs::set_permissions(&path, permissions).unwrap();
