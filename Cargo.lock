@@ -3502,7 +3502,6 @@ dependencies = [
  "sea-orm-cli",
  "sea-schema",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

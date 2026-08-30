@@ -27,13 +27,9 @@ sea-orm = { version = "~2.0.0", path = "../", default-features = false, features
     "schema-sync",
 ] }
 sea-orm-cli = { version = "~2.0.0", path = "../sea-orm-cli", default-features = false, optional = true }
-sea-schema = { version = "0.18.1", default-features = false, features = [
-    "discovery",
-    "writer",
-    "probe",
-] }
+sea-schema = { version = "0.18.1", default-features = false, features = ["probe"] }
 tracing = { version = "0.1", default-features = false, features = ["log"] }
-tracing-subscriber = { version = "0.3.17", default-features = false, features = [
+tracing-subscriber = { version = "0.3.17", optional = true, default-features = false, features = [
     "env-filter",
     "fmt",
 ] }
@@ -42,7 +38,7 @@ tracing-subscriber = { version = "0.3.17", default-features = false, features = 
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [features]
-cli = ["clap", "dotenvy", "sea-orm-cli/cli"]
+cli = ["clap", "dotenvy", "dep:tracing-subscriber", "sea-orm-cli/cli"]
 default = ["cli"]
 entity-registry = ["sea-orm/entity-registry"]
 runtime-async-std = [

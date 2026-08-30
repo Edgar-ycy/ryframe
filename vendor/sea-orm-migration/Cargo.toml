@@ -40,6 +40,7 @@ repository = "https://github.com/SeaQL/sea-orm"
 cli = [
     "clap",
     "dotenvy",
+    "dep:tracing-subscriber",
     "sea-orm-cli/cli",
 ]
 default = ["cli"]
@@ -148,11 +149,7 @@ default-features = false
 
 [dependencies.sea-schema]
 version = "0.18.1"
-features = [
-    "discovery",
-    "writer",
-    "probe",
-]
+features = ["probe"]
 default-features = false
 
 [dependencies.tracing]
@@ -166,6 +163,7 @@ features = [
     "env-filter",
     "fmt",
 ]
+optional = true
 default-features = false
 
 [dev-dependencies.tokio]
