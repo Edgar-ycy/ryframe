@@ -311,8 +311,19 @@ fn collect_owned_paths(
     input: &ResourceGateInput,
     result: &mut ResourceChangeSet,
 ) -> Option<String> {
+    let base_owners = match ownership_index(&input.base_ownership) {
+        Ok(index) => index,
+        Err(reason) => return Some(reason),
+    };
     for entry in &input.head_ownership.entries {
         if entry.resource != "__catalog__" && !result.impacted_resources.contains(&entry.resource) {
+            continue;
+        }
+        if entry.resource == "__catalog__"
+            && base_owners
+                .get(&(entry.root.clone(), entry.path.clone()))
+                .is_some_and(|base| base.fingerprint == entry.fingerprint)
+        {
             continue;
         }
         match entry.root.as_str() {

@@ -93,6 +93,28 @@ fn field_change_marks_schema_and_affected_crate() {
 }
 
 #[test]
+fn unchanged_catalog_output_does_not_expand_compile_surface() {
+    let base = source("post", "title", "post.read", &[]);
+    let head = source("post", "body", "post.read", &[]);
+    let mut input = input_with_post(Some(&base), &head);
+    let catalog_output = owned(
+        "__catalog__",
+        "crates/ryframe-tenant-db/src/generated/resources.rs",
+    );
+    input.base_ownership.entries.push(catalog_output.clone());
+    input.head_ownership.entries.push(catalog_output);
+    input.workspace_graph.package_by_dir.insert(
+        "crates/ryframe-tenant-db".to_owned(),
+        "ryframe-tenant-db".to_owned(),
+    );
+
+    let result = analyze(&input);
+
+    assert_eq!(result.ambiguous_reason, None);
+    assert_eq!(result.affected_crates, set(&["ryframe-api"]));
+}
+
+#[test]
 fn permission_change_marks_contract_impact() {
     let base = source("post", "title", "post.read", &[]);
     let head = source("post", "title", "post.list", &[]);
@@ -777,7 +799,7 @@ fn targeted_steps(crates: &BTreeSet<String>) -> Vec<GateStep> {
 }
 
 fn backend_paths(resources: &[&str]) -> Vec<&'static str> {
-    let mut paths = vec!["crates/ryframe-api/src/generated/mod.rs"];
+    let mut paths = Vec::new();
     for resource in resources {
         paths.push(match *resource {
             "post" => "crates/ryframe-api/src/generated/post/mod.rs",
