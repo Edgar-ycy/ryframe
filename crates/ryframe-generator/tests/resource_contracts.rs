@@ -1,3 +1,5 @@
+#[path = "resource_contracts/resource_aggregate.rs"]
+mod resource_aggregate;
 #[path = "resource_contracts/resource_check.rs"]
 mod resource_check;
 #[path = "resource_contracts/resource_generation.rs"]

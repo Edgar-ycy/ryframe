@@ -35,6 +35,8 @@ mod workspace;
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
+#[path = "internal/check_policy.rs"]
+mod check_policy_tests;
 #[path = "internal/check_snapshot.rs"]
 mod check_snapshot_tests;
 #[path = "internal/check.rs"]
@@ -57,6 +59,8 @@ mod dev_snapshot_tests;
 mod dev_tests;
 #[path = "internal/devex_acceptance.rs"]
 mod devex_acceptance_tests;
+#[path = "internal/devex_paths.rs"]
+mod devex_paths_tests;
 #[path = "internal/devex_sccache.rs"]
 mod devex_sccache_tests;
 #[path = "internal/devex.rs"]
