@@ -21,7 +21,8 @@ const PACKAGE_SURFACES: &[PackageSurface] = &[
     },
     PackageSurface {
         package: "ryframe-adapters",
-        features: &["image-processing", "otel", "redis-api", "spreadsheet"],
+        // 标准资源不会穿透到 adapters；可选协议实现由完整 Rust 门禁覆盖。
+        features: &[],
         has_lib: true,
         bins: &[],
         tests: &["adapter_contracts"],

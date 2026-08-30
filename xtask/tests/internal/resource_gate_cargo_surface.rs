@@ -65,10 +65,6 @@ fn resource_cargo_surface_selects_only_runtime_api_contracts() {
 
     for feature in [
         "ryframe/bin-api",
-        "ryframe-adapters/image-processing",
-        "ryframe-adapters/otel",
-        "ryframe-adapters/redis-api",
-        "ryframe-adapters/spreadsheet",
         "ryframe-application/test-support",
         "ryframe-db/migration",
         "ryframe-db/repositories",
@@ -79,6 +75,10 @@ fn resource_cargo_surface_selects_only_runtime_api_contracts() {
         assert!(feature_value.split(',').any(|actual| actual == feature));
     }
     for forbidden in [
+        "ryframe-adapters/image-processing",
+        "ryframe-adapters/otel",
+        "ryframe-adapters/redis-api",
+        "ryframe-adapters/spreadsheet",
         "runtime-swagger-ui",
         "bin-worker",
         "bin-migrate",
