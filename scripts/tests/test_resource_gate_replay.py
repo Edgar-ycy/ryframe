@@ -354,6 +354,24 @@ class ResourceGateReplayTests(unittest.TestCase):
         self.assertEqual(appended, ("gate", "--frontend-dir", str(frontend)))
         with self.assertRaisesRegex(MODULE.ReplayConfigurationError, "缺少路径"):
             MODULE.command_for_frontend(("gate", "--frontend-dir"), frontend)
+        runner_target = ROOT / "target" / "runner"
+        self.assertEqual(
+            MODULE.command_for_replay(command, frontend, runner_target),
+            (
+                "cargo",
+                "run",
+                "--locked",
+                "--target-dir",
+                str(runner_target.resolve()),
+                "-p",
+                "xtask",
+                "--",
+                "ci",
+                "resource-gate",
+                "--frontend-dir",
+                str(frontend),
+            ),
+        )
 
     def test_decision_environment_order_and_cleanup_fail_closed(self) -> None:
         with isolated_test_dir("resource-replay-decision") as fixture:

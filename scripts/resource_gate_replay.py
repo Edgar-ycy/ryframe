@@ -445,6 +445,26 @@ def command_for_frontend(command: tuple[str, ...], frontend: Path) -> tuple[str,
     return tuple(normalized)
 
 
+def command_for_replay(
+    command: tuple[str, ...], frontend: Path, runner_target: Path
+) -> tuple[str, ...]:
+    """在回放中展开 cargo xtask 别名，避免别名的深层相对 target。"""
+    normalized = list(command_for_frontend(command, frontend))
+    if len(normalized) >= 2 and normalized[0:2] == ["cargo", "xtask"]:
+        return (
+            "cargo",
+            "run",
+            "--locked",
+            "--target-dir",
+            str(runner_target.resolve()),
+            "-p",
+            "xtask",
+            "--",
+            *normalized[2:],
+        )
+    return tuple(normalized)
+
+
 def arm_order(index: int) -> tuple[bool, bool]:
     if index < 1:
         raise ValueError("replay case index 必须从 1 开始")
@@ -877,7 +897,13 @@ def execute_in_worktree(
         started = time.perf_counter_ns()
         with command_log.open("wb") as output:
             completed = subprocess.run(
-                list(command_for_frontend(command, frontend_worktree)),
+                list(
+                    command_for_replay(
+                        command,
+                        frontend_worktree,
+                        target_root / "runner",
+                    )
+                ),
                 cwd=backend_worktree,
                 env=environment,
                 check=False,
