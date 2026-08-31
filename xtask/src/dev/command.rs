@@ -54,7 +54,6 @@ pub(crate) fn api_command(
         command.arg("--probe");
         command
             .env("APP_APP_HOST", "127.0.0.1")
-            .env("APP_API_DOCS_ENABLED", "false")
             .env("APP_TELEMETRY_ENABLED", "false")
             .env("APP_LOGGER_OUTPUT", "stdout");
     }

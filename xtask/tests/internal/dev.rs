@@ -461,10 +461,6 @@ fn api_probe_uses_explicit_side_effect_free_mode() {
         Some(&Some("127.0.0.1".into()))
     );
     assert_eq!(
-        environment.get("APP_API_DOCS_ENABLED"),
-        Some(&Some("false".into()))
-    );
-    assert_eq!(
         environment.get("APP_TELEMETRY_ENABLED"),
         Some(&Some("false".into()))
     );
