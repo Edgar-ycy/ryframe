@@ -335,8 +335,9 @@ class ResourceGateReplayTests(unittest.TestCase):
             MODULE.TARGETED_P95_LIMIT_MS,
         )
         self.assertEqual(MODULE.percentile_nearest_rank([3, 1, 2], 95), 3)
-        self.assertTrue(MODULE.replay_activation_eligible(True, True, True, True))
-        self.assertFalse(MODULE.replay_activation_eligible(True, False, True, True))
+        self.assertTrue(MODULE.replay_activation_eligible(True, True, True, True, True))
+        self.assertFalse(MODULE.replay_activation_eligible(True, True, True, True, False))
+        self.assertFalse(MODULE.replay_activation_eligible(True, False, True, True, True))
 
     def test_frontend_argument_is_stable_across_temporary_worktrees(self) -> None:
         command = (
