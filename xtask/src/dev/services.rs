@@ -128,6 +128,9 @@ pub(super) fn start_services_in_mode(
     worker_ids: WorkerIds,
     mode: ServiceLaunchMode,
 ) -> Result<Services> {
+    if mode.is_probe() {
+        return start_probe_services(group, root, binaries, ports, worker_ids);
+    }
     let mut api_command = api_command(
         root,
         &binaries.api,
@@ -178,6 +181,88 @@ pub(super) fn start_services_in_mode(
             );
         }
     };
+    if let Err(error) = wait_services_ready_until(
+        health_deadline,
+        "API",
+        "Worker",
+        || ensure_running("API", &mut api),
+        || ensure_running("Worker", &mut worker),
+        || http_readyz(ports.api),
+        || http_readyz(ports.worker),
+    ) {
+        let api_stop = stop_child(&mut api);
+        let worker_stop = stop_child(&mut worker);
+        let cleanup = cleanup_binaries(&binaries);
+        return combine_failures(
+            Err(error),
+            [
+                ("停止未通过健康检查的 API", api_stop),
+                ("停止未通过健康检查的 Worker", worker_stop),
+                ("清理候选版本目录", cleanup),
+            ],
+        );
+    }
+    Ok(Services {
+        api,
+        worker,
+        binaries,
+    })
+}
+
+fn start_probe_services(
+    group: &ChildGroup,
+    root: &Path,
+    binaries: Binaries,
+    ports: DevPorts,
+    worker_ids: WorkerIds,
+) -> Result<Services> {
+    let mut api_command = api_command(
+        root,
+        &binaries.api,
+        RuntimeInputPaths::new(
+            &binaries.config_dir,
+            &binaries.locales_dir,
+            &binaries.runtime_secrets,
+        ),
+        ports.api,
+        ports.worker,
+        worker_ids.api,
+        true,
+    );
+    let mut api = match group.spawn(&mut api_command) {
+        Ok(api) => api,
+        Err(error) => {
+            let cleanup = cleanup_binaries(&binaries);
+            return combine_failures(Err(error), [("清理候选版本目录", cleanup)]);
+        }
+    };
+    let mut worker_command = worker_command(
+        root,
+        &binaries.worker,
+        RuntimeInputPaths::new(
+            &binaries.config_dir,
+            &binaries.locales_dir,
+            &binaries.runtime_secrets,
+        ),
+        ports.worker,
+        worker_ids.worker,
+        true,
+    );
+    let mut worker = match group.spawn(&mut worker_command) {
+        Ok(worker) => worker,
+        Err(error) => {
+            let api_stop = stop_child(&mut api);
+            let cleanup = cleanup_binaries(&binaries);
+            return combine_failures(
+                Err(error),
+                [
+                    ("停止未完成启动的 API", api_stop),
+                    ("清理候选版本目录", cleanup),
+                ],
+            );
+        }
+    };
+    let health_deadline = Instant::now() + HEALTH_TIMEOUT;
     if let Err(error) = wait_services_ready_until(
         health_deadline,
         "API",
