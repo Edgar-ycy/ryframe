@@ -244,7 +244,7 @@ fn record_test_change(tracker: &SourceRevisionTracker) -> SourceRevision {
 
 #[test]
 fn save_cases_drive_the_real_change_plan_and_cargo_count() {
-    assert_eq!(DEV_API_FEATURES, "bin-api,runtime-swagger-ui");
+    assert_eq!(DEV_API_FEATURES, "bin-api");
     for (case, cargo_invocations, expected_ready) in [
         (SaveCase::ConfigOnly, 0, ReadyKind::VerifiedNoRestart),
         (SaveCase::ApiOnly, 1, ReadyKind::Promoted),

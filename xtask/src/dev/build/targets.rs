@@ -16,7 +16,7 @@ use super::{
 };
 use crate::dev::model::{ArtifactAction, BuildPlan};
 
-pub(crate) const DEV_API_FEATURES: &str = "bin-api,runtime-swagger-ui";
+pub(crate) const DEV_API_FEATURES: &str = "bin-api";
 
 #[derive(Clone, Copy)]
 pub(super) struct CargoTarget {
