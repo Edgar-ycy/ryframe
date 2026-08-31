@@ -157,6 +157,7 @@ pub(crate) struct SaveMeasurement {
 pub(crate) enum SaveMeasurementContract {
     Current,
     LegacyConfigOnlyBaseline,
+    LegacyApiWorkerBaseline,
 }
 
 pub(crate) fn run() -> Result<()> {
@@ -495,6 +496,14 @@ pub(crate) fn read_measurement_with_contract(
         }
         SaveMeasurementContract::LegacyConfigOnlyBaseline => {
             return Err("legacy-cargo-dev-v1 只允许 config-only 测量结果".into());
+        }
+        SaveMeasurementContract::LegacyApiWorkerBaseline
+            if matches!(measurement.case, SaveCase::ApiOnly | SaveCase::WorkerOnly) =>
+        {
+            (1, ReadyKind::Promoted)
+        }
+        SaveMeasurementContract::LegacyApiWorkerBaseline => {
+            return Err("legacy-cargo-dev-v2 只允许 api-only 或 worker-only 测量结果".into());
         }
     };
     if measurement.schema_version != 1

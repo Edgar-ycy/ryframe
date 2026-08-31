@@ -26,6 +26,13 @@ pub(super) fn validate(
             candidate_records,
             baseline_pairing,
         ),
+        Some(BaselineContract::LegacyCargoDevV2) => validate_legacy_api_worker(
+            baseline,
+            candidate,
+            baseline_records,
+            candidate_records,
+            baseline_pairing,
+        ),
     }
 }
 
@@ -55,6 +62,34 @@ fn validate_legacy_cargo_dev(
     }
     validate_save_records("基线", baseline_records, 1, ReadyKind::Promoted)?;
     validate_save_records("候选", candidate_records, 0, ReadyKind::VerifiedNoRestart)
+}
+
+fn validate_legacy_api_worker(
+    baseline: &RunSummary,
+    candidate: &RunSummary,
+    baseline_records: &[SampleRecord],
+    candidate_records: &[SampleRecord],
+    pairing: &PairingMetadata,
+) -> Result<()> {
+    if baseline.suite != DevexSuite::CargoDevSave
+        || candidate.suite != DevexSuite::CargoDevSave
+        || baseline.variant != candidate.variant
+        || !matches!(baseline.variant.as_str(), "api-only" | "worker-only")
+    {
+        return Err("legacy-cargo-dev-v2 只允许 cargo-dev-save/api-only 或 worker-only".into());
+    }
+    let provenance = pairing
+        .baseline_provenance
+        .as_ref()
+        .ok_or("legacy-cargo-dev-v2 缺少 baseline 来源证据")?;
+    if provenance.base_commit != BaselineContract::LEGACY_CARGO_DEV_V2_BASE_COMMIT
+        || provenance.adapter_commit != BaselineContract::LEGACY_CARGO_DEV_V2_ADAPTER_COMMIT
+        || !valid_sha256(&provenance.patch_sha256)
+    {
+        return Err("legacy-cargo-dev-v2 baseline 提交或补丁哈希无效".into());
+    }
+    validate_save_records("基线", baseline_records, 1, ReadyKind::Promoted)?;
+    validate_save_records("候选", candidate_records, 1, ReadyKind::Promoted)
 }
 
 fn validate_save_records(

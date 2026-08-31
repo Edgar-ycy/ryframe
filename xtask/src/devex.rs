@@ -60,10 +60,10 @@ fn parse_paired(args: &[String]) -> std::result::Result<DevexCommand, String> {
                 .get(index + 1)
                 .filter(|value| !value.starts_with("--"))
                 .ok_or("--baseline-contract 缺少取值")?;
-            baseline_contract = Some(
-                BaselineContract::parse(value)
-                    .ok_or("--baseline-contract 只允许 legacy-cargo-dev-v1")?,
-            );
+            baseline_contract =
+                Some(BaselineContract::parse(value).ok_or(
+                    "--baseline-contract 只允许 legacy-cargo-dev-v1 或 legacy-cargo-dev-v2",
+                )?);
             index += 2;
             continue;
         }
@@ -294,7 +294,7 @@ fn resolve_run_reference(devex_root: &Path, reference: &str) -> Result<PathBuf> 
 
 pub(crate) fn usage() -> &'static str {
     "cargo xtask devex run --suite <suite> --variant <name> --runs <1..50> --cache <cold|warm>\n\
-     cargo xtask devex paired --base-backend <dir> --candidate-backend <dir> [--base-frontend <dir> --candidate-frontend <dir>] [--baseline-contract legacy-cargo-dev-v1] --suite <suite> --variant <name> --runs <1..50> --cache <cold|warm>\n\
+     cargo xtask devex paired --base-backend <dir> --candidate-backend <dir> [--base-frontend <dir> --candidate-frontend <dir>] [--baseline-contract legacy-cargo-dev-v1|legacy-cargo-dev-v2] --suite <suite> --variant <name> --runs <1..50> --cache <cold|warm>\n\
      cargo xtask devex summarize <日期/run-id>\n\
      cargo xtask devex compare --base <日期/run-id> --candidate <日期/run-id>"
 }

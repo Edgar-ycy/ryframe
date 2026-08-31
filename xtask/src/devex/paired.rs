@@ -213,20 +213,38 @@ fn baseline_provenance(
     baseline_root: &Path,
     contract: Option<BaselineContract>,
 ) -> Result<Option<BaselineProvenance>> {
-    let Some(BaselineContract::LegacyCargoDevV1) = contract else {
+    let Some(contract @ (BaselineContract::LegacyCargoDevV1 | BaselineContract::LegacyCargoDevV2)) =
+        contract
+    else {
         return Ok(None);
     };
+    let (base_commit, adapter_commit) = match contract {
+        BaselineContract::LegacyCargoDevV1 => (
+            BaselineContract::LEGACY_CARGO_DEV_BASE_COMMIT,
+            BaselineContract::LEGACY_CARGO_DEV_ADAPTER_COMMIT,
+        ),
+        BaselineContract::LegacyCargoDevV2 => (
+            BaselineContract::LEGACY_CARGO_DEV_V2_BASE_COMMIT,
+            BaselineContract::LEGACY_CARGO_DEV_V2_ADAPTER_COMMIT,
+        ),
+    };
     let head = git_text(baseline_root, &["rev-parse", "HEAD"])?;
-    if head != BaselineContract::LEGACY_CARGO_DEV_ADAPTER_COMMIT {
+    if head != adapter_commit {
         return Err(format!(
-            "legacy-cargo-dev-v1 基线必须是已审核适配提交 {}，实际为 {head}",
-            BaselineContract::LEGACY_CARGO_DEV_ADAPTER_COMMIT
+            "{} 基线必须是已审核适配提交 {}，实际为 {head}",
+            contract.as_str(),
+            adapter_commit
         )
         .into());
     }
     let parent = git_text(baseline_root, &["rev-parse", "HEAD^"])?;
-    if parent != BaselineContract::LEGACY_CARGO_DEV_BASE_COMMIT {
-        return Err("legacy-cargo-dev-v1 适配提交不再直接基于 7477b30".into());
+    if parent != base_commit {
+        return Err(format!(
+            "{} 适配提交不再直接基于基线提交 {}",
+            contract.as_str(),
+            base_commit
+        )
+        .into());
     }
     if !git_text(
         baseline_root,
@@ -242,15 +260,15 @@ fn baseline_provenance(
             "diff",
             "--binary",
             "--full-index",
-            BaselineContract::LEGACY_CARGO_DEV_BASE_COMMIT,
-            BaselineContract::LEGACY_CARGO_DEV_ADAPTER_COMMIT,
+            base_commit,
+            adapter_commit,
             "--",
             ".",
         ],
     )?;
     Ok(Some(BaselineProvenance {
-        base_commit: BaselineContract::LEGACY_CARGO_DEV_BASE_COMMIT.to_owned(),
-        adapter_commit: BaselineContract::LEGACY_CARGO_DEV_ADAPTER_COMMIT.to_owned(),
+        base_commit: base_commit.to_owned(),
+        adapter_commit: adapter_commit.to_owned(),
         patch_sha256: sha256(&patch),
     }))
 }
@@ -494,6 +512,9 @@ fn save_contract(
     match (baseline_contract, arm) {
         (Some(BaselineContract::LegacyCargoDevV1), PairedArm::Baseline) => {
             SaveMeasurementContract::LegacyConfigOnlyBaseline
+        }
+        (Some(BaselineContract::LegacyCargoDevV2), PairedArm::Baseline) => {
+            SaveMeasurementContract::LegacyApiWorkerBaseline
         }
         _ => SaveMeasurementContract::Current,
     }
