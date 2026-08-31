@@ -7,6 +7,13 @@ use crate::Result;
 
 /// 返回后端 Cargo Workspace 根目录。
 pub(crate) fn root_dir() -> PathBuf {
+    if let Ok(current) = std::env::current_dir()
+        && let Some(root) = current.ancestors().find(|candidate| {
+            candidate.join("Cargo.toml").is_file() && candidate.join("xtask").is_dir()
+        })
+    {
+        return root.to_path_buf();
+    }
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("xtask 必须位于 Cargo Workspace 根目录下")
