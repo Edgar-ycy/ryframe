@@ -863,6 +863,9 @@ def execute_in_worktree(
                 "RYFRAME_CI_HEAD_SHA": case.head,
                 "RYFRAME_CI_FRONTEND_REF": case.frontend_head,
                 "RYFRAME_DEVEX_TARGET_ROOT": str(target_root),
+                # 外层 xtask 也固定到 session 级短路径，避免 worktree 深路径
+                # 触发 Windows MAX_PATH，并复用各案例之间的 xtask 编译产物。
+                "CARGO_TARGET_DIR": str((target_root / "runner").resolve()),
                 "RYFRAME_INTEGRATION_RUN_ID": f"resource-replay-{worktree.name}",
                 "RYFRAME_RESOURCE_GATE_DECISION_FILE": str(decision_path.resolve()),
             }

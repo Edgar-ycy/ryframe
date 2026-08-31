@@ -650,6 +650,9 @@ if frontend.joinpath("scenario.txt").read_text().strip() != Path("scenario.txt")
 target = Path(os.environ.get("RYFRAME_DEVEX_TARGET_ROOT", ""))
 if not target.is_absolute() or target.name != "target" or target.parent != Path.cwd().parent.parent:
     raise SystemExit(11)
+runner_target = Path(os.environ.get("CARGO_TARGET_DIR", ""))
+if not runner_target.is_absolute() or runner_target.name != "runner" or runner_target.parent != target:
+    raise SystemExit(12)
 actual_mode = Path("targeted-mode.txt").read_text().strip() if mode == "targeted" else "full"
 decision = {
     "formatVersion": 1,
