@@ -104,6 +104,7 @@ fn resource_cargo_surface_selects_only_runtime_api_contracts() {
         assert!(clippy.windows(2).any(|pair| pair == ["--bin", bin]));
     }
     assert!(!test.contains(&"--bin".to_owned()));
+    assert!(!clippy.contains(&"--test".to_owned()));
     assert!(
         test.windows(2)
             .any(|pair| pair == ["--test", "mysql_real_protocol"])

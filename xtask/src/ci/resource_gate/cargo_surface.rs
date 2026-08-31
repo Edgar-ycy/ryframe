@@ -169,8 +169,10 @@ pub(crate) fn affected_package_args_for_target(
             args.extend(["--bin".to_owned(), bin.to_owned()]);
         }
     }
-    for test in tests {
-        args.extend(["--test".to_owned(), test.to_owned()]);
+    if operation == "test" {
+        for test in tests {
+            args.extend(["--test".to_owned(), test.to_owned()]);
+        }
     }
     args.extend(["--jobs".to_owned(), jobs.max(1).to_string()]);
     if operation == "clippy" {
