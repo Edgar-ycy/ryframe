@@ -252,7 +252,7 @@ fn baseline_provenance(
     )?
     .is_empty()
     {
-        return Err("legacy-cargo-dev-v1 基线 worktree 必须干净".into());
+        return Err(format!("{} 基线 worktree 必须干净", contract.as_str()).into());
     }
     let patch = git_output(
         baseline_root,

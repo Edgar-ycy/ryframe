@@ -336,6 +336,38 @@ fn legacy_baseline_contract_is_closed_to_config_only() {
 }
 
 #[test]
+fn legacy_api_worker_baseline_contract_accepts_only_single_target_saves() {
+    for variant in ["api-only", "worker-only"] {
+        let cli = parse(strings(&[
+            "devex",
+            "paired",
+            "--base-backend",
+            "D:/worktrees/base",
+            "--candidate-backend",
+            "D:/worktrees/candidate",
+            "--baseline-contract",
+            "legacy-cargo-dev-v2",
+            "--suite",
+            "cargo-dev-save",
+            "--variant",
+            variant,
+            "--runs",
+            "20",
+            "--cache",
+            "warm",
+        ]))
+        .unwrap();
+        let Command::Devex(DevexCommand::Paired(options)) = cli.command else {
+            panic!("应解析为 DevEx paired");
+        };
+        assert_eq!(
+            options.baseline_contract,
+            Some(BaselineContract::LegacyCargoDevV2)
+        );
+    }
+}
+
+#[test]
 fn suite_definitions_select_the_measured_workload() {
     let api = DevexSuite::RustColdBuild.definition("api").unwrap();
     assert_eq!(api.features, &["bin-api"]);
