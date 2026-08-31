@@ -224,11 +224,11 @@ fn run_shared_workspace() -> Result<(), String> {
 }
 
 fn prepare_shared_workspace() -> Result<SharedWorkspace, String> {
-    let backend_source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .ok_or("生成器应位于后端 Workspace/crates")?
-        .to_path_buf();
+    let backend_source = std::env::current_dir()
+        .map_err(|error| format!("无法读取资源 Workspace 当前目录：{error}"))?;
+    if !backend_source.join("Cargo.toml").is_file() {
+        return Err("资源 Workspace 当前目录不是后端 Workspace 根目录".into());
+    }
     let frontend_source = std::env::var_os(FRONTEND_DIR_ENV)
         .map(PathBuf::from)
         .ok_or("资源 Workspace 验证缺少前端目录环境变量")?;
