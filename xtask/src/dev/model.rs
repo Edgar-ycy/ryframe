@@ -10,7 +10,7 @@ use super::services::stop_all;
 
 pub(super) const HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
 pub(super) const WATCH_DEBOUNCE: Duration = Duration::from_millis(350);
-pub(super) const LOOP_INTERVAL: Duration = Duration::from_millis(100);
+pub(super) const LOOP_INTERVAL: Duration = Duration::from_millis(50);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ChangeKind {
