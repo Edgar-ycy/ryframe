@@ -150,6 +150,8 @@ cargo xtask devex compare --base <日期/run-id> --candidate <日期/run-id>
 
 `cargo xtask ci resource-gate --frontend-dir ../ryframe-vue3` 直接从 CI 的 base/head SHA 计算资源变化、关系闭包和 ownership，不接收调用方拼接的资源名。缺少合法 base、变更面过大、删除或重命名无法归属，以及 Cargo、toolchain、模板、CI 或架构策略变化时会自动执行完整门禁。
 
+定向模式的 Clippy 只检查受影响库和二进制，测试阶段只运行资源契约测试；MySQL、Redis、对象存储和 OTLP 的真实协议测试统一由 integration 门禁执行，避免在每次资源改动中重复编译重量级协议 harness。
+
 定向模式当前默认关闭；只有经过独立后端与前端提交回放、证明定向结果与完整门禁一致后，CI 才能使用受控激活标记。激活证据缺失、过期或无法验证时继续完整回退，不会把完整回退误报为定向通过。CI 的 Rust 编译使用 sccache 并保存统计，但不缓存整个 Cargo target；缓存配置或统计异常不得替代真实门禁结果。
 
 ## 常见问题
