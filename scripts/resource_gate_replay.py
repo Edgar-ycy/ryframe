@@ -324,7 +324,7 @@ def run_replay(
     sccache_started = False
     primary_error: BaseException | None = None
     try:
-        run_sccache(tools.sccache, environment, "--start-server")
+        ensure_sccache_server(tools.sccache, environment)
         sccache_started = True
         prime_case = next(
             case
@@ -785,6 +785,22 @@ def run_sccache(program: str, environment: dict[str, str], argument: str) -> Non
         raise ReplayConfigurationError(
             f"sccache {argument} 失败：{completed.stderr.strip()}"
         )
+
+
+def ensure_sccache_server(program: str, environment: dict[str, str]) -> None:
+    """启动并确认 sccache；兼容 Windows 本机启动命令的迟到返回。"""
+    try:
+        run_sccache(program, environment, "--start-server")
+        return
+    except ReplayConfigurationError as error:
+        # 某些 Windows 版本的 sccache 在服务已进入监听后仍会返回启动超时。
+        # 只有统计接口成功时才接受该状态，其他错误继续按配置错误处理。
+        if "Timed out waiting for server startup" not in str(error):
+            raise
+        try:
+            sccache_stats(program, environment)
+        except ReplayConfigurationError:
+            raise error
 
 
 def sccache_stats(program: str, environment: dict[str, str]) -> dict[str, Any]:
