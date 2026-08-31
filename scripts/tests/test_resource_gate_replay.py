@@ -164,7 +164,8 @@ class ResourceGateReplayTests(unittest.TestCase):
                 for case in document["cases"]
                 for arm in (case["targeted"], case["full"])
             }
-            self.assertEqual(len(targets), 40)
+            # 所有串行 arm 复用 session 级 target，worktree 仍保持隔离。
+            self.assertEqual(len(targets), 1)
             self.assertTrue(
                 all(
                     arm["output_fingerprint"].startswith("sha256:")
@@ -647,7 +648,7 @@ if not frontend.joinpath("node_modules").is_dir():
 if frontend.joinpath("scenario.txt").read_text().strip() != Path("scenario.txt").read_text().strip():
     raise SystemExit(10)
 target = Path(os.environ.get("RYFRAME_DEVEX_TARGET_ROOT", ""))
-if not target.is_absolute() or not target.is_relative_to(Path.cwd()):
+if not target.is_absolute() or target.name != "target" or target.parent != Path.cwd().parent.parent:
     raise SystemExit(11)
 actual_mode = Path("targeted-mode.txt").read_text().strip() if mode == "targeted" else "full"
 decision = {

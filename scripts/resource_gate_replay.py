@@ -294,6 +294,9 @@ def run_replay(
     session = (work_root / f"r-{uuid.uuid4().hex[:12]}").resolve()
     if not session.is_relative_to(allowed):
         raise ReplayConfigurationError("replay 临时目录逃逸允许范围")
+    shared_target = (session / "target").resolve()
+    if not shared_target.is_relative_to(session):
+        raise ReplayConfigurationError("replay 共享 Cargo target 逃逸 session")
     cache = (work_root / "cache" / session.name).resolve()
     if not cache.is_relative_to(allowed):
         raise ReplayConfigurationError("replay sccache 目录逃逸允许范围")
@@ -330,6 +333,7 @@ def run_replay(
             backend.root,
             frontend.root,
             session / "prime",
+            shared_target,
             prime_case,
             manifest.targeted_command,
             environment,
@@ -353,6 +357,7 @@ def run_replay(
                     backend.root,
                     frontend.root,
                     session / f"case-{index:03}-{'t' if targeted else 'f'}",
+                    shared_target,
                     case,
                     command,
                     environment,
@@ -414,6 +419,7 @@ def run_replay(
                 cleanup_errors.append(error)
         cleanup_errors.extend(prune_worktrees(backend.root, frontend.root))
         cleanup_errors.extend(remove_isolated_tree(cache, allowed))
+        cleanup_errors.extend(remove_isolated_tree(shared_target, allowed))
         if session.is_dir():
             try:
                 session.rmdir()
@@ -822,6 +828,7 @@ def execute_in_worktree(
     repository: Path,
     frontend_repository: Path,
     worktree: Path,
+    shared_target: Path,
     case: ReplayCase,
     command: tuple[str, ...],
     base_environment: dict[str, str],
@@ -844,11 +851,9 @@ def execute_in_worktree(
         add_worktree(frontend_repository, frontend_worktree, case.frontend_head, "前端")
         frontend_created = True
         install_frontend_dependencies(frontend_worktree, corepack, base_environment)
-        target_root = (
-            backend_worktree / ".local-tests" / "resource-gate-replay-target"
-        ).resolve()
-        if not target_root.is_relative_to(backend_worktree.resolve()):
-            raise ReplayConfigurationError("replay Cargo target 逃逸后端 worktree")
+        target_root = shared_target.resolve()
+        if not target_root.is_relative_to(worktree.parent.resolve()):
+            raise ReplayConfigurationError("replay Cargo target 逃逸 session")
         environment = base_environment.copy()
         environment.update(
             {
