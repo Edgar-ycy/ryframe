@@ -107,8 +107,9 @@ fn resource_cargo_surface_selects_only_runtime_api_contracts() {
     assert!(!clippy.contains(&"--test".to_owned()));
     assert!(
         test.windows(2)
-            .any(|pair| pair == ["--test", "mysql_real_protocol"])
+            .any(|pair| pair == ["--test", "mapping_contracts"])
     );
+    assert!(!test.contains(&"mysql_real_protocol".to_owned()));
     assert!(test.windows(2).any(|pair| pair == ["--test", "internal"]));
     assert!(affected_package_args_for_target("build", &affected, "target/ci/backend", 4).is_err());
 }

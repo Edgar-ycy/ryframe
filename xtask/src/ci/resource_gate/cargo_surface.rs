@@ -60,7 +60,9 @@ const PACKAGE_SURFACES: &[PackageSurface] = &[
         features: &["repositories", "migration"],
         has_lib: true,
         bins: &["export_mysql_snapshot"],
-        tests: &["mapping_contracts", "mysql_real_protocol"],
+        // MySQL 真实协议测试由 integration 门禁执行；定向资源门禁只编译映射契约，
+        // 避免每次资源字段变更重复拉起重量级数据库测试 harness。
+        tests: &["mapping_contracts"],
     },
     PackageSurface {
         package: "ryframe-generator",
