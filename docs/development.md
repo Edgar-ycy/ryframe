@@ -156,7 +156,5 @@ cargo xtask devex compare --base <日期/run-id> --candidate <日期/run-id>
 
 ## 常见问题
 
-- 启动提示迁移不一致：运行 `cargo migrate status` 和 `cargo migrate verify`，本地确认迁移内容后再执行 `cargo migrate up`。
-- Worker 未消费任务：确认 API 与 Worker 都使用 `APP_JOBS_MODE=external`，再检查 Worker 健康端口、lease 和数据库连接。
-- 前端请求与后端不一致：重新运行 `cargo api-sync`，再执行前端消费者检查。
-- Redis 或对象存储不可用：检查 `scope_id`、连接模式、TLS、ownership marker 和服务端口；详细步骤见[运维指南](operations.md)。
+- 启动提示迁移不一致：运行 `cargo migrate status` 与 `cargo migrate verify`，确认后再执行 `cargo migrate up`；Worker 未消费任务时，确认 API/Worker 使用 `APP_JOBS_MODE=external`，检查健康端口、lease 和数据库连接。
+- 前端请求与后端不一致：重新运行 `cargo api-sync` 和消费者检查；Redis 或对象存储不可用时，检查 `scope_id`、连接模式、TLS、ownership marker 与服务端口，详见[运维指南](operations.md)。
