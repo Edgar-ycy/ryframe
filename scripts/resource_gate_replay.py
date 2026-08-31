@@ -297,6 +297,9 @@ def run_replay(
     shared_target = (session / "target").resolve()
     if not shared_target.is_relative_to(session):
         raise ReplayConfigurationError("replay 共享 Cargo target 逃逸 session")
+    shared_worktree = (session / "worktree").resolve()
+    if not shared_worktree.is_relative_to(session):
+        raise ReplayConfigurationError("replay 共享 worktree 逃逸 session")
     cache = (work_root / "cache" / session.name).resolve()
     if not cache.is_relative_to(allowed):
         raise ReplayConfigurationError("replay sccache 目录逃逸允许范围")
@@ -332,7 +335,7 @@ def run_replay(
         prime = execute_in_worktree(
             backend.root,
             frontend.root,
-            session / "prime",
+            shared_worktree,
             shared_target,
             prime_case,
             manifest.targeted_command,
@@ -356,7 +359,7 @@ def run_replay(
                 arms[targeted] = execute_in_worktree(
                     backend.root,
                     frontend.root,
-                    session / f"case-{index:03}-{'t' if targeted else 'f'}",
+                    shared_worktree,
                     shared_target,
                     case,
                     command,
@@ -420,6 +423,7 @@ def run_replay(
         cleanup_errors.extend(prune_worktrees(backend.root, frontend.root))
         cleanup_errors.extend(remove_isolated_tree(cache, allowed))
         cleanup_errors.extend(remove_isolated_tree(shared_target, allowed))
+        cleanup_errors.extend(remove_isolated_tree(shared_worktree, allowed))
         if session.is_dir():
             try:
                 session.rmdir()
@@ -676,14 +680,12 @@ def controlled_environment(
 def replay_backend_roots(session: Path, case_count: int) -> tuple[Path, ...]:
     if case_count < 1:
         raise ReplayConfigurationError("replay cache 路径至少需要一个案例")
-    roots = [(session / "prime" / "b").resolve()]
-    for index in range(1, case_count + 1):
-        roots.extend(
-            (
-                (session / f"case-{index:03}-t" / "b").resolve(),
-                (session / f"case-{index:03}-f" / "b").resolve(),
-            )
-        )
+    # 所有 arm 串行复用固定 worktree，保持 Cargo 源码路径稳定，避免每个案例
+    # 因 worktree 路径变化触发整套 crate 的重复编译。
+    roots = [
+        (session / "worktree" / "b").resolve(),
+        (session / "worktree" / "b" / "crates").resolve(),
+    ]
     return validated_cache_roots(tuple(roots))
 
 

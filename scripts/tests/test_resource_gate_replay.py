@@ -424,8 +424,8 @@ class ResourceGateReplayTests(unittest.TestCase):
                     MODULE.controlled_environment("sccache", cache, True)
 
             roots = MODULE.replay_backend_roots(fixture / "session", 20)
-            self.assertEqual(len(roots), 41)
-            self.assertEqual(len({os.path.normcase(str(root)) for root in roots}), 41)
+            self.assertEqual(len(roots), 2)
+            self.assertEqual(len({os.path.normcase(str(root)) for root in roots}), 2)
             self.assertTrue(all(root.is_absolute() for root in roots))
             activation_environment = {
                 "RYFRAME_MYSQL_INTEGRATION": "1",
@@ -449,7 +449,7 @@ class ResourceGateReplayTests(unittest.TestCase):
             self.assertNotIn("CMAKE_C_COMPILER_LAUNCHER", environment)
             self.assertNotIn("CMAKE_CXX_COMPILER_LAUNCHER", environment)
             recorded = MODULE.recorded_environment(environment, True)
-            self.assertEqual(recorded["SCCACHE_BASEDIRS_COUNT"], "41")
+            self.assertEqual(recorded["SCCACHE_BASEDIRS_COUNT"], "2")
             self.assertEqual(recorded["mysqlTlsIntegration"], "1")
             self.assertTrue(
                 recorded["SCCACHE_BASEDIRS_FINGERPRINT"].startswith("sha256:")
