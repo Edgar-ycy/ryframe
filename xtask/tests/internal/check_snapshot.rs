@@ -6,7 +6,7 @@ use super::check::{
 };
 
 #[test]
-fn snapshot_test_environment_is_stable_and_relative_to_workspace() {
+fn snapshot_test_environment_is_stable_and_absolute() {
     let root = std::env::current_dir()
         .unwrap()
         .join(".local-tests")
@@ -23,15 +23,15 @@ fn snapshot_test_environment_is_stable_and_relative_to_workspace() {
     assert_ne!(first_environment, consumer.workspace_test_environment());
     assert_eq!(
         Path::new(&first_environment[0].1),
-        Path::new("target/xtask/verify-openapi.json")
+        root.join("target/xtask/verify-openapi.json")
     );
     assert_eq!(
         Path::new(&first_environment[1].1),
-        Path::new("target/xtask/verify-mysql.sql")
+        root.join("target/xtask/verify-mysql.sql")
     );
     assert_eq!(
         Path::new(&consumer.workspace_test_environment()[0].1),
-        Path::new("target/xtask/consumer-openapi.json")
+        root.join("target/xtask/consumer-openapi.json")
     );
     drop((first, second, consumer));
     std::fs::remove_dir_all(root).unwrap();
