@@ -19,7 +19,7 @@ use crate::{
         targeted_resource_workspace_compilation, verify_backend_snapshots, verify_job_budget_from,
     },
     process::{
-        command_output, command_output_with_env, run as run_process, run_owned, run_owned_with_env,
+        command_output_with_env, run as run_process, run_owned, run_owned_with_env,
         with_process_log,
     },
     workspace::root_dir,
@@ -355,8 +355,13 @@ fn execute_targeted_compile_contracts(
         return Err("resource gate 定向测试步骤类型无效".into());
     };
     if clippy_packages != test_packages {
-        return Err("resource gate 合并 Clippy/test 的 crate 范围不一致".into());
+        return Err("resource gate 的 Clippy/test crate 范围不一致".into());
     }
+    run_owned(
+        root,
+        "cargo",
+        &affected_package_args_for_target("clippy", clippy_packages, &targets.backend, test_jobs)?,
+    )?;
     execute_targeted_test(root, test, test_jobs, targets, snapshots)
 }
 
@@ -376,7 +381,7 @@ fn execute_targeted_test(
         "--no-run".to_owned(),
         "--message-format=json-render-diagnostics".to_owned(),
     ]);
-    let environment = targeted_clippy_test_environment(root, snapshots)?;
+    let environment = snapshots.workspace_test_environment();
     let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
     let environment_refs = environment
         .iter()
@@ -477,26 +482,6 @@ fn run_targeted_test_executables(
     } else {
         Err(format!("定向测试执行失败：{}", failures.join("；")).into())
     }
-}
-
-pub(crate) fn targeted_clippy_test_environment(
-    root: &Path,
-    snapshots: &BackendSnapshots,
-) -> Result<Vec<(&'static str, String)>> {
-    let clippy_driver = command_output(root, "rustup", &["which", "clippy-driver"])?;
-    let clippy_driver = clippy_driver.trim();
-    if clippy_driver.is_empty() || !Path::new(clippy_driver).is_file() {
-        return Err("resource gate 无法定位当前工具链的 clippy-driver".into());
-    }
-    let mut environment = snapshots.workspace_test_environment();
-    environment.extend([
-        ("RUSTC_WORKSPACE_WRAPPER", clippy_driver.to_owned()),
-        (
-            "CLIPPY_ARGS",
-            "-Dwarnings__CLIPPY_HACKERY__-Dclippy::redundant_clone".to_owned(),
-        ),
-    ]);
-    Ok(environment)
 }
 
 fn execute_targeted_cross_contracts(
