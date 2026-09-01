@@ -306,10 +306,7 @@ def run_replay(
     cache = (work_root / "cache" / session.name).resolve()
     if not cache.is_relative_to(allowed):
         raise ReplayConfigurationError("replay sccache 目录逃逸允许范围")
-    backend_roots = replay_backend_roots(session, len(manifest.cases))
-    environment = controlled_environment(
-        sccache, cache, activation_gate, backend_roots=backend_roots
-    )
+    environment = controlled_environment(sccache, cache, activation_gate)
     tools = collect_tools(backend.root, frontend.root, corepack, sccache, environment)
     session.mkdir()
     try:
@@ -712,8 +709,6 @@ def controlled_environment(
     sccache: str,
     cache: Path,
     activation_gate: bool,
-    *,
-    backend_roots: tuple[Path, ...] = (),
 ) -> dict[str, str]:
     environment = os.environ.copy()
     if activation_gate:
@@ -766,34 +761,7 @@ def controlled_environment(
             "SCCACHE_SERVER_PORT": str(available_port()),
         }
     )
-    if activation_gate:
-        roots = validated_cache_roots(backend_roots)
-        environment["SCCACHE_BASEDIRS"] = os.pathsep.join(map(str, roots))
     return environment
-
-
-def replay_backend_roots(session: Path, case_count: int) -> tuple[Path, ...]:
-    if case_count < 1:
-        raise ReplayConfigurationError("replay cache 路径至少需要一个案例")
-    # 所有 arm 串行复用固定 worktree，保持 Cargo 源码路径稳定，避免每个案例
-    # 因 worktree 路径变化触发整套 crate 的重复编译。
-    roots = [
-        (session / "worktree" / "b").resolve(),
-        (session / "worktree" / "b" / "crates").resolve(),
-    ]
-    return validated_cache_roots(tuple(roots))
-
-
-def validated_cache_roots(roots: tuple[Path, ...]) -> tuple[Path, ...]:
-    if len(roots) < 2:
-        raise ReplayConfigurationError("activation replay 至少需要两个缓存源码根")
-    if any(not path.is_absolute() for path in roots):
-        raise ReplayConfigurationError("replay 缓存源码根必须是绝对路径")
-    resolved = tuple(path.resolve() for path in roots)
-    canonical = tuple(os.path.normcase(str(path)) for path in resolved)
-    if len(set(canonical)) != len(canonical):
-        raise ReplayConfigurationError("replay 缓存源码根不得重复")
-    return resolved
 
 
 def available_port() -> int:
