@@ -2,8 +2,6 @@ use std::{
     collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
-    process,
-    sync::atomic::{AtomicU64, Ordering},
 };
 
 use crate::{
@@ -13,9 +11,8 @@ use crate::{
 
 use super::model::{BackendSnapshotProfile, ConsumerContractPlan};
 
-static NEXT_VERIFY_ARTIFACT: AtomicU64 = AtomicU64::new(1);
-
 pub(crate) struct BackendSnapshots {
+    root: PathBuf,
     openapi: Option<PathBuf>,
     mysql: Option<PathBuf>,
 }
@@ -26,13 +23,13 @@ impl BackendSnapshots {
         if let Some(openapi) = &self.openapi {
             environment.push((
                 "RYFRAME_VERIFY_OPENAPI_SNAPSHOT_OUTPUT",
-                openapi.to_string_lossy().into_owned(),
+                snapshot_environment_path(&self.root, openapi),
             ));
         }
         if let Some(mysql) = &self.mysql {
             environment.push((
                 "RYFRAME_VERIFY_MYSQL_SNAPSHOT_OUTPUT",
-                mysql.to_string_lossy().into_owned(),
+                snapshot_environment_path(&self.root, mysql),
             ));
         }
         environment
@@ -86,18 +83,24 @@ pub(crate) fn prepare_backend_snapshots(
             artifact_dir.display()
         )
     })?;
-    let suffix = format!(
-        "{}-{}",
-        process::id(),
-        NEXT_VERIFY_ARTIFACT.fetch_add(1, Ordering::Relaxed)
-    );
     let openapi = profiles
         .contains(&BackendSnapshotProfile::OpenApiContract)
-        .then(|| artifact_dir.join(format!("verify-{suffix}-openapi.json")));
+        .then(|| artifact_dir.join("verify-openapi.json"));
     let mysql = profiles
         .contains(&BackendSnapshotProfile::Mysql)
-        .then(|| artifact_dir.join(format!("verify-{suffix}-mysql.sql")));
-    Ok(BackendSnapshots { openapi, mysql })
+        .then(|| artifact_dir.join("verify-mysql.sql"));
+    Ok(BackendSnapshots {
+        root: root.to_path_buf(),
+        openapi,
+        mysql,
+    })
+}
+
+fn snapshot_environment_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned()
 }
 
 pub(crate) fn stage_committed_backend_snapshots(

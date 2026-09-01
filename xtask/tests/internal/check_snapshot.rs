@@ -1,6 +1,34 @@
-use std::path::Path;
+use std::{collections::BTreeSet, path::Path};
 
-use super::check::backend_snapshot_export_args;
+use super::check::{
+    BackendSnapshotProfile, backend_snapshot_export_args, prepare_backend_snapshots,
+};
+
+#[test]
+fn snapshot_test_environment_is_stable_and_relative_to_workspace() {
+    let root = std::env::current_dir()
+        .unwrap()
+        .join(".local-tests")
+        .join("stable-snapshot-environment");
+    let profiles = BTreeSet::from([
+        BackendSnapshotProfile::OpenApiContract,
+        BackendSnapshotProfile::Mysql,
+    ]);
+    let first = prepare_backend_snapshots(&root, &profiles).unwrap();
+    let second = prepare_backend_snapshots(&root, &profiles).unwrap();
+    let first_environment = first.workspace_test_environment();
+    assert_eq!(first_environment, second.workspace_test_environment());
+    assert_eq!(
+        Path::new(&first_environment[0].1),
+        Path::new("target/xtask/verify-openapi.json")
+    );
+    assert_eq!(
+        Path::new(&first_environment[1].1),
+        Path::new("target/xtask/verify-mysql.sql")
+    );
+    drop((first, second));
+    std::fs::remove_dir_all(root).unwrap();
+}
 
 #[test]
 fn openapi_snapshot_reuses_the_backend_verify_target() {
