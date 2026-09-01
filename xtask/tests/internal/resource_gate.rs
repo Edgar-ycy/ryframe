@@ -401,7 +401,11 @@ fn ownership_parser_is_strict_and_commands_share_ci_target() {
             .windows(2)
             .any(|pair| pair == ["--bin", "export_openapi"])
     );
-    assert!(!clippy.contains(&"--test".to_owned()));
+    assert!(
+        clippy
+            .windows(2)
+            .any(|pair| pair == ["--test", "resource_api_contracts"])
+    );
     let resource_args = resource_check_args_for_target(
         std::path::Path::new("../ryframe-vue3"),
         "target/ci/resource",

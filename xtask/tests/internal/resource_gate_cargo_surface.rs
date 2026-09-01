@@ -104,7 +104,14 @@ fn resource_cargo_surface_selects_only_runtime_api_contracts() {
         assert!(clippy.windows(2).any(|pair| pair == ["--bin", bin]));
     }
     assert!(!test.contains(&"--bin".to_owned()));
-    assert!(!clippy.contains(&"--test".to_owned()));
+    for contract in [
+        "resource_api_contracts",
+        "resource_application_contracts",
+        "resource_tenant_contracts",
+    ] {
+        assert!(clippy.windows(2).any(|pair| pair == ["--test", contract]));
+        assert!(test.windows(2).any(|pair| pair == ["--test", contract]));
+    }
     assert!(clippy.contains(&"--lib".to_owned()));
     assert!(!test.contains(&"--lib".to_owned()));
     assert!(
@@ -113,6 +120,13 @@ fn resource_cargo_surface_selects_only_runtime_api_contracts() {
     );
     assert!(!test.contains(&"mysql_real_protocol".to_owned()));
     assert!(test.windows(2).any(|pair| pair == ["--test", "internal"]));
+    let test_features = test
+        .windows(2)
+        .find_map(|pair| (pair[0] == "--features").then_some(pair[1].as_str()))
+        .unwrap();
+    assert!(!test_features.contains("ryframe-application/test-support"));
+    assert!(!test_features.contains("ryframe-tenant-db/repositories"));
+    assert!(!test_features.contains("ryframe-tenant-db/migration"));
     assert!(
         clippy
             .windows(2)
