@@ -154,9 +154,12 @@ class ResourceGateReplayTests(unittest.TestCase):
                     for case in document["cases"]
                 )
             )
-            self.assertEqual(document["evidence"]["prime"]["order"], 0)
-            self.assertEqual(document["evidence"]["prime_case"], "permission-2")
-            self.assertEqual(document["evidence"]["prime_change_count"], 4)
+            self.assertEqual(len(document["evidence"]["primes"]), 1)
+            prime = document["evidence"]["primes"][0]
+            self.assertEqual(prime["result"]["order"], 0)
+            self.assertEqual(prime["case"], "permission-2")
+            self.assertEqual(prime["rust_crates"], [])
+            self.assertEqual(prime["change_count"], 4)
             self.assertEqual(document["cases"][0]["targeted"]["order"], 1)
             self.assertEqual(document["cases"][0]["full"]["order"], 2)
             self.assertEqual(document["cases"][1]["full"]["order"], 3)
@@ -258,19 +261,34 @@ class ResourceGateReplayTests(unittest.TestCase):
                 valid_cases[0], failed_prime, targeted=True, require_pass=True
             )
 
-        selected, change_count = MODULE.select_prime_case(
+        selected = MODULE.select_prime_cases(
             valid_cases,
+            lambda case: (
+                ("ryframe-api", "ryframe-application")
+                if case is valid_cases[2]
+                else ("ryframe-api",)
+            ),
             lambda case: {valid_cases[0].name: 2, valid_cases[2].name: 9}.get(
                 case.name, 1
             ),
         )
-        self.assertEqual(selected, valid_cases[2])
-        self.assertEqual(change_count, 9)
-        tied, tied_count = MODULE.select_prime_case(valid_cases, lambda _: 3)
-        self.assertEqual(tied, valid_cases[0])
-        self.assertEqual(tied_count, 3)
+        self.assertEqual(
+            selected,
+            (
+                (
+                    valid_cases[2],
+                    ("ryframe-api", "ryframe-application"),
+                    9,
+                ),
+                (valid_cases[0], ("ryframe-api",), 2),
+            ),
+        )
+        tied = MODULE.select_prime_cases(
+            valid_cases, lambda _: ("ryframe-api",), lambda _: 3
+        )
+        self.assertEqual(tied, ((valid_cases[0], ("ryframe-api",), 3),))
         with self.assertRaisesRegex(MODULE.ReplayConfigurationError, "不得为负数"):
-            MODULE.select_prime_case(valid_cases, lambda _: -1)
+            MODULE.select_prime_cases(valid_cases, lambda _: (), lambda _: -1)
         duplicate_range = (
             *valid_cases[:-1],
             MODULE.ReplayCase(

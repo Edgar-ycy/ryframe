@@ -143,11 +143,17 @@ class ReplayEvidence:
     tools: dict[str, str]
     tools_fingerprint: str
     repositories: dict[str, dict[str, str | None]]
-    prime_case: str
-    prime_change_count: int
-    prime: CommandResult
+    primes: tuple[ReplayPrime, ...]
     sccache_before: dict[str, Any]
     sccache_after: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ReplayPrime:
+    case: str
+    rust_crates: tuple[str, ...]
+    change_count: int
+    result: CommandResult
 
 
 @dataclass(frozen=True)
@@ -317,7 +323,7 @@ def run_replay(
             f"无法创建 replay sccache 目录 {cache}：{error}"
         ) from error
     results: list[ReplayResult] = []
-    prime: CommandResult | None = None
+    primes: list[ReplayPrime] = []
     before: dict[str, Any] = {}
     after: dict[str, Any] = {}
     global_order = 0
@@ -328,32 +334,39 @@ def run_replay(
     try:
         ensure_sccache_server(tools.sccache, environment)
         sccache_started = True
-        prime_case, prime_change_count = select_prime_case(
+        prime_cases = select_prime_cases(
             manifest.cases,
+            lambda case: replay_case_rust_crates(backend, case),
             lambda case: replay_case_change_count(backend, frontend, case),
         )
-        verify_case_ranges(backend, frontend, prime_case)
+        first_prime = prime_cases[0][0]
+        verify_case_ranges(backend, frontend, first_prime)
         shared_worktree.mkdir()
-        add_worktree(backend.root, shared_worktree / "b", prime_case.head, "后端")
+        add_worktree(backend.root, shared_worktree / "b", first_prime.head, "后端")
         backend_worktree_created = True
         add_worktree(
             frontend.root,
             shared_worktree / "f",
-            prime_case.frontend_head,
+            first_prime.frontend_head,
             "前端",
         )
         frontend_worktree_created = True
-        prime = execute_in_worktree(
-            shared_worktree,
-            shared_target,
-            prime_case,
-            manifest.targeted_command,
-            environment,
-            tools.corepack,
-            targeted=True,
-            order=0,
-        )
-        require_arm(prime_case, prime, targeted=True, require_pass=True)
+        for index, (prime_case, rust_crates, change_count) in enumerate(prime_cases):
+            verify_case_ranges(backend, frontend, prime_case)
+            result = execute_in_worktree(
+                shared_worktree,
+                shared_target,
+                prime_case,
+                manifest.targeted_command,
+                environment,
+                tools.corepack,
+                targeted=True,
+                order=index - len(prime_cases) + 1,
+            )
+            require_arm(prime_case, result, targeted=True, require_pass=True)
+            primes.append(
+                ReplayPrime(prime_case.name, rust_crates, change_count, result)
+            )
         run_sccache(tools.sccache, environment, "--zero-stats")
         before = sccache_stats(tools.sccache, environment)
 
@@ -413,9 +426,7 @@ def run_replay(
                 "backend": repository_record(backend),
                 "frontend": repository_record(frontend),
             },
-            prime_case=prime_case.name,
-            prime_change_count=prime_change_count,
-            prime=prime,
+            primes=tuple(primes),
             sccache_before=before,
             sccache_after=after,
         )
@@ -551,11 +562,12 @@ def verify_case_ranges(
     )
 
 
-def select_prime_case(
+def select_prime_cases(
     cases: tuple[ReplayCase, ...],
+    rust_crates: Callable[[ReplayCase], tuple[str, ...]],
     change_count: Callable[[ReplayCase], int],
-) -> tuple[ReplayCase, int]:
-    """选择变更面最大的成功定向案例，为暖缓存回放建立完整编译面。"""
+) -> tuple[tuple[ReplayCase, tuple[str, ...], int], ...]:
+    """每个实际 Rust crate 变更面只选择一个最大案例进行预热。"""
     candidates = tuple(
         case
         for case in cases
@@ -563,13 +575,23 @@ def select_prime_case(
     )
     if not candidates:
         raise ReplayConfigurationError("replay 缺少可用于预热的成功定向案例")
-    ranked = tuple((case, change_count(case)) for case in candidates)
-    if any(count < 0 for _, count in ranked):
-        raise ReplayConfigurationError("replay 预热案例的变更文件数不得为负数")
-    return max(
-        enumerate(ranked),
-        key=lambda item: (item[1][1], -item[0]),
-    )[1]
+    selected: dict[tuple[str, ...], tuple[int, ReplayCase, int]] = {}
+    for index, case in enumerate(candidates):
+        surface = tuple(sorted(set(rust_crates(case))))
+        count = change_count(case)
+        if count < 0:
+            raise ReplayConfigurationError("replay 预热案例的变更文件数不得为负数")
+        current = selected.get(surface)
+        if current is None or count > current[2]:
+            selected[surface] = (index, case, count)
+    ordered = sorted(
+        (
+            (index, case, surface, count)
+            for surface, (index, case, count) in selected.items()
+        ),
+        key=lambda item: (-len(item[2]), item[2], item[0]),
+    )
+    return tuple((case, surface, count) for _, case, surface, count in ordered)
 
 
 def replay_case_change_count(
@@ -582,11 +604,29 @@ def replay_case_change_count(
     )
 
 
+def replay_case_rust_crates(
+    backend: RepositoryIdentity,
+    case: ReplayCase,
+) -> tuple[str, ...]:
+    crates = set()
+    for path in changed_files(backend.root, case.base, case.head):
+        parts = Path(path).as_posix().split("/")
+        if len(parts) >= 2 and parts[0] == "crates":
+            crates.add(parts[1])
+        elif parts[0] == "xtask":
+            crates.add("xtask")
+    return tuple(sorted(crates))
+
+
 def changed_file_count(repository: Path, base: str, head: str) -> int:
+    return len(changed_files(repository, base, head))
+
+
+def changed_files(repository: Path, base: str, head: str) -> tuple[str, ...]:
     if base == head:
-        return 0
+        return ()
     output = git_output(repository, "diff", "--name-only", "--no-renames", base, head)
-    return sum(1 for line in output.splitlines() if line.strip())
+    return tuple(line.strip() for line in output.splitlines() if line.strip())
 
 
 def repository_identity(path: Path, label: str, marker: str) -> RepositoryIdentity:
