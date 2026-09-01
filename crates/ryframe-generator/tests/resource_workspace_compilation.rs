@@ -210,8 +210,8 @@ fn panic_message(payload: Box<dyn Any + Send>) -> String {
 
 fn run_shared_workspace() -> Result<(), String> {
     let profile = VerificationProfile::from_environment()?;
-    let workspace = prepare_shared_workspace()?;
-    generate_resource_slices(&workspace);
+    let workspace = prepare_shared_workspace(profile)?;
+    generate_resource_slices(&workspace, profile);
     if profile == VerificationProfile::Targeted {
         return Ok(());
     }
@@ -223,12 +223,19 @@ fn run_shared_workspace() -> Result<(), String> {
     Ok(())
 }
 
-fn prepare_shared_workspace() -> Result<SharedWorkspace, String> {
-    let backend_source = std::env::current_dir()
+fn prepare_shared_workspace(profile: VerificationProfile) -> Result<SharedWorkspace, String> {
+    let current_dir = std::env::current_dir()
         .map_err(|error| format!("无法读取资源 Workspace 当前目录：{error}"))?;
-    if !backend_source.join("Cargo.toml").is_file() {
-        return Err("资源 Workspace 当前目录不是后端 Workspace 根目录".into());
-    }
+    let backend_source = current_dir
+        .ancestors()
+        .find(|path| {
+            path.join("catalog/resources").is_dir()
+                && path
+                    .join("crates/ryframe-generator/tests/fixtures/device.toml")
+                    .is_file()
+        })
+        .map(Path::to_path_buf)
+        .ok_or_else(|| format!("无法从 {} 定位后端 Workspace 根目录", current_dir.display()))?;
     let frontend_source = std::env::var_os(FRONTEND_DIR_ENV)
         .map(PathBuf::from)
         .ok_or("资源 Workspace 验证缺少前端目录环境变量")?;
@@ -242,21 +249,34 @@ fn prepare_shared_workspace() -> Result<SharedWorkspace, String> {
     fs::create_dir_all(&frontend_parent).expect("应创建前端临时测试目录");
     let backend = backend_parent.join("shared-resource-workspace");
     let frontend = frontend_parent.join("shared-resource-frontend");
-    fs::create_dir_all(&backend).expect("应创建后端临时 Workspace");
-    fs::create_dir_all(&frontend).expect("应创建前端临时 Workspace");
+    reset_workspace_directory(&backend);
+    reset_workspace_directory(&frontend);
 
-    for file in [
-        "Cargo.toml",
-        "Cargo.lock",
-        "rust-toolchain.toml",
-        "rustfmt.toml",
-    ] {
-        sync_file(&backend_source.join(file), &backend.join(file));
+    if profile == VerificationProfile::Full {
+        for file in [
+            "Cargo.toml",
+            "Cargo.lock",
+            "rust-toolchain.toml",
+            "rustfmt.toml",
+        ] {
+            sync_file(&backend_source.join(file), &backend.join(file));
+        }
+        for directory in [".cargo", "catalog", "crates", "vendor", "xtask"] {
+            sync_directory(&backend_source.join(directory), &backend.join(directory));
+        }
+        prepare_frontend_workspace(&frontend_source, &frontend);
+    } else {
+        // targeted 只验证生成计划和重复写入，不运行临时 Workspace 编译；保留生成器
+        // 用于识别根目录的两个标记文件即可，避免复制 crates/vendor 与完整前端源码。
+        sync_file(
+            &backend_source.join("Cargo.toml"),
+            &backend.join("Cargo.toml"),
+        );
+        sync_file(
+            &frontend_source.join("package.json"),
+            &frontend.join("package.json"),
+        );
     }
-    for directory in [".cargo", "catalog", "crates", "vendor", "xtask"] {
-        sync_directory(&backend_source.join(directory), &backend.join(directory));
-    }
-    prepare_frontend_workspace(&frontend_source, &frontend);
 
     let cargo_target = std::env::var_os("RYFRAME_RESOURCE_WORKSPACE_TARGET_DIR")
         .map(PathBuf::from)
@@ -270,7 +290,16 @@ fn prepare_shared_workspace() -> Result<SharedWorkspace, String> {
     })
 }
 
-fn generate_resource_slices(workspace: &SharedWorkspace) {
+fn reset_workspace_directory(path: &Path) {
+    if path.exists() {
+        fs::remove_dir_all(path)
+            .unwrap_or_else(|error| panic!("清理临时 Workspace {} 失败：{error}", path.display()));
+    }
+    fs::create_dir_all(path)
+        .unwrap_or_else(|error| panic!("创建临时 Workspace {} 失败：{error}", path.display()));
+}
+
+fn generate_resource_slices(workspace: &SharedWorkspace, profile: VerificationProfile) {
     let mut device = load_resource(
         workspace
             .backend_source
@@ -294,16 +323,23 @@ fn generate_resource_slices(workspace: &SharedWorkspace) {
     )
     .expect("临时 Workspace 中既有的 Notice 清单应有效");
     let catalog = render_resources(&[device, notice, post]).expect("Device 与既有资源应能共同生成");
-    let first = write_resource(
-        &catalog,
-        "device",
-        ResourceWorkspace {
-            backend_root: &workspace.backend,
-            frontend_root: Some(&workspace.frontend),
-        },
-    )
-    .expect("Device/Notice/Post 目录应一次性写入临时 Workspace");
-    assert!(!first.written.is_empty(), "首次生成必须写入资产");
+    let initial_resources: &[&str] = if profile == VerificationProfile::Targeted {
+        &["notice", "post", "device"]
+    } else {
+        &["device"]
+    };
+    for resource in initial_resources {
+        let first = write_resource(
+            &catalog,
+            resource,
+            ResourceWorkspace {
+                backend_root: &workspace.backend,
+                frontend_root: Some(&workspace.frontend),
+            },
+        )
+        .unwrap_or_else(|error| panic!("{resource} 首次生成应成功：{error}"));
+        assert!(!first.written.is_empty(), "{resource} 首次生成必须写入资产");
+    }
     assert_generated_ownership(workspace);
     for path in [
         "crates/ryframe-application/src/generated/post/service.rs",
