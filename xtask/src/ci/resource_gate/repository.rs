@@ -35,7 +35,8 @@ struct OwnershipEntryWire {
     resource: String,
     root: String,
     path: String,
-    source_hash: String,
+    #[serde(rename = "source_hash")]
+    _source_hash: String,
     #[serde(default)]
     schema_hash: Option<String>,
     #[serde(default)]
@@ -271,7 +272,6 @@ pub(crate) fn parse_ownership(source: &str) -> Result<OwnershipManifest, String>
             root: entry.root,
             path: normalize(&entry.path),
             fingerprint: [
-                entry.source_hash,
                 entry.schema_hash.unwrap_or_default(),
                 entry.schema_revision.unwrap_or_default(),
                 entry.content_hash,

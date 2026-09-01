@@ -369,6 +369,18 @@ fn ownership_parser_is_strict_and_commands_share_ci_target() {
     assert_eq!(parse_ownership(ownership).unwrap().entries.len(), 1);
     assert!(parse_ownership(&format!("{ownership}unknown = true\n")).is_err());
 
+    let changed_source = ownership.replace("source_hash = \"s\"", "source_hash = \"new\"");
+    assert_eq!(
+        parse_ownership(ownership).unwrap().entries[0].fingerprint,
+        parse_ownership(&changed_source).unwrap().entries[0].fingerprint,
+        "来源清单哈希不应让字节未变的生成文件进入 Rust 编译面"
+    );
+    let changed_content = ownership.replace("content_hash = \"c\"", "content_hash = \"new\"");
+    assert_ne!(
+        parse_ownership(ownership).unwrap().entries[0].fingerprint,
+        parse_ownership(&changed_content).unwrap().entries[0].fingerprint
+    );
+
     let packages = set(&["ryframe-api"]);
     let clippy =
         affected_package_args_for_target("clippy", &packages, "target/ci/backend", 3).unwrap();
