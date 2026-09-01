@@ -7,6 +7,15 @@ use crate::Result;
 
 /// 返回后端 Cargo Workspace 根目录。
 pub(crate) fn root_dir() -> PathBuf {
+    if let Ok(target) = std::env::var("RYFRAME_DEVEX_TARGET_ROOT") {
+        let target = PathBuf::from(target);
+        if let Some(session) = target.parent() {
+            let candidate = session.join("worktree").join("b");
+            if candidate.join("Cargo.toml").is_file() && candidate.join("xtask").is_dir() {
+                return candidate;
+            }
+        }
+    }
     if let Ok(explicit) = std::env::var("RYFRAME_WORKSPACE_ROOT") {
         let root = PathBuf::from(explicit);
         if root.join("Cargo.toml").is_file() && root.join("xtask").is_dir() {
