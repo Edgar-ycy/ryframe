@@ -120,12 +120,15 @@ fn unchanged_resource_output_does_not_expand_compile_surface() {
     let base = source("post", "title", "post.read", &[]);
     let head = source("post", "body", "post.read", &[]);
     let mut input = input_with_post(Some(&base), &head);
-    let tenant_output = owned("post", "crates/ryframe-tenant-db/src/generated/mod.rs");
-    input.base_ownership.entries.push(tenant_output.clone());
-    input.head_ownership.entries.push(tenant_output);
+    let stable_output = owned(
+        "post",
+        "crates/ryframe-application/src/generated/post/model.rs",
+    );
+    input.base_ownership.entries.push(stable_output.clone());
+    input.head_ownership.entries.push(stable_output);
     input.workspace_graph.package_by_dir.insert(
-        "crates/ryframe-tenant-db".to_owned(),
-        "ryframe-tenant-db".to_owned(),
+        "crates/ryframe-application".to_owned(),
+        "ryframe-application".to_owned(),
     );
 
     let result = analyze(&input);

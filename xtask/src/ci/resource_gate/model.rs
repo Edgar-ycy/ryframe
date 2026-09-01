@@ -334,10 +334,7 @@ fn collect_owned_paths(
         {
             continue;
         }
-        if unchanged
-            && (entry.resource == "__catalog__"
-                || entry.path == "crates/ryframe-tenant-db/src/generated/mod.rs")
-        {
+        if unchanged {
             continue;
         }
         match entry.root.as_str() {
