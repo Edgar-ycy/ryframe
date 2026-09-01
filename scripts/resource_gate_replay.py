@@ -143,6 +143,8 @@ class ReplayEvidence:
     tools: dict[str, str]
     tools_fingerprint: str
     repositories: dict[str, dict[str, str | None]]
+    prime_case: str
+    prime_change_count: int
     prime: CommandResult
     sccache_before: dict[str, Any]
     sccache_after: dict[str, Any]
@@ -267,7 +269,7 @@ def validate_case_coverage(cases: tuple[ReplayCase, ...]) -> None:
     )
     if targeted_passes < MINIMUM_SUCCESSFUL_CASES:
         raise ReplayConfigurationError(
-            "replay 至少需要 " f"{MINIMUM_SUCCESSFUL_CASES} 个预期成功的 targeted 案例"
+            f"replay 至少需要 {MINIMUM_SUCCESSFUL_CASES} 个预期成功的 targeted 案例"
         )
 
 
@@ -329,10 +331,9 @@ def run_replay(
     try:
         ensure_sccache_server(tools.sccache, environment)
         sccache_started = True
-        prime_case = next(
-            case
-            for case in manifest.cases
-            if case.expected == "pass" and case.targeted_mode == "targeted"
+        prime_case, prime_change_count = select_prime_case(
+            manifest.cases,
+            lambda case: replay_case_change_count(backend, frontend, case),
         )
         verify_case_ranges(backend, frontend, prime_case)
         shared_worktree.mkdir()
@@ -415,6 +416,8 @@ def run_replay(
                 "backend": repository_record(backend),
                 "frontend": repository_record(frontend),
             },
+            prime_case=prime_case.name,
+            prime_change_count=prime_change_count,
             prime=prime,
             sccache_before=before,
             sccache_after=after,
@@ -433,15 +436,13 @@ def run_replay(
             cleanup_created_worktrees(
                 (
                     (
-                        frontend_worktree_created
-                        or (shared_worktree / "f").exists(),
+                        frontend_worktree_created or (shared_worktree / "f").exists(),
                         frontend.root,
                         shared_worktree / "f",
                         "前端",
                     ),
                     (
-                        backend_worktree_created
-                        or (shared_worktree / "b").exists(),
+                        backend_worktree_created or (shared_worktree / "b").exists(),
                         backend.root,
                         shared_worktree / "b",
                         "后端",
@@ -551,6 +552,44 @@ def verify_case_ranges(
         "前端",
         allow_unchanged=True,
     )
+
+
+def select_prime_case(
+    cases: tuple[ReplayCase, ...],
+    change_count: Callable[[ReplayCase], int],
+) -> tuple[ReplayCase, int]:
+    """选择变更面最大的成功定向案例，为暖缓存回放建立完整编译面。"""
+    candidates = tuple(
+        case
+        for case in cases
+        if case.expected == "pass" and case.targeted_mode == "targeted"
+    )
+    if not candidates:
+        raise ReplayConfigurationError("replay 缺少可用于预热的成功定向案例")
+    ranked = tuple((case, change_count(case)) for case in candidates)
+    if any(count < 0 for _, count in ranked):
+        raise ReplayConfigurationError("replay 预热案例的变更文件数不得为负数")
+    return max(
+        enumerate(ranked),
+        key=lambda item: (item[1][1], -item[0]),
+    )[1]
+
+
+def replay_case_change_count(
+    backend: RepositoryIdentity,
+    frontend: RepositoryIdentity,
+    case: ReplayCase,
+) -> int:
+    return changed_file_count(backend.root, case.base, case.head) + changed_file_count(
+        frontend.root, case.frontend_base, case.frontend_head
+    )
+
+
+def changed_file_count(repository: Path, base: str, head: str) -> int:
+    if base == head:
+        return 0
+    output = git_output(repository, "diff", "--name-only", "--no-renames", base, head)
+    return sum(1 for line in output.splitlines() if line.strip())
 
 
 def repository_identity(path: Path, label: str, marker: str) -> RepositoryIdentity:
@@ -1074,9 +1113,7 @@ def frontend_dependency_fingerprint(frontend: Path) -> str:
     patches = frontend / "patches"
     if patches.is_dir():
         files.extend(path for path in patches.rglob("*") if path.is_file())
-    for path in sorted(
-        files, key=lambda value: value.relative_to(frontend).as_posix()
-    ):
+    for path in sorted(files, key=lambda value: value.relative_to(frontend).as_posix()):
         relative = path.relative_to(frontend).as_posix().encode("utf-8")
         digest.update(len(relative).to_bytes(4, "big"))
         digest.update(relative)
@@ -1162,7 +1199,9 @@ def require_arm(
             f"replay {case.name} 的 full arm 未执行未激活的完整门禁"
         )
     if require_pass and not result.passed:
-        detail = f"\n失败日志末尾：\n{result.failure_tail}" if result.failure_tail else ""
+        detail = (
+            f"\n失败日志末尾：\n{result.failure_tail}" if result.failure_tail else ""
+        )
         raise ReplayConfigurationError(f"replay prime 案例失败：{case.name}{detail}")
 
 

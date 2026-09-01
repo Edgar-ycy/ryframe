@@ -155,6 +155,8 @@ class ResourceGateReplayTests(unittest.TestCase):
                 )
             )
             self.assertEqual(document["evidence"]["prime"]["order"], 0)
+            self.assertEqual(document["evidence"]["prime_case"], "permission-2")
+            self.assertEqual(document["evidence"]["prime_change_count"], 4)
             self.assertEqual(document["cases"][0]["targeted"]["order"], 1)
             self.assertEqual(document["cases"][0]["full"]["order"], 2)
             self.assertEqual(document["cases"][1]["full"]["order"], 3)
@@ -255,6 +257,20 @@ class ResourceGateReplayTests(unittest.TestCase):
             MODULE.require_arm(
                 valid_cases[0], failed_prime, targeted=True, require_pass=True
             )
+
+        selected, change_count = MODULE.select_prime_case(
+            valid_cases,
+            lambda case: {valid_cases[0].name: 2, valid_cases[2].name: 9}.get(
+                case.name, 1
+            ),
+        )
+        self.assertEqual(selected, valid_cases[2])
+        self.assertEqual(change_count, 9)
+        tied, tied_count = MODULE.select_prime_case(valid_cases, lambda _: 3)
+        self.assertEqual(tied, valid_cases[0])
+        self.assertEqual(tied_count, 3)
+        with self.assertRaisesRegex(MODULE.ReplayConfigurationError, "不得为负数"):
+            MODULE.select_prime_case(valid_cases, lambda _: -1)
         duplicate_range = (
             *valid_cases[:-1],
             MODULE.ReplayCase(
@@ -336,8 +352,12 @@ class ResourceGateReplayTests(unittest.TestCase):
         )
         self.assertEqual(MODULE.percentile_nearest_rank([3, 1, 2], 95), 3)
         self.assertTrue(MODULE.replay_activation_eligible(True, True, True, True, True))
-        self.assertFalse(MODULE.replay_activation_eligible(True, True, True, True, False))
-        self.assertFalse(MODULE.replay_activation_eligible(True, False, True, True, True))
+        self.assertFalse(
+            MODULE.replay_activation_eligible(True, True, True, True, False)
+        )
+        self.assertFalse(
+            MODULE.replay_activation_eligible(True, False, True, True, True)
+        )
 
     def test_frontend_argument_is_stable_across_temporary_worktrees(self) -> None:
         command = (
@@ -549,9 +569,7 @@ class ResourceGateReplayTests(unittest.TestCase):
         )
         with (
             mock.patch.object(MODULE, "git_output", return_value="b" * 40),
-            mock.patch.object(
-                MODULE.subprocess, "run", return_value=completed
-            ) as run,
+            mock.patch.object(MODULE.subprocess, "run", return_value=completed) as run,
         ):
             MODULE.switch_worktree(Path("worktree"), commit, "后端")
         arguments = run.call_args.args[0]
@@ -570,7 +588,9 @@ class ResourceGateReplayTests(unittest.TestCase):
                 / "b"
             )
             worktree.mkdir(parents=True)
-            (worktree / "artifact.txt").write_text("locked then released", encoding="utf-8")
+            (worktree / "artifact.txt").write_text(
+                "locked then released", encoding="utf-8"
+            )
             failed = subprocess.CompletedProcess(
                 ["git", "worktree", "remove"], 128, "", "is not a working tree"
             )
