@@ -5,8 +5,7 @@ use crate::Result;
 #[derive(Debug, Clone, Copy)]
 struct PackageSurface {
     package: &'static str,
-    compile_features: &'static [&'static str],
-    test_features: &'static [&'static str],
+    features: &'static [&'static str],
     has_lib: bool,
     bins: &'static [&'static str],
     tests: &'static [&'static str],
@@ -15,8 +14,7 @@ struct PackageSurface {
 const PACKAGE_SURFACES: &[PackageSurface] = &[
     PackageSurface {
         package: "ryframe",
-        compile_features: &["bin-api"],
-        test_features: &["bin-api"],
+        features: &["bin-api"],
         has_lib: true,
         bins: &["ryframe"],
         tests: &["bin_feature_contract", "boot_contract"],
@@ -24,48 +22,42 @@ const PACKAGE_SURFACES: &[PackageSurface] = &[
     PackageSurface {
         package: "ryframe-adapters",
         // 标准资源不会穿透到 adapters；可选协议实现由完整 Rust 门禁覆盖。
-        compile_features: &[],
-        test_features: &[],
+        features: &[],
         has_lib: true,
         bins: &[],
         tests: &["adapter_contracts"],
     },
     PackageSurface {
         package: "ryframe-api",
-        compile_features: &[],
-        test_features: &[],
+        features: &[],
         has_lib: true,
         bins: &["export_openapi"],
         tests: &["resource_api_contracts"],
     },
     PackageSurface {
         package: "ryframe-application",
-        compile_features: &["test-support"],
-        test_features: &[],
+        features: &["test-support"],
         has_lib: true,
         bins: &[],
         tests: &["resource_application_contracts"],
     },
     PackageSurface {
         package: "ryframe-auth",
-        compile_features: &[],
-        test_features: &[],
+        features: &[],
         has_lib: true,
         bins: &[],
         tests: &["security_contracts"],
     },
     PackageSurface {
         package: "ryframe-config",
-        compile_features: &[],
-        test_features: &[],
+        features: &[],
         has_lib: true,
         bins: &[],
         tests: &["configuration_contracts"],
     },
     PackageSurface {
         package: "ryframe-db",
-        compile_features: &["repositories", "migration"],
-        test_features: &["repositories", "migration"],
+        features: &["repositories", "migration"],
         has_lib: true,
         bins: &["export_mysql_snapshot"],
         // MySQL 真实协议测试由 integration 门禁执行；定向资源门禁只编译映射契约，
@@ -74,40 +66,35 @@ const PACKAGE_SURFACES: &[PackageSurface] = &[
     },
     PackageSurface {
         package: "ryframe-generator",
-        compile_features: &[],
-        test_features: &[],
+        features: &[],
         has_lib: true,
         bins: &[],
         tests: &["resource_contracts"],
     },
     PackageSurface {
         package: "ryframe-kernel",
-        compile_features: &[],
-        test_features: &[],
+        features: &[],
         has_lib: true,
         bins: &[],
         tests: &["kernel_contracts"],
     },
     PackageSurface {
         package: "ryframe-macro",
-        compile_features: &[],
-        test_features: &[],
+        features: &[],
         has_lib: true,
         bins: &[],
         tests: &["patch_route"],
     },
     PackageSurface {
         package: "ryframe-tenant-db",
-        compile_features: &["repositories", "migration"],
-        test_features: &[],
+        features: &["repositories", "migration"],
         has_lib: true,
         bins: &[],
         tests: &["resource_tenant_contracts"],
     },
     PackageSurface {
         package: "xtask",
-        compile_features: &["resource"],
-        test_features: &["resource"],
+        features: &["resource"],
         has_lib: false,
         bins: &["xtask"],
         tests: &["internal"],
@@ -145,12 +132,8 @@ pub(crate) fn affected_package_args_for_target(
     let features = surfaces
         .iter()
         .flat_map(|surface| {
-            let features = if operation == "clippy" {
-                surface.compile_features
-            } else {
-                surface.test_features
-            };
-            features
+            surface
+                .features
                 .iter()
                 .map(move |feature| format!("{}/{feature}", surface.package))
         })
@@ -189,9 +172,6 @@ pub(crate) fn affected_package_args_for_target(
     if operation == "clippy" {
         for bin in bins {
             args.extend(["--bin".to_owned(), bin.to_owned()]);
-        }
-        for test in &tests {
-            args.extend(["--test".to_owned(), (*test).to_owned()]);
         }
     }
     if operation == "test" {
