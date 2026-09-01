@@ -458,7 +458,7 @@ class ResourceGateReplayTests(unittest.TestCase):
             self.assertEqual(environment["RYFRAME_CI_RUST_GATE_PROFILE"], "standard")
             self.assertEqual(environment["CARGO_INCREMENTAL"], "0")
             self.assertEqual(environment["RYFRAME_VERIFY_JOBS"], "12")
-            self.assertEqual(environment["RYFRAME_RESOURCE_GATE_TEST_JOBS"], "12")
+            self.assertEqual(environment["RYFRAME_RESOURCE_GATE_TEST_JOBS"], "8")
             self.assertNotIn("RYFRAME_CI_BACKEND_HEAD", environment)
             self.assertNotIn("RUSTFLAGS", environment)
             self.assertNotIn("SCCACHE_GHA_ENABLED", environment)
@@ -695,7 +695,7 @@ if os.environ.get("CARGO_INCREMENTAL") != "0":
     raise SystemExit(5)
 if os.environ.get("RYFRAME_VERIFY_JOBS") != "12" or os.environ.get("RYFRAME_CI_TEST_JOBS") != "4":
     raise SystemExit(6)
-if os.environ.get("RYFRAME_RESOURCE_GATE_TEST_JOBS") != "12":
+if os.environ.get("RYFRAME_RESOURCE_GATE_TEST_JOBS") != "8":
     raise SystemExit(13)
 if "RUSTFLAGS" in os.environ or "CARGO_ENCODED_RUSTFLAGS" in os.environ:
     raise SystemExit(7)
