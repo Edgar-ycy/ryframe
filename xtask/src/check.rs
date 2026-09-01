@@ -79,5 +79,5 @@ pub(crate) use selection::{
 pub(crate) use snapshot::{
     BackendSnapshots, backend_snapshot_export_args, consumer_contract_arguments,
     consumer_contract_plan, load_consumer_contract_plan, package_tests_generate_snapshots,
-    prepare_backend_snapshots, verify_backend_snapshots,
+    prepare_backend_snapshots, prepare_consumer_backend_snapshots, verify_backend_snapshots,
 };

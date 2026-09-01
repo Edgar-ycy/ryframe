@@ -2,6 +2,7 @@ use std::{collections::BTreeSet, path::Path};
 
 use super::check::{
     BackendSnapshotProfile, backend_snapshot_export_args, prepare_backend_snapshots,
+    prepare_consumer_backend_snapshots,
 };
 
 #[test]
@@ -16,8 +17,10 @@ fn snapshot_test_environment_is_stable_and_relative_to_workspace() {
     ]);
     let first = prepare_backend_snapshots(&root, &profiles).unwrap();
     let second = prepare_backend_snapshots(&root, &profiles).unwrap();
+    let consumer = prepare_consumer_backend_snapshots(&root, &profiles).unwrap();
     let first_environment = first.workspace_test_environment();
     assert_eq!(first_environment, second.workspace_test_environment());
+    assert_ne!(first_environment, consumer.workspace_test_environment());
     assert_eq!(
         Path::new(&first_environment[0].1),
         Path::new("target/xtask/verify-openapi.json")
@@ -26,7 +29,11 @@ fn snapshot_test_environment_is_stable_and_relative_to_workspace() {
         Path::new(&first_environment[1].1),
         Path::new("target/xtask/verify-mysql.sql")
     );
-    drop((first, second));
+    assert_eq!(
+        Path::new(&consumer.workspace_test_environment()[0].1),
+        Path::new("target/xtask/consumer-openapi.json")
+    );
+    drop((first, second, consumer));
     std::fs::remove_dir_all(root).unwrap();
 }
 

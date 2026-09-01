@@ -21,8 +21,8 @@ use super::{
     },
     snapshot::{
         export_and_verify_backend_snapshots, package_tests_generate_snapshots,
-        prepare_backend_snapshots, run_consumer_contract, stage_committed_backend_snapshots,
-        verify_backend_snapshots,
+        prepare_backend_snapshots, prepare_consumer_backend_snapshots, run_consumer_contract,
+        stage_committed_backend_snapshots, verify_backend_snapshots,
     },
 };
 use crate::{
@@ -389,7 +389,7 @@ pub(crate) fn ci_consumer_contract_against_committed_snapshot(
     let profiles = [BackendSnapshotProfile::OpenApiContract]
         .into_iter()
         .collect();
-    let snapshots = prepare_backend_snapshots(root, &profiles)?;
+    let snapshots = prepare_consumer_backend_snapshots(root, &profiles)?;
     stage_committed_backend_snapshots(root, &snapshots)?;
     run_consumer_contract(root, frontend_dir, &snapshots)
 }

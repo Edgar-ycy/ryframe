@@ -76,6 +76,21 @@ pub(crate) fn prepare_backend_snapshots(
     root: &Path,
     profiles: &BTreeSet<BackendSnapshotProfile>,
 ) -> Result<BackendSnapshots> {
+    prepare_backend_snapshots_with_prefix(root, profiles, "verify")
+}
+
+pub(crate) fn prepare_consumer_backend_snapshots(
+    root: &Path,
+    profiles: &BTreeSet<BackendSnapshotProfile>,
+) -> Result<BackendSnapshots> {
+    prepare_backend_snapshots_with_prefix(root, profiles, "consumer")
+}
+
+fn prepare_backend_snapshots_with_prefix(
+    root: &Path,
+    profiles: &BTreeSet<BackendSnapshotProfile>,
+    prefix: &str,
+) -> Result<BackendSnapshots> {
     let artifact_dir = root.join("target").join("xtask");
     fs::create_dir_all(&artifact_dir).map_err(|error| {
         format!(
@@ -85,10 +100,10 @@ pub(crate) fn prepare_backend_snapshots(
     })?;
     let openapi = profiles
         .contains(&BackendSnapshotProfile::OpenApiContract)
-        .then(|| artifact_dir.join("verify-openapi.json"));
+        .then(|| artifact_dir.join(format!("{prefix}-openapi.json")));
     let mysql = profiles
         .contains(&BackendSnapshotProfile::Mysql)
-        .then(|| artifact_dir.join("verify-mysql.sql"));
+        .then(|| artifact_dir.join(format!("{prefix}-mysql.sql")));
     Ok(BackendSnapshots {
         root: root.to_path_buf(),
         openapi,
