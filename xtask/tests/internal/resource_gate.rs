@@ -460,7 +460,7 @@ fn targeted_test_artifacts_are_exact_and_complete() {
     );
 
     assert!(
-        targeted_test_executables_from_messages(&output.lines().next().unwrap(), &expected)
+        targeted_test_executables_from_messages(output.lines().next().unwrap(), &expected)
             .unwrap_err()
             .to_string()
             .contains("缺少定向测试产物")
