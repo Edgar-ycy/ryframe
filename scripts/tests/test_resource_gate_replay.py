@@ -356,12 +356,15 @@ class ResourceGateReplayTests(unittest.TestCase):
         with self.assertRaisesRegex(MODULE.ReplayConfigurationError, "缺少路径"):
             MODULE.command_for_frontend(("gate", "--frontend-dir"), frontend)
         runner_target = ROOT / "target" / "runner"
+        backend = (ROOT / "backend").resolve()
         self.assertEqual(
-            MODULE.command_for_replay(command, frontend, runner_target),
+            MODULE.command_for_replay(command, frontend, runner_target, backend),
             (
                 "cargo",
                 "run",
                 "--locked",
+                "--config",
+                f'env.RYFRAME_WORKSPACE_ROOT="{backend.as_posix()}"',
                 "--target-dir",
                 str(runner_target.resolve()),
                 "-p",

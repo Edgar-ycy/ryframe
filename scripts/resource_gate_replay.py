@@ -446,7 +446,7 @@ def command_for_frontend(command: tuple[str, ...], frontend: Path) -> tuple[str,
 
 
 def command_for_replay(
-    command: tuple[str, ...], frontend: Path, runner_target: Path
+    command: tuple[str, ...], frontend: Path, runner_target: Path, workspace_root: Path
 ) -> tuple[str, ...]:
     """在回放中展开 cargo xtask 别名，避免别名的深层相对 target。"""
     normalized = list(command_for_frontend(command, frontend))
@@ -455,6 +455,8 @@ def command_for_replay(
             "cargo",
             "run",
             "--locked",
+            "--config",
+            f'env.RYFRAME_WORKSPACE_ROOT="{workspace_root.as_posix()}"',
             "--target-dir",
             str(runner_target.resolve()),
             "-p",
@@ -919,6 +921,7 @@ def execute_in_worktree(
                         command,
                         frontend_worktree,
                         target_root / "runner",
+                        backend_worktree,
                     )
                 ),
                 cwd=backend_worktree,
