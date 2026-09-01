@@ -31,7 +31,7 @@ TARGETED_ACTIVATION = "replay-verified-v1"
 DECISION_FORMAT_VERSION = 1
 FIXED_VERIFY_JOBS = "12"
 FIXED_TEST_JOBS = "4"
-FIXED_RESOURCE_GATE_TEST_JOBS = "8"
+FIXED_RESOURCE_GATE_TEST_JOBS = "12"
 SHA_PATTERN = re.compile(r"[0-9a-fA-F]{40}")
 REQUIRED_CATEGORIES = frozenset(
     {"addition", "field", "permission", "relation", "sql", "rename", "delete"}
