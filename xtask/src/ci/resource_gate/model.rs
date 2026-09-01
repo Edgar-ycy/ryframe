@@ -323,6 +323,7 @@ fn collect_owned_paths(
             .find(|resource| resource.name == *name)
             .is_some_and(resource_uses_tenant_storage)
     });
+    let mut stable_backend_fallback = None;
     for entry in &input.head_ownership.entries {
         if entry.resource != "__catalog__" && !result.impacted_resources.contains(&entry.resource) {
             continue;
@@ -334,7 +335,16 @@ fn collect_owned_paths(
         {
             continue;
         }
-        if unchanged {
+        if unchanged
+            && (entry.resource == "__catalog__"
+                || result.source_resources.contains(&entry.resource))
+        {
+            if entry.resource != "__catalog__"
+                && entry.root == "backend"
+                && entry.path.starts_with("crates/")
+            {
+                stable_backend_fallback.get_or_insert_with(|| entry.path.clone());
+            }
             continue;
         }
         match entry.root.as_str() {
@@ -346,6 +356,11 @@ fn collect_owned_paths(
             }
             root => return Some(format!("ownership 包含未知 root：{root}")),
         }
+    }
+    if result.owned_backend_paths.is_empty()
+        && let Some(path) = stable_backend_fallback
+    {
+        result.owned_backend_paths.insert(path);
     }
     None
 }

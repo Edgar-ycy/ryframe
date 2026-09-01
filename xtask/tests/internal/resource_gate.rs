@@ -993,12 +993,22 @@ fn input_with_post(base_source: Option<&str>, head_source: &str) -> ResourceGate
         POST_PATH.to_owned(),
         parse_resource_definition(POST_PATH, head_source).unwrap(),
     );
+    let base_ownership = ownership();
+    let mut head_ownership = ownership();
+    if base_source != Some(head_source) {
+        head_ownership
+            .entries
+            .iter_mut()
+            .find(|entry| entry.resource == "post")
+            .expect("测试 ownership 应包含 post")
+            .fingerprint = "changed".to_owned();
+    }
     ResourceGateInput {
         changes: vec![changed(ChangeStatus::Modified, POST_PATH)],
         base_resources,
         head_resources,
-        base_ownership: ownership(),
-        head_ownership: ownership(),
+        base_ownership,
+        head_ownership,
         workspace_graph: WorkspaceGraph {
             package_by_dir: [
                 ("crates/ryframe-api".to_owned(), "ryframe-api".to_owned()),
