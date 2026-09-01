@@ -6,5 +6,3 @@ mod catalog_contract;
 mod id_parser_contract;
 #[path = "api_contracts/runtime_contract.rs"]
 mod runtime_contract;
-#[path = "api_contracts/snapshot_export.rs"]
-mod snapshot_export;

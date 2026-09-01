@@ -51,5 +51,10 @@ name = "tenant_mapping_contracts"
 path = "tests/tenant_mapping_contracts.rs"
 required-features = ["repositories", "migration"]
 
+[[test]]
+name = "resource_tenant_contracts"
+path = "tests/resource_tenant_contracts.rs"
+required-features = ["repositories", "migration"]
+
 [lints]
 workspace = true

@@ -438,9 +438,9 @@ fn targeted_test_artifacts_are_exact_and_complete() {
     assert_eq!(
         expected,
         set(&[
-            "api_contracts",
-            "application_contracts",
-            "mapping_contracts"
+            "resource_api_contracts",
+            "resource_application_contracts",
+            "mapping_contracts",
         ])
     );
 

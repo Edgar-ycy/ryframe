@@ -32,14 +32,14 @@ const PACKAGE_SURFACES: &[PackageSurface] = &[
         features: &[],
         has_lib: true,
         bins: &["export_openapi"],
-        tests: &["api_contracts"],
+        tests: &["resource_api_contracts"],
     },
     PackageSurface {
         package: "ryframe-application",
         features: &["test-support"],
         has_lib: true,
         bins: &[],
-        tests: &["application_contracts"],
+        tests: &["resource_application_contracts"],
     },
     PackageSurface {
         package: "ryframe-auth",
@@ -90,7 +90,7 @@ const PACKAGE_SURFACES: &[PackageSurface] = &[
         features: &["repositories", "migration"],
         has_lib: true,
         bins: &[],
-        tests: &["tenant_mapping_contracts"],
+        tests: &["resource_tenant_contracts"],
     },
     PackageSurface {
         package: "xtask",
