@@ -338,7 +338,7 @@ fn execute_step(
             &affected_package_args_for_target(
                 "clippy",
                 packages,
-                &targets.backend,
+                &targeted_clippy_target(&targets.backend),
                 budget.backend,
             )?,
         )?,
@@ -357,6 +357,13 @@ fn execute_step(
         GateStep::OpenApiAndFrontendConsumer => super::consumer_contract(frontend_dir)?,
     }
     Ok(())
+}
+
+pub(crate) fn targeted_clippy_target(backend_target: &str) -> String {
+    Path::new(backend_target)
+        .join("resource-clippy")
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn run_parallel_tasks<Left, Right>(

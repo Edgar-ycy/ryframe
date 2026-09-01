@@ -178,7 +178,7 @@ class ResourceGateReplayTests(unittest.TestCase):
                 for line in tool_log.read_text(encoding="utf-8").splitlines()
                 if line == "pnpm install --offline --frozen-lockfile"
             ]
-            self.assertEqual(len(installs), 41)
+            self.assertEqual(len(installs), 1)
             self.assertEqual(
                 list(
                     (repository / ".local-tests/resource-gate-replay/tests").iterdir()
@@ -363,6 +363,8 @@ class ResourceGateReplayTests(unittest.TestCase):
                 "cargo",
                 "run",
                 "--locked",
+                "--manifest-path",
+                str((ROOT / "Cargo.toml").resolve()),
                 "--config",
                 f'env.RYFRAME_WORKSPACE_ROOT="{backend.as_posix()}"',
                 "--target-dir",
@@ -531,6 +533,29 @@ class ResourceGateReplayTests(unittest.TestCase):
             )
         self.assertEqual(run.call_count, 2)
         sleep.assert_called_once_with(0.1)
+
+    def test_switch_worktree_preserves_unchanged_source_timestamps(self) -> None:
+        commit = "a" * 40
+        with (
+            mock.patch.object(MODULE, "git_output", return_value=commit.upper()),
+            mock.patch.object(MODULE.subprocess, "run") as run,
+        ):
+            MODULE.switch_worktree(Path("worktree"), commit, "后端")
+        run.assert_not_called()
+
+        completed = subprocess.CompletedProcess(
+            ["git", "checkout", "--quiet", "--detach", commit], 0, "", ""
+        )
+        with (
+            mock.patch.object(MODULE, "git_output", return_value="b" * 40),
+            mock.patch.object(
+                MODULE.subprocess, "run", return_value=completed
+            ) as run,
+        ):
+            MODULE.switch_worktree(Path("worktree"), commit, "后端")
+        arguments = run.call_args.args[0]
+        self.assertEqual(arguments[:4], ["git", "checkout", "--quiet", "--detach"])
+        self.assertNotIn("--force", arguments)
 
     def test_cleanup_worktree_removes_partially_unregistered_directory(self) -> None:
         with isolated_test_dir("resource-replay-partial-worktree") as fixture:

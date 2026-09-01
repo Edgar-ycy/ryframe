@@ -1,6 +1,6 @@
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, path::Path};
 
-use super::ci::resource_gate::affected_package_args_for_target;
+use super::ci::resource_gate::{affected_package_args_for_target, targeted_clippy_target};
 
 fn packages(values: &[&str]) -> BTreeSet<String> {
     values.iter().map(|value| (*value).to_owned()).collect()
@@ -112,4 +112,20 @@ fn resource_cargo_surface_selects_only_runtime_api_contracts() {
     assert!(!test.contains(&"mysql_real_protocol".to_owned()));
     assert!(test.windows(2).any(|pair| pair == ["--test", "internal"]));
     assert!(affected_package_args_for_target("build", &affected, "target/ci/backend", 4).is_err());
+}
+
+#[test]
+fn resource_clippy_uses_a_stable_isolated_target_surface() {
+    assert_eq!(
+        targeted_clippy_target("target/ci/backend"),
+        Path::new("target/ci/backend")
+            .join("resource-clippy")
+            .to_string_lossy()
+    );
+    assert_eq!(
+        targeted_clippy_target(r"D:\cache\backend"),
+        Path::new(r"D:\cache\backend")
+            .join("resource-clippy")
+            .to_string_lossy()
+    );
 }

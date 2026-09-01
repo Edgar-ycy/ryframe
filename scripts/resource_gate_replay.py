@@ -322,6 +322,8 @@ def run_replay(
     after: dict[str, Any] = {}
     global_order = 0
     sccache_started = False
+    backend_worktree_created = False
+    frontend_worktree_created = False
     primary_error: BaseException | None = None
     try:
         ensure_sccache_server(tools.sccache, environment)
@@ -332,9 +334,17 @@ def run_replay(
             if case.expected == "pass" and case.targeted_mode == "targeted"
         )
         verify_case_ranges(backend, frontend, prime_case)
-        prime = execute_in_worktree(
-            backend.root,
+        shared_worktree.mkdir()
+        add_worktree(backend.root, shared_worktree / "b", prime_case.head, "后端")
+        backend_worktree_created = True
+        add_worktree(
             frontend.root,
+            shared_worktree / "f",
+            prime_case.frontend_head,
+            "前端",
+        )
+        frontend_worktree_created = True
+        prime = execute_in_worktree(
             shared_worktree,
             shared_target,
             prime_case,
@@ -357,8 +367,6 @@ def run_replay(
                     manifest.targeted_command if targeted else manifest.full_command
                 )
                 arms[targeted] = execute_in_worktree(
-                    backend.root,
-                    frontend.root,
                     shared_worktree,
                     shared_target,
                     case,
@@ -420,6 +428,27 @@ def run_replay(
             error = try_sccache_stop(tools.sccache, environment)
             if error is not None:
                 cleanup_errors.append(error)
+        cleanup_errors.extend(
+            cleanup_created_worktrees(
+                (
+                    (
+                        frontend_worktree_created
+                        or (shared_worktree / "f").exists(),
+                        frontend.root,
+                        shared_worktree / "f",
+                        "前端",
+                    ),
+                    (
+                        backend_worktree_created
+                        or (shared_worktree / "b").exists(),
+                        backend.root,
+                        shared_worktree / "b",
+                        "后端",
+                    ),
+                ),
+                shared_worktree,
+            )
+        )
         cleanup_errors.extend(prune_worktrees(backend.root, frontend.root))
         cleanup_errors.extend(remove_isolated_tree(cache, allowed))
         cleanup_errors.extend(remove_isolated_tree(shared_target, allowed))
@@ -455,6 +484,8 @@ def command_for_replay(
             "cargo",
             "run",
             "--locked",
+            "--manifest-path",
+            str((RUNNER_ROOT / "Cargo.toml").resolve()),
             "--config",
             f'env.RYFRAME_WORKSPACE_ROOT="{workspace_root.as_posix()}"',
             "--target-dir",
@@ -865,8 +896,6 @@ def try_sccache_stop(program: str, environment: dict[str, str]) -> str | None:
 
 
 def execute_in_worktree(
-    repository: Path,
-    frontend_repository: Path,
     worktree: Path,
     shared_target: Path,
     case: ReplayCase,
@@ -879,17 +908,12 @@ def execute_in_worktree(
 ) -> CommandResult:
     backend_worktree = worktree / "b"
     frontend_worktree = worktree / "f"
-    worktree.mkdir()
-    backend_created = False
-    frontend_created = False
     decision_path = worktree / "decision.json"
     command_log = worktree / "command.log"
     primary_error: BaseException | None = None
     try:
-        add_worktree(repository, backend_worktree, case.head, "后端")
-        backend_created = True
-        add_worktree(frontend_repository, frontend_worktree, case.frontend_head, "前端")
-        frontend_created = True
+        switch_worktree(backend_worktree, case.head, "后端")
+        switch_worktree(frontend_worktree, case.frontend_head, "前端")
         install_frontend_dependencies(frontend_worktree, corepack, base_environment)
         target_root = shared_target.resolve()
         if not target_root.is_relative_to(worktree.parent.resolve()):
@@ -961,29 +985,6 @@ def execute_in_worktree(
                 command_log.unlink()
             except OSError as error:
                 cleanup_errors.append(f"无法删除命令日志：{error}")
-        cleanup_errors.extend(
-            cleanup_created_worktrees(
-                (
-                    (
-                        frontend_created or frontend_worktree.exists(),
-                        frontend_repository,
-                        frontend_worktree,
-                        "前端",
-                    ),
-                    (
-                        backend_created or backend_worktree.exists(),
-                        repository,
-                        backend_worktree,
-                        "后端",
-                    ),
-                ),
-                worktree,
-            )
-        )
-        try:
-            worktree.rmdir()
-        except OSError as error:
-            cleanup_errors.append(f"replay 临时案例目录未完全回收：{worktree}：{error}")
         fail_on_cleanup(primary_error, "案例清理", cleanup_errors)
 
 
@@ -1003,11 +1004,37 @@ def add_worktree(repository: Path, worktree: Path, commit: str, label: str) -> N
         )
 
 
+def switch_worktree(worktree: Path, commit: str, label: str) -> None:
+    current = git_output(worktree, "rev-parse", "HEAD")
+    if current.casefold() == commit.casefold():
+        return
+    completed = subprocess.run(
+        ["git", "checkout", "--quiet", "--detach", commit],
+        cwd=worktree,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if completed.returncode != 0:
+        raise ReplayConfigurationError(
+            f"无法切换{label} replay worktree：{completed.stderr.strip()}"
+        )
+
+
 def install_frontend_dependencies(
     frontend: Path,
     corepack: str,
     environment: dict[str, str],
 ) -> None:
+    fingerprint = frontend_dependency_fingerprint(frontend)
+    marker = frontend / "node_modules" / ".ryframe-resource-replay-dependencies"
+    try:
+        if marker.read_text(encoding="utf-8").strip() == fingerprint:
+            return
+    except (OSError, UnicodeError):
+        pass
     completed = subprocess.run(
         [corepack, "pnpm", "install", "--offline", "--frozen-lockfile"],
         cwd=frontend,
@@ -1025,6 +1052,34 @@ def install_frontend_dependencies(
         )
     if not frontend.joinpath("node_modules").is_dir():
         raise ReplayConfigurationError("前端 replay 离线安装后仍缺少 node_modules")
+    try:
+        marker.write_text(fingerprint + "\n", encoding="utf-8")
+    except OSError as error:
+        raise ReplayConfigurationError(
+            f"无法写入前端 replay 依赖指纹：{error}"
+        ) from error
+
+
+def frontend_dependency_fingerprint(frontend: Path) -> str:
+    digest = hashlib.sha256()
+    files = [
+        frontend / name
+        for name in ("package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", ".npmrc")
+        if (frontend / name).is_file()
+    ]
+    patches = frontend / "patches"
+    if patches.is_dir():
+        files.extend(path for path in patches.rglob("*") if path.is_file())
+    for path in sorted(
+        files, key=lambda value: value.relative_to(frontend).as_posix()
+    ):
+        relative = path.relative_to(frontend).as_posix().encode("utf-8")
+        digest.update(len(relative).to_bytes(4, "big"))
+        digest.update(relative)
+        body = path.read_bytes()
+        digest.update(len(body).to_bytes(8, "big"))
+        digest.update(body)
+    return "sha256:" + digest.hexdigest()
 
 
 def load_decision(path: Path) -> ResourceGateDecision:
