@@ -105,17 +105,6 @@ pub(super) fn display_path(root: AssetRoot, path: &str) -> String {
     format!("{}:{path}", root.label())
 }
 
-pub(super) fn extract_source_hash(content: &str) -> String {
-    if let Some((_, rest)) = content.split_once("source-sha256: ") {
-        return rest
-            .split(|character: char| character.is_whitespace() || character == '|')
-            .next()
-            .unwrap_or_default()
-            .to_owned();
-    }
-    content_hash(content.as_bytes())
-}
-
 pub(super) fn content_hash(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }

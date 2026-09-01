@@ -4,7 +4,7 @@ use super::{AssetRoot, GeneratedAsset, aggregate_header, catalog};
 pub(super) fn render(resources: &[&ResourceIr], assets: &mut Vec<GeneratedAsset>) {
     let source = resources
         .iter()
-        .map(|resource| format!("{}:{}", resource.source_path, resource.source_hash))
+        .map(|resource| resource.source_path.clone())
         .collect::<Vec<_>>()
         .join(",");
     let aggregate = aggregate_header();

@@ -29,8 +29,9 @@ MINIMUM_SUCCESSFUL_CASES = 10
 TARGETED_P95_LIMIT_MS = 60_000
 TARGETED_ACTIVATION = "replay-verified-v1"
 DECISION_FORMAT_VERSION = 1
-FIXED_VERIFY_JOBS = "8"
+FIXED_VERIFY_JOBS = "12"
 FIXED_TEST_JOBS = "4"
+FIXED_RESOURCE_GATE_TEST_JOBS = "8"
 SHA_PATTERN = re.compile(r"[0-9a-fA-F]{40}")
 REQUIRED_CATEGORIES = frozenset(
     {"addition", "field", "permission", "relation", "sql", "rename", "delete"}
@@ -704,6 +705,7 @@ def controlled_environment(
             in {
                 "RYFRAME_DEVEX_TARGET_ROOT",
                 "RYFRAME_RESOURCE_GATE_DECISION_FILE",
+                "RYFRAME_RESOURCE_GATE_TEST_JOBS",
                 "RYFRAME_RESOURCE_GATE_TARGETED",
                 "RYFRAME_VERIFY_JOBS",
                 "CMAKE_C_COMPILER_LAUNCHER",
@@ -719,6 +721,7 @@ def controlled_environment(
             "RUSTC_WRAPPER": sccache,
             "RYFRAME_CI_RUST_GATE_PROFILE": "standard",
             "RYFRAME_CI_TEST_JOBS": FIXED_TEST_JOBS,
+            "RYFRAME_RESOURCE_GATE_TEST_JOBS": FIXED_RESOURCE_GATE_TEST_JOBS,
             "RYFRAME_VERIFY_JOBS": FIXED_VERIFY_JOBS,
             "SCCACHE_DIR": str(cache),
             "SCCACHE_SERVER_PORT": str(available_port()),
@@ -771,6 +774,7 @@ def recorded_environment(
             "CARGO_TERM_COLOR",
             "RYFRAME_CI_RUST_GATE_PROFILE",
             "RYFRAME_CI_TEST_JOBS",
+            "RYFRAME_RESOURCE_GATE_TEST_JOBS",
             "RYFRAME_VERIFY_JOBS",
         )
     }

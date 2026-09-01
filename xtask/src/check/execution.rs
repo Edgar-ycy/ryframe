@@ -21,7 +21,8 @@ use super::{
     },
     snapshot::{
         export_and_verify_backend_snapshots, package_tests_generate_snapshots,
-        prepare_backend_snapshots, run_consumer_contract, verify_backend_snapshots,
+        prepare_backend_snapshots, run_consumer_contract, stage_committed_backend_snapshots,
+        verify_backend_snapshots,
     },
 };
 use crate::{
@@ -363,14 +364,34 @@ pub(crate) fn ci_rust_gate(frontend_dir: &Path) -> Result<()> {
 }
 
 pub(crate) fn ci_consumer_contract(frontend_dir: &Path) -> Result<()> {
+    let targets = ci_target_policy()?;
+    ci_consumer_contract_with_target(frontend_dir, &targets.backend)
+}
+
+pub(crate) fn ci_consumer_contract_with_target(
+    frontend_dir: &Path,
+    target_dir: &str,
+) -> Result<()> {
     require_frontend_dependencies(frontend_dir)?;
     let root = root_dir();
     let profiles = [BackendSnapshotProfile::OpenApiContract]
         .into_iter()
         .collect();
-    let targets = ci_target_policy()?;
-    let snapshots = export_and_verify_backend_snapshots(&root, &profiles, &targets.backend)?;
+    let snapshots = export_and_verify_backend_snapshots(&root, &profiles, target_dir)?;
     run_consumer_contract(&root, frontend_dir, &snapshots)
+}
+
+pub(crate) fn ci_consumer_contract_against_committed_snapshot(
+    root: &Path,
+    frontend_dir: &Path,
+) -> Result<()> {
+    require_frontend_dependencies(frontend_dir)?;
+    let profiles = [BackendSnapshotProfile::OpenApiContract]
+        .into_iter()
+        .collect();
+    let snapshots = prepare_backend_snapshots(root, &profiles)?;
+    stage_committed_backend_snapshots(root, &snapshots)?;
+    run_consumer_contract(root, frontend_dir, &snapshots)
 }
 
 fn frontend_full_non_consumer(frontend_dir: &Path) -> Result<()> {

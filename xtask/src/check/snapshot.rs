@@ -15,13 +15,13 @@ use super::model::{BackendSnapshotProfile, ConsumerContractPlan};
 
 static NEXT_VERIFY_ARTIFACT: AtomicU64 = AtomicU64::new(1);
 
-pub(super) struct BackendSnapshots {
+pub(crate) struct BackendSnapshots {
     openapi: Option<PathBuf>,
     mysql: Option<PathBuf>,
 }
 
 impl BackendSnapshots {
-    pub(super) fn workspace_test_environment(&self) -> Vec<(&'static str, String)> {
+    pub(crate) fn workspace_test_environment(&self) -> Vec<(&'static str, String)> {
         let mut environment = Vec::with_capacity(2);
         if let Some(openapi) = &self.openapi {
             environment.push((
@@ -75,7 +75,7 @@ pub(super) fn export_and_verify_backend_snapshots(
     Ok(snapshots)
 }
 
-pub(super) fn prepare_backend_snapshots(
+pub(crate) fn prepare_backend_snapshots(
     root: &Path,
     profiles: &BTreeSet<BackendSnapshotProfile>,
 ) -> Result<BackendSnapshots> {
@@ -100,7 +100,31 @@ pub(super) fn prepare_backend_snapshots(
     Ok(BackendSnapshots { openapi, mysql })
 }
 
-pub(super) fn verify_backend_snapshots(root: &Path, snapshots: &BackendSnapshots) -> Result<()> {
+pub(crate) fn stage_committed_backend_snapshots(
+    root: &Path,
+    snapshots: &BackendSnapshots,
+) -> Result<()> {
+    if let Some(openapi) = &snapshots.openapi {
+        copy_committed_snapshot(&root.join("openapi/openapi.json"), openapi, "OpenAPI")?;
+    }
+    if let Some(mysql) = &snapshots.mysql {
+        copy_committed_snapshot(&root.join("sql/ryframe_config.sql"), mysql, "MySQL 基线")?;
+    }
+    Ok(())
+}
+
+fn copy_committed_snapshot(source: &Path, destination: &Path, label: &str) -> Result<()> {
+    fs::copy(source, destination).map_err(|error| {
+        format!(
+            "无法暂存已提交的{label}快照 {} -> {}：{error}",
+            source.display(),
+            destination.display()
+        )
+    })?;
+    Ok(())
+}
+
+pub(crate) fn verify_backend_snapshots(root: &Path, snapshots: &BackendSnapshots) -> Result<()> {
     if let Some(openapi) = &snapshots.openapi {
         verify_snapshot(
             "OpenAPI",
@@ -127,6 +151,8 @@ pub(crate) fn backend_snapshot_export_args(
     output: &Path,
 ) -> Vec<String> {
     let mut args = vec![
+        "--config".to_owned(),
+        "profile.dev.debug=0".to_owned(),
         "run".to_owned(),
         "--locked".to_owned(),
         "--target-dir".to_owned(),

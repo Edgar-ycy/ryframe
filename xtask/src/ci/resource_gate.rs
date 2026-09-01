@@ -1,4 +1,5 @@
 use std::{
+    collections::{BTreeMap, BTreeSet},
     env,
     fs::{self, OpenOptions},
     io::Write,
@@ -13,10 +14,14 @@ use serde::Serialize;
 use crate::{
     Result,
     check::{
-        ci_target_policy, ci_test_jobs_from, resource_workspace_compilation,
-        targeted_resource_workspace_compilation, verify_job_budget_from,
+        BackendSnapshotProfile, BackendSnapshots, ci_consumer_contract_against_committed_snapshot,
+        ci_target_policy, prepare_backend_snapshots, resource_workspace_compilation,
+        targeted_resource_workspace_compilation, verify_backend_snapshots, verify_job_budget_from,
     },
-    process::{run as run_process, run_owned, with_process_log},
+    process::{
+        command_output, command_output_with_env, run as run_process, run_owned, run_owned_with_env,
+        with_process_log,
+    },
     workspace::root_dir,
 };
 
@@ -223,12 +228,8 @@ fn execute_plan(
     let available = std::thread::available_parallelism().map_or(4, usize::from);
     let budget =
         verify_job_budget_from(env::var("RYFRAME_VERIFY_JOBS").ok().as_deref(), available)?;
-    let configured_test_jobs = env::var("RYFRAME_CI_TEST_JOBS").ok();
-    let test_jobs = targeted_test_jobs_from(
-        configured_test_jobs.as_deref(),
-        cfg!(windows),
-        budget.backend,
-    )?;
+    let configured_test_jobs = env::var("RYFRAME_RESOURCE_GATE_TEST_JOBS").ok();
+    let test_jobs = targeted_test_jobs_from(configured_test_jobs.as_deref(), budget.backend)?;
     let targets = ci_target_policy()?;
     if change_set.ambiguous_reason.is_none() {
         return execute_targeted_plan(
@@ -249,10 +250,17 @@ fn execute_plan(
 
 pub(crate) fn targeted_test_jobs_from(
     configured: Option<&str>,
-    windows: bool,
     backend_budget: usize,
 ) -> Result<usize> {
-    Ok(ci_test_jobs_from(configured, windows, backend_budget)?.min(backend_budget))
+    let jobs = match configured {
+        Some(value) => value
+            .parse::<usize>()
+            .ok()
+            .filter(|jobs| (1..=64).contains(jobs))
+            .ok_or("RYFRAME_RESOURCE_GATE_TEST_JOBS 必须是 1 到 64 的整数")?,
+        None => backend_budget.max(1),
+    };
+    Ok(jobs.min(backend_budget.max(1)))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -266,6 +274,10 @@ fn execute_targeted_plan(
     targets: &crate::check::VerifyTargetPolicy,
 ) -> Result<()> {
     let packages = change_set.affected_crates.clone();
+    let profiles = [BackendSnapshotProfile::OpenApiContract]
+        .into_iter()
+        .collect();
+    let snapshots = prepare_backend_snapshots(root, &profiles)?;
     run_parallel_tasks(
         root,
         "resource-gate-workspace",
@@ -288,12 +300,244 @@ fn execute_targeted_plan(
         },
         "resource-gate-contracts",
         || {
-            for step in targeted_contract_steps(packages) {
-                execute_step(root, frontend_dir, base, &step, budget, test_jobs, targets)?;
-            }
-            Ok(())
+            execute_targeted_contracts(
+                root,
+                frontend_dir,
+                base,
+                packages,
+                test_jobs,
+                targets,
+                &snapshots,
+            )
         },
+    )?;
+    verify_backend_snapshots(root, &snapshots)
+}
+
+fn execute_targeted_contracts(
+    root: &Path,
+    frontend_dir: &Path,
+    base: Option<&str>,
+    packages: std::collections::BTreeSet<String>,
+    test_jobs: usize,
+    targets: &crate::check::VerifyTargetPolicy,
+    snapshots: &BackendSnapshots,
+) -> Result<()> {
+    let mut steps = targeted_contract_steps(packages).into_iter();
+    let clippy = steps
+        .next()
+        .ok_or("resource gate 缺少 affected Clippy 步骤")?;
+    let test = steps
+        .next()
+        .ok_or("resource gate 缺少 affected test 步骤")?;
+    run_parallel_tasks(
+        root,
+        "resource-gate-compile-contracts",
+        || execute_targeted_compile_contracts(root, &clippy, &test, test_jobs, targets, snapshots),
+        "resource-gate-cross-contracts",
+        || execute_targeted_cross_contracts(root, frontend_dir, base, steps),
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_targeted_compile_contracts(
+    root: &Path,
+    clippy: &GateStep,
+    test: &GateStep,
+    test_jobs: usize,
+    targets: &crate::check::VerifyTargetPolicy,
+    snapshots: &BackendSnapshots,
+) -> Result<()> {
+    let GateStep::AffectedClippy(clippy_packages) = clippy else {
+        return Err("resource gate 定向 Clippy 步骤类型无效".into());
+    };
+    let GateStep::AffectedTest(test_packages) = test else {
+        return Err("resource gate 定向测试步骤类型无效".into());
+    };
+    if clippy_packages != test_packages {
+        return Err("resource gate 合并 Clippy/test 的 crate 范围不一致".into());
+    }
+    execute_targeted_test(root, test, test_jobs, targets, snapshots)
+}
+
+fn execute_targeted_test(
+    root: &Path,
+    step: &GateStep,
+    test_jobs: usize,
+    targets: &crate::check::VerifyTargetPolicy,
+    snapshots: &BackendSnapshots,
+) -> Result<()> {
+    let GateStep::AffectedTest(packages) = step else {
+        return Err("resource gate 定向测试步骤类型无效".into());
+    };
+    let mut args = affected_package_args_for_target("test", packages, &targets.backend, test_jobs)?;
+    let expected_tests = targeted_test_names_from_args(&args)?;
+    args.extend([
+        "--no-run".to_owned(),
+        "--message-format=json-render-diagnostics".to_owned(),
+    ]);
+    let environment = targeted_clippy_test_environment(root, snapshots)?;
+    let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let environment_refs = environment
+        .iter()
+        .map(|(key, value)| (*key, value.as_str()))
+        .collect::<Vec<_>>();
+    let output = command_output_with_env(root, "cargo", &arg_refs, &environment_refs)?;
+    let executables = targeted_test_executables_from_messages(&output, &expected_tests)?;
+    run_targeted_test_executables(root, &executables, &environment)
+}
+
+pub(crate) fn targeted_test_names_from_args(args: &[String]) -> Result<BTreeSet<String>> {
+    let tests = args
+        .windows(2)
+        .filter(|pair| pair[0] == "--test")
+        .map(|pair| pair[1].clone())
+        .collect::<BTreeSet<_>>();
+    if tests.is_empty() {
+        return Err("resource gate 定向测试命令缺少精确测试目标".into());
+    }
+    Ok(tests)
+}
+
+pub(crate) fn targeted_test_executables_from_messages(
+    output: &str,
+    expected: &BTreeSet<String>,
+) -> Result<BTreeMap<String, PathBuf>> {
+    let mut executables = BTreeMap::new();
+    for message in output
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+    {
+        let is_artifact =
+            message.get("reason").and_then(serde_json::Value::as_str) == Some("compiler-artifact");
+        let name = message
+            .pointer("/target/name")
+            .and_then(serde_json::Value::as_str);
+        let executable = message
+            .get("executable")
+            .and_then(serde_json::Value::as_str);
+        let Some((name, executable)) = name.zip(executable) else {
+            continue;
+        };
+        if !is_artifact || !expected.contains(name) {
+            continue;
+        }
+        if executables
+            .insert(name.to_owned(), PathBuf::from(executable))
+            .is_some()
+        {
+            return Err(format!("Cargo 重复返回定向测试产物：{name}").into());
+        }
+    }
+    let found = executables.keys().cloned().collect::<BTreeSet<_>>();
+    let missing = expected.difference(&found).cloned().collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(format!("Cargo 输出缺少定向测试产物：{}", missing.join(", ")).into());
+    }
+    Ok(executables)
+}
+
+fn run_targeted_test_executables(
+    root: &Path,
+    executables: &BTreeMap<String, PathBuf>,
+    environment: &[(&'static str, String)],
+) -> Result<()> {
+    let logs = root.join("target/verify/logs");
+    let results = thread::scope(|scope| {
+        executables
+            .iter()
+            .map(|(name, executable)| {
+                let label = format!("resource-gate-test-{name}");
+                let log = logs.join(format!("{label}.log"));
+                scope.spawn(move || {
+                    let executable = executable
+                        .to_str()
+                        .ok_or_else(|| "定向测试可执行文件路径不是有效 UTF-8".to_owned())?;
+                    with_process_log(&label, &log, || {
+                        run_owned_with_env(root, executable, &[], environment)
+                    })
+                    .map_err(|error| error.to_string())
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|handle| handle.join())
+            .collect::<Vec<_>>()
+    });
+    let mut failures = Vec::new();
+    for result in results {
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => failures.push(error),
+            Err(_) => failures.push("定向测试线程发生 panic".to_owned()),
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("定向测试执行失败：{}", failures.join("；")).into())
+    }
+}
+
+pub(crate) fn targeted_clippy_test_environment(
+    root: &Path,
+    snapshots: &BackendSnapshots,
+) -> Result<Vec<(&'static str, String)>> {
+    let clippy_driver = command_output(root, "rustup", &["which", "clippy-driver"])?;
+    let clippy_driver = clippy_driver.trim();
+    if clippy_driver.is_empty() || !Path::new(clippy_driver).is_file() {
+        return Err("resource gate 无法定位当前工具链的 clippy-driver".into());
+    }
+    let mut environment = snapshots.workspace_test_environment();
+    environment.extend([
+        ("RUSTC_WORKSPACE_WRAPPER", clippy_driver.to_owned()),
+        (
+            "CLIPPY_ARGS",
+            "-Dwarnings__CLIPPY_HACKERY__-Dclippy::redundant_clone".to_owned(),
+        ),
+    ]);
+    Ok(environment)
+}
+
+fn execute_targeted_cross_contracts(
+    root: &Path,
+    frontend_dir: &Path,
+    base: Option<&str>,
+    steps: impl Iterator<Item = GateStep>,
+) -> Result<()> {
+    for step in steps {
+        match step {
+            GateStep::PermissionContract => {
+                let args = vec![
+                    permission_policy_script()?,
+                    "--backend-root".to_owned(),
+                    root.to_string_lossy().into_owned(),
+                    "--skip-cargo-check".to_owned(),
+                ];
+                run_owned(root, "python", &args)?;
+            }
+            GateStep::MigrationContract => {
+                let args = super::preflight_migration_args(base);
+                run_owned(root, "python", &args)?;
+            }
+            GateStep::OpenApiAndFrontendConsumer => {
+                ci_consumer_contract_against_committed_snapshot(root, frontend_dir)?;
+            }
+            _ => return Err("resource gate 交叉契约步骤包含未知编译动作".into()),
+        }
+    }
+    Ok(())
+}
+
+fn permission_policy_script() -> Result<String> {
+    let runner_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("xtask manifest 缺少父目录")?;
+    let script = runner_root.join("scripts/check_permission_routes.py");
+    if !script.is_file() {
+        return Err(format!("当前 runner 缺少权限门禁脚本：{}", script.display()).into());
+    }
+    Ok(script.to_string_lossy().into_owned())
 }
 
 pub(crate) fn targeted_contract_steps(
@@ -338,7 +582,7 @@ fn execute_step(
             &affected_package_args_for_target(
                 "clippy",
                 packages,
-                &targeted_clippy_target(&targets.backend),
+                &targets.backend,
                 budget.backend,
             )?,
         )?,
@@ -357,13 +601,6 @@ fn execute_step(
         GateStep::OpenApiAndFrontendConsumer => super::consumer_contract(frontend_dir)?,
     }
     Ok(())
-}
-
-pub(crate) fn targeted_clippy_target(backend_target: &str) -> String {
-    Path::new(backend_target)
-        .join("resource-clippy")
-        .to_string_lossy()
-        .into_owned()
 }
 
 fn run_parallel_tasks<Left, Right>(

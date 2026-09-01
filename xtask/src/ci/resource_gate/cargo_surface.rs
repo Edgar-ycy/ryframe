@@ -147,7 +147,10 @@ pub(crate) fn affected_package_args_for_target(
         .flat_map(|surface| surface.tests.iter().copied())
         .collect::<BTreeSet<_>>();
 
+    let profile = if operation == "clippy" { "dev" } else { "test" };
     let mut args = vec![
+        "--config".to_owned(),
+        format!("profile.{profile}.debug=0"),
         operation.to_owned(),
         "--locked".to_owned(),
         "--target-dir".to_owned(),
@@ -163,7 +166,7 @@ pub(crate) fn affected_package_args_for_target(
             features.into_iter().collect::<Vec<_>>().join(","),
         ]);
     }
-    if surfaces.iter().any(|surface| surface.has_lib) {
+    if operation == "clippy" && surfaces.iter().any(|surface| surface.has_lib) {
         args.push("--lib".to_owned());
     }
     if operation == "clippy" {

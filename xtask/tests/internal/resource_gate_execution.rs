@@ -49,7 +49,7 @@ fn decision_artifact_records_actual_mode_and_is_atomic() {
 }
 
 #[test]
-fn targeted_execution_parallelizes_only_the_independent_resource_workspace() {
+fn targeted_execution_keeps_the_complete_contract_step_set_when_compile_steps_share_one_build() {
     let packages = set(&["ryframe-api", "ryframe-application"]);
     let contract_steps = targeted_contract_steps(packages.clone());
     assert_eq!(
@@ -69,10 +69,10 @@ fn targeted_execution_parallelizes_only_the_independent_resource_workspace() {
 
 #[test]
 fn targeted_test_jobs_never_exceed_the_backend_branch_budget() {
-    assert_eq!(targeted_test_jobs_from(None, false, 3).unwrap(), 3);
-    assert_eq!(targeted_test_jobs_from(None, true, 2).unwrap(), 2);
-    assert_eq!(targeted_test_jobs_from(Some("6"), false, 4).unwrap(), 4);
-    assert!(targeted_test_jobs_from(Some("0"), false, 4).is_err());
+    assert_eq!(targeted_test_jobs_from(None, 3).unwrap(), 3);
+    assert_eq!(targeted_test_jobs_from(Some("6"), 8).unwrap(), 6);
+    assert_eq!(targeted_test_jobs_from(Some("8"), 6).unwrap(), 6);
+    assert!(targeted_test_jobs_from(Some("0"), 4).is_err());
 }
 
 #[test]

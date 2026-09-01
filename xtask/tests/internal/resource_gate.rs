@@ -8,7 +8,8 @@ use super::{
         analyze, decision_for, enforce_targeted_activation, parse_name_status, parse_ownership,
         parse_resource_definition, plan_steps, preferred_nonempty_ref,
         resource_check_args_for_target, should_run_for_paths, targeted_activation_from,
-        targeted_contract_steps, targeted_test_jobs_from, write_decision_artifact,
+        targeted_contract_steps, targeted_test_executables_from_messages, targeted_test_jobs_from,
+        targeted_test_names_from_args, write_decision_artifact,
     },
 };
 
@@ -112,6 +113,89 @@ fn unchanged_catalog_output_does_not_expand_compile_surface() {
 
     assert_eq!(result.ambiguous_reason, None);
     assert_eq!(result.affected_crates, set(&["ryframe-api"]));
+}
+
+#[test]
+fn unchanged_resource_output_does_not_expand_compile_surface() {
+    let base = source("post", "title", "post.read", &[]);
+    let head = source("post", "body", "post.read", &[]);
+    let mut input = input_with_post(Some(&base), &head);
+    let tenant_output = owned("post", "crates/ryframe-tenant-db/src/generated/mod.rs");
+    input.base_ownership.entries.push(tenant_output.clone());
+    input.head_ownership.entries.push(tenant_output);
+    input.workspace_graph.package_by_dir.insert(
+        "crates/ryframe-tenant-db".to_owned(),
+        "ryframe-tenant-db".to_owned(),
+    );
+
+    let result = analyze(&input);
+
+    assert_eq!(result.ambiguous_reason, None);
+    assert_eq!(result.affected_crates, set(&["ryframe-api"]));
+}
+
+#[test]
+fn standard_resource_does_not_compile_reverse_only_adapters() {
+    let base = source("post", "title", "post.read", &[]);
+    let head = source("post", "body", "post.read", &[]);
+    let mut input = input_with_post(Some(&base), &head);
+    input.workspace_graph.package_by_dir.insert(
+        "crates/ryframe-adapters".to_owned(),
+        "ryframe-adapters".to_owned(),
+    );
+    input
+        .workspace_graph
+        .reverse_dependencies
+        .insert("ryframe-api".to_owned(), set(&["ryframe-adapters"]));
+
+    let result = analyze(&input);
+
+    assert_eq!(result.ambiguous_reason, None);
+    assert_eq!(result.affected_crates, set(&["ryframe-api"]));
+}
+
+#[test]
+fn control_resource_does_not_compile_reverse_only_tenant_database() {
+    let base = source("post", "title", "post.read", &[]);
+    let head = source("post", "body", "post.read", &[]);
+    let mut input = input_with_post(Some(&base), &head);
+    input.workspace_graph.package_by_dir.insert(
+        "crates/ryframe-tenant-db".to_owned(),
+        "ryframe-tenant-db".to_owned(),
+    );
+    input
+        .workspace_graph
+        .reverse_dependencies
+        .insert("ryframe-api".to_owned(), set(&["ryframe-tenant-db"]));
+
+    let result = analyze(&input);
+
+    assert_eq!(result.ambiguous_reason, None);
+    assert_eq!(result.affected_crates, set(&["ryframe-api"]));
+}
+
+#[test]
+fn tenant_resource_keeps_direct_tenant_database_ownership() {
+    let storage = "[storage]\nkind = \"tenant_data\"\ntenant_field = \"tenant_id\"";
+    let base = with_section(&source("post", "tenant_id", "post.read", &[]), storage);
+    let head = with_section(&source("post", "tenant_id", "post.list", &[]), storage);
+    let mut input = input_with_post(Some(&base), &head);
+    input.head_ownership.entries.push(owned(
+        "post",
+        "crates/ryframe-tenant-db/src/generated/post/mod.rs",
+    ));
+    input.workspace_graph.package_by_dir.insert(
+        "crates/ryframe-tenant-db".to_owned(),
+        "ryframe-tenant-db".to_owned(),
+    );
+
+    let result = analyze(&input);
+
+    assert_eq!(result.ambiguous_reason, None);
+    assert_eq!(
+        result.affected_crates,
+        set(&["ryframe-api", "ryframe-tenant-db"])
+    );
 }
 
 #[test]
@@ -328,6 +412,50 @@ fn ownership_parser_is_strict_and_commands_share_ci_target() {
             "--frontend-dir".to_owned(),
             "../ryframe-vue3".to_owned(),
         ]
+    );
+}
+
+#[test]
+fn targeted_test_artifacts_are_exact_and_complete() {
+    let packages = set(&["ryframe-api", "ryframe-application", "ryframe-db"]);
+    let args = affected_package_args_for_target("test", &packages, "target/ci/backend", 8).unwrap();
+    let expected = targeted_test_names_from_args(&args).unwrap();
+    assert_eq!(
+        expected,
+        set(&[
+            "api_contracts",
+            "application_contracts",
+            "mapping_contracts"
+        ])
+    );
+
+    let output = expected
+        .iter()
+        .map(|name| {
+            format!(
+                r#"{{"reason":"compiler-artifact","target":{{"name":"{name}"}},"executable":"D:/target/{name}.exe"}}"#
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let executables = targeted_test_executables_from_messages(&output, &expected).unwrap();
+    assert_eq!(
+        executables.keys().cloned().collect::<BTreeSet<_>>(),
+        expected
+    );
+
+    assert!(
+        targeted_test_executables_from_messages(&output.lines().next().unwrap(), &expected)
+            .unwrap_err()
+            .to_string()
+            .contains("缺少定向测试产物")
+    );
+    let duplicated = format!("{output}\n{output}");
+    assert!(
+        targeted_test_executables_from_messages(&duplicated, &expected)
+            .unwrap_err()
+            .to_string()
+            .contains("重复返回定向测试产物")
     );
 }
 

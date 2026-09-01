@@ -19,7 +19,7 @@ use ownership::{
     desired_entries, load_manifest, load_manifest_snapshot, manifests_equal, validate_workspace,
     verify_no_resource_removal, verify_owned_files, verify_unselected_resource_sources,
 };
-use path::{content_hash, display_path, extract_source_hash, target_path, validate_managed_path};
+use path::{content_hash, display_path, target_path, validate_managed_path};
 use plan::selected_assets;
 use transaction::{
     ExpectedFile, InstalledFile, install_staged, move_to_backup, persist_recovery_directories,

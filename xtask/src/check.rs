@@ -27,7 +27,9 @@ pub(crate) use cargo_command::{
     WORKSPACE_CLIPPY_ARGS, backend_package_operation_args, cargo_operation_jobs,
     default_test_jobs_from, workspace_clippy_args, workspace_test_args,
 };
-pub(crate) use execution::{ci_consumer_contract, ci_rust_gate};
+pub(crate) use execution::{
+    ci_consumer_contract, ci_consumer_contract_against_committed_snapshot, ci_rust_gate,
+};
 #[allow(unused_imports)]
 pub(crate) use execution::{run, verify};
 #[allow(unused_imports)]
@@ -75,6 +77,7 @@ pub(crate) use selection::{
 };
 #[allow(unused_imports)]
 pub(crate) use snapshot::{
-    backend_snapshot_export_args, consumer_contract_arguments, consumer_contract_plan,
-    load_consumer_contract_plan, package_tests_generate_snapshots,
+    BackendSnapshots, backend_snapshot_export_args, consumer_contract_arguments,
+    consumer_contract_plan, load_consumer_contract_plan, package_tests_generate_snapshots,
+    prepare_backend_snapshots, verify_backend_snapshots,
 };

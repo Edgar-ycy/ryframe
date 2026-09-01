@@ -1,6 +1,6 @@
-use std::{collections::BTreeSet, path::Path};
+use std::collections::BTreeSet;
 
-use super::ci::resource_gate::{affected_package_args_for_target, targeted_clippy_target};
+use super::ci::resource_gate::affected_package_args_for_target;
 
 fn packages(values: &[&str]) -> BTreeSet<String> {
     values.iter().map(|value| (*value).to_owned()).collect()
@@ -105,27 +105,22 @@ fn resource_cargo_surface_selects_only_runtime_api_contracts() {
     }
     assert!(!test.contains(&"--bin".to_owned()));
     assert!(!clippy.contains(&"--test".to_owned()));
+    assert!(clippy.contains(&"--lib".to_owned()));
+    assert!(!test.contains(&"--lib".to_owned()));
     assert!(
         test.windows(2)
             .any(|pair| pair == ["--test", "mapping_contracts"])
     );
     assert!(!test.contains(&"mysql_real_protocol".to_owned()));
     assert!(test.windows(2).any(|pair| pair == ["--test", "internal"]));
+    assert!(
+        clippy
+            .windows(2)
+            .any(|pair| pair == ["--config", "profile.dev.debug=0"])
+    );
+    assert!(
+        test.windows(2)
+            .any(|pair| pair == ["--config", "profile.test.debug=0"])
+    );
     assert!(affected_package_args_for_target("build", &affected, "target/ci/backend", 4).is_err());
-}
-
-#[test]
-fn resource_clippy_uses_a_stable_isolated_target_surface() {
-    assert_eq!(
-        targeted_clippy_target("target/ci/backend"),
-        Path::new("target/ci/backend")
-            .join("resource-clippy")
-            .to_string_lossy()
-    );
-    assert_eq!(
-        targeted_clippy_target(r"D:\cache\backend"),
-        Path::new(r"D:\cache\backend")
-            .join("resource-clippy")
-            .to_string_lossy()
-    );
 }

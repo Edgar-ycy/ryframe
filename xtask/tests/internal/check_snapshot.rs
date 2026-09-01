@@ -12,6 +12,8 @@ fn openapi_snapshot_reuses_the_backend_verify_target() {
             Path::new("target/xtask/openapi.json"),
         ),
         [
+            "--config",
+            "profile.dev.debug=0",
             "run",
             "--locked",
             "--target-dir",
@@ -36,6 +38,8 @@ fn mysql_snapshot_enables_the_required_migration_feature() {
             Path::new("target/xtask/mysql.sql"),
         ),
         [
+            "--config",
+            "profile.dev.debug=0",
             "run",
             "--locked",
             "--target-dir",

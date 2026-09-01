@@ -315,14 +315,28 @@ fn collect_owned_paths(
         Ok(index) => index,
         Err(reason) => return Some(reason),
     };
+    let tenant_storage_impacted = result.impacted_resources.iter().any(|name| {
+        input
+            .head_resources
+            .values()
+            .chain(input.base_resources.values())
+            .find(|resource| resource.name == *name)
+            .is_some_and(resource_uses_tenant_storage)
+    });
     for entry in &input.head_ownership.entries {
         if entry.resource != "__catalog__" && !result.impacted_resources.contains(&entry.resource) {
             continue;
         }
-        if entry.resource == "__catalog__"
-            && base_owners
-                .get(&(entry.root.clone(), entry.path.clone()))
-                .is_some_and(|base| base.fingerprint == entry.fingerprint)
+        let unchanged = base_owners
+            .get(&(entry.root.clone(), entry.path.clone()))
+            .is_some_and(|base| base.fingerprint == entry.fingerprint);
+        if entry.path == "crates/ryframe-tenant-db/src/generated/mod.rs" && !tenant_storage_impacted
+        {
+            continue;
+        }
+        if unchanged
+            && (entry.resource == "__catalog__"
+                || entry.path == "crates/ryframe-tenant-db/src/generated/mod.rs")
         {
             continue;
         }
@@ -337,6 +351,16 @@ fn collect_owned_paths(
         }
     }
     None
+}
+
+fn resource_uses_tenant_storage(resource: &ResourceDefinition) -> bool {
+    resource
+        .document
+        .get("storage")
+        .and_then(toml::Value::as_table)
+        .and_then(|storage| storage.get("kind"))
+        .and_then(toml::Value::as_str)
+        == Some("tenant_data")
 }
 
 fn collect_affected_crates(
@@ -365,6 +389,13 @@ fn collect_affected_crates(
     }
     result.affected_crates =
         reverse_dependency_closure(&direct, &input.workspace_graph.reverse_dependencies);
+    // 控制库标准资源不会进入 adapters 或 tenant-db；两者只因通用运行时边落入反向闭包。
+    // 保留直接 ownership 时的失败关闭语义，租户资源或未来真实生成输出仍会接受检查。
+    for reverse_only in ["ryframe-adapters", "ryframe-tenant-db"] {
+        if !direct.contains(reverse_only) {
+            result.affected_crates.remove(reverse_only);
+        }
+    }
     let workspace = input
         .workspace_graph
         .package_by_dir
