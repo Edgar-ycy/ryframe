@@ -460,9 +460,13 @@ pub(crate) fn stop_child(child: &mut ManagedChild) -> Result<()> {
     #[cfg(windows)]
     {
         child.terminate_tree()?;
-        let _ = child.wait();
         let deadline = Instant::now() + Duration::from_secs(1);
-        while child.active_process_count()? != Some(0) {
+        loop {
+            let direct_exited = child.try_wait()?.is_some();
+            let tree_exited = child.active_process_count()? == Some(0);
+            if direct_exited && tree_exited {
+                break;
+            }
             if Instant::now() >= deadline {
                 return Err("Windows 子进程树终止后 1 秒内仍有存活进程".into());
             }
