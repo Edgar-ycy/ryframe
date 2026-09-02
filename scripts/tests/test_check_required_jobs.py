@@ -289,13 +289,13 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertIn("$GITHUB_WORKSPACE/backend/deploy/prometheus", security)
         self.assertNotIn("$GITHUB_WORKSPACE/deploy/", security)
 
-    def test_completed_aws_lc_canary_is_not_a_recurring_ci_job(self) -> None:
+    def test_completed_aws_lc_canary_is_not_retained(self) -> None:
         workflows = "".join(
             path.read_text(encoding="utf-8")
             for path in (ROOT / ".github/workflows").glob("*.yml")
         )
         self.assertNotIn("aws-lc-sccache-canary:", workflows)
-        self.assertTrue((ROOT / "scripts/evaluate_sccache_canary.py").is_file())
+        self.assertFalse((ROOT / "scripts/evaluate_sccache_canary.py").exists())
 
     def test_full_stack_uses_isolated_reset_and_always_uploads_diagnostics(self) -> None:
         workflow = (ROOT / ".github/workflows/extended-ci.yml").read_text(
