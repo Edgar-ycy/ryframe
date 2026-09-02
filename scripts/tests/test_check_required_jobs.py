@@ -285,6 +285,9 @@ class RequiredJobsTests(unittest.TestCase):
             "\n  #", 1
         )[0]
         self.assertIn("--verify-cargo-graph", security)
+        self.assertIn("$GITHUB_WORKSPACE/backend/deploy/nginx", security)
+        self.assertIn("$GITHUB_WORKSPACE/backend/deploy/prometheus", security)
+        self.assertNotIn("$GITHUB_WORKSPACE/deploy/", security)
 
     def test_completed_aws_lc_canary_is_not_a_recurring_ci_job(self) -> None:
         workflows = "".join(
