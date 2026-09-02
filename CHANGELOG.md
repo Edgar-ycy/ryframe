@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- 生产镜像内容门禁改为导出并离线读取文件系统，不再要求 Distroless 镜像提供 shell，同时校验固定数值非 root 用户和运行层工具最小化。
 - 生产运行层改为固定摘要的 Distroless Debian 13，移除 shell、包管理器和 `curl`；API 与 Worker 新增内置 `--healthcheck`，避免基础镜像无补丁系统包阻塞高危漏洞门禁。
 - 修复真实全栈 CI 使用最小 `bin-api` 构建时仍启用 API 文档，导致应用在就绪前退出；该流程不再编译无关的 Swagger UI。
 - 修复 Cargo CycloneDX 自定义文件名重复追加 `.json`，导致扩展门禁无法收集后端 SBOM。

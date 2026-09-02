@@ -8,7 +8,10 @@ import json
 import re
 import subprocess
 import sys
+import tarfile
+import tempfile
 from pathlib import Path
+from typing import BinaryIO
 from urllib.parse import unquote
 
 
@@ -18,6 +21,15 @@ COMPOSE_FILE = ROOT / "deploy" / "compose.prod.yml"
 ALERT_RULES = ROOT / "deploy" / "prometheus" / "ryframe-alerts.yml"
 FIXTURE_ENV = ROOT / "scripts" / "fixtures" / "deploy.env"
 EXPECTED_BINARIES = {"ryframe", "ryframe-migrate", "ryframe-worker"}
+FORBIDDEN_RUNTIME_TOOLS = {
+    "bin/bash",
+    "bin/sh",
+    "usr/bin/apt",
+    "usr/bin/apt-get",
+    "usr/bin/curl",
+    "usr/bin/dpkg",
+}
+ONLINE_GENERATOR_PATTERN = re.compile(rb"/api/v1/tools/gen|tools:gen(?:[^a-z]|$)")
 EXPECTED_BASE_IMAGES = {
     "RUST_IMAGE": (
         "rust:1.97.1-bookworm@"
@@ -242,22 +254,110 @@ def check_pinned_actions(violations: list[str]) -> None:
                 )
 
 
+def normalize_archive_name(name: str) -> str:
+    return name.removeprefix("./").lstrip("/").rstrip("/")
+
+
+def stream_contains(source: BinaryIO, pattern: re.Pattern[bytes]) -> bool:
+    overlap = b""
+    while chunk := source.read(1024 * 1024):
+        data = overlap + chunk
+        if pattern.search(data):
+            return True
+        overlap = data[-128:]
+    return False
+
+
+def inspect_image_archive(path: Path) -> list[str]:
+    violations: list[str] = []
+    with tarfile.open(path, mode="r") as archive:
+        members = {
+            normalize_archive_name(member.name): member
+            for member in archive.getmembers()
+            if normalize_archive_name(member.name)
+        }
+        binary_root = "usr/local/bin/"
+        actual = {
+            name.removeprefix(binary_root): member
+            for name, member in members.items()
+            if name.startswith(binary_root) and "/" not in name.removeprefix(binary_root)
+        }
+        if set(actual) != EXPECTED_BINARIES:
+            violations.append(
+                "生产镜像 /usr/local/bin 条目必须精确为 "
+                f"{sorted(EXPECTED_BINARIES)}，当前为 {sorted(actual)}"
+            )
+        for name in sorted(EXPECTED_BINARIES & actual.keys()):
+            member = actual[name]
+            if not member.isfile() or member.issym() or member.islnk() or member.mode & 0o111 == 0:
+                violations.append(f"生产镜像 {name} 必须是非链接的可执行普通文件")
+
+        runtime_tools = sorted(FORBIDDEN_RUNTIME_TOOLS & members.keys())
+        if runtime_tools:
+            violations.append("生产镜像不得包含 shell、包管理器或 curl: " + ", ".join(runtime_tools))
+        suspicious = sorted(name for name in members if is_suspicious_generated_tool(name))
+        if suspicious:
+            violations.append("生产镜像包含 generator/reset 可疑路径: " + ", ".join(suspicious))
+        endpoint_hits = scan_online_generator_endpoints(archive, actual)
+        if endpoint_hits:
+            violations.append(
+                "生产镜像二进制仍包含在线生成器端点或权限: " + ", ".join(endpoint_hits)
+            )
+    return violations
+
+
+def is_suspicious_generated_tool(name: str) -> bool:
+    lowered = name.lower()
+    base = lowered.rsplit("/", maxsplit=1)[-1]
+    in_product_tree = lowered.startswith(("usr/local/bin/", "opt/ryframe/", "var/lib/ryframe/"))
+    return (in_product_tree and ("generator" in base or "reset" in base)) or (
+        "ryframe" in base and ("generator" in base or "reset" in base)
+    )
+
+
+def scan_online_generator_endpoints(
+    archive: tarfile.TarFile, binaries: dict[str, tarfile.TarInfo]
+) -> list[str]:
+    hits: list[str] = []
+    for name in sorted(EXPECTED_BINARIES & binaries.keys()):
+        source = archive.extractfile(binaries[name])
+        if source is not None and stream_contains(source, ONLINE_GENERATOR_PATTERN):
+            hits.append(f"/usr/local/bin/{name}")
+    return hits
+
+
+def export_image_filesystem(image: str, target: Path) -> None:
+    created = subprocess.run(
+        ["docker", "create", image], check=True, capture_output=True, text=True
+    )
+    container_id = created.stdout.strip()
+    if not re.fullmatch(r"[0-9a-f]{12,64}", container_id):
+        raise ValueError("docker create 未返回合法容器 ID")
+    try:
+        with target.open("wb") as output:
+            subprocess.run(["docker", "export", container_id], check=True, stdout=output)
+    finally:
+        subprocess.run(
+            ["docker", "rm", "--force", container_id],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+
 def inspect_image(image: str, expected_commit: str | None) -> list[str]:
     if not re.fullmatch(r"[A-Za-z0-9._/@:+-]+", image):
         raise ValueError("镜像引用格式无效")
     result = subprocess.run(
-        ["docker", "image", "inspect", image],
-        check=True,
-        capture_output=True,
-        text=True,
+        ["docker", "image", "inspect", image], check=True, capture_output=True, text=True
     )
     document = json.loads(result.stdout)
     if not isinstance(document, list) or len(document) != 1:
         raise ValueError("docker image inspect 返回了意外结果")
     config = document[0].get("Config") or {}
     violations: list[str] = []
-    if config.get("User") != "ryframe":
-        violations.append("生产镜像必须以 ryframe 用户运行")
+    if config.get("User") != "10001:10001":
+        violations.append("生产镜像必须以固定的数值非 root 用户 10001:10001 运行")
     if config.get("Entrypoint") != ["/usr/local/bin/ryframe"]:
         violations.append("生产镜像入口必须固定为 /usr/local/bin/ryframe")
     if expected_commit:
@@ -265,97 +365,14 @@ def inspect_image(image: str, expected_commit: str | None) -> list[str]:
         if revision != expected_commit:
             violations.append("生产镜像 revision 标签与源码提交不一致")
 
-    entries = subprocess.run(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--user",
-            "0:0",
-            "--entrypoint",
-            "/bin/sh",
-            image,
-            "-eu",
-            "-c",
-            "find /usr/local/bin -mindepth 1 -maxdepth 1 "
-            "-printf '%f\\0%y\\0%l\\0%m\\0'",
-        ],
-        check=True,
-        capture_output=True,
-    )
-    fields = entries.stdout.split(b"\0")
-    if fields[-1] == b"":
-        fields.pop()
-    if len(fields) % 4 != 0:
-        raise ValueError("无法解析生产镜像 /usr/local/bin 条目")
-    actual: dict[str, tuple[str, str, int]] = {}
-    for index in range(0, len(fields), 4):
-        name, kind, target, mode = (field.decode("utf-8") for field in fields[index : index + 4])
-        actual[name] = (kind, target, int(mode, 8))
-    if set(actual) != EXPECTED_BINARIES:
-        violations.append(
-            "生产镜像 /usr/local/bin 条目必须精确为 "
-            f"{sorted(EXPECTED_BINARIES)}，当前为 {sorted(actual)}"
-        )
-    for name in sorted(EXPECTED_BINARIES & actual.keys()):
-        kind, target, mode = actual[name]
-        if kind != "f" or target or mode & 0o111 == 0:
-            violations.append(f"生产镜像 {name} 必须是非链接的可执行普通文件")
-
-    forbidden = subprocess.run(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--user",
-            "0:0",
-            "--entrypoint",
-            "/bin/sh",
-            image,
-            "-eu",
-            "-c",
-            "{ find /usr/local/bin /opt/ryframe /var/lib/ryframe -xdev "
-            "\\( -iname '*generator*' -o -iname '*reset*' \\) -print; "
-            "find / -xdev "
-            "\\( -iname '*ryframe*generator*' -o -iname '*ryframe*reset*' \\) -print; "
-            "} | LC_ALL=C sort -u",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    forbidden_paths = [line for line in forbidden.stdout.splitlines() if line]
-    if forbidden_paths:
-        violations.append(
-            "生产镜像包含 generator/reset 可疑路径: " + ", ".join(forbidden_paths)
-        )
-
-    endpoint_scan = subprocess.run(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "--user",
-            "0:0",
-            "--entrypoint",
-            "/bin/sh",
-            image,
-            "-eu",
-            "-c",
-            "for binary in /usr/local/bin/ryframe /usr/local/bin/ryframe-migrate "
-            "/usr/local/bin/ryframe-worker; do "
-            "grep -a -E -l '/api/v1/tools/gen|tools:gen(:|[^a-z])' \"$binary\" || true; "
-            "done",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    endpoint_hits = [line for line in endpoint_scan.stdout.splitlines() if line]
-    if endpoint_hits:
-        violations.append(
-            "生产镜像二进制仍包含在线生成器端点或权限: " + ", ".join(endpoint_hits)
-        )
+    inspection_root = ROOT / "target" / "image-inspection"
+    inspection_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix="ryframe-image-inspect-", dir=inspection_root
+    ) as directory:
+        archive = Path(directory) / "filesystem.tar"
+        export_image_filesystem(image, archive)
+        violations.extend(inspect_image_archive(archive))
     return violations
 
 

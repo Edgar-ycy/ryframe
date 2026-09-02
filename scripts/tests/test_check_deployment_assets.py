@@ -1,0 +1,89 @@
+from __future__ import annotations
+
+import importlib.util
+import io
+import shutil
+import tarfile
+import unittest
+import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+
+
+SCRIPT = Path(__file__).resolve().parents[1] / "check_deployment_assets.py"
+TEMP_ROOT = SCRIPT.parents[1] / "target" / "script-tests"
+TEMP_ROOT.mkdir(parents=True, exist_ok=True)
+SPEC = importlib.util.spec_from_file_location("check_deployment_assets", SCRIPT)
+assert SPEC is not None and SPEC.loader is not None
+MODULE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(MODULE)
+
+
+@contextmanager
+def test_workspace() -> Iterator[Path]:
+    path = TEMP_ROOT / f"deployment-assets-{uuid.uuid4().hex}"
+    path.mkdir(parents=True)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path)
+
+
+def write_archive(path: Path, extra: dict[str, tuple[bytes, int]] | None = None) -> None:
+    files = {
+        f"usr/local/bin/{name}": (b"product binary", 0o755)
+        for name in MODULE.EXPECTED_BINARIES
+    }
+    files.update(extra or {})
+    with tarfile.open(path, mode="w") as archive:
+        for name, (content, mode) in files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(content)
+            info.mode = mode
+            archive.addfile(info, io.BytesIO(content))
+
+
+class CheckDeploymentAssetsTests(unittest.TestCase):
+    def test_distroless_archive_passes_without_shell(self) -> None:
+        with test_workspace() as directory:
+            archive = directory / "filesystem.tar"
+            write_archive(archive)
+
+            self.assertEqual(MODULE.inspect_image_archive(archive), [])
+
+    def test_archive_rejects_runtime_tools_and_product_tooling(self) -> None:
+        with test_workspace() as directory:
+            archive = directory / "filesystem.tar"
+            write_archive(
+                archive,
+                {
+                    "bin/sh": (b"shell", 0o755),
+                    "opt/ryframe/ryframe-reset": (b"reset", 0o755),
+                    "usr/local/bin/ryframe": (b"/api/v1/tools/gen", 0o755),
+                },
+            )
+
+            violations = MODULE.inspect_image_archive(archive)
+            self.assertTrue(any("不得包含 shell" in item for item in violations))
+            self.assertTrue(any("generator/reset 可疑路径" in item for item in violations))
+            self.assertTrue(any("在线生成器端点" in item for item in violations))
+
+    def test_archive_rejects_missing_or_non_executable_binary(self) -> None:
+        with test_workspace() as directory:
+            archive = directory / "filesystem.tar"
+            write_archive(
+                archive,
+                {
+                    "usr/local/bin/ryframe-worker": (b"worker", 0o644),
+                    "usr/local/bin/unexpected": (b"unexpected", 0o755),
+                },
+            )
+
+            violations = MODULE.inspect_image_archive(archive)
+            self.assertTrue(any("条目必须精确" in item for item in violations))
+            self.assertTrue(any("ryframe-worker 必须" in item for item in violations))
+
+
+if __name__ == "__main__":
+    unittest.main()
