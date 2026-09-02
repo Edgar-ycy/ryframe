@@ -799,6 +799,57 @@ def _workflow_jobs(
     return valid, errors
 
 
+def _contains_expression_reference(value: object, name: str) -> bool:
+    if not isinstance(value, str) or "${{" not in value:
+        return False
+    pattern = rf"(?<![A-Za-z0-9_]){re.escape(name)}\s*(?:\.|\[)"
+    return re.search(pattern, value) is not None
+
+
+def _validate_environment_contexts(
+    path: Path,
+    document: dict[str, Any],
+    jobs: list[tuple[str, dict[str, Any]]],
+) -> list[str]:
+    """阻止在 GitHub 尚未创建 runner/step 的 env 层级引用运行期上下文。"""
+
+    errors: list[str] = []
+    scopes = [
+        (
+            "工作流 env",
+            document.get("env"),
+            {"runner", "job", "steps", "env", "needs", "strategy", "matrix"},
+        )
+    ]
+    scopes.extend(
+        (f"job {job_name} env", job.get("env"), {"runner", "job", "steps", "env"})
+        for job_name, job in jobs
+    )
+    for location, environment, forbidden in scopes:
+        if environment is None:
+            continue
+        if not isinstance(environment, dict):
+            errors.append(f"{path}: {location} 必须是对象")
+            continue
+        for variable, value in environment.items():
+            for name in sorted(forbidden):
+                if _contains_expression_reference(value, name):
+                    errors.append(
+                        f"{path}: {location}.{variable} 不能引用 {name} 上下文；"
+                        "请下沉到具体 step 的 env、with 或 run"
+                    )
+            if (
+                isinstance(value, str)
+                and "${{" in value
+                and re.search(r"\bhashFiles\s*\(", value)
+            ):
+                errors.append(
+                    f"{path}: {location}.{variable} 不能调用 hashFiles；"
+                    "请下沉到具体 step 的 env 或 with"
+                )
+    return errors
+
+
 def _collect_service_images(
     path: Path,
     jobs: list[tuple[str, dict[str, Any]]],
@@ -1318,6 +1369,7 @@ def validate_workflows(workflow_dir: Path, policy: dict[str, Any]) -> list[str]:
         if document is not None:
             jobs, job_errors = _workflow_jobs(path, document)
             errors.extend(job_errors)
+            errors.extend(_validate_environment_contexts(path, document, jobs))
             workflow_images, image_errors = _collect_service_images(path, jobs)
             errors.extend(image_errors)
             service_images.update(workflow_images)

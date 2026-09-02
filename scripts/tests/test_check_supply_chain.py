@@ -734,6 +734,38 @@ jobs:
             )
         )
 
+    def test_workflow_rejects_runtime_context_in_job_environment(self) -> None:
+        workflow = """
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    env:
+      ARTIFACT_DIR: ${{ runner.temp }}/integration
+    steps:
+      - run: echo ok
+"""
+        with self.temporary_directory() as raw:
+            workflow_dir = Path(raw)
+            (workflow_dir / "ci.yml").write_text(workflow, encoding="utf-8")
+            errors = MODULE.validate_workflows(workflow_dir, policy())
+        self.assertTrue(any("不能引用 runner 上下文" in error for error in errors))
+
+    def test_workflow_accepts_runtime_context_in_step_environment(self) -> None:
+        workflow = """
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          ARTIFACT_DIR: ${{ runner.temp }}/integration
+        run: echo ok
+"""
+        with self.temporary_directory() as raw:
+            workflow_dir = Path(raw)
+            (workflow_dir / "ci.yml").write_text(workflow, encoding="utf-8")
+            errors = MODULE.validate_workflows(workflow_dir, policy())
+        self.assertFalse(any("runner 上下文" in error for error in errors))
+
     def test_workflow_uses_yaml_12_boolean_rules_for_names(self) -> None:
         digest = "b" * 64
         workflow = f"""

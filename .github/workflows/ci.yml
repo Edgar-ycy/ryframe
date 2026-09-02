@@ -396,7 +396,6 @@ jobs:
       RYFRAME_REDIS_HOST: 127.0.0.1
       RYFRAME_REDIS_PORT: "6379"
       RYFRAME_REDIS_DATABASE: "15"
-      RYFRAME_TLS_ARTIFACT_DIR: ${{ runner.temp }}/ryframe-tls-integration
     services:
       mysql:
         image: mysql:8.4.11@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
@@ -461,6 +460,8 @@ jobs:
 
       - name: 验证 MySQL、Redis 与 AWS-LC TLS 真实出站协议
         working-directory: backend
+        env:
+          RYFRAME_TLS_ARTIFACT_DIR: ${{ runner.temp }}/ryframe-tls-integration
         run: cargo xtask ci integration
 
       - name: 保存 AWS-LC TLS fixture 与测试日志
