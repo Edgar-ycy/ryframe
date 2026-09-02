@@ -9,7 +9,7 @@ use axum::{
     extract::{Request, State},
     http::{HeaderName, HeaderValue},
     middleware::{self, Next},
-    response::{IntoResponse, Response},
+    response::Response,
     routing::MethodRouter,
 };
 use ryframe_application::{PrincipalResolver, TenantContext, with_tenant_context};
@@ -50,57 +50,50 @@ pub async fn auth_middleware(
     State(auth_state): State<AuthState>,
     mut request: Request,
     next: Next,
-) -> Result<Response, Response> {
-    let token = extract_bearer_token(&request).ok_or_else(|| {
-        HttpAppError::from(AppError::Authentication("缺少认证令牌".into())).into_response()
-    })?;
-    let claims = decode_token(token, &auth_state.token_settings)
-        .map_err(|error| HttpAppError::from(error).into_response())?;
+) -> Result<Response, HttpAppError> {
+    let token = extract_bearer_token(&request)
+        .ok_or_else(|| AppError::Authentication("缺少认证令牌".into()))?;
+    let claims = decode_token(token, &auth_state.token_settings)?;
 
     if claims.token_type != "access" {
         return Err(HttpAppError::from(AppError::Authentication(
             "令牌类型错误，请使用访问令牌".into(),
-        ))
-        .into_response());
+        )));
     }
     if !auth_state.allow_multiple_tenants && claims.tenant_id != "system" {
         return Err(HttpAppError::from(AppError::Authentication(
             "令牌租户不适用于当前运行模式，请重新登录".into(),
-        ))
-        .into_response());
+        )));
     }
 
     if auth_state
         .access_revocations
         .is_revoked(&claims.jti)
         .await
-        .map_err(|error| {
+        .inspect_err(|_| {
             record_backend_failure("access_revocation");
-            HttpAppError::from(error).into_response()
         })?
     {
         return Err(HttpAppError::from(AppError::Authentication(
             "令牌已被撤销，请重新登录".into(),
-        ))
-        .into_response());
+        )));
     }
 
-    let claims_user_id = claims.sub.parse::<i64>().map_err(|_| {
-        HttpAppError::from(AppError::Authentication("令牌主体无效".into())).into_response()
-    })?;
+    let claims_user_id = claims
+        .sub
+        .parse::<i64>()
+        .map_err(|_| AppError::Authentication("令牌主体无效".into()))?;
     if !auth_state
         .refresh_sessions
         .is_active_for_identity(&claims.sid, &claims.tenant_id, claims_user_id)
         .await
-        .map_err(|error| {
+        .inspect_err(|_| {
             record_backend_failure("access_session");
-            HttpAppError::from(error).into_response()
         })?
     {
         return Err(HttpAppError::from(AppError::Authentication(
             "session is no longer active".into(),
-        ))
-        .into_response());
+        )));
     }
 
     let tenant_context = TenantContext {
@@ -111,8 +104,7 @@ pub async fn auth_middleware(
         tenant_context.clone(),
         auth_state.principal_resolver.resolve_principal(&claims),
     )
-    .await
-    .map_err(|error| HttpAppError::from(error).into_response())?;
+    .await?;
     let principal = Arc::new(principal);
 
     let span = tracing::Span::current();
@@ -147,7 +139,7 @@ fn extract_bearer_token(request: &Request) -> Option<&str> {
         .strip_prefix("Bearer ")
 }
 
-type PermissionFuture = Pin<Box<dyn Future<Output = Result<Response, Response>> + Send>>;
+type PermissionFuture = Pin<Box<dyn Future<Output = Result<Response, HttpAppError>> + Send>>;
 
 pub fn require_permission(
     permission: &'static str,
@@ -157,12 +149,8 @@ pub fn require_permission(
             let principal = request
                 .extensions()
                 .get::<RequestPrincipal>()
-                .ok_or_else(|| {
-                    HttpAppError::from(AppError::Authentication("未认证，请先登录".into()))
-                        .into_response()
-                })?;
-            check_permission(principal, permission)
-                .map_err(|error| HttpAppError::from(error).into_response())?;
+                .ok_or_else(|| AppError::Authentication("未认证，请先登录".into()))?;
+            check_permission(principal, permission)?;
             Ok(next.run(request).await)
         })
     }

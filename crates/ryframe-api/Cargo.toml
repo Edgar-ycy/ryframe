@@ -59,6 +59,7 @@ syn = { workspace = true }
 toml.workspace = true
 
 [dev-dependencies]
+tower = { workspace = true, features = ["util"] }
 ryframe-application = { path = "../ryframe-application", default-features = false, features = ["test-support"] }
 
 [[bin]]

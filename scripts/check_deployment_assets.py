@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import tomllib
 from pathlib import Path
 from typing import BinaryIO
 from urllib.parse import unquote
@@ -32,8 +33,8 @@ FORBIDDEN_RUNTIME_TOOLS = {
 ONLINE_GENERATOR_PATTERN = re.compile(rb"/api/v1/tools/gen|tools:gen(?:[^a-z]|$)")
 EXPECTED_BASE_IMAGES = {
     "RUST_IMAGE": (
-        "rust:1.97.1-bookworm@"
-        "sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97"
+        "rust:1.98.0-bookworm@"
+        "sha256:82150a52ec202c1b14d7817e14516c392bb7f5cfebd88f1ed531cb37ebd39922"
     ),
     "RUNTIME_IMAGE": (
         "gcr.io/distroless/cc-debian13:nonroot@"
@@ -119,6 +120,7 @@ def validate_runbook_url(url: str) -> str | None:
 
 def check_dockerfile(violations: list[str]) -> None:
     source = read(DOCKERFILE)
+    check_rust_toolchain(source, violations)
     normalized = re.sub(r"\\\r?\n\s*", " ", source)
     for argument, expected in EXPECTED_BASE_IMAGES.items():
         actual = re.findall(
@@ -156,6 +158,19 @@ def check_dockerfile(violations: list[str]) -> None:
             violations.append(f"最小运行镜像不得包含 {forbidden}")
     if 'CMD ["/usr/local/bin/ryframe", "--healthcheck"]' not in source:
         violations.append("生产镜像必须使用 API 内置健康检查")
+
+
+def check_rust_toolchain(source: str, violations: list[str]) -> None:
+    channel = tomllib.loads(read(ROOT / "rust-toolchain.toml"))["toolchain"]["channel"]
+    minimum = tomllib.loads(read(ROOT / "Cargo.toml"))["workspace"]["package"]["rust-version"]
+    if not re.fullmatch(r"1\.\d+\.\d+", channel):
+        violations.append("Rust 工具链必须固定到稳定版的完整版本号")
+        return
+    if minimum != channel.rsplit(".", 1)[0]:
+        violations.append("workspace rust-version 必须与固定 Rust 工具链的主次版本一致")
+    image_version = re.findall(r"^ARG RUST_IMAGE=rust:([^\s-]+)-", source, re.MULTILINE)
+    if image_version != [channel]:
+        violations.append("生产构建镜像的 Rust 版本必须与 rust-toolchain.toml 完全一致")
 
 
 def check_online_generator(violations: list[str]) -> None:

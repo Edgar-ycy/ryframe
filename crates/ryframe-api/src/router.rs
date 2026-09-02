@@ -58,25 +58,23 @@ async fn authenticated_tenant_rate_limit(
     State(state): State<AuthenticatedTenantRateLimitState>,
     request: Request,
     next: Next,
-) -> Result<Response, Response> {
+) -> Response {
     if !state.config.enabled {
-        return Ok(next.run(request).await);
+        return next.run(request).await;
     }
 
-    let principal = request
-        .extensions()
-        .get::<RequestPrincipal>()
-        .ok_or_else(|| {
-            HttpAppError::from(AppError::Authentication("未认证，请先登录".into())).into_response()
-        })?;
+    let Some(principal) = request.extensions().get::<RequestPrincipal>() else {
+        return HttpAppError::from(AppError::Authentication("未认证，请先登录".into()))
+            .into_response();
+    };
     if principal.tenant_request_limit_per_minute == 0 {
-        return Ok(next.run(request).await);
+        return next.run(request).await;
     }
     let key = tenant_key(&principal.tenant_id);
     let limit = principal.tenant_request_limit_per_minute;
 
     match state.limiter.acquire(&key, 60, limit).await {
-        Ok(decision) if decision.allowed => Ok(next.run(request).await),
+        Ok(decision) if decision.allowed => next.run(request).await,
         Ok(decision) => {
             record_rate_limit_rejection("tenant");
             let mut response =
@@ -84,12 +82,12 @@ async fn authenticated_tenant_rate_limit(
             if let Ok(value) = HeaderValue::from_str(&decision.retry_after_secs.to_string()) {
                 response.headers_mut().insert(RETRY_AFTER, value);
             }
-            Err(response)
+            response
         }
         Err(error) => {
             record_redis_degraded("tenant_rate_limit");
             tracing::error!(error = %error, "tenant rate-limit backend unavailable");
-            Err((StatusCode::SERVICE_UNAVAILABLE, "限流服务暂不可用").into_response())
+            (StatusCode::SERVICE_UNAVAILABLE, "限流服务暂不可用").into_response()
         }
     }
 }
@@ -124,14 +122,12 @@ async fn tenant_context_headers(
     State(state): State<AppState>,
     request: Request,
     next: Next,
-) -> Result<Response, Response> {
+) -> Result<Response, HttpAppError> {
     let tenant_id = request
         .extensions()
         .get::<RequestPrincipal>()
         .map(|principal| principal.tenant_id.clone())
-        .ok_or_else(|| {
-            HttpAppError::from(AppError::Authentication("未认证，请先登录".into())).into_response()
-        })?;
+        .ok_or_else(|| AppError::Authentication("未认证，请先登录".into()))?;
     let mut response = next.run(request).await;
     let values = if let Some(values) = response
         .extensions()
@@ -145,8 +141,7 @@ async fn tenant_context_headers(
             .platform
             .tenant_data
             .runtime_snapshot(&tenant_id)
-            .await
-            .map_err(|error| HttpAppError::from(error).into_response())?;
+            .await?;
         auth_handler::TenantContextHeaderValues {
             authorization_epoch: snapshot.authorization_epoch().to_string(),
             runtime_epoch: snapshot.runtime_epoch().to_string(),
@@ -160,10 +155,8 @@ async fn tenant_context_headers(
         ("x-tenant-data-generation", values.data_generation),
         ("x-tenant-data-state", values.data_state),
     ] {
-        let value = HeaderValue::from_str(&value).map_err(|_| {
-            HttpAppError::from(AppError::Internal(format!("响应上下文头 {name} 无效")))
-                .into_response()
-        })?;
+        let value = HeaderValue::from_str(&value)
+            .map_err(|_| AppError::Internal(format!("响应上下文头 {name} 无效")))?;
         response
             .headers_mut()
             .insert(HeaderName::from_static(name), value);

@@ -26,9 +26,9 @@ pub async fn rate_limit_middleware(
     State(state): State<RateLimitState>,
     request: axum::extract::Request,
     next: Next,
-) -> Result<Response, Response> {
+) -> Response {
     if !state.config.enabled || is_agent_api_path(request.uri().path()) {
-        return Ok(next.run(request).await);
+        return next.run(request).await;
     }
 
     let client_ip = request
@@ -46,13 +46,13 @@ pub async fn rate_limit_middleware(
         )
         .await
     {
-        Ok(decision) if decision.allowed => Ok(next.run(request).await),
-        Ok(decision) => Err(rate_limited_response(
+        Ok(decision) if decision.allowed => next.run(request).await,
+        Ok(decision) => rate_limited_response(
             "global_ip",
             "请求过于频繁，请稍后再试",
             decision.retry_after_secs,
-        )),
-        Err(error) => Err(rate_limit_unavailable(error)),
+        ),
+        Err(error) => rate_limit_unavailable(error),
     }
 }
 
@@ -60,16 +60,16 @@ pub async fn user_rate_limit_middleware(
     State(state): State<RateLimitState>,
     request: axum::extract::Request,
     next: Next,
-) -> Result<Response, Response> {
+) -> Response {
     if !state.config.enabled
         || !state.config.enable_user_rate_limit
         || is_agent_api_path(request.uri().path())
     {
-        return Ok(next.run(request).await);
+        return next.run(request).await;
     }
 
     let Some(claims) = request.extensions().get::<ryframe_auth::jwt::Claims>() else {
-        return Ok(next.run(request).await);
+        return next.run(request).await;
     };
     let key = tenant_user_key(&claims.tenant_id, &claims.sub);
     match state
@@ -81,13 +81,13 @@ pub async fn user_rate_limit_middleware(
         )
         .await
     {
-        Ok(decision) if decision.allowed => Ok(next.run(request).await),
-        Ok(decision) => Err(rate_limited_response(
+        Ok(decision) if decision.allowed => next.run(request).await,
+        Ok(decision) => rate_limited_response(
             "tenant_user",
             "用户请求过于频繁，请稍后再试",
             decision.retry_after_secs,
-        )),
-        Err(error) => Err(rate_limit_unavailable(error)),
+        ),
+        Err(error) => rate_limit_unavailable(error),
     }
 }
 
@@ -95,12 +95,12 @@ pub async fn api_rate_limit_middleware(
     State(state): State<RateLimitState>,
     request: axum::extract::Request,
     next: Next,
-) -> Result<Response, Response> {
+) -> Response {
     if !state.config.enabled
         || state.config.api_limits.is_empty()
         || is_agent_api_path(request.uri().path())
     {
-        return Ok(next.run(request).await);
+        return next.run(request).await;
     }
 
     let method = request.method().as_str();
@@ -146,7 +146,7 @@ pub async fn api_rate_limit_middleware(
                 .map(|limit| (method, *limit))
         });
     let Some((rule_scope, limit)) = configured_rule else {
-        return Ok(next.run(request).await);
+        return next.run(request).await;
     };
 
     let client_ip = request
@@ -161,13 +161,13 @@ pub async fn api_rate_limit_middleware(
         .acquire(&key, state.config.api_window_secs, limit)
         .await
     {
-        Ok(decision) if decision.allowed => Ok(next.run(request).await),
-        Ok(decision) => Err(rate_limited_response(
+        Ok(decision) if decision.allowed => next.run(request).await,
+        Ok(decision) => rate_limited_response(
             "api_ip",
             "接口请求过于频繁，请稍后再试",
             decision.retry_after_secs,
-        )),
-        Err(error) => Err(rate_limit_unavailable(error)),
+        ),
+        Err(error) => rate_limit_unavailable(error),
     }
 }
 

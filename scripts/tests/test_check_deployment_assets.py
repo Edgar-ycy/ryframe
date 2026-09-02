@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "check_deployment_assets.py"
@@ -45,6 +46,31 @@ def write_archive(path: Path, extra: dict[str, tuple[bytes, int]] | None = None)
 
 
 class CheckDeploymentAssetsTests(unittest.TestCase):
+    def test_rust_toolchain_versions_stay_aligned(self) -> None:
+        cases = [
+            ("1.98.0", "1.98", "1.98.0", None),
+            ("stable", "1.98", "1.98.0", "完整版本号"),
+            ("1.98.0-beta.1", "1.98", "1.98.0", "完整版本号"),
+            ("1.98.0", "1.97", "1.98.0", "主次版本一致"),
+            ("1.98.0", "1.98", "1.97.1", "完全一致"),
+            ("1.98.0", "1.98", "1.98.1", "完全一致"),
+        ]
+        for channel, minimum, image, expected in cases:
+            with self.subTest(channel=channel, minimum=minimum, image=image):
+                contents = {
+                    "rust-toolchain.toml": f'[toolchain]\nchannel = "{channel}"',
+                    "Cargo.toml": f'[workspace.package]\nrust-version = "{minimum}"',
+                }
+                violations: list[str] = []
+                with patch.object(MODULE, "read", side_effect=lambda path: contents[path.name]):
+                    MODULE.check_rust_toolchain(
+                        f"ARG RUST_IMAGE=rust:{image}-bookworm@sha256:abc\n", violations
+                    )
+                if expected is None:
+                    self.assertEqual(violations, [])
+                else:
+                    self.assertTrue(any(expected in item for item in violations))
+
     def test_distroless_archive_passes_without_shell(self) -> None:
         with test_workspace() as directory:
             archive = directory / "filesystem.tar"

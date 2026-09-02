@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [v0.12.1] - 2026-09-02
+
+### Changed
+
+- Rust 工具链统一升级到 1.98.0，最低 Rust 版本提高到 1.98，继续使用 Rust 2024 edition；生产构建镜像同步更新并固定官方摘要。
+- 部署门禁校验固定工具链、workspace 最低版本与生产构建镜像版本一致，防止本地和 CI 构建版本漂移。
+- 认证、权限和租户上下文中间件使用统一强类型 HTTP 错误，限流中间件直接返回响应；错误观测改用 `inspect_err`，适配新版 Clippy，保持现有 HTTP 行为。
+- 删除 application 任务接口导出中已经无用途的弃用告警豁免，不保留旧版兼容入口。
+
 ### Fixed
 
 - 删除 GitHub Actions 中持续零命中且产生写入错误的 sccache 远端后端；只在 Rust Gate 与 Windows Smoke 持久化限定大小的本地编译缓存，其他任务不再安装无收益的包装器。生产镜像与全栈校验脚本变化会选择性触发 Extended CI。

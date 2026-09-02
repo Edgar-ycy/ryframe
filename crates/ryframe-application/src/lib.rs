@@ -41,7 +41,6 @@ pub use authorization_cache::{
 pub use authorization_resolver::has_super_admin_role;
 pub(crate) use authorization_resolver::{AuthorizationResolver, ResolvedAuthorization};
 pub use id_generator::{BusinessIdGenerator, install as install_id_generator, next_id};
-#[allow(deprecated)]
 pub use jobs::{
     BackgroundJobListParams, BackgroundJobQueueStats, BackgroundJobVo, CallbackJobMetricsObserver,
     CallbackScheduleMetricsObserver, ClaimedBackgroundJob, CreateJobSchedule, EnqueueJob,
