@@ -124,7 +124,7 @@ def prepare(backend_root: Path) -> None:
             "ryframe",
             "--no-default-features",
             "--features",
-            "bin-api",
+            "bin-api,runtime-swagger-ui",
             "--bin",
             "ryframe",
         ],

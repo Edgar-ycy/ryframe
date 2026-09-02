@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- 修复真实全栈 CI 构建 API 时遗漏 `runtime-swagger-ui` feature，导致启用 API 文档的测试配置在就绪前退出。
+
 ## [v0.12.0] - 2026-09-02
 
 ### Added
