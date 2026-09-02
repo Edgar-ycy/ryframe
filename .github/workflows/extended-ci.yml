@@ -29,6 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       APP_ENV: test
+      APP_API_DOCS_ENABLED: "false"
       APP_SCOPE_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
       APP_APP_HOST: 127.0.0.1
       APP_APP_PORT: "8080"

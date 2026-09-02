@@ -306,6 +306,7 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn('tags: [ "v*.*.*" ]', workflow)
         self.assertIn("APP_ENV: test", block)
+        self.assertIn('APP_API_DOCS_ENABLED: "false"', block)
         self.assertIn('APP_RESET_LEGACY_MYSQL_EXCLUSIVE: "true"', block)
         self.assertIn(
             'APP_OBJECT_STORAGE_LOCAL_BASE_DIR=$RUNNER_TEMP/ryframe-full-stack/storage',

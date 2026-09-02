@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- 修复真实全栈 CI 构建 API 时遗漏 `runtime-swagger-ui` feature，导致启用 API 文档的测试配置在就绪前退出。
+- 修复真实全栈 CI 使用最小 `bin-api` 构建时仍启用 API 文档，导致应用在就绪前退出；该流程不再编译无关的 Swagger UI。
 
 ## [v0.12.0] - 2026-09-02
 

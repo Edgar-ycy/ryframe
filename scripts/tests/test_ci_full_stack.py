@@ -123,7 +123,7 @@ class FullStackCiTests(unittest.TestCase):
                     "ryframe",
                     "--no-default-features",
                     "--features",
-                    "bin-api,runtime-swagger-ui",
+                    "bin-api",
                     "--bin",
                     "ryframe",
                 ],
