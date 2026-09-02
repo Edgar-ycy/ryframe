@@ -613,6 +613,7 @@ class ResourceGateReplayTests(unittest.TestCase):
                     side_effect=[failed, failed, failed, failed, failed, pruned],
                 ) as run,
                 mock.patch.object(MODULE.time, "sleep"),
+                mock.patch.object(MODULE, "rmtree_path", side_effect=lambda path: path),
             ):
                 self.assertIsNone(
                     MODULE.cleanup_worktree(
@@ -658,6 +659,7 @@ class ResourceGateReplayTests(unittest.TestCase):
                 mock.patch.object(MODULE.os, "name", "nt"),
                 mock.patch.object(MODULE.shutil, "rmtree", side_effect=flaky_rmtree),
                 mock.patch.object(MODULE.time, "sleep") as sleep,
+                mock.patch.object(MODULE, "rmtree_path", side_effect=lambda path: path),
             ):
                 self.assertIsNone(
                     MODULE.remove_partial_worktree_directory(worktree, allowed)

@@ -1,0 +1,332 @@
+name: Extended CI
+
+on:
+  push:
+    tags: [ "v*.*.*" ]
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: "5"
+  DOCKER_BUILDKIT: "1"
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+
+jobs:
+  full-stack-e2e:
+    name: Real API MySQL Redis Chrome E2E
+    runs-on: ubuntu-latest
+    env:
+      APP_ENV: test
+      APP_SCOPE_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
+      APP_APP_HOST: 127.0.0.1
+      APP_APP_PORT: "8080"
+      APP_DATABASE_HOST: 127.0.0.1
+      APP_DATABASE_PORT: "3306"
+      APP_DATABASE_NAME: ryframe_e2e_${{ github.run_id }}_${{ github.run_attempt }}
+      APP_DATABASE_USERNAME: root
+      APP_DATABASE_PASSWORD: ryframe-ci-password
+      APP_DATABASE_TLS_MODE: disabled
+      APP_DATABASE_MIGRATION_MODE: verify
+      APP_REDIS_MODE: required
+      APP_REDIS_HOST: 127.0.0.1
+      APP_REDIS_PORT: "6379"
+      APP_REDIS_DATABASE: "14"
+      APP_REDIS_TLS: "false"
+      APP_RESET_CREDENTIAL_VERSION: ci-v1
+      APP_RESET_LEGACY_MYSQL_EXCLUSIVE: "true"
+      APP_RESET_LEGACY_REDIS_EXCLUSIVE: "true"
+      APP_RESET_LEGACY_OBJECT_STORAGE_EXCLUSIVE: "true"
+      APP_RESET_REDIS_OUTSIDE_SENTINEL_KEY: ryframe-ci-outside-sentinel
+      APP_OBJECT_STORAGE_BACKEND: local
+      APP_AUTH_JWT_SECRET: ryframe-ci-only-jwt-secret-with-more-than-thirty-two-bytes
+      APP_CORS_ALLOW_ORIGINS: http://127.0.0.1:4174
+      APP_JOBS_MODE: disabled
+      RYFRAME_CODE_SHA: ${{ github.sha }}
+      RYFRAME_RESET_SERVICES_STOPPED: "YES"
+      RYFRAME_RESET_ADMIN_PASSWORD: Valid!Admin123
+      RYFRAME_RESET_USER_PASSWORD: Valid!User123
+      RYFRAME_E2E_TENANT_ID: system
+      RYFRAME_E2E_USERNAME: admin
+      RYFRAME_E2E_PASSWORD: Valid!Admin123
+      VITE_APP_PROXY_TARGET: http://127.0.0.1:8080
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target/ci/full-stack/backend
+    services:
+      mysql:
+        image: mysql:8.4.11@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
+        env:
+          MYSQL_ROOT_PASSWORD: ryframe-ci-password
+          MYSQL_ROOT_HOST: "%"
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --host=127.0.0.1 --user=root --password=ryframe-ci-password --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+      redis:
+        image: redis:7.4.9@sha256:a8f08480e1f88f2647fed492d1178c06abb0d0c1fbf02c682a61e2f483fb3954
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=20
+    steps:
+      - name: 配置全栈临时目录
+        shell: bash
+        run: |
+          echo "APP_OBJECT_STORAGE_LOCAL_BASE_DIR=$RUNNER_TEMP/ryframe-full-stack/storage" >> "$GITHUB_ENV"
+          echo "RYFRAME_RESET_STATE_DIR=$RUNNER_TEMP/ryframe-full-stack/reset-state" >> "$GITHUB_ENV"
+
+      - name: 检出后端源码
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          path: backend
+
+      - name: 固定 CI Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: 安装固定并校验哈希的 CI Python 依赖
+        working-directory: backend
+        run: >-
+          python -m pip install
+          --disable-pip-version-check
+          --force-reinstall
+          --no-deps
+          --only-binary=:all:
+          --require-hashes
+          --requirement scripts/requirements-ci.txt
+
+      - name: 选择配套前端引用
+        id: frontend-ref
+        shell: bash
+        run: >-
+          python backend/scripts/select_frontend_commit.py
+          --event-name "$GITHUB_EVENT_NAME"
+          --event "$GITHUB_EVENT_PATH"
+          --backend-worktree backend
+          --release-ref "$GITHUB_REF"
+
+      - name: 检出配套前端
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: Edgar-ycy/ryframe-vue3
+          ref: ${{ steps.frontend-ref.outputs.ref }}
+          path: frontend
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+
+      - name: 安装固定版本 sccache
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
+        with:
+          tool: sccache@0.17.0
+          fallback: none
+
+      - name: 配置 sccache GitHub Actions 远端后端
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+        with:
+          script: |
+            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '')
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '')
+
+      - name: 缓存 Cargo 依赖
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: v3-rust-${{ runner.os }}-${{ runner.arch }}-full-stack-${{ hashFiles('backend/Cargo.lock', 'backend/Cargo.toml') }}
+          restore-keys: |
+            v3-rust-${{ runner.os }}-${{ runner.arch }}-full-stack-
+            v3-rust-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version-file: frontend/.node-version
+          package-manager-cache: false
+
+      - name: 安装 pnpm
+        uses: ./frontend/.github/actions/setup-pnpm
+        with:
+          working-directory: frontend
+
+      - name: 安装前端与 Chromium
+        working-directory: frontend
+        run: |
+          corepack pnpm install --frozen-lockfile
+          corepack pnpm exec playwright install --with-deps chromium
+
+      - name: 构建并安全初始化临时全栈环境
+        working-directory: backend
+        env:
+          RYFRAME_CI_REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
+        run: python scripts/ci_full_stack.py prepare
+
+      - name: 启动真实 API 并等待就绪
+        working-directory: backend
+        run: python scripts/ci_full_stack.py start
+
+      - name: 执行真实浏览器全栈流程
+        working-directory: frontend
+        run: corepack pnpm ci:browser-real
+
+      - name: 输出 sccache 统计
+        if: ${{ always() }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          stats_file="$RUNNER_TEMP/sccache-full-stack.json"
+          sccache --show-stats --stats-format=json > "$stats_file"
+          python backend/scripts/summarize_sccache_stats.py \
+            --stats "$stats_file" \
+            --label "Full Stack" \
+            --summary "$GITHUB_STEP_SUMMARY"
+          sccache --show-stats
+          sccache --stop-server
+
+      - name: 保存 sccache JSON 统计
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: sccache-full-stack-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/sccache-full-stack.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: 收集进程与基础设施日志
+        if: ${{ always() }}
+        working-directory: backend
+        env:
+          RYFRAME_CI_MYSQL_CONTAINER_ID: ${{ job.services.mysql.id }}
+          RYFRAME_CI_REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
+        run: python scripts/ci_full_stack.py collect
+
+      - name: 保存全栈诊断产物
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ryframe-full-stack-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/ryframe-full-stack
+            frontend/.local-tests/playwright-real/report
+            frontend/.local-tests/playwright-real/results
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: 安装固定版本 CycloneDX 工具
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
+        with:
+          tool: cargo-cyclonedx@0.5.9
+          fallback: none
+
+      - name: 生成并校验可复现 Cargo CycloneDX 清单
+        working-directory: backend
+        shell: bash
+        env:
+          SBOM_PATH: ${{ runner.temp }}/supply-chain/ryframe-backend.cdx.json
+        run: |
+          set -euo pipefail
+          mkdir --parents "$(dirname "$SBOM_PATH")"
+          SOURCE_DATE_EPOCH="$(git show --no-patch --format=%ct "$GITHUB_SHA")"
+          export SOURCE_DATE_EPOCH
+          cargo cyclonedx \
+            --manifest-path crates/ryframe/Cargo.toml \
+            --format json \
+            --spec-version 1.5 \
+            --target x86_64-unknown-linux-gnu \
+            --all \
+            --override-filename ryframe-backend.cdx.json
+          mv crates/ryframe/ryframe-backend.cdx.json "$SBOM_PATH"
+          python scripts/check_supply_chain.py \
+            --cyclonedx "$SBOM_PATH" \
+            --require-reproducible-cyclonedx
+
+      - name: 保存 Cargo CycloneDX 清单
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ryframe-cargo-cyclonedx-${{ github.sha }}
+          path: ${{ runner.temp }}/supply-chain/ryframe-backend.cdx.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 构建生产镜像
+        working-directory: backend
+        run: >-
+          docker build
+          --file deploy/Dockerfile
+          --build-arg "RYFRAME_BUILD_COMMIT=$GITHUB_SHA"
+          --tag "ryframe-ci:$GITHUB_SHA"
+          .
+
+      - name: 安装固定版本镜像扫描器
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
+        with:
+          tool: trivy@0.72.0
+          fallback: none
+
+      - name: 生成并校验生产镜像 CycloneDX 清单
+        id: image-sbom
+        working-directory: backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          output_dir="$RUNNER_TEMP/supply-chain"
+          mkdir --parents "$output_dir"
+          trivy image \
+            --cache-dir "$RUNNER_TEMP/trivy-cache" \
+            --timeout 30m \
+            --format cyclonedx \
+            --output "$output_dir/ryframe-image.cdx.json" \
+            "ryframe-ci:$GITHUB_SHA"
+          python scripts/check_supply_chain.py \
+            --cyclonedx "$output_dir/ryframe-image.cdx.json"
+
+      - name: 扫描生产镜像高危漏洞
+        id: image-scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          trivy image \
+            --cache-dir "$RUNNER_TEMP/trivy-cache" \
+            --timeout 30m \
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            --format json \
+            --output "$RUNNER_TEMP/supply-chain/trivy-report.json" \
+            "ryframe-ci:$GITHUB_SHA"
+
+      - name: 应用有期限的漏洞例外策略
+        working-directory: backend
+        run: >-
+          python scripts/check_supply_chain.py
+          --trivy-report "$RUNNER_TEMP/supply-chain/trivy-report.json"
+
+      - name: 保存镜像清单与漏洞报告
+        if: ${{ always() && (steps.image-sbom.outcome == 'success' || steps.image-scan.outcome == 'success') }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ryframe-image-security-${{ github.sha }}
+          path: ${{ runner.temp }}/supply-chain
+          if-no-files-found: error
+          retention-days: 30

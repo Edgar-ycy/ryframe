@@ -228,7 +228,7 @@ class TlsIntegrationPolicyTests(unittest.TestCase):
         workflow = (BACKEND_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertIn('"scripts/tls_integration_gate.py"', ci_source)
         integration = workflow.split("\n  integration:\n", 1)[1].split(
-            "\n  consumer-contract:\n", 1
+            "\n  windows-smoke:\n", 1
         )[0]
         self.assertIn("cargo xtask ci integration", integration)
         self.assertIn('RYFRAME_MYSQL_TLS_INTEGRATION: "1"', integration)

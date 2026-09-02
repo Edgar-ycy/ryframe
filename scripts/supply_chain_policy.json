@@ -47,7 +47,7 @@
         {
           "spdx": "Apache-2.0",
           "file": "LICENSE-APACHE",
-          "sha256": "4665f973ccb9393807a7fb1264add6b3513d19abc6b357e4cb52c6fe59cc6a3b",
+          "sha256": "6fd0f3522047150ca7c1939f02bc4a15662a4741a89bc03ae784eefa18caa299",
           "registry_source": {
             "package": "proc-macro-error2",
             "version": "2.0.1",
@@ -170,13 +170,13 @@
       "image": "redis:7.4.9@sha256:a8f08480e1f88f2647fed492d1178c06abb0d0c1fbf02c682a61e2f483fb3954"
     },
     {
-      "workflow": "ci.yml",
+      "workflow": "extended-ci.yml",
       "job": "full-stack-e2e",
       "service": "mysql",
       "image": "mysql:8.4.11@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb"
     },
     {
-      "workflow": "ci.yml",
+      "workflow": "extended-ci.yml",
       "job": "full-stack-e2e",
       "service": "redis",
       "image": "redis:7.4.9@sha256:a8f08480e1f88f2647fed492d1178c06abb0d0c1fbf02c682a61e2f483fb3954"

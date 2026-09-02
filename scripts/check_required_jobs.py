@@ -15,23 +15,17 @@ PLAN_OUTPUTS = (
     "consumer_contract",
 )
 PLAN_CONTROLLED_JOBS = {
-    "preflight": "preflight",
     "rust-gate": "rust_gate",
-    "resource-gate": "resource_gate",
     "integration": "integration",
-    "consumer-contract": "consumer_contract",
 }
-ALWAYS_AFTER_PLAN = ("security-audit", "deployment-assets")
 ALL_JOBS = (
     "plan",
     *PLAN_CONTROLLED_JOBS,
-    "full-stack-e2e",
+    "resource-gate",
     "windows-smoke",
-    "aws-lc-sccache-canary",
-    *ALWAYS_AFTER_PLAN,
-    "supply-chain",
+    "security-audit",
 )
-EVENTS = ("push", "pull_request", "schedule", "workflow_dispatch")
+EVENTS = ("push", "pull_request")
 RESULTS = ("success", "failure", "cancelled", "skipped")
 
 
@@ -40,7 +34,6 @@ def validate_required_jobs(
     action: str,
     results: Mapping[str, str],
     plan_outputs: Mapping[str, str],
-    git_ref: str = "",
 ) -> list[str]:
     errors: list[str] = []
     if event not in EVENTS:
@@ -70,10 +63,12 @@ def validate_required_jobs(
     edited = event == "pull_request" and action == "edited"
     for job, output in PLAN_CONTROLLED_JOBS.items():
         enabled = plan_outputs[output] == "true"
-        # 消费契约的精确前端提交选择只定义于 PR。
-        if job == "consumer-contract" and event != "pull_request":
-            enabled = False
         expected[job] = "success" if enabled else "skipped"
+    resource_enabled = (
+        plan_outputs["resource_gate"] == "true"
+        or plan_outputs["consumer_contract"] == "true"
+    )
+    expected["resource-gate"] = "success" if resource_enabled else "skipped"
     if edited:
         required_edited_plan = {
             "preflight": "false",
@@ -86,20 +81,7 @@ def validate_required_jobs(
             errors.append("pull_request.edited 必须只启用 consumer-contract")
     else:
         expected["security-audit"] = "success"
-        expected["deployment-assets"] = "success"
-        expected["windows-smoke"] = "skipped" if event == "schedule" else "success"
-        expected["aws-lc-sccache-canary"] = (
-            "success" if event in ("schedule", "workflow_dispatch") else "skipped"
-        )
-        expected["supply-chain"] = (
-            "success" if event in ("schedule", "workflow_dispatch") else "skipped"
-        )
-        expected["full-stack-e2e"] = (
-            "success"
-            if event in ("schedule", "workflow_dispatch")
-            or (event == "push" and git_ref.startswith("refs/tags/v"))
-            else "skipped"
-        )
+        expected["windows-smoke"] = "success"
 
     for name in ALL_JOBS:
         actual = results[name]
@@ -157,7 +139,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="校验 Required 汇总 job 的动态计划")
     parser.add_argument("--event", required=True)
     parser.add_argument("--action", default="")
-    parser.add_argument("--ref", default="")
     parser.add_argument("--needs-json", required=True)
     args = parser.parse_args()
     try:
@@ -170,7 +151,6 @@ def main() -> int:
         args.action,
         results,
         plan_outputs,
-        args.ref,
     )
     if errors:
         for error in errors:

@@ -399,6 +399,22 @@ class SupplyChainPolicyTests(unittest.TestCase):
                 [],
             )
 
+    def test_local_patch_license_hash_is_stable_across_line_endings(self) -> None:
+        with self.temporary_directory() as raw:
+            root = Path(raw)
+            configured, cargo_home, vendor, registry = self.write_local_patch_fixture(
+                root
+            )
+            for directory in (vendor, registry):
+                path = directory / "LICENSE-APACHE"
+                path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+            self.assertEqual(
+                MODULE.validate_local_patch_licenses(
+                    root, configured, cargo_home=cargo_home
+                ),
+                [],
+            )
+
     def test_local_patch_license_rejects_vendor_or_registry_drift(self) -> None:
         with self.temporary_directory() as raw:
             root = Path(raw)

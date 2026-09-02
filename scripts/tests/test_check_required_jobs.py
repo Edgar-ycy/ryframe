@@ -30,31 +30,21 @@ def successful_results(
     event: str,
     action: str,
     outputs: dict[str, str],
-    git_ref: str = "",
 ) -> dict[str, str]:
     results = {name: "skipped" for name in MODULE.ALL_JOBS}
     results["plan"] = "success"
     for job, output in MODULE.PLAN_CONTROLLED_JOBS.items():
         enabled = outputs[output] == "true"
-        if job == "consumer-contract" and event != "pull_request":
-            enabled = False
         results[job] = "success" if enabled else "skipped"
+    results["resource-gate"] = (
+        "success"
+        if outputs["resource_gate"] == "true"
+        or outputs["consumer_contract"] == "true"
+        else "skipped"
+    )
     if not (event == "pull_request" and action == "edited"):
         results["security-audit"] = "success"
-        results["deployment-assets"] = "success"
-        results["windows-smoke"] = "skipped" if event == "schedule" else "success"
-        results["aws-lc-sccache-canary"] = (
-            "success" if event in ("schedule", "workflow_dispatch") else "skipped"
-        )
-        results["supply-chain"] = (
-            "success" if event in ("schedule", "workflow_dispatch") else "skipped"
-        )
-        results["full-stack-e2e"] = (
-            "success"
-            if event in ("schedule", "workflow_dispatch")
-            or (event == "push" and git_ref.startswith("refs/tags/v"))
-            else "skipped"
-        )
+        results["windows-smoke"] = "success"
     return results
 
 
@@ -62,8 +52,6 @@ class RequiredJobsTests(unittest.TestCase):
     def test_accepts_dynamic_event_plans(self) -> None:
         cases = (
             ("push", "", plan_outputs()),
-            ("schedule", "", plan_outputs()),
-            ("workflow_dispatch", "", plan_outputs()),
             (
                 "pull_request",
                 "synchronize",
@@ -98,11 +86,9 @@ class RequiredJobsTests(unittest.TestCase):
         outputs = plan_outputs(consumer_contract="true")
         for job in (
             "plan",
-            "preflight",
             "rust-gate",
             "resource-gate",
             "integration",
-            "consumer-contract",
         ):
             for result in ("skipped", "failure", "cancelled"):
                 results = successful_results("pull_request", "synchronize", outputs)
@@ -113,38 +99,6 @@ class RequiredJobsTests(unittest.TestCase):
                             "pull_request", "synchronize", results, outputs
                         )
                     )
-
-    def test_full_stack_runs_only_for_scheduled_manual_or_release_tag(self) -> None:
-        outputs = plan_outputs()
-        for event, git_ref, expected in (
-            ("schedule", "refs/heads/main", "success"),
-            ("workflow_dispatch", "refs/heads/main", "success"),
-            ("push", "refs/tags/v1.2.3", "success"),
-            ("push", "refs/heads/main", "skipped"),
-            ("pull_request", "refs/pull/1/merge", "skipped"),
-        ):
-            with self.subTest(event=event, git_ref=git_ref):
-                results = successful_results(event, "", outputs, git_ref)
-                self.assertEqual(results["full-stack-e2e"], expected)
-                self.assertEqual(
-                    MODULE.validate_required_jobs(event, "", results, outputs, git_ref),
-                    [],
-                )
-
-    def test_aws_lc_canary_runs_only_for_scheduled_or_manual_events(self) -> None:
-        outputs = plan_outputs()
-        for event, expected in (
-            ("schedule", "success"),
-            ("workflow_dispatch", "success"),
-            ("push", "skipped"),
-            ("pull_request", "skipped"),
-        ):
-            with self.subTest(event=event):
-                results = successful_results(event, "", outputs)
-                self.assertEqual(results["aws-lc-sccache-canary"], expected)
-                self.assertEqual(
-                    MODULE.validate_required_jobs(event, "", results, outputs), []
-                )
 
     def test_skipped_plan_job_must_match_the_output(self) -> None:
         for output, job in (
@@ -214,18 +168,22 @@ class RequiredJobsTests(unittest.TestCase):
 
     def test_workflow_uses_plan_outputs_and_checked_required_script(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        plan = workflow.split("\n  plan:\n", 1)[1].split("\n  preflight:\n", 1)[0]
+        plan = workflow.split("\n  plan:\n", 1)[1].split("\n  rust-gate:\n", 1)[0]
         self.assertIn("cargo xtask ci plan", plan)
         for output in MODULE.PLAN_OUTPUTS:
             self.assertIn(f"{output}: ${{{{ steps.plan.outputs.{output} }}}}", plan)
         for job, output in MODULE.PLAN_CONTROLLED_JOBS.items():
             block = workflow.split(f"\n  {job}:\n", 1)[1].split("\n  #", 1)[0]
             self.assertIn(f"needs.plan.outputs.{output} == 'true'", block)
+        resource = workflow.split("\n  resource-gate:\n", 1)[1].split("\n  #", 1)[0]
+        self.assertIn("needs.plan.outputs.resource_gate == 'true'", resource)
+        self.assertIn("needs.plan.outputs.consumer_contract == 'true'", resource)
         required = workflow.split("  required:", 1)[1]
         self.assertIn("python scripts/check_required_jobs.py", required)
         self.assertIn("${{ toJSON(needs) }}", required)
         self.assertIn('--action "$EVENT_ACTION"', required)
-        self.assertIn('--ref "$GIT_REF"', required)
+        self.assertNotIn("GIT_REF", required)
+        self.assertNotIn("--ref", required)
         self.assertNotIn("needs.plan.result", required)
 
     def test_resource_gate_owns_its_git_range_and_frontend_checkout(self) -> None:
@@ -247,7 +205,9 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertIn("--fallback-main-on-invalid-base", block)
         self.assertIn("path: frontend", block)
         self.assertIn(
-            "ref: ${{ steps.resource-frontend-ref.outputs.ref }}", block
+            "steps.contract-frontend-ref.outputs.ref || "
+            "steps.resource-frontend-ref.outputs.ref",
+            block,
         )
         self.assertIn("node-version-file: frontend/.node-version", block)
         self.assertIn("uses: ./frontend/.github/actions/setup-pnpm", block)
@@ -263,8 +223,8 @@ class RequiredJobsTests(unittest.TestCase):
             block,
         )
         self.assertIn(
-            "RYFRAME_CI_FRONTEND_REF: "
-            "${{ steps.resource-frontend-ref.outputs.ref }}",
+            "RYFRAME_CI_FRONTEND_REF: ${{ steps.contract-frontend-ref.outputs.ref || "
+            "steps.resource-frontend-ref.outputs.ref }}",
             block,
         )
         self.assertIn("working-directory: backend", block)
@@ -280,49 +240,44 @@ class RequiredJobsTests(unittest.TestCase):
         required = workflow.split("\n  required:\n", 1)[1]
         self.assertIn("- resource-gate", required)
 
-    def test_pull_request_edit_skips_every_job_except_plan_contract_required(self) -> None:
+    def test_pull_request_edit_reuses_resource_job_for_contract(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        for job in ("windows-smoke", "security-audit", "supply-chain", "deployment-assets"):
+        for job in ("windows-smoke", "security-audit"):
             block = workflow.split(f"\n  {job}:\n", 1)[1].split("\n  #", 1)[0]
             self.assertIn("github.event.action != 'edited'", block)
-        consumer = workflow.split("  consumer-contract:", 1)[1].split(
-            "  windows-smoke:", 1
-        )[0]
-        self.assertIn("github.event_name == 'pull_request'", consumer)
+        resource = workflow.split("  resource-gate:", 1)[1].split("  integration:", 1)[0]
+        self.assertIn("needs.plan.outputs.consumer_contract == 'true'", resource)
+        self.assertIn("cargo xtask ci consumer-contract", resource)
 
     def test_sccache_uses_fixed_remote_backend_without_directory_cache(self) -> None:
-        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        self.assertEqual(workflow.count("tool: sccache@0.17.0"), 7)
-        self.assertEqual(workflow.count('SCCACHE_GHA_ENABLED: "true"'), 7)
-        self.assertEqual(workflow.count('CARGO_INCREMENTAL: "0"'), 1)
-        self.assertIn('env:\n  CARGO_INCREMENTAL: "0"', workflow)
+        daily = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        extended = (ROOT / ".github/workflows/extended-ci.yml").read_text(
+            encoding="utf-8"
+        )
+        workflow = daily + extended
+        self.assertEqual(daily.count('CARGO_INCREMENTAL: "0"'), 1)
+        self.assertEqual(extended.count('CARGO_INCREMENTAL: "0"'), 1)
         self.assertNotIn("RUSTFLAGS:", workflow)
-        self.assertEqual(workflow.count("SCCACHE_BASEDIRS:"), 1)
         self.assertNotIn("SCCACHE_DIR:", workflow)
         self.assertNotIn("SCCACHE_CACHE_SIZE:", workflow)
         self.assertNotIn("v2-sccache-", workflow)
-        self.assertEqual(workflow.count("--show-stats --stats-format=json"), 9)
-        self.assertEqual(workflow.count("summarize_sccache_stats.py"), 6)
-        self.assertEqual(workflow.count('--summary "$GITHUB_STEP_SUMMARY"'), 5)
-        self.assertIn("--summary $env:GITHUB_STEP_SUMMARY", workflow)
+        for job in ("rust-gate", "resource-gate", "integration", "windows-smoke"):
+            block = daily.split(f"\n  {job}:\n", 1)[1].split("\n  #", 1)[0]
+            self.assertIn("tool: sccache@0.17.0", block, job)
+            self.assertIn('SCCACHE_GHA_ENABLED: "true"', block, job)
+        self.assertIn("tool: sccache@0.17.0", extended)
         self.assertNotIn('cat "$stats_file"', workflow)
-        self.assertEqual(workflow.count("name: sccache-"), 7)
-        self.assertEqual(
-            workflow.count(
-                "actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3"
-            ),
-            7,
-        )
 
     def test_linux_rust_policy_jobs_use_the_fixed_backend_checkout(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        for job in ("plan", "preflight", "security-audit", "supply-chain"):
+        for job in ("plan", "security-audit"):
             block = workflow.split(f"\n  {job}:\n", 1)[1].split("\n  #", 1)[0]
             self.assertIn("path: backend", block, job)
             self.assertIn("defaults:\n      run:\n        working-directory: backend", block, job)
-        preflight = workflow.split("\n  preflight:\n", 1)[1].split("\n  #", 1)[0]
+        preflight = workflow.split("\n  plan:\n", 1)[1].split("\n  #", 1)[0]
         self.assertIn(
             "args: backend/.github/workflows/ci.yml "
+            "backend/.github/workflows/extended-ci.yml "
             "backend/.github/workflows/release.yml",
             preflight,
         )
@@ -331,53 +286,22 @@ class RequiredJobsTests(unittest.TestCase):
         )[0]
         self.assertIn("--verify-cargo-graph", security)
 
-    def test_aws_lc_sccache_canary_is_cross_checkout_and_strict(self) -> None:
-        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        block = workflow.split("\n  aws-lc-sccache-canary:\n", 1)[1].split(
-            "\n  #", 1
-        )[0]
-        self.assertIn("github.event_name == 'schedule'", block)
-        self.assertIn("github.event_name == 'workflow_dispatch'", block)
-        self.assertEqual(block.count("ref: ${{ github.sha }}"), 2)
-        self.assertIn("canary/source-a", block)
-        self.assertIn("canary/source-b", block)
-        self.assertIn("SCCACHE_BASEDIRS:", block)
-        self.assertIn('AWS_LC_SYS_CMAKE_BUILDER: "1"', block)
-        self.assertIn("CMAKE_GENERATOR: Ninja", block)
-        self.assertIn("CMAKE_C_COMPILER_LAUNCHER: sccache", block)
-        self.assertIn("CMAKE_CXX_COMPILER_LAUNCHER: sccache", block)
-        self.assertIn('RUSTC_WRAPPER: ""', block)
-        self.assertIn("cargo fetch --locked", block)
-        self.assertIn("cargo build --locked -p ryframe-auth --lib", block)
-        self.assertEqual(block.count("cargo build --locked -p ryframe-auth --lib"), 2)
-        for artifact in (
-            "before.json",
-            "prime.json",
-            "warm.json",
-            "timings.json",
-            "prime-cmake-cache.txt",
-            "warm-cmake-cache.txt",
-        ):
-            self.assertIn(artifact, block)
-        self.assertIn("AWS-LC 只启用 C", block)
-        self.assertIn("实际原生 C/C++ 请求", block)
-        self.assertEqual(block.count("CMAKE_C_COMPILER_LAUNCHER(:[^=]*)?=sccache"), 2)
-        self.assertIn("scripts/evaluate_sccache_canary.py", block)
-        self.assertIn("--min-hit-rate 0.80", block)
-        self.assertIn("--min-speedup 0.05", block)
-        self.assertIn("--min-non-cacheable-reduction 0.50", block)
-        self.assertIn("if: ${{ always() }}", block)
-        required = workflow.split("\n  required:\n", 1)[1]
-        self.assertIn("- aws-lc-sccache-canary", required)
+    def test_completed_aws_lc_canary_is_not_a_recurring_ci_job(self) -> None:
+        workflows = "".join(
+            path.read_text(encoding="utf-8")
+            for path in (ROOT / ".github/workflows").glob("*.yml")
+        )
+        self.assertNotIn("aws-lc-sccache-canary:", workflows)
+        self.assertTrue((ROOT / "scripts/evaluate_sccache_canary.py").is_file())
 
     def test_full_stack_uses_isolated_reset_and_always_uploads_diagnostics(self) -> None:
-        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        block = workflow.split("\n  full-stack-e2e:\n", 1)[1].split(
-            "\n  security-audit:\n", 1
-        )[0]
-        self.assertIn("github.event_name == 'schedule'", block)
-        self.assertIn("github.event_name == 'workflow_dispatch'", block)
-        self.assertIn("startsWith(github.ref, 'refs/tags/v')", block)
+        workflow = (ROOT / ".github/workflows/extended-ci.yml").read_text(
+            encoding="utf-8"
+        )
+        block = workflow.split("\n  full-stack-e2e:\n", 1)[1]
+        self.assertIn("schedule:", workflow)
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn('tags: [ "v*.*.*" ]', workflow)
         self.assertIn("APP_ENV: test", block)
         self.assertIn('APP_RESET_LEGACY_MYSQL_EXCLUSIVE: "true"', block)
         self.assertIn(
@@ -403,7 +327,7 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertIn("name: sccache-full-stack-", block)
         self.assertIn("frontend/.local-tests/playwright-real/report", block)
         self.assertIn("frontend/.local-tests/playwright-real/results", block)
-        self.assertEqual(block.count("if-no-files-found: error"), 1)
+        self.assertGreaterEqual(block.count("if-no-files-found: error"), 1)
         self.assertEqual(block.count("if-no-files-found: warn"), 1)
 
     def test_rust_gate_and_integration_use_internal_commands(self) -> None:
@@ -415,7 +339,7 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertIn("corepack pnpm install --frozen-lockfile", rust_gate)
         self.assertIn("cargo xtask ci rust-gate --frontend-dir ../frontend", rust_gate)
         integration = workflow.split("\n  integration:\n", 1)[1].split(
-            "\n  consumer-contract:\n", 1
+            "\n  windows-smoke:\n", 1
         )[0]
         self.assertIn("cargo xtask ci integration", integration)
         self.assertIn('RYFRAME_MYSQL_TLS_INTEGRATION: "1"', integration)
@@ -442,10 +366,10 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertNotIn("cargo check --locked -p ryframe", windows)
         self.assertNotIn("--test process_windows", windows)
 
-    def test_consumer_job_keeps_formal_source_check_and_uses_xtask(self) -> None:
+    def test_resource_job_keeps_formal_consumer_check_and_uses_xtask(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        consumer = workflow.split("  consumer-contract:", 1)[1].split(
-            "  windows-smoke:", 1
+        consumer = workflow.split("  resource-gate:", 1)[1].split(
+            "  integration:", 1
         )[0]
         self.assertIn("scripts/select_frontend_commit.py", consumer)
         self.assertIn("--candidate-openapi", consumer)
@@ -458,14 +382,17 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertNotIn("cmp --silent", consumer)
 
     def test_ci_yaml_parser_is_reinstalled_from_hashed_requirement(self) -> None:
-        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        self.assertEqual(workflow.count("--requirement scripts/requirements-ci.txt"), 4)
-        self.assertEqual(workflow.count("--force-reinstall"), 4)
-        self.assertEqual(workflow.count("--require-hashes"), 4)
+        workflow = "".join(
+            (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
+            for name in ("ci.yml", "extended-ci.yml")
+        )
+        self.assertEqual(workflow.count("--requirement scripts/requirements-ci.txt"), 3)
+        self.assertEqual(workflow.count("--force-reinstall"), 3)
+        self.assertEqual(workflow.count("--require-hashes"), 3)
 
     def test_preflight_passes_the_fetched_trusted_base_to_xtask(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        preflight = workflow.split("\n  preflight:\n", 1)[1].split(
+        preflight = workflow.split("\n  plan:\n", 1)[1].split(
             "\n  rust-gate:\n", 1
         )[0]
         self.assertIn("fetch-depth: 0", preflight)

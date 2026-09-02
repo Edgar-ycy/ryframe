@@ -3,13 +3,9 @@ name: CI
 on:
   push:
     branches: [ main ]
-    tags: [ "v*.*.*" ]
   pull_request:
     branches: [ main ]
     types: [ opened, synchronize, reopened, edited ]
-  schedule:
-    - cron: "17 3 * * 1"
-  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -29,10 +25,10 @@ env:
 
 jobs:
   # ============================================================
-  # 变更计划：YAML 只消费 xtask 的选择结果
+  # 变更计划与快速预检：复用同一 checkout、Rust 工具链和 xtask 编译结果
   # ============================================================
   plan:
-    name: CI Plan
+    name: Plan & Preflight
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -60,29 +56,14 @@ jobs:
           RYFRAME_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: cargo xtask ci plan
 
-  # ============================================================
-  # 快速策略与格式门禁
-  # ============================================================
-  preflight:
-    name: Preflight
-    needs: plan
-    if: ${{ needs.plan.result == 'success' && needs.plan.outputs.preflight == 'true' }}
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          fetch-depth: 0
-          path: backend
-
       - name: 固定 CI Python 3.12
+        if: ${{ steps.plan.outputs.preflight == 'true' }}
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.12"
 
       - name: 安装固定并校验哈希的 CI Python 依赖
+        if: ${{ steps.plan.outputs.preflight == 'true' }}
         run: >-
           python -m pip install
           --disable-pip-version-check
@@ -93,16 +74,19 @@ jobs:
           --requirement scripts/requirements-ci.txt
 
       - name: 安装 Rust 格式化工具链
+        if: ${{ steps.plan.outputs.preflight == 'true' }}
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with:
           components: rustfmt
 
       - name: 校验 GitHub Actions 工作流
+        if: ${{ steps.plan.outputs.preflight == 'true' }}
         uses: docker://rhysd/actionlint@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9
         with:
-          args: backend/.github/workflows/ci.yml backend/.github/workflows/release.yml
+          args: backend/.github/workflows/ci.yml backend/.github/workflows/extended-ci.yml backend/.github/workflows/release.yml
 
       - name: 执行仓库快速预检
+        if: ${{ steps.plan.outputs.preflight == 'true' }}
         env:
           RYFRAME_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: cargo xtask ci preflight
@@ -222,12 +206,15 @@ jobs:
           retention-days: 14
 
   # ============================================================
-  # 标准资源变更与安全回退门禁
+  # 标准资源与前端消费者契约：复用前端 checkout、pnpm 和 Rust 缓存
   # ============================================================
   resource-gate:
-    name: Resource Gate
+    name: Resource & Contract Gate
     needs: plan
-    if: ${{ needs.plan.result == 'success' && needs.plan.outputs.resource_gate == 'true' }}
+    if: >-
+      ${{ needs.plan.result == 'success' &&
+          (needs.plan.outputs.resource_gate == 'true' ||
+           needs.plan.outputs.consumer_contract == 'true') }}
     runs-on: ubuntu-latest
     env:
       RUSTC_WRAPPER: sccache
@@ -305,6 +292,7 @@ jobs:
 
       - name: 选择匹配的前端提交
         id: resource-frontend-ref
+        if: ${{ needs.plan.outputs.consumer_contract != 'true' }}
         working-directory: backend
         shell: bash
         env:
@@ -320,11 +308,26 @@ jobs:
           --fallback-main-on-invalid-base
           --release-ref "$GITHUB_REF"
 
+      - name: 生成候选契约并选择精确前端提交
+        id: contract-frontend-ref
+        if: ${{ needs.plan.outputs.consumer_contract == 'true' }}
+        working-directory: backend
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: >-
+          python scripts/select_frontend_commit.py
+          --event-name pull_request
+          --event "$GITHUB_EVENT_PATH"
+          --backend-worktree .
+          --base-sha "$BASE_SHA"
+          --candidate-openapi "$RUNNER_TEMP/candidate-openapi.json"
+
       - name: 检出前端资源 Workspace
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           repository: Edgar-ycy/ryframe-vue3
-          ref: ${{ steps.resource-frontend-ref.outputs.ref }}
+          ref: ${{ steps.contract-frontend-ref.outputs.ref || steps.resource-frontend-ref.outputs.ref }}
           path: frontend
 
       - name: 安装 Node.js
@@ -343,13 +346,24 @@ jobs:
         run: corepack pnpm install --frozen-lockfile
 
       - name: 执行资源影响闭包与消费者门禁
+        if: ${{ needs.plan.outputs.resource_gate == 'true' }}
         working-directory: backend
         env:
           RYFRAME_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           RYFRAME_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          RYFRAME_CI_FRONTEND_REF: ${{ steps.resource-frontend-ref.outputs.ref }}
+          RYFRAME_CI_FRONTEND_REF: ${{ steps.contract-frontend-ref.outputs.ref || steps.resource-frontend-ref.outputs.ref }}
           RYFRAME_RESOURCE_GATE_TARGETED: replay-verified-v1
         run: cargo xtask ci resource-gate --frontend-dir ../frontend
+
+      - name: 校验正式前端消费契约
+        if: ${{ needs.plan.outputs.consumer_contract == 'true' }}
+        working-directory: backend
+        env:
+          RYFRAME_CI_BACKEND_HEAD: ${{ github.event.pull_request.head.sha }}
+          RYFRAME_CI_BACKEND_REPOSITORY: Edgar-ycy/ryframe
+          RYFRAME_CI_CANDIDATE_OPENAPI: ${{ runner.temp }}/candidate-openapi.json
+          RYFRAME_CI_FRONTEND_REF: ${{ steps.contract-frontend-ref.outputs.ref }}
+        run: cargo xtask ci consumer-contract --frontend-dir ../frontend
 
       - name: 输出 sccache 远端命中统计
         if: ${{ always() }}
@@ -360,7 +374,7 @@ jobs:
           sccache --show-stats --stats-format=json > "$stats_file"
           python backend/scripts/summarize_sccache_stats.py \
             --stats "$stats_file" \
-            --label "Resource Gate" \
+            --label "Resource & Contract Gate" \
             --summary "$GITHUB_STEP_SUMMARY"
           sccache --show-stats
           sccache --stop-server
@@ -497,112 +511,6 @@ jobs:
           retention-days: 14
 
   # ============================================================
-  # 同步前端消费契约
-  # ============================================================
-  consumer-contract:
-    name: Frontend Consumer Contract
-    needs: plan
-    if: >-
-      ${{ needs.plan.result == 'success' &&
-          github.event_name == 'pull_request' &&
-          needs.plan.outputs.consumer_contract == 'true' }}
-    runs-on: ubuntu-latest
-    env:
-      RUSTC_WRAPPER: sccache
-      SCCACHE_GHA_ENABLED: "true"
-    steps:
-      - name: 检出后端 PR 提交
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          fetch-depth: 0
-          path: backend
-          ref: ${{ github.event.pull_request.head.sha }}
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
-
-      - name: 安装固定版本 sccache
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
-        with:
-          tool: sccache@0.17.0
-          fallback: none
-
-      - name: 配置 sccache GitHub Actions 远端后端
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
-        with:
-          script: |
-            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '')
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '')
-
-      - name: 生成候选契约并选择精确前端提交
-        id: frontend-ref
-        working-directory: backend
-        shell: bash
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: >-
-          python scripts/select_frontend_commit.py
-          --event-name pull_request
-          --event "$GITHUB_EVENT_PATH"
-          --backend-worktree .
-          --base-sha "$BASE_SHA"
-          --candidate-openapi "$RUNNER_TEMP/candidate-openapi.json"
-
-      - name: 检出前端消费者
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          repository: Edgar-ycy/ryframe-vue3
-          ref: ${{ steps.frontend-ref.outputs.ref }}
-          path: frontend
-
-      - name: Setup default Node.js
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
-        with:
-          node-version-file: frontend/.node-version
-          package-manager-cache: false
-
-      - name: Install pnpm
-        uses: ./frontend/.github/actions/setup-pnpm
-        with:
-          working-directory: frontend
-
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: corepack pnpm install --frozen-lockfile
-
-      - name: 通过内部命令校验正式消费契约
-        working-directory: backend
-        env:
-          RYFRAME_CI_BACKEND_HEAD: ${{ github.event.pull_request.head.sha }}
-          RYFRAME_CI_BACKEND_REPOSITORY: Edgar-ycy/ryframe
-          RYFRAME_CI_CANDIDATE_OPENAPI: ${{ runner.temp }}/candidate-openapi.json
-          RYFRAME_CI_FRONTEND_REF: ${{ steps.frontend-ref.outputs.ref }}
-        run: cargo xtask ci consumer-contract --frontend-dir ../frontend
-
-      - name: 输出 sccache 统计
-        if: ${{ always() }}
-        continue-on-error: true
-        shell: bash
-        run: |
-          stats_file="$RUNNER_TEMP/sccache-consumer-contract.json"
-          sccache --show-stats --stats-format=json > "$stats_file"
-          python backend/scripts/summarize_sccache_stats.py \
-            --stats "$stats_file" \
-            --label "Consumer Contract" \
-            --summary "$GITHUB_STEP_SUMMARY"
-          sccache --show-stats
-          sccache --stop-server
-
-      - name: 保存 sccache JSON 统计
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sccache-consumer-contract-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/sccache-consumer-contract.json
-          if-no-files-found: warn
-          retention-days: 14
-
-  # ============================================================
   # Windows 静态冒烟
   # ============================================================
   windows-smoke:
@@ -610,8 +518,7 @@ jobs:
     needs: plan
     if: >-
       ${{ needs.plan.result == 'success' &&
-          github.event.action != 'edited' &&
-          github.event_name != 'schedule' }}
+          github.event.action != 'edited' }}
     runs-on: windows-latest
     env:
       RUSTC_WRAPPER: sccache
@@ -711,392 +618,22 @@ jobs:
           retention-days: 14
 
   # ============================================================
-  # AWS-LC C/C++ 跨绝对路径缓存 canary
-  # ============================================================
-  aws-lc-sccache-canary:
-    name: AWS-LC C/C++ sccache Canary
-    if: >-
-      ${{ github.event_name == 'schedule' ||
-          github.event_name == 'workflow_dispatch' }}
-    runs-on: ubuntu-latest
-    env:
-      RUSTC_WRAPPER: ""
-      AWS_LC_SYS_CMAKE_BUILDER: "1"
-      CMAKE_GENERATOR: Ninja
-      SCCACHE_GHA_ENABLED: "true"
-      SCCACHE_GHA_VERSION: aws-lc-native-${{ github.run_id }}-${{ github.run_attempt }}
-      SCCACHE_BASEDIRS: ${{ github.workspace }}/canary/source-a:${{ github.workspace }}/canary/source-b
-      CMAKE_C_COMPILER_LAUNCHER: sccache
-      CMAKE_CXX_COMPILER_LAUNCHER: sccache
-    steps:
-      - name: 检出第一份精确源码
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          fetch-depth: 1
-          path: canary/source-a
-          ref: ${{ github.sha }}
-
-      - name: 检出第二份精确源码
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          fetch-depth: 1
-          path: canary/source-b
-          ref: ${{ github.sha }}
-
-      - name: 校验双路径指向同一提交
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$(git -C canary/source-a rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git -C canary/source-b rev-parse HEAD)" = "$GITHUB_SHA"
-          mkdir -p "$RUNNER_TEMP/aws-lc-sccache-canary"
-
-      - name: 安装 Rust 工具链
-        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
-
-      - name: 安装固定版本 sccache
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
-        with:
-          tool: sccache@0.17.0
-          fallback: none
-
-      - name: 配置 sccache GitHub Actions 远端后端
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
-        with:
-          script: |
-            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '')
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '')
-
-      - name: 缓存 Cargo 依赖
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-          key: v3-rust-${{ runner.os }}-${{ runner.arch }}-aws-lc-canary-${{ hashFiles('canary/source-a/Cargo.lock', 'canary/source-a/Cargo.toml') }}
-          restore-keys: |
-            v3-rust-${{ runner.os }}-${{ runner.arch }}-aws-lc-canary-
-            v3-rust-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: 预取锁定依赖
-        working-directory: canary/source-a
-        run: cargo fetch --locked
-
-      - name: 初始化 C/C++ 缓存统计
-        shell: bash
-        run: |
-          set -euo pipefail
-          sccache --stop-server || true
-          sccache --start-server
-          sccache --zero-stats
-          sccache --show-stats --stats-format=json \
-            > "$RUNNER_TEMP/aws-lc-sccache-canary/before.json"
-
-      - name: Prime 第一绝对路径的 AWS-LC 编译
-        working-directory: canary/source-a
-        shell: bash
-        run: |
-          set -euo pipefail
-          target_dir="$GITHUB_WORKSPACE/canary/source-a/target/aws-lc-canary"
-          started_ns=$(date +%s%N)
-          CARGO_TARGET_DIR="$target_dir" \
-            cargo build --locked -p ryframe-auth --lib
-          ended_ns=$(date +%s%N)
-          cmake_cache=$(find "$target_dir" -type f \
-            -path '*/build/aws-lc-sys-*/out/build/CMakeCache.txt' \
-            -print -quit)
-          test -n "$cmake_cache"
-          # 此依赖面关闭 BUILD_LIBSSL/BUILD_TESTING，AWS-LC 只启用 C；
-          # sccache 将实际原生 C/C++ 请求统一记录为 C/C++ 分类。
-          grep -Eq '^CMAKE_C_COMPILER_LAUNCHER(:[^=]*)?=sccache$' "$cmake_cache"
-          cp "$cmake_cache" \
-            "$RUNNER_TEMP/aws-lc-sccache-canary/prime-cmake-cache.txt"
-          echo $(( (ended_ns - started_ns) / 1000000 )) \
-            > "$RUNNER_TEMP/aws-lc-sccache-canary/cold-ms.txt"
-          sccache --show-stats --stats-format=json \
-            > "$RUNNER_TEMP/aws-lc-sccache-canary/prime.json"
-
-      - name: Warm 第二绝对路径的 AWS-LC 编译
-        working-directory: canary/source-b
-        shell: bash
-        run: |
-          set -euo pipefail
-          target_dir="$GITHUB_WORKSPACE/canary/source-b/target/aws-lc-canary"
-          started_ns=$(date +%s%N)
-          CARGO_TARGET_DIR="$target_dir" \
-            cargo build --locked -p ryframe-auth --lib
-          ended_ns=$(date +%s%N)
-          cmake_cache=$(find "$target_dir" -type f \
-            -path '*/build/aws-lc-sys-*/out/build/CMakeCache.txt' \
-            -print -quit)
-          test -n "$cmake_cache"
-          # CXX launcher 仍预配置供依赖面扩展后使用，当前可执行证据只校验 C。
-          grep -Eq '^CMAKE_C_COMPILER_LAUNCHER(:[^=]*)?=sccache$' "$cmake_cache"
-          cp "$cmake_cache" \
-            "$RUNNER_TEMP/aws-lc-sccache-canary/warm-cmake-cache.txt"
-          warm_ms=$(( (ended_ns - started_ns) / 1000000 ))
-          cold_ms=$(<"$RUNNER_TEMP/aws-lc-sccache-canary/cold-ms.txt")
-          printf '{"cold_ms":%s,"warm_ms":%s}\n' "$cold_ms" "$warm_ms" \
-            > "$RUNNER_TEMP/aws-lc-sccache-canary/timings.json"
-          sccache --show-stats --stats-format=json \
-            > "$RUNNER_TEMP/aws-lc-sccache-canary/warm.json"
-
-      - name: 评估 AWS-LC C/C++ 缓存收益
-        working-directory: canary/source-a
-        shell: bash
-        run: |
-          set -euo pipefail
-          output_dir="$RUNNER_TEMP/aws-lc-sccache-canary"
-          set +e
-          python scripts/evaluate_sccache_canary.py \
-            --before "$output_dir/before.json" \
-            --prime "$output_dir/prime.json" \
-            --warm "$output_dir/warm.json" \
-            --timings "$output_dir/timings.json" \
-            --expected-basedir "$GITHUB_WORKSPACE/canary/source-a" \
-            --expected-basedir "$GITHUB_WORKSPACE/canary/source-b" \
-            --min-hit-rate 0.80 \
-            --min-speedup 0.05 \
-            --min-non-cacheable-reduction 0.50 \
-            --report "$output_dir/report.json" \
-            --summary "$output_dir/summary.md"
-          status=$?
-          set -e
-          cat "$output_dir/summary.md" >> "$GITHUB_STEP_SUMMARY"
-          exit "$status"
-
-      - name: 停止 sccache 服务
-        if: ${{ always() }}
-        continue-on-error: true
-        run: sccache --stop-server
-
-      - name: 保存 AWS-LC sccache canary 产物
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sccache-aws-lc-canary-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/aws-lc-sccache-canary
-          if-no-files-found: warn
-          retention-days: 30
-
-  # ============================================================
-  # 定时、手动与发布标签真实全栈门禁
-  # ============================================================
-  full-stack-e2e:
-    name: Real API MySQL Redis Chrome E2E
-    needs: plan
-    if: >-
-      ${{ needs.plan.result == 'success' &&
-          (github.event_name == 'schedule' ||
-           github.event_name == 'workflow_dispatch' ||
-           startsWith(github.ref, 'refs/tags/v')) }}
-    runs-on: ubuntu-latest
-    env:
-      APP_ENV: test
-      APP_SCOPE_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
-      APP_APP_HOST: 127.0.0.1
-      APP_APP_PORT: "8080"
-      APP_DATABASE_HOST: 127.0.0.1
-      APP_DATABASE_PORT: "3306"
-      APP_DATABASE_NAME: ryframe_e2e_${{ github.run_id }}_${{ github.run_attempt }}
-      APP_DATABASE_USERNAME: root
-      APP_DATABASE_PASSWORD: ryframe-ci-password
-      APP_DATABASE_TLS_MODE: disabled
-      APP_DATABASE_MIGRATION_MODE: verify
-      APP_REDIS_MODE: required
-      APP_REDIS_HOST: 127.0.0.1
-      APP_REDIS_PORT: "6379"
-      APP_REDIS_DATABASE: "14"
-      APP_REDIS_TLS: "false"
-      APP_RESET_CREDENTIAL_VERSION: ci-v1
-      APP_RESET_LEGACY_MYSQL_EXCLUSIVE: "true"
-      APP_RESET_LEGACY_REDIS_EXCLUSIVE: "true"
-      APP_RESET_LEGACY_OBJECT_STORAGE_EXCLUSIVE: "true"
-      APP_RESET_REDIS_OUTSIDE_SENTINEL_KEY: ryframe-ci-outside-sentinel
-      APP_OBJECT_STORAGE_BACKEND: local
-      APP_AUTH_JWT_SECRET: ryframe-ci-only-jwt-secret-with-more-than-thirty-two-bytes
-      APP_CORS_ALLOW_ORIGINS: http://127.0.0.1:4174
-      APP_JOBS_MODE: disabled
-      RYFRAME_CODE_SHA: ${{ github.sha }}
-      RYFRAME_RESET_SERVICES_STOPPED: "YES"
-      RYFRAME_RESET_ADMIN_PASSWORD: Valid!Admin123
-      RYFRAME_RESET_USER_PASSWORD: Valid!User123
-      RYFRAME_E2E_TENANT_ID: system
-      RYFRAME_E2E_USERNAME: admin
-      RYFRAME_E2E_PASSWORD: Valid!Admin123
-      VITE_APP_PROXY_TARGET: http://127.0.0.1:8080
-      RUSTC_WRAPPER: sccache
-      SCCACHE_GHA_ENABLED: "true"
-      CARGO_TARGET_DIR: ${{ github.workspace }}/target/ci/full-stack/backend
-    services:
-      mysql:
-        image: mysql:8.4.11@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
-        env:
-          MYSQL_ROOT_PASSWORD: ryframe-ci-password
-          MYSQL_ROOT_HOST: "%"
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping --host=127.0.0.1 --user=root --password=ryframe-ci-password --silent"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=30
-      redis:
-        image: redis:7.4.9@sha256:a8f08480e1f88f2647fed492d1178c06abb0d0c1fbf02c682a61e2f483fb3954
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd="redis-cli ping"
-          --health-interval=5s
-          --health-timeout=3s
-          --health-retries=20
-    steps:
-      - name: 配置全栈临时目录
-        shell: bash
-        run: |
-          echo "APP_OBJECT_STORAGE_LOCAL_BASE_DIR=$RUNNER_TEMP/ryframe-full-stack/storage" >> "$GITHUB_ENV"
-          echo "RYFRAME_RESET_STATE_DIR=$RUNNER_TEMP/ryframe-full-stack/reset-state" >> "$GITHUB_ENV"
-
-      - name: 检出后端源码
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          fetch-depth: 0
-          path: backend
-
-      - name: 选择配套前端引用
-        id: frontend-ref
-        shell: bash
-        run: >-
-          python backend/scripts/select_frontend_commit.py
-          --event-name "$GITHUB_EVENT_NAME"
-          --event "$GITHUB_EVENT_PATH"
-          --backend-worktree backend
-          --release-ref "$GITHUB_REF"
-
-      - name: 检出配套前端
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          repository: Edgar-ycy/ryframe-vue3
-          ref: ${{ steps.frontend-ref.outputs.ref }}
-          path: frontend
-
-      - name: 安装 Rust 工具链
-        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
-
-      - name: 安装固定版本 sccache
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
-        with:
-          tool: sccache@0.17.0
-          fallback: none
-
-      - name: 配置 sccache GitHub Actions 远端后端
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
-        with:
-          script: |
-            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '')
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '')
-
-      - name: 缓存 Cargo 依赖
-        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
-        with:
-          path: |
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-          key: v3-rust-${{ runner.os }}-${{ runner.arch }}-full-stack-${{ hashFiles('backend/Cargo.lock', 'backend/Cargo.toml') }}
-          restore-keys: |
-            v3-rust-${{ runner.os }}-${{ runner.arch }}-full-stack-
-            v3-rust-${{ runner.os }}-${{ runner.arch }}-
-
-      - name: 安装 Node.js
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
-        with:
-          node-version-file: frontend/.node-version
-          package-manager-cache: false
-
-      - name: 安装 pnpm
-        uses: ./frontend/.github/actions/setup-pnpm
-        with:
-          working-directory: frontend
-
-      - name: 安装前端与 Chromium
-        working-directory: frontend
-        run: |
-          corepack pnpm install --frozen-lockfile
-          corepack pnpm exec playwright install --with-deps chromium
-
-      - name: 构建并安全初始化临时全栈环境
-        working-directory: backend
-        env:
-          RYFRAME_CI_REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
-        run: python scripts/ci_full_stack.py prepare
-
-      - name: 启动真实 API 并等待就绪
-        working-directory: backend
-        run: python scripts/ci_full_stack.py start
-
-      - name: 执行真实浏览器全栈流程
-        working-directory: frontend
-        run: corepack pnpm ci:browser-real
-
-      - name: 输出 sccache 统计
-        if: ${{ always() }}
-        continue-on-error: true
-        shell: bash
-        run: |
-          stats_file="$RUNNER_TEMP/sccache-full-stack.json"
-          sccache --show-stats --stats-format=json > "$stats_file"
-          python backend/scripts/summarize_sccache_stats.py \
-            --stats "$stats_file" \
-            --label "Full Stack" \
-            --summary "$GITHUB_STEP_SUMMARY"
-          sccache --show-stats
-          sccache --stop-server
-
-      - name: 保存 sccache JSON 统计
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sccache-full-stack-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/sccache-full-stack.json
-          if-no-files-found: warn
-          retention-days: 14
-
-      - name: 收集进程与基础设施日志
-        if: ${{ always() }}
-        working-directory: backend
-        env:
-          RYFRAME_CI_MYSQL_CONTAINER_ID: ${{ job.services.mysql.id }}
-          RYFRAME_CI_REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
-        run: python scripts/ci_full_stack.py collect
-
-      - name: 保存全栈诊断产物
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: ryframe-full-stack-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/ryframe-full-stack
-            frontend/.local-tests/playwright-real/report
-            frontend/.local-tests/playwright-real/results
-          if-no-files-found: error
-          retention-days: 14
-
-  # ============================================================
-  # 安全检查
+  # 安全、许可证与部署资产：复用同一 checkout 和 Python 环境
   # ============================================================
   security-audit:
-    name: Security Audit
+    name: Security, Supply Chain & Deployment
     needs: plan
     if: ${{ needs.plan.result == 'success' && github.event.action != 'edited' }}
     runs-on: ubuntu-latest
+    env:
+      DOCKER_BUILDKIT: "1"
     defaults:
       run:
         working-directory: backend
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
+          fetch-depth: 0
           path: backend
 
       - name: 固定 CI Python 3.12
@@ -1138,108 +675,15 @@ jobs:
       - name: Check licenses, bans, and sources
         run: cargo deny check licenses bans sources
 
-  # ============================================================
-  # 可复现软件物料清单
-  # ============================================================
-  supply-chain:
-    name: 后端 CycloneDX 物料清单
-    needs: plan
-    if: >-
-      ${{ needs.plan.result == 'success' &&
-          github.event.action != 'edited' &&
-          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
-    steps:
-      - name: 检出后端源码
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          fetch-depth: 0
-          path: backend
-
-      - name: 固定 CI Python 3.12
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
-        with:
-          python-version: "3.12"
-
-      - name: 安装固定并校验哈希的 CI Python 依赖
-        run: >-
-          python -m pip install
-          --disable-pip-version-check
-          --force-reinstall
-          --no-deps
-          --only-binary=:all:
-          --require-hashes
-          --requirement scripts/requirements-ci.txt
-
-      - name: 安装 Rust 工具链
-        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
-
-      - name: 安装固定版本 CycloneDX 工具
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
-        with:
-          tool: cargo-cyclonedx@0.5.9
-          fallback: none
-
-      - name: 生成并校验可复现 Cargo CycloneDX 清单
-        shell: bash
-        env:
-          SBOM_PATH: ${{ runner.temp }}/supply-chain/ryframe-backend.cdx.json
-        run: |
-          set -euo pipefail
-          mkdir --parents "$(dirname "$SBOM_PATH")"
-          SOURCE_DATE_EPOCH="$(git show --no-patch --format=%ct "$GITHUB_SHA")"
-          export SOURCE_DATE_EPOCH
-          cargo cyclonedx \
-            --manifest-path crates/ryframe/Cargo.toml \
-            --format json \
-            --spec-version 1.5 \
-            --target x86_64-unknown-linux-gnu \
-            --all \
-            --override-filename ryframe-backend.cdx.json
-          mv crates/ryframe/ryframe-backend.cdx.json "$SBOM_PATH"
-          python scripts/check_supply_chain.py \
-            --cyclonedx "$SBOM_PATH" \
-            --require-reproducible-cyclonedx
-
-      - name: 保存 Cargo CycloneDX 清单
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: ryframe-cargo-cyclonedx-${{ github.sha }}
-          path: ${{ runner.temp }}/supply-chain/ryframe-backend.cdx.json
-          if-no-files-found: error
-          retention-days: 30
-
-  # ============================================================
-  # 部署资产校验
-  # ============================================================
-  deployment-assets:
-    name: Deployment Assets
-    needs: plan
-    if: ${{ needs.plan.result == 'success' && github.event.action != 'edited' }}
-    runs-on: ubuntu-latest
-    env:
-      DOCKER_BUILDKIT: "1"
-    steps:
-      - name: 检出完整源码历史
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          fetch-depth: 0
-
       - name: 判断是否需要校验部署资产
         id: deployment-changes
         shell: bash
         env:
-          EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           set -euo pipefail
           required=false
-          if [[ "$EVENT_NAME" == "schedule" ]] \
-            || [[ "$EVENT_NAME" == "workflow_dispatch" ]] \
-            || [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] \
+          if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] \
             || [[ "$BASE_SHA" == "0000000000000000000000000000000000000000" ]]; then
             required=true
           else
@@ -1272,23 +716,6 @@ jobs:
           fi
           echo "required=$required" >> "$GITHUB_OUTPUT"
 
-      - name: 固定 CI Python 3.12
-        if: steps.deployment-changes.outputs.required == 'true'
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
-        with:
-          python-version: "3.12"
-
-      - name: 安装固定并校验哈希的 CI Python 依赖
-        if: steps.deployment-changes.outputs.required == 'true'
-        run: >-
-          python -m pip install
-          --disable-pip-version-check
-          --force-reinstall
-          --no-deps
-          --only-binary=:all:
-          --require-hashes
-          --requirement scripts/requirements-ci.txt
-
       - name: 校验部署资产静态边界
         if: steps.deployment-changes.outputs.required == 'true'
         run: python scripts/check_deployment_assets.py
@@ -1301,7 +728,7 @@ jobs:
         if: steps.deployment-changes.outputs.required == 'true'
         run: >-
           docker compose
-          --project-directory "$GITHUB_WORKSPACE"
+          --project-directory "$GITHUB_WORKSPACE/backend"
           --env-file scripts/fixtures/deploy.env
           --file deploy/compose.prod.yml
           config --quiet
@@ -1347,69 +774,7 @@ jobs:
           --image "ryframe-ci:$GITHUB_SHA"
           --expected-commit "$GITHUB_SHA"
 
-      - name: 安装固定版本镜像扫描器
-        if: >-
-          steps.deployment-changes.outputs.required == 'true' &&
-          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
-        with:
-          tool: trivy@0.72.0
-          fallback: none
 
-      - name: 生成并校验生产镜像 CycloneDX 清单
-        id: image-sbom
-        if: >-
-          steps.deployment-changes.outputs.required == 'true' &&
-          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-        shell: bash
-        run: |
-          set -euo pipefail
-          output_dir="$RUNNER_TEMP/supply-chain"
-          mkdir --parents "$output_dir"
-          trivy image \
-            --cache-dir "$RUNNER_TEMP/trivy-cache" \
-            --timeout 30m \
-            --format cyclonedx \
-            --output "$output_dir/ryframe-image.cdx.json" \
-            "ryframe-ci:$GITHUB_SHA"
-          python scripts/check_supply_chain.py \
-            --cyclonedx "$output_dir/ryframe-image.cdx.json"
-
-      - name: 扫描生产镜像高危漏洞
-        id: image-scan
-        if: >-
-          steps.deployment-changes.outputs.required == 'true' &&
-          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-        shell: bash
-        run: |
-          set -euo pipefail
-          trivy image \
-            --cache-dir "$RUNNER_TEMP/trivy-cache" \
-            --timeout 30m \
-            --scanners vuln \
-            --severity HIGH,CRITICAL \
-            --format json \
-            --output "$RUNNER_TEMP/supply-chain/trivy-report.json" \
-            "ryframe-ci:$GITHUB_SHA"
-
-      - name: 应用有期限的漏洞例外策略
-        if: >-
-          steps.deployment-changes.outputs.required == 'true' &&
-          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-        run: >-
-          python scripts/check_supply_chain.py
-          --trivy-report "$RUNNER_TEMP/supply-chain/trivy-report.json"
-
-      - name: 保存镜像清单与漏洞报告
-        if: >-
-          always() &&
-          (steps.image-sbom.outcome == 'success' || steps.image-scan.outcome == 'success')
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: ryframe-image-security-${{ github.sha }}
-          path: ${{ runner.temp }}/supply-chain
-          if-no-files-found: error
-          retention-days: 30
 
   # 分支保护只绑定这个稳定名称；事件不适用的 job 可以 skipped，失败和取消均拒绝。
   required:
@@ -1418,17 +783,11 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - plan
-      - preflight
       - rust-gate
       - resource-gate
       - integration
-      - consumer-contract
-      - full-stack-e2e
       - windows-smoke
-      - aws-lc-sccache-canary
       - security-audit
-      - supply-chain
-      - deployment-assets
     steps:
       - name: 检出汇总规则
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -1437,11 +796,9 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           EVENT_ACTION: ${{ github.event.action }}
-          GIT_REF: ${{ github.ref }}
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: >-
           python scripts/check_required_jobs.py
           --event "$EVENT_NAME"
           --action "$EVENT_ACTION"
-          --ref "$GIT_REF"
           --needs-json "$NEEDS_JSON"

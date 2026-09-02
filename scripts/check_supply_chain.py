@@ -589,6 +589,12 @@ def _registry_source_paths(
     )
 
 
+def _canonical_license_bytes(content: bytes) -> bytes:
+    """许可证是文本事实源；统一换行，避免 Git checkout 平台改变哈希。"""
+
+    return content.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
 def _validate_registry_copy(
     cargo_home: Path,
     source: dict[str, Any],
@@ -608,7 +614,7 @@ def _validate_registry_copy(
         if error is not None or source_path is None:
             errors.append(error or f"{label} registry 原件无法读取")
             continue
-        source_bytes = source_path.read_bytes()
+        source_bytes = _canonical_license_bytes(source_path.read_bytes())
         source_hash = hashlib.sha256(source_bytes).hexdigest()
         if source_hash != expected_hash or source_bytes != vendor_bytes:
             errors.append(
@@ -696,7 +702,7 @@ def validate_local_patch_licenses(
             if error is not None or path is None:
                 errors.append(error or f"{label} 文件无法读取")
                 continue
-            vendor_bytes = path.read_bytes()
+            vendor_bytes = _canonical_license_bytes(path.read_bytes())
             actual_hash = hashlib.sha256(vendor_bytes).hexdigest()
             expected_hash = license_file["sha256"]
             if actual_hash != expected_hash:
