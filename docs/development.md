@@ -144,7 +144,7 @@ cargo xtask devex summarize <日期/run-id>
 cargo xtask devex compare --base <日期/run-id> --candidate <日期/run-id>
 ```
 
-测量产物写入 `.local-tests/devex/<日期>/<run-id>/`，其中包含运行环境与源码指纹、逐次样本以及 P50/P95 摘要；涉及编译缓存的 suite 还保存前后统计。runner 会验证 suite 与缓存语义、源码和工具指纹、样本完整性及基线/候选是否可比较；前置依赖未就绪、输入无效、源码在测量中变化、缓存报错或证据缺失时都会失败关闭，不把不完整结果判为达标。在 Windows 的深层工作树中，DevEx 会将临时 Cargo target 放入工作区 `.local-tests/d/<摘要>`，避免 build-script 路径过长；测量记录仍只写入上述 DevEx 目录。`cargo-dev-save` 使用真实 watcher、只读迁移验证和探活流程，不会自动升级数据库。日常 `CI` 使用 6 个业务任务加 `Required` 汇总；`Extended CI` 在每周、版本标签或手动触发时运行全栈、CycloneDX 与镜像扫描。
+测量产物写入 `.local-tests/devex/<日期>/<run-id>/`，其中包含运行环境与源码指纹、逐次样本以及 P50/P95 摘要；涉及编译缓存的 suite 还保存前后统计。runner 会验证 suite 与缓存语义、源码和工具指纹、样本完整性及基线/候选是否可比较；前置依赖未就绪、输入无效、源码在测量中变化、缓存报错或证据缺失时都会失败关闭，不把不完整结果判为达标。在 Windows 的深层工作树中，DevEx 会将临时 Cargo target 放入工作区 `.local-tests/d/<摘要>`，避免 build-script 路径过长；测量记录仍只写入上述 DevEx 目录。`cargo-dev-save` 使用真实 watcher、只读迁移验证和探活流程，不会自动升级数据库。日常 `CI` 使用 6 个业务任务加 `Required` 汇总；`Extended CI` 在每周、版本标签、手动触发或生产镜像与全栈脚本变化时运行全栈、CycloneDX 与镜像扫描。
 
 ## 资源门禁
 
@@ -152,7 +152,7 @@ cargo xtask devex compare --base <日期/run-id> --candidate <日期/run-id>
 
 定向模式的 Clippy 只检查受影响库和二进制，测试阶段只运行资源契约测试；MySQL、Redis、对象存储和 OTLP 的真实协议测试统一由 integration 门禁执行，避免在每次资源改动中重复编译重量级协议 harness。
 
-定向模式当前默认关闭；只有经过独立后端与前端提交回放、证明定向结果与完整门禁一致后，CI 才能使用受控激活标记。激活证据缺失、过期或无法验证时继续完整回退，不会把完整回退误报为定向通过。CI 的 Rust 编译使用 sccache 并保存统计，但不缓存整个 Cargo target；缓存配置或统计异常不得替代真实门禁结果。
+定向模式当前默认关闭；只有经过独立后端与前端提交回放、证明定向结果与完整门禁一致后，CI 才能使用受控激活标记。激活证据缺失、过期或无法验证时继续完整回退，不会把完整回退误报为定向通过。CI 的 Rust 编译使用 sccache 并保存统计，但不缓存整个 Cargo target；Linux 由 Rust Gate 负责写入，其他 Linux 任务只读，Windows 使用独立命名空间写入，避免并发任务争抢同一远端写入额度。缓存配置或统计异常不得替代真实门禁结果。
 
 ## 常见问题
 

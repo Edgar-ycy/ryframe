@@ -265,7 +265,19 @@ class RequiredJobsTests(unittest.TestCase):
             block = daily.split(f"\n  {job}:\n", 1)[1].split("\n  #", 1)[0]
             self.assertIn("tool: sccache@0.17.0", block, job)
             self.assertIn('SCCACHE_GHA_ENABLED: "true"', block, job)
+        for job in ("resource-gate", "integration"):
+            block = daily.split(f"\n  {job}:\n", 1)[1].split("\n  #", 1)[0]
+            self.assertIn("SCCACHE_GHA_RW_MODE: READ_ONLY", block, job)
+            self.assertIn("SCCACHE_GHA_VERSION: ryframe-linux-v1", block, job)
+        rust_gate = daily.split("\n  rust-gate:\n", 1)[1].split("\n  #", 1)[0]
+        self.assertNotIn("SCCACHE_GHA_RW_MODE: READ_ONLY", rust_gate)
+        self.assertIn("SCCACHE_GHA_VERSION: ryframe-linux-v1", rust_gate)
+        windows = daily.split("\n  windows-smoke:\n", 1)[1].split("\n  #", 1)[0]
+        self.assertNotIn("SCCACHE_GHA_RW_MODE: READ_ONLY", windows)
+        self.assertIn("SCCACHE_GHA_VERSION: ryframe-windows-v1", windows)
         self.assertIn("tool: sccache@0.17.0", extended)
+        self.assertIn("SCCACHE_GHA_RW_MODE: READ_ONLY", extended)
+        self.assertIn("SCCACHE_GHA_VERSION: ryframe-linux-v1", extended)
         self.assertNotIn('cat "$stats_file"', workflow)
 
     def test_linux_rust_policy_jobs_use_the_fixed_backend_checkout(self) -> None:
@@ -304,7 +316,11 @@ class RequiredJobsTests(unittest.TestCase):
         block = workflow.split("\n  full-stack-e2e:\n", 1)[1]
         self.assertIn("schedule:", workflow)
         self.assertIn("workflow_dispatch:", workflow)
+        self.assertIn("branches: [ main ]", workflow)
         self.assertIn('tags: [ "v*.*.*" ]', workflow)
+        self.assertIn('"Dockerfile"', workflow)
+        self.assertIn('"scripts/ci_full_stack.py"', workflow)
+        self.assertIn('"scripts/check_deployment_assets.py"', workflow)
         self.assertIn("APP_ENV: test", block)
         self.assertIn('APP_API_DOCS_ENABLED: "false"', block)
         self.assertIn('APP_RESET_LEGACY_MYSQL_EXCLUSIVE: "true"', block)

@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- 收敛 GitHub Actions 的 sccache 并发写入：Linux 由 Rust Gate 单独写入，其他 Linux 任务只读，Windows 使用独立命名空间；生产镜像与全栈校验脚本变化会选择性触发 Extended CI。
 - 生产镜像内容门禁改为导出并离线读取文件系统，不再要求 Distroless 镜像提供 shell，同时校验固定数值非 root 用户和运行层工具最小化。
 - 生产运行层改为固定摘要的 Distroless Debian 13，移除 shell、包管理器和 `curl`；API 与 Worker 新增内置 `--healthcheck`，避免基础镜像无补丁系统包阻塞高危漏洞门禁。
 - 修复真实全栈 CI 使用最小 `bin-api` 构建时仍启用 API 文档，导致应用在就绪前退出；该流程不再编译无关的 Swagger UI。
