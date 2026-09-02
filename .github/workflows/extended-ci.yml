@@ -257,7 +257,7 @@ jobs:
             --spec-version 1.5 \
             --target x86_64-unknown-linux-gnu \
             --all \
-            --override-filename ryframe-backend.cdx.json
+            --override-filename ryframe-backend.cdx
           mv crates/ryframe/ryframe-backend.cdx.json "$SBOM_PATH"
           python scripts/check_supply_chain.py \
             --cyclonedx "$SBOM_PATH" \

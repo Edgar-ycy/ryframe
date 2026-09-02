@@ -326,6 +326,11 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertNotIn("nohup", block)
         self.assertNotIn("curl --fail", block)
         self.assertIn("corepack pnpm ci:browser-real", block)
+        self.assertIn("--override-filename ryframe-backend.cdx", block)
+        self.assertNotIn("--override-filename ryframe-backend.cdx.json", block)
+        self.assertIn(
+            'mv crates/ryframe/ryframe-backend.cdx.json "$SBOM_PATH"', block
+        )
         self.assertEqual(block.count("if: ${{ always() }}"), 4)
         self.assertIn("sccache-full-stack.json", block)
         self.assertIn("name: sccache-full-stack-", block)
