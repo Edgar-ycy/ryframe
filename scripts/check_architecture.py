@@ -52,6 +52,7 @@ DOCUMENT_LIMITS = {
     "docs/development.md": 160,
     "docs/operations.md": 240,
 }
+HISTORICAL_DOCUMENTS = {"CHANGELOG.md"}
 TEST_FILE_NAME = re.compile(r"(?:^tests?\.rs$|_tests?\.rs$)", re.IGNORECASE)
 TEST_ATTRIBUTE = re.compile(
     r"#\s*\[\s*(?:cfg\s*\(\s*test\s*\)|(?:[A-Za-z_][A-Za-z0-9_]*::)?test)\s*\]"
@@ -105,7 +106,7 @@ def validate_documentation(errors: list[str]) -> None:
             {".github", ".local-tests", "target", "vendor"}
         )
     }
-    expected = set(DOCUMENT_LIMITS)
+    expected = set(DOCUMENT_LIMITS) | HISTORICAL_DOCUMENTS
     if actual != expected:
         missing = expected - actual
         unexpected = actual - expected

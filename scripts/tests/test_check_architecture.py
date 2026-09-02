@@ -19,6 +19,12 @@ TEST_ROOT = SCRIPT.parents[1] / "target" / "script-tests"
 TEST_ROOT.mkdir(parents=True, exist_ok=True)
 
 
+class DocumentationPolicyTests(unittest.TestCase):
+    def test_changelog_is_allowed_without_a_history_size_limit(self) -> None:
+        self.assertEqual(MODULE.HISTORICAL_DOCUMENTS, {"CHANGELOG.md"})
+        self.assertNotIn("CHANGELOG.md", MODULE.DOCUMENT_LIMITS)
+
+
 class SystemDomainSurfaceGateTests(unittest.TestCase):
     def setUp(self) -> None:
         self.root = TEST_ROOT / f"system-domains-{uuid.uuid4().hex}"
