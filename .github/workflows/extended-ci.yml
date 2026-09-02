@@ -72,10 +72,6 @@ jobs:
       RYFRAME_E2E_USERNAME: admin
       RYFRAME_E2E_PASSWORD: Valid!Admin123
       VITE_APP_PROXY_TARGET: http://127.0.0.1:8080
-      RUSTC_WRAPPER: sccache
-      SCCACHE_GHA_ENABLED: "true"
-      SCCACHE_GHA_RW_MODE: READ_ONLY
-      SCCACHE_GHA_VERSION: ryframe-linux-v1
       CARGO_TARGET_DIR: ${{ github.workspace }}/target/ci/full-stack/backend
     services:
       mysql:
@@ -148,19 +144,6 @@ jobs:
       - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
 
-      - name: 安装固定版本 sccache
-        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
-        with:
-          tool: sccache@0.17.0
-          fallback: none
-
-      - name: 配置 sccache GitHub Actions 远端后端
-        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
-        with:
-          script: |
-            core.exportVariable('ACTIONS_RESULTS_URL', process.env.ACTIONS_RESULTS_URL || '')
-            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '')
-
       - name: 缓存 Cargo 依赖
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
         with:
@@ -203,29 +186,6 @@ jobs:
       - name: 执行真实浏览器全栈流程
         working-directory: frontend
         run: corepack pnpm ci:browser-real
-
-      - name: 输出 sccache 统计
-        if: ${{ always() }}
-        continue-on-error: true
-        shell: bash
-        run: |
-          stats_file="$RUNNER_TEMP/sccache-full-stack.json"
-          sccache --show-stats --stats-format=json > "$stats_file"
-          python backend/scripts/summarize_sccache_stats.py \
-            --stats "$stats_file" \
-            --label "Full Stack" \
-            --summary "$GITHUB_STEP_SUMMARY"
-          sccache --show-stats
-          sccache --stop-server
-
-      - name: 保存 sccache JSON 统计
-        if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: sccache-full-stack-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/sccache-full-stack.json
-          if-no-files-found: warn
-          retention-days: 14
 
       - name: 收集进程与基础设施日志
         if: ${{ always() }}

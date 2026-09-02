@@ -249,7 +249,7 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertIn("needs.plan.outputs.consumer_contract == 'true'", resource)
         self.assertIn("cargo xtask ci consumer-contract", resource)
 
-    def test_sccache_uses_fixed_remote_backend_without_directory_cache(self) -> None:
+    def test_sccache_only_wraps_compile_heavy_jobs_with_persisted_local_cache(self) -> None:
         daily = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         extended = (ROOT / ".github/workflows/extended-ci.yml").read_text(
             encoding="utf-8"
@@ -258,26 +258,29 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertEqual(daily.count('CARGO_INCREMENTAL: "0"'), 1)
         self.assertEqual(extended.count('CARGO_INCREMENTAL: "0"'), 1)
         self.assertNotIn("RUSTFLAGS:", workflow)
-        self.assertNotIn("SCCACHE_DIR:", workflow)
-        self.assertNotIn("SCCACHE_CACHE_SIZE:", workflow)
         self.assertNotIn("v2-sccache-", workflow)
-        for job in ("rust-gate", "resource-gate", "integration", "windows-smoke"):
+        for job in ("rust-gate", "windows-smoke"):
             block = daily.split(f"\n  {job}:\n", 1)[1].split("\n  #", 1)[0]
             self.assertIn("tool: sccache@0.17.0", block, job)
-            self.assertIn('SCCACHE_GHA_ENABLED: "true"', block, job)
+            self.assertIn("缓存 sccache 编译产物", block, job)
+            self.assertIn("SCCACHE_DIR:", block, job)
+            self.assertIn("SCCACHE_CACHE_SIZE:", block, job)
         for job in ("resource-gate", "integration"):
             block = daily.split(f"\n  {job}:\n", 1)[1].split("\n  #", 1)[0]
-            self.assertIn("SCCACHE_GHA_RW_MODE: READ_ONLY", block, job)
-            self.assertIn("SCCACHE_GHA_VERSION: ryframe-linux-v1", block, job)
+            self.assertNotIn("RUSTC_WRAPPER: sccache", block, job)
+            self.assertNotIn("tool: sccache@0.17.0", block, job)
+            self.assertNotIn("sccache JSON", block, job)
         rust_gate = daily.split("\n  rust-gate:\n", 1)[1].split("\n  #", 1)[0]
-        self.assertNotIn("SCCACHE_GHA_RW_MODE: READ_ONLY", rust_gate)
-        self.assertIn("SCCACHE_GHA_VERSION: ryframe-linux-v1", rust_gate)
+        self.assertIn(".cache/sccache/rust-gate", rust_gate)
+        self.assertIn("SCCACHE_CACHE_SIZE: 3G", rust_gate)
         windows = daily.split("\n  windows-smoke:\n", 1)[1].split("\n  #", 1)[0]
-        self.assertNotIn("SCCACHE_GHA_RW_MODE: READ_ONLY", windows)
-        self.assertIn("SCCACHE_GHA_VERSION: ryframe-windows-v1", windows)
-        self.assertIn("tool: sccache@0.17.0", extended)
-        self.assertIn("SCCACHE_GHA_RW_MODE: READ_ONLY", extended)
-        self.assertIn("SCCACHE_GHA_VERSION: ryframe-linux-v1", extended)
+        self.assertIn(".cache/sccache/windows-smoke", windows)
+        self.assertIn("SCCACHE_CACHE_SIZE: 2G", windows)
+        self.assertNotIn("RUSTC_WRAPPER: sccache", extended)
+        self.assertNotIn("tool: sccache@0.17.0", extended)
+        self.assertNotIn("sccache JSON", extended)
+        self.assertNotIn("SCCACHE_GHA_", workflow)
+        self.assertNotIn("ACTIONS_RUNTIME_TOKEN", workflow)
         self.assertNotIn('cat "$stats_file"', workflow)
 
     def test_linux_rust_policy_jobs_use_the_fixed_backend_checkout(self) -> None:
@@ -347,13 +350,13 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertIn(
             'mv crates/ryframe/ryframe-backend.cdx.json "$SBOM_PATH"', block
         )
-        self.assertEqual(block.count("if: ${{ always() }}"), 4)
-        self.assertIn("sccache-full-stack.json", block)
-        self.assertIn("name: sccache-full-stack-", block)
+        self.assertEqual(block.count("if: ${{ always() }}"), 2)
+        self.assertNotIn("sccache-full-stack.json", block)
+        self.assertNotIn("name: sccache-full-stack-", block)
         self.assertIn("frontend/.local-tests/playwright-real/report", block)
         self.assertIn("frontend/.local-tests/playwright-real/results", block)
         self.assertGreaterEqual(block.count("if-no-files-found: error"), 1)
-        self.assertEqual(block.count("if-no-files-found: warn"), 1)
+        self.assertEqual(block.count("if-no-files-found: warn"), 0)
 
     def test_rust_gate_and_integration_use_internal_commands(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
