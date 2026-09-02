@@ -24,8 +24,8 @@ EXPECTED_BASE_IMAGES = {
         "sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97"
     ),
     "DEBIAN_IMAGE": (
-        "debian:12-slim@"
-        "sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241"
+        "debian:13.6-slim@"
+        "sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132"
     ),
 }
 REPOSITORY_BLOB_PREFIX = "https://github.com/Edgar-ycy/ryframe/blob/main/"
