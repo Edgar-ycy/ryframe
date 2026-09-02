@@ -4,6 +4,9 @@ use std::sync::{Arc, OnceLock};
 
 use ryframe_kernel::{AppError, AppResult};
 
+/// API 请求 span 的稳定 target，供传输层和组合根共享过滤规则。
+pub const HTTP_REQUEST_LOG_SPAN_TARGET: &str = "ryframe.request_log";
+
 /// 可跨进程持久化的完整 W3C Trace Context。
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct PersistedTraceContext {

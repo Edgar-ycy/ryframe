@@ -248,8 +248,18 @@ def verify_generated_registry_wiring(root: Path) -> list[str]:
         ),
         (
             "crates/ryframe-db/src/generated/mod.rs",
+            "pub const MIGRATION_NAMES: &[&str]",
+            "控制库 generated 聚合必须提供只读迁移名称",
+        ),
+        (
+            "crates/ryframe-db/src/generated/mod.rs",
             "pub fn migrations() -> Vec<Box<dyn MigrationTrait>>",
             "控制库 generated 聚合必须提供 migrations()",
+        ),
+        (
+            "crates/ryframe-db/src/migration/mod.rs",
+            "pub fn expected_migration_names()",
+            "控制库只读校验必须消费手写及生成迁移名称",
         ),
         (
             "crates/ryframe-db/src/migration/mod.rs",
@@ -263,8 +273,18 @@ def verify_generated_registry_wiring(root: Path) -> list[str]:
         ),
         (
             "crates/ryframe-tenant-db/src/generated/mod.rs",
+            "pub const MIGRATION_NAMES: &[&str]",
+            "租户库 generated 聚合必须提供只读迁移名称",
+        ),
+        (
+            "crates/ryframe-tenant-db/src/generated/mod.rs",
             "pub fn migrations() -> Vec<Box<dyn MigrationTrait>>",
             "租户库 generated 聚合必须提供 migrations()",
+        ),
+        (
+            "crates/ryframe-tenant-db/src/migration/mod.rs",
+            "pub fn expected_migration_names()",
+            "租户库只读校验必须消费手写及生成迁移名称",
         ),
         (
             "crates/ryframe-tenant-db/src/migration/runtime.rs",
@@ -510,6 +530,7 @@ def verify_append_only(
             errors.append(f"缺少冻结基线迁移：{baseline}")
 
     registry_orders: dict[Path, list[tuple[str, int]]] = {}
+    name_registry_orders: dict[Path, list[tuple[str, int]]] = {}
     for migration in migrations:
         match = MIGRATION_NAME.fullmatch(migration.name)
         assert match is not None
@@ -546,6 +567,14 @@ def verify_append_only(
         module_registry = migration.module_registry.read_text(encoding="utf-8")
         if f"mod {migration.name};" not in module_registry:
             errors.append(f"迁移未在模块中注册：{migration.name}")
+        name_marker = f'"{migration.name}"'
+        name_position = module_registry.find(name_marker)
+        if name_position < 0:
+            errors.append(f"迁移未加入只读名称注册表：{migration.name}")
+        else:
+            name_registry_orders.setdefault(migration.module_registry, []).append(
+                (migration.name, name_position)
+            )
         migrator_registry = migration.migrator_registry.read_text(encoding="utf-8")
         marker = f"{migration.name}::Migration"
         position = migrator_registry.find(marker)
@@ -562,6 +591,12 @@ def verify_append_only(
             errors.append(
                 f"Migrator 必须按迁移名称递增注册：{registry.relative_to(root).as_posix()}"
             )
+    for registry, entries in name_registry_orders.items():
+        names_in_file = [name for name, _position in sorted(entries, key=lambda item: item[1])]
+        if names_in_file != sorted(names_in_file):
+            errors.append(
+                f"只读迁移名称必须递增注册：{registry.relative_to(root).as_posix()}"
+            )
     for source in discover_generated(root):
         relative = source.relative_to(root).as_posix()
         if enforce_lock and relative in head_paths and relative not in locked_paths:
@@ -574,6 +609,11 @@ def verify_append_only(
         source_text = source.read_text(encoding="utf-8")
         if "INITIAL_RESOURCE_MIGRATION" not in source_text:
             errors.append(f"generated migration 缺少不可变初始迁移标记：{relative}")
+        aggregate = source.parent.parent / "mod.rs"
+        expected_name = f'm_resource_initial_{source.parent.name}'
+        aggregate_source = aggregate.read_text(encoding="utf-8")
+        if f'"{expected_name}"' not in aggregate_source:
+            errors.append(f"generated migration 未加入只读名称注册表：{relative}")
         if not rejects_down_with_roll_forward(source_text):
             errors.append(
                 f"generated migration 必须拒绝 down、说明追加修复且不得执行其他逻辑：{relative}"

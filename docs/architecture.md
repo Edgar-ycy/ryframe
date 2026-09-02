@@ -26,7 +26,7 @@ HTTP 层把请求解析为明确的 DTO，再调用 application 用例。用例�
 
 | 模块 | 开发时用于 |
 |---|---|
-| `ryframe-kernel` | 通用 ID、分页、错误和值对象 |
+| `ryframe-kernel` | 通用 ID、Snowflake、分页、错误和值对象 |
 | `ryframe-config` | 配置结构、环境覆盖和校验 |
 | `ryframe-auth` | 密码、JWT 与 RBAC 决策 |
 | `ryframe-application` | 业务用例、事务、状态机和出站端口 |
@@ -35,7 +35,24 @@ HTTP 层把请求解析为明确的 DTO，再调用 application 用例。用例�
 | `ryframe-adapters` | Redis、对象存储、表格、限流、本地化和遥测 |
 | `ryframe-api` | Axum 路由、DTO、OpenAPI、extractor 和传输中间件 |
 | `ryframe` | API、Worker、迁移和重建的启动装配 |
-| `ryframe-generator` | 标准资源的离线生成 |
+| `ryframe-generator` | 标准资源的离线生成；默认构建不包含数据库驱动 |
+
+## 进程编译面
+
+根组合 crate 默认只编译 API 与 Swagger UI。独立进程必须关闭默认 feature，并只选择对应入口，避免把 HTTP、Redis、图片处理和遥测带入迁移工具：
+
+| 进程 | feature |
+|---|---|
+| API | `bin-api`，按需附加 `runtime-swagger-ui` |
+| Worker | `bin-worker` |
+| 控制库迁移 | `bin-migrate` |
+| 租户数据维护 | `bin-tenant-data` |
+| 文件维护 | `bin-file-maintenance` |
+| 非生产重建 | `bin-reset` |
+
+`ryframe-adapters` 默认不启用高成本能力；API 显式组合 `image-processing`、`monitoring`、`otel`、`redis-api` 与 `spreadsheet`，Worker 使用 `monitoring`、`otel`、`redis-client` 与 `spreadsheet`。验证码只启用 PNG codec，通用图片处理 codec 仅随 `image-processing` 编译。生成 fake 只在 `ryframe-application/test-support` 下可用，不进入产品进程。
+
+Worker 的健康状态模型与数据库监控端口位于 application，不依赖 `ryframe-api`；HTTP 健康端点只在 Worker 组合根装配。所有二进制在创建 MySQL、Redis、HTTP、对象存储或 OTLP 客户端前统一安装 AWS-LC provider；遇到已安装的不同 provider 时拒绝启动。Security Audit 以 `scripts/supply_chain_policy.json` 中的 profile 为事实源解析真实 Cargo feature tree：API（含 Swagger UI）与 Worker 要求 JWT、HTTP、Rustls 和 SQLx 链路启用 AWS-LC，并拒绝实际 `ring` package/provider；Worker 额外禁止依赖 `ryframe-api`。迁移进程只保留数据库所需的 AWS-LC TLS 链路，禁止 API、Adapter、Web、Redis、图片处理、遥测和 HTTP client 依赖。生成器默认运行图禁止数据库与网络 runtime，unique package closure 上限为 90；schema import 依赖仅由对应 feature 引入。`aws-lc-rs` 自身的 `ring-io`、`ring-sig-verify` 兼容 feature 不属于 ring provider。统一 provider 只描述项目选择的密码学实现，不代表项目自动获得 FIPS 认证。OTLP 的 HTTP protobuf 出站链路只编译 trace、Tokio runtime 与 reqwest client，不包含 logs、metrics 或 blocking client。
 
 `ryframe-application::system` 按业务分为四个入口：
 
@@ -48,7 +65,7 @@ HTTP 层把请求解析为明确的 DTO，再调用 application 用例。用例�
 
 ## 选择开发方式
 
-字段、筛选、排序和普通 CRUD 行为可由资源清单表达时，使用 `cargo resource`。Post 与 Notice 展示了完整链路；生成结果包含后端持久化、应用服务、API、权限资产和前端标准页面。
+字段、筛选、排序和普通 CRUD 行为可由资源清单表达时，使用 `cargo resource`。Post 与 Notice 展示了完整链路；生成结果包含后端持久化、应用服务、API、权限资产和前端标准页面。日常资源命令只使用生成器的默认离线能力；既有 MySQL 表结构读取被隔离在可选的 `schema-import` feature 中，只产生待人工确认的草案，不进入默认生成依赖闭包。
 
 需要事务编排、外部连接、异步任务或特殊状态机时，使用自定义用例：
 

@@ -25,8 +25,8 @@ pub use spec::{
 };
 pub use writer::{
     OwnershipEntry, OwnershipManifest, PlanAction, PlannedAsset, ResourceAssetPlan,
-    ResourceWorkspace, SafeWriteReport, plan_resource_assets, plan_resource_changes,
-    write_resource, write_resources,
+    ResourceWorkspace, SafeWriteReport, plan_all_resource_changes, plan_resource_assets,
+    plan_resource_changes, write_resource, write_resources,
 };
 
 use std::{fs, path::Path};

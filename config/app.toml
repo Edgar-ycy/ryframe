@@ -55,7 +55,7 @@ metrics_bearer_token = ""
 sql_log_level = "off"
 # 慢 SQL 判定阈值（毫秒）。
 sql_slow_threshold_ms = 200
-# 未设置时，开发/测试环境的 migration_mode 默认为 auto，生产环境默认为 verify。
+# API 与 Worker 只校验迁移状态；结构变更请显式运行 ryframe-migrate。
 # 生产控制面 DDL 应由独立的 `ryframe-migrate control up` 部署任务执行；
 # 租户数据面另执行 `ryframe-migrate tenant-data up --all`。
 

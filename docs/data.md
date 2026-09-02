@@ -19,6 +19,8 @@ cargo migrate verify
 cargo migrate verify tenant-data --all
 ```
 
+`status` 会以 `missing` 和 `unexpected` 列出缺失及额外的迁移版本；两者均为空且数量一致时才报告 `up_to_date=true`。
+
 确认迁移内容后，使用 `cargo migrate up` 或 `cargo migrate up tenant-data --all` 更新对应目标。
 
 ## 一致性

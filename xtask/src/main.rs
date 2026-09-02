@@ -8,6 +8,7 @@ mod ci;
 mod cli;
 mod contract;
 mod dev;
+mod devex;
 #[cfg(feature = "resource")]
 mod diff;
 mod doctor;
@@ -15,6 +16,7 @@ mod migration;
 mod process;
 mod release;
 mod resource;
+mod source_edit;
 mod watch;
 mod workspace;
 
@@ -36,7 +38,7 @@ fn main() {
 
     if let Err(error) = dispatch(cli) {
         eprintln!("任务失败：{error}");
-        std::process::exit(1);
+        std::process::exit(dev::failure_exit_code(error.as_ref()).unwrap_or(1));
     }
 }
 
@@ -47,12 +49,16 @@ fn dispatch(cli: Cli) -> Result<()> {
         Command::Contract { operation } => contract::run(operation, &cli.frontend_dir),
         Command::FeatureMatrix => check::feature_matrix(),
         Command::ReleaseVerify(options) => release::verify(&options, &cli.frontend_dir),
-        Command::Dev => dev::run(&cli.frontend_dir),
+        Command::Dev { measure_once: true } => dev::measure_once(),
+        Command::Dev {
+            measure_once: false,
+        } => dev::run(&cli.frontend_dir),
         Command::Verify { scope, full } => check::verify(scope, full, &cli.frontend_dir),
         Command::Resource(command) => resource::run(&command, &cli.frontend_dir),
         Command::ApiSync(command) => contract::api_sync(&command, &cli.frontend_dir),
         Command::Migrate(command) => migration::run(&command),
         Command::Ci(command) => ci::run(command, &cli.frontend_dir),
+        Command::Devex(command) => devex::run(&command, &cli.frontend_dir),
         Command::Help(topic) => {
             cli::print_help(topic.as_deref());
             Ok(())

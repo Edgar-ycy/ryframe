@@ -8,10 +8,18 @@ license.workspace = true
 repository.workspace = true
 description.workspace = true
 
+[features]
+default = []
+schema-import = [
+    "dep:ryframe-kernel",
+    "dep:ryframe-tenant-db",
+    "dep:sea-orm",
+]
+
 [dependencies]
-ryframe-kernel = { path = "../ryframe-kernel" }
-ryframe-tenant-db = { path = "../ryframe-tenant-db" }
-sea-orm = { workspace = true }
+ryframe-kernel = { path = "../ryframe-kernel", optional = true }
+ryframe-tenant-db = { path = "../ryframe-tenant-db", default-features = false, features = ["connection"], optional = true }
+sea-orm = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

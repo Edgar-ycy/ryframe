@@ -19,7 +19,11 @@ const CANDIDATE_MANAGED_PATHS: &[&str] = &[
     "src/api/generated/schema/monitor.ts",
     "src/api/generated/schema/agent.ts",
     "src/api/generated/schema/index.ts",
-    "src/api/generated/operations.ts",
+    "src/api/generated/operations/core.ts",
+    "src/api/generated/operations/system.ts",
+    "src/api/generated/operations/platform.ts",
+    "src/api/generated/operations/monitor.ts",
+    "src/api/generated/operations/agent.ts",
     "src/api/generated/permissions.ts",
     "src/api/generated/menuRoutes.ts",
     "src/shared/security/passwordPolicy.generated.json",
@@ -607,6 +611,19 @@ fn reads_frontend_generated_artifact_manifest_and_rejects_traversal() {
     assert_eq!(
         generated_artifact_paths(&frontend.0).unwrap(),
         CANDIDATE_MANAGED_PATHS[1..]
+    );
+    fs::write(
+        frontend.0.join("scripts/api-artifacts.mjs"),
+        "export const generatedOperationArtifactPaths = Object.freeze([\n  'src/api/generated/operations/core.ts',\n  'src/api/generated/operations/system.ts',\n])\nexport const generatedArtifactPaths = Object.freeze([\n  ...generatedOperationArtifactPaths,\n  'src/api/generated/permissions.ts',\n])\n",
+    )
+    .unwrap();
+    assert_eq!(
+        generated_artifact_paths(&frontend.0).unwrap(),
+        [
+            "src/api/generated/operations/core.ts",
+            "src/api/generated/operations/system.ts",
+            "src/api/generated/permissions.ts",
+        ]
     );
     fs::write(
         frontend.0.join("scripts/api-artifacts.mjs"),

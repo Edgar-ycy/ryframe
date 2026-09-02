@@ -27,7 +27,9 @@ pub(crate) use cargo_command::{
     WORKSPACE_CLIPPY_ARGS, backend_package_operation_args, cargo_operation_jobs,
     default_test_jobs_from, workspace_clippy_args, workspace_test_args,
 };
-pub(crate) use execution::{ci_consumer_contract, ci_rust_gate};
+pub(crate) use execution::{
+    ci_consumer_contract, ci_consumer_contract_against_committed_snapshot, ci_rust_gate,
+};
 #[allow(unused_imports)]
 pub(crate) use execution::{run, verify};
 #[allow(unused_imports)]
@@ -37,13 +39,14 @@ pub(crate) use feature::feature_matrix;
 pub(crate) use change_surface::{
     ChangeCategory, ChangeSurfacePolicy, ChangeSurfaceReport, RepositoryKind,
     analyze_change_surface, append_changed_file_size_warnings, load_change_surface_policy,
+    parse_change_surface_policy,
 };
 #[allow(unused_imports)]
 pub(crate) use context::{
     BACKEND_CI_TARGET_DIR, BACKEND_SMART_TARGET_DIR, BACKEND_VERIFY_TARGET_DIR,
     RESOURCE_CI_TARGET_DIR, RESOURCE_VERIFY_TARGET_DIR, VerifyExecutionContext, VerifyJobBudget,
-    VerifyTargetPolicy, ci_environment_from, resolve_target_dir, verify_job_budget_from,
-    verify_target_policy_from,
+    VerifyTargetPolicy, ci_environment_from, ci_target_policy, ci_target_policy_from,
+    resolve_target_dir, verify_job_budget_from, verify_target_policy_from,
 };
 #[allow(unused_imports)]
 pub(crate) use execution::{
@@ -62,17 +65,19 @@ pub(crate) use model::{
 };
 #[allow(unused_imports)]
 pub(crate) use resource::{
-    resolve_frontend_dir, resource_test_executable_from_messages, resource_workspace_compilation,
-    resource_workspace_environment,
+    ResourceWorkspaceProfile, resolve_frontend_dir, resource_test_executable_from_messages,
+    resource_workspace_compilation, resource_workspace_environment_for_profile,
+    targeted_resource_workspace_compilation,
 };
 #[allow(unused_imports)]
 pub(crate) use selection::{
     changed_paths, changed_paths_between, classify_changes, complete_verify_selection,
-    frontend_profile_commands, load_workspace_graph, needs_consumer_contract,
-    reverse_dependency_closure,
+    frontend_profile_commands, load_resource_workspace_graph, load_workspace_graph,
+    needs_consumer_contract, reverse_dependency_closure,
 };
 #[allow(unused_imports)]
 pub(crate) use snapshot::{
-    backend_snapshot_export_args, consumer_contract_arguments, consumer_contract_plan,
-    load_consumer_contract_plan, package_tests_generate_snapshots,
+    BackendSnapshots, backend_snapshot_export_args, consumer_contract_arguments,
+    consumer_contract_plan, load_consumer_contract_plan, package_tests_generate_snapshots,
+    prepare_backend_snapshots, prepare_consumer_backend_snapshots, verify_backend_snapshots,
 };

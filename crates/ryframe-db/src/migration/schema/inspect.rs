@@ -10,6 +10,7 @@ use super::{
     types::{ActualColumn, ActualForeignKey, ActualIndex, ActualTable},
 };
 
+#[cfg(any(feature = "migration", test))]
 const USER_TABLES_SQL: &str = concat!(
     "SELECT TABLE_NAME AS `table_name` FROM information_schema.TABLES ",
     "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE' ",
@@ -64,6 +65,7 @@ const ACTUAL_FOREIGN_KEYS_SQL: &str = concat!(
     "ORDER BY k.TABLE_NAME, k.CONSTRAINT_NAME, k.ORDINAL_POSITION",
 );
 
+#[cfg(feature = "migration")]
 pub(crate) async fn user_tables<C>(db: &C) -> Result<Vec<String>, DbErr>
 where
     C: ConnectionTrait + ?Sized,

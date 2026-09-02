@@ -31,7 +31,7 @@ cargo dev
 ```powershell
 $env:APP_ENV = "dev"
 $env:APP_JOBS_MODE = "external"
-cargo run --locked -p ryframe --bin ryframe-worker
+cargo run --locked -p ryframe --no-default-features --features bin-worker --bin ryframe-worker
 ```
 
 ## 开发与检查
@@ -62,10 +62,12 @@ cargo api-sync
 
 ## 开发标准资源
 
-标准 CRUD 资源通过资源清单离线生成。以下命令分别用于预览、写入和查看生成链路：
+标准 CRUD 资源通过资源清单离线生成。预览和检查都只读，只有显式的 `--write` 会更新生成结果：
 
 ```powershell
 cargo resource post
+cargo resource post --check
+cargo resource --all --check
 cargo resource post --write
 cargo resource post --explain
 ```

@@ -259,41 +259,65 @@ pub(crate) fn generated_artifact_paths(frontend_dir: &Path) -> Result<Vec<String
 fn generated_artifact_paths_from_source(source: &[u8]) -> Result<Vec<String>> {
     let source = std::str::from_utf8(source)
         .map_err(|error| format!("前端 api-artifacts.mjs 不是 UTF-8：{error}"))?;
-    let marker = "export const generatedArtifactPaths = Object.freeze([";
-    let start = source
-        .find(marker)
-        .map(|index| index + marker.len())
-        .ok_or("前端 api-artifacts.mjs 缺少 generatedArtifactPaths 清单")?;
-    let end = source[start..]
-        .find("])")
-        .map(|index| start + index)
-        .ok_or("前端 generatedArtifactPaths 清单缺少结束标记")?;
+    let body = frozen_array_body(source, "generatedArtifactPaths")?;
     let mut paths = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
-    for line in source[start..end].lines() {
+    for line in body.lines() {
         let value = line.trim().trim_end_matches(',').trim();
         if value.is_empty() {
             continue;
         }
-        let value = value
-            .strip_prefix('\'')
-            .and_then(|value| value.strip_suffix('\''))
-            .or_else(|| {
-                value
-                    .strip_prefix('"')
-                    .and_then(|value| value.strip_suffix('"'))
-            })
-            .ok_or_else(|| format!("generatedArtifactPaths 包含不受支持的条目：{value}"))?;
-        validate_frontend_relative_path(value)?;
-        if !seen.insert(value.to_owned()) {
-            return Err(format!("generatedArtifactPaths 包含重复路径：{value}").into());
+        if let Some(name) = value.strip_prefix("...") {
+            for nested in frozen_array_body(source, name)?.lines() {
+                push_generated_path(nested, &mut paths, &mut seen)?;
+            }
+        } else {
+            push_generated_path(value, &mut paths, &mut seen)?;
         }
-        paths.push(value.to_owned());
     }
     if paths.is_empty() {
         return Err("generatedArtifactPaths 不能为空".into());
     }
     Ok(paths)
+}
+
+fn frozen_array_body<'a>(source: &'a str, name: &str) -> Result<&'a str> {
+    let marker = format!("export const {name} = Object.freeze([");
+    let start = source
+        .find(&marker)
+        .map(|index| index + marker.len())
+        .ok_or_else(|| format!("前端 api-artifacts.mjs 缺少 {name} 清单"))?;
+    let end = source[start..]
+        .find("])")
+        .map(|index| start + index)
+        .ok_or_else(|| format!("前端 {name} 清单缺少结束标记"))?;
+    Ok(&source[start..end])
+}
+
+fn push_generated_path(
+    source: &str,
+    paths: &mut Vec<String>,
+    seen: &mut std::collections::BTreeSet<String>,
+) -> Result<()> {
+    let value = source.trim().trim_end_matches(',').trim();
+    if value.is_empty() {
+        return Ok(());
+    }
+    let value = value
+        .strip_prefix('\'')
+        .and_then(|value| value.strip_suffix('\''))
+        .or_else(|| {
+            value
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+        })
+        .ok_or_else(|| format!("generatedArtifactPaths 包含不受支持的条目：{value}"))?;
+    validate_frontend_relative_path(value)?;
+    if !seen.insert(value.to_owned()) {
+        return Err(format!("generatedArtifactPaths 包含重复路径：{value}").into());
+    }
+    paths.push(value.to_owned());
+    Ok(())
 }
 
 fn validate_frontend_relative_path(value: &str) -> Result<()> {

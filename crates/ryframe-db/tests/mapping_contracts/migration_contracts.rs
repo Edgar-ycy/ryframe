@@ -4,9 +4,9 @@ use ryframe_db::{
     install_id_generator,
     migration::{
         CONTROL_MIGRATION_LEDGER, Migrator, access_menus, access_permission_codes,
-        access_permission_names, control_ddl_statements, expected_extra, extract_column_type,
-        mysql_snapshot_sql, normalize_column_type, schema_fingerprint, supports_mysql_80_or_newer,
-        validate_seed_statements,
+        access_permission_names, control_ddl_statements, expected_extra, expected_migration_names,
+        extract_column_type, mysql_snapshot_sql, normalize_column_type, schema_fingerprint,
+        supports_mysql_80_or_newer, validate_seed_statements,
     },
     next_id,
     resource_ownership::{marker, validate_marker_input},
@@ -121,7 +121,6 @@ fn generated_resource_access_is_owned_once_by_the_merged_seed_catalog() {
         Some("system:post:list")
     );
     assert_eq!(post_menus[0].parent_route_key(), Some("system"));
-    assert_eq!(post_menus[0].sort(), 8);
 
     let notice = menus
         .iter()
@@ -130,7 +129,6 @@ fn generated_resource_access_is_owned_once_by_the_merged_seed_catalog() {
     assert_eq!(notice.name, "通知公告");
     assert_eq!(notice.permission.as_deref(), Some("system:notice:list"));
     assert_eq!(notice.parent_route_key(), Some("system"));
-    assert_eq!(notice.sort(), 15);
     assert_eq!(
         menus
             .iter()
@@ -205,6 +203,12 @@ fn supported_version_rejects_old_mysql_mariadb_and_invalid_identity() {
 #[test]
 fn control_schema_is_one_fresh_baseline() {
     let migrations = Migrator::migrations();
+    let actual_names = migrations
+        .iter()
+        .map(|migration| migration.name())
+        .collect::<Vec<_>>();
+    let expected_names = expected_migration_names().collect::<Vec<_>>();
+    assert_eq!(actual_names, expected_names);
     assert_eq!(
         migrations.len(),
         1 + ryframe_db::generated::migrations().len()

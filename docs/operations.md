@@ -17,12 +17,12 @@ Compose 会先更新控制库与租户库，再启动 Worker 和 API。启动后
 
 ## 非生产重建
 
-`ryframe-reset` 只在显式 `destructive-reset` feature 下编译，生产镜像不复制该二进制。执行前必须停止 API、Worker 和 scheduler，并完成全部只读预检。
+`ryframe-reset` 只在显式 `bin-reset` feature 下编译，生产镜像不复制该二进制。执行前必须停止 API、Worker 和 scheduler，并完成全部只读预检。
 
 ```powershell
 $env:APP_ENV = "test"
-cargo run --locked -p ryframe --features destructive-reset --bin ryframe-reset -- plan
-cargo run --locked -p ryframe --features destructive-reset --bin ryframe-reset -- execute --plan-hash <sha256> --confirm-reset <精确短语>
+cargo run --locked -p ryframe --no-default-features --features bin-reset --bin ryframe-reset -- plan
+cargo run --locked -p ryframe --no-default-features --features bin-reset --bin ryframe-reset -- execute --plan-hash <sha256> --confirm-reset <精确短语>
 ```
 
 执行顺序固定为对象前缀、Redis namespace、物理数据库、控制 baseline、租户 baseline、验证。清单、ledger 和 report 不包含秘密；失败后只允许使用同一清单续跑。生产环境在读取配置或访问外部资源前永久拒绝。

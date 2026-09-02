@@ -66,6 +66,10 @@ pub(super) fn migration(resource: &ResourceIr, header: &str) -> String {
     migration::migration(resource, header)
 }
 
+pub(super) fn migration_name(resource: &ResourceIr) -> String {
+    migration::migration_name(resource)
+}
+
 pub(super) fn rust_base_type(value_type: ValueType) -> &'static str {
     match value_type {
         ValueType::String => "String",

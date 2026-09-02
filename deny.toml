@@ -30,7 +30,8 @@ allow = [
 ]
 
 [[licenses.clarify]]
-# ring 由 rustls / jsonwebtoken 使用，且其许可证并非标准 SPDX 表达式。
+# ring 仍是锁文件中的可选上游依赖，cargo-deny 需要识别其非标准 SPDX 许可证；
+# API/Worker 定向运行图由供应链门禁单独禁止 ring provider。
 crate = "ring"
 expression = "MIT AND ISC AND OpenSSL"
 license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]

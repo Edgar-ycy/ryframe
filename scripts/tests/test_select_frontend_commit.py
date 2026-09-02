@@ -197,6 +197,57 @@ class SelectFrontendCommitTests(unittest.TestCase):
             ("v1.2.3", False),
         )
 
+    def test_resource_selection_uses_main_only_when_pr_base_is_unresolvable(self) -> None:
+        with test_directory() as directory:
+            event = directory / "event.json"
+            event.write_text(
+                json.dumps({"pull_request": {"body": ""}}), encoding="utf-8"
+            )
+            with mock.patch.object(
+                MODULE, "commit_exists_in_worktree", return_value=False
+            ) as exists, mock.patch.object(MODULE, "contract_changed_from_git") as classify:
+                selected = MODULE.select_ci_frontend_ref(
+                    event_name="pull_request",
+                    event_path=event,
+                    backend_worktree=Path("backend"),
+                    base_sha="4" * 40,
+                    prefer_marker=True,
+                    candidate_path=None,
+                    release_ref=None,
+                    fallback_main_on_invalid_base=True,
+                )
+
+        self.assertEqual(selected, ("main", False))
+        exists.assert_called_once_with(Path("backend"), "4" * 40)
+        classify.assert_not_called()
+
+    def test_resource_selection_preserves_explicit_frontend_marker_without_base(self) -> None:
+        with test_directory() as directory:
+            event = directory / "event.json"
+            frontend_sha = "5" * 40
+            event.write_text(
+                json.dumps(
+                    {
+                        "pull_request": {
+                            "body": f"Frontend-Commit: {frontend_sha}"
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            selected = MODULE.select_ci_frontend_ref(
+                event_name="pull_request",
+                event_path=event,
+                backend_worktree=Path("backend"),
+                base_sha=None,
+                prefer_marker=True,
+                candidate_path=None,
+                release_ref=None,
+                fallback_main_on_invalid_base=True,
+            )
+
+        self.assertEqual(selected, (frontend_sha, False))
+
 
 if __name__ == "__main__":
     unittest.main()

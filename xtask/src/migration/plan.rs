@@ -7,8 +7,8 @@ use chrono::Utc;
 
 use crate::{
     Result,
-    cli::{MigrationCommand, MigrationScope, MigrationTarget},
-    process::run as run_process,
+    cli::{MigrationCommand, MigrationOperation, MigrationScope, MigrationTarget},
+    process::{run as run_process, run_owned},
     workspace::root_dir,
 };
 
@@ -35,25 +35,8 @@ pub(crate) fn run(command: &MigrationCommand) -> Result<()> {
             &["scripts/check_migration_history.py", "--freeze"],
         ),
         MigrationCommand::Run { operation, target } => {
-            let operation = operation.as_str();
-            let mut migration_args = match target {
-                MigrationTarget::Control => vec!["control", operation],
-                MigrationTarget::TenantDataAll => vec!["tenant-data", operation, "--all"],
-                MigrationTarget::TenantDataOne(target) => {
-                    vec!["tenant-data", operation, "--target", target]
-                }
-            };
-            let mut args = vec![
-                "run",
-                "--locked",
-                "-p",
-                "ryframe",
-                "--bin",
-                "ryframe-migrate",
-                "--",
-            ];
-            args.append(&mut migration_args);
-            run_process(&root_dir(), "cargo", &args)
+            let args = migration_run_args(*operation, target);
+            run_owned(&root_dir(), "cargo", &args)
         }
         MigrationCommand::New { scope, name } => {
             let _lock = MigrationLock::acquire(&root_dir(), *scope)?;
@@ -61,6 +44,40 @@ pub(crate) fn run(command: &MigrationCommand) -> Result<()> {
             create_migration_under_lock(&root_dir(), *scope, name, &timestamp)
         }
     }
+}
+
+pub(crate) fn migration_run_args(
+    operation: MigrationOperation,
+    target: &MigrationTarget,
+) -> Vec<String> {
+    let mut args = [
+        "run",
+        "--locked",
+        "-p",
+        "ryframe",
+        "--no-default-features",
+        "--features",
+        "bin-migrate",
+        "--bin",
+        "ryframe-migrate",
+        "--",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    let operation = operation.as_str().to_owned();
+    match target {
+        MigrationTarget::Control => args.extend(["control".to_owned(), operation]),
+        MigrationTarget::TenantDataAll => {
+            args.extend(["tenant-data".to_owned(), operation, "--all".to_owned()]);
+        }
+        MigrationTarget::TenantDataOne(target) => args.extend([
+            "tenant-data".to_owned(),
+            operation,
+            "--target".to_owned(),
+            target.clone(),
+        ]),
+    }
+    args
 }
 
 #[allow(dead_code)]
@@ -141,7 +158,8 @@ fn plan_migration(root: &Path, scope: MigrationScope, module: &str) -> Result<Ve
     })?;
     let module_source = String::from_utf8(module_bytes.clone())
         .map_err(|error| format!("迁移模块注册表不是 UTF-8：{error}"))?;
-    let updated_module_source = insert_module_declaration(&module_source, module)?;
+    let updated_module_source =
+        insert_migration_name(&insert_module_declaration(&module_source, module)?, module)?;
 
     let (migrator_bytes, migrator_source) = if migrator_registry == module_registry {
         (module_bytes.clone(), updated_module_source.clone())
@@ -256,7 +274,54 @@ fn insert_module_declaration(source: &str, module: &str) -> Result<String> {
         "\n"
     };
     let mut updated = source.to_owned();
-    updated.insert_str(insert_at, &format!("{declaration}{newline}"));
+    updated.insert_str(
+        insert_at,
+        &format!("#[cfg(feature = \"migration\")]{newline}{declaration}{newline}"),
+    );
+    Ok(updated)
+}
+
+fn insert_migration_name(source: &str, module: &str) -> Result<String> {
+    const REGISTRY: &str = "const HANDWRITTEN_MIGRATION_NAMES: &[&str] = &[";
+    let entry = format!("\"{module}\"");
+    if source.contains(&entry) {
+        return Err(format!("迁移名称已注册：{module}").into());
+    }
+    let content_start = source
+        .find(REGISTRY)
+        .map(|offset| offset + REGISTRY.len())
+        .ok_or("迁移模块注册表缺少 HANDWRITTEN_MIGRATION_NAMES")?;
+    let content_end = source[content_start..]
+        .find("];")
+        .map(|offset| content_start + offset)
+        .ok_or("HANDWRITTEN_MIGRATION_NAMES 缺少结束括号")?;
+    let mut entries = source[content_start..content_end]
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .collect::<Vec<_>>();
+    if entries
+        .iter()
+        .any(|entry| !(entry.starts_with('"') && entry.ends_with('"')))
+    {
+        return Err("HANDWRITTEN_MIGRATION_NAMES 只能包含迁移名称字面量".into());
+    }
+    entries.push(&entry);
+    let newline = if source.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let registry = format!(
+        "{newline}{}{newline}",
+        entries
+            .iter()
+            .map(|entry| format!("    {entry},"))
+            .collect::<Vec<_>>()
+            .join(newline)
+    );
+    let mut updated = source.to_owned();
+    updated.replace_range(content_start..content_end, &registry);
     Ok(updated)
 }
 

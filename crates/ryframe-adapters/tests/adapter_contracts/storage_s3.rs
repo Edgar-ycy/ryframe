@@ -5,11 +5,10 @@ use std::{
     time::Duration,
 };
 
-use ryframe_adapters::{
-    metrics,
-    storage::{
-        ObjectStorage, S3Config, S3ObjectStorage, normalize_sha256, parse_list_objects_response,
-    },
+#[cfg(feature = "monitoring")]
+use ryframe_adapters::metrics;
+use ryframe_adapters::storage::{
+    ObjectStorage, S3Config, S3ObjectStorage, normalize_sha256, parse_list_objects_response,
 };
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncReadExt;
@@ -51,6 +50,7 @@ fn list_request_contains_exact_prefix_cursor_and_limit() {
         access_key: "test-access".to_owned(),
         secret_key: "test-secret".to_owned(),
         use_ssl: false,
+        root_ca_pem: None,
         region: "us-east-1".to_owned(),
         request_timeout_secs: 30,
     })
@@ -75,6 +75,7 @@ fn s3_config_redacts_credentials_and_bounds_timeout() {
         access_key: "access-must-not-leak".to_owned(),
         secret_key: "secret-must-not-leak".to_owned(),
         use_ssl: false,
+        root_ca_pem: None,
         region: "us-east-1".to_owned(),
         request_timeout_secs: 0,
     };
@@ -105,6 +106,7 @@ fn list_response_is_unescaped_bounded_and_prefix_checked() {
     assert!(parse_list_objects_response(too_many, "scope/", 1).is_err());
 }
 
+#[cfg(feature = "monitoring")]
 #[tokio::test]
 async fn s3_metrics_record_each_complete_logical_operation_once() {
     let not_found =
@@ -124,6 +126,7 @@ async fn s3_metrics_record_each_complete_logical_operation_once() {
         access_key: "test-access".to_owned(),
         secret_key: "test-secret".to_owned(),
         use_ssl: false,
+        root_ca_pem: None,
         region: "us-east-1".to_owned(),
         request_timeout_secs: 2,
     })
@@ -188,6 +191,7 @@ async fn s3_service_error_discards_remote_body_and_bucket_location() {
         access_key: "test-access".to_owned(),
         secret_key: "test-secret".to_owned(),
         use_ssl: false,
+        root_ca_pem: None,
         region: "us-east-1".to_owned(),
         request_timeout_secs: 2,
     })
@@ -219,6 +223,7 @@ async fn s3_transport_error_discards_request_url() {
         access_key: "test-access".to_owned(),
         secret_key: "test-secret".to_owned(),
         use_ssl: false,
+        root_ca_pem: None,
         region: "us-east-1".to_owned(),
         request_timeout_secs: 1,
     })
@@ -257,6 +262,7 @@ fn spawn_http_responses(responses: Vec<Vec<u8>>) -> (String, thread::JoinHandle<
     (endpoint.to_string(), server)
 }
 
+#[cfg(feature = "monitoring")]
 fn operation_total(metrics: &str, operation: &str) -> f64 {
     metrics
         .lines()
@@ -267,6 +273,7 @@ fn operation_total(metrics: &str, operation: &str) -> f64 {
         .sum()
 }
 
+#[cfg(feature = "monitoring")]
 fn operation_result_total(metrics: &str, operation: &str, result: &str) -> f64 {
     metrics
         .lines()
@@ -279,6 +286,7 @@ fn operation_result_total(metrics: &str, operation: &str, result: &str) -> f64 {
         .map_or(0.0, metric_value)
 }
 
+#[cfg(feature = "monitoring")]
 fn metric_value(line: &str) -> f64 {
     line.split_whitespace()
         .last()

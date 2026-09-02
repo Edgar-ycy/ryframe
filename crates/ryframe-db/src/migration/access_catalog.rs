@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use sea_orm::{ConnectionTrait, DbBackend, DbErr, Statement, TryGetable};
+use sea_orm::DbErr;
+#[cfg(feature = "migration")]
+use sea_orm::{ConnectionTrait, DbBackend, Statement, TryGetable};
 
 mod generated;
 
@@ -16,6 +18,7 @@ pub struct AccessMenu {
     pub name: String,
     pub menu_type: String,
     pub permission: Option<String>,
+    icon: Option<String>,
     parent_route_key: Option<String>,
     sort: i32,
     sort_declared: bool,
@@ -29,8 +32,13 @@ impl AccessMenu {
     pub const fn sort(&self) -> i32 {
         self.sort
     }
+
+    pub fn icon(&self) -> Option<&str> {
+        self.icon.as_deref()
+    }
 }
 
+#[cfg(feature = "migration")]
 pub(super) async fn seed_access_catalog<C>(db: &C) -> Result<(), DbErr>
 where
     C: ConnectionTrait + ?Sized,
@@ -78,7 +86,7 @@ where
             db.execute_raw(Statement::from_sql_and_values(
                 DbBackend::MySql,
                 "UPDATE `sys_menu` SET `name` = IF(`name` = `route_key`, ?, `name`), \
-                 `parent_id` = ?, `menu_type` = ?, `perm_id` = ?, `sort` = ?, `status` = '1', \
+                 `parent_id` = ?, `menu_type` = ?, `perm_id` = ?, `icon` = COALESCE(?, `icon`), `sort` = ?, `status` = '1', \
                  `del_flag` = '0', `updated_at` = UTC_TIMESTAMP(6) \
                  WHERE `id` = ? AND `tenant_id` = 'system'",
                 [
@@ -86,6 +94,7 @@ where
                     parent_id.into(),
                     menu.menu_type.as_str().into(),
                     permission_id.into(),
+                    menu.icon.clone().into(),
                     menu.sort().into(),
                     id.into(),
                 ],
@@ -98,7 +107,7 @@ where
             DbBackend::MySql,
             "INSERT INTO `sys_menu` \
              (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) \
-             VALUES (?, 'system', ?, ?, ?, ?, ?, NULL, ?, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))",
+             VALUES (?, 'system', ?, ?, ?, ?, ?, ?, ?, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))",
             [
                 id.into(),
                 menu.name.as_str().into(),
@@ -106,6 +115,7 @@ where
                 menu.menu_type.as_str().into(),
                 permission_id.into(),
                 menu.route_key.as_str().into(),
+                menu.icon.clone().into(),
                 menu.sort().into(),
             ],
         ))
@@ -114,6 +124,7 @@ where
     Ok(())
 }
 
+#[cfg(feature = "migration")]
 async fn permission_id<C>(db: &C, code: &str) -> Result<Option<i64>, DbErr>
 where
     C: ConnectionTrait + ?Sized,
@@ -129,6 +140,7 @@ where
     Ok(row.map(|row| i64::try_get_by_index(&row, 0)).transpose()?)
 }
 
+#[cfg(feature = "migration")]
 async fn next_permission_id<C>(db: &C) -> Result<i64, DbErr>
 where
     C: ConnectionTrait + ?Sized,
@@ -140,6 +152,7 @@ where
     .await
 }
 
+#[cfg(feature = "migration")]
 async fn menu_id<C>(db: &C, route_key: &str) -> Result<Option<i64>, DbErr>
 where
     C: ConnectionTrait + ?Sized,
@@ -155,6 +168,7 @@ where
     Ok(row.map(|row| i64::try_get_by_index(&row, 0)).transpose()?)
 }
 
+#[cfg(feature = "migration")]
 async fn next_menu_id<C>(db: &C) -> Result<i64, DbErr>
 where
     C: ConnectionTrait + ?Sized,
@@ -166,6 +180,7 @@ where
     .await
 }
 
+#[cfg(feature = "migration")]
 async fn next_catalog_id<C>(db: &C, sql: &'static str) -> Result<i64, DbErr>
 where
     C: ConnectionTrait + ?Sized,
@@ -266,6 +281,7 @@ pub fn access_menus() -> Result<Vec<AccessMenu>, DbErr> {
                 name: String::new(),
                 menu_type: String::new(),
                 permission: None,
+                icon: None,
                 parent_route_key: None,
                 sort: 0,
                 sort_declared: false,
@@ -292,6 +308,8 @@ pub fn access_menus() -> Result<Vec<AccessMenu>, DbErr> {
             menu.menu_type = value.to_owned();
         } else if let Some(value) = catalog_string_value(line, "permission") {
             menu.permission = Some(value.to_owned());
+        } else if let Some(value) = catalog_string_value(line, "icon") {
+            menu.icon = Some(value.to_owned());
         }
     }
     if let Some(menu) = current {
@@ -303,6 +321,12 @@ pub fn access_menus() -> Result<Vec<AccessMenu>, DbErr> {
             || menu.name.chars().count() > 64
             || !menu.sort_declared
             || menu.sort < 0
+            || menu.icon.as_deref().is_some_and(|icon| {
+                icon.is_empty()
+                    || !icon
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || b"-._".contains(&byte))
+            })
             || !matches!(menu.menu_type.as_str(), "M" | "C")
             || !menu
                 .route_key
@@ -360,6 +384,7 @@ pub fn access_menus() -> Result<Vec<AccessMenu>, DbErr> {
             name: resource.menu.labels.zh_cn,
             menu_type: "C".to_owned(),
             permission: Some(resource.permissions.list),
+            icon: resource.menu.icon,
             parent_route_key: Some(resource.menu.parent),
             sort: i32::try_from(resource.menu.order)
                 .map_err(|_| DbErr::Custom("生成菜单 order 超出可表示范围".into()))?,

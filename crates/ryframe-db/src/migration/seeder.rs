@@ -98,7 +98,7 @@ pub fn mysql_snapshot_sql() -> String {
          -- schema fingerprint: {}\n\
          -- 唯一事实来源：ryframe-db::migration Migrator 与 Seeder。\n\
          -- 仅供审阅：部署和重置工具不得执行此文件。\n\
-         -- 重新生成命令：cargo run -p ryframe-db --bin export_mysql_snapshot -- sql/ryframe_config.sql\n\n",
+         -- 重新生成命令：cargo run --locked -p ryframe-db --features migration --bin export_mysql_snapshot -- sql/ryframe_config.sql\n\n",
         crate::migration::m20260820_000000_control_baseline::schema_fingerprint()
     );
     for statement in ddl_statements() {
@@ -178,10 +178,13 @@ fn access_catalog_snapshot_statements() -> Result<Vec<String>, DbErr> {
             },
         );
         let menu_name = menu.name.replace('\'', "''");
+        let icon = menu
+            .icon()
+            .map_or_else(|| "NULL".to_owned(), |icon| format!("'{icon}'"));
         statements.push(format!(
             "INSERT INTO `sys_menu` \
              (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) \
-             SELECT {}, 'system', '{}', {}, '{}', {}, '{}', NULL, {}, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) \
+             SELECT {}, 'system', '{}', {}, '{}', {}, '{}', {}, {}, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) \
              WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = '{}')",
             20_000 + index,
             menu_name,
@@ -189,16 +192,18 @@ fn access_catalog_snapshot_statements() -> Result<Vec<String>, DbErr> {
             menu.menu_type,
             permission_id,
             menu.route_key,
+            icon,
             menu.sort(),
             menu.route_key,
         ));
         statements.push(format!(
-            "UPDATE `sys_menu` SET `name` = IF(`name` = `route_key`, '{}', `name`), `parent_id` = {}, `menu_type` = '{}', `perm_id` = {}, `sort` = {}, `status` = '1', `del_flag` = '0' \
+            "UPDATE `sys_menu` SET `name` = IF(`name` = `route_key`, '{}', `name`), `parent_id` = {}, `menu_type` = '{}', `perm_id` = {}, `icon` = COALESCE({}, `icon`), `sort` = {}, `status` = '1', `del_flag` = '0' \
              WHERE `tenant_id` = 'system' AND `route_key` = '{}'",
             menu_name,
             parent_id,
             menu.menu_type,
             permission_id,
+            icon,
             menu.sort(),
             menu.route_key,
         ));

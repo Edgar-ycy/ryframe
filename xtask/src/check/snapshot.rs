@@ -2,8 +2,6 @@ use std::{
     collections::BTreeSet,
     fs,
     path::{Path, PathBuf},
-    process,
-    sync::atomic::{AtomicU64, Ordering},
 };
 
 use crate::{
@@ -13,26 +11,24 @@ use crate::{
 
 use super::model::{BackendSnapshotProfile, ConsumerContractPlan};
 
-static NEXT_VERIFY_ARTIFACT: AtomicU64 = AtomicU64::new(1);
-
-pub(super) struct BackendSnapshots {
+pub(crate) struct BackendSnapshots {
     openapi: Option<PathBuf>,
     mysql: Option<PathBuf>,
 }
 
 impl BackendSnapshots {
-    pub(super) fn workspace_test_environment(&self) -> Vec<(&'static str, String)> {
+    pub(crate) fn workspace_test_environment(&self) -> Vec<(&'static str, String)> {
         let mut environment = Vec::with_capacity(2);
         if let Some(openapi) = &self.openapi {
             environment.push((
                 "RYFRAME_VERIFY_OPENAPI_SNAPSHOT_OUTPUT",
-                openapi.to_string_lossy().into_owned(),
+                snapshot_environment_path(openapi),
             ));
         }
         if let Some(mysql) = &self.mysql {
             environment.push((
                 "RYFRAME_VERIFY_MYSQL_SNAPSHOT_OUTPUT",
-                mysql.to_string_lossy().into_owned(),
+                snapshot_environment_path(mysql),
             ));
         }
         environment
@@ -75,9 +71,24 @@ pub(super) fn export_and_verify_backend_snapshots(
     Ok(snapshots)
 }
 
-pub(super) fn prepare_backend_snapshots(
+pub(crate) fn prepare_backend_snapshots(
     root: &Path,
     profiles: &BTreeSet<BackendSnapshotProfile>,
+) -> Result<BackendSnapshots> {
+    prepare_backend_snapshots_with_prefix(root, profiles, "verify")
+}
+
+pub(crate) fn prepare_consumer_backend_snapshots(
+    root: &Path,
+    profiles: &BTreeSet<BackendSnapshotProfile>,
+) -> Result<BackendSnapshots> {
+    prepare_backend_snapshots_with_prefix(root, profiles, "consumer")
+}
+
+fn prepare_backend_snapshots_with_prefix(
+    root: &Path,
+    profiles: &BTreeSet<BackendSnapshotProfile>,
+    prefix: &str,
 ) -> Result<BackendSnapshots> {
     let artifact_dir = root.join("target").join("xtask");
     fs::create_dir_all(&artifact_dir).map_err(|error| {
@@ -86,21 +97,44 @@ pub(super) fn prepare_backend_snapshots(
             artifact_dir.display()
         )
     })?;
-    let suffix = format!(
-        "{}-{}",
-        process::id(),
-        NEXT_VERIFY_ARTIFACT.fetch_add(1, Ordering::Relaxed)
-    );
     let openapi = profiles
         .contains(&BackendSnapshotProfile::OpenApiContract)
-        .then(|| artifact_dir.join(format!("verify-{suffix}-openapi.json")));
+        .then(|| artifact_dir.join(format!("{prefix}-openapi.json")));
     let mysql = profiles
         .contains(&BackendSnapshotProfile::Mysql)
-        .then(|| artifact_dir.join(format!("verify-{suffix}-mysql.sql")));
+        .then(|| artifact_dir.join(format!("{prefix}-mysql.sql")));
     Ok(BackendSnapshots { openapi, mysql })
 }
 
-pub(super) fn verify_backend_snapshots(root: &Path, snapshots: &BackendSnapshots) -> Result<()> {
+fn snapshot_environment_path(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
+pub(crate) fn stage_committed_backend_snapshots(
+    root: &Path,
+    snapshots: &BackendSnapshots,
+) -> Result<()> {
+    if let Some(openapi) = &snapshots.openapi {
+        copy_committed_snapshot(&root.join("openapi/openapi.json"), openapi, "OpenAPI")?;
+    }
+    if let Some(mysql) = &snapshots.mysql {
+        copy_committed_snapshot(&root.join("sql/ryframe_config.sql"), mysql, "MySQL 基线")?;
+    }
+    Ok(())
+}
+
+fn copy_committed_snapshot(source: &Path, destination: &Path, label: &str) -> Result<()> {
+    fs::copy(source, destination).map_err(|error| {
+        format!(
+            "无法暂存已提交的{label}快照 {} -> {}：{error}",
+            source.display(),
+            destination.display()
+        )
+    })?;
+    Ok(())
+}
+
+pub(crate) fn verify_backend_snapshots(root: &Path, snapshots: &BackendSnapshots) -> Result<()> {
     if let Some(openapi) = &snapshots.openapi {
         verify_snapshot(
             "OpenAPI",
@@ -114,7 +148,7 @@ pub(super) fn verify_backend_snapshots(root: &Path, snapshots: &BackendSnapshots
             "MySQL 基线",
             &root.join("sql").join("ryframe_config.sql"),
             mysql,
-            "cargo run --locked -p ryframe-db --bin export_mysql_snapshot -- sql/ryframe_config.sql",
+            "cargo run --locked -p ryframe-db --features migration --bin export_mysql_snapshot -- sql/ryframe_config.sql",
         )?;
     }
     Ok(())
@@ -126,18 +160,26 @@ pub(crate) fn backend_snapshot_export_args(
     binary: &str,
     output: &Path,
 ) -> Vec<String> {
-    vec![
+    let mut args = vec![
+        "--config".to_owned(),
+        "profile.dev.debug=0".to_owned(),
         "run".to_owned(),
         "--locked".to_owned(),
         "--target-dir".to_owned(),
         target_dir.to_owned(),
         "-p".to_owned(),
         package.to_owned(),
+    ];
+    if package == "ryframe-db" && binary == "export_mysql_snapshot" {
+        args.extend(["--features".to_owned(), "migration".to_owned()]);
+    }
+    args.extend([
         "--bin".to_owned(),
         binary.to_owned(),
         "--".to_owned(),
         output.to_string_lossy().into_owned(),
-    ]
+    ]);
+    args
 }
 
 /// 只有实际运行对应 package 的集成测试时，测试环境变量才能生成所需快照。

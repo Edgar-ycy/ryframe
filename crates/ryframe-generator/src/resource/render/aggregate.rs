@@ -4,10 +4,10 @@ use super::{AssetRoot, GeneratedAsset, aggregate_header, catalog};
 pub(super) fn render(resources: &[&ResourceIr], assets: &mut Vec<GeneratedAsset>) {
     let source = resources
         .iter()
-        .map(|resource| format!("{}:{}", resource.source_path, resource.source_hash))
+        .map(|resource| resource.source_path.clone())
         .collect::<Vec<_>>()
         .join(",");
-    let aggregate = aggregate_header(&source);
+    let aggregate = aggregate_header();
     assets.push(GeneratedAsset {
         resource: "__catalog__".into(),
         root: AssetRoot::Backend,
@@ -157,7 +157,14 @@ fn render_storage_mod(resources: &[&ResourceIr], storage: StorageKind, header: &
         .collect::<Vec<_>>();
     let modules = selected
         .iter()
-        .map(|resource| format!("pub mod {};", resource.name))
+        .map(|resource| {
+            let feature_gate = if resource.bootstrap_migration {
+                "#[cfg(any(feature = \"repositories\", feature = \"migration\"))]\n"
+            } else {
+                "#[cfg(feature = \"repositories\")]\n"
+            };
+            format!("{feature_gate}pub mod {};", resource.name)
+        })
         .collect::<Vec<_>>()
         .join("\n");
     let entity_exports = selected
@@ -196,8 +203,14 @@ fn render_storage_mod(resources: &[&ResourceIr], storage: StorageKind, header: &
         .map(|resource| format!("        Box::new({}::migration::Migration),", resource.name))
         .collect::<Vec<_>>()
         .join("\n");
+    let migration_names = selected
+        .iter()
+        .filter(|resource| resource.bootstrap_migration)
+        .map(|resource| format!("    {:?},", super::slice::migration_name(resource)))
+        .collect::<Vec<_>>()
+        .join("\n");
     let arc_import = if storage == StorageKind::TenantData {
-        "use std::sync::Arc;\n\n"
+        "#[cfg(feature = \"repositories\")]\nuse std::sync::Arc;\n\n"
     } else {
         ""
     };
@@ -207,7 +220,7 @@ fn render_storage_mod(resources: &[&ResourceIr], storage: StorageKind, header: &
         String::new()
     };
     format!(
-        "{header}{arc_import}use ryframe_application::generated::GeneratedPersistencePorts;\nuse sea_orm_migration::MigrationTrait;\n\n{modules}\n\npub mod entities {{\n{entity_exports}\n}}\n\npub fn register_ports({parameter_name}: {parameter_type}, ports: &mut GeneratedPersistencePorts) {{\n{empty_body}{registrations}\n}}\n\npub fn migrations() -> Vec<Box<dyn MigrationTrait>> {{\n    vec![\n{migrations}\n    ]\n}}\n"
+        "{header}{arc_import}#[cfg(feature = \"repositories\")]\nuse ryframe_application::generated::GeneratedPersistencePorts;\n#[cfg(feature = \"migration\")]\nuse sea_orm_migration::MigrationTrait;\n\n{modules}\n\npub const MIGRATION_NAMES: &[&str] = &[\n{migration_names}\n];\n\n#[cfg(feature = \"repositories\")]\npub mod entities {{\n{entity_exports}\n}}\n\n#[cfg(feature = \"repositories\")]\npub fn register_ports({parameter_name}: {parameter_type}, ports: &mut GeneratedPersistencePorts) {{\n{empty_body}{registrations}\n}}\n\n#[cfg(feature = \"migration\")]\npub fn migrations() -> Vec<Box<dyn MigrationTrait>> {{\n    vec![\n{migrations}\n    ]\n}}\n"
     )
 }
 

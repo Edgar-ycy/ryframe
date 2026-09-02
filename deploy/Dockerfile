@@ -15,7 +15,13 @@ RUN --mount=type=cache,id=ryframe-cargo-registry,target=/usr/local/cargo/registr
     --mount=type=cache,id=ryframe-target,target=/workspace/target,sharing=locked \
     RYFRAME_BUILD_COMMIT="${RYFRAME_BUILD_COMMIT}" \
     cargo build --locked --release --no-default-features -p ryframe \
-    --bin ryframe --bin ryframe-migrate --bin ryframe-worker \
+    --features bin-api,runtime-swagger-ui --bin ryframe \
+    && RYFRAME_BUILD_COMMIT="${RYFRAME_BUILD_COMMIT}" \
+    cargo build --locked --release --no-default-features -p ryframe \
+    --features bin-migrate --bin ryframe-migrate \
+    && RYFRAME_BUILD_COMMIT="${RYFRAME_BUILD_COMMIT}" \
+    cargo build --locked --release --no-default-features -p ryframe \
+    --features bin-worker --bin ryframe-worker \
     && install --directory /workspace/out \
     && install --mode=0755 /workspace/target/release/ryframe /workspace/out/ryframe \
     && install --mode=0755 /workspace/target/release/ryframe-migrate /workspace/out/ryframe-migrate \

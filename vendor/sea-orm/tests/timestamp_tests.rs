@@ -1,0 +1,285 @@
+#![allow(unused_imports, dead_code)]
+
+pub mod common;
+pub use common::{TestContext, features::*, setup::*};
+use pretty_assertions::assert_eq;
+use sea_orm::{DatabaseConnection, IntoActiveModel, NotSet, Set, entity::prelude::*};
+
+#[sea_orm_macros::test]
+async fn bakery_chain_schema_timestamp_tests() -> Result<(), DbErr> {
+    let ctx = TestContext::new("bakery_chain_schema_timestamp_tests").await;
+    create_log_table(&ctx.db).await?;
+    create_satellites_table(&ctx.db).await?;
+    create_applog(&ctx.db).await?;
+    create_satellites_log(&ctx.db).await?;
+
+    ctx.delete().await;
+
+    Ok(())
+}
+
+mod access_log {
+    use sea_orm::entity::prelude::*;
+
+    #[sea_orm::model]
+    #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
+    #[sea_orm(table_name = "access_log")]
+    pub struct Model {
+        #[sea_orm(primary_key)]
+        pub id: i32,
+        pub ts: ChronoUnixTimestamp,
+        pub ms: ChronoUnixTimestampMillis,
+        pub tts: TimeUnixTimestamp,
+        pub tms: TimeUnixTimestampMillis,
+    }
+
+    impl ActiveModelBehavior for ActiveModel {}
+}
+
+#[sea_orm_macros::test]
+async fn entity_timestamp_test() -> Result<(), DbErr> {
+    let ctx = TestContext::new("entity_timestamp_test").await;
+    let db = &ctx.db;
+
+    db.get_schema_builder()
+        .register(access_log::Entity)
+        .apply(db)
+        .await?;
+
+    let now = sea_orm::prelude::ChronoUtc::now();
+    let time_now = sea_orm::prelude::TimeDateTimeWithTimeZone::from_unix_timestamp_nanos(
+        now.timestamp_nanos_opt().unwrap() as i128,
+    )
+    .unwrap();
+
+    let log = access_log::ActiveModel {
+        id: NotSet,
+        ts: Set(now.into()),
+        ms: Set(ChronoUnixTimestampMillis(now)),
+        tts: Set(TimeUnixTimestamp(time_now)),
+        tms: Set(time_now.into()),
+    }
+    .insert(db)
+    .await?;
+
+    assert_eq!(log.ts.timestamp(), now.timestamp());
+    assert_eq!(log.ms.timestamp_millis(), now.timestamp_millis());
+
+    assert_eq!(log.tts.unix_timestamp(), now.timestamp());
+    assert_eq!(
+        log.tms.unix_timestamp_nanos() / 1_000_000,
+        now.timestamp_millis() as i128
+    );
+
+    #[derive(DerivePartialModel)]
+    #[sea_orm(entity = "access_log::Entity")]
+    struct AccessLog {
+        ts: i64,
+        ms: i64,
+        tts: i64,
+        tms: i64,
+    }
+
+    let log: AccessLog = access_log::Entity::find()
+        .into_partial_model()
+        .one(db)
+        .await?
+        .unwrap();
+
+    assert_eq!(log.ts, now.timestamp());
+    assert_eq!(log.ms, now.timestamp_millis());
+    assert_eq!(log.tts, now.timestamp());
+    assert_eq!(log.tms, now.timestamp_millis());
+
+    Ok(())
+}
+
+#[cfg(all(feature = "serde", feature = "with-json"))]
+#[test]
+fn unix_timestamp_serde_uses_i64() -> Result<(), serde_json::Error> {
+    let chrono_seconds: i64 = 1_700_000_000;
+    let chrono_millis: i64 = 1_700_000_000_123;
+    let time_seconds: i64 = 1_700_000_001;
+    let time_millis: i64 = 1_700_000_001_234;
+
+    let chrono_timestamp = ChronoUnixTimestamp(
+        sea_orm::prelude::ChronoDateTimeUtc::from_timestamp(chrono_seconds, 0).unwrap(),
+    );
+    let chrono_timestamp_millis = ChronoUnixTimestampMillis(
+        sea_orm::prelude::ChronoDateTimeUtc::from_timestamp_millis(chrono_millis).unwrap(),
+    );
+    let time_timestamp = TimeUnixTimestamp(
+        sea_orm::prelude::TimeDateTimeWithTimeZone::from_unix_timestamp(time_seconds).unwrap(),
+    );
+    let time_timestamp_millis = TimeUnixTimestampMillis(
+        sea_orm::prelude::TimeDateTimeWithTimeZone::from_unix_timestamp_nanos(
+            time_millis as i128 * 1_000_000,
+        )
+        .unwrap(),
+    );
+
+    assert_eq!(
+        serde_json::to_string(&chrono_timestamp)?,
+        chrono_seconds.to_string()
+    );
+    assert_eq!(
+        serde_json::from_str::<ChronoUnixTimestamp>(&chrono_seconds.to_string())?,
+        chrono_timestamp
+    );
+
+    assert_eq!(
+        serde_json::to_string(&chrono_timestamp_millis)?,
+        chrono_millis.to_string()
+    );
+    assert_eq!(
+        serde_json::from_str::<ChronoUnixTimestampMillis>(&chrono_millis.to_string())?,
+        chrono_timestamp_millis
+    );
+
+    assert_eq!(
+        serde_json::to_string(&time_timestamp)?,
+        time_seconds.to_string()
+    );
+    assert_eq!(
+        serde_json::from_str::<TimeUnixTimestamp>(&time_seconds.to_string())?,
+        time_timestamp
+    );
+
+    assert_eq!(
+        serde_json::to_string(&time_timestamp_millis)?,
+        time_millis.to_string()
+    );
+    assert_eq!(
+        serde_json::from_str::<TimeUnixTimestampMillis>(&time_millis.to_string())?,
+        time_timestamp_millis
+    );
+
+    assert!(serde_json::from_str::<ChronoUnixTimestamp>(&i64::MAX.to_string()).is_err());
+    assert!(serde_json::from_str::<TimeUnixTimestamp>(&i64::MAX.to_string()).is_err());
+
+    Ok(())
+}
+
+pub async fn create_applog(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let log = applog::Model {
+        id: 1,
+        action: "Testing".to_owned(),
+        json: Json::String("HI".to_owned()),
+        created_at: "2021-09-17T17:50:20+08:00".parse().unwrap(),
+    };
+
+    let res = Applog::insert(log.clone().into_active_model())
+        .exec(db)
+        .await?;
+
+    assert_eq!(log.id, res.last_insert_id);
+    let read_back = Applog::find().one(db).await?;
+    assert_eq!(read_back, Some(log.clone()));
+    #[cfg(all(not(feature = "sync"), feature = "sqlx-sqlite"))]
+    {
+        let read_back = read_back.unwrap();
+        assert_eq!(read_back.created_at.offset().local_minus_utc(), 8 * 60 * 60);
+    }
+
+    #[cfg(all(not(feature = "sync"), feature = "sqlx-sqlite"))]
+    assert_eq!(
+        Applog::find().into_json().one(db).await?,
+        Some(serde_json::json!({
+            "id": 1,
+            "action": "Testing",
+            "json": r#""HI""#,
+            "created_at": "2021-09-17T17:50:20+08:00",
+        }))
+    );
+    #[cfg(feature = "rusqlite")]
+    assert_eq!(
+        Applog::find().into_json().one(db)?,
+        Some(serde_json::json!({
+            "id": 1,
+            "action": "Testing",
+            "json": r#""HI""#,
+            "created_at": "2021-09-17 17:50:20+08:00",
+        }))
+    );
+    #[cfg(feature = "sqlx-mysql")]
+    assert_eq!(
+        Applog::find().into_json().one(db).await?,
+        Some(serde_json::json!({
+            "id": 1,
+            "action": "Testing",
+            "json": "HI",
+            "created_at": "2021-09-17T09:50:20Z",
+        }))
+    );
+    #[cfg(feature = "sqlx-postgres")]
+    assert_eq!(
+        Applog::find().into_json().one(db).await?,
+        Some(serde_json::json!({
+            "id": 1,
+            "action": "Testing",
+            "json": "HI",
+            "created_at": "2021-09-17T09:50:20Z",
+        }))
+    );
+
+    Ok(())
+}
+
+pub async fn create_satellites_log(db: &DatabaseConnection) -> Result<(), DbErr> {
+    let archive = satellite::Model {
+        id: 1,
+        satellite_name: "Sea-00001-2022".to_owned(),
+        launch_date: "2022-01-07T12:11:23Z".parse().unwrap(),
+        deployment_date: "2022-01-07T12:11:23Z".parse().unwrap(),
+    };
+
+    let res = Satellite::insert(archive.clone().into_active_model())
+        .exec(db)
+        .await?;
+
+    assert_eq!(archive.id, res.last_insert_id);
+    assert_eq!(Satellite::find().one(db).await?, Some(archive.clone()));
+
+    #[cfg(all(not(feature = "sync"), feature = "sqlx-sqlite"))]
+    assert_eq!(
+        Satellite::find().into_json().one(db).await?,
+        Some(serde_json::json!({
+            "id": 1,
+            "satellite_name": "Sea-00001-2022",
+            "launch_date": "2022-01-07T12:11:23+00:00",
+            "deployment_date": "2022-01-07T12:11:23Z".parse::<DateTimeLocal>().unwrap().to_rfc3339(),
+        }))
+    );
+    #[cfg(feature = "rusqlite")]
+    assert_eq!(
+        Satellite::find().into_json().one(db)?,
+        Some(serde_json::json!({
+            "id": 1,
+            "satellite_name": "Sea-00001-2022",
+            "launch_date": "2022-01-07 12:11:23+00:00",
+            "deployment_date": "2022-01-07 12:11:23+00:00"
+        }))
+    );
+    #[cfg(feature = "sqlx-mysql")]
+    assert_eq!(
+        Satellite::find().into_json().one(db).await?,
+        Some(serde_json::json!({
+            "id": 1,
+            "satellite_name": "Sea-00001-2022",
+            "launch_date": "2022-01-07T12:11:23Z",
+            "deployment_date": "2022-01-07T12:11:23Z",
+        }))
+    );
+    #[cfg(feature = "sqlx-postgres")]
+    assert_eq!(
+        Satellite::find().into_json().one(db).await?,
+        Some(serde_json::json!({
+            "id": 1,
+            "satellite_name": "Sea-00001-2022",
+            "launch_date": "2022-01-07T12:11:23Z",
+            "deployment_date": "2022-01-07T12:11:23Z",
+        }))
+    );
+
+    Ok(())
+}

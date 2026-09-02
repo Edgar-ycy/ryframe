@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use chrono::{DateTime, Utc};
 use ryframe_application::system::platform::compare_resources;
 use ryframe_application::{
+    infrastructure::*,
     next_id,
     ports::tenant_config::{
         TenantConfigRequesterRecord, TenantConfigTransferItemRecord, TenantConfigurationFenceRecord,
@@ -15,7 +16,6 @@ use ryframe_application::{
             TenantConfigTargetCatalog,
         },
     },
-    tenant_config_stable_key::*,
 };
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{

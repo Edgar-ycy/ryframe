@@ -14,7 +14,34 @@ use ryframe_adapters::{
 use ryframe_config::{AppConfig, Environment, RedisConfig, RedisMode};
 
 const ENABLE_ENV: &str = "RYFRAME_REDIS_INTEGRATION";
+const TLS_ENABLE_ENV: &str = "RYFRAME_REDIS_TLS_INTEGRATION";
 static SCOPE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+#[tokio::test]
+async fn tls_connection_round_trip_uses_real_redis() {
+    if !integration_enabled(TLS_ENABLE_ENV) {
+        eprintln!("跳过 Redis TLS 真实协议测试：设置 {TLS_ENABLE_ENV}=1 后才会连接外部服务");
+        return;
+    }
+
+    let config = redis_config("tls");
+    assert!(config.tls, "Redis TLS 集成测试必须设置 RYFRAME_REDIS_TLS=1");
+    let client = RedisClient::connect(&config)
+        .await
+        .unwrap_or_else(|error| panic!("使用 TLS 连接 Redis 真实服务失败: {error}"));
+    let key = "protocol:tls";
+    let result = async {
+        client.set(key, "ready").await.map_err(redis_error)?;
+        let value = client.get(key).await.map_err(redis_error)?;
+        if value.as_deref() == Some("ready") {
+            Ok(())
+        } else {
+            Err(format!("Redis TLS 往返结果不匹配: {value:?}"))
+        }
+    }
+    .await;
+    finish_with_cleanup(result, &[(&client, vec![key.to_owned()])]).await;
+}
 
 #[tokio::test]
 async fn redis_client_applies_and_expires_ttl() {
@@ -202,10 +229,10 @@ fn redis_config(test_name: &str) -> RedisConfig {
     redis.password = env_value("RYFRAME_REDIS_PASSWORD", "");
     redis.database = env_parse("RYFRAME_REDIS_DATABASE", 0);
     redis.timeout_secs = 3;
-    redis.tls = false;
-    redis.tls_ca = None;
-    redis.tls_client_cert = None;
-    redis.tls_client_key = None;
+    redis.tls = env_switch("RYFRAME_REDIS_TLS");
+    redis.tls_ca = env_optional("RYFRAME_REDIS_TLS_CA");
+    redis.tls_client_cert = env_optional("RYFRAME_REDIS_TLS_CLIENT_CERT");
+    redis.tls_client_key = env_optional("RYFRAME_REDIS_TLS_CLIENT_KEY");
     redis
 }
 
@@ -262,6 +289,23 @@ fn skip_message() {
 
 fn env_value(name: &str, default: &str) -> String {
     env::var(name).unwrap_or_else(|_| default.to_owned())
+}
+
+fn env_optional(name: &str) -> Option<String> {
+    match env::var(name) {
+        Ok(value) if !value.trim().is_empty() => Some(value),
+        Ok(_) | Err(env::VarError::NotPresent) => None,
+        Err(env::VarError::NotUnicode(_)) => panic!("{name} 必须是有效 UTF-8"),
+    }
+}
+
+fn env_switch(name: &str) -> bool {
+    match env::var(name) {
+        Ok(value) if value == "1" => true,
+        Ok(value) => panic!("{name} 只接受精确值 1，当前值为 {value:?}"),
+        Err(env::VarError::NotPresent) => false,
+        Err(env::VarError::NotUnicode(_)) => panic!("{name} 必须是有效 UTF-8"),
+    }
 }
 
 fn env_parse<T>(name: &str, default: T) -> T

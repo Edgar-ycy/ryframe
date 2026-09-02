@@ -61,7 +61,7 @@ def _run(
 
 
 def prepare(backend_root: Path) -> None:
-    """构建产品二进制，并用同一 reset plan 初始化隔离环境。"""
+    """构建产品二进制、重建隔离资源，并显式应用全部迁移。"""
 
     output_dir = _output_dir()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -92,10 +92,39 @@ def prepare(backend_root: Path) -> None:
             "--locked",
             "-p",
             "ryframe",
+            "--no-default-features",
             "--features",
-            "destructive-reset",
+            "bin-reset",
             "--bin",
             "ryframe-reset",
+        ],
+        cwd=backend_root,
+    )
+    _run(
+        [
+            "cargo",
+            "build",
+            "--locked",
+            "-p",
+            "ryframe",
+            "--no-default-features",
+            "--features",
+            "bin-migrate",
+            "--bin",
+            "ryframe-migrate",
+        ],
+        cwd=backend_root,
+    )
+    _run(
+        [
+            "cargo",
+            "build",
+            "--locked",
+            "-p",
+            "ryframe",
+            "--no-default-features",
+            "--features",
+            "bin-api",
             "--bin",
             "ryframe",
         ],
@@ -125,6 +154,9 @@ def prepare(backend_root: Path) -> None:
             cwd=backend_root,
             stdout=log,
         )
+    migrate = Path(_required_environment("CARGO_TARGET_DIR")) / "debug/ryframe-migrate"
+    _run([str(migrate), "control", "up"], cwd=backend_root)
+    _run([str(migrate), "tenant-data", "up", "--all"], cwd=backend_root)
 
 
 def _ready() -> bool:

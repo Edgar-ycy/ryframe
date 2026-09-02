@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use super::cli::{
     ApiSyncCommand, CheckScope, CiCommand, CliError, Command, ContractOperation, MigrationCommand,
-    MigrationOperation, MigrationTarget, ResourceAction, parse,
+    MigrationOperation, MigrationTarget, ResourceAction, ResourceTarget, parse,
 };
 
 fn strings(values: &[&str]) -> Vec<String> {
@@ -22,6 +22,10 @@ fn parses_ci_internal_commands_exactly() {
     assert_eq!(
         parse_command(&["ci", "rust-gate"]).unwrap(),
         Command::Ci(CiCommand::RustGate)
+    );
+    assert_eq!(
+        parse_command(&["ci", "resource-gate"]).unwrap(),
+        Command::Ci(CiCommand::ResourceGate)
     );
     assert_eq!(
         parse_command(&["ci", "integration"]).unwrap(),
@@ -59,6 +63,17 @@ fn preserves_read_only_legacy_check_commands() {
 #[test]
 fn parses_daily_short_commands() {
     assert_eq!(
+        parse_command(&["dev"]).unwrap(),
+        Command::Dev {
+            measure_once: false
+        }
+    );
+    assert_eq!(
+        parse_command(&["dev", "--measure-once"]).unwrap(),
+        Command::Dev { measure_once: true }
+    );
+    assert!(parse_command(&["dev", "--measure-once", "extra"]).is_err());
+    assert_eq!(
         parse_command(&["verify", "--full", "--scope", "frontend"]).unwrap(),
         Command::Verify {
             scope: CheckScope::Frontend,
@@ -69,7 +84,7 @@ fn parses_daily_short_commands() {
     else {
         panic!("应解析为资源命令");
     };
-    assert_eq!(resource.name, "post");
+    assert_eq!(resource.target, ResourceTarget::Named("post".into()));
     assert_eq!(resource.action, ResourceAction::Explain);
     assert_eq!(
         parse_command(&["api-sync", "--commit", "HEAD"]).unwrap(),
@@ -114,6 +129,8 @@ fn global_frontend_dir_can_follow_command_arguments() {
 #[test]
 fn rejects_ambiguous_or_duplicate_arguments() {
     assert!(parse_command(&["resource", "post", "--write", "--explain"]).is_err());
+    assert!(parse_command(&["resource", "--all"]).is_err());
+    assert!(parse_command(&["resource", "--all", "--write"]).is_err());
     assert!(parse_command(&["verify", "--scope", "all", "--scope", "backend"]).is_err());
     assert!(parse_command(&["migrate", "new", "unknown", "add_device"]).is_err());
     assert!(parse(strings(&["verify", "--frontend-dir", "--full"])).is_err());
@@ -132,9 +149,30 @@ fn daily_commands_forward_every_supported_argument() {
         }
     );
     assert!(matches!(
-        parse_command(&["resource", "post", "--write"]).unwrap(),
-        Command::Resource(command) if command.name == "post" && command.action == ResourceAction::Write
+        parse_command(&["resource", "post"]).unwrap(),
+        Command::Resource(command)
+            if command.target == ResourceTarget::Named("post".into())
+                && command.action == ResourceAction::Preview
     ));
+    assert!(matches!(
+        parse_command(&["resource", "post", "--write"]).unwrap(),
+        Command::Resource(command)
+            if command.target == ResourceTarget::Named("post".into())
+                && command.action == ResourceAction::Write
+    ));
+    assert!(matches!(
+        parse_command(&["resource", "post", "--check"]).unwrap(),
+        Command::Resource(command)
+            if command.target == ResourceTarget::Named("post".into())
+                && command.action == ResourceAction::Check
+    ));
+    assert_eq!(
+        parse_command(&["resource", "--all", "--check"]).unwrap(),
+        Command::Resource(super::cli::ResourceCommand {
+            target: ResourceTarget::All,
+            action: ResourceAction::Check,
+        })
+    );
     assert_eq!(
         parse_command(&["migrate", "status", "tenant-data", "--target", "tenant-a"]).unwrap(),
         Command::Migrate(MigrationCommand::Run {

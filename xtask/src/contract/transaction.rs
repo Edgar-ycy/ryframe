@@ -41,6 +41,32 @@ impl ContractTransactionMarker {
     }
 }
 
+struct SnapshotInstallContext<'a, Operations> {
+    before: &'a [Snapshot],
+    desired: &'a [Snapshot],
+    staged: &'a [Option<PathBuf>],
+    operations: &'a Operations,
+    transaction: &'a mut ContractTransactionMarker,
+}
+
+impl<Operations: ContractFileOperations> SnapshotInstallContext<'_, Operations> {
+    fn rollback(
+        &mut self,
+        committed: &[(usize, Option<PathBuf>)],
+        cause: Box<dyn std::error::Error>,
+    ) -> Result<()> {
+        rollback_snapshot_install(
+            self.before,
+            self.desired,
+            self.staged,
+            committed,
+            cause,
+            self.operations,
+            self.transaction,
+        )
+    }
+}
+
 pub(super) fn install_snapshots(before: &[Snapshot], desired: &[Snapshot]) -> Result<()> {
     install_snapshots_with(before, desired, &RealContractFileOperations)
 }
@@ -50,18 +76,7 @@ pub(crate) fn install_snapshots_with(
     desired: &[Snapshot],
     operations: &impl ContractFileOperations,
 ) -> Result<()> {
-    if before.len() != desired.len()
-        || before
-            .iter()
-            .zip(desired)
-            .any(|(old, new)| old.path != new.path)
-    {
-        return Err("契约事务的新旧文件集合不一致".into());
-    }
-    let paths = before
-        .iter()
-        .map(|snapshot| snapshot.path.clone())
-        .collect::<Vec<_>>();
+    let paths = validate_snapshot_sets(before, desired)?;
     reject_contract_recovery_artifacts(&paths)?;
     if before
         .iter()
@@ -72,6 +87,41 @@ pub(crate) fn install_snapshots_with(
     }
     let marker = format!("{}-{}", process::id(), nonce()?);
     let mut transaction = ContractTransactionMarker::begin(&paths, &marker)?;
+    let staged = stage_contract_snapshots(before, desired, &marker, operations, &mut transaction)?;
+    let committed = commit_contract_snapshots(
+        before,
+        desired,
+        &staged,
+        &marker,
+        operations,
+        &mut transaction,
+    )?;
+    verify_contract_install(before, desired, &committed, &transaction)?;
+    finish_contract_install(&committed, operations, &mut transaction)
+}
+
+fn validate_snapshot_sets(before: &[Snapshot], desired: &[Snapshot]) -> Result<Vec<PathBuf>> {
+    if before.len() != desired.len()
+        || before
+            .iter()
+            .zip(desired)
+            .any(|(old, new)| old.path != new.path)
+    {
+        return Err("契约事务的新旧文件集合不一致".into());
+    }
+    Ok(before
+        .iter()
+        .map(|snapshot| snapshot.path.clone())
+        .collect())
+}
+
+fn stage_contract_snapshots(
+    before: &[Snapshot],
+    desired: &[Snapshot],
+    marker: &str,
+    operations: &impl ContractFileOperations,
+    transaction: &mut ContractTransactionMarker,
+) -> Result<Vec<Option<PathBuf>>> {
     let mut staged = Vec::with_capacity(desired.len());
     for (index, (old, snapshot)) in before.iter().zip(desired).enumerate() {
         if old.content == snapshot.content {
@@ -83,7 +133,7 @@ pub(crate) fn install_snapshots_with(
             continue;
         };
         let stage_result: Result<PathBuf> = (|| {
-            let path = contract_sibling_path(&snapshot.path, "new", &marker, index)?;
+            let path = contract_sibling_path(&snapshot.path, "new", marker, index)?;
             let mut output = OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -113,120 +163,111 @@ pub(crate) fn install_snapshots_with(
             }
         }
     }
+    Ok(staged)
+}
 
+fn commit_contract_snapshots(
+    before: &[Snapshot],
+    desired: &[Snapshot],
+    staged: &[Option<PathBuf>],
+    marker: &str,
+    operations: &impl ContractFileOperations,
+    transaction: &mut ContractTransactionMarker,
+) -> Result<Vec<(usize, Option<PathBuf>)>> {
     let mut committed = Vec::new();
+    let mut context = SnapshotInstallContext {
+        before,
+        desired,
+        staged,
+        operations,
+        transaction,
+    };
     for (index, (old, new)) in before.iter().zip(desired).enumerate() {
-        let current = match fs::read(&old.path) {
-            Ok(content) => Some(content),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-            Err(error) => {
-                return rollback_snapshot_install(
-                    before,
-                    desired,
-                    &staged,
-                    &committed,
-                    error.into(),
-                    operations,
-                    &mut transaction,
-                );
-            }
-        };
-        if current != old.content {
-            return rollback_snapshot_install(
-                before,
-                desired,
-                &staged,
-                &committed,
-                format!("最终替换前文件发生变化，拒绝覆盖：{}", old.path.display()).into(),
-                operations,
-                &mut transaction,
-            );
-        }
-        if old.content == new.content {
-            continue;
-        }
-
-        let backup = if old.content.is_some() {
-            let backup = match contract_sibling_path(&old.path, "backup", &marker, index) {
-                Ok(path) => path,
-                Err(error) => {
-                    return rollback_snapshot_install(
-                        before,
-                        desired,
-                        &staged,
-                        &committed,
-                        error,
-                        operations,
-                        &mut transaction,
-                    );
-                }
-            };
-            if let Err(error) = operations.rename(&old.path, &backup) {
-                return rollback_snapshot_install(
-                    before,
-                    desired,
-                    &staged,
-                    &committed,
-                    error.into(),
-                    operations,
-                    &mut transaction,
-                );
-            }
-            committed.push((index, Some(backup.clone())));
-            if fs::read(&backup).ok() != old.content {
-                return rollback_snapshot_install(
-                    before,
-                    desired,
-                    &staged,
-                    &committed,
-                    format!(
-                        "原契约移入备份后内容发生变化，拒绝继续安装：{}",
-                        backup.display()
-                    )
-                    .into(),
-                    operations,
-                    &mut transaction,
-                );
-            }
-            Some(backup)
-        } else {
-            committed.push((index, None));
-            None
-        };
-        let _ = backup;
-        if new.content.is_some()
-            && let Err(error) = operations.hard_link(
-                staged[index]
-                    .as_ref()
-                    .expect("有目标内容的契约快照必须已经暂存"),
-                &new.path,
-            )
-        {
-            return rollback_snapshot_install(
-                before,
-                desired,
-                &staged,
-                &committed,
-                error.into(),
-                operations,
-                &mut transaction,
-            );
-        }
-        if let Some(stage) = &staged[index]
-            && let Err(error) = operations.remove_file(stage)
-        {
-            return rollback_snapshot_install(
-                before,
-                desired,
-                &staged,
-                &committed,
-                error.into(),
-                operations,
-                &mut transaction,
-            );
-        }
+        commit_contract_snapshot(&mut context, marker, index, old, new, &mut committed)?;
     }
+    Ok(committed)
+}
 
+fn commit_contract_snapshot<Operations: ContractFileOperations>(
+    context: &mut SnapshotInstallContext<'_, Operations>,
+    marker: &str,
+    index: usize,
+    old: &Snapshot,
+    new: &Snapshot,
+    committed: &mut Vec<(usize, Option<PathBuf>)>,
+) -> Result<()> {
+    let current = match fs::read(&old.path) {
+        Ok(content) => Some(content),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return context.rollback(committed, error.into());
+        }
+    };
+    if current != old.content {
+        return context.rollback(
+            committed,
+            format!("最终替换前文件发生变化，拒绝覆盖：{}", old.path.display()).into(),
+        );
+    }
+    if old.content == new.content {
+        return Ok(());
+    }
+    if old.content.is_some() {
+        backup_contract_snapshot(context, marker, index, old, committed)?;
+    } else {
+        committed.push((index, None));
+    }
+    if new.content.is_some()
+        && let Err(error) = context.operations.hard_link(
+            context.staged[index]
+                .as_ref()
+                .expect("有目标内容的契约快照必须已经暂存"),
+            &new.path,
+        )
+    {
+        return context.rollback(committed, error.into());
+    }
+    if let Some(stage) = &context.staged[index]
+        && let Err(error) = context.operations.remove_file(stage)
+    {
+        return context.rollback(committed, error.into());
+    }
+    Ok(())
+}
+
+fn backup_contract_snapshot<Operations: ContractFileOperations>(
+    context: &mut SnapshotInstallContext<'_, Operations>,
+    marker: &str,
+    index: usize,
+    old: &Snapshot,
+    committed: &mut Vec<(usize, Option<PathBuf>)>,
+) -> Result<()> {
+    let backup = match contract_sibling_path(&old.path, "backup", marker, index) {
+        Ok(path) => path,
+        Err(error) => {
+            return context.rollback(committed, error);
+        }
+    };
+    if let Err(error) = context.operations.rename(&old.path, &backup) {
+        return context.rollback(committed, error.into());
+    }
+    committed.push((index, Some(backup.clone())));
+    if fs::read(&backup).ok() != old.content {
+        let error = format!(
+            "原契约移入备份后内容发生变化，拒绝继续安装：{}",
+            backup.display()
+        );
+        return context.rollback(committed, error.into());
+    }
+    Ok(())
+}
+
+fn verify_contract_install(
+    before: &[Snapshot],
+    desired: &[Snapshot],
+    committed: &[(usize, Option<PathBuf>)],
+    transaction: &ContractTransactionMarker,
+) -> Result<()> {
     for snapshot in desired {
         if read_optional(&snapshot.path)? != snapshot.content {
             return Err(format!(
@@ -237,7 +278,7 @@ pub(crate) fn install_snapshots_with(
             .into());
         }
     }
-    for (index, backup) in &committed {
+    for (index, backup) in committed {
         if let Some(backup) = backup
             && fs::read(backup).ok() != before[*index].content
         {
@@ -249,6 +290,14 @@ pub(crate) fn install_snapshots_with(
             .into());
         }
     }
+    Ok(())
+}
+
+fn finish_contract_install(
+    committed: &[(usize, Option<PathBuf>)],
+    operations: &impl ContractFileOperations,
+    transaction: &mut ContractTransactionMarker,
+) -> Result<()> {
     let backups = committed
         .iter()
         .filter_map(|(_, backup)| backup.as_ref())

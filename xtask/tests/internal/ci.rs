@@ -1,29 +1,38 @@
 use super::{
-    check::{BackendSnapshotProfile, VerifySelection},
+    check::{BackendSnapshotProfile, VerifySelection, WorkspaceGraph},
     ci::{
-        ci_plan_for, formal_contract_source_args, integration_test_args, parse_changed_paths,
-        preflight_migration_args, verify_frontend_checkout_ref, windows_check_args,
-        windows_process_test_args,
+        ci_plan_for, ci_selection_for_paths, formal_contract_source_args,
+        integration_test_args_for_target, parse_changed_paths, preflight_migration_args,
+        resource_gate::{delegates_generic_ci_path, should_run_for_paths},
+        resource_gate_required_for_ci_range, tls_integration_args, verify_frontend_checkout_ref,
+        windows_check_args, windows_process_test_args,
     },
 };
 use std::path::Path;
 
 #[test]
 fn pull_request_edit_runs_only_consumer_contract() {
-    let plan = ci_plan_for("pull_request", "edited", &VerifySelection::default());
+    let plan = ci_plan_for("pull_request", "edited", &VerifySelection::default(), true);
 
     assert!(!plan.preflight);
     assert!(!plan.rust_gate);
+    assert!(!plan.resource_gate);
     assert!(!plan.integration);
     assert!(plan.consumer_contract);
 }
 
 #[test]
 fn documentation_change_runs_only_preflight() {
-    let plan = ci_plan_for("pull_request", "synchronize", &VerifySelection::default());
+    let plan = ci_plan_for(
+        "pull_request",
+        "synchronize",
+        &VerifySelection::default(),
+        false,
+    );
 
     assert!(plan.preflight);
     assert!(!plan.rust_gate);
+    assert!(!plan.resource_gate);
     assert!(!plan.integration);
     assert!(!plan.consumer_contract);
 }
@@ -42,10 +51,11 @@ fn database_change_selects_rust_integration_and_consumer_gates() {
     .into_iter()
     .collect();
 
-    let plan = ci_plan_for("pull_request", "synchronize", &selection);
+    let plan = ci_plan_for("pull_request", "synchronize", &selection, false);
 
     assert!(plan.preflight);
     assert!(plan.rust_gate);
+    assert!(!plan.resource_gate);
     assert!(plan.integration);
     assert!(plan.consumer_contract);
 }
@@ -54,10 +64,11 @@ fn database_change_selects_rust_integration_and_consumer_gates() {
 fn shared_pull_request_change_expands_to_full_plan() {
     let mut selection = VerifySelection::default();
     selection.full_reason = Some("共享配置变化".to_owned());
-    let plan = ci_plan_for("pull_request", "synchronize", &selection);
+    let plan = ci_plan_for("pull_request", "synchronize", &selection, false);
 
     assert!(plan.preflight);
     assert!(plan.rust_gate);
+    assert!(plan.resource_gate);
     assert!(plan.integration);
     assert!(plan.consumer_contract);
 }
@@ -65,12 +76,96 @@ fn shared_pull_request_change_expands_to_full_plan() {
 #[test]
 fn non_pr_events_run_full_backend_gates_without_consumer_contract() {
     for event in ["push", "schedule", "workflow_dispatch"] {
-        let plan = ci_plan_for(event, "", &VerifySelection::default());
+        let plan = ci_plan_for(event, "", &VerifySelection::default(), false);
         assert!(plan.preflight, "{event}");
         assert!(plan.rust_gate, "{event}");
+        assert!(plan.resource_gate, "{event}");
         assert!(plan.integration, "{event}");
         assert!(!plan.consumer_contract, "{event}");
     }
+}
+
+#[test]
+fn resource_change_selects_the_resource_gate_without_unrelated_backend_work() {
+    let plan = ci_plan_for(
+        "pull_request",
+        "synchronize",
+        &VerifySelection::default(),
+        true,
+    );
+
+    assert!(plan.preflight);
+    assert!(!plan.rust_gate);
+    assert!(plan.resource_gate);
+    assert!(!plan.integration);
+    assert!(!plan.consumer_contract);
+}
+
+#[test]
+fn resource_aware_ci_selection_keeps_targeted_and_full_surfaces_distinct() {
+    let graph = WorkspaceGraph::default();
+    for (name, path) in [
+        ("标准资源清单", "catalog/resources/post.toml"),
+        ("ownership 事实源", "catalog/resources/.ownership.toml"),
+        (
+            "ownership 可解释的生成输出",
+            "crates/ryframe-api/src/generated/post/mod.rs",
+        ),
+    ] {
+        let paths = vec![path.to_owned()];
+        let selection = ci_selection_for_paths(&paths, &graph);
+        let plan = ci_plan_for(
+            "pull_request",
+            "synchronize",
+            &selection,
+            should_run_for_paths(&paths),
+        );
+        assert!(delegates_generic_ci_path(path), "{name}: {path}");
+        assert!(selection.full_reason.is_none(), "{name}: {path}");
+        assert!(plan.preflight, "{name}: {path}");
+        assert!(!plan.rust_gate, "{name}: {path}");
+        assert!(plan.resource_gate, "{name}: {path}");
+        assert!(!plan.integration, "{name}: {path}");
+        assert!(!plan.consumer_contract, "{name}: {path}");
+    }
+
+    for (name, path) in [
+        (
+            "生成器或模板",
+            "crates/ryframe-generator/src/resource/render.rs",
+        ),
+        ("Cargo", "Cargo.lock"),
+        ("工具链", "rust-toolchain.toml"),
+        ("build.rs", "crates/ryframe-api/build.rs"),
+        ("CI", ".github/workflows/ci.yml"),
+        ("架构策略", "architecture/crate-boundaries.toml"),
+    ] {
+        let paths = vec![path.to_owned()];
+        let selection = ci_selection_for_paths(&paths, &graph);
+        let plan = ci_plan_for(
+            "pull_request",
+            "synchronize",
+            &selection,
+            should_run_for_paths(&paths),
+        );
+        assert!(!delegates_generic_ci_path(path), "{name}: {path}");
+        assert!(selection.full_reason.is_some(), "{name}: {path}");
+        assert!(plan.preflight, "{name}: {path}");
+        assert!(plan.rust_gate, "{name}: {path}");
+        assert!(plan.resource_gate, "{name}: {path}");
+        assert!(plan.integration, "{name}: {path}");
+        assert!(plan.consumer_contract, "{name}: {path}");
+    }
+}
+
+#[test]
+fn invalid_pull_request_range_schedules_command_level_full_fallback() {
+    assert!(!resource_gate_required_for_ci_range("pull_request", true));
+    assert!(resource_gate_required_for_ci_range("pull_request", false));
+    assert!(!resource_gate_required_for_ci_range(
+        "workflow_dispatch",
+        false
+    ));
 }
 
 #[test]
@@ -102,7 +197,13 @@ fn preflight_uses_only_a_valid_nonzero_base_sha() {
 #[test]
 fn integration_commands_share_the_ci_target_and_jobs() {
     assert_eq!(
-        integration_test_args("ryframe-db", "mysql_real_protocol", 4),
+        integration_test_args_for_target(
+            "ryframe-db",
+            "mysql_real_protocol",
+            Some("repositories"),
+            "target/ci/backend",
+            4,
+        ),
         [
             "test",
             "--locked",
@@ -110,12 +211,51 @@ fn integration_commands_share_the_ci_target_and_jobs() {
             "target/ci/backend",
             "-p",
             "ryframe-db",
+            "--features",
+            "repositories",
             "--test",
             "mysql_real_protocol",
             "--jobs",
             "4",
             "--",
             "--nocapture",
+        ]
+    );
+    assert_eq!(
+        integration_test_args_for_target(
+            "ryframe-adapters",
+            "redis_real_protocol",
+            Some("redis-api"),
+            "target/ci/backend",
+            4,
+        ),
+        [
+            "test",
+            "--locked",
+            "--target-dir",
+            "target/ci/backend",
+            "-p",
+            "ryframe-adapters",
+            "--features",
+            "redis-api",
+            "--test",
+            "redis_real_protocol",
+            "--jobs",
+            "4",
+            "--",
+            "--nocapture",
+        ]
+    );
+    assert_eq!(
+        tls_integration_args("target/ci/backend", 4),
+        [
+            "scripts/tls_integration_gate.py",
+            "--backend-root",
+            ".",
+            "--target-dir",
+            "target/ci/backend",
+            "--jobs",
+            "4",
         ]
     );
 }

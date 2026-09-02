@@ -4,6 +4,7 @@ pub mod auth;
 pub mod authorization;
 pub mod export;
 pub mod files;
+pub mod health;
 pub mod jobs;
 pub mod product;
 pub mod retention;

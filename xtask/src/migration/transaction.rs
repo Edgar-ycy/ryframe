@@ -49,20 +49,37 @@ pub(crate) fn commit_writes_with(
     writes: &[PlannedWrite],
     operations: &impl FileOperations,
 ) -> Result<()> {
-    let recovery_artifacts = find_recovery_artifacts(writes)?;
-    if !recovery_artifacts.is_empty() {
-        return Err(format!(
-            "检测到上次迁移文件事务未完整结束，已拒绝继续写入：{}；请根据 backup 文件恢复或确认目标已完整写入后再清理这些精确文件",
-            recovery_artifacts
-                .iter()
-                .map(|path| path.display().to_string())
-                .collect::<Vec<_>>()
-                .join("；")
-        )
-        .into());
-    }
+    reject_recovery_artifacts(writes)?;
     let nonce = transaction_nonce()?;
     let mut transaction = MigrationTransactionMarker::begin(writes, nonce)?;
+    let staged = stage_migration_writes(writes, nonce, operations, &mut transaction)?;
+    let committed = commit_migration_writes(writes, &staged, nonce, operations, &mut transaction)?;
+    verify_migration_install(writes, &committed, &transaction)?;
+    finish_migration_install(&committed, operations, &mut transaction)
+}
+
+fn reject_recovery_artifacts(writes: &[PlannedWrite]) -> Result<()> {
+    let recovery_artifacts = find_recovery_artifacts(writes)?;
+    if recovery_artifacts.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "检测到上次迁移文件事务未完整结束，已拒绝继续写入：{}；请根据 backup 文件恢复或确认目标已完整写入后再清理这些精确文件",
+        recovery_artifacts
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join("；")
+    )
+    .into())
+}
+
+fn stage_migration_writes(
+    writes: &[PlannedWrite],
+    nonce: u128,
+    operations: &impl FileOperations,
+    transaction: &mut MigrationTransactionMarker,
+) -> Result<Vec<PathBuf>> {
     let mut staged = Vec::with_capacity(writes.len());
     for (index, write) in writes.iter().enumerate() {
         let stage_result: Result<PathBuf> = (|| {
@@ -94,101 +111,130 @@ pub(crate) fn commit_writes_with(
             }
         }
     }
+    Ok(staged)
+}
 
+fn commit_migration_writes(
+    writes: &[PlannedWrite],
+    staged: &[PathBuf],
+    nonce: u128,
+    operations: &impl FileOperations,
+    transaction: &mut MigrationTransactionMarker,
+) -> Result<Vec<(usize, Option<PathBuf>)>> {
     let mut committed: Vec<(usize, Option<PathBuf>)> = Vec::new();
     for (index, write) in writes.iter().enumerate() {
-        let actual = match fs::read(&write.path) {
-            Ok(bytes) => Some(bytes),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-            Err(error) => {
-                return rollback(
-                    writes,
-                    &staged,
-                    &committed,
-                    error.into(),
-                    operations,
-                    &mut transaction,
-                );
-            }
-        };
-        if actual != write.expected {
-            return rollback(
-                writes,
-                &staged,
-                &committed,
-                format!("写入前文件发生变化，拒绝覆盖：{}", write.path.display()).into(),
-                operations,
-                &mut transaction,
-            );
-        }
-
-        let backup = if write.expected.is_some() {
-            let backup = match sibling_path(&write.path, "backup", nonce, index) {
-                Ok(path) => path,
-                Err(error) => {
-                    return rollback(
-                        writes,
-                        &staged,
-                        &committed,
-                        error,
-                        operations,
-                        &mut transaction,
-                    );
-                }
-            };
-            if let Err(error) = operations.rename(&write.path, &backup) {
-                return rollback(
-                    writes,
-                    &staged,
-                    &committed,
-                    error.into(),
-                    operations,
-                    &mut transaction,
-                );
-            }
-            committed.push((index, Some(backup.clone())));
-            if fs::read(&backup).ok() != write.expected {
-                return rollback(
-                    writes,
-                    &staged,
-                    &committed,
-                    format!(
-                        "原文件移入备份后内容发生变化，拒绝继续安装：{}",
-                        backup.display()
-                    )
-                    .into(),
-                    operations,
-                    &mut transaction,
-                );
-            }
-            Some(backup)
-        } else {
-            committed.push((index, None));
-            None
-        };
-        let _ = backup;
-        if let Err(error) = operations.hard_link(&staged[index], &write.path) {
-            return rollback(
-                writes,
-                &staged,
-                &committed,
-                error.into(),
-                operations,
-                &mut transaction,
-            );
-        }
-        if let Err(error) = operations.remove_file(&staged[index]) {
-            return rollback(
-                writes,
-                &staged,
-                &committed,
-                error.into(),
-                operations,
-                &mut transaction,
-            );
-        }
+        commit_migration_write(
+            writes,
+            staged,
+            nonce,
+            index,
+            write,
+            &mut committed,
+            operations,
+            transaction,
+        )?;
     }
+    Ok(committed)
+}
 
+#[allow(clippy::too_many_arguments)]
+fn commit_migration_write(
+    writes: &[PlannedWrite],
+    staged: &[PathBuf],
+    nonce: u128,
+    index: usize,
+    write: &PlannedWrite,
+    committed: &mut Vec<(usize, Option<PathBuf>)>,
+    operations: &impl FileOperations,
+    transaction: &mut MigrationTransactionMarker,
+) -> Result<()> {
+    let actual = match fs::read(&write.path) {
+        Ok(bytes) => Some(bytes),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => {
+            return rollback(
+                writes,
+                staged,
+                committed,
+                error.into(),
+                operations,
+                transaction,
+            );
+        }
+    };
+    if actual != write.expected {
+        return rollback(
+            writes,
+            staged,
+            committed,
+            format!("写入前文件发生变化，拒绝覆盖：{}", write.path.display()).into(),
+            operations,
+            transaction,
+        );
+    }
+    if write.expected.is_some() {
+        let backup = match sibling_path(&write.path, "backup", nonce, index) {
+            Ok(path) => path,
+            Err(error) => {
+                return rollback(writes, staged, committed, error, operations, transaction);
+            }
+        };
+        if let Err(error) = operations.rename(&write.path, &backup) {
+            return rollback(
+                writes,
+                staged,
+                committed,
+                error.into(),
+                operations,
+                transaction,
+            );
+        }
+        committed.push((index, Some(backup.clone())));
+        if fs::read(&backup).ok() != write.expected {
+            let error = format!(
+                "原文件移入备份后内容发生变化，拒绝继续安装：{}",
+                backup.display()
+            );
+            return rollback(
+                writes,
+                staged,
+                committed,
+                error.into(),
+                operations,
+                transaction,
+            );
+        }
+    } else {
+        committed.push((index, None));
+    }
+    if let Err(error) = operations.hard_link(&staged[index], &write.path) {
+        return rollback(
+            writes,
+            staged,
+            committed,
+            error.into(),
+            operations,
+            transaction,
+        );
+    }
+    if let Err(error) = operations.remove_file(&staged[index]) {
+        return rollback(
+            writes,
+            staged,
+            committed,
+            error.into(),
+            operations,
+            transaction,
+        );
+    }
+    Ok(())
+}
+
+fn verify_migration_install(
+    writes: &[PlannedWrite],
+    committed: &[(usize, Option<PathBuf>)],
+    transaction: &MigrationTransactionMarker,
+) -> Result<()> {
     for write in writes {
         let installed = match fs::read(&write.path) {
             Ok(content) => Some(content),
@@ -204,7 +250,7 @@ pub(crate) fn commit_writes_with(
             .into());
         }
     }
-    for (index, backup) in &committed {
+    for (index, backup) in committed {
         if let Some(backup) = backup
             && fs::read(backup).ok() != writes[*index].expected
         {
@@ -216,6 +262,14 @@ pub(crate) fn commit_writes_with(
             .into());
         }
     }
+    Ok(())
+}
+
+fn finish_migration_install(
+    committed: &[(usize, Option<PathBuf>)],
+    operations: &impl FileOperations,
+    transaction: &mut MigrationTransactionMarker,
+) -> Result<()> {
     let backup_paths = committed
         .iter()
         .filter_map(|(_, backup)| backup.clone())

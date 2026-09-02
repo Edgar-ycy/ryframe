@@ -20,7 +20,7 @@ use tower_http::{
 };
 
 const UNMATCHED_ROUTE: &str = "/unmatched";
-pub const REQUEST_LOG_SPAN_TARGET: &str = "ryframe.request_log";
+pub const REQUEST_LOG_SPAN_TARGET: &str = ryframe_application::HTTP_REQUEST_LOG_SPAN_TARGET;
 
 /// 请求日志的失败分类器。
 ///

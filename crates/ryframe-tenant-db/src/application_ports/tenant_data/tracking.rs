@@ -11,8 +11,11 @@ use ryframe_application::ports::{
     },
 };
 use ryframe_db::{
-    ControlDatabaseCluster, TenantDataRepository, TenantOperationLeaseRepository, TenantRepository,
-    application_ports::transaction::DatabasePortTransaction, database_utc_now,
+    ControlDatabaseCluster,
+    application_ports::transaction::DatabasePortTransaction,
+    repositories::{
+        TenantDataRepository, TenantOperationLeaseRepository, TenantRepository, database_utc_now,
+    },
 };
 use sea_orm::TransactionTrait;
 

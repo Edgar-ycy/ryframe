@@ -12,6 +12,19 @@ fn default_frontend_is_sibling_of_backend() {
 }
 
 #[test]
+fn isolated_directory_cleanup_rejects_its_root() {
+    let root =
+        std::env::temp_dir().join(format!("ryframe-workspace-cleanup-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let error = workspace::remove_isolated_directory(&root, &root)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("拒绝删除隔离边界外"));
+    assert!(root.is_dir());
+    std::fs::remove_dir(root).unwrap();
+}
+
+#[test]
 fn daily_cargo_aliases_lock_dependencies_and_isolate_the_runner() {
     let config = std::fs::read_to_string(workspace::root_dir().join(".cargo/config.toml")).unwrap();
     for alias in ["xtask", "dev", "verify", "api-sync", "migrate"] {

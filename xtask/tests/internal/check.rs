@@ -12,17 +12,18 @@ use super::check::{
     BACKEND_VERIFY_TARGET_DIR, BackendSnapshotProfile, CONSUMER_OWNED_COMMANDS, ChangeCategory,
     ChangeSurfacePolicy, FRONTEND_FULL_NON_CONSUMER_COMMANDS, FRONTEND_ONLY_CONTRACT_COMMANDS,
     FrontendProfile, PYTHON_TEST_ARGS, RESOURCE_CI_TARGET_DIR, RESOURCE_VERIFY_TARGET_DIR,
-    SMART_BACKEND_OPERATIONS, SMART_FEATURE_OPERATIONS, VerifyTargetPolicy, WORKSPACE_CLIPPY_ARGS,
-    WorkspaceGraph, analyze_change_surface, append_changed_file_size_warnings,
-    backend_package_operation_args, backend_snapshot_export_args, cargo_operation_jobs,
-    changed_paths, ci_environment_from, ci_test_jobs_from, classify_changes,
+    RepositoryKind, ResourceWorkspaceProfile, SMART_BACKEND_OPERATIONS, SMART_FEATURE_OPERATIONS,
+    VerifyTargetPolicy, WORKSPACE_CLIPPY_ARGS, WorkspaceGraph, analyze_change_surface,
+    append_changed_file_size_warnings, backend_package_operation_args, cargo_operation_jobs,
+    changed_paths, ci_environment_from, ci_target_policy_from, ci_test_jobs_from, classify_changes,
     complete_verify_selection, consumer_contract_arguments, consumer_contract_plan,
     default_test_jobs_from, feature_operation_args, feature_test_args, frontend_profile_commands,
     load_change_surface_policy, load_consumer_contract_plan, load_workspace_graph,
     minimal_workspace_check_args, needs_consumer_contract, package_tests_generate_snapshots,
-    resolve_frontend_dir, resolve_target_dir, resource_test_executable_from_messages,
-    resource_workspace_environment, reverse_dependency_closure, validate_feature_combination,
-    verify_job_budget_from, verify_target_policy_from, workspace_clippy_args, workspace_test_args,
+    parse_change_surface_policy, resolve_frontend_dir, resolve_target_dir,
+    resource_test_executable_from_messages, resource_workspace_environment_for_profile,
+    reverse_dependency_closure, validate_feature_combination, verify_job_budget_from,
+    verify_target_policy_from, workspace_clippy_args, workspace_test_args,
 };
 
 static NEXT_REPOSITORY: AtomicU64 = AtomicU64::new(1);
@@ -68,10 +69,7 @@ fn feature_combination_rejects_duplicates_and_unknowns() {
 
 #[test]
 fn feature_matrix_compiles_and_tests_required_feature_targets() {
-    let features = vec![
-        "destructive-reset".to_owned(),
-        "file-maintenance".to_owned(),
-    ];
+    let features = vec!["bin-reset".to_owned(), "bin-file-maintenance".to_owned()];
     let check = feature_operation_args("check", "ryframe", &features, "target", 8);
     let clippy = feature_operation_args("clippy", "ryframe", &features, "target", 8);
 
@@ -84,7 +82,7 @@ fn feature_matrix_compiles_and_tests_required_feature_targets() {
         assert!(args.contains(&"--all-targets".to_owned()));
         assert!(args.contains(&"--no-default-features".to_owned()));
         assert!(args.windows(2).any(|pair| pair == ["--jobs", "8"]));
-        assert!(args.contains(&"destructive-reset,file-maintenance".to_owned()));
+        assert!(args.contains(&"bin-reset,bin-file-maintenance".to_owned()));
     }
     let test = feature_test_args(
         "ryframe",
@@ -105,7 +103,7 @@ fn feature_matrix_compiles_and_tests_required_feature_targets() {
     );
     assert!(!test.contains(&"--all-targets".to_owned()));
     assert!(test.contains(&"--no-default-features".to_owned()));
-    assert!(test.contains(&"destructive-reset,file-maintenance".to_owned()));
+    assert!(test.contains(&"bin-reset,bin-file-maintenance".to_owned()));
     assert!(clippy.ends_with(&[
         "--".into(),
         "-D".into(),
@@ -263,6 +261,25 @@ fn target_resolution_preserves_absolute_cargo_target_dir() {
 }
 
 #[test]
+fn devex_ci_target_override_isolated_backend_and_resource_outputs() {
+    let root = Path::new("D:/devex/sample/cache");
+    assert_eq!(
+        ci_target_policy_from(Some(root)),
+        VerifyTargetPolicy {
+            backend: root.join("backend").to_string_lossy().into_owned(),
+            resource: root.join("resource").to_string_lossy().into_owned(),
+        }
+    );
+    assert_eq!(
+        ci_target_policy_from(None),
+        VerifyTargetPolicy {
+            backend: BACKEND_CI_TARGET_DIR.to_owned(),
+            resource: RESOURCE_CI_TARGET_DIR.to_owned(),
+        }
+    );
+}
+
+#[test]
 fn smart_backend_uses_clippy_and_test_without_redundant_check() {
     assert_eq!(SMART_BACKEND_OPERATIONS, ["clippy", "test"]);
     assert_eq!(SMART_FEATURE_OPERATIONS, ["clippy"]);
@@ -345,10 +362,11 @@ fn resource_test_executable_is_read_from_cargo_json_messages() {
 #[test]
 fn resource_workspace_environment_uses_selected_frontend_and_target() {
     assert_eq!(
-        resource_workspace_environment(
+        resource_workspace_environment_for_profile(
             Path::new("workspace/frontend"),
             Path::new("target/ci/resource"),
             "4",
+            ResourceWorkspaceProfile::Full,
         ),
         [
             ("CARGO_BUILD_JOBS", "4".to_owned()),
@@ -365,6 +383,28 @@ fn resource_workspace_environment_uses_selected_frontend_and_target() {
 }
 
 #[test]
+fn only_targeted_resource_workspace_sets_the_lightweight_profile() {
+    let full = resource_workspace_environment_for_profile(
+        Path::new("workspace/frontend"),
+        Path::new("target/ci/resource"),
+        "4",
+        ResourceWorkspaceProfile::Full,
+    );
+    assert!(
+        full.iter()
+            .all(|(key, _)| *key != "RYFRAME_RESOURCE_WORKSPACE_PROFILE")
+    );
+
+    let targeted = resource_workspace_environment_for_profile(
+        Path::new("workspace/frontend"),
+        Path::new("target/ci/resource"),
+        "4",
+        ResourceWorkspaceProfile::Targeted,
+    );
+    assert!(targeted.contains(&("RYFRAME_RESOURCE_WORKSPACE_PROFILE", "targeted".to_owned(),)));
+}
+
+#[test]
 fn resource_frontend_resolution_is_absolute_and_child_process_safe() {
     let workspace = std::env::current_dir().unwrap();
     let resolved = resolve_frontend_dir(&workspace.join("xtask"), Path::new("..")).unwrap();
@@ -375,30 +415,6 @@ fn resource_frontend_resolution_is_absolute_and_child_process_safe() {
         !resolved.to_string_lossy().starts_with(r"\\?\"),
         "传给 Node 的前端路径不得使用 Windows verbatim 前缀：{}",
         resolved.display()
-    );
-}
-
-#[test]
-fn backend_snapshots_reuse_the_backend_verify_target() {
-    assert_eq!(
-        backend_snapshot_export_args(
-            "target",
-            "ryframe-api",
-            "export_openapi",
-            Path::new("target/xtask/openapi.json"),
-        ),
-        [
-            "run",
-            "--locked",
-            "--target-dir",
-            "target",
-            "-p",
-            "ryframe-api",
-            "--bin",
-            "export_openapi",
-            "--",
-            "target/xtask/openapi.json",
-        ]
     );
 }
 
@@ -754,6 +770,20 @@ fn actual_workspace_graph_contains_reverse_dependents() {
 }
 
 #[test]
+fn resource_workspace_graph_excludes_optional_tooling_dependents() {
+    let graph = super::check::load_resource_workspace_graph(&super::workspace::root_dir()).unwrap();
+    let closure = reverse_dependency_closure(
+        &["ryframe-application".to_owned()].into_iter().collect(),
+        &graph.reverse_dependencies,
+    );
+
+    assert!(closure.contains("ryframe-application"));
+    assert!(closure.contains("ryframe-api"));
+    assert!(!closure.contains("ryframe-generator"));
+    assert!(!closure.contains("xtask"));
+}
+
+#[test]
 fn change_surface_separates_product_tests_generated_assets_and_tools() {
     let report = analyze_change_surface(
         &[
@@ -828,7 +858,25 @@ fn workspace_change_surface_policy_is_valid_and_versioned() {
     let policy = load_change_surface_policy(&super::workspace::root_dir()).unwrap();
     assert!(!policy.central_hotspots.is_empty());
     assert_eq!(policy.warning_budgets.backend_handwritten_product, 7);
-    assert_eq!(policy.soft_source_size.backend_rust, 500);
+    assert_eq!(policy.soft_source_size.warning_percent, 80);
+    assert_eq!(policy.soft_source_size.attention_percent, 90);
+    assert_eq!(policy.soft_source_size.backend_rust_hard_limit, 600);
+    assert_eq!(policy.soft_source_size.frontend_sfc_hard_limit, 400);
+    assert!(
+        policy
+            .full_invalidation_reason(RepositoryKind::Backend, "Cargo.toml")
+            .is_some()
+    );
+    assert!(
+        policy
+            .full_invalidation_reason(RepositoryKind::Backend, ".cargo/config.toml")
+            .is_some()
+    );
+    assert!(
+        policy
+            .full_invalidation_reason(RepositoryKind::Backend, "catalog/resources/device.toml")
+            .is_none()
+    );
 }
 
 #[test]
@@ -842,10 +890,11 @@ fn change_surface_warns_only_for_changed_files_over_soft_size_limits() {
     let frontend = root.join("frontend");
     fs::create_dir_all(backend.join("xtask/src")).unwrap();
     fs::create_dir_all(frontend.join("src/views/demo")).unwrap();
-    fs::write(backend.join("xtask/src/large.rs"), "line\n".repeat(501)).unwrap();
+    fs::write(backend.join("xtask/src/large.rs"), "line\n".repeat(480)).unwrap();
+    fs::write(backend.join("xtask/src/small.rs"), "line\n".repeat(479)).unwrap();
     fs::write(
         frontend.join("src/views/demo/useLarge.ts"),
-        "line\n".repeat(351),
+        "line\n".repeat(270),
     )
     .unwrap();
     fs::write(
@@ -854,7 +903,10 @@ fn change_surface_warns_only_for_changed_files_over_soft_size_limits() {
     )
     .unwrap();
     let policy = test_change_surface_policy();
-    let backend_paths = ["xtask/src/large.rs".to_owned()];
+    let backend_paths = [
+        "xtask/src/large.rs".to_owned(),
+        "xtask/src/small.rs".to_owned(),
+    ];
     let frontend_paths = ["src/views/demo/useLarge.ts".to_owned()];
     let mut report = analyze_change_surface(&backend_paths, &frontend_paths, &policy);
     append_changed_file_size_warnings(
@@ -866,49 +918,21 @@ fn change_surface_warns_only_for_changed_files_over_soft_size_limits() {
         &mut report,
     )
     .unwrap();
-    assert!(
-        report
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("large.rs"))
-    );
-    assert!(
-        report
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("useLarge.ts"))
-    );
-    assert!(
-        !report
-            .warnings
-            .iter()
-            .any(|warning| warning.contains("ignored.vue"))
-    );
+    assert_eq!(report.warnings.len(), 2);
+    let warnings = report.warnings.join("\n");
+    assert!(warnings.contains("large.rs") && warnings.contains("80%"));
+    assert!(warnings.contains("useLarge.ts") && warnings.contains("90%"));
+    assert!(!warnings.contains("small.rs"));
+    assert!(!warnings.contains("ignored.vue"));
     fs::remove_dir_all(root).unwrap();
 }
 
 fn test_change_surface_policy() -> ChangeSurfacePolicy {
-    toml::from_str(
-        r#"
-version = 1
+    parse_change_surface_policy(&test_change_surface_policy_source()).unwrap()
+}
 
-[warning_budgets]
-backend_handwritten_product = 1
-frontend_handwritten_product = 1
-combined_handwritten_product = 1
-
-[soft_source_size]
-backend_rust = 500
-frontend_composable = 350
-frontend_sfc_or_style = 500
-
-[[central_hotspots]]
-repository = "backend"
-path = "crates/ryframe-api/src/openapi.rs"
-standard_resource_forbidden = true
-"#,
-    )
-    .unwrap()
+fn test_change_surface_policy_source() -> String {
+    include_str!("../fixtures/change_surface_policy.toml").to_owned()
 }
 
 fn run_git(root: &std::path::Path, args: &[&str]) {

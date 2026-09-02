@@ -10,22 +10,6 @@ impl Default for AppSettings {
     }
 }
 
-pub(super) fn apply_migration_mode_default(table: &mut toml::Table, environment: Environment) {
-    let Some(toml::Value::Table(database)) = table.get_mut("database") else {
-        return;
-    };
-    database.entry("migration_mode").or_insert_with(|| {
-        toml::Value::String(
-            if environment.is_production() {
-                "verify"
-            } else {
-                "auto"
-            }
-            .into(),
-        )
-    });
-}
-
 pub(super) fn apply_job_mode_default(table: &mut toml::Table, environment: Environment) {
     let jobs = table
         .entry("jobs")

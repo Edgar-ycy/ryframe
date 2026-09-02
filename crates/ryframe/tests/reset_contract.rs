@@ -1,4 +1,4 @@
-#![cfg(feature = "destructive-reset")]
+#![cfg(feature = "bin-reset")]
 
 use std::{collections::BTreeMap, fs};
 

@@ -68,6 +68,7 @@ pub fn get_content_type(filename: &str) -> String {
 /// - 其他格式：不做处理，原样返回
 ///
 /// 返回压缩后的字节数据和新的文件名（如果格式变化）。
+#[cfg(feature = "image-processing")]
 pub fn compress_image(data: &[u8], original_name: &str) -> AppResult<(Vec<u8>, String)> {
     use image::{ImageEncoder, ImageFormat};
 

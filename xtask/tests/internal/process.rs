@@ -3,7 +3,30 @@ use std::{
     process::{Command, Stdio},
 };
 
-use super::process::{ChildGroup, configure_pnpm_environment, run, with_process_log};
+use super::process::{
+    ChildGroup, configure_pnpm_environment, process_is_running, resolved_executable, run,
+    with_process_log,
+};
+
+#[test]
+fn process_liveness_distinguishes_the_current_and_invalid_pid() {
+    assert!(process_is_running(std::process::id()));
+    assert!(!process_is_running(u32::MAX));
+}
+
+#[test]
+fn python_runner_honors_the_explicit_isolated_interpreter() {
+    let configured = std::ffi::OsString::from("D:/tools/ryframe-python/python.exe");
+    assert_eq!(
+        resolved_executable("python", Some(configured.clone())),
+        configured
+    );
+    assert_eq!(
+        resolved_executable("cargo", Some(std::ffi::OsString::from("ignored"))),
+        "cargo"
+    );
+    assert_eq!(resolved_executable("python", None), "python");
+}
 
 #[test]
 fn pnpm_commands_default_to_non_interactive_ci_mode() {

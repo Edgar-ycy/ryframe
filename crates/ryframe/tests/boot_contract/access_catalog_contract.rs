@@ -24,6 +24,15 @@ fn api_and_database_seed_use_the_same_merged_access_catalog() {
 }
 
 #[test]
+fn api_and_worker_build_the_same_tenant_config_target_catalog() {
+    let api = ryframe_api::tenant_config_target_catalog().expect("API 目标目录应有效");
+    let worker = ryframe::boot::access_catalog::tenant_config_target_catalog()
+        .expect("Worker 目标目录应有效");
+    assert_eq!(worker.page_routes(), api.page_routes());
+    assert_eq!(worker.api_permission_codes(), api.api_permission_codes());
+}
+
+#[test]
 fn post_access_appears_exactly_once_in_both_consumers() {
     for permission in [
         "system:post:add",

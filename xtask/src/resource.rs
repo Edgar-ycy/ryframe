@@ -1,6 +1,9 @@
 use std::path::Path;
 
-use crate::{Result, cli::ResourceCommand};
+use crate::{
+    Result,
+    cli::{ResourceCommand, ResourceTarget},
+};
 
 #[cfg(feature = "resource")]
 use std::fs;
@@ -13,49 +16,71 @@ use crate::{
 
 #[cfg(feature = "resource")]
 use ryframe_generator::{
-    GeneratedCatalog, PlanAction, ResourceError, ResourceIr, ResourceWorkspace, load_resource,
-    plan_resource_changes, render_resources, write_resource,
+    GeneratedCatalog, PlanAction, ResourceAssetPlan, ResourceError, ResourceIr, ResourceWorkspace,
+    load_resource, plan_all_resource_changes, plan_resource_changes, render_resources,
+    write_resource,
 };
 
 #[cfg(feature = "resource")]
 pub(crate) fn run(command: &ResourceCommand, frontend_dir: &Path) -> Result<()> {
     let root = root_dir();
     let resources = load_catalog(&root)?;
-    if !resources
-        .iter()
-        .any(|resource| resource.name == command.name)
+    if let ResourceTarget::Named(name) = &command.target
+        && !resources.iter().any(|resource| resource.name == *name)
     {
-        return Err(ResourceError::new(
-            format!("资源 `{}` 不存在", command.name),
-            format!(
-                "在 catalog/resources/{}.toml 中建立清单，或检查清单内 resource.name",
-                command.name
-            ),
-        )
-        .with_resource(&command.name)
-        .into());
+        return Err(missing_resource(name).into());
     }
     let catalog = render_resources(&resources)?;
 
-    match command.action {
-        ResourceAction::Preview => preview(&catalog, &command.name, &root, frontend_dir),
-        ResourceAction::Explain => explain(&catalog, &command.name),
-        ResourceAction::Write => write(&catalog, &command.name, &root, frontend_dir),
+    match (&command.target, command.action) {
+        (ResourceTarget::Named(name), ResourceAction::Preview) => {
+            preview(&catalog, name, &root, frontend_dir)
+        }
+        (ResourceTarget::Named(name), ResourceAction::Check) => {
+            check_named(&catalog, name, &root, frontend_dir)
+        }
+        (ResourceTarget::Named(name), ResourceAction::Explain) => explain(&catalog, name),
+        (ResourceTarget::Named(name), ResourceAction::Write) => {
+            write(&catalog, name, &root, frontend_dir)
+        }
+        (ResourceTarget::All, ResourceAction::Check) => check_all(&catalog, &root, frontend_dir),
+        (ResourceTarget::All, _) => {
+            Err("`--all` 仅支持只读的 `cargo resource --all --check`".into())
+        }
     }
 }
 
 #[cfg(not(feature = "resource"))]
 pub(crate) fn run(command: &ResourceCommand, _frontend_dir: &Path) -> Result<()> {
     Err(format!(
-        "内部调用缺少 resource feature，未修改文件；请使用 `cargo resource {}{}`",
-        command.name,
-        match command.action {
-            crate::cli::ResourceAction::Preview => "",
-            crate::cli::ResourceAction::Write => " --write",
-            crate::cli::ResourceAction::Explain => " --explain",
-        }
+        "内部调用缺少 resource feature，未修改文件；请使用 `{}`",
+        resource_invocation(command)
     )
     .into())
+}
+
+#[cfg(not(feature = "resource"))]
+fn resource_invocation(command: &ResourceCommand) -> String {
+    let target = match &command.target {
+        ResourceTarget::Named(name) => name.as_str(),
+        ResourceTarget::All => "--all",
+    };
+    let action = match command.action {
+        crate::cli::ResourceAction::Preview => "",
+        crate::cli::ResourceAction::Check => " --check",
+        crate::cli::ResourceAction::Write => " --write",
+        crate::cli::ResourceAction::Explain => " --explain",
+    };
+    format!("cargo resource {target}{action}")
+}
+
+#[cfg(feature = "resource")]
+fn missing_resource(name: &str) -> ResourceError {
+    ResourceError::new(
+        format!("资源 `{name}` 不存在"),
+        format!("在 catalog/resources/{name}.toml 中建立清单，或检查清单内 resource.name"),
+    )
+    .with_resource(name)
 }
 
 #[cfg(feature = "resource")]
@@ -144,6 +169,72 @@ fn preview(
         );
     }
     Ok(())
+}
+
+#[cfg(feature = "resource")]
+fn check_named(
+    catalog: &GeneratedCatalog,
+    resource: &str,
+    backend_root: &Path,
+    frontend_root: &Path,
+) -> Result<()> {
+    let plan = plan_resource_changes(
+        catalog,
+        resource,
+        ResourceWorkspace {
+            backend_root,
+            frontend_root: Some(frontend_root),
+        },
+    )?;
+    ensure_clean(
+        plan,
+        &format!("资源 `{resource}`"),
+        &format!("运行 `cargo resource {resource}` 查看差异，确认后显式执行 `--write`"),
+    )
+}
+
+#[cfg(feature = "resource")]
+fn check_all(catalog: &GeneratedCatalog, backend_root: &Path, frontend_root: &Path) -> Result<()> {
+    let plan = plan_all_resource_changes(
+        catalog,
+        ResourceWorkspace {
+            backend_root,
+            frontend_root: Some(frontend_root),
+        },
+    )?;
+    ensure_clean(
+        plan,
+        "全部资源",
+        "逐个运行 `cargo resource <资源名>` 查看差异，确认后显式执行对应的 `--write`",
+    )
+}
+
+#[cfg(feature = "resource")]
+pub(crate) fn ensure_clean(plan: ResourceAssetPlan, scope: &str, suggestion: &str) -> Result<()> {
+    let changed = plan
+        .assets
+        .iter()
+        .filter(|asset| asset.action != PlanAction::Unchanged)
+        .collect::<Vec<_>>();
+    if changed.is_empty() {
+        println!("{scope}：生成结果与工作区一致。");
+        return Ok(());
+    }
+    eprintln!("{scope}：存在 {} 个待生成差异：", changed.len());
+    for asset in &changed {
+        let state = match asset.action {
+            PlanAction::Create => "新增",
+            PlanAction::Update => "变更",
+            PlanAction::Delete => "删除",
+            PlanAction::Unchanged => unreachable!("已过滤未变化资产"),
+        };
+        eprintln!("  {state} {}:{}", asset.root.label(), asset.path);
+        eprint!(
+            "{}",
+            crate::diff::unified(&asset.before, &asset.after, &asset.path)
+        );
+    }
+    Err(ResourceError::new(format!("{scope}：生成结果与工作区不一致"), suggestion).into())
 }
 
 #[cfg(feature = "resource")]

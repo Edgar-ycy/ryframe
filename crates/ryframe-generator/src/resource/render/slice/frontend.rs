@@ -3,6 +3,7 @@ use super::super::{html_header, slash_header};
 
 pub(super) fn api(resource: &ResourceIr) -> String {
     let pascal = &resource.pascal_name;
+    let domain = &resource.module;
     let operations = &resource.api.operations;
     let detail_type = if resource.relations.is_empty() {
         String::new()
@@ -10,14 +11,13 @@ pub(super) fn api(resource: &ResourceIr) -> String {
         format!("export type {pascal}Detail = ApiSchema<'{pascal}DetailVo'>\n")
     };
     format!(
-        r#"{}import {{ requestOperation }} from '@/api/operationRequest'
-import {{
+        r#"{}import {{
   {delete_operation},
   {list_operation},
   {read_operation},
   {create_operation},
   {update_operation},
-}} from '@/api/generated/operations'
+}} from '@/api/generated/operations/{domain}'
 import type {{ ApiSchema, OperationJsonBody, OperationQuery }} from '@/api/contract'
 import type {{ Id }} from '@/shared/http/types'
 
@@ -27,23 +27,23 @@ export type {pascal}CreateInput = OperationJsonBody<'{create_operation}'>
 export type {pascal}UpdateInput = OperationJsonBody<'{update_operation}'>
 
 export function list{pascal}(params: {pascal}Query, signal?: AbortSignal) {{
-  return requestOperation({list_operation}, {{ params, signal }})
+  return {list_operation}({{ params, signal }})
 }}
 
 export function get{pascal}(id: Id, signal?: AbortSignal) {{
-  return requestOperation({read_operation}, {{ path: {{ id }}, signal }})
+  return {read_operation}({{ path: {{ id }}, signal }})
 }}
 
 export function create{pascal}(data: {pascal}CreateInput) {{
-  return requestOperation({create_operation}, {{ data }})
+  return {create_operation}({{ data }})
 }}
 
 export function update{pascal}(id: Id, data: {pascal}UpdateInput) {{
-  return requestOperation({update_operation}, {{ path: {{ id }}, data }})
+  return {update_operation}({{ path: {{ id }}, data }})
 }}
 
 export function delete{pascal}(id: Id) {{
-  return requestOperation({delete_operation}, {{ path: {{ id }} }})
+  return {delete_operation}({{ path: {{ id }} }})
 }}
 "#,
         super::super::slash_header(resource),

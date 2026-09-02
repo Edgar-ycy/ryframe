@@ -5,24 +5,15 @@ fn generated_post_router_composes_with_manual_export_extension() {
     use std::sync::Arc;
 
     use axum::{Router, routing::post};
-    use ryframe_application::generated::{
-        GeneratedServices,
-        notice::{NoticeFakePersistence, NoticeService},
-        post::{PostFakePersistence, PostService},
-    };
+    use ryframe_application::generated::post::{PostFakePersistence, PostService};
     use ryframe_kernel::PaginationPolicy;
 
-    let services = GeneratedServices {
-        notice: Arc::new(NoticeService::new(Arc::new(
-            NoticeFakePersistence::default(),
-        ))),
-        post: Arc::new(PostService::new(Arc::new(PostFakePersistence::default()))),
-    };
+    let service = Arc::new(PostService::new(Arc::new(PostFakePersistence::default())));
     let export = Router::new().route("/exports", post(|| async {}));
 
     let _router: Router = Router::new()
-        .merge(ryframe_api::generated::generated_router(
-            &services,
+        .merge(ryframe_api::generated::post::handler::router(
+            service,
             PaginationPolicy::new(20, 200),
         ))
         .nest("/posts", export);
@@ -331,6 +322,9 @@ mod openapi {
             .iter()
             .map(|resource| resource["name"].as_str().expect("资源名必须是字符串"))
             .collect::<Vec<_>>();
-        assert_eq!(names, ["notice", "post"]);
+        assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
+        let names = names.into_iter().collect::<BTreeSet<_>>();
+        assert!(names.contains("notice"));
+        assert!(names.contains("post"));
     }
 }

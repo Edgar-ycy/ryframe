@@ -6,8 +6,9 @@
 use chrono::{DateTime, Duration, Utc};
 use ryframe_config::{AppConfig, Environment, TenantDatabaseTargetMode};
 use ryframe_db::{
-    ControlDatabaseCluster, RegisterTenantDataBackupPoint, TenantDataRepository,
+    ControlDatabaseCluster,
     entities::tenant::data_backup_point as tenant_data_backup_point,
+    repositories::{RegisterTenantDataBackupPoint, TenantDataRepository},
 };
 use ryframe_tenant_db::TenantDatabaseRouter;
 use sea_orm::{DbBackend, FromQueryResult, Statement};
@@ -32,12 +33,13 @@ struct DatabaseNowRow {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ryframe::crypto::install_crypto_provider()?;
     let args = parse_args(std::env::args().skip(1).collect())?;
     let environment = Environment::from_env()?;
     let config = AppConfig::load_from_env(environment)?;
-    ryframe_adapters::snowflake::initialize(config.snowflake_worker_id)?;
+    ryframe_kernel::snowflake::initialize(config.snowflake_worker_id)?;
     ryframe_db::install_id_generator(|| {
-        ryframe_adapters::snowflake::try_next_snowflake_id().map_err(ryframe_kernel::AppError::from)
+        ryframe_kernel::snowflake::try_next_snowflake_id().map_err(ryframe_kernel::AppError::from)
     })?;
 
     let primary = ryframe_db::connection::connect_with_sql_logging(

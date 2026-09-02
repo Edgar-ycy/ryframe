@@ -10,12 +10,14 @@ from typing import Any
 PLAN_OUTPUTS = (
     "preflight",
     "rust_gate",
+    "resource_gate",
     "integration",
     "consumer_contract",
 )
 PLAN_CONTROLLED_JOBS = {
     "preflight": "preflight",
     "rust-gate": "rust_gate",
+    "resource-gate": "resource_gate",
     "integration": "integration",
     "consumer-contract": "consumer_contract",
 }
@@ -25,6 +27,7 @@ ALL_JOBS = (
     *PLAN_CONTROLLED_JOBS,
     "full-stack-e2e",
     "windows-smoke",
+    "aws-lc-sccache-canary",
     *ALWAYS_AFTER_PLAN,
     "supply-chain",
 )
@@ -75,6 +78,7 @@ def validate_required_jobs(
         required_edited_plan = {
             "preflight": "false",
             "rust_gate": "false",
+            "resource_gate": "false",
             "integration": "false",
             "consumer_contract": "true",
         }
@@ -84,6 +88,9 @@ def validate_required_jobs(
         expected["security-audit"] = "success"
         expected["deployment-assets"] = "success"
         expected["windows-smoke"] = "skipped" if event == "schedule" else "success"
+        expected["aws-lc-sccache-canary"] = (
+            "success" if event in ("schedule", "workflow_dispatch") else "skipped"
+        )
         expected["supply-chain"] = (
             "success" if event in ("schedule", "workflow_dispatch") else "skipped"
         )

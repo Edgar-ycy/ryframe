@@ -6,8 +6,7 @@ use std::{
 
 use super::{
     GeneratedAsset, GeneratedCatalog, MANIFEST_PATH, OwnershipEntry, OwnershipManifest,
-    ResourceError, ResourceIr, ResourceWorkspace, content_hash, extract_source_hash, target_path,
-    validate_managed_path,
+    ResourceError, ResourceIr, ResourceWorkspace, content_hash, target_path, validate_managed_path,
 };
 
 pub(super) fn validate_workspace(workspace: ResourceWorkspace<'_>) -> Result<(), ResourceError> {
@@ -204,7 +203,7 @@ pub(super) fn desired_entries(
                 root: asset.root,
                 path: asset.path.clone(),
                 source_hash: resource.map_or_else(
-                    || extract_source_hash(&asset.content),
+                    || content_hash(asset.content.as_bytes()),
                     |resource| resource.source_hash.clone(),
                 ),
                 schema_hash: resource.map(|resource| resource.schema_hash.clone()),

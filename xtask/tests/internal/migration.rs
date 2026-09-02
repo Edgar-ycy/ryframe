@@ -5,11 +5,55 @@ use std::{
 };
 
 use super::{
-    cli::MigrationScope,
-    migration::{FileOperations, PlannedWrite, commit_writes_with, create_migration},
+    cli::{MigrationOperation, MigrationScope, MigrationTarget},
+    migration::{
+        FileOperations, PlannedWrite, commit_writes_with, create_migration, migration_run_args,
+    },
 };
 
 static NEXT_DIR: AtomicU64 = AtomicU64::new(1);
+
+#[test]
+fn migration_runner_selects_only_the_migrate_binary_feature() {
+    let prefix = [
+        "run",
+        "--locked",
+        "-p",
+        "ryframe",
+        "--no-default-features",
+        "--features",
+        "bin-migrate",
+        "--bin",
+        "ryframe-migrate",
+        "--",
+    ];
+    let cases = [
+        (
+            MigrationOperation::Verify,
+            MigrationTarget::Control,
+            vec!["control", "verify"],
+        ),
+        (
+            MigrationOperation::Status,
+            MigrationTarget::TenantDataAll,
+            vec!["tenant-data", "status", "--all"],
+        ),
+        (
+            MigrationOperation::Up,
+            MigrationTarget::TenantDataOne("tenant-a".to_owned()),
+            vec!["tenant-data", "up", "--target", "tenant-a"],
+        ),
+    ];
+
+    for (operation, target, suffix) in cases {
+        let expected = prefix
+            .into_iter()
+            .chain(suffix)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        assert_eq!(migration_run_args(operation, &target), expected);
+    }
+}
 
 struct TestRoot(PathBuf);
 
@@ -112,7 +156,7 @@ fn creates_control_migration_and_registers_it_once() {
     let root = TestRoot::new();
     root.write(
             "crates/ryframe-db/src/migration/mod.rs",
-            "mod m20260820_000000_control_baseline;\nmod schema;\n\nimpl MigratorTrait for Migrator {\n    fn migrations() -> Vec<Box<dyn MigrationTrait>> {\n        vec![Box::new(m20260820_000000_control_baseline::Migration)]\n    }\n}\n",
+            "mod m20260820_000000_control_baseline;\nmod schema;\n\nconst HANDWRITTEN_MIGRATION_NAMES: &[&str] = &[\"m20260820_000000_control_baseline\"];\n\nimpl MigratorTrait for Migrator {\n    fn migrations() -> Vec<Box<dyn MigrationTrait>> {\n        vec![Box::new(m20260820_000000_control_baseline::Migration)]\n    }\n}\n",
         );
     create_migration(
         &root.0,
@@ -131,6 +175,8 @@ fn creates_control_migration_and_registers_it_once() {
     let registry =
         fs::read_to_string(root.0.join("crates/ryframe-db/src/migration/mod.rs")).unwrap();
     assert!(registry.contains("mod m20260823_010203_add_device;"));
+    assert!(registry.contains("\"m20260823_010203_add_device\","));
+    assert!(registry.contains("#[cfg(feature = \"migration\")]"));
     assert!(registry.contains("Box::new(m20260823_010203_add_device::Migration)"));
     assert!(
         create_migration(
@@ -148,7 +194,7 @@ fn tenant_migration_updates_module_and_runtime_registries() {
     let root = TestRoot::new();
     root.write(
         "crates/ryframe-tenant-db/src/migration/mod.rs",
-        "mod m20260820_000000_tenant_baseline;\nmod runtime;\n",
+        "mod m20260820_000000_tenant_baseline;\nmod runtime;\n\nconst HANDWRITTEN_MIGRATION_NAMES: &[&str] = &[\n    \"m20260820_000000_tenant_baseline\",\n];\n",
     );
     root.write(
             "crates/ryframe-tenant-db/src/migration/runtime.rs",
@@ -169,13 +215,15 @@ fn tenant_migration_updates_module_and_runtime_registries() {
     )
     .unwrap();
     assert!(modules.contains("mod m20260823_010204_add_device;"));
+    assert!(modules.contains("\"m20260823_010204_add_device\","));
+    assert!(modules.contains("#[cfg(feature = \"migration\")]"));
     assert!(runtime.contains("Box::new(super::m20260823_010204_add_device::Migration)"));
 }
 
 #[test]
 fn invalid_migration_path_leaves_registries_unchanged() {
     let root = TestRoot::new();
-    let registry = "mod m20260820_000000_control_baseline;\n\nimpl MigratorTrait for Migrator {\n    fn migrations() -> Vec<Box<dyn MigrationTrait>> {\n        vec![Box::new(m20260820_000000_control_baseline::Migration)]\n    }\n}\n";
+    let registry = "mod m20260820_000000_control_baseline;\n\nconst HANDWRITTEN_MIGRATION_NAMES: &[&str] = &[\n    \"m20260820_000000_control_baseline\",\n];\n\nimpl MigratorTrait for Migrator {\n    fn migrations() -> Vec<Box<dyn MigrationTrait>> {\n        vec![Box::new(m20260820_000000_control_baseline::Migration)]\n    }\n}\n";
     root.write("crates/ryframe-db/src/migration/mod.rs", registry);
 
     assert!(
@@ -197,7 +245,7 @@ fn invalid_migration_path_leaves_registries_unchanged() {
 #[test]
 fn migration_timestamp_must_advance_without_partial_writes() {
     let root = TestRoot::new();
-    let registry = "mod m20260820_000000_control_baseline;\n\nimpl MigratorTrait for Migrator {\n    fn migrations() -> Vec<Box<dyn MigrationTrait>> {\n        vec![Box::new(m20260820_000000_control_baseline::Migration)]\n    }\n}\n";
+    let registry = "mod m20260820_000000_control_baseline;\n\nconst HANDWRITTEN_MIGRATION_NAMES: &[&str] = &[\n    \"m20260820_000000_control_baseline\",\n];\n\nimpl MigratorTrait for Migrator {\n    fn migrations() -> Vec<Box<dyn MigrationTrait>> {\n        vec![Box::new(m20260820_000000_control_baseline::Migration)]\n    }\n}\n";
     root.write("crates/ryframe-db/src/migration/mod.rs", registry);
     root.write(
         "crates/ryframe-db/src/migration/m20260823_020000_existing.rs",

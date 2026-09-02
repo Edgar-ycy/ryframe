@@ -1,0 +1,24 @@
+name: Release Bot
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Commenting on `${{ github.event.release.tag_name }}` release
+        uses: billy1624/release-comment-on-pr@master
+        with:
+          release-tag: ${{ github.event.release.tag_name }}
+          token: ${{ github.token }}
+          message: |
+            ### :tada: Released In [${releaseTag}](${releaseUrl}) :tada:
+            
+            Huge thanks for the contribution!
+            This feature has now been released, so it's a great time to upgrade.
+            Show some love with a ⭐ on our repo, every star counts!

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+#[cfg(feature = "monitoring")]
 use ryframe_adapters::metrics;
 use ryframe_adapters::storage::{
     LocalObjectStorage, MAX_OBJECT_LIST_PAGE_SIZE, ObjectStorage, ScopedObjectStorage,
@@ -33,6 +34,7 @@ async fn put_file_streams_through_private_staging() {
     assert_eq!(stored, content);
 }
 
+#[cfg(feature = "monitoring")]
 #[tokio::test]
 async fn storage_metrics_use_only_bounded_connector_labels() {
     let directory = tempfile::tempdir().expect("创建测试目录");

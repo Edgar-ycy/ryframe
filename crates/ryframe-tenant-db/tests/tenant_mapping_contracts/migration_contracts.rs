@@ -6,7 +6,8 @@ use ryframe_tenant_db::{
     migration::{
         Migrator, RESOURCE_OWNERSHIP_DDL, TENANT_DATA_CATALOG, TENANT_DATA_MIGRATION_LEDGER,
         TENANT_DATA_SCHEMA_FINGERPRINT, TENANT_FENCE_DDL, TENANT_TARGET_SLOT_DDL,
-        TenantDataTableDescriptor, ensure_local_foreign_key_schema, normalize_check_clause,
+        TenantDataTableDescriptor, ensure_local_foreign_key_schema, expected_migration_names,
+        normalize_check_clause,
     },
 };
 use sea_orm_migration::MigratorTrait;
@@ -69,6 +70,12 @@ fn cross_schema_foreign_keys_are_rejected() {
 #[test]
 fn tenant_data_uses_one_fresh_baseline_and_its_own_ledger() {
     let migrations = Migrator::migrations();
+    let actual_names = migrations
+        .iter()
+        .map(|migration| migration.name())
+        .collect::<Vec<_>>();
+    let expected_names = expected_migration_names().collect::<Vec<_>>();
+    assert_eq!(actual_names, expected_names);
     assert_eq!(
         migrations.len(),
         1 + ryframe_tenant_db::generated::migrations().len()

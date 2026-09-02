@@ -1,6 +1,8 @@
 use chrono::Utc;
 use ryframe_application::{
-    AuditRequestContext, bind_current_audit, scope_audit_request,
+    AuditRequestContext,
+    infrastructure::bind_current_audit,
+    scope_audit_request,
     system::operations::{
         InMemoryOnlineSessionMetadata, OnlineSessionMetadataStore, OperLogStatus,
         RecordOperLogCommand, UserSession,

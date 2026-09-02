@@ -5,7 +5,7 @@ use crate::{ControlDatabaseCluster, OutboxEventRepository, RecordOutboxEvent};
 use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{DatabaseTransaction, TransactionTrait};
 
-use ryframe_application::{
+use ryframe_application::infrastructure::{
     AUDIT_AGGREGATE_TYPE, OUTBOX_MAX_ATTEMPTS, bind_current_audit, validate_audit_event,
 };
 use ryframe_application::{
@@ -72,7 +72,7 @@ async fn record_event_in_transaction(
     let now = crate::repositories::database_utc_now(transaction).await?;
     let payload = serde_json::to_value(event)
         .map_err(|error| AppError::Internal(format!("审计事件序列化失败: {error}")))?;
-    let trace_context = ryframe_application::current_trace_context();
+    let trace_context = ryframe_application::infrastructure::current_trace_context();
     OutboxEventRepository
         .record_in_transaction(
             transaction,

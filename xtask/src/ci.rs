@@ -10,7 +10,7 @@ use crate::{
     Result,
     check::{
         BACKEND_CI_TARGET_DIR, BackendSnapshotProfile, RESOURCE_CI_TARGET_DIR, VerifySelection,
-        changed_paths, changed_paths_between, ci_consumer_contract, ci_rust_gate,
+        changed_paths, changed_paths_between, ci_consumer_contract, ci_rust_gate, ci_target_policy,
         ci_test_jobs_from, classify_changes, complete_verify_selection, load_workspace_graph,
         resource_workspace_compilation,
     },
@@ -18,6 +18,9 @@ use crate::{
     process::{command_output, run as run_process, run_owned},
     workspace::root_dir,
 };
+
+#[path = "ci/resource_gate.rs"]
+pub(crate) mod resource_gate;
 
 const FULL_CI_EVENTS: &[&str] = &["push", "schedule", "workflow_dispatch"];
 const INTEGRATION_PACKAGES: &[&str] = &["ryframe-adapters", "ryframe-db", "ryframe-tenant-db"];
@@ -27,6 +30,7 @@ const WINDOWS_RUST_GATE_PROFILE: &str = "windows-smoke";
 pub(crate) struct CiPlan {
     pub(crate) preflight: bool,
     pub(crate) rust_gate: bool,
+    pub(crate) resource_gate: bool,
     pub(crate) integration: bool,
     pub(crate) consumer_contract: bool,
 }
@@ -36,6 +40,7 @@ impl CiPlan {
         Self {
             preflight: true,
             rust_gate: true,
+            resource_gate: true,
             integration: true,
             consumer_contract: true,
         }
@@ -47,6 +52,7 @@ pub(crate) fn run(command: CiCommand, frontend_dir: &Path) -> Result<()> {
         CiCommand::Plan => plan(),
         CiCommand::Preflight => preflight(),
         CiCommand::RustGate => rust_gate(frontend_dir),
+        CiCommand::ResourceGate => resource_gate::run(frontend_dir),
         CiCommand::Integration => integration(),
         CiCommand::ConsumerContract => consumer_contract(frontend_dir),
     }
@@ -76,11 +82,12 @@ fn plan() -> Result<()> {
     let root = root_dir();
     let event = env::var("GITHUB_EVENT_NAME").unwrap_or_else(|_| "local".to_owned());
     let action = env::var("GITHUB_EVENT_ACTION").unwrap_or_default();
-    let paths = ci_changed_paths(&root, &event)?;
+    let (paths, repository_range_valid) = ci_changed_paths(&root, &event)?;
     let graph = load_workspace_graph(&root)?;
-    let mut selection = classify_changes(&paths, &[], &graph);
-    complete_verify_selection(&mut selection, &graph);
-    let plan = ci_plan_for(&event, &action, &selection);
+    let selection = ci_selection_for_paths(&paths, &graph);
+    let resource_gate = resource_gate::should_run_for_paths(&paths)
+        || resource_gate_required_for_ci_range(&event, repository_range_valid);
+    let plan = ci_plan_for(&event, &action, &selection, resource_gate);
 
     println!("CI 事件：{event}{}", action_label(&action));
     if paths.is_empty() {
@@ -97,6 +104,25 @@ fn plan() -> Result<()> {
     write_github_outputs(plan)
 }
 
+pub(crate) fn ci_selection_for_paths(
+    paths: &[String],
+    graph: &crate::check::WorkspaceGraph,
+) -> VerifySelection {
+    if let Some(reason) = resource_gate::full_fallback_reason_for_paths(paths) {
+        let mut selection = VerifySelection::default();
+        selection.full_reason = Some(reason);
+        return selection;
+    }
+    let generic_paths = paths
+        .iter()
+        .filter(|path| !resource_gate::delegates_generic_ci_path(path))
+        .cloned()
+        .collect::<Vec<_>>();
+    let mut selection = classify_changes(&generic_paths, &[], graph);
+    complete_verify_selection(&mut selection, graph);
+    selection
+}
+
 fn action_label(action: &str) -> String {
     if action.is_empty() {
         String::new()
@@ -105,11 +131,17 @@ fn action_label(action: &str) -> String {
     }
 }
 
-pub(crate) fn ci_plan_for(event: &str, action: &str, selection: &VerifySelection) -> CiPlan {
+pub(crate) fn ci_plan_for(
+    event: &str,
+    action: &str,
+    selection: &VerifySelection,
+    resource_gate: bool,
+) -> CiPlan {
     if event == "pull_request" && action == "edited" {
         return CiPlan {
             preflight: false,
             rust_gate: false,
+            resource_gate: false,
             integration: false,
             consumer_contract: true,
         };
@@ -137,18 +169,22 @@ pub(crate) fn ci_plan_for(event: &str, action: &str, selection: &VerifySelection
         // 文档变更仍执行仓库策略与格式检查，保持 Required 的确定性。
         preflight: true,
         rust_gate: has_backend_work,
+        resource_gate,
         integration,
         consumer_contract,
     }
 }
 
-fn ci_changed_paths(root: &Path, event: &str) -> Result<Vec<String>> {
+fn ci_changed_paths(root: &Path, event: &str) -> Result<(Vec<String>, bool)> {
     if let Ok(configured) = env::var("RYFRAME_CI_CHANGED_PATHS") {
-        return Ok(parse_changed_paths(&configured));
+        return Ok((
+            parse_changed_paths(&configured),
+            configured_ci_range_valid(),
+        ));
     }
     if FULL_CI_EVENTS.contains(&event) {
         // 定时、手动和主分支构建必须完整执行，具体文件列表不影响计划。
-        return Ok(Vec::new());
+        return Ok((Vec::new(), configured_ci_range_valid()));
     }
     let base = env::var("RYFRAME_CI_BASE_SHA")
         .or_else(|_| env::var("GITHUB_BASE_SHA"))
@@ -158,10 +194,29 @@ fn ci_changed_paths(root: &Path, event: &str) -> Result<Vec<String>> {
         .ok();
     match (base.as_deref(), head.as_deref()) {
         (Some(base), Some(head)) if valid_git_sha(base) && valid_git_sha(head) => {
-            changed_paths_between(root, base, head)
+            match changed_paths_between(root, base, head) {
+                Ok(paths) => Ok((paths, true)),
+                Err(error) => {
+                    eprintln!("CI Git 范围不可解析，将由 resource-gate 执行完整回退：{error}");
+                    Ok((changed_paths(root)?, false))
+                }
+            }
         }
-        _ => changed_paths(root),
+        _ => Ok((changed_paths(root)?, false)),
     }
+}
+
+fn configured_ci_range_valid() -> bool {
+    let base = env::var("RYFRAME_CI_BASE_SHA")
+        .or_else(|_| env::var("GITHUB_BASE_SHA"))
+        .ok();
+    let head = env::var("RYFRAME_CI_HEAD_SHA")
+        .or_else(|_| env::var("GITHUB_SHA"))
+        .ok();
+    matches!(
+        (base.as_deref(), head.as_deref()),
+        (Some(base), Some(head)) if valid_git_sha(base) && valid_git_sha(head)
+    )
 }
 
 pub(crate) fn parse_changed_paths(value: &str) -> Vec<String> {
@@ -181,10 +236,18 @@ fn valid_git_sha(value: &str) -> bool {
         && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-fn plan_outputs(plan: CiPlan) -> [(&'static str, bool); 4] {
+pub(crate) fn resource_gate_required_for_ci_range(
+    event: &str,
+    repository_range_valid: bool,
+) -> bool {
+    event == "pull_request" && !repository_range_valid
+}
+
+fn plan_outputs(plan: CiPlan) -> [(&'static str, bool); 5] {
     [
         ("preflight", plan.preflight),
         ("rust_gate", plan.rust_gate),
+        ("resource_gate", plan.resource_gate),
         ("integration", plan.integration),
         ("consumer_contract", plan.consumer_contract),
     ]
@@ -204,6 +267,7 @@ fn write_github_outputs(plan: CiPlan) -> Result<()> {
 fn preflight() -> Result<()> {
     let root = root_dir();
     run_process(&root, "cargo", &["fmt", "--all", "--", "--check"])?;
+    run_process(&root, "python", &["scripts/check_python_environment.py"])?;
     run_process(
         &root,
         "python",
@@ -375,39 +439,67 @@ pub(crate) fn formal_contract_source_args(
 
 fn integration() -> Result<()> {
     let root = root_dir();
+    let targets = ci_target_policy()?;
     let jobs = ci_test_jobs_from(
         env::var("RYFRAME_CI_TEST_JOBS").ok().as_deref(),
         cfg!(windows),
         std::thread::available_parallelism().map_or(1, usize::from),
     )?;
-    for (package, target) in [
-        ("ryframe-db", "mysql_real_protocol"),
-        ("ryframe-adapters", "redis_real_protocol"),
+    for (package, target, features) in [
+        ("ryframe-db", "mysql_real_protocol", Some("repositories")),
+        ("ryframe-adapters", "redis_real_protocol", Some("redis-api")),
     ] {
         run_owned(
             &root,
             "cargo",
-            &integration_test_args(package, target, jobs),
+            &integration_test_args_for_target(package, target, features, &targets.backend, jobs),
         )?;
     }
+    run_owned(
+        &root,
+        "python",
+        &tls_integration_args(&targets.backend, jobs),
+    )?;
     Ok(())
 }
 
-pub(crate) fn integration_test_args(package: &str, target: &str, jobs: usize) -> Vec<String> {
-    [
+pub(crate) fn tls_integration_args(target_dir: &str, jobs: usize) -> Vec<String> {
+    vec![
+        "scripts/tls_integration_gate.py".to_owned(),
+        "--backend-root".to_owned(),
+        ".".to_owned(),
+        "--target-dir".to_owned(),
+        target_dir.to_owned(),
+        "--jobs".to_owned(),
+        jobs.max(1).to_string(),
+    ]
+}
+
+pub(crate) fn integration_test_args_for_target(
+    package: &str,
+    target: &str,
+    features: Option<&str>,
+    target_dir: &str,
+    jobs: usize,
+) -> Vec<String> {
+    let mut args = vec![
         "test".to_owned(),
         "--locked".to_owned(),
         "--target-dir".to_owned(),
-        BACKEND_CI_TARGET_DIR.to_owned(),
+        target_dir.to_owned(),
         "-p".to_owned(),
         package.to_owned(),
+    ];
+    if let Some(features) = features {
+        args.extend(["--features".to_owned(), features.to_owned()]);
+    }
+    args.extend([
         "--test".to_owned(),
         target.to_owned(),
         "--jobs".to_owned(),
         jobs.max(1).to_string(),
         "--".to_owned(),
         "--nocapture".to_owned(),
-    ]
-    .into_iter()
-    .collect()
+    ]);
+    args
 }

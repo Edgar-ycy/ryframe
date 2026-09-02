@@ -122,6 +122,7 @@ impl StorageReset {
                     access_key: config.object_storage.access_key.clone(),
                     secret_key: config.object_storage.secret_key.clone(),
                     use_ssl: config.object_storage.use_ssl,
+                    root_ca_pem: None,
                     region: config.object_storage.region.trim().to_owned(),
                     request_timeout_secs: config.object_storage.request_timeout_secs,
                 })

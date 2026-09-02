@@ -4,11 +4,15 @@ use std::{
     path::Path,
 };
 
-use serde::Deserialize;
-
 use crate::Result;
 
-const POLICY_PATH: &str = "architecture/change-surface.toml";
+#[path = "change_surface/policy.rs"]
+mod policy;
+
+pub(crate) use policy::{
+    ChangeSurfacePolicy, RepositoryKind, load_change_surface_policy, parse_change_surface_policy,
+};
+use policy::{SoftSourceSize, SourceSizeBudget};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum ChangeCategory {
@@ -45,87 +49,6 @@ impl ChangeCategory {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum RepositoryKind {
-    Backend,
-    Frontend,
-}
-
-impl RepositoryKind {
-    const fn label(self) -> &'static str {
-        match self {
-            Self::Backend => "后端",
-            Self::Frontend => "前端",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub(crate) struct WarningBudgets {
-    pub(crate) backend_handwritten_product: usize,
-    pub(crate) frontend_handwritten_product: usize,
-    pub(crate) combined_handwritten_product: usize,
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub(crate) struct SoftSourceSize {
-    pub(crate) backend_rust: usize,
-    pub(crate) frontend_composable: usize,
-    pub(crate) frontend_sfc_or_style: usize,
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub(crate) struct CentralHotspot {
-    pub(crate) repository: RepositoryKind,
-    pub(crate) path: String,
-    #[serde(default)]
-    pub(crate) standard_resource_forbidden: bool,
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-pub(crate) struct ChangeSurfacePolicy {
-    version: u32,
-    pub(crate) warning_budgets: WarningBudgets,
-    pub(crate) soft_source_size: SoftSourceSize,
-    #[serde(default)]
-    pub(crate) central_hotspots: Vec<CentralHotspot>,
-}
-
-impl ChangeSurfacePolicy {
-    fn validate(&self) -> Result<()> {
-        if self.version != 1 {
-            return Err(format!("修改扩散配置版本不受支持：{}", self.version).into());
-        }
-        let budgets = &self.warning_budgets;
-        if budgets.backend_handwritten_product == 0
-            || budgets.frontend_handwritten_product == 0
-            || budgets.combined_handwritten_product == 0
-        {
-            return Err("修改扩散预算必须大于零".into());
-        }
-        let sizes = &self.soft_source_size;
-        if sizes.backend_rust == 0
-            || sizes.frontend_composable == 0
-            || sizes.frontend_sfc_or_style == 0
-        {
-            return Err("修改文件源码规模提醒阈值必须大于零".into());
-        }
-        let mut paths = BTreeSet::new();
-        for hotspot in &self.central_hotspots {
-            if hotspot.path.is_empty() || hotspot.path.contains('\\') {
-                return Err(
-                    format!("中央热点路径必须使用非空正斜杠相对路径：{}", hotspot.path).into(),
-                );
-            }
-            if !paths.insert((hotspot.repository, hotspot.path.as_str())) {
-                return Err(format!("中央热点重复配置：{}", hotspot.path).into());
-            }
-        }
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct RepositoryChangeSurface {
     pub(crate) files: BTreeMap<ChangeCategory, Vec<String>>,
@@ -152,16 +75,6 @@ pub(crate) struct ChangeSurfaceReport {
     pub(crate) central_hotspots: Vec<String>,
     pub(crate) warnings: Vec<String>,
     pub(crate) violations: Vec<String>,
-}
-
-pub(crate) fn load_change_surface_policy(root: &Path) -> Result<ChangeSurfacePolicy> {
-    let path = root.join(POLICY_PATH);
-    let source = fs::read_to_string(&path)
-        .map_err(|error| format!("读取修改扩散配置 {} 失败：{error}", path.display()))?;
-    let policy = toml::from_str::<ChangeSurfacePolicy>(&source)
-        .map_err(|error| format!("解析修改扩散配置 {} 失败：{error}", path.display()))?;
-    policy.validate()?;
-    Ok(policy)
 }
 
 pub(crate) fn analyze_change_surface(
@@ -249,36 +162,66 @@ pub(crate) fn append_changed_file_size_warnings(
             &mut report.warnings,
             backend_root,
             path,
-            policy.soft_source_size.backend_rust,
+            policy
+                .soft_source_size
+                .budget(policy.soft_source_size.backend_rust_hard_limit),
             "Rust 源码",
         )?;
     }
     for path in frontend_paths {
-        let file_name = Path::new(path)
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or_default();
-        let (limit, label) = if path.ends_with(".ts")
-            && file_name.starts_with("use")
-            && !path.ends_with(".test.ts")
-            && !path.ends_with(".spec.ts")
-        {
-            (policy.soft_source_size.frontend_composable, "Composable")
-        } else if path.ends_with(".vue") || path.ends_with(".scss") {
-            (policy.soft_source_size.frontend_sfc_or_style, "SFC/SCSS")
-        } else {
+        if matches!(
+            classify_frontend(path),
+            ChangeCategory::Generated | ChangeCategory::Test
+        ) {
+            continue;
+        }
+        let Some((hard_limit, label)) = frontend_source_size_limit(path, &policy.soft_source_size)
+        else {
             continue;
         };
-        append_file_size_warning(&mut report.warnings, frontend_root, path, limit, label)?;
+        append_file_size_warning(
+            &mut report.warnings,
+            frontend_root,
+            path,
+            policy.soft_source_size.budget(hard_limit),
+            label,
+        )?;
     }
     Ok(())
+}
+
+fn frontend_source_size_limit(path: &str, sizes: &SoftSourceSize) -> Option<(usize, &'static str)> {
+    let path = Path::new(path);
+    let file_name = path.file_name()?.to_str()?;
+    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    if ["ts", "tsx", "mts", "cts"].contains(&extension.as_str()) {
+        if [".d.ts", ".d.tsx", ".d.mts", ".d.cts"]
+            .iter()
+            .any(|suffix| file_name.ends_with(suffix))
+        {
+            return None;
+        }
+        let normalized = path.to_string_lossy().replace('\\', "/");
+        let composable = file_name.starts_with("use") || normalized.contains("/composables/");
+        return Some(if composable {
+            (sizes.frontend_composable_hard_limit, "Composable")
+        } else {
+            (sizes.frontend_typescript_hard_limit, "TypeScript 源码")
+        });
+    }
+    match extension.as_str() {
+        "vue" => Some((sizes.frontend_sfc_hard_limit, "Vue SFC")),
+        "css" | "scss" => Some((sizes.frontend_style_hard_limit, "样式源码")),
+        "mjs" => Some((sizes.frontend_script_hard_limit, "前端脚本")),
+        _ => None,
+    }
 }
 
 fn append_file_size_warning(
     warnings: &mut Vec<String>,
     root: &Path,
     relative: &str,
-    limit: usize,
+    budget: SourceSizeBudget,
     label: &str,
 ) -> Result<()> {
     let path = root.join(relative);
@@ -288,9 +231,15 @@ fn append_file_size_warning(
     let source = fs::read_to_string(&path)
         .map_err(|error| format!("读取修改文件 {} 失败：{error}", path.display()))?;
     let lines = source.lines().count();
-    if lines > limit {
+    if lines >= budget.attention {
         warnings.push(format!(
-            "{label} {relative} 共 {lines} 行，超过软提醒阈值 {limit} 行"
+            "{label} {relative} 共 {lines} 行，达到 90% 高关注阈值 {} 行（硬上限 {} 行）",
+            budget.attention, budget.hard_limit
+        ));
+    } else if lines >= budget.warning {
+        warnings.push(format!(
+            "{label} {relative} 共 {lines} 行，达到 80% 提醒阈值 {} 行（硬上限 {} 行）",
+            budget.warning, budget.hard_limit
         ));
     }
     Ok(())

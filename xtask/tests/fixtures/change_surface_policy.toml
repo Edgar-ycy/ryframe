@@ -1,0 +1,27 @@
+version = 2
+
+[warning_budgets]
+backend_handwritten_product = 1
+frontend_handwritten_product = 1
+combined_handwritten_product = 1
+
+[soft_source_size]
+warning_percent = 80
+attention_percent = 90
+backend_rust_hard_limit = 600
+frontend_typescript_hard_limit = 300
+frontend_composable_hard_limit = 300
+frontend_sfc_hard_limit = 400
+frontend_style_hard_limit = 300
+frontend_script_hard_limit = 500
+
+[[full_invalidation_paths]]
+repository = "backend"
+match = "exact"
+path = "Cargo.toml"
+reason = "测试"
+
+[[central_hotspots]]
+repository = "backend"
+path = "crates/ryframe-api/src/openapi.rs"
+standard_resource_forbidden = true

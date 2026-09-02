@@ -1,9 +1,9 @@
 use std::{fs, path::PathBuf};
 
 use ryframe_generator::{
-    AssetRoot, GeneratedAsset, PlanAction, ResourceSpec, ResourceWorkspace, load_resource,
-    normalize_resource, plan_resource_assets, plan_resource_changes, render_resources,
-    write_resource, write_resources,
+    AssetRoot, GeneratedAsset, GeneratedCatalog, PlanAction, ResourceSpec, ResourceWorkspace,
+    load_resource, normalize_resource, plan_resource_assets, plan_resource_changes,
+    render_resources, write_resource, write_resources,
 };
 
 fn device_path() -> PathBuf {
@@ -12,6 +12,81 @@ fn device_path() -> PathBuf {
 
 fn post_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../catalog/resources/post.toml")
+}
+
+fn assert_control_database_repository_gates(generated: &GeneratedCatalog) {
+    let database_slice = generated
+        .assets
+        .iter()
+        .find(|asset| asset.path == "crates/ryframe-db/src/generated/post/mod.rs")
+        .expect("应生成 control DB 资源入口")
+        .content
+        .as_str();
+    assert!(database_slice.contains("#[cfg(feature = \"repositories\")]\npub mod entity;"));
+    assert!(database_slice.contains("#[cfg(feature = \"repositories\")]\nmod repository;"));
+    assert!(
+        database_slice.contains("#[cfg(feature = \"repositories\")]\npub use repository::port;")
+    );
+    let database_mod = generated
+        .assets
+        .iter()
+        .find(|asset| asset.path == "crates/ryframe-db/src/generated/mod.rs")
+        .expect("应生成 control DB 聚合入口");
+    assert!(
+        database_mod
+            .content
+            .contains("pub use super::post::entity as post;")
+    );
+    assert!(
+        database_mod
+            .content
+            .contains("ports.post = Some(post::port(database));")
+    );
+    assert!(database_mod.content.contains(
+        "#[cfg(feature = \"repositories\")]\nuse ryframe_application::generated::GeneratedPersistencePorts;"
+    ));
+    assert!(
+        database_mod
+            .content
+            .contains("#[cfg(feature = \"repositories\")]\npub fn register_ports(")
+    );
+    assert!(!database_mod.content.contains("database.clone()"));
+    assert!(
+        database_mod
+            .content
+            .contains("pub const MIGRATION_NAMES: &[&str] = &[];")
+    );
+}
+
+fn assert_tenant_bootstrap_migration_gates(generated: &GeneratedCatalog) {
+    let aggregate = generated
+        .assets
+        .iter()
+        .find(|asset| asset.path == "crates/ryframe-tenant-db/src/generated/mod.rs")
+        .expect("tenant generated 聚合应存在");
+    assert!(
+        aggregate
+            .content
+            .contains("Box::new(device::migration::Migration)")
+    );
+    assert!(
+        aggregate
+            .content
+            .contains("pub const MIGRATION_NAMES: &[&str] = &[\"m_resource_initial_device\"];")
+    );
+    assert!(aggregate.content.contains(
+        "#[cfg(any(feature = \"repositories\", feature = \"migration\"))]\npub mod device;"
+    ));
+    let database_slice = generated
+        .assets
+        .iter()
+        .find(|asset| asset.path == "crates/ryframe-tenant-db/src/generated/device/mod.rs")
+        .expect("应生成 tenant 数据库模块");
+    assert!(
+        database_slice
+            .content
+            .contains("#[cfg(feature = \"migration\")]\npub mod migration;")
+    );
 }
 
 fn device() -> ryframe_generator::ResourceIr {
@@ -99,22 +174,7 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
     let entity = content("post/entity.rs");
     assert!(entity.contains("pub const SOFT_DELETE_ACTIVE: &str = \"0\";"));
     assert!(entity.contains("pub const SOFT_DELETE_DELETED: &str = \"2\";"));
-    let database_mod = generated
-        .assets
-        .iter()
-        .find(|asset| asset.path == "crates/ryframe-db/src/generated/mod.rs")
-        .expect("应生成 control DB 聚合入口");
-    assert!(
-        database_mod
-            .content
-            .contains("pub use super::post::entity as post;")
-    );
-    assert!(
-        database_mod
-            .content
-            .contains("ports.post = Some(post::port(database));")
-    );
-    assert!(!database_mod.content.contains("database.clone()"));
+    assert_control_database_repository_gates(&generated);
     let fake = content("post/fake.rs");
     assert!(fake.contains("LockConfiguration"));
     assert!(fake.contains("FindByCode"));
@@ -233,6 +293,20 @@ fn rendering_is_deterministic_readable_and_split_by_responsibility() {
     let second = render_resources(&[resource]).expect("再次生成应成功");
 
     assert_eq!(first.assets, second.assets);
+    assert_device_asset_set(&first.assets);
+    assert_device_backend_contracts(&first.assets);
+    assert_device_frontend_contracts(&first.assets);
+    assert_device_openapi_contracts(&first.assets);
+}
+
+fn generated_asset<'a>(assets: &'a [GeneratedAsset], suffix: &str) -> &'a GeneratedAsset {
+    assets
+        .iter()
+        .find(|asset| asset.path.ends_with(suffix))
+        .unwrap_or_else(|| panic!("缺少生成资产 {suffix}"))
+}
+
+fn assert_device_asset_set(assets: &[GeneratedAsset]) {
     for expected in [
         "crates/ryframe-application/src/generated/device/model.rs",
         "crates/ryframe-application/src/generated/device/port.rs",
@@ -252,11 +326,11 @@ fn rendering_is_deterministic_readable_and_split_by_responsibility() {
         "src/generated/resources/device/registration.ts",
     ] {
         assert!(
-            first.assets.iter().any(|asset| asset.path == expected),
+            assets.iter().any(|asset| asset.path == expected),
             "缺少生成资产 {expected}"
         );
     }
-    for asset in &first.assets {
+    for asset in assets {
         assert!(asset.content.contains("@generated by RyFrame"));
         assert!(asset.content.lines().count() <= 500, "{} 过长", asset.path);
         if asset.path.ends_with(".rs") {
@@ -264,34 +338,20 @@ fn rendering_is_deterministic_readable_and_split_by_responsibility() {
                 .unwrap_or_else(|error| panic!("{} 语法无效：{error}", asset.path));
         }
     }
+}
 
-    let service = first
-        .assets
-        .iter()
-        .find(|asset| asset.path.ends_with("device/service.rs"))
-        .expect("应生成具体服务");
+fn assert_device_backend_contracts(assets: &[GeneratedAsset]) {
+    let service = generated_asset(assets, "device/service.rs");
     assert!(service.content.contains("pub struct DeviceService"));
     assert!(!service.content.contains("UseCase<"));
-    let port = first
-        .assets
-        .iter()
-        .find(|asset| asset.path.ends_with("device/port.rs"))
-        .expect("应生成异步端口");
+    let port = generated_asset(assets, "device/port.rs");
     assert!(port.content.contains("#[async_trait]"));
     assert!(!port.content.contains("Box::pin"));
-    let fake = first
-        .assets
-        .iter()
-        .find(|asset| asset.path.ends_with("device/fake.rs"))
-        .expect("应生成类型化测试替身");
+    let fake = generated_asset(assets, "device/fake.rs");
     assert!(fake.content.contains("pub enum DeviceCall"));
     assert!(fake.content.contains("DeviceTransactionState"));
     assert!(!fake.content.contains("Vec<String>"));
-    let migration = first
-        .assets
-        .iter()
-        .find(|asset| asset.path.ends_with("device/migration.rs"))
-        .expect("Device fixture 应生成资源首次引入迁移");
+    let migration = generated_asset(assets, "device/migration.rs");
     assert!(migration.content.contains("m_resource_initial_device"));
     assert!(migration.content.contains("INITIAL_RESOURCE_MIGRATION"));
     assert!(migration.content.contains("schema-sha256:"));
@@ -299,11 +359,7 @@ fn rendering_is_deterministic_readable_and_split_by_responsibility() {
     assert!(!migration.content.contains("REFERENCES `sys_tenant`"));
     assert!(migration.content.contains("禁止生产 down"));
 
-    let repository = first
-        .assets
-        .iter()
-        .find(|asset| asset.path.ends_with("device/repository.rs"))
-        .expect("应生成 Device repository");
+    let repository = generated_asset(assets, "device/repository.rs");
     assert!(
         repository
             .content
@@ -322,28 +378,25 @@ fn rendering_is_deterministic_readable_and_split_by_responsibility() {
         "MigrationDescriptor",
     ] {
         assert!(
-            first
-                .assets
+            assets
                 .iter()
                 .all(|asset| !asset.content.contains(forbidden)),
             "生成资产仍包含旧骨架 {forbidden}"
         );
     }
+}
 
-    let page = first
-        .assets
-        .iter()
-        .find(|asset| asset.path.ends_with("device/page.vue"))
-        .expect("应生成薄页面");
+fn assert_device_frontend_contracts(assets: &[GeneratedAsset]) {
+    let page = generated_asset(assets, "device/page.vue");
     assert!(page.content.contains("@/components/business/flat-crud"));
     assert!(!page.content.contains("@/components/FlatCrudPage"));
-    let frontend_api = first
-        .assets
-        .iter()
-        .find(|asset| asset.path.ends_with("device/api.ts"))
-        .expect("应生成强类型 API adapter");
-    assert!(frontend_api.content.contains("requestOperation"));
-    assert!(frontend_api.content.contains("@/api/generated/operations"));
+    let frontend_api = generated_asset(assets, "device/api.ts");
+    assert!(!frontend_api.content.contains("requestOperation"));
+    assert!(
+        frontend_api
+            .content
+            .contains("@/api/generated/operations/system")
+    );
     assert!(!frontend_api.content.contains("url:"));
     for operation in [
         "get_system_devices",
@@ -354,12 +407,10 @@ fn rendering_is_deterministic_readable_and_split_by_responsibility() {
     ] {
         assert!(frontend_api.content.contains(operation));
     }
+}
 
-    let aggregate = first
-        .assets
-        .iter()
-        .find(|asset| asset.path.ends_with("generated/crud_resources.rs"))
-        .expect("应生成 CRUD OpenAPI 聚合");
+fn assert_device_openapi_contracts(assets: &[GeneratedAsset]) {
+    let aggregate = generated_asset(assets, "generated/crud_resources.rs");
     for expected in [
         "CRUD_RESOURCES_VERSION: u16 = 1",
         "crud_resources_extension",
@@ -370,8 +421,7 @@ fn rendering_is_deterministic_readable_and_split_by_responsibility() {
     }
     assert!(!aggregate.content.contains("toml::"));
     assert!(!aggregate.content.contains("read_to_string"));
-    let api_mod = first
-        .assets
+    let api_mod = assets
         .iter()
         .find(|asset| asset.path == "crates/ryframe-api/src/generated/mod.rs")
         .expect("API 聚合入口应存在");
@@ -382,11 +432,7 @@ fn rendering_is_deterministic_readable_and_split_by_responsibility() {
             .contains("pub use crud_resources::crud_resources_extension;")
     );
 
-    let metadata = first
-        .assets
-        .iter()
-        .find(|asset| asset.path.ends_with("device/openapi.rs"))
-        .expect("应生成资源 OpenAPI 元数据");
+    let metadata = generated_asset(assets, "device/openapi.rs");
     assert!(metadata.content.contains("\"profile\": \"flat_crud\""));
     assert!(metadata.content.contains("\"fields\""));
     assert!(!metadata.content.contains("biz_device"));
@@ -798,44 +844,6 @@ fn named_write_rejects_pending_changes_in_other_managed_resources() {
 }
 
 #[test]
-fn control_initial_migration_has_tenant_fk_and_compact_enum_columns() {
-    let source = fs::read_to_string(post_path())
-        .expect("应读取 Post 清单")
-        .replacen(
-            "primary_key = [\"id\"]",
-            "primary_key = [\"id\"]\nbootstrap_migration = true",
-            1,
-        );
-    let spec = ResourceSpec::parse(&source, "catalog/resources/post.toml")
-        .expect("control fixture TOML 应有效");
-    let post = normalize_resource(spec, "catalog/resources/post.toml", "control-schema")
-        .expect("control fixture 应通过 IR");
-    let generated = render_resources(&[post]).expect("control fixture 应生成");
-    let migration = generated
-        .assets
-        .iter()
-        .find(|asset| asset.path.ends_with("post/migration.rs"))
-        .expect("应生成 control 初始迁移")
-        .content
-        .as_str();
-
-    assert!(migration.contains("CONSTRAINT `fk_post_tenant`"));
-    assert!(migration.contains("REFERENCES `sys_tenant` (`tenant_id`)"));
-    assert!(migration.contains("`tenant_id` VARCHAR(64)"));
-    assert!(migration.contains("`status` VARCHAR(1)"));
-    let aggregate = generated
-        .assets
-        .iter()
-        .find(|asset| asset.path == "crates/ryframe-db/src/generated/mod.rs")
-        .expect("control generated 聚合应存在");
-    assert!(
-        aggregate
-            .content
-            .contains("Box::new(post::migration::Migration)")
-    );
-}
-
-#[test]
 fn initial_migration_is_immutable_and_schema_evolution_requires_new_revision() {
     let backend = tempfile::tempdir().expect("应创建后端临时工作区");
     let frontend = tempfile::tempdir().expect("应创建前端临时工作区");
@@ -846,16 +854,7 @@ fn initial_migration_is_immutable_and_schema_evolution_requires_new_revision() {
     };
     let original = device();
     let rendered = render_resources(std::slice::from_ref(&original)).expect("Device 应生成");
-    let aggregate = rendered
-        .assets
-        .iter()
-        .find(|asset| asset.path == "crates/ryframe-tenant-db/src/generated/mod.rs")
-        .expect("tenant generated 聚合应存在");
-    assert!(
-        aggregate
-            .content
-            .contains("Box::new(device::migration::Migration)")
-    );
+    assert_tenant_bootstrap_migration_gates(&rendered);
     write_resource(&rendered, "device", workspace).expect("首次写入应成功");
     let migration_path = backend
         .path()

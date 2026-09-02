@@ -50,6 +50,34 @@ pub struct BackgroundServices {
     pub overview: Arc<OverviewService>,
 }
 
+struct IdentityServices {
+    authorization_cache: AuthorizationCache,
+    identity_read: Arc<dyn IdentityAuthorizationReadPort>,
+    user: Arc<UserService>,
+    product: Arc<ProductService>,
+    role: Arc<RoleService>,
+}
+
+struct ContentServices {
+    config: Arc<ConfigService>,
+    dict: Arc<DictService>,
+    oper_log: Arc<OperLogService>,
+    login_info: Arc<LoginInfoService>,
+    file: Arc<FileService>,
+    job_queue: Arc<JobQueue>,
+}
+
+struct ExtendedServices {
+    job_schedules: Option<Arc<JobScheduleService>>,
+    message: Arc<MessageService>,
+    export: Arc<ExportService>,
+    data_retention: Arc<DataRetentionService>,
+    user_import: Arc<UserImportService>,
+    tenant_config_transfer: Arc<TenantConfigTransferService>,
+    tenant_data_migration: Arc<TenantDataMigrationService>,
+    overview: Arc<OverviewService>,
+}
+
 /// 构造 API 与 Worker 必须保持一致的后台服务依赖图。
 pub fn build(
     database: &ControlDatabaseCluster,
@@ -63,8 +91,53 @@ pub fn build(
         dict_cache,
         starts_background_tasks,
     } = infrastructure;
+    let identity = build_identity_services(database, policies, redis_client.as_ref());
+    let content = build_content_services(
+        database,
+        &identity.authorization_cache,
+        object_storage.clone(),
+        dict_cache,
+        redis_client.as_ref(),
+        starts_background_tasks,
+    );
+    let extended = build_extended_services(
+        database,
+        tenant_data,
+        policies,
+        object_storage,
+        &identity,
+        &content,
+    )?;
+    Ok(BackgroundServices {
+        authorization_cache: identity.authorization_cache,
+        identity_read: identity.identity_read,
+        user: identity.user,
+        product: identity.product,
+        role: identity.role,
+        config: content.config,
+        dict: content.dict,
+        oper_log: content.oper_log,
+        login_info: content.login_info,
+        file: content.file,
+        job_queue: content.job_queue,
+        job_schedules: extended.job_schedules,
+        message: extended.message,
+        export: extended.export,
+        data_retention: extended.data_retention,
+        user_import: extended.user_import,
+        tenant_config_transfer: extended.tenant_config_transfer,
+        tenant_data_migration: extended.tenant_data_migration,
+        overview: extended.overview,
+    })
+}
+
+fn build_identity_services(
+    database: &ControlDatabaseCluster,
+    policies: &ApplicationPolicies,
+    redis_client: Option<&RedisClient>,
+) -> IdentityServices {
     let authorization_cache =
-        super::authorization_cache::cache(redis_client.clone(), policies.cache);
+        super::authorization_cache::cache(redis_client.cloned(), policies.cache);
     let identity_read = ryframe_db::application_ports::auth::identity(database.clone());
     let user = Arc::new(UserService::new(
         authorization_cache.clone(),
@@ -91,9 +164,23 @@ pub fn build(
             Arc::clone(&product),
         ),
     ));
-    let post_export = Arc::new(PostExportService::new(
-        ryframe_db::application_ports::export::post(database.clone()),
-    ));
+    IdentityServices {
+        authorization_cache,
+        identity_read,
+        user,
+        product,
+        role,
+    }
+}
+
+fn build_content_services(
+    database: &ControlDatabaseCluster,
+    authorization_cache: &AuthorizationCache,
+    object_storage: Arc<dyn ArtifactStore>,
+    dict_cache: Option<Arc<dyn DictCacheStore>>,
+    redis_client: Option<&RedisClient>,
+    starts_background_tasks: bool,
+) -> ContentServices {
     let config = Arc::new(ConfigService::new(
         ryframe_db::application_ports::system::config(
             database.clone(),
@@ -123,8 +210,31 @@ pub fn build(
     }
     let job_queue = Arc::new(
         JobQueue::new(ryframe_db::application_ports::jobs::queue(database.clone()))
-            .with_wakeup_transport(super::jobs::job_wakeup_transport(redis_client.as_ref())),
+            .with_wakeup_transport(super::jobs::job_wakeup_transport(redis_client)),
     );
+    ContentServices {
+        config,
+        dict,
+        oper_log,
+        login_info,
+        file,
+        job_queue,
+    }
+}
+
+fn build_extended_services(
+    database: &ControlDatabaseCluster,
+    tenant_data: Arc<TenantDatabaseRouter>,
+    policies: &ApplicationPolicies,
+    object_storage: Arc<dyn ArtifactStore>,
+    identity: &IdentityServices,
+    content: &ContentServices,
+) -> AppResult<ExtendedServices> {
+    let authorization_cache = &identity.authorization_cache;
+    let user = &identity.user;
+    let product = &identity.product;
+    let file = &content.file;
+    let job_queue = &content.job_queue;
     let tenant_data_migration = Arc::new(TenantDataMigrationService::new(
         ryframe_tenant_db::application_ports::tenant_data::tracking(database.clone()),
         Arc::<TenantDatabaseRouter>::clone(&tenant_data),
@@ -159,7 +269,7 @@ pub fn build(
             archive: super::tenant_config_archive::codec(),
         },
         ryframe_application::system::platform::TenantConfigTransferSettings {
-            target_catalog: ryframe_api::tenant_config_target_catalog()?,
+            target_catalog: super::access_catalog::tenant_config_target_catalog()?,
             config: policies.tenant_config_transfer,
         },
     ));
@@ -168,50 +278,15 @@ pub fn build(
         job_queue.clone(),
         policies.job_runtime,
     ));
-    let job_schedules = build_schedules(database, &job_queue, policies)?;
+    let job_schedules = build_schedules(database, job_queue, policies)?;
     let message = Arc::new(MessageService::new(
         ryframe_db::application_ports::system::message(database.clone()),
         job_queue.clone(),
         policies.messaging,
     ));
-    let export = Arc::new(
-        ExportService::new(
-            ExportPersistencePorts::new(
-                ryframe_db::application_ports::export::artifact(database.clone()),
-                ryframe_db::application_ports::export::cleanup(database.clone()),
-                ryframe_db::application_ports::export::deletion(database.clone()),
-                ryframe_db::application_ports::export::execution(database.clone()),
-                ryframe_db::application_ports::export::request(database.clone()),
-                ryframe_db::application_ports::export::requester(database.clone()),
-            ),
-            ExportResourceServices {
-                users: Arc::clone(&user),
-                roles: Arc::clone(&role),
-                posts: post_export,
-                configs: Arc::clone(&config),
-                dicts: Arc::clone(&dict),
-                oper_logs: Arc::clone(&oper_log),
-                login_infos: Arc::clone(&login_info),
-            },
-            object_storage,
-            super::spreadsheet::writer_factory(),
-            policies.export,
-        )
-        .with_job_queue(job_queue.clone()),
-    );
+    let export = build_export_service(database, object_storage, identity, content, policies);
 
-    Ok(BackgroundServices {
-        authorization_cache,
-        identity_read,
-        user,
-        product,
-        role,
-        config,
-        dict,
-        oper_log,
-        login_info,
-        file,
-        job_queue,
+    Ok(ExtendedServices {
         job_schedules,
         message,
         export,
@@ -221,6 +296,44 @@ pub fn build(
         tenant_data_migration,
         overview,
     })
+}
+
+fn build_export_service(
+    database: &ControlDatabaseCluster,
+    object_storage: Arc<dyn ArtifactStore>,
+    identity: &IdentityServices,
+    content: &ContentServices,
+    policies: &ApplicationPolicies,
+) -> Arc<ExportService> {
+    let persistence = ExportPersistencePorts::new(
+        ryframe_db::application_ports::export::artifact(database.clone()),
+        ryframe_db::application_ports::export::cleanup(database.clone()),
+        ryframe_db::application_ports::export::deletion(database.clone()),
+        ryframe_db::application_ports::export::execution(database.clone()),
+        ryframe_db::application_ports::export::request(database.clone()),
+        ryframe_db::application_ports::export::requester(database.clone()),
+    );
+    let resources = ExportResourceServices {
+        users: Arc::clone(&identity.user),
+        roles: Arc::clone(&identity.role),
+        posts: Arc::new(PostExportService::new(
+            ryframe_db::application_ports::export::post(database.clone()),
+        )),
+        configs: Arc::clone(&content.config),
+        dicts: Arc::clone(&content.dict),
+        oper_logs: Arc::clone(&content.oper_log),
+        login_infos: Arc::clone(&content.login_info),
+    };
+    Arc::new(
+        ExportService::new(
+            persistence,
+            resources,
+            object_storage,
+            super::spreadsheet::writer_factory(),
+            policies.export,
+        )
+        .with_job_queue(content.job_queue.clone()),
+    )
 }
 
 fn build_schedules(

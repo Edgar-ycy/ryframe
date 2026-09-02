@@ -5,13 +5,45 @@
       "package": "ryframe",
       "minimal": [],
       "maximal": [
+        "bin-api",
+        "bin-file-maintenance",
+        "bin-migrate",
+        "bin-reset",
+        "bin-tenant-data",
+        "bin-worker",
         "default",
-        "destructive-reset",
-        "file-maintenance",
+        "runtime-crypto",
+        "runtime-database",
+        "runtime-services",
         "runtime-swagger-ui"
       ],
       "test_targets": [
         "reset_contract"
+      ]
+    },
+    {
+      "package": "ryframe-adapters",
+      "minimal": [],
+      "maximal": [
+        "default",
+        "image-processing",
+        "monitoring",
+        "otel",
+        "redis-api",
+        "redis-client",
+        "spreadsheet"
+      ],
+      "test_targets": []
+    },
+    {
+      "package": "ryframe-application",
+      "minimal": [],
+      "maximal": [
+        "default",
+        "test-support"
+      ],
+      "test_targets": [
+        "application_contracts"
       ]
     },
     {
@@ -21,6 +53,45 @@
         "runtime-swagger-ui"
       ],
       "test_targets": []
+    },
+    {
+      "package": "ryframe-db",
+      "minimal": [],
+      "maximal": [
+        "connection",
+        "default",
+        "migration",
+        "repositories",
+        "telemetry"
+      ],
+      "test_targets": [
+        "mapping_contracts",
+        "mysql_real_protocol"
+      ]
+    },
+    {
+      "package": "ryframe-generator",
+      "minimal": [],
+      "maximal": [
+        "default",
+        "schema-import"
+      ],
+      "test_targets": [
+        "resource_contracts"
+      ]
+    },
+    {
+      "package": "ryframe-tenant-db",
+      "minimal": [],
+      "maximal": [
+        "connection",
+        "default",
+        "migration",
+        "repositories"
+      ],
+      "test_targets": [
+        "tenant_mapping_contracts"
+      ]
     },
     {
       "package": "xtask",

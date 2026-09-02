@@ -10,11 +10,60 @@ use tokio::sync::{oneshot, watch};
 /// API 进程在收到关闭信号后的全部后台任务总宽限时间。
 const SHUTDOWN_GRACE_PERIOD: Duration = Duration::from_secs(5);
 
+struct ApiStartup {
+    run_mode: boot::startup::ApiRunMode,
+    config: AppConfig,
+    policies: boot::application_policy::ApplicationPolicies,
+    localizer: Arc<ryframe_kernel::Localizer>,
+}
+
+impl ApiStartup {
+    const fn starts_background_tasks(&self) -> bool {
+        self.run_mode.starts_background_tasks()
+    }
+}
+
+struct ApiDependencies {
+    database: ryframe_db::ControlDatabaseCluster,
+    redis: boot::redis::RedisState,
+    limiter: boot::limiter::LimiterState,
+    services: ryframe_api::AppServices,
+    replica_health_monitor: Option<tokio::task::JoinHandle<()>>,
+}
+
+struct ApiTasks {
+    message_hub: Arc<ryframe_api::message_socket::MessageHub>,
+    worker_tasks: Vec<tokio::task::JoinHandle<()>>,
+    readiness_monitor: tokio::task::JoinHandle<()>,
+    server_info_sampler: tokio::task::JoinHandle<()>,
+    message_replay_scheduler: Option<tokio::task::JoinHandle<()>>,
+    replica_health_monitor: Option<tokio::task::JoinHandle<()>>,
+    message_listener: Option<tokio::task::JoinHandle<()>>,
+}
+
+struct ApiRuntime {
+    listener: tokio::net::TcpListener,
+    router: axum::Router,
+    shutdown_sender: watch::Sender<bool>,
+    tasks: ApiTasks,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
-    let run_mode =
-        boot::startup::parse_api_run_mode(&std::env::args().skip(1).collect::<Vec<_>>())?;
-    let starts_background_tasks = run_mode.starts_background_tasks();
+    ryframe::crypto::install_crypto_provider()?;
+    install_process_hooks()?;
+    let startup = load_startup()?;
+    let (_logger_guard, _telemetry_guard) = boot::logging::init(&startup.config)?;
+    tracing::info!(environment = %startup.config.environment, "configuration loaded");
+    if startup.starts_background_tasks() {
+        ryframe_adapters::metrics::spawn_process_metrics_updater();
+    }
+    let dependencies = prepare_dependencies(&startup).await?;
+    let runtime = prepare_runtime(&startup, dependencies).await?;
+    serve_and_shutdown(runtime).await
+}
+
+fn install_process_hooks() -> Result<(), AppError> {
     ryframe_api::metrics::install(ryframe_api::metrics::ApiMetricsHooks {
         begin_http_request: ryframe_adapters::metrics::begin_http_request,
         finish_http_request: ryframe_adapters::metrics::finish_http_request,
@@ -43,7 +92,12 @@ async fn main() -> Result<(), AppError> {
     ryframe_application::set_authorization_cache_lookup_hook(
         ryframe_adapters::metrics::record_authorization_cache_lookup,
     );
+    Ok(())
+}
 
+fn load_startup() -> Result<ApiStartup, AppError> {
+    let run_mode =
+        boot::startup::parse_api_run_mode(&std::env::args().skip(1).collect::<Vec<_>>())?;
     let environment = Environment::from_env()?;
     let config = AppConfig::load_from_env(environment)?;
     if run_mode == boot::startup::ApiRunMode::Probe && config.environment.is_production() {
@@ -53,31 +107,38 @@ async fn main() -> Result<(), AppError> {
     }
     let application_policies = boot::application_policy::ApplicationPolicies::from_config(&config)?;
     ryframe_api::validate_runtime_features(config.api_docs.enabled)?;
-    ryframe_adapters::snowflake::initialize(config.snowflake_worker_id)
-        .map_err(|error| AppError::Config(format!("Snowflake 初始化失败: {error}")))?;
-    ryframe_db::install_id_generator(|| {
-        ryframe_adapters::snowflake::try_next_snowflake_id().map_err(AppError::from)
-    })?;
-    ryframe_application::install_id_generator(|| {
-        ryframe_adapters::snowflake::try_next_snowflake_id().map_err(AppError::from)
-    })?;
+    initialize_id_generators(config.snowflake_worker_id)?;
     let localizer = Arc::new(
         LocalizerLoader::load_from_environment(config.environment.is_production())
             .map_err(|error| AppError::Config(format!("国际化资源加载失败: {error}")))?,
     );
-    let (_logger_guard, _telemetry_guard) = boot::logging::init(&config)?;
-    tracing::info!(
-        environment = %config.environment,
-        "configuration loaded"
-    );
-    if starts_background_tasks {
-        ryframe_adapters::metrics::spawn_process_metrics_updater();
-    }
+    Ok(ApiStartup {
+        run_mode,
+        config,
+        policies: application_policies,
+        localizer,
+    })
+}
 
-    let database = boot::datasource::connect(&config).await?;
+fn initialize_id_generators(worker_id: i64) -> Result<(), AppError> {
+    ryframe_kernel::snowflake::initialize(worker_id)
+        .map_err(|error| AppError::Config(format!("Snowflake 初始化失败: {error}")))?;
+    ryframe_db::install_id_generator(|| {
+        ryframe_kernel::snowflake::try_next_snowflake_id().map_err(AppError::from)
+    })?;
+    ryframe_application::install_id_generator(|| {
+        ryframe_kernel::snowflake::try_next_snowflake_id().map_err(AppError::from)
+    })?;
+    Ok(())
+}
+
+async fn prepare_dependencies(startup: &ApiStartup) -> Result<ApiDependencies, AppError> {
+    let config = &startup.config;
+    let starts_background_tasks = startup.starts_background_tasks();
+    let database = boot::datasource::connect(config).await?;
     let control_plane = boot::control_plane::prepare(
         &database,
-        &config,
+        config,
         boot::control_plane::ControlPlaneStartup::api(starts_background_tasks),
     )
     .await?;
@@ -91,16 +152,15 @@ async fn main() -> Result<(), AppError> {
         )
     });
 
-    let config_arc = Arc::new(config.clone());
     let redis =
         boot::redis::init(&config.redis, config.environment, starts_background_tasks).await?;
-    let object_storage = boot::storage::init(&config, starts_background_tasks).await?;
-    let limit = boot::limiter::init(&config, &redis.client, starts_background_tasks)?;
+    let object_storage = boot::storage::init(config, starts_background_tasks).await?;
+    let limit = boot::limiter::init(config, &redis.client, starts_background_tasks)?;
     let services = boot::services::build_all(
         &database,
         Arc::clone(&tenant_database_router),
-        &config,
-        &application_policies,
+        config,
+        &startup.policies,
         boot::services::ServiceInfrastructure {
             redis_client: &redis.client,
             object_storage,
@@ -110,19 +170,44 @@ async fn main() -> Result<(), AppError> {
     )
     .await?;
     install_job_metrics(&services.operations.job_queue);
-    let outbox_persistence = ryframe_db::application_ports::jobs::outbox(database.clone());
+    Ok(ApiDependencies {
+        database,
+        redis,
+        limiter: limit,
+        services,
+        replica_health_monitor,
+    })
+}
 
+async fn prepare_runtime(
+    startup: &ApiStartup,
+    dependencies: ApiDependencies,
+) -> Result<ApiRuntime, AppError> {
+    let ApiDependencies {
+        database,
+        redis,
+        limiter,
+        services,
+        replica_health_monitor,
+    } = dependencies;
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
-    let (server_info, mut server_info_sampler) =
+    let worker_tasks = start_embedded_workers(
+        startup,
+        &database,
+        &services,
+        redis.client.clone(),
+        shutdown_receiver.clone(),
+    )?;
+    let (server_info, server_info_sampler) =
         ryframe_adapters::monitor::ServerInfoSampler::spawn(shutdown_receiver.clone()).await?;
     let state = boot::app_state::assemble(boot::app_state::AppStateAssembly {
         database,
-        config: config_arc,
-        localizer,
+        config: Arc::new(startup.config.clone()),
+        localizer: Arc::clone(&startup.localizer),
         redis_client: redis.client.clone(),
         token_blacklist: redis.token_blacklist,
-        services: services.clone(),
-        limiter: limit.limiter.clone(),
+        services,
+        limiter: limiter.limiter,
         server_info,
     });
     let message_hub = state.message_hub.clone();
@@ -130,98 +215,147 @@ async fn main() -> Result<(), AppError> {
     let readiness_redis = redis.client.clone();
     let readiness_file = state.services.content.file.clone();
     let readiness_cache = state.monitor.readiness.clone();
-    let message_listener = starts_background_tasks
+    let message_listener = startup
+        .starts_background_tasks()
         .then(|| {
             boot::message_listener::spawn(
                 &state.message_hub,
                 redis.client.clone(),
-                services.operations.message.clone(),
-                services.platform.tenant_data.clone(),
+                state.services.operations.message.clone(),
+                state.services.platform.tenant_data.clone(),
                 state.settings.messaging.enabled,
             )
         })
         .flatten();
-    let mut message_replay_scheduler = starts_background_tasks
+    let message_replay_scheduler = startup
+        .starts_background_tasks()
         .then(|| {
             state.message_hub.spawn_replay_scheduler(
-                services.operations.message.clone(),
+                state.services.operations.message.clone(),
                 shutdown_receiver.clone(),
             )
         })
         .flatten();
-    let router = app::build_app(state, limit.rate_limit_state)?;
+    let router = app::build_app(state, limiter.rate_limit_state)?;
 
-    let addr = format!("{}:{}", config.app.host, config.app.port);
+    let addr = format!("{}:{}", startup.config.app.host, startup.config.app.port);
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .map_err(|error| AppError::Internal(format!("failed to bind {addr}: {error}")))?;
     tracing::info!(address = %addr, "HTTP server started");
 
-    let mut readiness_monitor = boot::readiness::spawn(
+    let readiness_monitor = boot::readiness::spawn(
         readiness_database,
         readiness_redis,
         Some(readiness_file),
         readiness_cache,
         shutdown_receiver.clone(),
     );
-    let mut worker_tasks = if !starts_background_tasks {
-        tracing::info!("API 候选探活模式不启动消息、清理、回放或后台任务循环");
-        Vec::new()
-    } else {
-        match config.jobs.mode {
-            JobWorkerMode::Embedded => {
-                let execution_tenant_scope =
-                    boot::jobs::execution_tenant_scope(application_policies.multi_tenancy);
-                let worker = boot::jobs::build_job_worker(
-                    services.operations.job_queue.clone(),
-                    &application_policies.job_worker,
-                    execution_tenant_scope.clone(),
-                    boot::jobs::JobWorkerDependencies::from_api_services(
-                        &services,
-                        redis.client.clone(),
-                        application_policies.messaging.enabled(),
-                    ),
-                )?;
-                if let Some(schedules) = services.operations.job_schedules.as_ref() {
-                    boot::jobs::validate_schedule_targets(&worker, schedules.target_registry())?;
-                }
-                tracing::info!(
-                    concurrency = config.jobs.concurrency,
-                    "已启动内置后台任务 Worker"
-                );
-                let mut tasks = worker.spawn(shutdown_receiver.clone());
-                if let Some(schedules) = services.operations.job_schedules.clone() {
-                    tasks.push(schedules.spawn(shutdown_receiver.clone()));
-                } else {
-                    tracing::info!("Cron 调度已关闭，内置 Worker 仅消费普通后台任务");
-                }
-                let authorization_cache = boot::authorization_cache::cache(
-                    redis.client.clone(),
-                    application_policies.cache,
-                );
-                tasks.extend(
-                    OutboxWorker::new(
-                        services.operations.job_queue.clone(),
-                        outbox_persistence,
-                        &application_policies.job_worker,
-                        execution_tenant_scope,
-                    )?
-                    .with_authorization_cache(authorization_cache)
-                    .spawn(shutdown_receiver),
-                );
-                tasks
-            }
-            JobWorkerMode::External => {
-                tracing::info!("后台任务由独立 ryframe-worker 进程消费");
-                Vec::new()
-            }
-            JobWorkerMode::Disabled => {
-                tracing::warn!("后台任务 Worker 已禁用，仅应在隔离环境使用");
-                Vec::new()
-            }
-        }
-    };
+    Ok(ApiRuntime {
+        listener,
+        router,
+        shutdown_sender,
+        tasks: ApiTasks {
+            message_hub,
+            worker_tasks,
+            readiness_monitor,
+            server_info_sampler,
+            message_replay_scheduler,
+            replica_health_monitor,
+            message_listener,
+        },
+    })
+}
 
+fn start_embedded_workers(
+    startup: &ApiStartup,
+    database: &ryframe_db::ControlDatabaseCluster,
+    services: &ryframe_api::AppServices,
+    redis_client: Option<ryframe_adapters::RedisClient>,
+    shutdown_receiver: watch::Receiver<bool>,
+) -> Result<Vec<tokio::task::JoinHandle<()>>, AppError> {
+    if !startup.starts_background_tasks() {
+        tracing::info!("API 候选探活模式不启动消息、清理、回放或后台任务循环");
+        return Ok(Vec::new());
+    }
+    let outbox_persistence = ryframe_db::application_ports::jobs::outbox(database.clone());
+    match startup.config.jobs.mode {
+        JobWorkerMode::Embedded => {
+            let execution_tenant_scope =
+                boot::jobs::execution_tenant_scope(startup.policies.multi_tenancy);
+            let worker = boot::jobs::build_job_worker(
+                services.operations.job_queue.clone(),
+                &startup.policies.job_worker,
+                execution_tenant_scope.clone(),
+                boot::jobs::JobWorkerDependencies::from_api_services(
+                    services,
+                    redis_client.clone(),
+                    startup.policies.messaging.enabled(),
+                ),
+            )?;
+            if let Some(schedules) = services.operations.job_schedules.as_ref() {
+                boot::jobs::validate_schedule_targets(&worker, schedules.target_registry())?;
+            }
+            tracing::info!(
+                concurrency = startup.config.jobs.concurrency,
+                "已启动内置后台任务 Worker"
+            );
+            let mut tasks = worker.spawn(shutdown_receiver.clone());
+            if let Some(schedules) = services.operations.job_schedules.clone() {
+                tasks.push(schedules.spawn(shutdown_receiver.clone()));
+            } else {
+                tracing::info!("Cron 调度已关闭，内置 Worker 仅消费普通后台任务");
+            }
+            let authorization_cache =
+                boot::authorization_cache::cache(redis_client, startup.policies.cache);
+            tasks.extend(
+                OutboxWorker::new(
+                    services.operations.job_queue.clone(),
+                    outbox_persistence,
+                    &startup.policies.job_worker,
+                    execution_tenant_scope,
+                )?
+                .with_authorization_cache(authorization_cache)
+                .spawn(shutdown_receiver),
+            );
+            Ok(tasks)
+        }
+        JobWorkerMode::External => {
+            tracing::info!("后台任务由独立 ryframe-worker 进程消费");
+            Ok(Vec::new())
+        }
+        JobWorkerMode::Disabled => {
+            tracing::warn!("后台任务 Worker 已禁用，仅应在隔离环境使用");
+            Ok(Vec::new())
+        }
+    }
+}
+
+async fn serve_and_shutdown(runtime: ApiRuntime) -> Result<(), AppError> {
+    let ApiRuntime {
+        listener,
+        router,
+        shutdown_sender,
+        mut tasks,
+    } = runtime;
+    let (result, shutdown_deadline) = serve_until_shutdown(
+        listener,
+        router,
+        shutdown_sender.clone(),
+        Arc::clone(&tasks.message_hub),
+    )
+    .await;
+    stop_tasks(&mut tasks, shutdown_sender, shutdown_deadline).await;
+    tracing::info!("HTTP server stopped");
+    result
+}
+
+async fn serve_until_shutdown(
+    listener: tokio::net::TcpListener,
+    router: axum::Router,
+    shutdown_sender: watch::Sender<bool>,
+    message_hub: Arc<ryframe_api::message_socket::MessageHub>,
+) -> (Result<(), AppError>, tokio::time::Instant) {
     let (shutdown_deadline_sender, mut shutdown_deadline_receiver) = oneshot::channel();
     let (result, shutdown_deadline) = {
         let server = axum::serve(
@@ -229,8 +363,8 @@ async fn main() -> Result<(), AppError> {
             router.into_make_service_with_connect_info::<SocketAddr>(),
         )
         .with_graceful_shutdown(shutdown_signal(
-            shutdown_sender.clone(),
-            message_hub.clone(),
+            shutdown_sender,
+            message_hub,
             shutdown_deadline_sender,
         ))
         .into_future();
@@ -259,10 +393,17 @@ async fn main() -> Result<(), AppError> {
             }
         }
     };
+    (result, shutdown_deadline)
+}
 
-    message_hub.shutdown_all();
+async fn stop_tasks(
+    tasks: &mut ApiTasks,
+    shutdown_sender: watch::Sender<bool>,
+    shutdown_deadline: tokio::time::Instant,
+) {
+    tasks.message_hub.shutdown_all();
     let _ = shutdown_sender.send(true);
-    for task in &mut worker_tasks {
+    for task in &mut tasks.worker_tasks {
         if tokio::time::timeout_at(shutdown_deadline, &mut *task)
             .await
             .is_err()
@@ -271,21 +412,21 @@ async fn main() -> Result<(), AppError> {
             task.abort();
         }
     }
-    if tokio::time::timeout_at(shutdown_deadline, &mut readiness_monitor)
+    if tokio::time::timeout_at(shutdown_deadline, &mut tasks.readiness_monitor)
         .await
         .is_err()
     {
         tracing::warn!("后台就绪探测未在宽限期内停止");
-        readiness_monitor.abort();
+        tasks.readiness_monitor.abort();
     }
-    if tokio::time::timeout_at(shutdown_deadline, &mut server_info_sampler)
+    if tokio::time::timeout_at(shutdown_deadline, &mut tasks.server_info_sampler)
         .await
         .is_err()
     {
         tracing::warn!("服务器信息采样器未在宽限期内停止");
-        server_info_sampler.abort();
+        tasks.server_info_sampler.abort();
     }
-    if let Some(scheduler) = message_replay_scheduler.as_mut()
+    if let Some(scheduler) = tasks.message_replay_scheduler.as_mut()
         && tokio::time::timeout_at(shutdown_deadline, &mut *scheduler)
             .await
             .is_err()
@@ -293,14 +434,12 @@ async fn main() -> Result<(), AppError> {
         tracing::warn!("消息共享补拉调度器未在宽限期内停止");
         scheduler.abort();
     }
-    if let Some(replica_health_monitor) = replica_health_monitor {
+    if let Some(replica_health_monitor) = tasks.replica_health_monitor.take() {
         replica_health_monitor.abort();
     }
-    if let Some(listener) = message_listener {
+    if let Some(listener) = tasks.message_listener.take() {
         listener.abort();
     }
-    tracing::info!("HTTP server stopped");
-    result
 }
 
 async fn shutdown_signal(

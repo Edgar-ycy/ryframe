@@ -8,20 +8,52 @@ license.workspace = true
 repository.workspace = true
 description.workspace = true
 
+[features]
+default = []
+connection = [
+    "dep:ryframe-config",
+    "dep:ryframe-db",
+    "ryframe-db/connection",
+    "dep:hex",
+    "dep:sea-orm",
+    "dep:sha2",
+    "dep:thiserror",
+    "dep:tokio",
+    "dep:tracing",
+]
+migration = ["connection", "dep:async-trait", "dep:sea-orm-migration"]
+repositories = [
+    "connection",
+    "ryframe-db/repositories",
+    "dep:ryframe-kernel",
+    "dep:ryframe-application",
+    "dep:async-trait",
+    "dep:chrono",
+]
+
 [dependencies]
-ryframe-config = { path = "../ryframe-config" }
-ryframe-kernel = { path = "../ryframe-kernel" }
-ryframe-db = { path = "../ryframe-db" }
-ryframe-application = { path = "../ryframe-application" }
-async-trait = { workspace = true }
-chrono = { workspace = true }
-hex = { workspace = true }
-sea-orm = { workspace = true }
-sea-orm-migration = { workspace = true }
-sha2 = { workspace = true }
-thiserror = { workspace = true }
-tokio = { workspace = true, features = ["rt", "sync"] }
-tracing = { workspace = true }
+ryframe-config = { path = "../ryframe-config", optional = true }
+ryframe-kernel = { path = "../ryframe-kernel", optional = true }
+ryframe-db = { path = "../ryframe-db", default-features = false, optional = true }
+ryframe-application = { path = "../ryframe-application", default-features = false, optional = true }
+async-trait = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
+hex = { workspace = true, optional = true }
+sea-orm = { workspace = true, optional = true }
+sea-orm-migration = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["rt", "sync", "time"] }
+tracing = { workspace = true, optional = true }
+
+[[test]]
+name = "tenant_mapping_contracts"
+path = "tests/tenant_mapping_contracts.rs"
+required-features = ["repositories", "migration"]
+
+[[test]]
+name = "resource_tenant_contracts"
+path = "tests/resource_tenant_contracts.rs"
 
 [lints]
 workspace = true

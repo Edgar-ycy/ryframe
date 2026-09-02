@@ -7,11 +7,49 @@ use std::{
 };
 
 use ryframe_generator::{
-    RelationIr, RelationKind, ResourceWorkspace, load_resource, render_resources, write_resource,
+    AssetRoot, OwnershipManifest, RelationIr, RelationKind, ResourceWorkspace, load_resource,
+    render_resources, write_resource,
 };
 
 static SHARED_WORKSPACE_RESULT: OnceLock<Result<(), String>> = OnceLock::new();
 const FRONTEND_DIR_ENV: &str = "RYFRAME_RESOURCE_WORKSPACE_FRONTEND_DIR";
+const PROFILE_ENV: &str = "RYFRAME_RESOURCE_WORKSPACE_PROFILE";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VerificationProfile {
+    Full,
+    Targeted,
+}
+
+impl VerificationProfile {
+    fn from_value(value: Option<&str>) -> Result<Self, String> {
+        match value {
+            None => Ok(Self::Full),
+            Some("targeted") => Ok(Self::Targeted),
+            Some(value) => Err(format!(
+                "资源 Workspace 验证模式 `{value}` 无效；仅 targeted gate 可设置 targeted"
+            )),
+        }
+    }
+
+    fn from_environment() -> Result<Self, String> {
+        let Some(value) = std::env::var_os(PROFILE_ENV) else {
+            return Self::from_value(None);
+        };
+        let value = value.into_string().map_err(|_| {
+            format!("资源 Workspace 验证模式环境变量 {PROFILE_ENV} 不是有效 Unicode")
+        })?;
+        Self::from_value(Some(&value))
+    }
+}
+
+struct SharedWorkspace {
+    backend_source: PathBuf,
+    frontend_source: PathBuf,
+    backend: PathBuf,
+    frontend: PathBuf,
+    cargo_target: PathBuf,
+}
 
 #[test]
 #[ignore = "完整门禁在共享的临时真实 Workspace 中运行 Cargo 与 vue-tsc"]
@@ -29,6 +67,123 @@ fn post_control_slice_compiles_in_temporary_real_workspace() {
 #[ignore = "在共享的临时真实 Workspace 中验证 Notice 的标准 CRUD 生成层"]
 fn notice_control_slice_compiles_in_temporary_real_workspace() {
     assert_shared_workspace("Notice");
+}
+
+#[test]
+fn missing_device_frontend_contract_is_injected_once() {
+    let permissions = "export const permissionCatalog = [\n]\n".to_owned();
+    let operations = "import { bindJsonOperation } from '../operationRequest'\n".to_owned();
+    let schema = concat!(
+        "export interface components {\n    schemas: {\n    }\n}\n",
+        "export interface operations {\n}\n",
+    )
+    .to_owned();
+
+    let injected = prepare_device_frontend_contract(permissions, operations, schema)
+        .expect("缺失的 Device 契约应可装配")
+        .expect("首次装配应返回修改内容");
+    assert!(
+        device_frontend_contract_is_complete(&injected.0, &injected.1, &injected.2)
+            .expect("装配后的契约应可判定")
+    );
+    assert!(
+        prepare_device_frontend_contract(injected.0, injected.1, injected.2)
+            .expect("重复装配应成功")
+            .is_none(),
+        "重复装配完整 fixture 契约必须零修改"
+    );
+}
+
+#[test]
+fn basic_generated_device_frontend_contract_is_upgraded_once() {
+    let operation_names = [
+        "delete_system_devices_by_id",
+        "get_system_devices",
+        "get_system_devices_by_id",
+        "post_system_devices",
+        "put_system_devices_by_id",
+    ];
+    let operations = operation_names
+        .map(|name| format!("export const {name} = bindJsonOperation({{}})\n"))
+        .concat();
+    let schema_operations = operation_names
+        .map(|name| format!("    {name}: {{}}\n"))
+        .concat();
+    let schema = format!(
+        concat!(
+            "export interface components {{\n    schemas: {{\n",
+            "        ApiPageResponse_DeviceVo: {{}};\n",
+            "        ApiResponse_DeviceVo: {{ data?: {{ id: string }} }};\n",
+            "        CreateDeviceDto: {{}};\n",
+            "        UpdateDeviceDto: {{}};\n",
+            "    }};\n}}\n",
+            "export interface operations {{\n{schema_operations}}}\n",
+        ),
+        schema_operations = schema_operations,
+    );
+    let permissions = "\"system:device:list\"".to_owned();
+
+    let upgraded =
+        prepare_device_frontend_contract(permissions.clone(), operations.clone(), schema)
+            .expect("完整 basic generated 契约应可升级")
+            .expect("首次升级应补充 DeviceDetailVo");
+    assert_eq!(upgraded.0, permissions, "升级不得改写已生成权限清单");
+    assert_eq!(upgraded.1, operations, "升级不得改写已生成 operation");
+    let device_vo_reference = "import(\"./core\").components[\"schemas\"][\"DeviceVo\"]";
+    assert_eq!(
+        upgraded.2.matches(device_vo_reference).count(),
+        2,
+        "DeviceDetailVo 本体与 parent 必须复用现有 DeviceVo 的强类型引用"
+    );
+    assert_eq!(upgraded.2.matches("DeviceDetailVo:").count(), 1);
+    assert!(
+        prepare_device_frontend_contract(upgraded.0, upgraded.1, upgraded.2)
+            .expect("升级后的 generated 契约应可识别")
+            .is_none(),
+        "升级后的 generated 契约必须零修改"
+    );
+}
+
+#[test]
+fn partial_device_frontend_contract_fails_closed() {
+    let partial_contracts = [
+        (
+            "export const permissionCatalog = [\n  \"system:device:list\",\n]\n",
+            "",
+            "",
+        ),
+        ("", "", "DeviceDetailVo: {}"),
+        (
+            "\"system:device:list\"",
+            "export const get_system_devices = bindJsonOperation({})",
+            "ApiPageResponse_DeviceVo:\nApiResponse_DeviceVo:",
+        ),
+    ];
+    for (permissions, operations, schema) in partial_contracts {
+        assert!(
+            prepare_device_frontend_contract(permissions.into(), operations.into(), schema.into())
+                .is_err(),
+            "部分存在的 Device 契约必须失败，不能猜测补齐"
+        );
+    }
+}
+
+#[test]
+fn verification_profile_defaults_to_full_and_rejects_unknown_values() {
+    assert_eq!(
+        VerificationProfile::from_value(None).unwrap(),
+        VerificationProfile::Full
+    );
+    assert_eq!(
+        VerificationProfile::from_value(Some("targeted")).unwrap(),
+        VerificationProfile::Targeted
+    );
+    for value in ["", "full", "targeted ", "unknown"] {
+        assert!(
+            VerificationProfile::from_value(Some(value)).is_err(),
+            "未知模式 {value:?} 必须失败关闭"
+        );
+    }
 }
 
 fn assert_shared_workspace(resource: &str) {
@@ -54,11 +209,33 @@ fn panic_message(payload: Box<dyn Any + Send>) -> String {
 }
 
 fn run_shared_workspace() -> Result<(), String> {
-    let backend_source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .ok_or("生成器应位于后端 Workspace/crates")?
-        .to_path_buf();
+    let profile = VerificationProfile::from_environment()?;
+    let workspace = prepare_shared_workspace(profile)?;
+    generate_resource_slices(&workspace, profile);
+    if profile == VerificationProfile::Targeted {
+        return Ok(());
+    }
+    register_generated_backend_modules(&workspace.backend);
+    register_device_frontend_contract(&workspace.frontend);
+    write_device_fake_transaction_test(&workspace.backend);
+    assert_backend_checks(&workspace);
+    assert_frontend_checks(&workspace.frontend_source, &workspace.frontend);
+    Ok(())
+}
+
+fn prepare_shared_workspace(profile: VerificationProfile) -> Result<SharedWorkspace, String> {
+    let current_dir = std::env::current_dir()
+        .map_err(|error| format!("无法读取资源 Workspace 当前目录：{error}"))?;
+    let backend_source = current_dir
+        .ancestors()
+        .find(|path| {
+            path.join("catalog/resources").is_dir()
+                && path
+                    .join("crates/ryframe-generator/tests/fixtures/device.toml")
+                    .is_file()
+        })
+        .map(Path::to_path_buf)
+        .ok_or_else(|| format!("无法从 {} 定位后端 Workspace 根目录", current_dir.display()))?;
     let frontend_source = std::env::var_os(FRONTEND_DIR_ENV)
         .map(PathBuf::from)
         .ok_or("资源 Workspace 验证缺少前端目录环境变量")?;
@@ -72,25 +249,63 @@ fn run_shared_workspace() -> Result<(), String> {
     fs::create_dir_all(&frontend_parent).expect("应创建前端临时测试目录");
     let backend = backend_parent.join("shared-resource-workspace");
     let frontend = frontend_parent.join("shared-resource-frontend");
-    fs::create_dir_all(&backend).expect("应创建后端临时 Workspace");
-    fs::create_dir_all(&frontend).expect("应创建前端临时 Workspace");
+    reset_workspace_directory(&backend);
+    reset_workspace_directory(&frontend);
 
-    for file in [
-        "Cargo.toml",
-        "Cargo.lock",
-        "rust-toolchain.toml",
-        "rustfmt.toml",
-    ] {
-        sync_file(&backend_source.join(file), &backend.join(file));
+    if profile == VerificationProfile::Full {
+        for file in [
+            "Cargo.toml",
+            "Cargo.lock",
+            "rust-toolchain.toml",
+            "rustfmt.toml",
+        ] {
+            sync_file(&backend_source.join(file), &backend.join(file));
+        }
+        for directory in [".cargo", "catalog", "crates", "vendor", "xtask"] {
+            sync_directory(&backend_source.join(directory), &backend.join(directory));
+        }
+        prepare_frontend_workspace(&frontend_source, &frontend);
+    } else {
+        // targeted 只验证生成计划和重复写入，不运行临时 Workspace 编译；保留生成器
+        // 用于识别根目录的两个标记文件即可，避免复制 crates/vendor 与完整前端源码。
+        sync_file(
+            &backend_source.join("Cargo.toml"),
+            &backend.join("Cargo.toml"),
+        );
+        sync_file(
+            &frontend_source.join("package.json"),
+            &frontend.join("package.json"),
+        );
     }
-    for directory in [".cargo", "catalog", "crates", "vendor", "xtask"] {
-        sync_directory(&backend_source.join(directory), &backend.join(directory));
-    }
-    prepare_frontend_workspace(&frontend_source, &frontend);
 
-    let mut device =
-        load_resource(backend_source.join("crates/ryframe-generator/tests/fixtures/device.toml"))
-            .expect("Device 清单应有效");
+    let cargo_target = std::env::var_os("RYFRAME_RESOURCE_WORKSPACE_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| backend_source.join("target/resource-generator-workspace-check"));
+    Ok(SharedWorkspace {
+        backend_source,
+        frontend_source,
+        backend,
+        frontend,
+        cargo_target,
+    })
+}
+
+fn reset_workspace_directory(path: &Path) {
+    if path.exists() {
+        fs::remove_dir_all(path)
+            .unwrap_or_else(|error| panic!("清理临时 Workspace {} 失败：{error}", path.display()));
+    }
+    fs::create_dir_all(path)
+        .unwrap_or_else(|error| panic!("创建临时 Workspace {} 失败：{error}", path.display()));
+}
+
+fn generate_resource_slices(workspace: &SharedWorkspace, profile: VerificationProfile) {
+    let mut device = load_resource(
+        workspace
+            .backend_source
+            .join("crates/ryframe-generator/tests/fixtures/device.toml"),
+    )
+    .expect("Device 清单应有效");
     device.relations.push(RelationIr {
         name: "parent".into(),
         pascal_name: "Parent".into(),
@@ -99,21 +314,33 @@ fn run_shared_workspace() -> Result<(), String> {
         target_resource: "device".into(),
         target_pascal_name: "Device".into(),
     });
-    let post = load_resource(backend_source.join("catalog/resources/post.toml"))
+    let post = load_resource(workspace.backend_source.join("catalog/resources/post.toml"))
         .expect("临时 Workspace 中既有的 Post 清单应有效");
-    let notice = load_resource(backend_source.join("catalog/resources/notice.toml"))
-        .expect("临时 Workspace 中既有的 Notice 清单应有效");
-    let catalog = render_resources(&[device, notice, post]).expect("Device 与既有资源应能共同生成");
-    let first = write_resource(
-        &catalog,
-        "device",
-        ResourceWorkspace {
-            backend_root: &backend,
-            frontend_root: Some(&frontend),
-        },
+    let notice = load_resource(
+        workspace
+            .backend_source
+            .join("catalog/resources/notice.toml"),
     )
-    .expect("Device/Notice/Post 目录应一次性写入临时 Workspace");
-    assert!(!first.written.is_empty(), "首次生成必须写入资产");
+    .expect("临时 Workspace 中既有的 Notice 清单应有效");
+    let catalog = render_resources(&[device, notice, post]).expect("Device 与既有资源应能共同生成");
+    let initial_resources: &[&str] = if profile == VerificationProfile::Targeted {
+        &["notice", "post", "device"]
+    } else {
+        &["device"]
+    };
+    for resource in initial_resources {
+        let first = write_resource(
+            &catalog,
+            resource,
+            ResourceWorkspace {
+                backend_root: &workspace.backend,
+                frontend_root: Some(&workspace.frontend),
+            },
+        )
+        .unwrap_or_else(|error| panic!("{resource} 首次生成应成功：{error}"));
+        assert!(!first.written.is_empty(), "{resource} 首次生成必须写入资产");
+    }
+    assert_generated_ownership(workspace);
     for path in [
         "crates/ryframe-application/src/generated/post/service.rs",
         "crates/ryframe-application/src/generated/notice/service.rs",
@@ -125,9 +352,9 @@ fn run_shared_workspace() -> Result<(), String> {
         "src/generated/resources/notice/registration.ts",
     ] {
         let root = if path.starts_with("src/") {
-            &frontend
+            &workspace.frontend
         } else {
-            &backend
+            &workspace.backend
         };
         assert!(root.join(path).is_file(), "Post 资产未生成：{path}");
     }
@@ -136,21 +363,66 @@ fn run_shared_workspace() -> Result<(), String> {
             &catalog,
             resource,
             ResourceWorkspace {
-                backend_root: &backend,
-                frontend_root: Some(&frontend),
+                backend_root: &workspace.backend,
+                frontend_root: Some(&workspace.frontend),
             },
         )
         .unwrap_or_else(|error| panic!("{resource} 连续生成应成功：{error}"));
         assert!(repeated.written.is_empty(), "{resource} 连续生成不得写入");
         assert!(repeated.removed.is_empty(), "{resource} 连续生成不得删除");
     }
-    let notice_registration =
-        fs::read_to_string(frontend.join("src/generated/resources/notice/registration.ts"))
-            .expect("应读取 Notice 页面注册清单");
+    let notice_registration = fs::read_to_string(
+        workspace
+            .frontend
+            .join("src/generated/resources/notice/registration.ts"),
+    )
+    .expect("应读取 Notice 页面注册清单");
     assert!(
         notice_registration.contains("@/views/system/notice/index.vue"),
         "Notice 必须保留强类型自定义页面扩展"
     );
+}
+
+fn assert_generated_ownership(workspace: &SharedWorkspace) {
+    let manifest_path = workspace.backend.join("catalog/resources/.ownership.toml");
+    let manifest = fs::read_to_string(&manifest_path).expect("应读取生成后的 ownership manifest");
+    let manifest: OwnershipManifest = toml::from_str(&manifest).expect("ownership manifest 应有效");
+    let selected = ["device", "notice", "post"];
+    let mut roots = std::collections::BTreeSet::new();
+    let mut paths = std::collections::BTreeSet::new();
+    for entry in manifest
+        .entries
+        .iter()
+        .filter(|entry| selected.contains(&entry.resource.as_str()))
+    {
+        assert!(
+            paths.insert((entry.root, entry.path.as_str())),
+            "ownership 不得重复登记路径：{}",
+            entry.path
+        );
+        let root = match entry.root {
+            AssetRoot::Backend => &workspace.backend,
+            AssetRoot::Frontend => &workspace.frontend,
+        };
+        assert!(
+            root.join(&entry.path).is_file(),
+            "ownership 资产不存在：{}",
+            entry.path
+        );
+        roots.insert((entry.resource.as_str(), entry.root));
+    }
+    for resource in selected {
+        for root in [AssetRoot::Backend, AssetRoot::Frontend] {
+            assert!(
+                roots.contains(&(resource, root)),
+                "{resource} 缺少 {} ownership",
+                root.label()
+            );
+        }
+    }
+}
+
+fn register_generated_backend_modules(backend: &Path) {
     for crate_name in [
         "ryframe-application",
         "ryframe-db",
@@ -167,18 +439,32 @@ fn run_shared_workspace() -> Result<(), String> {
         }
         fs::write(&lib, source).expect("应在临时副本接入 generated module");
     }
-    register_device_frontend_contract(&frontend);
-    write_device_fake_transaction_test(&backend);
-    let cargo_target = std::env::var_os("RYFRAME_RESOURCE_WORKSPACE_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| backend_source.join("target/resource-generator-workspace-check"));
+}
 
+fn assert_backend_checks(workspace: &SharedWorkspace) {
     let cargo_fmt = Command::new("cargo")
         .args(["fmt", "--all", "--", "--check"])
-        .current_dir(&backend)
+        .current_dir(&workspace.backend)
         .output()
         .expect("应检查生成 Rust 资产格式");
     assert_command_succeeded("cargo fmt --check", &cargo_fmt);
+
+    let migration = Command::new("cargo")
+        .args([
+            "check",
+            "-p",
+            "ryframe-db",
+            "-p",
+            "ryframe-tenant-db",
+            "--no-default-features",
+            "--features",
+            "ryframe-db/migration,ryframe-tenant-db/migration",
+        ])
+        .current_dir(&workspace.backend)
+        .env("CARGO_TARGET_DIR", &workspace.cargo_target)
+        .output()
+        .expect("应运行生成迁移最小面 cargo check");
+    assert_command_succeeded("cargo check generated migrations", &migration);
 
     let cargo = Command::new("cargo")
         .args([
@@ -191,29 +477,32 @@ fn run_shared_workspace() -> Result<(), String> {
             "ryframe-tenant-db",
             "-p",
             "ryframe-api",
+            "--no-default-features",
+            "--features",
+            "ryframe-db/repositories,ryframe-tenant-db/repositories",
         ])
-        .current_dir(&backend)
-        .env("CARGO_TARGET_DIR", &cargo_target)
+        .current_dir(&workspace.backend)
+        .env("CARGO_TARGET_DIR", &workspace.cargo_target)
         .output()
         .expect("应运行临时后端 cargo check");
-    assert_command_succeeded("cargo check", &cargo);
+    assert_command_succeeded("cargo check generated repositories", &cargo);
 
     let fake_test = Command::new("cargo")
         .args([
             "test",
             "-p",
             "ryframe-application",
+            "--no-default-features",
+            "--features",
+            "test-support",
             "--test",
             "generated_device_fake",
         ])
-        .current_dir(&backend)
-        .env("CARGO_TARGET_DIR", cargo_target)
+        .current_dir(&workspace.backend)
+        .env("CARGO_TARGET_DIR", &workspace.cargo_target)
         .output()
         .expect("应运行生成 Fake 事务语义测试");
     assert_command_succeeded("generated Device fake transaction test", &fake_test);
-
-    assert_frontend_checks(&frontend_source, &frontend);
-    Ok(())
 }
 
 fn prepare_frontend_workspace(source: &Path, target: &Path) {
@@ -311,35 +600,57 @@ fn sync_file(source: &Path, target: &Path) {
 fn register_device_frontend_contract(frontend: &Path) {
     let permissions_path = frontend.join("src/api/generated/permissions.ts");
     let permissions = fs::read_to_string(&permissions_path).expect("应读取候选权限清单");
+    let operations_path = frontend.join("src/api/generated/operations/system.ts");
+    let operations = fs::read_to_string(&operations_path).expect("应读取候选 operation 清单");
+    let schema_path = frontend.join("src/api/generated/schema/system.ts");
+    let schema = fs::read_to_string(&schema_path).expect("应读取候选 OpenAPI schema");
+
+    let Some((permissions, operations, schema)) =
+        prepare_device_frontend_contract(permissions, operations, schema)
+            .unwrap_or_else(|error| panic!("候选 Device 前端契约不完整：{error}"))
+    else {
+        return;
+    };
+    fs::write(permissions_path, permissions).expect("应写入临时候选权限清单");
+    fs::write(operations_path, operations).expect("应写入临时候选 operation 清单");
+    fs::write(schema_path, schema).expect("应写入临时候选 OpenAPI schema");
+}
+
+fn prepare_device_frontend_contract(
+    permissions: String,
+    mut operations: String,
+    mut schema: String,
+) -> Result<Option<(String, String, String)>, String> {
+    match device_frontend_contract_state(&permissions, &operations, &schema)? {
+        DeviceFrontendContractState::Complete => return Ok(None),
+        DeviceFrontendContractState::GeneratedBasic => {
+            add_generated_device_detail_schema(&mut schema)?;
+            debug_assert!(
+                device_frontend_contract_is_complete(&permissions, &operations, &schema)
+                    .expect("刚升级的 Device 前端契约应完整")
+            );
+            return Ok(Some((permissions, operations, schema)));
+        }
+        DeviceFrontendContractState::Missing => {}
+    }
+
+    let permission_marker = "export const permissionCatalog = [\n";
+    if !permissions.contains(permission_marker) {
+        return Err("权限清单缺少 permissionCatalog".into());
+    }
     let permissions = permissions.replacen(
-        "export const permissionCatalog = [\n",
+        permission_marker,
         "export const permissionCatalog = [\n  \"system:device:list\",\n",
         1,
     );
-    fs::write(permissions_path, permissions).expect("应写入临时候选权限清单");
 
-    let operations_path = frontend.join("src/api/generated/operations.ts");
-    let mut operations = fs::read_to_string(&operations_path).expect("应读取候选 operation 清单");
-    let fixture = include_str!("fixtures/device_operations.ts.part");
-    let (operation_ids, descriptors) = fixture
-        .split_once("\n\nexport const")
-        .expect("Device operation fixture 应分为 ID 和描述符");
-    operations = operations.replacen(
-        "export type OperationId =\n",
-        &format!("export type OperationId =\n{operation_ids}\n"),
-        1,
-    );
-    operations.push_str("\n\nexport const");
-    operations.push_str(descriptors);
-    fs::write(operations_path, operations).expect("应写入临时候选 operation 清单");
+    operations.push('\n');
+    operations.push_str(include_str!("fixtures/device_operations.ts.part"));
 
-    let schema_path = frontend.join("src/api/generated/schema/system.ts");
-    let mut schema = fs::read_to_string(&schema_path).expect("应读取候选 OpenAPI schema");
     let component_marker = "export interface components {\n    schemas: {\n";
-    assert!(
-        schema.contains(component_marker),
-        "候选 schema 缺少 components 接口"
-    );
+    if !schema.contains(component_marker) {
+        return Err("OpenAPI schema 缺少 components 接口".into());
+    }
     schema = schema.replacen(
         component_marker,
         &format!(
@@ -348,9 +659,114 @@ fn register_device_frontend_contract(frontend: &Path) {
         1,
     );
     let marker = "export interface operations {\n";
-    assert!(schema.contains(marker), "候选 schema 缺少 operations 接口");
+    if !schema.contains(marker) {
+        return Err("OpenAPI schema 缺少 operations 接口".into());
+    }
     let schema = schema.replacen(marker, include_str!("fixtures/device_schema.ts.part"), 1);
-    fs::write(schema_path, schema).expect("应写入临时候选 OpenAPI schema");
+    debug_assert!(
+        device_frontend_contract_is_complete(&permissions, &operations, &schema)
+            .expect("刚装配的 Device 前端契约应完整")
+    );
+    Ok(Some((permissions, operations, schema)))
+}
+
+fn add_generated_device_detail_schema(schema: &mut String) -> Result<(), String> {
+    let component_marker = "export interface components {\n    schemas: {\n";
+    if schema.matches(component_marker).count() != 1 {
+        return Err("OpenAPI schema 必须包含唯一的 components 接口".into());
+    }
+    let detail_schema = concat!(
+        "        DeviceDetailVo: import(\"./core\").components[\"schemas\"][\"DeviceVo\"] & {\n",
+        "            parent?: import(\"./core\").components[\"schemas\"][\"DeviceVo\"] | null;\n",
+        "        };\n",
+    );
+    *schema = schema.replacen(
+        component_marker,
+        &format!("{component_marker}{detail_schema}"),
+        1,
+    );
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DeviceFrontendContractState {
+    Missing,
+    GeneratedBasic,
+    Complete,
+}
+
+fn device_frontend_contract_is_complete(
+    permissions: &str,
+    operations: &str,
+    schema: &str,
+) -> Result<bool, String> {
+    Ok(matches!(
+        device_frontend_contract_state(permissions, operations, schema)?,
+        DeviceFrontendContractState::Complete
+    ))
+}
+
+fn device_frontend_contract_state(
+    permissions: &str,
+    operations: &str,
+    schema: &str,
+) -> Result<DeviceFrontendContractState, String> {
+    const OPERATION_NAMES: [&str; 5] = [
+        "delete_system_devices_by_id",
+        "get_system_devices",
+        "get_system_devices_by_id",
+        "post_system_devices",
+        "put_system_devices_by_id",
+    ];
+    const GENERATED_SCHEMA_MARKERS: [&str; 4] = [
+        "ApiPageResponse_DeviceVo:",
+        "ApiResponse_DeviceVo:",
+        "CreateDeviceDto:",
+        "UpdateDeviceDto:",
+    ];
+    const FIXTURE_SCHEMA_MARKERS: [&str; 3] = [
+        "type DeviceContractRecord = {",
+        "DeviceVo: DeviceContractRecord;",
+        "DeviceDetailVo: DeviceContractRecord & {",
+    ];
+    const GENERATED_DETAIL_MARKER: &str = "DeviceDetailVo:";
+
+    let permission_present = permissions.contains("\"system:device:list\"");
+    let operation_constants =
+        OPERATION_NAMES.map(|name| operations.contains(&format!("export const {name} =")));
+    let schema_operations = OPERATION_NAMES.map(|name| schema.contains(&format!("    {name}: {{")));
+    let generated_schema = GENERATED_SCHEMA_MARKERS.map(|marker| schema.contains(marker));
+    let fixture_schema = FIXTURE_SCHEMA_MARKERS.map(|marker| schema.contains(marker));
+
+    let common_complete = permission_present
+        && operation_constants.iter().all(|present| *present)
+        && schema_operations.iter().all(|present| *present);
+    let generated_complete = generated_schema.iter().all(|present| *present);
+    let generated_any = generated_schema.iter().any(|present| *present);
+    let fixture_complete = fixture_schema.iter().all(|present| *present);
+    let fixture_any = fixture_schema.iter().any(|present| *present);
+    let generated_detail_present = schema.contains(GENERATED_DETAIL_MARKER);
+    if common_complete && fixture_complete && !generated_any {
+        return Ok(DeviceFrontendContractState::Complete);
+    }
+    if common_complete && generated_complete && !fixture_any {
+        return Ok(if generated_detail_present {
+            DeviceFrontendContractState::Complete
+        } else {
+            DeviceFrontendContractState::GeneratedBasic
+        });
+    }
+
+    let any_present = permission_present
+        || operation_constants.iter().any(|present| *present)
+        || schema_operations.iter().any(|present| *present)
+        || generated_any
+        || fixture_any
+        || generated_detail_present;
+    if any_present {
+        return Err("只发现部分权限、operation 或 schema 标记，拒绝猜测并重复装配".into());
+    }
+    Ok(DeviceFrontendContractState::Missing)
 }
 
 fn write_device_fake_transaction_test(backend: &Path) {

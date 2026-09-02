@@ -5,11 +5,10 @@ mod s3;
 mod scoped;
 mod signing;
 
-use std::{
-    future::Future,
-    path::Path,
-    time::{Duration, Instant},
-};
+use std::{future::Future, path::Path, time::Duration};
+
+#[cfg(feature = "monitoring")]
+use std::time::Instant;
 
 use async_trait::async_trait;
 pub use local::LocalObjectStorage;
@@ -109,11 +108,13 @@ pub(crate) async fn trace_storage_operation<T>(
     operation: StorageOperation,
     future: impl Future<Output = StorageResult<T>>,
 ) -> StorageResult<T> {
+    #[cfg(feature = "monitoring")]
     let started = Instant::now();
     let span = storage_operation_span(backend, operation);
     let result = future.instrument(span.clone()).await;
     let result_label = storage_result_label(&result);
     span.record("storage.result", result_label);
+    #[cfg(feature = "monitoring")]
     crate::metrics::observe_connector_operation(
         backend,
         operation.as_str(),

@@ -4,24 +4,40 @@
 //! 使用独立账本 `seaql_tenant_data_migrations`。控制面 `sys_*` 表只能由
 //! `ryframe-db::migration` 管理，不能经此入口安装到 dedicated 目标。
 
+mod baseline_contract;
 mod catalog;
 mod generated_catalog;
+#[cfg(feature = "migration")]
 mod m20260820_000000_tenant_baseline;
 mod normalization;
+#[cfg(feature = "migration")]
 mod runtime;
 mod schema;
+mod status;
+
+const HANDWRITTEN_MIGRATION_NAMES: &[&str] = &["m20260820_000000_tenant_baseline"];
+
+pub fn expected_migration_names() -> impl Iterator<Item = &'static str> {
+    HANDWRITTEN_MIGRATION_NAMES
+        .iter()
+        .copied()
+        .chain(crate::generated::MIGRATION_NAMES.iter().copied())
+}
 
 pub use catalog::{
     TENANT_DATA_CATALOG, TENANT_DATA_SCHEMA_FINGERPRINT, TenantDataCatalog,
     TenantDataForeignKeyDescriptor, TenantDataTableDescriptor, catalog_entry_canonical,
     schema_fingerprint_for_catalog,
 };
+#[cfg(feature = "migration")]
 pub use m20260820_000000_tenant_baseline::{
     RESOURCE_OWNERSHIP_DDL, TENANT_FENCE_DDL, TENANT_TARGET_SLOT_DDL,
 };
 pub use normalization::normalize_check_clause;
-pub use runtime::{MigrationStatus, Migrator, TENANT_DATA_MIGRATION_LEDGER, status, up};
+#[cfg(feature = "migration")]
+pub use runtime::{Migrator, up};
 pub use schema::{
     canonical_table_schema, ensure_local_foreign_key_schema, ensure_mysql_target_boundary, verify,
     verify_for_catalog, verify_mysql_80, verify_mysql_target, verify_mysql_target_for_catalog,
 };
+pub use status::{MigrationStatus, TENANT_DATA_MIGRATION_LEDGER, status};

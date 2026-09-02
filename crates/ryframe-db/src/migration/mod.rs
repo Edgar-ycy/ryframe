@@ -1,48 +1,95 @@
 //! 仅支持 MySQL 的控制库新基线。
 
+use std::collections::BTreeSet;
+
+#[cfg(feature = "migration")]
+use sea_orm::TransactionTrait;
 use sea_orm::{
-    ConnectionTrait, DatabaseBackend, DatabaseConnection, DbBackend, FromQueryResult, Statement,
-    TransactionTrait, TryGetable,
+    ConnectionTrait, DatabaseBackend, DatabaseConnection, DbBackend, DbErr, FromQueryResult,
+    Statement, TryGetable,
 };
+#[cfg(feature = "migration")]
 use sea_orm_migration::prelude::*;
 
 mod access_catalog;
+mod baseline_contract;
+#[cfg(feature = "migration")]
 mod m20260820_000000_control_baseline;
 mod schema;
+#[cfg(feature = "migration")]
 mod seeder;
 
 pub use access_catalog::{
     AccessMenu, access_menus, access_permission_codes, access_permission_names,
 };
-pub use m20260820_000000_control_baseline::ddl_statements as control_ddl_statements;
+pub use baseline_contract::ddl_statements as control_ddl_statements;
 pub use schema::{
     expected_extra, extract_column_type, normalize_column_type, verify_current_schema,
 };
+#[cfg(feature = "migration")]
 pub use seeder::{mysql_snapshot_sql, seed, validate_seed_statements};
 
+#[cfg(feature = "migration")]
 const MIGRATION_LOCK_SQL_PREFIX: &str = "ryframe:migration:";
 pub const CONTROL_MIGRATION_LEDGER: &str = "seaql_migrations";
+const HANDWRITTEN_MIGRATION_NAMES: &[&str] = &["m20260820_000000_control_baseline"];
+
+pub fn expected_migration_names() -> impl Iterator<Item = &'static str> {
+    HANDWRITTEN_MIGRATION_NAMES
+        .iter()
+        .copied()
+        .chain(crate::generated::MIGRATION_NAMES.iter().copied())
+}
 
 /// 迁移账本状态，适用于部署 CLI 和就绪报告。
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MigrationStatus {
     pub applied: usize,
     pub expected: usize,
+    pub missing: Vec<String>,
+    pub unexpected: Vec<String>,
 }
 
 impl MigrationStatus {
     pub fn is_up_to_date(&self) -> bool {
-        self.applied == self.expected
+        self.applied == self.expected && self.missing.is_empty() && self.unexpected.is_empty()
+    }
+
+    fn from_versions(applied_versions: Vec<String>, expected_versions: Vec<String>) -> Self {
+        let applied_names = applied_versions
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        let expected_names = expected_versions
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        let missing = expected_names
+            .difference(&applied_names)
+            .map(|name| (*name).to_owned())
+            .collect();
+        let unexpected = applied_names
+            .difference(&expected_names)
+            .map(|name| (*name).to_owned())
+            .collect();
+        Self {
+            applied: applied_versions.len(),
+            expected: expected_versions.len(),
+            missing,
+            unexpected,
+        }
     }
 }
 
+#[cfg(feature = "migration")]
 pub struct Migrator;
 
 /// 当前唯一控制库 baseline 的稳定 schema 指纹。
 pub fn schema_fingerprint() -> String {
-    m20260820_000000_control_baseline::schema_fingerprint()
+    baseline_contract::schema_fingerprint()
 }
 
+#[cfg(feature = "migration")]
 #[async_trait::async_trait]
 impl MigratorTrait for Migrator {
     fn migrations() -> Vec<Box<dyn MigrationTrait>> {
@@ -60,6 +107,7 @@ impl MigratorTrait for Migrator {
 /// 应用待执行迁移，幂等地初始化系统数据，并校验 schema。
 ///
 /// 这是唯一允许执行 DDL 的操作，供独立部署任务使用，而非生产 API 启动过程。
+#[cfg(feature = "migration")]
 pub async fn up(db: &DatabaseConnection) -> Result<(), DbErr> {
     ensure_mysql(db)?;
     verify_mysql_80(db).await?;
@@ -82,13 +130,14 @@ pub async fn up(db: &DatabaseConnection) -> Result<(), DbErr> {
 /// 在不执行 DDL 或初始化写入的情况下，校验迁移账本完整且主库 schema 与当前迁移
 /// 指纹相匹配。
 pub async fn verify(db: &DatabaseConnection) -> Result<(), DbErr> {
-    ensure_mysql(db)?;
-    verify_mysql_80(db).await?;
     let status = status(db).await?;
     if !status.is_up_to_date() {
         return Err(DbErr::Custom(format!(
-            "control migration ledger is not current: applied {}, expected {}; run `ryframe-migrate control up` before starting the API",
-            status.applied, status.expected
+            "control migration ledger is not current: applied {}, expected {}, missing [{}], unexpected [{}]; run `ryframe-migrate control up` before starting the API",
+            status.applied,
+            status.expected,
+            status.missing.join(","),
+            status.unexpected.join(",")
         )));
     }
     verify_current_schema(db)
@@ -100,7 +149,6 @@ pub async fn verify(db: &DatabaseConnection) -> Result<(), DbErr> {
 pub async fn status(db: &DatabaseConnection) -> Result<MigrationStatus, DbErr> {
     ensure_mysql(db)?;
     verify_mysql_80(db).await?;
-    let expected = Migrator::migrations().len();
     let ledger_exists = scalar_i64(
         db,
         "SELECT COUNT(*) FROM information_schema.tables \
@@ -108,18 +156,34 @@ pub async fn status(db: &DatabaseConnection) -> Result<MigrationStatus, DbErr> {
     )
     .await?
         > 0;
-    let applied = if ledger_exists {
-        scalar_i64(db, "SELECT COUNT(*) FROM seaql_migrations").await? as usize
+    let applied_versions = if ledger_exists {
+        MigrationVersionRow::find_by_statement(Statement::from_string(
+            DbBackend::MySql,
+            "SELECT version FROM seaql_migrations ORDER BY version",
+        ))
+        .all(db)
+        .await?
+        .into_iter()
+        .map(|migration| migration.version)
+        .collect()
     } else {
-        0
+        Vec::new()
     };
-    Ok(MigrationStatus { applied, expected })
+    Ok(MigrationStatus::from_versions(
+        applied_versions,
+        expected_migration_names().map(str::to_owned).collect(),
+    ))
 }
 
 #[derive(Debug, FromQueryResult)]
 struct ServerIdentityRow {
     version: String,
     version_comment: String,
+}
+
+#[derive(Debug, FromQueryResult)]
+struct MigrationVersionRow {
+    version: String,
 }
 
 /// 仅接受支持受约束 CHECK 的 MySQL 8.0.16 或更高版本。
@@ -180,6 +244,7 @@ async fn scalar_i64(db: &DatabaseConnection, sql: &str) -> Result<i64, DbErr> {
         .ok_or_else(|| DbErr::Custom(format!("query returned a NULL scalar value: {sql}")))
 }
 
+#[cfg(feature = "migration")]
 async fn migrate_seed_verify<C>(db: &C) -> Result<(), DbErr>
 where
     C: ConnectionTrait + ?Sized,
@@ -196,6 +261,7 @@ where
         .map_err(|error| DbErr::Custom(format!("schema verification failed: {error}")))
 }
 
+#[cfg(feature = "migration")]
 async fn acquire_migration_lock<C>(db: &C) -> Result<(), DbErr>
 where
     C: ConnectionTrait + ?Sized,
@@ -217,6 +283,7 @@ where
     Ok(())
 }
 
+#[cfg(feature = "migration")]
 async fn release_migration_lock<C>(db: &C) -> Result<(), DbErr>
 where
     C: ConnectionTrait + ?Sized,
@@ -236,4 +303,45 @@ where
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migration_status_uses_exact_names_not_only_count() {
+        let current =
+            MigrationStatus::from_versions(vec!["baseline".into()], vec!["baseline".into()]);
+        assert!(current.is_up_to_date());
+        assert!(current.missing.is_empty());
+        assert!(current.unexpected.is_empty());
+
+        let mismatched = MigrationStatus::from_versions(
+            vec!["baseline".into(), "wrong".into()],
+            vec!["baseline".into(), "expected".into()],
+        );
+        assert_eq!(mismatched.applied, mismatched.expected);
+        assert_eq!(mismatched.missing, ["expected"]);
+        assert_eq!(mismatched.unexpected, ["wrong"]);
+        assert!(!mismatched.is_up_to_date());
+
+        let missing = MigrationStatus::from_versions(Vec::new(), vec!["baseline".into()]);
+        assert_eq!(missing.missing, ["baseline"]);
+        assert!(missing.unexpected.is_empty());
+        assert!(!missing.is_up_to_date());
+
+        let unexpected = MigrationStatus::from_versions(vec!["unknown".into()], Vec::new());
+        assert!(unexpected.missing.is_empty());
+        assert_eq!(unexpected.unexpected, ["unknown"]);
+        assert!(!unexpected.is_up_to_date());
+
+        let duplicate = MigrationStatus::from_versions(
+            vec!["baseline".into(), "baseline".into()],
+            vec!["baseline".into()],
+        );
+        assert!(duplicate.missing.is_empty());
+        assert!(duplicate.unexpected.is_empty());
+        assert!(!duplicate.is_up_to_date());
+    }
 }

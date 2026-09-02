@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, fmt, path::PathBuf};
 
-use crate::workspace::default_frontend_dir;
+use crate::{devex, workspace::default_frontend_dir};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Cli {
@@ -15,12 +15,13 @@ pub(crate) enum Command {
     Contract { operation: ContractOperation },
     FeatureMatrix,
     ReleaseVerify(ReleaseOptions),
-    Dev,
+    Dev { measure_once: bool },
     Verify { scope: CheckScope, full: bool },
     Resource(ResourceCommand),
     ApiSync(ApiSyncCommand),
     Migrate(MigrationCommand),
     Ci(CiCommand),
+    Devex(devex::DevexCommand),
     Help(Option<String>),
 }
 
@@ -29,6 +30,7 @@ pub(crate) enum CiCommand {
     Plan,
     Preflight,
     RustGate,
+    ResourceGate,
     Integration,
     ConsumerContract,
 }
@@ -69,13 +71,20 @@ pub(crate) struct ReleaseOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ResourceAction {
     Preview,
+    Check,
     Write,
     Explain,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ResourceTarget {
+    Named(String),
+    All,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResourceCommand {
-    pub(crate) name: String,
+    pub(crate) target: ResourceTarget,
     pub(crate) action: ResourceAction,
 }
 
@@ -195,8 +204,16 @@ pub(crate) fn parse(mut args: Vec<String>) -> Result<Cli, CliError> {
         }
         "release-verify" => Command::ReleaseVerify(parse_release(&args)?),
         "dev" => {
-            require_empty(&args, "cargo dev")?;
-            Command::Dev
+            let measure_once = match args.as_slice() {
+                [] => false,
+                [flag] if flag == "--measure-once" => true,
+                _ => {
+                    return Err(CliError::new(
+                        "用法：cargo dev [--measure-once]；一次性场景由 RYFRAME_DEVEX_SAVE_CASE 选择",
+                    ));
+                }
+            };
+            Command::Dev { measure_once }
         }
         "verify" => {
             let (scope, full) = parse_scope_options(&args, true)?;
@@ -206,6 +223,7 @@ pub(crate) fn parse(mut args: Vec<String>) -> Result<Cli, CliError> {
         "api-sync" => Command::ApiSync(parse_api_sync(&args)?),
         "migrate" => Command::Migrate(parse_migration(&args)?),
         "ci" => Command::Ci(parse_ci(&args)?),
+        "devex" => Command::Devex(devex::parse_command(&args).map_err(CliError::new)?),
         _ => return Err(CliError::new(format!("未知命令：{command_name}"))),
     };
 
@@ -220,10 +238,11 @@ fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
         [command] if command == "plan" => Ok(CiCommand::Plan),
         [command] if command == "preflight" => Ok(CiCommand::Preflight),
         [command] if command == "rust-gate" => Ok(CiCommand::RustGate),
+        [command] if command == "resource-gate" => Ok(CiCommand::ResourceGate),
         [command] if command == "integration" => Ok(CiCommand::Integration),
         [command] if command == "consumer-contract" => Ok(CiCommand::ConsumerContract),
         _ => Err(CliError::new(
-            "用法：cargo xtask ci <plan|preflight|rust-gate|integration|consumer-contract>",
+            "用法：cargo xtask ci <plan|preflight|rust-gate|resource-gate|integration|consumer-contract>",
         )),
     }
 }
@@ -293,26 +312,29 @@ fn parse_release(args: &[String]) -> Result<ReleaseOptions, CliError> {
 }
 
 fn parse_resource(args: &[String]) -> Result<ResourceCommand, CliError> {
-    let Some(name) = args.first() else {
-        return Err(CliError::new(
-            "用法：cargo resource <资源名> [--write|--explain]",
-        ));
-    };
-    validate_name(name)?;
-    let action = match &args[1..] {
-        [] => ResourceAction::Preview,
-        [flag] if flag == "--write" => ResourceAction::Write,
-        [flag] if flag == "--explain" => ResourceAction::Explain,
-        _ => {
-            return Err(CliError::new(
-                "用法：cargo resource <资源名> [--write|--explain]",
-            ));
+    const USAGE: &str =
+        "用法：cargo resource <资源名> [--check|--write|--explain] | cargo resource --all --check";
+    let (target, action) = match args {
+        [all, check] if all == "--all" && check == "--check" => {
+            (ResourceTarget::All, ResourceAction::Check)
         }
+        [name] if name != "--all" => {
+            validate_name(name)?;
+            (ResourceTarget::Named(name.clone()), ResourceAction::Preview)
+        }
+        [name, flag] if name != "--all" => {
+            validate_name(name)?;
+            let action = match flag.as_str() {
+                "--check" => ResourceAction::Check,
+                "--write" => ResourceAction::Write,
+                "--explain" => ResourceAction::Explain,
+                _ => return Err(CliError::new(USAGE)),
+            };
+            (ResourceTarget::Named(name.clone()), action)
+        }
+        _ => return Err(CliError::new(USAGE)),
     };
-    Ok(ResourceCommand {
-        name: name.clone(),
-        action,
-    })
+    Ok(ResourceCommand { target, action })
 }
 
 fn parse_api_sync(args: &[String]) -> Result<ApiSyncCommand, CliError> {
@@ -480,21 +502,23 @@ fn require_empty(args: &[String], usage: &str) -> Result<(), CliError> {
 pub(crate) fn print_help(topic: Option<&str>) {
     let help = match topic {
         Some("dev") => {
-            "cargo dev [--frontend-dir PATH]\n  监听并管理 API、Worker 与 Vite；失败时保留 last-known-good。"
+            "cargo dev [--frontend-dir PATH]\n  监听并管理 API、Worker 与 Vite；失败时保留 last-known-good。\n\
+             RYFRAME_DEVEX_SAVE_CASE=<case> cargo dev --measure-once\n  只运行一次保存反馈测量；case 支持 config-only、api-only、worker-only、shared-runtime、locales、migration-only、resource-manifest、cancellation。"
         }
         Some("verify") => {
             "cargo verify [--full] [--scope all|backend|frontend] [--frontend-dir PATH]\n  根据前后端 Git 变更执行最小安全检查；--full 执行完整本地门禁。"
         }
         Some("resource") => {
-            "cargo resource <资源名> [--write|--explain]\n  预览、写入或解释一个资源的生成计划。"
+            "cargo resource <资源名> [--check|--write|--explain]\n  预览、检查、写入或解释一个资源；cargo resource --all --check 只读检查全部资源。"
         }
         Some("api-sync") => {
             "cargo api-sync [--commit GIT_REF] [--frontend-dir PATH]\n  同步开发候选契约，或固定指定提交的正式契约。"
         }
         Some("migrate") => migration_usage(),
         Some("ci") => {
-            "cargo xtask ci <plan|preflight|rust-gate|integration|consumer-contract>\n  CI 内部稳定入口。"
+            "cargo xtask ci <plan|preflight|rust-gate|resource-gate|integration|consumer-contract>\n  CI 内部稳定入口。"
         }
+        Some("devex") => devex::usage(),
         Some("doctor") => "cargo xtask doctor [--frontend-dir PATH]",
         Some("check") => "cargo xtask check [--scope all|backend|frontend] [--frontend-dir PATH]",
         Some("contract") => "cargo xtask contract check [--frontend-dir PATH]",
@@ -516,7 +540,8 @@ fn general_help() -> &'static str {
 日常命令：\n\
   cargo dev\n\
   cargo verify [--full] [--scope all|backend|frontend]\n\
-  cargo resource <资源名> [--write|--explain]\n\
+  cargo resource <资源名> [--check|--write|--explain]\n\
+  cargo resource --all --check\n\
   cargo api-sync [--commit GIT_REF]\n\
   cargo migrate <verify|up|status> [control|tenant-data (--all|--target KEY)]\n\
   cargo migrate new <control|tenant-data> <迁移名>\n\n\
@@ -525,7 +550,8 @@ fn general_help() -> &'static str {
   cargo xtask check [--scope all|backend|frontend] [--frontend-dir PATH]\n\
   cargo xtask contract check [--frontend-dir PATH]\n\
   cargo xtask migrate freeze\n\
-  cargo xtask ci <plan|preflight|rust-gate|integration|consumer-contract>\n\
+  cargo xtask ci <plan|preflight|rust-gate|resource-gate|integration|consumer-contract>\n\
+  cargo xtask devex run|summarize|compare ...\n\
   cargo xtask feature-matrix\n\
   cargo xtask release-verify ...\n\n\
 运行 `cargo <命令> --help` 查看单个日常命令的说明。"

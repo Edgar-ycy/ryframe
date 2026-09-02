@@ -3,7 +3,7 @@ use std::{
     ffi::{OsStr, OsString},
     fs,
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Command, Stdio},
     sync::{Once, OnceLock},
     thread,
     time::{Duration, Instant},
@@ -13,7 +13,7 @@ use crate::{Result, workspace::root_dir};
 
 #[path = "process/child.rs"]
 mod child;
-pub(crate) use child::ChildGroup;
+pub(crate) use child::{ChildGroup, ManagedChild};
 #[path = "process/logging.rs"]
 mod logging;
 #[allow(unused_imports)]
@@ -82,22 +82,37 @@ pub(crate) fn run_with_env(
     args: &[&str],
     environment: &[(&str, &str)],
 ) -> Result<()> {
+    run_with_env_removed(dir, executable, args, environment, &[])
+}
+
+pub(crate) fn run_with_env_removed(
+    dir: &Path,
+    executable: &str,
+    args: &[&str],
+    environment: &[(&str, &str)],
+    removed_environment: &[&str],
+) -> Result<()> {
     let started = Instant::now();
     let logged = process_log_active();
+    let command_executable = resolved_executable(executable, env::var_os("RYFRAME_PYTHON"));
+    let command_label = command_executable.to_string_lossy();
     if !logged {
-        println!("→ {executable} {}", args.join(" "));
+        println!("→ {command_label} {}", args.join(" "));
     }
-    let mut command = child_command(executable);
+    let mut command = child_command(&command_executable);
     configure_cargo_cache(executable, &mut command);
+    command.args(args);
+    for key in removed_environment {
+        command.env_remove(key);
+    }
     command
-        .args(args)
         .envs(environment.iter().copied())
         .current_dir(dir)
         .stdin(Stdio::inherit());
     configure_output(&mut command)?;
     let status = command.status();
     let elapsed = started.elapsed().as_secs_f64();
-    let label = format!("{executable} {}", args.join(" "));
+    let label = format!("{command_label} {}", args.join(" "));
     let status = match status {
         Ok(status) => status,
         Err(error) => {
@@ -113,7 +128,7 @@ pub(crate) fn run_with_env(
         Ok(())
     } else {
         Err(format!(
-            "命令执行失败（{elapsed:.1}s）：{executable} {}",
+            "命令执行失败（{elapsed:.1}s）：{command_label} {}",
             args.join(" ")
         )
         .into())
@@ -247,10 +262,12 @@ pub(crate) fn command_output_with_env(
 ) -> Result<String> {
     let started = Instant::now();
     let logged = process_log_active();
+    let command_executable = resolved_executable(executable, env::var_os("RYFRAME_PYTHON"));
+    let command_label = command_executable.to_string_lossy();
     if !logged {
-        println!("→ {executable} {}", args.join(" "));
+        println!("→ {command_label} {}", args.join(" "));
     }
-    let mut command = child_command(executable);
+    let mut command = child_command(&command_executable);
     configure_cargo_cache(executable, &mut command);
     let output = command
         .args(args)
@@ -258,13 +275,13 @@ pub(crate) fn command_output_with_env(
         .current_dir(dir)
         .output()?;
     let elapsed = started.elapsed().as_secs_f64();
-    let label = format!("{executable} {}", args.join(" "));
+    let label = format!("{command_label} {}", args.join(" "));
     record_step(label, elapsed, output.status.success());
     if !output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(format!(
-            "命令执行失败（{elapsed:.1}s）：{executable} {}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+            "命令执行失败（{elapsed:.1}s）：{command_label} {}\nstdout:\n{stdout}\nstderr:\n{stderr}",
             args.join(" ")
         )
         .into());
@@ -274,6 +291,18 @@ pub(crate) fn command_output_with_env(
     }
     String::from_utf8(output.stdout)
         .map_err(|error| format!("{executable} 输出不是 UTF-8：{error}").into())
+}
+
+pub(crate) fn resolved_executable(
+    executable: &str,
+    configured_python: Option<OsString>,
+) -> OsString {
+    if executable == "python"
+        && let Some(configured) = configured_python.filter(|value| !value.is_empty())
+    {
+        return configured;
+    }
+    OsString::from(executable)
 }
 
 /// 仓库任务不能把 xtask 自身的 Cargo 包上下文泄漏给嵌套命令。
@@ -355,7 +384,7 @@ pub(crate) fn spawn_pnpm_with_env(
     dir: &Path,
     args: &[&str],
     environment: &[(&str, &str)],
-) -> Result<Child> {
+) -> Result<ManagedChild> {
     let mut command = pnpm_command(dir)?;
     command
         .args(args)
@@ -386,35 +415,81 @@ fn prepare_process_group(command: &mut Command) {
 #[cfg(not(any(unix, windows)))]
 fn prepare_process_group(_command: &mut Command) {}
 
-pub(crate) fn stop_child(child: &mut Child) -> Result<()> {
-    if child.try_wait()?.is_some() {
-        return Ok(());
-    }
+#[cfg(windows)]
+pub(crate) fn process_is_running(pid: u32) -> bool {
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, WAIT_TIMEOUT},
+        System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+            WaitForSingleObject,
+        },
+    };
 
+    let process = unsafe {
+        OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+            0,
+            pid,
+        )
+    };
+    if process.is_null() {
+        return false;
+    }
+    let running = unsafe { WaitForSingleObject(process, 0) } == WAIT_TIMEOUT;
+    unsafe { CloseHandle(process) };
+    running
+}
+
+#[cfg(unix)]
+pub(crate) fn process_is_running(pid: u32) -> bool {
+    let Ok(pid) = i32::try_from(pid) else {
+        return false;
+    };
+    if unsafe { libc::kill(pid, 0) } == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(not(any(unix, windows)))]
+pub(crate) fn process_is_running(pid: u32) -> bool {
+    pid == std::process::id()
+}
+
+pub(crate) fn stop_child(child: &mut ManagedChild) -> Result<()> {
     #[cfg(windows)]
     {
-        let pid = child.id().to_string();
-        let status = Command::new("taskkill")
-            .args(["/PID", &pid, "/T", "/F"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()?;
-        if !status.success() && child.try_wait()?.is_none() {
-            child.kill()?;
+        child.terminate_tree()?;
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            let direct_exited = child.try_wait()?.is_some();
+            let tree_exited = child.active_process_count()? == Some(0);
+            if direct_exited && tree_exited {
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err("Windows 子进程树终止后 1 秒内仍有存活进程".into());
+            }
+            thread::sleep(Duration::from_millis(10));
         }
     }
     #[cfg(unix)]
     {
-        signal_process_group(child.id(), libc::SIGTERM)?;
-        if wait_for_child_exit(child, Duration::from_secs(5))? {
-            return Ok(());
-        }
+        const TERMINATE_GRACE: Duration = Duration::from_millis(400);
+        const FORCE_KILL_GRACE: Duration = Duration::from_millis(400);
 
-        signal_process_group(child.id(), libc::SIGKILL)?;
-        if !wait_for_child_exit(child, Duration::from_secs(5))? {
-            child.kill()?;
+        let process_group_id = child.process_group_id();
+        signal_process_group(process_group_id, libc::SIGTERM)?;
+        if !wait_for_process_group_exit(child, process_group_id, TERMINATE_GRACE)? {
+            signal_process_group(process_group_id, libc::SIGKILL)?;
+            if !wait_for_process_group_exit(child, process_group_id, FORCE_KILL_GRACE)? {
+                let _ = child.kill();
+            }
         }
+    }
+    #[cfg(not(any(unix, windows)))]
+    if child.try_wait()?.is_none() {
+        child.kill()?;
     }
 
     let _ = child.wait();
@@ -437,15 +512,36 @@ fn signal_process_group(pid: u32, signal: libc::c_int) -> Result<()> {
 }
 
 #[cfg(unix)]
-fn wait_for_child_exit(child: &mut Child, timeout: Duration) -> Result<bool> {
+fn wait_for_process_group_exit(
+    child: &mut ManagedChild,
+    process_group_id: u32,
+    timeout: Duration,
+) -> Result<bool> {
     let deadline = Instant::now() + timeout;
     loop {
-        if child.try_wait()?.is_some() {
+        let _ = child.try_wait()?;
+        if !process_group_exists(process_group_id)? {
             return Ok(true);
         }
         if Instant::now() >= deadline {
             return Ok(false);
         }
         thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[cfg(unix)]
+fn process_group_exists(process_group_id: u32) -> Result<bool> {
+    let process_group_id =
+        i32::try_from(process_group_id).map_err(|_| "子进程组 ID 超出 POSIX 范围")?;
+    let result = unsafe { libc::kill(-process_group_id, 0) };
+    if result == 0 {
+        return Ok(true);
+    }
+    let error = std::io::Error::last_os_error();
+    match error.raw_os_error() {
+        Some(libc::ESRCH) => Ok(false),
+        Some(libc::EPERM) => Ok(true),
+        _ => Err(format!("无法查询子进程组 {process_group_id}：{error}").into()),
     }
 }

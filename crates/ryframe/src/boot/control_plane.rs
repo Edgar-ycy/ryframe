@@ -5,7 +5,7 @@ use ryframe_db::{CallbackDatabaseMetricsObserver, ControlDatabaseCluster};
 use ryframe_kernel::AppError;
 use ryframe_tenant_db::TenantDatabaseRouter;
 
-use super::{datasource, startup, tenant_data};
+use super::{datasource, tenant_data};
 
 /// 控制面启动策略只描述 API 与 Worker 已存在的行为差异。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -34,10 +34,6 @@ impl ControlPlaneStartup {
             process: ControlPlaneProcess::Worker,
             allows_initialization_writes,
         }
-    }
-
-    const fn migration_mode(self, configured: MigrationMode) -> MigrationMode {
-        startup::effective_migration_mode(self.allows_initialization_writes, configured)
     }
 }
 
@@ -74,13 +70,10 @@ async fn apply_migration(
     configured: MigrationMode,
     startup: ControlPlaneStartup,
 ) -> Result<(), AppError> {
-    match startup.migration_mode(configured) {
-        MigrationMode::Auto => ryframe_db::migration::up(database.write())
-            .await
-            .map_err(|error| migration_error(startup.process, false, error))?,
+    match configured {
         MigrationMode::Verify => ryframe_db::migration::verify(database.write())
             .await
-            .map_err(|error| migration_error(startup.process, true, error))?,
+            .map_err(|error| migration_error(startup.process, error))?,
         MigrationMode::Off => match startup.process {
             ControlPlaneProcess::Api => {
                 tracing::warn!(
@@ -93,18 +86,12 @@ async fn apply_migration(
     Ok(())
 }
 
-fn migration_error(
-    process: ControlPlaneProcess,
-    verification: bool,
-    error: impl std::fmt::Display,
-) -> AppError {
-    let message = match (process, verification) {
-        (ControlPlaneProcess::Api, false) => format!("database migration failed: {error}"),
-        (ControlPlaneProcess::Api, true) => {
+fn migration_error(process: ControlPlaneProcess, error: impl std::fmt::Display) -> AppError {
+    let message = match process {
+        ControlPlaneProcess::Api => {
             format!("database migration verification failed: {error}")
         }
-        (ControlPlaneProcess::Worker, false) => format!("数据库迁移失败: {error}"),
-        (ControlPlaneProcess::Worker, true) => format!("数据库迁移校验失败: {error}"),
+        ControlPlaneProcess::Worker => format!("数据库迁移校验失败: {error}"),
     };
     AppError::Database(message)
 }
@@ -131,7 +118,7 @@ async fn verify_fixed_tenant(
     let Some(tenant_id) = fixed_tenant_to_verify(config.multi_tenancy.fixed_tenant_id()) else {
         return Ok(());
     };
-    ryframe_db::TenantRepository
+    ryframe_db::repositories::TenantRepository
         .ensure_available(database.write(), tenant_id)
         .await
         .map_err(|error| {
@@ -171,20 +158,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn process_modes_keep_write_and_probe_migration_rules() {
-        let cases = [
-            (ControlPlaneStartup::api(true), MigrationMode::Auto),
-            (ControlPlaneStartup::worker(true), MigrationMode::Auto),
-            (ControlPlaneStartup::api(false), MigrationMode::Verify),
-            (ControlPlaneStartup::worker(false), MigrationMode::Verify),
-        ];
-        for (startup, expected) in cases {
-            assert_eq!(startup.migration_mode(MigrationMode::Auto), expected);
-        }
-        assert_eq!(
-            ControlPlaneStartup::worker(false).migration_mode(MigrationMode::Off),
-            MigrationMode::Off
-        );
+    fn runtime_migration_modes_are_read_only() {
+        assert_eq!(MigrationMode::default(), MigrationMode::Verify);
+        assert_ne!(MigrationMode::Off, MigrationMode::Verify);
     }
 
     #[test]

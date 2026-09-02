@@ -5,7 +5,7 @@ pub(super) fn migration(resource: &ResourceIr, header: &str) -> String {
         resource.bootstrap_migration,
         "只有显式声明的资源可以生成首次引入迁移"
     );
-    let migration_name = format!("m_resource_initial_{}", resource.name);
+    let migration_name = migration_name(resource);
     let mut definitions = resource
         .fields
         .iter()
@@ -88,6 +88,10 @@ impl MigrationTrait for Migration {{
 "##,
         schema_hash = resource.schema_hash,
     )
+}
+
+pub(super) fn migration_name(resource: &ResourceIr) -> String {
+    format!("m_resource_initial_{}", resource.name)
 }
 
 fn column_definition(field: &super::FieldIr) -> String {

@@ -7,7 +7,7 @@ use super::{
     },
     types::{ExpectedColumn, ExpectedForeignKey, ExpectedIndex, ExpectedSchema, ExpectedTable},
 };
-use crate::migration::m20260820_000000_control_baseline::ddl_statements;
+use crate::migration::baseline_contract::ddl_statements;
 
 pub(super) fn expected_schema() -> Result<ExpectedSchema, DbErr> {
     let mut schema = ExpectedSchema::default();

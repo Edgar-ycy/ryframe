@@ -10,72 +10,181 @@ description.workspace = true
 default-run = "ryframe"
 
 [dependencies]
-ryframe-kernel = { path = "../ryframe-kernel" }
-ryframe-config = { path = "../ryframe-config" }
-ryframe-db = { path = "../ryframe-db" }
-ryframe-tenant-db = { path = "../ryframe-tenant-db" }
-ryframe-adapters = { path = "../ryframe-adapters" }
-ryframe-application = { path = "../ryframe-application" }
-ryframe-api = { path = "../ryframe-api", default-features = false }
-ryframe-auth = { path = "../ryframe-auth" }
-axum = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
-tracing = { workspace = true }
-opentelemetry = { workspace = true }
-tracing-opentelemetry = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["env-filter", "json"]}
-tracing-appender = { workspace = true }
-sea-orm = { workspace = true}
-redis = { workspace = true }
-futures-util = { workspace = true }
+ryframe-kernel = { path = "../ryframe-kernel", optional = true }
+ryframe-config = { path = "../ryframe-config", optional = true }
+ryframe-db = { path = "../ryframe-db", default-features = false, optional = true }
+ryframe-tenant-db = { path = "../ryframe-tenant-db", default-features = false, optional = true }
+ryframe-adapters = { path = "../ryframe-adapters", default-features = false, optional = true }
+ryframe-application = { path = "../ryframe-application", default-features = false, optional = true }
+ryframe-api = { path = "../ryframe-api", default-features = false, optional = true }
+ryframe-auth = { path = "../ryframe-auth", optional = true }
+axum = { workspace = true, optional = true, features = ["http1", "tokio"] }
+tokio = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+opentelemetry = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
+tracing-subscriber = { workspace = true, optional = true, features = ["env-filter", "json"]}
+tracing-appender = { workspace = true, optional = true }
+sea-orm = { workspace = true, optional = true}
+redis = { workspace = true, optional = true }
+futures-util = { workspace = true, optional = true }
 md5 = { version = "0.8", optional = true }
 sha2 = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
 serde = { workspace = true, optional = true, features = ["derive"] }
-serde_json = { workspace = true }
-chrono = { workspace = true }
-async-trait = { workspace = true }
-zip = { workspace = true }
+serde_json = { workspace = true, optional = true }
+chrono = { workspace = true, optional = true }
+async-trait = { workspace = true, optional = true }
+zip = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
 
 [features]
-default = ["runtime-swagger-ui"]
-runtime-swagger-ui = ["ryframe-api/runtime-swagger-ui"]
-# 一次性文件维护工具必须显式启用，常规 API、Worker 和迁移命令不会携带旧 MD5 实现。
-file-maintenance = ["dep:md5", "dep:sha2", "dep:hex"]
-# 破坏性环境重建能力不进入常规二进制和生产镜像。
-destructive-reset = ["dep:sha2", "dep:hex", "dep:serde"]
+default = ["bin-api", "runtime-swagger-ui"]
+
+# 每个进程目标只启用自身的组合根与直接依赖。内部 runtime-* feature 仅用于复用清单。
+runtime-crypto = ["dep:ryframe-kernel", "dep:rustls"]
+runtime-database = [
+    "runtime-crypto",
+    "dep:ryframe-config",
+    "dep:ryframe-db",
+    "ryframe-db/connection",
+    "dep:ryframe-tenant-db",
+    "ryframe-tenant-db/connection",
+    "dep:sea-orm",
+    "dep:tokio",
+    "tokio/macros",
+    "tokio/rt-multi-thread",
+]
+runtime-services = [
+    "runtime-database",
+    "dep:ryframe-adapters",
+    "ryframe-adapters/monitoring",
+    "ryframe-adapters/otel",
+    "ryframe-adapters/redis-client",
+    "dep:ryframe-application",
+    "dep:ryframe-auth",
+    "ryframe-db/repositories",
+    "ryframe-db/telemetry",
+    "ryframe-tenant-db/repositories",
+    "dep:tracing",
+    "dep:opentelemetry",
+    "dep:tracing-opentelemetry",
+    "dep:tracing-subscriber",
+    "dep:tracing-appender",
+    "dep:redis",
+    "dep:futures-util",
+    "dep:serde_json",
+    "dep:chrono",
+    "dep:async-trait",
+    "dep:zip",
+    "tokio/net",
+    "tokio/signal",
+    "tokio/sync",
+    "tokio/time",
+]
+
+bin-api = [
+    "runtime-services",
+    "ryframe-adapters/image-processing",
+    "ryframe-adapters/redis-api",
+    "ryframe-adapters/spreadsheet",
+    "dep:ryframe-api",
+    "dep:axum",
+]
+bin-worker = [
+    "runtime-services",
+    "ryframe-adapters/spreadsheet",
+    "dep:axum",
+]
+bin-migrate = [
+    "runtime-database",
+    "ryframe-db/migration",
+    "ryframe-tenant-db/migration",
+]
+bin-tenant-data = [
+    "runtime-database",
+    "ryframe-db/repositories",
+    "ryframe-tenant-db/repositories",
+    "dep:chrono",
+]
+bin-file-maintenance = [
+    "runtime-crypto",
+    "dep:ryframe-config",
+    "dep:ryframe-db",
+    "ryframe-db/repositories",
+    "dep:ryframe-adapters",
+    "dep:sea-orm",
+    "dep:tokio",
+    "tokio/macros",
+    "tokio/rt-multi-thread",
+    "dep:md5",
+    "dep:sha2",
+    "dep:hex",
+    "dep:chrono",
+]
+bin-reset = [
+    "runtime-database",
+    "ryframe-db/migration",
+    "ryframe-tenant-db/migration",
+    "dep:ryframe-adapters",
+    "ryframe-adapters/redis-client",
+    "dep:ryframe-application",
+    "dep:ryframe-auth",
+    "dep:redis",
+    "dep:async-trait",
+    "dep:sha2",
+    "dep:hex",
+    "dep:serde",
+    "dep:serde_json",
+    "dep:chrono",
+]
+runtime-swagger-ui = ["ryframe-api?/runtime-swagger-ui"]
 
 [[bin]]
 name = "ryframe"
 path = "src/main.rs"
+required-features = ["bin-api"]
 test = false
 
 [[bin]]
 name = "ryframe-reset"
 path = "src/bin/ryframe_reset.rs"
-required-features = ["destructive-reset"]
+required-features = ["bin-reset"]
 test = false
 
 [[bin]]
 name = "ryframe-migrate"
 path = "src/bin/ryframe_migrate.rs"
+required-features = ["bin-migrate"]
 test = false
 
 [[bin]]
 name = "ryframe-tenant-data"
 path = "src/bin/ryframe_tenant_data.rs"
+required-features = ["bin-tenant-data"]
 test = false
 
 [[bin]]
 name = "ryframe-worker"
 path = "src/bin/ryframe_worker.rs"
+required-features = ["bin-worker"]
 test = false
 
 [[bin]]
 name = "ryframe-file-maintenance"
 path = "src/bin/ryframe_file_maintenance.rs"
-required-features = ["file-maintenance"]
+required-features = ["bin-file-maintenance"]
 test = false
+
+[[test]]
+name = "boot_contract"
+path = "tests/boot_contract.rs"
+required-features = ["bin-api"]
+
+[[test]]
+name = "reset_contract"
+path = "tests/reset_contract.rs"
+required-features = ["bin-reset"]
 
 [lints]
 workspace = true
