@@ -181,7 +181,7 @@ services:
       - edge
       - backend
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/readyz"]
+      test: ["CMD", "/usr/local/bin/ryframe", "--healthcheck"]
       interval: 15s
       timeout: 3s
       retries: 5
@@ -198,7 +198,7 @@ services:
       APP_DATABASE_MIGRATION_MODE: verify
       SNOWFLAKE_WORKER_ID: ${RYFRAME_WORKER_SNOWFLAKE_WORKER_ID:?必须设置唯一 Worker Snowflake 节点号}
     healthcheck:
-      test: ["CMD-SHELL", "curl --fail --silent \"http://127.0.0.1:$${APP_JOBS_HEALTH_PORT}/readyz\""]
+      test: ["CMD", "/usr/local/bin/ryframe-worker", "--healthcheck"]
       interval: 15s
       timeout: 3s
       retries: 5

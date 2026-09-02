@@ -18,6 +18,8 @@ use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
 #[path = "boot_contract/access_catalog_contract.rs"]
 mod access_catalog_contract;
+#[path = "boot_contract/healthcheck_contract.rs"]
+mod healthcheck_contract;
 #[path = "boot_contract/probe_startup_contract.rs"]
 mod probe_startup_contract;
 

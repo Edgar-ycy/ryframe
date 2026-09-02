@@ -23,9 +23,9 @@ EXPECTED_BASE_IMAGES = {
         "rust:1.97.1-bookworm@"
         "sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97"
     ),
-    "DEBIAN_IMAGE": (
-        "debian:13.6-slim@"
-        "sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132"
+    "RUNTIME_IMAGE": (
+        "gcr.io/distroless/cc-debian13:nonroot@"
+        "sha256:c31ff9abcb1910f3ab25c7957bdaf0bfe12a01eb546e8df2282f1c8f682b606c"
     ),
 }
 REPOSITORY_BLOB_PREFIX = "https://github.com/Edgar-ycy/ryframe/blob/main/"
@@ -139,6 +139,11 @@ def check_dockerfile(violations: list[str]) -> None:
     for forbidden in ("ryframe-generator", "ryframe-reset", "ryframe-db-reset"):
         if forbidden in source:
             violations.append(f"生产 Dockerfile 不得包含 {forbidden}")
+    for forbidden in ("apt-get", "curl", "useradd"):
+        if forbidden in source:
+            violations.append(f"最小运行镜像不得包含 {forbidden}")
+    if 'CMD ["/usr/local/bin/ryframe", "--healthcheck"]' not in source:
+        violations.append("生产镜像必须使用 API 内置健康检查")
 
 
 def check_online_generator(violations: list[str]) -> None:
@@ -157,6 +162,14 @@ def check_online_generator(violations: list[str]) -> None:
 
 def check_compose_fixture(violations: list[str]) -> None:
     compose = read(COMPOSE_FILE)
+    if "curl" in compose or "CMD-SHELL" in compose:
+        violations.append("生产 Compose 健康检查不得依赖 shell 或 curl")
+    for command in (
+        '["CMD", "/usr/local/bin/ryframe", "--healthcheck"]',
+        '["CMD", "/usr/local/bin/ryframe-worker", "--healthcheck"]',
+    ):
+        if command not in compose:
+            violations.append(f"生产 Compose 缺少内置健康检查: {command}")
     try:
         values = parse_env(FIXTURE_ENV)
     except (OSError, ValueError) as error:

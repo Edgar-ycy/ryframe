@@ -13,21 +13,27 @@ fn arguments(values: &[&str]) -> Vec<String> {
 fn probe_modes_are_explicit_and_keep_normal_modes() {
     let serve = parse_api_run_mode(&[]).unwrap();
     let api_probe = parse_api_run_mode(&arguments(&["--probe"])).unwrap();
+    let api_healthcheck = parse_api_run_mode(&arguments(&["--healthcheck"])).unwrap();
     assert_eq!(serve, ApiRunMode::Serve);
     assert!(serve.starts_background_tasks());
     assert_eq!(api_probe, ApiRunMode::Probe);
     assert!(!api_probe.starts_background_tasks());
+    assert_eq!(api_healthcheck, ApiRunMode::Healthcheck);
+    assert!(!api_healthcheck.starts_background_tasks());
     assert!(parse_api_run_mode(&arguments(&["--probe", "extra"])).is_err());
 
     let continuous = parse_worker_run_mode(&[]).unwrap();
     let once = parse_worker_run_mode(&arguments(&["--once"])).unwrap();
     let worker_probe = parse_worker_run_mode(&arguments(&["--probe"])).unwrap();
+    let worker_healthcheck = parse_worker_run_mode(&arguments(&["--healthcheck"])).unwrap();
     assert_eq!(continuous, WorkerRunMode::Continuous);
     assert!(continuous.allows_initialization_writes());
     assert_eq!(once, WorkerRunMode::Once);
     assert!(once.allows_initialization_writes());
     assert_eq!(worker_probe, WorkerRunMode::Probe);
     assert!(!worker_probe.allows_initialization_writes());
+    assert_eq!(worker_healthcheck, WorkerRunMode::Healthcheck);
+    assert!(!worker_healthcheck.allows_initialization_writes());
     assert!(parse_worker_run_mode(&arguments(&["--probe", "extra"])).is_err());
 }
 

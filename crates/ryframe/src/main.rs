@@ -50,9 +50,14 @@ struct ApiRuntime {
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
+    let arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    let run_mode = boot::startup::parse_api_run_mode(&arguments)?;
+    if run_mode == boot::startup::ApiRunMode::Healthcheck {
+        return ryframe::healthcheck::probe_from_env("APP_APP_PORT", 8080);
+    }
     ryframe::crypto::install_crypto_provider()?;
     install_process_hooks()?;
-    let startup = load_startup()?;
+    let startup = load_startup(run_mode)?;
     let (_logger_guard, _telemetry_guard) = boot::logging::init(&startup.config)?;
     tracing::info!(environment = %startup.config.environment, "configuration loaded");
     if startup.starts_background_tasks() {
@@ -95,9 +100,7 @@ fn install_process_hooks() -> Result<(), AppError> {
     Ok(())
 }
 
-fn load_startup() -> Result<ApiStartup, AppError> {
-    let run_mode =
-        boot::startup::parse_api_run_mode(&std::env::args().skip(1).collect::<Vec<_>>())?;
+fn load_startup(run_mode: boot::startup::ApiRunMode) -> Result<ApiStartup, AppError> {
     let environment = Environment::from_env()?;
     let config = AppConfig::load_from_env(environment)?;
     if run_mode == boot::startup::ApiRunMode::Probe && config.environment.is_production() {

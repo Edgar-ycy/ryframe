@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- 生产运行层改为固定摘要的 Distroless Debian 13，移除 shell、包管理器和 `curl`；API 与 Worker 新增内置 `--healthcheck`，避免基础镜像无补丁系统包阻塞高危漏洞门禁。
 - 修复真实全栈 CI 使用最小 `bin-api` 构建时仍启用 API 文档，导致应用在就绪前退出；该流程不再编译无关的 Swagger UI。
 - 修复 Cargo CycloneDX 自定义文件名重复追加 `.json`，导致扩展门禁无法收集后端 SBOM。
 - 将生产运行镜像升级到固定摘要的 Debian 13.6 slim，消除旧 Debian 12.15 系统包触发的高危与严重漏洞门禁失败。

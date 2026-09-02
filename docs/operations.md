@@ -2,7 +2,7 @@
 
 ## 部署与发布
 
-生产镜像包含 API、迁移和 Worker 二进制，不包含生成器、文件维护或 reset。部署前复制 `deploy/.env.production.example`，在受控环境中填写镜像摘要、服务地址、`APP_SCOPE_ID` 和各密钥文件路径。
+生产镜像使用固定摘要的 Distroless Debian 13 运行层，只包含 API、迁移、Worker 及其运行依赖，不带 shell、包管理器、`curl`、生成器、文件维护或 reset。API 与 Worker 由自身的 `--healthcheck` 命令探测本机 `/readyz`。部署前复制 `deploy/.env.production.example`，在受控环境中填写镜像摘要、服务地址、`APP_SCOPE_ID` 和各密钥文件路径。
 
 先展开 Compose 配置检查最终变量和挂载，再启动服务：
 

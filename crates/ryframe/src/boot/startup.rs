@@ -6,6 +6,7 @@ use ryframe_kernel::AppError;
 pub enum ApiRunMode {
     Serve,
     Probe,
+    Healthcheck,
 }
 
 impl ApiRunMode {
@@ -18,7 +19,10 @@ pub fn parse_api_run_mode(arguments: &[String]) -> Result<ApiRunMode, AppError> 
     match arguments {
         [] => Ok(ApiRunMode::Serve),
         [command] if command == "--probe" => Ok(ApiRunMode::Probe),
-        _ => Err(AppError::Config("用法: ryframe [--probe]".into())),
+        [command] if command == "--healthcheck" => Ok(ApiRunMode::Healthcheck),
+        _ => Err(AppError::Config(
+            "用法: ryframe [--probe|--healthcheck]".into(),
+        )),
     }
 }
 
@@ -27,11 +31,12 @@ pub enum WorkerRunMode {
     Continuous,
     Once,
     Probe,
+    Healthcheck,
 }
 
 impl WorkerRunMode {
     pub const fn allows_initialization_writes(self) -> bool {
-        !matches!(self, Self::Probe)
+        matches!(self, Self::Continuous | Self::Once)
     }
 }
 
@@ -40,8 +45,9 @@ pub fn parse_worker_run_mode(arguments: &[String]) -> Result<WorkerRunMode, AppE
         [] => Ok(WorkerRunMode::Continuous),
         [command] if command == "--once" => Ok(WorkerRunMode::Once),
         [command] if command == "--probe" => Ok(WorkerRunMode::Probe),
+        [command] if command == "--healthcheck" => Ok(WorkerRunMode::Healthcheck),
         _ => Err(AppError::Config(
-            "用法: ryframe-worker [--once|--probe]".into(),
+            "用法: ryframe-worker [--once|--probe|--healthcheck]".into(),
         )),
     }
 }

@@ -63,8 +63,13 @@ struct WorkerRuntime {
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
+    let arguments = std::env::args().skip(1).collect::<Vec<_>>();
+    let run_mode = process_startup::parse_worker_run_mode(&arguments)?;
+    if run_mode == process_startup::WorkerRunMode::Healthcheck {
+        return ryframe::healthcheck::probe_from_env("APP_JOBS_HEALTH_PORT", 9091);
+    }
     ryframe::crypto::install_crypto_provider()?;
-    let startup = load_startup()?;
+    let startup = load_startup(run_mode)?;
     let (_logger_guard, telemetry_guard) = process_logging::init(&startup.config)?;
     if startup.run_mode.allows_initialization_writes() {
         ryframe_adapters::metrics::spawn_process_metrics_updater();
@@ -74,18 +79,17 @@ async fn main() -> Result<(), AppError> {
         process_startup::WorkerRunMode::Once => run_once(runtime, &startup).await?,
         process_startup::WorkerRunMode::Probe => run_probe(runtime, &startup).await?,
         process_startup::WorkerRunMode::Continuous => run_continuous(runtime, &startup).await?,
+        process_startup::WorkerRunMode::Healthcheck => unreachable!("健康检查已在启动前返回"),
     }
     telemetry_guard.shutdown();
     Ok(())
 }
 
-fn load_startup() -> Result<WorkerStartup, AppError> {
+fn load_startup(run_mode: process_startup::WorkerRunMode) -> Result<WorkerStartup, AppError> {
     ryframe_application::set_audit_failure_hook(ryframe_adapters::metrics::record_audit_failure);
     ryframe_application::set_authorization_cache_lookup_hook(
         ryframe_adapters::metrics::record_authorization_cache_lookup,
     );
-    let run_mode =
-        process_startup::parse_worker_run_mode(&std::env::args().skip(1).collect::<Vec<_>>())?;
     let environment = Environment::from_env()?;
     let config = AppConfig::load_from_env(environment)?;
     if run_mode == process_startup::WorkerRunMode::Probe && config.environment.is_production() {

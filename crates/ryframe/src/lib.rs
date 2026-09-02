@@ -13,6 +13,8 @@ pub mod boot;
     feature = "bin-reset",
 ))]
 pub mod crypto;
+#[cfg(any(feature = "bin-api", feature = "bin-worker"))]
+pub mod healthcheck;
 
 #[cfg(feature = "bin-reset")]
 pub mod reset;
