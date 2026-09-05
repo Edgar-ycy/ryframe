@@ -72,18 +72,15 @@ pub(crate) use entities::{
     dict_type, export_job, job_schedule, job_schedule_execution, login_info, menu, message,
     message_audience, message_recipient, oper_log, outbox_event, password_reset_request,
     permission, product_plan, product_plan_capability, product_plan_version, role, role_dept,
-    role_permission, service_access_audit, service_account, service_account_role,
-    service_credential, service_delegation, service_delegation_capability, sys_file, tenant, user,
-    user_import_job, user_import_row_result, user_role,
+    role_permission, sys_file, tenant, user, user_import_job, user_import_row_result, user_role,
 };
 #[allow(unused_imports)]
 #[cfg(feature = "repositories")]
 pub(crate) use repositories::{
-    AgentDictionaryPage, AgentQueryPage, AgentQueryRepository, AgentRowScope, BackgroundJobFilter,
-    BackgroundJobRepository, BackgroundJobStats, BackgroundJobTypeStats, CONFIG_CACHE_NAMESPACE,
-    CacheNamespaceVersionRepository, ConfigFilter, ConfigRepository, CreateExportJob,
-    CreateTenantDataMigration, CreateUserImportJob, DataRetentionRepository, DeptRepository,
-    DictDataRepository, DictTypeFilter, DictTypeRepository, EnqueueBackgroundJob,
+    BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, BackgroundJobTypeStats,
+    CONFIG_CACHE_NAMESPACE, CacheNamespaceVersionRepository, ConfigFilter, ConfigRepository,
+    CreateExportJob, CreateTenantDataMigration, CreateUserImportJob, DataRetentionRepository,
+    DeptRepository, DictDataRepository, DictTypeFilter, DictTypeRepository, EnqueueBackgroundJob,
     EnqueueBackgroundJobResult, ExpiredLeaseRecovery, ExportJobRepository, ExportStartDisposition,
     FailBackgroundJob, FileRepository, JobFailureDisposition, JobScheduleExecutionFilter,
     JobScheduleFilter, JobScheduleRepository, LoginInfoFilter, LoginInfoRepository,
@@ -95,13 +92,11 @@ pub(crate) use repositories::{
     PublishMessageCommand, PublishedMessage, RecipientMessage, RecipientMessagePage,
     RecordOutboxEvent, RegisterTenantDataBackupPoint, RetentionCleanupResult, RetentionCutoff,
     RetentionResource, RoleFilter, RoleRepository, ScheduleOverviewStats,
-    ServiceAccessAuditRepository, ServiceAccountLock, ServiceAccountRepository,
-    ServiceAuthorizationRepository, ServiceAuthorizationSnapshot, ServiceCredentialRepository,
-    ServiceDelegationRepository, TenantConfigTransferRepository, TenantConfigurationFence,
-    TenantDataRepository, TenantOperationLeaseRepository, TenantProductBundle,
-    TenantProvisioningRepository, TenantRepository, TenantUsageAggregate, TenantUsagePageFilter,
-    TenantUsageRepository, UserFilter, UserImportArtifact, UserImportFilter, UserImportRepository,
-    UserRepository, ValidatedTenantDataBackup, database_utc_now, validate_cache_namespace,
+    TenantConfigTransferRepository, TenantConfigurationFence, TenantDataRepository,
+    TenantOperationLeaseRepository, TenantProductBundle, TenantProvisioningRepository,
+    TenantRepository, TenantUsageAggregate, TenantUsagePageFilter, TenantUsageRepository,
+    UserFilter, UserImportArtifact, UserImportFilter, UserImportRepository, UserRepository,
+    ValidatedTenantDataBackup, database_utc_now, validate_cache_namespace,
 };
 #[cfg(feature = "repositories")]
 pub mod application_ports;

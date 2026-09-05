@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use chrono::Duration as ChronoDuration;
 use ryframe_kernel::{AppError, AppResult};
@@ -287,67 +287,6 @@ impl TenantConfigTransferPolicy {
     }
 }
 
-/// 服务账号管理和 Agent 查询共用的安全上限。
-#[derive(Clone, Copy, Debug)]
-pub struct ServiceAccountPolicy {
-    pub(crate) enabled: bool,
-    pub(crate) max_active_credentials: u32,
-    pub(crate) max_credential_days: u32,
-    pub(crate) default_delegation_hours: u32,
-    pub(crate) max_delegation_days: u32,
-    pub(crate) default_requests_per_minute: u32,
-    pub(crate) max_concurrent_queries: u32,
-    pub(crate) query_timeout_ms: u64,
-    pub(crate) max_page_size: u64,
-    pub(crate) max_response_bytes: usize,
-}
-
-impl ServiceAccountPolicy {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        enabled: bool,
-        max_active_credentials: u32,
-        max_credential_days: u32,
-        default_delegation_hours: u32,
-        max_delegation_days: u32,
-        default_requests_per_minute: u32,
-        max_concurrent_queries: u32,
-        query_timeout_ms: u64,
-        max_page_size: u64,
-        max_response_bytes: usize,
-    ) -> AppResult<Self> {
-        if max_active_credentials == 0
-            || max_credential_days == 0
-            || default_delegation_hours == 0
-            || max_delegation_days == 0
-            || u64::from(default_delegation_hours) > u64::from(max_delegation_days) * 24
-            || default_requests_per_minute == 0
-            || max_concurrent_queries == 0
-            || query_timeout_ms == 0
-            || max_page_size == 0
-            || max_response_bytes == 0
-        {
-            return Err(AppError::Config("服务账号运行策略无效".into()));
-        }
-        Ok(Self {
-            enabled,
-            max_active_credentials,
-            max_credential_days,
-            default_delegation_hours,
-            max_delegation_days,
-            default_requests_per_minute,
-            max_concurrent_queries,
-            query_timeout_ms,
-            max_page_size,
-            max_response_bytes,
-        })
-    }
-
-    pub const fn enabled(self) -> bool {
-        self.enabled
-    }
-}
-
 /// 多租户启停只在用例边界表达，不携带配置加载细节。
 #[derive(Clone, Copy, Debug)]
 pub struct MultiTenancyPolicy {
@@ -365,55 +304,6 @@ impl MultiTenancyPolicy {
 
     pub fn allows_tenant(self, tenant_id: &str) -> bool {
         self.enabled || tenant_id == "system"
-    }
-}
-
-/// 已解码并完成校验的服务账号 Pepper 版本集合。
-///
-/// 该类型不实现 `Debug` 或序列化，避免密钥进入日志。
-pub struct PepperKeyring {
-    active_version: i32,
-    peppers: BTreeMap<i32, Vec<u8>>,
-}
-
-impl PepperKeyring {
-    pub fn new(active_version: i32, peppers: BTreeMap<i32, Vec<u8>>) -> AppResult<Self> {
-        if active_version <= 0
-            || peppers.is_empty()
-            || !peppers.contains_key(&active_version)
-            || peppers
-                .iter()
-                .any(|(version, key)| *version <= 0 || key.len() < 32)
-        {
-            return Err(AppError::Config("Pepper Keyring 无效".into()));
-        }
-        Ok(Self {
-            active_version,
-            peppers,
-        })
-    }
-
-    pub const fn active_version(&self) -> i32 {
-        self.active_version
-    }
-
-    pub fn active(&self) -> (i32, &[u8]) {
-        (
-            self.active_version,
-            self.peppers
-                .get(&self.active_version)
-                .expect("活动 Pepper 已在构造时校验"),
-        )
-    }
-
-    pub fn get(&self, version: i32) -> Option<&[u8]> {
-        self.peppers.get(&version).map(Vec::as_slice)
-    }
-
-    pub fn iter(&self) -> impl ExactSizeIterator<Item = (i32, &[u8])> {
-        self.peppers
-            .iter()
-            .map(|(version, key)| (*version, key.as_slice()))
     }
 }
 

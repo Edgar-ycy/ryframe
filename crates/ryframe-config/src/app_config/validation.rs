@@ -183,7 +183,6 @@ impl AppConfig {
         self.tenant_config_transfer
             .validate(self.upload.file_max_bytes)
             .map_err(AppError::Config)?;
-        self.service_accounts.validate().map_err(AppError::Config)?;
         self.telemetry.validate().map_err(AppError::Config)?;
         self.messaging.validate().map_err(AppError::Config)?;
         let access_ttl =
@@ -198,16 +197,6 @@ impl AppConfig {
         if refresh_ttl > 7 * 24 * 60 * 60 {
             return Err(AppError::Config(
                 "auth.refresh_token_expire cannot exceed the 7-day absolute session limit".into(),
-            ));
-        }
-        if self.service_accounts.enabled
-            && !self
-                .redis
-                .as_ref()
-                .is_some_and(|redis| redis.mode == RedisMode::Required)
-        {
-            return Err(AppError::Config(
-                "启用 service_accounts 时要求 redis.mode = \"required\"".into(),
             ));
         }
         if self.environment.is_production()
@@ -230,11 +219,6 @@ impl AppConfig {
             return Err(AppError::Config(
                 "production requires redis.mode = \"required\"".into(),
             ));
-        }
-        if self.environment.is_production() && self.service_accounts.enabled {
-            self.service_accounts
-                .load_pepper_keyring(jwt_secret)
-                .map_err(AppError::Config)?;
         }
         if let Some(redis) = &self.redis {
             if !redis.has_scope_id(&self.scope_id) {

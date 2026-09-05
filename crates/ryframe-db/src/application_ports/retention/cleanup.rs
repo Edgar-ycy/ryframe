@@ -102,7 +102,6 @@ const fn to_database_resource(resource: RetentionResource) -> DatabaseResource {
         RetentionResource::OperationLogs => DatabaseResource::OperationLogs,
         RetentionResource::LoginLogs => DatabaseResource::LoginLogs,
         RetentionResource::UserImports => DatabaseResource::UserImports,
-        RetentionResource::ServiceAccessAudits => DatabaseResource::ServiceAccessAudits,
         RetentionResource::RetentionRuns => DatabaseResource::RetentionRuns,
     }
 }

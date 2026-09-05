@@ -1,8 +1,6 @@
 use ryframe_kernel::{AppError, AppResult};
 use serde_json::Value;
 
-pub const SERVICE_ACCOUNTS_CAPABILITY: &str = "system.service_accounts";
-
 pub type CapabilityConfigValidator = fn(&Value) -> AppResult<()>;
 
 #[derive(Clone, Copy)]
@@ -28,40 +26,8 @@ pub struct CapabilityDescriptor {
     pub variants: &'static [CapabilityVariantDescriptor],
 }
 
-const SERVICE_ACCOUNT_PERMISSIONS: &[&str] = &[
-    "system:service-account:list",
-    "system:service-account:add",
-    "system:service-account:edit",
-    "system:service-account:remove",
-    "system:service-account:role",
-    "system:service-account:key-rotate",
-    "system:service-account:key-revoke",
-    "system:service-delegation:list",
-    "system:service-delegation:revoke",
-    "system:service-access-audit:list",
-];
-
-const SERVICE_ACCOUNT_VARIANTS: &[CapabilityVariantDescriptor] = &[CapabilityVariantDescriptor {
-    code: "default",
-    schema_version: 1,
-    validate: validate_empty_config,
-}];
-
-/// 编译进当前二进制的唯一能力目录；数据库只能引用这里存在的稳定能力代码。
-pub const CAPABILITY_CATALOG: &[CapabilityDescriptor] = &[CapabilityDescriptor {
-    code: SERVICE_ACCOUNTS_CAPABILITY,
-    name: "服务账号",
-    description: "服务账号、API Key、用户委托与服务访问审计",
-    affects_authorization: true,
-    dependencies: &[],
-    conflicts: &[],
-    route_keys: &["system.service-accounts"],
-    permission_codes: SERVICE_ACCOUNT_PERMISSIONS,
-    default_admin_permissions: SERVICE_ACCOUNT_PERMISSIONS,
-    deployment_dependencies: &["service_accounts.enabled", "redis"],
-    client_config_fields: &[],
-    variants: SERVICE_ACCOUNT_VARIANTS,
-}];
+/// 当前部署没有可选业务能力；套餐和租户始终支持合法的空能力集合。
+pub const CAPABILITY_CATALOG: &[CapabilityDescriptor] = &[];
 
 pub fn capability_descriptor(code: &str) -> AppResult<&'static CapabilityDescriptor> {
     CAPABILITY_CATALOG
@@ -113,14 +79,4 @@ pub fn project_client_config(descriptor: &CapabilityDescriptor, config: &Value) 
             })
             .collect(),
     )
-}
-
-fn validate_empty_config(config: &Value) -> AppResult<()> {
-    if config.as_object().is_some_and(serde_json::Map::is_empty) {
-        Ok(())
-    } else {
-        Err(AppError::Validation(
-            "system.service_accounts/default schema v1 只接受严格空 JSON 对象".into(),
-        ))
-    }
 }

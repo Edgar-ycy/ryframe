@@ -20,7 +20,6 @@ mod product;
 mod product_capability_catalog;
 mod profile;
 mod role;
-mod service_account;
 mod tenant;
 mod user;
 mod user_import;

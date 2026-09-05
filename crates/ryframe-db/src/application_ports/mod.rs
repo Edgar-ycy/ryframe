@@ -1,4 +1,3 @@
-pub mod agent;
 pub mod audit;
 pub mod auth;
 pub mod authorization;
@@ -7,7 +6,6 @@ pub mod files;
 pub mod jobs;
 pub mod product;
 pub mod retention;
-pub mod service_accounts;
 pub mod system;
 pub mod tenant_config;
 pub mod tenants;

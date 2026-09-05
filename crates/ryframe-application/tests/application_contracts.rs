@@ -15,8 +15,6 @@ fn ensure_test_id_generator() {
     });
 }
 
-#[path = "application_contracts/agent_contract.rs"]
-mod agent_contract;
 #[path = "application_contracts/export_execution_contract.rs"]
 mod export_execution_contract;
 #[path = "application_contracts/export_request_contract.rs"]

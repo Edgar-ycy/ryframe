@@ -152,17 +152,6 @@ mod artifact_store {
     }
 }
 
-mod agent_limiter {
-    use ryframe::boot::agent_limiter::*;
-
-    #[test]
-    fn digest_separates_dimensions_and_values() {
-        assert_ne!(digest_key("tenant", "12"), digest_key("tenant1", "2"));
-        assert_ne!(digest_key("tenant", "12"), digest_key("account", "12"));
-        assert!(digest_key("tenant", "12").starts_with("ryframe:agent-limit:tenant:"));
-    }
-}
-
 mod message_listener {
     use ryframe::boot::message_listener::*;
 
@@ -433,8 +422,6 @@ mod service_domains {
                 "product",
                 "tenant_data",
                 "tenant_usage",
-                "service_accounts",
-                "agent",
                 "tenant_config_transfer",
                 "tenant_data_migration",
                 "authorization_diagnostic",

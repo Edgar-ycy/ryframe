@@ -50,10 +50,6 @@ const PRODUCT_SEED_STATEMENTS: &[&str] = &[
          (1, 1, 1, '标准版 v1', '标准版初始能力集合', 'published', 1, 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)), \
          (2, 2, 1, '平台版 v1', '平台控制面初始能力集合', 'published', 1, 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)) \
          ON DUPLICATE KEY UPDATE `id` = `id`",
-    "INSERT INTO `sys_product_plan_capability` \
-         (`plan_version_id`, `capability_code`, `variant_code`, `schema_version`, `config`, `created_at`, `updated_at`) VALUES \
-         (2, 'system.service_accounts', 'default', 1, JSON_OBJECT(), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)) \
-         ON DUPLICATE KEY UPDATE `plan_version_id` = `plan_version_id`",
     "INSERT INTO `sys_tenant_product_plan` \
          (`tenant_id`, `plan_version_id`, `changed_by`, `change_reason`, `created_at`, `updated_at`) \
          SELECT `tenant_id`, IF(`tenant_id` = 'system', 2, 1), NULL, 'fresh_baseline', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) \

@@ -3252,7 +3252,6 @@ dependencies = [
  "futures-util",
  "hex",
  "hmac",
- "rand 0.10.1",
  "ryframe-auth",
  "ryframe-kernel",
  "serde",

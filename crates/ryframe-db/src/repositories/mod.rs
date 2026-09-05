@@ -5,7 +5,6 @@ use crate::DbResultExt;
 use ryframe_kernel::{AppError, AppResult, ExportQuerySnapshot};
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QuerySelect, Select, sea_query::Expr};
 
-pub mod agent_query_repo;
 pub mod background_job_repo;
 pub mod cache_namespace_version_repo;
 pub mod config_repo;
@@ -28,11 +27,6 @@ pub mod permission_repo;
 pub mod post_export_repo;
 pub mod product_repo;
 pub mod role_repo;
-pub mod service_access_audit_repo;
-pub mod service_account_repo;
-pub mod service_authorization_repo;
-pub mod service_credential_repo;
-pub mod service_delegation_repo;
 pub mod tenant_config_transfer_repo;
 pub mod tenant_data_repo;
 pub mod tenant_operation_lease_repo;
@@ -42,9 +36,6 @@ pub mod tenant_usage_repo;
 pub mod user_import_repo;
 pub mod user_repo;
 
-pub use agent_query_repo::{
-    AgentDictionaryPage, AgentQueryPage, AgentQueryRepository, AgentRowScope,
-};
 pub use background_job_repo::{
     BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, BackgroundJobTypeStats,
     EnqueueBackgroundJob, EnqueueBackgroundJobResult, ExpiredLeaseRecovery, FailBackgroundJob,
@@ -81,13 +72,6 @@ pub use permission_repo::PermissionRepository;
 pub use post_export_repo::{PostExportFilter, PostExportRepository};
 pub use product_repo::{ProductPlanVersionBundle, ProductRepository, TenantProductBundle};
 pub use role_repo::{RoleFilter, RoleRepository};
-pub use service_access_audit_repo::ServiceAccessAuditRepository;
-pub use service_account_repo::{ServiceAccountLock, ServiceAccountRepository};
-pub use service_authorization_repo::{
-    ServiceAuthorizationRepository, ServiceAuthorizationSnapshot,
-};
-pub use service_credential_repo::ServiceCredentialRepository;
-pub use service_delegation_repo::ServiceDelegationRepository;
 pub use tenant_config_transfer_repo::{TenantConfigTransferRepository, TenantConfigurationFence};
 pub use tenant_data_repo::{
     CreateTenantDataMigration, RegisterTenantDataBackupPoint, TenantDataRepository,

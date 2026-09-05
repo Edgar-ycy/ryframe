@@ -15,8 +15,7 @@ use crate::{
 };
 
 use super::product_capability_catalog::{
-    CAPABILITY_CATALOG, SERVICE_ACCOUNTS_CAPABILITY, project_client_config,
-    validate_capability_snapshot,
+    CAPABILITY_CATALOG, project_client_config, validate_capability_snapshot,
 };
 
 const SYSTEM_TENANT_ID: &str = "system";
@@ -42,7 +41,6 @@ pub struct ProductService {
     read: Arc<dyn ProductReadPort>,
     write: Arc<dyn ProductWritePort>,
     authorization_cache: AuthorizationCache,
-    service_accounts_deployment_available: bool,
 }
 
 impl ProductService {
@@ -50,13 +48,11 @@ impl ProductService {
         read: Arc<dyn ProductReadPort>,
         write: Arc<dyn ProductWritePort>,
         authorization_cache: AuthorizationCache,
-        service_accounts_deployment_available: bool,
     ) -> Self {
         Self {
             read,
             write,
             authorization_cache,
-            service_accounts_deployment_available,
         }
     }
 

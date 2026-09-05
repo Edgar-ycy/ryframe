@@ -11,8 +11,6 @@
 
 pub mod access_catalog;
 #[cfg(feature = "bin-api")]
-pub mod agent_limiter;
-#[cfg(feature = "bin-api")]
 pub mod app_state;
 pub mod application_policy;
 pub mod artifact_store;

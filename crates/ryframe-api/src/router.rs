@@ -39,21 +39,6 @@ struct AuthenticatedTenantRateLimitState {
     config: Arc<crate::settings::RateLimitSettings>,
 }
 
-#[derive(Clone)]
-struct CapabilityGuardState {
-    app: AppState,
-    capability_code: &'static str,
-}
-
-impl CapabilityGuardState {
-    const fn new(app: AppState, capability_code: &'static str) -> Self {
-        Self {
-            app,
-            capability_code,
-        }
-    }
-}
-
 async fn authenticated_tenant_rate_limit(
     State(state): State<AuthenticatedTenantRateLimitState>,
     request: Request,
@@ -162,27 +147,6 @@ async fn tenant_context_headers(
             .insert(HeaderName::from_static(name), value);
     }
     Ok(response)
-}
-
-/// 通用能力门禁位于具体路由 RBAC 外层：部署 501 → 租户能力 403 → RBAC 403。
-async fn capability_guard(
-    State(state): State<CapabilityGuardState>,
-    request: Request,
-    next: Next,
-) -> Result<Response, HttpAppError> {
-    let tenant_id = request
-        .extensions()
-        .get::<RequestPrincipal>()
-        .map(|principal| principal.tenant_id.clone())
-        .ok_or_else(|| AppError::Authentication("未认证，请先登录".into()))?;
-    state
-        .app
-        .services
-        .platform
-        .product
-        .require_capability(&tenant_id, state.capability_code)
-        .await?;
-    Ok(next.run(request).await)
 }
 
 async fn auth_no_store(request: Request, next: Next) -> Response {
@@ -394,14 +358,6 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         router = router.nest("/platform", platform);
     }
 
-    let profile_delegations = protect(
-        domains::profile::service_delegations(state.clone()).layer(from_fn_with_state(
-            OperLogMiddlewareState::new_arc(state.services.operations.audit_outbox.clone()),
-            oper_log_middleware,
-        )),
-        &state,
-    );
-    router = router.nest("/profile/service-delegations", profile_delegations);
     if state.settings.api_docs_enabled {
         router = router.route(
             "/api-docs/openapi.json",

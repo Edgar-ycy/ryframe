@@ -12,12 +12,11 @@ pub enum RetentionResource {
     OperationLogs,
     LoginLogs,
     UserImports,
-    ServiceAccessAudits,
     RetentionRuns,
 }
 
 impl RetentionResource {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 8] = [
         Self::BackgroundJobs,
         Self::OutboxEvents,
         Self::ScheduleExecutions,
@@ -25,7 +24,6 @@ impl RetentionResource {
         Self::OperationLogs,
         Self::LoginLogs,
         Self::UserImports,
-        Self::ServiceAccessAudits,
         Self::RetentionRuns,
     ];
 
@@ -38,7 +36,6 @@ impl RetentionResource {
             Self::OperationLogs => "operation_logs",
             Self::LoginLogs => "login_logs",
             Self::UserImports => "user_imports",
-            Self::ServiceAccessAudits => "service_access_audits",
             Self::RetentionRuns => "retention_runs",
         }
     }

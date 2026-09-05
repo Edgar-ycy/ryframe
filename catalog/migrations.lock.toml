@@ -9,13 +9,13 @@ target = "m20260820_000000_control_baseline"
 
 [[files]]
 path = "crates/ryframe-db/src/migration/m20260820_000000_control_baseline/mod.rs"
-sha256 = "3d3d494838229ee057d156d30d2a11d42cc2bf08a82f34b4b4606b4b43afc08e"
+sha256 = "906618a6b745c1f3dd9332d53dcc242b3d783f1e337208825ff474d2b729e5b9"
 storage = "control"
 target = "m20260820_000000_control_baseline"
 
 [[files]]
 path = "crates/ryframe-db/src/migration/m20260820_000000_control_baseline/schema.rs"
-sha256 = "a3519832e1e71a40ffe0e9cef3575d85e873fbf67f2f3ddb8a1fd900015c53c2"
+sha256 = "d1bb6746219c68660f44b1470b7951de37062f9b0d0d65d0ddc13dceaa8c4428"
 storage = "control"
 target = "m20260820_000000_control_baseline"
 

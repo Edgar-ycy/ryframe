@@ -57,7 +57,7 @@ Worker 的健康状态模型与数据库监控端口位于 application，不依�
 `ryframe-application::system` 按业务分为四个入口：
 
 - `identity`：用户、角色、权限、部门、档案、导入、验证码和 WebSocket ticket；
-- `platform`：租户、产品、服务账号和授权诊断；
+- `platform`：租户、产品和授权诊断；
 - `content`：配置、字典、公告、文件、选项和标准内容资源；
 - `operations`：消息、导出、审计日志、登录日志、在线用户、监控和保留策略。
 

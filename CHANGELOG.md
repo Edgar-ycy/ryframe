@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Removed
+
+- 完整移除 Agent 查询、用户委托和服务账号管理的后端实现、23 个 operation、专属配置、密钥装配和六张数据表；保留其余业务能力及完整历史记录。
+
 ### Changed
 
 - 后端开发自动化统一为 `cargo xtask dev|check|build|generate|data` 五类入口；CI、性能、生成器和数据维护能力按职责归入同一命令树，并移除旧 Cargo alias。

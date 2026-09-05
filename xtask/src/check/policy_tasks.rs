@@ -37,7 +37,7 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
         script: "scripts/check_deployment_assets.py",
         full_order: Some(1),
         smart_order: None,
-        ci_preflight_order: Some(4),
+        ci_preflight_order: Some(5),
     },
     PythonPolicyTask {
         id: "migration-history",
@@ -61,9 +61,16 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
         ci_preflight_order: Some(3),
     },
     PythonPolicyTask {
+        id: "removed-identity",
+        script: "scripts/check_removed_identity.py",
+        full_order: Some(5),
+        smart_order: Some(3),
+        ci_preflight_order: Some(4),
+    },
+    PythonPolicyTask {
         id: "supply-chain",
         script: "scripts/check_supply_chain.py",
-        full_order: Some(5),
+        full_order: Some(6),
         smart_order: None,
         ci_preflight_order: Some(1),
     },

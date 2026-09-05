@@ -143,8 +143,8 @@ fn generated_resource_access_is_owned_once_by_the_merged_seed_catalog() {
 #[test]
 fn review_snapshot_matches_the_fresh_schema() {
     let snapshot = mysql_snapshot_sql();
-    assert!(snapshot.contains("schema fingerprint: 595a420d869c5fdb"));
-    assert_eq!(snapshot.matches("CREATE TABLE IF NOT EXISTS").count(), 51);
+    assert!(snapshot.contains("schema fingerprint: 1256b142b5dfaaf1"));
+    assert_eq!(snapshot.matches("CREATE TABLE IF NOT EXISTS").count(), 45);
     for required in [
         "`sys_background_job`",
         "`payload_version`",
@@ -253,6 +253,6 @@ fn baseline_table_set_and_schema_fingerprint_are_stable() {
     tables.sort_unstable();
     tables.dedup();
     assert_eq!(tables.len(), count);
-    assert_eq!(count, 51);
-    assert_eq!(schema_fingerprint(), "595a420d869c5fdb");
+    assert_eq!(count, 45);
+    assert_eq!(schema_fingerprint(), "1256b142b5dfaaf1");
 }

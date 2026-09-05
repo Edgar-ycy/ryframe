@@ -1,4 +1,3 @@
-pub mod agent_handler;
 pub mod auth_handler;
 pub mod authorization_diagnostic_handler;
 pub mod captcha_handler;
@@ -22,8 +21,6 @@ pub mod profile_handler;
 pub mod retention_handler;
 pub mod role_handler;
 pub mod schedule_handler;
-pub mod service_account_handler;
-pub mod service_delegation_profile_handler;
 pub mod tenant_config_handler;
 pub mod tenant_data_handler;
 pub mod tenant_handler;

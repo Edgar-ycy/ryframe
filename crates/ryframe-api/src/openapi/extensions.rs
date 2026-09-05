@@ -32,28 +32,6 @@ pub(super) fn configure_security_schemes(openapi: &mut utoipa::openapi::OpenApi)
                 ),
             ),
         );
-        components.add_security_scheme(
-            "ryframeApiKey",
-            utoipa::openapi::security::SecurityScheme::ApiKey(
-                utoipa::openapi::security::ApiKey::Header(
-                    utoipa::openapi::security::ApiKeyValue::with_description(
-                        "Authorization",
-                        "格式：`RyFrameApiKey rfk_<key_id>.<256-bit-secret>`；仅用于 `/api/v1/agent/v1/**`。",
-                    ),
-                ),
-            ),
-        );
-        components.add_security_scheme(
-            "delegationToken",
-            utoipa::openapi::security::SecurityScheme::ApiKey(
-                utoipa::openapi::security::ApiKey::Header(
-                    utoipa::openapi::security::ApiKeyValue::with_description(
-                        "X-RyFrame-Delegation",
-                        "可选的本人限时委托令牌，格式：`rfd_<256-bit-secret>`。",
-                    ),
-                ),
-            ),
-        );
     }
 }
 
@@ -94,10 +72,6 @@ pub(super) fn add_contract_extensions(openapi: &mut utoipa::openapi::OpenApi) {
         .extensions
         .get_or_insert_default()
         .insert("x-ryframe-product-errors".into(), product_error_contract());
-    openapi.extensions.get_or_insert_default().insert(
-        "x-ryframe-agent-capabilities".into(),
-        agent_capability_contract(),
-    );
 }
 
 fn menu_route_contract() -> serde_json::Value {
@@ -261,24 +235,4 @@ fn product_error_contract() -> serde_json::Value {
             {"error_key": "tenant_data_target_unavailable", "status": 503, "retry_after": true}
         ]
     })
-}
-
-fn agent_capability_contract() -> serde_json::Value {
-    let capabilities = ryframe_application::agent::AgentCapability::ALL
-        .into_iter()
-        .map(|capability| {
-            let descriptor = capability.descriptor();
-            serde_json::json!({
-                "capability_key": descriptor.key,
-                "operation_id": descriptor.operation_id,
-                "method": descriptor.method,
-                "path": descriptor.path,
-                "required_permission": descriptor.required_permission,
-                "direct": descriptor.direct,
-                "delegated": descriptor.delegated,
-                "cost": descriptor.cost,
-            })
-        })
-        .collect::<Vec<_>>();
-    serde_json::json!({ "version": 1, "capabilities": capabilities })
 }

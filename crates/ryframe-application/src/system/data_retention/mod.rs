@@ -47,7 +47,6 @@ pub struct DataRetentionPolicy {
     pub tenant_config_artifact_hours: u32,
     pub tenant_config_rollback_hours: u32,
     pub retention_run_days: u32,
-    pub service_access_audit_days: u32,
     pub dead_background_jobs_permanent: bool,
     pub dead_outbox_events_permanent: bool,
 }

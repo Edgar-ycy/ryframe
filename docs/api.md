@@ -4,6 +4,8 @@
 
 HTTP 接口使用 `/api/v1` 前缀，完整路径、字段和 operation ID 见 `openapi/openapi.json`。开发环境启用 `api_docs.enabled` 并编译 `runtime-swagger-ui` feature 后，可访问 `/api/v1/swagger-ui`；原始文档位于 `/api/v1/api-docs/openapi.json`。
 
+当前 0.x 版本只提供现有普通用户与租户接口，Agent 查询、用户委托和服务账号接口已移除；旧地址按未知路由处理。开发版本的接口变化需要同步全部调用方，不提供旧结构映射。
+
 普通业务端点使用 JSON；上传、文本、验证码图片、Blob 和文件下载按 OpenAPI 声明的 media type 传输，调用方不得把这些响应按 JSON 解码。时间使用带时区的 RFC3339 并在服务端规范化为 UTC。JSON DTO 默认拒绝未知字段；非法枚举、反向时间范围和越界批量请求在入队前返回 400。
 
 JSON 业务响应使用统一包络；文本和二进制响应直接使用契约声明的 content type，不附加 JSON 包络：
@@ -28,6 +30,8 @@ Authorization: Bearer <access_token>
 ```
 
 客户端应原子应用 `SessionContext` 中的用户、租户、角色、权限、授权与运行 epoch、capability 和菜单投影，不得混用不同响应的会话字段。会话上下文显式返回 `is_super_admin`；客户端使用该字段和授权投影展示界面，不根据角色 code 推断超级管理员。
+
+能力目录和会话能力集合允许为空；套餐版本仍可发布，租户仍通过套餐版本开通并获得基础资源。空集合不允许任意未注册能力，也不会改变普通用户的权限与租户隔离校验。
 
 每条路由在访问目录中声明一种策略：
 

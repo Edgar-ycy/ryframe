@@ -213,10 +213,7 @@ impl ProductService {
         Ok(())
     }
 
-    pub(super) fn deployment_enabled(&self, capability_code: &str) -> bool {
-        match capability_code {
-            SERVICE_ACCOUNTS_CAPABILITY => self.service_accounts_deployment_available,
-            _ => false,
-        }
+    pub(super) fn deployment_enabled(&self, _capability_code: &str) -> bool {
+        false
     }
 }

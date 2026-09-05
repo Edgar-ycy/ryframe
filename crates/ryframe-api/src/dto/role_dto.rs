@@ -12,14 +12,12 @@ use utoipa::{IntoParams, ToSchema};
 #[serde(rename_all = "snake_case")]
 pub enum RoleOptionPurposeDto {
     UserAssignment,
-    ServiceAccountAssignment,
 }
 
 impl From<RoleOptionPurposeDto> for RoleOptionPurpose {
     fn from(value: RoleOptionPurposeDto) -> Self {
         match value {
             RoleOptionPurposeDto::UserAssignment => Self::UserAssignment,
-            RoleOptionPurposeDto::ServiceAccountAssignment => Self::ServiceAccountAssignment,
         }
     }
 }
