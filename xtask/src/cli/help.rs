@@ -19,8 +19,10 @@ pub(crate) fn print_help(topic: Option<&str>) {
 }
 
 fn check_help() -> &'static str {
-    "cargo xtask check [--full] [--plan] [--scope all|backend|frontend]\n  cargo xtask check doctor\n  cargo xtask check ci <plan|preflight|rust-gate|resource-gate|integration|consumer-contract>\n  cargo xtask check perf run|summarize|compare ...\n  cargo xtask check release ...\n  cargo xtask check recovery <阶段> ...\n\n默认根据变更执行最小安全检查；--full 执行浏览器以外的完整本地门禁；--plan 只输出任务图。"
+    CHECK_HELP
 }
+
+pub(crate) const CHECK_HELP: &str = "cargo xtask check [--full] [--plan] [--scope all|backend|frontend]\n  cargo xtask check doctor\n  cargo xtask check ci <plan|preflight|rust-gate|resource-gate|integration|consumer-contract>\n  cargo xtask check perf run|paired|summarize|compare ...\n  cargo xtask check release ...\n  cargo xtask check recovery <阶段> ...\n\n默认根据变更执行最小安全检查；--full 执行浏览器以外的完整本地门禁；--plan 只输出任务图。";
 
 fn generate_help() -> &'static str {
     "cargo xtask generate resource <资源名> [--check|--write|--explain]\n  cargo xtask generate resource --all --check\n  cargo xtask generate api [--write]\n  cargo xtask generate api --commit <SHA> --write\n\n未传 --write 时只预览或核验，不更新文件。"

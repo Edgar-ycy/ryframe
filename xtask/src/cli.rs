@@ -7,6 +7,8 @@ mod model;
 #[path = "cli/parse.rs"]
 mod parse;
 
+#[cfg(test)]
+pub(crate) use help::CHECK_HELP;
 #[allow(unused_imports)]
 pub(crate) use help::print_help;
 pub(crate) use model::*;
