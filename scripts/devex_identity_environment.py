@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import sys
 
-from devex_import_samples import read_model, template_archive
+from user_import_fixture import read_model, template_archive
 from full_stack_migration_mysql import MysqlSession, identifier, ownership
 from full_stack_process import process_identity, read_process
 from full_stack_runtime import verify_runtime

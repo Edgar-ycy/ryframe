@@ -9,7 +9,7 @@ export const importSampleModel = Object.freeze({ version: 1, rows_per_file: 1,
   username: 'dv{namespace}{worker:02x}{cycle:04x}', nickname: '性能导入',
   email: '{username}@example.test', phone: '', department: 'current_template_sheet2_A2' })
 const digest = (content) => createHash('sha256').update(content).digest('hex')
-const producer = fileURLToPath(new URL('../devex_import_samples.py', import.meta.url))
+const producer = fileURLToPath(new URL('../user_import_fixture.py', import.meta.url))
 
 export function importSpecification(config) {
   const contract = config.contract.import_samples
@@ -25,7 +25,7 @@ export function importSpecification(config) {
 
 function python(executable, request) {
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, ['-X', 'utf8', producer], {
+    const child = spawn(executable, ['-X', 'utf8', producer, 'performance'], {
       env: process.env, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'],
     })
     const chunks = []
