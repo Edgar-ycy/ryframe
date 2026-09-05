@@ -48,7 +48,7 @@ pub(crate) fn run(command: &DataCommand) -> Result<()> {
     run_owned(&root_dir(), "cargo", &cargo_args)
 }
 
-fn tenant_data_arguments(kind: &str, arguments: &[String]) -> Result<Vec<String>> {
+pub(crate) fn tenant_data_arguments(kind: &str, arguments: &[String]) -> Result<Vec<String>> {
     let (operation, rest) = arguments
         .split_first()
         .ok_or("数据维护命令缺少明确子操作")?;
@@ -59,7 +59,7 @@ fn tenant_data_arguments(kind: &str, arguments: &[String]) -> Result<Vec<String>
     Ok(result)
 }
 
-fn target_inventory_arguments(arguments: &[String]) -> Result<Vec<String>> {
+pub(crate) fn target_inventory_arguments(arguments: &[String]) -> Result<Vec<String>> {
     let (operation, rest) = arguments
         .split_first()
         .ok_or("目标库存命令缺少明确子操作")?;
@@ -70,29 +70,4 @@ fn target_inventory_arguments(arguments: &[String]) -> Result<Vec<String>> {
     result.push("target-inventory".to_owned());
     result.extend(rest.iter().cloned());
     Ok(result)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn strings(values: &[&str]) -> Vec<String> {
-        values.iter().map(ToString::to_string).collect()
-    }
-
-    #[test]
-    fn maintenance_operations_map_to_existing_private_binary_commands() {
-        assert_eq!(
-            tenant_data_arguments("backup", &strings(&["status", "--id", "b1"])).unwrap(),
-            strings(&["backup-status", "--id", "b1"])
-        );
-        assert_eq!(
-            tenant_data_arguments("restore", &strings(&["verify", "--id", "r1"])).unwrap(),
-            strings(&["restore-verify", "--id", "r1"])
-        );
-        assert_eq!(
-            target_inventory_arguments(&strings(&["inventory", "--target", "tenant-a"])).unwrap(),
-            strings(&["target-inventory", "--target", "tenant-a"])
-        );
-    }
 }

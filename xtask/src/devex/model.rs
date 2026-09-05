@@ -6,12 +6,15 @@ use serde::{Deserialize, Serialize};
 mod baseline;
 #[path = "model/execution_contract.rs"]
 mod execution_contract;
+#[path = "model/frontend_steps.rs"]
+mod frontend_steps;
 
 pub(crate) use baseline::{BaselineContract, BaselineProvenance};
 pub(crate) use execution_contract::{
     RESOURCE_GATE_DECISION_ENV, RESOURCE_GATE_DECISION_TEMPLATE, RESOURCE_GATE_TARGETED_ACTIVATION,
     RESOURCE_GATE_TARGETED_ENV,
 };
+use frontend_steps::{FRONTEND_BUILD, FRONTEND_FAST};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -582,23 +585,5 @@ const RUST_GATE: &[StepDefinition] = &[StepDefinition {
         "rust-gate",
         "--frontend-dir",
         "{frontend}",
-    ],
-}];
-const FRONTEND_FAST: &[StepDefinition] = &[StepDefinition {
-    working_directory: WorkingDirectory::Frontend,
-    program: "corepack",
-    args: &["pnpm", "check"],
-}];
-const FRONTEND_BUILD: &[StepDefinition] = &[StepDefinition {
-    working_directory: WorkingDirectory::Frontend,
-    program: "corepack",
-    args: &[
-        "pnpm",
-        "exec",
-        "vite",
-        "build",
-        "--outDir",
-        "{target}/frontend/dist",
-        "--emptyOutDir",
     ],
 }];

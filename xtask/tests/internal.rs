@@ -35,6 +35,13 @@ mod workspace;
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
+#[path = "../src/build.rs"]
+mod build;
+#[path = "../src/data.rs"]
+mod data;
+
+#[path = "internal/build.rs"]
+mod build_tests;
 #[path = "internal/check_policy.rs"]
 mod check_policy_tests;
 #[path = "internal/check_snapshot.rs"]
@@ -49,6 +56,8 @@ mod ci_tests;
 mod cli_tests;
 #[path = "internal/contract.rs"]
 mod contract_tests;
+#[path = "internal/data.rs"]
+mod data_tests;
 #[path = "internal/dev_probe_control.rs"]
 mod dev_probe_control_tests;
 #[path = "internal/dev_process_control.rs"]
@@ -59,6 +68,8 @@ mod dev_snapshot_tests;
 mod dev_tests;
 #[path = "internal/devex_acceptance.rs"]
 mod devex_acceptance_tests;
+#[path = "internal/devex_cli.rs"]
+mod devex_cli_tests;
 #[path = "internal/devex_paths.rs"]
 mod devex_paths_tests;
 #[path = "internal/devex_sccache.rs"]
