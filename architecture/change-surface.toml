@@ -186,12 +186,6 @@ reason = "单元测试运行配置变化"
 [[full_invalidation_paths]]
 repository = "frontend"
 match = "exact"
-path = "vitest.targeted.config.ts"
-reason = "定向测试运行配置变化"
-
-[[full_invalidation_paths]]
-repository = "frontend"
-match = "exact"
 path = "playwright.config.ts"
 reason = "浏览器测试配置变化"
 
