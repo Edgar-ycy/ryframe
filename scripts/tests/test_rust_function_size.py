@@ -26,6 +26,7 @@ SPEC.loader.exec_module(MODULE)
 @contextmanager
 def isolated_test_dir(label: str) -> Iterator[Path]:
     root = (SCRIPT.parents[1] / ".local-tests").resolve()
+    root.mkdir(exist_ok=True)
     path = (root / f"{label}-{uuid.uuid4().hex}").resolve()
     if not path.is_relative_to(root):
         raise AssertionError("测试目录逃逸 .local-tests")
@@ -96,6 +97,44 @@ fn helper() {
             [(item.symbol, item.private) for item in records],
             [("Port for Service::execute", False), ("helper", True)],
         )
+
+    def test_unsafe_gate_matches_syntax_without_matching_text_or_raw_identifier(
+        self,
+    ) -> None:
+        source = b"""\
+// unsafe { ignored(); }
+const MESSAGE: &str = "unsafe";
+fn safe() { let r#unsafe = MESSAGE; }
+unsafe fn foreign() { unsafe { call(); } }
+unsafe impl Send for Value {}
+macro_rules! generated { () => { unsafe { call(); } } }
+"""
+        try:
+            from tree_sitter import Language, Parser
+            import tree_sitter_rust
+        except ImportError as error:  # pragma: no cover - CI 必须安装固定依赖
+            self.fail(f"缺少 tree-sitter 测试依赖：{error}")
+        tree = Parser(Language(tree_sitter_rust.language())).parse(source)
+
+        records = MODULE.unsafe_syntax_in_tree("src/lib.rs", tree.root_node)
+        errors: list[str] = []
+
+        self.assertEqual([record.line for record in records], [4, 4, 5, 6])
+        self.assertEqual(MODULE.validate_no_unsafe(records, errors), 4)
+        self.assertTrue(all("src/lib.rs" in error for error in errors))
+
+    def test_template_gate_recovers_placeholders_and_finds_unsafe_token(self) -> None:
+        source = b"pub fn {name}() { unsafe { call(); } }\n"
+        errors: list[str] = []
+        runtime = MODULE.load_ast_runtime(errors)
+        self.assertIsNotNone(runtime)
+        assert runtime is not None
+
+        records = runtime.parse_template_unsafe("template.rs.tpl", source)
+
+        self.assertEqual(errors, [])
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].line, 1)
 
     def test_changed_mode_only_checks_function_intersecting_new_lines(self) -> None:
         records = [

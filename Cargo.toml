@@ -20,6 +20,7 @@ description = "Production-oriented Rust 2024 admin backend with Vue 3, RBAC, obs
 
 [workspace.lints.rust]
 non_ascii_idents = "forbid"
+unsafe_code = "forbid"
 
 
 [workspace.dependencies]

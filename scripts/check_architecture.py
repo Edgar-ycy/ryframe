@@ -20,11 +20,13 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from rust_function_size import (
+from rust_function_size import (  # noqa: E402
     changed_line_ranges,
-    parse_functions,
     parse_policy as parse_function_size_policy,
+    parse_rust_sources,
+    parse_template_unsafe,
     validate_functions,
+    validate_no_unsafe,
 )
 
 
@@ -428,6 +430,40 @@ def workspace_packages(metadata: dict[str, Any]) -> dict[str, dict[str, Any]]:
     }
 
 
+def validate_unsafe_lint_policy(
+    root: Path, packages: dict[str, dict[str, Any]], errors: list[str]
+) -> int:
+    """固定 Workspace lint，并确保每个自维护 crate 都继承该策略。"""
+
+    try:
+        workspace_manifest = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        errors.append(f"无法读取 Workspace unsafe lint：{error}")
+        return 0
+    workspace_lints = workspace_manifest.get("workspace", {}).get("lints", {})
+    rust_lints = workspace_lints.get("rust", {}) if isinstance(workspace_lints, dict) else {}
+    if not isinstance(rust_lints, dict) or rust_lints.get("unsafe_code") != "forbid":
+        errors.append("Workspace 必须设置 [workspace.lints.rust] unsafe_code = \"forbid\"")
+
+    checked = 0
+    for package_name, package in sorted(packages.items()):
+        manifest_path = Path(package["manifest_path"]).resolve()
+        try:
+            manifest_path.relative_to(root)
+            manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+        except ValueError:
+            errors.append(f"工作区 crate 位于仓库之外：{package_name}")
+            continue
+        except (OSError, tomllib.TOMLDecodeError) as error:
+            errors.append(f"无法读取 crate lint 配置：{package_name}（{error}）")
+            continue
+        checked += 1
+        lints = manifest.get("lints")
+        if not isinstance(lints, dict) or lints.get("workspace") is not True:
+            errors.append(f"工作区 crate 必须继承 Workspace lint：{package_name}")
+    return checked
+
+
 def workspace_edges(packages: dict[str, dict[str, Any]]) -> set[tuple[str, str]]:
     package_roots = {
         Path(package["manifest_path"]).resolve().parent: package_name
@@ -634,7 +670,9 @@ def validate_source_size(
 
     scanned_paths: set[str] = set()
     scanned_by_package: dict[str, int] = {}
-    for package_name in sorted(profile.get("products", set()) | profile.get("tools", set())):
+    for package_name in sorted(
+        profile.get("products", set()) | profile.get("tools", set())
+    ):
         package = packages.get(package_name)
         if package is None:
             continue
@@ -814,6 +852,25 @@ def workspace_rust_sources(
         if build_script.is_file():
             sources.add(build_script)
     return sorted(sources)
+
+
+def workspace_rust_templates(
+    root: Path,
+    profile: dict[str, Any],
+    packages: dict[str, dict[str, Any]],
+) -> list[Path]:
+    templates: set[Path] = set()
+    for package_name in sorted(profile.get("products", set()) | profile.get("tools", set())):
+        package = packages.get(package_name)
+        if package is None:
+            continue
+        package_root = Path(package["manifest_path"]).resolve().parent
+        try:
+            package_root.relative_to(root)
+        except ValueError:
+            continue
+        templates.update(package_root.rglob("*.rs.tpl"))
+    return sorted(path for path in templates if path.is_file())
 
 
 def validate_legacy_persistence_apis(
@@ -1015,6 +1072,7 @@ def main() -> int:
     active_profile, profiles, source_size, test_layout, function_size = load_policy(errors)
     metadata = cargo_metadata(errors)
     packages = workspace_packages(metadata) if metadata else {}
+    unsafe_lint_packages = validate_unsafe_lint_policy(ROOT, packages, errors) if packages else 0
     active = profiles.get(active_profile, {})
     actual_edges: set[tuple[str, str]] = set()
     scanned = 0
@@ -1025,6 +1083,8 @@ def main() -> int:
     legacy_persistence_violations = 0
     async_port_sources = 0
     async_port_violations = 0
+    checked_unsafe_sources = 0
+    unsafe_syntax_violations = 0
     checked_functions = 0
     function_size_violations = 0
     if active and packages:
@@ -1047,10 +1107,14 @@ def main() -> int:
             workspace_rust_sources(ROOT, active, packages),
             errors,
         )
+        rust_sources = workspace_rust_sources(ROOT, active, packages)
+        functions, unsafe_syntax = parse_rust_sources(ROOT, rust_sources, errors)
+        rust_templates = workspace_rust_templates(ROOT, active, packages)
+        unsafe_syntax.extend(parse_template_unsafe(ROOT, rust_templates, errors))
+        checked_unsafe_sources = len(rust_sources) + len(rust_templates)
+        unsafe_syntax_violations = validate_no_unsafe(unsafe_syntax, errors)
         function_policy = parse_function_size_policy(function_size, errors)
         if function_policy is not None:
-            rust_sources = workspace_rust_sources(ROOT, active, packages)
-            functions = parse_functions(ROOT, rust_sources, errors)
             changed = (
                 changed_line_ranges(ROOT, errors)
                 if function_policy.mode == "changed"
@@ -1108,6 +1172,11 @@ def main() -> int:
         f"(mode={function_size.get('mode')}, functions={checked_functions}, "
         f"violations={function_size_violations})."
     )
+    print(
+        "Rust unsafe AST gate passed "
+        f"(source_files={checked_unsafe_sources}, violations={unsafe_syntax_violations})."
+    )
+    print(f"Workspace unsafe lint inheritance passed (packages={unsafe_lint_packages}).")
     if ran_tenant_checks:
         print("Tenant-data architecture boundaries are valid.")
     return 0

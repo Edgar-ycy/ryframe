@@ -25,6 +25,76 @@ class DocumentationPolicyTests(unittest.TestCase):
         self.assertNotIn("CHANGELOG.md", MODULE.DOCUMENT_LIMITS)
 
 
+class RustSourceDiscoveryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = TEST_ROOT / f"rust-sources-{uuid.uuid4().hex}"
+        self.package = self.root / "crates/example"
+        (self.package / "src").mkdir(parents=True)
+        (self.package / "templates").mkdir()
+        (self.package / "Cargo.toml").write_text("[package]\n", encoding="utf-8")
+        (self.package / "src/lib.rs").write_text("pub fn safe() {}\n", encoding="utf-8")
+        (self.package / "templates/generated.rs.tpl").write_text(
+            "pub fn {name}() {}\n", encoding="utf-8"
+        )
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.root)
+
+    def test_unsafe_policy_discovers_rust_templates_separately(self) -> None:
+        profile = {"products": {"example"}, "tools": set()}
+        packages = {"example": {"manifest_path": str(self.package / "Cargo.toml")}}
+
+        self.assertEqual(
+            MODULE.workspace_rust_templates(self.root, profile, packages),
+            [self.package / "templates/generated.rs.tpl"],
+        )
+
+
+class UnsafeLintPolicyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = TEST_ROOT / f"unsafe-lint-{uuid.uuid4().hex}"
+        self.package = self.root / "crates/example"
+        self.package.mkdir(parents=True)
+        (self.root / "Cargo.toml").write_text(
+            '[workspace]\n[workspace.lints.rust]\nunsafe_code = "forbid"\n',
+            encoding="utf-8",
+        )
+        (self.package / "Cargo.toml").write_text(
+            '[package]\nname = "example"\nversion = "0.1.0"\n[lints]\nworkspace = true\n',
+            encoding="utf-8",
+        )
+        self.packages = {
+            "example": {"manifest_path": str(self.package / "Cargo.toml")}
+        }
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.root)
+
+    def test_accepts_forbid_and_workspace_inheritance(self) -> None:
+        errors: list[str] = []
+
+        checked = MODULE.validate_unsafe_lint_policy(self.root, self.packages, errors)
+
+        self.assertEqual(checked, 1)
+        self.assertEqual(errors, [])
+
+    def test_rejects_weaker_workspace_lint_and_missing_inheritance(self) -> None:
+        (self.root / "Cargo.toml").write_text(
+            '[workspace]\n[workspace.lints.rust]\nunsafe_code = "warn"\n',
+            encoding="utf-8",
+        )
+        (self.package / "Cargo.toml").write_text(
+            '[package]\nname = "example"\nversion = "0.1.0"\n',
+            encoding="utf-8",
+        )
+        errors: list[str] = []
+
+        MODULE.validate_unsafe_lint_policy(self.root, self.packages, errors)
+
+        self.assertTrue(any("unsafe_code" in error for error in errors))
+        self.assertTrue(any("继承" in error for error in errors))
+
+
 class SystemDomainSurfaceGateTests(unittest.TestCase):
     def setUp(self) -> None:
         self.root = TEST_ROOT / f"system-domains-{uuid.uuid4().hex}"
