@@ -38,7 +38,10 @@ fn main() {
 
     if let Err(error) = dispatch(cli) {
         eprintln!("任务失败：{error}");
-        std::process::exit(dev::failure_exit_code(error.as_ref()).unwrap_or(1));
+        let code = dev::failure_exit_code(error.as_ref())
+            .or_else(|| process::failure_exit_code(error.as_ref()))
+            .unwrap_or(1);
+        std::process::exit(code);
     }
 }
 

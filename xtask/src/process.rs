@@ -14,6 +14,11 @@ use crate::{Result, workspace::root_dir};
 #[path = "process/child.rs"]
 mod child;
 pub(crate) use child::{ChildGroup, ManagedChild};
+#[path = "process/exit_status.rs"]
+mod exit_status;
+use exit_status::CommandFailure;
+#[allow(unused_imports)]
+pub(crate) use exit_status::failure_exit_code;
 #[path = "process/logging.rs"]
 mod logging;
 #[allow(unused_imports)]
@@ -127,9 +132,12 @@ pub(crate) fn run_with_env_removed(
         }
         Ok(())
     } else {
-        Err(format!(
-            "命令执行失败（{elapsed:.1}s）：{command_label} {}",
-            args.join(" ")
+        Err(CommandFailure::new(
+            format!(
+                "命令执行失败（{elapsed:.1}s）：{command_label} {}",
+                args.join(" ")
+            ),
+            status,
         )
         .into())
     }
@@ -237,7 +245,11 @@ pub(crate) fn run_pnpm_with_env(
         }
         Ok(())
     } else {
-        Err(format!("命令执行失败（{elapsed:.1}s）：pnpm {}", args.join(" ")).into())
+        Err(CommandFailure::new(
+            format!("命令执行失败（{elapsed:.1}s）：pnpm {}", args.join(" ")),
+            status,
+        )
+        .into())
     }
 }
 
@@ -280,9 +292,12 @@ pub(crate) fn command_output_with_env(
     if !output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        return Err(format!(
-            "命令执行失败（{elapsed:.1}s）：{command_label} {}\nstdout:\n{stdout}\nstderr:\n{stderr}",
-            args.join(" ")
+        return Err(CommandFailure::new(
+            format!(
+                "命令执行失败（{elapsed:.1}s）：{command_label} {}\nstdout:\n{stdout}\nstderr:\n{stderr}",
+                args.join(" ")
+            ),
+            output.status,
         )
         .into());
     }

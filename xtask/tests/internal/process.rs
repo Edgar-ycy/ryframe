@@ -4,8 +4,8 @@ use std::{
 };
 
 use super::process::{
-    ChildGroup, configure_pnpm_environment, process_is_running, resolved_executable, run,
-    with_process_log,
+    ChildGroup, command_output, configure_pnpm_environment, failure_exit_code, process_is_running,
+    resolved_executable, run, with_process_log,
 };
 
 #[test]
@@ -26,6 +26,23 @@ fn python_runner_honors_the_explicit_isolated_interpreter() {
         "cargo"
     );
     assert_eq!(resolved_executable("python", None), "python");
+}
+
+#[test]
+fn child_usage_and_task_failure_exit_codes_are_preserved() {
+    for code in [2, 7] {
+        let statement = format!("exit {code}");
+        #[cfg(windows)]
+        let (program, args) = ("cmd", vec!["/D", "/C", statement.as_str()]);
+        #[cfg(unix)]
+        let (program, args) = ("sh", vec!["-c", statement.as_str()]);
+        let directory = std::path::Path::new(".");
+        let error = run(directory, program, &args).unwrap_err();
+        assert_eq!(failure_exit_code(error.as_ref()), Some(code));
+        let error = command_output(directory, program, &args).unwrap_err();
+        assert_eq!(failure_exit_code(error.as_ref()), Some(code));
+    }
+    assert_eq!(failure_exit_code(&std::io::Error::other("无法启动")), None);
 }
 
 #[test]
