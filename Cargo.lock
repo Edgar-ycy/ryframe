@@ -4991,6 +4991,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "winsafe"
+version = "0.0.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d135d17ab770252ad95e9a872d365cf3090e3be864a34ab46f48555993efc904"
+
+[[package]]
 name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5025,6 +5031,7 @@ dependencies = [
  "tokio",
  "toml",
  "windows-sys 0.61.2",
+ "winsafe",
 ]
 
 [[package]]

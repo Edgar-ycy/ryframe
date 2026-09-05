@@ -26,6 +26,7 @@ toml = { workspace = true }
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
+winsafe = { version = "=0.0.19", default-features = false, features = ["kernel"] }
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",

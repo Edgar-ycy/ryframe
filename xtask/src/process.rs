@@ -432,27 +432,18 @@ fn prepare_process_group(_command: &mut Command) {}
 
 #[cfg(windows)]
 pub(crate) fn process_is_running(pid: u32) -> bool {
-    use windows_sys::Win32::{
-        Foundation::{CloseHandle, WAIT_TIMEOUT},
-        System::Threading::{
-            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
-            WaitForSingleObject,
-        },
-    };
+    use winsafe::{HPROCESS, co, prelude::kernel_Hprocess};
 
-    let process = unsafe {
-        OpenProcess(
-            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
-            0,
-            pid,
-        )
-    };
-    if process.is_null() {
+    let Ok(process) = HPROCESS::OpenProcess(
+        co::PROCESS::QUERY_LIMITED_INFORMATION | co::PROCESS::SYNCHRONIZE,
+        false,
+        pid,
+    ) else {
         return false;
-    }
-    let running = unsafe { WaitForSingleObject(process, 0) } == WAIT_TIMEOUT;
-    unsafe { CloseHandle(process) };
-    running
+    };
+    process
+        .WaitForSingleObject(Some(0))
+        .is_ok_and(|status| status == co::WAIT::TIMEOUT)
 }
 
 #[cfg(unix)]

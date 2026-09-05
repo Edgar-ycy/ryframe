@@ -9,12 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use windows_sys::Win32::{
-    Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT},
-    System::Threading::{
-        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, WaitForSingleObject,
-    },
-};
+use winsafe::{HPROCESS, co, prelude::kernel_Hprocess};
 
 #[path = "../src/process.rs"]
 mod process;
@@ -26,16 +21,6 @@ type Result<T> = std::result::Result<T, Box<dyn Error>>;
 const HELPER_NAME: &str = "job_descendant_helper";
 const HELPER_ROLE: &str = "RYFRAME_XTASK_JOB_TEST_ROLE";
 const PID_FILE: &str = "RYFRAME_XTASK_JOB_TEST_PID_FILE";
-
-struct OwnedHandle(HANDLE);
-
-impl Drop for OwnedHandle {
-    fn drop(&mut self) {
-        if !self.0.is_null() {
-            unsafe { CloseHandle(self.0) };
-        }
-    }
-}
 
 #[test]
 #[ignore = "仅由 Windows Job Object 集成测试作为子进程调用"]
@@ -102,17 +87,21 @@ fn stopping_command_tree_reclaims_descendant_after_direct_child_exits() {
         .expect("应能读取后代 PID")
         .parse::<u32>()
         .expect("后代 PID 应为整数");
-    let descendant = OwnedHandle(unsafe {
-        OpenProcess(
-            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
-            0,
-            descendant_id,
-        )
-    });
-    assert!(!descendant.0.is_null(), "后代进程应仍在运行");
+    let descendant = HPROCESS::OpenProcess(
+        co::PROCESS::QUERY_LIMITED_INFORMATION | co::PROCESS::SYNCHRONIZE,
+        false,
+        descendant_id,
+    )
+    .expect("应能持有后代进程的真实句柄");
+    assert!(
+        process::process_is_running(descendant_id),
+        "后代进程应仍在运行"
+    );
     assert_eq!(
-        unsafe { WaitForSingleObject(descendant.0, 0) },
-        WAIT_TIMEOUT,
+        descendant
+            .WaitForSingleObject(Some(0))
+            .expect("应能查询后代进程状态"),
+        co::WAIT::TIMEOUT,
         "父辅助进程退出后，后代仍应由命令级 Job Object 持有"
     );
 
@@ -125,9 +114,21 @@ fn stopping_command_tree_reclaims_descendant_after_direct_child_exits() {
         "停止命令返回时 Job Object 不得保留孤儿进程"
     );
     assert_eq!(
-        unsafe { WaitForSingleObject(descendant.0, 5_000) },
-        WAIT_OBJECT_0,
+        descendant
+            .WaitForSingleObject(Some(5_000))
+            .expect("应能等待后代进程退出"),
+        co::WAIT::OBJECT_0,
         "停止命令级 Job Object 应回收已脱离直接父进程的后代"
     );
+    assert!(
+        !process::process_is_running(descendant_id),
+        "仍持有句柄的已退出后代不得被判为存活"
+    );
     let _ = fs::remove_file(pid_file);
+}
+
+#[test]
+fn process_liveness_distinguishes_current_process_from_unopenable_pid() {
+    assert!(process::process_is_running(std::process::id()));
+    assert!(!process::process_is_running(0));
 }
