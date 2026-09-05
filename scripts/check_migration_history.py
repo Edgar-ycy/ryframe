@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""校验迁移只追加，并管理提交后不可变的迁移冻结清单。"""
+"""校验迁移的版本阶段约束，并显式维护开发版基线与稳定版冻结清单。"""
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+
+from release_stage import release_stage
 
 
 MIGRATION_NAME = re.compile(r"^m(?P<stamp>\d{8}_\d{6})_(?P<label>[a-z][a-z0-9_]*)$")
@@ -183,7 +185,7 @@ def verify_lock(root: Path, lock_path: Path) -> list[str]:
         if actual != entry.expected_sha256:
             errors.append(
                 f"冻结迁移被修改：{entry.relative}\n"
-                "  历史迁移不可编辑；请新建追加迁移并采用 roll-forward 修复"
+                "  源码与锁文件不一致；0.x 使用显式 baseline --write，稳定版请追加 roll-forward 迁移"
             )
     return errors
 
@@ -551,7 +553,8 @@ def verify_append_only(
             elif enforce_lock and relative in head_paths:
                 errors.append(
                     f"已提交迁移未进入冻结清单：{relative}；"
-                    "禁止用自动检查接受历史文件，请从新建迁移的工作树执行 `cargo xtask data migrate freeze`"
+                    "禁止用自动检查接受历史文件，请从新建迁移的工作树执行 "
+                    "`cargo xtask data migrate freeze`"
                 )
             elif enforce_lock and require_frozen:
                 errors.append(
@@ -628,6 +631,10 @@ def verify_append_only(
 def check(
     root: Path, *, require_frozen: bool = False, trusted_ref: str = "HEAD"
 ) -> list[str]:
+    try:
+        stable = release_stage(root, trusted_ref)["stable"]
+    except (OSError, ValueError) as error:
+        return [str(error)]
     lock_path = root / LOCK_RELATIVE_PATH
     document, entries, load_errors = load_lock(root, lock_path)
     lock_errors = verify_lock(root, lock_path) if not load_errors else load_errors
@@ -638,7 +645,7 @@ def check(
         return [*lock_errors, str(error)]
     trusted_errors = (
         verify_trusted_head_lock(root, document, entries, head_paths, trusted_ref)
-        if document is not None and not load_errors
+        if stable and document is not None and not load_errors
         else []
     )
     return lock_errors + trusted_errors + verify_generated_registry_wiring(root) + verify_append_only(
@@ -680,6 +687,32 @@ def write_lock_atomically(lock_path: Path, expected: bytes, content: bytes) -> N
         os.replace(staged, lock_path)
     finally:
         staged.unlink(missing_ok=True)
+
+
+def refresh_baseline(root: Path) -> list[str]:
+    """只刷新源码清单；从不连接或转换现有数据库。"""
+    try:
+        if release_stage(root)["stable"]:
+            return ["稳定版阶段禁止重新锁定迁移基线"]
+    except (OSError, ValueError) as error:
+        return [str(error)]
+    lock_path = root / LOCK_RELATIVE_PATH
+    document, _entries, errors = load_lock(root, lock_path)
+    if errors or document is None:
+        return errors
+    errors = verify_generated_registry_wiring(root) + verify_append_only(root)
+    if errors:
+        return errors
+    paths = [path for migration in discover(root) for path in migration.source_files()]
+    paths.extend(discover_generated(root))
+    entries = []
+    for path in sorted(paths):
+        relative = path.relative_to(root).as_posix()
+        storage, target = lock_identity(relative)
+        entries.append(LockedFile(relative, path, sha256(path), storage, target))
+    before = lock_path.read_bytes()
+    write_lock_atomically(lock_path, before, render_lock(document, entries))
+    return []
 
 
 def freeze(root: Path) -> list[str]:
@@ -755,6 +788,15 @@ def freeze(root: Path) -> list[str]:
 
 def main() -> int:
     arguments = sys.argv[1:]
+    if arguments in (["--help"], ["-h"]):
+        print(
+            "用法：check_migration_history.py [--freeze|--require-frozen|--refresh-baseline --write] "
+            "[--trusted-ref <ref-or-sha>]\n"
+            "默认与 --require-frozen 仅检查，不写文件。\n"
+            "--refresh-baseline --write 仅用于 0.x 显式重整基线，不修改已有数据库。\n"
+            "--freeze 仅使用本地 HEAD 冻结新迁移；从 v1.0.0 起冻结迁移只允许追加修复。"
+        )
+        return 0
     trusted_ref = "HEAD"
     trusted_ref_supplied = False
     mode_arguments: list[str] = []
@@ -772,18 +814,21 @@ def main() -> int:
         mode_arguments.append(argument)
         index += 1
     root = Path(__file__).resolve().parents[1]
-    if mode_arguments == ["--freeze"] and not trusted_ref_supplied:
+    if mode_arguments == ["--refresh-baseline", "--write"] and not trusted_ref_supplied:
+        errors = refresh_baseline(root)
+        success = "开发版迁移基线已刷新；现有数据库未改动，请使用新建隔离数据库验收。"
+    elif mode_arguments == ["--freeze"] and not trusted_ref_supplied:
         errors = freeze(root)
-        success = "迁移冻结完成；提交后该源码只能通过追加迁移修复。"
+        success = "迁移冻结完成；从 v1.0.0 起只能通过追加迁移修复。"
     elif mode_arguments == ["--require-frozen"]:
         errors = check(root, require_frozen=True, trusted_ref=trusted_ref)
-        success = "迁移历史校验通过：所有待提交迁移已冻结，历史仅允许追加和 roll-forward。"
+        success = "迁移历史校验通过：源码、注册与迁移锁文件一致，版本阶段保护已校验。"
     elif not mode_arguments:
         errors = check(root, trusted_ref=trusted_ref)
         success = "迁移历史校验通过：冻结迁移未变化，工作树新迁移可继续编辑。"
     else:
         print(
-            "用法：check_migration_history.py [--freeze|--require-frozen] "
+            "用法：check_migration_history.py [--freeze|--require-frozen|--refresh-baseline --write] "
             "[--trusted-ref <ref-or-sha>]；--freeze 仅使用本地 HEAD",
             file=sys.stderr,
         )

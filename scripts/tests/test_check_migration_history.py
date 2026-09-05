@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 SCRIPT = Path(__file__).resolve().parents[1] / "check_migration_history.py"
 SPEC = importlib.util.spec_from_file_location("check_migration_history", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
@@ -28,6 +29,9 @@ class MigrationHistoryTests(unittest.TestCase):
             f"migration-history-test-{os.getpid()}-{uuid.uuid4().hex}"
         )
         self.root.mkdir()
+        (self.root / "Cargo.toml").write_text(
+            '[workspace.package]\nversion = "1.0.0"\n', encoding="utf-8"
+        )
         self.control = self.root / "crates/ryframe-db/src/migration"
         self.tenant = self.root / "crates/ryframe-tenant-db/src/migration"
         self.catalog = self.root / "catalog"
@@ -507,6 +511,30 @@ class MigrationHistoryTests(unittest.TestCase):
         errors = MODULE.check(self.root)
 
         self.assertTrue(any("复用了受信迁移目标" in error for error in errors))
+
+    def test_development_baseline_refresh_is_explicit_and_read_only_check_detects_drift(
+        self,
+    ):
+        (self.root / "Cargo.toml").write_text(
+            '[workspace.package]\nversion = "0.12.1"\n', encoding="utf-8"
+        )
+        self._commit_all("development baseline")
+        source = self.control / "m20260820_000000_control_baseline/mod.rs"
+        source.write_text("new development baseline\n", encoding="utf-8")
+        lock = self.catalog / "migrations.lock.toml"
+        before = lock.read_bytes()
+        self.assertTrue(MODULE.check(self.root))
+        self.assertEqual(lock.read_bytes(), before)
+        self.assertEqual(MODULE.refresh_baseline(self.root), [])
+        self.assertNotEqual(lock.read_bytes(), before)
+        self.assertEqual(MODULE.check(self.root, require_frozen=True), [])
+
+    def test_stable_baseline_refresh_is_rejected_without_writes(self):
+        self._commit_all("stable baseline")
+        lock = self.catalog / "migrations.lock.toml"
+        before = lock.read_bytes()
+        self.assertTrue(MODULE.refresh_baseline(self.root))
+        self.assertEqual(lock.read_bytes(), before)
 
 
 if __name__ == "__main__":
