@@ -1505,16 +1505,17 @@ def validate_activation_commands(manifest: ReplayManifest) -> None:
             "activation gate 的 targeted/full 必须运行同一资源门禁入口"
         )
     command = manifest.targeted_command
-    if len(command) < 4 or tuple(command[:4]) != (
+    if len(command) < 5 or tuple(command[:5]) != (
         "cargo",
         "xtask",
+        "check",
         "ci",
         "resource-gate",
     ):
         raise ReplayConfigurationError(
-            "activation gate 只接受 cargo xtask ci resource-gate 作为比较入口"
+            "activation gate 只接受 cargo xtask check ci resource-gate 作为比较入口"
         )
-    remaining = command[4:]
+    remaining = command[5:]
     if remaining and (len(remaining) != 2 or remaining[0] != "--frontend-dir"):
         raise ReplayConfigurationError(
             "activation gate 资源门禁入口只允许可选的 --frontend-dir PATH"

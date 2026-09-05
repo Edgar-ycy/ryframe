@@ -54,7 +54,7 @@ jobs:
           GITHUB_EVENT_ACTION: ${{ github.event.action }}
           RYFRAME_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           RYFRAME_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: cargo xtask ci plan
+        run: cargo xtask check ci plan
 
       - name: 固定 CI Python 3.12
         if: ${{ steps.plan.outputs.preflight == 'true' }}
@@ -89,7 +89,7 @@ jobs:
         if: ${{ steps.plan.outputs.preflight == 'true' }}
         env:
           RYFRAME_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: cargo xtask ci preflight
+        run: cargo xtask check ci preflight
 
   # ============================================================
   # Rust 单一编译门禁
@@ -180,7 +180,7 @@ jobs:
 
       - name: 执行 Clippy、feature、Workspace 测试与快照门禁
         working-directory: backend
-        run: cargo xtask ci rust-gate --frontend-dir ../frontend
+        run: cargo xtask check ci rust-gate --frontend-dir ../frontend
 
       - name: 输出 sccache 命中统计
         if: ${{ always() }}
@@ -338,7 +338,7 @@ jobs:
           RYFRAME_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           RYFRAME_CI_FRONTEND_REF: ${{ steps.contract-frontend-ref.outputs.ref || steps.resource-frontend-ref.outputs.ref }}
           RYFRAME_RESOURCE_GATE_TARGETED: replay-verified-v1
-        run: cargo xtask ci resource-gate --frontend-dir ../frontend
+        run: cargo xtask check ci resource-gate --frontend-dir ../frontend
 
       - name: 校验正式前端消费契约
         if: ${{ needs.plan.outputs.consumer_contract == 'true' }}
@@ -348,7 +348,7 @@ jobs:
           RYFRAME_CI_BACKEND_REPOSITORY: Edgar-ycy/ryframe
           RYFRAME_CI_CANDIDATE_OPENAPI: ${{ runner.temp }}/candidate-openapi.json
           RYFRAME_CI_FRONTEND_REF: ${{ steps.contract-frontend-ref.outputs.ref }}
-        run: cargo xtask ci consumer-contract --frontend-dir ../frontend
+        run: cargo xtask check ci consumer-contract --frontend-dir ../frontend
 
   # ============================================================
   # MySQL、Redis 与 AWS-LC TLS 真实出站协议
@@ -423,7 +423,7 @@ jobs:
         working-directory: backend
         env:
           RYFRAME_TLS_ARTIFACT_DIR: ${{ runner.temp }}/ryframe-tls-integration
-        run: cargo xtask ci integration
+        run: cargo xtask check ci integration
 
       - name: 保存 AWS-LC TLS fixture 与测试日志
         if: ${{ always() }}
@@ -516,7 +516,7 @@ jobs:
           RYFRAME_CI_FRONTEND_REF: ${{ steps.windows-frontend-ref.outputs.ref }}
           RYFRAME_CI_RUST_GATE_PROFILE: windows-smoke
           RYFRAME_CI_TEST_JOBS: "4"
-        run: cargo xtask ci rust-gate --frontend-dir ../ryframe-vue3
+        run: cargo xtask check ci rust-gate --frontend-dir ../ryframe-vue3
 
       - name: 输出 sccache 统计
         if: ${{ always() }}

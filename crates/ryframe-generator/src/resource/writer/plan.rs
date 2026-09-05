@@ -280,7 +280,7 @@ pub(super) fn selected_assets(
         return Err(ResourceError::new(
             format!("资源 `{resource}` 不在当前清单中，不能把缺失清单当作删除指令"),
             format!(
-                "当前版本不支持 `cargo resource {resource}` 按名退役资源；恢复 catalog/resources/{resource}.toml，退役必须由后续显式 remove 命令保留不可变初始迁移后执行"
+                "当前版本不支持 `cargo xtask generate resource {resource}` 按名退役资源；恢复 catalog/resources/{resource}.toml，退役必须由后续显式 remove 命令保留不可变初始迁移后执行"
             ),
         )
         .with_resource(resource));

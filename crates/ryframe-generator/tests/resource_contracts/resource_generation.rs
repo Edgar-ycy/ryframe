@@ -829,7 +829,7 @@ fn named_write_rejects_pending_changes_in_other_managed_resources() {
 
     assert!(error.contains("资源 device"));
     assert!(error.contains("待生成变化"));
-    assert!(error.contains("cargo resource device --write"));
+    assert!(error.contains("cargo xtask generate resource device --write"));
     assert_eq!(fs::read_to_string(device_file).unwrap(), device_before);
     assert_eq!(
         fs::read_to_string(ownership_path).unwrap(),
@@ -892,7 +892,7 @@ fn initial_migration_is_immutable_and_schema_evolution_requires_new_revision() {
     .expect_err("已受管 schema 变化必须声明新 revision")
     .to_string();
     assert!(error.contains("没有声明新的 schema_revision"));
-    assert!(error.contains("cargo migrate new tenant-data"));
+    assert!(error.contains("cargo xtask data migrate new tenant-data"));
 
     let revision = "m20260823_123456_expand_device_name";
     let changed_source = fs::read_to_string(device_path())
@@ -943,7 +943,7 @@ fn initial_migration_is_immutable_and_schema_evolution_requires_new_revision() {
     .expect_err("同 revision 不得承载第二次 schema 变化")
     .to_string();
     assert!(error.contains("已用于上一版 schema"));
-    assert!(error.contains("cargo migrate new tenant-data"));
+    assert!(error.contains("cargo xtask data migrate new tenant-data"));
 
     let removed_source = changed_source.replacen(
         "bootstrap_migration = true",

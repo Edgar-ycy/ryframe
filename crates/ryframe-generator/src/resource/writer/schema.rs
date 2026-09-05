@@ -225,7 +225,7 @@ fn locked_paths(root: &Path) -> Result<BTreeSet<String>, ResourceError> {
         ResourceError::file(
             &path,
             format!("迁移冻结清单格式错误：{error}"),
-            "先通过 cargo migrate verify 修复冻结清单",
+            "先通过 cargo xtask data migrate verify 修复冻结清单",
         )
     })?;
     Ok(value
@@ -241,10 +241,10 @@ fn locked_paths(root: &Path) -> Result<BTreeSet<String>, ResourceError> {
 fn schema_change_suggestion(storage: StorageKind) -> &'static str {
     match storage {
         StorageKind::ControlRow => {
-            "先运行 `cargo migrate new control <name>`，再把生成的完整迁移名写入 database.schema_revision"
+            "先运行 `cargo xtask data migrate new control <name>`，再把生成的完整迁移名写入 database.schema_revision"
         }
         StorageKind::TenantData => {
-            "先运行 `cargo migrate new tenant-data <name>`，再把生成的完整迁移名写入 database.schema_revision"
+            "先运行 `cargo xtask data migrate new tenant-data <name>`，再把生成的完整迁移名写入 database.schema_revision"
         }
     }
 }

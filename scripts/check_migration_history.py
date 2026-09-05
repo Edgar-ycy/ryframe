@@ -551,10 +551,12 @@ def verify_append_only(
             elif enforce_lock and relative in head_paths:
                 errors.append(
                     f"已提交迁移未进入冻结清单：{relative}；"
-                    "禁止用自动检查接受历史文件，请从新建迁移的工作树执行 `cargo migrate freeze`"
+                    "禁止用自动检查接受历史文件，请从新建迁移的工作树执行 `cargo xtask data migrate freeze`"
                 )
             elif enforce_lock and require_frozen:
-                errors.append(f"待提交迁移尚未冻结：{relative}；请先运行 `cargo migrate freeze`")
+                errors.append(
+                    f"待提交迁移尚未冻结：{relative}；请先运行 `cargo xtask data migrate freeze`"
+                )
 
         source = migration.source.read_text(encoding="utf-8")
         if migration.name != baseline:
@@ -602,10 +604,12 @@ def verify_append_only(
         if enforce_lock and relative in head_paths and relative not in locked_paths:
             errors.append(
                 f"已提交迁移未进入冻结清单：{relative}；"
-                "资源初始迁移必须在提交前执行 `cargo migrate freeze`"
+                "资源初始迁移必须在提交前执行 `cargo xtask data migrate freeze`"
             )
         elif enforce_lock and require_frozen and relative not in locked_paths:
-            errors.append(f"待提交迁移尚未冻结：{relative}；请先运行 `cargo migrate freeze`")
+            errors.append(
+                f"待提交迁移尚未冻结：{relative}；请先运行 `cargo xtask data migrate freeze`"
+            )
         source_text = source.read_text(encoding="utf-8")
         if "INITIAL_RESOURCE_MIGRATION" not in source_text:
             errors.append(f"generated migration 缺少不可变初始迁移标记：{relative}")

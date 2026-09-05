@@ -1,42 +1,13 @@
 use std::path::PathBuf;
 
 use super::cli::{
-    ApiSyncCommand, CheckScope, CiCommand, CliError, Command, ContractOperation, MigrationCommand,
-    MigrationOperation, MigrationTarget, ResourceAction, ResourceTarget, parse,
+    ApiGenerateCommand, BuildOptions, BuildProfile, CheckCommand, CheckOptions, CheckScope,
+    CiCommand, CliError, Command, DataCommand, GenerateCommand, MigrationCommand,
+    MigrationOperation, MigrationTarget, ResourceAction, ResourceCommand, ResourceTarget, parse,
 };
 
 fn strings(values: &[&str]) -> Vec<String> {
     values.iter().map(ToString::to_string).collect()
-}
-
-#[test]
-fn parses_ci_internal_commands_exactly() {
-    assert_eq!(
-        parse_command(&["ci", "plan"]).unwrap(),
-        Command::Ci(CiCommand::Plan)
-    );
-    assert_eq!(
-        parse_command(&["ci", "preflight"]).unwrap(),
-        Command::Ci(CiCommand::Preflight)
-    );
-    assert_eq!(
-        parse_command(&["ci", "rust-gate"]).unwrap(),
-        Command::Ci(CiCommand::RustGate)
-    );
-    assert_eq!(
-        parse_command(&["ci", "resource-gate"]).unwrap(),
-        Command::Ci(CiCommand::ResourceGate)
-    );
-    assert_eq!(
-        parse_command(&["ci", "integration"]).unwrap(),
-        Command::Ci(CiCommand::Integration)
-    );
-    assert_eq!(
-        parse_command(&["ci", "consumer-contract"]).unwrap(),
-        Command::Ci(CiCommand::ConsumerContract)
-    );
-    assert!(parse_command(&["ci"]).is_err());
-    assert!(parse_command(&["ci", "rust-gate", "extra"]).is_err());
 }
 
 fn parse_command(values: &[&str]) -> std::result::Result<Command, CliError> {
@@ -44,140 +15,297 @@ fn parse_command(values: &[&str]) -> std::result::Result<Command, CliError> {
 }
 
 #[test]
-fn preserves_read_only_legacy_check_commands() {
+fn exposes_exactly_five_top_level_command_families() {
+    assert!(matches!(parse_command(&["dev"]), Ok(Command::Dev { .. })));
+    assert!(matches!(parse_command(&["check"]), Ok(Command::Check(_))));
     assert_eq!(
-        parse_command(&["check", "--scope", "backend"]).unwrap(),
-        Command::Check {
-            scope: CheckScope::Backend
-        }
+        parse_command(&["build"]).unwrap(),
+        Command::Build(BuildOptions {
+            profile: BuildProfile::Release,
+            real: false,
+        })
     );
     assert_eq!(
-        parse_command(&["contract", "check"]).unwrap(),
-        Command::Contract {
-            operation: ContractOperation::Check
-        }
+        parse_command(&["generate"]).unwrap(),
+        Command::Generate(GenerateCommand::Help)
     );
-    assert!(parse_command(&["contract", "sync"]).is_err());
+    assert_eq!(
+        parse_command(&["data"]).unwrap(),
+        Command::Data(DataCommand::Help)
+    );
+    for removed in [
+        "doctor",
+        "verify",
+        "resource",
+        "api-sync",
+        "migrate",
+        "ci",
+        "devex",
+        "contract",
+        "feature-matrix",
+        "release-verify",
+    ] {
+        assert!(
+            parse_command(&[removed]).is_err(),
+            "旧入口 {removed} 应被拒绝"
+        );
+        assert!(parse_command(&[removed, "--help"]).is_err());
+        assert!(parse_command(&["help", removed]).is_err());
+    }
 }
 
 #[test]
-fn parses_daily_short_commands() {
+fn help_accepts_only_current_command_families() {
+    assert_eq!(parse_command(&[]).unwrap(), Command::Help(None));
+    assert_eq!(parse_command(&["--help"]).unwrap(), Command::Help(None));
+    for command in ["dev", "check", "build", "generate", "data"] {
+        let expected = Command::Help(Some(command.into()));
+        assert_eq!(parse_command(&["help", command]).unwrap(), expected);
+        assert_eq!(parse_command(&[command, "--help"]).unwrap(), expected);
+    }
+    assert!(parse_command(&["missing", "--help"]).is_err());
+}
+
+#[test]
+fn parses_check_task_graph_and_internal_groups() {
     assert_eq!(
-        parse_command(&["dev"]).unwrap(),
-        Command::Dev {
-            measure_once: false
-        }
+        parse_command(&["check", "--scope", "frontend", "--full", "--plan"]).unwrap(),
+        Command::Check(CheckCommand::Run(CheckOptions {
+            scope: CheckScope::Frontend,
+            full: true,
+            plan: true,
+        }))
     );
+    assert_eq!(
+        parse_command(&["check", "doctor"]).unwrap(),
+        Command::Check(CheckCommand::Doctor)
+    );
+    for (name, operation) in [
+        ("plan", CiCommand::Plan),
+        ("preflight", CiCommand::Preflight),
+        ("rust-gate", CiCommand::RustGate),
+        ("resource-gate", CiCommand::ResourceGate),
+        ("integration", CiCommand::Integration),
+        ("consumer-contract", CiCommand::ConsumerContract),
+    ] {
+        assert_eq!(
+            parse_command(&["check", "ci", name]).unwrap(),
+            Command::Check(CheckCommand::Ci(operation))
+        );
+    }
+    assert!(parse_command(&["check", "ci"]).is_err());
+    assert!(parse_command(&["check", "ci", "rust-gate", "extra"]).is_err());
+    assert!(parse_command(&["check", "--full", "--full"]).is_err());
+    assert!(parse_command(&["check", "--scope", "all", "--scope", "backend"]).is_err());
+}
+
+#[test]
+fn parses_build_and_development_options() {
     assert_eq!(
         parse_command(&["dev", "--measure-once"]).unwrap(),
         Command::Dev { measure_once: true }
     );
+    assert_eq!(
+        parse_command(&["build", "--real"]).unwrap(),
+        Command::Build(BuildOptions {
+            profile: BuildProfile::Release,
+            real: true,
+        })
+    );
+    assert_eq!(
+        parse_command(&["build", "--profile", "dev"]).unwrap(),
+        Command::Build(BuildOptions {
+            profile: BuildProfile::Dev,
+            real: false,
+        })
+    );
+    assert_eq!(
+        parse_command(&["build", "--real", "--profile", "release"]).unwrap(),
+        Command::Build(BuildOptions {
+            profile: BuildProfile::Release,
+            real: true,
+        })
+    );
+    assert!(parse_command(&["build", "--profile", "test"]).is_err());
+    assert!(parse_command(&["build", "--profile", "--real"]).is_err());
+    assert!(parse_command(&["build", "--profile", "dev", "--profile", "release"]).is_err());
+    assert!(parse_command(&["build", "--real", "--real"]).is_err());
+    assert!(parse_command(&["build", "--real", "extra"]).is_err());
     assert!(parse_command(&["dev", "--measure-once", "extra"]).is_err());
-    assert_eq!(
-        parse_command(&["verify", "--full", "--scope", "frontend"]).unwrap(),
-        Command::Verify {
-            scope: CheckScope::Frontend,
-            full: true
-        }
-    );
-    let Command::Resource(resource) = parse_command(&["resource", "post", "--explain"]).unwrap()
-    else {
-        panic!("应解析为资源命令");
-    };
-    assert_eq!(resource.target, ResourceTarget::Named("post".into()));
-    assert_eq!(resource.action, ResourceAction::Explain);
-    assert_eq!(
-        parse_command(&["api-sync", "--commit", "HEAD"]).unwrap(),
-        Command::ApiSync(ApiSyncCommand::Commit("HEAD".into()))
-    );
-    assert_eq!(
-        parse_command(&["migrate", "freeze"]).unwrap(),
-        Command::Migrate(MigrationCommand::Freeze)
-    );
 }
 
 #[test]
-fn migration_defaults_to_control_scope() {
+fn generation_is_read_only_until_write_is_explicit() {
     assert_eq!(
-        parse_command(&["migrate", "verify"]).unwrap(),
-        Command::Migrate(MigrationCommand::Run {
+        parse_command(&["generate", "api"]).unwrap(),
+        Command::Generate(GenerateCommand::Api(ApiGenerateCommand {
+            reference: None,
+            write: false,
+        }))
+    );
+    assert_eq!(
+        parse_command(&["generate", "api", "--commit", "HEAD", "--write"]).unwrap(),
+        Command::Generate(GenerateCommand::Api(ApiGenerateCommand {
+            reference: Some("HEAD".into()),
+            write: true,
+        }))
+    );
+    assert!(parse_command(&["generate", "api", "--commit", "HEAD"]).is_err());
+    assert!(parse_command(&["generate", "api", "--write", "--write"]).is_err());
+
+    assert_eq!(
+        parse_command(&["generate", "resource", "post"]).unwrap(),
+        Command::Generate(GenerateCommand::Resource(ResourceCommand {
+            target: ResourceTarget::Named("post".into()),
+            action: ResourceAction::Preview,
+        }))
+    );
+    assert_eq!(
+        parse_command(&["generate", "resource", "--all", "--check"]).unwrap(),
+        Command::Generate(GenerateCommand::Resource(ResourceCommand {
+            target: ResourceTarget::All,
+            action: ResourceAction::Check,
+        }))
+    );
+    assert!(parse_command(&["generate", "resource", "--all", "--write"]).is_err());
+    assert!(parse_command(&["generate", "resource", "--all"]).is_err());
+    assert!(parse_command(&["generate", "resource", "post", "--write", "--explain"]).is_err());
+    for (flag, action) in [
+        ("--write", ResourceAction::Write),
+        ("--check", ResourceAction::Check),
+        ("--explain", ResourceAction::Explain),
+    ] {
+        assert_eq!(
+            parse_command(&["generate", "resource", "post", flag]).unwrap(),
+            Command::Generate(GenerateCommand::Resource(ResourceCommand {
+                target: ResourceTarget::Named("post".into()),
+                action,
+            }))
+        );
+    }
+}
+
+#[test]
+fn data_groups_migrations_and_explicit_maintenance() {
+    assert_eq!(
+        parse_command(&["data", "migrate", "verify"]).unwrap(),
+        Command::Data(DataCommand::Migrate(MigrationCommand::Run {
             operation: MigrationOperation::Verify,
             target: MigrationTarget::Control,
-        })
+        }))
     );
     assert_eq!(
-        parse_command(&["migrate", "up", "tenant-data", "--all"]).unwrap(),
-        Command::Migrate(MigrationCommand::Run {
+        parse_command(&["data", "migrate", "up", "tenant-data", "--all"]).unwrap(),
+        Command::Data(DataCommand::Migrate(MigrationCommand::Run {
             operation: MigrationOperation::Up,
             target: MigrationTarget::TenantDataAll,
-        })
+        }))
     );
+    assert!(matches!(
+        parse_command(&["data", "backup", "status"]),
+        Ok(Command::Data(DataCommand::Backup(arguments))) if arguments == ["status"]
+    ));
+    assert!(matches!(
+        parse_command(&["data", "restore", "verify", "--id", "r1"]),
+        Ok(Command::Data(DataCommand::Restore(arguments))) if arguments[0] == "verify"
+    ));
+    assert!(matches!(
+        parse_command(&["data", "target", "inventory", "--target", "tenant-a"]),
+        Ok(Command::Data(DataCommand::TargetInventory(arguments)))
+            if arguments == ["inventory", "--target", "tenant-a"]
+    ));
+    assert!(parse_command(&["data", "backup"]).is_err());
+    assert!(parse_command(&["data", "file", "unknown"]).is_err());
+    assert_eq!(
+        parse_command(&["data", "migrate", "freeze"]).unwrap(),
+        Command::Data(DataCommand::Migrate(MigrationCommand::Freeze))
+    );
+    assert_eq!(
+        parse_command(&[
+            "data",
+            "migrate",
+            "status",
+            "tenant-data",
+            "--target",
+            "tenant-a"
+        ])
+        .unwrap(),
+        Command::Data(DataCommand::Migrate(MigrationCommand::Run {
+            operation: MigrationOperation::Status,
+            target: MigrationTarget::TenantDataOne("tenant-a".into()),
+        }))
+    );
+    assert!(parse_command(&["data", "migrate", "new", "unknown", "add_device"]).is_err());
+}
+
+#[test]
+fn release_values_must_be_nonempty_and_cannot_consume_options() {
+    let arguments = [
+        "check",
+        "release",
+        "--tag",
+        "v0.12.1",
+        "--backend-repository",
+        "owner/backend",
+        "--backend-commit",
+        "HEAD",
+        "--frontend-repository",
+        "owner/frontend",
+        "--frontend-commit",
+        "HEAD",
+        "--manifest-path",
+        "target/evidence.json",
+    ];
+    assert!(matches!(
+        parse_command(&arguments),
+        Ok(Command::Check(CheckCommand::Release(_)))
+    ));
+    for value in ["", " ", "-q", "--unknown"] {
+        let mut invalid = arguments;
+        invalid[3] = value;
+        assert!(parse_command(&invalid).is_err(), "无效值：{value:?}");
+    }
 }
 
 #[test]
 fn global_frontend_dir_can_follow_command_arguments() {
     let cli = parse(strings(&[
-        "contract",
         "check",
+        "--plan",
         "--frontend-dir",
-        "D:/workspace/frontend",
+        "D:/工作区/frontend with spaces",
     ]))
     .unwrap();
-    assert_eq!(cli.frontend_dir, PathBuf::from("D:/workspace/frontend"));
+    assert_eq!(
+        cli.frontend_dir,
+        PathBuf::from("D:/工作区/frontend with spaces")
+    );
 }
 
 #[test]
-fn rejects_ambiguous_or_duplicate_arguments() {
-    assert!(parse_command(&["resource", "post", "--write", "--explain"]).is_err());
-    assert!(parse_command(&["resource", "--all"]).is_err());
-    assert!(parse_command(&["resource", "--all", "--write"]).is_err());
-    assert!(parse_command(&["verify", "--scope", "all", "--scope", "backend"]).is_err());
-    assert!(parse_command(&["migrate", "new", "unknown", "add_device"]).is_err());
-    assert!(parse(strings(&["verify", "--frontend-dir", "--full"])).is_err());
-    assert!(parse_command(&["api-sync", "--commit", "--full"]).is_err());
-    assert!(parse_command(&["api-sync", "--commit", "-q"]).is_err());
-    assert!(parse_command(&["migrate", "verify", "tenant-data", "--target", "--all"]).is_err());
-}
-
-#[test]
-fn daily_commands_forward_every_supported_argument() {
-    assert_eq!(
-        parse_command(&["verify", "--scope", "backend", "--full"]).unwrap(),
-        Command::Verify {
-            scope: CheckScope::Backend,
-            full: true,
-        }
+fn rejects_ambiguous_global_or_value_arguments() {
+    assert!(parse(strings(&["check", "--frontend-dir", "--full"])).is_err());
+    assert!(parse(strings(&["check", "--frontend-dir", "-h"])).is_err());
+    assert!(
+        parse(strings(&[
+            "check",
+            "--frontend-dir",
+            "a",
+            "--frontend-dir",
+            "b",
+        ]))
+        .is_err()
     );
-    assert!(matches!(
-        parse_command(&["resource", "post"]).unwrap(),
-        Command::Resource(command)
-            if command.target == ResourceTarget::Named("post".into())
-                && command.action == ResourceAction::Preview
-    ));
-    assert!(matches!(
-        parse_command(&["resource", "post", "--write"]).unwrap(),
-        Command::Resource(command)
-            if command.target == ResourceTarget::Named("post".into())
-                && command.action == ResourceAction::Write
-    ));
-    assert!(matches!(
-        parse_command(&["resource", "post", "--check"]).unwrap(),
-        Command::Resource(command)
-            if command.target == ResourceTarget::Named("post".into())
-                && command.action == ResourceAction::Check
-    ));
-    assert_eq!(
-        parse_command(&["resource", "--all", "--check"]).unwrap(),
-        Command::Resource(super::cli::ResourceCommand {
-            target: ResourceTarget::All,
-            action: ResourceAction::Check,
-        })
-    );
-    assert_eq!(
-        parse_command(&["migrate", "status", "tenant-data", "--target", "tenant-a"]).unwrap(),
-        Command::Migrate(MigrationCommand::Run {
-            operation: MigrationOperation::Status,
-            target: MigrationTarget::TenantDataOne("tenant-a".into()),
-        })
+    assert!(parse_command(&["generate", "api", "--commit", "-q", "--write"]).is_err());
+    assert!(
+        parse_command(&[
+            "data",
+            "migrate",
+            "verify",
+            "tenant-data",
+            "--target",
+            "--all",
+        ])
+        .is_err()
     );
 }

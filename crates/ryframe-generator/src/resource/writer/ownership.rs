@@ -79,7 +79,9 @@ pub(super) fn verify_unselected_resource_sources(
         if current.source_hash != *owned_hash {
             return Err(ResourceError::new(
                 "未选中的受管资源清单已有待生成变化，拒绝提前刷新中央聚合",
-                format!("先运行 cargo resource {resource} --write，再重新生成所选资源 {selected}"),
+                format!(
+                    "先运行 cargo xtask generate resource {resource} --write，再重新生成所选资源 {selected}"
+                ),
             )
             .with_resource(resource)
             .with_file(&current.source_path));

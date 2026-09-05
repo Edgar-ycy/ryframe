@@ -14,6 +14,8 @@ mod feature;
 pub(crate) mod metrics;
 #[path = "check/model.rs"]
 mod model;
+#[path = "check/plan.rs"]
+mod plan;
 #[path = "check/resource.rs"]
 mod resource;
 #[path = "check/selection.rs"]
@@ -27,14 +29,6 @@ pub(crate) use cargo_command::{
     WORKSPACE_CLIPPY_ARGS, backend_package_operation_args, cargo_operation_jobs,
     default_test_jobs_from, workspace_clippy_args, workspace_test_args,
 };
-pub(crate) use execution::{
-    ci_consumer_contract, ci_consumer_contract_against_committed_snapshot, ci_rust_gate,
-};
-#[allow(unused_imports)]
-pub(crate) use execution::{run, verify};
-#[allow(unused_imports)]
-pub(crate) use feature::feature_matrix;
-
 #[allow(unused_imports)]
 pub(crate) use change_surface::{
     ChangeCategory, ChangeSurfacePolicy, ChangeSurfaceReport, RepositoryKind,
@@ -49,8 +43,13 @@ pub(crate) use context::{
     resolve_target_dir, verify_job_budget_from, verify_target_policy_from,
 };
 #[allow(unused_imports)]
+pub(crate) use execution::verify;
+#[allow(unused_imports)]
 pub(crate) use execution::{
     BACKEND_POLICY_SCRIPTS, PYTHON_TEST_ARGS, SMART_BACKEND_OPERATIONS, SMART_FEATURE_OPERATIONS,
+};
+pub(crate) use execution::{
+    ci_consumer_contract, ci_consumer_contract_against_committed_snapshot, ci_rust_gate,
 };
 #[allow(unused_imports)]
 pub(crate) use feature::{
@@ -61,6 +60,8 @@ pub(crate) use feature::{
 pub(crate) use model::{
     BackendSnapshotProfile, ConsumerContractPlan, FrontendProfile, VerifySelection, WorkspaceGraph,
 };
+#[allow(unused_imports)]
+pub(crate) use plan::plan;
 #[allow(unused_imports)]
 pub(crate) use resource::{
     ResourceWorkspaceProfile, resolve_frontend_dir, resource_test_executable_from_messages,

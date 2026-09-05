@@ -29,6 +29,15 @@ pub(super) fn migration_directory(root: &Path, scope: MigrationScope) -> PathBuf
 
 pub(crate) fn run(command: &MigrationCommand) -> Result<()> {
     match command {
+        MigrationCommand::Baseline => run_process(
+            &root_dir(),
+            "python",
+            &[
+                "scripts/check_migration_history.py",
+                "--refresh-baseline",
+                "--write",
+            ],
+        ),
         MigrationCommand::Freeze => run_process(
             &root_dir(),
             "python",

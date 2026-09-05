@@ -483,7 +483,7 @@ const RUST_CHECK_MIGRATE: &[StepDefinition] = &[StepDefinition {
 const CARGO_DEV_SAVE: &[StepDefinition] = &[StepDefinition {
     working_directory: WorkingDirectory::Backend,
     program: "cargo",
-    args: &["dev", "--measure-once"],
+    args: &["xtask", "dev", "--measure-once"],
 }];
 const RESOURCE_GENERATOR_ALL: &[StepDefinition] = &[StepDefinition {
     working_directory: WorkingDirectory::Backend,
@@ -498,6 +498,7 @@ const RESOURCE_GENERATOR_ALL: &[StepDefinition] = &[StepDefinition {
         "--features",
         "resource",
         "--",
+        "generate",
         "resource",
         "--all",
         "--check",
@@ -518,6 +519,7 @@ const RESOURCE_GENERATOR_POST: &[StepDefinition] = &[StepDefinition {
         "--features",
         "resource",
         "--",
+        "generate",
         "resource",
         "post",
         "--check",
@@ -538,6 +540,7 @@ const RESOURCE_GENERATOR_NOTICE: &[StepDefinition] = &[StepDefinition {
         "--features",
         "resource",
         "--",
+        "generate",
         "resource",
         "notice",
         "--check",
@@ -556,6 +559,7 @@ const RESOURCE_GATE: &[StepDefinition] = &[StepDefinition {
         "-p",
         "xtask",
         "--",
+        "check",
         "ci",
         "resource-gate",
         "--frontend-dir",
@@ -573,6 +577,7 @@ const RUST_GATE: &[StepDefinition] = &[StepDefinition {
         "-p",
         "xtask",
         "--",
+        "check",
         "ci",
         "rust-gate",
         "--frontend-dir",
@@ -582,7 +587,7 @@ const RUST_GATE: &[StepDefinition] = &[StepDefinition {
 const FRONTEND_FAST: &[StepDefinition] = &[StepDefinition {
     working_directory: WorkingDirectory::Frontend,
     program: "corepack",
-    args: &["pnpm", "check:fast"],
+    args: &["pnpm", "check"],
 }];
 const FRONTEND_BUILD: &[StepDefinition] = &[StepDefinition {
     working_directory: WorkingDirectory::Frontend,

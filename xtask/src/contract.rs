@@ -10,7 +10,7 @@ mod model;
 mod transaction;
 
 #[allow(unused_imports)]
-pub(crate) use candidate::{api_sync, run};
+pub(crate) use candidate::generate_api;
 
 #[allow(unused_imports)]
 pub(crate) use candidate::{

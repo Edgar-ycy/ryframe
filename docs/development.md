@@ -7,14 +7,14 @@
 
 首次启动先验证数据库结构，再启动开发进程：
 ```powershell
-cargo migrate verify
-cargo dev
+cargo xtask data migrate verify
+cargo xtask dev
 ```
-`cargo dev` 启动 Vite、API 和独立 Worker。后端变化会先编译到按会话和代次隔离的新目录，并在隔离端口探活；探活成功后才切换正式端口，失败时继续使用上一个可用版本。再次启动时会清理上次崩溃留下的暂存目录，并校验清单、成对二进制与运行输入快照，恢复最近的完整版本后再后台构建当前源码。按 `Ctrl+C` 停止全部子进程；若 `xtask` 自身变化，命令以退出码 `75` 提示重新运行 `cargo dev`。
+`cargo xtask dev` 启动 Vite、API 和独立 Worker。后端变化会先编译到按会话和代次隔离的新目录，并在隔离端口探活；探活成功后才切换正式端口，失败时继续使用上一个可用版本。再次启动时会清理上次崩溃留下的暂存目录，并校验清单、成对二进制与运行输入快照，恢复最近的完整版本后再后台构建当前源码。按 `Ctrl+C` 停止全部子进程；若 `xtask` 自身变化，命令以退出码 `75` 提示重新运行 `cargo xtask dev`。
 
 保存后的动作由整批路径共同决定；同一批包含多类变化时会合并为覆盖全部变化的计划：
 
-| 变化范围 | `cargo dev` 动作 |
+| 变化范围 | `cargo xtask dev` 动作 |
 |---|---|
 | 当前开发运行配置 | 不调用 Cargo；先比较去注释、脱敏后的配置快照与内存密钥投影。语义相同的保存保持当前 API/Worker 就绪；存在实际差异时复用上一可用二进制，以原子配置快照探活后成对切换 |
 | 本地化 catalog | 重新构建 API 和 Worker，因为默认文案包含编译期资源 |
@@ -24,10 +24,10 @@ cargo dev
 | 控制库迁移或访问目录 | 只构建 migrate，复用上一可用 API/Worker，执行控制库 verify 后成对探活和切换；不自动升级 |
 | 租户迁移 | 只构建 migrate，并验证当前配置中明确登记的本地租户目标；不重启服务 |
 | migrate 入口 | 只构建 migrate 并独立 verify；不重启服务 |
-| 资源清单或生成器 | 执行只读 `cargo resource --all --check`；发现漂移即失败，不重启服务 |
+| 资源清单或生成器 | 执行只读 `cargo xtask generate resource --all --check`；发现漂移即失败，不重启服务 |
 | Cargo、toolchain、`build.rs` 或本地 vendor | 重新规划并构建 API、Worker 和 migrate |
 | 未识别的后端文件 | 保守地重新构建 API 和 Worker |
-| `xtask` 自身 | 退出码 `75`，提示开发者重新运行 `cargo dev` |
+| `xtask` 自身 | 退出码 `75`，提示开发者重新运行 `cargo xtask dev` |
 
 编译、迁移验证或探活期间出现更新的源码代次时，旧周期会终止并回收完整 Cargo、rustc 与 build-script 进程树，再处理最新路径集合。候选版本开始切换后会先完成切换或恢复上一可用版本；期间的新事件进入队列，不会把过期代次提升为正式版本。配置与本地化资源使用原子运行快照，密钥只通过子进程环境传递，不写入代次清单。仅注释、格式等不改变快照语义的配置保存会重新校验文件结构和密钥投影后跳过重启；任一配置值或密钥投影变化仍按完整候选探活与回滚路径处理。
 
@@ -41,13 +41,13 @@ cargo run --locked -p ryframe --no-default-features --features bin-worker --bin 
 控制库使用默认目标；租户数据可操作全部已登记目标或单个目标；新迁移必须用对应命令创建骨架：
 
 ```powershell
-cargo migrate status
-cargo migrate verify
-cargo migrate up
-cargo migrate verify tenant-data --all
-cargo migrate verify tenant-data --target <目标键>
-cargo migrate new control <迁移名>
-cargo migrate new tenant-data <迁移名>
+cargo xtask data migrate status
+cargo xtask data migrate verify
+cargo xtask data migrate up
+cargo xtask data migrate verify tenant-data --all
+cargo xtask data migrate verify tenant-data --target <目标键>
+cargo xtask data migrate new control <迁移名>
+cargo xtask data migrate new tenant-data <迁移名>
 ```
 生产部署和非生产重建步骤见[数据指南](data.md)与[运维指南](operations.md)。
 ## 开发标准资源
@@ -55,23 +55,23 @@ cargo migrate new tenant-data <迁移名>
 资源入口默认只预览差异；`--check` 只读比较并在存在差异时返回失败，`--write` 才写入生成结果，`--explain` 可查看从资源清单到页面的调用链：
 
 ```powershell
-cargo resource --help
-cargo resource post
-cargo resource post --check
-cargo resource --all --check
-cargo resource post --write
-cargo resource post --explain
+cargo xtask generate resource --help
+cargo xtask generate resource post
+cargo xtask generate resource post --check
+cargo xtask generate resource --all --check
+cargo xtask generate resource post --write
+cargo xtask generate resource post --explain
 ```
-`cargo resource --all --check` 会校验全部受管后端、前端资产和 ownership 清单，适合在提交前确认重复生成零差异。该命令不会创建临时生成文件、刷新 OpenAPI 或连接数据库；发现差异后，先按资源预览，再显式执行对应的 `--write`。
+`cargo xtask generate resource --all --check` 会校验全部受管后端、前端资产和 ownership 清单，适合在提交前确认重复生成零差异。该命令不会创建临时生成文件、刷新 OpenAPI 或连接数据库；发现差异后，先按资源预览，再显式执行对应的 `--write`。
 
 开发新的标准资源时：
 
 1. 在 `catalog/resources/` 增加或修改资源清单。
 2. 预览生成差异，确认字段、校验、筛选、排序和权限。
 3. 使用 `--write` 更新后端、OpenAPI 和前端派生文件。
-4. 运行 `cargo resource --all --check` 确认资源目录零差异。
+4. 运行 `cargo xtask generate resource --all --check` 确认资源目录零差异。
 5. 在前端补充资源需要的业务交互。
-6. 运行 `cargo verify`，再用浏览器验证新增、查询、编辑和删除流程。
+6. 运行 `cargo xtask check`，再用浏览器验证新增、查询、编辑和删除流程。
 
 Post 和 Notice 可作为标准 CRUD 示例。导出、发布等特殊动作适合保留为自定义强类型用例。
 ## 开发自定义业务
@@ -86,7 +86,7 @@ Post 和 Notice 可作为标准 CRUD 示例。导出、发布等特殊动作适�
 6. 同步前端契约并联调；模块选择和请求流见[架构说明](architecture.md)。
 ## API 与前后端联调
 
-接口变化后运行 `cargo api-sync`，从当前后端代码生成候选 OpenAPI 并刷新前端 operation descriptor；随后进入前端项目执行消费者检查和浏览器 smoke，确认请求、权限、菜单与页面行为一致。只重新导出后端快照时运行：
+接口变化后运行 `cargo xtask generate api --write`，从当前后端代码生成候选 OpenAPI 并刷新前端 operation descriptor；随后进入前端项目执行消费者检查和浏览器 smoke，确认请求、权限、菜单与页面行为一致。只重新导出后端快照时运行：
 ```powershell
 cargo run --locked -p ryframe-api --bin export_openapi -- openapi/openapi.json
 cargo run --locked -p ryframe-db --features migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
@@ -96,8 +96,8 @@ cargo run --locked -p ryframe-db --features migration --bin export_mysql_snapsho
 日常修改使用智能检查，联调完成后使用完整检查：
 
 ```powershell
-cargo verify
-cargo verify --full
+cargo xtask check
+cargo xtask check --full
 ```
 只运行后端或前端主要检查时可添加 `--scope backend` 或 `--scope frontend`。
 
@@ -128,27 +128,27 @@ $env:RYFRAME_MYSQL_TLS_INTEGRATION = "1"
 $env:RYFRAME_REDIS_INTEGRATION = "1"
 $env:RYFRAME_REDIS_DATABASE = "15"
 $env:RYFRAME_INTEGRATION_RUN_ID = "local-aws-lc"
-cargo xtask ci integration
+cargo xtask check ci integration
 ```
 
 TLS fixture 会生成两日有效的临时 CA，在动态回环端口启动 Redis TLS 代理和 HTTPS 服务；相关测试结束或失败后都会停止监听并删除临时证书。日志默认保存在 `.local-tests/integration/tls/<run-id>/`，历史目录不会覆盖；可用 `RYFRAME_TLS_ARTIFACT_DIR` 指定日志根目录。CI 对成功和失败运行都上传 14 天，失败摘要会输出每个已运行测试的最近日志。`RYFRAME_REDIS_HOST` 不是 `127.0.0.1`、`::1` 或 `localhost` 时门禁直接拒绝启动，避免误连共享 Redis。
 
 ## 开发反馈性能测量
 
-需要测量保存反馈、编译、资源门禁或前端构建时，先用 `cargo xtask devex --help` 选择适用的 suite、variant、运行次数与冷暖缓存，再通过统一入口执行和汇总：
+需要测量保存反馈、编译、资源门禁或前端构建时，先用 `cargo xtask check perf --help` 选择适用的 suite、variant、运行次数与冷暖缓存，再通过统一入口执行和汇总：
 
 ```powershell
-cargo xtask devex run --suite <suite> --variant <name> --runs <次数> --cache <cold|warm>
-cargo xtask devex paired --base-backend <基线目录> --candidate-backend <候选目录> --suite <suite> --variant <name> --runs <次数> --cache <cold|warm>
-cargo xtask devex summarize <日期/run-id>
-cargo xtask devex compare --base <日期/run-id> --candidate <日期/run-id>
+cargo xtask check perf run --suite <suite> --variant <name> --runs <次数> --cache <cold|warm>
+cargo xtask check perf paired --base-backend <基线目录> --candidate-backend <候选目录> --suite <suite> --variant <name> --runs <次数> --cache <cold|warm>
+cargo xtask check perf summarize <日期/run-id>
+cargo xtask check perf compare --base <日期/run-id> --candidate <日期/run-id>
 ```
 
 测量产物写入 `.local-tests/devex/<日期>/<run-id>/`，其中包含运行环境与源码指纹、逐次样本以及 P50/P95 摘要；涉及编译缓存的 suite 还保存前后统计。runner 会验证 suite 与缓存语义、源码和工具指纹、样本完整性及基线/候选是否可比较；前置依赖未就绪、输入无效、源码在测量中变化、缓存报错或证据缺失时都会失败关闭，不把不完整结果判为达标。在 Windows 的深层工作树中，DevEx 会将临时 Cargo target 放入工作区 `.local-tests/d/<摘要>`，避免 build-script 路径过长；测量记录仍只写入上述 DevEx 目录。`cargo-dev-save` 使用真实 watcher、只读迁移验证和探活流程，不会自动升级数据库。日常 `CI` 使用 6 个业务任务加 `Required` 汇总；`Extended CI` 在每周、版本标签、手动触发或生产镜像与全栈脚本变化时运行全栈、CycloneDX 与镜像扫描。
 
 ## 资源门禁
 
-`cargo xtask ci resource-gate --frontend-dir ../ryframe-vue3` 直接从 CI 的 base/head SHA 计算资源变化、关系闭包和 ownership，不接收调用方拼接的资源名。缺少合法 base、变更面过大、删除或重命名无法归属，以及 Cargo、toolchain、模板、CI 或架构策略变化时会自动执行完整门禁。
+`cargo xtask check ci resource-gate --frontend-dir ../ryframe-vue3` 直接从 CI 的 base/head SHA 计算资源变化、关系闭包和 ownership，不接收调用方拼接的资源名。缺少合法 base、变更面过大、删除或重命名无法归属，以及 Cargo、toolchain、模板、CI 或架构策略变化时会自动执行完整门禁。
 
 定向模式的 Clippy 只检查受影响库和二进制，测试阶段只运行资源契约测试；MySQL、Redis、对象存储和 OTLP 的真实协议测试统一由 integration 门禁执行，避免在每次资源改动中重复编译重量级协议 harness。
 
@@ -156,5 +156,5 @@ cargo xtask devex compare --base <日期/run-id> --candidate <日期/run-id>
 
 ## 常见问题
 
-- 启动提示迁移不一致：运行 `cargo migrate status` 与 `cargo migrate verify`，确认后再执行 `cargo migrate up`；Worker 未消费任务时，确认 API/Worker 使用 `APP_JOBS_MODE=external`，检查健康端口、lease 和数据库连接。
-- 前端请求与后端不一致：重新运行 `cargo api-sync` 和消费者检查；Redis 或对象存储不可用时，检查 `scope_id`、连接模式、TLS、ownership marker 与服务端口，详见[运维指南](operations.md)。
+- 启动提示迁移不一致：运行 `cargo xtask data migrate status` 与 `cargo xtask data migrate verify`，确认后再执行 `cargo xtask data migrate up`；Worker 未消费任务时，确认 API/Worker 使用 `APP_JOBS_MODE=external`，检查健康端口、lease 和数据库连接。
+- 前端请求与后端不一致：重新运行 `cargo xtask generate api --write` 和消费者检查；Redis 或对象存储不可用时，检查 `scope_id`、连接模式、TLS、ownership marker 与服务端口，详见[运维指南](operations.md)。

@@ -140,7 +140,7 @@ pub(crate) fn verify_backend_snapshots(root: &Path, snapshots: &BackendSnapshots
             "OpenAPI",
             &root.join("openapi").join("openapi.json"),
             openapi,
-            "cargo api-sync",
+            "cargo xtask generate api --write",
         )?;
     }
     if let Some(mysql) = &snapshots.mysql {

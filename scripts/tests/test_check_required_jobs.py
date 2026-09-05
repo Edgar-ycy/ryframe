@@ -169,7 +169,7 @@ class RequiredJobsTests(unittest.TestCase):
     def test_workflow_uses_plan_outputs_and_checked_required_script(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         plan = workflow.split("\n  plan:\n", 1)[1].split("\n  rust-gate:\n", 1)[0]
-        self.assertIn("cargo xtask ci plan", plan)
+        self.assertIn("cargo xtask check ci plan", plan)
         for output in MODULE.PLAN_OUTPUTS:
             self.assertIn(f"{output}: ${{{{ steps.plan.outputs.{output} }}}}", plan)
         for job, output in MODULE.PLAN_CONTROLLED_JOBS.items():
@@ -229,7 +229,7 @@ class RequiredJobsTests(unittest.TestCase):
         )
         self.assertIn("working-directory: backend", block)
         self.assertIn(
-            "cargo xtask ci resource-gate --frontend-dir ../frontend", block
+            "cargo xtask check ci resource-gate --frontend-dir ../frontend", block
         )
         self.assertNotIn("RYFRAME_CI_CHANGED_PATHS", block)
         self.assertIn(
@@ -247,7 +247,7 @@ class RequiredJobsTests(unittest.TestCase):
             self.assertIn("github.event.action != 'edited'", block)
         resource = workflow.split("  resource-gate:", 1)[1].split("  integration:", 1)[0]
         self.assertIn("needs.plan.outputs.consumer_contract == 'true'", resource)
-        self.assertIn("cargo xtask ci consumer-contract", resource)
+        self.assertIn("cargo xtask check ci consumer-contract", resource)
 
     def test_sccache_only_wraps_compile_heavy_jobs_with_persisted_local_cache(self) -> None:
         daily = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
@@ -365,11 +365,11 @@ class RequiredJobsTests(unittest.TestCase):
         )[0]
         self.assertIn("scripts/select_frontend_commit.py", rust_gate)
         self.assertIn("corepack pnpm install --frozen-lockfile", rust_gate)
-        self.assertIn("cargo xtask ci rust-gate --frontend-dir ../frontend", rust_gate)
+        self.assertIn("cargo xtask check ci rust-gate --frontend-dir ../frontend", rust_gate)
         integration = workflow.split("\n  integration:\n", 1)[1].split(
             "\n  windows-smoke:\n", 1
         )[0]
-        self.assertIn("cargo xtask ci integration", integration)
+        self.assertIn("cargo xtask check ci integration", integration)
         self.assertIn('RYFRAME_MYSQL_TLS_INTEGRATION: "1"', integration)
         self.assertNotIn("cargo test --locked -p ryframe-db", integration)
         self.assertIn("path: backend", integration)
@@ -389,7 +389,7 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertIn("RYFRAME_CI_FRONTEND_REF", windows)
         self.assertIn("RYFRAME_CI_RUST_GATE_PROFILE: windows-smoke", windows)
         self.assertIn(
-            "cargo xtask ci rust-gate --frontend-dir ../ryframe-vue3", windows
+            "cargo xtask check ci rust-gate --frontend-dir ../ryframe-vue3", windows
         )
         self.assertNotIn("cargo check --locked -p ryframe", windows)
         self.assertNotIn("--test process_windows", windows)
@@ -404,7 +404,9 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertIn("RYFRAME_CI_BACKEND_HEAD", consumer)
         self.assertIn("RYFRAME_CI_CANDIDATE_OPENAPI", consumer)
         self.assertIn("RYFRAME_CI_FRONTEND_REF", consumer)
-        self.assertIn("cargo xtask ci consumer-contract --frontend-dir ../frontend", consumer)
+        self.assertIn(
+            "cargo xtask check ci consumer-contract --frontend-dir ../frontend", consumer
+        )
         self.assertNotIn("pnpm consumer:check --", consumer)
         self.assertNotIn("cargo run --locked", consumer)
         self.assertNotIn("cmp --silent", consumer)
@@ -426,7 +428,7 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertIn("fetch-depth: 0", preflight)
         self.assertIn("github.event.pull_request.base.sha", preflight)
         self.assertIn("github.event.before", preflight)
-        self.assertIn("cargo xtask ci preflight", preflight)
+        self.assertIn("cargo xtask check ci preflight", preflight)
 
 
 if __name__ == "__main__":

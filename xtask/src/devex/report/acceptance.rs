@@ -85,7 +85,7 @@ pub(crate) fn duration_acceptance(
             12_000.0,
         )],
         (DevexSuite::FrontendFast, "default") => vec![maximum_check(
-            "前端 check:fast P95",
+            "前端 check P95",
             "<= 12000 ms",
             candidate_duration.p95,
             12_000.0,

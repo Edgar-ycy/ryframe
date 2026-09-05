@@ -38,7 +38,7 @@ fn validate_schema_revision(
     } else {
         Err(ResourceError::new(
             format!("schema_revision `{revision}` 不是追加迁移名称"),
-            "使用 `mYYYYMMDD_HHMMSS_name`，并先通过 cargo migrate new 创建对应 roll-forward 迁移",
+            "使用 `mYYYYMMDD_HHMMSS_name`，并先通过 cargo xtask data migrate new 创建对应 roll-forward 迁移",
         )
         .with_resource(resource)
         .with_file(source_path))

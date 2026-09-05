@@ -91,7 +91,7 @@ fn tool_self_change_has_a_stable_rerun_exit_code() {
     assert_eq!(TOOL_SELF_CHANGED_EXIT_CODE, 75);
     assert_eq!(
         error.to_string(),
-        "xtask 自身已变化，请重新运行 `cargo dev`"
+        "xtask 自身已变化，请重新运行 `cargo xtask dev`"
     );
     let ordinary = std::io::Error::other("ordinary failure");
     assert_eq!(failure_exit_code(&ordinary), None);

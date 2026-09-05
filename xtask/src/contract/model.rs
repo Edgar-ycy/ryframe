@@ -36,7 +36,7 @@ impl ContractLock {
             .open(&path)
             .map_err(|error| {
                 format!(
-                    "无法获取契约同步锁 {}：{error}。若没有其他 cargo api-sync 正在运行，请删除该残留锁文件",
+                    "无法获取契约同步锁 {}：{error}。若没有其他 cargo xtask generate api --write 正在运行，请删除该残留锁文件",
                     path.display()
                 )
             })?;

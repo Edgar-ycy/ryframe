@@ -6,7 +6,7 @@ use std::{
 };
 
 use super::{
-    cli::{Command, parse},
+    cli::{CheckCommand, Command, parse},
     dev::{
         ReadyKind, SaveCase, SaveMeasurement, SaveMeasurementContract, read_measurement,
         read_measurement_with_contract,
@@ -129,7 +129,8 @@ fn fixed_suite_whitelist_is_complete_and_closed() {
 #[test]
 fn cli_requires_named_run_and_compare_arguments() {
     let cli = parse(strings(&[
-        "devex",
+        "check",
+        "perf",
         "run",
         "--suite",
         "rust-cold-build",
@@ -141,7 +142,7 @@ fn cli_requires_named_run_and_compare_arguments() {
         "cold",
     ]))
     .unwrap();
-    let Command::Devex(DevexCommand::Run(options)) = cli.command else {
+    let Command::Check(CheckCommand::Perf(DevexCommand::Run(options))) = cli.command else {
         panic!("应解析为 DevEx run");
     };
     assert_eq!(options.suite, DevexSuite::RustColdBuild);
@@ -149,10 +150,11 @@ fn cli_requires_named_run_and_compare_arguments() {
     assert_eq!(options.runs, 20);
     assert_eq!(options.cache_state, CacheState::Cold);
 
-    assert!(parse(strings(&["devex", "run", "rust-cold-build"])).is_err());
+    assert!(parse(strings(&["check", "perf", "run", "rust-cold-build"])).is_err());
     assert!(
         parse(strings(&[
-            "devex",
+            "check",
+            "perf",
             "run",
             "--suite",
             "backend-check",
@@ -165,10 +167,20 @@ fn cli_requires_named_run_and_compare_arguments() {
         ]))
         .is_err()
     );
-    assert!(parse(strings(&["devex", "compare", "base/run", "candidate/run",])).is_err());
+    assert!(
+        parse(strings(&[
+            "check",
+            "perf",
+            "compare",
+            "base/run",
+            "candidate/run",
+        ]))
+        .is_err()
+    );
     assert!(matches!(
         parse(strings(&[
-            "devex",
+            "check",
+            "perf",
             "compare",
             "--base",
             "2026-08-01/base",
@@ -177,7 +189,7 @@ fn cli_requires_named_run_and_compare_arguments() {
         ]))
         .unwrap()
         .command,
-        Command::Devex(DevexCommand::Compare { .. })
+        Command::Check(CheckCommand::Perf(DevexCommand::Compare { .. }))
     ));
 }
 
@@ -191,7 +203,8 @@ fn cli_rejects_cache_states_that_change_suite_semantics() {
         ("rust-sccache", "workspace", "20", "cold"),
     ] {
         let error = parse(strings(&[
-            "devex",
+            "check",
+            "perf",
             "run",
             "--suite",
             suite,
@@ -211,7 +224,8 @@ fn cli_rejects_cache_states_that_change_suite_semantics() {
 #[test]
 fn paired_cli_requires_two_explicit_backend_worktrees() {
     let cli = parse(strings(&[
-        "devex",
+        "check",
+        "perf",
         "paired",
         "--base-backend",
         "D:/worktrees/base",
@@ -227,7 +241,7 @@ fn paired_cli_requires_two_explicit_backend_worktrees() {
         "cold",
     ]))
     .unwrap();
-    let Command::Devex(DevexCommand::Paired(options)) = cli.command else {
+    let Command::Check(CheckCommand::Perf(DevexCommand::Paired(options))) = cli.command else {
         panic!("应解析为 DevEx paired");
     };
     assert_eq!(options.baseline_backend, Path::new("D:/worktrees/base"));
@@ -239,7 +253,8 @@ fn paired_cli_requires_two_explicit_backend_worktrees() {
     assert!(options.candidate_frontend.is_none());
 
     let error = parse(strings(&[
-        "devex",
+        "check",
+        "perf",
         "paired",
         "--base-backend",
         "D:/worktrees/base",
@@ -257,7 +272,8 @@ fn paired_cli_requires_two_explicit_backend_worktrees() {
     assert!(error.contains("--candidate-backend"), "{error}");
 
     let error = parse(strings(&[
-        "devex",
+        "check",
+        "perf",
         "paired",
         "--base-backend",
         "D:/worktrees/base",
@@ -280,7 +296,8 @@ fn paired_cli_requires_two_explicit_backend_worktrees() {
 #[test]
 fn legacy_baseline_contract_is_closed_to_config_only() {
     let cli = parse(strings(&[
-        "devex",
+        "check",
+        "perf",
         "paired",
         "--base-backend",
         "D:/worktrees/base",
@@ -298,7 +315,7 @@ fn legacy_baseline_contract_is_closed_to_config_only() {
         "warm",
     ]))
     .unwrap();
-    let Command::Devex(DevexCommand::Paired(options)) = cli.command else {
+    let Command::Check(CheckCommand::Perf(DevexCommand::Paired(options))) = cli.command else {
         panic!("应解析为 DevEx paired");
     };
     assert_eq!(
@@ -313,7 +330,8 @@ fn legacy_baseline_contract_is_closed_to_config_only() {
     ] {
         assert!(
             parse(strings(&[
-                "devex",
+                "check",
+                "perf",
                 "paired",
                 "--base-backend",
                 "D:/worktrees/base",
@@ -359,7 +377,7 @@ fn suite_definitions_select_the_measured_workload() {
         ]
     );
     let frontend = DevexSuite::FrontendFast.definition("default").unwrap();
-    assert_eq!(frontend.steps[0].args, &["pnpm", "check:fast"]);
+    assert_eq!(frontend.steps[0].args, &["pnpm", "check"]);
 
     let incremental = DevexSuite::RustIncremental
         .definition("application")
@@ -582,7 +600,8 @@ fn legacy_config_result_requires_one_cargo_without_relaxing_current_results() {
 #[test]
 fn cli_rejects_under_sampled_and_unknown_variants() {
     let under_sampled = parse(strings(&[
-        "devex",
+        "check",
+        "perf",
         "run",
         "--suite",
         "frontend-fast",
@@ -601,7 +620,8 @@ fn cli_rejects_under_sampled_and_unknown_variants() {
     );
 
     let unknown = parse(strings(&[
-        "devex",
+        "check",
+        "perf",
         "run",
         "--suite",
         "cargo-dev-save",

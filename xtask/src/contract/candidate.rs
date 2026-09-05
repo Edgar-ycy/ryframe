@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     Result,
-    cli::{ApiSyncCommand, ContractOperation},
+    cli::ApiGenerateCommand,
     process::{run as run_process, run_pnpm},
     workspace::root_dir,
 };
@@ -23,16 +23,11 @@ use super::{
 pub(crate) const CANDIDATE_GENERATION_ARGS: &[&str] =
     &["scripts/generate-api-artifacts.mjs", "--write"];
 
-pub(crate) fn run(operation: ContractOperation, frontend_dir: &Path) -> Result<()> {
-    match operation {
-        ContractOperation::Check => run_pnpm(frontend_dir, &["check", "--stage", "contract"]),
-    }
-}
-
-pub(crate) fn api_sync(command: &ApiSyncCommand, frontend_dir: &Path) -> Result<()> {
-    match command {
-        ApiSyncCommand::Candidate => sync_candidate(frontend_dir),
-        ApiSyncCommand::Commit(reference) => sync_commit(reference, frontend_dir),
+pub(crate) fn generate_api(command: &ApiGenerateCommand, frontend_dir: &Path) -> Result<()> {
+    match (&command.reference, command.write) {
+        (_, false) => run_pnpm(frontend_dir, &["check", "--stage", "contract"]),
+        (None, true) => sync_candidate(frontend_dir),
+        (Some(reference), true) => sync_commit(reference, frontend_dir),
     }
 }
 

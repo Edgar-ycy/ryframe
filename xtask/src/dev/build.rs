@@ -245,7 +245,7 @@ fn run_resource_check(
 ) -> Result<StepResult<()>> {
     let mut command = context.cargo_command();
     command
-        .args(["resource", "--all", "--check"])
+        .args(["xtask", "generate", "resource", "--all", "--check"])
         .current_dir(context.root)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())

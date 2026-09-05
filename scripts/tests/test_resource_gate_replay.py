@@ -237,8 +237,8 @@ class ResourceGateReplayTests(unittest.TestCase):
             for index in range(20)
         )
         valid = MODULE.ReplayManifest(
-            ("cargo", "xtask", "ci", "resource-gate"),
-            ("cargo", "xtask", "ci", "resource-gate"),
+            ("cargo", "xtask", "check", "ci", "resource-gate"),
+            ("cargo", "xtask", "check", "ci", "resource-gate"),
             valid_cases,
         )
         MODULE.validate_case_coverage(valid_cases)
@@ -381,6 +381,7 @@ class ResourceGateReplayTests(unittest.TestCase):
         command = (
             "cargo",
             "xtask",
+            "check",
             "ci",
             "resource-gate",
             "--frontend-dir",
@@ -410,6 +411,7 @@ class ResourceGateReplayTests(unittest.TestCase):
                 "-p",
                 "xtask",
                 "--",
+                "check",
                 "ci",
                 "resource-gate",
                 "--frontend-dir",

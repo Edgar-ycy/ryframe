@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 后端开发自动化统一为 `cargo xtask dev|check|build|generate|data` 五类入口；CI、性能、生成器和数据维护能力按职责归入同一命令树，并移除旧 Cargo alias。
+
 ## [v0.12.1] - 2026-09-02
 
 ### Changed

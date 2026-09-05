@@ -27,13 +27,18 @@ fn isolated_directory_cleanup_rejects_its_root() {
 #[test]
 fn daily_cargo_aliases_lock_dependencies_and_isolate_the_runner() {
     let config = std::fs::read_to_string(workspace::root_dir().join(".cargo/config.toml")).unwrap();
-    for alias in ["xtask", "dev", "verify", "api-sync", "migrate"] {
-        let prefix = format!("{alias} = \"run --locked --target-dir target/xtask-run ");
-        assert!(config.lines().any(|line| line.starts_with(&prefix)));
+    assert!(
+        config.lines().any(|line| {
+            line.starts_with("xtask = \"run --locked --target-dir target/xtask-run ")
+        })
+    );
+    for removed in ["dev", "verify", "resource", "api-sync", "migrate"] {
+        assert!(
+            !config
+                .lines()
+                .any(|line| line.starts_with(&format!("{removed} =")))
+        );
     }
-    assert!(config.lines().any(|line| {
-        line.starts_with("resource = \"run --locked --target-dir target/xtask-resource ")
-    }));
 }
 
 #[cfg(feature = "resource")]

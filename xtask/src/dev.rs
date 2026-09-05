@@ -9,7 +9,7 @@ pub(crate) struct ToolSelfChanged;
 
 impl fmt::Display for ToolSelfChanged {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("xtask 自身已变化，请重新运行 `cargo dev`")
+        formatter.write_str("xtask 自身已变化，请重新运行 `cargo xtask dev`")
     }
 }
 

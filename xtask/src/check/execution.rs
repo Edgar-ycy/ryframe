@@ -7,7 +7,7 @@ use super::{
         analyze_change_surface, append_changed_file_size_warnings, enforce_change_surface,
         load_change_surface_policy, print_change_surface,
     },
-    context::{BACKEND_SMART_TARGET_DIR, VerifyExecutionContext, ci_target_policy},
+    context::{VerifyExecutionContext, ci_target_policy},
     feature::{
         check_feature_registry, feature_matrix_with_jobs, load_feature_registry,
         run_feature_operations, run_feature_tests, validate_feature_registry,
@@ -53,21 +53,6 @@ pub(crate) const BACKEND_POLICY_SCRIPTS: &[&str] = &[
 pub(crate) const SMART_BACKEND_OPERATIONS: &[&str] = &["clippy", "test"];
 pub(crate) const SMART_FEATURE_OPERATIONS: &[&str] = &["clippy"];
 
-pub(crate) fn run(scope: CheckScope, frontend_dir: &Path) -> Result<()> {
-    match scope {
-        CheckScope::Backend => {
-            let context = VerifyExecutionContext::new(frontend_dir, false)?;
-            backend(&root_dir(), BACKEND_SMART_TARGET_DIR, context.jobs.total)
-        }
-        CheckScope::Frontend => frontend(frontend_dir),
-        CheckScope::All => {
-            let context = VerifyExecutionContext::new(frontend_dir, false)?;
-            backend(&root_dir(), BACKEND_SMART_TARGET_DIR, context.jobs.total)?;
-            frontend(frontend_dir)
-        }
-    }
-}
-
 /// 根据工作树变更执行最小安全检查；完整模式覆盖全部本地门禁。
 pub(crate) fn verify(scope: CheckScope, full: bool, frontend_dir: &Path) -> Result<()> {
     let started = Instant::now();
@@ -102,7 +87,7 @@ pub(crate) fn verify(scope: CheckScope, full: bool, frontend_dir: &Path) -> Resu
         enforce_change_surface(&change_surface)?;
 
         if full {
-            println!("cargo verify 选择完整门禁：显式传入 --full。");
+            println!("cargo xtask check 选择完整门禁：显式传入 --full。");
             return full_verify(&context, scope);
         }
 
@@ -124,7 +109,7 @@ pub(crate) fn verify(scope: CheckScope, full: bool, frontend_dir: &Path) -> Resu
         let mut selection = classify_changes(backend_changes, frontend_changes, &graph);
         if let Some(reason) = &selection.full_reason {
             mode = "完整（自动扩大）";
-            println!("cargo verify 扩大为完整门禁：{reason}");
+            println!("cargo xtask check 扩大为完整门禁：{reason}");
             let metrics_root = context.root.clone();
             context.promote_to_full();
             metrics::update_targets(
@@ -196,7 +181,7 @@ pub(crate) fn verify(scope: CheckScope, full: bool, frontend_dir: &Path) -> Resu
     })();
     let total_seconds = started.elapsed().as_secs_f64();
     println!(
-        "cargo verify {}：范围={}，模式={mode}，总耗时={:.1}s。",
+        "cargo xtask check {}：范围={}，模式={mode}，总耗时={:.1}s。",
         if result.is_ok() { "完成" } else { "失败" },
         scope_label(scope),
         total_seconds
@@ -286,7 +271,6 @@ fn full_verify(context: &VerifyExecutionContext, scope: CheckScope) -> Result<()
             // 前端单侧没有可信的后端工作树候选；由前端状态机校验正式或候选契约。
             run_pnpm(frontend_dir, &["check", "--full"])?;
         }
-        run_pnpm(frontend_dir, &["check", "--stage", "browser"])?;
     }
     Ok(())
 }
@@ -420,10 +404,6 @@ fn backend(root: &Path, backend_target: &str, jobs: usize) -> Result<()> {
         run_process(root, "python", &[script])?;
     }
     Ok(())
-}
-
-fn frontend(frontend_dir: &Path) -> Result<()> {
-    run_pnpm(frontend_dir, &["check"])
 }
 
 fn backend_packages(

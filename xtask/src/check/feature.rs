@@ -4,12 +4,9 @@ use std::{
     path::Path,
 };
 
-use crate::{Result, process::run_owned, workspace::root_dir};
+use crate::{Result, process::run_owned};
 
-use super::{
-    context::{BACKEND_VERIFY_TARGET_DIR, verify_job_budget},
-    selection::load_workspace_metadata,
-};
+use super::selection::load_workspace_metadata;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct FeatureMatrixEntry {
@@ -17,12 +14,6 @@ pub(super) struct FeatureMatrixEntry {
     pub(super) minimal: Vec<String>,
     pub(super) maximal: Vec<String>,
     pub(super) test_targets: Vec<String>,
-}
-
-pub(crate) fn feature_matrix() -> Result<()> {
-    let root = root_dir();
-    let jobs = verify_job_budget()?.total;
-    feature_matrix_with_jobs(&root, BACKEND_VERIFY_TARGET_DIR, jobs)
 }
 
 pub(crate) fn feature_matrix_with_jobs(root: &Path, target_dir: &str, jobs: usize) -> Result<()> {
