@@ -5022,7 +5022,7 @@ name = "xtask"
 version = "0.12.1"
 dependencies = [
  "chrono",
- "libc",
+ "nix",
  "notify",
  "ryframe-generator",
  "serde",

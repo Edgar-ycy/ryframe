@@ -1,5 +1,12 @@
 #![cfg(unix)]
+#![forbid(unsafe_code)]
 #![allow(dead_code)]
+
+use nix::{
+    errno::Errno,
+    sys::signal::{Signal, kill},
+    unistd::Pid,
+};
 
 use std::{
     error::Error,
@@ -26,9 +33,7 @@ struct DescendantGuard(Option<i32>);
 impl Drop for DescendantGuard {
     fn drop(&mut self) {
         if let Some(pid) = self.0 {
-            unsafe {
-                libc::kill(pid, libc::SIGKILL);
-            }
+            let _ = kill(Pid::from_raw(pid), Signal::SIGKILL);
         }
     }
 }
@@ -42,7 +47,11 @@ impl Drop for DescendantGuard {
 fn process_group_descendant_helper() {
     match std::env::var(HELPER_ROLE).as_deref() {
         Ok("parent") => {
-            let child = Command::new(std::env::current_exe().expect("应能定位测试程序"))
+            // 标准 shell 将 SIGTERM 设为忽略，再原位 exec 测试程序；忽略状态跨 exec 保留。
+            // 可执行文件和参数通过位置参数传递，不把路径拼接进 shell 代码。
+            let child = Command::new("sh")
+                .args(["-c", "trap '' TERM; exec \"$@\"", "ryframe-signal-fixture"])
+                .arg(std::env::current_exe().expect("应能定位测试程序"))
                 .args([HELPER_NAME, "--exact", "--ignored", "--nocapture"])
                 .env(HELPER_ROLE, "grandchild")
                 .stdin(Stdio::null())
@@ -57,9 +66,7 @@ fn process_group_descendant_helper() {
             .expect("应能记录后代进程 PID");
         }
         Ok("grandchild") => {
-            unsafe {
-                libc::signal(libc::SIGTERM, libc::SIG_IGN);
-            }
+            kill(Pid::this(), Signal::SIGTERM).expect("应能向后代自身发送真实 SIGTERM");
             fs::write(
                 std::env::var_os(READY_FILE).expect("应提供后代就绪文件"),
                 b"ready",
@@ -102,6 +109,12 @@ fn stopping_process_group_reclaims_descendant_after_direct_child_exits() {
         .expect("后代 PID 应为整数");
     let mut guard = DescendantGuard(Some(descendant_id));
     assert!(process_exists(descendant_id), "父退出后后代应仍在进程组中");
+    kill(Pid::from_raw(descendant_id), Signal::SIGTERM).expect("应能发送真实温和终止信号");
+    thread::sleep(Duration::from_millis(100));
+    assert!(
+        process_exists(descendant_id),
+        "后代必须真实忽略 SIGTERM 才能验证整组强杀"
+    );
 
     let stop_started = Instant::now();
     process::stop_child(&mut direct_child).expect("应能强制终止直接父已退出的独立进程组");
@@ -114,6 +127,7 @@ fn stopping_process_group_reclaims_descendant_after_direct_child_exits() {
         assert!(Instant::now() < deadline, "独立进程组未回收后代进程");
         thread::sleep(Duration::from_millis(25));
     }
+    process::stop_child(&mut direct_child).expect("进程组已不存在时再次停止应成功");
     guard.0 = None;
     let _ = fs::remove_file(pid_file);
     let _ = fs::remove_file(ready_file);
@@ -140,8 +154,5 @@ fn wait_for_file(path: &std::path::Path) {
 }
 
 fn process_exists(pid: i32) -> bool {
-    if unsafe { libc::kill(pid, 0) } == 0 {
-        return true;
-    }
-    std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+    !matches!(kill(Pid::from_raw(pid), None), Err(Errno::ESRCH))
 }

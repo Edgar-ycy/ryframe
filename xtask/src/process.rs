@@ -448,13 +448,12 @@ pub(crate) fn process_is_running(pid: u32) -> bool {
 
 #[cfg(unix)]
 pub(crate) fn process_is_running(pid: u32) -> bool {
+    use nix::{errno::Errno, sys::signal::kill, unistd::Pid};
+
     let Ok(pid) = i32::try_from(pid) else {
         return false;
     };
-    if unsafe { libc::kill(pid, 0) } == 0 {
-        return true;
-    }
-    std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    matches!(kill(Pid::from_raw(pid), None), Ok(()) | Err(Errno::EPERM))
 }
 
 #[cfg(not(any(unix, windows)))]
@@ -481,13 +480,15 @@ pub(crate) fn stop_child(child: &mut ManagedChild) -> Result<()> {
     }
     #[cfg(unix)]
     {
+        use nix::sys::signal::Signal;
+
         const TERMINATE_GRACE: Duration = Duration::from_millis(400);
         const FORCE_KILL_GRACE: Duration = Duration::from_millis(400);
 
         let process_group_id = child.process_group_id();
-        signal_process_group(process_group_id, libc::SIGTERM)?;
+        signal_process_group(process_group_id, Signal::SIGTERM)?;
         if !wait_for_process_group_exit(child, process_group_id, TERMINATE_GRACE)? {
-            signal_process_group(process_group_id, libc::SIGKILL)?;
+            signal_process_group(process_group_id, Signal::SIGKILL)?;
             if !wait_for_process_group_exit(child, process_group_id, FORCE_KILL_GRACE)? {
                 let _ = child.kill();
             }
@@ -503,18 +504,18 @@ pub(crate) fn stop_child(child: &mut ManagedChild) -> Result<()> {
 }
 
 #[cfg(unix)]
-fn signal_process_group(pid: u32, signal: libc::c_int) -> Result<()> {
+fn signal_process_group(pid: u32, signal: nix::sys::signal::Signal) -> Result<()> {
+    use nix::{errno::Errno, sys::signal::kill, unistd::Pid};
+
     let pid = i32::try_from(pid).map_err(|_| "子进程 ID 超出 POSIX 范围")?;
     // POSIX 规定负 PID 表示整个进程组；子进程在 spawn 时成为自己的进程组组长。
-    let result = unsafe { libc::kill(-pid, signal) };
-    if result == 0 {
-        return Ok(());
+    match kill(Pid::from_raw(-pid), signal) {
+        Ok(()) | Err(Errno::ESRCH) => Ok(()),
+        Err(error) => {
+            let error = std::io::Error::from(error);
+            Err(format!("无法向子进程组 {pid} 发送信号：{error}").into())
+        }
     }
-    let error = std::io::Error::last_os_error();
-    if error.raw_os_error() == Some(libc::ESRCH) {
-        return Ok(());
-    }
-    Err(format!("无法向子进程组 {pid} 发送信号：{error}").into())
 }
 
 #[cfg(unix)]
@@ -538,16 +539,16 @@ fn wait_for_process_group_exit(
 
 #[cfg(unix)]
 fn process_group_exists(process_group_id: u32) -> Result<bool> {
+    use nix::{errno::Errno, sys::signal::kill, unistd::Pid};
+
     let process_group_id =
         i32::try_from(process_group_id).map_err(|_| "子进程组 ID 超出 POSIX 范围")?;
-    let result = unsafe { libc::kill(-process_group_id, 0) };
-    if result == 0 {
-        return Ok(true);
-    }
-    let error = std::io::Error::last_os_error();
-    match error.raw_os_error() {
-        Some(libc::ESRCH) => Ok(false),
-        Some(libc::EPERM) => Ok(true),
-        _ => Err(format!("无法查询子进程组 {process_group_id}：{error}").into()),
+    match kill(Pid::from_raw(-process_group_id), None) {
+        Ok(()) | Err(Errno::EPERM) => Ok(true),
+        Err(Errno::ESRCH) => Ok(false),
+        Err(error) => {
+            let error = std::io::Error::from(error);
+            Err(format!("无法查询子进程组 {process_group_id}：{error}").into())
+        }
     }
 }

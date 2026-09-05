@@ -142,7 +142,10 @@ impl Drop for ManagedChild {
         }
         #[cfg(unix)]
         {
-            let _ = super::signal_process_group(self.process_group_id, libc::SIGKILL);
+            let _ = super::signal_process_group(
+                self.process_group_id,
+                nix::sys::signal::Signal::SIGKILL,
+            );
         }
         #[cfg(not(any(unix, windows)))]
         {
