@@ -61,6 +61,17 @@ class RedisPingHandler(socketserver.BaseRequestHandler):
 
 
 class TlsIntegrationGateTests(unittest.TestCase):
+    def test_https_fixture_rejects_non_loopback_and_invalid_ports_before_loading_certificates(
+        self,
+    ) -> None:
+        for host, port, message in [
+            ("0.0.0.0", 0, "只允许监听回环地址"),
+            ("127.0.0.1", -1, "端口必须在 0 到 65535 之间"),
+            ("::1", 65_536, "端口必须在 0 到 65535 之间"),
+        ]:
+            with self.subTest(host=host, port=port), self.assertRaisesRegex(ValueError, message):
+                MODULE.create_server(Path("missing.crt"), Path("missing.key"), host, port)
+
     def test_commands_run_only_the_three_exact_tls_tests(self) -> None:
         commands = [
             MODULE.test_command(spec, Path("target/ci/backend"), 4)
