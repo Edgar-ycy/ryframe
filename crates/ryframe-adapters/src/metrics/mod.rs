@@ -2,7 +2,9 @@
 
 use std::{sync::LazyLock, time::Duration};
 
+mod backup;
 mod catalog;
+pub use backup::{set_backup_collector_failed, set_backup_health};
 
 use catalog::*;
 use prometheus::{Encoder, Registry, TextEncoder};
@@ -13,6 +15,7 @@ static METRICS_REGISTRY: LazyLock<Registry> = LazyLock::new(|| {
 
 fn ensure_registered() {
     METRICS_REGISTERED.call_once(|| {
+        backup::register(&METRICS_REGISTRY);
         for collector in [
             Box::new(HTTP_REQUESTS_TOTAL.clone()) as Box<dyn prometheus::core::Collector>,
             Box::new(HTTP_REQUEST_DURATION.clone()),

@@ -201,6 +201,65 @@ async fn scoped_storage_digest_uses_the_scoped_physical_key() {
     assert!(scoped.digest("exports", "source/data.bin").await.is_err());
 }
 
+#[cfg(feature = "monitoring")]
+#[test]
+fn backup_metrics_have_capture_time_and_only_fixed_labels() {
+    let captured = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+    ryframe_adapters::metrics::set_backup_health(
+        &BackupHealth {
+            required_resources: 6,
+            missing_resources: 1,
+            expired_resources: 2,
+            invalid_resources: 3,
+            oldest_capture: Some(captured),
+            last_restore_completed: Some(captured),
+            last_restore_succeeded: true,
+            restore_duration_seconds: Some(42),
+            recovery_point_age_seconds: Some(86_400),
+            restore_running: 1,
+            restore_overdue: 2,
+        },
+        chrono::DateTime::from_timestamp(1_800_000_000, 0).unwrap(),
+    );
+    let text = ryframe_adapters::metrics::metrics_text();
+    assert!(text.contains("ryframe_backup_last_success_timestamp_seconds 1700000000"));
+    assert!(text.contains("ryframe_backup_collector_last_success_timestamp_seconds 1800000000"));
+    assert!(text.contains("ryframe_backup_resources{state=\"missing\"} 1"));
+    assert!(text.contains("ryframe_restore_last_succeeded 1"));
+    assert!(text.contains("ryframe_restore_duration_seconds 42"));
+    assert!(text.contains("ryframe_restore_recovery_point_age_seconds 86400"));
+    let series = text
+        .lines()
+        .filter(|line| line.starts_with("ryframe_backup_") || line.starts_with("ryframe_restore_"))
+        .map(|line| line.split_whitespace().next().unwrap())
+        .collect::<std::collections::BTreeSet<_>>();
+    // 精确集合同时拒绝 tenant、scope、endpoint、object、object_key、target 等额外标签。
+    assert_eq!(
+        series,
+        [
+            "ryframe_backup_collector_up",
+            "ryframe_backup_collector_last_success_timestamp_seconds",
+            "ryframe_backup_last_success_timestamp_seconds",
+            "ryframe_backup_resources{state=\"expired\"}",
+            "ryframe_backup_resources{state=\"invalid\"}",
+            "ryframe_backup_resources{state=\"missing\"}",
+            "ryframe_backup_resources{state=\"required\"}",
+            "ryframe_restore_duration_seconds",
+            "ryframe_restore_last_completed_timestamp_seconds",
+            "ryframe_restore_last_succeeded",
+            "ryframe_restore_recovery_point_age_seconds",
+            "ryframe_restore_runs{state=\"overdue\"}",
+            "ryframe_restore_runs{state=\"running\"}",
+        ]
+        .into_iter()
+        .collect()
+    );
+    ryframe_adapters::metrics::set_backup_collector_failed();
+    let failed = ryframe_adapters::metrics::metrics_text();
+    assert!(failed.contains("ryframe_backup_collector_up 0"));
+    assert!(failed.contains("ryframe_backup_collector_last_success_timestamp_seconds 1800000000"));
+}
+
 fn restore_plan() -> RestorePlan {
     RestorePlan {
         id: "drill".into(),
