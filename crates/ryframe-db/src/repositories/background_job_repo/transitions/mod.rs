@@ -58,20 +58,15 @@ pub(super) fn linked_resource_id(job: &background_job::Model, key: &str) -> Opti
     }
 }
 
-#[derive(Clone, Copy)]
-pub(super) enum LinkedJobDisposition {
-    Retried,
-    Dead,
-    ManuallyRetried,
-}
-
 mod config_transfer;
 mod linked;
 mod retention;
 mod support;
+mod terminal;
 
 use config_transfer::*;
 use support::*;
+use terminal::*;
 
 impl BackgroundJobRepository {
     /// 在业务 control 事务内复活一条已关联的权威任务。
@@ -152,7 +147,7 @@ impl BackgroundJobRepository {
         let mut recovery = ExpiredLeaseRecovery::default();
         for job in expired {
             let dead = job.attempts >= job.max_attempts;
-            Self::sync_linked_job_state(
+            let sync_result = Self::sync_linked_job_state(
                 &transaction,
                 &job,
                 if dead {
@@ -164,6 +159,28 @@ impl BackgroundJobRepository {
                 now,
             )
             .await?;
+            if let Some(disposition) = Self::finish_from_linked_terminal(
+                &transaction,
+                &job,
+                sync_result,
+                Some(EXPIRED_LEASE_DEAD_ERROR),
+                now,
+            )
+            .await?
+            {
+                match disposition {
+                    JobFailureDisposition::Completed => {
+                        recovery.completed = recovery.completed.saturating_add(1);
+                    }
+                    JobFailureDisposition::Dead => {
+                        recovery.dead = recovery.dead.saturating_add(1);
+                    }
+                    JobFailureDisposition::Retried { .. } | JobFailureDisposition::LeaseLost => {
+                        unreachable!("关联业务终态只能收束为完成或死信")
+                    }
+                }
+                continue;
+            }
 
             let mut active: background_job::ActiveModel = job.into();
             active.status = Set(if dead {
@@ -280,7 +297,7 @@ impl BackgroundJobRepository {
         }
 
         let dead = force_dead || job.attempts >= job.max_attempts;
-        Self::sync_linked_job_state(
+        let sync_result = Self::sync_linked_job_state(
             &txn,
             &job,
             if dead {
@@ -292,6 +309,13 @@ impl BackgroundJobRepository {
             now,
         )
         .await?;
+        if let Some(disposition) =
+            Self::finish_from_linked_terminal(&txn, &job, sync_result, Some(error_message), now)
+                .await?
+        {
+            txn.commit().await.db()?;
+            return Ok(disposition);
+        }
         let mut active: background_job::ActiveModel = job.into();
         active.status = Set(if dead {
             background_job::Model::STATUS_DEAD
@@ -341,7 +365,7 @@ impl BackgroundJobRepository {
             rollback_quietly(transaction).await;
             return Ok(JobFailureDisposition::LeaseLost);
         }
-        let linked_transitioned = Self::sync_linked_job_state(
+        let sync_result = Self::sync_linked_job_state(
             &transaction,
             &job,
             LinkedJobDisposition::Retried,
@@ -349,9 +373,17 @@ impl BackgroundJobRepository {
             now,
         )
         .await?;
-        if is_tenant_config_job(&job.job_type) && !linked_transitioned {
-            rollback_quietly(transaction).await;
-            return Ok(JobFailureDisposition::LeaseLost);
+        if let Some(disposition) = Self::finish_from_linked_terminal(
+            &transaction,
+            &job,
+            sync_result,
+            Some(error_message),
+            now,
+        )
+        .await?
+        {
+            transaction.commit().await.db()?;
+            return Ok(disposition);
         }
         let attempts = job.attempts.saturating_sub(1);
         let mut active: background_job::ActiveModel = job.into();
@@ -391,7 +423,7 @@ impl BackgroundJobRepository {
             rollback_quietly(transaction).await;
             return Ok(JobFailureDisposition::LeaseLost);
         }
-        Self::sync_linked_job_state(
+        let sync_result = Self::sync_linked_job_state(
             &transaction,
             &job,
             LinkedJobDisposition::Dead,
@@ -399,6 +431,18 @@ impl BackgroundJobRepository {
             now,
         )
         .await?;
+        if let Some(disposition) = Self::finish_from_linked_terminal(
+            &transaction,
+            &job,
+            sync_result,
+            Some(error_message),
+            now,
+        )
+        .await?
+        {
+            transaction.commit().await.db()?;
+            return Ok(disposition);
+        }
         let mut active: background_job::ActiveModel = job.into();
         active.status = Set(background_job::Model::STATUS_DEAD.to_owned());
         active.lease_owner = Set(None);
@@ -423,7 +467,7 @@ impl BackgroundJobRepository {
         job_id: i64,
         retry_requested_by: i64,
         now: DateTime<Utc>,
-    ) -> AppResult<bool> {
+    ) -> AppResult<JobFailureDisposition> {
         let transaction = db.begin().await.db()?;
         let tenant_scope = if include_platform {
             sea_orm::Condition::any()
@@ -441,16 +485,16 @@ impl BackgroundJobRepository {
             .db()?
         else {
             rollback_quietly(transaction).await;
-            return Ok(false);
+            return Ok(JobFailureDisposition::LeaseLost);
         };
         if is_tenant_config_job(&job.job_type)
             && !Self::is_tenant_config_job_owner(&transaction, &job, tenant_id, retry_requested_by)
                 .await?
         {
             rollback_quietly(transaction).await;
-            return Ok(false);
+            return Ok(JobFailureDisposition::LeaseLost);
         }
-        let linked_transitioned = Self::sync_linked_job_state(
+        let sync_result = Self::sync_linked_job_state(
             &transaction,
             &job,
             LinkedJobDisposition::ManuallyRetried,
@@ -458,9 +502,11 @@ impl BackgroundJobRepository {
             now,
         )
         .await?;
-        if is_tenant_config_job(&job.job_type) && !linked_transitioned {
-            rollback_quietly(transaction).await;
-            return Ok(false);
+        if let Some(disposition) =
+            Self::finish_from_linked_terminal(&transaction, &job, sync_result, None, now).await?
+        {
+            transaction.commit().await.db()?;
+            return Ok(disposition);
         }
         let mut active: background_job::ActiveModel = job.into();
         active.status = Set(background_job::Model::STATUS_PENDING.to_owned());
@@ -472,7 +518,7 @@ impl BackgroundJobRepository {
         active.completed_at = Set(None);
         active.update(&transaction).await.db()?;
         transaction.commit().await.db()?;
-        Ok(true)
+        Ok(JobFailureDisposition::Retried { available_at: now })
     }
 
     fn owned_running_query(

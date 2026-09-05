@@ -67,21 +67,21 @@ impl BackgroundJobRepository {
         error: Option<String>,
         now: DateTime<Utc>,
         kind: ConfigTransferJobKind,
-    ) -> AppResult<bool>
+    ) -> AppResult<LinkedJobSyncResult>
     where
         C: ConnectionTrait,
     {
-        let (status, statuses) = match (kind, disposition) {
+        let (status, statuses): (&str, &[&str]) = match (kind, disposition) {
             (ConfigTransferJobKind::Preview, LinkedJobDisposition::Retried) => (
                 tenant_config_transfer::Model::STATUS_PREVIEW_PENDING,
-                vec![
+                &[
                     tenant_config_transfer::Model::STATUS_PREVIEW_PENDING,
                     tenant_config_transfer::Model::STATUS_PREVIEWING,
                 ],
             ),
             (ConfigTransferJobKind::Preview, LinkedJobDisposition::Dead) => (
                 tenant_config_transfer::Model::STATUS_FAILED,
-                vec![
+                &[
                     tenant_config_transfer::Model::STATUS_PREVIEW_PENDING,
                     tenant_config_transfer::Model::STATUS_PREVIEWING,
                     tenant_config_transfer::Model::STATUS_FAILED,
@@ -89,18 +89,18 @@ impl BackgroundJobRepository {
             ),
             (ConfigTransferJobKind::Preview, LinkedJobDisposition::ManuallyRetried) => (
                 tenant_config_transfer::Model::STATUS_PREVIEW_PENDING,
-                vec![tenant_config_transfer::Model::STATUS_FAILED],
+                &[tenant_config_transfer::Model::STATUS_FAILED],
             ),
             (ConfigTransferJobKind::Apply, LinkedJobDisposition::Retried) => (
                 tenant_config_transfer::Model::STATUS_APPLY_PENDING,
-                vec![
+                &[
                     tenant_config_transfer::Model::STATUS_APPLY_PENDING,
                     tenant_config_transfer::Model::STATUS_APPLYING,
                 ],
             ),
             (ConfigTransferJobKind::Apply, LinkedJobDisposition::Dead) => (
                 tenant_config_transfer::Model::STATUS_FAILED,
-                vec![
+                &[
                     tenant_config_transfer::Model::STATUS_APPLY_PENDING,
                     tenant_config_transfer::Model::STATUS_APPLYING,
                     tenant_config_transfer::Model::STATUS_FAILED,
@@ -108,18 +108,18 @@ impl BackgroundJobRepository {
             ),
             (ConfigTransferJobKind::Apply, LinkedJobDisposition::ManuallyRetried) => (
                 tenant_config_transfer::Model::STATUS_APPLY_PENDING,
-                vec![tenant_config_transfer::Model::STATUS_FAILED],
+                &[tenant_config_transfer::Model::STATUS_FAILED],
             ),
             (ConfigTransferJobKind::Rollback, LinkedJobDisposition::Retried) => (
                 tenant_config_transfer::Model::STATUS_ROLLBACK_PENDING,
-                vec![
+                &[
                     tenant_config_transfer::Model::STATUS_ROLLBACK_PENDING,
                     tenant_config_transfer::Model::STATUS_ROLLING_BACK,
                 ],
             ),
             (ConfigTransferJobKind::Rollback, LinkedJobDisposition::Dead) => (
                 tenant_config_transfer::Model::STATUS_FAILED,
-                vec![
+                &[
                     tenant_config_transfer::Model::STATUS_ROLLBACK_PENDING,
                     tenant_config_transfer::Model::STATUS_ROLLING_BACK,
                     tenant_config_transfer::Model::STATUS_FAILED,
@@ -127,21 +127,21 @@ impl BackgroundJobRepository {
             ),
             (ConfigTransferJobKind::Rollback, LinkedJobDisposition::ManuallyRetried) => (
                 tenant_config_transfer::Model::STATUS_ROLLBACK_PENDING,
-                vec![tenant_config_transfer::Model::STATUS_FAILED],
+                &[tenant_config_transfer::Model::STATUS_FAILED],
             ),
         };
         let Some(transfer_id) = linked_resource_id(job, "transfer_id") else {
-            return Ok(false);
+            return Ok(LinkedJobSyncResult::Conflict);
         };
         let Some(tenant_id) = job.tenant_id.as_deref() else {
-            return Ok(false);
+            return Ok(LinkedJobSyncResult::Conflict);
         };
         let mut update = tenant_config_transfer::Entity::update_many()
             .col_expr(tenant_config_transfer::Column::Status, Expr::value(status))
             .col_expr(tenant_config_transfer::Column::UpdatedAt, Expr::value(now))
             .filter(tenant_config_transfer::Column::Id.eq(transfer_id))
             .filter(tenant_config_transfer::Column::TenantId.eq(tenant_id))
-            .filter(tenant_config_transfer::Column::Status.is_in(statuses));
+            .filter(tenant_config_transfer::Column::Status.is_in(statuses.iter().copied()));
         update = match kind {
             ConfigTransferJobKind::Preview => {
                 update.filter(tenant_config_transfer::Column::PreviewBackgroundJobId.eq(job.id))
@@ -169,17 +169,138 @@ impl BackgroundJobRepository {
                 Expr::value(Option::<String>::None),
             );
         }
-        update
-            .exec(db)
-            .await
-            .map(|result| result.rows_affected == 1)
-            .db()
+        let updated = update.exec(db).await.db()?;
+        let current = if updated.rows_affected == 1 {
+            None
+        } else {
+            let query = tenant_config_transfer::Entity::find_by_id(transfer_id)
+                .filter(tenant_config_transfer::Column::TenantId.eq(tenant_id));
+            let query =
+                match kind {
+                    ConfigTransferJobKind::Preview => query
+                        .filter(tenant_config_transfer::Column::PreviewBackgroundJobId.eq(job.id)),
+                    ConfigTransferJobKind::Apply => query
+                        .filter(tenant_config_transfer::Column::ApplyBackgroundJobId.eq(job.id)),
+                    ConfigTransferJobKind::Rollback => query
+                        .filter(tenant_config_transfer::Column::RollbackBackgroundJobId.eq(job.id)),
+                };
+            query
+                .select_only()
+                .column(tenant_config_transfer::Column::Status)
+                .lock(LockType::Update)
+                .into_tuple::<String>()
+                .one(db)
+                .await
+                .db()?
+        };
+        Ok(classify_transfer_update(
+            updated.rows_affected,
+            current.as_deref(),
+            statuses,
+            kind,
+        ))
     }
 }
 
-#[derive(Clone, Copy)]
+fn classify_transfer_update(
+    rows_affected: u64,
+    current_status: Option<&str>,
+    eligible_statuses: &[&str],
+    kind: ConfigTransferJobKind,
+) -> LinkedJobSyncResult {
+    match rows_affected {
+        1 => LinkedJobSyncResult::Transitioned,
+        0 => match current_status {
+            Some(status) if eligible_statuses.contains(&status) => {
+                LinkedJobSyncResult::Transitioned
+            }
+            Some(status) => transfer_terminal(kind, status)
+                .map(LinkedJobSyncResult::Terminal)
+                .unwrap_or(LinkedJobSyncResult::Conflict),
+            None => LinkedJobSyncResult::Conflict,
+        },
+        _ => LinkedJobSyncResult::Conflict,
+    }
+}
+
+fn transfer_terminal(kind: ConfigTransferJobKind, status: &str) -> Option<LinkedBusinessTerminal> {
+    if status == tenant_config_transfer::Model::STATUS_FAILED {
+        return Some(LinkedBusinessTerminal::Failed);
+    }
+    let completed = match kind {
+        ConfigTransferJobKind::Preview => matches!(
+            status,
+            tenant_config_transfer::Model::STATUS_PREVIEWED
+                | tenant_config_transfer::Model::STATUS_APPLY_PENDING
+                | tenant_config_transfer::Model::STATUS_APPLYING
+                | tenant_config_transfer::Model::STATUS_APPLIED
+                | tenant_config_transfer::Model::STATUS_ROLLBACK_PENDING
+                | tenant_config_transfer::Model::STATUS_ROLLING_BACK
+                | tenant_config_transfer::Model::STATUS_ROLLED_BACK
+        ),
+        ConfigTransferJobKind::Apply => matches!(
+            status,
+            tenant_config_transfer::Model::STATUS_APPLIED
+                | tenant_config_transfer::Model::STATUS_ROLLBACK_PENDING
+                | tenant_config_transfer::Model::STATUS_ROLLING_BACK
+                | tenant_config_transfer::Model::STATUS_ROLLED_BACK
+        ),
+        ConfigTransferJobKind::Rollback => {
+            status == tenant_config_transfer::Model::STATUS_ROLLED_BACK
+        }
+    };
+    completed.then_some(LinkedBusinessTerminal::Succeeded)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ConfigTransferJobKind {
     Preview,
     Apply,
     Rollback,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn later_transfer_phases_are_terminal_for_the_completed_phase() {
+        for (kind, status, expected) in [
+            (
+                ConfigTransferJobKind::Preview,
+                tenant_config_transfer::Model::STATUS_APPLYING,
+                Some(LinkedBusinessTerminal::Succeeded),
+            ),
+            (
+                ConfigTransferJobKind::Apply,
+                tenant_config_transfer::Model::STATUS_ROLLBACK_PENDING,
+                Some(LinkedBusinessTerminal::Succeeded),
+            ),
+            (
+                ConfigTransferJobKind::Rollback,
+                tenant_config_transfer::Model::STATUS_ROLLED_BACK,
+                Some(LinkedBusinessTerminal::Succeeded),
+            ),
+            (
+                ConfigTransferJobKind::Rollback,
+                tenant_config_transfer::Model::STATUS_FAILED,
+                Some(LinkedBusinessTerminal::Failed),
+            ),
+        ] {
+            assert_eq!(transfer_terminal(kind, status), expected);
+        }
+    }
+
+    #[test]
+    fn manual_retry_does_not_accept_an_already_completed_phase() {
+        assert_eq!(
+            classify_transfer_update(
+                0,
+                Some(tenant_config_transfer::Model::STATUS_APPLIED),
+                &[tenant_config_transfer::Model::STATUS_FAILED],
+                ConfigTransferJobKind::Apply,
+            ),
+            LinkedJobSyncResult::Terminal(LinkedBusinessTerminal::Succeeded)
+        );
+    }
 }

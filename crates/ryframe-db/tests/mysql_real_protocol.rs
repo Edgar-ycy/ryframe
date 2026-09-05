@@ -12,6 +12,9 @@ use mysql::{
     database_config_with_tls, db_error, execute, integration_enabled, require_count, run_mysql_test,
 };
 
+#[path = "mysql_real_protocol/linked_job_states.rs"]
+mod linked_job_states;
+
 const TLS_ENABLE_ENV: &str = "RYFRAME_MYSQL_TLS_INTEGRATION";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

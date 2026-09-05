@@ -303,16 +303,28 @@ impl JobQueue {
             .await?;
 
         let now = self.database_now().await?;
-        let retried = self
+        let outcome = self
             .persistence
             .retry_dead(tenant_id, include_platform, job_id, principal.user_id, now)
             .await?;
-        if !retried {
-            return Err(AppError::Conflict(
-                "后台任务状态已变化，请刷新后重试".into(),
-            ));
+        match outcome {
+            JobFailureOutcome::Retried { .. } => self.notify_background_jobs().await,
+            JobFailureOutcome::Completed => {
+                return Err(AppError::Conflict(
+                    "关联业务已经完成、取消或过期，后台任务已同步为完成状态".into(),
+                ));
+            }
+            JobFailureOutcome::Dead => {
+                return Err(AppError::Conflict(
+                    "关联业务已经失败且不能重新投递，后台任务保持死信状态".into(),
+                ));
+            }
+            JobFailureOutcome::LeaseLost => {
+                return Err(AppError::Conflict(
+                    "后台任务状态已变化，请刷新后重试".into(),
+                ));
+            }
         }
-        self.notify_background_jobs().await;
 
         self.persistence
             .find_for_tenant(tenant_id, include_platform, job_id)

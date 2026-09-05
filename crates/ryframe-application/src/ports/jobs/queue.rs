@@ -219,7 +219,7 @@ pub trait BackgroundJobPersistencePort: Send + Sync {
         job_id: i64,
         retried_by: i64,
         now: DateTime<Utc>,
-    ) -> ryframe_kernel::AppResult<bool>;
+    ) -> ryframe_kernel::AppResult<JobFailureOutcome>;
 
     async fn tenant_config_job_owner<'a>(
         &'a self,

@@ -235,7 +235,7 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
         job_id: i64,
         retried_by: i64,
         now: DateTime<Utc>,
-    ) -> ryframe_kernel::AppResult<bool> {
+    ) -> ryframe_kernel::AppResult<JobFailureOutcome> {
         self.repository
             .retry_dead(
                 self.database.write(),
@@ -246,6 +246,7 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
                 now,
             )
             .await
+            .map(to_failure_outcome)
     }
 
     async fn tenant_config_job_owner<'a>(
