@@ -216,68 +216,45 @@ fn assign_and_resume_suspended_child(
 
 #[cfg(windows)]
 fn resume_initial_thread(process_id: u32) -> Result<()> {
-    use std::mem;
     use windows_sys::Win32::{
-        Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE},
-        System::{
-            Diagnostics::ToolHelp::{
-                CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First,
-                Thread32Next,
-            },
-            Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME},
-        },
+        Foundation::{CloseHandle, HANDLE},
+        System::Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME},
     };
+    use winsafe::{HPROCESSLIST, co::TH32CS, prelude::*};
 
-    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
-    if snapshot == INVALID_HANDLE_VALUE {
-        return Err(format!(
-            "无法枚举挂起子进程的初始线程：{}",
-            std::io::Error::last_os_error()
-        )
-        .into());
-    }
-
-    let result = (|| {
-        let mut entry = THREADENTRY32 {
-            dwSize: u32::try_from(mem::size_of::<THREADENTRY32>())
-                .expect("Windows 线程条目大小必须可由 u32 表示"),
-            ..Default::default()
-        };
-        let mut has_entry = unsafe { Thread32First(snapshot, &raw mut entry) } != 0;
-        let mut last_open_error = None;
-        while has_entry {
-            if entry.th32OwnerProcessID == process_id {
-                let thread: HANDLE =
-                    unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID) };
-                if thread.is_null() {
-                    last_open_error = Some(std::io::Error::last_os_error());
-                } else {
-                    let previous_suspend_count = unsafe { ResumeThread(thread) };
-                    unsafe { CloseHandle(thread) };
-                    if previous_suspend_count == u32::MAX {
-                        return Err(format!(
-                            "无法恢复挂起子进程 {process_id} 的初始线程：{}",
-                            std::io::Error::last_os_error()
-                        )
-                        .into());
-                    }
-                    if previous_suspend_count == 1 {
-                        return Ok(());
-                    }
+    let mut snapshot = HPROCESSLIST::CreateToolhelp32Snapshot(TH32CS::SNAPTHREAD, None)
+        .map_err(|error| format!("无法枚举挂起子进程的初始线程：{error}"))?;
+    let mut last_open_error = None;
+    for entry in snapshot.iter_threads() {
+        let entry = entry.map_err(|error| format!("无法枚举挂起子进程的初始线程：{error}"))?;
+        if entry.th32OwnerProcessID == process_id {
+            let thread: HANDLE =
+                unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID) };
+            if thread.is_null() {
+                last_open_error = Some(std::io::Error::last_os_error());
+            } else {
+                let previous_suspend_count = unsafe { ResumeThread(thread) };
+                unsafe { CloseHandle(thread) };
+                if previous_suspend_count == u32::MAX {
                     return Err(format!(
-                        "挂起子进程 {process_id} 的初始线程挂起计数异常：{previous_suspend_count}"
+                        "无法恢复挂起子进程 {process_id} 的初始线程：{}",
+                        std::io::Error::last_os_error()
                     )
                     .into());
                 }
+                if previous_suspend_count == 1 {
+                    return Ok(());
+                }
+                return Err(format!(
+                    "挂起子进程 {process_id} 的初始线程挂起计数异常：{previous_suspend_count}"
+                )
+                .into());
             }
-            has_entry = unsafe { Thread32Next(snapshot, &raw mut entry) } != 0;
         }
-        if let Some(error) = last_open_error {
-            Err(format!("无法打开挂起子进程 {process_id} 的初始线程：{error}").into())
-        } else {
-            Err(format!("未找到挂起子进程 {process_id} 的初始线程").into())
-        }
-    })();
-    unsafe { CloseHandle(snapshot) };
-    result
+    }
+    if let Some(error) = last_open_error {
+        Err(format!("无法打开挂起子进程 {process_id} 的初始线程：{error}").into())
+    } else {
+        Err(format!("未找到挂起子进程 {process_id} 的初始线程").into())
+    }
 }
