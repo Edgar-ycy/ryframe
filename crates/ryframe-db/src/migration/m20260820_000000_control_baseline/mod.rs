@@ -2,6 +2,7 @@ use sea_orm::DatabaseBackend;
 use sea_orm_migration::prelude::*;
 
 mod base;
+mod jobs;
 mod schema;
 
 pub struct Migration;
@@ -55,6 +56,7 @@ pub fn ddl_statements() -> impl Iterator<Item = &'static str> {
         .chain(schema::product_capability_table_statements())
         .chain(schema::tenant_data_control_table_statements())
         .chain([
+            jobs::BACKGROUND_JOB_ATTEMPT_DDL,
             schema::OUTBOX_EVENT_DDL,
             schema::EXPORT_JOB_DDL,
             schema::RESOURCE_OWNERSHIP_DDL,

@@ -1,5 +1,5 @@
 -- 自动生成文件：RyFrame 控制库新基线快照。
--- schema fingerprint: 1256b142b5dfaaf1
+-- schema fingerprint: 7b81bd3d12095ee4
 -- 唯一事实来源：ryframe-db::migration Migrator 与 Seeder。
 -- 仅供审阅：部署和重置工具不得执行此文件。
 -- 重新生成命令：cargo run --locked -p ryframe-db --features migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
@@ -447,18 +447,19 @@ CREATE TABLE IF NOT EXISTS `sys_background_job` (
     `payload`       JSON         NOT NULL COMMENT '任务载荷',
     `status`        VARCHAR(16)  NOT NULL DEFAULT 'pending' COMMENT '状态: pending/running/succeeded/dead',
     `priority`      INT          NOT NULL DEFAULT 0 COMMENT '优先级，数值越大越优先',
-    `available_at`  DATETIME     NOT NULL COMMENT '最早可执行时间',
+    `available_at`  DATETIME(6)  NOT NULL COMMENT '最早可执行时间',
     `attempts`      INT          NOT NULL DEFAULT 0 COMMENT '已领取次数',
+    `claim_sequence` BIGINT      NOT NULL DEFAULT 0 COMMENT '单调领取序号，不随重试预算重置',
     `max_attempts`  INT          NOT NULL DEFAULT 5 COMMENT '最大领取次数',
     `lease_owner`   VARCHAR(128)          DEFAULT NULL COMMENT '当前租约持有者',
-    `lease_until`   DATETIME              DEFAULT NULL COMMENT '租约失效时间',
+    `lease_until`   DATETIME(6)           DEFAULT NULL COMMENT '租约失效时间',
     `dedupe_key`    VARCHAR(191)          DEFAULT NULL COMMENT '同类型幂等键',
     `traceparent`   VARCHAR(255)          DEFAULT NULL COMMENT 'W3C Trace Context',
     `tracestate`    VARCHAR(512)          DEFAULT NULL COMMENT 'W3C Trace Context 状态',
     `last_error`    TEXT                  DEFAULT NULL COMMENT '最后失败原因',
-    `created_at`    DATETIME     NOT NULL COMMENT '创建时间',
-    `updated_at`    DATETIME     NOT NULL COMMENT '更新时间',
-    `completed_at`  DATETIME              DEFAULT NULL COMMENT '终态时间',
+    `created_at`    DATETIME(6)  NOT NULL COMMENT '创建时间',
+    `updated_at`    DATETIME(6)  NOT NULL COMMENT '更新时间',
+    `completed_at`  DATETIME(6)           DEFAULT NULL COMMENT '终态时间',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uq_bg_job_dedupe` (`job_type`, `dedupe_key`),
     KEY `idx_bg_job_claim` (`status`, `available_at`, `priority`, `id`),
@@ -466,7 +467,10 @@ CREATE TABLE IF NOT EXISTS `sys_background_job` (
     KEY `idx_bg_job_tenant` (`tenant_id`, `status`, `created_at`),
     KEY `idx_bg_job_schedule_status` (`schedule_id`, `status`, `created_at`),
     KEY `idx_bg_job_retention` (`status`, `completed_at`, `id`),
-    KEY `idx_bg_job_tenant_created_status` (`tenant_id`, `created_at`, `status`)
+    KEY `idx_bg_job_tenant_created_status` (`tenant_id`, `created_at`, `status`),
+    CONSTRAINT `ck_bg_job_attempt_budget` CHECK (
+        `attempts` >= 0 AND `max_attempts` BETWEEN 1 AND 100
+        AND `claim_sequence` >= `attempts`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='持久化后台任务';
 
 CREATE TABLE IF NOT EXISTS `sys_job_schedule` (
@@ -1039,6 +1043,30 @@ CREATE TABLE IF NOT EXISTS `sys_tenant_data_backup_point` (
             CONSTRAINT `ck_tenant_data_backup_retention`
                 CHECK (`expires_at` IS NULL OR `expires_at` >= `retention_until`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户业务数据备份恢复点';
+
+CREATE TABLE IF NOT EXISTS `sys_background_job_attempt` (
+    `job_id` BIGINT NOT NULL COMMENT '后台任务ID',
+    `sequence` BIGINT NOT NULL COMMENT '该任务的单调领取序号',
+    `available_at` DATETIME(6) NOT NULL COMMENT '本次领取的最早可执行时间',
+    `started_at` DATETIME(6) NOT NULL COMMENT '领取事务记录的实际开始时间',
+    `finished_at` DATETIME(6) DEFAULT NULL COMMENT '处理器完成或失败时间，租约失效时未知',
+    `closed_at` DATETIME(6) DEFAULT NULL COMMENT '尝试闭合时间，包含租约回收时间',
+    `outcome` VARCHAR(32) NOT NULL COMMENT 'running/succeeded/failed/dead/deferred/lease_expired',
+    PRIMARY KEY (`job_id`, `sequence`),
+    CONSTRAINT `fk_bg_attempt_job` FOREIGN KEY (`job_id`)
+        REFERENCES `sys_background_job` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,
+    CONSTRAINT `ck_bg_attempt_sequence` CHECK (`sequence` > 0),
+    CONSTRAINT `ck_bg_attempt_times` CHECK (
+        `started_at` >= `available_at`
+        AND (`finished_at` IS NULL OR `finished_at` >= `started_at`)
+        AND (`closed_at` IS NULL OR `closed_at` >= `started_at`)),
+    CONSTRAINT `ck_bg_attempt_outcome` CHECK (
+        (`outcome` = 'running' AND `finished_at` IS NULL AND `closed_at` IS NULL)
+        OR (`outcome` = 'lease_expired' AND `finished_at` IS NULL AND `closed_at` IS NOT NULL)
+        OR (`outcome` IN ('succeeded', 'failed', 'dead', 'deferred')
+            AND `finished_at` IS NOT NULL AND `closed_at` IS NOT NULL
+            AND `closed_at` = `finished_at`))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='后台任务单次执行事实';
 
 CREATE TABLE IF NOT EXISTS `sys_outbox_event` (
     `id` BIGINT NOT NULL,

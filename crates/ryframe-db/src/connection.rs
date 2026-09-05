@@ -95,6 +95,7 @@ const REQUIRED_TABLES: &[&str] = &[
     "sys_user_role",
     "sys_role_permission",
     "sys_background_job",
+    "sys_background_job_attempt",
     "sys_message",
     "sys_message_audience",
     "sys_message_recipient",

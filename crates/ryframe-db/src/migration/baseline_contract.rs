@@ -9,6 +9,11 @@ mod base;
 #[path = "m20260820_000000_control_baseline/schema.rs"]
 mod schema;
 
+#[cfg(any(not(feature = "migration"), test))]
+#[allow(clippy::duplicate_mod)]
+#[path = "m20260820_000000_control_baseline/jobs.rs"]
+mod jobs;
+
 /// 当前控制库基线的只读 DDL 事实源，不编译迁移执行 trait。
 #[cfg(any(not(feature = "migration"), test))]
 pub fn ddl_statements() -> impl Iterator<Item = &'static str> {
@@ -21,6 +26,7 @@ pub fn ddl_statements() -> impl Iterator<Item = &'static str> {
         .chain(schema::product_capability_table_statements())
         .chain(schema::tenant_data_control_table_statements())
         .chain([
+            jobs::BACKGROUND_JOB_ATTEMPT_DDL,
             schema::OUTBOX_EVENT_DDL,
             schema::EXPORT_JOB_DDL,
             schema::RESOURCE_OWNERSHIP_DDL,

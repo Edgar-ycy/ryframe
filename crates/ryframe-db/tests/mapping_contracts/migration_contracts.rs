@@ -143,10 +143,12 @@ fn generated_resource_access_is_owned_once_by_the_merged_seed_catalog() {
 #[test]
 fn review_snapshot_matches_the_fresh_schema() {
     let snapshot = mysql_snapshot_sql();
-    assert!(snapshot.contains("schema fingerprint: 1256b142b5dfaaf1"));
-    assert_eq!(snapshot.matches("CREATE TABLE IF NOT EXISTS").count(), 45);
+    assert!(snapshot.contains("schema fingerprint: 7b81bd3d12095ee4"));
+    assert_eq!(snapshot.matches("CREATE TABLE IF NOT EXISTS").count(), 46);
     for required in [
         "`sys_background_job`",
+        "`sys_background_job_attempt`",
+        "`claim_sequence`",
         "`payload_version`",
         "`sys_export_job`",
         "`active_request_fingerprint`",
@@ -245,6 +247,44 @@ fn baseline_contains_export_snapshot_and_task_versions() {
 }
 
 #[test]
+fn background_attempt_baseline_preserves_sequence_time_and_outcome_constraints() {
+    let statements = control_ddl_statements().collect::<Vec<_>>();
+    let background = statements
+        .iter()
+        .find(|statement| statement.contains("CREATE TABLE IF NOT EXISTS `sys_background_job`"))
+        .expect("基线必须包含后台任务表");
+    for required in [
+        "`claim_sequence` BIGINT      NOT NULL DEFAULT 0",
+        "`available_at`  DATETIME(6)",
+        "`lease_until`   DATETIME(6)",
+        "CONSTRAINT `ck_bg_job_attempt_budget`",
+        "`claim_sequence` >= `attempts`",
+    ] {
+        assert!(
+            background.contains(required),
+            "后台任务缺少约束: {required}"
+        );
+    }
+
+    let attempt = statements
+        .iter()
+        .find(|statement| {
+            statement.contains("CREATE TABLE IF NOT EXISTS `sys_background_job_attempt`")
+        })
+        .expect("基线必须包含后台任务尝试表");
+    for required in [
+        "PRIMARY KEY (`job_id`, `sequence`)",
+        "CONSTRAINT `fk_bg_attempt_job`",
+        "CONSTRAINT `ck_bg_attempt_sequence`",
+        "CONSTRAINT `ck_bg_attempt_times`",
+        "CONSTRAINT `ck_bg_attempt_outcome`",
+        "`outcome` = 'lease_expired' AND `finished_at` IS NULL",
+    ] {
+        assert!(attempt.contains(required), "尝试表缺少约束: {required}");
+    }
+}
+
+#[test]
 fn baseline_table_set_and_schema_fingerprint_are_stable() {
     let mut tables = control_ddl_statements()
         .map(|statement| statement.split('`').nth(1).expect("基线语句必须包含表名"))
@@ -253,6 +293,6 @@ fn baseline_table_set_and_schema_fingerprint_are_stable() {
     tables.sort_unstable();
     tables.dedup();
     assert_eq!(tables.len(), count);
-    assert_eq!(count, 45);
-    assert_eq!(schema_fingerprint(), "1256b142b5dfaaf1");
+    assert_eq!(count, 46);
+    assert_eq!(schema_fingerprint(), "7b81bd3d12095ee4");
 }

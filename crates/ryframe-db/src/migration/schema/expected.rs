@@ -360,4 +360,31 @@ mod tests {
         assert_eq!(key.delete_rule, "set null");
         assert_eq!(key.update_rule, "cascade");
     }
+
+    #[test]
+    fn multiline_checks_preserve_attempt_columns_and_foreign_key() {
+        let schema = super::expected_schema().unwrap();
+        let table = "sys_background_job_attempt";
+        let columns = schema
+            .columns
+            .iter()
+            .filter(|((name, _), _)| name == table)
+            .collect::<Vec<_>>();
+        assert_eq!(columns.len(), 7);
+        for name in ["available_at", "started_at"] {
+            let column = &schema.columns[&(table.into(), name.into())];
+            assert_eq!(column.column_type, "datetime(6)");
+            assert!(!column.nullable);
+        }
+        for name in ["finished_at", "closed_at"] {
+            let column = &schema.columns[&(table.into(), name.into())];
+            assert_eq!(column.column_type, "datetime(6)");
+            assert!(column.nullable);
+        }
+        let key = &schema.foreign_keys[&(table.into(), "fk_bg_attempt_job".into())];
+        assert_eq!(key.columns, ["job_id"]);
+        assert_eq!(key.referenced_table, "sys_background_job");
+        assert_eq!(key.delete_rule, "cascade");
+        assert_eq!(key.update_rule, "restrict");
+    }
 }
