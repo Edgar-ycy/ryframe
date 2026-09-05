@@ -30,13 +30,13 @@ use super::{
 mod environment;
 #[path = "run/process.rs"]
 mod process;
+use process::execute_steps;
 #[path = "run/resource_gate.rs"]
 mod resource_gate;
 #[path = "run/save.rs"]
 mod save;
 
 use environment::effective_environment;
-use process::execute_steps;
 pub(crate) use resource_gate::read_resource_gate_decision;
 
 pub(super) fn execute(
@@ -193,6 +193,9 @@ pub(super) fn prepare_run_at(
             environment.remove("SCCACHE_RECACHE");
         }
     }
+    if options.suite.is_runtime() {
+        super::runtime::prepare(backend_root, options.cache_state, &mut environment)?;
+    }
     let metadata = collect_metadata(MetadataContext {
         backend_root,
         frontend_root,
@@ -204,6 +207,12 @@ pub(super) fn prepare_run_at(
         pairing: pairing.clone(),
     })?;
     let source_fingerprints = metadata.source_fingerprints();
+    if options.suite.is_runtime() {
+        environment.insert(
+            "RYFRAME_DEVEX_SOURCE_FINGERPRINTS".into(),
+            serde_json::to_string(&source_fingerprints)?,
+        );
+    }
     write_metadata(&run_dir, &metadata)?;
     fs::write(run_dir.join("samples.jsonl"), [])?;
     let normalizer = PathNormalizer::new(backend_root, frontend_root, devex_root);
@@ -359,6 +368,7 @@ pub(super) struct SampleOutcome {
     cargo_invocations: Option<usize>,
     ready_kind: Option<ReadyKind>,
     resource_gate_decision: Option<ResourceGateDecisionEvidence>,
+    runtime: Option<super::runtime::RuntimeEvidence>,
     pub(super) status: ExitStatus,
 }
 
@@ -432,6 +442,11 @@ pub(super) fn execute_sample_with_contract(
         cargo_invocations: None,
         ready_kind: None,
         resource_gate_decision,
+        runtime: if suite.is_runtime() {
+            super::runtime::read(target, label, suite, status.success())?
+        } else {
+            None
+        },
         status,
     };
     if suite == DevexSuite::CargoDevSave && outcome.status.success() {
@@ -489,6 +504,7 @@ pub(super) fn sample_record(
         order,
         source_fingerprints,
         resource_gate_decision: outcome.resource_gate_decision.clone(),
+        runtime: outcome.runtime.clone(),
     }
 }
 

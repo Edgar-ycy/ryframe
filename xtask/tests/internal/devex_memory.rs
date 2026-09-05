@@ -6,12 +6,23 @@ use std::{
 
 use serde_json::{Value, json};
 
-use super::devex::memory::{self, MemoryEvidence, MemoryMethod, MemoryReading};
+use super::devex::{
+    distribution,
+    memory::{self, MemoryEvidence, MemoryMethod, MemoryReading},
+};
 
 pub(super) fn evidence() -> Value {
     let mut evidence = MemoryEvidence::new();
     evidence.steps = vec![MemoryReading::Measured { peak_bytes: 1024 }];
     serde_json::to_value(evidence).unwrap()
+}
+
+#[test]
+fn p99_uses_nearest_rank_without_changing_p95() {
+    let values = (1..=100).map(f64::from).collect::<Vec<_>>();
+    let result = distribution(&values).unwrap();
+    assert_eq!((result.p50, result.p95, result.p99), (50.0, 95.0, 99.0));
+    assert!(distribution(&[]).is_none());
 }
 
 #[test]
@@ -62,6 +73,7 @@ fn memory_summary_preserves_failed_samples_and_blocks_mixed_or_missing_collector
     let stats = summary.memory.unwrap();
     assert_eq!(stats.successful_peak_bytes.as_ref().unwrap().max, 1024.0);
     assert_eq!(stats.failed_peak_bytes.as_ref().unwrap().max, 4096.0);
+    assert_eq!(summary.duration_ms.unwrap().p99, 100.0);
     let report = fs::read_to_string(run.join("summary.md")).unwrap();
     assert!(report.contains("失败样本：峰值 4096 bytes"));
     assert!(report.contains("- 采集器："));
@@ -127,6 +139,7 @@ fn memory_child() {
         assert!(child_command("grandchild").status().unwrap().success());
     } else if role == "orphan-parent" {
         let mut child = child_command("orphan").spawn().unwrap();
+        // 主线程先退出以制造范围不完整；外层 ManagedChild 拥有并回收整棵树。
         std::thread::spawn(move || child.wait().unwrap());
     } else {
         std::thread::sleep(Duration::from_millis(if role == "orphan" {

@@ -2,11 +2,12 @@
 import hashlib
 import os
 from pathlib import Path
+import shutil
 import struct
 import subprocess
 import sys
-import tempfile
 import unittest
+import uuid
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -17,9 +18,10 @@ class SourceInventoryTests(unittest.TestCase):
     def setUp(self):
         base = Path(__file__).resolve().parents[2] / ".local-tests/python-unit"
         base.mkdir(parents=True, exist_ok=True)
-        temporary = tempfile.TemporaryDirectory(dir=base)
-        self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name).resolve() / "中文 来源"
+        temporary = base / f"source-inventory-{uuid.uuid4()}"
+        temporary.mkdir()
+        self.addCleanup(lambda: shutil.rmtree(temporary, ignore_errors=True))
+        self.root = temporary.resolve() / "中文 来源"
         self.root.mkdir()
         self.head, self.patch, self.index = "a" * 40, b"binary diff", b"index fixture"
         self.untracked = ["新增 文件.txt"]

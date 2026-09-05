@@ -58,6 +58,24 @@ fn validate_sample(metadata: &RunMetadata, sample: &SampleRecord) -> Result<()> 
     {
         return Err("内存证据步骤数与实际测量命令不一致".into());
     }
+    if let Some(evidence) = &sample.runtime {
+        super::super::runtime::validate(
+            evidence,
+            metadata.suite,
+            sample.status == SampleStatus::Passed,
+        )?;
+        if !metadata.suite.is_runtime()
+            || evidence.cache_state != metadata.cache_state
+            || metadata
+                .environment
+                .get("RYFRAME_DEVEX_RUNTIME_INPUT_SHA256")
+                != Some(&evidence.input_sha256)
+        {
+            return Err("运行时样本与 metadata 的负载或冷暖条件不一致".into());
+        }
+    } else if metadata.suite.is_runtime() && sample.status == SampleStatus::Passed {
+        return Err("运行时成功样本缺少测量证据".into());
+    }
     if metadata.suite == DevexSuite::CargoDevSave && sample.cargo_invocations.is_none() {
         return Err(format!("cargo-dev-save 样本 {} 缺少 Cargo 调用数", sample.sequence).into());
     }

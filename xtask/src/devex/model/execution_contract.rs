@@ -19,13 +19,18 @@ impl DevexSuite {
     pub(crate) fn validate_cache_state(self, observed: CacheState) -> Result<(), String> {
         let required = match self {
             Self::RustColdBuild => CacheState::Cold,
-            Self::RustIncremental | Self::ResourceGate | Self::RustGate | Self::RustSccache => {
-                CacheState::Warm
-            }
+            Self::RustIncremental
+            | Self::ResourceGate
+            | Self::RustGate
+            | Self::RustSccache
+            | Self::RuntimeApi
+            | Self::RuntimeJobs
+            | Self::RuntimeTenants => CacheState::Warm,
             Self::CargoDevSave
             | Self::ResourceGenerator
             | Self::FrontendFast
-            | Self::FrontendBuild => return Ok(()),
+            | Self::FrontendBuild
+            | Self::RuntimeHomepage => return Ok(()),
         };
         (observed == required).then_some(()).ok_or_else(|| {
             format!(

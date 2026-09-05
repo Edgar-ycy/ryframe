@@ -16,7 +16,7 @@ pub(crate) struct ComparisonCheck {
     pub(crate) passed: bool,
 }
 
-pub(super) fn checks(
+pub(crate) fn checks(
     baseline: &RunSummary,
     candidate: &RunSummary,
     baseline_duration: &Distribution,
@@ -25,6 +25,61 @@ pub(super) fn checks(
     let mut checks = duration_acceptance(baseline, baseline_duration, candidate_duration);
     if baseline.suite.uses_sccache() {
         checks.extend(sccache_acceptance(baseline, candidate)?);
+    }
+    if baseline.suite.is_runtime() {
+        checks.extend(runtime_checks(baseline, candidate)?);
+    } else {
+        checks.push(ComparisonCheck {
+            name: "保留场景 P95 回退",
+            requirement: "<= 10%",
+            observed: percentage_change(baseline_duration.p95, candidate_duration.p95),
+            passed: baseline_duration.p95 > 0.0
+                && candidate_duration.p95 <= baseline_duration.p95 * 1.10,
+        });
+    }
+    Ok(checks)
+}
+
+fn runtime_checks(baseline: &RunSummary, candidate: &RunSummary) -> Result<Vec<ComparisonCheck>> {
+    let base = baseline.runtime.as_ref().ok_or("运行时基线缺少证据")?;
+    let next = candidate.runtime.as_ref().ok_or("运行时候选缺少证据")?;
+    if base.input_sha256 != next.input_sha256 || !base.scenarios.keys().eq(next.scenarios.keys()) {
+        return Err("运行时环境、数据集或场景不可比".into());
+    }
+    let mut checks = vec![
+        zero("基线失败周期", base.failed_cycles),
+        zero("候选失败周期", next.failed_cycles),
+        zero("基线会话失败", base.session_failures),
+        zero("候选会话失败", next.session_failures),
+        zero("基线采集失败", base.collector_failures),
+        zero("候选采集失败", next.collector_failures),
+    ];
+    for (name, original) in &base.scenarios {
+        let current = &next.scenarios[name];
+        for (metric, before, after) in [
+            ("端到端", Some(&original.p95_ms), Some(&current.p95_ms)),
+            (
+                "排队",
+                original.queue_p95_ms.as_ref(),
+                current.queue_p95_ms.as_ref(),
+            ),
+            (
+                "执行",
+                original.execution_p95_ms.as_ref(),
+                current.execution_p95_ms.as_ref(),
+            ),
+        ] {
+            match (before, after) {
+                (Some(a), Some(b)) => checks.push(ComparisonCheck {
+                    name: "保留业务周期 P95 的样本 P95 回退",
+                    requirement: "<= 10%",
+                    observed: format!("{name}/{metric}：{:.2} → {:.2} ms", a.p95, b.p95),
+                    passed: b.p95 <= a.p95 * 1.10,
+                }),
+                (None, None) => {}
+                _ => return Err("后台计时范围发生变化，不能比较".into()),
+            }
+        }
     }
     Ok(checks)
 }

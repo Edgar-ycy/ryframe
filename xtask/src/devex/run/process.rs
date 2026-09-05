@@ -1,16 +1,14 @@
-use std::{
-    collections::BTreeMap,
-    path::Path,
-    process::{Command, ExitStatus, Stdio},
-};
-
-use crate::Result;
-
 use super::super::{
     memory::{self, MemoryEvidence},
     metadata::corepack_executable,
     model::{StepDefinition, SuiteDefinition, WorkingDirectory},
     support::{display_step, success_status},
+};
+use crate::Result;
+use std::{
+    collections::BTreeMap,
+    path::Path,
+    process::{Command, ExitStatus, Stdio},
 };
 
 pub(super) fn execute_steps(
@@ -61,11 +59,16 @@ fn step_command(
     let mut command = Command::new(program);
     let target = target.to_string_lossy();
     let frontend = frontend_root.to_string_lossy();
+    let backend = backend_root.to_string_lossy();
+    let driver_root = crate::workspace::root_dir();
+    let driver = driver_root.to_string_lossy();
     let args = step
         .args
         .iter()
         .map(|arg| {
-            arg.replace("{target}", &target)
+            arg.replace("{driver}", &driver)
+                .replace("{backend}", &backend)
+                .replace("{target}", &target)
                 .replace("{frontend}", &frontend)
                 .replace("{label}", label)
         })

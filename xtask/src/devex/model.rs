@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 mod baseline;
 #[path = "model/execution_contract.rs"]
 mod execution_contract;
+#[path = "model/runtime.rs"]
+mod runtime;
 #[path = "model/steps.rs"]
 mod steps;
 use steps::*;
@@ -28,10 +30,14 @@ pub(crate) enum DevexSuite {
     RustSccache,
     FrontendFast,
     FrontendBuild,
+    RuntimeHomepage,
+    RuntimeApi,
+    RuntimeJobs,
+    RuntimeTenants,
 }
 
 impl DevexSuite {
-    pub(crate) const ALL: [Self; 9] = [
+    pub(crate) const ALL: [Self; 13] = [
         Self::RustColdBuild,
         Self::RustIncremental,
         Self::CargoDevSave,
@@ -41,6 +47,10 @@ impl DevexSuite {
         Self::RustSccache,
         Self::FrontendFast,
         Self::FrontendBuild,
+        Self::RuntimeHomepage,
+        Self::RuntimeApi,
+        Self::RuntimeJobs,
+        Self::RuntimeTenants,
     ];
 
     pub(crate) fn parse(value: &str) -> Option<Self> {
@@ -58,11 +68,18 @@ impl DevexSuite {
             Self::RustSccache => "rust-sccache",
             Self::FrontendFast => "frontend-fast",
             Self::FrontendBuild => "frontend-build",
+            Self::RuntimeHomepage => "runtime-homepage",
+            Self::RuntimeApi => "runtime-api",
+            Self::RuntimeJobs => "runtime-jobs",
+            Self::RuntimeTenants => "runtime-tenants",
         }
     }
 
     pub(crate) fn definition(self, variant: &str) -> Result<SuiteDefinition, String> {
         match self {
+            Self::RuntimeHomepage | Self::RuntimeApi | Self::RuntimeJobs | Self::RuntimeTenants => {
+                runtime::definition(self, variant)
+            }
             Self::RustColdBuild => Ok(SuiteDefinition {
                 steps: rust_steps(variant, BuildProfile::Build)?,
                 features: rust_features(variant)?,
@@ -170,7 +187,8 @@ impl DevexSuite {
             Self::ResourceGenerator => "all、post 或 notice",
             Self::ResourceGate => "auto",
             Self::RustGate => "default",
-            Self::FrontendFast | Self::FrontendBuild => "default",
+            Self::FrontendFast | Self::FrontendBuild | Self::RuntimeHomepage => "default",
+            Self::RuntimeApi | Self::RuntimeJobs | Self::RuntimeTenants => "10、50 或 100",
         }
     }
 
@@ -192,6 +210,13 @@ impl DevexSuite {
             }
         };
         Ok(Some(source))
+    }
+
+    pub(crate) const fn is_runtime(self) -> bool {
+        matches!(
+            self,
+            Self::RuntimeHomepage | Self::RuntimeApi | Self::RuntimeJobs | Self::RuntimeTenants
+        )
     }
 
     pub(crate) const fn uses_sccache(self) -> bool {

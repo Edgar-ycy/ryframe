@@ -40,6 +40,9 @@ pub(crate) fn require_frontend_dependencies(
     options: &DevexRunOptions,
 ) -> Result<()> {
     require_frontend_manifest(frontend_root, options, "目录")?;
+    if options.suite.is_runtime() {
+        require_runtime_frontend_files(frontend_root, options)?;
+    }
     if frontend_root.join("node_modules").is_dir() {
         return Ok(());
     }
@@ -49,6 +52,29 @@ pub(crate) fn require_frontend_dependencies(
         frontend_root.display()
     )
     .into())
+}
+
+fn require_runtime_frontend_files(frontend_root: &Path, options: &DevexRunOptions) -> Result<()> {
+    const FILES: &[&str] = &[
+        "scripts/browser-login-budget.mjs",
+        "scripts/browser-login-budget-model.mjs",
+        "scripts/browser-login-ledger.mjs",
+    ];
+    let missing = FILES
+        .iter()
+        .filter(|relative| !frontend_root.join(relative).is_file())
+        .copied()
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "suite `{}` 缺少前端共享登录预算文件：{}",
+            options.suite.as_str(),
+            missing.join("、")
+        )
+        .into())
+    }
 }
 
 fn require_frontend_manifest(

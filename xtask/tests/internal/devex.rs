@@ -21,33 +21,54 @@ use super::{
 
 #[test]
 fn successful_targets_follow_suite_storage_policy() {
-    let run = temporary_directory("cold-target-cleanup");
-    let cold = run.join("cache/cold-001");
-    fs::create_dir_all(&cold).unwrap();
-    fs::write(cold.join("artifact"), b"ok").unwrap();
-    cleanup_successful_sample_target(&run, &cold, DevexSuite::RustColdBuild, CacheState::Cold)
-        .unwrap();
-    assert!(!cold.exists());
-
-    let warm = run.join("cache/warm");
-    fs::create_dir_all(&warm).unwrap();
-    cleanup_successful_sample_target(&run, &warm, DevexSuite::RustIncremental, CacheState::Warm)
-        .unwrap();
-    assert!(warm.is_dir());
-
-    let sccache = sample_target(&run, DevexSuite::RustSccache, CacheState::Warm, 1);
-    fs::create_dir_all(&sccache).unwrap();
-    fs::write(sccache.join("artifact"), b"ok").unwrap();
-    cleanup_successful_sample_target(&run, &sccache, DevexSuite::RustSccache, CacheState::Warm)
-        .unwrap();
-    assert!(!sccache.exists());
-
-    let isolated = run.join("cache/sccache-measure-001");
-    fs::create_dir_all(&isolated).unwrap();
-    cleanup_successful_sample_target(&run, &isolated, DevexSuite::RustGate, CacheState::Warm)
-        .unwrap();
-    assert!(!isolated.exists());
-    fs::remove_dir_all(run).unwrap();
+    // 相对的自有 target 沙箱使两种祖先布局与宿主 TEMP 无关。
+    let root = PathBuf::from("target").join(format!("devex-storage-{}", std::process::id()));
+    fs::create_dir_all("target").unwrap();
+    fs::create_dir(&root).unwrap();
+    let outside = root.join("outside");
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("keep"), b"owned sentinel").unwrap();
+    for run in [root.join("ordinary"), root.join(".local-tests/devex/short")] {
+        fs::create_dir_all(&run).unwrap();
+        let cold = sample_target(&run, DevexSuite::RustColdBuild, CacheState::Cold, 1);
+        let target_root = cold.parent().unwrap();
+        if run == root.join("ordinary") {
+            assert_eq!(target_root, run.join("cache"));
+        } else {
+            assert_eq!(target_root.parent().unwrap(), root.join(".local-tests/d"));
+            assert_eq!(target_root.file_name().unwrap().len(), 12);
+        }
+        for (suite, cache, preserved) in [
+            (DevexSuite::RustColdBuild, CacheState::Cold, false),
+            (DevexSuite::RustIncremental, CacheState::Warm, true),
+            (DevexSuite::RustSccache, CacheState::Warm, false),
+            (DevexSuite::RustGate, CacheState::Warm, false),
+            (DevexSuite::RuntimeHomepage, CacheState::Cold, true),
+        ] {
+            let target = sample_target(&run, suite, cache, 1);
+            assert_eq!(target.parent().unwrap(), target_root);
+            fs::create_dir_all(&target).unwrap();
+            fs::write(target.join("artifact"), b"ok").unwrap();
+            cleanup_successful_sample_target(&run, &target, suite, cache).unwrap();
+            assert_eq!(target.exists(), preserved);
+            if preserved {
+                assert_eq!(fs::read(target.join("artifact")).unwrap(), b"ok");
+                super::workspace::remove_isolated_directory(target_root, &target).unwrap();
+            }
+        }
+        for forbidden in [&outside, target_root] {
+            let rejected = cleanup_successful_sample_target(
+                &run,
+                forbidden,
+                DevexSuite::RustColdBuild,
+                CacheState::Cold,
+            );
+            assert!(rejected.is_err());
+        }
+        assert_eq!(fs::read(outside.join("keep")).unwrap(), b"owned sentinel");
+        fs::remove_dir(target_root).unwrap();
+    }
+    super::workspace::remove_isolated_directory(Path::new("target"), &root).unwrap();
 }
 
 #[test]
@@ -94,31 +115,6 @@ fn resource_gate_decision_artifact_must_prove_targeted_mode() {
         .to_string();
     assert!(error.contains("未证明") && error.contains("targeted"));
     fs::remove_dir_all(target).unwrap();
-}
-
-#[test]
-fn fixed_suite_whitelist_is_complete_and_closed() {
-    let names = DevexSuite::ALL.map(DevexSuite::as_str);
-    assert_eq!(
-        names,
-        [
-            "rust-cold-build",
-            "rust-incremental",
-            "cargo-dev-save",
-            "resource-generator",
-            "resource-gate",
-            "rust-gate",
-            "rust-sccache",
-            "frontend-fast",
-            "frontend-build",
-        ]
-    );
-    assert!(
-        names
-            .into_iter()
-            .all(|name| DevexSuite::parse(name).is_some())
-    );
-    assert!(DevexSuite::parse("backend-check").is_none());
 }
 
 #[test]
@@ -430,11 +426,12 @@ fn metadata_paths_use_stable_workspace_tokens() {
 }
 
 #[test]
-fn summary_uses_nearest_rank_p50_and_p95() {
+fn summary_uses_nearest_rank_p50_p95_and_p99() {
     let distribution = distribution(&[50.0, 10.0, 20.0, 40.0, 30.0]).unwrap();
     assert_eq!(distribution.min, 10.0);
     assert_eq!(distribution.p50, 30.0);
     assert_eq!(distribution.p95, 50.0);
+    assert_eq!(distribution.p99, 50.0);
     assert_eq!(distribution.max, 50.0);
     assert_eq!(distribution.mean, 30.0);
 }

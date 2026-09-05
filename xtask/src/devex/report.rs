@@ -24,6 +24,8 @@ mod sccache;
 #[path = "report/validation.rs"]
 mod validation;
 
+#[allow(unused_imports)]
+pub(crate) use acceptance::checks as comparison_checks;
 pub(crate) use acceptance::duration_acceptance;
 use validation::{validate_execution_contract, validate_samples};
 
@@ -67,6 +69,8 @@ impl ResourceGateDecisionEvidence {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub(super) struct SampleRecord {
     pub(super) memory: super::memory::MemoryEvidence,
+    #[serde(default)]
+    pub(super) runtime: Option<super::runtime::RuntimeEvidence>,
     pub(super) schema_version: u8,
     pub(super) run_id: String,
     pub(super) sequence: usize,
@@ -96,6 +100,8 @@ pub(super) struct SampleRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub(crate) struct RunSummary {
     pub(crate) memory: Option<super::memory::MemorySummary>,
+    #[serde(default)]
+    pub(crate) runtime: Option<super::runtime::RuntimeSummary>,
     pub(crate) schema_version: u8,
     pub(crate) run_id: String,
     pub(crate) suite: DevexSuite,
@@ -124,6 +130,7 @@ pub(crate) struct Distribution {
     pub(crate) min: f64,
     pub(crate) p50: f64,
     pub(crate) p95: f64,
+    pub(crate) p99: f64,
     pub(crate) max: f64,
     pub(crate) mean: f64,
 }
@@ -202,6 +209,7 @@ pub(crate) fn summarize(run_dir: &Path) -> Result<RunSummary> {
     let pairing = metadata.pairing.clone();
     let summary = RunSummary {
         memory: super::memory::summarize(&measurements)?,
+        runtime: super::runtime::summarize(&measurements)?,
         schema_version: 1,
         run_id: metadata.run_id,
         suite: metadata.suite,
@@ -314,6 +322,7 @@ pub(crate) fn distribution(values: &[f64]) -> Option<Distribution> {
         min: sorted[0],
         p50: nearest_rank(&sorted, 0.50),
         p95: nearest_rank(&sorted, 0.95),
+        p99: nearest_rank(&sorted, 0.99),
         max: sorted[sorted.len() - 1],
         mean: sum / sorted.len() as f64,
     })

@@ -55,7 +55,7 @@ pub(crate) fn cleanup_successful_sample_target(
     suite: DevexSuite,
     cache_state: CacheState,
 ) -> Result<()> {
-    if cache_state != CacheState::Cold && !suite.uses_sccache() {
+    if suite.is_runtime() || (cache_state != CacheState::Cold && !suite.uses_sccache()) {
         return Ok(());
     }
     remove_isolated_directory(&compiler_target_root(run_dir), target)

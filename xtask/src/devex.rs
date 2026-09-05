@@ -18,6 +18,8 @@ mod paired;
 mod preflight;
 #[path = "devex/report.rs"]
 mod report;
+#[path = "devex/runtime.rs"]
+mod runtime;
 #[path = "devex/support.rs"]
 mod support;
 
@@ -320,6 +322,8 @@ pub(crate) use metadata::SourceFingerprints;
 pub(crate) use metadata::{PathNormalizer, filter_environment};
 #[allow(unused_imports)]
 pub(crate) use paired::abba_pair_order;
+#[allow(unused_imports)]
+pub(crate) use report::comparison_checks;
 #[allow(unused_imports)]
 pub(crate) use report::{
     Distribution, ResourceGateDecisionEvidence, RunSummary, duration_acceptance,
