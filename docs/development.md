@@ -73,7 +73,7 @@ cargo xtask generate resource post --explain
 5. 在前端补充资源需要的业务交互。
 6. 运行 `cargo xtask check`，再用浏览器验证新增、查询、编辑和删除流程。
 
-Post 和 Notice 可作为标准 CRUD 示例。导出、发布等特殊动作适合保留为自定义强类型用例。
+Post 和 Notice 可作为标准 CRUD 示例。导出、发布等特殊动作适合保留为自定义强类型用例。租户资源生成同时更新建表迁移和复制目录；完整验证 Device 链路时，执行 `python scripts/prepare_full_stack_fixture.py --backend-dir <后端根目录> --frontend-dir <前端根目录> --output-dir <后端根目录>/.local-tests/device-fixture --write`，它只在新的隔离工作树生成资源并检查幂等性，不启动外部服务。随后为隔离工作树配置测试资源，并以 `RYFRAME_E2E_FIXTURE=device` 运行真实浏览器验收。
 ## 开发自定义业务
 
 不能由标准资源表达的流程按以下顺序实现：
