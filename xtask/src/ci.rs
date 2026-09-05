@@ -9,10 +9,10 @@ use std::{
 use crate::{
     Result,
     check::{
-        BACKEND_CI_TARGET_DIR, BackendSnapshotProfile, RESOURCE_CI_TARGET_DIR, VerifySelection,
-        changed_paths, changed_paths_between, ci_consumer_contract, ci_rust_gate, ci_target_policy,
-        ci_test_jobs_from, classify_changes, complete_verify_selection, load_workspace_graph,
-        resource_workspace_compilation,
+        BACKEND_CI_TARGET_DIR, BackendSnapshotProfile, PolicyProfile, RESOURCE_CI_TARGET_DIR,
+        VerifySelection, changed_paths, changed_paths_between, ci_consumer_contract, ci_rust_gate,
+        ci_target_policy, ci_test_jobs_from, classify_changes, complete_verify_selection,
+        load_workspace_graph, policy_tasks, resource_workspace_compilation,
     },
     cli::CiCommand,
     process::{command_output, run as run_process, run_owned},
@@ -281,14 +281,8 @@ fn preflight() -> Result<()> {
             "test_*.py",
         ],
     )?;
-    for script in [
-        "scripts/check_prerelease_dependencies.py",
-        "scripts/check_supply_chain.py",
-        "scripts/check_architecture.py",
-        "scripts/check_permission_routes.py",
-        "scripts/check_deployment_assets.py",
-    ] {
-        run_process(&root, "python", &[script])?;
+    for task in policy_tasks(PolicyProfile::CiPreflight) {
+        run_process(&root, "python", &[task.script])?;
     }
     let migration_args = preflight_migration_args(
         env::var("RYFRAME_CI_BASE_SHA")

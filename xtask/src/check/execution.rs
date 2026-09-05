@@ -11,6 +11,7 @@ use super::{
     metrics,
     model::{BackendSnapshotProfile, FrontendProfile},
     plan::{CheckPlanMode, build_check_plan, render_plan, validate_plan},
+    policy_tasks::{PolicyProfile, policy_tasks},
     resource::resource_workspace_compilation,
     selection::{frontend_profile_commands, load_workspace_metadata, needs_consumer_contract},
     snapshot::{
@@ -35,14 +36,6 @@ pub(crate) const PYTHON_TEST_ARGS: &[&str] = &[
     "scripts/tests",
     "-p",
     "test_*.py",
-];
-pub(crate) const BACKEND_POLICY_SCRIPTS: &[&str] = &[
-    "scripts/check_architecture.py",
-    "scripts/check_deployment_assets.py",
-    "scripts/check_migration_history.py",
-    "scripts/check_prerelease_dependencies.py",
-    "scripts/check_permission_routes.py",
-    "scripts/check_supply_chain.py",
 ];
 pub(crate) const SMART_BACKEND_OPERATIONS: &[&str] = &["clippy", "test"];
 pub(crate) const SMART_FEATURE_OPERATIONS: &[&str] = &["clippy"];
@@ -358,8 +351,8 @@ fn backend(root: &Path, backend_target: &str, jobs: usize) -> Result<()> {
     // Clippy 会先完成 Workspace 全目标类型检查，无需再执行覆盖范围更小的 cargo check。
     let clippy = workspace_clippy_args(backend_target, jobs);
     run_owned(root, "cargo", &clippy)?;
-    for script in BACKEND_POLICY_SCRIPTS {
-        run_process(root, "python", &[script])?;
+    for task in policy_tasks(PolicyProfile::Full) {
+        run_process(root, "python", &[task.script])?;
     }
     Ok(())
 }
@@ -413,12 +406,8 @@ fn backend_packages(
             default_test_jobs_from(cfg!(windows), compile_jobs),
         )?;
     }
-    for script in [
-        "scripts/check_architecture.py",
-        "scripts/check_migration_history.py",
-        "scripts/check_permission_routes.py",
-    ] {
-        run_process(root, "python", &[script])?;
+    for task in policy_tasks(PolicyProfile::Smart) {
+        run_process(root, "python", &[task.script])?;
     }
     Ok(())
 }

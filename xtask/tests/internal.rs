@@ -44,6 +44,8 @@ mod data;
 
 #[path = "internal/build.rs"]
 mod build_tests;
+#[path = "internal/check_policy_tasks.rs"]
+mod check_policy_task_tests;
 #[path = "internal/check_policy.rs"]
 mod check_policy_tests;
 #[path = "internal/check_snapshot.rs"]

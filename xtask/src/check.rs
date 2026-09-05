@@ -16,6 +16,8 @@ pub(crate) mod metrics;
 mod model;
 #[path = "check/plan.rs"]
 mod plan;
+#[path = "check/policy_tasks.rs"]
+mod policy_tasks;
 #[path = "check/resource.rs"]
 mod resource;
 #[path = "check/selection.rs"]
@@ -45,9 +47,7 @@ pub(crate) use context::{
 #[allow(unused_imports)]
 pub(crate) use execution::verify;
 #[allow(unused_imports)]
-pub(crate) use execution::{
-    BACKEND_POLICY_SCRIPTS, PYTHON_TEST_ARGS, SMART_BACKEND_OPERATIONS, SMART_FEATURE_OPERATIONS,
-};
+pub(crate) use execution::{PYTHON_TEST_ARGS, SMART_BACKEND_OPERATIONS, SMART_FEATURE_OPERATIONS};
 pub(crate) use execution::{
     ci_consumer_contract, ci_consumer_contract_against_committed_snapshot, ci_rust_gate,
 };
@@ -62,6 +62,8 @@ pub(crate) use model::{
 };
 #[allow(unused_imports)]
 pub(crate) use plan::{CheckPlanMode, build_check_plan, plan, select_check_mode, validate_plan};
+#[allow(unused_imports)]
+pub(crate) use policy_tasks::{PYTHON_POLICY_TASKS, PolicyProfile, PythonPolicyTask, policy_tasks};
 #[allow(unused_imports)]
 pub(crate) use resource::{
     ResourceWorkspaceProfile, resolve_frontend_dir, resource_test_executable_from_messages,
