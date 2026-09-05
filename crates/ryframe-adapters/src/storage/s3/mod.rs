@@ -94,7 +94,9 @@ impl S3ObjectStorage {
 
         let endpoint = normalize_endpoint(&config.endpoint, config.use_ssl)?;
         let request_timeout = Duration::from_secs(config.request_timeout_secs);
-        let mut client = reqwest::Client::builder().timeout(request_timeout);
+        let mut client = reqwest::Client::builder()
+            .timeout(request_timeout)
+            .redirect(reqwest::redirect::Policy::none());
         if let Some(root_ca_pem) = config.root_ca_pem {
             let certificate =
                 reqwest::Certificate::from_pem(&root_ca_pem).map_err(transport_error)?;

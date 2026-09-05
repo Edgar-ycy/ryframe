@@ -1,5 +1,6 @@
 #[cfg(feature = "redis-api")]
 pub mod application_ports;
+pub mod backup;
 #[cfg(feature = "redis-api")]
 pub mod cache;
 #[cfg(feature = "redis-api")]
