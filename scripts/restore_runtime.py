@@ -5,8 +5,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
+import stat
+import sys
 import urllib.request
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
@@ -22,15 +27,186 @@ from restore_build import (
 from process_sockets import endpoint, verify_listener
 
 FRONTEND_RECEIPT = ".vite/restore-build.json"
+MAX_JSON_BYTES = 16 * 1024 * 1024
+HEX_40 = re.compile(r"[a-f0-9]{40}")
+HEX_64 = re.compile(r"[a-f0-9]{64}")
+IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+AUTHORITY_FIELDS = {
+    "format_version",
+    "kind",
+    "restore_id",
+    "backup_id",
+    "plan_hash",
+    "scope_id",
+    "data_verified_at",
+    "backend_sha",
+    "frontend_sha",
+    "api_endpoint",
+    "worker_endpoint",
+    "frontend_endpoint",
+}
+
+
+def _is_reparse(metadata: os.stat_result) -> bool:
+    flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return bool(getattr(metadata, "st_file_attributes", 0) & flag)
+
+
+def _reject_link_or_reparse(path: Path) -> None:
+    current = path.absolute()
+    while True:
+        metadata = current.lstat()
+        if stat.S_ISLNK(metadata.st_mode) or _is_reparse(metadata):
+            raise ValueError(f"恢复核验输入不得经过符号链接或重解析点：{current}")
+        if current.parent == current:
+            return
+        current = current.parent
+
+
+def _file_state(metadata: os.stat_result) -> tuple[int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+    )
+
+
+def _strict_object_pairs(pairs: list[tuple[str, object]]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"恢复核验 JSON 包含重复字段：{key}")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"恢复核验 JSON 包含非标准数值：{value}")
+
+
+@dataclass(frozen=True)
+class JsonDocument:
+    path: Path
+    raw: bytes
+    value: dict
+    state: tuple[int, int, int, int]
+
+    @property
+    def sha256(self) -> str:
+        return hashlib.sha256(self.raw).hexdigest()
+
+    def assert_unchanged(self) -> None:
+        current = read_json_document(self.path)
+        if current.state != self.state or current.raw != self.raw:
+            raise ValueError(f"核验期间 JSON 输入被替换或修改：{self.path}")
+
+
+def read_json_document(path: Path) -> JsonDocument:
+    path = path.absolute()
+    _reject_link_or_reparse(path)
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode):
+        raise ValueError(f"恢复核验输入必须是普通文件：{path}")
+    if before.st_size == 0:
+        raise ValueError(f"恢复核验输入不能为空：{path}")
+    if before.st_size > MAX_JSON_BYTES:
+        raise ValueError(f"恢复核验输入超过 16 MiB：{path}")
+    with path.open("rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if _file_state(opened) != _file_state(before) or not stat.S_ISREG(opened.st_mode):
+            raise ValueError(f"恢复核验输入在打开前被替换：{path}")
+        raw = stream.read(MAX_JSON_BYTES + 1)
+        after_read = os.fstat(stream.fileno())
+    after = path.lstat()
+    state = _file_state(before)
+    if len(raw) > MAX_JSON_BYTES or _file_state(after_read) != state or _file_state(after) != state:
+        raise ValueError(f"恢复核验输入在读取期间被替换或修改：{path}")
+    try:
+        text = raw.decode("utf-8", errors="strict")
+        value = json.loads(
+            text,
+            object_pairs_hook=_strict_object_pairs,
+            parse_constant=_reject_json_constant,
+        )
+    except UnicodeDecodeError as error:
+        raise ValueError(f"恢复核验输入不是 UTF-8：{path}") from error
+    except json.JSONDecodeError as error:
+        raise ValueError(f"恢复核验输入不是严格 JSON：{path}") from error
+    if not isinstance(value, dict):
+        raise ValueError(f"恢复核验输入必须是 JSON 对象：{path}")
+    return JsonDocument(path, raw, value, state)
 
 
 def read_json(path: Path) -> dict:
-    if path.stat().st_size > 16 * 1024 * 1024:
-        raise ValueError("恢复运行收据超过 16 MiB")
-    value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict):
-        raise ValueError("恢复运行收据必须是对象")
+    return read_json_document(path).value
+
+
+def _exact_fields(value: object, fields: set[str], label: str) -> dict:
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ValueError(f"{label}字段必须精确匹配当前格式")
     return value
+
+
+def _canonical_endpoint(url: object, path: str, label: str) -> str:
+    if not isinstance(url, str):
+        raise ValueError(f"{label}必须是字符串")
+    _family, host, port = endpoint(url)
+    parsed = urlsplit(url)
+    if parsed.port is None or parsed.path != path:
+        raise ValueError(f"{label}必须使用显式端口和精确路径 {path or '/'}")
+    authority = f"[{host}]" if ":" in host else host
+    canonical = f"{parsed.scheme}://{authority}:{port}{path}"
+    if url != canonical:
+        raise ValueError(f"{label}必须使用规范化 loopback 地址")
+    return canonical
+
+
+def validate_authority(value: object) -> dict:
+    authority = _exact_fields(value, AUTHORITY_FIELDS, "权威恢复上下文")
+    if authority["format_version"] != 1 or authority["kind"] != "restore-runtime-authority":
+        raise ValueError("权威恢复上下文版本或类型不匹配")
+    for field in ("restore_id", "backup_id", "scope_id"):
+        if not isinstance(authority[field], str) or not IDENTIFIER.fullmatch(authority[field]):
+            raise ValueError(f"权威恢复上下文的 {field} 无效")
+    for field, pattern in (("plan_hash", HEX_64), ("backend_sha", HEX_40), ("frontend_sha", HEX_40)):
+        if not isinstance(authority[field], str) or not pattern.fullmatch(authority[field]):
+            raise ValueError(f"权威恢复上下文的 {field} 无效")
+    timestamp = authority["data_verified_at"]
+    if not isinstance(timestamp, str):
+        raise ValueError("权威恢复上下文缺少 data_verified_at")
+    try:
+        parsed_time = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError("权威恢复上下文的 data_verified_at 无效") from error
+    if parsed_time.tzinfo is None or parsed_time.utcoffset() is None:
+        raise ValueError("权威恢复上下文的 data_verified_at 必须包含时区")
+    endpoints = {
+        "api": _canonical_endpoint(authority["api_endpoint"], "/readyz", "API 端点"),
+        "worker": _canonical_endpoint(authority["worker_endpoint"], "/readyz", "Worker 端点"),
+        "frontend": _canonical_endpoint(authority["frontend_endpoint"], "", "前端端点"),
+    }
+    if len({urlsplit(url).port for url in endpoints.values()}) != 3:
+        raise ValueError("API、Worker 与前端必须使用三个互异的显式端口")
+    return authority
+
+
+def read_authority(stream=None) -> dict:
+    source = stream if stream is not None else sys.stdin
+    raw = source.buffer.read(MAX_JSON_BYTES + 1) if hasattr(source, "buffer") else source.read(MAX_JSON_BYTES + 1)
+    if isinstance(raw, str):
+        raw = raw.encode("utf-8")
+    if not raw or len(raw) > MAX_JSON_BYTES:
+        raise ValueError("verify 必须从 stdin 接收非空且不超过 16 MiB 的权威恢复上下文")
+    try:
+        value = json.loads(
+            raw.decode("utf-8", errors="strict"),
+            object_pairs_hook=_strict_object_pairs,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("stdin 权威恢复上下文必须是 UTF-8 严格 JSON") from error
+    return validate_authority(value)
 
 
 def require_bindings(bindings: dict) -> tuple[dict, dict]:

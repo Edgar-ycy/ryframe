@@ -40,6 +40,93 @@ class RestoreRuntimeTests(unittest.TestCase):
         (self.frontend / "dist/app.js").write_text("console.log(42)")
         (self.frontend / "dist/.vite/manifest.json").write_text("{}")
 
+    def authority(self, **changes):
+        value = {
+            "format_version": 1,
+            "kind": "restore-runtime-authority",
+            "restore_id": "restore-one",
+            "backup_id": "backup-one",
+            "plan_hash": "c" * 64,
+            "scope_id": "restore-test",
+            "data_verified_at": "2026-09-06T08:00:00+08:00",
+            "backend_sha": "a" * 40,
+            "frontend_sha": "d" * 40,
+            "api_endpoint": "http://127.0.0.1:18080/readyz",
+            "worker_endpoint": "http://127.0.0.1:19091/readyz",
+            "frontend_endpoint": "http://127.0.0.1:14174",
+        }
+        value.update(changes)
+        return value
+
+    def test_json_documents_are_regular_bounded_utf8_strict_and_stable(self):
+        document = self.root / "document.json"
+        document.write_text('{"value": 1}', encoding="utf-8")
+        observed = restore_runtime.read_json_document(document)
+        self.assertEqual(observed.value, {"value": 1})
+        self.assertEqual(observed.sha256, restore_build.file_digest(document)["sha256"])
+
+        invalid = {
+            "empty": b"",
+            "utf8": b'{"value":"\xff"}',
+            "duplicate": b'{"value":1,"value":2}',
+            "constant": b'{"value":NaN}',
+            "array": b"[]",
+        }
+        for name, raw in invalid.items():
+            with self.subTest(name=name):
+                path = self.root / f"{name}.json"
+                path.write_bytes(raw)
+                with self.assertRaises(ValueError):
+                    restore_runtime.read_json_document(path)
+
+        oversized = self.root / "oversized.json"
+        with oversized.open("wb") as stream:
+            stream.truncate(restore_runtime.MAX_JSON_BYTES + 1)
+        with self.assertRaisesRegex(ValueError, "超过 16 MiB"):
+            restore_runtime.read_json_document(oversized)
+        with self.assertRaisesRegex(ValueError, "普通文件"):
+            restore_runtime.read_json_document(self.root)
+
+        document.write_text('{"value": 2}', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "被替换或修改"):
+            observed.assert_unchanged()
+
+    def test_json_documents_reject_links_and_reparse_points(self):
+        document = self.root / "document.json"
+        document.write_text("{}", encoding="utf-8")
+        with patch.object(restore_runtime, "_is_reparse", return_value=True), \
+                self.assertRaisesRegex(ValueError, "重解析点"):
+            restore_runtime.read_json_document(document)
+        link = self.root / "link.json"
+        try:
+            link.symlink_to(document)
+        except OSError:
+            return
+        with self.assertRaisesRegex(ValueError, "符号链接"):
+            restore_runtime.read_json_document(link)
+
+    def test_authoritative_context_has_exact_fields_and_strict_endpoints(self):
+        expected = self.authority()
+        self.assertEqual(restore_runtime.read_authority(io.StringIO(json.dumps(expected))), expected)
+        invalid = [
+            {**expected, "extra": True},
+            {**expected, "data_verified_at": "2026-09-06T08:00:00"},
+            {**expected, "api_endpoint": "http://localhost:18080/readyz"},
+            {**expected, "api_endpoint": "http://user@127.0.0.1:18080/readyz"},
+            {**expected, "api_endpoint": "http://127.0.0.1:18080/readyz?ok=1"},
+            {**expected, "api_endpoint": "http://127.0.0.1:18080/"},
+            {**expected, "api_endpoint": "http://127.0.0.1/readyz"},
+            {**expected, "worker_endpoint": expected["api_endpoint"]},
+            {**expected, "frontend_endpoint": "http://127.0.0.1:14174/"},
+        ]
+        for value in invalid:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                restore_runtime.read_authority(io.StringIO(json.dumps(value)))
+
+        duplicate = '{"format_version":1,"format_version":1}'
+        with self.assertRaisesRegex(ValueError, "重复字段"):
+            restore_runtime.read_authority(io.StringIO(duplicate))
+
     def cargo_run(self, command, **_kwargs):
         name = command[command.index("--bin") + 1]
         executable = self.backend / name
