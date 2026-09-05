@@ -10,6 +10,8 @@ on:
       - "docker-compose*.yml"
       - "deploy/**"
       - "scripts/ci_full_stack.py"
+      - "scripts/ci_devex_cgroup.py"
+      - "scripts/tests/test_ci_devex_cgroup.py"
       - "scripts/check_deployment_assets.py"
       - "scripts/check_vulnerability_exceptions.py"
       - "scripts/vulnerability-exceptions.json"
@@ -34,6 +36,48 @@ env:
   GIT_CONFIG_VALUE_0: main
 
 jobs:
+  devex-cgroup:
+    name: Linux DevEx Cgroup Memory
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: 检出后端源码
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          path: backend
+
+      - name: 固定 CI Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+
+      - name: 确认后端固定工具链
+        working-directory: backend
+        run: rustup show active-toolchain
+
+      - name: 显式验收专属 cgroup 的孙进程峰值与精确清理
+        id: cgroup
+        working-directory: backend
+        run: python scripts/ci_devex_cgroup.py run --output .local-tests/ci-devex-cgroup
+
+      - name: 复核并清理本 job 的精确 cgroup
+        if: ${{ always() && steps.cgroup.outcome != 'skipped' }}
+        working-directory: backend
+        run: python scripts/ci_devex_cgroup.py cleanup --output .local-tests/ci-devex-cgroup
+
+      - name: 保存 cgroup 成功与失败证据
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ryframe-devex-cgroup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: backend/.local-tests/ci-devex-cgroup
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+
   full-stack-e2e:
     name: Real API MySQL Redis Chrome E2E
     runs-on: ubuntu-latest
