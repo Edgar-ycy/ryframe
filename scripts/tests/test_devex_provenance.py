@@ -4,12 +4,11 @@ import copy
 import hashlib
 import io
 import json
-import shutil
 import struct
 import subprocess
 import sys
+import tempfile
 import unittest
-import uuid
 from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
@@ -33,14 +32,6 @@ DRIVER_SOURCE = {
 }
 
 
-def test_directory(label: str) -> Path:
-    parent = ROOT / ".local-tests/python-unit"
-    parent.mkdir(parents=True, exist_ok=True)
-    path = parent / f"{label}-{uuid.uuid4()}"
-    path.mkdir()
-    return path
-
-
 class Response(io.BytesIO):
     status = 200
 
@@ -53,8 +44,11 @@ class ProvenanceTests(unittest.TestCase):
         self.driver_source = self.enterContext(
             patch.object(provenance, "current_execution_source", return_value=DRIVER_SOURCE)
         )
-        self.root = test_directory("provenance").resolve()
-        self.addCleanup(lambda: shutil.rmtree(self.root, ignore_errors=True))
+        local = ROOT / ".local-tests/python-unit"
+        local.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=local)
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
         self.backend, self.frontend, self.runtime = [self.root / name for name in ("backend", "frontend", "runtime")]
         self.backend.mkdir()
         self.runtime.mkdir()
@@ -158,7 +152,10 @@ class ProvenanceTests(unittest.TestCase):
         with self.assertRaisesRegex(provenance.ProvenanceError, "driver_source"):
             provenance.verify(self.request)
         self.request["driver_fingerprint"] = FINGERPRINT
-        self.driver_source.side_effect = [DRIVER_SOURCE, {**DRIVER_SOURCE, "worktree_fingerprint": "sha256:" + "1" * 64}]
+        self.driver_source.side_effect = [
+            DRIVER_SOURCE,
+            {**DRIVER_SOURCE, "worktree_fingerprint": "sha256:" + "1" * 64},
+        ]
         with self.assertRaisesRegex(provenance.ProvenanceError, "driver_source_stable"):
             provenance.verify(self.request)
 
@@ -248,17 +245,19 @@ class ProvenanceTests(unittest.TestCase):
 
 class FingerprintTests(unittest.TestCase):
     def test_xtask_length_framing_and_raw_git_order_include_untracked_content(self):
-        root = test_directory("fingerprint").resolve()
-        self.addCleanup(lambda: shutil.rmtree(root, ignore_errors=True))
-        (root / "z.rs").write_bytes(b"z content")
-        (root / "a.rs").write_bytes(b"a content")
-        chunks = [b"a" * 40, b"binary patch\0", b"z.rs", b"z content", b"a.rs", b"a content"]
-        expected = hashlib.sha256(b"".join(struct.pack("<Q", len(value)) + value for value in chunks)).hexdigest()
-        with patch.object(provenance, "git", side_effect=[chunks[1], b"z.rs\0a.rs\0"]) as git:
-            self.assertEqual(provenance.worktree_fingerprint(root, SOURCE["head"]), "sha256:" + expected)
-        self.assertEqual(git.call_args_list[0].args[1:], ("diff", "--binary", "--no-ext-diff", "HEAD", "--", "."))
-        with patch.object(provenance, "git", side_effect=[b"", b"../outside\0"]), self.assertRaises(ValueError):
-            provenance.worktree_fingerprint(root, SOURCE["head"])
+        local = ROOT / ".local-tests/python-unit"
+        local.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=local) as directory:
+            root = Path(directory).resolve()
+            (root / "z.rs").write_bytes(b"z content")
+            (root / "a.rs").write_bytes(b"a content")
+            chunks = [b"a" * 40, b"binary patch\0", b"z.rs", b"z content", b"a.rs", b"a content"]
+            expected = hashlib.sha256(b"".join(struct.pack("<Q", len(value)) + value for value in chunks)).hexdigest()
+            with patch.object(provenance, "git", side_effect=[chunks[1], b"z.rs\0a.rs\0"]) as git:
+                self.assertEqual(provenance.worktree_fingerprint(root, SOURCE["head"]), "sha256:" + expected)
+            self.assertEqual(git.call_args_list[0].args[1:], ("diff", "--binary", "--no-ext-diff", "HEAD", "--", "."))
+            with patch.object(provenance, "git", side_effect=[b"", b"../outside\0"]), self.assertRaises(ValueError):
+                provenance.worktree_fingerprint(root, SOURCE["head"])
 
 
 if __name__ == "__main__":

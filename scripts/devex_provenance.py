@@ -14,7 +14,7 @@ from prepare_full_stack_fixture import git
 from process_sockets import verify_listener
 from restore_build import source_snapshot, verify_build_artifacts
 from restore_runtime import FRONTEND_RECEIPT, verify_frontend_artifacts
-from source_fingerprints import current_execution_source, reusable_artifact_source
+from source_fingerprints import checked_source, current_execution_source, reusable_artifact_source
 
 
 class ProvenanceError(ValueError):
@@ -110,8 +110,9 @@ def verify_source(root: Path, receipt: dict, fingerprint: str) -> dict:
         if original["worktree_fingerprint"] != fingerprint:
             raise ValueError("请求没有绑定构建时的完整工作区指纹")
         return original["snapshot"]
-    source = source_snapshot(root)
-    actual = worktree_fingerprint(root, source["head"])
+    current = checked_source(root)
+    source = current["snapshot"] if current is not None else source_snapshot(root)
+    actual = current["worktree_fingerprint"] if current is not None else worktree_fingerprint(root, source["head"])
     if (receipt.get("source") != source or type(source.get("clean")) is not bool
             or not re.fullmatch(r"[a-f0-9]{40}", source["head"])
             or actual != fingerprint):
