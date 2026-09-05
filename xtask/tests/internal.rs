@@ -22,6 +22,8 @@ mod doctor;
 mod migration;
 #[path = "../src/process.rs"]
 mod process;
+#[path = "../src/recovery.rs"]
+mod recovery;
 #[path = "../src/release.rs"]
 mod release;
 #[path = "../src/resource.rs"]
@@ -84,6 +86,8 @@ mod doctor_tests;
 mod migration_tests;
 #[path = "internal/process.rs"]
 mod process_tests;
+#[path = "internal/recovery.rs"]
+mod recovery_tests;
 #[path = "internal/resource_gate_cargo_surface.rs"]
 mod resource_gate_cargo_surface_tests;
 #[path = "internal/resource_gate.rs"]

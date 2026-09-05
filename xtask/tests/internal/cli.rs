@@ -95,6 +95,23 @@ fn parses_check_task_graph_and_internal_groups() {
     }
     assert!(parse_command(&["check", "ci"]).is_err());
     assert!(parse_command(&["check", "ci", "rust-gate", "extra"]).is_err());
+    assert_eq!(
+        parse_command(&[
+            "check",
+            "recovery",
+            "runtime",
+            "verify",
+            "--receipt",
+            "runtime.json",
+        ])
+        .unwrap(),
+        Command::Check(CheckCommand::Recovery(strings(&[
+            "runtime",
+            "verify",
+            "--receipt",
+            "runtime.json",
+        ])))
+    );
     assert!(parse_command(&["check", "--full", "--full"]).is_err());
     assert!(parse_command(&["check", "--scope", "all", "--scope", "backend"]).is_err());
 }

@@ -75,7 +75,7 @@ fn dispatch_check(command: CheckCommand, frontend_dir: &std::path::Path) -> Resu
         CheckCommand::Ci(command) => ci::run(command, frontend_dir),
         CheckCommand::Perf(command) => devex::run(&command, frontend_dir),
         CheckCommand::Release(options) => release::verify(&options, frontend_dir),
-        CheckCommand::Recovery(arguments) => recovery::run(&arguments),
+        CheckCommand::Recovery(arguments) => recovery::run(&arguments, frontend_dir),
     }
 }
 

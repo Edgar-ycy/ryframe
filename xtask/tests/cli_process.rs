@@ -48,3 +48,28 @@ fn default_help_exposes_only_five_task_families_and_exits_zero() {
         assert!(result.stderr.is_empty(), "命令：{command}");
     }
 }
+
+#[test]
+fn recovery_runtime_forwards_the_global_frontend_as_one_argument() {
+    let missing = "missing-runtime-receipt.json";
+    let result = invoke(&[
+        "check",
+        "recovery",
+        "runtime",
+        "verify",
+        "--backend-dir",
+        ".",
+        "--bindings",
+        "missing-bindings.json",
+        "--frontend-url",
+        "http://127.0.0.1:4174",
+        "--receipt",
+        missing,
+        "--frontend-dir",
+        "D:/前端 worktree",
+    ]);
+    assert_eq!(result.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(stderr.contains(missing), "{stderr}");
+    assert!(!stderr.contains("the following arguments are required: --frontend-dir"));
+}

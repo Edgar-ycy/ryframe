@@ -13,10 +13,21 @@ from source_inventory import capture_inventory, git, source_snapshot
 ROLES = {"api": ("bin-api", "ryframe"), "worker": ("bin-worker", "ryframe-worker")}
 
 
-def write_new(path: Path, value: dict, root: Path) -> None:
-    if not path.resolve().is_relative_to((root / ".local-tests").resolve()):
+def validate_new_output(path: Path, root: Path) -> Path:
+    path = path.resolve()
+    local = (root / ".local-tests").resolve()
+    if path == local or not path.is_relative_to(local):
         raise ValueError("运行收据只能写入当前仓库忽略的 .local-tests")
+    if path.exists():
+        raise FileExistsError(f"运行收据已经存在：{path}")
+    if not path.parent.is_dir():
+        raise ValueError("运行收据的父目录必须已经存在")
     git(root, "check-ignore", path.relative_to(root).as_posix())
+    return path
+
+
+def write_new(path: Path, value: dict, root: Path) -> None:
+    path = validate_new_output(path, root)
     with path.open("x", encoding="utf-8", newline="\n") as stream:
         json.dump(value, stream, ensure_ascii=False, indent=2)
         stream.write("\n")
