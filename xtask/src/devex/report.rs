@@ -66,6 +66,7 @@ impl ResourceGateDecisionEvidence {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub(super) struct SampleRecord {
+    pub(super) memory: super::memory::MemoryEvidence,
     pub(super) schema_version: u8,
     pub(super) run_id: String,
     pub(super) sequence: usize,
@@ -94,6 +95,7 @@ pub(super) struct SampleRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub(crate) struct RunSummary {
+    pub(crate) memory: Option<super::memory::MemorySummary>,
     pub(crate) schema_version: u8,
     pub(crate) run_id: String,
     pub(crate) suite: DevexSuite,
@@ -156,6 +158,8 @@ struct ComparisonReport<'a> {
     candidate_input_fingerprint: &'a str,
     baseline_duration_ms: &'a Distribution,
     candidate_duration_ms: &'a Distribution,
+    baseline_memory: &'a Option<super::memory::MemorySummary>,
+    candidate_memory: &'a Option<super::memory::MemorySummary>,
     baseline_resource_gate_targeted_decisions: usize,
     candidate_resource_gate_targeted_decisions: usize,
     checks: &'a [acceptance::ComparisonCheck],
@@ -197,6 +201,7 @@ pub(crate) fn summarize(run_dir: &Path) -> Result<RunSummary> {
     let source_fingerprints = metadata.source_fingerprints();
     let pairing = metadata.pairing.clone();
     let summary = RunSummary {
+        memory: super::memory::summarize(&measurements)?,
         schema_version: 1,
         run_id: metadata.run_id,
         suite: metadata.suite,
@@ -282,6 +287,8 @@ pub(crate) fn compare(baseline_dir: &Path, candidate_dir: &Path) -> Result<Strin
         candidate_input_fingerprint: &candidate.input_fingerprint,
         baseline_duration_ms: baseline_duration,
         candidate_duration_ms: candidate_duration,
+        baseline_memory: &baseline.memory,
+        candidate_memory: &candidate.memory,
         baseline_resource_gate_targeted_decisions: baseline.resource_gate_targeted_decisions,
         candidate_resource_gate_targeted_decisions: candidate.resource_gate_targeted_decisions,
         checks: &checks,
@@ -362,6 +369,7 @@ fn ensure_comparable(
 ) -> Result<()> {
     ensure_complete("基线", baseline)?;
     ensure_complete("候选", candidate)?;
+    super::memory::ensure_comparable(baseline.memory.as_ref(), candidate.memory.as_ref())?;
     if baseline.suite != candidate.suite {
         return Err("DevEx 对比要求 suite 相同".into());
     }

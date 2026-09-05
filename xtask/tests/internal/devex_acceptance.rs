@@ -78,6 +78,7 @@ fn distribution(value: f64) -> Distribution {
 
 fn summary(suite: DevexSuite, variant: &str) -> RunSummary {
     RunSummary {
+        memory: None,
         schema_version: 1,
         run_id: "run".into(),
         suite,

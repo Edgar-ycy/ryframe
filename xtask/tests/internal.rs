@@ -74,6 +74,8 @@ mod dev_tests;
 mod devex_acceptance_tests;
 #[path = "internal/devex_cli.rs"]
 mod devex_cli_tests;
+#[path = "internal/devex_memory.rs"]
+mod devex_memory_tests;
 #[path = "internal/devex_paths.rs"]
 mod devex_paths_tests;
 #[path = "internal/devex_sccache.rs"]

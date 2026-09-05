@@ -355,6 +355,7 @@ fn execute_measurements(
 pub(super) struct SampleOutcome {
     started_at: chrono::DateTime<Utc>,
     duration_ms: f64,
+    memory: super::memory::MemoryEvidence,
     cargo_invocations: Option<usize>,
     ready_kind: Option<ReadyKind>,
     resource_gate_decision: Option<ResourceGateDecisionEvidence>,
@@ -414,7 +415,7 @@ pub(super) fn execute_sample_with_contract(
             label,
         )
     };
-    let status = if let Some(source) = source.as_deref() {
+    let (status, memory) = if let Some(source) = source.as_deref() {
         with_source_edit(source, label, execute)?
     } else {
         execute()?
@@ -427,13 +428,20 @@ pub(super) fn execute_sample_with_contract(
     let outcome = SampleOutcome {
         started_at,
         duration_ms: started.elapsed().as_secs_f64() * 1_000.0,
+        memory,
         cargo_invocations: None,
         ready_kind: None,
         resource_gate_decision,
         status,
     };
     if suite == DevexSuite::CargoDevSave && outcome.status.success() {
-        save::measurement_outcome(target, variant, outcome.status, save_contract)
+        save::measurement_outcome(
+            target,
+            variant,
+            outcome.status,
+            save_contract,
+            outcome.memory,
+        )
     } else {
         Ok(outcome)
     }
@@ -466,6 +474,7 @@ pub(super) fn sample_record(
         cache_state,
         started_at: outcome.started_at.to_rfc3339(),
         duration_ms: outcome.duration_ms,
+        memory: outcome.memory.clone(),
         cargo_invocations: outcome.cargo_invocations,
         ready_kind: outcome.ready_kind,
         status: if outcome.status.success() {

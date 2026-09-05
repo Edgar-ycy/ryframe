@@ -584,6 +584,7 @@ fn fake_paired_run(
                 "run_id": name,
                 "sequence": pair,
                 "kind": "measurement",
+                "memory": super::devex_memory_tests::evidence(),
                 "cache_state": "cold",
                 "started_at": format!("2026-08-27T00:00:{order:02}Z"),
                 "duration_ms": duration,
@@ -660,6 +661,7 @@ fn fake_legacy_paired_run(name: &str, arm: PairedArm, cargo_invocations: usize) 
                 "run_id": name,
                 "sequence": pair,
                 "kind": "measurement",
+                "memory": super::devex_memory_tests::evidence(),
                 "cache_state": "warm",
                 "started_at": format!("2026-08-27T00:00:{order:02}Z"),
                 "duration_ms": if arm == PairedArm::Baseline {
@@ -697,7 +699,7 @@ fn temporary_directory(name: &str) -> PathBuf {
     directory
 }
 
-fn fake_run(name: &str, fingerprint: &str, durations: &[f64]) -> PathBuf {
+pub(super) fn fake_run(name: &str, fingerprint: &str, durations: &[f64]) -> PathBuf {
     let directory = temporary_directory(name);
     let metadata = serde_json::json!({
         "schema_version": 1,
@@ -733,6 +735,7 @@ fn fake_run(name: &str, fingerprint: &str, durations: &[f64]) -> PathBuf {
                 "run_id": name,
                 "sequence": index + 1,
                 "kind": "measurement",
+                "memory": super::devex_memory_tests::evidence(),
                 "cache_state": "cold",
                 "started_at": "2026-08-27T00:00:00Z",
                 "duration_ms": duration,

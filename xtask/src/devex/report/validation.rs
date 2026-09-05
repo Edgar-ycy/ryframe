@@ -51,6 +51,13 @@ fn validate_sample(metadata: &RunMetadata, sample: &SampleRecord) -> Result<()> 
     if !sample.duration_ms.is_finite() || sample.duration_ms < 0.0 {
         return Err(format!("样本 {} 的耗时无效", sample.sequence).into());
     }
+    sample.memory.validate()?;
+    let expected_steps = metadata.suite.definition(&metadata.variant)?.steps.len();
+    if sample.memory.steps.len() > expected_steps
+        || (sample.status == SampleStatus::Passed && sample.memory.steps.len() != expected_steps)
+    {
+        return Err("内存证据步骤数与实际测量命令不一致".into());
+    }
     if metadata.suite == DevexSuite::CargoDevSave && sample.cargo_invocations.is_none() {
         return Err(format!("cargo-dev-save 样本 {} 缺少 Cargo 调用数", sample.sequence).into());
     }

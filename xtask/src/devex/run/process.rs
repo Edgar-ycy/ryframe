@@ -7,6 +7,7 @@ use std::{
 use crate::Result;
 
 use super::super::{
+    memory::{self, MemoryEvidence},
     metadata::corepack_executable,
     model::{StepDefinition, SuiteDefinition, WorkingDirectory},
     support::{display_step, success_status},
@@ -19,11 +20,12 @@ pub(super) fn execute_steps(
     definition: SuiteDefinition,
     environment: &BTreeMap<String, String>,
     label: &str,
-) -> Result<ExitStatus> {
+) -> Result<(ExitStatus, MemoryEvidence)> {
     let mut last_status = success_status()?;
+    let mut memory = MemoryEvidence::new();
     for (index, step) in definition.steps.iter().enumerate() {
         println!("  → {label} step {:02}: {}", index + 1, display_step(step));
-        last_status = step_command(
+        let command = step_command(
             step,
             backend_root,
             frontend_root,
@@ -31,13 +33,15 @@ pub(super) fn execute_steps(
             definition,
             environment,
             label,
-        )
-        .status()?;
+        );
+        let (status, reading) = memory::execute(command)?;
+        last_status = status;
+        memory.steps.push(reading);
         if !last_status.success() {
             break;
         }
     }
-    Ok(last_status)
+    Ok((last_status, memory))
 }
 
 fn step_command(

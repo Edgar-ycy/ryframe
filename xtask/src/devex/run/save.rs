@@ -7,13 +7,14 @@ use crate::{
     dev::{RESULT_FILE_NAME, SaveCase, SaveMeasurementContract, read_measurement_with_contract},
 };
 
-use super::SampleOutcome;
+use super::{super::memory::MemoryEvidence, SampleOutcome};
 
 pub(super) fn measurement_outcome(
     target: &Path,
     variant: &str,
     status: ExitStatus,
     contract: SaveMeasurementContract,
+    memory: MemoryEvidence,
 ) -> Result<SampleOutcome> {
     let measurement = read_measurement_with_contract(&target.join(RESULT_FILE_NAME), contract)?;
     let expected = SaveCase::parse(variant).ok_or("cargo-dev-save 变体无法映射到保存场景")?;
@@ -30,6 +31,7 @@ pub(super) fn measurement_outcome(
     Ok(SampleOutcome {
         started_at,
         duration_ms: measurement.save_to_ready_ms,
+        memory,
         cargo_invocations: Some(measurement.cargo_invocations),
         ready_kind: Some(measurement.ready_kind),
         resource_gate_decision: None,

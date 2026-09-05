@@ -50,7 +50,7 @@ pub(super) fn render(summary: &RunSummary) -> String {
     } else {
         String::new()
     };
-    format!(
+    let document = format!(
         "# DevEx 测量摘要\n\n\
          - run：`{}`\n\
          - suite：`{}`\n\
@@ -79,6 +79,10 @@ pub(super) fn render(summary: &RunSummary) -> String {
         summary.failed,
         metrics,
         sccache,
+    );
+    format!(
+        "{document}{}",
+        super::super::memory::render(summary.memory.as_ref())
     )
 }
 
@@ -122,6 +126,10 @@ pub(super) fn render_comparison(
         candidate_duration.p95,
         percentage_change(baseline_duration.p95, candidate_duration.p95),
     );
+    document.push_str(&super::super::memory::render_comparison(
+        baseline.memory.as_ref(),
+        candidate.memory.as_ref(),
+    ));
     if checks.is_empty() {
         return document;
     }

@@ -6,6 +6,8 @@ use crate::{Result, workspace::root_dir};
 mod execution;
 #[path = "devex/incremental.rs"]
 mod incremental;
+#[path = "devex/memory.rs"]
+pub(crate) mod memory;
 #[path = "devex/metadata.rs"]
 mod metadata;
 #[path = "devex/model.rs"]
@@ -296,7 +298,8 @@ pub(crate) fn usage() -> &'static str {
     "cargo xtask check perf run --suite <suite> --variant <name> --runs <1..50> --cache <cold|warm>\n\
      cargo xtask check perf paired --base-backend <dir> --candidate-backend <dir> [--base-frontend <dir> --candidate-frontend <dir>] [--baseline-contract legacy-cargo-dev-v1|legacy-cargo-dev-v2] --suite <suite> --variant <name> --runs <1..50> --cache <cold|warm>\n\
      cargo xtask check perf summarize <日期/run-id>\n\
-     cargo xtask check perf compare --base <日期/run-id> --candidate <日期/run-id>"
+     cargo xtask check perf compare --base <日期/run-id> --candidate <日期/run-id>\n\
+     Linux 内存测量需要 RYFRAME_DEVEX_CGROUP_ROOT 指向已授权且启用 memory controller 的 cgroup v2 委托目录；缺失时保留不可用原因并阻止完整性能验收。"
 }
 
 fn suite_names() -> String {

@@ -598,6 +598,7 @@ fn write_samples(
                 "run_id": name,
                 "sequence": pair,
                 "kind": "measurement",
+                "memory": super::devex_memory_tests::evidence(),
                 "cache_state": "warm",
                 "started_at": format!("2026-08-27T00:00:{:02}Z", order.unwrap_or(pair)),
                 "duration_ms": duration,
