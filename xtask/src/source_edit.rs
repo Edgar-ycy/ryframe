@@ -86,6 +86,7 @@ fn atomic_replace_if_unchanged(path: &Path, expected: &[u8], contents: &[u8]) ->
             .open(&temporary)?;
         output.write_all(contents)?;
         output.sync_all()?;
+        drop(output);
         fs::set_permissions(&temporary, permissions)?;
         if fs::read(path)? != expected {
             return Err("目标文件在测量写入期间被其他操作修改，拒绝覆盖".into());
@@ -105,34 +106,16 @@ fn atomic_replace_if_unchanged(path: &Path, expected: &[u8], contents: &[u8]) ->
 
 #[cfg(windows)]
 fn replace_path(source: &Path, target: &Path) -> Result<()> {
-    use windows_sys::Win32::Storage::FileSystem::{
-        MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, MoveFileExW,
-    };
+    use winsafe::{ReplaceFile, co};
 
-    let source = wide_path(source);
-    let target = wide_path(target);
-    let moved = unsafe {
-        MoveFileExW(
-            source.as_ptr(),
-            target.as_ptr(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
-        )
-    };
-    if moved == 0 {
-        Err(std::io::Error::last_os_error().into())
-    } else {
-        Ok(())
-    }
-}
-
-#[cfg(windows)]
-fn wide_path(path: &Path) -> Vec<u16> {
-    use std::os::windows::ffi::OsStrExt;
-
-    path.as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect()
+    let source = source
+        .to_str()
+        .ok_or_else(|| format!("原子写入临时路径不是有效 Unicode：{}", source.display()))?;
+    let target = target
+        .to_str()
+        .ok_or_else(|| format!("原子写入目标路径不是有效 Unicode：{}", target.display()))?;
+    ReplaceFile(target, source, None, co::REPLACEFILE::WRITE_THROUGH)?;
+    Ok(())
 }
 
 #[cfg(not(windows))]
