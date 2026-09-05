@@ -172,7 +172,7 @@ fn create_kill_on_close_job() -> Result<windows_sys::Win32::Foundation::HANDLE> 
         )
         .into());
     }
-    let mut information: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { mem::zeroed() };
+    let mut information = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
     information.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
     let configured = unsafe {
         SetInformationJobObject(
