@@ -114,7 +114,12 @@ fn replace_path(source: &Path, target: &Path) -> Result<()> {
     let target = target
         .to_str()
         .ok_or_else(|| format!("原子写入目标路径不是有效 Unicode：{}", target.display()))?;
-    ReplaceFile(target, source, None, co::REPLACEFILE::WRITE_THROUGH)?;
+    ReplaceFile(
+        target,
+        source,
+        None,
+        co::REPLACEFILE::WRITE_THROUGH | co::REPLACEFILE::IGNORE_ACL_ERRORS,
+    )?;
     Ok(())
 }
 
