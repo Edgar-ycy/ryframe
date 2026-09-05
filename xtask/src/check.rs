@@ -61,7 +61,7 @@ pub(crate) use model::{
     BackendSnapshotProfile, ConsumerContractPlan, FrontendProfile, VerifySelection, WorkspaceGraph,
 };
 #[allow(unused_imports)]
-pub(crate) use plan::plan;
+pub(crate) use plan::{CheckPlanMode, build_check_plan, plan, select_check_mode, validate_plan};
 #[allow(unused_imports)]
 pub(crate) use resource::{
     ResourceWorkspaceProfile, resolve_frontend_dir, resource_test_executable_from_messages,

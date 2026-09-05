@@ -3,22 +3,16 @@ use super::{
         backend_package_operation_args, cargo_operation_jobs, ci_test_jobs_from,
         default_test_jobs_from, workspace_clippy_args, workspace_test_args,
     },
-    change_surface::{
-        analyze_change_surface, append_changed_file_size_warnings, enforce_change_surface,
-        load_change_surface_policy, print_change_surface,
-    },
     context::{VerifyExecutionContext, ci_target_policy},
     feature::{
         check_feature_registry, feature_matrix_with_jobs, load_feature_registry,
         run_feature_operations, run_feature_tests, validate_feature_registry,
     },
     metrics,
-    model::{BackendSnapshotProfile, FrontendProfile, WorkspaceGraph},
+    model::{BackendSnapshotProfile, FrontendProfile},
+    plan::{CheckPlanMode, build_check_plan, render_plan, validate_plan},
     resource::resource_workspace_compilation,
-    selection::{
-        changed_paths, classify_changes, complete_verify_selection, frontend_profile_commands,
-        load_workspace_graph, load_workspace_metadata, needs_consumer_contract, print_selection,
-    },
+    selection::{frontend_profile_commands, load_workspace_metadata, needs_consumer_contract},
     snapshot::{
         export_and_verify_backend_snapshots, package_tests_generate_snapshots,
         prepare_backend_snapshots, prepare_consumer_backend_snapshots, run_consumer_contract,
@@ -68,60 +62,24 @@ pub(crate) fn verify(scope: CheckScope, full: bool, frontend_dir: &Path) -> Resu
     );
     let result = (|| {
         let root = &context.root;
-        let includes_backend = matches!(scope, CheckScope::All | CheckScope::Backend);
-        let includes_frontend = matches!(scope, CheckScope::All | CheckScope::Frontend);
-        let all_backend_changes = changed_paths(root)?;
-        let all_frontend_changes = changed_paths(&context.frontend_dir)?;
-        let policy = load_change_surface_policy(root)?;
-        let mut change_surface =
-            analyze_change_surface(&all_backend_changes, &all_frontend_changes, &policy);
-        append_changed_file_size_warnings(
-            root,
-            &context.frontend_dir,
-            &all_backend_changes,
-            &all_frontend_changes,
-            &policy,
-            &mut change_surface,
-        )?;
-        print_change_surface(&change_surface);
-        enforce_change_surface(&change_surface)?;
-
-        if full {
-            println!("cargo xtask check 选择完整门禁：显式传入 --full。");
-            return full_verify(&context, scope);
-        }
-
-        let graph = if includes_backend {
-            load_workspace_graph(root)?
-        } else {
-            WorkspaceGraph::default()
+        let check_plan = build_check_plan(scope, full, root, &context.frontend_dir)?;
+        render_plan(&check_plan);
+        validate_plan(&check_plan)?;
+        let selection = match &check_plan.mode {
+            CheckPlanMode::ExplicitFull => return full_verify(&context, scope),
+            CheckPlanMode::ExpandedFull(_) => {
+                mode = "完整（自动扩大）";
+                let metrics_root = context.root.clone();
+                context.promote_to_full();
+                metrics::update_targets(
+                    &metrics_root,
+                    context.targets.backend.as_str(),
+                    context.targets.resource.as_str(),
+                );
+                return full_verify(&context, scope);
+            }
+            CheckPlanMode::Selected(selection) => selection,
         };
-        let backend_changes = if includes_backend {
-            all_backend_changes.as_slice()
-        } else {
-            &[]
-        };
-        let frontend_changes = if includes_frontend {
-            all_frontend_changes.as_slice()
-        } else {
-            &[]
-        };
-        let mut selection = classify_changes(backend_changes, frontend_changes, &graph);
-        if let Some(reason) = &selection.full_reason {
-            mode = "完整（自动扩大）";
-            println!("cargo xtask check 扩大为完整门禁：{reason}");
-            let metrics_root = context.root.clone();
-            context.promote_to_full();
-            metrics::update_targets(
-                &metrics_root,
-                context.targets.backend.as_str(),
-                context.targets.resource.as_str(),
-            );
-            return full_verify(&context, scope);
-        }
-
-        complete_verify_selection(&mut selection, &graph);
-        print_selection(&selection);
         let package_tests_generate_snapshots = !selection.backend_packages.is_empty()
             && !selection.backend_snapshot_profiles.is_empty()
             && package_tests_generate_snapshots(
