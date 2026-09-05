@@ -185,7 +185,7 @@ jobs:
 
       - name: 执行真实浏览器全栈流程
         working-directory: frontend
-        run: corepack pnpm ci:browser-real
+        run: corepack pnpm check --stage browser --real
 
       - name: 收集进程与基础设施日志
         if: ${{ always() }}

@@ -50,25 +50,6 @@ pub(crate) const BACKEND_POLICY_SCRIPTS: &[&str] = &[
     "scripts/check_permission_routes.py",
     "scripts/check_supply_chain.py",
 ];
-pub(crate) const FRONTEND_FULL_NON_CONSUMER_COMMANDS: &[&str] = &[
-    "check:workflows",
-    "check:dependencies",
-    "test:policies",
-    "check:source-size",
-    "lint",
-    "lint:styles",
-    "build",
-    "check:bundle",
-];
-pub(crate) const FRONTEND_ONLY_CONTRACT_COMMANDS: &[&str] =
-    &["api:check", "typecheck", "test:unit"];
-pub(crate) const CONSUMER_OWNED_COMMANDS: &[&str] = &[
-    "check:contract",
-    "check:api-artifacts",
-    "check:api-operations",
-    "typecheck",
-    "test:unit",
-];
 pub(crate) const SMART_BACKEND_OPERATIONS: &[&str] = &["clippy", "test"];
 pub(crate) const SMART_FEATURE_OPERATIONS: &[&str] = &["clippy"];
 
@@ -193,6 +174,7 @@ pub(crate) fn verify(scope: CheckScope, full: bool, frontend_dir: &Path) -> Resu
                     root,
                     &context.frontend_dir,
                     snapshots.as_ref().ok_or("后端快照尚未生成")?,
+                    false,
                 )?;
                 consumer_contract_ran = true;
             }
@@ -238,19 +220,8 @@ fn full_verify(context: &VerifyExecutionContext, scope: CheckScope) -> Result<()
         require_frontend_dependencies(frontend_dir)?;
     }
     let backend_enabled = matches!(scope, CheckScope::All | CheckScope::Backend);
-    let frontend_enabled = matches!(scope, CheckScope::All | CheckScope::Frontend);
-    if backend_enabled && frontend_enabled {
-        run_parallel_tasks(
-            root,
-            "backend-foundation",
-            || backend(root, context.targets.backend.as_str(), context.jobs.backend),
-            "frontend-foundation",
-            || frontend_full_non_consumer(frontend_dir),
-        )?;
-    } else if backend_enabled {
+    if backend_enabled {
         backend(root, context.targets.backend.as_str(), context.jobs.backend)?;
-    } else if frontend_enabled {
-        frontend_full_non_consumer(frontend_dir)?;
     }
     let backend_snapshots = if backend_enabled {
         let snapshots = prepare_backend_snapshots(
@@ -305,18 +276,17 @@ fn full_verify(context: &VerifyExecutionContext, scope: CheckScope) -> Result<()
             backend_snapshots
                 .as_ref()
                 .ok_or("完整后端门禁缺少 OpenAPI 快照")?,
+            false,
         )?;
     }
     if matches!(scope, CheckScope::All | CheckScope::Frontend) {
         if let Some(snapshots) = backend_snapshots.as_ref() {
-            run_consumer_contract(root, frontend_dir, snapshots)?;
+            run_consumer_contract(root, frontend_dir, snapshots, true)?;
         } else {
             // 前端单侧没有可信的后端工作树候选；由前端状态机校验正式或候选契约。
-            for command in FRONTEND_ONLY_CONTRACT_COMMANDS {
-                run_pnpm(frontend_dir, &[*command])?;
-            }
+            run_pnpm(frontend_dir, &["check", "--full"])?;
         }
-        run_pnpm(frontend_dir, &["test:browser-smoke"])?;
+        run_pnpm(frontend_dir, &["check", "--stage", "browser"])?;
     }
     Ok(())
 }
@@ -378,7 +348,7 @@ pub(crate) fn ci_consumer_contract_with_target(
         .into_iter()
         .collect();
     let snapshots = export_and_verify_backend_snapshots(&root, &profiles, target_dir)?;
-    run_consumer_contract(&root, frontend_dir, &snapshots)
+    run_consumer_contract(&root, frontend_dir, &snapshots, false)
 }
 
 pub(crate) fn ci_consumer_contract_against_committed_snapshot(
@@ -391,22 +361,7 @@ pub(crate) fn ci_consumer_contract_against_committed_snapshot(
         .collect();
     let snapshots = prepare_consumer_backend_snapshots(root, &profiles)?;
     stage_committed_backend_snapshots(root, &snapshots)?;
-    run_consumer_contract(root, frontend_dir, &snapshots)
-}
-
-fn frontend_full_non_consumer(frontend_dir: &Path) -> Result<()> {
-    // consumer:check 负责契约、派生物、operation、类型和单测；这里仅执行互补门禁，
-    // 避免完整检查重复运行 vue-tsc 与 Vitest。
-    if FRONTEND_FULL_NON_CONSUMER_COMMANDS
-        .iter()
-        .any(|command| CONSUMER_OWNED_COMMANDS.contains(command))
-    {
-        return Err("完整前端门禁配置重复执行了 consumer:check 已负责的检查".into());
-    }
-    for command in FRONTEND_FULL_NON_CONSUMER_COMMANDS {
-        run_pnpm(frontend_dir, &[*command])?;
-    }
-    Ok(())
+    run_consumer_contract(root, frontend_dir, &snapshots, false)
 }
 
 fn run_parallel_tasks<Left, Right>(
@@ -536,7 +491,7 @@ fn frontend_profiles(
     consumer_contract_ran: bool,
 ) -> Result<()> {
     for command in frontend_profile_commands(profiles, consumer_contract_ran) {
-        run_pnpm(frontend_dir, &[command])?;
+        run_pnpm(frontend_dir, command)?;
     }
     Ok(())
 }

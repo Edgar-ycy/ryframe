@@ -50,9 +50,7 @@ pub(crate) use context::{
 };
 #[allow(unused_imports)]
 pub(crate) use execution::{
-    BACKEND_POLICY_SCRIPTS, CONSUMER_OWNED_COMMANDS, FRONTEND_FULL_NON_CONSUMER_COMMANDS,
-    FRONTEND_ONLY_CONTRACT_COMMANDS, PYTHON_TEST_ARGS, SMART_BACKEND_OPERATIONS,
-    SMART_FEATURE_OPERATIONS,
+    BACKEND_POLICY_SCRIPTS, PYTHON_TEST_ARGS, SMART_BACKEND_OPERATIONS, SMART_FEATURE_OPERATIONS,
 };
 #[allow(unused_imports)]
 pub(crate) use feature::{
@@ -78,6 +76,7 @@ pub(crate) use selection::{
 #[allow(unused_imports)]
 pub(crate) use snapshot::{
     BackendSnapshots, backend_snapshot_export_args, consumer_contract_arguments,
-    consumer_contract_plan, load_consumer_contract_plan, package_tests_generate_snapshots,
-    prepare_backend_snapshots, prepare_consumer_backend_snapshots, verify_backend_snapshots,
+    consumer_contract_command, consumer_contract_plan, load_consumer_contract_plan,
+    package_tests_generate_snapshots, prepare_backend_snapshots,
+    prepare_consumer_backend_snapshots, verify_backend_snapshots,
 };

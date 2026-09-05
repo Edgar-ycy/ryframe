@@ -9,21 +9,21 @@ use std::{
 
 use super::check::{
     BACKEND_CI_TARGET_DIR, BACKEND_POLICY_SCRIPTS, BACKEND_SMART_TARGET_DIR,
-    BACKEND_VERIFY_TARGET_DIR, BackendSnapshotProfile, CONSUMER_OWNED_COMMANDS, ChangeCategory,
-    ChangeSurfacePolicy, FRONTEND_FULL_NON_CONSUMER_COMMANDS, FRONTEND_ONLY_CONTRACT_COMMANDS,
+    BACKEND_VERIFY_TARGET_DIR, BackendSnapshotProfile, ChangeCategory, ChangeSurfacePolicy,
     FrontendProfile, PYTHON_TEST_ARGS, RESOURCE_CI_TARGET_DIR, RESOURCE_VERIFY_TARGET_DIR,
     RepositoryKind, ResourceWorkspaceProfile, SMART_BACKEND_OPERATIONS, SMART_FEATURE_OPERATIONS,
     VerifyTargetPolicy, WORKSPACE_CLIPPY_ARGS, WorkspaceGraph, analyze_change_surface,
     append_changed_file_size_warnings, backend_package_operation_args, cargo_operation_jobs,
     changed_paths, ci_environment_from, ci_target_policy_from, ci_test_jobs_from, classify_changes,
-    complete_verify_selection, consumer_contract_arguments, consumer_contract_plan,
-    default_test_jobs_from, feature_operation_args, feature_test_args, frontend_profile_commands,
-    load_change_surface_policy, load_consumer_contract_plan, load_workspace_graph,
-    minimal_workspace_check_args, needs_consumer_contract, package_tests_generate_snapshots,
-    parse_change_surface_policy, resolve_frontend_dir, resolve_target_dir,
-    resource_test_executable_from_messages, resource_workspace_environment_for_profile,
-    reverse_dependency_closure, validate_feature_combination, verify_job_budget_from,
-    verify_target_policy_from, workspace_clippy_args, workspace_test_args,
+    complete_verify_selection, consumer_contract_arguments, consumer_contract_command,
+    consumer_contract_plan, default_test_jobs_from, feature_operation_args, feature_test_args,
+    frontend_profile_commands, load_change_surface_policy, load_consumer_contract_plan,
+    load_workspace_graph, minimal_workspace_check_args, needs_consumer_contract,
+    package_tests_generate_snapshots, parse_change_surface_policy, resolve_frontend_dir,
+    resolve_target_dir, resource_test_executable_from_messages,
+    resource_workspace_environment_for_profile, reverse_dependency_closure,
+    validate_feature_combination, verify_job_budget_from, verify_target_policy_from,
+    workspace_clippy_args, workspace_test_args,
 };
 
 static NEXT_REPOSITORY: AtomicU64 = AtomicU64::new(1);
@@ -453,8 +453,6 @@ fn consumer_plan_builds_exact_candidate_and_formal_arguments() {
     assert_eq!(
         consumer_contract_arguments(&candidate, Path::new("target/openapi.json")),
         [
-            "consumer:check",
-            "--",
             "--mode",
             "candidate",
             "--openapi",
@@ -468,6 +466,11 @@ fn consumer_plan_builds_exact_candidate_and_formal_arguments() {
         ]
         .map(str::to_owned)
     );
+    assert_eq!(
+        consumer_contract_command(false),
+        ["check", "--stage", "contract"]
+    );
+    assert_eq!(consumer_contract_command(true), ["check", "--full"]);
 
     let formal = consumer_contract_plan(&source, false, None).unwrap();
     assert_eq!(formal.mode, "formal");
@@ -514,30 +517,6 @@ fn consumer_plan_detects_candidate_marker_from_frontend_workspace() {
     assert_eq!(candidate.backend_commit, "4".repeat(40));
     assert!(!candidate.require_pin);
     fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn full_frontend_commands_do_not_repeat_consumer_owned_gates() {
-    let non_consumer = FRONTEND_FULL_NON_CONSUMER_COMMANDS
-        .iter()
-        .copied()
-        .collect::<BTreeSet<_>>();
-    let consumer = CONSUMER_OWNED_COMMANDS
-        .iter()
-        .copied()
-        .collect::<BTreeSet<_>>();
-    assert_eq!(
-        non_consumer.len(),
-        FRONTEND_FULL_NON_CONSUMER_COMMANDS.len()
-    );
-    assert_eq!(consumer.len(), CONSUMER_OWNED_COMMANDS.len());
-    assert!(non_consumer.is_disjoint(&consumer));
-    assert!(!non_consumer.contains("check"));
-    assert_eq!(
-        FRONTEND_ONLY_CONTRACT_COMMANDS,
-        ["api:check", "typecheck", "test:unit"]
-    );
-    assert!(!FRONTEND_ONLY_CONTRACT_COMMANDS.contains(&"consumer:check"));
 }
 
 #[test]
@@ -651,11 +630,15 @@ fn frontend_code_contract_and_browser_changes_use_separate_profiles() {
 }
 
 #[test]
-fn frontend_contract_plan_runs_api_check_once_and_avoids_owned_duplicates() {
+fn frontend_contract_profiles_select_public_stages_and_one_unit_invocation() {
     let contract = [FrontendProfile::Contract].into_iter().collect();
     assert_eq!(
         frontend_profile_commands(&contract, false),
-        ["api:check", "typecheck", "test:unit", "build"]
+        [
+            ["check", "--stage", "contract"].as_slice(),
+            ["check", "--stage", "unit"].as_slice(),
+            ["build"].as_slice(),
+        ]
     );
 
     let contract_and_code = [FrontendProfile::Contract, FrontendProfile::Code]
@@ -663,21 +646,22 @@ fn frontend_contract_plan_runs_api_check_once_and_avoids_owned_duplicates() {
         .collect();
     let commands = frontend_profile_commands(&contract_and_code, false);
     assert_eq!(
-        commands
-            .iter()
-            .filter(|command| **command == "api:check")
-            .count(),
-        1
+        commands,
+        [
+            ["check", "--stage", "static"].as_slice(),
+            ["check", "--stage", "unit"].as_slice(),
+            ["build"].as_slice(),
+        ]
     );
-    assert!(!commands.contains(&"check:contract"));
-    assert!(!commands.contains(&"check:api-artifacts"));
-    assert!(!commands.contains(&"check:api-operations"));
 
     let after_consumer = frontend_profile_commands(&contract_and_code, true);
-    assert!(!after_consumer.contains(&"api:check"));
-    assert!(!after_consumer.contains(&"typecheck"));
-    assert!(!after_consumer.contains(&"test:unit"));
-    assert!(after_consumer.contains(&"build"));
+    assert_eq!(
+        after_consumer,
+        [
+            ["check", "--stage", "static"].as_slice(),
+            ["build"].as_slice(),
+        ]
+    );
 }
 
 #[test]

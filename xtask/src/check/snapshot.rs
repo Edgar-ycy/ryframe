@@ -6,7 +6,7 @@ use std::{
 
 use crate::{
     Result,
-    process::{command_output, run_owned, run_pnpm},
+    process::{command_output, run_owned, run_pnpm_with_env},
 };
 
 use super::model::{BackendSnapshotProfile, ConsumerContractPlan};
@@ -229,6 +229,7 @@ pub(super) fn run_consumer_contract(
     backend_root: &Path,
     frontend_dir: &Path,
     backend_snapshots: &BackendSnapshots,
+    full: bool,
 ) -> Result<()> {
     let openapi = backend_snapshots
         .openapi
@@ -246,8 +247,20 @@ pub(super) fn run_consumer_contract(
     };
     let plan = load_consumer_contract_plan(frontend_dir, candidate_commit.as_deref())?;
     let arguments = consumer_contract_arguments(&plan, openapi);
-    let arguments = arguments.iter().map(String::as_str).collect::<Vec<_>>();
-    run_pnpm(frontend_dir, &arguments)
+    let context = serde_json::to_string(&arguments)?;
+    run_pnpm_with_env(
+        frontend_dir,
+        consumer_contract_command(full),
+        &[("RYFRAME_CONSUMER_CONTRACT", context.as_str())],
+    )
+}
+
+pub(crate) fn consumer_contract_command(full: bool) -> &'static [&'static str] {
+    if full {
+        &["check", "--full"]
+    } else {
+        &["check", "--stage", "contract"]
+    }
 }
 
 pub(crate) fn load_consumer_contract_plan(
@@ -301,8 +314,6 @@ pub(crate) fn consumer_contract_arguments(
     openapi: &Path,
 ) -> Vec<String> {
     vec![
-        "consumer:check".to_owned(),
-        "--".to_owned(),
         "--mode".to_owned(),
         plan.mode.to_owned(),
         "--openapi".to_owned(),

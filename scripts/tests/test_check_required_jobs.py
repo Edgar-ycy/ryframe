@@ -344,7 +344,7 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertNotIn("ryframe-reset plan", block)
         self.assertNotIn("nohup", block)
         self.assertNotIn("curl --fail", block)
-        self.assertIn("corepack pnpm ci:browser-real", block)
+        self.assertIn("corepack pnpm check --stage browser --real", block)
         self.assertIn("--override-filename ryframe-backend.cdx", block)
         self.assertNotIn("--override-filename ryframe-backend.cdx.json", block)
         self.assertIn(

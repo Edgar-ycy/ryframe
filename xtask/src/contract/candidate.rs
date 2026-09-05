@@ -25,7 +25,7 @@ pub(crate) const CANDIDATE_GENERATION_ARGS: &[&str] =
 
 pub(crate) fn run(operation: ContractOperation, frontend_dir: &Path) -> Result<()> {
     match operation {
-        ContractOperation::Check => run_pnpm(frontend_dir, &["api:check"]),
+        ContractOperation::Check => run_pnpm(frontend_dir, &["check", "--stage", "contract"]),
     }
 }
 
