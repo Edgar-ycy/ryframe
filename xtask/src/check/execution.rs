@@ -10,13 +10,13 @@ use super::{
     },
     metrics,
     model::{BackendSnapshotProfile, FrontendProfile},
-    plan::{CheckPlanMode, build_check_plan, render_plan, validate_plan},
+    plan::{CheckPlanMode, build_task_plan, render_plan, validate_plan},
     policy_tasks::{PolicyProfile, policy_tasks},
     resource::resource_workspace_compilation,
-    selection::{frontend_profile_commands, load_workspace_metadata, needs_consumer_contract},
+    selection::{frontend_profile_commands, load_workspace_metadata},
     snapshot::{
-        export_and_verify_backend_snapshots, package_tests_generate_snapshots,
-        prepare_backend_snapshots, prepare_consumer_backend_snapshots, run_consumer_contract,
+        export_and_verify_backend_snapshots, prepare_backend_snapshots,
+        prepare_consumer_backend_snapshots, run_consumer_contract,
         stage_committed_backend_snapshots, verify_backend_snapshots,
     },
 };
@@ -27,6 +27,10 @@ use crate::{
     workspace::root_dir,
 };
 use std::{collections::BTreeSet, path::Path, thread, time::Instant};
+
+mod task_execution;
+
+use task_execution::execute_plan;
 
 pub(crate) const PYTHON_TEST_ARGS: &[&str] = &[
     "-m",
@@ -54,81 +58,20 @@ pub(crate) fn verify(scope: CheckScope, full: bool, frontend_dir: &Path) -> Resu
         context.targets.resource.as_str(),
     );
     let result = (|| {
-        let root = &context.root;
-        let check_plan = build_check_plan(scope, full, root, &context.frontend_dir)?;
-        render_plan(&check_plan);
+        let check_plan = build_task_plan(scope, full, &context.root, &context.frontend_dir)?;
         validate_plan(&check_plan)?;
-        let selection = match &check_plan.mode {
-            CheckPlanMode::ExplicitFull => return full_verify(&context, scope),
-            CheckPlanMode::ExpandedFull(_) => {
-                mode = "完整（自动扩大）";
-                let metrics_root = context.root.clone();
-                context.promote_to_full();
-                metrics::update_targets(
-                    &metrics_root,
-                    context.targets.backend.as_str(),
-                    context.targets.resource.as_str(),
-                );
-                return full_verify(&context, scope);
-            }
-            CheckPlanMode::Selected(selection) => selection,
-        };
-        let package_tests_generate_snapshots = !selection.backend_packages.is_empty()
-            && !selection.backend_snapshot_profiles.is_empty()
-            && package_tests_generate_snapshots(
-                &selection.backend_snapshot_profiles,
-                &selection.backend_packages,
+        render_plan(&check_plan);
+        if matches!(check_plan.mode, CheckPlanMode::ExpandedFull(_)) {
+            mode = "完整（自动扩大）";
+            let metrics_root = context.root.clone();
+            context.promote_to_full();
+            metrics::update_targets(
+                &metrics_root,
+                context.targets.backend.as_str(),
+                context.targets.resource.as_str(),
             );
-        let mut snapshots = if package_tests_generate_snapshots {
-            Some(prepare_backend_snapshots(
-                root,
-                &selection.backend_snapshot_profiles,
-            )?)
-        } else {
-            None
-        };
-        if !selection.backend_packages.is_empty() {
-            backend_packages(&context, &selection.backend_packages, snapshots.as_ref())?;
         }
-        let mut consumer_contract_ran = false;
-        if !selection.backend_snapshot_profiles.is_empty() {
-            if needs_consumer_contract(&selection.backend_snapshot_profiles) {
-                require_frontend_dependencies(&context.frontend_dir)?;
-            }
-            if let Some(generated) = snapshots.as_ref() {
-                verify_backend_snapshots(root, generated)?;
-            } else {
-                // 纯快照变更没有可复用的 package test，保留聚焦导出路径。
-                snapshots = Some(export_and_verify_backend_snapshots(
-                    root,
-                    &selection.backend_snapshot_profiles,
-                    context.targets.backend.as_str(),
-                )?);
-            }
-            if needs_consumer_contract(&selection.backend_snapshot_profiles) {
-                run_consumer_contract(
-                    root,
-                    &context.frontend_dir,
-                    snapshots.as_ref().ok_or("后端快照尚未生成")?,
-                    false,
-                )?;
-                consumer_contract_ran = true;
-            }
-        }
-        if !selection.frontend_profiles.is_empty() {
-            frontend_profiles(
-                &context.frontend_dir,
-                &selection.frontend_profiles,
-                consumer_contract_ran,
-            )?;
-        }
-        if selection.backend_packages.is_empty()
-            && selection.backend_snapshot_profiles.is_empty()
-            && selection.frontend_profiles.is_empty()
-        {
-            println!("没有需要执行的代码检查；当前变更仅包含文档，或工作树没有变更。");
-        }
-        Ok(())
+        execute_plan(&check_plan, &context)
     })();
     let total_seconds = started.elapsed().as_secs_f64();
     println!(
@@ -147,83 +90,6 @@ const fn scope_label(scope: CheckScope) -> &'static str {
         CheckScope::Backend => "后端",
         CheckScope::Frontend => "前端",
     }
-}
-
-fn full_verify(context: &VerifyExecutionContext, scope: CheckScope) -> Result<()> {
-    let root = &context.root;
-    let frontend_dir = &context.frontend_dir;
-    if matches!(scope, CheckScope::All | CheckScope::Backend) {
-        require_frontend_dependencies(frontend_dir)?;
-    }
-    let backend_enabled = matches!(scope, CheckScope::All | CheckScope::Backend);
-    if backend_enabled {
-        backend(root, context.targets.backend.as_str(), context.jobs.backend)?;
-    }
-    let backend_snapshots = if backend_enabled {
-        let snapshots = prepare_backend_snapshots(
-            root,
-            &[
-                BackendSnapshotProfile::OpenApiContract,
-                BackendSnapshotProfile::Mysql,
-            ]
-            .into_iter()
-            .collect(),
-        )?;
-        run_process(root, "python", PYTHON_TEST_ARGS)?;
-        run_process(
-            root,
-            "python",
-            &["scripts/check_migration_history.py", "--require-frozen"],
-        )?;
-        let budget = context.jobs;
-        let test_jobs = default_test_jobs_from(cfg!(windows), budget.backend);
-        println!(
-            "完整门禁并发：总计={}，主 Workspace 编译={}，测试={}，资源 Workspace={}",
-            budget.total, budget.backend, test_jobs, budget.resource
-        );
-        run_parallel_tasks(
-            root,
-            "backend-workspace",
-            || {
-                feature_matrix_with_jobs(root, context.targets.backend.as_str(), budget.backend)?;
-                let args = workspace_test_args(context.targets.backend.as_str(), test_jobs);
-                let environment = snapshots.workspace_test_environment();
-                run_owned_with_env(root, "cargo", &args, &environment)
-            },
-            "resource-workspace",
-            || {
-                resource_workspace_compilation(
-                    root,
-                    frontend_dir,
-                    context.targets.resource.as_str(),
-                    budget.resource,
-                )
-            },
-        )?;
-        verify_backend_snapshots(root, &snapshots)?;
-        Some(snapshots)
-    } else {
-        None
-    };
-    if matches!(scope, CheckScope::Backend) {
-        run_consumer_contract(
-            root,
-            frontend_dir,
-            backend_snapshots
-                .as_ref()
-                .ok_or("完整后端门禁缺少 OpenAPI 快照")?,
-            false,
-        )?;
-    }
-    if matches!(scope, CheckScope::All | CheckScope::Frontend) {
-        if let Some(snapshots) = backend_snapshots.as_ref() {
-            run_consumer_contract(root, frontend_dir, snapshots, true)?;
-        } else {
-            // 前端单侧没有可信的后端工作树候选；由前端状态机校验正式或候选契约。
-            run_pnpm(frontend_dir, &["check", "--full"])?;
-        }
-    }
-    Ok(())
 }
 
 pub(crate) fn ci_rust_gate(frontend_dir: &Path) -> Result<()> {

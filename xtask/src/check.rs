@@ -61,7 +61,11 @@ pub(crate) use model::{
     BackendSnapshotProfile, ConsumerContractPlan, FrontendProfile, VerifySelection, WorkspaceGraph,
 };
 #[allow(unused_imports)]
-pub(crate) use plan::{CheckPlanMode, build_check_plan, plan, select_check_mode, validate_plan};
+pub(crate) use plan::{
+    CheckPlanMode, CheckTask, CheckTaskExecutor, CheckTaskRepository, CheckTaskStage,
+    CheckTaskWorkingDirectory, TaskPlan, build_task_plan, plan, select_check_mode, tasks_for,
+    validate_plan,
+};
 #[allow(unused_imports)]
 pub(crate) use policy_tasks::{PYTHON_POLICY_TASKS, PolicyProfile, PythonPolicyTask, policy_tasks};
 #[allow(unused_imports)]

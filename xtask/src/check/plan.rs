@@ -14,6 +14,15 @@ use super::{
     },
 };
 
+#[path = "plan_tasks.rs"]
+mod tasks;
+
+use tasks::validate_task_graph;
+pub(crate) use tasks::{
+    CheckTask, CheckTaskExecutor, CheckTaskRepository, CheckTaskStage, CheckTaskWorkingDirectory,
+    tasks_for,
+};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CheckPlanMode {
     ExplicitFull,
@@ -22,24 +31,25 @@ pub(crate) enum CheckPlanMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CheckPlan {
+pub(crate) struct TaskPlan {
     pub(crate) surface: ChangeSurfaceReport,
     pub(crate) mode: CheckPlanMode,
+    pub(crate) tasks: Vec<CheckTask>,
 }
 
 pub(crate) fn plan(scope: CheckScope, full: bool, frontend_dir: &Path) -> Result<()> {
-    let plan = build_check_plan(scope, full, &root_dir(), frontend_dir)?;
-    render_plan(&plan);
+    let plan = build_task_plan(scope, full, &root_dir(), frontend_dir)?;
     validate_plan(&plan)?;
+    render_plan(&plan);
     Ok(())
 }
 
-pub(crate) fn build_check_plan(
+pub(crate) fn build_task_plan(
     scope: CheckScope,
     full: bool,
     root: &Path,
     frontend_dir: &Path,
-) -> Result<CheckPlan> {
+) -> Result<TaskPlan> {
     let backend_changes = changed_paths(root)?;
     let frontend_changes = changed_paths(frontend_dir)?;
     let policy = load_change_surface_policy(root)?;
@@ -57,14 +67,18 @@ pub(crate) fn build_check_plan(
     } else {
         WorkspaceGraph::default()
     };
-    Ok(CheckPlan {
+    let mode = select_check_mode(scope, full, &backend_changes, &frontend_changes, &graph);
+    let tasks = tasks_for(scope, &mode);
+    Ok(TaskPlan {
         surface,
-        mode: select_check_mode(scope, full, &backend_changes, &frontend_changes, &graph),
+        mode,
+        tasks,
     })
 }
 
-pub(crate) fn validate_plan(plan: &CheckPlan) -> Result<()> {
-    enforce_change_surface(&plan.surface)
+pub(crate) fn validate_plan(plan: &TaskPlan) -> Result<()> {
+    enforce_change_surface(&plan.surface)?;
+    validate_task_graph(&plan.tasks)
 }
 
 pub(crate) fn select_check_mode(
@@ -95,32 +109,57 @@ pub(crate) fn select_check_mode(
     CheckPlanMode::Selected(selection)
 }
 
-pub(crate) fn render_plan(plan: &CheckPlan) {
+pub(crate) fn render_plan(plan: &TaskPlan) {
     print_change_surface(&plan.surface);
     match &plan.mode {
-        CheckPlanMode::ExplicitFull => print_full_plan(),
+        CheckPlanMode::ExplicitFull => println!("任务图模式：完整（显式 --full）。"),
         CheckPlanMode::ExpandedFull(reason) => {
             println!("任务图扩大为完整门禁：{reason}");
-            print_full_dependencies();
         }
         CheckPlanMode::Selected(selection) => {
             print_selection(selection);
-            println!(
-                "任务依赖与去重：Cargo 包检查复用同一 target；快照先于消费契约；前端完整单测最多执行一次。"
-            );
         }
+    }
+    if plan.tasks.is_empty() {
+        println!("任务图为空：当前范围仅有文档变更或没有变更。");
+        return;
+    }
+    for task in &plan.tasks {
+        let dependencies = if task.dependencies.is_empty() {
+            "无".to_owned()
+        } else {
+            task.dependencies.join(",")
+        };
+        println!(
+            "任务 {}：仓库={}，阶段={}，依赖={}",
+            task.id,
+            task.repository.label(),
+            task.stage.label(),
+            dependencies
+        );
+        println!(
+            "  工作目录={}；调用={}（{}）",
+            task.working_directory.label(),
+            task.executor.label(),
+            task.executor.description()
+        );
+        println!(
+            "  编译覆盖={}；允许写入={}；外部资源={}",
+            display_metadata(task.compilation_coverage),
+            display_metadata(task.allowed_writes),
+            if task.external_resources.is_empty() {
+                "禁止".to_owned()
+            } else {
+                task.external_resources.join("、")
+            }
+        );
     }
 }
 
-fn print_full_plan() {
-    println!(
-        "完整任务图：后端基础检查与前端静态检查并行；随后执行 Rust 测试、资源切片、契约消费、覆盖率和生产构建。浏览器验收单独执行。"
-    );
-    println!(
-        "编译覆盖：Workspace Clippy、Workspace test、feature matrix、资源生成器默认与 schema-import feature。"
-    );
-}
-
-fn print_full_dependencies() {
-    println!("依赖顺序：基础静态检查 → 编译与测试 → 快照、消费契约与生产构建。");
+fn display_metadata(values: &[&str]) -> String {
+    if values.is_empty() {
+        "无".to_owned()
+    } else {
+        values.join("、")
+    }
 }
