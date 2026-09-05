@@ -15,6 +15,7 @@ use crate::{
         load_workspace_graph, policy_tasks, resource_workspace_compilation,
     },
     cli::CiCommand,
+    contract::verify_contract_source,
     process::{command_output, run as run_process, run_owned},
     workspace::root_dir,
 };
@@ -386,49 +387,22 @@ fn verify_formal_contract_source_from_environment(frontend_dir: &Path) -> Result
     else {
         return Ok(());
     };
-    if !valid_git_sha(&backend_head) {
-        return Err("RYFRAME_CI_BACKEND_HEAD 必须是 40 位 Git SHA".into());
-    }
     let repository = env::var("RYFRAME_CI_BACKEND_REPOSITORY")
         .unwrap_or_else(|_| "Edgar-ycy/ryframe".to_owned());
     let candidate = env::var_os("RYFRAME_CI_CANDIDATE_OPENAPI")
         .map(PathBuf::from)
         .ok_or("消费契约来源检查缺少 RYFRAME_CI_CANDIDATE_OPENAPI")?;
     let root = root_dir();
-    run_owned(
+    let commit = verify_contract_source(
         &root,
-        "python",
-        &formal_contract_source_args(frontend_dir, &backend_head, &repository, &candidate),
-    )
-}
-
-pub(crate) fn formal_contract_source_args(
-    frontend_dir: &Path,
-    backend_head: &str,
-    backend_repository: &str,
-    candidate: &Path,
-) -> Vec<String> {
-    vec![
-        "scripts/verify_frontend_contract_source.py".to_owned(),
-        "--backend-worktree".to_owned(),
-        ".".to_owned(),
-        "--backend-head".to_owned(),
-        backend_head.to_owned(),
-        "--backend-repository".to_owned(),
-        backend_repository.to_owned(),
-        "--source-metadata".to_owned(),
-        frontend_dir
-            .join("openapi/source.json")
-            .to_string_lossy()
-            .into_owned(),
-        "--frontend-openapi".to_owned(),
-        frontend_dir
-            .join("openapi/openapi.json")
-            .to_string_lossy()
-            .into_owned(),
-        "--candidate-openapi".to_owned(),
-        candidate.to_string_lossy().into_owned(),
-    ]
+        &backend_head,
+        &repository,
+        &frontend_dir.join("openapi/source.json"),
+        &frontend_dir.join("openapi/openapi.json"),
+        &candidate,
+    )?;
+    println!("{commit}");
+    Ok(())
 }
 
 fn integration() -> Result<()> {

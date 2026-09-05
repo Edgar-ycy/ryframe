@@ -6,6 +6,8 @@ mod candidate;
 mod formal;
 #[path = "contract/model.rs"]
 mod model;
+#[path = "contract/source.rs"]
+mod source;
 #[path = "contract/transaction.rs"]
 mod transaction;
 
@@ -21,5 +23,7 @@ pub(crate) use candidate::{
 pub(crate) use formal::{FORMAL_SYNC_ARGS, github_repository_identifier, validate_formal_sync};
 #[allow(unused_imports)]
 pub(crate) use model::{ContractFileOperations, Snapshot, sha256_hex};
+#[allow(unused_imports)]
+pub(crate) use source::verify_contract_source;
 #[allow(unused_imports)]
 pub(crate) use transaction::{install_snapshots_with, write_atomically_with};

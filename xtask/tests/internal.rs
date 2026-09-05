@@ -60,6 +60,8 @@ mod child_environment_tests;
 mod ci_tests;
 #[path = "internal/cli.rs"]
 mod cli_tests;
+#[path = "internal/contract_source.rs"]
+mod contract_source_tests;
 #[path = "internal/contract.rs"]
 mod contract_tests;
 #[path = "internal/data.rs"]

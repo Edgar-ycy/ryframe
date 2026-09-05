@@ -1,14 +1,13 @@
 use super::{
     check::{BackendSnapshotProfile, VerifySelection, WorkspaceGraph},
     ci::{
-        ci_plan_for, ci_selection_for_paths, formal_contract_source_args,
-        integration_test_args_for_target, parse_changed_paths, preflight_migration_args,
+        ci_plan_for, ci_selection_for_paths, integration_test_args_for_target, parse_changed_paths,
+        preflight_migration_args,
         resource_gate::{delegates_generic_ci_path, should_run_for_paths},
         resource_gate_required_for_ci_range, tls_integration_args, verify_frontend_checkout_ref,
         windows_check_args, windows_process_test_args,
     },
 };
-use std::path::Path;
 
 #[test]
 fn pull_request_edit_runs_only_consumer_contract() {
@@ -303,36 +302,4 @@ fn frontend_checkout_requires_an_exact_requested_sha() {
             .is_err()
     );
     assert!(verify_frontend_checkout_ref("main", "not-a-commit").is_err());
-}
-
-#[test]
-fn formal_source_command_receives_all_pinned_contract_inputs() {
-    let frontend = Path::new("../frontend");
-    let candidate = Path::new("artifacts/candidate-openapi.json");
-    let head = "0123456789abcdef0123456789abcdef01234567";
-    let args = formal_contract_source_args(frontend, head, "owner/backend", candidate);
-    assert_eq!(
-        args,
-        [
-            "scripts/verify_frontend_contract_source.py".to_owned(),
-            "--backend-worktree".to_owned(),
-            ".".to_owned(),
-            "--backend-head".to_owned(),
-            head.to_owned(),
-            "--backend-repository".to_owned(),
-            "owner/backend".to_owned(),
-            "--source-metadata".to_owned(),
-            frontend
-                .join("openapi/source.json")
-                .to_string_lossy()
-                .into_owned(),
-            "--frontend-openapi".to_owned(),
-            frontend
-                .join("openapi/openapi.json")
-                .to_string_lossy()
-                .into_owned(),
-            "--candidate-openapi".to_owned(),
-            candidate.to_string_lossy().into_owned(),
-        ]
-    );
 }

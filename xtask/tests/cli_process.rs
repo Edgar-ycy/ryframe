@@ -2,14 +2,27 @@
 
 use std::process::{Command, Output};
 
-fn invoke(arguments: &[&str]) -> Output {
+fn xtask_command() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000);
     }
-    command.args(arguments).output().unwrap()
+    command
+}
+
+fn invoke(arguments: &[&str]) -> Output {
+    xtask_command().args(arguments).output().unwrap()
+}
+
+fn invoke_with_environment(arguments: &[&str], environment: &[(&str, &str)]) -> Output {
+    xtask_command()
+        .args(arguments)
+        .envs(environment.iter().copied())
+        .env_remove("RYFRAME_CI_FRONTEND_REF")
+        .output()
+        .unwrap()
 }
 
 #[test]
@@ -84,4 +97,35 @@ fn recovery_runtime_forwards_the_global_frontend_as_one_argument() {
     let stderr = String::from_utf8_lossy(&result.stderr);
     assert!(stderr.contains(missing), "{stderr}");
     assert!(!stderr.contains("the following arguments are required: --frontend-dir"));
+}
+
+#[test]
+fn consumer_contract_runs_the_inline_source_gate_before_frontend_tasks() {
+    let result = invoke_with_environment(
+        &[
+            "check",
+            "ci",
+            "consumer-contract",
+            "--frontend-dir",
+            "D:/前端 worktree",
+        ],
+        &[
+            (
+                "RYFRAME_CI_BACKEND_HEAD",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            ),
+            ("RYFRAME_CI_BACKEND_REPOSITORY", "invalid"),
+            (
+                "RYFRAME_CI_CANDIDATE_OPENAPI",
+                "D:/候选 contract/candidate-openapi.json",
+            ),
+        ],
+    );
+
+    assert_eq!(result.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(
+        stderr.contains("期望后端仓库必须是 owner/repository"),
+        "{stderr}"
+    );
 }
