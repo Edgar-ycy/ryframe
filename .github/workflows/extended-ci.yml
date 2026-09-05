@@ -13,8 +13,9 @@ on:
       - "scripts/ci_devex_cgroup.py"
       - "scripts/tests/test_ci_devex_cgroup.py"
       - "scripts/check_deployment_assets.py"
-      - "scripts/check_vulnerability_exceptions.py"
-      - "scripts/vulnerability-exceptions.json"
+      - "scripts/check_supply_chain.py"
+      - "scripts/supply_chain_policy.json"
+      - "scripts/tests/test_check_supply_chain.py"
   schedule:
     - cron: "17 3 * * 1"
   workflow_dispatch:
