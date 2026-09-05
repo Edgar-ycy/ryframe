@@ -1,5 +1,7 @@
 use sea_orm::DbErr;
 
+mod clauses;
+
 use super::{
     normalize::{
         expected_extra, extract_column_type, normalize_action, normalize_column_type,
@@ -45,11 +47,7 @@ fn add_table_parts(
     table_character_set: &str,
     table_collation: &str,
 ) -> Result<(), DbErr> {
-    let lines = statement.lines().collect::<Vec<_>>();
-    let mut pending_constraint = None;
-    let mut index = 0;
-    while index < lines.len() {
-        let line = lines[index].trim().trim_end_matches(',');
+    for line in clauses::table_clauses(statement)? {
         let upper = line.to_ascii_uppercase();
         if line.starts_with('`') {
             add_column(
@@ -70,15 +68,21 @@ fn add_table_parts(
             );
         } else if upper.starts_with("UNIQUE KEY") || upper.starts_with("KEY ") {
             add_named_index(schema, table, line, &upper);
-        } else if upper.starts_with("CONSTRAINT ") {
-            pending_constraint = backtick_identifiers(line).into_iter().next();
-        } else if upper.starts_with("FOREIGN KEY") {
-            let (name, clause, next_index) =
-                foreign_key_clause(table, pending_constraint.take(), line, &lines, index)?;
-            add_foreign_key(schema, table, name, &clause)?;
-            index = next_index;
         }
-        index += 1;
+        if (upper.starts_with("CONSTRAINT ") || upper.starts_with("FOREIGN KEY"))
+            && let Some(offset) = upper.find("FOREIGN KEY")
+        {
+            let name = upper
+                .starts_with("CONSTRAINT ")
+                .then(|| backtick_identifiers(&line[..offset]).into_iter().next())
+                .flatten()
+                .ok_or_else(|| {
+                    DbErr::Custom(format!(
+                        "foreign key in {table} is missing a constraint name"
+                    ))
+                })?;
+            add_foreign_key(schema, table, name, &line[offset..])?;
+        }
     }
     Ok(())
 }
@@ -133,36 +137,6 @@ fn add_named_index(schema: &mut ExpectedSchema, table: &str, line: &str, upper: 
             },
         );
     }
-}
-
-fn foreign_key_clause(
-    table: &str,
-    name: Option<String>,
-    line: &str,
-    lines: &[&str],
-    mut index: usize,
-) -> Result<(String, String, usize), DbErr> {
-    let name = name.ok_or_else(|| {
-        DbErr::Custom(format!(
-            "foreign key in {table} is missing a constraint name"
-        ))
-    })?;
-    let mut clause = line.to_owned();
-    while index + 1 < lines.len() {
-        let next = lines[index + 1].trim().trim_end_matches(',');
-        if next.is_empty() {
-            index += 1;
-            continue;
-        }
-        let next_upper = next.to_ascii_uppercase();
-        if !next_upper.starts_with("REFERENCES") && !next_upper.starts_with("ON ") {
-            break;
-        }
-        index += 1;
-        clause.push(' ');
-        clause.push_str(next);
-    }
-    Ok((name, clause, index))
 }
 
 fn add_foreign_key(
@@ -317,4 +291,73 @@ fn backtick_identifiers(value: &str) -> Vec<String> {
         .filter(|(index, _)| index % 2 == 1)
         .map(|(_, identifier)| identifier.to_owned())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ExpectedSchema, add_table_parts};
+
+    fn parse_table(statement: &str) -> ExpectedSchema {
+        let mut schema = ExpectedSchema::default();
+        add_table_parts(
+            &mut schema,
+            "child",
+            statement,
+            "utf8mb4",
+            "utf8mb4_general_ci",
+        )
+        .unwrap();
+        schema
+    }
+
+    #[test]
+    fn synthetic_multiline_check_and_foreign_key_keep_complete_clauses() {
+        let schema = parse_table(
+            r#"CREATE TABLE `child` (
+                `id` BIGINT NOT NULL,
+                `parent_id` BIGINT NOT NULL,
+                `state` VARCHAR(16) NOT NULL DEFAULT 'queued,ready',
+                CONSTRAINT `ck_child_state` CHECK (
+                    (`state` IN ('queued,ready', 'done'))
+                    AND (`id` > 0)),
+                CONSTRAINT `fk_child_parent`
+                    FOREIGN KEY (`parent_id`)
+                    REFERENCES `parent` (`id`)
+                    ON DELETE CASCADE ON UPDATE RESTRICT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"#,
+        );
+
+        assert_eq!(
+            schema
+                .columns
+                .keys()
+                .filter(|(table, _)| table == "child")
+                .count(),
+            3
+        );
+        let key = &schema.foreign_keys[&("child".into(), "fk_child_parent".into())];
+        assert_eq!(key.columns, ["parent_id"]);
+        assert_eq!(key.referenced_table, "parent");
+        assert_eq!(key.referenced_columns, ["id"]);
+        assert_eq!(key.delete_rule, "cascade");
+        assert_eq!(key.update_rule, "restrict");
+    }
+
+    #[test]
+    fn synthetic_inline_foreign_key_keeps_actions() {
+        let schema = parse_table(
+            r#"CREATE TABLE `child` (
+                `id` BIGINT NOT NULL,
+                `owner_id` BIGINT NULL,
+                CONSTRAINT `fk_child_owner` FOREIGN KEY (`owner_id`) REFERENCES `owner` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"#,
+        );
+
+        let key = &schema.foreign_keys[&("child".into(), "fk_child_owner".into())];
+        assert_eq!(key.columns, ["owner_id"]);
+        assert_eq!(key.referenced_table, "owner");
+        assert_eq!(key.referenced_columns, ["id"]);
+        assert_eq!(key.delete_rule, "set null");
+        assert_eq!(key.update_rule, "cascade");
+    }
 }
