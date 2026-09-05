@@ -59,6 +59,7 @@ uuid = "1"
 
 thiserror = "2"
 http = "1"
+http-body-util = "0.1"
 
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 

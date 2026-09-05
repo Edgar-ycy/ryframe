@@ -2,7 +2,7 @@ use crate::RequestPrincipal;
 use crate::http::{ApiResponse, HttpResult};
 use axum::{
     Json, Router,
-    extract::{Multipart, State},
+    extract::{DefaultBodyLimit, Multipart, State, multipart::MultipartRejection},
 };
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, put, route};
@@ -26,7 +26,7 @@ pub fn profile_router() -> Router<AppState> {
         .merge(route!(get_profile))
         .merge(route!(update_profile))
         .merge(route!(change_password))
-        .merge(route!(update_avatar))
+        .merge(route!(update_avatar).layer(DefaultBodyLimit::disable()))
 }
 
 /// 获取个人信息
@@ -103,31 +103,26 @@ pub async fn change_password(
     request_body(content = FileUploadForm, content_type = "multipart/form-data"),
     responses(
         (status = 200, description = "头像更新成功", body = ApiResponse<AvatarResponse>),
-        (status = 413, description = "上传内容超过 5 MiB 限制"),
+        (status = 400, description = "上传表单或头像内容无效"),
+        (status = 413, description = "上传内容超过配置的头像大小限制"),
         (status = 503, description = "数据库或对象存储暂不可用")
     ),
     security(("bearer" = [])))]
 pub async fn update_avatar(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    mut multipart: Multipart,
+    multipart: Result<Multipart, MultipartRejection>,
 ) -> HttpResult<Json<ApiResponse<AvatarResponse>>> {
+    let mut multipart = multipart?;
     let mut avatar_upload = None;
 
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| AppError::Internal(format!("读取上传数据失败: {}", e)))?
-    {
+    while let Some(field) = multipart.next_field().await? {
         let filename = match field.file_name() {
             Some(name) => name.to_string(),
             None => continue,
         };
 
-        let data = field
-            .bytes()
-            .await
-            .map_err(|e| AppError::Internal(format!("读取文件数据失败: {}", e)))?;
+        let data = field.bytes().await?;
 
         // 委托 FileService 处理上传逻辑
         avatar_upload = Some(
