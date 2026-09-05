@@ -7,7 +7,6 @@ import json
 import struct
 import subprocess
 import sys
-import tempfile
 import unittest
 from contextlib import ExitStack
 from pathlib import Path
@@ -18,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import devex_provenance as provenance
 import restore_build
 import restore_runtime
+from tests.workspace_directory import WorkspaceDirectory
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = {"head": "a" * 40, "patch_sha256": "b" * 64, "files": [], "clean": False}
@@ -45,8 +45,7 @@ class ProvenanceTests(unittest.TestCase):
             patch.object(provenance, "current_execution_source", return_value=DRIVER_SOURCE)
         )
         local = ROOT / ".local-tests/python-unit"
-        local.mkdir(parents=True, exist_ok=True)
-        temporary = tempfile.TemporaryDirectory(dir=local)
+        temporary = WorkspaceDirectory(local)
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         self.backend, self.frontend, self.runtime = [self.root / name for name in ("backend", "frontend", "runtime")]
@@ -246,8 +245,7 @@ class ProvenanceTests(unittest.TestCase):
 class FingerprintTests(unittest.TestCase):
     def test_xtask_length_framing_and_raw_git_order_include_untracked_content(self):
         local = ROOT / ".local-tests/python-unit"
-        local.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=local) as directory:
+        with WorkspaceDirectory(local) as directory:
             root = Path(directory).resolve()
             (root / "z.rs").write_bytes(b"z content")
             (root / "a.rs").write_bytes(b"a content")

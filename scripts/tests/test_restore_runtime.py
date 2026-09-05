@@ -6,7 +6,6 @@ import io
 import json
 import subprocess
 import sys
-import tempfile
 import threading
 import unittest
 from pathlib import Path
@@ -16,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import restore_build
 import restore_runtime
 import restore_runtime_evidence
+from tests.workspace_directory import WorkspaceDirectory
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = {"head": "a" * 40, "patch_sha256": "b" * 64, "files": [], "clean": True}
@@ -67,8 +67,7 @@ class RestoreRuntimeTests(unittest.TestCase):
             )
         )
         local = ROOT / ".local-tests/python-unit"
-        local.mkdir(parents=True, exist_ok=True)
-        self.directory = tempfile.TemporaryDirectory(dir=local)
+        self.directory = WorkspaceDirectory(local)
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name).resolve()
         self.backend, self.frontend = self.root / "backend", self.root / "frontend"
