@@ -162,12 +162,12 @@ user_capacity = 500
 # ========== 接口级限流 ==========
 # 敏感接口限流：METHOD /path = 每窗口最大请求数
 # 示例：{"POST /api/v1/auth/login" = 5} 表示登录接口每分钟最多 5 次
+# 接口级窗口时长（秒）
+api_window_secs = 60
 [rate_limit.api_limits]
 "POST /api/v1/auth/login" = 5
 "POST /api/v1/auth/password-reset/complete" = 3
 "GET /api/v1/auth/csrf" = 30
-# 接口级窗口时长（秒）
-api_window_secs = 60
 
 [pagination]
 # 省略 `page_size` 时按此策略取值；提供 page=0、page_size=0 或超过

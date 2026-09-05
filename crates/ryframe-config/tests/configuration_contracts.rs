@@ -6,6 +6,29 @@ use ryframe_config::{
 const _: () = assert!(MAX_EXPORT_ROWS <= MAX_XLSX_DATA_ROWS);
 
 #[test]
+fn checked_in_config_keeps_api_window_outside_the_route_map() {
+    let config: toml::Value =
+        toml::from_str(include_str!("../../../config/app.toml")).expect("默认配置应是有效 TOML");
+    let rate_limit = config
+        .get("rate_limit")
+        .and_then(toml::Value::as_table)
+        .expect("默认配置应包含 rate_limit");
+    assert_eq!(
+        rate_limit
+            .get("api_window_secs")
+            .and_then(toml::Value::as_integer),
+        Some(60)
+    );
+    assert!(
+        !rate_limit
+            .get("api_limits")
+            .and_then(toml::Value::as_table)
+            .expect("默认配置应包含接口限流规则")
+            .contains_key("api_window_secs")
+    );
+}
+
+#[test]
 fn runtime_migration_mode_defaults_to_verify_and_rejects_removed_auto() {
     assert_eq!(MigrationMode::default(), MigrationMode::Verify);
     let removed: Result<MigrationMode, _> = toml::Value::String("auto".into()).try_into();
