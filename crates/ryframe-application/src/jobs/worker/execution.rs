@@ -57,26 +57,7 @@ impl JobWorker {
         worker_id: &str,
     ) -> AppResult<JobRunResult> {
         let Some(handler) = self.handlers.get(&job.job_type).cloned() else {
-            let now = self.queue.database_now().await?;
-            let failure_reason = format!("未注册任务处理器: {}", job.job_type);
-            let completed = self
-                .queue
-                .dead_letter(job.id, worker_id, &failure_reason, now)
-                .await?;
-            return Ok(if completed {
-                tracing::error!(
-                    job_id = job.id,
-                    job_type = %job.job_type,
-                    worker_id,
-                    attempts = job.attempts,
-                    max_attempts = job.max_attempts,
-                    failure_reason,
-                    "后台任务因未注册处理器进入死信状态"
-                );
-                JobRunResult::Dead
-            } else {
-                JobRunResult::LeaseLost
-            });
+            return self.reject_unregistered_job(&job, worker_id).await;
         };
 
         let span = tracing::info_span!("background_job", job_type = %job.job_type);
@@ -161,73 +142,8 @@ impl JobWorker {
                     })
                 }
                 Err(error) => {
-                    let now = self.queue.database_now().await?;
-                    if let AppError::RetryableConflict(message, retry_after_seconds) = &error {
-                        let retry_after_seconds = (*retry_after_seconds).clamp(1, 86_400);
-                        let available_at = now
-                            + Duration::seconds(
-                                i64::try_from(retry_after_seconds).unwrap_or(86_400),
-                            );
-                        let deferred = self
-                            .queue
-                            .defer_retryable_conflict(job.id, worker_id, available_at, message, now)
-                            .await?;
-                        return Ok(if deferred {
-                            tracing::debug!(
-                                job_id = job.id,
-                                job_type = %job.job_type,
-                                worker_id,
-                                retry_at = %available_at,
-                                "后台任务因资源暂时被占用而延期，未消耗尝试预算"
-                            );
-                            JobRunResult::Retried
-                        } else {
-                            JobRunResult::LeaseLost
-                        });
-                    }
-                    let retry_at = now + retry_delay(job.attempts);
-                    let force_dead = handler.should_dead_letter(&error);
-                    let error_message = error.to_string();
-                    let log_error = job_log_error(&job.job_type, &error);
-                    match self
-                        .queue
-                        .fail(FailJobCommand {
-                            job_id: job.id,
-                            worker_id,
-                            retry_at,
-                            error_message: &error_message,
-                            force_dead,
-                            now,
-                        })
-                        .await?
-                    {
-                        JobFailureOutcome::Retried { available_at } => {
-                            tracing::debug!(
-                                job_id = job.id,
-                                job_type = %job.job_type,
-                                worker_id,
-                                attempts = job.attempts,
-                                max_attempts = job.max_attempts,
-                                retry_at = %available_at,
-                                error = %log_error,
-                                "后台任务执行失败，已安排重试"
-                            );
-                            Ok(JobRunResult::Retried)
-                        }
-                        JobFailureOutcome::Dead => {
-                            tracing::error!(
-                                job_id = job.id,
-                                job_type = %job.job_type,
-                                worker_id,
-                                attempts = job.attempts,
-                                max_attempts = job.max_attempts,
-                                error = %log_error,
-                                "后台任务重试耗尽，已进入死信状态"
-                            );
-                            Ok(JobRunResult::Dead)
-                        }
-                        JobFailureOutcome::LeaseLost => Ok(JobRunResult::LeaseLost),
-                    }
+                    self.finish_failed_job(&job, worker_id, handler.as_ref(), error)
+                        .await
                 }
             }
         }
@@ -266,5 +182,108 @@ fn job_log_error(job_type: &str, error: &AppError) -> String {
         format!("配置迁移任务失败（错误类别：{}）", error.error_code())
     } else {
         error.to_string()
+    }
+}
+
+impl JobWorker {
+    async fn reject_unregistered_job(
+        &self,
+        job: &ClaimedJobRecord,
+        worker_id: &str,
+    ) -> AppResult<JobRunResult> {
+        let now = self.queue.database_now().await?;
+        let failure_reason = format!("未注册任务处理器: {}", job.job_type);
+        let completed = self
+            .queue
+            .dead_letter(job.id, worker_id, &failure_reason, now)
+            .await?;
+        Ok(if completed {
+            tracing::error!(
+                job_id = job.id,
+                job_type = %job.job_type,
+                worker_id,
+                attempts = job.attempts,
+                max_attempts = job.max_attempts,
+                failure_reason,
+                "后台任务因未注册处理器进入死信状态"
+            );
+            JobRunResult::Dead
+        } else {
+            JobRunResult::LeaseLost
+        })
+    }
+
+    async fn finish_failed_job(
+        &self,
+        job: &ClaimedJobRecord,
+        worker_id: &str,
+        handler: &dyn JobHandler,
+        error: AppError,
+    ) -> AppResult<JobRunResult> {
+        let now = self.queue.database_now().await?;
+        if let AppError::RetryableConflict(message, retry_after_seconds) = &error {
+            let retry_after_seconds = (*retry_after_seconds).clamp(1, 86_400);
+            let available_at =
+                now + Duration::seconds(i64::try_from(retry_after_seconds).unwrap_or(86_400));
+            let deferred = self
+                .queue
+                .defer_retryable_conflict(job.id, worker_id, available_at, message, now)
+                .await?;
+            return Ok(if deferred {
+                tracing::debug!(
+                    job_id = job.id,
+                    job_type = %job.job_type,
+                    worker_id,
+                    retry_at = %available_at,
+                    "后台任务因资源暂时被占用而延期，未消耗尝试预算"
+                );
+                JobRunResult::Retried
+            } else {
+                JobRunResult::LeaseLost
+            });
+        }
+        let retry_at = now + retry_delay(job.attempts);
+        let force_dead = handler.should_dead_letter(&error);
+        let error_message = error.to_string();
+        let log_error = job_log_error(&job.job_type, &error);
+        match self
+            .queue
+            .fail(FailJobCommand {
+                job_id: job.id,
+                worker_id,
+                retry_at,
+                error_message: &error_message,
+                force_dead,
+                now,
+            })
+            .await?
+        {
+            JobFailureOutcome::Retried { available_at } => {
+                tracing::debug!(
+                    job_id = job.id,
+                    job_type = %job.job_type,
+                    worker_id,
+                    attempts = job.attempts,
+                    max_attempts = job.max_attempts,
+                    retry_at = %available_at,
+                    error = %log_error,
+                    "后台任务执行失败，已安排重试"
+                );
+                Ok(JobRunResult::Retried)
+            }
+            JobFailureOutcome::Dead => {
+                tracing::error!(
+                    job_id = job.id,
+                    job_type = %job.job_type,
+                    worker_id,
+                    attempts = job.attempts,
+                    max_attempts = job.max_attempts,
+                    error = %log_error,
+                    "后台任务重试耗尽，已进入死信状态"
+                );
+                Ok(JobRunResult::Dead)
+            }
+            JobFailureOutcome::LeaseLost => Ok(JobRunResult::LeaseLost),
+        }
     }
 }
