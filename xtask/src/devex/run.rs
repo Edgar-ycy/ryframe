@@ -3,7 +3,7 @@ use std::{
     fs,
     net::{Ipv4Addr, TcpListener},
     path::{Path, PathBuf},
-    process::{Command, ExitStatus, Stdio},
+    process::{Command, ExitStatus},
     time::Instant,
 };
 
@@ -16,32 +16,27 @@ use crate::{
 
 use super::{
     incremental::with_source_edit,
-    metadata::{
-        MetadataContext, PathNormalizer, SourceFingerprints, collect as collect_metadata,
-        corepack_executable,
-    },
-    model::{
-        CacheState, DevexRunOptions, DevexSuite, PairedArm, PairingMetadata, StepDefinition,
-        SuiteDefinition, WorkingDirectory,
-    },
+    metadata::{MetadataContext, PathNormalizer, SourceFingerprints, collect as collect_metadata},
+    model::{CacheState, DevexRunOptions, DevexSuite, PairedArm, PairingMetadata, SuiteDefinition},
     preflight,
     report::{
         ResourceGateDecisionEvidence, SampleKind, SampleRecord, SampleStatus, append_sample,
         summarize, write_metadata,
     },
-    support::{
-        cleanup_successful_sample_target, display_step, metric, sample_target, success_status,
-    },
+    support::{cleanup_successful_sample_target, metric, sample_target},
 };
 
 #[path = "run/environment.rs"]
 mod environment;
+#[path = "run/process.rs"]
+mod process;
 #[path = "run/resource_gate.rs"]
 mod resource_gate;
 #[path = "run/save.rs"]
 mod save;
 
 use environment::effective_environment;
+use process::execute_steps;
 pub(crate) use resource_gate::read_resource_gate_decision;
 
 pub(super) fn execute(
@@ -442,87 +437,6 @@ pub(super) fn execute_sample_with_contract(
     } else {
         Ok(outcome)
     }
-}
-
-fn execute_steps(
-    backend_root: &Path,
-    frontend_root: &Path,
-    target: &Path,
-    definition: SuiteDefinition,
-    environment: &BTreeMap<String, String>,
-    label: &str,
-) -> Result<ExitStatus> {
-    let mut last_status = success_status()?;
-    for (index, step) in definition.steps.iter().enumerate() {
-        println!("  → {label} step {:02}: {}", index + 1, display_step(step));
-        last_status = step_command(
-            step,
-            backend_root,
-            frontend_root,
-            target,
-            definition,
-            environment,
-            label,
-        )
-        .status()?;
-        if !last_status.success() {
-            break;
-        }
-    }
-    Ok(last_status)
-}
-
-fn step_command(
-    step: &StepDefinition,
-    backend_root: &Path,
-    frontend_root: &Path,
-    target: &Path,
-    definition: SuiteDefinition,
-    environment: &BTreeMap<String, String>,
-    label: &str,
-) -> Command {
-    let program = if step.program == "corepack" {
-        corepack_executable()
-    } else {
-        step.program
-    };
-    let mut command = Command::new(program);
-    let target = target.to_string_lossy();
-    let frontend = frontend_root.to_string_lossy();
-    let args = step
-        .args
-        .iter()
-        .map(|arg| {
-            arg.replace("{target}", &target)
-                .replace("{frontend}", &frontend)
-                .replace("{label}", label)
-        })
-        .collect::<Vec<_>>();
-    command
-        .args(args)
-        .current_dir(match step.working_directory {
-            WorkingDirectory::Backend => backend_root,
-            WorkingDirectory::Frontend => frontend_root,
-        })
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-    for key in definition.remove_environment {
-        command.env_remove(key);
-    }
-    for (key, value) in environment {
-        command.env(
-            key,
-            value
-                .replace("{target}", &target)
-                .replace("{frontend}", &frontend)
-                .replace("{label}", label),
-        );
-    }
-    if step.program == "cargo" {
-        command.env("CARGO_TARGET_DIR", target.as_ref());
-    }
-    command
 }
 
 #[allow(clippy::too_many_arguments)]
