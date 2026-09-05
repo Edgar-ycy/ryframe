@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use super::cli::{
-    ApiGenerateCommand, BuildOptions, BuildProfile, CHECK_HELP, CheckCommand, CheckOptions,
-    CheckScope, CiCommand, CliError, Command, DataCommand, GenerateCommand, MigrationCommand,
+    ApiGenerateCommand, BuildOptions, BuildProfile, CheckCommand, CheckOptions, CheckScope,
+    CiCommand, CliError, Command, DataCommand, GenerateCommand, MigrationCommand,
     MigrationOperation, MigrationTarget, ResourceAction, ResourceCommand, ResourceTarget, parse,
 };
 
@@ -64,11 +64,6 @@ fn help_accepts_only_current_command_families() {
         assert_eq!(parse_command(&[command, "--help"]).unwrap(), expected);
     }
     assert!(parse_command(&["missing", "--help"]).is_err());
-}
-
-#[test]
-fn check_help_lists_every_supported_performance_operation() {
-    assert!(CHECK_HELP.contains("check perf run|paired|summarize|compare"));
 }
 
 #[test]

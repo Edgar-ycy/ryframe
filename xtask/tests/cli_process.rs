@@ -50,6 +50,18 @@ fn default_help_exposes_only_five_task_families_and_exits_zero() {
 }
 
 #[test]
+fn check_help_lists_every_supported_performance_operation() {
+    let result = invoke(&["check", "--help"]);
+    assert!(result.status.success());
+    assert!(result.stderr.is_empty());
+    assert!(
+        String::from_utf8(result.stdout)
+            .unwrap()
+            .contains("check perf run|paired|summarize|compare")
+    );
+}
+
+#[test]
 fn recovery_runtime_forwards_the_global_frontend_as_one_argument() {
     let missing = "missing-runtime-receipt.json";
     let result = invoke(&[
