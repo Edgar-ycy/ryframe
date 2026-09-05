@@ -1,4 +1,5 @@
 mod authorization_diagnostic;
+mod backup;
 mod captcha;
 mod config;
 mod data_retention;
