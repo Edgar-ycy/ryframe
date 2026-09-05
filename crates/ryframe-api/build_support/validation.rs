@@ -43,118 +43,11 @@ pub(super) fn validate_catalog(catalog: &AccessCatalog) -> Result<(), Box<dyn Er
         &permissions,
     )?;
 
-    let mut route_keys = BTreeSet::new();
-    let mut page_keys = BTreeSet::new();
-    for menu in &catalog.menus {
-        validate_identifier("菜单 route_key", &menu.route_key)?;
-        if menu.order > i32::MAX as u32 {
-            return Err(format!("菜单 {} 的 order 超出可表示范围", menu.route_key).into());
-        }
-        validate_identifier("菜单 title_key", &menu.title_key)?;
-        if menu.name.trim() != menu.name || menu.name.is_empty() || menu.name.chars().count() > 64 {
-            return Err(format!("菜单 {} 的 name 格式无效", menu.route_key).into());
-        }
-        if !route_keys.insert(menu.route_key.as_str()) {
-            return Err(format!("菜单 route_key 重复: {}", menu.route_key).into());
-        }
-        if menu.menu_type != "M" && menu.menu_type != "C" {
-            return Err(format!("菜单 {} 的 menu_type 只能是 M 或 C", menu.route_key).into());
-        }
-        match (&*menu.menu_type, menu.page_key.as_deref()) {
-            ("M", None) => {}
-            ("M", Some(_)) => {
-                return Err(format!("目录菜单 {} 不得声明 page_key", menu.route_key).into());
-            }
-            ("C", Some(page_key)) => {
-                validate_identifier("页面 page_key", page_key)?;
-                if !page_keys.insert(page_key) {
-                    return Err(format!("页面 page_key 重复: {page_key}").into());
-                }
-            }
-            ("C", None) => {
-                return Err(format!("页面菜单 {} 必须声明 page_key", menu.route_key).into());
-            }
-            _ => unreachable!("menu_type 已校验"),
-        }
-        if let Some(permission) = menu.permission.as_deref() {
-            validate_reference("菜单权限码", permission, "权限码", &permissions)?;
-        }
-    }
-
-    let mut capabilities = BTreeSet::new();
-    for capability in &catalog.capabilities {
-        validate_code("能力码", &capability.code, '.')?;
-        if !capabilities.insert(capability.code.as_str()) {
-            return Err(format!("能力码重复: {}", capability.code).into());
-        }
-        let capability_route_keys = unique_values("能力 route_key", &capability.route_keys)?;
-        validate_references(
-            "能力 route_key",
-            &capability_route_keys,
-            "菜单 route_key",
-            &route_keys,
-        )?;
-        for route_key in &capability_route_keys {
-            let menu = catalog
-                .menus
-                .iter()
-                .find(|menu| menu.route_key == *route_key)
-                .expect("能力 route_key 已通过引用校验");
-            if menu.capability.as_deref() != Some(capability.code.as_str()) {
-                return Err(format!(
-                    "能力 {} 的 route_key {} 未反向绑定同一菜单能力",
-                    capability.code, route_key
-                )
-                .into());
-            }
-        }
-        let capability_page_keys = unique_values("能力 page_key", &capability.page_keys)?;
-        validate_references(
-            "能力 page_key",
-            &capability_page_keys,
-            "页面 page_key",
-            &page_keys,
-        )?;
-        let capability_permissions = unique_values("能力权限码", &capability.permissions)?;
-        validate_references(
-            "能力权限码",
-            &capability_permissions,
-            "权限码",
-            &permissions,
-        )?;
-    }
-    for menu in &catalog.menus {
-        if let Some(capability) = menu.capability.as_deref() {
-            validate_reference("菜单能力码", capability, "能力码", &capabilities)?;
-            let descriptor = catalog
-                .capabilities
-                .iter()
-                .find(|descriptor| descriptor.code == capability)
-                .expect("菜单能力码已通过引用校验");
-            if !descriptor.route_keys.contains(&menu.route_key) {
-                return Err(format!(
-                    "菜单 {} 未闭合到能力 {} 的 route_keys",
-                    menu.route_key, capability
-                )
-                .into());
-            }
-            if let Some(page_key) = menu.page_key.as_ref()
-                && !descriptor.page_keys.contains(page_key)
-            {
-                return Err(
-                    format!("页面 {page_key} 未闭合到能力 {capability} 的 page_keys").into(),
-                );
-            }
-            if let Some(permission) = menu.permission.as_ref()
-                && !descriptor.permissions.contains(permission)
-            {
-                return Err(format!(
-                    "菜单权限 {permission} 未闭合到能力 {capability} 的 permissions"
-                )
-                .into());
-            }
-        }
-    }
+    let MenuKeys {
+        route_keys,
+        page_keys,
+    } = validate_menus(catalog, &permissions)?;
+    validate_capabilities(catalog, &permissions, &route_keys, &page_keys)?;
 
     let mut explicit_endpoints = BTreeSet::new();
     for policy in &catalog.route_policies {
@@ -437,4 +330,136 @@ fn validate_api_path(path: &str) -> Result<(), Box<dyn Error>> {
     } else {
         Err(format!("HTTP 路径必须是无空白的绝对路径: {path}").into())
     }
+}
+
+struct MenuKeys<'a> {
+    route_keys: BTreeSet<&'a str>,
+    page_keys: BTreeSet<&'a str>,
+}
+
+fn validate_menus<'a>(
+    catalog: &'a AccessCatalog,
+    permissions: &BTreeSet<&str>,
+) -> Result<MenuKeys<'a>, Box<dyn Error>> {
+    let mut route_keys = BTreeSet::new();
+    let mut page_keys = BTreeSet::new();
+    for menu in &catalog.menus {
+        validate_identifier("菜单 route_key", &menu.route_key)?;
+        if menu.order > i32::MAX as u32 {
+            return Err(format!("菜单 {} 的 order 超出可表示范围", menu.route_key).into());
+        }
+        validate_identifier("菜单 title_key", &menu.title_key)?;
+        if menu.name.trim() != menu.name || menu.name.is_empty() || menu.name.chars().count() > 64 {
+            return Err(format!("菜单 {} 的 name 格式无效", menu.route_key).into());
+        }
+        if !route_keys.insert(menu.route_key.as_str()) {
+            return Err(format!("菜单 route_key 重复: {}", menu.route_key).into());
+        }
+        if menu.menu_type != "M" && menu.menu_type != "C" {
+            return Err(format!("菜单 {} 的 menu_type 只能是 M 或 C", menu.route_key).into());
+        }
+        match (&*menu.menu_type, menu.page_key.as_deref()) {
+            ("M", None) => {}
+            ("M", Some(_)) => {
+                return Err(format!("目录菜单 {} 不得声明 page_key", menu.route_key).into());
+            }
+            ("C", Some(page_key)) => {
+                validate_identifier("页面 page_key", page_key)?;
+                if !page_keys.insert(page_key) {
+                    return Err(format!("页面 page_key 重复: {page_key}").into());
+                }
+            }
+            ("C", None) => {
+                return Err(format!("页面菜单 {} 必须声明 page_key", menu.route_key).into());
+            }
+            _ => unreachable!("menu_type 已校验"),
+        }
+        if let Some(permission) = menu.permission.as_deref() {
+            validate_reference("菜单权限码", permission, "权限码", permissions)?;
+        }
+    }
+
+    Ok(MenuKeys {
+        route_keys,
+        page_keys,
+    })
+}
+
+fn validate_capabilities(
+    catalog: &AccessCatalog,
+    permissions: &BTreeSet<&str>,
+    route_keys: &BTreeSet<&str>,
+    page_keys: &BTreeSet<&str>,
+) -> Result<(), Box<dyn Error>> {
+    let mut capabilities = BTreeSet::new();
+    for capability in &catalog.capabilities {
+        validate_code("能力码", &capability.code, '.')?;
+        if !capabilities.insert(capability.code.as_str()) {
+            return Err(format!("能力码重复: {}", capability.code).into());
+        }
+        let capability_route_keys = unique_values("能力 route_key", &capability.route_keys)?;
+        validate_references(
+            "能力 route_key",
+            &capability_route_keys,
+            "菜单 route_key",
+            route_keys,
+        )?;
+        for route_key in &capability_route_keys {
+            let menu = catalog
+                .menus
+                .iter()
+                .find(|menu| menu.route_key == *route_key)
+                .expect("能力 route_key 已通过引用校验");
+            if menu.capability.as_deref() != Some(capability.code.as_str()) {
+                return Err(format!(
+                    "能力 {} 的 route_key {} 未反向绑定同一菜单能力",
+                    capability.code, route_key
+                )
+                .into());
+            }
+        }
+        let capability_page_keys = unique_values("能力 page_key", &capability.page_keys)?;
+        validate_references(
+            "能力 page_key",
+            &capability_page_keys,
+            "页面 page_key",
+            page_keys,
+        )?;
+        let capability_permissions = unique_values("能力权限码", &capability.permissions)?;
+        validate_references("能力权限码", &capability_permissions, "权限码", permissions)?;
+    }
+    for menu in &catalog.menus {
+        if let Some(capability) = menu.capability.as_deref() {
+            validate_reference("菜单能力码", capability, "能力码", &capabilities)?;
+            let descriptor = catalog
+                .capabilities
+                .iter()
+                .find(|descriptor| descriptor.code == capability)
+                .expect("菜单能力码已通过引用校验");
+            if !descriptor.route_keys.contains(&menu.route_key) {
+                return Err(format!(
+                    "菜单 {} 未闭合到能力 {} 的 route_keys",
+                    menu.route_key, capability
+                )
+                .into());
+            }
+            if let Some(page_key) = menu.page_key.as_ref()
+                && !descriptor.page_keys.contains(page_key)
+            {
+                return Err(
+                    format!("页面 {page_key} 未闭合到能力 {capability} 的 page_keys").into(),
+                );
+            }
+            if let Some(permission) = menu.permission.as_ref()
+                && !descriptor.permissions.contains(permission)
+            {
+                return Err(format!(
+                    "菜单权限 {permission} 未闭合到能力 {capability} 的 permissions"
+                )
+                .into());
+            }
+        }
+    }
+
+    Ok(())
 }
