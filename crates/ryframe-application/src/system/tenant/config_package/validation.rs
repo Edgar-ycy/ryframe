@@ -434,5 +434,5 @@ fn permission_contains_wildcard(code: &str) -> bool {
 }
 
 #[cfg(test)]
-#[path = "validation/tests.rs"]
+#[path = "validation_contracts.rs"]
 mod tests;
