@@ -139,6 +139,7 @@ fn full_gate_discovers_repository_python_tests() {
             "scripts/check_migration_history.py",
             "scripts/check_prerelease_dependencies.py",
             "scripts/check_permission_routes.py",
+            "scripts/check_removed_identity.py",
             "scripts/check_supply_chain.py",
         ]
     );
