@@ -46,7 +46,8 @@ use utoipa::OpenApi;
         crate::handlers::common_handler::upload_file,
         crate::handlers::common_handler::upload_image,
         crate::handlers::common_handler::upload_avatar,
-        crate::handlers::common_handler::download_file
+        crate::handlers::common_handler::download_file,
+        crate::handlers::common_handler::shell_settings
     ),
     components(schemas(
         crate::dto::job_dto::BackgroundJobPageQuery,
@@ -87,6 +88,7 @@ use utoipa::OpenApi;
         crate::dto::public_dto::LoginInfoVo,
         crate::dto::public_dto::OnlineUserVo,
         crate::dto::public_dto::UploadResponse,
+        crate::dto::config_dto::ShellSettingsDto,
         crate::monitor::ServerInfo,
         crate::monitor::CacheInfo,
         crate::monitor::CacheCommandStats,

@@ -14,6 +14,13 @@ use crate::{
 const CACHE_TTL_SECS: u64 = 3600;
 const CONFIG_CACHE_NAMESPACE: &str = "config";
 
+/// 登录用户可读取的租户界面设置，不包含管理配置或密钥。
+#[derive(Debug)]
+pub struct ShellSettings {
+    pub side_theme: Option<String>,
+    pub skin_name: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ConfigVo {
     /// ID 使用字符串，避免 64 位值超出 JavaScript 安全整数范围。
@@ -118,6 +125,20 @@ impl ConfigService {
     ) -> AppResult<Option<ConfigVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         self.find_by_key_in_tenant(tenant_id, key, true).await
+    }
+
+    pub async fn shell_settings(&self, actor: &ActorContext) -> AppResult<ShellSettings> {
+        let tenant_id = crate::validated_tenant_id(actor)?;
+        let side_theme = self
+            .find_by_key_in_tenant(tenant_id, "sys.index.sideTheme", true)
+            .await?;
+        let skin_name = self
+            .find_by_key_in_tenant(tenant_id, "sys.index.skinName", true)
+            .await?;
+        Ok(ShellSettings {
+            side_theme: side_theme.map(|config| config.value),
+            skin_name: skin_name.map(|config| config.value),
+        })
     }
 
     /// 读取认证完成前所需的一项租户配置。

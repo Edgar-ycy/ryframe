@@ -239,6 +239,11 @@ path = "/api/v1/common/file/download"
 policy = "authenticated"
 
 [[route_policies]]
+method = "GET"
+path = "/api/v1/common/shell-settings"
+policy = "authenticated"
+
+[[route_policies]]
 method = "POST"
 path = "/api/v1/common/jobs/deletions"
 policy = "authenticated"

@@ -1,9 +1,16 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::http::HttpResult;
 use ryframe_application::system::content::ConfigListParams;
 use ryframe_kernel::{PaginationPolicy, ValidatedPageQuery};
+
+/// 当前租户的界面设置；未配置的项目由客户端使用默认值。
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ShellSettingsDto {
+    pub side_theme: Option<String>,
+    pub skin_name: Option<String>,
+}
 
 crate::list_query!(pub ConfigListQuery, ConfigFilterQuery {
     name: String,

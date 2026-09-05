@@ -71,6 +71,35 @@ pub fn download_router(state: AppState) -> Router {
     Router::new().merge(route!(download_file)).with_state(state)
 }
 
+pub fn settings_router(state: AppState) -> Router {
+    Router::new()
+        .merge(route!(shell_settings))
+        .with_state(state)
+}
+
+/// 所有已认证用户可读取固定的界面设置，不接受任意配置键。
+#[get("/shell-settings")]
+#[utoipa::path(get, path = "/api/v1/common/shell-settings", tag = "通用",
+    responses((status = 200, description = "当前租户界面设置", body = ApiResponse<crate::dto::config_dto::ShellSettingsDto>)),
+    security(("bearer" = [])))]
+pub async fn shell_settings(
+    State(state): State<AppState>,
+    current_user: RequestPrincipal,
+) -> HttpResult<Json<ApiResponse<crate::dto::config_dto::ShellSettingsDto>>> {
+    let settings = state
+        .services
+        .content
+        .config
+        .shell_settings(&current_user)
+        .await?;
+    Ok(Json(ApiResponse::success(
+        crate::dto::config_dto::ShellSettingsDto {
+            side_theme: settings.side_theme,
+            skin_name: settings.skin_name,
+        },
+    )))
+}
+
 // ==================== 上传接口（薄层：仅解析 HTTP 参数，委托 Service） ====================
 
 /// 通用文件上传（固定私有 `uploads` 桶）
