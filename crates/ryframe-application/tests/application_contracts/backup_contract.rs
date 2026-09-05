@@ -95,7 +95,7 @@ async fn runtime_probe_time_counts_towards_the_one_hour_limit() {
 
 #[tokio::test]
 async fn stale_or_incomplete_business_evidence_never_marks_recovery_successful() {
-    for case in 0..7 {
+    for case in 0..8 {
         let (service, repository, _) = fixture();
         let manifest = manifest();
         service
@@ -124,9 +124,13 @@ async fn stale_or_incomplete_business_evidence_never_marks_recovery_successful()
             5 => {
                 proof.scenarios[0].succeeded = false;
             }
-            _ => {
+            6 => {
                 proof.runtime_receipt_sha256.clear();
             }
+            _ => proof.scenarios.push(RestoreScenarioResult {
+                name: "unknown-extra-scenario".into(),
+                succeeded: true,
+            }),
         }
         assert!(service.finish_restore("drill-1", &proof).await.is_err());
         assert_eq!(

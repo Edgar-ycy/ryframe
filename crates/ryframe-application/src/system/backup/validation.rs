@@ -283,14 +283,16 @@ pub fn validate_restore_proof(
         "浏览器错误、网络失败或无障碍检查未通过",
     )?;
     let mut names = BTreeSet::new();
+    let required = REQUIRED_RESTORE_SCENARIOS
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
     require(
         proof
             .scenarios
             .iter()
             .all(|item| item.succeeded && names.insert(item.name.as_str()))
-            && REQUIRED_RESTORE_SCENARIOS
-                .iter()
-                .all(|name| names.contains(name)),
-        "核心业务恢复验收存在缺失、重复或失败场景",
+            && names == required,
+        "核心业务恢复验收存在缺失、额外、重复或失败场景",
     )
 }
