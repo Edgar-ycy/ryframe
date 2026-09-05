@@ -91,30 +91,12 @@ impl JobScheduleService {
         };
         let fire_key = automatic_fire_key(due);
 
-        if misfired && schedule.misfire_policy == MISFIRE_SKIP {
-            self.record_non_enqueued_due_execution(
-                transaction,
-                NonEnqueuedDueExecution {
-                    schedule,
-                    fire_key: &fire_key,
-                    trigger_kind,
-                    scheduled_for: due,
-                    next_run_at,
-                    now,
-                    outcome: OUTCOME_SKIPPED_MISFIRE,
-                    detail: Some("计划停机期间错过多次触发，已按 skip 策略跳过".into()),
-                },
-            )
-            .await?;
-            return Ok(DueScheduleResult {
-                enqueued: false,
-                outcome: OUTCOME_SKIPPED_MISFIRE,
-            });
-        }
-
-        let target = match self.resolve_target(&schedule.tenant_id, &schedule.handler_key, false) {
-            Ok(target) => target,
-            Err(error) => {
+        let target = match self
+            .evaluate_due_target(transaction, &schedule, misfired)
+            .await?
+        {
+            DueTarget::Ready(target) => target,
+            DueTarget::Skipped { outcome, detail } => {
                 self.record_non_enqueued_due_execution(
                     transaction,
                     NonEnqueuedDueExecution {
@@ -124,40 +106,17 @@ impl JobScheduleService {
                         scheduled_for: due,
                         next_run_at,
                         now,
-                        outcome: OUTCOME_TARGET_UNAVAILABLE,
-                        detail: Some(error.to_string()),
+                        outcome,
+                        detail: Some(detail),
                     },
                 )
                 .await?;
                 return Ok(DueScheduleResult {
                     enqueued: false,
-                    outcome: OUTCOME_TARGET_UNAVAILABLE,
+                    outcome,
                 });
             }
         };
-
-        if schedule.concurrency_policy == CONCURRENCY_FORBID
-            && transaction.has_active_job(schedule.id).await?
-        {
-            self.record_non_enqueued_due_execution(
-                transaction,
-                NonEnqueuedDueExecution {
-                    schedule,
-                    fire_key: &fire_key,
-                    trigger_kind,
-                    scheduled_for: due,
-                    next_run_at,
-                    now,
-                    outcome: OUTCOME_SKIPPED_CONCURRENCY,
-                    detail: Some("同一计划已有待执行或运行中的任务".into()),
-                },
-            )
-            .await?;
-            return Ok(DueScheduleResult {
-                enqueued: false,
-                outcome: OUTCOME_SKIPPED_CONCURRENCY,
-            });
-        }
 
         let context = ScheduledJobContext {
             tenant_id: &schedule.tenant_id,
@@ -188,6 +147,38 @@ impl JobScheduleService {
             enqueued: true,
             outcome: OUTCOME_ENQUEUED,
         })
+    }
+
+    async fn evaluate_due_target(
+        &self,
+        transaction: &dyn JobScheduleTransaction,
+        schedule: &JobScheduleRecord,
+        misfired: bool,
+    ) -> AppResult<DueTarget> {
+        if misfired && schedule.misfire_policy == MISFIRE_SKIP {
+            return Ok(DueTarget::Skipped {
+                outcome: OUTCOME_SKIPPED_MISFIRE,
+                detail: "计划停机期间错过多次触发，已按 skip 策略跳过".into(),
+            });
+        }
+        let target = match self.resolve_target(&schedule.tenant_id, &schedule.handler_key, false) {
+            Ok(target) => target,
+            Err(error) => {
+                return Ok(DueTarget::Skipped {
+                    outcome: OUTCOME_TARGET_UNAVAILABLE,
+                    detail: error.to_string(),
+                });
+            }
+        };
+        if schedule.concurrency_policy == CONCURRENCY_FORBID
+            && transaction.has_active_job(schedule.id).await?
+        {
+            return Ok(DueTarget::Skipped {
+                outcome: OUTCOME_SKIPPED_CONCURRENCY,
+                detail: "同一计划已有待执行或运行中的任务".into(),
+            });
+        }
+        Ok(DueTarget::Ready(target))
     }
 
     async fn record_non_enqueued_due_execution(
@@ -261,4 +252,12 @@ struct NonEnqueuedDueExecution<'a> {
 struct DueScheduleResult {
     enqueued: bool,
     outcome: &'static str,
+}
+
+enum DueTarget {
+    Ready(Arc<dyn ScheduledJobTarget>),
+    Skipped {
+        outcome: &'static str,
+        detail: String,
+    },
 }
