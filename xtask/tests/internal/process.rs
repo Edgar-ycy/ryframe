@@ -81,7 +81,7 @@ fn child_group_accepts_and_waits_for_child() {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    let status = group.spawn(&mut command).unwrap().wait().unwrap();
+    let status = group.spawn(command).unwrap().wait().unwrap();
     assert!(status.success());
 }
 

@@ -407,7 +407,7 @@ pub(crate) fn spawn_pnpm_with_env(
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
-    group.spawn(&mut command)
+    group.spawn(command)
 }
 
 #[cfg(unix)]
@@ -417,18 +417,6 @@ fn prepare_process_group(command: &mut Command) {
     // 为每个开发服务建立独立进程组，停止时能同时回收其派生子进程。
     command.process_group(0);
 }
-
-#[cfg(windows)]
-fn prepare_process_group(command: &mut Command) {
-    use std::os::windows::process::CommandExt;
-    use windows_sys::Win32::System::Threading::CREATE_SUSPENDED;
-
-    // 先挂起创建，再加入 Job Object，确保任何业务代码和后代进程都不能抢先运行。
-    command.creation_flags(CREATE_SUSPENDED);
-}
-
-#[cfg(not(any(unix, windows)))]
-fn prepare_process_group(_command: &mut Command) {}
 
 #[cfg(windows)]
 pub(crate) fn process_is_running(pid: u32) -> bool {

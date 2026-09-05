@@ -98,7 +98,7 @@ fn stopping_process_group_reclaims_descendant_after_direct_child_exits() {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    let mut direct_child = group.spawn(&mut command).expect("应能启动父辅助进程");
+    let mut direct_child = group.spawn(command).expect("应能启动父辅助进程");
     wait_for_direct_child(&mut direct_child);
     wait_for_file(&pid_file);
     wait_for_file(&ready_file);
