@@ -326,7 +326,7 @@ impl BackgroundJobRepository {
         available_at: DateTime<Utc>,
         error_message: &str,
         now: DateTime<Utc>,
-    ) -> AppResult<bool> {
+    ) -> AppResult<JobFailureDisposition> {
         let transaction = db.begin().await.db()?;
         let Some(job) = Self::owned_running_query(job_id, worker_id)
             .lock(LockType::Update)
@@ -335,11 +335,11 @@ impl BackgroundJobRepository {
             .db()?
         else {
             rollback_quietly(transaction).await;
-            return Ok(false);
+            return Ok(JobFailureDisposition::LeaseLost);
         };
         if job.lease_until.is_none_or(|lease_until| lease_until <= now) {
             rollback_quietly(transaction).await;
-            return Ok(false);
+            return Ok(JobFailureDisposition::LeaseLost);
         }
         let linked_transitioned = Self::sync_linked_job_state(
             &transaction,
@@ -351,7 +351,7 @@ impl BackgroundJobRepository {
         .await?;
         if is_tenant_config_job(&job.job_type) && !linked_transitioned {
             rollback_quietly(transaction).await;
-            return Ok(false);
+            return Ok(JobFailureDisposition::LeaseLost);
         }
         let attempts = job.attempts.saturating_sub(1);
         let mut active: background_job::ActiveModel = job.into();
@@ -365,7 +365,7 @@ impl BackgroundJobRepository {
         active.completed_at = Set(None);
         active.update(&transaction).await.db()?;
         transaction.commit().await.db()?;
-        Ok(true)
+        Ok(JobFailureDisposition::Retried { available_at })
     }
 
     /// 当重试无法推进时显式将任务标记为死信（例如没有注册对应类型的处理器）。
@@ -376,7 +376,7 @@ impl BackgroundJobRepository {
         worker_id: &str,
         error_message: &str,
         now: DateTime<Utc>,
-    ) -> AppResult<bool> {
+    ) -> AppResult<JobFailureDisposition> {
         let transaction = db.begin().await.db()?;
         let Some(job) = Self::owned_running_query(job_id, worker_id)
             .lock(LockType::Update)
@@ -385,11 +385,11 @@ impl BackgroundJobRepository {
             .db()?
         else {
             rollback_quietly(transaction).await;
-            return Ok(false);
+            return Ok(JobFailureDisposition::LeaseLost);
         };
         if job.lease_until.is_none_or(|lease_until| lease_until <= now) {
             rollback_quietly(transaction).await;
-            return Ok(false);
+            return Ok(JobFailureDisposition::LeaseLost);
         }
         Self::sync_linked_job_state(
             &transaction,
@@ -408,7 +408,7 @@ impl BackgroundJobRepository {
         active.completed_at = Set(Some(now));
         active.update(&transaction).await.db()?;
         transaction.commit().await.db()?;
-        Ok(true)
+        Ok(JobFailureDisposition::Dead)
     }
 
     /// 将当前租户的一条死信任务重新置为待执行状态。

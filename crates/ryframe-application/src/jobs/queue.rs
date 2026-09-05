@@ -15,7 +15,7 @@ use super::{
 use crate::ports::jobs::{
     BackgroundJobPersistencePort, BackgroundJobReadFilter, BackgroundJobRecord,
     BackgroundJobTransaction, ClaimedJobRecord, ExecutionTenantScope, FailJobCommand,
-    JobFailureOutcome, TenantConfigJobKind,
+    JobFailureOutcome, RecoveredJobLeases, TenantConfigJobKind,
 };
 
 mod filters;
@@ -68,7 +68,7 @@ impl JobQueue {
         worker_id: &str,
         error_message: &str,
         now: DateTime<Utc>,
-    ) -> AppResult<bool> {
+    ) -> AppResult<JobFailureOutcome> {
         self.persistence
             .dead_letter(job_id, worker_id, error_message, now)
             .await
@@ -102,7 +102,7 @@ impl JobQueue {
         available_at: DateTime<Utc>,
         error_message: &str,
         now: DateTime<Utc>,
-    ) -> AppResult<bool> {
+    ) -> AppResult<JobFailureOutcome> {
         self.persistence
             .defer_retryable_conflict(job_id, worker_id, available_at, error_message, now)
             .await
@@ -188,7 +188,7 @@ impl JobQueue {
                 .persistence
                 .recover_expired_leases(now, tenant_scope)
                 .await?;
-            if recovered.requeued.saturating_add(recovered.dead) < 500 {
+            if !recovered_batch_is_full(recovered) {
                 break;
             }
         }
@@ -405,5 +405,32 @@ impl JobQueue {
         if let Some(observer) = self.metrics_observer() {
             observer.record_claim_attempt(queue, result);
         }
+    }
+}
+
+fn recovered_batch_is_full(recovered: RecoveredJobLeases) -> bool {
+    recovered
+        .requeued
+        .saturating_add(recovered.dead)
+        .saturating_add(recovered.completed)
+        >= 500
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RecoveredJobLeases, recovered_batch_is_full};
+
+    #[test]
+    fn completed_recoveries_count_towards_batch_limit() {
+        assert!(recovered_batch_is_full(RecoveredJobLeases {
+            requeued: 200,
+            dead: 100,
+            completed: 200,
+        }));
+        assert!(!recovered_batch_is_full(RecoveredJobLeases {
+            requeued: 200,
+            dead: 100,
+            completed: 199,
+        }));
     }
 }

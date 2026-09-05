@@ -164,6 +164,15 @@ fn job_run_result_label(result: &AppResult<JobRunResult>) -> &'static str {
     }
 }
 
+fn job_run_result_for_failure(outcome: &JobFailureOutcome) -> JobRunResult {
+    match outcome {
+        JobFailureOutcome::Retried { .. } => JobRunResult::Retried,
+        JobFailureOutcome::Dead => JobRunResult::Dead,
+        JobFailureOutcome::Completed => JobRunResult::Succeeded,
+        JobFailureOutcome::LeaseLost => JobRunResult::LeaseLost,
+    }
+}
+
 /// 将未注册任务归并到固定标签，避免异常数据扩大 Prometheus 标签基数。
 fn bounded_job_type_label(registered: bool, job_type: &str) -> &str {
     if registered { job_type } else { "unregistered" }
@@ -193,11 +202,11 @@ impl JobWorker {
     ) -> AppResult<JobRunResult> {
         let now = self.queue.database_now().await?;
         let failure_reason = format!("未注册任务处理器: {}", job.job_type);
-        let completed = self
+        let outcome = self
             .queue
             .dead_letter(job.id, worker_id, &failure_reason, now)
             .await?;
-        Ok(if completed {
+        if matches!(outcome, JobFailureOutcome::Dead) {
             tracing::error!(
                 job_id = job.id,
                 job_type = %job.job_type,
@@ -207,10 +216,8 @@ impl JobWorker {
                 failure_reason,
                 "后台任务因未注册处理器进入死信状态"
             );
-            JobRunResult::Dead
-        } else {
-            JobRunResult::LeaseLost
-        })
+        }
+        Ok(job_run_result_for_failure(&outcome))
     }
 
     async fn finish_failed_job(
@@ -225,11 +232,11 @@ impl JobWorker {
             let retry_after_seconds = (*retry_after_seconds).clamp(1, 86_400);
             let available_at =
                 now + Duration::seconds(i64::try_from(retry_after_seconds).unwrap_or(86_400));
-            let deferred = self
+            let outcome = self
                 .queue
                 .defer_retryable_conflict(job.id, worker_id, available_at, message, now)
                 .await?;
-            return Ok(if deferred {
+            if matches!(outcome, JobFailureOutcome::Retried { .. }) {
                 tracing::debug!(
                     job_id = job.id,
                     job_type = %job.job_type,
@@ -237,16 +244,14 @@ impl JobWorker {
                     retry_at = %available_at,
                     "后台任务因资源暂时被占用而延期，未消耗尝试预算"
                 );
-                JobRunResult::Retried
-            } else {
-                JobRunResult::LeaseLost
-            });
+            }
+            return Ok(job_run_result_for_failure(&outcome));
         }
         let retry_at = now + retry_delay(job.attempts);
         let force_dead = handler.should_dead_letter(&error);
         let error_message = error.to_string();
         let log_error = job_log_error(&job.job_type, &error);
-        match self
+        let outcome = self
             .queue
             .fail(FailJobCommand {
                 job_id: job.id,
@@ -256,8 +261,8 @@ impl JobWorker {
                 force_dead,
                 now,
             })
-            .await?
-        {
+            .await?;
+        match &outcome {
             JobFailureOutcome::Retried { available_at } => {
                 tracing::debug!(
                     job_id = job.id,
@@ -269,7 +274,6 @@ impl JobWorker {
                     error = %log_error,
                     "后台任务执行失败，已安排重试"
                 );
-                Ok(JobRunResult::Retried)
             }
             JobFailureOutcome::Dead => {
                 tracing::error!(
@@ -281,9 +285,40 @@ impl JobWorker {
                     error = %log_error,
                     "后台任务重试耗尽，已进入死信状态"
                 );
-                Ok(JobRunResult::Dead)
             }
-            JobFailureOutcome::LeaseLost => Ok(JobRunResult::LeaseLost),
+            JobFailureOutcome::Completed => {
+                tracing::debug!(
+                    job_id = job.id,
+                    job_type = %job.job_type,
+                    worker_id,
+                    "关联业务已经权威终结，后台任务按成功完成收口"
+                );
+            }
+            JobFailureOutcome::LeaseLost => {}
+        }
+        Ok(job_run_result_for_failure(&outcome))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failure_outcomes_map_to_worker_results() {
+        let retry_at = chrono::Utc::now();
+        for (outcome, expected) in [
+            (
+                JobFailureOutcome::Retried {
+                    available_at: retry_at,
+                },
+                JobRunResult::Retried,
+            ),
+            (JobFailureOutcome::Dead, JobRunResult::Dead),
+            (JobFailureOutcome::Completed, JobRunResult::Succeeded),
+            (JobFailureOutcome::LeaseLost, JobRunResult::LeaseLost),
+        ] {
+            assert_eq!(job_run_result_for_failure(&outcome), expected);
         }
     }
 }

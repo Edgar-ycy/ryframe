@@ -36,6 +36,7 @@ pub struct EnqueueBackgroundJobResult {
 pub struct ExpiredLeaseRecovery {
     pub requeued: u64,
     pub dead: u64,
+    pub completed: u64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -74,6 +75,8 @@ pub enum JobFailureDisposition {
     Retried { available_at: DateTime<Utc> },
     /// 已耗尽最大领取次数。
     Dead,
+    /// 关联业务已经权威终结，后台任务已按成功完成收口。
+    Completed,
     /// 其他 Worker 持有该租约，或该租约已过期并被重新领取。
     LeaseLost,
 }

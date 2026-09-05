@@ -32,8 +32,12 @@ pub struct FailJobCommand<'a> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum JobFailureOutcome {
-    Retried { available_at: DateTime<Utc> },
+    Retried {
+        available_at: DateTime<Utc>,
+    },
     Dead,
+    /// 关联业务已经权威终结，后台任务已按成功完成收口。
+    Completed,
     LeaseLost,
 }
 
@@ -90,6 +94,7 @@ pub struct BackgroundJobTypeStats {
 pub struct RecoveredJobLeases {
     pub requeued: u64,
     pub dead: u64,
+    pub completed: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -143,7 +148,7 @@ pub trait BackgroundJobPersistencePort: Send + Sync {
         worker_id: &'a str,
         error_message: &'a str,
         now: DateTime<Utc>,
-    ) -> ryframe_kernel::AppResult<bool>;
+    ) -> ryframe_kernel::AppResult<JobFailureOutcome>;
 
     async fn renew_lease<'a>(
         &'a self,
@@ -167,7 +172,7 @@ pub trait BackgroundJobPersistencePort: Send + Sync {
         available_at: DateTime<Utc>,
         error_message: &'a str,
         now: DateTime<Utc>,
-    ) -> ryframe_kernel::AppResult<bool>;
+    ) -> ryframe_kernel::AppResult<JobFailureOutcome>;
 
     async fn fail<'a>(
         &'a self,

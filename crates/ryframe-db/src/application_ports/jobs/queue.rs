@@ -74,10 +74,11 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
         worker_id: &'a str,
         error_message: &'a str,
         now: DateTime<Utc>,
-    ) -> ryframe_kernel::AppResult<bool> {
+    ) -> ryframe_kernel::AppResult<JobFailureOutcome> {
         self.repository
             .dead_letter(self.database.write(), job_id, worker_id, error_message, now)
             .await
+            .map(to_failure_outcome)
     }
 
     async fn renew_lease<'a>(
@@ -116,7 +117,7 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
         available_at: DateTime<Utc>,
         error_message: &'a str,
         now: DateTime<Utc>,
-    ) -> ryframe_kernel::AppResult<bool> {
+    ) -> ryframe_kernel::AppResult<JobFailureOutcome> {
         self.repository
             .defer_retryable_conflict(
                 self.database.write(),
@@ -127,6 +128,7 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
                 now,
             )
             .await
+            .map(to_failure_outcome)
     }
 
     async fn fail<'a>(
@@ -175,6 +177,7 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
             .map(|value| RecoveredJobLeases {
                 requeued: value.requeued,
                 dead: value.dead,
+                completed: value.completed,
             })
     }
 
@@ -377,6 +380,7 @@ fn to_failure_outcome(value: DatabaseFailureOutcome) -> JobFailureOutcome {
             JobFailureOutcome::Retried { available_at }
         }
         DatabaseFailureOutcome::Dead => JobFailureOutcome::Dead,
+        DatabaseFailureOutcome::Completed => JobFailureOutcome::Completed,
         DatabaseFailureOutcome::LeaseLost => JobFailureOutcome::LeaseLost,
     }
 }
@@ -428,4 +432,35 @@ async fn transfer_job_owner(
         .await
         .db()
         .map(|transfer| transfer.map(|transfer| transfer.requested_by))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn database_failure_outcomes_keep_terminal_meaning() {
+        let retry_at = Utc::now();
+        for (database, application) in [
+            (
+                DatabaseFailureOutcome::Retried {
+                    available_at: retry_at,
+                },
+                JobFailureOutcome::Retried {
+                    available_at: retry_at,
+                },
+            ),
+            (DatabaseFailureOutcome::Dead, JobFailureOutcome::Dead),
+            (
+                DatabaseFailureOutcome::Completed,
+                JobFailureOutcome::Completed,
+            ),
+            (
+                DatabaseFailureOutcome::LeaseLost,
+                JobFailureOutcome::LeaseLost,
+            ),
+        ] {
+            assert_eq!(to_failure_outcome(database), application);
+        }
+    }
 }
