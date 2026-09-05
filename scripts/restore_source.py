@@ -1,0 +1,209 @@
+"""绑定备份前实际运行的干净构建与已有数据复验；不准备数据或执行备份。"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import urllib.request
+from urllib.parse import urlsplit
+
+from full_stack_process import process_identity, read_process
+from full_stack_runtime import verify_runtime
+from process_sockets import endpoint, verify_listener
+from restore_build import file_digest, verify_build, write_new
+from restore_reference_io import ExternalTools
+from restore_reference_plan import plan_hash, validate_plan
+from restore_runtime import NoRedirect, read_json
+from restore_source_binding import source_binding
+
+
+def instant(value: str) -> dt.datetime:
+    result = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if result.tzinfo is None:
+        raise ValueError("来源证据时间必须包含时区")
+    return result
+
+
+def source_state(backend: Path, plan: dict, build: dict, *, stopped=False) -> dict:
+    verify_build(backend, build, build["source"]["head"])
+    side = plan["source"]
+    directory = Path(side["runtime_dir"])
+    runtime = verify_runtime(backend, directory)
+    if runtime["scope_id"] != side["scope_id"]:
+        raise ValueError("来源运行 scope 与参考计划不同")
+    physical = source_binding(backend, plan)
+    processes = {}
+    urls = {"api": side["api_url"].rstrip("/") + "/readyz", "worker": runtime["worker_ready_url"]}
+    for role in ("api", "worker"):
+        identity = read_process(directory, role, side["scope_id"])
+        artifact = build["artifacts"][role]
+        if (Path(identity["executable"]).resolve() != Path(artifact["executable"]).resolve()
+                or runtime["artifacts"][role] != {"path": artifact["executable"], "sha256": artifact["sha256"]}):
+            raise ValueError("来源 API/Worker 并非所声明干净构建的实际产物")
+        actual = process_identity(identity["pid"])
+        if stopped:
+            if actual is not None:
+                raise ValueError("来源进程尚未停止或 PID 被重用")
+        else:
+            if actual != identity:
+                raise ValueError("来源进程创建身份已变化")
+            endpoint(urls[role])
+            if urlsplit(urls[role]).path != "/readyz":
+                raise ValueError("来源探针必须为明确的 readyz")
+            verify_listener(identity["pid"], urls[role])
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+            with opener.open(urls[role], timeout=10) as response:
+                if response.status != 200:
+                    raise ValueError("来源 API/Worker 尚未就绪")
+        processes[role] = identity
+    return {"runtime": runtime, "processes": processes, "physical_binding": physical}
+
+
+def expected_result(plan: dict, dataset: dict, digest: str) -> dict:
+    if (dataset.get("format_version") != 1 or dataset.get("plan_sha256") != plan_hash(plan)
+            or dataset.get("source_scope_id") != plan["source"]["scope_id"]
+            or type(dataset.get("records")) is not int or dataset["records"] < 100_000
+            or type(dataset.get("object_bytes")) is not int or dataset["object_bytes"] < 1024**3):
+        raise ValueError("来源数据必须绑定原计划且达到参考规模")
+    tenants = dataset["tenants"]
+    expected = {"system", *[f"{plan['source']['scope_id']}-{index:02d}" for index in range(1, 11)]}
+    if (len(tenants) != 11 or {tenant["tenant_id"] for tenant in tenants} != expected
+            or sum(tenant["records"] for tenant in tenants) != dataset["records"]
+            or sum(file["bytes"] for tenant in tenants for file in tenant["files"]) != dataset["object_bytes"]
+            or any(len(tenant["posts"]) < 3 or not tenant["files"] for tenant in tenants)):
+        raise ValueError("来源数据样本、租户或声明规模不一致")
+    return {"format_version": 1, "status": "existing_data_verified", "side": "source",
+            "scope_id": plan["source"]["scope_id"], "plan_sha256": plan_hash(plan),
+            "source_scope_id": dataset["source_scope_id"], "dataset_sha256": digest,
+            "actions": {"business": "read_only", "objects": "read_only", "session": "login_logout"},
+            "restore_success": False, "tenants": len(tenants),
+            "posts": sum(len(tenant["posts"]) for tenant in tenants),
+            "files": sum(len(tenant["files"]) for tenant in tenants)}
+
+
+def verify_source(backend: Path, plan_path: Path, build_path: Path, dataset_path: Path) -> dict:
+    plan, build, dataset = map(read_json, (plan_path, build_path, dataset_path))
+    validate_plan(plan, backend)
+    work = Path(plan["work_dir"])
+    owner = {"format_version": 1, "id": plan["id"], "plan_sha256": plan_hash(plan)}
+    if read_json(work / "reference-owner.json") != owner:
+        raise ValueError("来源复验目录 ownership 不匹配")
+    inputs = {str(path): file_digest(path) for path in (plan_path, build_path, dataset_path)}
+    expected = expected_result(plan, dataset, inputs[str(dataset_path)]["sha256"])
+    started = dt.datetime.now(dt.timezone.utc)
+    if instant(dataset["completed_at"]) > started:
+        raise ValueError("数据准备尚未完成或完成时间位于未来")
+    before = source_state(backend, plan, build)
+    tools = ExternalTools(plan, work)
+    command = [*tools.command("node"), str(backend / "scripts/restore_reference_dataset.mjs"),
+               "--plan", str(plan_path), "--backend-dir", str(backend), "--verify-existing",
+               str(dataset_path), "--side", "source", "--write"]
+    result = tools.execute(command, timeout=1800, env={**os.environ, "RYFRAME_PYTHON": sys.executable})
+    verified = json.loads(result.stdout)
+    if verified != expected:
+        raise ValueError("来源复验结果未绑定同一计划、数据摘要、范围或检查侧")
+    if source_state(backend, plan, build) != before:
+        raise ValueError("来源复验期间构建、配置或进程代次发生变化")
+    if any(file_digest(Path(path)) != digest for path, digest in inputs.items()):
+        raise ValueError("来源复验期间输入证据发生变化")
+    return {"format_version": 1, "kind": "restore-source-runtime", "plan_sha256": plan_hash(plan),
+            "backend_root": str(backend), "scope_id": plan["source"]["scope_id"], "build": build,
+            **before, "inputs": inputs, "dataset_path": str(dataset_path), "verified": verified,
+            "started_at": started.isoformat(), "verified_at": dt.datetime.now(dt.timezone.utc).isoformat()}
+
+
+def stopped_source_evidence(backend: Path, plan: dict, receipt_path: Path) -> tuple[dict, dict, str]:
+    original = file_digest(receipt_path)
+    receipt = read_json(receipt_path)
+    expected = {"format_version": 1, "kind": "restore-source-runtime", "plan_sha256": plan_hash(plan),
+                "backend_root": str(backend), "scope_id": plan["source"]["scope_id"]}
+    if any(receipt.get(key) != value for key, value in expected.items()):
+        raise ValueError("备份来源运行证明与本次计划、源码目录或 scope 不匹配")
+    verify_build(backend, receipt["build"], receipt["build"]["source"]["head"])
+    for filename, digest in receipt["inputs"].items():
+        if file_digest(Path(filename)) != digest:
+            raise ValueError("来源复验证据已变化")
+    dataset_path = Path(receipt["dataset_path"])
+    dataset = read_json(dataset_path)
+    if receipt["verified"] != expected_result(plan, dataset, file_digest(dataset_path)["sha256"]):
+        raise ValueError("来源复验收据被替换或混入恢复目标结果")
+    state = source_state(backend, plan, receipt["build"], stopped=True)
+    if any(receipt.get(key) != value for key, value in state.items()):
+        raise ValueError("来源复验后进程曾重启或运行配置被替换")
+    if not (instant(dataset["completed_at"]) <= instant(receipt["started_at"])
+            <= instant(receipt["verified_at"]) <= dt.datetime.now(dt.timezone.utc)):
+        raise ValueError("来源数据与复验时间顺序不成立")
+    if file_digest(receipt_path) != original:
+        raise ValueError("备份核验期间来源运行收据发生变化")
+    return receipt, state, original["sha256"]
+
+
+def quiesce_source(backend: Path, plan: dict, receipt_path: Path) -> dict:
+    receipt, state, digest = stopped_source_evidence(backend, plan, receipt_path)
+    return {"format_version": 1, "kind": "restore-source-quiescence", "plan_sha256": plan_hash(plan),
+            "scope_id": plan["source"]["scope_id"], "source_runtime_sha256": digest,
+            "source_sha": receipt["build"]["source"]["head"], "processes": state["processes"],
+            "observed_stopped_at": dt.datetime.now(dt.timezone.utc).isoformat()}
+
+
+def verify_stopped_source(backend: Path, plan: dict, inventory: dict, receipt_path: Path,
+                          quiescence_path: Path) -> dict:
+    receipt, state, digest = stopped_source_evidence(backend, plan, receipt_path)
+    verify_build(backend, receipt["build"], inventory["source_sha"])
+    observed_digest = file_digest(quiescence_path)
+    observed = read_json(quiescence_path)
+    expected = {"format_version": 1, "kind": "restore-source-quiescence", "plan_sha256": plan_hash(plan),
+                "scope_id": plan["source"]["scope_id"], "source_runtime_sha256": digest,
+                "source_sha": inventory["source_sha"], "processes": state["processes"]}
+    if set(observed) != set(expected) | {"observed_stopped_at"} or any(observed.get(key) != value for key, value in expected.items()):
+        raise ValueError("停止观察收据与同一来源、构建及进程代次不匹配")
+    if not (instant(receipt["verified_at"]) <= instant(observed["observed_stopped_at"])
+            <= instant(inventory["quiesced_at"]) <= instant(inventory["captured_at"])
+            <= dt.datetime.now(dt.timezone.utc)):
+        raise ValueError("来源复验、实际停止观察与清单采集时间顺序不成立")
+    if file_digest(quiescence_path) != observed_digest:
+        raise ValueError("备份核验期间停止观察收据发生变化")
+    return {"source_runtime_sha256": digest, "source_quiescence_sha256": observed_digest["sha256"]}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    for operation in ("verify", "quiesce"):
+        command = commands.add_parser(operation)
+        names = ("backend-dir", "plan", "output") + (("build-receipt", "dataset") if operation == "verify" else ("source-runtime",))
+        for name in names:
+            command.add_argument("--" + name, type=Path, required=True)
+        command.add_argument("--write", action="store_true", required=True,
+                             help="显式生成新证据；verify 会登录及注销，quiesce 只读观察已登记进程停止状态")
+    args = parser.parse_args()
+    backend, output = args.backend_dir.resolve(), args.output.resolve()
+    outputs = [output, output.with_name(output.name + ".failed.json"), output.with_name(output.name + ".stderr.log")]
+    if any(path.exists() for path in outputs) or not output.is_relative_to(backend / ".local-tests"):
+        raise ValueError("来源运行证明必须使用忽略目录内的新文件")
+    plan = read_json(args.plan)
+    validate_plan(plan, backend)
+    lock = Path(plan["work_dir"]) / ".reference-lock"
+    lock.mkdir(exist_ok=False)
+    try:
+        receipt = (verify_source(backend, args.plan.resolve(), args.build_receipt.resolve(), args.dataset.resolve())
+                   if args.command == "verify" else quiesce_source(backend, plan, args.source_runtime.resolve()))
+    except Exception as error:
+        write_new(output.with_name(output.name + ".failed.json"), {"status": "failed", "error": type(error).__name__}, backend)
+        if isinstance(error, (subprocess.CalledProcessError, subprocess.TimeoutExpired)) and error.stderr:
+            with output.with_name(output.name + ".stderr.log").open("xb") as stream:
+                stream.write(error.stderr)
+        raise
+    finally:
+        lock.rmdir()
+    write_new(output, receipt, backend)
+    print(json.dumps({"output": str(output), "status": "source_verified" if args.command == "verify" else "source_stopped",
+                      "observed_stopped_at": receipt.get("observed_stopped_at"), "restore_success": False}))
+
+
+if __name__ == "__main__":
+    main()

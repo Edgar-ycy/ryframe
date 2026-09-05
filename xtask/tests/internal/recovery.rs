@@ -38,3 +38,15 @@ fn reference_stages_keep_their_existing_arguments() {
     assert_eq!(script, "scripts/restore_reference.py");
     assert_eq!(forwarded, arguments);
 }
+
+#[test]
+fn forwarded_recovery_scripts_exist_in_checkout() {
+    let root = super::workspace::root_dir();
+    for arguments in [strings(&["plan"]), strings(&["runtime", "status"])] {
+        let (script, _) = recovery_command(&arguments, Path::new("unused")).unwrap();
+        assert!(
+            root.join(script).is_file(),
+            "恢复入口转发的脚本不在当前检出中：{script}"
+        );
+    }
+}
