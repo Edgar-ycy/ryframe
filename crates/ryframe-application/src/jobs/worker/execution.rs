@@ -78,26 +78,10 @@ impl JobWorker {
             let heartbeat_queue = self.queue.clone();
             let heartbeat_worker_id = worker_id.to_owned();
             let heartbeat_job_id = job.id;
+            let heartbeat_claim_sequence = job.claim_sequence;
             let lease_duration = self.lease_duration;
-            let operation = async {
-                if let Some(seconds) = job.max_runtime_seconds {
-                    let seconds = u64::try_from(seconds)
-                        .map_err(|_| AppError::Internal("计划任务最大运行时长不是正整数".into()))?;
-                    match time::timeout(
-                        StdDuration::from_secs(seconds),
-                        handler.handle(&claimed_job),
-                    )
-                    .await
-                    {
-                        Ok(result) => result,
-                        Err(_) => Err(AppError::ServiceUnavailable(format!(
-                            "计划任务执行超过最大运行时长 {seconds} 秒"
-                        ))),
-                    }
-                } else {
-                    handler.handle(&claimed_job).await
-                }
-            };
+            let operation =
+                run_job_handler(handler.as_ref(), &claimed_job, job.max_runtime_seconds);
             let handler_result =
                 match run_with_lease_heartbeat(operation, self.heartbeat_interval, move || {
                     let queue = heartbeat_queue.clone();
@@ -105,7 +89,13 @@ impl JobWorker {
                     async move {
                         let now = queue.database_now().await?;
                         queue
-                            .renew_lease(heartbeat_job_id, &worker_id, lease_duration, now)
+                            .renew_lease(
+                                heartbeat_job_id,
+                                heartbeat_claim_sequence,
+                                &worker_id,
+                                lease_duration,
+                                now,
+                            )
                             .await
                     }
                 })
@@ -134,7 +124,10 @@ impl JobWorker {
             match handler_result {
                 Ok(()) => {
                     let now = self.queue.database_now().await?;
-                    let completed = self.queue.complete(job.id, worker_id, now).await?;
+                    let completed = self
+                        .queue
+                        .complete(job.id, job.claim_sequence, worker_id, now)
+                        .await?;
                     Ok(if completed {
                         JobRunResult::Succeeded
                     } else {
@@ -149,6 +142,24 @@ impl JobWorker {
         }
         .instrument(span)
         .await
+    }
+}
+
+async fn run_job_handler(
+    handler: &dyn JobHandler,
+    job: &ClaimedBackgroundJob,
+    max_runtime_seconds: Option<i32>,
+) -> AppResult<()> {
+    let Some(seconds) = max_runtime_seconds else {
+        return handler.handle(job).await;
+    };
+    let seconds = u64::try_from(seconds)
+        .map_err(|_| AppError::Internal("计划任务最大运行时长不是正整数".into()))?;
+    match time::timeout(StdDuration::from_secs(seconds), handler.handle(job)).await {
+        Ok(result) => result,
+        Err(_) => Err(AppError::ServiceUnavailable(format!(
+            "计划任务执行超过最大运行时长 {seconds} 秒"
+        ))),
     }
 }
 
@@ -204,7 +215,7 @@ impl JobWorker {
         let failure_reason = format!("未注册任务处理器: {}", job.job_type);
         let outcome = self
             .queue
-            .dead_letter(job.id, worker_id, &failure_reason, now)
+            .dead_letter(job.id, job.claim_sequence, worker_id, &failure_reason, now)
             .await?;
         if matches!(outcome, JobFailureOutcome::Dead) {
             tracing::error!(
@@ -234,7 +245,14 @@ impl JobWorker {
                 now + Duration::seconds(i64::try_from(retry_after_seconds).unwrap_or(86_400));
             let outcome = self
                 .queue
-                .defer_retryable_conflict(job.id, worker_id, available_at, message, now)
+                .defer_retryable_conflict(
+                    job.id,
+                    job.claim_sequence,
+                    worker_id,
+                    available_at,
+                    message,
+                    now,
+                )
                 .await?;
             if matches!(outcome, JobFailureOutcome::Retried { .. }) {
                 tracing::debug!(
@@ -255,6 +273,7 @@ impl JobWorker {
             .queue
             .fail(FailJobCommand {
                 job_id: job.id,
+                claim_sequence: job.claim_sequence,
                 worker_id,
                 retry_at,
                 error_message: &error_message,

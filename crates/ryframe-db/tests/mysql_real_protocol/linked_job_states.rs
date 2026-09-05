@@ -51,6 +51,14 @@ async fn expired_terminal_linked_jobs_do_not_requeue() {
             2,
         )
         .await?;
+        require_count(
+            &database,
+            "SELECT COUNT(*) AS value FROM sys_background_job_attempt \
+             WHERE job_id IN (7101, 7102) AND outcome = 'lease_expired' \
+             AND finished_at IS NULL AND closed_at IS NOT NULL",
+            2,
+        )
+        .await?;
 
         let repeated = persistence
             .recover_expired_leases(now, &ExecutionTenantScope::all())
@@ -79,6 +87,7 @@ async fn terminal_business_states_converge_across_failure_paths() {
         let failed = persistence
             .fail(FailJobCommand {
                 job_id: 7301,
+                claim_sequence: 1,
                 worker_id: "active-worker",
                 retry_at: now + chrono::Duration::minutes(1),
                 error_message: "late failure",
@@ -88,12 +97,13 @@ async fn terminal_business_states_converge_across_failure_paths() {
             .await
             .map_err(|error| error.to_string())?;
         let dead_lettered = persistence
-            .dead_letter(7302, "active-worker", "missing handler", now)
+            .dead_letter(7302, 1, "active-worker", "missing handler", now)
             .await
             .map_err(|error| error.to_string())?;
         let deferred = persistence
             .defer_retryable_conflict(
                 7303,
+                1,
                 "active-worker",
                 now + chrono::Duration::minutes(1),
                 "busy",
@@ -139,6 +149,79 @@ async fn terminal_business_states_converge_across_failure_paths() {
              WHERE id = 7405 AND status = 'pending' AND completed_at IS NULL",
             1,
         )
+        .await?;
+        require_count(
+            &database,
+            "SELECT COUNT(*) AS value FROM sys_background_job_attempt \
+             WHERE job_id BETWEEN 7301 AND 7303 AND closed_at IS NOT NULL \
+             AND ((job_id = 7301 AND outcome = 'failed') \
+               OR (job_id = 7302 AND outcome = 'dead') \
+               OR (job_id = 7303 AND outcome = 'deferred'))",
+            3,
+        )
+        .await?;
+        require_count(
+            &database,
+            "SELECT COUNT(*) AS value FROM sys_background_job_attempt \
+             WHERE job_id BETWEEN 7301 AND 7303 AND outcome = 'running'",
+            0,
+        )
+        .await
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn linked_state_conflict_rolls_back_attempt_and_background_updates() {
+    run_mysql_test("linked-attempt-conflict", |database| async move {
+        install_control_schema(&database).await?;
+        execute(
+            &database,
+            "INSERT INTO sys_background_job \
+             (id, tenant_id, job_type, payload, status, priority, available_at, attempts, \
+              claim_sequence, max_attempts, lease_owner, lease_until, created_at, updated_at) \
+             VALUES (7501, 'tenant-terminal', 'system.user.import', \
+              JSON_OBJECT('import_job_id', 'missing'), 'running', 0, UTC_TIMESTAMP(6), 1, 1, 3, \
+              'active-worker', DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 1 HOUR), \
+              UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))",
+        )
+        .await?;
+        execute(
+            &database,
+            "INSERT INTO sys_background_job_attempt \
+             (job_id, sequence, available_at, started_at, outcome) \
+             SELECT id, claim_sequence, available_at, updated_at, 'running' \
+             FROM sys_background_job WHERE id = 7501",
+        )
+        .await?;
+        let persistence =
+            application_ports::jobs::queue(ControlDatabaseCluster::single(database.clone()));
+        let now = persistence
+            .database_now()
+            .await
+            .map_err(|error| error.to_string())?;
+        if persistence
+            .dead_letter(7501, 1, "active-worker", "missing link", now)
+            .await
+            .is_ok()
+        {
+            return Err("关联状态冲突必须失败关闭".into());
+        }
+        require_count(
+            &database,
+            "SELECT COUNT(*) AS value FROM sys_background_job \
+             WHERE id = 7501 AND status = 'running' AND claim_sequence = 1 \
+             AND lease_owner = 'active-worker'",
+            1,
+        )
+        .await?;
+        require_count(
+            &database,
+            "SELECT COUNT(*) AS value FROM sys_background_job_attempt \
+             WHERE job_id = 7501 AND sequence = 1 AND outcome = 'running' \
+             AND finished_at IS NULL AND closed_at IS NULL",
+            1,
+        )
         .await
     })
     .await;
@@ -155,14 +238,22 @@ async fn seed_expired_terminal_imports(database: &DatabaseConnection) -> Result<
     execute(
         database,
         "INSERT INTO sys_background_job \
-         (id, tenant_id, job_type, payload, status, priority, available_at, attempts, max_attempts, \
+         (id, tenant_id, job_type, payload, status, priority, available_at, attempts, claim_sequence, max_attempts, \
           lease_owner, lease_until, created_at, updated_at) VALUES \
          (7101, 'tenant-terminal', 'system.user.import', JSON_OBJECT('import_job_id', '7201'), \
-          'running', 0, UTC_TIMESTAMP(6), 1, 3, 'expired-worker', \
+          'running', 0, UTC_TIMESTAMP(6), 1, 1, 3, 'expired-worker', \
           DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 1 SECOND), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)), \
          (7102, 'tenant-terminal', 'system.user.import', JSON_OBJECT('import_job_id', '7202'), \
-          'running', 0, UTC_TIMESTAMP(6), 1, 3, 'expired-worker', \
+          'running', 0, UTC_TIMESTAMP(6), 1, 1, 3, 'expired-worker', \
           DATE_SUB(UTC_TIMESTAMP(6), INTERVAL 1 SECOND), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))",
+    )
+    .await?;
+    execute(
+        database,
+        "INSERT INTO sys_background_job_attempt \
+         (job_id, sequence, available_at, started_at, outcome) \
+         SELECT id, claim_sequence, available_at, updated_at, 'running' \
+         FROM sys_background_job WHERE id IN (7101, 7102)",
     )
     .await?;
     execute(
@@ -183,23 +274,31 @@ async fn seed_failure_path_imports(database: &DatabaseConnection) -> Result<(), 
     execute(
         database,
         "INSERT INTO sys_background_job \
-         (id, tenant_id, job_type, payload, status, priority, available_at, attempts, max_attempts, \
+         (id, tenant_id, job_type, payload, status, priority, available_at, attempts, claim_sequence, max_attempts, \
           lease_owner, lease_until, created_at, updated_at, completed_at) VALUES \
          (7301, 'tenant-terminal', 'system.user.import', JSON_OBJECT('import_job_id', '7401'), \
-          'running', 0, UTC_TIMESTAMP(6), 1, 3, 'active-worker', \
+          'running', 0, UTC_TIMESTAMP(6), 1, 1, 3, 'active-worker', \
           DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 1 HOUR), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), NULL), \
          (7302, 'tenant-terminal', 'system.user.import', JSON_OBJECT('import_job_id', '7402'), \
-          'running', 0, UTC_TIMESTAMP(6), 1, 3, 'active-worker', \
+          'running', 0, UTC_TIMESTAMP(6), 1, 1, 3, 'active-worker', \
           DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 1 HOUR), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), NULL), \
          (7303, 'tenant-terminal', 'system.user.import', JSON_OBJECT('import_job_id', '7403'), \
-          'running', 0, UTC_TIMESTAMP(6), 1, 3, 'active-worker', \
+          'running', 0, UTC_TIMESTAMP(6), 1, 1, 3, 'active-worker', \
           DATE_ADD(UTC_TIMESTAMP(6), INTERVAL 1 HOUR), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), NULL), \
          (7304, 'tenant-terminal', 'system.user.import', JSON_OBJECT('import_job_id', '7404'), \
-          'dead', 0, UTC_TIMESTAMP(6), 3, 3, NULL, NULL, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), \
+          'dead', 0, UTC_TIMESTAMP(6), 3, 3, 3, NULL, NULL, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), \
           UTC_TIMESTAMP(6)), \
          (7305, 'tenant-terminal', 'system.user.import', JSON_OBJECT('import_job_id', '7405'), \
-          'dead', 0, UTC_TIMESTAMP(6), 3, 3, NULL, NULL, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), \
+          'dead', 0, UTC_TIMESTAMP(6), 3, 3, 3, NULL, NULL, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), \
           UTC_TIMESTAMP(6))",
+    )
+    .await?;
+    execute(
+        database,
+        "INSERT INTO sys_background_job_attempt \
+         (job_id, sequence, available_at, started_at, outcome) \
+         SELECT id, claim_sequence, available_at, updated_at, 'running' \
+         FROM sys_background_job WHERE id BETWEEN 7301 AND 7303",
     )
     .await?;
     execute(

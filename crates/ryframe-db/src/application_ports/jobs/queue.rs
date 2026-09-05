@@ -1,6 +1,7 @@
 use crate::DbResultExt;
 use std::sync::Arc;
 
+use crate::repositories::background_job_repo::DeferBackgroundJob;
 use crate::{
     BackgroundJobFilter as DatabaseJobFilter, BackgroundJobRepository,
     BackgroundJobStats as DatabaseJobStats, BackgroundJobTypeStats as DatabaseTypeStats,
@@ -71,12 +72,20 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
     async fn dead_letter<'a>(
         &'a self,
         job_id: i64,
+        claim_sequence: i64,
         worker_id: &'a str,
         error_message: &'a str,
         now: DateTime<Utc>,
     ) -> ryframe_kernel::AppResult<JobFailureOutcome> {
         self.repository
-            .dead_letter(self.database.write(), job_id, worker_id, error_message, now)
+            .dead_letter(
+                self.database.write(),
+                job_id,
+                claim_sequence,
+                worker_id,
+                error_message,
+                now,
+            )
             .await
             .map(to_failure_outcome)
     }
@@ -84,6 +93,7 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
     async fn renew_lease<'a>(
         &'a self,
         job_id: i64,
+        claim_sequence: i64,
         worker_id: &'a str,
         lease_duration: Duration,
         now: DateTime<Utc>,
@@ -92,6 +102,7 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
             .renew_lease(
                 self.database.write(),
                 job_id,
+                claim_sequence,
                 worker_id,
                 lease_duration,
                 now,
@@ -102,17 +113,25 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
     async fn complete<'a>(
         &'a self,
         job_id: i64,
+        claim_sequence: i64,
         worker_id: &'a str,
         now: DateTime<Utc>,
     ) -> ryframe_kernel::AppResult<bool> {
         self.repository
-            .complete(self.database.write(), job_id, worker_id, now)
+            .complete(
+                self.database.write(),
+                job_id,
+                claim_sequence,
+                worker_id,
+                now,
+            )
             .await
     }
 
     async fn defer_retryable_conflict<'a>(
         &'a self,
         job_id: i64,
+        claim_sequence: i64,
         worker_id: &'a str,
         available_at: DateTime<Utc>,
         error_message: &'a str,
@@ -121,11 +140,14 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
         self.repository
             .defer_retryable_conflict(
                 self.database.write(),
-                job_id,
-                worker_id,
-                available_at,
-                error_message,
-                now,
+                DeferBackgroundJob {
+                    job_id,
+                    claim_sequence,
+                    worker_id,
+                    available_at,
+                    error_message,
+                    now,
+                },
             )
             .await
             .map(to_failure_outcome)
@@ -140,6 +162,7 @@ impl BackgroundJobPersistencePort for DatabaseJobQueuePersistence {
                 self.database.write(),
                 FailBackgroundJob {
                     job_id: command.job_id,
+                    claim_sequence: command.claim_sequence,
                     worker_id: command.worker_id,
                     retry_at: command.retry_at,
                     error_message: command.error_message,
@@ -345,6 +368,7 @@ fn to_claimed_record(job: background_job::Model) -> ClaimedJobRecord {
         payload: job.payload,
         lease_owner: job.lease_owner,
         attempts: job.attempts,
+        claim_sequence: job.claim_sequence,
         max_attempts: job.max_attempts,
         max_runtime_seconds: job.max_runtime_seconds,
         traceparent: job.traceparent,

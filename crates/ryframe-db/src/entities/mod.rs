@@ -1,4 +1,5 @@
 pub mod background_job;
+pub mod background_job_attempt;
 pub mod cache_namespace_version;
 pub mod config;
 pub mod data_retention_run;
@@ -31,6 +32,7 @@ pub mod user_import_row_result;
 pub mod user_role;
 
 pub use background_job::Entity as BackgroundJobEntity;
+pub use background_job_attempt::Entity as BackgroundJobAttemptEntity;
 pub use cache_namespace_version::Entity as CacheNamespaceVersionEntity;
 pub use config::Entity as ConfigEntity;
 pub use data_retention_run::Entity as DataRetentionRunEntity;

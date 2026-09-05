@@ -43,9 +43,12 @@ impl BackgroundJobRepository {
             .attempts
             .checked_add(1)
             .ok_or_else(|| AppError::Database("background job attempts overflowed".into()))?;
+        let sequence = super::attempts::next_sequence(job.claim_sequence)?;
+        super::attempts::start(&txn, &job, sequence, now).await?;
         let mut active: background_job::ActiveModel = job.into();
         active.status = Set(background_job::Model::STATUS_RUNNING.to_owned());
         active.attempts = Set(attempts);
+        active.claim_sequence = Set(sequence);
         active.lease_owner = Set(Some(worker_id.to_owned()));
         active.lease_until = Set(Some(now + lease_duration));
         active.updated_at = Set(now);

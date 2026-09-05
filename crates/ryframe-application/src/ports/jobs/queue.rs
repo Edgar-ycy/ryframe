@@ -15,6 +15,8 @@ pub struct ClaimedJobRecord {
     pub payload: serde_json::Value,
     pub lease_owner: Option<String>,
     pub attempts: i32,
+    /// 本次领取的单调序号，用于拒绝同一 Worker 标识的旧租约结果。
+    pub claim_sequence: i64,
     pub max_attempts: i32,
     pub max_runtime_seconds: Option<i32>,
     pub traceparent: Option<String>,
@@ -23,6 +25,7 @@ pub struct ClaimedJobRecord {
 
 pub struct FailJobCommand<'a> {
     pub job_id: i64,
+    pub claim_sequence: i64,
     pub worker_id: &'a str,
     pub retry_at: DateTime<Utc>,
     pub error_message: &'a str,
@@ -145,6 +148,7 @@ pub trait BackgroundJobPersistencePort: Send + Sync {
     async fn dead_letter<'a>(
         &'a self,
         job_id: i64,
+        claim_sequence: i64,
         worker_id: &'a str,
         error_message: &'a str,
         now: DateTime<Utc>,
@@ -153,6 +157,7 @@ pub trait BackgroundJobPersistencePort: Send + Sync {
     async fn renew_lease<'a>(
         &'a self,
         job_id: i64,
+        claim_sequence: i64,
         worker_id: &'a str,
         lease_duration: Duration,
         now: DateTime<Utc>,
@@ -161,6 +166,7 @@ pub trait BackgroundJobPersistencePort: Send + Sync {
     async fn complete<'a>(
         &'a self,
         job_id: i64,
+        claim_sequence: i64,
         worker_id: &'a str,
         now: DateTime<Utc>,
     ) -> ryframe_kernel::AppResult<bool>;
@@ -168,6 +174,7 @@ pub trait BackgroundJobPersistencePort: Send + Sync {
     async fn defer_retryable_conflict<'a>(
         &'a self,
         job_id: i64,
+        claim_sequence: i64,
         worker_id: &'a str,
         available_at: DateTime<Utc>,
         error_message: &'a str,

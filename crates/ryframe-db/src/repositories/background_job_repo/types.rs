@@ -84,10 +84,21 @@ pub enum JobFailureDisposition {
 /// 当前租约内一次失败转换所需的完整输入。
 pub struct FailBackgroundJob<'a> {
     pub job_id: i64,
+    pub claim_sequence: i64,
     pub worker_id: &'a str,
     pub retry_at: DateTime<Utc>,
     pub error_message: &'a str,
     pub force_dead: bool,
+    pub now: DateTime<Utc>,
+}
+
+/// 当前租约内一次可重试冲突延后的完整输入。
+pub struct DeferBackgroundJob<'a> {
+    pub job_id: i64,
+    pub claim_sequence: i64,
+    pub worker_id: &'a str,
+    pub available_at: DateTime<Utc>,
+    pub error_message: &'a str,
     pub now: DateTime<Utc>,
 }
 

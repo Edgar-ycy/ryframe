@@ -22,6 +22,8 @@ pub struct Model {
     pub priority: i32,
     pub available_at: DateTime<Utc>,
     pub attempts: i32,
+    /// 每次领取递增，不随重试预算或人工重试重置。
+    pub claim_sequence: i64,
     pub max_attempts: i32,
     pub lease_owner: Option<String>,
     pub lease_until: Option<DateTime<Utc>>,

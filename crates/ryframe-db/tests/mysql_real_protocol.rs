@@ -12,6 +12,9 @@ use mysql::{
     database_config_with_tls, db_error, execute, integration_enabled, require_count, run_mysql_test,
 };
 
+#[cfg(feature = "migration")]
+#[path = "mysql_real_protocol/job_attempts.rs"]
+mod job_attempts;
 #[path = "mysql_real_protocol/linked_job_states.rs"]
 mod linked_job_states;
 

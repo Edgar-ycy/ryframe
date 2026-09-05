@@ -20,9 +20,10 @@ use crate::{
     repositories::{DataRetentionRepository, ExecutionTenantFilter},
 };
 
+use super::attempts::{self, Outcome};
 use super::{
-    BackgroundJobRepository, ExpiredLeaseRecovery, FailBackgroundJob, JobFailureDisposition,
-    validate_lease,
+    BackgroundJobRepository, DeferBackgroundJob, ExpiredLeaseRecovery, FailBackgroundJob,
+    JobFailureDisposition, validate_lease,
 };
 
 /// 租约到期且尝试次数耗尽时写入的安全诊断原因。
@@ -104,6 +105,9 @@ impl BackgroundJobRepository {
         {
             return Ok(true);
         }
+        if job.status == background_job::Model::STATUS_RUNNING {
+            attempts::close(db, &job, Outcome::LeaseExpired, now).await?;
+        }
         let mut active: background_job::ActiveModel = job.into();
         active.status = Set(background_job::Model::STATUS_PENDING.to_owned());
         active.attempts = Set(0);
@@ -147,6 +151,7 @@ impl BackgroundJobRepository {
         let mut recovery = ExpiredLeaseRecovery::default();
         for job in expired {
             let dead = job.attempts >= job.max_attempts;
+            attempts::close(&transaction, &job, Outcome::LeaseExpired, now).await?;
             let sync_result = Self::sync_linked_job_state(
                 &transaction,
                 &job,
@@ -213,32 +218,34 @@ impl BackgroundJobRepository {
         &self,
         db: &DatabaseConnection,
         job_id: i64,
+        claim_sequence: i64,
         worker_id: &str,
         now: DateTime<Utc>,
     ) -> AppResult<bool> {
-        let result = background_job::Entity::update_many()
-            .col_expr(
-                background_job::Column::Status,
-                Expr::value(background_job::Model::STATUS_SUCCEEDED),
-            )
-            .col_expr(
-                background_job::Column::LeaseOwner,
-                Expr::value(Option::<String>::None),
-            )
-            .col_expr(
-                background_job::Column::LeaseUntil,
-                Expr::value(Option::<DateTime<Utc>>::None),
-            )
-            .col_expr(background_job::Column::UpdatedAt, Expr::value(now))
-            .col_expr(background_job::Column::CompletedAt, Expr::value(now))
-            .filter(background_job::Column::Id.eq(job_id))
-            .filter(background_job::Column::Status.eq(background_job::Model::STATUS_RUNNING))
-            .filter(background_job::Column::LeaseOwner.eq(worker_id))
-            .filter(background_job::Column::LeaseUntil.gt(now))
-            .exec(db)
+        let transaction = db.begin().await.db()?;
+        let Some(job) = Self::owned_running_query(job_id, claim_sequence, worker_id)
+            .lock(LockType::Update)
+            .one(&transaction)
             .await
-            .db()?;
-        Ok(result.rows_affected == 1)
+            .db()?
+        else {
+            rollback_quietly(transaction).await;
+            return Ok(false);
+        };
+        if job.lease_until.is_none_or(|until| until <= now) {
+            rollback_quietly(transaction).await;
+            return Ok(false);
+        }
+        attempts::close(&transaction, &job, Outcome::Succeeded, now).await?;
+        let mut active: background_job::ActiveModel = job.into();
+        active.status = Set(background_job::Model::STATUS_SUCCEEDED.to_owned());
+        active.lease_owner = Set(None);
+        active.lease_until = Set(None);
+        active.updated_at = Set(now);
+        active.completed_at = Set(Some(now));
+        active.update(&transaction).await.db()?;
+        transaction.commit().await.db()?;
+        Ok(true)
     }
 
     /// 续期正在处理的租约。耗时任务应在原租约失效前调用；续期采用比较并交换语义。
@@ -246,6 +253,7 @@ impl BackgroundJobRepository {
         &self,
         db: &DatabaseConnection,
         job_id: i64,
+        claim_sequence: i64,
         worker_id: &str,
         lease_duration: Duration,
         now: DateTime<Utc>,
@@ -259,6 +267,7 @@ impl BackgroundJobRepository {
             .col_expr(background_job::Column::UpdatedAt, Expr::value(now))
             .filter(background_job::Column::Id.eq(job_id))
             .filter(background_job::Column::Status.eq(background_job::Model::STATUS_RUNNING))
+            .filter(background_job::Column::ClaimSequence.eq(claim_sequence))
             .filter(background_job::Column::LeaseOwner.eq(worker_id))
             .filter(background_job::Column::LeaseUntil.gt(now))
             .exec(db)
@@ -275,6 +284,7 @@ impl BackgroundJobRepository {
     ) -> AppResult<JobFailureDisposition> {
         let FailBackgroundJob {
             job_id,
+            claim_sequence,
             worker_id,
             retry_at,
             error_message,
@@ -282,7 +292,7 @@ impl BackgroundJobRepository {
             now,
         } = command;
         let txn = db.begin().await.db()?;
-        let Some(job) = Self::owned_running_query(job_id, worker_id)
+        let Some(job) = Self::owned_running_query(job_id, claim_sequence, worker_id)
             .lock(LockType::Update)
             .one(&txn)
             .await
@@ -297,6 +307,13 @@ impl BackgroundJobRepository {
         }
 
         let dead = force_dead || job.attempts >= job.max_attempts;
+        attempts::close(
+            &txn,
+            &job,
+            if dead { Outcome::Dead } else { Outcome::Failed },
+            now,
+        )
+        .await?;
         let sync_result = Self::sync_linked_job_state(
             &txn,
             &job,
@@ -345,14 +362,18 @@ impl BackgroundJobRepository {
     pub async fn defer_retryable_conflict(
         &self,
         db: &DatabaseConnection,
-        job_id: i64,
-        worker_id: &str,
-        available_at: DateTime<Utc>,
-        error_message: &str,
-        now: DateTime<Utc>,
+        command: DeferBackgroundJob<'_>,
     ) -> AppResult<JobFailureDisposition> {
+        let DeferBackgroundJob {
+            job_id,
+            claim_sequence,
+            worker_id,
+            available_at,
+            error_message,
+            now,
+        } = command;
         let transaction = db.begin().await.db()?;
-        let Some(job) = Self::owned_running_query(job_id, worker_id)
+        let Some(job) = Self::owned_running_query(job_id, claim_sequence, worker_id)
             .lock(LockType::Update)
             .one(&transaction)
             .await
@@ -365,6 +386,7 @@ impl BackgroundJobRepository {
             rollback_quietly(transaction).await;
             return Ok(JobFailureDisposition::LeaseLost);
         }
+        attempts::close(&transaction, &job, Outcome::Deferred, now).await?;
         let sync_result = Self::sync_linked_job_state(
             &transaction,
             &job,
@@ -405,12 +427,13 @@ impl BackgroundJobRepository {
         &self,
         db: &DatabaseConnection,
         job_id: i64,
+        claim_sequence: i64,
         worker_id: &str,
         error_message: &str,
         now: DateTime<Utc>,
     ) -> AppResult<JobFailureDisposition> {
         let transaction = db.begin().await.db()?;
-        let Some(job) = Self::owned_running_query(job_id, worker_id)
+        let Some(job) = Self::owned_running_query(job_id, claim_sequence, worker_id)
             .lock(LockType::Update)
             .one(&transaction)
             .await
@@ -423,6 +446,7 @@ impl BackgroundJobRepository {
             rollback_quietly(transaction).await;
             return Ok(JobFailureDisposition::LeaseLost);
         }
+        attempts::close(&transaction, &job, Outcome::Dead, now).await?;
         let sync_result = Self::sync_linked_job_state(
             &transaction,
             &job,
@@ -523,10 +547,12 @@ impl BackgroundJobRepository {
 
     fn owned_running_query(
         job_id: i64,
+        claim_sequence: i64,
         worker_id: &str,
     ) -> sea_orm::Select<background_job::Entity> {
         background_job::Entity::find_by_id(job_id)
             .filter(background_job::Column::Status.eq(background_job::Model::STATUS_RUNNING))
+            .filter(background_job::Column::ClaimSequence.eq(claim_sequence))
             .filter(background_job::Column::LeaseOwner.eq(worker_id))
     }
 }

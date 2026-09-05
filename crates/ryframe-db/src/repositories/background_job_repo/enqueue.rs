@@ -66,6 +66,7 @@ impl BackgroundJobRepository {
             priority: Set(command.priority),
             available_at: Set(command.available_at),
             attempts: Set(0),
+            claim_sequence: Set(0),
             max_attempts: Set(command.max_attempts),
             lease_owner: Set(None),
             lease_until: Set(None),

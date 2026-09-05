@@ -65,46 +65,59 @@ impl JobQueue {
     pub(super) async fn dead_letter(
         &self,
         job_id: i64,
+        claim_sequence: i64,
         worker_id: &str,
         error_message: &str,
         now: DateTime<Utc>,
     ) -> AppResult<JobFailureOutcome> {
         self.persistence
-            .dead_letter(job_id, worker_id, error_message, now)
+            .dead_letter(job_id, claim_sequence, worker_id, error_message, now)
             .await
     }
 
     pub(super) async fn renew_lease(
         &self,
         job_id: i64,
+        claim_sequence: i64,
         worker_id: &str,
         lease_duration: chrono::Duration,
         now: DateTime<Utc>,
     ) -> AppResult<bool> {
         self.persistence
-            .renew_lease(job_id, worker_id, lease_duration, now)
+            .renew_lease(job_id, claim_sequence, worker_id, lease_duration, now)
             .await
     }
 
     pub(super) async fn complete(
         &self,
         job_id: i64,
+        claim_sequence: i64,
         worker_id: &str,
         now: DateTime<Utc>,
     ) -> AppResult<bool> {
-        self.persistence.complete(job_id, worker_id, now).await
+        self.persistence
+            .complete(job_id, claim_sequence, worker_id, now)
+            .await
     }
 
     pub(super) async fn defer_retryable_conflict(
         &self,
         job_id: i64,
+        claim_sequence: i64,
         worker_id: &str,
         available_at: DateTime<Utc>,
         error_message: &str,
         now: DateTime<Utc>,
     ) -> AppResult<JobFailureOutcome> {
         self.persistence
-            .defer_retryable_conflict(job_id, worker_id, available_at, error_message, now)
+            .defer_retryable_conflict(
+                job_id,
+                claim_sequence,
+                worker_id,
+                available_at,
+                error_message,
+                now,
+            )
             .await
     }
 

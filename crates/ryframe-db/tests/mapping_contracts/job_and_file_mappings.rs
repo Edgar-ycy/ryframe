@@ -124,6 +124,7 @@ fn persistence_mapping_keeps_job_fields() {
         priority: 3,
         available_at: now,
         attempts: 2,
+        claim_sequence: 3,
         max_attempts: 5,
         lease_owner: Some("worker-a".into()),
         lease_until: Some(now),
