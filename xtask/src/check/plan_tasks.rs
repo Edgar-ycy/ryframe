@@ -65,6 +65,7 @@ impl CheckTaskWorkingDirectory {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CheckTaskExecutor {
+    RemovedIdentity,
     RequireFrontendDependencies,
     FullBackendStatic,
     FullSnapshotPrepare,
@@ -85,6 +86,7 @@ pub(crate) enum CheckTaskExecutor {
 impl CheckTaskExecutor {
     pub(crate) const fn label(self) -> &'static str {
         match self {
+            Self::RemovedIdentity => "check_removed_identity",
             Self::RequireFrontendDependencies => "require_frontend_dependencies",
             Self::FullBackendStatic => "run_full_backend_static",
             Self::FullSnapshotPrepare => "prepare_full_snapshots",
@@ -105,6 +107,7 @@ impl CheckTaskExecutor {
 
     pub(crate) const fn description(self) -> &'static str {
         match self {
+            Self::RemovedIdentity => "核对前后端已移除的服务身份能力",
             Self::RequireFrontendDependencies => "确认前端依赖已按锁文件安装",
             Self::FullBackendStatic => "执行后端 feature 注册、格式、Clippy 与策略检查",
             Self::FullSnapshotPrepare => "准备当前后端 OpenAPI 与 MySQL 候选快照",
@@ -125,6 +128,7 @@ impl CheckTaskExecutor {
 
     const fn working_directory(self) -> CheckTaskWorkingDirectory {
         match self {
+            Self::RemovedIdentity => CheckTaskWorkingDirectory::Backend,
             Self::RequireFrontendDependencies
             | Self::FullBackendConsumerContract
             | Self::FullFrontendConsumerContract
@@ -181,15 +185,18 @@ fn full_tasks(scope: CheckScope) -> Vec<CheckTask> {
             &[],
             &["前端测试报告", "前端生产构建"],
         )),
-        CheckScope::Frontend => tasks.push(task(
-            "full.frontend",
-            &[],
-            CheckTaskRepository::Frontend,
-            CheckTaskStage::Build,
-            CheckTaskExecutor::FullFrontend,
-            &[],
-            &["前端测试报告", "前端生产构建"],
-        )),
+        CheckScope::Frontend => {
+            tasks.push(removed_identity_task("full.removed-identity", &[]));
+            tasks.push(task(
+                "full.frontend",
+                &["full.removed-identity"],
+                CheckTaskRepository::Frontend,
+                CheckTaskStage::Build,
+                CheckTaskExecutor::FullFrontend,
+                &[],
+                &["前端测试报告", "前端生产构建"],
+            ));
+        }
     }
     tasks
 }
@@ -275,6 +282,10 @@ fn smart_tasks(selection: &VerifySelection) -> Vec<CheckTask> {
         );
     let mut tasks = Vec::new();
     let mut previous = None;
+    if selection.backend_packages.is_empty() && !selection.frontend_profiles.is_empty() {
+        tasks.push(removed_identity_task("smart.removed-identity", &[]));
+        previous = Some("smart.removed-identity");
+    }
     if prepare_snapshots {
         tasks.push(task(
             "smart.snapshots-prepare",
@@ -340,11 +351,24 @@ fn smart_tasks(selection: &VerifySelection) -> Vec<CheckTask> {
 fn dependency(previous: Option<&'static str>) -> &'static [&'static str] {
     match previous {
         Some("smart.snapshots-prepare") => &["smart.snapshots-prepare"],
+        Some("smart.removed-identity") => &["smart.removed-identity"],
         Some("smart.backend-packages") => &["smart.backend-packages"],
         Some("smart.snapshots-verify") => &["smart.snapshots-verify"],
         Some("smart.consumer-contract") => &["smart.consumer-contract"],
         Some(_) | None => &[],
     }
+}
+
+fn removed_identity_task(id: &'static str, dependencies: &'static [&'static str]) -> CheckTask {
+    task(
+        id,
+        dependencies,
+        CheckTaskRepository::CrossRepository,
+        CheckTaskStage::Static,
+        CheckTaskExecutor::RemovedIdentity,
+        &[],
+        &[],
+    )
 }
 
 fn task(

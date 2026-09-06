@@ -1,3 +1,5 @@
+use std::path::Path;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PolicyProfile {
     Full,
@@ -12,6 +14,7 @@ pub(crate) struct PythonPolicyTask {
     full_order: Option<u8>,
     smart_order: Option<u8>,
     ci_preflight_order: Option<u8>,
+    requires_frontend: bool,
 }
 
 impl PythonPolicyTask {
@@ -22,6 +25,15 @@ impl PythonPolicyTask {
             PolicyProfile::CiPreflight => self.ci_preflight_order,
         }
     }
+
+    pub(crate) fn arguments(self, frontend_dir: &Path) -> Vec<String> {
+        let mut arguments = vec![self.script.to_owned()];
+        if self.requires_frontend {
+            arguments.push("--frontend-dir".to_owned());
+            arguments.push(frontend_dir.to_string_lossy().into_owned());
+        }
+        arguments
+    }
 }
 
 pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
@@ -31,6 +43,7 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
         full_order: Some(0),
         smart_order: Some(0),
         ci_preflight_order: Some(2),
+        requires_frontend: false,
     },
     PythonPolicyTask {
         id: "deployment-assets",
@@ -38,6 +51,7 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
         full_order: Some(1),
         smart_order: None,
         ci_preflight_order: Some(5),
+        requires_frontend: false,
     },
     PythonPolicyTask {
         id: "migration-history",
@@ -45,6 +59,7 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
         full_order: Some(2),
         smart_order: Some(1),
         ci_preflight_order: None,
+        requires_frontend: false,
     },
     PythonPolicyTask {
         id: "prerelease-dependencies",
@@ -52,6 +67,7 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
         full_order: Some(3),
         smart_order: None,
         ci_preflight_order: Some(0),
+        requires_frontend: false,
     },
     PythonPolicyTask {
         id: "permission-routes",
@@ -59,6 +75,7 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
         full_order: Some(4),
         smart_order: Some(2),
         ci_preflight_order: Some(3),
+        requires_frontend: false,
     },
     PythonPolicyTask {
         id: "removed-identity",
@@ -66,6 +83,7 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
         full_order: Some(5),
         smart_order: Some(3),
         ci_preflight_order: Some(4),
+        requires_frontend: true,
     },
     PythonPolicyTask {
         id: "supply-chain",
@@ -73,6 +91,7 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
         full_order: Some(6),
         smart_order: None,
         ci_preflight_order: Some(1),
+        requires_frontend: false,
     },
 ];
 

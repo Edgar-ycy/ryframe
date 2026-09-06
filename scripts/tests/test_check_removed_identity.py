@@ -58,11 +58,28 @@ class RemovedIdentityTests(unittest.TestCase):
                     self.assertTrue(check(root, frontend))
                     target.write_text(files[relative], encoding="utf-8")
 
+            source = root / "crates/api/src/lib.rs"
+            for symbol in (
+                "agent_query",
+                "agent_capability",
+                "agent_directory",
+                "agent_limiter",
+            ):
+                with self.subTest(symbol=symbol):
+                    source.write_text(f"pub fn {symbol}() {{}}", encoding="utf-8")
+                    self.assertTrue(check(root, frontend))
+                    source.write_text(files["crates/api/src/lib.rs"], encoding="utf-8")
+
             removed_paths = [
                 "crates/ryframe-application/src/agent/mod.rs",
+                "crates/ryframe-application/src/ports/service_accounts/mod.rs",
+                "crates/ryframe-application/src/system/service_account/mod.rs",
+                "crates/ryframe-db/src/application_ports/agent/mod.rs",
                 "crates/ryframe-db/src/application_ports/service_accounts/mod.rs",
                 "frontend/src/api/generated/operations/agent.ts",
+                "frontend/src/api/generated/schema/agent.ts",
                 "frontend/src/features/service-accounts/manifest.ts",
+                "frontend/src/views/system/service-accounts/index.vue",
             ]
             for relative in removed_paths:
                 with self.subTest(relative=relative):

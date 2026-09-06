@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::path::Path;
 
 use super::check::{PYTHON_POLICY_TASKS, PolicyProfile, policy_tasks};
 
@@ -45,5 +46,27 @@ fn smart_and_ci_profiles_reuse_the_same_policy_task_definitions() {
             "scripts/check_removed_identity.py",
             "scripts/check_deployment_assets.py",
         ]
+    );
+}
+
+#[test]
+fn removed_identity_task_binds_the_frontend_directory_without_splitting_it() {
+    let frontend = Path::new("D:/包含 空格/ryframe-vue3");
+    let task = PYTHON_POLICY_TASKS
+        .iter()
+        .find(|task| task.id == "removed-identity")
+        .unwrap();
+
+    assert_eq!(
+        task.arguments(frontend),
+        [
+            "scripts/check_removed_identity.py",
+            "--frontend-dir",
+            "D:/包含 空格/ryframe-vue3",
+        ]
+    );
+    assert_eq!(
+        PYTHON_POLICY_TASKS[0].arguments(frontend),
+        ["scripts/check_architecture.py"]
     );
 }

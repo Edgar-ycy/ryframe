@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use super::{
     PYTHON_TEST_ARGS, backend, backend_packages, frontend_profiles, require_frontend_dependencies,
-    run_parallel_tasks,
+    run_parallel_tasks, run_removed_identity,
 };
 use crate::{
     Result,
@@ -47,6 +47,9 @@ fn execute_task(
     state: &mut CheckExecutionState,
 ) -> Result<()> {
     match executor {
+        CheckTaskExecutor::RemovedIdentity => {
+            run_removed_identity(&context.root, &context.frontend_dir)
+        }
         CheckTaskExecutor::SmartSnapshotPrepare
         | CheckTaskExecutor::SmartBackendPackages
         | CheckTaskExecutor::SmartSnapshotVerify
@@ -130,6 +133,7 @@ fn execute_full_task(
             &context.root,
             context.targets.backend.as_str(),
             context.jobs.backend,
+            &context.frontend_dir,
         ),
         CheckTaskExecutor::FullSnapshotPrepare => {
             state.snapshots = Some(prepare_backend_snapshots(

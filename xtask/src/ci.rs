@@ -51,7 +51,7 @@ impl CiPlan {
 pub(crate) fn run(command: CiCommand, frontend_dir: &Path) -> Result<()> {
     match command {
         CiCommand::Plan => plan(),
-        CiCommand::Preflight => preflight(),
+        CiCommand::Preflight => preflight(frontend_dir),
         CiCommand::RustGate => rust_gate(frontend_dir),
         CiCommand::ResourceGate => resource_gate::run(frontend_dir),
         CiCommand::Integration => integration(),
@@ -265,7 +265,7 @@ fn write_github_outputs(plan: CiPlan) -> Result<()> {
     Ok(())
 }
 
-fn preflight() -> Result<()> {
+fn preflight(frontend_dir: &Path) -> Result<()> {
     let root = root_dir();
     run_process(&root, "cargo", &["fmt", "--all", "--", "--check"])?;
     run_process(&root, "python", &["scripts/check_python_environment.py"])?;
@@ -283,7 +283,7 @@ fn preflight() -> Result<()> {
         ],
     )?;
     for task in policy_tasks(PolicyProfile::CiPreflight) {
-        run_process(&root, "python", &[task.script])?;
+        run_owned(&root, "python", &task.arguments(frontend_dir))?;
     }
     let migration_args = preflight_migration_args(
         env::var("RYFRAME_CI_BASE_SHA")

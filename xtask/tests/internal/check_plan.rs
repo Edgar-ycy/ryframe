@@ -68,15 +68,19 @@ fn full_scope_keeps_backend_contract_and_frontend_only_paths_distinct() {
     );
 
     let frontend = tasks_for(CheckScope::Frontend, &CheckPlanMode::ExplicitFull);
-    assert_eq!(frontend.len(), 1);
-    assert_eq!(frontend[0].id, "full.frontend");
+    assert_eq!(frontend.len(), 2);
+    assert_eq!(frontend[0].id, "full.removed-identity");
     assert!(frontend[0].dependencies.is_empty());
-    assert_eq!(frontend[0].repository, CheckTaskRepository::Frontend);
+    assert_eq!(frontend[0].repository, CheckTaskRepository::CrossRepository);
+    assert_eq!(frontend[0].executor, CheckTaskExecutor::RemovedIdentity);
+    assert_eq!(frontend[1].id, "full.frontend");
+    assert_eq!(frontend[1].dependencies, ["full.removed-identity"]);
+    assert_eq!(frontend[1].repository, CheckTaskRepository::Frontend);
     assert_eq!(
-        frontend[0].working_directory,
+        frontend[1].working_directory,
         CheckTaskWorkingDirectory::Frontend
     );
-    assert_eq!(frontend[0].executor, CheckTaskExecutor::FullFrontend);
+    assert_eq!(frontend[1].executor, CheckTaskExecutor::FullFrontend);
 }
 
 #[test]
@@ -120,7 +124,7 @@ fn smart_frontend_only_and_documentation_plans_do_not_invent_backend_work() {
     );
     assert_eq!(
         task_ids(&frontend_mode, CheckScope::Frontend),
-        ["smart.frontend"]
+        ["smart.removed-identity", "smart.frontend"]
     );
     let CheckPlanMode::Selected(selection) = frontend_mode else {
         panic!("前端代码变更应生成智能计划");

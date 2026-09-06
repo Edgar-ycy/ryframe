@@ -11,7 +11,7 @@ use super::{
     metrics,
     model::{BackendSnapshotProfile, FrontendProfile},
     plan::{CheckPlanMode, build_task_plan, render_plan, validate_plan},
-    policy_tasks::{PolicyProfile, policy_tasks},
+    policy_tasks::{PYTHON_POLICY_TASKS, PolicyProfile, policy_tasks},
     resource::resource_workspace_compilation,
     selection::{frontend_profile_commands, load_workspace_metadata},
     snapshot::{
@@ -211,14 +211,14 @@ fn require_frontend_dependencies(frontend_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn backend(root: &Path, backend_target: &str, jobs: usize) -> Result<()> {
+fn backend(root: &Path, backend_target: &str, jobs: usize, frontend_dir: &Path) -> Result<()> {
     check_feature_registry(root)?;
     run_process(root, "cargo", &["fmt", "--all", "--", "--check"])?;
     // Clippy 会先完成 Workspace 全目标类型检查，无需再执行覆盖范围更小的 cargo check。
     let clippy = workspace_clippy_args(backend_target, jobs);
     run_owned(root, "cargo", &clippy)?;
     for task in policy_tasks(PolicyProfile::Full) {
-        run_process(root, "python", &[task.script])?;
+        run_owned(root, "python", &task.arguments(frontend_dir))?;
     }
     Ok(())
 }
@@ -273,9 +273,17 @@ fn backend_packages(
         )?;
     }
     for task in policy_tasks(PolicyProfile::Smart) {
-        run_process(root, "python", &[task.script])?;
+        run_owned(root, "python", &task.arguments(&context.frontend_dir))?;
     }
     Ok(())
+}
+
+pub(super) fn run_removed_identity(root: &Path, frontend_dir: &Path) -> Result<()> {
+    let task = PYTHON_POLICY_TASKS
+        .iter()
+        .find(|task| task.id == "removed-identity")
+        .ok_or("服务身份删除检查任务未登记")?;
+    run_owned(root, "python", &task.arguments(frontend_dir))
 }
 
 fn frontend_profiles(
