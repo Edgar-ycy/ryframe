@@ -6,17 +6,13 @@ import argparse
 import hashlib
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 from release_stage import release_stage
-
-
-def git(root: Path, *arguments: str) -> bytes:
-    return subprocess.check_output(["git", "-C", str(root), *arguments])
+from source_inventory import git, snapshot
 
 
 def validate_paths(backend: Path, frontend: Path, output: Path) -> None:
@@ -37,35 +33,6 @@ def validate_paths(backend: Path, frontend: Path, output: Path) -> None:
         raise ValueError("输出不能包含源仓库")
     relative = output.relative_to(backend).as_posix()
     git(backend, "check-ignore", relative)
-
-
-def snapshot(root: Path) -> tuple[dict, bytes]:
-    head = git(root, "rev-parse", "HEAD").decode().strip()
-    if not re.fullmatch(r"[a-f0-9]{40}", head):
-        raise ValueError("源码 HEAD 不是有效 SHA")
-    patch = git(root, "diff", "--binary", "HEAD")
-    files = []
-    for raw in sorted(
-        git(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0")
-    ):
-        if not raw:
-            continue
-        relative = raw.decode("utf-8")
-        path = root / relative
-        if (
-            path.is_symlink()
-            or not path.resolve().is_relative_to(root)
-            or not path.is_file()
-        ):
-            raise ValueError("未跟踪文件越界、不是普通文件或包含符号链接")
-        files.append(
-            {"path": relative, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
-        )
-    return {
-        "head": head,
-        "patch_sha256": hashlib.sha256(patch).hexdigest(),
-        "files": files,
-    }, patch
 
 
 def run(
