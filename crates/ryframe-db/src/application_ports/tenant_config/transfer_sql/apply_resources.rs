@@ -2,6 +2,7 @@ use super::*;
 use crate::DbResultExt;
 
 mod roles;
+mod simple;
 
 pub(crate) async fn apply_resources_in_transaction(
     transaction: &sea_orm::DatabaseTransaction,
@@ -112,7 +113,10 @@ pub(crate) async fn apply_resources_in_transaction(
         }
     }
 
-    upsert_simple_resources(transaction, tenant_id, resources, &changed, now).await?;
+    simple::upsert_posts(transaction, tenant_id, resources, &changed, now).await?;
+    simple::upsert_dict_types(transaction, tenant_id, resources, &changed, now).await?;
+    simple::upsert_dict_data(transaction, tenant_id, resources, &changed, now).await?;
+    simple::upsert_configs(transaction, tenant_id, resources, &changed, now).await?;
     upsert_permissions(
         transaction,
         tenant_id,
@@ -131,150 +135,6 @@ pub(crate) async fn apply_resources_in_transaction(
         now,
     )
     .await
-}
-
-async fn upsert_simple_resources(
-    transaction: &sea_orm::DatabaseTransaction,
-    tenant_id: &str,
-    resources: &TenantConfigPackageResources,
-    changed: &BTreeSet<(String, String)>,
-    now: DateTime<Utc>,
-) -> AppResult<()> {
-    for item in &resources.posts {
-        if !changed.contains(&("post".to_owned(), normalize_stable_key(&item.code))) {
-            continue;
-        }
-        let existing = post::Entity::find()
-            .filter(post::Column::TenantId.eq(tenant_id))
-            .all(transaction)
-            .await
-            .db()?
-            .into_iter()
-            .find(|candidate| {
-                normalize_stable_key(&candidate.code) == normalize_stable_key(&item.code)
-            });
-        let model = post::Model {
-            id: existing.as_ref().map(|item| item.id).unwrap_or(next_id()?),
-            tenant_id: tenant_id.to_owned(),
-            name: item.name.clone(),
-            code: item.code.clone(),
-            sort: item.sort,
-            status: item.status.clone(),
-            remark: item.remark.clone(),
-            del_flag: post::SOFT_DELETE_ACTIVE.to_owned(),
-            created_at: existing.as_ref().map(|item| item.created_at).unwrap_or(now),
-            updated_at: now,
-        };
-        save_model(
-            transaction,
-            existing.is_some(),
-            post::ActiveModel::from(model),
-        )
-        .await?;
-    }
-    for item in &resources.dict_types {
-        if !changed.contains(&("dict_type".to_owned(), normalize_stable_key(&item.code))) {
-            continue;
-        }
-        let existing = dict_type::Entity::find()
-            .filter(dict_type::Column::TenantId.eq(tenant_id))
-            .all(transaction)
-            .await
-            .db()?
-            .into_iter()
-            .find(|candidate| {
-                normalize_stable_key(&candidate.code) == normalize_stable_key(&item.code)
-            });
-        let model = dict_type::Model {
-            id: existing.as_ref().map(|item| item.id).unwrap_or(next_id()?),
-            tenant_id: tenant_id.to_owned(),
-            name: item.name.clone(),
-            code: item.code.clone(),
-            status: item.status.clone(),
-            remark: item.remark.clone(),
-            del_flag: dict_type::Model::DEL_FLAG_NORMAL.to_owned(),
-            created_at: existing.as_ref().map(|item| item.created_at).unwrap_or(now),
-            updated_at: now,
-        };
-        save_model(
-            transaction,
-            existing.is_some(),
-            dict_type::ActiveModel::from(model),
-        )
-        .await?;
-    }
-    for item in &resources.dict_data {
-        let key = format!("{}:{}:{}", item.type_code.len(), item.type_code, item.value);
-        if !changed.contains(&("dict_data".to_owned(), normalize_stable_key(&key))) {
-            continue;
-        }
-        let existing = dict_data::Entity::find()
-            .filter(dict_data::Column::TenantId.eq(tenant_id))
-            .all(transaction)
-            .await
-            .db()?
-            .into_iter()
-            .find(|candidate| {
-                normalize_stable_key(&candidate.type_code) == normalize_stable_key(&item.type_code)
-                    && normalize_stable_key(&candidate.value) == normalize_stable_key(&item.value)
-            });
-        let model = dict_data::Model {
-            id: existing.as_ref().map(|item| item.id).unwrap_or(next_id()?),
-            tenant_id: tenant_id.to_owned(),
-            type_code: item.type_code.clone(),
-            label: item.label.clone(),
-            value: item.value.clone(),
-            sort: item.sort,
-            status: item.status.clone(),
-            css_class: item.css_class.clone(),
-            remark: item.remark.clone(),
-            del_flag: dict_data::Model::DEL_FLAG_NORMAL.to_owned(),
-            created_at: existing.as_ref().map(|item| item.created_at).unwrap_or(now),
-            updated_at: now,
-        };
-        save_model(
-            transaction,
-            existing.is_some(),
-            dict_data::ActiveModel::from(model),
-        )
-        .await?;
-    }
-    for item in &resources.configs {
-        if !changed.contains(&("config".to_owned(), normalize_stable_key(&item.key))) {
-            continue;
-        }
-        if ryframe_application::system::platform::is_sensitive_config_key(&item.key) {
-            return Err(AppError::Validation("敏感参数不能应用".into()));
-        }
-        let existing = config::Entity::find()
-            .filter(config::Column::TenantId.eq(tenant_id))
-            .all(transaction)
-            .await
-            .db()?
-            .into_iter()
-            .find(|candidate| {
-                normalize_stable_key(&candidate.key) == normalize_stable_key(&item.key)
-            });
-        let model = config::Model {
-            id: existing.as_ref().map(|item| item.id).unwrap_or(next_id()?),
-            tenant_id: tenant_id.to_owned(),
-            name: item.name.clone(),
-            key: item.key.clone(),
-            value: item.value.clone(),
-            portable: true,
-            remark: item.remark.clone(),
-            del_flag: config::Model::DEL_FLAG_NORMAL.to_owned(),
-            created_at: existing.as_ref().map(|item| item.created_at).unwrap_or(now),
-            updated_at: now,
-        };
-        save_model(
-            transaction,
-            existing.is_some(),
-            config::ActiveModel::from(model),
-        )
-        .await?;
-    }
-    Ok(())
 }
 
 async fn save_model<A>(
@@ -394,39 +254,10 @@ async fn upsert_menus(
     changed: &BTreeSet<(String, String)>,
     now: DateTime<Utc>,
 ) -> AppResult<()> {
-    let permissions = permission::Entity::find()
-        .filter(permission::Column::TenantId.eq(tenant_id))
-        .all(transaction)
-        .await
-        .db()?;
-    let permission_ids = permissions
-        .into_iter()
-        .map(|item| (normalize_stable_key(&item.code), item.id))
-        .collect::<BTreeMap<_, _>>();
-    let existing = menu::Entity::find()
-        .filter(menu::Column::TenantId.eq(tenant_id))
-        .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
-        .all(transaction)
-        .await
-        .db()?;
-    let existing_permission_codes = permission::Entity::find()
-        .filter(permission::Column::TenantId.eq(tenant_id))
-        .all(transaction)
-        .await
-        .db()?
-        .into_iter()
-        .map(|item| (item.id, item.code))
-        .collect::<BTreeMap<_, _>>();
-    let stable_keys = build_menu_stable_keys(&existing, &existing_permission_codes)?;
-    let mut by_key = existing
-        .into_iter()
-        .filter_map(|item| {
-            stable_keys
-                .get(&item.id)
-                .cloned()
-                .map(|key| (normalize_stable_key(&key), item))
-        })
-        .collect::<BTreeMap<_, _>>();
+    let MenuApplyCatalog {
+        permission_ids,
+        mut by_key,
+    } = load_menu_catalog(transaction, tenant_id).await?;
     let source_keys = resources
         .iter()
         .map(|item| normalize_stable_key(&item.stable_key))
@@ -468,28 +299,7 @@ async fn upsert_menus(
                         .ok_or_else(|| AppError::Conflict(format!("菜单引用的权限 {code} 不存在")))
                 })
                 .transpose()?;
-            match item.menu_type.as_str() {
-                menu::Model::MENU_TYPE_DIR => {
-                    if item.route_key.is_none() {
-                        return Err(AppError::Validation("目录菜单必须声明 route_key".into()));
-                    }
-                }
-                menu::Model::MENU_TYPE_MENU => {
-                    if item.route_key.is_none() || perm_id.is_none() {
-                        return Err(AppError::Validation(
-                            "页面菜单必须声明 route_key 并绑定权限".into(),
-                        ));
-                    }
-                }
-                menu::Model::MENU_TYPE_BUTTON => {
-                    if item.route_key.is_some() || perm_id.is_none() || parent_id.is_none() {
-                        return Err(AppError::Validation(
-                            "操作菜单必须绑定权限和父菜单，且不能声明 route_key".into(),
-                        ));
-                    }
-                }
-                _ => return Err(AppError::Validation("配置包菜单类型不受支持".into())),
-            }
+            validate_portable_menu(item, perm_id, parent_id)?;
             if !changed.contains(&("menu".to_owned(), normalize_stable_key(&item.stable_key))) {
                 continue;
             }
@@ -527,4 +337,82 @@ async fn upsert_menus(
         remaining = deferred;
     }
     Ok(())
+}
+
+fn validate_portable_menu(
+    item: &PortableMenu,
+    perm_id: Option<i64>,
+    parent_id: Option<i64>,
+) -> AppResult<()> {
+    match item.menu_type.as_str() {
+        menu::Model::MENU_TYPE_DIR => {
+            if item.route_key.is_none() {
+                return Err(AppError::Validation("目录菜单必须声明 route_key".into()));
+            }
+        }
+        menu::Model::MENU_TYPE_MENU => {
+            if item.route_key.is_none() || perm_id.is_none() {
+                return Err(AppError::Validation(
+                    "页面菜单必须声明 route_key 并绑定权限".into(),
+                ));
+            }
+        }
+        menu::Model::MENU_TYPE_BUTTON => {
+            if item.route_key.is_some() || perm_id.is_none() || parent_id.is_none() {
+                return Err(AppError::Validation(
+                    "操作菜单必须绑定权限和父菜单，且不能声明 route_key".into(),
+                ));
+            }
+        }
+        _ => return Err(AppError::Validation("配置包菜单类型不受支持".into())),
+    }
+    Ok(())
+}
+
+struct MenuApplyCatalog {
+    permission_ids: BTreeMap<String, i64>,
+    by_key: BTreeMap<String, menu::Model>,
+}
+
+async fn load_menu_catalog(
+    transaction: &sea_orm::DatabaseTransaction,
+    tenant_id: &str,
+) -> AppResult<MenuApplyCatalog> {
+    let permissions = permission::Entity::find()
+        .filter(permission::Column::TenantId.eq(tenant_id))
+        .all(transaction)
+        .await
+        .db()?;
+    let permission_ids = permissions
+        .into_iter()
+        .map(|item| (normalize_stable_key(&item.code), item.id))
+        .collect::<BTreeMap<_, _>>();
+    let existing = menu::Entity::find()
+        .filter(menu::Column::TenantId.eq(tenant_id))
+        .filter(menu::Column::DelFlag.eq(menu::Model::DEL_FLAG_NORMAL))
+        .all(transaction)
+        .await
+        .db()?;
+    let existing_permission_codes = permission::Entity::find()
+        .filter(permission::Column::TenantId.eq(tenant_id))
+        .all(transaction)
+        .await
+        .db()?
+        .into_iter()
+        .map(|item| (item.id, item.code))
+        .collect::<BTreeMap<_, _>>();
+    let stable_keys = build_menu_stable_keys(&existing, &existing_permission_codes)?;
+    let by_key = existing
+        .into_iter()
+        .filter_map(|item| {
+            stable_keys
+                .get(&item.id)
+                .cloned()
+                .map(|key| (normalize_stable_key(&key), item))
+        })
+        .collect::<BTreeMap<_, _>>();
+    Ok(MenuApplyCatalog {
+        permission_ids,
+        by_key,
+    })
 }
