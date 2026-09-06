@@ -4,8 +4,8 @@ import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
-import tempfile
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 from unittest.mock import patch
 
 import devex_clone_post_process as process
@@ -18,7 +18,7 @@ from restore_build import file_digest
 class IdentityProducerTests(unittest.TestCase):
     def setUp(self):
         self.backend = next(path for path in Path(__file__).resolve().parents if (path / 'Cargo.toml').is_file())
-        temporary = tempfile.TemporaryDirectory(dir=self.backend / '.local-tests/tmp', prefix='identity-producer-')
+        temporary = WorkspaceDirectory(dir=self.backend / '.local-tests/tmp', prefix='identity-producer-')
         self.addCleanup(temporary.cleanup)
         self.directory = Path(temporary.name).resolve()
         write_json(self.directory / 'manifest.json', {'kind': 'isolated-producer-fixture'})

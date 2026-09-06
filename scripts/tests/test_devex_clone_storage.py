@@ -3,8 +3,8 @@ from contextlib import ExitStack, nullcontext
 import copy
 import os
 from pathlib import Path
-import tempfile
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 from unittest.mock import Mock, patch
 
 import devex_clone_storage as storage
@@ -18,7 +18,7 @@ from full_stack_process import process_identity, write_receipt
 class StorageTests(unittest.TestCase):
     def setUp(self):
         self.backend = next(path for path in Path(__file__).resolve().parents if (path / "Cargo.toml").is_file())
-        temporary = tempfile.TemporaryDirectory(dir=self.backend / ".local-tests/tmp", prefix="sr-")
+        temporary = WorkspaceDirectory(dir=self.backend / ".local-tests/tmp", prefix="sr-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         self.directory = self.root / "run"

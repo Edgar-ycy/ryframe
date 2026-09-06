@@ -4,11 +4,11 @@ import io
 import os
 from pathlib import Path
 import sys
-import tempfile
 import threading
 import time
 from types import SimpleNamespace
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -22,7 +22,7 @@ from restore_build import file_digest
 class ProducerTests(unittest.TestCase):
     def setUp(self):
         self.backend = next(path for path in Path(__file__).resolve().parents if (path / 'Cargo.toml').is_file())
-        temporary = tempfile.TemporaryDirectory(dir=self.backend / '.local-tests/tmp', prefix='post-producer-')
+        temporary = WorkspaceDirectory(dir=self.backend / '.local-tests/tmp', prefix='post-producer-')
         self.addCleanup(temporary.cleanup)
         self.directory = Path(temporary.name).resolve()
         write_json(self.directory / 'manifest.json', {'id': 'fixture-only'})

@@ -4,9 +4,9 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
-import tempfile
 from types import SimpleNamespace
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 from unittest.mock import patch, Mock
 
 import devex_clone_seed as seed
@@ -20,7 +20,7 @@ from restore_reference_plan import plan_hash
 class SeedTests(unittest.TestCase):
     def setUp(self):
         repository = next(path for path in Path(__file__).resolve().parents if (path / "Cargo.toml").is_file())
-        temporary = tempfile.TemporaryDirectory(dir=repository / ".local-tests/tmp", prefix="seed-evidence-")
+        temporary = WorkspaceDirectory(dir=repository / ".local-tests/tmp", prefix="seed-evidence-")
         self.addCleanup(temporary.cleanup)
         self.backend = Path(temporary.name).resolve() / "backend"
         self.directory = self.backend / ".local-tests/run"

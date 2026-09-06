@@ -2,8 +2,8 @@
 from contextlib import ExitStack
 import copy
 from pathlib import Path
-import tempfile
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 from unittest.mock import patch
 
 import devex_clone_cache as cache
@@ -18,7 +18,7 @@ from full_stack_process import write_receipt
 class CacheFixture(unittest.TestCase):
     def setUp(self):
         self.backend = next(path for path in Path(__file__).resolve().parents if (path / "Cargo.toml").is_file())
-        temporary = tempfile.TemporaryDirectory(dir=self.backend / ".local-tests/tmp", prefix="cr-")
+        temporary = WorkspaceDirectory(dir=self.backend / ".local-tests/tmp", prefix="cr-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         self.directory, self.data = self.root / "run", self.root / "data"

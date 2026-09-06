@@ -5,9 +5,9 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import tempfile
 import threading
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 from unittest.mock import Mock, patch
 
 import devex_clone_cache_process as process
@@ -19,7 +19,7 @@ BOOT = "5a81dc04-9e9a-416b-8eab-1b059bddf489"
 class CacheProcessTests(unittest.TestCase):
     def setUp(self):
         self.backend = next(path for path in Path(__file__).resolve().parents if (path / "Cargo.toml").is_file())
-        temporary = tempfile.TemporaryDirectory(dir=self.backend / ".local-tests/tmp", prefix="cp-")
+        temporary = WorkspaceDirectory(dir=self.backend / ".local-tests/tmp", prefix="cp-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         data = self.root / "data"
