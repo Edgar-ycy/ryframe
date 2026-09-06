@@ -41,6 +41,8 @@ pub(crate) const PYTHON_TEST_ARGS: &[&str] = &[
     "-p",
     "test_*.py",
 ];
+
+pub(crate) const PYTHON_ENVIRONMENT_ARGS: &[&str] = &["scripts/check_python_environment.py"];
 pub(crate) const SMART_BACKEND_OPERATIONS: &[&str] = &["clippy", "test"];
 pub(crate) const SMART_FEATURE_OPERATIONS: &[&str] = &["clippy"];
 

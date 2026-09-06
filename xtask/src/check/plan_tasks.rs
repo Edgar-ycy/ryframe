@@ -67,6 +67,7 @@ impl CheckTaskWorkingDirectory {
 pub(crate) enum CheckTaskExecutor {
     RemovedIdentity,
     RequireFrontendDependencies,
+    FullPythonEnvironment,
     FullBackendStatic,
     FullSnapshotPrepare,
     FullPythonTests,
@@ -88,6 +89,7 @@ impl CheckTaskExecutor {
         match self {
             Self::RemovedIdentity => "check_removed_identity",
             Self::RequireFrontendDependencies => "require_frontend_dependencies",
+            Self::FullPythonEnvironment => "check_python_environment",
             Self::FullBackendStatic => "run_full_backend_static",
             Self::FullSnapshotPrepare => "prepare_full_snapshots",
             Self::FullPythonTests => "run_full_python_tests",
@@ -109,6 +111,7 @@ impl CheckTaskExecutor {
         match self {
             Self::RemovedIdentity => "核对前后端已移除的服务身份能力",
             Self::RequireFrontendDependencies => "确认前端依赖已按锁文件安装",
+            Self::FullPythonEnvironment => "核验固定 Python 解释器与原生 AST 依赖",
             Self::FullBackendStatic => "执行后端 feature 注册、格式、Clippy 与策略检查",
             Self::FullSnapshotPrepare => "准备当前后端 OpenAPI 与 MySQL 候选快照",
             Self::FullPythonTests => "执行仓库 Python 检查测试",
@@ -204,6 +207,15 @@ fn full_tasks(scope: CheckScope) -> Vec<CheckTask> {
 fn full_backend_tasks() -> Vec<CheckTask> {
     vec![
         task(
+            "full.python-environment",
+            &[],
+            CheckTaskRepository::Backend,
+            CheckTaskStage::Prerequisite,
+            CheckTaskExecutor::FullPythonEnvironment,
+            &[],
+            &[],
+        ),
+        task(
             "full.frontend-dependencies",
             &[],
             CheckTaskRepository::CrossRepository,
@@ -214,7 +226,7 @@ fn full_backend_tasks() -> Vec<CheckTask> {
         ),
         task(
             "full.backend-static",
-            &["full.frontend-dependencies"],
+            &["full.python-environment", "full.frontend-dependencies"],
             CheckTaskRepository::Backend,
             CheckTaskStage::Static,
             CheckTaskExecutor::FullBackendStatic,

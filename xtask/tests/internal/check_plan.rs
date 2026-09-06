@@ -21,6 +21,7 @@ fn full_all_plan_exposes_the_executed_topology_and_metadata() {
     assert_eq!(
         tasks.iter().map(|task| task.id).collect::<Vec<_>>(),
         [
+            "full.python-environment",
             "full.frontend-dependencies",
             "full.backend-static",
             "full.snapshots-prepare",
@@ -56,6 +57,14 @@ fn full_all_plan_exposes_the_executed_topology_and_metadata() {
     assert_eq!(workspaces.executor, CheckTaskExecutor::FullWorkspaces);
     assert!(workspaces.compilation_coverage.contains(&"feature matrix"));
     assert!(workspaces.allowed_writes.contains(&"并行任务日志"));
+    let python = tasks
+        .iter()
+        .find(|task| task.id == "full.python-environment")
+        .unwrap();
+    assert_eq!(python.repository, CheckTaskRepository::Backend);
+    assert_eq!(python.stage, CheckTaskStage::Prerequisite);
+    assert_eq!(python.executor, CheckTaskExecutor::FullPythonEnvironment);
+    assert!(python.dependencies.is_empty());
 }
 
 #[test]

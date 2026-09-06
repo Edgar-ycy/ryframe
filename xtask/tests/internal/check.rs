@@ -10,20 +10,20 @@ use std::{
 use super::check::{
     BACKEND_CI_TARGET_DIR, BACKEND_SMART_TARGET_DIR, BACKEND_VERIFY_TARGET_DIR,
     BackendSnapshotProfile, ChangeCategory, ChangeSurfacePolicy, CheckPlanMode, FrontendProfile,
-    PYTHON_TEST_ARGS, PolicyProfile, RESOURCE_CI_TARGET_DIR, RESOURCE_VERIFY_TARGET_DIR,
-    RepositoryKind, ResourceWorkspaceProfile, SMART_BACKEND_OPERATIONS, SMART_FEATURE_OPERATIONS,
-    VerifyTargetPolicy, WORKSPACE_CLIPPY_ARGS, WorkspaceGraph, analyze_change_surface,
-    append_changed_file_size_warnings, backend_package_operation_args, cargo_operation_jobs,
-    changed_paths, ci_environment_from, ci_target_policy_from, ci_test_jobs_from, classify_changes,
-    complete_verify_selection, consumer_contract_arguments, consumer_contract_command,
-    consumer_contract_plan, default_test_jobs_from, feature_operation_args, feature_test_args,
-    frontend_profile_commands, load_change_surface_policy, load_consumer_contract_plan,
-    load_workspace_graph, minimal_workspace_check_args, needs_consumer_contract,
-    package_tests_generate_snapshots, parse_change_surface_policy, policy_tasks,
-    resolve_frontend_dir, resolve_target_dir, resource_test_executable_from_messages,
-    resource_workspace_environment_for_profile, reverse_dependency_closure, select_check_mode,
-    validate_feature_combination, verify_job_budget_from, verify_target_policy_from,
-    workspace_clippy_args, workspace_test_args,
+    PYTHON_ENVIRONMENT_ARGS, PYTHON_TEST_ARGS, PolicyProfile, RESOURCE_CI_TARGET_DIR,
+    RESOURCE_VERIFY_TARGET_DIR, RepositoryKind, ResourceWorkspaceProfile, SMART_BACKEND_OPERATIONS,
+    SMART_FEATURE_OPERATIONS, VerifyTargetPolicy, WORKSPACE_CLIPPY_ARGS, WorkspaceGraph,
+    analyze_change_surface, append_changed_file_size_warnings, backend_package_operation_args,
+    cargo_operation_jobs, changed_paths, ci_environment_from, ci_target_policy_from,
+    ci_test_jobs_from, classify_changes, complete_verify_selection, consumer_contract_arguments,
+    consumer_contract_command, consumer_contract_plan, default_test_jobs_from,
+    feature_operation_args, feature_test_args, frontend_profile_commands,
+    load_change_surface_policy, load_consumer_contract_plan, load_workspace_graph,
+    minimal_workspace_check_args, needs_consumer_contract, package_tests_generate_snapshots,
+    parse_change_surface_policy, policy_tasks, resolve_frontend_dir, resolve_target_dir,
+    resource_test_executable_from_messages, resource_workspace_environment_for_profile,
+    reverse_dependency_closure, select_check_mode, validate_feature_combination,
+    verify_job_budget_from, verify_target_policy_from, workspace_clippy_args, workspace_test_args,
 };
 use super::cli::CheckScope;
 
@@ -116,6 +116,10 @@ fn feature_matrix_compiles_and_tests_required_feature_targets() {
 
 #[test]
 fn full_gate_discovers_repository_python_tests() {
+    assert_eq!(
+        PYTHON_ENVIRONMENT_ARGS,
+        ["scripts/check_python_environment.py"]
+    );
     assert_eq!(
         PYTHON_TEST_ARGS,
         [

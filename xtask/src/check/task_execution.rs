@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use super::{
-    PYTHON_TEST_ARGS, backend, backend_packages, frontend_profiles, require_frontend_dependencies,
-    run_parallel_tasks, run_removed_identity,
+    PYTHON_ENVIRONMENT_ARGS, PYTHON_TEST_ARGS, backend, backend_packages, frontend_profiles,
+    require_frontend_dependencies, run_parallel_tasks, run_removed_identity,
 };
 use crate::{
     Result,
@@ -128,6 +128,9 @@ fn execute_full_task(
     match executor {
         CheckTaskExecutor::RequireFrontendDependencies => {
             require_frontend_dependencies(&context.frontend_dir)
+        }
+        CheckTaskExecutor::FullPythonEnvironment => {
+            run_process(&context.root, "python", PYTHON_ENVIRONMENT_ARGS)
         }
         CheckTaskExecutor::FullBackendStatic => backend(
             &context.root,

@@ -47,7 +47,9 @@ pub(crate) use context::{
 #[allow(unused_imports)]
 pub(crate) use execution::verify;
 #[allow(unused_imports)]
-pub(crate) use execution::{PYTHON_TEST_ARGS, SMART_BACKEND_OPERATIONS, SMART_FEATURE_OPERATIONS};
+pub(crate) use execution::{
+    PYTHON_ENVIRONMENT_ARGS, PYTHON_TEST_ARGS, SMART_BACKEND_OPERATIONS, SMART_FEATURE_OPERATIONS,
+};
 pub(crate) use execution::{
     ci_consumer_contract, ci_consumer_contract_against_committed_snapshot, ci_rust_gate,
 };
