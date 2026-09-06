@@ -205,50 +205,19 @@ async fn sync_menus(
         if !is_enabled {
             continue;
         }
-        let parent_id = match source.parent_id {
-            Some(source_parent_id) => {
-                let parent_route = system_by_id
-                    .get(&source_parent_id)
-                    .and_then(|parent| parent.route_key.as_deref())
-                    .ok_or_else(|| AppError::Config("能力菜单父级缺少 route_key".into()))?;
-                Some(*tenant_menu_ids.get(parent_route).ok_or_else(|| {
-                    AppError::Config(format!("租户 {tenant_id} 缺少能力菜单父级 {parent_route}"))
-                })?)
-            }
-            None => None,
-        };
-        let perm_id = match source.perm_id {
-            Some(source_perm_id) => {
-                let code = system_permission_codes
-                    .get(&source_perm_id)
-                    .ok_or_else(|| AppError::Config("能力菜单引用的模板权限不存在".into()))?;
-                Some(*permission_ids.get(code).ok_or_else(|| {
-                    AppError::Config(format!("租户 {tenant_id} 缺少能力菜单权限 {code}"))
-                })?)
-            }
-            None => None,
-        };
+        let (parent_id, perm_id) = resolve_menu_links(
+            source,
+            tenant_id,
+            &system_by_id,
+            &tenant_menu_ids,
+            &system_permission_codes,
+            permission_ids,
+        )?;
         let id = ryframe_application::next_id()?;
-        menu::ActiveModel {
-            id: Set(id),
-            tenant_id: Set(tenant_id.to_owned()),
-            name: Set(source.name.clone()),
-            parent_id: Set(parent_id),
-            menu_type: Set(source.menu_type.clone()),
-            perm_id: Set(perm_id),
-            route_key: Set(source.route_key.clone()),
-            icon: Set(source.icon.clone()),
-            sort: Set(source.sort),
-            visible: Set(true),
-            status: Set(menu::Model::STATUS_NORMAL.into()),
-            remark: Set(source.remark.clone()),
-            del_flag: Set(menu::Model::DEL_FLAG_NORMAL.into()),
-            created_at: Set(Utc::now()),
-            updated_at: Set(Utc::now()),
-        }
-        .insert(transaction)
-        .await
-        .db()?;
+        capability_menu_model(id, tenant_id, source, parent_id, perm_id)
+            .insert(transaction)
+            .await
+            .db()?;
         tenant_menu_ids.insert(route_key.to_owned(), id);
     }
     Ok(())
@@ -305,4 +274,64 @@ async fn assign_default_admin_permissions(
             .db()?;
     }
     Ok(())
+}
+
+fn resolve_menu_links(
+    source: &menu::Model,
+    tenant_id: &str,
+    system_by_id: &HashMap<i64, &menu::Model>,
+    tenant_menu_ids: &HashMap<String, i64>,
+    system_permission_codes: &HashMap<i64, String>,
+    permission_ids: &HashMap<String, i64>,
+) -> AppResult<(Option<i64>, Option<i64>)> {
+    let parent_id = match source.parent_id {
+        Some(source_parent_id) => {
+            let parent_route = system_by_id
+                .get(&source_parent_id)
+                .and_then(|parent| parent.route_key.as_deref())
+                .ok_or_else(|| AppError::Config("能力菜单父级缺少 route_key".into()))?;
+            Some(*tenant_menu_ids.get(parent_route).ok_or_else(|| {
+                AppError::Config(format!("租户 {tenant_id} 缺少能力菜单父级 {parent_route}"))
+            })?)
+        }
+        None => None,
+    };
+    let perm_id = match source.perm_id {
+        Some(source_perm_id) => {
+            let code = system_permission_codes
+                .get(&source_perm_id)
+                .ok_or_else(|| AppError::Config("能力菜单引用的模板权限不存在".into()))?;
+            Some(*permission_ids.get(code).ok_or_else(|| {
+                AppError::Config(format!("租户 {tenant_id} 缺少能力菜单权限 {code}"))
+            })?)
+        }
+        None => None,
+    };
+    Ok((parent_id, perm_id))
+}
+
+fn capability_menu_model(
+    id: i64,
+    tenant_id: &str,
+    source: &menu::Model,
+    parent_id: Option<i64>,
+    perm_id: Option<i64>,
+) -> menu::ActiveModel {
+    menu::ActiveModel {
+        id: Set(id),
+        tenant_id: Set(tenant_id.to_owned()),
+        name: Set(source.name.clone()),
+        parent_id: Set(parent_id),
+        menu_type: Set(source.menu_type.clone()),
+        perm_id: Set(perm_id),
+        route_key: Set(source.route_key.clone()),
+        icon: Set(source.icon.clone()),
+        sort: Set(source.sort),
+        visible: Set(true),
+        status: Set(menu::Model::STATUS_NORMAL.into()),
+        remark: Set(source.remark.clone()),
+        del_flag: Set(menu::Model::DEL_FLAG_NORMAL.into()),
+        created_at: Set(Utc::now()),
+        updated_at: Set(Utc::now()),
+    }
 }
