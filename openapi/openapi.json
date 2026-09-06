@@ -4381,6 +4381,9 @@
           },
           "data": {
             "properties": {
+              "backup": {
+                "$ref": "#/components/schemas/RuntimeBackupStatus"
+              },
               "database": {
                 "$ref": "#/components/schemas/RuntimeDatabaseStatus"
               },
@@ -4402,7 +4405,8 @@
               "redis",
               "object_storage",
               "upload_circuit_breaker",
-              "jobs"
+              "jobs",
+              "backup"
             ],
             "type": "object"
           },
@@ -15081,6 +15085,129 @@
         ],
         "type": "object"
       },
+      "RuntimeBackupCollectionStatus": {
+        "enum": [
+          "unknown",
+          "available",
+          "unavailable",
+          "stale"
+        ],
+        "type": "string"
+      },
+      "RuntimeBackupHealth": {
+        "properties": {
+          "expired_resources": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "invalid_resources": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "last_restore_completed": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_restore_succeeded": {
+            "type": "boolean"
+          },
+          "missing_resources": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "oldest_capture": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recovery_point_age_seconds": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "required_resources": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "restore_duration_seconds": {
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "restore_overdue": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "restore_running": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "required_resources",
+          "missing_resources",
+          "expired_resources",
+          "invalid_resources",
+          "last_restore_succeeded",
+          "restore_running",
+          "restore_overdue"
+        ],
+        "type": "object"
+      },
+      "RuntimeBackupStatus": {
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "collector_status": {
+            "$ref": "#/components/schemas/RuntimeBackupCollectionStatus"
+          },
+          "health": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RuntimeBackupHealth"
+              }
+            ]
+          },
+          "last_attempt_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_success_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "collector_status",
+          "available"
+        ],
+        "type": "object"
+      },
       "RuntimeCircuitBreakerStatus": {
         "properties": {
           "state": {
@@ -15245,6 +15372,9 @@
       },
       "RuntimeStatus": {
         "properties": {
+          "backup": {
+            "$ref": "#/components/schemas/RuntimeBackupStatus"
+          },
           "database": {
             "$ref": "#/components/schemas/RuntimeDatabaseStatus"
           },
@@ -15266,7 +15396,8 @@
           "redis",
           "object_storage",
           "upload_circuit_breaker",
-          "jobs"
+          "jobs",
+          "backup"
         ],
         "type": "object"
       },
@@ -18048,8 +18179,37 @@
               }
             }
           },
+          "400": {
+            "description": "上传表单或头像内容无效",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "413": {
-            "description": "上传内容超过 5 MiB 限制",
+            "description": "上传内容超过配置的头像大小限制",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -19586,8 +19746,37 @@
               }
             }
           },
+          "400": {
+            "description": "上传表单或文件内容无效",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "413": {
-            "description": "上传内容超过 10 MiB 限制",
+            "description": "上传内容超过配置的文件大小限制",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -19706,8 +19895,37 @@
               }
             }
           },
+          "400": {
+            "description": "上传表单或头像内容无效",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "413": {
-            "description": "上传内容超过 5 MiB 限制",
+            "description": "上传内容超过配置的头像大小限制",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -19826,8 +20044,37 @@
               }
             }
           },
+          "400": {
+            "description": "上传表单或文件内容无效",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
           "413": {
-            "description": "上传内容超过 10 MiB 限制",
+            "description": "上传内容超过配置的文件大小限制",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -33260,6 +33507,64 @@
               }
             },
             "description": "用户导入任务已创建",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "上传表单、幂等键或导入文件无效",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "上传内容超过配置的导入文件大小限制",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
