@@ -11,7 +11,9 @@ from pathlib import Path
 REMOVED = re.compile(
     r"service[_-]accounts?|service[_-]delegations?|service[_-]credentials?|"
     r"service[_-]access[_-]audits?|ServiceAccount|ServiceDelegation|ServiceCredential|"
-    r"ServiceAccessAudit|PepperKeyring|AgentQuery|PrebuiltApiEnvelope|"
+    r"ServiceAccessAudit|PepperKeyring|AgentQuery|AgentPageQuery|"
+    r"Agent(?:Capability|User|Department|Post|DictionaryItem|Dictionary)Response|"
+    r"PrebuiltApiEnvelope|"
     r"agent[_-](?:query|capabilit|directory|limiter)|RyFrameApiKey|X-RyFrame-Delegation|"
     r"/api/v1/agent/|"
     r"Agent API|Agent 查询|服务账号|服务委托|服务访问审计|个人服务委托|服务身份"
@@ -20,8 +22,12 @@ REMOVED_PATH_MARKERS = (
     "/crates/ryframe-application/src/agent/",
     "/crates/ryframe-application/src/ports/service_accounts/",
     "/crates/ryframe-application/src/system/service_account/",
+    "/crates/ryframe-application/src/service_identity_secret.rs",
+    "/crates/ryframe-api/src/dto/agent_dto.rs",
+    "/crates/ryframe-api/src/handlers/agent_handler.rs",
     "/crates/ryframe-db/src/application_ports/agent/",
     "/crates/ryframe-db/src/application_ports/service_accounts/",
+    "/crates/ryframe-db/src/repositories/service_authorization_repo.rs",
     "/src/api/generated/operations/agent.ts",
     "/src/api/generated/schema/agent.ts",
     "/src/features/service-accounts/",

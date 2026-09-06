@@ -430,6 +430,20 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertIn("github.event.before", preflight)
         self.assertIn("cargo xtask check ci preflight", preflight)
 
+    def test_preflight_checks_the_exact_frontend_source(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        preflight = workflow.split("\n  plan:\n", 1)[1].split(
+            "\n  rust-gate:\n", 1
+        )[0]
+        self.assertIn("scripts/select_frontend_commit.py", preflight)
+        self.assertIn("--prefer-marker", preflight)
+        self.assertIn(
+            "ref: ${{ steps.preflight-frontend-ref.outputs.ref }}", preflight
+        )
+        self.assertIn(
+            "cargo xtask check ci preflight --frontend-dir ../frontend", preflight
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

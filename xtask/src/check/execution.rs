@@ -218,7 +218,7 @@ fn backend(root: &Path, backend_target: &str, jobs: usize, frontend_dir: &Path) 
     let clippy = workspace_clippy_args(backend_target, jobs);
     run_owned(root, "cargo", &clippy)?;
     for task in policy_tasks(PolicyProfile::Full) {
-        run_owned(root, "python", &task.arguments(frontend_dir))?;
+        run_owned(root, "python", &task.arguments(root, frontend_dir)?)?;
     }
     Ok(())
 }
@@ -273,7 +273,11 @@ fn backend_packages(
         )?;
     }
     for task in policy_tasks(PolicyProfile::Smart) {
-        run_owned(root, "python", &task.arguments(&context.frontend_dir))?;
+        run_owned(
+            root,
+            "python",
+            &task.arguments(root, &context.frontend_dir)?,
+        )?;
     }
     Ok(())
 }
@@ -283,7 +287,7 @@ pub(super) fn run_removed_identity(root: &Path, frontend_dir: &Path) -> Result<(
         .iter()
         .find(|task| task.id == "removed-identity")
         .ok_or("服务身份删除检查任务未登记")?;
-    run_owned(root, "python", &task.arguments(frontend_dir))
+    run_owned(root, "python", &task.arguments(root, frontend_dir)?)
 }
 
 fn frontend_profiles(

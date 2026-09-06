@@ -1,5 +1,7 @@
 use std::path::Path;
 
+use crate::Result;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PolicyProfile {
     Full,
@@ -26,13 +28,27 @@ impl PythonPolicyTask {
         }
     }
 
-    pub(crate) fn arguments(self, frontend_dir: &Path) -> Vec<String> {
+    pub(crate) fn arguments(self, root: &Path, frontend_dir: &Path) -> Result<Vec<String>> {
         let mut arguments = vec![self.script.to_owned()];
         if self.requires_frontend {
+            let frontend_dir = if frontend_dir.is_absolute() {
+                frontend_dir.to_path_buf()
+            } else {
+                root.join(frontend_dir)
+            };
+            let frontend_dir = std::path::absolute(&frontend_dir).map_err(|error| {
+                format!(
+                    "无法解析服务身份检查使用的前端目录 {}：{error}",
+                    frontend_dir.display()
+                )
+            })?;
+            let frontend_dir = frontend_dir
+                .to_str()
+                .ok_or("服务身份检查使用的前端目录不是有效 UTF-8")?;
             arguments.push("--frontend-dir".to_owned());
-            arguments.push(frontend_dir.to_string_lossy().into_owned());
+            arguments.push(frontend_dir.to_owned());
         }
-        arguments
+        Ok(arguments)
     }
 }
 

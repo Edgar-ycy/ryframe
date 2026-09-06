@@ -51,22 +51,23 @@ fn smart_and_ci_profiles_reuse_the_same_policy_task_definitions() {
 
 #[test]
 fn removed_identity_task_binds_the_frontend_directory_without_splitting_it() {
-    let frontend = Path::new("D:/包含 空格/ryframe-vue3");
+    let root = std::env::current_dir().unwrap();
+    let frontend = Path::new("../包含 空格/ryframe-vue3");
     let task = PYTHON_POLICY_TASKS
         .iter()
         .find(|task| task.id == "removed-identity")
         .unwrap();
 
+    let arguments = task.arguments(&root, frontend).unwrap();
+    assert_eq!(arguments[0], "scripts/check_removed_identity.py");
+    assert_eq!(arguments[1], "--frontend-dir");
+    assert!(Path::new(&arguments[2]).is_absolute());
     assert_eq!(
-        task.arguments(frontend),
-        [
-            "scripts/check_removed_identity.py",
-            "--frontend-dir",
-            "D:/包含 空格/ryframe-vue3",
-        ]
+        Path::new(&arguments[2]),
+        std::path::absolute(root.join(frontend)).unwrap()
     );
     assert_eq!(
-        PYTHON_POLICY_TASKS[0].arguments(frontend),
+        PYTHON_POLICY_TASKS[0].arguments(&root, frontend).unwrap(),
         ["scripts/check_architecture.py"]
     );
 }

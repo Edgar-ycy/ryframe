@@ -140,7 +140,8 @@ pub(crate) fn ci_plan_for(
 ) -> CiPlan {
     if event == "pull_request" && action == "edited" {
         return CiPlan {
-            preflight: false,
+            // PR 正文承载精确前端提交；编辑 marker 后必须重新核对跨仓删除策略。
+            preflight: true,
             rust_gate: false,
             resource_gate: false,
             integration: false,
@@ -283,7 +284,7 @@ fn preflight(frontend_dir: &Path) -> Result<()> {
         ],
     )?;
     for task in policy_tasks(PolicyProfile::CiPreflight) {
-        run_owned(&root, "python", &task.arguments(frontend_dir))?;
+        run_owned(&root, "python", &task.arguments(&root, frontend_dir)?)?;
     }
     let migration_args = preflight_migration_args(
         env::var("RYFRAME_CI_BASE_SHA")

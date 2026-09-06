@@ -64,6 +64,13 @@ class RemovedIdentityTests(unittest.TestCase):
                 "agent_capability",
                 "agent_directory",
                 "agent_limiter",
+                "AgentPageQuery",
+                "AgentCapabilityResponse",
+                "AgentUserResponse",
+                "AgentDepartmentResponse",
+                "AgentPostResponse",
+                "AgentDictionaryItemResponse",
+                "AgentDictionaryResponse",
             ):
                 with self.subTest(symbol=symbol):
                     source.write_text(f"pub fn {symbol}() {{}}", encoding="utf-8")
@@ -74,8 +81,12 @@ class RemovedIdentityTests(unittest.TestCase):
                 "crates/ryframe-application/src/agent/mod.rs",
                 "crates/ryframe-application/src/ports/service_accounts/mod.rs",
                 "crates/ryframe-application/src/system/service_account/mod.rs",
+                "crates/ryframe-application/src/service_identity_secret.rs",
+                "crates/ryframe-api/src/dto/agent_dto.rs",
+                "crates/ryframe-api/src/handlers/agent_handler.rs",
                 "crates/ryframe-db/src/application_ports/agent/mod.rs",
                 "crates/ryframe-db/src/application_ports/service_accounts/mod.rs",
+                "crates/ryframe-db/src/repositories/service_authorization_repo.rs",
                 "frontend/src/api/generated/operations/agent.ts",
                 "frontend/src/api/generated/schema/agent.ts",
                 "frontend/src/features/service-accounts/manifest.ts",

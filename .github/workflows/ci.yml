@@ -64,6 +64,30 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: 选择快速预检匹配的前端提交
+        if: ${{ steps.plan.outputs.preflight == 'true' }}
+        id: preflight-frontend-ref
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: >-
+          python scripts/select_frontend_commit.py
+          --event-name "$EVENT_NAME"
+          --event "$GITHUB_EVENT_PATH"
+          --backend-worktree .
+          --base-sha "$BASE_SHA"
+          --prefer-marker
+          --release-ref "$GITHUB_REF"
+
+      - name: 检出快速预检使用的前端源码
+        if: ${{ steps.plan.outputs.preflight == 'true' }}
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ env.FRONTEND_REPOSITORY }}
+          ref: ${{ steps.preflight-frontend-ref.outputs.ref }}
+          path: frontend
+
       - name: 安装固定并校验哈希的 CI Python 依赖
         if: ${{ steps.plan.outputs.preflight == 'true' }}
         run: >-
@@ -91,7 +115,7 @@ jobs:
         if: ${{ steps.plan.outputs.preflight == 'true' }}
         env:
           RYFRAME_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: cargo xtask check ci preflight
+        run: cargo xtask check ci preflight --frontend-dir ../frontend
 
   # ============================================================
   # Rust 单一编译门禁

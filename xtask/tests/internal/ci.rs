@@ -10,10 +10,10 @@ use super::{
 };
 
 #[test]
-fn pull_request_edit_runs_only_consumer_contract() {
+fn pull_request_edit_rechecks_identity_policy_and_consumer_contract() {
     let plan = ci_plan_for("pull_request", "edited", &VerifySelection::default(), true);
 
-    assert!(!plan.preflight);
+    assert!(plan.preflight);
     assert!(!plan.rust_gate);
     assert!(!plan.resource_gate);
     assert!(!plan.integration);
