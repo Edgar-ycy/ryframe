@@ -104,7 +104,7 @@ cargo xtask data backup inventory --output .local-tests/backup/inventory.json --
 
 输出文件必须事先不存在。随后由外部工具按清单中的精确数据库、表和对象前缀完成复制与校验，再补齐 `id`、`completed_at`、`retention_until` 和 `artifacts`，形成 `BackupManifest`。每个 `db:<逻辑目标键>` 与 `objects:<桶>` 至少对应一个文件产物，登记其 `relative_path`、`bytes`、`sha256`；相对路径不得越出备份根目录。结构定义见 `crates/ryframe-application/src/ports/backup/manifest.rs`。
 
-需要检查尚未分配租户的目标或初始化前后状态时，使用 `ryframe-tenant-data target-inventory --target <已配置目标key> --output <新文件>`。该命令只连接明确配置的数据库，校验 schema 和精确全表目录，并在只读事务中计算完整行摘要；`target.database` 保存业务表与 placement，`target.preserved_tables` 单独保存 ownership、迁移账本和备份恢复登记表。它不访问对象存储、不修改目标，也不把未使用的目标遗漏为“空清单”。控制库与独立目标之间的一致性仍要求外部停止所有生产者；单份目标清单不表示备份或恢复成功。
+需要检查尚未分配租户的目标或初始化前后状态时，使用 `cargo xtask data target inventory --target <已配置目标key> --output <新文件>`。该命令只连接明确配置的数据库，校验 schema 和精确全表目录，并在只读事务中计算完整行摘要；`target.database` 保存业务表与 placement，`target.preserved_tables` 单独保存 ownership、迁移账本和备份恢复登记表。它不访问对象存储、不修改目标，也不把未使用的目标遗漏为“空清单”。控制库与独立目标之间的一致性仍要求外部停止所有生产者；单份目标清单不表示备份或恢复成功。
 
 ```powershell
 cargo xtask data backup register --manifest .local-tests/backup/manifest.json --backup-root .local-tests/backup/files
