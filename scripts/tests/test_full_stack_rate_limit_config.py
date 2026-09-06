@@ -2,8 +2,8 @@ import sys
 import json
 import os
 import subprocess
-import tempfile
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 from pathlib import Path
 
 import yaml
@@ -25,7 +25,7 @@ class LoginRateLimitConfigTests(unittest.TestCase):
     def setUp(self):
         local = ROOT / ".local-tests/python-unit"
         local.mkdir(parents=True, exist_ok=True)
-        self.directory = tempfile.TemporaryDirectory(dir=local)
+        self.directory = WorkspaceDirectory(dir=local)
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         self.config = self.root / "config"

@@ -1,7 +1,7 @@
 import hashlib
 import sys
-import tempfile
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,7 +17,7 @@ TEMP = ROOT / ".local-tests/python-unit"
 class FullStackFixtureTests(unittest.TestCase):
     def setUp(self):
         TEMP.mkdir(parents=True, exist_ok=True)
-        self.directory = tempfile.TemporaryDirectory(dir=TEMP)
+        self.directory = WorkspaceDirectory(dir=TEMP)
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name).resolve()
         self.backend, self.frontend = self.root / "backend", self.root / "frontend"

@@ -2,8 +2,8 @@
 import copy
 import json
 import subprocess
-import tempfile
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 from pathlib import Path
 
 from devex_identity_environment import quota_sql, validate_quota, validate_target_bindings
@@ -39,7 +39,7 @@ class IdentityPreparationTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         local = root / ".local-tests/python-unit"
         local.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=local) as temporary:
+        with WorkspaceDirectory(dir=local) as temporary:
             backend = Path(temporary)
             directory = backend / "config"
             directory.mkdir()
@@ -103,7 +103,7 @@ class IdentityControlTargetTests(unittest.TestCase):
         backend = Path(__file__).resolve().parents[2]
         local = backend / '.local-tests/python-unit'
         local.mkdir(parents=True, exist_ok=True)
-        self.temporary = tempfile.TemporaryDirectory(dir=local)
+        self.temporary = WorkspaceDirectory(dir=local)
         self.addCleanup(self.temporary.cleanup)
         self.backend = Path(self.temporary.name)
         (self.backend / 'config').mkdir()

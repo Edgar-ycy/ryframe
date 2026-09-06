@@ -5,8 +5,8 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -119,7 +119,7 @@ class HistoryTests(unittest.TestCase):
     def setUp(self):
         local = Path(__file__).resolve().parents[2] / ".local-tests/python-unit"
         local.mkdir(parents=True, exist_ok=True)
-        self.temporary = tempfile.TemporaryDirectory(dir=local)
+        self.temporary = WorkspaceDirectory(dir=local)
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
 

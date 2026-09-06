@@ -3,8 +3,8 @@ import copy
 from pathlib import Path
 import pickle
 import shutil
-import tempfile
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 from unittest.mock import patch
 
 import devex_clone as clone
@@ -89,7 +89,7 @@ class PlanReuseTests(unittest.TestCase):
         shutil.copyfile(self.path, sibling)
         with self.assertRaisesRegex(ValueError, "不属于"):
             clone.reuse_plan(self.backend, str(sibling), token)
-        with tempfile.TemporaryDirectory(dir=self.backend.parent) as other:
+        with WorkspaceDirectory(dir=self.backend.parent) as other:
             other = Path(other)
             (other / ".local-tests").mkdir()
             path = other / ".local-tests/plan.json"

@@ -1,8 +1,8 @@
 import os
 import subprocess
 import sys
-import tempfile
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -15,7 +15,7 @@ class OwnedProcessTests(unittest.TestCase):
     def setUp(self):
         local = ROOT / ".local-tests/python-unit"
         local.mkdir(parents=True, exist_ok=True)
-        self.directory = tempfile.TemporaryDirectory(dir=local)
+        self.directory = WorkspaceDirectory(dir=local)
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
         self.process = subprocess.Popen(
