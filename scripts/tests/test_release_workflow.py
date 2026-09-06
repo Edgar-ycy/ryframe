@@ -56,7 +56,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
                             expected = ("${{ needs.validate-release.outputs.frontend_repository }}"
                                         if job_name == "publish-release" else "${{ env.FRONTEND_REPOSITORY }}")
                             self.assertEqual(step["with"]["repository"], expected)
-                self.assertEqual(len(checkouts), {"ci.yml": 3, "extended-ci.yml": 1, "release.yml": 2}[filename])
+                self.assertEqual(len(checkouts), {"ci.yml": 4, "extended-ci.yml": 1, "release.yml": 2}[filename])
         release = workflow("release.yml")["jobs"]["validate-release"]
         self.assertEqual(release["outputs"]["frontend_repository"], "${{ steps.release.outputs.frontend_repository }}")
         export = next(step for step in release["steps"] if step.get("id") == "release")
