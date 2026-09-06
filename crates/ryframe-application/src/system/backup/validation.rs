@@ -11,12 +11,21 @@ fn require(condition: bool, message: &str) -> AppResult<()> {
     }
 }
 
+fn identifier_character(byte: u8) -> bool {
+    byte.is_ascii_lowercase() || byte.is_ascii_digit()
+}
+
 fn identifier(value: &str, max: usize) -> bool {
-    !value.is_empty()
+    let mut bytes = value.bytes();
+    matches!(bytes.next(), Some(first) if identifier_character(first))
         && value.len() <= max
-        && value.bytes().all(|byte| {
-            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'_' | b'-')
-        })
+        && bytes.all(|byte| identifier_character(byte) || matches!(byte, b'_' | b'-'))
+}
+
+fn scope_identifier(value: &str) -> bool {
+    value.len() >= 2
+        && identifier(value, 48)
+        && value.bytes().next_back().is_some_and(identifier_character)
 }
 
 fn hex(value: &str, size: usize) -> bool {
@@ -32,7 +41,7 @@ pub fn validate_backup_manifest(
     now: DateTime<Utc>,
 ) -> AppResult<()> {
     require(
-        identifier(&manifest.id, 64) && identifier(&manifest.scope_id, 48),
+        identifier(&manifest.id, 64) && scope_identifier(&manifest.scope_id),
         "备份集或 scope 标识无效",
     )?;
     require(hex(&manifest.source_sha, 40), "备份源码必须使用精确 SHA")?;
@@ -176,7 +185,8 @@ pub fn validate_restore_plan(
 ) -> AppResult<()> {
     require(
         identifier(&plan.id, 64)
-            && identifier(&plan.scope_id, 48)
+            && identifier(&plan.backup_id, 64)
+            && scope_identifier(&plan.scope_id)
             && plan.scope_id != backup.manifest.scope_id
             && plan.backup_id == backup.manifest.id,
         "恢复必须使用独立 scope 并绑定已登记备份集",

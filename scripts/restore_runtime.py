@@ -21,10 +21,10 @@ from restore_build import (
     verify_build,
     write_new,
 )
+from restore_identifiers import valid_identifier, valid_scope_identifier
 from restore_runtime_evidence import (
     HEX_40,
     HEX_64,
-    IDENTIFIER,
     ArtifactSnapshot,
     JsonDocument,
     artifact_snapshot,
@@ -66,9 +66,11 @@ def require_bindings(bindings: dict) -> tuple[dict, dict]:
     )
     if not all(checks):
         raise ValueError("运行产物必须绑定已完成数据校验的恢复演练")
-    for field in ("id", "backup_id", "scope_id"):
-        if not isinstance(plan.get(field), str) or not IDENTIFIER.fullmatch(plan[field]):
+    for field in ("id", "backup_id"):
+        if not valid_identifier(plan.get(field)):
             raise ValueError(f"恢复 bindings 的 {field} 无效")
+    if not valid_scope_identifier(plan.get("scope_id")):
+        raise ValueError("恢复 bindings 的 scope_id 无效")
     _timestamp(record.get("data_verified_at"), "恢复数据校验时间")
     return record, manifest
 

@@ -485,6 +485,85 @@ async fn identifiers_cannot_replace_existing_backup_or_restore_plans() {
     );
 }
 
+#[test]
+fn backup_restore_and_scope_identifiers_follow_the_formal_contract() {
+    let original = manifest();
+    let now = original.completed_at + Duration::minutes(5);
+    let required = original.resource_keys();
+
+    for id in ["a".to_owned(), format!("a{}", "_".repeat(63))] {
+        let mut candidate = original.clone();
+        candidate.id = id;
+        validate_backup_manifest(&candidate, &required, now).unwrap();
+    }
+    for id in ["", "_backup", "-backup", "Backup", "backup.one"]
+        .into_iter()
+        .map(str::to_owned)
+        .chain(["a".repeat(65)])
+    {
+        let mut candidate = original.clone();
+        candidate.id = id;
+        assert!(validate_backup_manifest(&candidate, &required, now).is_err());
+    }
+
+    for scope in ["a1".to_owned(), format!("a{}z", "_".repeat(46))] {
+        let mut candidate = original.clone();
+        candidate.scope_id = scope.clone();
+        for objects in &mut candidate.objects {
+            objects.prefix = format!("{scope}/");
+        }
+        validate_backup_manifest(&candidate, &required, now).unwrap();
+    }
+    for scope in [
+        "",
+        "a",
+        "_scope",
+        "-scope",
+        "scope_",
+        "scope-",
+        "Scope",
+        "scope.one",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .chain([format!("a{}z", "_".repeat(47))])
+    {
+        let mut candidate = original.clone();
+        candidate.scope_id = scope.clone();
+        for objects in &mut candidate.objects {
+            objects.prefix = format!("{scope}/");
+        }
+        assert!(validate_backup_manifest(&candidate, &required, now).is_err());
+    }
+
+    let backup = BackupRecord {
+        manifest: original,
+        manifest_hash: "e".repeat(64),
+        valid: true,
+        checked_at: now,
+        failure: None,
+    };
+    for id in ["a".to_owned(), format!("a{}", "-".repeat(63))] {
+        let mut candidate = plan();
+        candidate.id = id;
+        validate_restore_plan(&backup, &candidate, now).unwrap();
+    }
+    for id in ["", "_restore", "-restore", "Restore", "restore.one"]
+        .into_iter()
+        .map(str::to_owned)
+        .chain(["a".repeat(65)])
+    {
+        let mut candidate = plan();
+        candidate.id = id;
+        assert!(validate_restore_plan(&backup, &candidate, now).is_err());
+    }
+    let mut invalid_backup = backup.clone();
+    invalid_backup.manifest.id = "_backup".into();
+    let mut candidate = plan();
+    candidate.backup_id = invalid_backup.manifest.id.clone();
+    assert!(validate_restore_plan(&invalid_backup, &candidate, now).is_err());
+}
+
 #[tokio::test]
 async fn ranges_timestamps_and_source_resource_reuse_fail_closed() {
     let (_, repository, _) = fixture();

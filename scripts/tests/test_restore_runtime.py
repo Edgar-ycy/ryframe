@@ -258,8 +258,28 @@ class RestoreRuntimeTests(unittest.TestCase):
     def test_authoritative_context_has_exact_fields_and_strict_endpoints(self):
         expected = self.authority()
         self.assertEqual(restore_runtime.read_authority(io.StringIO(json.dumps(expected))), expected)
+        valid = [
+            {**expected, "restore_id": "a" + "_" * 63},
+            {**expected, "backup_id": "b" + "-" * 63},
+            {**expected, "scope_id": "a1"},
+            {**expected, "scope_id": "a" + "_" * 46 + "z"},
+        ]
+        for value in valid:
+            with self.subTest(valid=value):
+                self.assertEqual(restore_runtime.read_authority(io.StringIO(json.dumps(value))), value)
         invalid = [
             {**expected, "extra": True},
+            {**expected, "restore_id": "_restore"},
+            {**expected, "restore_id": "Restore"},
+            {**expected, "restore_id": "restore.one"},
+            {**expected, "restore_id": "a" * 65},
+            {**expected, "backup_id": "-backup"},
+            {**expected, "scope_id": "a"},
+            {**expected, "scope_id": "_scope"},
+            {**expected, "scope_id": "scope_"},
+            {**expected, "scope_id": "Scope"},
+            {**expected, "scope_id": "scope.one"},
+            {**expected, "scope_id": "a" + "_" * 47 + "z"},
             {**expected, "data_verified_at": "2026-09-06T08:00:00"},
             {**expected, "api_endpoint": "http://localhost:18080/readyz"},
             {**expected, "api_endpoint": "http://user@127.0.0.1:18080/readyz"},
@@ -274,6 +294,36 @@ class RestoreRuntimeTests(unittest.TestCase):
                 restore_runtime.read_authority(io.StringIO(json.dumps(value)))
         with self.assertRaisesRegex(ValueError, "重复字段"):
             restore_runtime.read_authority(io.StringIO('{"format_version":1,"format_version":1}'))
+
+    def test_bindings_use_the_same_identifier_boundaries_as_authority(self):
+        authority, _build, _frontend, bindings_path = self.prepare()
+        bindings = restore_runtime.read_json(bindings_path)
+        valid = [
+            ("id", "a" + "_" * 63),
+            ("backup_id", "b" + "-" * 63),
+            ("scope_id", "a" + "_" * 46 + "z"),
+        ]
+        for field, value in valid:
+            candidate = copy.deepcopy(bindings)
+            candidate["record"]["plan"][field] = value
+            if field == "backup_id":
+                candidate["manifest"]["id"] = value
+            with self.subTest(valid_field=field):
+                restore_runtime.require_bindings(candidate)
+        invalid = [
+            ("id", "_restore"),
+            ("backup_id", "backup.one"),
+            ("scope_id", "a"),
+            ("scope_id", "scope-"),
+            ("scope_id", "a" * 49),
+        ]
+        for field, value in invalid:
+            candidate = copy.deepcopy(bindings)
+            candidate["record"]["plan"][field] = value
+            if field == "backup_id":
+                candidate["manifest"]["id"] = value
+            with self.subTest(invalid_field=field), self.assertRaises(ValueError):
+                restore_runtime.require_bindings(candidate)
 
     def test_bind_records_reviewable_paths_and_every_authoritative_field(self):
         authority, receipt, bindings = self.bind_receipt()

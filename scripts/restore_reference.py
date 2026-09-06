@@ -14,7 +14,8 @@ from process_sockets import verify_listener
 from restore_build import file_digest, source_snapshot
 from restore_reference_io import ExternalTools, object_index, validate_dump
 from restore_reference_plan import (dataset_timeout_seconds, identifier, plan_hash, safe_file,
-                                    validate_inventory, validate_plan, verify_artifacts)
+                                    scope_identifier, validate_inventory, validate_plan,
+                                    verify_artifacts)
 from restore_runtime import read_json
 from restore_source import verify_stopped_source
 
@@ -100,13 +101,19 @@ def backup(plan: dict, tools: ExternalTools, work: Path, inventory: dict,
 
 def validate_restore_record(plan: dict, manifest: dict, record: dict) -> None:
     target = plan["target"]
+    restore_plan = record["plan"]
+    identifier(restore_plan["id"])
+    identifier(restore_plan["backup_id"])
+    scope_identifier(restore_plan["scope_id"])
     expected = {(db["key"], db["key"], db["server_uuid"], db["database"]) for db in target["databases"]}
-    actual = {(db["source_key"], db["target_key"], db["server_uuid"], db["database"]) for db in record["plan"]["databases"]}
-    if (record["status"] != "running" or record["plan"]["backup_id"] != manifest["id"]
-            or record["plan"]["scope_id"] != target["scope_id"] or actual != expected
-            or len(record["plan"]["databases"]) != len(expected)
-            or record["plan"]["object_endpoint"] != target["s3"]["endpoint"]
-            or record["plan"]["object_prefix"] != target["scope_id"] + "/"):
+    actual = {(db["source_key"], db["target_key"], db["server_uuid"], db["database"])
+              for db in restore_plan["databases"]}
+    if (record["status"] != "running" or restore_plan["backup_id"] != manifest["id"]
+            or restore_plan["backup_id"] != plan["id"]
+            or restore_plan["scope_id"] != target["scope_id"] or actual != expected
+            or len(restore_plan["databases"]) != len(expected)
+            or restore_plan["object_endpoint"] != target["s3"]["endpoint"]
+            or restore_plan["object_prefix"] != target["scope_id"] + "/"):
         raise ValueError("还原必须绑定 restore-begin 的运行中记录和相同精确目标")
     started = dt.datetime.fromisoformat(record["started_at"].replace("Z", "+00:00"))
     elapsed = (dt.datetime.now(dt.timezone.utc) - started).total_seconds()

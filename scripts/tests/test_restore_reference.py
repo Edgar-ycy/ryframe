@@ -36,6 +36,27 @@ class ReferenceTests(unittest.TestCase):
             with self.assertRaises((ValueError, OSError)):
                 validate_plan(plan, self.backend)
 
+    def test_plan_ids_and_scopes_use_the_formal_identifier_boundaries(self):
+        for identifier in ("a", "a" + "_" * 63):
+            candidate = copy.deepcopy(self.plan)
+            candidate["id"] = identifier
+            validate_plan(candidate, self.backend)
+        for identifier in ("", "_restore", "-restore", "Restore", "restore.one", "a" * 65):
+            candidate = copy.deepcopy(self.plan)
+            candidate["id"] = identifier
+            with self.subTest(identifier=identifier), self.assertRaises(ValueError):
+                validate_plan(candidate, self.backend)
+
+        for scope in ("a1", "a" + "_" * 46 + "z"):
+            candidate = copy.deepcopy(self.plan)
+            candidate["target"]["scope_id"] = scope
+            validate_plan(candidate, self.backend)
+        for scope in ("", "a", "_target", "-target", "target_", "target-", "Target", "target.one", "a" * 49):
+            candidate = copy.deepcopy(self.plan)
+            candidate["target"]["scope_id"] = scope
+            with self.subTest(scope=scope), self.assertRaises(ValueError):
+                validate_plan(candidate, self.backend)
+
     def test_safe_files_reject_escape_missing_absolute_and_link(self):
         good = self.backend / "good"
         good.write_text("data")
@@ -51,6 +72,8 @@ class ReferenceTests(unittest.TestCase):
         value = inventory(self.plan)
         validate_inventory(self.plan, value)
         changes = [
+            lambda value: value.update(id="another-backup"),
+            lambda value: value.update(id="Backup"),
             lambda value: value["databases"].pop(),
             lambda value: value["databases"][0].update(database="other"),
             lambda value: value["databases"][0].update(shared=False),
@@ -102,6 +125,23 @@ class ReferenceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             reference.restore(self.plan, tools, root, manifest, restore_record(self.plan))
         self.assertEqual(tools.mock_calls, [])
+
+    def test_restore_rejects_backup_swap_and_invalid_record_id_before_external_call(self):
+        work = reference.work_directory(self.plan)
+        root, manifest = stored_backup(self.plan, work)
+        changes = [
+            lambda changed_manifest, _record: changed_manifest.update(id="another-backup"),
+            lambda _manifest, record: record["plan"].update(id="_restore"),
+            lambda _manifest, record: record["plan"].update(backup_id="backup.one"),
+        ]
+        for change in changes:
+            changed_manifest = copy.deepcopy(manifest)
+            record = restore_record(self.plan)
+            change(changed_manifest, record)
+            tools = Mock()
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                reference.restore(self.plan, tools, root, changed_manifest, record)
+            self.assertEqual(tools.mock_calls, [])
 
     def test_valid_restore_preserves_target_owner_and_rewrites_only_physical_object_scope(self):
         work = reference.work_directory(self.plan)

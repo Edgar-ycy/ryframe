@@ -9,14 +9,21 @@ from pathlib import Path
 
 from process_sockets import endpoint
 from restore_build import file_digest
+from restore_identifiers import valid_identifier, valid_scope_identifier
 
 BUCKETS = {"uploads", "avatar", "exports", "imports", "config-packages"}
 EXCLUDED_TABLES = {"ryframe_resource_ownership", "sys_backup_set", "sys_backup_resource", "sys_restore_run"}
 
 
 def identifier(value: str) -> str:
-    if not isinstance(value, str) or not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", value):
+    if not valid_identifier(value):
         raise ValueError("计划资源名称无效")
+    return value
+
+
+def scope_identifier(value: str) -> str:
+    if not valid_scope_identifier(value):
+        raise ValueError("演练 scope 无效")
     return value
 
 
@@ -58,8 +65,7 @@ def validate_plan(plan: dict, backend: Path) -> None:
     identities = {}
     for name in ("source", "target"):
         side = plan[name]
-        if len(identifier(side["scope_id"])) > 48:
-            raise ValueError("演练 scope 过长")
+        scope_identifier(side["scope_id"])
         endpoint(side["s3"]["endpoint"])
         for key in ("api_url", "frontend_url"):
             endpoint(side[key])
@@ -105,8 +111,9 @@ def validate_plan(plan: dict, backend: Path) -> None:
 
 
 def validate_inventory(plan: dict, inventory: dict) -> None:
-    if inventory["scope_id"] != plan["source"]["scope_id"]:
-        raise ValueError("备份清单 scope 与资源计划不一致")
+    if (identifier(inventory["id"]) != plan["id"]
+            or scope_identifier(inventory["scope_id"]) != plan["source"]["scope_id"]):
+        raise ValueError("备份清单 ID 或 scope 与资源计划不一致")
     expected = {db["key"]: db for db in plan["source"]["databases"]}
     if len(inventory["databases"]) != len(expected) or {db["key"] for db in inventory["databases"]} != set(expected):
         raise ValueError("备份清单必须完整覆盖精确数据库目标")

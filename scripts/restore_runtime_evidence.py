@@ -14,11 +14,11 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 from process_sockets import endpoint
+from restore_identifiers import valid_identifier, valid_scope_identifier
 
 MAX_JSON_BYTES = 16 * 1024 * 1024
 HEX_40 = re.compile(r"[a-f0-9]{40}")
 HEX_64 = re.compile(r"[a-f0-9]{64}")
-IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 AUTHORITY_FIELDS = {
     "format_version",
     "kind",
@@ -223,9 +223,11 @@ def validate_authority(value: object) -> dict:
     authority = exact_fields(value, AUTHORITY_FIELDS, "权威恢复上下文")
     if authority["format_version"] != 1 or authority["kind"] != "restore-runtime-authority":
         raise ValueError("权威恢复上下文版本或类型不匹配")
-    for field in ("restore_id", "backup_id", "scope_id"):
-        if not isinstance(authority[field], str) or not IDENTIFIER.fullmatch(authority[field]):
+    for field in ("restore_id", "backup_id"):
+        if not valid_identifier(authority[field]):
             raise ValueError(f"权威恢复上下文的 {field} 无效")
+    if not valid_scope_identifier(authority["scope_id"]):
+        raise ValueError("权威恢复上下文的 scope_id 无效")
     for field, pattern in (("plan_hash", HEX_64), ("backend_sha", HEX_40), ("frontend_sha", HEX_40)):
         if not isinstance(authority[field], str) or not pattern.fullmatch(authority[field]):
             raise ValueError(f"权威恢复上下文的 {field} 无效")
