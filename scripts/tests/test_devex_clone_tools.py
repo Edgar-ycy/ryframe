@@ -3,8 +3,8 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -17,7 +17,7 @@ class CloneToolsTests(unittest.TestCase):
     def setUp(self):
         parent = REPO / ".local-tests/python-unit"
         parent.mkdir(parents=True, exist_ok=True)
-        temporary = tempfile.TemporaryDirectory(dir=parent)
+        temporary = WorkspaceDirectory(dir=parent)
         self.addCleanup(temporary.cleanup)
         self.backend = Path(temporary.name).resolve()
         self.directory = self.backend / ".local-tests/build-tools"

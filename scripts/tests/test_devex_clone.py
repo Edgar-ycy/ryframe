@@ -7,8 +7,8 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -38,7 +38,7 @@ class CloneTests(unittest.TestCase):
     def setUp(self):
         location = REPO / ".local-tests/python-unit"
         location.mkdir(parents=True, exist_ok=True)
-        temporary = tempfile.TemporaryDirectory(dir=location)
+        temporary = WorkspaceDirectory(dir=location)
         self.addCleanup(temporary.cleanup)
         self.backend = Path(temporary.name).resolve()
         for relative in ("sql/ryframe_config.sql", "crates/ryframe-tenant-db/src/generated/catalog.rs",

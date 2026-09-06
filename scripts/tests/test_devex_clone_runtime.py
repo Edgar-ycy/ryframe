@@ -3,8 +3,8 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -18,7 +18,7 @@ class RuntimeControlTests(unittest.TestCase):
     def setUp(self):
         local = Path(__file__).resolve().parents[2] / ".local-tests/python-unit"
         local.mkdir(parents=True, exist_ok=True)
-        temporary = tempfile.TemporaryDirectory(dir=local)
+        temporary = WorkspaceDirectory(dir=local)
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         (self.root / "config").mkdir()

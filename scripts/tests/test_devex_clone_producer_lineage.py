@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sys
-import tempfile
 from types import SimpleNamespace
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -24,7 +24,7 @@ class ProducerLineageTests(unittest.TestCase):
         self.backend = Path(__file__).resolve().parents[2]
         temporary_root = self.backend / ".local-tests" / "python-unit"
         temporary_root.mkdir(parents=True, exist_ok=True)
-        temporary = tempfile.TemporaryDirectory(dir=temporary_root)
+        temporary = WorkspaceDirectory(dir=temporary_root)
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         self.run = self.root / "run"

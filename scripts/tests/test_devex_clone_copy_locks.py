@@ -4,8 +4,8 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -40,7 +40,7 @@ class CopyLockTests(unittest.TestCase):
     def setUp(self):
         local = Path(__file__).resolve().parents[2] / ".local-tests/python-unit"
         local.mkdir(parents=True, exist_ok=True)
-        temporary = tempfile.TemporaryDirectory(dir=local)
+        temporary = WorkspaceDirectory(dir=local)
         self.addCleanup(temporary.cleanup)
         self.backend = Path(temporary.name).resolve()
         self.local = self.backend / ".local-tests"
