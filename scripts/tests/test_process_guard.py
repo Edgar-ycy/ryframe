@@ -3,8 +3,8 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from process_guard import process_guard
@@ -25,7 +25,7 @@ class ProcessGuardTests(unittest.TestCase):
     def setUp(self):
         base = Path(__file__).resolve().parents[2] / ".local-tests/python-unit"
         base.mkdir(parents=True, exist_ok=True)
-        temporary = tempfile.TemporaryDirectory(dir=base)
+        temporary = WorkspaceDirectory(dir=base)
         self.addCleanup(temporary.cleanup)
         self.directory = Path(temporary.name).resolve()
 

@@ -3,8 +3,8 @@ import hashlib
 import json
 from pathlib import Path
 import sys
-import tempfile
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import restore_source_binding as binding
@@ -16,7 +16,7 @@ class SourceBindingTests(unittest.TestCase):
     def setUp(self):
         local = ROOT / ".local-tests/python-unit"
         local.mkdir(parents=True, exist_ok=True)
-        temporary = tempfile.TemporaryDirectory(dir=local)
+        temporary = WorkspaceDirectory(dir=local)
         self.addCleanup(temporary.cleanup)
         self.backend = Path(temporary.name)
         self.config = self.backend / "config"

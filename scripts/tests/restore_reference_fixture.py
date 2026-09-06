@@ -1,6 +1,7 @@
 import datetime as dt
-import tempfile
 from pathlib import Path
+
+from tests.workspace_directory import WorkspaceDirectory
 
 from restore_build import file_digest
 from restore_reference import artifact, now, write_json
@@ -11,7 +12,7 @@ from restore_reference_plan import BUCKETS
 def environment(test):
     local = Path(__file__).resolve().parents[2] / ".local-tests/python-unit"
     local.mkdir(parents=True, exist_ok=True)
-    temporary = tempfile.TemporaryDirectory(dir=local)
+    temporary = WorkspaceDirectory(dir=local)
     test.addCleanup(temporary.cleanup)
     backend = Path(temporary.name).resolve()
     config = backend / ".local-tests/client.cnf"

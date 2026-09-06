@@ -7,8 +7,8 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -21,7 +21,7 @@ class NativeDigestTests(unittest.TestCase):
     def setUp(self):
         base = Path(__file__).resolve().parents[2] / ".local-tests/python-unit"
         base.mkdir(parents=True, exist_ok=True)
-        temporary = tempfile.TemporaryDirectory(dir=base)
+        temporary = WorkspaceDirectory(dir=base)
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.directory = self.root / "binaries"

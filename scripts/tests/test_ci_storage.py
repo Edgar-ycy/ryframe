@@ -2,8 +2,8 @@ import io
 import json
 import subprocess
 import sys
-import tempfile
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -50,7 +50,7 @@ class CiResourceManifestTests(unittest.TestCase):
     def setUp(self):
         base = Path(__file__).resolve().parents[2] / ".local-tests/python-unit"
         base.mkdir(parents=True, exist_ok=True)
-        temporary = tempfile.TemporaryDirectory(dir=base)
+        temporary = WorkspaceDirectory(dir=base)
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         self.output = self.root / "runtime"

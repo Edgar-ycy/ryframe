@@ -4,8 +4,8 @@ import hashlib
 import json
 from pathlib import Path
 import sys
-import tempfile
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -138,7 +138,7 @@ class SourceFingerprintsTests(unittest.TestCase):
     def setUp(self):
         parent = ROOT / ".local-tests/python-unit"
         parent.mkdir(parents=True, exist_ok=True)
-        temporary = tempfile.TemporaryDirectory(dir=parent)
+        temporary = WorkspaceDirectory(dir=parent)
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         self.local = self.root / ".local-tests"
