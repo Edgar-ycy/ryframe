@@ -49,7 +49,7 @@ cargo xtask data migrate verify tenant-data --all
 
 RustFS、Redis 与 API/Worker 的重启分别使用同一运行目录下的 `storage`、`cache` 和 `runtime` 操作，绑定原配置、数据目录、产物、凭据引用、端口与进程创建身份。`status` 始终只读，变更操作要求 `--write`；无法证明归属、阶段不允许、端口被占用或出现未知资源时拒绝接管。缓存只重建登记的 ownership 与验收 sentinel，不恢复会话或锁。
 
-fresh target 的准备、续作、初始化、复核和只读状态统一从 `cargo xtask check recovery fresh-target ...` 进入。xtask 固定当前后端目录，不接受调用方传入其他 `--backend-dir`；`status` 不接受 `--write`，其他阶段仍由私有状态机要求显式 `--write` 并核对登记、前后像与控制器身份。
+fresh target 的准备、续作、初始化、复核和只读状态统一从 `cargo xtask check recovery fresh-target ...` 进入。受控工作目录和证据路径可以使用当前后端 `.local-tests` 下的相对路径，入口会先规范化并拒绝链接或越界路径。xtask 固定当前后端目录，不接受调用方传入其他 `--backend-dir`；`status` 不接受 `--write`，其他阶段仍由私有状态机要求显式 `--write` 并核对登记、前后像与控制器身份。
 
 复制成功后，`post-copy` 依次登记数据集、准备目标、停用调度并复验实际记录和对象。性能 seed 在同一账本中核对十一个明确租户的配额，创建固定身份并再次验证权限；身份开始后不再调整配额。API 与 Worker 的启动和停止使用登记收据，任务处理完成且全部生产者停止后才生成新的 seed 导出。任何阶段成功都不能替代最终业务、数据或正式恢复验证。
 
