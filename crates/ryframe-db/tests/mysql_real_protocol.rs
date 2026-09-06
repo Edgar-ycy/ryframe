@@ -218,9 +218,51 @@ async fn generated_post_port_enforces_tenant_isolation() {
         verify_generated_post_reads(&database).await?;
         verify_generated_post_filters(&database).await?;
         verify_generated_post_writes(&database).await?;
+        verify_generated_post_update_persists(&database).await?;
         Ok(())
     })
     .await;
+}
+
+async fn verify_generated_post_update_persists(
+    database: &DatabaseConnection,
+) -> Result<(), String> {
+    use ryframe_application::TransactionAuditMode;
+    let persistence = generated::post::port(ControlDatabaseCluster::single(database.clone()));
+    let transaction = persistence
+        .begin("tenant-a")
+        .await
+        .map_err(|error| error.to_string())?;
+    let mut record = transaction
+        .find_by_id_for_update("tenant-a", 101)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or("待更新岗位不存在")?;
+    record.name = "更新后的岗位".into();
+    record.sort = 18;
+    record.remark = Some("实际写入 MySQL".into());
+    let saved = transaction
+        .update(record)
+        .await
+        .map_err(|error| error.to_string())?;
+    transaction
+        .commit(TransactionAuditMode::Skip)
+        .await
+        .map_err(|error| error.to_string())?;
+    let read = persistence
+        .find_by_id("tenant-a", 101)
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or("更新后岗位丢失")?;
+    for actual in [saved, read] {
+        if actual.name != "更新后的岗位"
+            || actual.sort != 18
+            || actual.remark.as_deref() != Some("实际写入 MySQL")
+        {
+            return Err("标准资源返回成功但字段未写入数据库".into());
+        }
+    }
+    require_count(database, "SELECT COUNT(*) AS value FROM sys_post WHERE tenant_id = 'tenant-b' AND name = '岗位 B' AND sort = 1", 1).await
 }
 
 async fn create_generated_post_fixture(database: &DatabaseConnection) -> Result<(), String> {
