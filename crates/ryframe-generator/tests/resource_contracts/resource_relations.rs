@@ -69,6 +69,8 @@ fn belongs_to_relation_generates_one_read_slice_and_all_registrations() {
     assert!(app_registry.contains("pub device: Arc<DeviceService>"));
     let api_registry = content(&catalog, "ryframe-api/src/generated/router.rs");
     assert!(api_registry.contains("super::device::handler::router"));
+    assert!(api_registry.contains("CapabilityGuardState::new"));
+    assert!(api_registry.contains("system.device"));
     let db_registry = content(&catalog, "ryframe-tenant-db/src/generated/mod.rs");
     assert!(db_registry.contains("ports.device = Some(device::port(router));"));
 

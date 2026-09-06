@@ -42,6 +42,7 @@ pub(in crate::router) fn redis_idempotent(state: AppState) -> Router {
         .nest("/menus", menu_handler::menu_router(state.clone()))
         .nest("/depts", dept_handler::dept_router(state.clone()))
         .merge(generated::generated_router(
+            state.clone(),
             &state.services.content.generated,
             state.settings.pagination,
         ))

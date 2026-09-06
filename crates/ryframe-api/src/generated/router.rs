@@ -3,18 +3,37 @@
 
 use std::sync::Arc;
 
-use axum::Router;
+use axum::{Router, middleware::from_fn_with_state};
 use ryframe_application::generated::GeneratedServices;
 use ryframe_kernel::PaginationPolicy;
 
-pub fn generated_router(services: &GeneratedServices, pagination: PaginationPolicy) -> Router {
+use crate::{
+    router::{CapabilityGuardState, capability_guard},
+    state::AppState,
+};
+
+pub fn generated_router(
+    state: AppState,
+    services: &GeneratedServices,
+    pagination: PaginationPolicy,
+) -> Router {
     Router::new()
         .nest(
             "/notices",
-            super::notice::handler::router(Arc::clone(&services.notice), pagination),
+            super::notice::handler::router(Arc::clone(&services.notice), pagination).layer(
+                from_fn_with_state(
+                    CapabilityGuardState::new(state.clone(), "system.notice"),
+                    capability_guard,
+                ),
+            ),
         )
         .nest(
             "/posts",
-            super::post::handler::router(Arc::clone(&services.post), pagination),
+            super::post::handler::router(Arc::clone(&services.post), pagination).layer(
+                from_fn_with_state(
+                    CapabilityGuardState::new(state.clone(), "system.post"),
+                    capability_guard,
+                ),
+            ),
         )
 }
