@@ -244,10 +244,16 @@ fn render_api_mod(resources: &[&ResourceIr], header: &str) -> String {
 fn render_generated_router(resources: &[&ResourceIr], header: &str) -> String {
     let nests = resources
         .iter()
-        .map(|resource| {
+        .enumerate()
+        .map(|(index, resource)| {
             let path = resource.api.path.trim_start_matches("/api/v1/system");
+            let state = if index + 1 == resources.len() {
+                "state"
+            } else {
+                "state.clone()"
+            };
             format!(
-                "        .nest({path:?}, super::{name}::handler::router(Arc::clone(&services.{name}), pagination).layer(from_fn_with_state(CapabilityGuardState::new(state.clone(), {capability:?}), capability_guard)))",
+                "        .nest({path:?}, super::{name}::handler::router(Arc::clone(&services.{name}), pagination).layer(from_fn_with_state(CapabilityGuardState::new({state}, {capability:?}), capability_guard)))",
                 name = resource.name,
                 capability = resource.access.capability,
             )

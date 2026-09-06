@@ -31,7 +31,7 @@ pub fn generated_router(
             "/posts",
             super::post::handler::router(Arc::clone(&services.post), pagination).layer(
                 from_fn_with_state(
-                    CapabilityGuardState::new(state.clone(), "system.post"),
+                    CapabilityGuardState::new(state, "system.post"),
                     capability_guard,
                 ),
             ),
