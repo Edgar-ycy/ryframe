@@ -700,13 +700,18 @@ jobs:
             nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10 \
             -t
 
-      - name: 校验 Prometheus 告警规则
+      - name: 校验 Prometheus 告警规则与触发边界
         if: steps.deployment-changes.outputs.required == 'true'
-        run: >-
-          docker run --rm --entrypoint /bin/promtool
-          --volume "$GITHUB_WORKSPACE/backend/deploy/prometheus:/rules:ro"
-          prom/prometheus@sha256:8672a850efe2f9874702406c8318704edb363587f8c2ca88586b4c8fdb5cea24
-          check rules /rules/ryframe-alerts.yml
+        run: |
+          promtool() {
+            docker run --rm --entrypoint /bin/promtool \
+              --volume "$GITHUB_WORKSPACE/backend/deploy/prometheus:/rules:ro" \
+              --workdir /rules \
+              prom/prometheus@sha256:8672a850efe2f9874702406c8318704edb363587f8c2ca88586b4c8fdb5cea24 \
+              "$@"
+          }
+          promtool check rules /rules/ryframe-alerts.yml
+          promtool test rules /rules/ryframe-alerts.test.yml
 
       - name: 构建生产镜像
         if: steps.deployment-changes.outputs.required == 'true'
