@@ -82,8 +82,6 @@ fn recovery_runtime_forwards_the_global_frontend_as_one_argument() {
         "recovery",
         "runtime",
         "verify",
-        "--backend-dir",
-        ".",
         "--bindings",
         "missing-bindings.json",
         "--frontend-url",
