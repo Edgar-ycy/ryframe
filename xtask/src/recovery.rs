@@ -15,6 +15,23 @@ pub(crate) fn recovery_command(
     frontend_dir: &Path,
 ) -> Result<(&'static str, Vec<String>)> {
     let (operation, rest) = arguments.split_first().ok_or("恢复验收缺少明确阶段")?;
+    if operation == "fresh-target" {
+        if rest.iter().any(|value| value == "--backend-dir") {
+            return Err(
+                "fresh-target 由 cargo xtask 固定当前后端目录，不接受 --backend-dir".into(),
+            );
+        }
+        let backend = root_dir();
+        let backend = backend
+            .to_str()
+            .ok_or("后端目录必须能表示为 UTF-8 命令参数")?;
+        let mut forwarded = Vec::with_capacity(rest.len() + 3);
+        forwarded.push(operation.to_owned());
+        forwarded.extend(rest.iter().cloned());
+        forwarded.push("--backend-dir".to_owned());
+        forwarded.push(backend.to_owned());
+        return Ok(("scripts/devex_clone.py", forwarded));
+    }
     if operation != "runtime" {
         return Ok(("scripts/restore_reference.py", arguments.to_vec()));
     }

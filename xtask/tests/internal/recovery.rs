@@ -40,9 +40,56 @@ fn reference_stages_keep_their_existing_arguments() {
 }
 
 #[test]
+fn fresh_target_uses_the_private_state_machine_with_the_current_backend() {
+    let (script, forwarded) = recovery_command(
+        &strings(&[
+            "fresh-target",
+            "--workspace",
+            "D:/隔离 target",
+            "--operation",
+            "status",
+        ]),
+        Path::new("unused"),
+    )
+    .unwrap();
+    assert_eq!(script, "scripts/devex_clone.py");
+    assert_eq!(
+        forwarded,
+        strings(&[
+            "fresh-target",
+            "--workspace",
+            "D:/隔离 target",
+            "--operation",
+            "status",
+            "--backend-dir",
+        ])
+        .into_iter()
+        .chain([super::workspace::root_dir().display().to_string()])
+        .collect::<Vec<_>>(),
+    );
+    assert!(
+        recovery_command(
+            &strings(&["fresh-target", "--backend-dir", "other"]),
+            Path::new("unused"),
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn forwarded_recovery_scripts_exist_in_checkout() {
     let root = super::workspace::root_dir();
-    for arguments in [strings(&["plan"]), strings(&["runtime", "status"])] {
+    for arguments in [
+        strings(&["plan"]),
+        strings(&["runtime", "status"]),
+        strings(&[
+            "fresh-target",
+            "--operation",
+            "status",
+            "--workspace",
+            "D:/target",
+        ]),
+    ] {
         let (script, _) = recovery_command(&arguments, Path::new("unused")).unwrap();
         assert!(
             root.join(script).is_file(),

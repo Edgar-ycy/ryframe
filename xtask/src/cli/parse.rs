@@ -310,6 +310,7 @@ fn parse_recovery(args: &[String]) -> Result<Vec<String>, CliError> {
             "restore",
             "copy",
             "damage",
+            "fresh-target",
             "runtime",
         ],
     )

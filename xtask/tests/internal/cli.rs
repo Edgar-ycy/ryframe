@@ -112,6 +112,25 @@ fn parses_check_task_graph_and_internal_groups() {
             "runtime.json",
         ])))
     );
+    assert!(matches!(
+        parse_command(&[
+            "check",
+            "recovery",
+            "fresh-target",
+            "--workspace",
+            "D:/隔离 target",
+            "--operation",
+            "status",
+        ]),
+        Ok(Command::Check(CheckCommand::Recovery(arguments)))
+            if arguments == strings(&[
+                "fresh-target",
+                "--workspace",
+                "D:/隔离 target",
+                "--operation",
+                "status",
+            ])
+    ));
     assert!(parse_command(&["check", "--full", "--full"]).is_err());
     assert!(parse_command(&["check", "--scope", "all", "--scope", "backend"]).is_err());
 }
