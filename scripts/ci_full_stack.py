@@ -14,13 +14,14 @@ from pathlib import Path
 from typing import Callable, Protocol
 
 
-from ci_full_stack_resources import BUCKETS, build_binaries, prepare_storage, read_binaries
 from ci_full_stack_databases import DatabasePlan, plan_databases, prepare_databases
+from ci_full_stack_resources import build_binaries, prepare_storage, read_binaries
 from full_stack_process import read_process, record_process, terminate_owned_process
-from full_stack_runtime import register_runtime, worker_ready_url
+from full_stack_runtime import register_runtime
 from full_stack_worker import control as control_worker
 from full_stack_worker import ensure_port_free, wait_for_port_free
 from process_sockets import verify_listener
+
 PLAN_HASH_PATTERN = re.compile(r"^plan_hash=([0-9a-f]{64})$", re.MULTILINE)
 
 
@@ -98,7 +99,9 @@ def _run(
         env=env,
     )
     if completed.returncode != 0:
-        detail = completed.stderr.strip() if completed.stderr else str(completed.returncode)
+        detail = (
+            completed.stderr.strip() if completed.stderr else str(completed.returncode)
+        )
         raise FullStackError(f"命令失败（{' '.join(arguments)}）：{detail}")
     return completed
 
@@ -189,7 +192,9 @@ def wait_for_api(
 def _tail(path: Path, lines: int = 200) -> str:
     if not path.is_file():
         return ""
-    return "\n".join(path.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:])
+    return "\n".join(
+        path.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:]
+    )
 
 
 def _stop_started_process(
@@ -215,9 +220,7 @@ def start(backend_root: Path) -> None:
     if receipt["worker_ready_url"] == api_ready_url:
         raise FullStackError("API 和 Worker 必须使用不同的明确监听端口")
     binaries = read_binaries(output_dir)
-    for name, binary, ready_url in (
-        ("api", "ryframe", api_ready_url),
-    ):
+    for name, binary, ready_url in (("api", "ryframe", api_ready_url),):
         if (output_dir / f"{name}.json").exists():
             raise FullStackError("运行目录已有 API 进程收据；请使用新的运行目录")
         ensure_port_free(ready_url)
@@ -226,8 +229,12 @@ def start(backend_root: Path) -> None:
         service_environment["SNOWFLAKE_WORKER_ID"] = "1" if name == "api" else "2"
         with service_log.open("ab") as log:
             process = subprocess.Popen(
-                [binaries[binary]], cwd=backend_root, stdin=subprocess.DEVNULL,
-                stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+                [binaries[binary]],
+                cwd=backend_root,
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
                 env=service_environment,
             )
@@ -279,22 +286,33 @@ def _best_effort(arguments: list[str], *, output: Path) -> None:
             log.write(f"无法执行 {' '.join(arguments)}：{error}\n")
 
 
-def collect() -> None:
+def collect(backend_root: Path | None = None) -> None:
     """尽力停止本 Job 的 API、Worker，并收集基础设施与编译缓存日志。"""
 
+    backend_root = (backend_root or Path.cwd()).resolve()
     output_dir = _output_dir()
     output_dir.mkdir(parents=True, exist_ok=True)
     failures: list[str] = []
-    endpoints = {"worker": worker_ready_url, "api": _api_ready_url}
-    for name in ("worker", "api"):
+    if (output_dir / "runtime.json").is_file():
+        try:
+            control_worker("stop", backend_root, output_dir, timeout=180)
+        except Exception as error:
+            failures.append(f"worker: {error}")
+    elif (output_dir / "worker.json").exists() or (
+        output_dir / "worker-control.lock"
+    ).exists():
+        failures.append("worker: 存在进程或控制收据，但缺少可信 runtime 收据")
+    for name in ("api",):
         if (output_dir / f"{name}.json").is_file():
             try:
-                identity = read_process(output_dir, name, _required_environment("APP_SCOPE_ID"))
+                identity = read_process(
+                    output_dir, name, _required_environment("APP_SCOPE_ID")
+                )
                 terminate_owned_process(identity)
             except Exception as error:
                 failures.append(f"{name}: {error}")
         try:
-            wait_for_port_free(endpoints[name]())
+            wait_for_port_free(_api_ready_url())
         except Exception as error:
             failures.append(f"{name} 端口: {error}")
 
@@ -310,7 +328,9 @@ def collect() -> None:
             except FullStackError as error:
                 failures.append(str(error))
             else:
-                _best_effort(["docker", "logs", container], output=output_dir / filename)
+                _best_effort(
+                    ["docker", "logs", container], output=output_dir / filename
+                )
     sccache_log = output_dir / "sccache.log"
     _best_effort(["sccache", "--show-stats"], output=sccache_log)
     _best_effort(["sccache", "--stop-server"], output=sccache_log)
@@ -334,7 +354,7 @@ def main() -> None:
     elif args.operation == "start":
         start(args.backend_root.resolve())
     else:
-        collect()
+        collect(args.backend_root.resolve())
 
 
 if __name__ == "__main__":

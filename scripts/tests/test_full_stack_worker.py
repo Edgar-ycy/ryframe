@@ -2,8 +2,10 @@ import json
 import os
 from pathlib import Path
 import shutil
+import socket
 import subprocess
 import sys
+import time
 import unittest
 import uuid
 from unittest import mock
@@ -11,152 +13,459 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import full_stack_worker as worker
 from ci_full_stack_resources import BINARIES
+from full_stack_process import (
+    process_identity,
+    read_process,
+    record_process,
+    terminate_owned_process,
+)
 from full_stack_runtime import register_runtime, verify_runtime
+
+
+FAKE_WORKER = r"""
+import os
+if os.environ.get("SNOWFLAKE_WORKER_ID") == "2":
+    import socket
+    import time
+    mode = os.environ.get("RYFRAME_FAKE_WORKER_MODE", "ready")
+    if mode == "idle":
+        while True:
+            time.sleep(1)
+    if mode == "exit":
+        os._exit(7)
+    time.sleep(float(os.environ.get("RYFRAME_FAKE_WORKER_DELAY", "0")))
+    server = socket.socket()
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("127.0.0.1", int(os.environ["APP_JOBS_HEALTH_PORT"])))
+    server.listen()
+    while True:
+        connection, _ = server.accept()
+        with connection:
+            request = b""
+            while b"\r\n\r\n" not in request:
+                block = connection.recv(4096)
+                if not block:
+                    break
+                request += block
+            connection.sendall(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+"""
 
 
 class WorkerControlTests(unittest.TestCase):
     def setUp(self):
         local = Path(__file__).resolve().parents[2] / ".local-tests/python-unit"
         local.mkdir(parents=True, exist_ok=True)
-        self.root = local / f"worker-{uuid.uuid4().hex}"
+        self.root = local / f"worker-control-{uuid.uuid4().hex}"
         self.root.mkdir()
-        self.addCleanup(shutil.rmtree, self.root)
+        self.addCleanup(self.cleanup)
         (self.root / "config").mkdir()
-        (self.root / "config/app.toml").write_text("[app]\nport=8080\n", encoding="utf-8")
+        (self.root / "config/app.toml").write_text(
+            "[app]\nport=8080\n", encoding="utf-8"
+        )
         self.directory = self.root / "runtime"
         self.directory.mkdir()
-        (self.directory / "binaries.json").write_text(json.dumps(
-            {name: str(Path(sys.executable).resolve()) for _, name in BINARIES}), encoding="utf-8")
-        self.environment = mock.patch.dict(os.environ, {
-            "APP_ENV": "test", "APP_SCOPE_ID": "worker-control-test", "APP_JOBS_MODE": "external",
-            "APP_JOBS_HEALTH_HOST": "127.0.0.1", "APP_JOBS_HEALTH_PORT": "12345",
-        }, clear=True)
+        self.fake = self.root / "fake-python"
+        self.fake.mkdir()
+        (self.fake / "sitecustomize.py").write_text(FAKE_WORKER, encoding="utf-8")
+        port = self.free_port()
+        (self.directory / "binaries.json").write_text(
+            json.dumps(
+                {name: str(Path(sys.executable).resolve()) for _, name in BINARIES}
+            ),
+            encoding="utf-8",
+        )
+        environment = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith("APP_") and not key.startswith("RYFRAME_E2E_")
+        }
+        environment.update(
+            {
+                "APP_ENV": "test",
+                "APP_SCOPE_ID": "worker-control-test",
+                "APP_JOBS_MODE": "external",
+                "APP_JOBS_HEALTH_HOST": "127.0.0.1",
+                "APP_JOBS_HEALTH_PORT": str(port),
+                "PYTHONPATH": str(self.fake),
+            }
+        )
+        self.environment = mock.patch.dict(os.environ, environment, clear=True)
         self.environment.start()
         self.addCleanup(self.environment.stop)
         register_runtime(self.root, self.directory)
-        self.children = []
-        self.popen = subprocess.Popen
-        self.addCleanup(self.cleanup_children)
-        listener = mock.patch.object(worker, "verify_listener")
-        self.listener = listener.start()
-        self.addCleanup(listener.stop)
+        self.controllers = []
+        self.fake_workers = []
 
-    def cleanup_children(self):
-        for child in self.children:
-            if child.poll() is None:
-                child.kill()
-            child.wait(timeout=5)
+    @staticmethod
+    def free_port():
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            return listener.getsockname()[1]
 
-    def spawn(self, arguments, **kwargs):
-        self.assertEqual(arguments, [str(Path(sys.executable).resolve())])
-        self.assertEqual(kwargs["env"]["SNOWFLAKE_WORKER_ID"], "2")
-        process = self.popen([sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
-        self.children.append(process)
-        return process
+    def cleanup(self):
+        for process in self.controllers:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
+        for process, identity in self.fake_workers:
+            if process_identity(identity["pid"]) == identity:
+                terminate_owned_process(identity, crash=True)
+            process.wait(timeout=5)
+        for path in (self.directory / worker.LOCK,):
+            for name in ("supervisor.json", "candidate.json"):
+                receipt = path / name
+                if receipt.is_file():
+                    try:
+                        identity = json.loads(receipt.read_text(encoding="utf-8"))[
+                            "identity"
+                        ]
+                        if process_identity(identity["pid"]) == identity:
+                            terminate_owned_process(identity, crash=True)
+                    except (KeyError, OSError, ValueError):
+                        pass
+        process = self.directory / "worker.json"
+        if process.is_file():
+            try:
+                identity = read_process(self.directory, "worker", "worker-control-test")
+                if process_identity(identity["pid"]) == identity:
+                    terminate_owned_process(identity, crash=True)
+            except (OSError, ValueError):
+                pass
+        shutil.rmtree(self.root)
 
-    def control(self, operation, timeout=2):
+    def control(self, operation, timeout=4):
         return worker.control(operation, self.root, self.directory, timeout)
 
-    def test_restart_updates_receipt_and_cleanup_targets_the_new_process(self):
-        with mock.patch.object(worker.subprocess, "Popen", side_effect=self.spawn), \
-                mock.patch.object(worker, "ensure_port_free"), mock.patch.object(worker, "ready", return_value=True):
-            first = self.control("start")
-            self.assertEqual(self.control("status")["identity"], first["identity"])
-            with self.assertRaisesRegex(ValueError, "重复启动"):
-                self.control("start")
-            self.assertEqual(self.control("crash")["state"], "stopped")
-            self.children[0].wait(timeout=5)
-            second = self.control("start")
-            self.assertNotEqual(first["identity"], second["identity"])
-            self.assertEqual(self.control("stop")["state"], "stopped")
-            self.children[1].wait(timeout=5)
-            self.assertEqual(self.control("stop")["state"], "stopped")
-        self.assertEqual(len(list(self.directory.glob("worker-*.log"))), 2)
-        self.assertEqual(self.listener.call_count, 2)
+    def wait_for(self, condition, timeout=10):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if condition():
+                return
+            time.sleep(0.02)
+        self.fail("等待进程级测试检查点超时")
 
-    def test_start_timeout_reaps_child_and_keeps_log(self):
-        with mock.patch.object(worker.subprocess, "Popen", side_effect=self.spawn), \
-                mock.patch.object(worker, "ensure_port_free"), mock.patch.object(worker, "ready", return_value=False):
-            with self.assertRaisesRegex(TimeoutError, "就绪超时"):
-                self.control("start", timeout=0.01)
-        self.assertIsNotNone(self.children[0].poll())
-        self.assertEqual(self.control("status")["state"], "stopped")
-        self.assertEqual(len(list(self.directory.glob("worker-*.log"))), 1)
+    def spawn_fake_worker(self, mode: str, *, register: bool) -> dict:
+        environment = {
+            **os.environ,
+            "RYFRAME_FAKE_WORKER_MODE": mode,
+            "SNOWFLAKE_WORKER_ID": "2",
+        }
+        process = subprocess.Popen(
+            [sys.executable],
+            cwd=self.root,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        self.wait_for(lambda: process_identity(process.pid) is not None)
+        identity = process_identity(process.pid)
+        self.assertIsNotNone(identity)
+        self.fake_workers.append((process, identity))
+        if register:
+            recorded = record_process(
+                self.directory,
+                "worker",
+                process.pid,
+                sys.executable,
+                "worker-control-test",
+            )["identity"]
+            self.assertEqual(recorded, identity)
+        return identity
 
-    def test_exit_before_readiness_preserves_receipt_and_allows_restart(self):
-        def exit_before_ready(_url):
-            self.children[-1].kill()
-            self.children[-1].wait(timeout=5)
-            return False
+    def test_start_persists_atomic_receipts_and_worker_survives_cli(self):
+        started = self.control("start")
+        self.assertEqual(started["state"], "running")
+        identity = started["identity"]
+        self.assertEqual(process_identity(identity["pid"]), identity)
+        self.assertFalse((self.directory / worker.LOCK).exists())
 
-        with mock.patch.object(worker.subprocess, "Popen", side_effect=self.spawn), \
-                mock.patch.object(worker, "ensure_port_free"):
-            with mock.patch.object(worker, "ready", side_effect=exit_before_ready):
-                with self.assertRaisesRegex(RuntimeError, "就绪前退出"):
-                    self.control("start")
-            failed = json.loads((self.directory / "worker.json").read_text(encoding="utf-8"))
-            self.assertEqual(self.control("status")["state"], "stopped")
-            self.assertFalse((self.directory / "worker-control.lock").exists())
-            with mock.patch.object(worker, "ready", return_value=True):
-                restarted = self.control("start")
-            self.assertNotEqual(failed["identity"], restarted["identity"])
-            self.control("stop")
-        self.assertEqual(len(list(self.directory.glob("worker-*.log"))), 2)
+        archive = self.directory / worker.ARCHIVE / started["operation_id"]
+        self.assertEqual(
+            {path.name for path in archive.iterdir()},
+            {
+                "owner.json",
+                "request.json",
+                "candidate.json",
+                "supervisor.json",
+                "progress.json",
+                "result.json",
+            },
+        )
+        self.assertEqual(list(self.directory.glob(".wc-*.tmp")), [])
+        receipts = {
+            name: json.loads((archive / name).read_text(encoding="utf-8"))
+            for name in ("owner.json", "request.json", "result.json")
+        }
+        for value in receipts.values():
+            self.assertEqual(value["operation_id"], started["operation_id"])
+            self.assertEqual(value["runtime_directory"], str(self.directory))
+            self.assertEqual(value["source_sha256"], started["source_sha256"])
+        self.assertEqual(
+            receipts["owner.json"]["identity"], started["controller_identity"]
+        )
+        self.assertGreater((archive / "owner.json").stat().st_size, 0)
+        self.assertGreater((archive / "request.json").stat().st_size, 0)
+        self.assertGreater((archive / "result.json").stat().st_size, 0)
 
-    def test_wrong_listener_reaps_started_child_and_keeps_failure_log(self):
-        self.listener.side_effect = ValueError("监听进程身份不匹配")
-        with mock.patch.object(worker.subprocess, "Popen", side_effect=self.spawn), \
-                mock.patch.object(worker, "ensure_port_free"), mock.patch.object(worker, "ready", return_value=True):
-            with self.assertRaisesRegex(ValueError, "监听进程身份不匹配"):
-                self.control("start")
-        self.assertIsNotNone(self.children[0].poll())
-        self.assertEqual(self.control("status")["state"], "stopped")
-        self.assertEqual(len(list(self.directory.glob("worker-*.log"))), 1)
-
-    def test_identity_change_is_not_terminated(self):
-        with mock.patch.object(worker.subprocess, "Popen", side_effect=self.spawn), \
-                mock.patch.object(worker, "ensure_port_free"), mock.patch.object(worker, "ready", return_value=True):
+        with self.assertRaisesRegex(ValueError, "重复启动"):
             self.control("start")
+        self.assertEqual(process_identity(identity["pid"]), identity)
+        self.assertEqual(self.control("status")["state"], "running")
+        self.assertEqual(self.control("reconcile")["state"], "running")
+        self.assertEqual(self.control("stop")["state"], "stopped")
+        self.assertEqual(self.control("stop")["state"], "stopped")
+        self.assertEqual(self.control("status")["state"], "stopped")
+        self.assertIsNone(process_identity(identity["pid"]))
+
+    def launch_interrupted_controller(self, checkpoint, operation="start"):
+        marker = self.root / f"{checkpoint}.marker"
+        source = """
+import sys
+import time
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import full_stack_worker as worker
+target, operation, marker = sys.argv[2], sys.argv[3], Path(sys.argv[4])
+def pause(phase):
+    if phase == target:
+        marker.write_text(phase, encoding="utf-8")
+        time.sleep(30)
+worker._control_checkpoint = pause
+worker.control(operation, Path(sys.argv[5]), Path(sys.argv[6]), 4)
+"""
+        environment = os.environ.copy()
+        environment["PYTHONPATH"] = os.pathsep.join(
+            [str(Path(__file__).resolve().parents[1]), str(self.fake)]
+        )
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                source,
+                str(Path(__file__).resolve().parents[1]),
+                checkpoint,
+                operation,
+                str(marker),
+                str(self.root),
+                str(self.directory),
+            ],
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        self.controllers.append(process)
+        self.wait_for(marker.is_file)
+        identity = process_identity(process.pid)
+        self.assertIsNotNone(identity)
+        terminate_owned_process(identity, crash=True)
+        process.wait(timeout=5)
+        return process
+
+    def test_parent_death_is_recoverable_during_prepare_launch_and_readiness(self):
+        for checkpoint in ("prepared", "authorized", "waiting-ready"):
+            with self.subTest(checkpoint=checkpoint):
+                with mock.patch.dict(
+                    os.environ, {"RYFRAME_FAKE_WORKER_DELAY": "0.5"}, clear=False
+                ):
+                    self.launch_interrupted_controller(checkpoint)
+                    lock = self.directory / worker.LOCK
+                    self.assertTrue((lock / "owner.json").is_file())
+                    self.assertTrue((lock / "request.json").is_file())
+                    self.assertGreater((lock / "owner.json").stat().st_size, 0)
+                    self.assertGreater((lock / "request.json").stat().st_size, 0)
+                    if checkpoint == "prepared":
+                        result = self.control("reconcile")
+                        self.assertEqual(result["state"], "stopped")
+                    else:
+                        self.wait_for(
+                            lambda: (lock / "result.json").is_file(), timeout=10
+                        )
+                        result = self.control("status")
+                        self.assertEqual(result["state"], "running")
+                        self.control("stop")
+                self.assertFalse(lock.exists())
+
+    def test_parent_death_reconciles_simple_operations_to_their_exact_goal(self):
+        started = self.control("start")
+        self.launch_interrupted_controller("stop-prepared", "stop")
+        stopped = self.control("status")
+        self.assertEqual(stopped["state"], "stopped")
+        self.assertIsNone(process_identity(started["identity"]["pid"]))
+        archived = [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in (self.directory / worker.ARCHIVE).glob("*/result.json")
+        ]
+        self.assertTrue(
+            any(
+                value["operation"] == "stop"
+                and value["outcome"] == "succeeded"
+                and value["state"] == "stopped"
+                and value["reconciled"] is True
+                for value in archived
+            )
+        )
+
+        started = self.control("start")
+        for operation in ("status", "reconcile"):
+            self.launch_interrupted_controller(f"{operation}-prepared", operation)
+            current = self.control("reconcile" if operation == "status" else "status")
+            self.assertEqual(current["state"], "running")
+            self.assertEqual(current["identity"], started["identity"])
+        self.control("stop")
+
+    def test_start_timeout_is_archived_and_reaps_exact_worker(self):
+        with mock.patch.dict(
+            os.environ, {"RYFRAME_FAKE_WORKER_MODE": "idle"}, clear=False
+        ):
+            with self.assertRaisesRegex(RuntimeError, "就绪超时"):
+                self.control("start", timeout=0.2)
+        identity = read_process(self.directory, "worker", "worker-control-test")
+        self.assertIsNone(process_identity(identity["pid"]))
+        self.assertEqual(self.control("status")["state"], "stopped")
+        results = [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in (self.directory / worker.ARCHIVE).glob("*/result.json")
+        ]
+        self.assertTrue(
+            any(
+                value["operation"] == "start" and value["outcome"] == "failed"
+                for value in results
+            )
+        )
+
+    def test_worker_exit_before_readiness_is_reaped_and_restartable(self):
+        with mock.patch.dict(
+            os.environ, {"RYFRAME_FAKE_WORKER_MODE": "exit"}, clear=False
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Worker.*退出"):
+                self.control("start")
+        failed = read_process(self.directory, "worker", "worker-control-test")
+        self.assertIsNone(process_identity(failed["pid"]))
+        self.assertEqual(self.control("status")["state"], "stopped")
+        restarted = self.control("start")
+        self.assertEqual(restarted["state"], "running")
+        self.control("stop")
+
+    def test_wrong_worker_creation_identity_fails_closed_without_signalling_reused_pid(
+        self,
+    ):
+        started = self.control("start")
         path = self.directory / "worker.json"
-        receipt = json.loads(path.read_text(encoding="utf-8"))
-        receipt["identity"]["started"] = "0"
-        path.write_text(json.dumps(receipt), encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "身份已变化"):
-            self.control("crash")
-        self.assertIsNone(self.children[0].poll())
+        original = json.loads(path.read_text(encoding="utf-8"))
+        changed = {**original, "identity": {**original["identity"], "started": "0"}}
+        path.write_text(json.dumps(changed), encoding="utf-8")
+        for operation in ("status", "stop", "reconcile"):
+            with (
+                self.subTest(operation=operation),
+                self.assertRaisesRegex(ValueError, "身份已变化"),
+            ):
+                self.control(operation)
+            self.assertEqual(
+                process_identity(started["identity"]["pid"]), started["identity"]
+            )
+        path.write_text(json.dumps(original), encoding="utf-8")
+        self.control("stop")
 
-    def test_lock_and_configuration_changes_fail_closed(self):
-        lock = self.directory / "worker-control.lock"
+    def test_duplicate_or_unknown_control_receipt_content_fails_closed(self):
+        self.launch_interrupted_controller("prepared")
+        lock = self.directory / worker.LOCK
+        request = lock / "request.json"
+        original = request.read_text(encoding="utf-8")
+        request.write_text(
+            original.replace(
+                '"operation": "start",',
+                '"operation": "start",\n  "operation": "stop",',
+                1,
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(ValueError, "重复字段"):
+            self.control("reconcile")
+        self.assertTrue(lock.is_dir())
+        self.assertFalse((self.directory / "worker.json").exists())
+
+    def test_empty_legacy_lock_requires_explicit_safe_reconciliation(self):
+        lock = self.directory / worker.LOCK
         lock.mkdir()
-        with self.assertRaisesRegex(ValueError, "并发启动"):
-            self.control("start")
-        lock.rmdir()
+        with self.assertRaisesRegex(ValueError, "显式使用 reconcile"):
+            self.control("status")
+        first = self.control("reconcile")
+        self.assertEqual(first["state"], "stopped")
+        self.assertFalse(lock.exists())
+        self.assertEqual(self.control("reconcile")["state"], "stopped")
+        self.assertEqual(
+            len(list((self.directory / worker.ARCHIVE).glob("legacy-*.json"))), 1
+        )
+
+        started = self.control("start")
+        lock.mkdir()
+        adopted = self.control("reconcile")
+        self.assertEqual(adopted["state"], "running")
+        self.assertEqual(adopted["identity"], started["identity"])
+        self.control("stop")
+
+    def test_configuration_and_binary_changes_fail_before_process_control(self):
         with mock.patch.dict(os.environ, {"APP_SCOPE_ID": "other-test"}):
             with self.assertRaisesRegex(ValueError, "不匹配"):
                 self.control("status")
-        (self.root / "config/app.toml").write_text("[app]\nport=9999\n", encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "不匹配"):
-            verify_runtime(self.root, self.directory)
-
-    def test_binary_change_and_non_test_environment_are_rejected(self):
-        manifest = self.directory / "binaries.json"
-        value = json.loads(manifest.read_text(encoding="utf-8"))
-        value["ryframe-worker"] = str(self.root / "config/app.toml")
-        manifest.write_text(json.dumps(value), encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "不匹配"):
-            self.control("status")
         with mock.patch.dict(os.environ, {"APP_ENV": "production"}):
             with self.assertRaisesRegex(ValueError, "APP_ENV=test"):
                 self.control("status")
+        manifest = self.directory / "binaries.json"
+        original = manifest.read_text(encoding="utf-8")
+        binaries = json.loads(original)
+        binaries["ryframe-worker"] = str(self.root / "config/app.toml")
+        manifest.write_text(json.dumps(binaries), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "不匹配"):
+            self.control("status")
+        manifest.write_text(original, encoding="utf-8")
+        (self.root / "config/app.toml").write_text(
+            "[app]\nport=9999\n", encoding="utf-8"
+        )
+        with self.assertRaisesRegex(ValueError, "不匹配"):
+            verify_runtime(self.root, self.directory)
 
-    def test_unknown_operation_is_rejected_before_lock_or_runtime_access(self):
-        with mock.patch.object(worker, "verify_runtime") as verify:
-            with self.assertRaisesRegex(ValueError, "未知 Worker"):
-                self.control("unknown")
-        verify.assert_not_called()
-        self.assertFalse((self.directory / "worker-control.lock").exists())
+    def test_stopped_state_fails_closed_when_the_registered_port_is_occupied(self):
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", int(os.environ["APP_JOBS_HEALTH_PORT"])))
+            listener.listen()
+            with self.assertRaisesRegex(ValueError, "端口已占用"):
+                self.control("status")
 
-    def test_kernel_guard_wraps_runtime_verification_and_control_lock(self):
+    def test_simple_status_and_reconcile_reject_a_live_unready_worker(self):
+        identity = self.spawn_fake_worker("idle", register=True)
+        for operation in ("status", "reconcile"):
+            with (
+                self.subTest(operation=operation),
+                self.assertRaisesRegex(ValueError, "未通过就绪探针"),
+            ):
+                self.control(operation)
+            self.assertEqual(process_identity(identity["pid"]), identity)
+            self.assertFalse((self.directory / worker.LOCK).exists())
+
+    def test_active_status_reconciliation_rejects_a_foreign_ready_listener(self):
+        identity = self.spawn_fake_worker("idle", register=True)
+        foreign = self.spawn_fake_worker("ready", register=False)
+        self.wait_for(
+            lambda: worker.ready(
+                verify_runtime(self.root, self.directory)["worker_ready_url"]
+            )
+        )
+        self.launch_interrupted_controller("status-prepared", "status")
+
+        with self.assertRaisesRegex(ValueError, "端口不属于"):
+            self.control("reconcile")
+        self.assertEqual(process_identity(identity["pid"]), identity)
+        self.assertEqual(process_identity(foreign["pid"]), foreign)
+        self.assertTrue((self.directory / worker.LOCK).is_dir())
+
+    def test_kernel_guard_wraps_runtime_verification_and_receipt_transition(self):
         events = []
 
         class Guard:
@@ -166,16 +475,27 @@ class WorkerControlTests(unittest.TestCase):
             def __exit__(self, *_):
                 events.append("guard-exit")
 
-        with mock.patch.object(worker, "process_guard", return_value=Guard()), \
-                mock.patch.object(worker, "verify_runtime", wraps=worker.verify_runtime):
-            self.control("status")
+        with mock.patch.object(worker, "process_guard", return_value=Guard()):
+            self.assertEqual(self.control("status")["state"], "stopped")
         self.assertEqual(events, ["guard-enter", "guard-exit"])
-        self.assertFalse((self.directory / "worker-control.lock").exists())
+        self.assertFalse((self.directory / worker.LOCK).exists())
 
-    def test_stopped_receipt_fails_closed_when_the_port_is_owned_elsewhere(self):
-        with mock.patch.object(worker, "ensure_port_free", side_effect=ValueError("occupied")):
-            with self.assertRaisesRegex(ValueError, "occupied"):
-                self.control("status")
+    def test_unknown_operation_and_boolean_timeout_are_rejected_without_lock(self):
+        with mock.patch.object(worker, "verify_runtime") as verify:
+            for operation in ("unknown", []):
+                with (
+                    self.subTest(operation=operation),
+                    self.assertRaisesRegex(ValueError, "未知 Worker"),
+                ):
+                    self.control(operation)
+            for timeout in (True, "1"):
+                with (
+                    self.subTest(timeout=timeout),
+                    self.assertRaisesRegex(ValueError, "就绪超时"),
+                ):
+                    self.control("status", timeout=timeout)
+        verify.assert_not_called()
+        self.assertFalse((self.directory / worker.LOCK).exists())
 
 
 if __name__ == "__main__":
