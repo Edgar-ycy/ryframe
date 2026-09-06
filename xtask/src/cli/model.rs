@@ -25,7 +25,22 @@ pub(crate) enum CheckCommand {
     Ci(CiCommand),
     Perf(devex::DevexCommand),
     Release(ReleaseOptions),
-    Recovery(Vec<String>),
+    Recovery(RecoveryCommand),
+}
+
+/// 恢复验收由一个公开入口按职责选择私有阶段程序。
+///
+/// 各阶段仍保留底层参数校验，xtask 负责固定当前检出的路径，避免维护文档暴露
+/// 私有脚本作为用户入口。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RecoveryCommand {
+    Reference(Vec<String>),
+    Runtime(Vec<String>),
+    Source(Vec<String>),
+    Clone(Vec<String>),
+    FreshTarget(Vec<String>),
+    Fixture(Vec<String>),
+    DatasetPrepare(Vec<String>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -41,11 +41,11 @@ cargo xtask data migrate verify tenant-data --all
 
 ## 开发数据复制与性能 seed
 
-开发复制先用 `python scripts/devex_clone.py plan --backend-dir <后端> --input <输入清单> --output <新计划> --write` 固定计划，再用 `verify --backend-dir <后端> --plan <计划>` 只读复核。输入、证据和运行目录必须位于该后端 `.local-tests`，只接受已审查表、已登记新目标和完整 ownership；未完成任务、迁移历史、未知生成表、物理引用或未知写入都会失败关闭。来源调度必须先停用、复验并重新导出，离线校验不表示真实资源已就绪。
+开发复制先用 `cargo xtask check recovery clone plan --input <输入清单> --output <新计划> --write` 固定计划，再用 `cargo xtask check recovery clone verify --plan <计划>` 只读复核。已登记 fresh target 的准备、续作、初始化、复核和只读状态使用 `cargo xtask check recovery fresh-target ...`。输入、证据和运行目录必须位于当前后端 `.local-tests`，只接受已审查表、已登记新目标和完整 ownership；未完成任务、迁移历史、未知生成表、物理引用或未知写入都会失败关闭。来源调度必须先停用、复验并重新导出，离线校验不表示真实资源已就绪。
 
 维护工具通过 `devex_clone_tools.py build|verify` 构建和复核，来源通过 `devex_clone_source.py` 捕获。两者绑定实际 API、Worker、维护二进制、配置、源码和工具指纹；生产者必须停止，数据库关系与对象清单在采集前后保持一致。对象按 HEAD、条件 GET、再次 HEAD 的顺序核验内容和元数据，目标只允许精确 key 的条件创建；失败、竞争或未知结果保留证据，不退回无条件覆盖。
 
-复制统一使用同一 `devex_clone.py` 运行目录和状态机：`init` 登记来源、目标与可复用导出；`status` 只读展示最后成功阶段、未收尾状态和下一合法动作；`stage --stage export|target-verify|copy --mode run` 只运行明确阶段。中断后先以 `reconcile` 对照原账本和完整前后像，再显式 `resume`；死亡控制器只通过绑定创建身份的 `recover` 回收，回收本地锁不表示远端写入成功。
+复制统一使用同一私有状态机、运行目录和账本：`cargo xtask check recovery clone init` 登记来源、目标与可复用导出；`clone status` 只读展示最后成功阶段、未收尾状态和下一合法动作；`clone stage` 每次只运行明确阶段。中断后先以 `clone stage --mode reconcile` 对照原账本和完整前后像，再显式 `resume`；死亡控制器只通过绑定创建身份的 `clone recover` 回收，回收本地锁不表示远端写入成功。正式维护入口只展示 `cargo xtask check recovery` 的阶段，不把私有脚本名作为命令契约。
 
 RustFS、Redis 与 API/Worker 的重启分别使用同一运行目录下的 `storage`、`cache` 和 `runtime` 操作，绑定原配置、数据目录、产物、凭据引用、端口与进程创建身份。`status` 始终只读，变更操作要求 `--write`；无法证明归属、阶段不允许、端口被占用或出现未知资源时拒绝接管。缓存只重建登记的 ownership 与验收 sentinel，不恢复会话或锁。
 

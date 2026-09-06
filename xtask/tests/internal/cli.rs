@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use super::cli::{
     ApiGenerateCommand, BuildOptions, BuildProfile, CheckCommand, CheckOptions, CheckScope,
     CiCommand, CliError, Command, DataCommand, GenerateCommand, MigrationCommand,
-    MigrationOperation, MigrationTarget, ResourceAction, ResourceCommand, ResourceTarget, parse,
+    MigrationOperation, MigrationTarget, RecoveryCommand, ResourceAction, ResourceCommand,
+    ResourceTarget, parse,
 };
 
 fn strings(values: &[&str]) -> Vec<String> {
@@ -105,12 +106,9 @@ fn parses_check_task_graph_and_internal_groups() {
             "runtime.json",
         ])
         .unwrap(),
-        Command::Check(CheckCommand::Recovery(strings(&[
-            "runtime",
-            "verify",
-            "--receipt",
-            "runtime.json",
-        ])))
+        Command::Check(CheckCommand::Recovery(RecoveryCommand::Runtime(strings(
+            &["verify", "--receipt", "runtime.json",]
+        ))))
     );
     assert!(matches!(
         parse_command(&[
@@ -122,15 +120,49 @@ fn parses_check_task_graph_and_internal_groups() {
             "--operation",
             "status",
         ]),
-        Ok(Command::Check(CheckCommand::Recovery(arguments)))
+        Ok(Command::Check(CheckCommand::Recovery(RecoveryCommand::FreshTarget(arguments))))
             if arguments == strings(&[
-                "fresh-target",
                 "--workspace",
                 "D:/隔离 target",
                 "--operation",
                 "status",
             ])
     ));
+    for values in [
+        ["check", "recovery", "source"].as_slice(),
+        ["check", "recovery", "source", "unknown"].as_slice(),
+        ["check", "recovery", "runtime", "unknown"].as_slice(),
+        ["check", "recovery", "missing"].as_slice(),
+    ] {
+        assert!(parse_command(values).is_err());
+    }
+    assert_eq!(
+        parse_command(&["check", "recovery", "fixture", "--output-dir", "fixture"]).unwrap(),
+        Command::Check(CheckCommand::Recovery(RecoveryCommand::Fixture(strings(
+            &["--output-dir", "fixture",]
+        ))))
+    );
+    assert_eq!(
+        parse_command(&[
+            "check",
+            "recovery",
+            "dataset-prepare",
+            "--plan",
+            "reference.json",
+        ])
+        .unwrap(),
+        Command::Check(CheckCommand::Recovery(RecoveryCommand::DatasetPrepare(
+            strings(&["--plan", "reference.json"],)
+        )))
+    );
+    assert_eq!(
+        parse_command(&["check", "recovery", "clone", "status", "--run-dir", "run"]).unwrap(),
+        Command::Check(CheckCommand::Recovery(RecoveryCommand::Clone(strings(&[
+            "status",
+            "--run-dir",
+            "run",
+        ]))))
+    );
     assert!(parse_command(&["check", "--full", "--full"]).is_err());
     assert!(parse_command(&["check", "--scope", "all", "--scope", "backend"]).is_err());
 }

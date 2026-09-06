@@ -297,23 +297,60 @@ fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
     }
 }
 
-fn parse_recovery(args: &[String]) -> Result<Vec<String>, CliError> {
-    parse_maintenance_args(
-        "recovery",
-        args,
-        &[
-            "plan",
-            "check-dataset",
-            "check-existing",
-            "dataset",
-            "backup",
-            "restore",
-            "copy",
-            "damage",
-            "fresh-target",
-            "runtime",
-        ],
-    )
+fn parse_recovery(args: &[String]) -> Result<RecoveryCommand, CliError> {
+    let Some((stage, rest)) = args.split_first() else {
+        return Err(CliError::new("check recovery 缺少明确阶段"));
+    };
+    match stage.as_str() {
+        "plan" | "check-dataset" | "check-existing" | "dataset" | "backup" | "restore" | "copy"
+        | "damage" => Ok(RecoveryCommand::Reference(args.to_vec())),
+        "runtime" => parse_recovery_operation("runtime", rest, &["build", "bind", "verify"])
+            .map(RecoveryCommand::Runtime),
+        "source" => parse_recovery_operation("source", rest, &["verify", "quiesce"])
+            .map(RecoveryCommand::Source),
+        "clone" => parse_recovery_operation(
+            "clone",
+            rest,
+            &[
+                "plan",
+                "verify",
+                "init",
+                "status",
+                "stage",
+                "runtime",
+                "recover",
+                "recover-copy",
+                "bridge",
+                "post-copy",
+                "seed-runtime",
+                "storage",
+                "cache",
+            ],
+        )
+        .map(RecoveryCommand::Clone),
+        "fresh-target" => Ok(RecoveryCommand::FreshTarget(rest.to_vec())),
+        "fixture" => Ok(RecoveryCommand::Fixture(rest.to_vec())),
+        "dataset-prepare" => Ok(RecoveryCommand::DatasetPrepare(rest.to_vec())),
+        _ => Err(CliError::new(format!("未知 recovery 阶段：{stage}"))),
+    }
+}
+
+fn parse_recovery_operation(
+    stage: &str,
+    args: &[String],
+    operations: &[&str],
+) -> Result<Vec<String>, CliError> {
+    let Some(operation) = args.first() else {
+        return Err(CliError::new(format!(
+            "check recovery {stage} 缺少明确子操作"
+        )));
+    };
+    if !operations.contains(&operation.as_str()) {
+        return Err(CliError::new(format!(
+            "未知 recovery {stage} 子操作：{operation}"
+        )));
+    }
+    Ok(args.to_vec())
 }
 
 fn parse_release(args: &[String]) -> Result<ReleaseOptions, CliError> {

@@ -131,9 +131,9 @@ cargo xtask data restore verify --id <演练ID> --proof .local-tests/restore/bus
 
 ### 生成恢复业务证明
 
-把 `restore-verify-data` 成功返回的完整记录放入绑定文件的 `record`，原备份清单放入 `manifest`，参考数据准备收据的 SHA-256 放入 `dataset_sha256`，保存到忽略目录。前后端必须是清单绑定 SHA 的干净源码，先用 `python scripts/restore_runtime.py build --backend-dir <后端目录> --output <后端目录>/.local-tests/restore/build.json --write` 构建并登记实际 API/Worker 产物；前端通过 `corepack pnpm build --real` 生成生产文件和 `.vite/restore-build.json`。按构建收据启动隔离 API/Worker，并在明确运行目录保存对应 `api.json`、`worker.json` 进程收据。
+把 `restore-verify-data` 成功返回的完整记录放入绑定文件的 `record`，原备份清单放入 `manifest`，参考数据准备收据的 SHA-256 放入 `dataset_sha256`，保存到忽略目录。前后端必须是清单绑定 SHA 的干净源码，先用 `cargo xtask check recovery runtime build --output .local-tests/restore/build.json --write` 构建并登记实际 API/Worker 产物；前端通过 `corepack pnpm build --real` 生成生产文件和 `.vite/restore-build.json`。按构建收据启动隔离 API/Worker，并在明确运行目录保存对应 `api.json`、`worker.json` 进程收据。
 
-启动前端生产 preview 后，执行 `python scripts/restore_runtime.py bind --backend-dir <后端目录> --frontend-dir <前端目录> --build-receipt <build.json> --runtime-dir <进程收据目录> --bindings <绑定文件> --frontend-url <本机站点地址> --output <后端目录>/.local-tests/restore/runtime.json --write`。该命令核对源码、二进制、进程创建身份、探针监听端口及实际返回的前端文件，配置目录正确或 HTTP 200 均不能单独充当来源证明。
+启动前端生产 preview 后，执行 `cargo xtask check recovery runtime bind --build-receipt <build.json> --runtime-dir <进程收据目录> --bindings <绑定文件> --frontend-url <本机站点地址> --output .local-tests/restore/runtime.json --write`。该入口固定当前后端和 `--frontend-dir` 选择的前端工作树，核对源码、二进制、进程创建身份、探针监听端口及实际返回的前端文件，配置目录正确或 HTTP 200 均不能单独充当来源证明。
 
 前端设置 `RYFRAME_RESTORE_BINDINGS`、`RYFRAME_RESTORE_RUNTIME_RECEIPT`、`RYFRAME_RESTORE_BACKEND_DIR`、`RYFRAME_E2E_SCOPE_ID` 和 `RYFRAME_E2E_BASE_URL`，分别指向绑定文件、运行收据、干净后端源码、新 scope 和已启动的生产站点；同时用 `RYFRAME_RESTORE_REFERENCE_PLAN` 和 `RYFRAME_RESTORE_DATASET_RECEIPT` 指向参考环境计划和原数据准备收据，再运行 `corepack pnpm check --stage browser --real --server preview`。测试开始及结束均复核来源；运行期间替换进程、修改源码或产物都会拒绝生成成功证明。各文件只保存摘要和资源归属，不包含密钥。
 
@@ -141,11 +141,11 @@ cargo xtask data restore verify --id <演练ID> --proof .local-tests/restore/bus
 
 ### 参考环境的外部验收驱动
 
-`scripts/restore_reference.py` 调用本机 MySQL、mysqldump、AWS CLI 和 Node 准备演练数据与外部备份。先把源、目标的精确地址、不同 scope、数据库 ownership、运行收据目录和工具摘要写入忽略目录中的计划文件；字段校验以 `scripts/restore_reference_plan.py` 为准。MySQL 使用计划内明确的客户端配置文件及其摘要，S3 凭据只引用环境变量。工具不创建或扫描数据库，源目标均需事先初始化。参考规模为 system 加十个普通租户、至少十万条实际岗位记录及至少 1 GiB 已登记上传对象，租户分布覆盖共享和独立目标；例如 256 个 4 MiB 对象。岗位记录属于控制库，租户业务表复制另由 Device 生成资源验收覆盖。
+`cargo xtask check recovery` 调用私有的本机 MySQL、mysqldump、AWS CLI 和 Node 阶段程序准备演练数据与外部备份。先把源、目标的精确地址、不同 scope、数据库 ownership、运行收据目录和工具摘要写入忽略目录中的计划文件；字段校验以恢复计划规则为准。MySQL 使用计划内明确的客户端配置文件及其摘要，S3 凭据只引用环境变量。工具不创建或扫描数据库，源目标均需事先初始化。参考规模为 system 加十个普通租户、至少十万条实际岗位记录及至少 1 GiB 已登记上传对象，租户分布覆盖共享和独立目标；例如 256 个 4 MiB 对象。岗位记录属于控制库，租户业务表复制另由 Device 生成资源验收覆盖。
 
 数据准备计划的 `dataset.request_interval_ms` 必须为 1000 至 5000 毫秒，限制每个固定客户端的实际 HTTP 请求启动频率；十一个租户可并发准备，每个租户使用自己的身份与地址。`dataset.timeout_seconds` 显式设置整阶段时限（1 至 604800 秒），例如参考规模预留 21600 秒；其他外部命令仍使用 1800 秒超时。收到 429 时保留失败，不通过重试或更换地址绕过限流。数据准备发生在备份与恢复开始之前，其耗时不计入恢复时间。
 
-各阶段共用 `--backend-dir <后端绝对路径> --plan <计划JSON>`，`plan` 只读核对，其他写步骤必须显式传入 `--write`：
+所有命令从对应干净后端工作树执行；`cargo xtask check recovery` 固定当前 `--backend-dir`，各阶段共用 `--plan <计划JSON>`。`plan` 只读核对，其他写步骤必须显式传入 `--write`：
 
 | 阶段 | 操作与输出 |
 | --- | --- |
@@ -155,13 +155,13 @@ cargo xtask data restore verify --id <演练ID> --proof .local-tests/restore/bus
 | `copy --backup-root <备份目录> --copy-id <独立副本ID>` | 创建保留原摘要的独立备份副本；先登记副本并执行 `restore-begin`。 |
 | `damage --backup-root <副本目录> --artifact <清单内路径> [--missing]` | 仅损坏或删除指定副本产物，保留原备份；随后用 `restore-verify-data` 验证失败状态及告警。 |
 
-已有数据可以在原计划不变的前提下复验。`python scripts/restore_reference.py check-existing --backend-dir <后端绝对路径> --plan <原计划JSON> --side source` 核对源侧数据库 ownership 和已登记 API；随后运行 `node scripts/restore_reference_dataset.mjs --backend-dir <后端绝对路径> --plan <原计划JSON> --verify-existing <原dataset/result.json> --side source --write`，读取原岗位样本并下载校验全部登记对象，将标准输出保存到新的独立证据文件。`--write` 表示登录、注销会产生会话及审计副作用，业务记录和对象始终只读。省略 `--side` 时已有数据验证仍固定为 `target`；数据准备仍固定为 `source`，其他阶段不接受该选项。
+已有数据可以在原计划不变的前提下复验。先用 `cargo xtask check recovery check-existing --plan <原计划JSON> --side source` 核对源侧数据库 ownership 和已登记 API；随后运行 `cargo xtask check recovery dataset-prepare --plan <原计划JSON> --verify-existing <原dataset/result.json> --side source --write`，读取原岗位样本并下载校验全部登记对象，将标准输出保存到新的独立证据文件。`--write` 表示登录、注销会产生会话及审计副作用，业务记录和对象始终只读。省略 `--side` 时已有数据验证仍固定为 `target`；数据准备仍固定为 `source`，其他阶段不接受该选项。
 
 验证结果记录实际侧、scope、原计划及数据收据摘要和只读动作范围，状态为 `existing_data_verified`，不表示恢复成功，也不单独证明源码干净。源侧复验结果不能用于目标恢复证明。
 
-正式备份前，在同一配置下启动真实干净构建的 API 和 external Worker，使用 `python scripts/restore_source.py verify --backend-dir <后端绝对路径> --plan <原计划JSON> --build-receipt <本次构建收据JSON> --dataset <原dataset/result.json> --output <新来源运行证明JSON> --write`。该命令会亲自执行源侧已有数据复验，在前后核对 API/Worker 的构建摘要、配置、创建身份、监听端口及就绪状态。
+正式备份前，在同一配置下启动真实干净构建的 API 和 external Worker，使用 `cargo xtask check recovery source verify --plan <原计划JSON> --build-receipt <本次构建收据JSON> --dataset <原dataset/result.json> --output <新来源运行证明JSON> --write`。该命令会亲自执行源侧已有数据复验，在前后核对 API/Worker 的构建摘要、配置、创建身份、监听端口及就绪状态。
 
-成功后停止全部生产者，再执行 `python scripts/restore_source.py quiesce --backend-dir <后端绝对路径> --plan <原计划JSON> --source-runtime <来源运行证明JSON> --output <新停止观察收据JSON> --write`。该命令不终止进程；它核对同一代次已停止并记录实际观察时间。之后才能重新采集 Inventory，其 `quiesced_at` 使用该收据的 `observed_stopped_at`。给 `backup` 同时传入两份证明；备份前后均检查来源进程已停止、未换代，以及复验、实际停止观察、采集时间的先后关系。清单先采集、进程后来才停止的流程会失败。重新复验使用新的输出文件，失败日志保留；不改写原计划、数据收据和历史证据的摘要或完成时间。
+成功后停止全部生产者，再执行 `cargo xtask check recovery source quiesce --plan <原计划JSON> --source-runtime <来源运行证明JSON> --output <新停止观察收据JSON> --write`。该命令不终止进程；它核对同一代次已停止并记录实际观察时间。之后才能重新采集 Inventory，其 `quiesced_at` 使用该收据的 `observed_stopped_at`。给 `backup` 同时传入两份证明；备份前后均检查来源进程已停止、未换代，以及复验、实际停止观察、采集时间的先后关系。清单先采集、进程后来才停止的流程会失败。重新复验使用新的输出文件，失败日志保留；不改写原计划、数据收据和历史证据的摘要或完成时间。
 
 恢复浏览器套件逐一登录十一个租户读取备份前已有的岗位，下载并校验全部原有上传对象，再执行正常核心业务。故障与 Worker 重启场景继续由普通全栈套件执行。每阶段保留独立收据，失败不覆盖、不自动清理资源；只有最终产品 CLI 核算后的成功记录能证明 24 小时恢复点与 60 分钟恢复时间。
 
