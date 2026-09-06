@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod tenant_data;
 pub mod tenants;
 
