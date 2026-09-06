@@ -9,6 +9,12 @@ from devex_clone_run_state import recover_lock
 COMMANDS = {"init", "status", "stage", "runtime", "recover", "recover-copy", "bridge", "post-copy", "seed-runtime", "storage", "cache", "maintenance", "fresh-target"}
 
 
+def evidence_path(backend: Path, value: Path, *, new: bool = False) -> Path:
+    """将用户相对路径限定到当前后端的受控证据根。"""
+    requested = value if value.is_absolute() else backend / value
+    return local_path(backend, str(requested), new=new)
+
+
 def add_commands(commands) -> None:
     register = commands.add_parser("init", help="登记固定验收清单与运行目录，不连接服务")
     register.add_argument("--manifest", type=Path, required=True)
@@ -77,8 +83,7 @@ def dispatch(args, backend: Path) -> dict:
     if args.command == "maintenance":
         from devex_clone_tools import build, verify
 
-        requested = args.output if args.output.is_absolute() else backend / args.output
-        output = local_path(backend, str(requested), new=args.operation == "build")
+        output = evidence_path(backend, args.output, new=args.operation == "build")
         if args.operation == "build":
             if not args.write:
                 raise ValueError("maintenance build 需要显式 --write")
@@ -120,7 +125,7 @@ def dispatch(args, backend: Path) -> dict:
         write_bridge(backend, args.build, args.inventory, args.output)
         return {"status": "artifact_reuse_audited", "receipt": str(args.output), "compiled": False,
                 "restore_qualified": False}
-    directory = local_path(backend, str(args.run_dir))
+    directory = evidence_path(backend, args.run_dir)
     if args.command == "init":
         return initialize(backend, args.manifest, directory)
     if args.command == "status":

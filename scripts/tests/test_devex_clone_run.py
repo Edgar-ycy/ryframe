@@ -258,6 +258,14 @@ class RunTests(unittest.TestCase):
                          self.backend)
         create.assert_called_once_with(self.backend, self.backend / relative)
 
+    def test_clone_status_resolves_relative_run_directory_under_backend(self):
+        import devex_clone_run_cli as cli
+
+        with patch.object(cli, "status", return_value={"status": "observed"}) as observe:
+            result = cli.dispatch(SimpleNamespace(command="status", run_dir=Path(".local-tests/run")), self.backend)
+        self.assertEqual(result, {"status": "observed"})
+        observe.assert_called_once_with(self.backend, self.directory)
+
     def test_runtime_environment_and_identity_are_delegated_without_build(self):
         value = dict(self.value)
         request = self.file("runtime-request", {"source": {"runtime_dir": str(self.local / "runtime"), "api_url": "http://127.0.0.1:18210"}})
