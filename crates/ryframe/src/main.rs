@@ -241,11 +241,7 @@ async fn prepare_runtime(
         .flatten();
     let router = app::build_app(state, limiter.rate_limit_state)?;
 
-    let addr = format!("{}:{}", startup.config.app.host, startup.config.app.port);
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .map_err(|error| AppError::Internal(format!("failed to bind {addr}: {error}")))?;
-    tracing::info!(address = %addr, "HTTP server started");
+    let listener = bind_listener(startup).await?;
 
     let readiness_monitor = boot::readiness::spawn(
         readiness_database,
@@ -270,6 +266,14 @@ async fn prepare_runtime(
     })
 }
 
+async fn bind_listener(startup: &ApiStartup) -> Result<tokio::net::TcpListener, AppError> {
+    let address = format!("{}:{}", startup.config.app.host, startup.config.app.port);
+    let listener = tokio::net::TcpListener::bind(&address)
+        .await
+        .map_err(|error| AppError::Internal(format!("failed to bind {address}: {error}")))?;
+    tracing::info!(%address, "HTTP server started");
+    Ok(listener)
+}
 fn start_embedded_workers(
     startup: &ApiStartup,
     database: &ryframe_db::ControlDatabaseCluster,
