@@ -3,7 +3,7 @@ import json
 import subprocess
 import sys
 import unittest
-from tests.workspace_directory import WorkspaceDirectory
+from workspace_directory import WorkspaceDirectory
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch

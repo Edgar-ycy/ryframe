@@ -3,7 +3,7 @@ from contextlib import ExitStack
 import copy
 from pathlib import Path
 import unittest
-from tests.workspace_directory import WorkspaceDirectory
+from workspace_directory import WorkspaceDirectory
 from unittest.mock import patch
 
 import devex_clone_cache as cache

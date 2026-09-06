@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
-from tests.workspace_directory import WorkspaceDirectory
+from workspace_directory import WorkspaceDirectory
 from unittest.mock import patch
 
 import devex_clone_post_process as process

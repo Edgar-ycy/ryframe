@@ -4,7 +4,7 @@ import copy
 import os
 from pathlib import Path
 import unittest
-from tests.workspace_directory import WorkspaceDirectory
+from workspace_directory import WorkspaceDirectory
 from unittest.mock import Mock, patch
 
 import devex_clone_storage as storage

@@ -2,7 +2,7 @@
 from pathlib import Path
 import unittest
 
-from tests.workspace_directory import WorkspaceDirectory
+from workspace_directory import WorkspaceDirectory
 
 
 class WorkspaceDirectoryTests(unittest.TestCase):

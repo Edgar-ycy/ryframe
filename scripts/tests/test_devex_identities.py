@@ -3,7 +3,7 @@ import copy
 import json
 import subprocess
 import unittest
-from tests.workspace_directory import WorkspaceDirectory
+from workspace_directory import WorkspaceDirectory
 from pathlib import Path
 
 from devex_identity_environment import quota_sql, validate_quota, validate_target_bindings

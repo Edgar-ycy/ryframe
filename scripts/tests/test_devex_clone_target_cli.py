@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import sys
 import unittest
-from tests.workspace_directory import WorkspaceDirectory
+from workspace_directory import WorkspaceDirectory
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

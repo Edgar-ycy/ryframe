@@ -22,7 +22,7 @@ from verify_release_ci import (
     requirements,
     validate_remote_tags,
 )
-from tests.workspace_directory import WorkspaceDirectory
+from workspace_directory import WorkspaceDirectory
 import verify_release_ci as verifier
 
 

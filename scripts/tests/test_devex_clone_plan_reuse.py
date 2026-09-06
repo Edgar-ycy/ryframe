@@ -4,7 +4,7 @@ from pathlib import Path
 import pickle
 import shutil
 import unittest
-from tests.workspace_directory import WorkspaceDirectory
+from workspace_directory import WorkspaceDirectory
 from unittest.mock import patch
 
 import devex_clone as clone

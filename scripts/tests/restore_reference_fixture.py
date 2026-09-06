@@ -1,7 +1,7 @@
 import datetime as dt
 from pathlib import Path
 
-from tests.workspace_directory import WorkspaceDirectory
+from workspace_directory import WorkspaceDirectory
 
 from restore_build import file_digest
 from restore_reference import artifact, now, write_json

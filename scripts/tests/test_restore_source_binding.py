@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import sys
 import unittest
-from tests.workspace_directory import WorkspaceDirectory
+from workspace_directory import WorkspaceDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import restore_source_binding as binding

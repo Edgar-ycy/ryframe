@@ -10,7 +10,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import full_stack_provenance as provenance
 from full_stack_process import write_receipt
-from tests.workspace_directory import WorkspaceDirectory
+from workspace_directory import WorkspaceDirectory
 
 
 class DeviceSourceEvidenceTests(unittest.TestCase):

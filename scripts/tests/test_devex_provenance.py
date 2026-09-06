@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import devex_provenance as provenance
 import restore_build
 import restore_runtime
-from tests.workspace_directory import WorkspaceDirectory
+from workspace_directory import WorkspaceDirectory
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = {"head": "a" * 40, "patch_sha256": "b" * 64, "files": [], "clean": False}

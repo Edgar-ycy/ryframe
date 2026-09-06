@@ -14,7 +14,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import ci_devex_cgroup as gate
 from release_evidence import EvidenceError, validate_run
-from tests.workspace_directory import WorkspaceDirectory
+from workspace_directory import WorkspaceDirectory
 from verify_release_ci import requirements
 
 REPOSITORY = Path(__file__).resolve().parents[2]

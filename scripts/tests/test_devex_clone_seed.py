@@ -6,7 +6,7 @@ from pathlib import Path
 import shutil
 from types import SimpleNamespace
 import unittest
-from tests.workspace_directory import WorkspaceDirectory
+from workspace_directory import WorkspaceDirectory
 from unittest.mock import patch, Mock
 
 import devex_clone_seed as seed

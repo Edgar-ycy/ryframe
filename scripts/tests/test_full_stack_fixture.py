@@ -1,7 +1,7 @@
 import hashlib
 import sys
 import unittest
-from tests.workspace_directory import WorkspaceDirectory
+from workspace_directory import WorkspaceDirectory
 from pathlib import Path
 from unittest.mock import patch
 

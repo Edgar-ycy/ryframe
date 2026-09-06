@@ -2,7 +2,7 @@ import copy
 from pathlib import Path
 import sys
 import unittest
-from tests.workspace_directory import WorkspaceDirectory
+from workspace_directory import WorkspaceDirectory
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
