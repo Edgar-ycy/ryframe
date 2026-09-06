@@ -252,29 +252,7 @@ async fn persistence_contract_rejects_malformed_restore_record_shapes() {
         .unwrap();
     let running = service.begin_restore(plan()).await.unwrap();
 
-    let mut invalid_creates = Vec::new();
-    let mut invalid = running.clone();
-    invalid.plan.id = "restore-invalid-hash".into();
-    invalid.plan_hash = "f".repeat(64);
-    invalid_creates.push(invalid);
-    let mut invalid = running.clone();
-    invalid.plan.id = "restore-invalid-initial-state".into();
-    invalid.plan_hash = backup_content_hash(&invalid.plan).unwrap();
-    invalid.status = RestoreStatus::Failed;
-    invalid.completed_at = Some(running.started_at);
-    invalid.failure = Some("错误初始状态".into());
-    invalid_creates.push(invalid);
-    let mut invalid = running.clone();
-    invalid.plan.id = "restore-nanosecond-time".into();
-    invalid.plan_hash = backup_content_hash(&invalid.plan).unwrap();
-    invalid.started_at += Duration::nanoseconds(1);
-    invalid_creates.push(invalid);
-    let mut invalid = running.clone();
-    invalid.plan.id = "restore-nanosecond-recovery".into();
-    invalid.plan_hash = backup_content_hash(&invalid.plan).unwrap();
-    invalid.recovered_at += Duration::nanoseconds(1);
-    invalid_creates.push(invalid);
-    for invalid in invalid_creates {
+    for invalid in malformed_restore_creates(&running) {
         let transaction = repository.begin().await.unwrap();
         assert!(matches!(
             transaction.create_restore(&invalid).await,
@@ -282,32 +260,7 @@ async fn persistence_contract_rejects_malformed_restore_record_shapes() {
         ));
     }
 
-    let mut malformed = Vec::new();
-    let mut next = data_verified_record(&running);
-    next.data_verified_at = None;
-    malformed.push(next);
-    let mut next = data_verified_record(&running);
-    next.data_verified_at = next
-        .data_verified_at
-        .map(|timestamp| timestamp + Duration::nanoseconds(1));
-    malformed.push(next);
-    let mut next = data_verified_record(&running);
-    next.completed_at = next.data_verified_at;
-    malformed.push(next);
-    let mut next = data_verified_record(&running);
-    next.failure = Some("数据已验证状态不能带失败".into());
-    malformed.push(next);
-    let mut next = data_verified_record(&running);
-    next.data_verified_at =
-        Some(running.started_at + Duration::hours(1) + Duration::nanoseconds(1));
-    malformed.push(next);
-    let mut next = running.clone();
-    next.status = RestoreStatus::Failed;
-    next.data_verified_at = Some(running.started_at + Duration::seconds(1));
-    next.completed_at = next.data_verified_at;
-    next.failure = Some("数据验证前失败".into());
-    malformed.push(next);
-    for next in malformed {
+    for next in malformed_running_advances(&running) {
         assert!(matches!(
             persist_restore_advance(repository.as_ref(), &running, &next).await,
             Err(AppError::Validation(_))
@@ -327,39 +280,94 @@ async fn persistence_contract_rejects_malformed_restore_record_shapes() {
         persist_restore_advance(repository.as_ref(), &verified, &changed_verified_at).await,
         Err(AppError::Conflict(_))
     ));
-    let mut malformed = Vec::new();
-    let mut next = verified.clone();
-    next.status = RestoreStatus::Succeeded;
-    malformed.push(next);
-    let mut next = verified.clone();
-    next.status = RestoreStatus::Succeeded;
-    next.completed_at = Some(verified.data_verified_at.unwrap() - Duration::nanoseconds(1));
-    malformed.push(next);
-    let mut next = verified.clone();
-    next.status = RestoreStatus::Succeeded;
-    next.completed_at = Some(verified.data_verified_at.unwrap() + Duration::nanoseconds(1));
-    malformed.push(next);
-    let mut next = verified.clone();
-    next.status = RestoreStatus::Succeeded;
-    next.completed_at = Some(verified.data_verified_at.unwrap());
-    next.failure = Some("成功状态不能带失败".into());
-    malformed.push(next);
-    let mut next = verified.clone();
-    next.status = RestoreStatus::Failed;
-    next.completed_at = Some(verified.data_verified_at.unwrap());
-    next.failure = Some(String::new());
-    malformed.push(next);
-    let mut next = verified.clone();
-    next.status = RestoreStatus::Failed;
-    next.completed_at = verified.data_verified_at;
-    next.failure = Some("   ".into());
-    malformed.push(next);
-    for next in malformed {
+    for next in malformed_verified_advances(&verified) {
         assert!(matches!(
             persist_restore_advance(repository.as_ref(), &verified, &next).await,
             Err(AppError::Validation(_))
         ));
     }
+}
+
+fn malformed_restore_creates(running: &RestoreRecord) -> Vec<RestoreRecord> {
+    let mut invalid_hash = running.clone();
+    invalid_hash.plan.id = "restore-invalid-hash".into();
+    invalid_hash.plan_hash = "f".repeat(64);
+    let mut invalid_state = running.clone();
+    invalid_state.plan.id = "restore-invalid-initial-state".into();
+    invalid_state.plan_hash = backup_content_hash(&invalid_state.plan).unwrap();
+    invalid_state.status = RestoreStatus::Failed;
+    invalid_state.completed_at = Some(running.started_at);
+    invalid_state.failure = Some("错误初始状态".into());
+    let mut invalid_start = running.clone();
+    invalid_start.plan.id = "restore-nanosecond-time".into();
+    invalid_start.plan_hash = backup_content_hash(&invalid_start.plan).unwrap();
+    invalid_start.started_at += Duration::nanoseconds(1);
+    let mut invalid_recovery = running.clone();
+    invalid_recovery.plan.id = "restore-nanosecond-recovery".into();
+    invalid_recovery.plan_hash = backup_content_hash(&invalid_recovery.plan).unwrap();
+    invalid_recovery.recovered_at += Duration::nanoseconds(1);
+    vec![invalid_hash, invalid_state, invalid_start, invalid_recovery]
+}
+
+fn malformed_running_advances(running: &RestoreRecord) -> Vec<RestoreRecord> {
+    let mut missing_time = data_verified_record(running);
+    missing_time.data_verified_at = None;
+    let mut imprecise_time = data_verified_record(running);
+    imprecise_time.data_verified_at = imprecise_time
+        .data_verified_at
+        .map(|timestamp| timestamp + Duration::nanoseconds(1));
+    let mut completed = data_verified_record(running);
+    completed.completed_at = completed.data_verified_at;
+    let mut failure = data_verified_record(running);
+    failure.failure = Some("数据已验证状态不能带失败".into());
+    let mut overdue = data_verified_record(running);
+    overdue.data_verified_at =
+        Some(running.started_at + Duration::hours(1) + Duration::nanoseconds(1));
+    let mut failed_after_verification = running.clone();
+    failed_after_verification.status = RestoreStatus::Failed;
+    failed_after_verification.data_verified_at = Some(running.started_at + Duration::seconds(1));
+    failed_after_verification.completed_at = failed_after_verification.data_verified_at;
+    failed_after_verification.failure = Some("数据验证前失败".into());
+    vec![
+        missing_time,
+        imprecise_time,
+        completed,
+        failure,
+        overdue,
+        failed_after_verification,
+    ]
+}
+
+fn malformed_verified_advances(verified: &RestoreRecord) -> Vec<RestoreRecord> {
+    let verified_at = verified.data_verified_at.unwrap();
+    let mut missing_completion = verified.clone();
+    missing_completion.status = RestoreStatus::Succeeded;
+    let mut early_completion = verified.clone();
+    early_completion.status = RestoreStatus::Succeeded;
+    early_completion.completed_at = Some(verified_at - Duration::nanoseconds(1));
+    let mut imprecise_completion = verified.clone();
+    imprecise_completion.status = RestoreStatus::Succeeded;
+    imprecise_completion.completed_at = Some(verified_at + Duration::nanoseconds(1));
+    let mut success_with_failure = verified.clone();
+    success_with_failure.status = RestoreStatus::Succeeded;
+    success_with_failure.completed_at = Some(verified_at);
+    success_with_failure.failure = Some("成功状态不能带失败".into());
+    let mut empty_failure = verified.clone();
+    empty_failure.status = RestoreStatus::Failed;
+    empty_failure.completed_at = Some(verified_at);
+    empty_failure.failure = Some(String::new());
+    let mut blank_failure = verified.clone();
+    blank_failure.status = RestoreStatus::Failed;
+    blank_failure.completed_at = Some(verified_at);
+    blank_failure.failure = Some("   ".into());
+    vec![
+        missing_completion,
+        early_completion,
+        imprecise_completion,
+        success_with_failure,
+        empty_failure,
+        blank_failure,
+    ]
 }
 
 #[test]
