@@ -20,6 +20,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from tenant_data_boundaries import validate_tenant_data_boundaries  # noqa: E402
+
 from rust_function_size import (  # noqa: E402
     changed_line_ranges,
     parse_policy as parse_function_size_policy,
@@ -83,21 +85,6 @@ def validate_system_domain_surface(root: Path, errors: list[str]) -> None:
         )
     if re.search(r"(?m)^\s*pub\s+use\s+", source):
         errors.append("system 根模块不得保留兼容 re-export")
-
-
-def business_sources() -> list[Path]:
-    result: list[Path] = []
-    for path in sorted((ROOT / "crates").glob("*/src/**/*.rs")):
-        relative = path.relative_to(ROOT)
-        lowered_parts = {part.lower() for part in relative.parts}
-        source = path.read_text(encoding="utf-8")
-        if (
-            lowered_parts.intersection({"biz", "business", "tenant_business"})
-            or path.name.lower().startswith("biz_")
-            or "tenant-data-boundary: business" in source
-        ):
-            result.append(path)
-    return result
 
 
 def validate_documentation(errors: list[str]) -> None:
@@ -296,11 +283,6 @@ def validate_profile(name: str, profile: Any, errors: list[str]) -> dict[str, An
         errors.append(
             f"{label} 声明 {expected_count} 个包，但 packages 实际包含 {len(packages)} 个"
         )
-    run_legacy_checks = profile.get("run_tenant_data_legacy_checks", False)
-    if not isinstance(run_legacy_checks, bool):
-        errors.append(f"{label}.run_tenant_data_legacy_checks 必须是布尔值")
-        run_legacy_checks = False
-
     if products & tools:
         errors.append(f"{label} 的产品包与工具包不得重叠")
     if products | tools != packages:
@@ -346,7 +328,6 @@ def validate_profile(name: str, profile: Any, errors: list[str]) -> dict[str, An
         "allowed_edges": allowed_edges,
         "temporary_edges": temporary_edges,
         "expected_count": expected_count,
-        "run_legacy_checks": run_legacy_checks,
     }
 
 
@@ -942,128 +923,6 @@ def validate_async_port_traits(
     return len(source_paths), violations
 
 
-def validate_tenant_data_boundaries(errors: list[str]) -> None:
-    """校验租户数据目录、生成模板和应用端口边界。"""
-
-    tenant_manifest = read("crates/ryframe-tenant-db/Cargo.toml")
-    for forbidden in ("ryframe-api",):
-        if re.search(rf"(?m)^\s*{re.escape(forbidden)}\s*=", tenant_manifest):
-            errors.append(f"ryframe-tenant-db must not depend on {forbidden}")
-
-    use_case_template = read("crates/ryframe-generator/src/template/use_case.rs")
-    repository_template = read("crates/ryframe-generator/src/template/repository.rs")
-    tenant_data_repository = read(
-        "crates/ryframe-db/src/repositories/tenant_data_repo.rs"
-    )
-    catalog_template = read("crates/ryframe-generator/src/template/catalog.rs")
-    generator_engine = read("crates/ryframe-generator/src/engine.rs")
-    for fragment in (
-        "DataSource",
-        "RepositoryPort",
-        ".begin(tenant_id)",
-        ".commit(transaction)",
-        ".rollback(transaction)",
-        ".insert(&transaction",
-    ):
-        if fragment not in use_case_template:
-            errors.append(f"generator use-case template misses application boundary: {fragment}")
-    for forbidden in (
-        "ryframe_db",
-        "ryframe_tenant_db",
-        "ryframe_adapters",
-        "ryframe_http",
-        "sea_orm",
-        "axum",
-    ):
-        if forbidden in use_case_template:
-            errors.append(f"generator use-case template crosses application boundary: {forbidden}")
-    for fragment in (
-        "connection: &DatabaseConnection",
-        "transaction: &DatabaseTransaction",
-        "find_by_id",
-        "insert",
-        "update",
-        "delete",
-        ".reset_all()",
-    ):
-        if fragment not in repository_template:
-            errors.append(f"generator repository template misses SQL boundary: {fragment}")
-    for forbidden in (".begin(", ".commit(", ".rollback(", "TransactionTrait"):
-        if forbidden in repository_template:
-            errors.append(f"generator repository template owns transaction boundary: {forbidden}")
-    if tenant_data_repository.count(".reset_all()") < 3:
-        errors.append(
-            "tenant-data repository saves must mark mutated model fields for UPDATE"
-        )
-    for fragment in ('starts_with("biz_")', 'column.name == "tenant_id"'):
-        if fragment not in generator_engine:
-            errors.append(f"generator business-table validation misses: {fragment}")
-    for fragment in (
-        "TenantDataTableDescriptor",
-        "primary_key_cursor_columns",
-        "checksum_columns",
-        "foreign_key_dependencies",
-        "GENERATED_TENANT_DATA_SCHEMA_FINGERPRINT",
-    ):
-        if fragment not in catalog_template:
-            errors.append(f"generator catalog template misses: {fragment}")
-    for forbidden in ("ControlDatabaseCluster", ".write(", ".source("):
-        if forbidden in use_case_template or forbidden in repository_template:
-            errors.append(f"generator business template reaches control data source: {forbidden}")
-
-    for path in business_sources():
-        source = path.read_text(encoding="utf-8")
-        relative = path.relative_to(ROOT).as_posix()
-        is_generated_sql_boundary = relative.startswith(
-            "crates/ryframe-db/src/repositories/business/"
-        )
-        forbidden_type_pattern = (
-            r"\b(?:ControlDatabaseCluster|TenantDataTargetHandle|"
-            r"TenantDatabaseTargetRegistry)\b"
-            if is_generated_sql_boundary
-            else r"\b(?:ControlDatabaseCluster|DatabaseConnection|"
-            r"TenantDataTargetHandle|TenantDatabaseTargetRegistry)\b"
-        )
-        forbidden_types = re.search(forbidden_type_pattern, source)
-        forbidden_methods = re.search(
-            r"\.(?:write|source|open_target(?:_for_catalog)?|verify_target_now(?:_for_catalog)?|"
-            r"target_occupancy(?:_for_catalog)?|tenant_is_empty_on_target(?:_for_catalog)?|"
-            r"prepare_migration_target(?:_for_catalog)?|freeze_fence(?:_for_catalog)?|"
-            r"activate_fence(?:_for_catalog)?|clear_prepared_target(?:_for_catalog)?|"
-            r"cleanup_ownership_for_catalog|delete_tenant_rows_batch(?:_for_catalog)?|"
-            r"finish_tenant_cleanup_for_catalog|finalize_retained_source(?:_for_catalog)?|"
-            r"runtime_snapshot|verify_current_targets|placement_metrics_snapshot|"
-            r"prepare_provisioning|provision_tenant_fence|provision_pending_fence)\(",
-            source,
-        )
-        if forbidden_types or forbidden_methods:
-            errors.append(
-                "tenant business module bypasses TenantDataSession: "
-                f"{relative}"
-            )
-
-    generated_catalog = read(
-        "crates/ryframe-tenant-db/src/migration/generated_catalog.rs"
-    )
-    migration_module = read("crates/ryframe-tenant-db/src/migration/mod.rs")
-    migration_catalog = read("crates/ryframe-tenant-db/src/migration/catalog.rs")
-    if "mod generated_catalog;" not in migration_module:
-        errors.append("tenant-data generated catalog is not compiled into the migration module")
-    for fragment in (
-        "GENERATED_TENANT_DATA_TABLES",
-        "GENERATED_TENANT_DATA_SCHEMA_FINGERPRINT",
-    ):
-        if fragment not in generated_catalog or fragment not in migration_catalog:
-            errors.append(f"tenant-data compiled catalog misses: {fragment}")
-
-    adapters_multi_tenant = ROOT / "crates/ryframe-adapters/src/multi_tenant.rs"
-    if adapters_multi_tenant.is_file():
-        source = adapters_multi_tenant.read_text(encoding="utf-8")
-        for removed in ("IsolationStrategy", "TenantFilter"):
-            if re.search(rf"\b{removed}\b", source):
-                errors.append(f"removed multi-tenant shell remains: {removed}")
-
-
 def main() -> int:
     errors: list[str] = []
     warnings: list[str] = []
@@ -1127,9 +986,7 @@ def main() -> int:
                 errors,
             )
 
-    ran_tenant_checks = bool(active.get("run_legacy_checks"))
-    if ran_tenant_checks:
-        validate_tenant_data_boundaries(errors)
+    validate_tenant_data_boundaries(ROOT, errors)
 
     if warnings:
         print("Architecture size notices:", file=sys.stderr)
@@ -1177,8 +1034,7 @@ def main() -> int:
         f"(source_files={checked_unsafe_sources}, violations={unsafe_syntax_violations})."
     )
     print(f"Workspace unsafe lint inheritance passed (packages={unsafe_lint_packages}).")
-    if ran_tenant_checks:
-        print("Tenant-data architecture boundaries are valid.")
+    print("Tenant-data architecture boundaries are valid.")
     return 0
 
 
