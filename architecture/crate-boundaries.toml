@@ -96,7 +96,6 @@ exceptions = [
     { path = "crates/ryframe-generator/src/resource/render/slice/frontend.rs", symbol = "render_fields", current_lines = 273, reason = "全量门禁启用前的存量 generator 函数；到期前拆分字段渲染阶段", expires = 2026-09-27 },
     { path = "crates/ryframe-generator/src/resource/writer/execute.rs", symbol = "write_resources", current_lines = 271, reason = "全量门禁启用前的存量 generator 函数；到期前拆分写入阶段", expires = 2026-09-27 },
     { path = "crates/ryframe-generator/tests/resource_contracts/resource_generation.rs", symbol = "post_slice_preserves_control_configuration_and_conflict_semantics", current_lines = 138, reason = "存量集成测试场景；到期前拆分 fixture 与断言阶段", expires = 2026-09-27 },
-    { path = "crates/ryframe-generator/tests/resource_contracts/resource_generation.rs", symbol = "initial_migration_is_immutable_and_schema_evolution_requires_new_revision", current_lines = 130, reason = "存量集成测试场景；到期前拆分 fixture 与断言阶段", expires = 2026-09-27 },
     { path = "crates/ryframe-tenant-db/src/migration/catalog.rs", symbol = "TenantDataCatalog::validate_structure", current_lines = 189, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
     { path = "crates/ryframe-tenant-db/src/migration/schema/catalog.rs", symbol = "canonical_table_schema", current_lines = 180, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
     { path = "crates/ryframe-tenant-db/src/migration/schema/target_slot.rs", symbol = "verify_target_slot_schema", current_lines = 183, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
