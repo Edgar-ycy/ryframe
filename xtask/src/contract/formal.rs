@@ -14,7 +14,8 @@ use super::{
     },
     model::{CANDIDATE_MARKER, ContractLock, sha256_hex},
     ownership::contract_managed_paths,
-    transaction::{install_snapshots, reject_contract_recovery_artifacts},
+    recovery::reject_contract_recovery_artifacts,
+    transaction::install_snapshots,
 };
 
 pub(crate) const FORMAL_SYNC_ARGS: &[&[&str]] = &[

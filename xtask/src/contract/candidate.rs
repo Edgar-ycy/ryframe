@@ -12,13 +12,15 @@ use crate::{
 };
 
 use super::{
+    atomic::write_atomically,
     formal::sync_commit,
     model::{
         CANDIDATE_MARKER, CRUD_RESOURCE_ARTIFACT, ContractLock, Snapshot, StagingFrontend, nonce,
         sha256_hex,
     },
     ownership::contract_managed_paths,
-    transaction::{install_snapshots, reject_contract_recovery_artifacts, write_atomically},
+    recovery::reject_contract_recovery_artifacts,
+    transaction::install_snapshots,
 };
 
 pub(crate) const CANDIDATE_GENERATION_ARGS: &[&str] =
