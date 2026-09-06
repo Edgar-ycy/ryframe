@@ -1,6 +1,9 @@
 #[cfg(feature = "repositories")]
 mod auto_fill;
 #[cfg(feature = "repositories")]
+#[doc(hidden)]
+pub mod backup_verification;
+#[cfg(feature = "repositories")]
 pub mod cluster;
 #[cfg(feature = "connection")]
 pub mod connection;
