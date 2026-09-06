@@ -1,7 +1,7 @@
 //! 外部备份登记、隔离恢复验证与运行状态端口。
 
 use chrono::{DateTime, Utc};
-use ryframe_kernel::AppResult;
+use ryframe_kernel::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 
 mod health;
@@ -11,6 +11,14 @@ mod restore;
 pub use health::*;
 pub use manifest::*;
 pub use restore::*;
+
+/// 计算备份与恢复契约使用的规范 JSON 内容摘要。
+pub fn backup_content_hash(value: &impl Serialize) -> AppResult<String> {
+    use sha2::{Digest, Sha256};
+    let bytes = serde_json::to_vec(value)
+        .map_err(|_| AppError::Validation("备份或演练清单无法序列化".into()))?;
+    Ok(hex::encode(Sha256::digest(bytes)))
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -26,8 +34,18 @@ pub struct BackupRecord {
 pub trait BackupTransaction: Send + Sync {
     async fn backup(&self, id: &str) -> AppResult<Option<BackupRecord>>;
     async fn save_backup(&self, record: &BackupRecord) -> AppResult<()>;
-    async fn restore(&self, id: &str) -> AppResult<Option<RestoreRecord>>;
-    async fn save_restore(&self, record: &RestoreRecord) -> AppResult<()>;
+    /// 原子创建恢复演练。相同 ID 与完整计划的重试返回首次持久化的权威记录；
+    /// 相同 ID 绑定不同计划或计划摘要时返回冲突。
+    /// 实现必须先调用 [`validate_restore_creation`] 拒绝无效初始记录。
+    async fn create_restore(&self, record: &RestoreRecord) -> AppResult<RestoreRecord>;
+    /// 按完整旧记录执行一次状态 CAS，并返回持久化后的权威记录。
+    /// 实现必须保持计划、计划摘要、开始时间与恢复点时间不可变，并拒绝非法状态转换。
+    /// 实现必须调用 [`validate_restore_advance`] 校验旧记录和下一记录的完整形状。
+    async fn advance_restore(
+        &self,
+        expected: &RestoreRecord,
+        next: &RestoreRecord,
+    ) -> AppResult<RestoreRecord>;
     async fn commit(self: Box<Self>) -> AppResult<()>;
 }
 

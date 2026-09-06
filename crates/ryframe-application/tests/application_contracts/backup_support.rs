@@ -8,7 +8,7 @@ use std::{
     collections::BTreeMap,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicI64, Ordering},
+        atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
     },
 };
 use tokio::sync::{Mutex, OwnedMutexGuard};
@@ -67,15 +67,6 @@ impl BackupTransaction for Transaction {
             .or_else(|| self.records.backups.get(id))
             .cloned())
     }
-    async fn restore(&self, id: &str) -> AppResult<Option<RestoreRecord>> {
-        Ok(self
-            .restores
-            .lock()
-            .await
-            .get(id)
-            .or_else(|| self.records.restores.get(id))
-            .cloned())
-    }
     async fn save_backup(&self, record: &BackupRecord) -> AppResult<()> {
         self.backups
             .lock()
@@ -83,12 +74,42 @@ impl BackupTransaction for Transaction {
             .insert(record.manifest.id.clone(), record.clone());
         Ok(())
     }
-    async fn save_restore(&self, record: &RestoreRecord) -> AppResult<()> {
-        self.restores
-            .lock()
-            .await
-            .insert(record.plan.id.clone(), record.clone());
-        Ok(())
+    async fn create_restore(&self, record: &RestoreRecord) -> AppResult<RestoreRecord> {
+        let mut staged = self.restores.lock().await;
+        let existing = staged
+            .get(&record.plan.id)
+            .or_else(|| self.records.restores.get(&record.plan.id));
+        if let Some(existing) = existing {
+            if existing.plan != record.plan || existing.plan_hash != record.plan_hash {
+                return Err(AppError::Conflict(
+                    "恢复演练 ID 已用于不同的恢复计划".into(),
+                ));
+            }
+            validate_restore_creation(record)?;
+            validate_restore_record(existing)?;
+            return Ok(existing.clone());
+        }
+        validate_restore_creation(record)?;
+        staged.insert(record.plan.id.clone(), record.clone());
+        Ok(record.clone())
+    }
+    async fn advance_restore(
+        &self,
+        expected: &RestoreRecord,
+        next: &RestoreRecord,
+    ) -> AppResult<RestoreRecord> {
+        validate_restore_advance(expected, next)?;
+        let mut staged = self.restores.lock().await;
+        let current = staged
+            .get(&expected.plan.id)
+            .or_else(|| self.records.restores.get(&expected.plan.id))
+            .cloned()
+            .ok_or_else(|| AppError::NotFound("恢复演练不存在".into()))?;
+        if current != *expected {
+            return Err(AppError::Conflict("恢复演练状态已变化".into()));
+        }
+        staged.insert(next.plan.id.clone(), next.clone());
+        Ok(next.clone())
     }
     async fn commit(mut self: Box<Self>) -> AppResult<()> {
         let backups = std::mem::take(&mut *self.backups.lock().await);
@@ -104,6 +125,10 @@ pub struct Verification {
     pub broken_file: AtomicBool,
     pub broken_data: AtomicBool,
     pub unavailable: AtomicBool,
+    pub artifact_calls: AtomicU64,
+    pub restored_database_calls: AtomicU64,
+    pub restored_object_calls: AtomicU64,
+    pub runtime_calls: AtomicU64,
     pub runtime_delay_seconds: AtomicI64,
     pub clock: Arc<AtomicI64>,
 }
@@ -119,6 +144,7 @@ fn checked(failed: bool) -> AppResult<()> {
 #[async_trait::async_trait]
 impl BackupArtifactVerifier for Verification {
     async fn artifacts(&self, _: &BackupManifest) -> AppResult<()> {
+        self.artifact_calls.fetch_add(1, Ordering::SeqCst);
         checked(self.broken_file.load(Ordering::SeqCst))
     }
 }
@@ -142,6 +168,7 @@ impl BackupDatabaseVerifier for Verification {
         checked(false)
     }
     async fn restored_databases(&self, _: &BackupManifest, _: &RestorePlan) -> AppResult<()> {
+        self.restored_database_calls.fetch_add(1, Ordering::SeqCst);
         checked(self.broken_data.load(Ordering::SeqCst))
     }
 }
@@ -154,12 +181,14 @@ impl BackupObjectVerifier for Verification {
         checked(false)
     }
     async fn restored_objects(&self, _: &BackupManifest, _: &RestorePlan) -> AppResult<()> {
+        self.restored_object_calls.fetch_add(1, Ordering::SeqCst);
         checked(self.broken_data.load(Ordering::SeqCst))
     }
 }
 #[async_trait::async_trait]
 impl BackupRuntimeVerifier for Verification {
     async fn restored_runtime(&self, _: &RestoreRecord, _: &RestoreBusinessProof) -> AppResult<()> {
+        self.runtime_calls.fetch_add(1, Ordering::SeqCst);
         self.clock.fetch_add(
             self.runtime_delay_seconds.load(Ordering::SeqCst),
             Ordering::SeqCst,

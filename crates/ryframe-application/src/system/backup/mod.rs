@@ -79,13 +79,6 @@ impl BackupService {
             .await?;
         self.objects.validate_restore_targets(&plan).await?;
         let plan_hash = backup_content_hash(&plan)?;
-        let transaction = self.repository.begin().await?;
-        if let Some(existing) = transaction.restore(&plan.id).await? {
-            if existing.plan_hash != plan_hash {
-                return Err(AppError::Conflict("恢复演练 ID 已用于其他目标".into()));
-            }
-            return Ok(existing);
-        }
         let record = RestoreRecord {
             plan,
             plan_hash,
@@ -96,7 +89,8 @@ impl BackupService {
             recovered_at: backup.manifest.captured_at,
             failure: None,
         };
-        transaction.save_restore(&record).await?;
+        let transaction = self.repository.begin().await?;
+        let record = transaction.create_restore(&record).await?;
         transaction.commit().await?;
         Ok(record)
     }
@@ -156,23 +150,17 @@ impl BackupService {
         result: AppResult<()>,
     ) -> AppResult<RestoreRecord> {
         let now = self.repository.database_now().await?;
-        let result = result.and_then(|()| {
-            if now < previous.started_at || (now - previous.started_at).num_seconds() > 3600 {
-                Err(AppError::Validation(
-                    "恢复演练超过 60 分钟或时钟发生回退".into(),
-                ))
-            } else {
-                Ok(())
-            }
-        });
-        let transaction = self.repository.begin().await?;
-        let mut record = transaction
-            .restore(&previous.plan.id)
-            .await?
-            .ok_or_else(|| AppError::NotFound("恢复演练不存在".into()))?;
-        if record.status != previous.status || record.plan_hash != previous.plan_hash {
-            return Err(AppError::Conflict("恢复演练状态已变化".into()));
-        }
+        let timing = if now < previous.data_verified_at.unwrap_or(previous.started_at)
+            || now - previous.started_at > chrono::Duration::hours(1)
+        {
+            Err(AppError::Validation(
+                "恢复演练超过 60 分钟或时钟发生回退".into(),
+            ))
+        } else {
+            Ok(())
+        };
+        let result = timing.and(result);
+        let mut record = previous.clone();
         record.status = if result.is_ok() {
             next
         } else {
@@ -182,9 +170,11 @@ impl BackupService {
         if record.status == RestoreStatus::DataVerified {
             record.data_verified_at = Some(now);
         } else {
-            record.completed_at = Some(now.max(record.started_at));
+            record.completed_at =
+                Some(now.max(record.data_verified_at.unwrap_or(record.started_at)));
         }
-        transaction.save_restore(&record).await?;
+        let transaction = self.repository.begin().await?;
+        let record = transaction.advance_restore(&previous, &record).await?;
         transaction.commit().await?;
         result?;
         Ok(record)
@@ -199,18 +189,14 @@ impl BackupService {
     }
 
     async fn require_restore(&self, id: &str) -> AppResult<RestoreRecord> {
-        self.repository
+        let record = self
+            .repository
             .restore(id)
             .await?
-            .ok_or_else(|| AppError::NotFound("恢复演练不存在".into()))
+            .ok_or_else(|| AppError::NotFound("恢复演练不存在".into()))?;
+        validate_restore_record(&record)?;
+        Ok(record)
     }
-}
-
-pub fn backup_content_hash(value: &impl serde::Serialize) -> AppResult<String> {
-    use sha2::{Digest, Sha256};
-    let bytes = serde_json::to_vec(value)
-        .map_err(|_| AppError::Validation("备份或演练清单无法序列化".into()))?;
-    Ok(hex::encode(Sha256::digest(bytes)))
 }
 
 fn failure_detail(error: &AppError) -> String {
