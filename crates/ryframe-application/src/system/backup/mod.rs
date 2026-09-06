@@ -5,7 +5,9 @@ use ryframe_kernel::{AppError, AppResult};
 use std::sync::Arc;
 
 mod validation;
-pub use validation::{validate_backup_manifest, validate_restore_plan, validate_restore_proof};
+pub use validation::{
+    validate_backup_manifest, validate_backup_record, validate_restore_plan, validate_restore_proof,
+};
 
 pub const BACKUP_OBJECT_BUCKETS: &[&str] = &[
     crate::system::content::UPLOAD_BUCKET,
@@ -56,18 +58,21 @@ impl BackupService {
             checked_at: self.repository.database_now().await?,
             failure: verification.as_ref().err().map(failure_detail),
         };
+        validate_backup_manifest(&record.manifest, required, record.checked_at)?;
+        validate_backup_record(&record)?;
         let transaction = self.repository.begin().await?;
-        if transaction
-            .backup(&record.manifest.id)
-            .await?
-            .is_some_and(|existing| existing.manifest_hash != record.manifest_hash)
-        {
-            return Err(AppError::Conflict("备份集 ID 已用于不同清单".into()));
-        }
-        transaction.save_backup(&record).await?;
+        let authoritative = transaction.save_backup(&record).await?;
         transaction.commit().await?;
         verification?;
-        Ok(record)
+        if authoritative.valid {
+            Ok(authoritative)
+        } else {
+            Err(AppError::Validation(
+                authoritative
+                    .failure
+                    .unwrap_or_else(|| "备份校验未通过".into()),
+            ))
+        }
     }
 
     pub async fn begin_restore(&self, plan: RestorePlan) -> AppResult<RestoreRecord> {

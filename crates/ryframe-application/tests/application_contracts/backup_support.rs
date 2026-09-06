@@ -1,7 +1,7 @@
 use chrono::{DateTime, Duration, Utc};
 use ryframe_application::{
     ports::backup::*,
-    system::operations::{BACKUP_OBJECT_BUCKETS, BackupService},
+    system::operations::{BACKUP_OBJECT_BUCKETS, BackupService, validate_backup_record},
 };
 use ryframe_kernel::{AppError, AppResult};
 use std::{
@@ -58,21 +58,25 @@ impl BackupRepository for Repository {
 // 事务端口的写入在单独暂存区中完成，未提交时不能污染持久状态。
 #[async_trait::async_trait]
 impl BackupTransaction for Transaction {
-    async fn backup(&self, id: &str) -> AppResult<Option<BackupRecord>> {
-        Ok(self
-            .backups
-            .lock()
-            .await
-            .get(id)
-            .or_else(|| self.records.backups.get(id))
-            .cloned())
-    }
-    async fn save_backup(&self, record: &BackupRecord) -> AppResult<()> {
-        self.backups
-            .lock()
-            .await
-            .insert(record.manifest.id.clone(), record.clone());
-        Ok(())
+    async fn save_backup(&self, record: &BackupRecord) -> AppResult<BackupRecord> {
+        validate_backup_record(record)?;
+        let mut staged = self.backups.lock().await;
+        let existing = staged
+            .get(&record.manifest.id)
+            .or_else(|| self.records.backups.get(&record.manifest.id));
+        if let Some(existing) = existing {
+            validate_backup_record(existing)?;
+            if existing.manifest != record.manifest
+                || existing.manifest_hash != record.manifest_hash
+            {
+                return Err(AppError::Conflict("备份集 ID 已用于不同清单".into()));
+            }
+            if existing.checked_at >= record.checked_at {
+                return Ok(existing.clone());
+            }
+        }
+        staged.insert(record.manifest.id.clone(), record.clone());
+        Ok(record.clone())
     }
     async fn create_restore(&self, record: &RestoreRecord) -> AppResult<RestoreRecord> {
         let mut staged = self.restores.lock().await;
@@ -129,6 +133,7 @@ pub struct Verification {
     pub restored_database_calls: AtomicU64,
     pub restored_object_calls: AtomicU64,
     pub runtime_calls: AtomicU64,
+    pub artifact_delay_seconds: AtomicI64,
     pub runtime_delay_seconds: AtomicI64,
     pub clock: Arc<AtomicI64>,
 }
@@ -145,6 +150,10 @@ fn checked(failed: bool) -> AppResult<()> {
 impl BackupArtifactVerifier for Verification {
     async fn artifacts(&self, _: &BackupManifest) -> AppResult<()> {
         self.artifact_calls.fetch_add(1, Ordering::SeqCst);
+        self.clock.fetch_add(
+            self.artifact_delay_seconds.load(Ordering::SeqCst),
+            Ordering::SeqCst,
+        );
         checked(self.broken_file.load(Ordering::SeqCst))
     }
 }

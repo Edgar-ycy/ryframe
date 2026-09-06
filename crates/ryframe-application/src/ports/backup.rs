@@ -24,7 +24,7 @@ pub(crate) fn has_storage_timestamp_precision(value: DateTime<Utc>) -> bool {
     value.timestamp_subsec_nanos().is_multiple_of(1_000)
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BackupRecord {
     pub manifest: BackupManifest,
@@ -36,8 +36,11 @@ pub struct BackupRecord {
 
 #[async_trait::async_trait]
 pub trait BackupTransaction: Send + Sync {
-    async fn backup(&self, id: &str) -> AppResult<Option<BackupRecord>>;
-    async fn save_backup(&self, record: &BackupRecord) -> AppResult<()>;
+    /// 原子登记或复验备份集，并返回持久化的权威记录。
+    ///
+    /// 相同 ID 只能绑定同一份清单；较旧或相同时间的复验不得覆盖现有结果。
+    /// 实现必须在写入资源关系和租户备份点前完成清单绑定检查。
+    async fn save_backup(&self, record: &BackupRecord) -> AppResult<BackupRecord>;
     /// 原子创建恢复演练。相同 ID 与完整计划的重试返回首次持久化的权威记录；
     /// 相同 ID 绑定不同计划或计划摘要时返回冲突。
     /// 实现必须先调用 [`validate_restore_creation`] 拒绝无效初始记录。

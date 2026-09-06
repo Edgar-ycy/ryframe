@@ -2,7 +2,7 @@ use super::backup_support::*;
 use chrono::Duration;
 use ryframe_application::{
     ports::backup::*,
-    system::operations::{validate_backup_manifest, validate_restore_plan},
+    system::operations::{validate_backup_manifest, validate_backup_record, validate_restore_plan},
 };
 use ryframe_kernel::{AppError, AppResult};
 use std::sync::atomic::Ordering;
@@ -79,6 +79,77 @@ async fn corrupt_or_missing_files_are_persisted_as_invalid_and_cannot_begin_rest
     assert!(!record.valid);
     assert!(record.failure.is_some());
     assert!(service.begin_restore(plan()).await.is_err());
+}
+
+#[tokio::test]
+async fn registration_keeps_the_newest_authoritative_verification() {
+    let (service, repository, verifier) = fixture();
+    let manifest = manifest();
+    let required = manifest.resource_keys();
+    service.register(manifest.clone(), &required).await.unwrap();
+
+    verifier.broken_file.store(true, Ordering::SeqCst);
+    let error = service
+        .register(manifest.clone(), &required)
+        .await
+        .unwrap_err();
+    assert!(error.message().contains("注入的校验失败"));
+    assert!(
+        repository
+            .backup(&manifest.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .valid
+    );
+
+    repository.clock.fetch_add(10, Ordering::SeqCst);
+    assert!(service.register(manifest.clone(), &required).await.is_err());
+    let invalid = repository.backup(&manifest.id).await.unwrap().unwrap();
+    assert!(!invalid.valid);
+    assert!(invalid.failure.is_some());
+
+    repository.clock.fetch_sub(5, Ordering::SeqCst);
+    verifier.broken_file.store(false, Ordering::SeqCst);
+    assert!(service.register(manifest.clone(), &required).await.is_err());
+    assert_eq!(
+        repository.backup(&manifest.id).await.unwrap(),
+        Some(invalid)
+    );
+
+    repository.clock.fetch_add(10, Ordering::SeqCst);
+    let valid = service.register(manifest, &required).await.unwrap();
+    assert!(valid.valid);
+    assert!(valid.failure.is_none());
+
+    repository.clock.fetch_sub(5, Ordering::SeqCst);
+    verifier.broken_file.store(true, Ordering::SeqCst);
+    let error = service
+        .register(valid.manifest.clone(), &required)
+        .await
+        .unwrap_err();
+    assert!(error.message().contains("注入的校验失败"));
+    assert_eq!(
+        repository.backup(&valid.manifest.id).await.unwrap(),
+        Some(valid)
+    );
+}
+
+#[tokio::test]
+async fn registration_rechecks_retention_after_external_verification() {
+    let (service, repository, verifier) = fixture();
+    let manifest = manifest();
+    verifier
+        .artifact_delay_seconds
+        .store(7 * 24 * 60 * 60 + 1, Ordering::SeqCst);
+
+    assert!(matches!(
+        service
+            .register(manifest.clone(), &manifest.resource_keys())
+            .await,
+        Err(AppError::Validation(_))
+    ));
+    assert!(repository.backup(&manifest.id).await.unwrap().is_none());
 }
 
 #[tokio::test]
@@ -338,6 +409,52 @@ fn backup_and_restore_inputs_reject_sub_microsecond_timestamps() {
     ));
 }
 
+#[test]
+fn backup_records_bind_hash_status_and_persisted_time() {
+    let manifest = manifest();
+    let mut record = BackupRecord {
+        manifest_hash: backup_content_hash(&manifest).unwrap(),
+        checked_at: manifest.completed_at,
+        manifest,
+        valid: true,
+        failure: None,
+    };
+    assert!(validate_backup_record(&record).is_ok());
+
+    let mut invalid = Vec::new();
+    let mut candidate = record.clone();
+    candidate.manifest_hash = "f".repeat(64);
+    invalid.push(candidate);
+    let mut candidate = record.clone();
+    candidate.checked_at += Duration::nanoseconds(1);
+    invalid.push(candidate);
+    let mut candidate = record.clone();
+    candidate.checked_at = candidate.manifest.completed_at - Duration::microseconds(1);
+    invalid.push(candidate);
+    let mut candidate = record.clone();
+    candidate.checked_at = candidate.manifest.retention_until;
+    invalid.push(candidate);
+    let mut candidate = record.clone();
+    candidate.failure = Some("不应存在".into());
+    invalid.push(candidate);
+    for detail in [None, Some("   ".into()), Some("错".repeat(1001))] {
+        let mut candidate = record.clone();
+        candidate.valid = false;
+        candidate.failure = detail;
+        invalid.push(candidate);
+    }
+    for candidate in invalid {
+        assert!(matches!(
+            validate_backup_record(&candidate),
+            Err(AppError::Validation(_))
+        ));
+    }
+
+    record.valid = false;
+    record.failure = Some("校验失败".into());
+    assert!(validate_backup_record(&record).is_ok());
+}
+
 #[tokio::test]
 async fn corrupted_authoritative_records_fail_before_external_verification() {
     let (service, repository, verifier) = fixture();
@@ -526,12 +643,10 @@ async fn identifiers_cannot_replace_existing_backup_or_restore_plans() {
         .unwrap();
     let mut changed = manifest.clone();
     changed.source_sha = "f".repeat(40);
-    assert!(
-        service
-            .register(changed, &manifest.resource_keys())
-            .await
-            .is_err()
-    );
+    assert!(matches!(
+        service.register(changed, &manifest.resource_keys()).await,
+        Err(AppError::Conflict(_))
+    ));
     assert_eq!(
         repository
             .backup(&manifest.id)

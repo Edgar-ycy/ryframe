@@ -105,6 +105,28 @@ pub fn validate_backup_manifest(
     validate_artifacts(&manifest.artifacts, &unique)
 }
 
+pub fn validate_backup_record(record: &BackupRecord) -> AppResult<()> {
+    require(
+        record.manifest_hash == backup_content_hash(&record.manifest)?,
+        "备份记录的清单摘要无效",
+    )?;
+    require(
+        has_storage_timestamp_precision(record.checked_at)
+            && record.checked_at >= record.manifest.completed_at
+            && record.checked_at < record.manifest.retention_until,
+        "备份校验时间精度或有效期无效",
+    )?;
+    require(
+        match record.failure.as_deref() {
+            None => record.valid,
+            Some(detail) => {
+                !record.valid && !detail.trim().is_empty() && detail.chars().count() <= 1000
+            }
+        },
+        "备份校验状态与失败信息不一致",
+    )
+}
+
 fn validate_database(database: &DatabaseBackup) -> AppResult<()> {
     let mut tenants = BTreeSet::new();
     require(
