@@ -2,8 +2,8 @@ use std::fmt::Write as _;
 
 use sea_orm::{DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement};
 
-use super::super::normalization::normalize_check_clause;
 use super::{ensure_mysql, normalize_column_default, normalize_column_extra};
+use ryframe_db::migration::normalize_check_clause;
 
 #[derive(Debug, FromQueryResult)]
 pub(super) struct FenceColumnRow {

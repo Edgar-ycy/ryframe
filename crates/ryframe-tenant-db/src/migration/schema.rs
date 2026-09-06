@@ -1,11 +1,11 @@
 use sea_orm::{DatabaseBackend, DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement};
 
 use super::catalog::{TENANT_DATA_CATALOG, TenantDataCatalog, tenant_data_schema_fingerprint};
-use super::normalization::normalize_check_clause;
 use super::status::{TENANT_DATA_MIGRATION_LEDGER, status_after_server_validation};
 use catalog::{
     FenceCheckRow, FenceColumnRow, FenceConstraintRow, FenceIndexRow, TenantDataTableRow,
 };
+use ryframe_db::migration::normalize_check_clause;
 use target_slot::verify_target_slot_schema;
 
 mod catalog;

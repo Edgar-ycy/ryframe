@@ -1,10 +1,10 @@
 use sea_orm::{DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement};
 
-use super::super::normalization::normalize_check_clause;
 use super::catalog::{
     FenceCheckRow, FenceColumnRow, FenceConstraintRow, FenceIndexRow, TenantDataTableRow,
 };
 use super::{normalize_column_default, normalize_column_extra, schema_fingerprint_mismatch};
+use ryframe_db::migration::normalize_check_clause;
 
 pub(super) async fn verify_target_slot_schema(
     db: &DatabaseConnection,

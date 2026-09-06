@@ -22,6 +22,9 @@ mod backup;
 #[cfg(feature = "migration")]
 #[path = "mysql_real_protocol/job_attempts.rs"]
 mod job_attempts;
+#[cfg(feature = "migration")]
+#[path = "mysql_real_protocol/schema_verification.rs"]
+mod schema_verification;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn required_tls_negotiates_a_real_mysql_cipher() {
