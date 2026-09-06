@@ -280,6 +280,13 @@ class TargetCliTests(unittest.TestCase):
         with patch.object(target_cli, "status", return_value={"status": "fresh_target_unregistered"}):
             self.assertEqual(cli.dispatch(status, self.backend)["status"], "fresh_target_unregistered")
 
+    def test_dispatch_resolves_relative_fresh_target_workspace(self):
+        status = self.args("status", write=False)
+        status.workspace = Path(".local-tests/fresh-workspace")
+        with patch.object(target_cli, "status", return_value={"status": "fresh_target_unregistered"}) as observe:
+            self.assertEqual(cli.dispatch(status, self.backend)["status"], "fresh_target_unregistered")
+        observe.assert_called_once_with(self.backend, self.workspace)
+
     def test_status_is_local_and_marks_incomplete_workspace_for_reconciliation(self):
         unregistered = target_cli.status(self.backend, self.workspace)
         self.assertEqual(unregistered["status"], "fresh_target_unregistered")

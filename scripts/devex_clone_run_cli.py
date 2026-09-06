@@ -99,6 +99,7 @@ def dispatch(args, backend: Path) -> dict:
         from devex_clone_target_cli import initialize as initialize_target
         from devex_clone_target_cli import prepare, resume_prepare, status as target_status, verify
 
+        workspace = evidence_path(backend, args.workspace, new=args.operation == "prepare")
         supplied = (args.request is not None, args.environment is not None,
                     args.storage_run is not None, args.observation_dir is not None)
         expected = {"prepare": (True, True, True, False), "resume-prepare": (False, False, False, False),
@@ -109,16 +110,17 @@ def dispatch(args, backend: Path) -> dict:
         if args.operation == "status":
             if args.write:
                 raise ValueError("fresh-target status 是只读操作，不接受 --write")
-            return target_status(backend, args.workspace)
+            return target_status(backend, workspace)
         if not args.write:
             raise ValueError("fresh-target 非 status 操作需要显式 --write")
         if args.operation == "prepare":
-            return prepare(backend, args.workspace, args.request, args.environment, args.storage_run)
+            return prepare(backend, workspace, evidence_path(backend, args.request),
+                           evidence_path(backend, args.environment), evidence_path(backend, args.storage_run))
         if args.operation == "resume-prepare":
-            return resume_prepare(backend, args.workspace)
+            return resume_prepare(backend, workspace)
         if args.operation == "initialize":
-            return initialize_target(backend, args.workspace)
-        return verify(backend, args.workspace, args.observation_dir)
+            return initialize_target(backend, workspace)
+        return verify(backend, workspace, evidence_path(backend, args.observation_dir, new=True))
     if args.command == "bridge":
         from source_fingerprints import write_bridge
 
