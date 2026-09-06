@@ -3,7 +3,7 @@ use ryframe_application::ports::tenants::{
     TenantDepartmentTemplate, TenantDictionaryDataTemplate, TenantDictionaryTypeTemplate,
     TenantMenuTemplate, TenantPermissionTemplate, TenantPostTemplate, TenantProvisioningTemplate,
 };
-use ryframe_kernel::AppResult;
+use ryframe_kernel::{AppError, AppResult};
 use sea_orm::{ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder};
 
 use super::TenantProvisioningRepository;
@@ -123,14 +123,14 @@ async fn load_dictionary_data(
 async fn load_departments(
     transaction: &DatabaseTransaction,
 ) -> AppResult<Vec<TenantDepartmentTemplate>> {
-    dept::Entity::find()
+    let departments = dept::Entity::find()
         .filter(dept::Column::TenantId.eq(TEMPLATE_TENANT_ID))
         .filter(dept::Column::DelFlag.eq(dept::Model::DEL_FLAG_NORMAL))
         .order_by_asc(dept::Column::Id)
         .all(transaction)
         .await
-        .db()
-        .map(|items| items.into_iter().map(map_department).collect())
+        .db()?;
+    departments.into_iter().map(map_department).collect()
 }
 
 fn map_permission(source: permission::Model) -> TenantPermissionTemplate {
@@ -210,19 +210,56 @@ fn map_dictionary_data(source: dict_data::Model) -> TenantDictionaryDataTemplate
     }
 }
 
-fn map_department(source: dept::Model) -> TenantDepartmentTemplate {
-    TenantDepartmentTemplate {
+fn map_department(source: dept::Model) -> AppResult<TenantDepartmentTemplate> {
+    let ancestor_source_ids = parse_department_ancestors(source.id, &source.ancestors)?;
+    Ok(TenantDepartmentTemplate {
         source_id: source.id,
         name: source.name,
         parent_source_id: source.parent_id,
-        ancestor_source_ids: source
-            .ancestors
-            .split(',')
-            .filter_map(|part| part.trim().parse().ok())
-            .collect(),
+        ancestor_source_ids,
         sort: source.sort,
         status: source.status,
         remark: source.remark,
         delete_flag: source.del_flag,
+    })
+}
+
+fn parse_department_ancestors(source_id: i64, ancestors: &str) -> AppResult<Vec<i64>> {
+    ancestors
+        .split(',')
+        .map(|part| {
+            let token = part.trim();
+            if token.is_empty() {
+                return Err(AppError::Internal(format!(
+                    "复制租户部门目录失败：源部门 {source_id} 的祖级列表包含空 token"
+                )));
+            }
+            token.parse::<i64>().map_err(|_| {
+                AppError::Internal(format!(
+                    "复制租户部门目录失败：源部门 {source_id} 的祖级 token `{token}` 不是有效 ID"
+                ))
+            })
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn department_ancestor_parser_rejects_invalid_or_empty_token() {
+        assert_eq!(
+            parse_department_ancestors(3, "0, 1,2").unwrap(),
+            vec![0, 1, 2]
+        );
+        assert!(matches!(
+            parse_department_ancestors(3, "0,invalid"),
+            Err(AppError::Internal(message)) if message.contains("`invalid` 不是有效 ID")
+        ));
+        assert!(matches!(
+            parse_department_ancestors(3, "0,,2"),
+            Err(AppError::Internal(message)) if message.contains("包含空 token")
+        ));
     }
 }
