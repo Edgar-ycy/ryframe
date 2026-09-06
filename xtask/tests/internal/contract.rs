@@ -17,13 +17,11 @@ const CANDIDATE_MANAGED_PATHS: &[&str] = &[
     "src/api/generated/schema/system.ts",
     "src/api/generated/schema/platform.ts",
     "src/api/generated/schema/monitor.ts",
-    "src/api/generated/schema/agent.ts",
     "src/api/generated/schema/index.ts",
     "src/api/generated/operations/core.ts",
     "src/api/generated/operations/system.ts",
     "src/api/generated/operations/platform.ts",
     "src/api/generated/operations/monitor.ts",
-    "src/api/generated/operations/agent.ts",
     "src/api/generated/permissions.ts",
     "src/api/generated/menuRoutes.ts",
     "src/shared/security/passwordPolicy.generated.json",
@@ -74,6 +72,14 @@ impl TestFrontend {
         fs::write(
             manifest,
             format!("export const generatedArtifactPaths = Object.freeze([\n{entries}\n])\n"),
+        )
+        .unwrap();
+        fs::write(
+            root.join("src/api/generated/ownership.json"),
+            serde_json::to_vec(
+                &serde_json::json!({"version": 1, "files": &CANDIDATE_MANAGED_PATHS[1..]}),
+            )
+            .unwrap(),
         )
         .unwrap();
         fs::write(root.join("openapi/source.json"), "formal-source").unwrap();
@@ -631,4 +637,64 @@ fn reads_frontend_generated_artifact_manifest_and_rejects_traversal() {
     )
     .unwrap();
     assert!(generated_artifact_paths(&frontend.0).is_err());
+}
+
+#[test]
+fn candidate_sync_removes_previous_owned_artifacts_atomically() {
+    let frontend = TestFrontend::new();
+    let retired = "src/api/generated/operations/retired.ts";
+    let old = frontend.0.join(retired);
+    fs::write(&old, "old caller").unwrap();
+    let manifest = frontend.0.join("src/api/generated/ownership.json");
+    let mut ownership: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    ownership["files"]
+        .as_array_mut()
+        .unwrap()
+        .push(retired.into());
+    fs::write(&manifest, serde_json::to_vec(&ownership).unwrap()).unwrap();
+    apply_candidate(&frontend.backend(), &frontend.0, candidate(), |staging| {
+        fs::remove_file(staging.join(retired))?;
+        Ok(())
+    })
+    .unwrap();
+    assert!(!old.exists());
+}
+
+#[test]
+fn candidate_sync_removes_previous_owned_shared_generated_artifact() {
+    let frontend = TestFrontend::new();
+    let retired = "src/shared/config/retired.generated.json";
+    let old = frontend.0.join(retired);
+    fs::create_dir_all(old.parent().unwrap()).unwrap();
+    fs::write(&old, "old config").unwrap();
+    let manifest = frontend.0.join("src/api/generated/ownership.json");
+    let mut ownership: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    ownership["files"]
+        .as_array_mut()
+        .unwrap()
+        .push(retired.into());
+    fs::write(&manifest, serde_json::to_vec(&ownership).unwrap()).unwrap();
+    apply_candidate(&frontend.backend(), &frontend.0, candidate(), |staging| {
+        fs::remove_file(staging.join(retired))?;
+        Ok(())
+    })
+    .unwrap();
+    assert!(!old.exists());
+}
+
+#[test]
+fn candidate_sync_rejects_previous_owned_regular_source() {
+    let frontend = TestFrontend::new();
+    let manifest = frontend.0.join("src/api/generated/ownership.json");
+    let mut ownership: serde_json::Value =
+        serde_json::from_slice(&fs::read(&manifest).unwrap()).unwrap();
+    ownership["files"]
+        .as_array_mut()
+        .unwrap()
+        .push("src/shared/config/runtime.ts".into());
+    fs::write(&manifest, serde_json::to_vec(&ownership).unwrap()).unwrap();
+    let result = apply_candidate(&frontend.backend(), &frontend.0, candidate(), |_| Ok(()));
+    assert!(result.is_err());
 }

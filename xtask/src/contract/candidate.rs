@@ -17,6 +17,7 @@ use super::{
         CANDIDATE_MARKER, CRUD_RESOURCE_ARTIFACT, ContractLock, Snapshot, StagingFrontend, nonce,
         sha256_hex,
     },
+    ownership::contract_managed_paths,
     transaction::{install_snapshots, reject_contract_recovery_artifacts, write_atomically},
 };
 
@@ -146,7 +147,7 @@ where
         .is_some();
     let inputs = snapshot_staging_inputs(frontend_dir)?;
     let artifact_paths = artifact_paths_from_inputs(&inputs, frontend_dir)?;
-    let mut managed_paths = contract_managed_paths(frontend_dir, &artifact_paths);
+    let mut managed_paths = contract_managed_paths(frontend_dir, &artifact_paths)?;
     managed_paths.insert(0, backend_dir.join("openapi/openapi.json"));
     reject_contract_recovery_artifacts(&managed_paths)?;
     let before = snapshot_managed_files(&managed_paths)?;
@@ -218,25 +219,6 @@ fn candidate_marker(candidate: &[u8], formal_source: &[u8]) -> Result<Vec<u8>> {
     let mut bytes = serde_json::to_string_pretty(&marker)?.into_bytes();
     bytes.push(b'\n');
     Ok(bytes)
-}
-
-pub(super) fn contract_managed_paths(
-    frontend_dir: &Path,
-    artifact_paths: &[String],
-) -> Vec<PathBuf> {
-    let mut paths = vec![
-        frontend_dir.join("openapi/openapi.json"),
-        frontend_dir.join("openapi/source.json"),
-        frontend_dir.join(CANDIDATE_MARKER),
-    ];
-    paths.extend(artifact_paths.iter().map(|path| frontend_dir.join(path)));
-    if !artifact_paths
-        .iter()
-        .any(|path| path == CRUD_RESOURCE_ARTIFACT)
-    {
-        paths.push(frontend_dir.join(CRUD_RESOURCE_ARTIFACT));
-    }
-    paths
 }
 
 #[allow(dead_code)]

@@ -6,6 +6,8 @@ mod candidate;
 mod formal;
 #[path = "contract/model.rs"]
 mod model;
+#[path = "contract/ownership.rs"]
+mod ownership;
 #[path = "contract/source.rs"]
 mod source;
 #[path = "contract/transaction.rs"]
