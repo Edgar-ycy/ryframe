@@ -193,6 +193,16 @@ async fn persistence_contract_rejects_malformed_restore_record_shapes() {
     invalid.completed_at = Some(running.started_at);
     invalid.failure = Some("错误初始状态".into());
     invalid_creates.push(invalid);
+    let mut invalid = running.clone();
+    invalid.plan.id = "restore-nanosecond-time".into();
+    invalid.plan_hash = backup_content_hash(&invalid.plan).unwrap();
+    invalid.started_at += Duration::nanoseconds(1);
+    invalid_creates.push(invalid);
+    let mut invalid = running.clone();
+    invalid.plan.id = "restore-nanosecond-recovery".into();
+    invalid.plan_hash = backup_content_hash(&invalid.plan).unwrap();
+    invalid.recovered_at += Duration::nanoseconds(1);
+    invalid_creates.push(invalid);
     for invalid in invalid_creates {
         let transaction = repository.begin().await.unwrap();
         assert!(matches!(
@@ -204,6 +214,11 @@ async fn persistence_contract_rejects_malformed_restore_record_shapes() {
     let mut malformed = Vec::new();
     let mut next = data_verified_record(&running);
     next.data_verified_at = None;
+    malformed.push(next);
+    let mut next = data_verified_record(&running);
+    next.data_verified_at = next
+        .data_verified_at
+        .map(|timestamp| timestamp + Duration::nanoseconds(1));
     malformed.push(next);
     let mut next = data_verified_record(&running);
     next.completed_at = next.data_verified_at;
@@ -251,6 +266,10 @@ async fn persistence_contract_rejects_malformed_restore_record_shapes() {
     malformed.push(next);
     let mut next = verified.clone();
     next.status = RestoreStatus::Succeeded;
+    next.completed_at = Some(verified.data_verified_at.unwrap() + Duration::nanoseconds(1));
+    malformed.push(next);
+    let mut next = verified.clone();
+    next.status = RestoreStatus::Succeeded;
     next.completed_at = Some(verified.data_verified_at.unwrap());
     next.failure = Some("成功状态不能带失败".into());
     malformed.push(next);
@@ -270,6 +289,53 @@ async fn persistence_contract_rejects_malformed_restore_record_shapes() {
             Err(AppError::Validation(_))
         ));
     }
+}
+
+#[test]
+fn backup_and_restore_inputs_reject_sub_microsecond_timestamps() {
+    let current = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+    let valid = manifest();
+    let required = valid.resource_keys();
+    let mut precise = valid.clone();
+    precise.captured_at += Duration::microseconds(123);
+    assert!(validate_backup_manifest(&precise, &required, current).is_ok());
+
+    let mut invalid_times = Vec::new();
+    let mut invalid = valid.clone();
+    invalid.quiesced_at += Duration::nanoseconds(1);
+    invalid_times.push(invalid);
+    let mut invalid = valid.clone();
+    invalid.captured_at += Duration::nanoseconds(1);
+    invalid_times.push(invalid);
+    let mut invalid = valid.clone();
+    invalid.completed_at += Duration::nanoseconds(1);
+    invalid_times.push(invalid);
+    let mut invalid = valid.clone();
+    invalid.retention_until += Duration::nanoseconds(1);
+    invalid_times.push(invalid);
+    for invalid in invalid_times {
+        assert!(matches!(
+            validate_backup_manifest(&invalid, &required, current),
+            Err(AppError::Validation(_))
+        ));
+    }
+
+    let backup = BackupRecord {
+        manifest: valid,
+        manifest_hash: String::new(),
+        valid: true,
+        checked_at: current,
+        failure: None,
+    };
+    let mut precise = plan();
+    precise.fault_at -= Duration::microseconds(123);
+    assert!(validate_restore_plan(&backup, &precise, current).is_ok());
+    let mut restore = plan();
+    restore.fault_at += Duration::nanoseconds(1);
+    assert!(matches!(
+        validate_restore_plan(&backup, &restore, current),
+        Err(AppError::Validation(_))
+    ));
 }
 
 #[tokio::test]

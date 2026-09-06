@@ -20,6 +20,10 @@ pub fn backup_content_hash(value: &impl Serialize) -> AppResult<String> {
     Ok(hex::encode(Sha256::digest(bytes)))
 }
 
+pub(crate) fn has_storage_timestamp_precision(value: DateTime<Utc>) -> bool {
+    value.timestamp_subsec_nanos().is_multiple_of(1_000)
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BackupRecord {

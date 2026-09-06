@@ -51,6 +51,17 @@ pub fn validate_backup_manifest(
         "schema 指纹格式无效",
     )?;
     require(
+        [
+            manifest.quiesced_at,
+            manifest.captured_at,
+            manifest.completed_at,
+            manifest.retention_until,
+        ]
+        .into_iter()
+        .all(has_storage_timestamp_precision),
+        "备份时间必须使用微秒精度",
+    )?;
+    require(
         manifest.quiesced_at <= manifest.captured_at
             && manifest.captured_at <= manifest.completed_at
             && manifest.completed_at <= now,
@@ -194,6 +205,10 @@ pub fn validate_restore_plan(
     require(
         backup.valid && backup.manifest.retention_until > now,
         "备份已失效或不在保留期内",
+    )?;
+    require(
+        has_storage_timestamp_precision(plan.fault_at),
+        "恢复故障时间必须使用微秒精度",
     )?;
     require(
         plan.fault_at >= backup.manifest.captured_at

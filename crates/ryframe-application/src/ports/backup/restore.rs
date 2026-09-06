@@ -2,7 +2,7 @@ use chrono::{DateTime, Duration, Utc};
 use ryframe_kernel::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 
-use super::backup_content_hash;
+use super::{backup_content_hash, has_storage_timestamp_precision};
 
 /// 恢复演练只绑定显式登记的隔离目标。连接凭据由进程外的配置提供。
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -94,11 +94,22 @@ pub fn validate_restore_advance(expected: &RestoreRecord, next: &RestoreRecord) 
 
 /// 校验任意已持久化恢复记录的摘要、状态与时间投影。
 pub fn validate_restore_record(record: &RestoreRecord) -> AppResult<()> {
-    if backup_content_hash(&record.plan)? != record.plan_hash
+    let timestamps = [
+        Some(record.plan.fault_at),
+        Some(record.started_at),
+        record.data_verified_at,
+        record.completed_at,
+        Some(record.recovered_at),
+    ];
+    if timestamps
+        .into_iter()
+        .flatten()
+        .any(|timestamp| !has_storage_timestamp_precision(timestamp))
+        || backup_content_hash(&record.plan)? != record.plan_hash
         || record.recovered_at > record.started_at
     {
         return Err(AppError::Validation(
-            "恢复演练计划摘要或恢复点时间无效".into(),
+            "恢复演练计划摘要、时间精度或恢复点时间无效".into(),
         ));
     }
     let verified = record.data_verified_at.is_some_and(|verified| {
