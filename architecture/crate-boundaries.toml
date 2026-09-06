@@ -13,8 +13,8 @@ generated_markers = [
 frozen_migration_lock = "catalog/migrations.lock.toml"
 
 [function_size]
-# 现阶段只门禁本次变更触及的函数；所有存量例外清零后才允许切换为 all。
-mode = "changed"
+# 全量检查所有 Rust 函数，禁止重新引入存量例外。
+mode = "all"
 public_max_lines = 150
 private_max_lines = 100
 orchestration_max_lines = 80
@@ -56,51 +56,7 @@ orchestrations = [
     { path = "xtask/src/dev/services.rs", symbol = "switch_services_with_rollback" },
     { path = "xtask/src/dev/services.rs", symbol = "restore_last_known_good" },
 ]
-exceptions = [
-    { path = "crates/ryframe/src/bin/ryframe_tenant_data.rs", symbol = "register_backup", current_lines = 103, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-adapters/src/storage/local/cleanup.rs", symbol = "LocalObjectStorage::cleanup_staging_run", current_lines = 140, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-api/src/generated/notice/openapi.rs", symbol = "crud_resource_metadata", current_lines = 265, reason = "现有生成模板产物；到期前由 generator 模板拆分，禁止手改生成文件", expires = 2026-09-27 },
-    { path = "crates/ryframe-api/src/generated/post/openapi.rs", symbol = "crud_resource_metadata", current_lines = 270, reason = "现有生成模板产物；到期前由 generator 模板拆分，禁止手改生成文件", expires = 2026-09-27 },
-    { path = "crates/ryframe-api/src/handlers/user_import_handler.rs", symbol = "create", current_lines = 130, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-application/src/jobs/schedule/execution.rs", symbol = "JobScheduleService::process_due_schedule", current_lines = 127, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-application/src/jobs/worker/execution.rs", symbol = "JobWorker::run_claimed_job", current_lines = 183, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-application/src/system/authorization_diagnostic.rs", symbol = "AuthorizationDiagnosticService::diagnose", current_lines = 211, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-application/src/system/export/resources/batches.rs", symbol = "ExportService::append_export_batch", current_lines = 201, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-application/src/system/file/upload_reservation/operations.rs", symbol = "FileService::reserve_upload", current_lines = 162, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-application/src/system/tenant/config_transfer/export_filter.rs", symbol = "filter_exportable_resources", current_lines = 178, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-application/src/system/tenant/config_transfer/export_workflow.rs", symbol = "TenantConfigTransferService::execute_export", current_lines = 176, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-application/src/system/tenant/config_transfer/plan.rs", symbol = "compare_resources", current_lines = 155, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-application/src/system/tenant/config_transfer/requests.rs", symbol = "TenantConfigTransferService::insert_uploaded_bundle_and_transfer", current_lines = 103, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-application/src/system/tenant/config_transfer/rollback_workflow.rs", symbol = "TenantConfigTransferService::execute_rollback", current_lines = 176, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-application/src/system/tenant/data_migration/mod.rs", symbol = "TenantDataMigrationService::create", current_lines = 183, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-application/src/system/tenant/data_migration/recovery.rs", symbol = "TenantDataMigrationService::cleanup_catalog_rows", current_lines = 146, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-application/src/system/tenant/data_migration/workflow.rs", symbol = "TenantDataMigrationService::execute_migration", current_lines = 223, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-application/src/system/user_import/batch.rs", symbol = "UserImportService::commit_batch", current_lines = 128, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-config/src/app_config/validation.rs", symbol = "AppConfig::validate", current_lines = 319, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-db/src/application_ports/export/request.rs", symbol = "ExportRequestTransaction for DatabaseExportRequestTransaction::summarize_selection", current_lines = 106, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-db/src/application_ports/product/capabilities.rs", symbol = "sync_menus", current_lines = 125, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-db/src/application_ports/tenant_config/transfer_sql/apply_resources.rs", symbol = "upsert_menus", current_lines = 141, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-db/src/migration/m20260820_000000_control_baseline/schema.rs", symbol = "tenant_data_control_table_statements", current_lines = 163, reason = "冻结迁移源码不可修改；到期前明确门禁对冻结事实源的长期处理", expires = 2026-09-27 },
-    { path = "crates/ryframe-db/src/repositories/background_job_repo/transitions/linked.rs", symbol = "BackgroundJobRepository::sync_linked_job_state", current_lines = 267, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-db/src/repositories/message_repo/publish.rs", symbol = "validate_publish_command", current_lines = 107, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-generator/src/resource/ir/contract.rs", symbol = "validate_generation_contract", current_lines = 210, reason = "全量门禁启用前的存量 generator 函数；到期前按验证阶段拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-generator/src/resource/ir/field.rs", symbol = "validate_field", current_lines = 248, reason = "全量门禁启用前的存量 generator 函数；到期前按验证阶段拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-generator/src/resource/ir/normalize.rs", symbol = "normalize", current_lines = 240, reason = "全量门禁启用前的存量 generator 函数；到期前按规范化阶段拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-generator/src/resource/ir/reference.rs", symbol = "validate_references", current_lines = 170, reason = "全量门禁启用前的存量 generator 函数；到期前按关系验证阶段拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-generator/src/resource/render/slice/api.rs", symbol = "handler", current_lines = 201, reason = "全量门禁启用前的存量 generator 函数；到期前拆分模板片段", expires = 2026-09-27 },
-    { path = "crates/ryframe-generator/src/resource/render/slice/application/fake.rs", symbol = "fake", current_lines = 357, reason = "全量门禁启用前的存量 generator 函数；到期前拆分模板片段", expires = 2026-09-27 },
-    { path = "crates/ryframe-generator/src/resource/render/slice/application/service.rs", symbol = "service", current_lines = 188, reason = "全量门禁启用前的存量 generator 函数；到期前拆分模板片段", expires = 2026-09-27 },
-    { path = "crates/ryframe-generator/src/resource/render/slice/database/repository.rs", symbol = "repository", current_lines = 178, reason = "全量门禁启用前的存量 generator 函数；到期前拆分模板片段", expires = 2026-09-27 },
-    { path = "crates/ryframe-generator/src/resource/render/slice/frontend.rs", symbol = "render_fields", current_lines = 273, reason = "全量门禁启用前的存量 generator 函数；到期前拆分字段渲染阶段", expires = 2026-09-27 },
-    { path = "crates/ryframe-generator/src/resource/writer/execute.rs", symbol = "write_resources", current_lines = 271, reason = "全量门禁启用前的存量 generator 函数；到期前拆分写入阶段", expires = 2026-09-27 },
-    { path = "crates/ryframe-generator/tests/resource_contracts/resource_generation.rs", symbol = "post_slice_preserves_control_configuration_and_conflict_semantics", current_lines = 138, reason = "存量集成测试场景；到期前拆分 fixture 与断言阶段", expires = 2026-09-27 },
-    { path = "crates/ryframe-tenant-db/src/migration/catalog.rs", symbol = "TenantDataCatalog::validate_structure", current_lines = 189, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-tenant-db/src/migration/schema/catalog.rs", symbol = "canonical_table_schema", current_lines = 180, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-tenant-db/src/migration/schema/target_slot.rs", symbol = "verify_target_slot_schema", current_lines = 183, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-tenant-db/src/migration/schema.rs", symbol = "verify_fence_schema", current_lines = 233, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-tenant-db/src/router/cleanup.rs", symbol = "clear_tenant_data_in_transaction", current_lines = 118, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-tenant-db/src/router/connection.rs", symbol = "verify_target_mode_invariants", current_lines = 103, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-]
+exceptions = []
 
 # 私有纯逻辑允许在生产模块中就地单测；公开契约与跨层场景仍放在所属 crate/tests。
 [test_layout]
@@ -120,78 +76,9 @@ disabled_bin_test_targets = [
     "xtask:xtask",
 ]
 
-# 当前 12 包过渡图。依赖边必须与 Cargo metadata 完全一致。
-[profiles.transition]
-expected_package_count = 12
-run_tenant_data_legacy_checks = true
-packages = [
-    "ryframe",
-    "ryframe-api",
-    "ryframe-auth",
-    "ryframe-config",
-    "ryframe-adapters",
-    "ryframe-db",
-    "ryframe-generator",
-    "ryframe-kernel",
-    "ryframe-macro",
-    "ryframe-application",
-    "ryframe-tenant-db",
-    "xtask",
-]
-product_packages = [
-    "ryframe",
-    "ryframe-api",
-    "ryframe-auth",
-    "ryframe-config",
-    "ryframe-adapters",
-    "ryframe-db",
-    "ryframe-kernel",
-    "ryframe-macro",
-    "ryframe-application",
-    "ryframe-tenant-db",
-]
-tool_packages = ["ryframe-generator", "xtask"]
-allowed_internal_edges = [
-    "ryframe -> ryframe-api",
-    "ryframe -> ryframe-auth",
-    "ryframe -> ryframe-config",
-    "ryframe -> ryframe-adapters",
-    "ryframe -> ryframe-db",
-    "ryframe -> ryframe-kernel",
-    "ryframe -> ryframe-application",
-    "ryframe -> ryframe-tenant-db",
-    "ryframe-api -> ryframe-auth",
-    "ryframe-api -> ryframe-kernel",
-    "ryframe-api -> ryframe-macro",
-    "ryframe-api -> ryframe-application",
-    "ryframe-auth -> ryframe-config",
-    "ryframe-auth -> ryframe-adapters",
-    "ryframe-auth -> ryframe-kernel",
-    "ryframe-config -> ryframe-kernel",
-    "ryframe-adapters -> ryframe-config",
-    "ryframe-adapters -> ryframe-kernel",
-    "ryframe-db -> ryframe-config",
-    "ryframe-db -> ryframe-kernel",
-    "ryframe-db -> ryframe-macro",
-    "ryframe-db -> ryframe-application",
-    "ryframe-generator -> ryframe-kernel",
-    "ryframe-generator -> ryframe-tenant-db",
-    "ryframe-macro -> ryframe-adapters",
-    "ryframe-application -> ryframe-auth",
-    "ryframe-application -> ryframe-config",
-    "ryframe-application -> ryframe-kernel",
-    "ryframe-tenant-db -> ryframe-application",
-    "ryframe-tenant-db -> ryframe-config",
-    "ryframe-tenant-db -> ryframe-db",
-    "ryframe-tenant-db -> ryframe-kernel",
-]
-
-temporary_product_tool_edges = []
-
-# 最终 10 个产品 crate + 2 个工具 crate。此 profile 即使尚未启用，也会被检查完整性与无环性。
+# 当前 10 个产品 crate + 2 个工具 crate；实际依赖与声明双向核验。
 [profiles.final]
 expected_package_count = 12
-run_tenant_data_legacy_checks = false
 packages = [
     "ryframe",
     "ryframe-adapters",
