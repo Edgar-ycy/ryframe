@@ -2,5 +2,7 @@
 
 mod artifacts;
 mod objects;
+mod runtime;
 pub use artifacts::artifact_verifier;
 pub use objects::object_verifier;
+pub use runtime::runtime_verifier;
