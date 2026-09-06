@@ -1,7 +1,9 @@
 use chrono::{DateTime, Duration, Utc};
 use ryframe_application::{
     ports::backup::*,
-    system::operations::{BACKUP_OBJECT_BUCKETS, BackupService, validate_backup_record},
+    system::operations::{
+        BACKUP_OBJECT_BUCKETS, BackupService, validate_backup_record, validate_restore_plan,
+    },
 };
 use ryframe_kernel::{AppError, AppResult};
 use std::{
@@ -25,6 +27,7 @@ pub struct Repository {
 }
 struct Transaction {
     records: OwnedMutexGuard<Records>,
+    clock: Arc<AtomicI64>,
     backups: Mutex<BTreeMap<String, BackupRecord>>,
     restores: Mutex<BTreeMap<String, RestoreRecord>>,
 }
@@ -40,6 +43,7 @@ impl BackupRepository for Repository {
     async fn begin(&self) -> AppResult<Box<dyn BackupTransaction>> {
         Ok(Box::new(Transaction {
             records: self.records.clone().lock_owned().await,
+            clock: self.clock.clone(),
             backups: Mutex::default(),
             restores: Mutex::default(),
         }))
@@ -94,6 +98,21 @@ impl BackupTransaction for Transaction {
             return Ok(existing.clone());
         }
         validate_restore_creation(record)?;
+        let backup = {
+            let staged = self.backups.lock().await;
+            staged
+                .get(&record.plan.backup_id)
+                .or_else(|| self.records.backups.get(&record.plan.backup_id))
+                .cloned()
+        }
+        .ok_or_else(|| AppError::NotFound("恢复演练绑定的备份集不存在".into()))?;
+        let now = DateTime::from_timestamp(self.clock.load(Ordering::SeqCst), 0).unwrap();
+        validate_restore_plan(&backup, &record.plan, now)?;
+        if record.recovered_at != backup.manifest.captured_at {
+            return Err(AppError::Validation(
+                "恢复演练的实际恢复点与备份采集时间不一致".into(),
+            ));
+        }
         staged.insert(record.plan.id.clone(), record.clone());
         Ok(record.clone())
     }

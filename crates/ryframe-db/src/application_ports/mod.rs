@@ -1,6 +1,7 @@
 pub mod audit;
 pub mod auth;
 pub mod authorization;
+pub mod backup;
 pub mod export;
 pub mod files;
 pub mod jobs;

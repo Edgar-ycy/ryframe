@@ -199,7 +199,7 @@ fn integration_commands_share_the_ci_target_and_jobs() {
         integration_test_args_for_target(
             "ryframe-db",
             "mysql_real_protocol",
-            Some("repositories"),
+            Some("repositories,migration"),
             "target/ci/backend",
             4,
         ),
@@ -211,7 +211,7 @@ fn integration_commands_share_the_ci_target_and_jobs() {
             "-p",
             "ryframe-db",
             "--features",
-            "repositories",
+            "repositories,migration",
             "--test",
             "mysql_real_protocol",
             "--jobs",

@@ -43,7 +43,8 @@ pub trait BackupTransaction: Send + Sync {
     async fn save_backup(&self, record: &BackupRecord) -> AppResult<BackupRecord>;
     /// 原子创建恢复演练。相同 ID 与完整计划的重试返回首次持久化的权威记录；
     /// 相同 ID 绑定不同计划或计划摘要时返回冲突。
-    /// 实现必须先调用 [`validate_restore_creation`] 拒绝无效初始记录。
+    /// 首次创建必须在同一事务锁定并复核父备份仍有效、未过期，且实际恢复点等于采集时间；
+    /// 同时必须先调用 [`validate_restore_creation`] 拒绝无效初始记录。
     async fn create_restore(&self, record: &RestoreRecord) -> AppResult<RestoreRecord>;
     /// 按完整旧记录执行一次状态 CAS，并返回持久化后的权威记录。
     /// 实现必须保持计划、计划摘要、开始时间与恢复点时间不可变，并拒绝非法状态转换。

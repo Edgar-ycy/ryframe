@@ -6,6 +6,7 @@ use ryframe_kernel::{AppError, AppResult, ExportQuerySnapshot};
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QuerySelect, Select, sea_query::Expr};
 
 pub mod background_job_repo;
+pub mod backup_repo;
 pub mod cache_namespace_version_repo;
 pub mod config_repo;
 pub mod data_retention_repo;

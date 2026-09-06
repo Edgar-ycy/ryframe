@@ -203,6 +203,57 @@ async fn create_restore_retry_returns_the_first_authoritative_record() {
 }
 
 #[tokio::test]
+async fn first_restore_create_revalidates_parent_and_recovery_point() {
+    let (service, repository, _) = fixture();
+    let manifest = manifest();
+    service
+        .register(manifest.clone(), &manifest.resource_keys())
+        .await
+        .unwrap();
+    let running = service.begin_restore(plan()).await.unwrap();
+    let backup = repository.backup(&manifest.id).await.unwrap().unwrap();
+
+    let mut invalid = backup.clone();
+    invalid.valid = false;
+    invalid.failure = Some("重新校验失败".into());
+    repository
+        .records
+        .lock()
+        .await
+        .backups
+        .insert(manifest.id.clone(), invalid);
+    let candidate = restore_with_id(&running, "restore-invalid-parent");
+    let transaction = repository.begin().await.unwrap();
+    let error = transaction.create_restore(&candidate).await.unwrap_err();
+    assert!(error.message().contains("备份已失效或不在保留期内"));
+    drop(transaction);
+
+    repository
+        .records
+        .lock()
+        .await
+        .backups
+        .insert(manifest.id.clone(), backup.clone());
+    let original_now = repository.clock.load(Ordering::SeqCst);
+    repository.clock.store(
+        backup.manifest.retention_until.timestamp(),
+        Ordering::SeqCst,
+    );
+    let candidate = restore_with_id(&running, "restore-expired-parent");
+    let transaction = repository.begin().await.unwrap();
+    let error = transaction.create_restore(&candidate).await.unwrap_err();
+    assert!(error.message().contains("备份已失效或不在保留期内"));
+    drop(transaction);
+    repository.clock.store(original_now, Ordering::SeqCst);
+
+    let mut candidate = restore_with_id(&running, "restore-wrong-recovery-point");
+    candidate.recovered_at += Duration::microseconds(1);
+    let transaction = repository.begin().await.unwrap();
+    let error = transaction.create_restore(&candidate).await.unwrap_err();
+    assert!(error.message().contains("实际恢复点与备份采集时间不一致"));
+}
+
+#[tokio::test]
 async fn advance_restore_rejects_immutable_changes_and_illegal_transitions() {
     let (service, repository, _) = fixture();
     let manifest = manifest();
@@ -307,6 +358,13 @@ fn malformed_restore_creates(running: &RestoreRecord) -> Vec<RestoreRecord> {
     invalid_recovery.plan_hash = backup_content_hash(&invalid_recovery.plan).unwrap();
     invalid_recovery.recovered_at += Duration::nanoseconds(1);
     vec![invalid_hash, invalid_state, invalid_start, invalid_recovery]
+}
+
+fn restore_with_id(running: &RestoreRecord, id: &str) -> RestoreRecord {
+    let mut candidate = running.clone();
+    candidate.plan.id = id.into();
+    candidate.plan_hash = backup_content_hash(&candidate.plan).unwrap();
+    candidate
 }
 
 fn malformed_running_advances(running: &RestoreRecord) -> Vec<RestoreRecord> {

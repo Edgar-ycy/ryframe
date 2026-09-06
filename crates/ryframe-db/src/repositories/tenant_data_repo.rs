@@ -375,6 +375,22 @@ impl TenantDataRepository {
             .db()
     }
 
+    pub async fn lock_backup_by_provider_ref<C>(
+        &self,
+        db: &C,
+        provider_ref: &str,
+    ) -> AppResult<Option<tenant_data_backup_point::Model>>
+    where
+        C: ConnectionTrait,
+    {
+        tenant_data_backup_point::Entity::find()
+            .filter(tenant_data_backup_point::Column::ProviderRef.eq(provider_ref))
+            .lock(LockType::Update)
+            .one(db)
+            .await
+            .db()
+    }
+
     pub async fn insert_backup<C>(
         &self,
         db: &C,
@@ -383,28 +399,7 @@ impl TenantDataRepository {
     where
         C: ConnectionTrait,
     {
-        tenant_data_backup_point::ActiveModel {
-            id: Set(command.id),
-            scope: Set(command.scope),
-            tenant_id: Set(command.tenant_id),
-            target_key: Set(command.target_key),
-            placement_generation: Set(command.placement_generation),
-            schema_fingerprint: Set(command.schema_fingerprint),
-            provider_ref: Set(command.provider_ref),
-            captured_at: Set(command.captured_at),
-            checksum: Set(command.checksum),
-            validation_status: Set(command.validation_status),
-            validation_detail: Set(None),
-            retention_until: Set(command.retention_until),
-            expires_at: Set(command.expires_at),
-            last_restore_drill_at: Set(None),
-            created_by: Set(command.created_by),
-            created_at: Set(command.now),
-            updated_at: Set(command.now),
-        }
-        .insert(db)
-        .await
-        .db()
+        backup_active_model(command).insert(db).await.db()
     }
 
     pub async fn validated_backup_for_destination<C>(

@@ -415,7 +415,11 @@ fn integration() -> Result<()> {
         std::thread::available_parallelism().map_or(1, usize::from),
     )?;
     for (package, target, features) in [
-        ("ryframe-db", "mysql_real_protocol", Some("repositories")),
+        (
+            "ryframe-db",
+            "mysql_real_protocol",
+            Some("repositories,migration"),
+        ),
         ("ryframe-adapters", "redis_real_protocol", Some("redis-api")),
     ] {
         run_owned(
