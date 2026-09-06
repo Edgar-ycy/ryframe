@@ -13,7 +13,7 @@ use model::{ResetManifest, build_manifest, canonical_json, sha256_hex, validate_
 use runtime::ExternalResetRuntime;
 use ryframe_config::{AppConfig, Environment};
 
-const USAGE: &str = "用法:\n  ryframe-reset plan\n  ryframe-reset execute --plan-hash <sha256> --confirm-reset <精确短语>";
+const USAGE: &str = "用法:\n  ryframe-reset plan\n  ryframe-reset execute --plan-hash <sha256> --confirm-reset <精确短语>\n执行报告区分 completed（本次完成）、reused（复用原完成）与 failed；原锁释放失败或中断须人工核对，不得删除旧账本。";
 const CODE_SHA_ENV: &str = "RYFRAME_CODE_SHA";
 const SERVICES_STOPPED_ENV: &str = "RYFRAME_RESET_SERVICES_STOPPED";
 
@@ -78,7 +78,10 @@ pub async fn run(args: Vec<String>) -> ResetResult<()> {
             let store = LedgerStore::from_environment(&manifest, &plan_hash)?;
             let mut runtime = ExternalResetRuntime::new(config, &manifest)?;
             let report = execute(&mut runtime, &manifest, &plan_hash, &store).await?;
-            println!("reset_status={}", report.status);
+            println!("reset_status={}", report.status.as_str());
+            if let Some(completed_at) = &report.completed_at {
+                println!("reset_completed_at={completed_at}");
+            }
             println!("reset_report={}", store.report_path().display());
         }
     }

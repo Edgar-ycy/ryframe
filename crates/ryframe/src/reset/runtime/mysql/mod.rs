@@ -293,7 +293,7 @@ impl MysqlReset {
             ("tenant_baselines".into(), migrated.to_string()),
             (
                 "schema_fingerprint".into(),
-                ryframe_tenant_db::migration::TENANT_DATA_SCHEMA_FINGERPRINT.into(),
+                ryframe_tenant_db::migration::tenant_data_schema_fingerprint().into(),
             ),
         ]))
     }
