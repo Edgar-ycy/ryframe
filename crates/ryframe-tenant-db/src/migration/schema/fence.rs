@@ -181,8 +181,10 @@ pub(super) async fn verify_fence_constraints(db: &DatabaseConnection) -> Result<
         .iter()
         .find(|check| check.constraint_name == "ck_biz_tenant_fence_state")
         .map(|check| normalize_check_clause(&check.check_clause));
-    if generation.as_deref() != Some("placement_generation>0")
-        || state.as_deref() != Some("statein('active','frozen')")
+    let expected_generation = normalize_check_clause("`placement_generation` > 0");
+    let expected_state = normalize_check_clause("`state` IN ('active', 'frozen')");
+    if generation.as_deref() != Some(expected_generation.as_str())
+        || state.as_deref() != Some(expected_state.as_str())
     {
         return Err(schema_fingerprint_mismatch("fence check constraints"));
     }

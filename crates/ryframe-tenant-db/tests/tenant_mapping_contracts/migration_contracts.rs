@@ -16,11 +16,11 @@ use sea_orm_migration::MigratorTrait;
 fn normalizes_mysql_escaped_check_literal_quotes() {
     assert_eq!(
         normalize_check_clause(r#"(`state` IN (_utf8mb4\'active\', _utf8mb4\'frozen\'))"#),
-        "statein('active','frozen')",
+        normalize_check_clause("state in ('active', 'frozen')"),
     );
     assert_eq!(
         normalize_check_clause(r#"(`kind` = _ascii\"mysql\")"#),
-        "kind=\"mysql\"",
+        normalize_check_clause(r#"kind = \"mysql\""#),
     );
     assert_eq!(
         normalize_check_clause(r#"(`code` = _utf8mb4\'O\\\'Reilly\')"#),
@@ -34,10 +34,21 @@ fn normalizes_mysql_escaped_check_literal_quotes() {
 
 #[test]
 fn check_normalization_preserves_semantic_grouping() {
-    assert_eq!(normalize_check_clause("(((`a` = 1)))"), "a=1");
+    assert_eq!(
+        normalize_check_clause("(((`a` = 1)))"),
+        normalize_check_clause("a=1")
+    );
     assert_ne!(
         normalize_check_clause("((`a` AND `b`) OR `c`)"),
         normalize_check_clause("(`a` AND (`b` OR `c`))"),
+    );
+    assert_ne!(
+        normalize_check_clause("`a-b` > 0"),
+        normalize_check_clause("`a` - `b` > 0"),
+    );
+    assert_ne!(
+        normalize_check_clause("`a` IS NULL"),
+        normalize_check_clause("`aisnull`"),
     );
 }
 

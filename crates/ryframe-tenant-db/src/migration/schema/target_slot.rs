@@ -192,13 +192,15 @@ async fn verify_constraints(db: &DatabaseConnection) -> Result<(), DbErr> {
         .iter()
         .find(|check| check.constraint_name == "ck_biz_tenant_target_slot_value")
         .map(|check| normalize_check_clause(&check.check_clause));
+    let expected_slot_id = normalize_check_clause("`slot_id` = 1");
+    let expected_value = normalize_check_clause(
+        "(((`tenant_id` IS NULL) AND (`placement_generation` IS NULL) \
+         AND (`switch_token` IS NULL)) OR ((`tenant_id` IS NOT NULL) \
+         AND (`placement_generation` > 0) AND (`switch_token` IS NOT NULL)))",
+    );
     if checks.len() != 2
-        || slot_id.as_deref() != Some("slot_id=1")
-        || value.as_deref()
-            != Some(
-                "((tenant_idisnull)and(placement_generationisnull)and(switch_tokenisnull))or(\
-                 (tenant_idisnotnull)and(placement_generation>0)and(switch_tokenisnotnull))",
-            )
+        || slot_id.as_deref() != Some(expected_slot_id.as_str())
+        || value.as_deref() != Some(expected_value.as_str())
     {
         return Err(schema_fingerprint_mismatch("target slot check constraints"));
     }

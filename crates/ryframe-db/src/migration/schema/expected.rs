@@ -363,7 +363,7 @@ fn backtick_identifiers(value: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExpectedSchema, add_table_parts};
+    use super::{ExpectedSchema, add_table_parts, normalize_check_clause};
 
     fn parse_table(statement: &str) -> ExpectedSchema {
         let mut schema = ExpectedSchema::default();
@@ -410,7 +410,10 @@ mod tests {
         assert_eq!(key.delete_rule, "cascade");
         assert_eq!(key.update_rule, "restrict");
         let check = &schema.checks[&("child".into(), "ck_child_state".into())];
-        assert_eq!(check.clause, "(statein('queued,ready','done'))and(id>0)");
+        assert_eq!(
+            check.clause,
+            normalize_check_clause("((`state` IN ('queued,ready', 'done')) AND (`id` > 0))")
+        );
         assert!(check.enforced);
     }
 
@@ -486,7 +489,11 @@ mod tests {
             &schema.checks[&("sys_restore_run".into(), "ck_restore_run_completed".into())];
         assert_eq!(
             completed.clause,
-            "(statusin('running','data_verified')andcompleted_atisnull)or(statusin('succeeded','failed')andcompleted_atisnotnullandcompleted_at>=started_at)"
+            normalize_check_clause(
+                "((`status` IN ('running', 'data_verified') AND `completed_at` IS NULL) \
+                 OR (`status` IN ('succeeded', 'failed') AND `completed_at` IS NOT NULL \
+                 AND `completed_at` >= `started_at`))"
+            )
         );
         assert!(completed.enforced);
     }
