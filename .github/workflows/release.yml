@@ -107,29 +107,32 @@ jobs:
             echo "frontend_repository=$FRONTEND_REPOSITORY"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Verify exact source CI runs succeeded
+      - name: 验证精确源码的日常与扩展 CI
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          verify_successful_ci() {
-            local repository="$1"
-            local commit="$2"
-            local successful_runs
-            successful_runs="$(gh api \
-              "repos/${repository}/actions/workflows/ci.yml/runs?head_sha=${commit}&per_page=100" \
-              --jq '[.workflow_runs[] | select(.event == "push" and .status == "completed" and .conclusion == "success")] | length')"
-            if [[ "$successful_runs" -lt 1 ]]; then
-              echo "The exact ${repository}@${commit} source commit has no successful CI run."
-              exit 1
-            fi
-          }
+          BACKEND_SHA: ${{ steps.release.outputs.backend_commit }}
+          FRONTEND_SHA: ${{ steps.release.outputs.frontend_commit }}
+        run: >-
+          python scripts/verify_release_ci.py
+          --backend-repository "$GITHUB_REPOSITORY"
+          --frontend-repository "$FRONTEND_REPOSITORY"
+          --backend-sha "$BACKEND_SHA"
+          --frontend-sha "$FRONTEND_SHA"
+          --tag "$RELEASE_TAG"
+          --timeout 5400
+          --output "$RUNNER_TEMP/release-ci-evidence.json"
 
-          verify_successful_ci "$GITHUB_REPOSITORY" \
-            "${{ steps.release.outputs.backend_commit }}"
-          verify_successful_ci "${{ steps.release.outputs.frontend_repository }}" \
-            "${{ steps.release.outputs.frontend_commit }}"
+      - name: 保存发布校验记录
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/release-validation.json
+            ${{ runner.temp }}/release-ci-evidence.json
+          if-no-files-found: error
+          retention-days: 30
 
   publish-release:
     name: Publish source-only GitHub release
@@ -137,6 +140,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
     steps:
       - name: Check out fixed backend source
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -175,6 +179,49 @@ jobs:
           [[ "$(git -C frontend rev-parse "${RELEASE_TAG}^{commit}")" == "$FRONTEND_COMMIT" ]]
           [[ "$(git -C frontend rev-parse HEAD)" == "$FRONTEND_COMMIT" ]]
 
+      - name: Build release notes from immutable tag annotations
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.validate-release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          backend_notes="$RUNNER_TEMP/backend-release-notes.md"
+          frontend_notes="$RUNNER_TEMP/frontend-release-notes.md"
+          git for-each-ref --format='%(contents)' "refs/tags/$RELEASE_TAG" > "$backend_notes"
+          git -C frontend for-each-ref --format='%(contents)' \
+            "refs/tags/$RELEASE_TAG" > "$frontend_notes"
+          test -s "$backend_notes"
+          test -s "$frontend_notes"
+
+          {
+            printf '# RyFrame %s\n\n' "$RELEASE_TAG"
+            printf '# 后端更新\n\n'
+            cat "$backend_notes"
+            printf '\n\n# 前端更新\n\n'
+            cat "$frontend_notes"
+            printf '\n'
+          } > release_body.md
+          test -s release_body.md
+
+      - name: 发布前复核最新 CI attempt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BACKEND_SHA: ${{ needs.validate-release.outputs.backend_commit }}
+          FRONTEND_SHA: ${{ needs.validate-release.outputs.frontend_commit }}
+          BACKEND_TAG_OID: ${{ needs.validate-release.outputs.backend_tag_oid }}
+          FRONTEND_TAG_OID: ${{ needs.validate-release.outputs.frontend_tag_oid }}
+        run: >-
+          python scripts/verify_release_ci.py
+          --backend-repository "$GITHUB_REPOSITORY"
+          --frontend-repository "$FRONTEND_REPOSITORY"
+          --backend-sha "$BACKEND_SHA"
+          --frontend-sha "$FRONTEND_SHA"
+          --backend-tag-oid "$BACKEND_TAG_OID"
+          --frontend-tag-oid "$FRONTEND_TAG_OID"
+          --tag "$RELEASE_TAG"
+          --timeout 5400
+          --output "$RUNNER_TEMP/release-final-evidence.json"
+
       - name: Purge custom assets from target release
         shell: bash
         env:
@@ -201,43 +248,6 @@ jobs:
             cat "$release_error" >&2
             exit 1
           fi
-
-      - name: Build release notes from immutable tag annotations
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ needs.validate-release.outputs.tag }}
-        run: |
-          set -euo pipefail
-          backend_notes="$RUNNER_TEMP/backend-release-notes.md"
-          frontend_notes="$RUNNER_TEMP/frontend-release-notes.md"
-          git for-each-ref --format='%(contents)' "refs/tags/$RELEASE_TAG" > "$backend_notes"
-          git -C frontend for-each-ref --format='%(contents)' \
-            "refs/tags/$RELEASE_TAG" > "$frontend_notes"
-          test -s "$backend_notes"
-          test -s "$frontend_notes"
-
-          {
-            printf '# RyFrame %s\n\n' "$RELEASE_TAG"
-            printf '# 后端更新\n\n'
-            cat "$backend_notes"
-            printf '\n\n# 前端更新\n\n'
-            cat "$frontend_notes"
-            printf '\n'
-          } > release_body.md
-          test -s release_body.md
-
-      - name: Confirm tag refs immediately before publishing
-        shell: bash
-        env:
-          RELEASE_TAG: ${{ needs.validate-release.outputs.tag }}
-          BACKEND_TAG_OID: ${{ needs.validate-release.outputs.backend_tag_oid }}
-          FRONTEND_TAG_OID: ${{ needs.validate-release.outputs.frontend_tag_oid }}
-        run: |
-          set -euo pipefail
-          backend_remote_oid="$(git ls-remote --refs origin "refs/tags/${RELEASE_TAG}" | awk '{ print $1 }')"
-          frontend_remote_oid="$(git -C frontend ls-remote --refs origin "refs/tags/${RELEASE_TAG}" | awk '{ print $1 }')"
-          [[ -n "$backend_remote_oid" && "$backend_remote_oid" == "$BACKEND_TAG_OID" ]]
-          [[ -n "$frontend_remote_oid" && "$frontend_remote_oid" == "$FRONTEND_TAG_OID" ]]
 
       - name: Create source-only GitHub release
         uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
@@ -269,3 +279,12 @@ jobs:
           jq --join-output '.body // ""' "$release_json" > "$published_body"
           test -s "$published_body"
           diff --unified release_body.md "$published_body"
+
+      - name: 保存最终发布证据
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-final-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-final-evidence.json
+          if-no-files-found: error
+          retention-days: 30

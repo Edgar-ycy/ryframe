@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [ main ]
+    tags: [ "v*.*.*" ]
   pull_request:
     branches: [ main ]
     types: [ opened, synchronize, reopened, edited ]
@@ -22,6 +23,7 @@ env:
   GIT_CONFIG_COUNT: "1"
   GIT_CONFIG_KEY_0: init.defaultBranch
   GIT_CONFIG_VALUE_0: main
+  FRONTEND_REPOSITORY: ${{ vars.RYFRAME_FRONTEND_REPOSITORY || format('{0}/ryframe-vue3', github.repository_owner) }}
 
 jobs:
   # ============================================================
@@ -130,7 +132,7 @@ jobs:
       - name: 检出前端资源 Workspace
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
-          repository: Edgar-ycy/ryframe-vue3
+          repository: ${{ env.FRONTEND_REPOSITORY }}
           ref: ${{ steps.frontend-ref.outputs.ref }}
           path: frontend
 
@@ -311,7 +313,7 @@ jobs:
       - name: 检出前端资源 Workspace
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
-          repository: Edgar-ycy/ryframe-vue3
+          repository: ${{ env.FRONTEND_REPOSITORY }}
           ref: ${{ steps.contract-frontend-ref.outputs.ref || steps.resource-frontend-ref.outputs.ref }}
           path: frontend
 
@@ -345,7 +347,7 @@ jobs:
         working-directory: backend
         env:
           RYFRAME_CI_BACKEND_HEAD: ${{ github.event.pull_request.head.sha }}
-          RYFRAME_CI_BACKEND_REPOSITORY: Edgar-ycy/ryframe
+          RYFRAME_CI_BACKEND_REPOSITORY: ${{ github.repository }}
           RYFRAME_CI_CANDIDATE_OPENAPI: ${{ runner.temp }}/candidate-openapi.json
           RYFRAME_CI_FRONTEND_REF: ${{ steps.contract-frontend-ref.outputs.ref }}
         run: cargo xtask check ci consumer-contract --frontend-dir ../frontend
@@ -491,7 +493,7 @@ jobs:
       - name: 检出前端真实 Workspace
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
-          repository: Edgar-ycy/ryframe-vue3
+          repository: ${{ env.FRONTEND_REPOSITORY }}
           ref: ${{ steps.windows-frontend-ref.outputs.ref }}
           path: ryframe-vue3
 
