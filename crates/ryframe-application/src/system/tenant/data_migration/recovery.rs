@@ -321,82 +321,12 @@ impl TenantDataMigrationService {
             generation,
             switch_token,
         };
-        match self
-            .tenant_migration
-            .cleanup_ownership(cleanup_fence)
-            .await?
-        {
-            TenantDataCleanupOwnership::OwnedFrozen => {}
-            TenantDataCleanupOwnership::AlreadyClean => return Ok(()),
-            TenantDataCleanupOwnership::NotOwned
-                if snapshot.state == TenantDataMigrationRecord::STATE_PRECHECKING
-                    && matches!(intent, RecoveryIntent::Cancel | RecoveryIntent::Failure) =>
-            {
-                // precheck/prepare 前的取消或失败对目标没有任何所有权。
-                // 保留陌生 fence/数据并收口本迁移，绝不将其视为可清理副作用。
-                tracing::warn!(
-                    migration_id = snapshot.id,
-                    target = target_key,
-                    "precheck 迁移未拥有目标 cleanup fence，已安全跳过陌生数据"
-                );
-                return Ok(());
-            }
-            TenantDataCleanupOwnership::NotOwned
-                if self
-                    .persistence
-                    .migration(snapshot.id)
-                    .await?
-                    .is_some_and(|migration| migration.cleanup_ready_at.is_some()) =>
-            {
-                // 所有 catalog 批次清空后会先持久化 cleanup_ready_at，再移除目标
-                // fence/slot。若进程恰在两者之间崩溃且 dedicated 槽已被新租户占用，
-                // 此检查点只授权控制面收口，绝不再次触碰新租户目标数据。
-                return Ok(());
-            }
-            TenantDataCleanupOwnership::NotOwned => {
-                return Err(AppError::StalePlacementGeneration(
-                    "cleanup fence/slot 不属于当前 migration".into(),
-                ));
-            }
+        if !self.owns_cleanup(snapshot, intent, cleanup_fence).await? {
+            return Ok(());
         }
         let catalog_tables = self.tenant_migration.catalog_tables();
         for descriptor in catalog_tables.iter().rev() {
-            let existing_item = self
-                .persistence
-                .items(snapshot.id)
-                .await?
-                .into_iter()
-                .find(|item| item.table_name == descriptor.name);
-            let mut item = if let Some(item) = existing_item {
-                item
-            } else {
-                let now = self.persistence.database_now().await?;
-                self.persistence
-                    .insert_item(TenantDataMigrationItemRecord {
-                        id: crate::next_id()?,
-                        migration_id: snapshot.id,
-                        table_name: descriptor.name.into(),
-                        copy_order: i32::try_from(descriptor.copy_order).map_err(|_| {
-                            AppError::Validation("catalog copy_order 超出范围".into())
-                        })?,
-                        state: TenantDataMigrationItemRecord::STATE_PENDING.into(),
-                        cursor_json: None,
-                        source_row_count: Some(0),
-                        target_row_count: Some(0),
-                        source_digest: None,
-                        target_digest: None,
-                        error_code: None,
-                        error_detail: None,
-                        copy_started_at: None,
-                        copied_at: None,
-                        verified_at: None,
-                        cleanup_state: TenantDataMigrationItemRecord::CLEANUP_PENDING.into(),
-                        cleanup_row_count: 0,
-                        created_at: now,
-                        updated_at: now,
-                    })
-                    .await?
-            };
+            let mut item = self.cleanup_item(snapshot.id, descriptor).await?;
             if item.cleanup_state == TenantDataMigrationItemRecord::CLEANUP_CLEANED {
                 continue;
             }
@@ -538,5 +468,96 @@ impl TenantDataMigrationService {
             .commit(crate::TransactionAuditMode::Skip)
             .await?;
         Ok(())
+    }
+}
+
+impl TenantDataMigrationService {
+    async fn cleanup_item(
+        &self,
+        migration_id: i64,
+        descriptor: &crate::ports::tenant_data::TenantDataCatalogTable,
+    ) -> AppResult<TenantDataMigrationItemRecord> {
+        let existing_item = self
+            .persistence
+            .items(migration_id)
+            .await?
+            .into_iter()
+            .find(|item| item.table_name == descriptor.name);
+        if let Some(item) = existing_item {
+            Ok(item)
+        } else {
+            let now = self.persistence.database_now().await?;
+            self.persistence
+                .insert_item(TenantDataMigrationItemRecord {
+                    id: crate::next_id()?,
+                    migration_id,
+                    table_name: descriptor.name.into(),
+                    copy_order: i32::try_from(descriptor.copy_order)
+                        .map_err(|_| AppError::Validation("catalog copy_order 超出范围".into()))?,
+                    state: TenantDataMigrationItemRecord::STATE_PENDING.into(),
+                    cursor_json: None,
+                    source_row_count: Some(0),
+                    target_row_count: Some(0),
+                    source_digest: None,
+                    target_digest: None,
+                    error_code: None,
+                    error_detail: None,
+                    copy_started_at: None,
+                    copied_at: None,
+                    verified_at: None,
+                    cleanup_state: TenantDataMigrationItemRecord::CLEANUP_PENDING.into(),
+                    cleanup_row_count: 0,
+                    created_at: now,
+                    updated_at: now,
+                })
+                .await
+        }
+    }
+
+    async fn owns_cleanup(
+        &self,
+        snapshot: &TenantDataMigrationRecord,
+        intent: RecoveryIntent,
+        cleanup_fence: TenantDataFence<'_>,
+    ) -> AppResult<bool> {
+        match self
+            .tenant_migration
+            .cleanup_ownership(cleanup_fence)
+            .await?
+        {
+            TenantDataCleanupOwnership::OwnedFrozen => {}
+            TenantDataCleanupOwnership::AlreadyClean => return Ok(false),
+            TenantDataCleanupOwnership::NotOwned
+                if snapshot.state == TenantDataMigrationRecord::STATE_PRECHECKING
+                    && matches!(intent, RecoveryIntent::Cancel | RecoveryIntent::Failure) =>
+            {
+                // precheck/prepare 前的取消或失败对目标没有任何所有权。
+                // 保留陌生 fence/数据并收口本迁移，绝不将其视为可清理副作用。
+                tracing::warn!(
+                    migration_id = snapshot.id,
+                    target = cleanup_fence.target_key,
+                    "precheck 迁移未拥有目标 cleanup fence，已安全跳过陌生数据"
+                );
+                return Ok(false);
+            }
+            TenantDataCleanupOwnership::NotOwned
+                if self
+                    .persistence
+                    .migration(snapshot.id)
+                    .await?
+                    .is_some_and(|migration| migration.cleanup_ready_at.is_some()) =>
+            {
+                // 所有 catalog 批次清空后会先持久化 cleanup_ready_at，再移除目标
+                // fence/slot。若进程恰在两者之间崩溃且 dedicated 槽已被新租户占用，
+                // 此检查点只授权控制面收口，绝不再次触碰新租户目标数据。
+                return Ok(false);
+            }
+            TenantDataCleanupOwnership::NotOwned => {
+                return Err(AppError::StalePlacementGeneration(
+                    "cleanup fence/slot 不属于当前 migration".into(),
+                ));
+            }
+        }
+        Ok(true)
     }
 }
