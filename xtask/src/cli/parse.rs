@@ -325,6 +325,7 @@ fn parse_recovery(args: &[String]) -> Result<RecoveryCommand, CliError> {
                 "seed-runtime",
                 "storage",
                 "cache",
+                "maintenance",
             ],
         )
         .map(RecoveryCommand::Clone),

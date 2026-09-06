@@ -225,6 +225,39 @@ class RunTests(unittest.TestCase):
             execute.assert_not_called()
         self.assertEqual(state.binding(self.directory / "state.json"), before)
 
+    def test_maintenance_cli_requires_explicit_build_and_keeps_verify_readonly(self):
+        import devex_clone_run_cli as cli
+
+        output = self.local / "maintenance"
+        build = SimpleNamespace(command="maintenance", operation="build", output=output, write=False)
+        with patch("devex_clone_tools.build", return_value={}) as create, \
+                patch("devex_clone_tools.verify", return_value={}) as verify:
+            with self.assertRaises(ValueError):
+                cli.dispatch(build, self.backend)
+            create.assert_not_called()
+            self.assertEqual(cli.dispatch(SimpleNamespace(**{**vars(build), "write": True}), self.backend), {
+                "status": "maintenance_build_created", "receipt": str(output / "build.json"),
+                "resources_modified": False, "restore_qualified": False,
+            })
+            create.assert_called_once_with(self.backend, output)
+            check = SimpleNamespace(command="maintenance", operation="verify", output=output / "build.json", write=False)
+            self.assertEqual(cli.dispatch(check, self.backend), {
+                "status": "maintenance_build_verified", "receipt": str(output / "build.json"),
+                "resources_modified": False, "restore_qualified": False,
+            })
+            verify.assert_called_once_with(self.backend, output / "build.json")
+            with self.assertRaises(ValueError):
+                cli.dispatch(SimpleNamespace(**{**vars(check), "write": True}), self.backend)
+
+    def test_maintenance_cli_resolves_relative_evidence_path_under_backend(self):
+        import devex_clone_run_cli as cli
+
+        relative = Path(".local-tests/maintenance-relative")
+        with patch("devex_clone_tools.build", return_value={}) as create:
+            cli.dispatch(SimpleNamespace(command="maintenance", operation="build", output=relative, write=True),
+                         self.backend)
+        create.assert_called_once_with(self.backend, self.backend / relative)
+
     def test_runtime_environment_and_identity_are_delegated_without_build(self):
         value = dict(self.value)
         request = self.file("runtime-request", {"source": {"runtime_dir": str(self.local / "runtime"), "api_url": "http://127.0.0.1:18210"}})

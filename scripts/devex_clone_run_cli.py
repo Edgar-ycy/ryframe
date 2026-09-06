@@ -6,7 +6,7 @@ from devex_clone_model import local_path
 from devex_clone_run import cleanup_inputs, execute, initialize, recover_copy, run_runtime, status
 from devex_clone_run_state import recover_lock
 
-COMMANDS = {"init", "status", "stage", "runtime", "recover", "recover-copy", "bridge", "post-copy", "seed-runtime", "storage", "cache", "fresh-target"}
+COMMANDS = {"init", "status", "stage", "runtime", "recover", "recover-copy", "bridge", "post-copy", "seed-runtime", "storage", "cache", "maintenance", "fresh-target"}
 
 
 def add_commands(commands) -> None:
@@ -30,6 +30,11 @@ def add_commands(commands) -> None:
     cache.add_argument("--operation", choices=("restart", "status", "stop", "recover", "reconcile", "resume"), required=True)
     cache.add_argument("--request", type=Path, help="首次 restart 必须固定绑定原 Redis 配置及隔离目标")
     cache.add_argument("--write", action="store_true")
+    maintenance = commands.add_parser("maintenance", help="构建或只读核验开发复制维护工具收据")
+    maintenance.add_argument("--operation", choices=("build", "verify"), required=True)
+    maintenance.add_argument("--output", type=Path, required=True,
+                             help="build 使用新的证据目录；verify 使用现有 build.json")
+    maintenance.add_argument("--write", action="store_true", help="只有 build 需要显式指定")
     fresh = commands.add_parser("fresh-target", help="登记并分阶段准备、初始化和复核一个 fresh 目标")
     fresh.add_argument("--workspace", type=Path, required=True)
     fresh.add_argument("--operation", choices=("prepare", "resume-prepare", "initialize", "verify", "status"), required=True)
@@ -64,11 +69,27 @@ def add_commands(commands) -> None:
         command.add_argument("--run-dir", type=Path, required=True)
     for command in (register, stage, recover, copy_recover, bridge, post):
         command.add_argument("--write", action="store_true", required=True)
-    for command in (register, check, stage, runtime, recover, copy_recover, bridge, post, seed, storage, cache, fresh):
+    for command in (register, check, stage, runtime, recover, copy_recover, bridge, post, seed, storage, cache, maintenance, fresh):
         command.add_argument("--backend-dir", type=Path, required=True)
 
 
 def dispatch(args, backend: Path) -> dict:
+    if args.command == "maintenance":
+        from devex_clone_tools import build, verify
+
+        requested = args.output if args.output.is_absolute() else backend / args.output
+        output = local_path(backend, str(requested), new=args.operation == "build")
+        if args.operation == "build":
+            if not args.write:
+                raise ValueError("maintenance build 需要显式 --write")
+            build(backend, output)
+            return {"status": "maintenance_build_created", "receipt": str(output / "build.json"),
+                    "resources_modified": False, "restore_qualified": False}
+        if args.write:
+            raise ValueError("maintenance verify 是只读操作，不接受 --write")
+        verify(backend, output)
+        return {"status": "maintenance_build_verified", "receipt": str(output),
+                "resources_modified": False, "restore_qualified": False}
     if args.command == "fresh-target":
         from devex_clone_target_cli import initialize as initialize_target
         from devex_clone_target_cli import prepare, resume_prepare, status as target_status, verify

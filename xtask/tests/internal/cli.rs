@@ -163,6 +163,26 @@ fn parses_check_task_graph_and_internal_groups() {
             "run",
         ]))))
     );
+    assert_eq!(
+        parse_command(&[
+            "check",
+            "recovery",
+            "clone",
+            "maintenance",
+            "--operation",
+            "verify",
+            "--output",
+            "build.json",
+        ])
+        .unwrap(),
+        Command::Check(CheckCommand::Recovery(RecoveryCommand::Clone(strings(&[
+            "maintenance",
+            "--operation",
+            "verify",
+            "--output",
+            "build.json",
+        ]))))
+    );
     assert!(parse_command(&["check", "--full", "--full"]).is_err());
     assert!(parse_command(&["check", "--scope", "all", "--scope", "backend"]).is_err());
 }
