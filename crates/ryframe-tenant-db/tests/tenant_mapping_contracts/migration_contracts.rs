@@ -5,9 +5,9 @@ use ryframe_tenant_db::{
     },
     migration::{
         Migrator, RESOURCE_OWNERSHIP_DDL, TENANT_DATA_CATALOG, TENANT_DATA_MIGRATION_LEDGER,
-        TENANT_DATA_SCHEMA_FINGERPRINT, TENANT_FENCE_DDL, TENANT_TARGET_SLOT_DDL,
-        TenantDataTableDescriptor, ensure_local_foreign_key_schema, expected_migration_names,
-        normalize_check_clause,
+        TENANT_FENCE_DDL, TENANT_TARGET_SLOT_DDL, TenantDataTableDescriptor,
+        ensure_local_foreign_key_schema, expected_migration_names, normalize_check_clause,
+        tenant_data_schema_fingerprint,
     },
 };
 use sea_orm_migration::MigratorTrait;
@@ -96,13 +96,60 @@ fn baseline_contains_complete_infrastructure_schema() {
 fn generated_fingerprint_matches_shared_catalog_computation() {
     assert_eq!(
         TENANT_DATA_CATALOG.schema_fingerprint(),
-        TENANT_DATA_SCHEMA_FINGERPRINT
+        tenant_data_schema_fingerprint()
     );
+}
+
+#[test]
+fn generated_fingerprint_is_independent_from_runtime_catalog_recalculation() {
+    assert_eq!(
+        tenant_data_schema_fingerprint(),
+        ryframe_tenant_db::generated::catalog::GENERATED_TENANT_DATA_SCHEMA_FINGERPRINT
+    );
+    assert_eq!(tenant_data_schema_fingerprint().len(), 64);
 }
 
 #[test]
 fn catalog_lookup_rejects_unknown_table() {
     assert!(catalog_table("unknown_table").is_err());
+}
+
+#[test]
+fn catalog_rejects_invalid_copy_order_and_unregistered_descriptors() {
+    const VALID: TenantDataTableDescriptor = TenantDataTableDescriptor {
+        table: "biz_example",
+        copy_order: 1,
+        tenant_column: "tenant_id",
+        primary_key_cursor_columns: &["tenant_id", "id"],
+        checksum_columns: &["tenant_id", "id"],
+        column_types: &["varchar", "bigint"],
+        has_generated_columns: false,
+        foreign_key_dependencies: &[],
+        foreign_keys: &[],
+        schema_canonical: "test",
+    };
+    const VALID_TABLES: &[TenantDataTableDescriptor] = &[VALID];
+    const ZERO: &[TenantDataTableDescriptor] = &[TenantDataTableDescriptor {
+        copy_order: 0,
+        ..VALID
+    }];
+    const OVERFLOW: &[TenantDataTableDescriptor] = &[TenantDataTableDescriptor {
+        copy_order: u32::MAX,
+        ..VALID
+    }];
+    let valid = ryframe_tenant_db::migration::TenantDataCatalog::new(VALID_TABLES);
+    assert!(valid.validate_structure().is_ok());
+    assert!(
+        valid.validate().is_err(),
+        "未登记的目录不能冒充当前生产目录"
+    );
+    for tables in [ZERO, OVERFLOW] {
+        assert!(
+            ryframe_tenant_db::migration::TenantDataCatalog::new(tables)
+                .validate_structure()
+                .is_err()
+        );
+    }
 }
 
 #[test]

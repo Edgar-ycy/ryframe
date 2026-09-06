@@ -61,7 +61,7 @@ impl TenantDatabaseRouter {
         target_key: &str,
         catalog: &crate::migration::TenantDataCatalog,
     ) -> Result<TenantDataTargetHandle, TenantDataError> {
-        if catalog.schema_fingerprint() == crate::migration::TENANT_DATA_SCHEMA_FINGERPRINT {
+        if catalog.schema_fingerprint() == crate::migration::tenant_data_schema_fingerprint() {
             return self.open_target(target_key).await;
         }
         let mode = self.inner.targets.target_mode(target_key).ok_or_else(|| {
@@ -288,7 +288,7 @@ impl TenantDataTargetHandle {
     }
 
     pub fn schema_fingerprint(&self) -> &'static str {
-        crate::migration::TENANT_DATA_SCHEMA_FINGERPRINT
+        crate::migration::tenant_data_schema_fingerprint()
     }
 }
 
@@ -316,21 +316,7 @@ async fn verify_target_mode_invariants(
     target_key: &str,
     target_mode: TenantDatabaseTargetMode,
 ) -> Result<(), TenantDataError> {
-    let slot = TargetSlotRow::find_by_statement(Statement::from_string(
-        DbBackend::MySql,
-        TARGET_SLOT_QUERY,
-    ))
-    .one(database)
-    .await
-    .map_err(|error| {
-        tracing::warn!(target = target_key, %error, "目标模式占用槽校验失败");
-        TenantDataError::TargetUnavailable {
-            target_key: target_key.into(),
-        }
-    })?
-    .ok_or_else(|| TenantDataError::TargetUnavailable {
-        target_key: target_key.into(),
-    })?;
+    let slot = read_target_slot(database, target_key).await?;
     let slot_empty = matches!(
         (
             &slot.tenant_id,
@@ -447,5 +433,23 @@ where
             TenantDataError::TargetUnavailable {
                 target_key: target_key.into(),
             }
+        })
+}
+
+async fn read_target_slot(
+    database: &DatabaseConnection,
+    target_key: &str,
+) -> Result<TargetSlotRow, TenantDataError> {
+    TargetSlotRow::find_by_statement(Statement::from_string(DbBackend::MySql, TARGET_SLOT_QUERY))
+        .one(database)
+        .await
+        .map_err(|error| {
+            tracing::warn!(target = target_key, %error, "目标模式占用槽校验失败");
+            TenantDataError::TargetUnavailable {
+                target_key: target_key.into(),
+            }
+        })?
+        .ok_or_else(|| TenantDataError::TargetUnavailable {
+            target_key: target_key.into(),
         })
 }

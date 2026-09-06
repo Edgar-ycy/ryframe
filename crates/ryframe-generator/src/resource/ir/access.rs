@@ -69,6 +69,14 @@ pub(super) fn validate_api_and_access(
             .with_file(source_path));
         }
     }
+    if spec.route.key != spec.menu.key {
+        return Err(ResourceError::new(
+            "route.key 必须与 menu.key 一致",
+            "路由与菜单使用同一个稳定资源键，例如 `system.device`",
+        )
+        .with_resource(resource)
+        .with_file(source_path));
+    }
     if let Some(icon) = &spec.menu.icon
         && !is_safe_symbol(icon)
     {

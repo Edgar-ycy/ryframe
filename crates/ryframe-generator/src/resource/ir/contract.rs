@@ -62,6 +62,18 @@ pub(super) fn validate_generation_contract(
     spec: &ResourceSpec,
     fields: &[FieldIr],
 ) -> Result<(), ResourceError> {
+    validate_api_identity(resource, source_path, spec)?;
+    validate_tenant_identity(resource, source_path, spec, fields)?;
+    validate_managed_fields(resource, source_path, spec, fields)?;
+    validate_default_sort(resource, source_path, fields)?;
+    Ok(())
+}
+
+fn validate_api_identity(
+    resource: &str,
+    source_path: &str,
+    spec: &ResourceSpec,
+) -> Result<(), ResourceError> {
     let error = |message: &str, suggestion: &str| {
         ResourceError::new(message, suggestion)
             .with_resource(resource)
@@ -85,6 +97,20 @@ pub(super) fn validate_generation_contract(
         ));
     }
 
+    Ok(())
+}
+
+fn validate_tenant_identity(
+    resource: &str,
+    source_path: &str,
+    spec: &ResourceSpec,
+    fields: &[FieldIr],
+) -> Result<(), ResourceError> {
+    let error = |message: &str, suggestion: &str| {
+        ResourceError::new(message, suggestion)
+            .with_resource(resource)
+            .with_file(source_path)
+    };
     let id = fields
         .iter()
         .find(|field| field.name == "id")
@@ -155,6 +181,99 @@ pub(super) fn validate_generation_contract(
         }
     }
 
+    Ok(())
+}
+
+fn validate_managed_fields(
+    resource: &str,
+    source_path: &str,
+    spec: &ResourceSpec,
+    fields: &[FieldIr],
+) -> Result<(), ResourceError> {
+    let service_managed = managed_fields(resource, source_path, spec, fields)?;
+    for field in fields {
+        let editable = field.usage.create || field.usage.update;
+        if service_managed.contains(&field.name) && editable {
+            return Err(field_error(
+                resource,
+                &field.name,
+                source_path,
+                "服务管理字段禁止 create/update",
+                "关闭 usage.create/update，由 Service 写入租户、主键、软删和审计值",
+            ));
+        }
+        if editable && !(field.usage.read || field.usage.list) {
+            return Err(field_error(
+                resource,
+                &field.name,
+                source_path,
+                "表单字段未出现在 read/list 视图",
+                "至少启用 usage.read 或 usage.list，确保编辑表单取得强类型原值",
+            ));
+        }
+        if !field.nullable && field.usage.create_optional && field.default.is_none() {
+            return Err(field_error(
+                resource,
+                &field.name,
+                source_path,
+                "非空 create_optional 字段缺少默认值",
+                "声明类型正确且满足校验的 default，或取消 create_optional",
+            ));
+        }
+        if !field.nullable
+            && !field.usage.create
+            && !service_managed.contains(&field.name)
+            && field.default.is_none()
+        {
+            return Err(field_error(
+                resource,
+                &field.name,
+                source_path,
+                "非空字段既不从 create 输入，也没有稳定默认值",
+                "启用 usage.create、声明类型正确的 default，或移入强类型 Service 扩展",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_default_sort(
+    resource: &str,
+    source_path: &str,
+    fields: &[FieldIr],
+) -> Result<(), ResourceError> {
+    let default_sort = fields
+        .iter()
+        .filter(|field| field.usage.sort)
+        .collect::<Vec<_>>();
+    if default_sort.len() > 1 {
+        let names = default_sort
+            .iter()
+            .map(|field| field.name.as_str())
+            .collect::<Vec<_>>()
+            .join("、");
+        return Err(field_error(
+            resource,
+            &default_sort[1].name,
+            source_path,
+            format!("flat_crud v1 只能声明一个默认排序字段，当前为 {names}"),
+            "只为一个字段保留 usage.sort=true；稳定次级 id 排序由 repository 自动追加",
+        ));
+    }
+    Ok(())
+}
+
+fn managed_fields(
+    resource: &str,
+    source_path: &str,
+    spec: &ResourceSpec,
+    fields: &[FieldIr],
+) -> Result<BTreeSet<String>, ResourceError> {
+    let error = |message: &str, suggestion: &str| {
+        ResourceError::new(message, suggestion)
+            .with_resource(resource)
+            .with_file(source_path)
+    };
     let audit = spec.database.audit.as_ref().ok_or_else(|| {
         error(
             "flat_crud v1 必须声明 created_at/updated_at",
@@ -203,66 +322,5 @@ pub(super) fn validate_generation_contract(
     }
     service_managed.extend(audit.created_by.iter().cloned());
     service_managed.extend(audit.updated_by.iter().cloned());
-    for field in fields {
-        let editable = field.usage.create || field.usage.update;
-        if service_managed.contains(&field.name) && editable {
-            return Err(field_error(
-                resource,
-                &field.name,
-                source_path,
-                "服务管理字段禁止 create/update",
-                "关闭 usage.create/update，由 Service 写入租户、主键、软删和审计值",
-            ));
-        }
-        if editable && !(field.usage.read || field.usage.list) {
-            return Err(field_error(
-                resource,
-                &field.name,
-                source_path,
-                "表单字段未出现在 read/list 视图",
-                "至少启用 usage.read 或 usage.list，确保编辑表单取得强类型原值",
-            ));
-        }
-        if !field.nullable && field.usage.create_optional && field.default.is_none() {
-            return Err(field_error(
-                resource,
-                &field.name,
-                source_path,
-                "非空 create_optional 字段缺少默认值",
-                "声明类型正确且满足校验的 default，或取消 create_optional",
-            ));
-        }
-        if !field.nullable
-            && !field.usage.create
-            && !service_managed.contains(&field.name)
-            && field.default.is_none()
-        {
-            return Err(field_error(
-                resource,
-                &field.name,
-                source_path,
-                "非空字段既不从 create 输入，也没有稳定默认值",
-                "启用 usage.create、声明类型正确的 default，或移入强类型 Service 扩展",
-            ));
-        }
-    }
-    let default_sort = fields
-        .iter()
-        .filter(|field| field.usage.sort)
-        .collect::<Vec<_>>();
-    if default_sort.len() > 1 {
-        let names = default_sort
-            .iter()
-            .map(|field| field.name.as_str())
-            .collect::<Vec<_>>()
-            .join("、");
-        return Err(field_error(
-            resource,
-            &default_sort[1].name,
-            source_path,
-            format!("flat_crud v1 只能声明一个默认排序字段，当前为 {names}"),
-            "只为一个字段保留 usage.sort=true；稳定次级 id 排序由 repository 自动追加",
-        ));
-    }
-    Ok(())
+    Ok(service_managed)
 }

@@ -8,8 +8,9 @@ const TENANT_DATA_TARGET_SLOT_SCHEMA_CANONICAL: &str = "v4|table=biz_tenant_targ
 const RESOURCE_OWNERSHIP_SCHEMA_CANONICAL: &str = "v4|table=ryframe_resource_ownership|engine=innodb|charset=utf8mb4|collation=utf8mb4_general_ci|columns=resource_kind:varchar(32):not-null:null-default:no-extra:ascii:ascii_bin;scope_id:varchar(48):not-null:null-default:no-extra:ascii:ascii_bin;marker:varchar(128):not-null:null-default:no-extra:ascii:ascii_bin;created_at:datetime(6):not-null:current_timestamp(6):no-extra:none:none;updated_at:datetime(6):not-null:current_timestamp(6):on update current_timestamp(6):none:none|indexes=PRIMARY:unique:btree:resource_kind;uq_resource_ownership_marker:unique:btree:marker;uq_resource_ownership_scope:unique:btree:scope_id,resource_kind|constraints=PRIMARY:PRIMARY KEY;uq_resource_ownership_marker:UNIQUE;uq_resource_ownership_scope:UNIQUE";
 
 /// 应用构建所要求的稳定、小写十六进制 SHA-256 schema 指纹。
-pub const TENANT_DATA_SCHEMA_FINGERPRINT: &str =
-    super::generated_catalog::GENERATED_TENANT_DATA_SCHEMA_FINGERPRINT;
+pub fn tenant_data_schema_fingerprint() -> &'static str {
+    crate::generated::catalog::GENERATED_TENANT_DATA_SCHEMA_FINGERPRINT
+}
 
 /// 编译期业务表复制描述。表名和列名不能来自配置或请求。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -24,7 +25,7 @@ pub struct TenantDataTableDescriptor {
     pub has_generated_columns: bool,
     pub foreign_key_dependencies: &'static [&'static str],
     pub foreign_keys: &'static [TenantDataForeignKeyDescriptor],
-    /// 由 generator 从完整 information_schema 规范化生成，用于精确结构校验及指纹。
+    /// 由 generator 从资源 DDL 模型生成，与 information_schema 精确比对。
     pub schema_canonical: &'static str,
 }
 
@@ -41,9 +42,9 @@ pub struct TenantDataCatalog {
     tables: &'static [TenantDataTableDescriptor],
 }
 
-/// 当前阶段尚未迁入业务表；fence 是路由基础设施，不参与租户数据复制。
+/// 生成入口登记的业务表；路由基础设施不参与租户数据复制。
 pub const TENANT_DATA_CATALOG: TenantDataCatalog = TenantDataCatalog {
-    tables: super::generated_catalog::GENERATED_TENANT_DATA_TABLES,
+    tables: crate::generated::catalog::GENERATED_TENANT_DATA_TABLES,
 };
 
 impl TenantDataCatalog {
@@ -61,8 +62,8 @@ impl TenantDataCatalog {
     pub fn validate(&self) -> Result<(), String> {
         self.validate_structure()?;
         let computed = self.schema_fingerprint();
-        if computed != TENANT_DATA_SCHEMA_FINGERPRINT {
-            return Err("tenant-data schema fingerprint constant is stale".into());
+        if computed != tenant_data_schema_fingerprint() {
+            return Err("租户数据目录与当前构建要求的 schema 指纹不一致".into());
         }
         Ok(())
     }
@@ -93,51 +94,7 @@ impl TenantDataCatalog {
         let mut copy_orders = HashSet::with_capacity(self.tables.len());
         let mut previous_copy_order = None;
         for table in self.tables {
-            if !table.table.starts_with("biz_")
-                || !safe_identifier(table.table)
-                || matches!(table.table, "biz_tenant_fence" | "biz_tenant_target_slot")
-            {
-                return Err(format!("invalid tenant-data table: {}", table.table));
-            }
-            if table.tenant_column != "tenant_id" || !safe_identifier(table.tenant_column) {
-                return Err(format!("{} must use tenant_id", table.table));
-            }
-            if table.primary_key_cursor_columns.len() < 2 {
-                return Err(format!(
-                    "{} primary-key cursor must include tenant_id and a business key",
-                    table.table
-                ));
-            }
-            if !table
-                .primary_key_cursor_columns
-                .iter()
-                .all(|column| safe_identifier(column))
-                || !table
-                    .checksum_columns
-                    .iter()
-                    .all(|column| safe_identifier(column))
-            {
-                return Err(format!(
-                    "{} contains an unsafe column identifier",
-                    table.table
-                ));
-            }
-            if table.primary_key_cursor_columns.first().copied() != Some("tenant_id") {
-                return Err(format!(
-                    "{} primary-key cursor must start with tenant_id",
-                    table.table
-                ));
-            }
-            if !table
-                .primary_key_cursor_columns
-                .iter()
-                .all(|column| table.checksum_columns.contains(column))
-            {
-                return Err(format!(
-                    "{} checksum columns must include the complete primary-key cursor",
-                    table.table
-                ));
-            }
+            validate_table_columns(table)?;
             if !copy_orders.insert(table.copy_order) {
                 return Err(format!("duplicate copy_order: {}", table.copy_order));
             }
@@ -145,34 +102,7 @@ impl TenantDataCatalog {
                 return Err("tenant-data catalog slice must be ordered by copy_order".into());
             }
             previous_copy_order = Some(table.copy_order);
-            if table.schema_canonical.trim().is_empty() {
-                return Err(format!("{} has no canonical schema", table.table));
-            }
-            if table.has_generated_columns {
-                return Err(format!(
-                    "{} contains an unsupported generated column",
-                    table.table
-                ));
-            }
-            if table.column_types.len() != table.checksum_columns.len() {
-                return Err(format!(
-                    "{} column_types must align with checksum columns",
-                    table.table
-                ));
-            }
-            if table
-                .column_types
-                .iter()
-                .any(|data_type| data_type.eq_ignore_ascii_case("timestamp"))
-            {
-                return Err(format!(
-                    "{} contains unsupported TIMESTAMP; use DATETIME(6)",
-                    table.table
-                ));
-            }
-            if !table.checksum_columns.contains(&"tenant_id") {
-                return Err(format!("{} checksum omits tenant_id", table.table));
-            }
+            validate_table_metadata(table)?;
             if by_name.insert(table.table, table).is_some() {
                 return Err(format!("duplicate tenant-data table: {}", table.table));
             }
@@ -215,45 +145,7 @@ impl TenantDataCatalog {
                 }
                 *incoming.get_mut(table.table).expect("catalog table exists") += 1;
             }
-            let mut foreign_key_names = HashSet::with_capacity(table.foreign_keys.len());
-            for foreign_key in table.foreign_keys {
-                if foreign_key.name.is_empty()
-                    || !safe_identifier(foreign_key.name)
-                    || !foreign_key_names.insert(foreign_key.name)
-                    || foreign_key.columns.is_empty()
-                    || foreign_key.columns.len() != foreign_key.referenced_columns.len()
-                    || !table
-                        .foreign_key_dependencies
-                        .contains(&foreign_key.referenced_table)
-                    || !foreign_key
-                        .columns
-                        .iter()
-                        .all(|column| safe_identifier(column))
-                    || !foreign_key
-                        .referenced_columns
-                        .iter()
-                        .all(|column| safe_identifier(column))
-                {
-                    return Err(format!(
-                        "{} has an invalid foreign-key descriptor",
-                        table.table
-                    ));
-                }
-                let local_tenant = foreign_key
-                    .columns
-                    .iter()
-                    .position(|column| *column == "tenant_id");
-                let referenced_tenant = foreign_key
-                    .referenced_columns
-                    .iter()
-                    .position(|column| *column == "tenant_id");
-                if local_tenant.is_none() || local_tenant != referenced_tenant {
-                    return Err(format!(
-                        "{} foreign key {} must contain aligned tenant_id columns",
-                        table.table, foreign_key.name
-                    ));
-                }
-            }
+            validate_foreign_keys(table)?;
         }
         let mut ready = incoming
             .iter()
@@ -327,4 +219,131 @@ pub fn schema_fingerprint_for_catalog(entries: &[String]) -> String {
     canonical.push_str(&entries.join(";"));
     canonical.push(']');
     hex::encode(Sha256::digest(canonical.as_bytes()))
+}
+
+fn validate_table_columns(table: &TenantDataTableDescriptor) -> Result<(), String> {
+    if !table.table.starts_with("biz_")
+        || !safe_identifier(table.table)
+        || matches!(table.table, "biz_tenant_fence" | "biz_tenant_target_slot")
+    {
+        return Err(format!("invalid tenant-data table: {}", table.table));
+    }
+    if table.tenant_column != "tenant_id" || !safe_identifier(table.tenant_column) {
+        return Err(format!("{} must use tenant_id", table.table));
+    }
+    if table.primary_key_cursor_columns.len() < 2 {
+        return Err(format!(
+            "{} primary-key cursor must include tenant_id and a business key",
+            table.table
+        ));
+    }
+    if !table
+        .primary_key_cursor_columns
+        .iter()
+        .all(|column| safe_identifier(column))
+        || !table
+            .checksum_columns
+            .iter()
+            .all(|column| safe_identifier(column))
+    {
+        return Err(format!(
+            "{} contains an unsafe column identifier",
+            table.table
+        ));
+    }
+    if table.primary_key_cursor_columns.first().copied() != Some("tenant_id") {
+        return Err(format!(
+            "{} primary-key cursor must start with tenant_id",
+            table.table
+        ));
+    }
+    if !table
+        .primary_key_cursor_columns
+        .iter()
+        .all(|column| table.checksum_columns.contains(column))
+    {
+        return Err(format!(
+            "{} checksum columns must include the complete primary-key cursor",
+            table.table
+        ));
+    }
+    Ok(())
+}
+
+fn validate_table_metadata(table: &TenantDataTableDescriptor) -> Result<(), String> {
+    if table.copy_order == 0 || i32::try_from(table.copy_order).is_err() {
+        return Err(format!("{} 的复制顺序必须是正的 i32 整数", table.table));
+    }
+    if table.schema_canonical.trim().is_empty() {
+        return Err(format!("{} has no canonical schema", table.table));
+    }
+    if table.has_generated_columns {
+        return Err(format!(
+            "{} contains an unsupported generated column",
+            table.table
+        ));
+    }
+    if table.column_types.len() != table.checksum_columns.len() {
+        return Err(format!(
+            "{} column_types must align with checksum columns",
+            table.table
+        ));
+    }
+    if table
+        .column_types
+        .iter()
+        .any(|data_type| data_type.eq_ignore_ascii_case("timestamp"))
+    {
+        return Err(format!(
+            "{} contains unsupported TIMESTAMP; use DATETIME(6)",
+            table.table
+        ));
+    }
+    if !table.checksum_columns.contains(&"tenant_id") {
+        return Err(format!("{} checksum omits tenant_id", table.table));
+    }
+    Ok(())
+}
+
+fn validate_foreign_keys(table: &TenantDataTableDescriptor) -> Result<(), String> {
+    let mut foreign_key_names = HashSet::with_capacity(table.foreign_keys.len());
+    for foreign_key in table.foreign_keys {
+        if foreign_key.name.is_empty()
+            || !safe_identifier(foreign_key.name)
+            || !foreign_key_names.insert(foreign_key.name)
+            || foreign_key.columns.is_empty()
+            || foreign_key.columns.len() != foreign_key.referenced_columns.len()
+            || !table
+                .foreign_key_dependencies
+                .contains(&foreign_key.referenced_table)
+            || !foreign_key
+                .columns
+                .iter()
+                .all(|column| safe_identifier(column))
+            || !foreign_key
+                .referenced_columns
+                .iter()
+                .all(|column| safe_identifier(column))
+        {
+            return Err(format!(
+                "{} has an invalid foreign-key descriptor",
+                table.table
+            ));
+        }
+        let local_tenant = foreign_key
+            .columns
+            .iter()
+            .position(|column| *column == "tenant_id");
+        let referenced_tenant = foreign_key
+            .referenced_columns
+            .iter()
+            .position(|column| *column == "tenant_id");
+        if local_tenant.is_none() || local_tenant != referenced_tenant {
+            return Err(format!(
+                "{} foreign key {} must contain aligned tenant_id columns",
+                table.table, foreign_key.name
+            ));
+        }
+    }
+    Ok(())
 }

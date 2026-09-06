@@ -34,6 +34,12 @@ pub(super) fn render(resources: &[&ResourceIr], assets: &mut Vec<GeneratedAsset>
     assets.push(GeneratedAsset {
         resource: "__catalog__".into(),
         root: AssetRoot::Backend,
+        path: "crates/ryframe-tenant-db/src/generated/catalog.rs".into(),
+        content: super::tenant_catalog::render(resources, &aggregate),
+    });
+    assets.push(GeneratedAsset {
+        resource: "__catalog__".into(),
+        root: AssetRoot::Backend,
         path: "crates/ryframe-api/src/generated/mod.rs".into(),
         content: render_api_mod(resources, &aggregate),
     });
@@ -210,7 +216,7 @@ fn render_storage_mod(resources: &[&ResourceIr], storage: StorageKind, header: &
         .collect::<Vec<_>>()
         .join("\n");
     let arc_import = if storage == StorageKind::TenantData {
-        "#[cfg(feature = \"repositories\")]\nuse std::sync::Arc;\n\n"
+        "pub mod catalog;\n\n#[cfg(feature = \"repositories\")]\nuse std::sync::Arc;\n\n"
     } else {
         ""
     };

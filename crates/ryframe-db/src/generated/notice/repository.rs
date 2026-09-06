@@ -137,6 +137,7 @@ impl NoticeTransaction for DatabaseNoticeTransaction {
     async fn update(&self, record: NoticeRecord) -> AppResult<NoticeRecord> {
         self.ensure_tenant(&record.tenant_id)?;
         entity::ActiveModel::from(to_entity(record))
+            .reset_all()
             .update(&self.transaction)
             .await
             .map(to_record)

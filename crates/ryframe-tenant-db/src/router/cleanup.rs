@@ -284,34 +284,7 @@ async fn clear_tenant_data_in_transaction(
                 target_key: provision.target_key.clone(),
             });
         }
-        for descriptor in catalog.tables() {
-            let row = transaction
-                .query_one_raw(Statement::from_sql_and_values(
-                    DbBackend::MySql,
-                    format!(
-                        "SELECT EXISTS(SELECT 1 FROM `{}` WHERE `tenant_id` = ? LIMIT 1)",
-                        descriptor.table
-                    ),
-                    [provision.tenant_id.clone().into()],
-                ))
-                .await
-                .map_err(|error| {
-                    target_write_error(provision, error, "fence absent 数据安全检查失败")
-                })?
-                .ok_or_else(|| TenantDataError::TargetUnavailable {
-                    target_key: provision.target_key.clone(),
-                })?;
-            let exists = row.try_get_by_index::<i64>(0).map_err(|error| {
-                target_write_error(provision, error, "fence absent 数据安全检查无效")
-            })?;
-            if exists != 0 {
-                return Err(TenantDataError::FenceRejected {
-                    tenant_id: provision.tenant_id.clone(),
-                    target_key: provision.target_key.clone(),
-                    reason: "缺少 migration-owned frozen fence，拒绝删除 catalog 数据".into(),
-                });
-            }
-        }
+        verify_unowned_catalog_empty(transaction, provision, catalog).await?;
         return Ok(());
     }
 
@@ -360,6 +333,40 @@ async fn clear_tenant_data_in_transaction(
         } else if slot.tenant_id.is_some() {
             return Err(TenantDataError::DedicatedTargetOccupied {
                 target_key: provision.target_key.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+async fn verify_unowned_catalog_empty(
+    transaction: &DatabaseTransaction,
+    provision: &FenceProvision,
+    catalog: &crate::migration::TenantDataCatalog,
+) -> Result<(), TenantDataError> {
+    for descriptor in catalog.tables() {
+        let row = transaction
+            .query_one_raw(Statement::from_sql_and_values(
+                DbBackend::MySql,
+                format!(
+                    "SELECT EXISTS(SELECT 1 FROM `{}` WHERE `tenant_id` = ? LIMIT 1)",
+                    descriptor.table
+                ),
+                [provision.tenant_id.clone().into()],
+            ))
+            .await
+            .map_err(|error| target_write_error(provision, error, "fence absent 数据安全检查失败"))?
+            .ok_or_else(|| TenantDataError::TargetUnavailable {
+                target_key: provision.target_key.clone(),
+            })?;
+        let exists = row.try_get_by_index::<i64>(0).map_err(|error| {
+            target_write_error(provision, error, "fence absent 数据安全检查无效")
+        })?;
+        if exists != 0 {
+            return Err(TenantDataError::FenceRejected {
+                tenant_id: provision.tenant_id.clone(),
+                target_key: provision.target_key.clone(),
+                reason: "缺少 migration-owned frozen fence，拒绝删除 catalog 数据".into(),
             });
         }
     }

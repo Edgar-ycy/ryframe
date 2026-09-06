@@ -166,6 +166,47 @@ pub async fn canonical_table_schema(
     .await?;
     ensure_local_foreign_key_schemas(&foreign_keys)?;
 
+    Ok(render_table_schema(
+        table,
+        columns,
+        indexes,
+        constraints,
+        checks,
+        foreign_keys,
+    ))
+}
+
+fn ensure_local_foreign_key_schemas(foreign_keys: &[ForeignKeySchemaRow]) -> Result<(), DbErr> {
+    for foreign_key in foreign_keys {
+        ensure_local_foreign_key_schema(
+            &foreign_key.current_schema,
+            &foreign_key.referenced_table_schema,
+        )?;
+    }
+    Ok(())
+}
+
+pub fn ensure_local_foreign_key_schema(
+    current_schema: &str,
+    referenced_schema: &str,
+) -> Result<(), DbErr> {
+    if referenced_schema == current_schema {
+        Ok(())
+    } else {
+        Err(DbErr::Custom(
+            "tenant-data catalog foreign keys must stay within the target schema".into(),
+        ))
+    }
+}
+
+fn render_table_schema(
+    table: TenantDataTableRow,
+    columns: Vec<FenceColumnRow>,
+    indexes: Vec<FenceIndexRow>,
+    constraints: Vec<FenceConstraintRow>,
+    checks: Vec<FenceCheckRow>,
+    foreign_keys: Vec<ForeignKeySchemaRow>,
+) -> String {
     let mut canonical = format!(
         "v2|table={:?}|engine={:?}|charset={:?}|collation={:?}|columns=[",
         table.table_name,
@@ -243,28 +284,5 @@ pub async fn canonical_table_schema(
         .expect("writing canonical schema to String cannot fail");
     }
     canonical.push(']');
-    Ok(canonical)
-}
-
-fn ensure_local_foreign_key_schemas(foreign_keys: &[ForeignKeySchemaRow]) -> Result<(), DbErr> {
-    for foreign_key in foreign_keys {
-        ensure_local_foreign_key_schema(
-            &foreign_key.current_schema,
-            &foreign_key.referenced_table_schema,
-        )?;
-    }
-    Ok(())
-}
-
-pub fn ensure_local_foreign_key_schema(
-    current_schema: &str,
-    referenced_schema: &str,
-) -> Result<(), DbErr> {
-    if referenced_schema == current_schema {
-        Ok(())
-    } else {
-        Err(DbErr::Custom(
-            "tenant-data catalog foreign keys must stay within the target schema".into(),
-        ))
-    }
+    canonical
 }

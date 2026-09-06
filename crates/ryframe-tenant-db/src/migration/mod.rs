@@ -6,7 +6,6 @@
 
 mod baseline_contract;
 mod catalog;
-mod generated_catalog;
 #[cfg(feature = "migration")]
 mod m20260820_000000_tenant_baseline;
 mod normalization;
@@ -25,9 +24,9 @@ pub fn expected_migration_names() -> impl Iterator<Item = &'static str> {
 }
 
 pub use catalog::{
-    TENANT_DATA_CATALOG, TENANT_DATA_SCHEMA_FINGERPRINT, TenantDataCatalog,
-    TenantDataForeignKeyDescriptor, TenantDataTableDescriptor, catalog_entry_canonical,
-    schema_fingerprint_for_catalog,
+    TENANT_DATA_CATALOG, TenantDataCatalog, TenantDataForeignKeyDescriptor,
+    TenantDataTableDescriptor, catalog_entry_canonical, schema_fingerprint_for_catalog,
+    tenant_data_schema_fingerprint,
 };
 #[cfg(feature = "migration")]
 pub use m20260820_000000_tenant_baseline::{
