@@ -23,6 +23,7 @@ if str(SCRIPT_DIR) not in sys.path:
 from tenant_data_boundaries import validate_tenant_data_boundaries  # noqa: E402
 
 from rust_function_size import (  # noqa: E402
+    FunctionRecord,
     changed_line_ranges,
     parse_policy as parse_function_size_policy,
     parse_rust_sources,
@@ -614,16 +615,16 @@ def validate_source_size(
     packages: dict[str, dict[str, Any]],
     errors: list[str],
     warnings: list[str],
-) -> tuple[int, dict[str, int]]:
+) -> tuple[int, dict[str, int], set[str]]:
     max_lines = source_size.get("max_lines")
     if not isinstance(max_lines, int) or max_lines < 1:
         errors.append("source_size.max_lines 必须是正整数")
-        return 0, {}
+        return 0, {}, set()
 
     generated_max_lines = source_size.get("generated_max_lines")
     if not isinstance(generated_max_lines, int) or generated_max_lines < 1:
         errors.append("source_size.generated_max_lines 必须是正整数")
-        return 0, {}
+        return 0, {}, set()
     if generated_max_lines > max_lines:
         errors.append("source_size.generated_max_lines 不得大于 source_size.max_lines")
 
@@ -696,7 +697,22 @@ def validate_source_size(
     stale_frozen_paths = frozen_migrations - scanned_paths
     for path in sorted(stale_frozen_paths):
         errors.append(f"冻结迁移清单未命中工作区源码: {path}")
-    return len(scanned_paths), scanned_by_package
+    return len(scanned_paths), scanned_by_package, frozen_migrations
+
+
+def mutable_function_records(
+    records: list[FunctionRecord],
+    frozen_migrations: set[str],
+    retained_exceptions: set[tuple[str, str]],
+) -> list[FunctionRecord]:
+    """冻结迁移按摘要锁定；过渡期仍保留策略中已登记的旧例外。"""
+
+    return [
+        record
+        for record in records
+        if record.path not in frozen_migrations
+        or (record.path, record.symbol) in retained_exceptions
+    ]
 
 
 def validate_test_layout(
@@ -936,6 +952,7 @@ def main() -> int:
     actual_edges: set[tuple[str, str]] = set()
     scanned = 0
     scanned_by_package: dict[str, int] = {}
+    frozen_migrations: set[str] = set()
     checked_test_sources = 0
     integration_targets = 0
     persistence_sources = 0
@@ -946,11 +963,12 @@ def main() -> int:
     unsafe_syntax_violations = 0
     checked_functions = 0
     function_size_violations = 0
+    excluded_frozen_functions = 0
     if active and packages:
         actual_edges = validate_active_workspace(
             active_profile, active, packages, errors
         )
-        scanned, scanned_by_package = validate_source_size(
+        scanned, scanned_by_package, frozen_migrations = validate_source_size(
             source_size, active, packages, errors, warnings
         )
         checked_test_sources, integration_targets = validate_test_layout(
@@ -974,6 +992,16 @@ def main() -> int:
         unsafe_syntax_violations = validate_no_unsafe(unsafe_syntax, errors)
         function_policy = parse_function_size_policy(function_size, errors)
         if function_policy is not None:
+            retained_exceptions = {
+                (exception.path, exception.symbol)
+                for exception in function_policy.exceptions
+            }
+            mutable_functions = mutable_function_records(
+                functions,
+                frozen_migrations,
+                retained_exceptions,
+            )
+            excluded_frozen_functions = len(functions) - len(mutable_functions)
             changed = (
                 changed_line_ranges(ROOT, errors)
                 if function_policy.mode == "changed"
@@ -981,7 +1009,7 @@ def main() -> int:
             )
             checked_functions, function_size_violations = validate_functions(
                 function_policy,
-                functions,
+                mutable_functions,
                 changed,
                 errors,
             )
@@ -1027,7 +1055,7 @@ def main() -> int:
     print(
         "Rust function-size AST gate passed "
         f"(mode={function_size.get('mode')}, functions={checked_functions}, "
-        f"violations={function_size_violations})."
+        f"frozen_functions={excluded_frozen_functions}, violations={function_size_violations})."
     )
     print(
         "Rust unsafe AST gate passed "

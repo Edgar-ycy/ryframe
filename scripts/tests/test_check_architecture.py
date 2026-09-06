@@ -285,6 +285,48 @@ class FrozenMigrationSourceTests(unittest.TestCase):
         )
         self.assertTrue(any("哈希不匹配" in error for error in errors))
 
+    def test_function_gate_only_excludes_exact_locked_sources(self) -> None:
+        self.write_lock()
+        errors: list[str] = []
+        frozen = MODULE.frozen_migration_sources(
+            self.root,
+            "catalog/migrations.lock.toml",
+            errors,
+        )
+        records = [
+            MODULE.FunctionRecord(
+                path=self.source.relative_to(self.root).as_posix(),
+                symbol="baseline",
+                start_line=1,
+                end_line=200,
+                lines=200,
+                private=False,
+            ),
+            MODULE.FunctionRecord(
+                path="crates/example/src/lib.rs",
+                symbol="maintained",
+                start_line=1,
+                end_line=200,
+                lines=200,
+                private=False,
+            ),
+        ]
+
+        remaining = MODULE.mutable_function_records(records, frozen, set())
+
+        self.assertEqual([record.symbol for record in remaining], ["maintained"])
+        self.assertEqual(errors, [])
+
+        retained = MODULE.mutable_function_records(
+            records,
+            frozen,
+            {(records[0].path, records[0].symbol)},
+        )
+        self.assertEqual(
+            [record.symbol for record in retained],
+            ["baseline", "maintained"],
+        )
+
 
 class CrateBoundaryPolicyTests(unittest.TestCase):
     def setUp(self) -> None:
