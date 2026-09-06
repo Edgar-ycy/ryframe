@@ -180,6 +180,12 @@
       "job": "full-stack-e2e",
       "service": "redis",
       "image": "redis:7.4.9@sha256:a8f08480e1f88f2647fed492d1178c06abb0d0c1fbf02c682a61e2f483fb3954"
+    },
+    {
+      "workflow": "extended-ci.yml",
+      "job": "full-stack-e2e",
+      "service": "rustfs",
+      "image": "ghcr.io/rustfs/rustfs:1.0.0-rc.5-glibc@sha256:65fdebfd6cf628f66747f0aacb2c5d531bd634f39e382c6ef07142dbc3313876"
     }
   ],
   "vulnerability_gate": {
