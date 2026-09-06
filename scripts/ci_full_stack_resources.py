@@ -1,4 +1,4 @@
-"""仅为显式全栈环境准备对象桶和可追溯的二进制路径。"""
+"""为显式全栈环境准备对象桶，并绑定构建来源与二进制产物。"""
 
 from __future__ import annotations
 
@@ -13,6 +13,9 @@ import urllib.parse
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+from full_stack_provenance import BUILD_EVIDENCE, build_evidence, full_stack_source_evidence
+from full_stack_process import write_receipt
 
 BUCKETS = ("uploads", "avatar", "exports", "imports", "config-packages")
 BINARIES = (("bin-reset", "ryframe-reset"), ("bin-migrate", "ryframe-migrate"),
@@ -83,6 +86,7 @@ def bucket_request(endpoint: str, bucket: str, access: str, secret: str,
 
 
 def build_binaries(run, backend_root: Path, output_dir: Path) -> dict[str, str]:
+    source = full_stack_source_evidence(backend_root, output_dir)
     binaries: dict[str, str] = {}
     for feature, name in BINARIES:
         result = run(["cargo", "build", "--locked", "-p", "ryframe", "--no-default-features",
@@ -95,7 +99,9 @@ def build_binaries(run, backend_root: Path, output_dir: Path) -> dict[str, str]:
                 binaries[name] = str(Path(event["executable"]).resolve())
         if name not in binaries:
             raise ValueError(f"Cargo 没有返回 {name} 的 executable")
-    (output_dir / "binaries.json").write_text(json.dumps(binaries, indent=2) + "\n", encoding="utf-8")
+    evidence = build_evidence(backend_root, output_dir, binaries, source)
+    write_receipt(output_dir / "binaries.json", binaries)
+    write_receipt(output_dir / BUILD_EVIDENCE, evidence)
     return binaries
 
 

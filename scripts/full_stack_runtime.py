@@ -1,4 +1,4 @@
-"""绑定全栈测试的明确运行目录、配置摘要和构建产物。"""
+"""绑定全栈测试的源码、运行目录、配置摘要和构建产物。"""
 
 from __future__ import annotations
 
@@ -10,6 +10,12 @@ from pathlib import Path
 
 from artifact_digests import file_digest
 from ci_full_stack_resources import read_binaries
+from full_stack_provenance import (
+    full_stack_source_evidence,
+    register_runtime_evidence,
+    verify_build_evidence,
+    verify_runtime_evidence,
+)
 from full_stack_process import write_receipt
 
 
@@ -55,6 +61,9 @@ def runtime_contract(backend: Path, directory: Path) -> dict:
 
 
 def register_runtime(backend: Path, directory: Path) -> dict:
+    source = full_stack_source_evidence(backend, directory)
+    if source is not None and verify_build_evidence(backend, directory)["source"] != source:
+        raise ValueError("运行登记使用的源码与构建来源不匹配")
     contract = runtime_contract(backend, directory)
     path = directory / "runtime.json"
     if path.exists():
@@ -62,11 +71,14 @@ def register_runtime(backend: Path, directory: Path) -> dict:
             raise ValueError("已登记全栈运行目录的配置或产物发生变化")
     else:
         write_receipt(path, contract)
+    register_runtime_evidence(backend, directory, path)
     return contract
 
 
 def verify_runtime(backend: Path, directory: Path) -> dict:
-    receipt = json.loads((directory / "runtime.json").read_text(encoding="utf-8"))
+    path = directory / "runtime.json"
+    receipt = json.loads(path.read_text(encoding="utf-8"))
     if receipt != runtime_contract(backend, directory):
         raise ValueError("全栈运行收据与当前 scope、配置或二进制不匹配")
+    verify_runtime_evidence(backend, directory, path)
     return receipt

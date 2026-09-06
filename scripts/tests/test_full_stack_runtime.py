@@ -69,6 +69,30 @@ class RuntimeContractTests(unittest.TestCase):
             self.assertEqual(runtime.verify_runtime(self.backend, self.directory), value)
         self.assertEqual(self.receipt.read_bytes(), before)
 
+    def test_full_stack_source_is_checked_before_registration_and_on_verify(self):
+        source = {"format_version": 1, "fixture": "device"}
+        with patch.object(runtime, "full_stack_source_evidence", return_value=source) as capture, \
+                patch.object(runtime, "verify_build_evidence", return_value={"source": source}) as build, \
+                patch.object(runtime, "register_runtime_evidence") as register:
+            value = runtime.register_runtime(self.backend, self.directory)
+        capture.assert_called_once_with(self.backend, self.directory)
+        build.assert_called_once_with(self.backend, self.directory)
+        register.assert_called_once_with(self.backend, self.directory, self.receipt)
+
+        with patch.object(runtime, "verify_runtime_evidence") as verify:
+            self.assertEqual(runtime.verify_runtime(self.backend, self.directory), value)
+        verify.assert_called_once_with(self.backend, self.directory, self.receipt)
+
+    def test_build_source_mismatch_does_not_publish_runtime_receipt(self):
+        source = {"format_version": 1, "fixture": "device"}
+        with patch.object(runtime, "full_stack_source_evidence", return_value=source), \
+                patch.object(runtime, "verify_build_evidence", return_value={"source": {}}), \
+                patch.object(runtime, "write_receipt") as write:
+            with self.assertRaisesRegex(ValueError, "构建来源"):
+                runtime.register_runtime(self.backend, self.directory)
+        write.assert_not_called()
+        self.assertFalse(self.receipt.exists())
+
     def test_configuration_digest_tracks_all_toml_and_app_values_only(self):
         original = runtime.configuration_digest(self.backend)
         with patch.dict(os.environ, {"UNRELATED_VALUE": "another"}):

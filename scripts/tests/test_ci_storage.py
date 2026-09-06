@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ci_full_stack_resources import (
     BINARIES, BUCKETS, bucket_request, build_binaries, create_bucket, prepare_storage, read_binaries,
 )
+from full_stack_provenance import BUILD_EVIDENCE, verify_build_evidence
 
 
 class CiStorageTests(unittest.TestCase):
@@ -77,6 +78,11 @@ class CiResourceManifestTests(unittest.TestCase):
         result = build_binaries(run, self.root, self.output)
         self.assertEqual(result, self.binaries)
         self.assertEqual(read_binaries(self.output), self.binaries)
+        evidence = verify_build_evidence(self.root, self.output)
+        self.assertIsNone(evidence["source"])
+        self.assertEqual(set(evidence["artifacts"]), set(self.binaries))
+        for name, value in evidence["artifacts"].items():
+            self.assertEqual(value["path"], self.binaries[name])
         self.assertEqual(run.call_count, len(BINARIES))
         for invocation, (feature, name) in zip(run.call_args_list, BINARIES):
             self.assertEqual(invocation.args, ([
@@ -104,6 +110,7 @@ class CiResourceManifestTests(unittest.TestCase):
                     build_binaries(run, self.root, self.output)
                 self.assertEqual(count, 2)
                 self.assertFalse((self.output / "binaries.json").exists())
+                self.assertFalse((self.output / BUILD_EVIDENCE).exists())
 
     def test_manifest_rejects_wrong_roles_relative_paths_and_missing_files_without_rewriting(self):
         first = BINARIES[0][1]
@@ -121,6 +128,16 @@ class CiResourceManifestTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     read_binaries(self.output)
                 self.assertEqual(path.read_bytes(), raw)
+
+    def test_build_evidence_rejects_replaced_artifact_without_rewriting(self):
+        run = Mock(side_effect=lambda command, **_: self.cargo_result(command[command.index("--bin") + 1]))
+        build_binaries(run, self.root, self.output)
+        receipt = self.output / BUILD_EVIDENCE
+        original = receipt.read_bytes()
+        Path(self.binaries["ryframe"]).write_bytes(b"replaced")
+        with self.assertRaisesRegex(ValueError, "不匹配"):
+            verify_build_evidence(self.root, self.output)
+        self.assertEqual(receipt.read_bytes(), original)
 
     def test_local_storage_prepares_only_declared_buckets_and_preserves_existing_files(self):
         directory = self.root / "objects"

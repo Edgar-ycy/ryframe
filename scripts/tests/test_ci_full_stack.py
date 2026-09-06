@@ -69,8 +69,11 @@ class FullStackCiTests(unittest.TestCase):
                 stdout = f"plan_hash={'a' * 64}\n" if arguments[-1] == "plan" else ""
                 if arguments[0] == "cargo":
                     name = arguments[arguments.index("--bin") + 1]
+                    artifact = root / "artifacts" / name
+                    artifact.parent.mkdir(parents=True, exist_ok=True)
+                    artifact.write_bytes(name.encode())
                     stdout = json.dumps({"reason": "compiler-artifact", "target": {"name": name},
-                                         "executable": str(root / "artifacts" / name)})
+                                         "executable": str(artifact)})
                 return subprocess.CompletedProcess(arguments, 0, stdout, "")
 
             with mock.patch.dict(os.environ, self.environment(root), clear=True), mock.patch.object(
