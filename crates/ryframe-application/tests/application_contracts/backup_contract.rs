@@ -804,7 +804,7 @@ fn backup_restore_and_scope_identifiers_follow_the_formal_contract() {
         candidate.id = id;
         assert!(validate_restore_plan(&backup, &candidate, now).is_err());
     }
-    let mut invalid_backup = backup.clone();
+    let mut invalid_backup = backup;
     invalid_backup.manifest.id = "_backup".into();
     let mut candidate = plan();
     candidate.backup_id = invalid_backup.manifest.id.clone();
