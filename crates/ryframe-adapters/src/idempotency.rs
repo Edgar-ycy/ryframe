@@ -36,40 +36,38 @@ impl RedisIdempotencyStore {
         let fingerprint = fingerprint.to_owned();
         let result = self
             .redis
-            .transaction(&watched, move |mut connection, mut transaction| {
+            .transaction(&watched, async move |mut connection, mut transaction| {
                 let meta_key = meta_key.clone();
                 let guard_key = guard_key.clone();
                 let fingerprint = fingerprint.clone();
-                async move {
-                    let exists: bool = connection.exists(&meta_key).await?;
-                    if exists {
-                        let existing: Option<String> =
-                            connection.hget(&meta_key, "fingerprint").await?;
-                        if existing.as_deref() != Some(fingerprint.as_str()) {
-                            return Ok(Some(2_i64));
-                        }
-                        let state: Option<String> = connection.hget(&meta_key, "state").await?;
-                        return Ok(Some(match state.as_deref() {
-                            Some("processing") => 3,
-                            Some("non_replayable") => 4,
-                            Some("completed") => 5,
-                            _ => 6,
-                        }));
+                let exists: bool = connection.exists(&meta_key).await?;
+                if exists {
+                    let existing: Option<String> =
+                        connection.hget(&meta_key, "fingerprint").await?;
+                    if existing.as_deref() != Some(fingerprint.as_str()) {
+                        return Ok(Some(2_i64));
                     }
-                    let guard: Option<String> = connection.get(&guard_key).await?;
-                    if let Some(guard) = guard {
-                        return Ok(Some(if guard == fingerprint { 4 } else { 2 }));
-                    }
-                    transaction
-                        .hset(&meta_key, "state", "processing")
-                        .ignore()
-                        .hset(&meta_key, "fingerprint", fingerprint)
-                        .ignore()
-                        .expire(&meta_key, bounded_redis_ttl_secs(processing_ttl_secs))
-                        .ignore();
-                    let committed: Option<()> = transaction.query_async(&mut connection).await?;
-                    Ok(committed.map(|()| 1_i64))
+                    let state: Option<String> = connection.hget(&meta_key, "state").await?;
+                    return Ok(Some(match state.as_deref() {
+                        Some("processing") => 3,
+                        Some("non_replayable") => 4,
+                        Some("completed") => 5,
+                        _ => 6,
+                    }));
                 }
+                let guard: Option<String> = connection.get(&guard_key).await?;
+                if let Some(guard) = guard {
+                    return Ok(Some(if guard == fingerprint { 4 } else { 2 }));
+                }
+                transaction
+                    .hset(&meta_key, "state", "processing")
+                    .ignore()
+                    .hset(&meta_key, "fingerprint", fingerprint)
+                    .ignore()
+                    .expire(&meta_key, bounded_redis_ttl_secs(processing_ttl_secs))
+                    .ignore();
+                let committed: Option<()> = transaction.query_async(&mut connection).await?;
+                Ok(committed.map(|()| 1_i64))
             })
             .await
             .map_err(|error| format!("Redis 幂等保留失败: {error}"))?;
@@ -102,25 +100,23 @@ impl RedisIdempotencyStore {
         let fingerprint = fingerprint.to_owned();
         match self
             .redis
-            .transaction(&watched, move |mut connection, mut transaction| {
+            .transaction(&watched, async move |mut connection, mut transaction| {
                 let meta_key = meta_key.clone();
                 let guard_key = guard_key.clone();
                 let fingerprint = fingerprint.clone();
-                async move {
-                    let stored_fingerprint: Option<String> =
-                        connection.hget(&meta_key, "fingerprint").await?;
-                    let state: Option<String> = connection.hget(&meta_key, "state").await?;
-                    if stored_fingerprint.as_deref() != Some(fingerprint.as_str())
-                        || state.as_deref() != Some("processing")
-                    {
-                        return Ok(Some(false));
-                    }
-                    transaction
-                        .set_ex(&guard_key, fingerprint, completed_ttl_secs)
-                        .ignore();
-                    let committed: Option<()> = transaction.query_async(&mut connection).await?;
-                    Ok(committed.map(|()| true))
+                let stored_fingerprint: Option<String> =
+                    connection.hget(&meta_key, "fingerprint").await?;
+                let state: Option<String> = connection.hget(&meta_key, "state").await?;
+                if stored_fingerprint.as_deref() != Some(fingerprint.as_str())
+                    || state.as_deref() != Some("processing")
+                {
+                    return Ok(Some(false));
                 }
+                transaction
+                    .set_ex(&guard_key, fingerprint, completed_ttl_secs)
+                    .ignore();
+                let committed: Option<()> = transaction.query_async(&mut connection).await?;
+                Ok(committed.map(|()| true))
             })
             .await
         {
@@ -145,30 +141,28 @@ impl RedisIdempotencyStore {
         let response = response.to_owned();
         match self
             .redis
-            .transaction(&watched, move |mut connection, mut transaction| {
+            .transaction(&watched, async move |mut connection, mut transaction| {
                 let meta_key = meta_key.clone();
                 let response_key = response_key.clone();
                 let guard_key = guard_key.clone();
                 let fingerprint = fingerprint.clone();
                 let response = response.clone();
-                async move {
-                    let stored_fingerprint: Option<String> =
-                        connection.hget(&meta_key, "fingerprint").await?;
-                    if stored_fingerprint.as_deref() != Some(fingerprint.as_str()) {
-                        return Ok(Some(false));
-                    }
-                    transaction
-                        .set_ex(&response_key, response, completed_ttl_secs)
-                        .ignore()
-                        .hset(&meta_key, "state", "completed")
-                        .ignore()
-                        .expire(&meta_key, bounded_redis_ttl_secs(completed_ttl_secs))
-                        .ignore()
-                        .del(&guard_key)
-                        .ignore();
-                    let committed: Option<()> = transaction.query_async(&mut connection).await?;
-                    Ok(committed.map(|()| true))
+                let stored_fingerprint: Option<String> =
+                    connection.hget(&meta_key, "fingerprint").await?;
+                if stored_fingerprint.as_deref() != Some(fingerprint.as_str()) {
+                    return Ok(Some(false));
                 }
+                transaction
+                    .set_ex(&response_key, response, completed_ttl_secs)
+                    .ignore()
+                    .hset(&meta_key, "state", "completed")
+                    .ignore()
+                    .expire(&meta_key, bounded_redis_ttl_secs(completed_ttl_secs))
+                    .ignore()
+                    .del(&guard_key)
+                    .ignore();
+                let committed: Option<()> = transaction.query_async(&mut connection).await?;
+                Ok(committed.map(|()| true))
             })
             .await
         {
@@ -189,23 +183,21 @@ impl RedisIdempotencyStore {
         let fingerprint = fingerprint.to_owned();
         match self
             .redis
-            .transaction(&watched, move |mut connection, mut transaction| {
+            .transaction(&watched, async move |mut connection, mut transaction| {
                 let meta_key = meta_key.clone();
                 let fingerprint = fingerprint.clone();
-                async move {
-                    let stored_fingerprint: Option<String> =
-                        connection.hget(&meta_key, "fingerprint").await?;
-                    if stored_fingerprint.as_deref() != Some(fingerprint.as_str()) {
-                        return Ok(Some(false));
-                    }
-                    transaction
-                        .hset(&meta_key, "state", "non_replayable")
-                        .ignore()
-                        .expire(&meta_key, bounded_redis_ttl_secs(completed_ttl_secs))
-                        .ignore();
-                    let committed: Option<()> = transaction.query_async(&mut connection).await?;
-                    Ok(committed.map(|()| true))
+                let stored_fingerprint: Option<String> =
+                    connection.hget(&meta_key, "fingerprint").await?;
+                if stored_fingerprint.as_deref() != Some(fingerprint.as_str()) {
+                    return Ok(Some(false));
                 }
+                transaction
+                    .hset(&meta_key, "state", "non_replayable")
+                    .ignore()
+                    .expire(&meta_key, bounded_redis_ttl_secs(completed_ttl_secs))
+                    .ignore();
+                let committed: Option<()> = transaction.query_async(&mut connection).await?;
+                Ok(committed.map(|()| true))
             })
             .await
         {

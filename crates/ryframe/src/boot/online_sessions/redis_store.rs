@@ -1,5 +1,5 @@
 use chrono::Utc;
-use redis::AsyncCommands;
+use redis::{AsyncCommands, aio::ConnectionLike};
 use ryframe_adapters::RedisClient;
 use ryframe_application::system::operations::{OnlineSessionMetadataStore, UserSession};
 use ryframe_kernel::{AppError, AppResult};
@@ -58,7 +58,7 @@ async fn apply_touch_if_unchanged(
     let replacement = replacement.map(|(json, ttl)| (json.to_owned(), ttl));
     let sid = session.sid.clone();
     let code = client
-        .transaction(&watched, move |mut connection, mut transaction| {
+        .transaction(&watched, async move |mut connection, mut transaction| {
             let metadata_key = metadata_key.clone();
             let tenant_key = tenant_key.clone();
             let user_key = user_key.clone();
@@ -93,6 +93,7 @@ async fn apply_touch_if_unchanged(
                 let committed: Option<()> = transaction.query_async(&mut connection).await?;
                 Ok(committed.map(|()| 1_i64))
             }
+            .await
         })
         .await
         .map_err(|error| unavailable("touch", error))?;
@@ -110,7 +111,7 @@ pub(super) async fn add(client: &RedisClient, session: &UserSession, ttl: u64) -
     let watched = [metadata_key.clone(), tenant_key.clone(), user_key.clone()];
     let sid = session.sid.clone();
     let _: () = client
-        .transaction(&watched, move |mut connection, mut transaction| {
+        .transaction(&watched, async move |mut connection, mut transaction| {
             let metadata_key = metadata_key.clone();
             let tenant_key = tenant_key.clone();
             let user_key = user_key.clone();
@@ -128,6 +129,7 @@ pub(super) async fn add(client: &RedisClient, session: &UserSession, ttl: u64) -
                 queue_index_membership(&mut connection, &mut transaction, &membership).await?;
                 transaction.query_async(&mut connection).await
             }
+            .await
         })
         .await
         .map_err(|error| unavailable("add", error))?;
@@ -157,7 +159,7 @@ pub(super) async fn remove(client: &RedisClient, tenant_id: &str, sid: &str) -> 
     let watched = [metadata_key.clone(), tenant_key.clone(), user_key.clone()];
     let sid = sid.to_owned();
     client
-        .transaction(&watched, move |mut connection, mut transaction| {
+        .transaction(&watched, async move |mut connection, mut transaction| {
             let metadata_key = metadata_key.clone();
             let tenant_key = tenant_key.clone();
             let user_key = user_key.clone();
@@ -174,17 +176,21 @@ pub(super) async fn remove(client: &RedisClient, tenant_id: &str, sid: &str) -> 
                 let committed: Option<()> = transaction.query_async(&mut connection).await?;
                 Ok(committed)
             }
+            .await
         })
         .await
         .map_err(|error| unavailable("remove", error))?;
     Ok(())
 }
 
-async fn queue_index_membership(
-    connection: &mut redis::aio::MultiplexedConnection,
+async fn queue_index_membership<C>(
+    connection: &mut C,
     transaction: &mut redis::Pipeline,
     membership: &SessionIndexMembership<'_>,
-) -> Result<(), redis::RedisError> {
+) -> Result<(), redis::RedisError>
+where
+    C: ConnectionLike + Send + Sync,
+{
     transaction
         .set_ex(
             membership.metadata_key,

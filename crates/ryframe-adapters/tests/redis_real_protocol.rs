@@ -13,6 +13,9 @@ use ryframe_adapters::{
 };
 use ryframe_config::{AppConfig, Environment, RedisConfig, RedisMode};
 
+#[path = "redis_real_protocol/transactions.rs"]
+mod transactions;
+
 const ENABLE_ENV: &str = "RYFRAME_REDIS_INTEGRATION";
 const TLS_ENABLE_ENV: &str = "RYFRAME_REDIS_TLS_INTEGRATION";
 static SCOPE_SEQUENCE: AtomicU64 = AtomicU64::new(1);

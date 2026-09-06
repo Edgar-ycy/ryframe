@@ -96,22 +96,20 @@ impl RateLimiter {
                 let redis_key = client.scoped_key(&format!("{RATE_LIMIT_KEY_PREFIX}{key}"));
                 let watched = [redis_key.clone()];
                 match client
-                    .transaction(&watched, move |mut connection, mut transaction| {
+                    .transaction(&watched, async move |mut connection, mut transaction| {
                         let redis_key = redis_key.clone();
-                        async move {
-                            let current: Option<u64> = connection.get(&redis_key).await?;
-                            let ttl: i64 = connection.ttl(&redis_key).await?;
-                            let count = current.unwrap_or(0).saturating_add(1);
-                            transaction.incr(&redis_key, 1_u8).ignore();
-                            if current.is_none() || ttl < 0 {
-                                transaction
-                                    .expire(&redis_key, redis_ttl_secs(window_secs))
-                                    .ignore();
-                            }
-                            let committed: Option<()> =
-                                transaction.query_async(&mut connection).await?;
-                            Ok(committed.map(|()| count <= u64::from(limit)))
+                        let current: Option<u64> = connection.get(&redis_key).await?;
+                        let ttl: i64 = connection.ttl(&redis_key).await?;
+                        let count = current.unwrap_or(0).saturating_add(1);
+                        transaction.incr(&redis_key, 1_u8).ignore();
+                        if current.is_none() || ttl < 0 {
+                            transaction
+                                .expire(&redis_key, redis_ttl_secs(window_secs))
+                                .ignore();
                         }
+                        let committed: Option<()> =
+                            transaction.query_async(&mut connection).await?;
+                        Ok(committed.map(|()| count <= u64::from(limit)))
                     })
                     .await
                 {
@@ -172,14 +170,12 @@ impl RateLimiter {
                     .collect::<Vec<_>>();
                 let watched = redis_keys.clone();
                 let values = client
-                    .transaction(&watched, move |mut connection, mut transaction| {
+                    .transaction(&watched, async move |mut connection, mut transaction| {
                         let redis_keys = redis_keys.clone();
-                        async move {
-                            for redis_key in &redis_keys {
-                                transaction.get(redis_key).ttl(redis_key);
-                            }
-                            transaction.query_async(&mut connection).await
+                        for redis_key in &redis_keys {
+                            transaction.get(redis_key).ttl(redis_key);
                         }
+                        transaction.query_async(&mut connection).await
                     })
                     .await
                     .map_err(|error| format!("Redis rate-limit snapshot failed: {error}"))?;

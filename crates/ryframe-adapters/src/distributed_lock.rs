@@ -224,17 +224,18 @@ impl DistributedLock for RedisDistributedLock {
                         let release_holder = holder.clone();
                         let watched_key = release_key.clone();
                         match client
-                            .transaction(&[watched_key.as_str()], move |mut conn, mut pipe| {
-                                let key = release_key.clone();
-                                let holder = release_holder.clone();
-                                async move {
+                            .transaction(
+                                &[watched_key.as_str()],
+                                async move |mut conn, mut pipe| {
+                                    let key = release_key.clone();
+                                    let holder = release_holder.clone();
                                     let current: Option<String> = conn.get(&key).await?;
                                     if current.as_deref() != Some(holder.as_str()) {
                                         return Ok(Some(0_i32));
                                     }
                                     pipe.del(&key).query_async(&mut conn).await
-                                }
-                            })
+                                },
+                            )
                             .await
                         {
                             Ok(1) => tracing::debug!("分布式锁已释放 [key={}]", key),

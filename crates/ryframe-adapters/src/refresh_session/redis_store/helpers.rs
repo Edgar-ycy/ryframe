@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
-use redis::AsyncCommands;
+use redis::{AsyncCommands, aio::ConnectionLike};
 use ryframe_kernel::AppResult;
 
 use crate::RedisNamespace;
@@ -23,17 +23,20 @@ pub(super) fn scoped_tenant_user_index(
     scope.key(&keyspace::tenant_user_index(tenant_id, user_id))
 }
 
-async fn redis_type(
-    connection: &mut redis::aio::MultiplexedConnection,
-    key: &str,
-) -> Result<String, redis::RedisError> {
+async fn redis_type<C>(connection: &mut C, key: &str) -> Result<String, redis::RedisError>
+where
+    C: ConnectionLike + Send + Sync,
+{
     redis::cmd("TYPE").arg(key).query_async(connection).await
 }
 
-pub(super) async fn ensure_types(
-    connection: &mut redis::aio::MultiplexedConnection,
+pub(super) async fn ensure_types<C>(
+    connection: &mut C,
     keys: &[(&String, &str)],
-) -> Result<(), redis::RedisError> {
+) -> Result<(), redis::RedisError>
+where
+    C: ConnectionLike + Send + Sync,
+{
     for (key, expected) in keys {
         let actual = redis_type(connection, key).await?;
         if actual != "none" && actual != *expected {
@@ -47,20 +50,26 @@ pub(super) async fn ensure_types(
     Ok(())
 }
 
-pub(super) async fn watch_additional(
-    connection: &mut redis::aio::MultiplexedConnection,
+pub(super) async fn watch_additional<C>(
+    connection: &mut C,
     keys: &[String],
-) -> Result<(), redis::RedisError> {
+) -> Result<(), redis::RedisError>
+where
+    C: ConnectionLike + Send + Sync,
+{
     if !keys.is_empty() {
         redis::cmd("WATCH").arg(keys).exec_async(connection).await?;
     }
     Ok(())
 }
 
-pub(super) async fn load_family(
-    connection: &mut redis::aio::MultiplexedConnection,
+pub(super) async fn load_family<C>(
+    connection: &mut C,
     key: &str,
-) -> Result<Option<RefreshFamily>, redis::RedisError> {
+) -> Result<Option<RefreshFamily>, redis::RedisError>
+where
+    C: ConnectionLike + Send + Sync,
+{
     let fields: HashMap<String, String> = connection.hgetall(key).await?;
     if fields.is_empty() {
         return Ok(None);
@@ -147,12 +156,15 @@ pub(super) fn queue_family_write(
         .ignore();
 }
 
-pub(super) async fn queue_expiry_extension(
-    connection: &mut redis::aio::MultiplexedConnection,
+pub(super) async fn queue_expiry_extension<C>(
+    connection: &mut C,
     transaction: &mut redis::Pipeline,
     key: &str,
     absolute_exp: i64,
-) -> Result<(), redis::RedisError> {
+) -> Result<(), redis::RedisError>
+where
+    C: ConnectionLike + Send + Sync,
+{
     let current: i64 = redis::cmd("EXPIRETIME")
         .arg(key)
         .query_async(connection)
@@ -167,21 +179,27 @@ pub(super) async fn queue_expiry_extension(
     Ok(())
 }
 
-pub(super) async fn queue_index_removal(
-    connection: &mut redis::aio::MultiplexedConnection,
+pub(super) async fn queue_index_removal<C>(
+    connection: &mut C,
     transaction: &mut redis::Pipeline,
     key: &str,
     sid: &str,
-) -> Result<(), redis::RedisError> {
+) -> Result<(), redis::RedisError>
+where
+    C: ConnectionLike + Send + Sync,
+{
     queue_index_removals(connection, transaction, key, &[sid.to_owned()]).await
 }
 
-pub(super) async fn queue_index_removals(
-    connection: &mut redis::aio::MultiplexedConnection,
+pub(super) async fn queue_index_removals<C>(
+    connection: &mut C,
     transaction: &mut redis::Pipeline,
     key: &str,
     sids: &[String],
-) -> Result<(), redis::RedisError> {
+) -> Result<(), redis::RedisError>
+where
+    C: ConnectionLike + Send + Sync,
+{
     if sids.is_empty() {
         return Ok(());
     }

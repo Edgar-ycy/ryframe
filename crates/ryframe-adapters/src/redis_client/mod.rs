@@ -4,6 +4,9 @@
 //! 当 Redis 未配置时，调用方应回退到内存存储。
 mod connection;
 mod telemetry;
+mod transaction;
+
+pub use transaction::RedisTransactionConnection;
 
 use std::{sync::Arc, time::Duration};
 
@@ -11,8 +14,8 @@ use connection::{build_client, redis_timeout_error};
 use telemetry::{RedisOperation, trace_redis_operation};
 
 use redis::{
-    AsyncCommands, FromRedisValue, Pipeline,
-    aio::{ConnectionManager, ConnectionManagerConfig, MultiplexedConnection},
+    AsyncCommands,
+    aio::{ConnectionManager, ConnectionManagerConfig},
 };
 use ryframe_config::RedisConfig;
 
@@ -28,11 +31,12 @@ fn prepare_mget_command(keys: &[String]) -> redis::Cmd {
 
 /// Redis 客户端封装
 ///
-/// 内部使用 `ConnectionManager`，自动处理重连和连接池管理。
+/// 普通命令复用连接管理器，乐观事务使用有界的独占连接池。
 #[derive(Clone)]
 pub struct RedisClient {
     client: redis::Client,
     conn: ConnectionManager,
+    transaction_pool: Arc<transaction::RedisTransactionPool>,
     timeout: Duration,
     namespace: RedisNamespace,
 }
@@ -66,6 +70,19 @@ impl RedisClient {
     /// # 错误
     /// 连接超时或 Redis 不可达时返回错误
     pub async fn connect(config: &RedisConfig) -> Result<Self, redis::RedisError> {
+        let transaction_pool_size = usize::try_from(config.max_pool_size).map_err(|_| {
+            redis::RedisError::from((
+                redis::ErrorKind::InvalidClientConfig,
+                "Redis 事务连接池容量超出当前平台范围",
+            ))
+        })?;
+        if transaction_pool_size == 0 || transaction_pool_size > tokio::sync::Semaphore::MAX_PERMITS
+        {
+            return Err(redis::RedisError::from((
+                redis::ErrorKind::InvalidClientConfig,
+                "Redis 事务连接池容量无效",
+            )));
+        }
         let (client, conn) = trace_redis_operation(RedisOperation::Connect, async {
             let client = build_client(config).await?;
 
@@ -96,6 +113,9 @@ impl RedisClient {
         Ok(Self {
             client,
             conn,
+            transaction_pool: Arc::new(transaction::RedisTransactionPool::new(
+                transaction_pool_size,
+            )),
             timeout: Duration::from_secs(config.timeout_secs.max(1)),
             namespace: RedisNamespace::for_scope(config.scope_id()),
         })
@@ -162,45 +182,6 @@ impl RedisClient {
     /// 获取底层连接管理器（用于高级操作）
     pub fn conn(&self) -> &ConnectionManager {
         &self.conn
-    }
-
-    /// 建立本次操作独占的多路复用连接。
-    ///
-    /// 需要 `WATCH/MULTI/EXEC` 的调用必须使用独占连接，避免多个乐观事务在共享连接上交错。
-    async fn dedicated_connection(&self) -> Result<MultiplexedConnection, redis::RedisError> {
-        tokio::time::timeout(self.timeout, self.client.get_multiplexed_async_connection())
-            .await
-            .map_err(|_| redis_timeout_error("Redis 独占连接超时"))?
-    }
-
-    /// 在独占连接上执行 Redis 乐观事务，检测到并发修改时自动重试。
-    ///
-    /// 闭包可能执行多次，闭包内只能进行可重复的 Redis 读取并构造事务命令，不能产生外部副作用。
-    pub async fn transaction<K, T, F, Fut>(
-        &self,
-        keys: &[K],
-        operation: F,
-    ) -> Result<T, redis::RedisError>
-    where
-        K: AsRef<str>,
-        T: FromRedisValue,
-        F: FnMut(MultiplexedConnection, Pipeline) -> Fut,
-        Fut: Future<Output = Result<Option<T>, redis::RedisError>>,
-    {
-        let connection = self.dedicated_connection().await?;
-        let keys = keys
-            .iter()
-            .map(|key| self.scoped_key(key.as_ref()))
-            .collect::<Vec<_>>();
-        trace_redis_operation(RedisOperation::Transaction, async {
-            tokio::time::timeout(
-                self.timeout,
-                redis::aio::transaction_async(connection, &keys, operation),
-            )
-            .await
-            .map_err(|_| redis_timeout_error("Redis 事务超时"))?
-        })
-        .await
     }
 
     /// 建立一个专用的 Pub/Sub 订阅连接并订阅指定频道。

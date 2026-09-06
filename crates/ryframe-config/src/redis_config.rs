@@ -43,7 +43,7 @@ pub struct RedisConfig {
     /// 数据库索引（0-15）
     #[serde(default)]
     pub database: u8,
-    /// 连接池最大连接数
+    /// 乐观事务独占连接池的最大连接数；普通多路复用连接与订阅连接单独管理。
     #[serde(default = "default_redis_pool_size")]
     pub max_pool_size: u32,
     /// 连接超时（秒）
