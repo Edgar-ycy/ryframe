@@ -1,0 +1,49 @@
+#[path = "../src/bin/ryframe_tenant_data/args.rs"]
+mod args;
+
+use args::{Command, parse};
+
+fn arguments(value: &str) -> Result<Command, String> {
+    parse(value.split_whitespace().map(String::from))
+}
+
+#[test]
+fn explicit_commands_require_scoped_inputs_and_reject_duplicate_flags() {
+    assert_eq!(arguments("--help").unwrap(), Command::Help);
+    assert_eq!(arguments("backup-status").unwrap(), Command::Status);
+    assert!(arguments("backup-register --target old --provider-ref old").is_err());
+    assert!(arguments("backup-register --manifest m.json").is_err());
+    assert!(
+        arguments("backup-register --manifest m.json --manifest n.json --backup-root data")
+            .is_err()
+    );
+    assert!(arguments("backup-status --backup-root data").is_err());
+    let command = arguments(
+        "restore-verify-data --id drill --backup-root data --restore-config-dir isolated",
+    )
+    .unwrap();
+    assert_eq!(command.restore_config().unwrap().to_str(), Some("isolated"));
+    assert_eq!(command.backup_root().to_str(), Some("data"));
+    assert!(args::USAGE.contains("外部工具"));
+}
+
+#[test]
+fn target_inventory_requires_one_explicit_target_and_output() {
+    assert_eq!(
+        arguments("target-inventory --target unused --output target.json").unwrap(),
+        Command::TargetInventory {
+            target: "unused".into(),
+            output: "target.json".into()
+        }
+    );
+    for command in [
+        "target-inventory",
+        "target-inventory --output target.json",
+        "target-inventory --target unused",
+        "target-inventory --target unused --target another --output target.json",
+        "target-inventory --target unused --output target.json --all true",
+        "target-inventory --target unused --output target.json --restore-config-dir other",
+    ] {
+        assert!(arguments(command).is_err(), "{command}");
+    }
+}

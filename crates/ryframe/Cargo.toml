@@ -38,6 +38,9 @@ async-trait = { workspace = true, optional = true }
 zip = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 
+[dev-dependencies]
+futures-util.workspace = true
+
 [features]
 default = ["bin-api", "runtime-swagger-ui"]
 
@@ -106,6 +109,10 @@ bin-tenant-data = [
     "ryframe-db/repositories",
     "ryframe-tenant-db/repositories",
     "dep:chrono",
+    "dep:ryframe-application",
+    "dep:ryframe-adapters",
+    "dep:serde",
+    "dep:serde_json",
 ]
 bin-file-maintenance = [
     "runtime-crypto",
@@ -185,6 +192,16 @@ required-features = ["bin-api"]
 name = "reset_contract"
 path = "tests/reset_contract.rs"
 required-features = ["bin-reset"]
+
+[[test]]
+name = "backup_cli_contract"
+path = "tests/backup_cli_contract.rs"
+required-features = ["bin-tenant-data"]
+
+[[test]]
+name = "target_inventory_mysql"
+path = "tests/target_inventory_mysql.rs"
+required-features = ["bin-tenant-data", "bin-migrate"]
 
 [lints]
 workspace = true
