@@ -246,6 +246,14 @@ class RunTests(unittest.TestCase):
                 "resources_modified": False, "restore_qualified": False,
             })
             verify.assert_called_once_with(self.backend, output / "build.json")
+            verify.reset_mock()
+            output.mkdir()
+            directory = SimpleNamespace(command="maintenance", operation="verify", output=output, write=False)
+            self.assertEqual(cli.dispatch(directory, self.backend), {
+                "status": "maintenance_build_verified", "receipt": str(output / "build.json"),
+                "resources_modified": False, "restore_qualified": False,
+            })
+            verify.assert_called_once_with(self.backend, output / "build.json")
             with self.assertRaises(ValueError):
                 cli.dispatch(SimpleNamespace(**{**vars(check), "write": True}), self.backend)
 

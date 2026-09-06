@@ -39,7 +39,7 @@ def add_commands(commands) -> None:
     maintenance = commands.add_parser("maintenance", help="构建或只读核验开发复制维护工具收据")
     maintenance.add_argument("--operation", choices=("build", "verify"), required=True)
     maintenance.add_argument("--output", type=Path, required=True,
-                             help="build 使用新的证据目录；verify 使用现有 build.json")
+                             help="build 使用新的证据目录；verify 使用现有目录或其中的 build.json")
     maintenance.add_argument("--write", action="store_true", help="只有 build 需要显式指定")
     fresh = commands.add_parser("fresh-target", help="登记并分阶段准备、初始化和复核一个 fresh 目标")
     fresh.add_argument("--workspace", type=Path, required=True)
@@ -92,6 +92,8 @@ def dispatch(args, backend: Path) -> dict:
                     "resources_modified": False, "restore_qualified": False}
         if args.write:
             raise ValueError("maintenance verify 是只读操作，不接受 --write")
+        if output.is_dir():
+            output = evidence_path(backend, output / "build.json")
         verify(backend, output)
         return {"status": "maintenance_build_verified", "receipt": str(output),
                 "resources_modified": False, "restore_qualified": False}
