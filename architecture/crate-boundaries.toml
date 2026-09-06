@@ -80,7 +80,6 @@ exceptions = [
     { path = "crates/ryframe-db/src/application_ports/export/request.rs", symbol = "ExportRequestTransaction for DatabaseExportRequestTransaction::summarize_selection", current_lines = 106, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
     { path = "crates/ryframe-db/src/application_ports/product/capabilities.rs", symbol = "sync_menus", current_lines = 125, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
     { path = "crates/ryframe-db/src/application_ports/tenant_config/transfer_sql/apply_resources.rs", symbol = "upsert_menus", current_lines = 141, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
-    { path = "crates/ryframe-db/src/application_ports/tenant_config/transfer_sql/resources.rs", symbol = "load_resources_on", current_lines = 301, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
     { path = "crates/ryframe-db/src/migration/m20260820_000000_control_baseline/schema.rs", symbol = "tenant_data_control_table_statements", current_lines = 163, reason = "冻结迁移源码不可修改；到期前明确门禁对冻结事实源的长期处理", expires = 2026-09-27 },
     { path = "crates/ryframe-db/src/repositories/background_job_repo/transitions/linked.rs", symbol = "BackgroundJobRepository::sync_linked_job_state", current_lines = 267, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
     { path = "crates/ryframe-db/src/repositories/message_repo/publish.rs", symbol = "validate_publish_command", current_lines = 107, reason = "全量门禁启用前的存量函数；后续改动只能缩短并在到期前拆分", expires = 2026-09-27 },
