@@ -1,28 +1,16 @@
 # RyFrame
 
-RyFrame 是面向企业后台的 Rust 2024 服务端，与 RyFrame-Vue3 配套使用。它提供认证授权、系统管理、多租户、异步任务、筛选导出、对象存储和可观测性能力。
+当前为 `0.x` 开发版本，安装和联调只支持当前 API、配置、任务载荷与数据库基线；请使用全新隔离数据库，不直接覆盖旧开发库。
 
-当前版本已移除 Agent 查询、用户委托和服务账号管理；普通用户、租户、套餐、配置迁移、跨库迁移、监控、消息、调度、导入和导出继续保留。套餐能力集合可以为空。
+当前提供用户、角色、权限、组织、产品套餐、多租户、配置迁移、跨库迁移、监控、消息、调度、导入和导出。Agent 查询接口、用户委托和服务账号管理已移除，个人资料、密码、头像和登录会话管理继续保留。套餐可以发布不含可选能力的版本，租户开通与配额管理照常使用。
+
+RyFrame 是面向企业后台的 Rust 2024 服务端，与 RyFrame-Vue3 配套使用。它提供认证授权、系统管理、多租户、异步任务、筛选导出、对象存储和可观测性能力。
 
 ## 当前项目状态
 
-下表列出项目能力与最近已验证的 Windows 本机参考值；P50 表示 5 次测量的中位数，P95 表示较慢一侧的统计值。
-耗时受硬件、缓存和服务负载影响；Rust 工具链升级后的后端性能需重新测量，不能直接视为下表数值。
+API、Worker、迁移和维护程序按 feature 定向构建；标准资源生成默认离线，数据库结构导入按需启用 `schema-import`。前端首屏只同步加载核心、外壳和全局导出文案，生产构建自动检查初始依赖图与包体积预算。
 
-| 项目 | 当前结果 | 说明 |
-| --- | ---: | --- |
-| 前端生产构建 | P50 3.996 秒，P95 4.362 秒 | `corepack pnpm build`，连续运行 5 次 |
-| 前端快速检查 | P95 9.506 秒 | `corepack pnpm check` |
-| 资源门禁 | P95 58.661 秒 | 定向检查资源生成、契约及受影响代码 |
-| 过期构建取消 | P95 0.370 秒 | 新修改出现后终止并回收旧构建进程树 |
-| 首页首屏资源 | JavaScript gzip 162,102 B | 生产构建的初始依赖图 |
-| 首屏国际化资源 | gzip 8,657 B | 仅同步加载核心、外壳和全局导出文案 |
-| 资源生成器 | 默认依赖 37 个 | 数据库结构导入按需启用 `schema-import` |
-| Workspace | 10 个产品 crate 与 2 个工具 crate | API、Worker、迁移和维护程序按 feature 定向构建 |
-| 日常 CI | 后端 6 个、前端 5 个业务任务 | 分别由 `Required` 汇总为单一必需状态 |
-
-首页真实打开时间会同时受到 API、MySQL、Redis、网络和浏览器缓存影响，目前不在 README
-固定单次秒数；交付验收以真实浏览器 smoke、控制台错误和无障碍检查结果为准。
+构建、检查、首页和业务负载的性能通过 `cargo xtask check perf` 测量，使用方式见[开发指南](docs/development.md)。源码或工具链变化后，既有测量只能作为历史参考；报告需要对应实际源码、硬件、服务配置和冷暖缓存条件，不能用单次构建耗时或包体积推断首页打开时间。当前改造后的完整恢复和性能验收仍在准备中，不代表已达到正式版发布条件。
 
 ## 环境准备
 
@@ -48,13 +36,8 @@ cargo xtask dev
 
 `cargo xtask dev` 同时管理 API、Worker 和 Vite，并在后端修改后完成探活再切换版本。按 `Ctrl+C` 可停止整组进程。
 
-只在排障时单独启动 Worker，并让 API 使用 external 任务模式：
-
-```powershell
-$env:APP_ENV = "dev"
-$env:APP_JOBS_MODE = "external"
-cargo run --locked -p ryframe --no-default-features --features bin-worker --bin ryframe-worker
-```
+排障时仍通过 `cargo xtask dev` 管理 API、Worker 与其进程树；维护二进制的专用操作按职责从
+`cargo xtask data --help` 进入，避免绕开运行收据和 ownership 核验。
 
 ## 开发与检查
 
@@ -70,7 +53,7 @@ cargo xtask check
 cargo xtask check --full
 ```
 
-生产构建运行 `cargo xtask build`；需要开发 profile 时显式传入 `--profile dev`。`--scope backend|frontend` 可限制主要检查侧。五类顶层入口固定为 `dev`、`check`、`build`、`generate` 和 `data`，更多迁移、测试和排障组合见[开发指南](docs/development.md)。
+`--scope backend|frontend` 可限制主要检查侧。更多迁移、测试和排障命令见[开发指南](docs/development.md)。
 
 ## 同步 API 契约
 
@@ -88,8 +71,10 @@ cargo xtask generate api --write
 
 ```powershell
 cargo xtask generate resource post
+cargo xtask generate resource post --check
 cargo xtask generate resource --all --check
 cargo xtask generate resource post --write
+cargo xtask generate resource post --explain
 ```
 
 资源清单位于 `catalog/resources/`。Post 和 Notice 可作为标准资源示例；导出、消息发布等特殊行为使用普通 Rust 用例扩展。完整流程见[开发指南](docs/development.md)。

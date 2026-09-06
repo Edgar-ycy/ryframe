@@ -21,11 +21,15 @@ Compose 会先更新控制库与租户库，再启动 Worker 和 API。启动后
 
 ```powershell
 $env:APP_ENV = "test"
-cargo run --locked -p ryframe --no-default-features --features bin-reset --bin ryframe-reset -- plan
-cargo run --locked -p ryframe --no-default-features --features bin-reset --bin ryframe-reset -- execute --plan-hash <sha256> --confirm-reset <精确短语>
+cargo xtask data reset plan
+cargo xtask data reset execute --plan-hash <sha256> --confirm-reset <精确短语>
 ```
 
-执行顺序固定为对象前缀、Redis namespace、物理数据库、控制 baseline、租户 baseline、验证。清单、ledger 和 report 不包含秘密；失败后只允许使用同一清单续跑。生产环境在读取配置或访问外部资源前永久拒绝。
+执行顺序固定为对象前缀、Redis namespace、物理数据库、控制 baseline、租户 baseline、验证和锁释放。清单、ledger 和 report 不包含秘密；普通阶段失败且锁释放成功时，只允许使用同一清单和 ledger 续跑。生产环境在读取配置或访问外部资源前永久拒绝。
+
+报告的 `status` 区分 `completed`（本次完成）、`reused`（复用同一 ledger 的原完成）和 `failed`。`completed_at` 记录锁释放后持久化的原完成时间，重复执行不更新该值，也不重新运行预检或破坏性阶段；`reported_at` 仅表示报告生成时间。锁释放失败、中断或缺少完成证据时，重复执行仍失败，必须人工核对服务停止状态、MySQL 环境锁及清单内精确资源，保留原始失败记录。
+
+新的绝对 `RYFRAME_RESET_STATE_DIR` 表示一次新的维护操作，必须重新生成并核验 plan、ownership 和资源范围；不得通过删除或覆盖旧 ledger 触发重置。当前开发版本使用 ledger v4 和 report v2，旧版账本明确拒绝，不自动转换，旧本地证据继续保留。
 
 ## HTTP 5xx 与高延迟
 
@@ -81,7 +85,136 @@ cargo run --locked -p ryframe --no-default-features --features bin-reset --bin r
 
 ## 备份失败或过期
 
-停止依赖无效备份的迁移操作，检查目标、校验和、完成时间和保留策略。恢复后重新生成并验证备份，不手工标记为成功。
+停止依赖无效备份的迁移操作，检查目标、校验和、采集时间和保留策略。恢复后重新生成并验证备份，不手工标记为成功。外部工具负责备份与还原字节，RyFrame 只负责清单采集、登记、恢复验证、状态和告警。
+
+### 参考环境与一致性
+
+参考演练采用系统租户和 10 个普通租户，覆盖共享与独立数据目标，至少 10 万条代表性业务记录和 1 GiB 对象数据。外部运维调度每 12 小时执行完整备份，保留至少 7 天。演练报告必须记录 Windows 机器、MySQL/RustFS 版本、存储和网络条件；24 小时恢复点、60 分钟恢复时间是该规模下需要实际验证的目标。
+
+开始采集前暂停业务写入，停止 API 写入入口、Worker、scheduler 和消息等生产者。在整个清单采集、数据库转储和对象复制期间保持静止，避免把多个时间点的数据登记为一致备份。数据库按完整主键顺序计算摘要，对象采用流式 SHA-256；清单包含源码 SHA、schema 指纹、物理数据库身份、租户 placement、对象前缀、字节数和摘要，不包含密钥。
+
+### 采集和登记
+
+在 Windows 维护机通过 `cargo xtask data` 执行备份和恢复登记；配置和密钥放在受控的忽略目录。该维护能力不包含在生产运行镜像中。
+
+```powershell
+cargo xtask data --help
+cargo xtask data backup inventory --output .local-tests/backup/inventory.json --source-sha <精确后端SHA> --quiesced-at <暂停写入的RFC3339时间>
+```
+
+输出文件必须事先不存在。随后由外部工具按清单中的精确数据库、表和对象前缀完成复制与校验，再补齐 `id`、`completed_at`、`retention_until` 和 `artifacts`，形成 `BackupManifest`。每个 `db:<逻辑目标键>` 与 `objects:<桶>` 至少对应一个文件产物，登记其 `relative_path`、`bytes`、`sha256`；相对路径不得越出备份根目录。结构定义见 `crates/ryframe-application/src/ports/backup/manifest.rs`。
+
+需要检查尚未分配租户的目标或初始化前后状态时，使用 `ryframe-tenant-data target-inventory --target <已配置目标key> --output <新文件>`。该命令只连接明确配置的数据库，校验 schema 和精确全表目录，并在只读事务中计算完整行摘要；`target.database` 保存业务表与 placement，`target.preserved_tables` 单独保存 ownership、迁移账本和备份恢复登记表。它不访问对象存储、不修改目标，也不把未使用的目标遗漏为“空清单”。控制库与独立目标之间的一致性仍要求外部停止所有生产者；单份目标清单不表示备份或恢复成功。
+
+```powershell
+cargo xtask data backup register --manifest .local-tests/backup/manifest.json --backup-root .local-tests/backup/files
+cargo xtask data backup status
+```
+
+登记会重新读取文件验证大小及 SHA-256，缺失或损坏会登记为无效并返回失败。同一备份 ID 只允许重复验证相同清单，不允许替换数据。登记成功表示已校验备份文件，尚不能表示恢复成功。状态查询只读取控制库，不依赖对象存储当前是否可连接。
+
+### 隔离恢复与验收
+
+1. 准备全新的隔离数据库和对象前缀，先按当前基线初始化并建立目标 ownership。逻辑 target key 保持一致，物理数据库、scope、JWT 密钥和 Redis namespace 必须与原环境不同，Worker 使用 external 模式。维护机的 `APP_CONFIG_DIR` 指向登记库，`--restore-config-dir` 指向隔离环境配置；检查实际生效的 `APP_*` 覆盖值，避免把源配置覆盖到目标上。
+2. 按 `crates/ryframe-application/src/ports/backup/restore.rs` 的 `RestorePlan` 填写完整目标、故障时间、前端 SHA、API/Worker 就绪地址和新对象前缀。物理数据库身份必须匹配，不能指向任一原业务库。
+3. 在开始外部还原之前执行 `restore-begin`。重复相同 plan 不重置计时。外部还原仅覆盖该 plan 中已核验的隔离资源，保留目标自己的 ownership 和备份登记元数据；数据库转储只含清单中的业务表，不执行指向源库的 `USE`、数据库创建或跨库语句。对象路径仅替换 scope 前缀，不能复制源 ownership 标记。
+4. 停止目标业务写入，执行 `restore-verify-data`。它重新验证备份文件、当前 schema、完整表内容、租户关系和完整对象集合，缺失、多余、损坏或错误 ownership 都会失败。
+5. 使用全新 Redis 临时状态启动 API、Worker 和前端，完成真实浏览器业务验收，再提交绑定演练 ID、plan hash、源码 SHA、scope 和时间范围的 `RestoreBusinessProof`。`restore-verify` 再检查两项就绪探针，只有数据与业务验证均通过且总计时不超过 60 分钟、备份恢复点距离故障不超过 24 小时才记录成功。
+
+```powershell
+cargo xtask data restore begin --plan .local-tests/restore/plan.json --restore-config-dir .local-tests/restore/config
+cargo xtask data restore verify-data --id <演练ID> --backup-root .local-tests/backup/files --restore-config-dir .local-tests/restore/config
+cargo xtask data restore verify --id <演练ID> --proof .local-tests/restore/business-proof.json --restore-config-dir .local-tests/restore/config
+```
+
+一次完整验收需保留成功恢复和损坏或缺失备份失败演练的原始日志、校验结果、trace、截图和视频。失败不会被登记覆盖为成功，也不会自动操作原业务资源。`running`、`data_verified`、`succeeded`、`failed` 分别表示已开始、数据通过、全部通过与失败；超过时限且未完成的演练仍会触发告警。
+
+### 生成恢复业务证明
+
+把 `restore-verify-data` 成功返回的完整记录放入绑定文件的 `record`，原备份清单放入 `manifest`，参考数据准备收据的 SHA-256 放入 `dataset_sha256`，保存到忽略目录。前后端必须是清单绑定 SHA 的干净源码，先用 `python scripts/restore_runtime.py build --backend-dir <后端目录> --output <后端目录>/.local-tests/restore/build.json --write` 构建并登记实际 API/Worker 产物；前端通过 `corepack pnpm build --real` 生成生产文件和 `.vite/restore-build.json`。按构建收据启动隔离 API/Worker，并在明确运行目录保存对应 `api.json`、`worker.json` 进程收据。
+
+启动前端生产 preview 后，执行 `python scripts/restore_runtime.py bind --backend-dir <后端目录> --frontend-dir <前端目录> --build-receipt <build.json> --runtime-dir <进程收据目录> --bindings <绑定文件> --frontend-url <本机站点地址> --output <后端目录>/.local-tests/restore/runtime.json --write`。该命令核对源码、二进制、进程创建身份、探针监听端口及实际返回的前端文件，配置目录正确或 HTTP 200 均不能单独充当来源证明。
+
+前端设置 `RYFRAME_RESTORE_BINDINGS`、`RYFRAME_RESTORE_RUNTIME_RECEIPT`、`RYFRAME_RESTORE_BACKEND_DIR`、`RYFRAME_E2E_SCOPE_ID` 和 `RYFRAME_E2E_BASE_URL`，分别指向绑定文件、运行收据、干净后端源码、新 scope 和已启动的生产站点；同时用 `RYFRAME_RESTORE_REFERENCE_PLAN` 和 `RYFRAME_RESTORE_DATASET_RECEIPT` 指向参考环境计划和原数据准备收据，再运行 `corepack pnpm check --stage browser --real --server preview`。测试开始及结束均复核来源；运行期间替换进程、修改源码或产物都会拒绝生成成功证明。各文件只保存摘要和资源归属，不包含密钥。
+
+测试覆盖全部恢复核心场景并通过控制台、网络和 axe 断言后，结果写入 `.local-tests/playwright-real/restore-<演练ID>.json`，测试明细另存相邻文件。已有结果不会覆盖；有失败、跳过、重试、缺场景、源码不匹配或数据验证尚未完成时不生成成功证明。将该文件传给维护 CLI 的 `restore-verify --proof`。这一步仍会重新检查服务就绪和恢复时间，浏览器通过不等于最终恢复登记成功。
+
+### 参考环境的外部验收驱动
+
+`scripts/restore_reference.py` 调用本机 MySQL、mysqldump、AWS CLI 和 Node 准备演练数据与外部备份。先把源、目标的精确地址、不同 scope、数据库 ownership、运行收据目录和工具摘要写入忽略目录中的计划文件；字段校验以 `scripts/restore_reference_plan.py` 为准。MySQL 使用计划内明确的客户端配置文件及其摘要，S3 凭据只引用环境变量。工具不创建或扫描数据库，源目标均需事先初始化。参考规模为 system 加十个普通租户、至少十万条实际岗位记录及至少 1 GiB 已登记上传对象，租户分布覆盖共享和独立目标；例如 256 个 4 MiB 对象。岗位记录属于控制库，租户业务表复制另由 Device 生成资源验收覆盖。
+
+数据准备计划的 `dataset.request_interval_ms` 必须为 1000 至 5000 毫秒，限制每个固定客户端的实际 HTTP 请求启动频率；十一个租户可并发准备，每个租户使用自己的身份与地址。`dataset.timeout_seconds` 显式设置整阶段时限（1 至 604800 秒），例如参考规模预留 21600 秒；其他外部命令仍使用 1800 秒超时。收到 429 时保留失败，不通过重试或更换地址绕过限流。数据准备发生在备份与恢复开始之前，其耗时不计入恢复时间。
+
+各阶段共用 `--backend-dir <后端绝对路径> --plan <计划JSON>`，`plan` 只读核对，其他写步骤必须显式传入 `--write`：
+
+| 阶段 | 操作与输出 |
+| --- | --- |
+| `dataset` | 通过当前 API 建立套餐、十个租户、业务记录和关联对象，保存逐条创建证据与 `dataset/result.json`。 |
+| `backup --inventory <清单JSON> --source-runtime <来源运行证明JSON> --source-quiescence <停止观察收据JSON>` | 核对停止前实际干净构建、源侧业务复验和采集前的停止观察收据，按 `backup-inventory` 清单精确导出数据和对象、核对摘要，生成 `backup/manifest.json`，随后用产品 `backup-register` 登记。 |
+| `restore --backup-root <备份目录> --record <restore-begin记录>` | 先核对全部产物和目标，再还原到停止写入的隔离环境；输出只表示复制完成，后续仍需数据验证和真实业务证明。 |
+| `copy --backup-root <备份目录> --copy-id <独立副本ID>` | 创建保留原摘要的独立备份副本；先登记副本并执行 `restore-begin`。 |
+| `damage --backup-root <副本目录> --artifact <清单内路径> [--missing]` | 仅损坏或删除指定副本产物，保留原备份；随后用 `restore-verify-data` 验证失败状态及告警。 |
+
+已有数据可以在原计划不变的前提下复验。`python scripts/restore_reference.py check-existing --backend-dir <后端绝对路径> --plan <原计划JSON> --side source` 核对源侧数据库 ownership 和已登记 API；随后运行 `node scripts/restore_reference_dataset.mjs --backend-dir <后端绝对路径> --plan <原计划JSON> --verify-existing <原dataset/result.json> --side source --write`，读取原岗位样本并下载校验全部登记对象，将标准输出保存到新的独立证据文件。`--write` 表示登录、注销会产生会话及审计副作用，业务记录和对象始终只读。省略 `--side` 时已有数据验证仍固定为 `target`；数据准备仍固定为 `source`，其他阶段不接受该选项。
+
+验证结果记录实际侧、scope、原计划及数据收据摘要和只读动作范围，状态为 `existing_data_verified`，不表示恢复成功，也不单独证明源码干净。源侧复验结果不能用于目标恢复证明。
+
+正式备份前，在同一配置下启动真实干净构建的 API 和 external Worker，使用 `python scripts/restore_source.py verify --backend-dir <后端绝对路径> --plan <原计划JSON> --build-receipt <本次构建收据JSON> --dataset <原dataset/result.json> --output <新来源运行证明JSON> --write`。该命令会亲自执行源侧已有数据复验，在前后核对 API/Worker 的构建摘要、配置、创建身份、监听端口及就绪状态。
+
+成功后停止全部生产者，再执行 `python scripts/restore_source.py quiesce --backend-dir <后端绝对路径> --plan <原计划JSON> --source-runtime <来源运行证明JSON> --output <新停止观察收据JSON> --write`。该命令不终止进程；它核对同一代次已停止并记录实际观察时间。之后才能重新采集 Inventory，其 `quiesced_at` 使用该收据的 `observed_stopped_at`。给 `backup` 同时传入两份证明；备份前后均检查来源进程已停止、未换代，以及复验、实际停止观察、采集时间的先后关系。清单先采集、进程后来才停止的流程会失败。重新复验使用新的输出文件，失败日志保留；不改写原计划、数据收据和历史证据的摘要或完成时间。
+
+恢复浏览器套件逐一登录十一个租户读取备份前已有的岗位，下载并校验全部原有上传对象，再执行正常核心业务。故障与 Worker 重启场景继续由普通全栈套件执行。每阶段保留独立收据，失败不覆盖、不自动清理资源；只有最终产品 CLI 核算后的成功记录能证明 24 小时恢复点与 60 分钟恢复时间。
+
+### 指标与告警
+
+API 与 Worker 的备份采集器每 60 秒读取控制库汇总，整次采集最多等待 10 秒，输出到现有 Prometheus 指标接口。运行时监控页显示采集状态、必需及异常资源、最近恢复结果与耗时；未知、失败和陈旧状态不表示当前数据可用，保留的有效快照仅供诊断。备份故障独立展示和告警，不改变 API readiness。
+
+`ryframe_backup_last_success_timestamp_seconds` 取所有必需目标的最旧有效备份采集时间，重新登记旧备份不会刷新恢复点。`ryframe_backup_resources` 使用固定的 required/missing/expired/invalid 维度，`ryframe_backup_collector_up` 表示采集成功与否，`ryframe_backup_collector_last_success_timestamp_seconds` 记录最近成功读取汇总的时间；后者缺失或超过 150 秒会触发采集告警，不能用它替代备份恢复点。恢复指标包括最新完成结果、耗时、恢复点年龄和 running/overdue 汇总。指标没有租户、端点或对象键标签。
+
+`deploy/prometheus/ryframe-alerts.yml` 在 23 小时预警、24 小时告警，并分别检查缺失、过期、校验失败和采集失败。收到恢复失败或超时告警时先查看登记状态和保留的演练证据，不通过改登记时间消除告警。
+
+将该规则文件只读挂载或复制到现有 Prometheus 的 `/etc/prometheus/rules/ryframe-alerts.yml`，在其配置中显式加载这个文件。下例中的两个 HTTPS 地址应替换为现有监控入口，分别转发到 API 的 `/api/v1/monitor/metrics` 和 Worker 健康端口的 `/metrics`；生产 Compose 中的 Worker 默认只在后端网络可见，需要由现有监控网络或反向代理提供访问。密钥文件只保存与 RyFrame `APP_MONITOR_METRICS_BEARER_TOKEN_FILE` 相同的 token 内容，路径以 Prometheus 所在主机或容器为准。
+
+```yaml
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+rule_files:
+  - /etc/prometheus/rules/ryframe-alerts.yml
+
+scrape_configs:
+  - job_name: ryframe-api
+    scheme: https
+    metrics_path: /api/v1/monitor/metrics
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/ryframe-metrics-token
+    tls_config:
+      ca_file: /run/secrets/monitor-ca.pem
+    static_configs:
+      - targets: [ryframe-api.internal.example:443]
+  - job_name: ryframe-worker
+    scheme: https
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/ryframe-metrics-token
+    tls_config:
+      ca_file: /run/secrets/monitor-ca.pem
+    static_configs:
+      - targets: [ryframe-worker.internal.example:443]
+```
+
+沿用现有 `alerting.alertmanagers` 配置，并将 `service=ryframe` 的 warning/critical 告警路由到运维通知渠道。先执行 `promtool check config /etc/prometheus/prometheus.yml` 与 `promtool check rules /etc/prometheus/rules/ryframe-alerts.yml`，通过后按现有平台的配置重载方式生效；Prometheus 支持 `SIGHUP`，也支持在启用生命周期接口后通过 `POST /-/reload` 重载。[配置与重载方式](https://prometheus.io/docs/prometheus/latest/configuration/configuration/)
+
+重载后在 Targets 中确认两个抓取目标均为 UP，在 Rules 中确认 `ryframe.application` 规则组加载且健康，并查询 `ryframe_backup_collector_up`、`ryframe_backup_resources` 和 `ryframe_backup_last_success_timestamp_seconds` 检查实际采集结果。API 与 Worker 各暴露一份部署汇总，按 Prometheus 的 `job`、`instance` 区分采集进程，不能将两份计数相加。最后通过隔离演练产生真实失败状态，核对告警进入 Alertmanager 并送达通知渠道；仅通过配置检查不作为通知送达证据。
+
+## 发布门禁排障
+
+协调版本 tag 同时触发双方日常 CI 和 Extended CI。后端的 core 与 Device 全栈任务均检出配套前端 tag，产物内记录双方精确 SHA、run ID 和 attempt；Device 产物另附从干净源码生成隔离工作树的收据。Release 在校验阶段和实际创建 Release 前分别检查四组最新运行、两套全栈产物及必需 job；缺失、失败、取消、超时、错误 SHA、跳过必需 job 或最新重跑未成功都会阻断发布。
+
+检查 Release 保存的 `release-ci-evidence.json` 与 `release-final-evidence.json`，按其中 run ID 和 attempt 定位失败。默认总等待上限为 5400 秒，GitHub API 分页和单次调用共享截止时间。修复后对同一目标源码重跑相应 CI，再重新运行 Release；不移动已有 tag，也不以其他提交的成功结果替代。发布资产仍为 GitHub 源码归档。
 
 ## TLS 证书
 
