@@ -396,117 +396,135 @@ impl LocalObjectStorage {
                 }
             };
             report.scanned_entries += 1;
-            let path = entry.path();
-            let matches_staging_name = entry.file_name().to_str().is_some_and(|name| {
-                name.starts_with(STAGING_FILE_PREFIX) && name.ends_with(STAGING_FILE_SUFFIX)
-            });
-            if !matches_staging_name {
-                continue;
-            }
-            let file_type = match entry.file_type().await {
-                Ok(file_type) => file_type,
-                Err(error) => {
-                    report.record_failure("inspect local staging entry type", &error);
-                    continue;
-                }
-            };
-            if !file_type.is_file() || file_type.is_symlink() {
-                continue;
-            }
-            if self.active_staging.contains(&path) {
-                report.skipped_active += 1;
-                continue;
-            }
-            let metadata = match tokio::fs::symlink_metadata(&path).await {
-                Ok(metadata) if metadata.file_type().is_file() => metadata,
-                Ok(_) => continue,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(error) => {
-                    report.record_failure("inspect local staging candidate", &error);
-                    continue;
-                }
-            };
-            if !metadata
-                .modified()
-                .ok()
-                .and_then(|modified| cursor.now.duration_since(modified).ok())
-                .is_some_and(|age| age >= cursor.stale_after)
-            {
-                continue;
-            }
-            let resolved = match tokio::fs::canonicalize(&path).await {
-                Ok(path)
-                    if path.parent() == Some(cursor.staging_directory.as_path())
-                        && path.starts_with(&cursor.staging_directory) =>
-                {
-                    path
-                }
-                Ok(_) => continue,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(error) => {
-                    report.record_failure("resolve local staging candidate", &error);
-                    continue;
-                }
-            };
-            if self.active_staging.contains(&resolved) {
-                report.skipped_active += 1;
-                continue;
-            }
-
-            let locked_file = match tokio::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(&resolved)
-                .await
-            {
-                Ok(file) => file.into_std().await,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(error) => {
-                    report.record_failure("open local staging candidate for locking", &error);
-                    continue;
-                }
-            };
-            match locked_file.try_lock() {
-                Ok(()) => {}
-                Err(std::fs::TryLockError::WouldBlock) => {
-                    report.skipped_active += 1;
-                    continue;
-                }
-                Err(std::fs::TryLockError::Error(error)) => {
-                    report.record_failure("lock local staging candidate", &error);
-                    continue;
-                }
-            }
-
-            let metadata = match tokio::fs::symlink_metadata(&resolved).await {
-                Ok(metadata) if metadata.file_type().is_file() => metadata,
-                Ok(_) => continue,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(error) => {
-                    report.record_failure("recheck local staging candidate", &error);
-                    continue;
-                }
-            };
-            if !metadata
-                .modified()
-                .ok()
-                .and_then(|modified| cursor.now.duration_since(modified).ok())
-                .is_some_and(|age| age >= cursor.stale_after)
-            {
-                continue;
-            }
-            match tokio::fs::remove_file(&resolved).await {
-                Ok(()) => report.removed_files += 1,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    report.record_failure("remove stale local staging file", &error);
-                }
-            }
+            self.cleanup_staging_entry(entry, &cursor, &mut report)
+                .await;
         }
 
         Ok(CleanupRunOutcome {
             report,
             cursor: (!reached_end).then_some(cursor),
         })
+    }
+
+    async fn cleanup_staging_entry(
+        &self,
+        entry: tokio::fs::DirEntry,
+        cursor: &CleanupCursor,
+        report: &mut CleanupReport,
+    ) {
+        let path = entry.path();
+        let matches_staging_name = entry.file_name().to_str().is_some_and(|name| {
+            name.starts_with(STAGING_FILE_PREFIX) && name.ends_with(STAGING_FILE_SUFFIX)
+        });
+        if !matches_staging_name {
+            return;
+        }
+        let file_type = match entry.file_type().await {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                report.record_failure("inspect local staging entry type", &error);
+                return;
+            }
+        };
+        if !file_type.is_file() || file_type.is_symlink() {
+            return;
+        }
+        if self.active_staging.contains(&path) {
+            report.skipped_active += 1;
+            return;
+        }
+        let metadata = match tokio::fs::symlink_metadata(&path).await {
+            Ok(metadata) if metadata.file_type().is_file() => metadata,
+            Ok(_) => return,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => {
+                report.record_failure("inspect local staging candidate", &error);
+                return;
+            }
+        };
+        if !metadata
+            .modified()
+            .ok()
+            .and_then(|modified| cursor.now.duration_since(modified).ok())
+            .is_some_and(|age| age >= cursor.stale_after)
+        {
+            return;
+        }
+        let resolved = match tokio::fs::canonicalize(&path).await {
+            Ok(path)
+                if path.parent() == Some(cursor.staging_directory.as_path())
+                    && path.starts_with(&cursor.staging_directory) =>
+            {
+                path
+            }
+            Ok(_) => return,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => {
+                report.record_failure("resolve local staging candidate", &error);
+                return;
+            }
+        };
+        if self.active_staging.contains(&resolved) {
+            report.skipped_active += 1;
+            return;
+        }
+
+        Self::remove_locked_candidate(&resolved, cursor, report).await;
+    }
+
+    async fn remove_locked_candidate(
+        resolved: &Path,
+        cursor: &CleanupCursor,
+        report: &mut CleanupReport,
+    ) {
+        let locked_file = match tokio::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(resolved)
+            .await
+        {
+            Ok(file) => file.into_std().await,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => {
+                report.record_failure("open local staging candidate for locking", &error);
+                return;
+            }
+        };
+        match locked_file.try_lock() {
+            Ok(()) => {}
+            Err(std::fs::TryLockError::WouldBlock) => {
+                report.skipped_active += 1;
+                return;
+            }
+            Err(std::fs::TryLockError::Error(error)) => {
+                report.record_failure("lock local staging candidate", &error);
+                return;
+            }
+        }
+
+        let metadata = match tokio::fs::symlink_metadata(resolved).await {
+            Ok(metadata) if metadata.file_type().is_file() => metadata,
+            Ok(_) => return,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => {
+                report.record_failure("recheck local staging candidate", &error);
+                return;
+            }
+        };
+        if !metadata
+            .modified()
+            .ok()
+            .and_then(|modified| cursor.now.duration_since(modified).ok())
+            .is_some_and(|age| age >= cursor.stale_after)
+        {
+            return;
+        }
+        match tokio::fs::remove_file(resolved).await {
+            Ok(()) => report.removed_files += 1,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                report.record_failure("remove stale local staging file", &error);
+            }
+        }
     }
 }
