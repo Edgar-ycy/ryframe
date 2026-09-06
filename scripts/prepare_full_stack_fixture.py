@@ -11,6 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from full_stack_process import write_receipt
 from release_stage import release_stage
 from source_inventory import git, snapshot
 
@@ -104,12 +105,7 @@ def prepare(backend: Path, frontend: Path, output: Path) -> dict:
         "paths": {name: str(path) for name, path in roots.items()},
     }
 
-    def write_receipt() -> None:
-        (output / "fixture.json").write_text(
-            json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-        )
-
-    write_receipt()
+    write_receipt(output / "fixture.json", receipt)
     copy_snapshot(backend, roots["backend"], backend_receipt, backend_patch, log)
     copy_snapshot(frontend, roots["frontend"], frontend_receipt, frontend_patch, log)
     (roots["backend"] / "catalog/resources/device.toml").write_bytes(fixture_bytes)
@@ -167,7 +163,7 @@ def prepare(backend: Path, frontend: Path, output: Path) -> dict:
     if before != {name: snapshot(path)[0] for name, path in roots.items()}:
         raise ValueError("资源只读检查改写了隔离工作树")
     receipt.update(status="ready", generated=before)
-    write_receipt()
+    write_receipt(output / "fixture.json", receipt)
     return receipt
 
 

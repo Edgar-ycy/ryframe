@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import prepare_full_stack_fixture as fixture
+import full_stack_process
 import source_inventory
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -53,6 +54,7 @@ class FullStackFixtureTests(unittest.TestCase):
     def test_untracked_content_is_fingerprinted_and_escape_is_rejected(self):
         self.assertIs(fixture.git, source_inventory.git)
         self.assertIs(fixture.snapshot, source_inventory.snapshot)
+        self.assertIs(fixture.write_receipt, full_stack_process.write_receipt)
         (self.backend / "new.txt").write_bytes(b"current source")
         responses = [b"a" * 40, b"binary patch", b"new.txt\0"]
         with patch.object(source_inventory, "git", side_effect=responses):
