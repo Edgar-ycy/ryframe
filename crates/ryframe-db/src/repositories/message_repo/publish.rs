@@ -262,6 +262,41 @@ fn validate_publish_command(command: &PublishMessageCommand) -> AppResult<()> {
             "消息主题、标题或正文不符合长度要求".into(),
         ));
     }
+    validate_message_content(command)?;
+    if !matches!(
+        command.severity.as_str(),
+        message::Model::SEVERITY_INFO
+            | message::Model::SEVERITY_SUCCESS
+            | message::Model::SEVERITY_WARNING
+            | message::Model::SEVERITY_ERROR
+    ) {
+        return Err(AppError::Validation("消息级别无效".into()));
+    }
+    if command.audiences.is_empty() || command.audiences.len() > 500 {
+        return Err(AppError::Validation(
+            "消息受众数量必须在 1 到 500 之间".into(),
+        ));
+    }
+    if let Some(payload) = &command.payload_json
+        && serde_json::to_vec(payload)
+            .map_err(|error| AppError::Validation(format!("消息载荷无法序列化: {error}")))?
+            .len()
+            > 16 * 1024
+    {
+        return Err(AppError::Validation("消息载荷不能超过 16 KiB".into()));
+    }
+    if command.expires_at <= command.published_at {
+        return Err(AppError::Validation("消息过期时间必须晚于发布时间".into()));
+    }
+    Ok(())
+}
+
+fn is_duplicate_key_error(error: &sea_orm::DbErr) -> bool {
+    let text = error.to_string().to_ascii_lowercase();
+    text.contains("duplicate") || text.contains("1062")
+}
+
+fn validate_message_content(command: &PublishMessageCommand) -> AppResult<()> {
     let literal = matches!(
         (
             &command.title_text,
@@ -333,35 +368,5 @@ fn validate_publish_command(command: &PublishMessageCommand) -> AppResult<()> {
             "消息本地化参数必须是键和值均为字符串的对象".into(),
         ));
     }
-    if !matches!(
-        command.severity.as_str(),
-        message::Model::SEVERITY_INFO
-            | message::Model::SEVERITY_SUCCESS
-            | message::Model::SEVERITY_WARNING
-            | message::Model::SEVERITY_ERROR
-    ) {
-        return Err(AppError::Validation("消息级别无效".into()));
-    }
-    if command.audiences.is_empty() || command.audiences.len() > 500 {
-        return Err(AppError::Validation(
-            "消息受众数量必须在 1 到 500 之间".into(),
-        ));
-    }
-    if let Some(payload) = &command.payload_json
-        && serde_json::to_vec(payload)
-            .map_err(|error| AppError::Validation(format!("消息载荷无法序列化: {error}")))?
-            .len()
-            > 16 * 1024
-    {
-        return Err(AppError::Validation("消息载荷不能超过 16 KiB".into()));
-    }
-    if command.expires_at <= command.published_at {
-        return Err(AppError::Validation("消息过期时间必须晚于发布时间".into()));
-    }
     Ok(())
-}
-
-fn is_duplicate_key_error(error: &sea_orm::DbErr) -> bool {
-    let text = error.to_string().to_ascii_lowercase();
-    text.contains("duplicate") || text.contains("1062")
 }
