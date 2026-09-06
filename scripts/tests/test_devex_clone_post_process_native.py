@@ -5,9 +5,9 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 import time
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import devex_clone_post as post
@@ -58,7 +58,7 @@ class NativeProducerTests(unittest.TestCase):
         node = Path('D:/Program Files/nodejs/node.exe') if os.name == 'nt' else Path('/usr/bin/node')
         if not node.is_file():
             self.skipTest('未登记本机 Node stub 工具')
-        with tempfile.TemporaryDirectory(dir=root / '.local-tests/tmp', prefix='post-node-crash-') as temporary:
+        with WorkspaceDirectory(dir=root / '.local-tests/tmp', prefix='post-node-crash-') as temporary:
             backend = Path(temporary).resolve()
             scripts, directory = backend / 'scripts', backend / '.local-tests/run'
             scripts.mkdir()
@@ -187,7 +187,7 @@ class NativeProducerTests(unittest.TestCase):
         node = Path('D:/Program Files/nodejs/node.exe') if os.name == 'nt' else Path('/usr/bin/node')
         if not node.is_file():
             self.skipTest('未登记本机 Node stub 工具')
-        with tempfile.TemporaryDirectory(dir=root / '.local-tests/tmp', prefix='identity-node-contract-') as temporary:
+        with WorkspaceDirectory(dir=root / '.local-tests/tmp', prefix='identity-node-contract-') as temporary:
             directory = Path(temporary).resolve()
             for name in ('devex_clone_existing.mjs', 'devex_clone_identity.mjs', 'devex_clone_quota_bridge.mjs'):
                 (directory / name).write_bytes(Path(process.__file__).with_name(name).read_bytes())
@@ -233,7 +233,7 @@ assert.deepEqual(globalThis.identityOptions, {lockOwnerToken:'10000000-0000-4000
         node = Path('D:/Program Files/nodejs/node.exe') if os.name == 'nt' else Path('/usr/bin/node')
         if not node.is_file():
             self.skipTest('未登记本机 Node stub 工具')
-        with tempfile.TemporaryDirectory(dir=root / '.local-tests/tmp', prefix='post-node-gates-') as temporary:
+        with WorkspaceDirectory(dir=root / '.local-tests/tmp', prefix='post-node-gates-') as temporary:
             backend = Path(temporary).resolve()
             marker = backend / 'unexpected-request.json'
             stub = "import { writeFileSync } from 'node:fs'; export const verifyCloneExisting = async () => { writeFileSync(process.env.STUB_MARKER, '{}'); throw Error('unexpected request') };"

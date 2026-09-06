@@ -4,8 +4,8 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 import unittest
+from tests.workspace_directory import WorkspaceDirectory
 from unittest.mock import patch
 
 import devex_clone_storage_process as process
@@ -17,7 +17,7 @@ from full_stack_process import process_identity, terminate_owned_process
 class NativeProcessTests(unittest.TestCase):
     def setUp(self):
         self.backend = next(path for path in Path(__file__).resolve().parents if (path / "Cargo.toml").is_file())
-        temporary = tempfile.TemporaryDirectory(dir=self.backend / ".local-tests/tmp", prefix="sn-")
+        temporary = WorkspaceDirectory(dir=self.backend / ".local-tests/tmp", prefix="sn-")
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
         self.output = self.root / "attempt"
