@@ -324,6 +324,15 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertIn('"Dockerfile"', workflow)
         self.assertIn('"scripts/ci_full_stack.py"', workflow)
         self.assertIn('"scripts/check_deployment_assets.py"', workflow)
+        for path in (
+            "scripts/check_supply_chain.py",
+            "scripts/supply_chain_policy.json",
+            "scripts/tests/test_check_supply_chain.py",
+        ):
+            self.assertIn(f'"{path}"', workflow)
+            self.assertTrue((ROOT / path).is_file())
+        self.assertNotIn("check_vulnerability_exceptions.py", workflow)
+        self.assertNotIn("vulnerability-exceptions.json", workflow)
         self.assertIn("APP_ENV: test", block)
         self.assertIn('APP_API_DOCS_ENABLED: "false"', block)
         self.assertIn('APP_RESET_LEGACY_MYSQL_EXCLUSIVE: "true"', block)
@@ -404,9 +413,7 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertIn("RYFRAME_CI_BACKEND_HEAD", consumer)
         self.assertIn("RYFRAME_CI_CANDIDATE_OPENAPI", consumer)
         self.assertIn("RYFRAME_CI_FRONTEND_REF", consumer)
-        self.assertIn(
-            "cargo xtask check ci consumer-contract --frontend-dir ../frontend", consumer
-        )
+        self.assertIn("cargo xtask check ci consumer-contract --frontend-dir ../frontend", consumer)
         self.assertNotIn("pnpm consumer:check --", consumer)
         self.assertNotIn("cargo run --locked", consumer)
         self.assertNotIn("cmp --silent", consumer)

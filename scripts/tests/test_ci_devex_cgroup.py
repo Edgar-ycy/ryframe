@@ -1,9 +1,11 @@
-"""cgroup CI 的权限、精确归属、失败清理和工作流接线回归；不连接 Linux 或创建真实 cgroup。"""
+"""cgroup CI 的权限、精确归属、失败清理和发布接线回归；不连接 Linux 或创建真实 cgroup。"""
 
+import copy
 import json
 import os
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -11,7 +13,9 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import ci_devex_cgroup as gate
+from release_evidence import EvidenceError, validate_run
 from tests.workspace_directory import WorkspaceDirectory
+from verify_release_ci import requirements
 
 REPOSITORY = Path(__file__).resolve().parents[2]
 
@@ -273,11 +277,23 @@ class CgroupWorkflowTests(unittest.TestCase):
         source = (REPOSITORY / "xtask/tests/internal/devex_memory.rs").read_text(encoding="utf-8")
         self.assertIn('#[ignore = "需要显式提供具有 memory controller 委托权限的 RYFRAME_DEVEX_CGROUP_ROOT"]', source)
 
-    def test_linux_job_has_exact_source_path_filters(self):
-        workflow = yaml.safe_load((REPOSITORY / ".github/workflows/extended-ci.yml").read_text(encoding="utf-8"))
-        paths = workflow[True]["push"]["paths"]
-        self.assertIn("scripts/ci_devex_cgroup.py", paths)
-        self.assertIn("scripts/tests/test_ci_devex_cgroup.py", paths)
+    def test_release_rejects_missing_skipped_failed_or_cancelled_memory_job(self):
+        args = SimpleNamespace(backend_repository="owner/backend", frontend_repository="owner/frontend",
+                               backend_sha="a" * 40, frontend_sha="b" * 40, tag="v0.13.0")
+        requirement = requirements(args)[2]
+        self.assertIn("Linux DevEx Cgroup Memory", requirement.jobs)
+        run = {"id": 1, "run_attempt": 2, "head_sha": args.backend_sha, "status": "completed", "conclusion": "success",
+               "event": "push", "head_branch": args.tag}
+        jobs = [{"id": index + 1, "name": name, "run_id": 1, "run_attempt": 2, "head_sha": args.backend_sha,
+                 "status": "completed", "conclusion": "success"} for index, name in enumerate(requirement.jobs)]
+        validate_run(run, jobs, requirement, jobs_attempt=2)
+        for outcome in ("skipped", "failure", "cancelled", None):
+            failing = copy.deepcopy(jobs)
+            failing[-1]["conclusion"] = outcome
+            with self.subTest(outcome=outcome), self.assertRaises(EvidenceError):
+                validate_run(run, failing, requirement, jobs_attempt=2)
+        with self.assertRaises(EvidenceError):
+            validate_run(run, jobs[:-1], requirement, jobs_attempt=2)
 
 
 if __name__ == "__main__":
