@@ -1,11 +1,11 @@
 """seed_to_arm 统一清单与继承存储的离线约束。"""
 from pathlib import Path
 import sys
-import tempfile
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tests.workspace_directory import WorkspaceDirectory
 import devex_clone_run as run
 from devex_clone_capture import write_json
 from devex_clone_run_state import binding
@@ -15,9 +15,9 @@ class RunArmTests(unittest.TestCase):
     def setUp(self):
         base = Path(__file__).resolve().parents[2] / ".local-tests/python-unit"
         base.mkdir(parents=True, exist_ok=True)
-        temporary = tempfile.TemporaryDirectory(dir=base)
+        temporary = WorkspaceDirectory(base, "devex-clone-run-arm-")
         self.addCleanup(temporary.cleanup)
-        self.backend = Path(temporary.name).resolve()
+        self.backend = temporary.path
         self.local = self.backend / ".local-tests"
         self.local.mkdir()
         self.directory = self.local / "run"

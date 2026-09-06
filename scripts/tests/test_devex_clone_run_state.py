@@ -4,11 +4,11 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from tests.workspace_directory import WorkspaceDirectory
 import devex_clone_run_state as state
 from devex_clone_capture import read_json, write_json
 from process_guard import process_guard
@@ -18,9 +18,9 @@ class RunStateTests(unittest.TestCase):
     def setUp(self):
         local = Path(__file__).resolve().parents[2] / ".local-tests/python-unit"
         local.mkdir(parents=True, exist_ok=True)
-        temporary = tempfile.TemporaryDirectory(dir=local)
+        temporary = WorkspaceDirectory(local, "devex-clone-run-state-")
         self.addCleanup(temporary.cleanup)
-        self.backend = Path(temporary.name).resolve()
+        self.backend = temporary.path
         self.directory = self.backend / ".local-tests/run"
         self.directory.mkdir(parents=True)
         write_json(self.directory / "manifest.json", {"kind": "isolated-state-fixture"})
