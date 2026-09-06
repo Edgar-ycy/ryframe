@@ -96,6 +96,12 @@ fn parses_check_task_graph_and_internal_groups() {
     }
     assert!(parse_command(&["check", "ci"]).is_err());
     assert!(parse_command(&["check", "ci", "rust-gate", "extra"]).is_err());
+    assert!(parse_command(&["check", "--full", "--full"]).is_err());
+    assert!(parse_command(&["check", "--scope", "all", "--scope", "backend"]).is_err());
+}
+
+#[test]
+fn parses_recovery_check_groups() {
     assert_eq!(
         parse_command(&[
             "check",
@@ -183,8 +189,6 @@ fn parses_check_task_graph_and_internal_groups() {
             "build.json",
         ]))))
     );
-    assert!(parse_command(&["check", "--full", "--full"]).is_err());
-    assert!(parse_command(&["check", "--scope", "all", "--scope", "backend"]).is_err());
 }
 
 #[test]
