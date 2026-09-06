@@ -96,46 +96,7 @@ pub fn compare_resources(
     registered_permissions: &BTreeMap<String, String>,
     output: &mut Vec<PlanItemDescription>,
 ) -> AppResult<()> {
-    compare_simple(
-        "department",
-        source.departments.iter(),
-        target.departments.iter(),
-        |item| join_path(&item.path),
-        |item| item.path.last().cloned().unwrap_or_default(),
-        output,
-    )?;
-    compare_simple(
-        "post",
-        source.posts.iter(),
-        target.posts.iter(),
-        |item| item.code.clone(),
-        |item| item.name.clone(),
-        output,
-    )?;
-    compare_simple(
-        "dict_type",
-        source.dict_types.iter(),
-        target.dict_types.iter(),
-        |item| item.code.clone(),
-        |item| item.name.clone(),
-        output,
-    )?;
-    compare_simple(
-        "dict_data",
-        source.dict_data.iter(),
-        target.dict_data.iter(),
-        |item| format!("{}:{}:{}", item.type_code.len(), item.type_code, item.value),
-        |item| item.label.clone(),
-        output,
-    )?;
-    compare_simple(
-        "config",
-        source.configs.iter(),
-        target.configs.iter(),
-        |item| item.key.clone(),
-        |item| item.name.clone(),
-        output,
-    )?;
+    compare_standard_resources(source, target, output)?;
 
     let target_permissions = target
         .permissions
@@ -318,4 +279,53 @@ pub(super) fn sha256_json(value: &impl Serialize) -> AppResult<String> {
 
 pub(super) fn sha256_hex(value: &[u8]) -> String {
     hex::encode(Sha256::digest(value))
+}
+
+fn compare_standard_resources(
+    source: &TenantConfigPackageResources,
+    target: &TenantConfigPackageResources,
+    output: &mut Vec<PlanItemDescription>,
+) -> AppResult<()> {
+    compare_simple(
+        "department",
+        source.departments.iter(),
+        target.departments.iter(),
+        |item| join_path(&item.path),
+        |item| item.path.last().cloned().unwrap_or_default(),
+        output,
+    )?;
+    compare_simple(
+        "post",
+        source.posts.iter(),
+        target.posts.iter(),
+        |item| item.code.clone(),
+        |item| item.name.clone(),
+        output,
+    )?;
+    compare_simple(
+        "dict_type",
+        source.dict_types.iter(),
+        target.dict_types.iter(),
+        |item| item.code.clone(),
+        |item| item.name.clone(),
+        output,
+    )?;
+    compare_simple(
+        "dict_data",
+        source.dict_data.iter(),
+        target.dict_data.iter(),
+        |item| format!("{}:{}:{}", item.type_code.len(), item.type_code, item.value),
+        |item| item.label.clone(),
+        output,
+    )?;
+    compare_simple(
+        "config",
+        source.configs.iter(),
+        target.configs.iter(),
+        |item| item.key.clone(),
+        |item| item.name.clone(),
+        output,
+    )?;
+
+    Ok(())
 }
