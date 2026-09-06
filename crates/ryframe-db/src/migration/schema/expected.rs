@@ -387,4 +387,23 @@ mod tests {
         assert_eq!(key.delete_rule, "cascade");
         assert_eq!(key.update_rule, "restrict");
     }
+
+    #[test]
+    fn inline_backup_constraints_are_verified_against_their_columns_and_target() {
+        let schema = super::expected_schema().unwrap();
+        for (table, name) in [
+            ("sys_backup_resource", "fk_backup_resource_set"),
+            ("sys_restore_run", "fk_restore_run_backup"),
+        ] {
+            let key = schema
+                .foreign_keys
+                .get(&(table.into(), name.into()))
+                .unwrap();
+            assert_eq!(key.columns, ["backup_id"]);
+            assert_eq!(key.referenced_table, "sys_backup_set");
+            assert_eq!(key.referenced_columns, ["id"]);
+            assert_eq!(key.delete_rule, "restrict");
+            assert_eq!(key.update_rule, "restrict");
+        }
+    }
 }

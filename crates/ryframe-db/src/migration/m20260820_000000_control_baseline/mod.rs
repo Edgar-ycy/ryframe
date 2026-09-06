@@ -1,6 +1,7 @@
 use sea_orm::DatabaseBackend;
 use sea_orm_migration::prelude::*;
 
+mod backup;
 mod base;
 mod jobs;
 mod schema;
@@ -55,6 +56,7 @@ pub fn ddl_statements() -> impl Iterator<Item = &'static str> {
         .chain(schema::tenant_config_table_statements())
         .chain(schema::product_capability_table_statements())
         .chain(schema::tenant_data_control_table_statements())
+        .chain(backup::BACKUP_TABLE_STATEMENTS)
         .chain([
             jobs::BACKGROUND_JOB_ATTEMPT_DDL,
             schema::OUTBOX_EVENT_DDL,
