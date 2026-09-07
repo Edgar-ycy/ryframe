@@ -16,10 +16,17 @@ from pathlib import Path
 
 from full_stack_provenance import BUILD_EVIDENCE, build_evidence, full_stack_source_evidence
 from full_stack_process import write_receipt
+from full_stack_build import build_artifacts
 
 BUCKETS = ("uploads", "avatar", "exports", "imports", "config-packages")
 BINARIES = (("bin-reset", "ryframe-reset"), ("bin-migrate", "ryframe-migrate"),
             ("bin-api", "ryframe"), ("bin-worker", "ryframe-worker"))
+ROLE_BY_NAME = {
+    "ryframe": "api",
+    "ryframe-worker": "worker",
+    "ryframe-reset": "reset",
+    "ryframe-migrate": "migrate",
+}
 
 
 def prepare_storage(required) -> None:
@@ -87,18 +94,14 @@ def bucket_request(endpoint: str, bucket: str, access: str, secret: str,
 
 def build_binaries(run, backend_root: Path, output_dir: Path) -> dict[str, str]:
     source = full_stack_source_evidence(backend_root, output_dir)
-    binaries: dict[str, str] = {}
-    for feature, name in BINARIES:
-        result = run(["cargo", "build", "--locked", "-p", "ryframe", "--no-default-features",
-                      "--features", feature, "--bin", name, "--message-format=json"],
-                     cwd=backend_root, capture_output=True)
-        for line in result.stdout.splitlines():
-            event = json.loads(line)
-            if (event.get("reason") == "compiler-artifact"
-                    and event.get("target", {}).get("name") == name and event.get("executable")):
-                binaries[name] = str(Path(event["executable"]).resolve())
-        if name not in binaries:
-            raise ValueError(f"Cargo 没有返回 {name} 的 executable")
+    built = build_artifacts(
+        backend_root,
+        tuple(ROLE_BY_NAME[name] for _, name in BINARIES),
+        lambda command: run(command, cwd=backend_root, capture_output=True).stdout,
+        require_workspace_manifest=False,
+        require_binary_kind=False,
+    )
+    binaries = {item["name"]: str(item["executable"]) for item in built.values()}
     evidence = build_evidence(backend_root, output_dir, binaries, source)
     write_receipt(output_dir / "binaries.json", binaries)
     write_receipt(output_dir / BUILD_EVIDENCE, evidence)
