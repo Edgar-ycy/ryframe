@@ -19,6 +19,7 @@ from devex_clone_source_proof import require_closed_port
 from devex_clone_storage_process import start as start_rustfs
 from restore_build import file_digest
 from restore_reference_plan import BUCKETS, plan_hash
+from reference_fixture_paths import service_run
 
 
 def bound(path: Path) -> dict:
@@ -90,7 +91,7 @@ def buckets(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bo
     review_file, review = document(backend, review_path)
     bootstrap_file, bootstrap, private = environment(backend, review_file, review, bootstrap_path)
     execution = Path(bootstrap["execution_backend"])
-    run = execution / ".local-tests/reference-fixture/service-run"
+    run = service_run(review)
     manifest = run / "manifest.json"
     output = run / "buckets"
     if output.exists() or not manifest.is_file():
@@ -143,7 +144,7 @@ def rustfs(backend: Path, review_path: Path, bootstrap_path: Path, *, write: boo
     bootstrap_file, bootstrap, private = environment(backend, review_file, review, bootstrap_path)
     service = review["services"]["rustfs"]
     execution = Path(bootstrap["execution_backend"])
-    run = execution / ".local-tests/reference-fixture/service-run"
+    run = service_run(review)
     output = run / "rustfs"
     if run.exists() or output.exists() or not run.parent.is_dir():
         raise ValueError("首代服务账本目录已经存在或父目录缺失")
@@ -191,7 +192,7 @@ def redis(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bool
     review_file, review = document(backend, review_path)
     bootstrap_file, bootstrap, private = environment(backend, review_file, review, bootstrap_path)
     execution = Path(bootstrap["execution_backend"])
-    run = execution / ".local-tests/reference-fixture/service-run"
+    run = service_run(review)
     output = run / "redis"
     manifest = run / "manifest.json"
     if output.exists() or not manifest.is_file():

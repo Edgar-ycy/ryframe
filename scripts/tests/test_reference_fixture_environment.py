@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import reference_fixture_environment as environment
+from reference_fixture_paths import service_run
 from restore_build import file_digest
 
 
@@ -46,7 +47,8 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
                 "databases": [{"key": key, "database": f"fixture_{side}_{key.replace('-', '_')}",
                                "mode": "shared" if key in ("shared-control", "shared") else "dedicated",
                                "expected_server_uuid": "uuid", "connection_file": str(defaults), "host": "127.0.0.1", "port": 3306}
-                              for key in ("shared-control", "shared", "dedicated-a", "dedicated-b")]}
+                               for key in ("shared-control", "shared", "dedicated-a", "dedicated-b")]}
+        self.review["future_root"] = str(self.root / "device-backend/.local-tests/reference-fixture/run-r1")
         self.fixture = {"format_version": 1, "fixture": "device", "status": "ready", "sources": {"backend": {"head": "a" * 40}, "frontend": {"head": "b" * 40}},
                         "paths": {"backend": str(self.root / "device-backend"), "frontend": str(self.root / "device-frontend")}}
         self.maintenance = {"format_version": 1, "kind": "devex-clone-tool-build", "resources_modified": False, "artifacts":
@@ -100,6 +102,10 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual(result["tools"]["wsl"], {"path": str(self.wsl.resolve()), "sha256": file_digest(self.wsl)["sha256"]})
         self.assertEqual(result["tools"]["redis_python"]["resolved_path"], "/usr/bin/python3.12")
         self.assertEqual(result["services"]["rustfs"]["scope_id"], "services-fixture-seed")
+        self.assertEqual(
+            result["services"]["rustfs"]["process_receipt"],
+            str(Path(result["future_root"]) / "service-run/rustfs/process.json"),
+        )
         self.assertEqual(result["preflight"]["status"], "verified")
         self.assertNotIn("preflight", self.review)
 
@@ -127,6 +133,17 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
     def test_preflight_binding_rejects_the_unreviewed_plan(self):
         with self.assertRaisesRegex(ValueError, "预检"):
             environment._preflight_binding(self.review)
+
+    def test_service_run_rejects_roots_outside_the_device_fixture(self):
+        self.assertEqual(
+            service_run(self.review),
+            Path(self.review["future_root"]) / "service-run",
+        )
+        for value in (str(self.root / "outside"), str(Path(self.review["future_root"]) / "nested")):
+            with self.subTest(value=value):
+                invalid = dict(self.review, future_root=value)
+                with self.assertRaisesRegex(ValueError, "future_root"):
+                    service_run(invalid)
 
     def test_environment_uses_the_frozen_device_tree_and_private_secret_files(self):
         execution = self.root / "device-backend"
