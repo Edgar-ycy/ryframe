@@ -94,9 +94,15 @@ def _preflight(review: dict, run=subprocess.run) -> dict:
 def _preflight_binding(review: dict) -> None:
     value = review.get("preflight")
     expected = {name: review["tools"][name] for name in ("mysql", "aws", "rustfs", "redis_server")}
+    seed = review["scopes"]["seed"]
+    service_run = Path(seed["backend_dir"]) / ".local-tests/reference-fixture/service-run"
+    rustfs = review["services"]["rustfs"]
+    expected_scope = "services-" + seed["scope_id"]
     if (not isinstance(value, dict) or value.get("format_version") != 1
             or value.get("kind") != "reference-fixture-tool-preflight"
-            or value.get("status") != "verified" or value.get("tools") != expected):
+            or value.get("status") != "verified" or value.get("tools") != expected
+            or rustfs.get("scope_id") != expected_scope
+            or rustfs.get("process_receipt") != str(service_run / "rustfs/process.json")):
         raise ValueError("夹具审阅计划缺少当前工具预检收据")
 
 
@@ -110,6 +116,10 @@ def revalidate(backend: Path, review_path: Path, output: Path, run=subprocess.ru
         raise ValueError("新审阅收据的父目录不存在")
     revised = copy.deepcopy(review)
     revised["tools"] = {**review["tools"], **observed}
+    seed = revised["scopes"]["seed"]
+    service_run = Path(seed["backend_dir"]) / ".local-tests/reference-fixture/service-run"
+    revised["services"]["rustfs"].update(
+        scope_id="services-" + seed["scope_id"], process_receipt=str(service_run / "rustfs/process.json"))
     revised["preflight"] = {"format_version": 1, "kind": "reference-fixture-tool-preflight", "status": "verified",
                             "supersedes": bound(review_file), "tools": copy.deepcopy(observed)}
     write_json(output, revised)

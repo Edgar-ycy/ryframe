@@ -36,6 +36,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         for side in ("seed", "base", "candidate"):
             scope = "fixture-" + side
             self.review["scopes"][side] = {"scope_id": scope, "runtime_dir": str(self.root / (side + "-runtime")),
+                "backend_dir": str(self.root / "device-backend"),
                 "identity_ledger": str(self.root / (side + "-identities")), "api_url": "http://127.0.0.1:18210",
                 "worker_ready_url": "http://127.0.0.1:19210/readyz", "frontend_url": "http://127.0.0.1:4190",
                 "objects": {"endpoint": "http://127.0.0.1:29200", "region": "us-east-1"},
@@ -85,6 +86,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         result = environment.revalidate(self.backend, review, output, run)
 
         self.assertEqual(result["tools"]["redis_server"]["resolved_path"], "/usr/bin/redis-server")
+        self.assertEqual(result["services"]["rustfs"]["scope_id"], "services-fixture-seed")
         self.assertEqual(result["preflight"]["status"], "verified")
         self.assertNotIn("preflight", self.review)
 
