@@ -364,12 +364,17 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
     scope = selected["scope_id"]
     api = urlsplit(selected["api_url"])
     worker = urlsplit(selected["worker_ready_url"])
+    frontend = urlsplit(selected["frontend_url"])
     if (api.hostname not in ("127.0.0.1", "::1") or api.port is None
-            or worker.hostname not in ("127.0.0.1", "::1") or worker.port is None):
-        raise ValueError("夹具 API 或 Worker 地址必须是明确本机端口")
+            or worker.hostname not in ("127.0.0.1", "::1") or worker.port is None
+            or frontend.scheme not in ("http", "https") or frontend.hostname not in ("127.0.0.1", "::1")
+            or frontend.port is None or frontend.path not in ("", "/") or frontend.query or frontend.fragment):
+        raise ValueError("夹具 API、Worker 或前端地址必须是明确本机端口")
+    frontend_origin = f"{frontend.scheme}://{frontend.netloc}"
     environment = {
         "APP_ENV": "test", "APP_SCOPE_ID": scope, "APP_CONFIG_DIR": str(execution / "config"),
         "APP_APP_HOST": api.hostname, "APP_APP_PORT": str(api.port),
+        "APP_CORS_ALLOW_ORIGINS": frontend_origin,
         # 控制库使用应用配置的正式覆盖名；租户目标仍以独立的秘密环境变量引用同一凭据。
         "APP_DATABASE_HOST": client["host"], "APP_DATABASE_PORT": client["port"],
         "APP_DATABASE_NAME": database["shared-control"]["database"],

@@ -185,6 +185,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual(values["APP_SCOPE_ID"], "fixture-seed")
         self.assertEqual(values["APP_DATABASE_NAME"], "fixture_seed_shared_control")
         self.assertEqual((values["APP_APP_HOST"], values["APP_APP_PORT"]), ("127.0.0.1", "18210"))
+        self.assertEqual(values["APP_CORS_ALLOW_ORIGINS"], "http://127.0.0.1:4190")
         self.assertEqual((values["APP_JOBS_HEALTH_HOST"], values["APP_JOBS_HEALTH_PORT"]), ("127.0.0.1", "19210"))
         self.assertEqual(values["APP_DATABASE_TLS_MODE"], "disabled")
         self.assertTrue(all(item["tls_mode"] == "disabled" for item in json.loads(values["APP_TENANT_DATA_TARGETS"])))
