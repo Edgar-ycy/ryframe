@@ -271,7 +271,8 @@ def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_pa
         with Environments(runtime_environment, runtime_environment).use("target"):
             configuration = configuration_digest(execution)
             maintenance = verify_tools(execution, maintenance_path)
-        write_json(output / "environment.json", {"format_version": 1, "environment": environment})
+        # fresh-target 只接受这一层私有环境；版本和生命周期信息属于相邻 bootstrap 收据。
+        write_json(output / "environment.json", {"environment": environment})
         receipt = {"format_version": 1, "kind": "reference-fixture-environment", "status": "prepared",
                    "plan": result, "execution_backend": str(execution), "configuration_sha256": configuration,
                    "maintenance": bound(maintenance_path), "maintenance_source": maintenance["source"],
