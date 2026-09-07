@@ -91,6 +91,18 @@ class TargetTests(unittest.TestCase):
                 with self.assertRaises(ValueError): binding.request_binding(self.f.root, value)
         self.assertFalse(self.f.calls)
 
+    def test_unready_review_prevents_prepare(self):
+        f = self.f
+        f.review["ready_for_execution"] = False
+        f.request["review"] = {
+            **f.bound(f.local / "review.json", f.review),
+            "canonical_sha256": plan_hash(f.review),
+        }
+        f.save_request()
+        with self.assertRaisesRegex(ValueError, "已就绪审阅计划"):
+            self.prepare()
+        self.assertFalse(f.calls)
+
     def test_failed_producer_launch_intent_without_pid_blocks_fresh_prepare(self):
         runtime = Path(self.f.review["scopes"]["seed"]["runtime_dir"])
         runtime.mkdir()

@@ -40,8 +40,9 @@ def request_binding(backend: Path, request: dict) -> tuple[dict, dict]:
     review = read_json(bound_file(backend, {k: v for k, v in request["review"].items() if k != "canonical_sha256"}))
     if (plan_hash(review) != digest(request["review"]["canonical_sha256"])
             or review.get("kind") != "review-only-perf-resource-plan-with-readonly-preflight"
+            or review.get("ready_for_execution") is not True
             or set(review["scopes"]) != {"seed", "base", "candidate"} or request["side"] not in review["scopes"]):
-        raise ValueError("必须选择原始审阅计划的明确单侧")
+        raise ValueError("必须选择已就绪审阅计划的明确单侧")
     selected = review["scopes"][request["side"]]
     target = request["target"]
     exact(target, {"scope_id", "s3", "databases"})

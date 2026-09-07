@@ -33,7 +33,7 @@ class Fixture:
         (self.configuration / "app.toml").write_text('[app]\nhost="127.0.0.1"\nport=18210\n[database]\nreplicas=[]\nsources=[]\n[database.primary]\nhost="127.0.0.1"\nport=3306\ndatabase="fresh_seed_control"\nusername="root"\npassword="db-secret"\ntls_mode="disabled"\n[object_storage]\nbackend="rustfs"\nendpoint="http://127.0.0.1:29200"\nregion="us-east-1"\naccess_key="access"\nsecret_key="secret"\nuse_ssl=false\n', encoding="utf-8")
         defaults = self.local / "mysql.cnf"
         defaults.write_text("[client]\nhost=127.0.0.1\nport=3306\nuser=root\npassword=db-secret\nssl-mode=DISABLED\n", encoding="utf-8")
-        self.review = {"kind": "review-only-perf-resource-plan-with-readonly-preflight", "scopes": {},
+        self.review = {"kind": "review-only-perf-resource-plan-with-readonly-preflight", "ready_for_execution": True, "scopes": {},
                        "reference": {role: {"databases": [{"server_uuid": self.uuid, "database": "protected_" + role}]}
                                      for role in ("source", "protected_target")},
                        "tools": {role: {"path": str(self.paths[role]), "sha256": file_digest(self.paths[role])["sha256"]}
