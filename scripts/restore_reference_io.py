@@ -13,6 +13,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import quote, quote_plus
 
+from artifact_digests import filesystem_path
 from restore_build import file_digest
 from restore_reference_plan import BUCKETS, identifier, safe_file
 
@@ -122,7 +123,7 @@ class VerificationStdout:
         self.check, self.target_key = check, identifier(target_key)
         self.observed, self.failure = None, None
         self._paths()
-        self.stream = self.path.open("x+b", buffering=0)
+        self.stream = open(filesystem_path(self.path), "x+b", buffering=0)
         try:
             self.identity = self._state()[:2]
         except BaseException as error:
@@ -133,14 +134,20 @@ class VerificationStdout:
             raise
 
     def _paths(self):
-        if not self.path.is_absolute() or any(
-                p.is_symlink() or (p.exists() and getattr(p.lstat(), "st_file_attributes", 0) & 0x400)
-                for p in (self.path, *self.path.parents)):
+        if not self.path.is_absolute() or any(self._linked_or_reparse(path) for path in (self.path, *self.path.parents)):
             raise ValueError("MySQL 输出文件必须使用无链接的明确绝对路径")
+
+    @staticmethod
+    def _linked_or_reparse(path: Path) -> bool:
+        try:
+            state = os.lstat(filesystem_path(path))
+        except FileNotFoundError:
+            return False
+        return os.path.islink(filesystem_path(path)) or bool(getattr(state, "st_file_attributes", 0) & 0x400)
 
     def _state(self):
         self._paths()
-        actual, declared = os.fstat(self.stream.fileno()), self.path.stat()
+        actual, declared = os.fstat(self.stream.fileno()), os.stat(filesystem_path(self.path))
         # Windows 的 fstat 与路径 stat 对 ctime 的含义不同；绑定文件 ID、大小与修改时间。
         def state(value):
             return value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns
@@ -190,7 +197,7 @@ class VerificationStdout:
                   "stderr_bytes": stderr_bytes, "stderr_sha256": stderr_sha256, **diagnostic}
         receipt = self.path.with_suffix(".json")
         try:
-            with receipt.open("x", encoding="utf-8", newline="\n") as stream:
+            with open(filesystem_path(receipt), "x", encoding="utf-8", newline="\n") as stream:
                 json.dump(result, stream, ensure_ascii=False, indent=2)
                 stream.write("\n")
                 stream.flush()

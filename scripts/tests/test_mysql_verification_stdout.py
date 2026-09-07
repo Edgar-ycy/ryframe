@@ -3,12 +3,14 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+from artifact_digests import filesystem_path
 from devex_clone_factory import CloneSession
 from devex_clone_inventory import _Capture
 from devex_clone_post_context import Context
@@ -215,6 +217,21 @@ class VerificationStdoutTests(unittest.TestCase):
                 VerificationStdout(self.work, 'identity', 'shared-control')
             self.assertEqual(path.read_bytes(), b'previous')
 
+    def test_long_windows_output_path_preserves_stdout_and_receipt(self):
+        work = self.work
+        while len(str(work / 'mysql-ownership-shared-control-0123456789abcdef0123456789abcdef.stdout')) <= 270:
+            work /= 'evidence-segment'
+        os.makedirs(filesystem_path(work))
+        self.addCleanup(shutil.rmtree, filesystem_path(work))
+        with VerificationStdout(work, 'ownership', 'shared-control') as output:
+            output.write(b'control\tscope\tmarker\n')
+            raw, artifact = output.snapshot()
+            receipt = output.receipt(0, stderr=b'')
+        self.assertEqual(raw, b'control\tscope\tmarker\n')
+        with open(filesystem_path(artifact['path']), 'rb') as stream:
+            self.assertEqual(stream.read(), raw)
+        self.assertTrue(os.path.isfile(filesystem_path(receipt['path'])))
+
     def test_late_same_size_change_cannot_return_earlier_success(self):
         original = VerificationStdout.snapshot
         calls = 0
@@ -247,8 +264,8 @@ class VerificationStdoutTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 1)
 
     def test_linked_path_rejected_before_creation(self):
-        original = Path.is_symlink
-        with patch.object(Path, 'is_symlink', lambda path: path == self.work or original(path)):
+        original = os.path.islink
+        with patch('restore_reference_io.os.path.islink', lambda path: path == filesystem_path(self.work) or original(path)):
             with self.assertRaisesRegex(ValueError, '链接'):
                 VerificationStdout(self.work, 'identity', 'shared-control')
         self.assertEqual(list(self.work.glob('*.stdout')), [])
@@ -263,7 +280,7 @@ class VerificationStdoutTests(unittest.TestCase):
         original = ValueError('file identity unavailable')
         stream = Mock()
         stream.close.side_effect = OSError('close unavailable')
-        with patch.object(Path, 'open', return_value=stream), patch.object(VerificationStdout, '_state', side_effect=original):
+        with patch('builtins.open', return_value=stream), patch.object(VerificationStdout, '_state', side_effect=original):
             with self.assertRaises(ValueError) as caught:
                 VerificationStdout(self.work, 'identity', 'shared-control')
         self.assertIs(caught.exception, original)
