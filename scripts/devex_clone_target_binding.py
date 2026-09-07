@@ -22,6 +22,53 @@ KEYS = {"shared-control": ("combined", "shared"), "shared": ("tenant", "shared")
 EXCLUSIVE = {"mysql_exclusive", "redis_exclusive", "object_storage_exclusive"}
 
 
+def validate_review(review: dict) -> None:
+    """拒绝缺字段的审阅计划，避免初始化过程中才发现资源定义不完整。"""
+    if not isinstance(review, dict) or not isinstance(review.get("reference"), dict):
+        raise ValueError("审阅计划结构无效")
+    if review.get("kind") != "review-only-perf-resource-plan-with-readonly-preflight":
+        raise ValueError("审阅计划类型无效")
+    if review.get("ready_for_execution") is not True:
+        raise ValueError("审阅计划尚未就绪")
+    scopes, tools, services = review.get("scopes"), review.get("tools"), review.get("services")
+    if not isinstance(scopes, dict) or set(scopes) != {"seed", "base", "candidate"}:
+        raise ValueError("审阅计划必须完整声明三侧资源")
+    if not isinstance(tools, dict) or not isinstance(services, dict):
+        raise ValueError("审阅计划缺少工具或服务定义")
+    for role in ("mysql", "aws", "rustfs"):
+        tool = tools.get(role)
+        if not isinstance(tool, dict) or not isinstance(tool.get("path"), str) or not isinstance(tool.get("sha256"), str):
+            raise ValueError("审阅计划工具定义无效")
+    redis = tools.get("redis_server")
+    if not isinstance(redis, dict) or any(not isinstance(redis.get(key), str) for key in ("distribution", "resolved_path", "sha256")):
+        raise ValueError("审阅计划 Redis 工具定义无效")
+    rustfs, cache = services.get("rustfs"), services.get("redis")
+    if not isinstance(rustfs, dict) or not isinstance(cache, dict) or any(
+        not isinstance(value, str)
+        for value in (rustfs.get("api"), rustfs.get("console"), rustfs.get("data_dir"), cache.get("directory"))
+    ):
+        raise ValueError("审阅计划服务定义无效")
+    for role in ("source", "protected_target"):
+        side = review["reference"].get(role)
+        if not isinstance(side, dict) or not isinstance(side.get("databases"), list):
+            raise ValueError("审阅计划保护资源定义无效")
+    for side in scopes.values():
+        if not isinstance(side, dict) or not isinstance(side.get("scope_id"), str) or not name(side["scope_id"]):
+            raise ValueError("审阅计划 scope 无效")
+        if any(not isinstance(side.get(key), str) for key in ("runtime_dir", "identity_ledger", "api_url", "worker_ready_url", "frontend_url")):
+            raise ValueError("审阅计划运行路径无效")
+        objects, cache = side.get("objects"), side.get("redis")
+        if not isinstance(objects, dict) or any(not isinstance(objects.get(key), str) for key in ("endpoint", "region")):
+            raise ValueError("审阅计划对象存储定义无效")
+        if not isinstance(cache, dict) or any(not isinstance(cache.get(key), str) for key in ("url", "namespace", "ownership_key", "ownership_value")):
+            raise ValueError("审阅计划 Redis 定义无效")
+        databases = side.get("databases")
+        if not isinstance(databases, list) or {item.get("key") for item in databases if isinstance(item, dict)} != set(KEYS):
+            raise ValueError("审阅计划数据库定义无效")
+        if any(not isinstance(item.get("database"), str) or not isinstance(item.get("expected_server_uuid"), str) for item in databases):
+            raise ValueError("审阅计划数据库身份无效")
+
+
 def external_file(value: dict) -> None:
     exact(value, {"path", "sha256"})
     path = Path(value["path"])
@@ -38,10 +85,9 @@ def request_binding(backend: Path, request: dict) -> tuple[dict, dict]:
     name(request["id"])
     exact(request["review"], {"path", "bytes", "sha256", "canonical_sha256"})
     review = read_json(bound_file(backend, {k: v for k, v in request["review"].items() if k != "canonical_sha256"}))
+    validate_review(review)
     if (plan_hash(review) != digest(request["review"]["canonical_sha256"])
-            or review.get("kind") != "review-only-perf-resource-plan-with-readonly-preflight"
-            or review.get("ready_for_execution") is not True
-            or set(review["scopes"]) != {"seed", "base", "candidate"} or request["side"] not in review["scopes"]):
+            or request["side"] not in review["scopes"]):
         raise ValueError("必须选择已就绪审阅计划的明确单侧")
     selected = review["scopes"][request["side"]]
     target = request["target"]

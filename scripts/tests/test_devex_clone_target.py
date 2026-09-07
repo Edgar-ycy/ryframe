@@ -99,7 +99,19 @@ class TargetTests(unittest.TestCase):
             "canonical_sha256": plan_hash(f.review),
         }
         f.save_request()
-        with self.assertRaisesRegex(ValueError, "已就绪审阅计划"):
+        with self.assertRaisesRegex(ValueError, "尚未就绪"):
+            self.prepare()
+        self.assertFalse(f.calls)
+
+    def test_incomplete_review_prevents_resource_operations(self):
+        f = self.f
+        f.review["services"].pop("redis")
+        f.request["review"] = {
+            **f.bound(f.local / "review.json", f.review),
+            "canonical_sha256": plan_hash(f.review),
+        }
+        f.save_request()
+        with self.assertRaisesRegex(ValueError, "服务定义无效"):
             self.prepare()
         self.assertFalse(f.calls)
 
