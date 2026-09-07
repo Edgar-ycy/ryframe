@@ -155,24 +155,51 @@ def _secret(directory: Path, name: str) -> tuple[str, dict]:
     return value, bound(path)
 
 
-def _environment(backend: Path, review: dict, fixture: dict, output: Path) -> tuple[dict, dict]:
+def _database_credentials(backend: Path, source: Path, destination: Path) -> dict:
+    source = local_path(backend, str(source))
+    destination = local_path(backend, str(destination))
+    if linked(source) or not source.is_file():
+        raise ValueError("冻结 Device MySQL 凭据缺失或经过链接")
+    if destination == source:
+        return bound(source)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if linked(destination) or destination.exists() and not destination.is_file():
+        raise ValueError("目标 MySQL 凭据路径无效")
+    if destination.exists():
+        if destination.read_bytes() != source.read_bytes():
+            raise ValueError("目标 MySQL 凭据已存在且不属于冻结 Device 来源")
+    else:
+        with destination.open("xb") as stream:
+            stream.write(source.read_bytes())
+            stream.flush()
+            os.fsync(stream.fileno())
+    return bound(destination)
+
+
+def _environment(backend: Path, review: dict, fixture: dict, output: Path, side: str = "seed") -> tuple[dict, dict]:
     seed = review["scopes"]["seed"]
+    if side not in review["scopes"]:
+        raise ValueError("夹具环境必须选择已审阅侧")
+    selected = review["scopes"][side]
     execution = Path(fixture["paths"]["backend"])
     # Device 收据记录的是生成工作树的内容快照，不包含其后产生的忽略运行目录状态。
     if execution != Path(seed["backend_dir"]) or snapshot(execution)[0] != fixture["generated"]["backend"]:
         raise ValueError("seed Device 工作树与审阅计划或生成快照不一致")
     secrets = execution / ".local-tests/reference-fixture/secrets"
-    database = {item["key"]: item for item in seed["databases"]}
-    mysql_path = Path(database["shared-control"]["connection_file"])
-    if mysql_path != secrets / "mysql-client.cnf" or linked(mysql_path) or not mysql_path.is_file():
+    seed_database = {item["key"]: item for item in seed["databases"]}
+    source_mysql = Path(seed_database["shared-control"]["connection_file"])
+    if source_mysql != secrets / "mysql-client.cnf" or linked(source_mysql) or not source_mysql.is_file():
         raise ValueError("seed MySQL 凭据路径不属于冻结工作树")
+    database = {item["key"]: item for item in selected["databases"]}
+    mysql_path = Path(database["shared-control"]["connection_file"])
+    if any(item["connection_file"] != str(mysql_path) for item in database.values()):
+        raise ValueError("同侧四个数据库必须使用同一冻结 MySQL 凭据")
+    mysql_descriptor = _database_credentials(backend, source_mysql, mysql_path)
     parser = configparser.ConfigParser(interpolation=None)
     parser.read_string(mysql_path.read_text(encoding="utf-8"))
     if parser.sections() != ["client"] or set(parser["client"]) != {"host", "port", "user", "password", "ssl-mode"}:
-        raise ValueError("seed MySQL 凭据格式无效")
-    if any(item["connection_file"] != str(mysql_path) for item in database.values()):
-        raise ValueError("seed 四个数据库必须使用同一冻结 MySQL 凭据")
-    values, files = {}, {"mysql-client.cnf": bound(mysql_path)}
+        raise ValueError("MySQL 凭据格式无效")
+    values, files = {}, {"mysql-client.cnf": mysql_descriptor}
     for key, filename in (("APP_OBJECT_STORAGE_ACCESS_KEY", "rustfs-access-key.txt"),
                           ("APP_OBJECT_STORAGE_SECRET_KEY", "rustfs-secret-key.txt"),
                           ("APP_REDIS_PASSWORD", "redis-password.txt"),
@@ -188,7 +215,7 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path) -> tu
         targets.append({"key": key, "kind": "mysql", "mode": item["mode"], "host": item["host"],
                         "port": item["port"], "database": item["database"], "username": parser["client"]["user"],
                         "password_env": "APP_DB_PASSWORD", "tls_mode": "disabled"})
-    scope = seed["scope_id"]
+    scope = selected["scope_id"]
     environment = {
         "APP_ENV": "test", "APP_SCOPE_ID": scope, "APP_CONFIG_DIR": str(execution / "config"),
         # 控制库使用应用配置的正式覆盖名；租户目标仍以独立的秘密环境变量引用同一凭据。
@@ -198,9 +225,9 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path) -> tu
         "APP_DATABASE_PASSWORD": parser["client"]["password"], "APP_DATABASE_TLS_MODE": "disabled",
         "APP_DB_PASSWORD": parser["client"]["password"],
         "APP_TENANT_DATA_TARGETS": json.dumps(targets, separators=(",", ":")),
-        "APP_OBJECT_STORAGE_BACKEND": "rustfs", "APP_OBJECT_STORAGE_ENDPOINT": seed["objects"]["endpoint"],
-        "APP_OBJECT_STORAGE_REGION": seed["objects"]["region"], "APP_OBJECT_STORAGE_USE_SSL": "false",
-        "APP_REDIS_HOST": "127.0.0.1", "APP_REDIS_PORT": str(urlsplit(seed["redis"]["url"]).port or 16390),
+        "APP_OBJECT_STORAGE_BACKEND": "rustfs", "APP_OBJECT_STORAGE_ENDPOINT": selected["objects"]["endpoint"],
+        "APP_OBJECT_STORAGE_REGION": selected["objects"]["region"], "APP_OBJECT_STORAGE_USE_SSL": "false",
+        "APP_REDIS_HOST": "127.0.0.1", "APP_REDIS_PORT": str(urlsplit(selected["redis"]["url"]).port or 16390),
         "APP_REDIS_DATABASE": "0", "APP_REDIS_TLS": "false", "APP_JOBS_MODE": "external",
         "APP_JOBS_HEALTH_HOST": "127.0.0.1", "APP_JOBS_HEALTH_PORT": "19210",
         "APP_RESET_CREDENTIAL_VERSION": "fixture-v1",
@@ -212,7 +239,7 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path) -> tu
     return environment, files
 
 
-def plan(backend: Path, review_path: Path, fixture_path: Path, maintenance_path: Path) -> dict:
+def plan(backend: Path, review_path: Path, fixture_path: Path, maintenance_path: Path, side: str = "seed") -> dict:
     """验证 C52 无关的输入，并返回后续显式创建阶段应消费的不可变描述。"""
     backend = backend.resolve(strict=True)
     review_file, review = _read(backend, review_path)
@@ -224,10 +251,12 @@ def plan(backend: Path, review_path: Path, fixture_path: Path, maintenance_path:
     reference = review["reference"]
     if any(reference[side]["databases"] for side in ("source", "protected_target")):
         raise ValueError("新的隔离参考夹具不得读取或复用历史来源数据库")
-    seed = review["scopes"]["seed"]
-    databases = {item["key"]: item for item in seed["databases"]}
+    if side not in review["scopes"]:
+        raise ValueError("夹具环境必须选择已审阅侧")
+    selected = review["scopes"][side]
+    databases = {item["key"]: item for item in selected["databases"]}
     if set(databases) != set(KEYS):
-        raise ValueError("seed 侧必须精确声明四个数据库")
+        raise ValueError("夹具侧必须精确声明四个数据库")
     names = [entry["database"].lower() for side in review["scopes"].values()
              for entry in side["databases"]]
     if len(names) != 12 or len(set(names)) != len(names):
@@ -238,22 +267,23 @@ def plan(backend: Path, review_path: Path, fixture_path: Path, maintenance_path:
         "review": {**bound(review_file), "canonical_sha256": plan_hash(review)},
         "fixture": bound(fixture_file),
         "maintenance_build": bound(maintenance_file),
-        "side": "seed",
-        "scope_id": seed["scope_id"],
+        "side": side,
+        "scope_id": selected["scope_id"],
         "databases": [{"key": key, "database": databases[key]["database"],
                        "mode": KEYS[key][1]} for key in sorted(databases)],
-        "object_endpoint": seed["objects"]["endpoint"],
-        "redis_url": seed["redis"]["url"],
+        "object_endpoint": selected["objects"]["endpoint"],
+        "redis_url": selected["redis"]["url"],
         "historical_data_used": False,
         "remote_writes": 0,
     }
     return {**result, "sha256": plan_hash(result)}
 
 
-def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_path: Path, output: Path) -> dict:
+def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_path: Path, output: Path,
+            side: str = "seed") -> dict:
     """显式准备冻结环境；只写本地私有环境和收据，绝不创建服务或业务资源。"""
     backend = backend.resolve(strict=True)
-    result = plan(backend, review_path, fixture_path, maintenance_path)
+    result = plan(backend, review_path, fixture_path, maintenance_path, side)
     output = local_path(backend, str(output if output.is_absolute() else backend / output), new=True)
     if not output.parent.is_dir():
         raise ValueError("夹具环境输出父目录不存在")
@@ -262,7 +292,7 @@ def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_pa
     fixture = read_json(Path(result["fixture"]["path"]))
     maintenance_path = Path(result["maintenance_build"]["path"])
     execution = Path(fixture["paths"]["backend"])
-    environment, secrets = _environment(backend, review, fixture, output)
+    environment, secrets = _environment(backend, review, fixture, output, side)
     output.mkdir()
     (output / "tmp").mkdir()
     try:
@@ -295,6 +325,7 @@ def main() -> None:
     parser.add_argument("--fixture", type=Path)
     parser.add_argument("--maintenance-build", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--side", choices=("seed", "base", "candidate"), default="seed")
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
     if args.operation in ("plan", "prepare") and (args.fixture is None or args.maintenance_build is None):
@@ -302,11 +333,11 @@ def main() -> None:
     if args.operation == "plan":
         if args.output is not None or args.write:
             parser.error("plan 不接受 --output 或 --write")
-        result = plan(args.backend_dir, args.review, args.fixture, args.maintenance_build)
+        result = plan(args.backend_dir, args.review, args.fixture, args.maintenance_build, args.side)
     elif args.operation == "prepare":
         if args.output is None or not args.write:
             parser.error("prepare 需要 --output 与 --write")
-        result = prepare(args.backend_dir, args.review, args.fixture, args.maintenance_build, args.output)
+        result = prepare(args.backend_dir, args.review, args.fixture, args.maintenance_build, args.output, args.side)
     else:
         if args.output is None or not args.write:
             parser.error("review 需要 --output 与 --write")

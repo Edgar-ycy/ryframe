@@ -57,6 +57,9 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertFalse(result["historical_data_used"])
         self.assertEqual(result["remote_writes"], 0)
         self.assertEqual(result["side"], "seed")
+        base = environment.plan(self.backend, self.write("base-review.json", self.review), self.write("base-fixture.json", self.fixture),
+                                self.write("base-build.json", self.maintenance), "base")
+        self.assertEqual((base["side"], base["scope_id"]), ("base", "fixture-base"))
 
     def test_plan_rejects_historical_source_database(self):
         self.review["reference"]["source"]["databases"] = [{"database": "old"}]
@@ -145,6 +148,16 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual(values["APP_OBJECT_STORAGE_ACCESS_KEY"], "access")
         self.assertEqual(values["APP_MONITOR_METRICS_BEARER_TOKEN"], "metrics")
         self.assertEqual(set(files), {"mysql-client.cnf", *names})
+
+        base_mysql = self.root / "base/backend/.local-tests/reference-fixture/secrets/mysql-client.cnf"
+        for item in self.review["scopes"]["base"]["databases"]:
+            item["connection_file"] = str(base_mysql)
+        with patch.object(environment, "snapshot", return_value=(generated, b"")):
+            base_values, base_files = environment._environment(self.backend, self.review, fixture, self.root / "base-output", "base")
+        self.assertEqual(base_values["APP_SCOPE_ID"], "fixture-base")
+        self.assertEqual(base_values["APP_DATABASE_NAME"], "fixture_base_shared_control")
+        self.assertEqual(base_mysql.read_bytes(), (secrets / "mysql-client.cnf").read_bytes())
+        self.assertEqual(base_files["mysql-client.cnf"], {"path": str(base_mysql), **file_digest(base_mysql)})
 
 
 if __name__ == "__main__":
