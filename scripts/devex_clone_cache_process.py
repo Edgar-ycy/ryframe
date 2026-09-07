@@ -87,11 +87,12 @@ def validate(request, *, files=True):
             or type(request["timeout_seconds"]) is not int or not 1 <= request["timeout_seconds"] <= 180
             or not re.fullmatch(r"[A-Z][A-Z0-9_]+", request["password_env"])
             or not re.fullmatch(r"[a-f0-9]{64}", request["sha256"])
-            or not re.fullmatch(r"[a-f0-9]{40}", request["previous_run_id"])
-            or not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", request["previous_boot_id"])):
+            or request["previous_identity"] is None and (request["previous_boot_id"] is not None or request["previous_run_id"] is not None)
+            or request["previous_identity"] is not None and (not re.fullmatch(r"[a-f0-9]{40}", request["previous_run_id"])
+                                                       or not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", request["previous_boot_id"]))):
         raise ValueError("Redis 原进程、端点或工具声明无效")
     previous = request["previous_identity"]
-    if (set(previous) != {"pid", "started", "executable"} or type(previous["pid"]) is not int or previous["pid"] <= 1
+    if previous is not None and (set(previous) != {"pid", "started", "executable"} or type(previous["pid"]) is not int or previous["pid"] <= 1
             or not isinstance(previous["started"], str) or not previous["started"].isdigit() or previous["executable"] != request["executable"]):
         raise ValueError("Redis 原始 Linux 创建身份不完整")
     if set(request["directory"]) != {"path", "device", "inode"} or set(request["wsl"]) != {"path", "sha256"}:
@@ -272,9 +273,10 @@ def linux_serve(payload):
     authorization = sys.stdin.readline(16384)
     if not authorization or json.loads(authorization) != {"request_sha256": payload["request_sha256"], "output": payload["windows_output"]}:
         raise ValueError("WSL 启动未获得已登记 Windows 控制器授权")
-    old = linux_identity(kernel, request["previous_identity"]["pid"])
-    if old is not None and old["boot_id"] == request["previous_boot_id"]:
-        raise ValueError("原 Redis 进程仍存在或同 boot PID 已被复用")
+    if request["previous_identity"] is not None:
+        old = linux_identity(kernel, request["previous_identity"]["pid"])
+        if old is not None and old["boot_id"] == request["previous_boot_id"]:
+            raise ValueError("原 Redis 进程仍存在或同 boot PID 已被复用")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", request["port"]))
     args = [request["launcher"], linux_path(request["configuration"]["path"])]

@@ -72,6 +72,31 @@ class CacheProcessTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             process.validate(self.request)
 
+    def test_first_generation_allows_only_a_complete_absence_of_predecessor(self):
+        initial = {**self.request, "previous_identity": None, "previous_boot_id": None, "previous_run_id": None}
+        process.validate(initial)
+        for key, value in (("previous_boot_id", BOOT), ("previous_run_id", "a" * 40)):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                process.validate({**initial, key: value})
+
+    def test_first_generation_does_not_observe_a_predecessor_before_launch(self):
+        request = {**self.request, "previous_identity": None, "previous_boot_id": None, "previous_run_id": None}
+        payload = {"request": request, "request_sha256": process.canonical(request), "windows_output": str(self.output)}
+        authorization = json.dumps({"request_sha256": payload["request_sha256"], "output": str(self.output)}) + "\n"
+        kernel = Mock()
+        with patch.object(process, "linux_inputs", return_value=(self.output, kernel)), \
+                patch.object(process.sys, "stdin", io.StringIO(authorization)), \
+                patch.object(process, "linux_identity", side_effect=lambda _kernel, pid: (
+                    self.assertNotEqual(pid, self.request["previous_identity"]["pid"]),
+                    {"pid": pid, "started": "60", "executable": self.request["executable"], "boot_id": BOOT},
+                )[1]) as identity, \
+                patch.object(process.socket, "socket"), \
+                patch.object(process, "write", side_effect=RuntimeError("已越过前代检查")), \
+                patch.object(process.subprocess, "Popen") as popen, self.assertRaisesRegex(RuntimeError, "已越过前代检查"):
+            process.linux_serve(payload)
+        self.assertEqual([call.args[1] for call in identity.call_args_list], [os.getpid()])
+        popen.assert_not_called()
+
     def test_atomic_publication_never_exposes_partial_json_and_never_overwrites(self):
         target = self.output / "receipt.json"
         original = json.dump
