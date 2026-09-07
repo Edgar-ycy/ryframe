@@ -15,6 +15,7 @@ from devex_clone_target_binding import KEYS, validate_review
 from devex_clone_factory_context import Environments
 from reference_fixture_runtime import _bootstrap, _output, _runtime_environment, verify as verify_runtime
 from restore_build import file_digest
+from restore_reference_io import redact_object_diagnostic
 from restore_reference_plan import plan_hash, validate_plan
 
 
@@ -100,6 +101,22 @@ def _dataset() -> dict:
     }
 
 
+def _write_prepare_failure(runtime: Path, plan_file: Path, error: subprocess.CalledProcessError, values: dict) -> Path:
+    """保存已脱敏的子进程失败证据，禁止把未知写入当作可重放阶段。"""
+    output = runtime / (plan_file.stem + ".prepare-failed.json")
+    if output.exists():
+        raise ValueError("参考数据准备失败证据已存在，禁止覆盖或重放")
+    write_json(output, {
+        "format_version": 1,
+        "kind": "reference-fixture-dataset-failure",
+        "status": "failed_unknown_writes",
+        "returncode": error.returncode,
+        "stdout": redact_object_diagnostic(error.stdout, values),
+        "stderr": redact_object_diagnostic(error.stderr, values),
+    })
+    return output
+
+
 def build_plan(backend: Path, environment_path: Path, runtime_path: Path, work_dir: Path) -> dict:
     """从同代次 bootstrap、运行时和审阅计划派生单一的参考数据计划。"""
     bootstrap_file, execution, private = _bootstrap(backend, environment_path)
@@ -166,10 +183,14 @@ def prepare(backend: Path, environment_path: Path, runtime_path: Path, plan_path
     values = _runtime_environment(private, pair)
     command = [sys.executable, "-X", "utf8", str(execution / "scripts/restore_reference.py"), "dataset",
                "--plan", str(plan_file), "--backend-dir", str(execution), "--write"]
-    with Environments(values, values).use("source"):
-        completed = subprocess.run(command, cwd=execution, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   text=True, encoding="utf-8", check=True,
-                                   creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
+    try:
+        with Environments(values, values).use("source"):
+            subprocess.run(command, cwd=execution, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           text=True, encoding="utf-8", check=True,
+                           creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
+    except subprocess.CalledProcessError as error:
+        diagnostic = _write_prepare_failure(runtime, plan_file, error, values)
+        raise RuntimeError(f"参考数据准备子进程失败；已保存脱敏诊断：{diagnostic}") from error
     return {"status": "reference_fixture_dataset_prepared", "plan": _bound(plan_file),
             "work_dir": plan["work_dir"], "dataset": _bound(Path(plan["work_dir"]) / "dataset/result.json"),
             "remote_writes": {"business_data": True, "objects": True}}

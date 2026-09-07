@@ -1,5 +1,6 @@
 import copy
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -75,3 +76,17 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
         with patch.object(dataset, "verify_runtime", return_value={"scope_id": "other", "runtime": {}}):
             with self.assertRaisesRegex(ValueError, "同一代次"):
                 dataset.build_plan(self.backend, self.bootstrap, self.runtime, self.work)
+
+    def test_prepare_failure_records_redacted_diagnostic_once(self):
+        error = subprocess.CalledProcessError(1, ["node"], output="password=secret", stderr="secret")
+        path = dataset._write_prepare_failure(
+            self.runtime,
+            self.runtime / "dataset-plan.json",
+            error,
+            {"APP_DATABASE_PASSWORD": "secret"},
+        )
+        value = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(value["status"], "failed_unknown_writes")
+        self.assertNotIn("secret", value["stdout"] + value["stderr"])
+        with self.assertRaisesRegex(ValueError, "禁止覆盖"):
+            dataset._write_prepare_failure(self.runtime, self.runtime / "dataset-plan.json", error, {})
