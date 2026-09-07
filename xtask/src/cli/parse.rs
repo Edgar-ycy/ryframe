@@ -330,9 +330,32 @@ fn parse_recovery(args: &[String]) -> Result<RecoveryCommand, CliError> {
         )
         .map(RecoveryCommand::Clone),
         "fresh-target" => Ok(RecoveryCommand::FreshTarget(rest.to_vec())),
-        "fixture" => Ok(RecoveryCommand::Fixture(rest.to_vec())),
+        "fixture" => parse_fixture(rest).map(RecoveryCommand::Fixture),
         "dataset-prepare" => Ok(RecoveryCommand::DatasetPrepare(rest.to_vec())),
         _ => Err(CliError::new(format!("未知 recovery 阶段：{stage}"))),
+    }
+}
+
+fn parse_fixture(args: &[String]) -> Result<Vec<String>, CliError> {
+    match args {
+        [option, ..] if option.starts_with("--") => Ok(args.to_vec()),
+        [operation, ..]
+            if [
+                "environment",
+                "review",
+                "request",
+                "services",
+                "source-pair",
+                "runtime",
+                "dataset",
+            ]
+            .contains(&operation.as_str()) =>
+        {
+            Ok(args.to_vec())
+        }
+        _ => Err(CliError::new(
+            "用法：cargo xtask check recovery fixture --output-dir <目录> --write，或 fixture <environment|review|request|services|source-pair|runtime|dataset> ...",
+        )),
     }
 }
 

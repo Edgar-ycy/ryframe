@@ -26,6 +26,13 @@ fn exposes_exactly_five_top_level_command_families() {
             real: false,
         })
     );
+    assert!(parse_command(&[
+        "check",
+        "recovery",
+        "fixture",
+        "status",
+    ])
+    .is_err());
     assert_eq!(
         parse_command(&["generate"]).unwrap(),
         Command::Generate(GenerateCommand::Help)
