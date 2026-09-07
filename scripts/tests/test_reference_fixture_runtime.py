@@ -74,6 +74,7 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
             result = runtime.build(self.backend, self.bootstrap, output)
 
         self.assertEqual(result["status"], "reference_fixture_runtime_built")
+        self.assertEqual(captured["environment"]["APP_API_DOCS_ENABLED"], "false")
         self.assertEqual(captured["environment"]["RYFRAME_E2E_FIXTURE"], "device")
         self.assertEqual(captured["environment"]["RYFRAME_CODE_SHA"], "b" * 40)
         build = json.loads((output / "backend-build.json").read_text(encoding="utf-8"))

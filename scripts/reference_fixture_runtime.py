@@ -65,7 +65,8 @@ def _environment(execution: Path, values: dict, output: Path) -> dict:
     head = source.get("head") if isinstance(source, dict) else None
     if not isinstance(head, str):
         raise ValueError("夹具来源组合缺少后端提交")
-    return {**configured(values), "RYFRAME_E2E_FIXTURE": "device", "RYFRAME_CODE_SHA": head}
+    return {**configured(values), "APP_API_DOCS_ENABLED": "false",
+            "RYFRAME_E2E_FIXTURE": "device", "RYFRAME_CODE_SHA": head}
 
 
 def _run(command: list[str], *, cwd: Path, capture_output: bool) -> subprocess.CompletedProcess:
