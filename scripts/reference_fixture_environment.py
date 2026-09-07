@@ -168,7 +168,8 @@ def _secret(directory: Path, name: str) -> tuple[str, dict]:
 
 def _secret_directory(backend: Path, execution: Path, selected: Path | None = None) -> Path:
     root = execution / ".local-tests/reference-fixture"
-    directory = root / "secrets" if selected is None else local_path(backend, str(selected))
+    requested = selected if selected is None or selected.is_absolute() else backend / selected
+    directory = root / "secrets" if requested is None else local_path(backend, str(requested))
     if (not directory.is_relative_to(root) or linked(directory) or not directory.is_dir()
             or any(linked(directory / name) or not (directory / name).is_file() for name in SECRET_FILES)):
         raise ValueError("夹具 secret set 必须是执行工作树内完整的普通文件目录")
@@ -205,8 +206,7 @@ def bootstrap_secrets(backend: Path, source_fixture_path: Path, source_directory
     target_execution = Path(target_fixture["paths"]["backend"])
     if source_execution == target_execution:
         raise ValueError("秘密导入必须在两个不同的 Device 工作树之间进行")
-    requested_source = source_directory if source_directory.is_absolute() else backend / source_directory
-    source = _secret_directory(backend, source_execution, requested_source)
+    source = _secret_directory(backend, source_execution, source_directory)
     destination = target_execution / ".local-tests/reference-fixture/secrets"
     if destination.exists() or linked(destination) or not destination.parent.is_dir():
         raise ValueError("新 Device 默认秘密目录已存在或父目录无效")
