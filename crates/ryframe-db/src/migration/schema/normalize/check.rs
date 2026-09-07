@@ -369,7 +369,7 @@ fn atomic_group(tokens: &[CheckToken], open: usize, close: usize) -> bool {
                 between_range = false;
             }
             CheckToken::Keyword(value) if depth == 0 && matches!(value.as_str(), "and" | "or") => {
-                return false
+                return false;
             }
             CheckToken::Symbol(value) if depth == 0 && value == "," => return false,
             _ => {}
@@ -445,10 +445,14 @@ mod tests {
             normalize_check_clause(
                 "((`attempts` >= 0) and (`max_attempts` between 1 and 100) and (`claim_sequence` >= `attempts`))",
             ),
-            normalize_check_clause("`attempts` >= 0 AND `max_attempts` BETWEEN 1 AND 100 AND `claim_sequence` >= `attempts`"),
+            normalize_check_clause(
+                "`attempts` >= 0 AND `max_attempts` BETWEEN 1 AND 100 AND `claim_sequence` >= `attempts`"
+            ),
         );
         assert_eq!(
-            normalize_check_clause("((`status` in (_utf8mb4\\'running\\',_utf8mb4\\'failed\\')) and (`completed_at` is null))"),
+            normalize_check_clause(
+                "((`status` in (_utf8mb4\\'running\\',_utf8mb4\\'failed\\')) and (`completed_at` is null))"
+            ),
             normalize_check_clause("`status` IN ('running', 'failed') AND `completed_at` IS NULL"),
         );
     }
