@@ -182,10 +182,16 @@ class SourceBindingTests(unittest.TestCase):
         with self.assertRaisesRegex(binding.BindingError, "对象认证"):
             self.verify()
 
+    def test_portable_quoted_password_is_normalized_before_binding(self):
+        self.client.write_text(self.client.read_text().replace("private-db-value", '"private-db-value"'))
+        self.refresh_defaults_hash()
+        self.assertEqual(len(self.verify()["databases"]), 4)
+
     def test_incomplete_ambiguous_defaults_or_changed_file_are_rejected(self):
         original = self.client.read_text()
         for content in (original + "ssl-ca=external.pem\n", original.replace("ssl-mode=REQUIRED\n", ""),
-                        original.replace("private-db-value", '"private-db-value"'),
+                        original.replace("private-db-value", '"private db value"'),
+                        original.replace("private-db-value", '"private-db-value\\"'),
                         original.replace("private-db-value", "private-db-value#comment")):
             with self.subTest():
                 self.client.write_text(content)

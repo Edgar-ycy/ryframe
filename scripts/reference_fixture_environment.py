@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import configparser
 import copy
 import json
 import os
@@ -20,6 +19,7 @@ from devex_clone_tools import verify as verify_tools
 from full_stack_runtime import configuration_digest
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
+from restore_source_binding import mysql_client
 from source_inventory import snapshot
 
 
@@ -195,10 +195,10 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
     if any(item["connection_file"] != str(mysql_path) for item in database.values()):
         raise ValueError("同侧四个数据库必须使用同一冻结 MySQL 凭据")
     mysql_descriptor = _database_credentials(backend, source_mysql, mysql_path)
-    parser = configparser.ConfigParser(interpolation=None)
-    parser.read_string(mysql_path.read_text(encoding="utf-8"))
-    if parser.sections() != ["client"] or set(parser["client"]) != {"host", "port", "user", "password", "ssl-mode"}:
-        raise ValueError("MySQL 凭据格式无效")
+    try:
+        client = mysql_client(mysql_path, mysql_descriptor["sha256"])
+    except ValueError as error:
+        raise ValueError("MySQL 凭据格式无效") from error
     values, files = {}, {"mysql-client.cnf": mysql_descriptor}
     for key, filename in (("APP_OBJECT_STORAGE_ACCESS_KEY", "rustfs-access-key.txt"),
                           ("APP_OBJECT_STORAGE_SECRET_KEY", "rustfs-secret-key.txt"),
@@ -213,17 +213,17 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
     for key in ("shared", "dedicated-a", "dedicated-b"):
         item = database[key]
         targets.append({"key": key, "kind": "mysql", "mode": item["mode"], "host": item["host"],
-                        "port": item["port"], "database": item["database"], "username": parser["client"]["user"],
+                        "port": item["port"], "database": item["database"], "username": client["user"],
                         "password_env": "APP_DB_PASSWORD", "tls_mode": "disabled"})
     scope = selected["scope_id"]
     environment = {
         "APP_ENV": "test", "APP_SCOPE_ID": scope, "APP_CONFIG_DIR": str(execution / "config"),
         # 控制库使用应用配置的正式覆盖名；租户目标仍以独立的秘密环境变量引用同一凭据。
-        "APP_DATABASE_HOST": parser["client"]["host"], "APP_DATABASE_PORT": parser["client"]["port"],
+        "APP_DATABASE_HOST": client["host"], "APP_DATABASE_PORT": client["port"],
         "APP_DATABASE_NAME": database["shared-control"]["database"],
-        "APP_DATABASE_USERNAME": parser["client"]["user"],
-        "APP_DATABASE_PASSWORD": parser["client"]["password"], "APP_DATABASE_TLS_MODE": "disabled",
-        "APP_DB_PASSWORD": parser["client"]["password"],
+        "APP_DATABASE_USERNAME": client["user"],
+        "APP_DATABASE_PASSWORD": client["password"], "APP_DATABASE_TLS_MODE": "disabled",
+        "APP_DB_PASSWORD": client["password"],
         "APP_TENANT_DATA_TARGETS": json.dumps(targets, separators=(",", ":")),
         "APP_OBJECT_STORAGE_BACKEND": "rustfs", "APP_OBJECT_STORAGE_ENDPOINT": selected["objects"]["endpoint"],
         "APP_OBJECT_STORAGE_REGION": selected["objects"]["region"], "APP_OBJECT_STORAGE_USE_SSL": "false",

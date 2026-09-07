@@ -1,7 +1,6 @@
 """只读核对来源运行配置与参考计划的物理目标；秘密仅在内存比较。"""
 from __future__ import annotations
 
-import configparser
 import hashlib
 import json
 import os
@@ -68,28 +67,42 @@ def defaults_connection(backend: Path, declared: dict) -> dict:
     path = Path(declared["defaults_file"])
     demand(path.is_absolute() and path.resolve().is_relative_to((backend / ".local-tests").resolve())
            and path.is_file() and not path.is_symlink(), "来源 MySQL 凭据文件边界无效")
-    raw = path.read_bytes()
-    demand(hashlib.sha256(raw).hexdigest() == declared["defaults_sha256"], "来源 MySQL 凭据文件摘要已变化")
-    content = raw.decode("utf-8")
-    config = configparser.ConfigParser(interpolation=None)
-    config.read_string(content)
-    required = {"host", "port", "user", "password", "ssl-mode"}
-    demand(config.sections() == ["client"] and not config.defaults()
-           and set(config["client"]) == required, "来源凭据必须显式且仅包含连接认证与无外部文件 TLS 模式")
-    # 仅接受本参考设施的无转义写法，拒绝 MySQL 与 ConfigParser 解释可能不同的选项值。
-    for line in content.splitlines():
-        if not line.strip() or line == "[client]":
-            continue
-        demand("=" in line, "来源 MySQL 凭据选项格式不明确")
-        key, value = line.split("=", 1)
-        demand(key in required and bool(value) and value == value.strip()
-               and not any(character in value for character in "\"'\\#;\r\n"), "来源 MySQL 凭据选项包含不支持的转义或注释")
-    client = config["client"]
-    demand(client["host"] in ("127.0.0.1", "::1"), "来源 MySQL 必须是计划中的明确本机地址")
-    demand(client["ssl-mode"] in ("REQUIRED", "DISABLED"), "来源 TLS 模式不支持未绑定的外部证书")
-    demand(re.fullmatch(r"[0-9]+", client["port"]) is not None, "来源 MySQL 凭据端口无效")
+    client = mysql_client(path, declared["defaults_sha256"])
     return {"host": client["host"], "port": port(int(client["port"])), "database": text(declared["database"]),
             "username": client["user"], "password": client["password"], "tls_mode": client["ssl-mode"].lower()}
+
+
+def mysql_client(path: Path, expected_sha256: str | None = None) -> dict:
+    """只接受 MySQL 与本项目一致解释的最小凭据格式，并规范化安全双引号 token。"""
+    raw = path.read_bytes()
+    if expected_sha256 is not None:
+        demand(hashlib.sha256(raw).hexdigest() == expected_sha256, "来源 MySQL 凭据文件摘要已变化")
+    content = raw.decode("utf-8")
+    required = {"host", "port", "user", "password", "ssl-mode"}
+    entries = {}
+    section = False
+    for line in content.splitlines():
+        if line == "[client]" and not section:
+            section = True
+            continue
+        demand(section and "=" in line, "来源 MySQL 凭据选项格式不明确")
+        key, value = line.split("=", 1)
+        demand(key in required and key not in entries and bool(value) and value == value.strip(),
+               "来源 MySQL 凭据选项格式不明确")
+        if value.startswith('"') or value.endswith('"'):
+            demand(len(value) >= 3 and value.startswith('"') and value.endswith('"')
+                   and re.fullmatch(r"[A-Za-z0-9._-]+", value[1:-1]) is not None,
+                   "来源 MySQL 凭据选项包含不支持的转义或注释")
+            value = value[1:-1]
+        else:
+            demand(not any(character in value for character in "\"'\\#;\r\n"),
+                   "来源 MySQL 凭据选项包含不支持的转义或注释")
+        entries[key] = value
+    demand(section and set(entries) == required, "来源凭据必须显式且仅包含连接认证与无外部文件 TLS 模式")
+    demand(entries["host"] in ("127.0.0.1", "::1"), "来源 MySQL 必须是计划中的明确本机地址")
+    demand(entries["ssl-mode"] in ("REQUIRED", "DISABLED"), "来源 TLS 模式不支持未绑定的外部证书")
+    demand(re.fullmatch(r"[0-9]+", entries["port"]) is not None, "来源 MySQL 凭据端口无效")
+    return entries
 
 
 def runtime_targets(table: dict, variables: Mapping[str, str]) -> dict:
