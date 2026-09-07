@@ -364,6 +364,34 @@ class SourceFingerprintsTests(unittest.TestCase):
                 sources.artifact_sources(self.root, [binding]):
             pass
 
+    def test_maintenance_bridge_can_verify_controlled_isolated_worktree(self):
+        isolated = self.local / "isolated-backend"
+        build = isolated / ".local-tests/build/build.json"
+        build.parent.mkdir(parents=True)
+        build.write_text("{}", encoding="utf-8")
+        receipt = {"kind": "devex-clone-tool-build", "backend_root": str(isolated)}
+
+        with patch.object(devex_clone_tools, "verify_evidence") as verify:
+            sources._verify_bridge_build(self.root, build, receipt)
+
+        verify.assert_called_once_with(isolated.resolve(), build, receipt)
+
+    def test_maintenance_bridge_rejects_uncontrolled_or_misplaced_worktree(self):
+        isolated = self.local / "isolated-backend"
+        allowed = isolated / ".local-tests/build/build.json"
+        allowed.parent.mkdir(parents=True)
+        allowed.write_text("{}", encoding="utf-8")
+        receipt = {"kind": "devex-clone-tool-build", "backend_root": str(ROOT)}
+
+        with self.assertRaisesRegex(ValueError, "当前 .local-tests"):
+            sources._verify_bridge_build(self.root, allowed, receipt)
+
+        receipt["backend_root"] = str(isolated)
+        misplaced = self.local / "misplaced-build.json"
+        misplaced.write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "所属工作树"):
+            sources._verify_bridge_build(self.root, misplaced, receipt)
+
     def test_tool_change_during_stage_requires_new_stage_verification(self):
         binding = self.bridge()
         with self.assertRaisesRegex(ValueError, "阶段结束"), sources.artifact_sources(self.root, [binding]):

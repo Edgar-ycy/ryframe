@@ -132,6 +132,30 @@ def _bridge_build_identity(receipt: dict) -> str:
                              "artifacts": roles})
 
 
+def _maintenance_build_root(root: Path, path: Path, receipt: dict) -> Path:
+    """解析维护构建所属工作树，隔离工作树只能位于当前证据根内。"""
+    from devex_clone_model import linked
+
+    current = root.resolve(strict=True)
+    declared = Path(receipt.get("backend_root", ""))
+    if not declared.is_absolute() or not declared.is_dir():
+        raise ValueError("维护构建缺少可用的所属工作树")
+    declared = declared.resolve(strict=True)
+    if declared == current:
+        return current
+    evidence_root = current / ".local-tests"
+    if declared == evidence_root or not declared.is_relative_to(evidence_root):
+        raise ValueError("隔离维护构建工作树必须位于当前 .local-tests")
+    cursor = evidence_root
+    for part in declared.relative_to(evidence_root).parts:
+        cursor /= part
+        if linked(cursor):
+            raise ValueError("隔离维护构建工作树不能经过链接")
+    if not path.is_relative_to(declared / ".local-tests"):
+        raise ValueError("维护构建收据必须位于所属工作树的 .local-tests")
+    return declared
+
+
 def _verify_bridge_build(root: Path, path: Path, receipt: dict) -> None:
     kind = receipt.get("kind")
     if kind == "restore-backend-build":
@@ -152,7 +176,7 @@ def _verify_bridge_build(root: Path, path: Path, receipt: dict) -> None:
     if kind == "devex-clone-tool-build":
         from devex_clone_tools import verify_evidence
 
-        verify_evidence(root, path, receipt)
+        verify_evidence(_maintenance_build_root(root, path, receipt), path, receipt)
         return
     raise ValueError("来源桥接只接受 API/Worker 或维护 CLI 构建收据")
 
