@@ -157,10 +157,11 @@ def main() -> None:
     args = parser.parse_args()
     if not args.write:
         parser.error("续签审阅计划需要显式 --write")
-    result = renew(args.backend_dir, args.template, args.fixture, args.future_root, args.id,
+    backend = args.backend_dir.resolve()
+    result = renew(backend, args.template, args.fixture, args.future_root, args.id,
                    args.api_port, args.worker_port, args.frontend_port)
-    output = local_path(args.backend_dir.resolve(), str(args.output if args.output.is_absolute()
-                                                         else args.backend_dir / args.output), new=True)
+    requested_output = args.output if args.output.is_absolute() else backend / args.output
+    output = local_path(backend, str(requested_output), new=True)
     if not output.parent.is_dir():
         raise ValueError("新审阅计划输出父目录不存在")
     write_json(output, result)
