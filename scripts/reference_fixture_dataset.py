@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -101,7 +102,8 @@ def _dataset() -> dict:
     }
 
 
-def _write_prepare_failure(runtime: Path, plan_file: Path, error: subprocess.CalledProcessError, values: dict) -> Path:
+def _write_prepare_failure(runtime: Path, plan_file: Path, error: subprocess.CalledProcessError, values: dict,
+                           report_directory: Path) -> Path:
     """保存已脱敏的子进程失败证据，禁止把未知写入当作可重放阶段。"""
     output = runtime / (plan_file.stem + ".prepare-failed.json")
     if output.exists():
@@ -113,6 +115,7 @@ def _write_prepare_failure(runtime: Path, plan_file: Path, error: subprocess.Cal
         "returncode": error.returncode,
         "stdout": redact_object_diagnostic(error.stdout, values),
         "stderr": redact_object_diagnostic(error.stderr, values),
+        "fatal_report_directory": str(report_directory),
     })
     return output
 
@@ -181,15 +184,21 @@ def prepare(backend: Path, environment_path: Path, runtime_path: Path, plan_path
         raise ValueError("参考数据计划与当前夹具来源、工具或运行时不一致")
     pair = read_json(runtime / "source-pair.json")
     values = _runtime_environment(private, pair)
+    reports = runtime / (plan_file.stem + ".node-reports")
+    if reports.exists():
+        raise ValueError("参考数据准备 Node fatal report 目录已存在，禁止覆盖或重放")
+    reports.mkdir()
+    node_options = " ".join(item for item in (os.environ.get("NODE_OPTIONS", ""), "--report-on-fatalerror",
+                                                 f'--report-directory="{reports}"') if item)
     command = [sys.executable, "-X", "utf8", str(execution / "scripts/restore_reference.py"), "dataset",
                "--plan", str(plan_file), "--backend-dir", str(execution), "--write"]
     try:
-        with Environments(values, values).use("source"):
+        with Environments({**values, "NODE_OPTIONS": node_options}, {**values, "NODE_OPTIONS": node_options}).use("source"):
             subprocess.run(command, cwd=execution, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                            text=True, encoding="utf-8", check=True,
                            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
     except subprocess.CalledProcessError as error:
-        diagnostic = _write_prepare_failure(runtime, plan_file, error, values)
+        diagnostic = _write_prepare_failure(runtime, plan_file, error, values, reports)
         raise RuntimeError(f"参考数据准备子进程失败；已保存脱敏诊断：{diagnostic}") from error
     return {"status": "reference_fixture_dataset_prepared", "plan": _bound(plan_file),
             "work_dir": plan["work_dir"], "dataset": _bound(Path(plan["work_dir"]) / "dataset/result.json"),

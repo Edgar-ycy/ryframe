@@ -84,9 +84,10 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
             self.runtime / "dataset-plan.json",
             error,
             {"APP_DATABASE_PASSWORD": "secret"},
+            self.runtime / "dataset-plan.node-reports",
         )
         value = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(value["status"], "failed_unknown_writes")
         self.assertNotIn("secret", value["stdout"] + value["stderr"])
         with self.assertRaisesRegex(ValueError, "禁止覆盖"):
-            dataset._write_prepare_failure(self.runtime, self.runtime / "dataset-plan.json", error, {})
+            dataset._write_prepare_failure(self.runtime, self.runtime / "dataset-plan.json", error, {}, self.runtime / "other")
