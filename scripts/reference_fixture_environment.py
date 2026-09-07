@@ -17,7 +17,8 @@ def bound(path: Path) -> dict:
 
 
 def _read(backend: Path, value: Path) -> tuple[Path, dict]:
-    path = local_path(backend, str(value))
+    requested = value if value.is_absolute() else backend / value
+    path = local_path(backend, str(requested))
     if linked(path) or not path.is_file():
         raise ValueError("夹具输入必须是受控目录中的普通文件")
     return path, read_json(path)
@@ -34,7 +35,8 @@ def _fixture(value: dict) -> None:
 
 def _maintenance(value: dict) -> None:
     artifacts = value.get("artifacts")
-    if (value.get("format_version") != 1 or value.get("status") != "maintenance_build_created"
+    if (value.get("format_version") != 1 or value.get("kind") != "devex-clone-tool-build"
+            or value.get("resources_modified") is not False
             or not isinstance(artifacts, dict)
             or not {"reset", "migrate", "tenant-data"}.issubset(artifacts)):
         raise ValueError("维护构建收据不完整")

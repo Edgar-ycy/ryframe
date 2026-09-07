@@ -45,7 +45,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
                               for key in ("shared-control", "shared", "dedicated-a", "dedicated-b")]}
         self.fixture = {"format_version": 1, "fixture": "device", "status": "ready", "sources": {"backend": {"head": "a" * 40}, "frontend": {"head": "b" * 40}},
                         "paths": {"backend": str(self.root / "device-backend"), "frontend": str(self.root / "device-frontend")}}
-        self.maintenance = {"format_version": 1, "status": "maintenance_build_created", "artifacts":
+        self.maintenance = {"format_version": 1, "kind": "devex-clone-tool-build", "resources_modified": False, "artifacts":
                             {key: {"executable": str(tool)} for key in ("reset", "migrate", "tenant-data")}}
 
     def test_plan_is_read_only_and_excludes_historical_data(self):
@@ -58,6 +58,13 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.review["reference"]["source"]["databases"] = [{"database": "old"}]
         with self.assertRaisesRegex(ValueError, "历史来源"):
             environment.plan(self.backend, self.write("review.json", self.review), self.write("fixture.json", self.fixture), self.write("build.json", self.maintenance))
+
+    def test_plan_accepts_project_relative_evidence_paths(self):
+        review = self.write("review.json", self.review)
+        fixture = self.write("fixture.json", self.fixture)
+        maintenance = self.write("build.json", self.maintenance)
+        result = environment.plan(self.backend, review.relative_to(self.backend), fixture.relative_to(self.backend), maintenance.relative_to(self.backend))
+        self.assertEqual(result["scope_id"], "fixture-seed")
 
 
 if __name__ == "__main__":
