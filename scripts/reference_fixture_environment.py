@@ -217,8 +217,14 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
                         "port": item["port"], "database": item["database"], "username": client["user"],
                         "password_env": "APP_DB_PASSWORD", "tls_mode": tls_mode})
     scope = selected["scope_id"]
+    api = urlsplit(selected["api_url"])
+    worker = urlsplit(selected["worker_ready_url"])
+    if (api.hostname not in ("127.0.0.1", "::1") or api.port is None
+            or worker.hostname not in ("127.0.0.1", "::1") or worker.port is None):
+        raise ValueError("夹具 API 或 Worker 地址必须是明确本机端口")
     environment = {
         "APP_ENV": "test", "APP_SCOPE_ID": scope, "APP_CONFIG_DIR": str(execution / "config"),
+        "APP_APP_HOST": api.hostname, "APP_APP_PORT": str(api.port),
         # 控制库使用应用配置的正式覆盖名；租户目标仍以独立的秘密环境变量引用同一凭据。
         "APP_DATABASE_HOST": client["host"], "APP_DATABASE_PORT": client["port"],
         "APP_DATABASE_NAME": database["shared-control"]["database"],
@@ -230,7 +236,7 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
         "APP_OBJECT_STORAGE_REGION": selected["objects"]["region"], "APP_OBJECT_STORAGE_USE_SSL": "false",
         "APP_REDIS_HOST": "127.0.0.1", "APP_REDIS_PORT": str(urlsplit(selected["redis"]["url"]).port or 16390),
         "APP_REDIS_DATABASE": "0", "APP_REDIS_TLS": "false", "APP_JOBS_MODE": "external",
-        "APP_JOBS_HEALTH_HOST": "127.0.0.1", "APP_JOBS_HEALTH_PORT": "19210",
+        "APP_JOBS_HEALTH_HOST": worker.hostname, "APP_JOBS_HEALTH_PORT": str(worker.port),
         "APP_RESET_CREDENTIAL_VERSION": "fixture-v1",
         "APP_RESET_REDIS_OUTSIDE_SENTINEL_KEY": f"ryframe:devex-fresh:{scope}:sentinel",
         "APP_RESET_LEGACY_MYSQL_EXCLUSIVE": "true", "APP_RESET_LEGACY_REDIS_EXCLUSIVE": "true",
