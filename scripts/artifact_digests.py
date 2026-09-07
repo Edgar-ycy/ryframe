@@ -27,7 +27,13 @@ def filesystem_path(path: Path | str) -> str:
 
 
 def _plain_digest(path: Path) -> dict:
-    with open(filesystem_path(path), "rb") as stream:
+    try:
+        stream = path.open("rb")
+    except OSError:
+        if not _WINDOWS:
+            raise
+        stream = open(filesystem_path(path), "rb")
+    with stream:
         sha = hashlib.file_digest(stream, "sha256").hexdigest()
         size = os.fstat(stream.fileno()).st_size
     return {"bytes": size, "sha256": sha}
@@ -191,7 +197,7 @@ def file_digest(path: Path) -> dict:
     """摘要只接受普通文件；未登记的文件每次完整读取，不复用路径或时间缓存。"""
     path = Path(path)
     native = filesystem_path(path)
-    if os.path.islink(native) or not os.path.isfile(native):
+    if path.is_symlink() or os.path.islink(native) or not os.path.isfile(native):
         raise ValueError("产物必须是普通文件")
     protected = protected_digest(path)
     return protected if protected is not None else _plain_digest(path)

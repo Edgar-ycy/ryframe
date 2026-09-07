@@ -45,9 +45,15 @@ def name(value: str) -> str:
 
 def linked(path: Path) -> bool:
     native = filesystem_path(path)
-    return os.path.islink(native) or (
-        os.path.exists(native) and bool(getattr(path.lstat(), "st_file_attributes", 0) & 0x400)
-    )
+    if path.is_symlink() or os.path.islink(native):
+        return True
+    if not os.path.exists(native):
+        return False
+    try:
+        attributes = path.lstat()
+    except OSError:
+        attributes = os.lstat(native)
+    return bool(getattr(attributes, "st_file_attributes", 0) & 0x400)
 
 
 def local_path(backend: Path, filename: str, *, new=False) -> Path:
