@@ -13,9 +13,10 @@ from devex_clone_source_proof import bound_file, require_closed_port, verify_api
 from devex_clone_tools import verify as verify_tools
 from full_stack_runtime import configuration_digest, worker_ready_url
 from full_stack_rate_limit_config import load_app_table
-from restore_build import file_digest, source_snapshot
+from restore_build import file_digest
 from restore_reference_plan import BUCKETS, identifier, plan_hash
 from restore_source_binding import defaults_connection, source_binding
+from source_inventory import snapshot
 
 KEYS = {"shared-control": ("combined", "shared"), "shared": ("tenant", "shared"),
         "dedicated-a": ("tenant", "dedicated"), "dedicated-b": ("tenant", "dedicated")}
@@ -143,7 +144,8 @@ def execution_backend(backend: Path, request: dict) -> tuple[Path, dict]:
     expected = Path(fixture["paths"].get("backend", ""))
     generated = fixture["generated"].get("backend")
     if (root != expected or not (root / "Cargo.toml").is_file() or not (root / ".git").exists()
-            or not isinstance(generated, dict) or source_snapshot(root) != generated):
+            # Device 收据绑定的是生成内容快照；忽略运行目录不应让冻结执行树失效。
+            or not isinstance(generated, dict) or snapshot(root)[0] != generated):
         raise ValueError("冻结 Device 后端工作树或生成来源已变化")
     return root, {"kind": "device-fixture", "path": str(root), "fixture": declared["fixture"], "source": generated}
 

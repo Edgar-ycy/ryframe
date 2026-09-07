@@ -2,14 +2,21 @@
 from __future__ import annotations
 
 import argparse
+import configparser
 import json
+import os
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from devex_clone_capture import read_json
+from devex_clone_capture import read_json, write_json
+from devex_clone_factory_context import Environments, configured
 from devex_clone_model import linked, local_path
 from devex_clone_target_binding import KEYS, validate_review
+from devex_clone_tools import verify as verify_tools
+from full_stack_runtime import configuration_digest
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
+from source_inventory import snapshot
 
 
 def bound(path: Path) -> dict:
@@ -44,6 +51,73 @@ def _maintenance(value: dict) -> None:
         item = artifacts[name]
         if not isinstance(item, dict) or not isinstance(item.get("executable"), str):
             raise ValueError("维护构建产物描述无效")
+
+
+def _secret(directory: Path, name: str) -> tuple[str, dict]:
+    path = directory / name
+    if linked(path) or not path.is_file():
+        raise ValueError("隔离夹具秘密文件缺失或经过链接")
+    value = path.read_text(encoding="utf-8").strip()
+    if not value:
+        raise ValueError("隔离夹具秘密文件不能为空")
+    return value, bound(path)
+
+
+def _environment(backend: Path, review: dict, fixture: dict, output: Path) -> tuple[dict, dict]:
+    seed = review["scopes"]["seed"]
+    execution = Path(fixture["paths"]["backend"])
+    # Device 收据记录的是生成工作树的内容快照，不包含其后产生的忽略运行目录状态。
+    if execution != Path(seed["backend_dir"]) or snapshot(execution)[0] != fixture["generated"]["backend"]:
+        raise ValueError("seed Device 工作树与审阅计划或生成快照不一致")
+    secrets = execution / ".local-tests/reference-fixture/secrets"
+    database = {item["key"]: item for item in seed["databases"]}
+    mysql_path = Path(database["shared-control"]["connection_file"])
+    if mysql_path != secrets / "mysql-client.cnf" or linked(mysql_path) or not mysql_path.is_file():
+        raise ValueError("seed MySQL 凭据路径不属于冻结工作树")
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read_string(mysql_path.read_text(encoding="utf-8"))
+    if parser.sections() != ["client"] or set(parser["client"]) != {"host", "port", "user", "password", "ssl-mode"}:
+        raise ValueError("seed MySQL 凭据格式无效")
+    if any(item["connection_file"] != str(mysql_path) for item in database.values()):
+        raise ValueError("seed 四个数据库必须使用同一冻结 MySQL 凭据")
+    values, files = {}, {"mysql-client.cnf": bound(mysql_path)}
+    for key, filename in (("APP_OBJECT_STORAGE_ACCESS_KEY", "rustfs-access-key.txt"),
+                          ("APP_OBJECT_STORAGE_SECRET_KEY", "rustfs-secret-key.txt"),
+                          ("APP_REDIS_PASSWORD", "redis-password.txt"),
+                          ("RYFRAME_RESET_ADMIN_PASSWORD", "reset-admin-password.txt"),
+                          ("RYFRAME_RESET_USER_PASSWORD", "reset-user-password.txt"),
+                          ("APP_AUTH_JWT_SECRET", "jwt-secret.txt"),
+                          ("APP_MONITOR_METRICS_BEARER_TOKEN", "metrics-token.txt")):
+        value, descriptor = _secret(secrets, filename)
+        values[key], files[filename] = value, descriptor
+    targets = []
+    for key in ("shared", "dedicated-a", "dedicated-b"):
+        item = database[key]
+        targets.append({"key": key, "kind": "mysql", "mode": item["mode"], "host": item["host"],
+                        "port": item["port"], "database": item["database"], "username": parser["client"]["user"],
+                        "password_env": "APP_DB_PASSWORD", "tls_mode": "disabled"})
+    scope = seed["scope_id"]
+    environment = {
+        "APP_ENV": "test", "APP_SCOPE_ID": scope, "APP_CONFIG_DIR": str(execution / "config"),
+        # 控制库使用应用配置的正式覆盖名；租户目标仍以独立的秘密环境变量引用同一凭据。
+        "APP_DATABASE_HOST": parser["client"]["host"], "APP_DATABASE_PORT": parser["client"]["port"],
+        "APP_DATABASE_NAME": database["shared-control"]["database"],
+        "APP_DATABASE_USERNAME": parser["client"]["user"],
+        "APP_DATABASE_PASSWORD": parser["client"]["password"], "APP_DATABASE_TLS_MODE": "disabled",
+        "APP_DB_PASSWORD": parser["client"]["password"],
+        "APP_TENANT_DATA_TARGETS": json.dumps(targets, separators=(",", ":")),
+        "APP_OBJECT_STORAGE_BACKEND": "rustfs", "APP_OBJECT_STORAGE_ENDPOINT": seed["objects"]["endpoint"],
+        "APP_OBJECT_STORAGE_REGION": seed["objects"]["region"], "APP_OBJECT_STORAGE_USE_SSL": "false",
+        "APP_REDIS_HOST": "127.0.0.1", "APP_REDIS_PORT": str(urlsplit(seed["redis"]["url"]).port or 16390),
+        "APP_REDIS_DATABASE": "0", "APP_REDIS_TLS": "false", "APP_JOBS_MODE": "external",
+        "APP_JOBS_HEALTH_HOST": "127.0.0.1", "APP_JOBS_HEALTH_PORT": "19210",
+        "APP_RESET_CREDENTIAL_VERSION": "fixture-v1",
+        "APP_RESET_REDIS_OUTSIDE_SENTINEL_KEY": f"ryframe:devex-fresh:{scope}:sentinel",
+        "APP_RESET_LEGACY_MYSQL_EXCLUSIVE": "true", "APP_RESET_LEGACY_REDIS_EXCLUSIVE": "true",
+        "APP_RESET_LEGACY_OBJECT_STORAGE_EXCLUSIVE": "true", "TEMP": str(output / "tmp"), "TMP": str(output / "tmp"),
+        **values,
+    }
+    return environment, files
 
 
 def plan(backend: Path, review_path: Path, fixture_path: Path, maintenance_path: Path) -> dict:
@@ -84,15 +158,61 @@ def plan(backend: Path, review_path: Path, fixture_path: Path, maintenance_path:
     return {**result, "sha256": plan_hash(result)}
 
 
+def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_path: Path, output: Path) -> dict:
+    """显式准备冻结环境；只写本地私有环境和收据，绝不创建服务或业务资源。"""
+    backend = backend.resolve(strict=True)
+    result = plan(backend, review_path, fixture_path, maintenance_path)
+    output = local_path(backend, str(output if output.is_absolute() else backend / output), new=True)
+    if not output.parent.is_dir():
+        raise ValueError("夹具环境输出父目录不存在")
+    review = read_json(Path(result["review"]["path"]))
+    fixture = read_json(Path(result["fixture"]["path"]))
+    maintenance_path = Path(result["maintenance_build"]["path"])
+    execution = Path(fixture["paths"]["backend"])
+    environment, secrets = _environment(backend, review, fixture, output)
+    output.mkdir()
+    (output / "tmp").mkdir()
+    try:
+        # 隔离业务配置，同时保留 Git、Cargo 等本机工具必需的系统环境。
+        runtime_environment = configured(environment)
+        with Environments(runtime_environment, runtime_environment).use("target"):
+            configuration = configuration_digest(execution)
+            maintenance = verify_tools(execution, maintenance_path)
+        write_json(output / "environment.json", {"format_version": 1, "environment": environment})
+        receipt = {"format_version": 1, "kind": "reference-fixture-environment", "status": "prepared",
+                   "plan": result, "execution_backend": str(execution), "configuration_sha256": configuration,
+                   "maintenance": bound(maintenance_path), "maintenance_source": maintenance["source"],
+                   "secret_files": secrets, "environment_sha256": plan_hash(environment),
+                   "services_started": False, "remote_writes": 0, "historical_data_used": False}
+        write_json(output / "bootstrap.json", receipt)
+        return receipt
+    except BaseException:
+        # 保留目录供定位，不把半成品误当作可执行环境。
+        if not (output / "bootstrap.json").exists():
+            write_json(output / "failed.json", {"status": "failed", "services_started": False, "remote_writes": 0})
+        raise
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("plan",))
+    parser.add_argument("operation", choices=("plan", "prepare"))
     parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--review", type=Path, required=True)
     parser.add_argument("--fixture", type=Path, required=True)
     parser.add_argument("--maintenance-build", type=Path, required=True)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
-    print(json.dumps(plan(args.backend_dir, args.review, args.fixture, args.maintenance_build), ensure_ascii=False))
+    if args.operation == "plan":
+        if args.output is not None or args.write:
+            parser.error("plan 不接受 --output 或 --write")
+        result = plan(args.backend_dir, args.review, args.fixture, args.maintenance_build)
+    else:
+        if args.output is None or not args.write:
+            parser.error("prepare 需要 --output 与 --write")
+        result = prepare(args.backend_dir, args.review, args.fixture, args.maintenance_build, args.output)
+    print(json.dumps({"status": result.get("status", "planned"), "services_started": result.get("services_started", False),
+                      "remote_writes": result.get("remote_writes", 0)}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

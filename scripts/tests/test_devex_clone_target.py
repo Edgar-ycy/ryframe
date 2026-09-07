@@ -79,7 +79,7 @@ class TargetTests(unittest.TestCase):
         receipt = f.bound(f.local / "device-fixture.json", fixture)
         f.request["execution_backend"] = {"fixture": receipt, "path": str(execution)}
 
-        with patch.object(binding, "source_snapshot", return_value=generated):
+        with patch.object(binding, "snapshot", return_value=(generated, b"")):
             root, evidence = binding.execution_backend(f.root, f.request)
 
         self.assertEqual(root, execution)
