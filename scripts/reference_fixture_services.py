@@ -266,7 +266,10 @@ def main() -> None:
     args = parser.parse_args()
     action = {"rustfs": rustfs, "redis": redis, "buckets": buckets}[args.operation]
     result = action(args.backend_dir.resolve(strict=True), args.review, args.environment, write=args.write)
-    print(json.dumps({key: result[key] for key in ("status", "services_started", "remote_writes")}, ensure_ascii=False))
+    summary = {"status": result["status"], "remote_writes": result["remote_writes"]}
+    if "services_started" in result:
+        summary["services_started"] = result["services_started"]
+    print(json.dumps(summary, ensure_ascii=False))
 
 
 if __name__ == "__main__":
