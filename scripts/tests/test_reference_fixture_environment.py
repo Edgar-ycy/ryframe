@@ -167,6 +167,21 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertNotEqual(rotated_values["RYFRAME_RESET_USER_PASSWORD"], values["RYFRAME_RESET_USER_PASSWORD"])
         environment._validate_reset_passwords(rotated_values)
 
+        target_execution = self.root / "new-device-backend"
+        (target_execution / ".local-tests/reference-fixture").mkdir(parents=True)
+        (target_execution / "Cargo.toml").write_text("[workspace]", encoding="utf-8")
+        (target_execution / ".git").write_text("gitdir: fixture", encoding="utf-8")
+        target_fixture = json.loads(json.dumps(fixture))
+        target_fixture["paths"]["backend"] = str(target_execution)
+        target_fixture_file = self.write("new-device-fixture.json", target_fixture)
+        with patch.object(environment, "snapshot", return_value=(generated, b"")):
+            bootstrapped = environment.bootstrap_secrets(
+                self.backend, fixture_file, secret_set, target_fixture_file)
+        self.assertEqual(bootstrapped["status"], "imported")
+        self.assertEqual(set(bootstrapped["target_files"]), set(environment.SECRET_FILES))
+        self.assertFalse(bootstrapped["services_started"])
+        self.assertFalse(bootstrapped["remote_writes"])
+
         values["RYFRAME_RESET_USER_PASSWORD"] = "weak"
         with self.assertRaisesRegex(ValueError, "RYFRAME_RESET_USER_PASSWORD"):
             environment._validate_reset_passwords(values)

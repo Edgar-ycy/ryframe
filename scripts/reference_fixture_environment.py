@@ -178,6 +178,60 @@ def _secret_directory(backend: Path, execution: Path, selected: Path | None = No
     return directory
 
 
+def _fixture_execution(backend: Path, fixture_path: Path) -> tuple[Path, dict, dict]:
+    """读取并核验一个 Device 收据及其生成后的后端工作树。"""
+    receipt_path, fixture = _read(backend, fixture_path)
+    _fixture(fixture)
+    execution = Path(fixture["paths"]["backend"])
+    generated = fixture.get("generated", {}).get("backend")
+    if (not isinstance(generated, dict) or not execution.is_dir()
+            or snapshot(execution)[0] != generated):
+        raise ValueError("Device 工作树与生成快照不一致")
+    return receipt_path, fixture, generated
+
+
+def bootstrap_secrets(backend: Path, source_fixture_path: Path, source_directory: Path,
+                      target_fixture_path: Path) -> dict:
+    """将已登记的秘密集复制到新 Device；只写新工作树内的私有文件。"""
+    backend = backend.resolve(strict=True)
+    source_receipt, source_fixture, _ = _fixture_execution(backend, source_fixture_path)
+    target_receipt, target_fixture, _ = _fixture_execution(backend, target_fixture_path)
+    source_execution = Path(source_fixture["paths"]["backend"])
+    target_execution = Path(target_fixture["paths"]["backend"])
+    if source_execution == target_execution:
+        raise ValueError("秘密导入必须在两个不同的 Device 工作树之间进行")
+    source = _secret_directory(backend, source_execution, source_directory)
+    destination = target_execution / ".local-tests/reference-fixture/secrets"
+    if destination.exists() or linked(destination) or not destination.parent.is_dir():
+        raise ValueError("新 Device 默认秘密目录已存在或父目录无效")
+    destination.mkdir()
+    try:
+        for name in SECRET_FILES:
+            target = destination / name
+            with target.open("xb") as stream:
+                stream.write((source / name).read_bytes())
+                stream.flush()
+                os.fsync(stream.fileno())
+        receipt = {
+            "format_version": 1,
+            "kind": "reference-fixture-secret-bootstrap",
+            "status": "imported",
+            "source_fixture": bound(source_receipt),
+            "source_files": {name: bound(source / name) for name in SECRET_FILES},
+            "target_fixture": bound(target_receipt),
+            "target_files": {name: bound(destination / name) for name in SECRET_FILES},
+            "remote_writes": 0,
+            "services_started": False,
+        }
+        write_json(destination / "bootstrap.json", receipt)
+        return receipt
+    except BaseException:
+        if not (destination / "bootstrap.json").exists():
+            write_json(destination / "failed.json", {"status": "failed", "remote_writes": 0,
+                                                       "services_started": False})
+        raise
+
+
 def _reset_password() -> str:
     return "Aa1!" + secrets.token_urlsafe(32)
 
@@ -410,8 +464,10 @@ def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_pa
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("plan", "prepare", "review", "rotate-secrets"))
+    parser.add_argument("operation", choices=("plan", "prepare", "review", "rotate-secrets", "bootstrap-secrets"))
     parser.add_argument("--backend-dir", type=Path, required=True)
+    parser.add_argument("--source-fixture", type=Path)
+    parser.add_argument("--source-secrets", type=Path)
     parser.add_argument("--review", type=Path)
     parser.add_argument("--fixture", type=Path)
     parser.add_argument("--maintenance-build", type=Path)
@@ -437,6 +493,11 @@ def main() -> None:
         if args.review is not None or args.maintenance_build is not None or args.secrets_dir is not None:
             parser.error("rotate-secrets 不接受 --review、--maintenance-build 或 --secrets-dir")
         result = rotate_secrets(args.backend_dir, args.fixture, args.output)
+    elif args.operation == "bootstrap-secrets":
+        if (args.source_fixture is None or args.source_secrets is None or args.fixture is None or not args.write
+                or any(value is not None for value in (args.review, args.maintenance_build, args.output, args.secrets_dir))):
+            parser.error("bootstrap-secrets 需要 --source-fixture、--source-secrets、--fixture 与 --write")
+        result = bootstrap_secrets(args.backend_dir, args.source_fixture, args.source_secrets, args.fixture)
     else:
         if args.review is None or args.output is None or not args.write or args.secrets_dir is not None:
             parser.error("review 需要 --review、--output 与 --write，且不接受 --secrets-dir")
