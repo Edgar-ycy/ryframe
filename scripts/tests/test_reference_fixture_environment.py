@@ -181,6 +181,11 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual(base_mysql.read_bytes(), (secrets / "mysql-client.cnf").read_bytes())
         self.assertEqual(base_files["mysql-client.cnf"], {"path": str(base_mysql), **file_digest(base_mysql)})
 
+        self.review["scopes"]["base"]["backend_dir"] = str(self.root / "other-device-backend")
+        with patch.object(environment, "snapshot", return_value=(generated, b"")):
+            with self.assertRaisesRegex(ValueError, "所选侧 Device"):
+                environment._environment(self.backend, self.review, fixture, self.root / "base-output", "base")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -261,20 +261,18 @@ def _validate_reset_passwords(values: dict) -> None:
 
 def _environment(backend: Path, review: dict, fixture: dict, output: Path, side: str = "seed",
                  secret_directory: Path | None = None) -> tuple[dict, dict]:
-    seed = review["scopes"]["seed"]
     if side not in review["scopes"]:
         raise ValueError("夹具环境必须选择已审阅侧")
     selected = review["scopes"][side]
     execution = Path(fixture["paths"]["backend"])
     # Device 收据记录的是生成工作树的内容快照，不包含其后产生的忽略运行目录状态。
-    if execution != Path(seed["backend_dir"]) or snapshot(execution)[0] != fixture["generated"]["backend"]:
-        raise ValueError("seed Device 工作树与审阅计划或生成快照不一致")
+    if execution != Path(selected["backend_dir"]) or snapshot(execution)[0] != fixture["generated"]["backend"]:
+        raise ValueError("所选侧 Device 工作树与审阅计划或生成快照不一致")
     source_secrets = _secret_directory(backend, execution)
     secrets = _secret_directory(backend, execution, secret_directory)
-    seed_database = {item["key"]: item for item in seed["databases"]}
-    source_mysql = Path(seed_database["shared-control"]["connection_file"])
+    source_mysql = source_secrets / "mysql-client.cnf"
     if source_mysql != source_secrets / "mysql-client.cnf" or linked(source_mysql) or not source_mysql.is_file():
-        raise ValueError("seed MySQL 凭据路径不属于冻结工作树")
+        raise ValueError("Device MySQL 凭据路径不属于冻结工作树")
     database = {item["key"]: item for item in selected["databases"]}
     mysql_path = Path(database["shared-control"]["connection_file"])
     if any(item["connection_file"] != str(mysql_path) for item in database.values()):
