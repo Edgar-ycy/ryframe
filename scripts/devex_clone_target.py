@@ -302,6 +302,8 @@ def history(output: Path) -> dict:
         names.add("failure.json")
     names.update(path.name for path in output.glob("resume-prepare-*.json"))
     names.update(path.name for path in output.glob("resume-initialize-*.intent.json"))
+    names.update(path.name for path in output.glob("resume-initialize-*.failure.json"))
+    names.update(path.name for path in output.glob("resume-reset-plan-*.json"))
     return {name: file_digest(output / name) for name in sorted(names)}
 
 
@@ -619,7 +621,8 @@ def resume_inventory_target(backend: Path, output: Path, run=subprocess.run, *, 
             if original != prepared["generation"]:
                 raise ValueError("库存恢复前来源、工具或服务代次变化")
             stage = "resume_reset_proof"
-            manifest, sha = reset_plan(resources, original["maintenance"], request, original, "resume-reset-plan")
+            manifest, sha = reset_plan(resources, original["maintenance"], request, original,
+                                       f"resume-reset-plan-{attempt}")
             reset = reset_completed(output, manifest, sha)
             if read_json(output / "reset.confirmed.json").get("observed") != reset:
                 raise ValueError("库存恢复 reset 完成收据不同于当前受控计划")

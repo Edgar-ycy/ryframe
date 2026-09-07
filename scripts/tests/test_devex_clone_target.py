@@ -271,6 +271,21 @@ class TargetTests(unittest.TestCase):
             self.f.root, self.f.output, self.f.run, request_descriptor=descriptor
         )
 
+    def test_inventory_resume_history_keeps_prior_readonly_failure(self):
+        f = self.f
+        self.prepare()
+        with patch.object(target, "inventory", side_effect=InventoryCaptureError(f.output)):
+            with self.assertRaises(InventoryCaptureError): self.initialize()
+        descriptor = {"path": str(f.path), **file_digest(f.path)}
+        with patch.object(target, "inventory", side_effect=InventoryCaptureError(f.output)):
+            with self.assertRaises(InventoryCaptureError): target.resume_inventory_target(
+                f.root, f.output, f.run, request_descriptor=descriptor
+            )
+        failed = next(f.output.glob("resume-initialize-*.failure.json"))
+        with patch.object(target, "inventory", wraps=target.inventory):
+            result = target.resume_inventory_target(f.root, f.output, f.run, request_descriptor=descriptor)
+        self.assertEqual(result["history"][failed.name], file_digest(failed))
+
     def test_storage_restart_after_prepare_refuses_create(self):
         self.prepare(); self.f.storage_restarted = True
         with self.assertRaises(ValueError): self.initialize()
