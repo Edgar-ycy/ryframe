@@ -12,7 +12,7 @@ from devex_clone_model import linked, local_path
 from devex_clone_target_binding import KEYS, request_binding, validate_review
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
-from reference_fixture_paths import service_run
+from reference_fixture_paths import service_run as expected_service_run
 
 
 def _read(backend: Path, value: Path) -> tuple[Path, dict]:
@@ -75,7 +75,7 @@ def build(backend: Path, environment_path: Path, service_run: Path, request_id: 
     if execution != Path(selected["backend_dir"]):
         raise ValueError("私有环境执行工作树与 seed 审阅侧不符")
     requested_run = service_run if service_run.is_absolute() else backend / service_run
-    expected_run = service_run(review)
+    expected_run = expected_service_run(review)
     actual_run = local_path(backend, str(requested_run))
     if actual_run != expected_run:
         raise ValueError("fresh-target 请求必须绑定本审阅计划的唯一服务账本")
