@@ -75,4 +75,3 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
         with patch.object(dataset, "verify_runtime", return_value={"scope_id": "other", "runtime": {}}):
             with self.assertRaisesRegex(ValueError, "同一代次"):
                 dataset.build_plan(self.backend, self.bootstrap, self.runtime, self.work)
-
