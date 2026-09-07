@@ -59,14 +59,17 @@ def _output(execution: Path, value: Path, *, new: bool) -> Path:
     return path
 
 
-def _environment(execution: Path, values: dict, output: Path) -> dict:
-    pair = write_pair(execution, output / "source-pair.json")
+def _runtime_environment(values: dict, pair: dict) -> dict:
     source = pair["sources"]["backend"]
     head = source.get("head") if isinstance(source, dict) else None
     if not isinstance(head, str):
         raise ValueError("夹具来源组合缺少后端提交")
     return {**configured(values), "APP_API_DOCS_ENABLED": "false",
             "RYFRAME_E2E_FIXTURE": "device", "RYFRAME_CODE_SHA": head}
+
+
+def _environment(execution: Path, values: dict, output: Path) -> dict:
+    return _runtime_environment(values, write_pair(execution, output / "source-pair.json"))
 
 
 def _run(command: list[str], *, cwd: Path, capture_output: bool) -> subprocess.CompletedProcess:
@@ -116,12 +119,8 @@ def build(backend: Path, environment_path: Path, output_path: Path) -> dict:
 def verify(backend: Path, environment_path: Path, output_path: Path) -> dict:
     _, execution, private = _bootstrap(backend, environment_path)
     output = _output(execution, output_path, new=False)
-    values = {**configured(private), "RYFRAME_E2E_FIXTURE": "device"}
     pair = read_json(output / "source-pair.json")
-    head = pair.get("sources", {}).get("backend", {}).get("head")
-    if not isinstance(head, str):
-        raise ValueError("夹具来源组合缺少后端提交")
-    values["RYFRAME_CODE_SHA"] = head
+    values = _runtime_environment(private, pair)
     with Environments(values, values).use("source"):
         build = read_json(output / "backend-build.json")
         verify_build_artifacts(build)
@@ -138,8 +137,7 @@ def run(backend: Path, environment_path: Path, output_path: Path, operation: str
     _, execution, private = _bootstrap(backend, environment_path)
     output = _output(execution, output_path, new=False)
     pair = read_json(output / "source-pair.json")
-    values = {**configured(private), "RYFRAME_E2E_FIXTURE": "device",
-              "RYFRAME_CODE_SHA": pair["sources"]["backend"]["head"]}
+    values = _runtime_environment(private, pair)
     api_url = f"http://{values['APP_APP_HOST']}:{values['APP_APP_PORT']}"
     with Environments(values, values).use("source"):
         result = control(execution, output, operation, ("api", "worker"), api_url)
