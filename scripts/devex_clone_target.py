@@ -303,6 +303,8 @@ def history(output: Path) -> dict:
     names.update(path.name for path in output.glob("resume-prepare-*.json"))
     names.update(path.name for path in output.glob("resume-initialize-*.intent.json"))
     names.update(path.name for path in output.glob("resume-initialize-*.failure.json"))
+    if (output / "resume-reset-plan.json").exists():
+        names.add("resume-reset-plan.json")
     names.update(path.name for path in output.glob("resume-reset-plan-*.json"))
     return {name: file_digest(output / name) for name in sorted(names)}
 
