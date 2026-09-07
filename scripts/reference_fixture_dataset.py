@@ -89,6 +89,8 @@ def _dataset() -> dict:
     return {
         "timeout_seconds": 43_200,
         "request_interval_ms": 1_000,
+        "api_validation_posts": 2,
+        "post_batch_rows": 1_000,
         "tenant_targets": ["shared"] * 8 + ["dedicated-a", "dedicated-b"],
         "records": 100_000,
         "object_count": 256,

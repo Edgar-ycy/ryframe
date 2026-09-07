@@ -29,6 +29,15 @@ export function datasetSpecification(plan) {
     throw new Error('参考数据集必须包含10个普通租户及已有system租户')
   requestPacer(settings.request_interval_ms)
   if (
+    !Number.isSafeInteger(settings.api_validation_posts) ||
+    settings.api_validation_posts < 1 ||
+    settings.api_validation_posts > 10 ||
+    !Number.isSafeInteger(settings.post_batch_rows) ||
+    settings.post_batch_rows < 100 ||
+    settings.post_batch_rows > 2_000
+  )
+    throw new Error('参考数据准备必须声明每租户 API 验证记录数和100到2000行的岗位批次大小')
+  if (
     !Number.isSafeInteger(settings.records) ||
     settings.records < 100_000 ||
     settings.records > 1_000_000
@@ -70,6 +79,84 @@ export function datasetSpecification(plan) {
       throw new Error('参考API与前端必须使用明确loopback根地址')
   }
   return settings
+}
+
+function tenantRecordCount(records, index, tenants = 11) {
+  return Math.floor(records / tenants) + (index < records % tenants ? 1 : 0)
+}
+
+export function postBatchRows(plan, identities) {
+  const settings = datasetSpecification(plan)
+  const rows = []
+  const samples = []
+  for (const [identityIndex, identity] of identities.entries()) {
+    const count = tenantRecordCount(settings.records, identityIndex)
+    for (let index = settings.api_validation_posts; index < count; index++) {
+      const row = {
+        tenant_id: identity.tenant_id,
+        index,
+        code: `${plan.id}-${index}`,
+        name: `恢复样本${index}`,
+        sort: index % 1000,
+      }
+      if (index === settings.api_validation_posts || index === count - 1)
+        samples.push({ identityIndex, position: rows.length, row })
+      rows.push(row)
+    }
+  }
+  if (rows.length !== settings.records - identities.length * settings.api_validation_posts)
+    throw new Error('岗位批次行数与当前计划规模不一致')
+  return { rows, samples }
+}
+
+export function postBatchSamples(samples, result) {
+  if (
+    result?.kind !== 'restore-reference-post-batch' ||
+    !/^[1-9][0-9]*$/.test(result.first_id) ||
+    !Number.isSafeInteger(result.rows) ||
+    result.rows < 1 ||
+    !Number.isSafeInteger(result.batch_rows) ||
+    !Number.isSafeInteger(result.batches) ||
+    !/^[1-9][0-9]*$/.test(result.last_id) ||
+    BigInt(result.last_id) !== BigInt(result.first_id) + BigInt(result.rows - 1)
+  )
+    throw new Error('岗位批次结果不完整')
+  const first = BigInt(result.first_id)
+  return samples.map(({ identityIndex, position, row }) => ({
+    identityIndex,
+    id: (first + BigInt(position)).toString(),
+    code: row.code,
+    name: row.name,
+  }))
+}
+
+function preparePostBatch(plan, backend, planPath, input) {
+  const python = process.env.RYFRAME_PYTHON?.trim() || 'python'
+  let output
+  try {
+    output = execFileSync(
+      python,
+      [
+        '-X',
+        'utf8',
+        path.join(backend, 'scripts/restore_reference_post_batch.py'),
+        '--backend-dir',
+        backend,
+        '--plan',
+        planPath,
+        '--input',
+        input,
+      ],
+      { encoding: 'utf8', windowsHide: true, timeout: 900_000, maxBuffer: 1024 * 1024 },
+    )
+  } catch (error) {
+    throw new Error('岗位批次准备失败；当前阶段含有未知写入，禁止重放', { cause: error })
+  }
+  try {
+    return JSON.parse(output)
+  } catch {
+    throw new Error('岗位批次准备未返回唯一 JSON 收据')
+  }
 }
 
 export function sampleContent(id, index, bytes) {
@@ -156,7 +243,7 @@ async function tenants(plan, admin, catalog) {
   return result
 }
 
-export async function prepareDataset(plan, backend) {
+export async function prepareDataset(plan, backend, planPath) {
   const settings = datasetSpecification(plan)
   const directory = path.join(plan.work_dir, 'dataset')
   await mkdir(directory, { recursive: false })
@@ -182,12 +269,12 @@ export async function prepareDataset(plan, backend) {
     identities.map(async (identity, index) => {
       try {
         await identity.session.request({ operation: 'post_auth_refresh' })
-        const count = Math.floor(settings.records / 11) + (index < settings.records % 11 ? 1 : 0)
+        const count = tenantRecordCount(settings.records, index)
         const posts = await seedPosts(
           identity.session,
           plan.id,
           identity.tenant_id,
-          count,
+          settings.api_validation_posts,
           async (row) => {
             await record(row)
             if (failure) throw new Error('其他参考租户准备失败，停止新增请求')
@@ -198,6 +285,8 @@ export async function prepareDataset(plan, backend) {
           username: identity.username,
           password_env: identity.password_env,
           records: count,
+          api_records: settings.api_validation_posts,
+          batch_records: count - settings.api_validation_posts,
           posts,
           files: [],
         }
@@ -209,6 +298,26 @@ export async function prepareDataset(plan, backend) {
     }),
   )
   if (prepared.some((item) => item.status === 'rejected')) throw failure
+  const batch = postBatchRows(plan, identities)
+  const batchInput = path.join(directory, 'post-batch.ndjson')
+  await writeFile(batchInput, batch.rows.map((row) => JSON.stringify(row)).join('\n') + '\n', { flag: 'wx' })
+  const batchResult = preparePostBatch(plan, backend, planPath, batchInput)
+  if (
+    batchResult.plan_sha256 !== hash(plan) ||
+    batchResult.rows !== batch.rows.length ||
+    batchResult.batch_rows !== settings.post_batch_rows ||
+    batchResult.batches !== Math.ceil(batch.rows.length / settings.post_batch_rows) ||
+    batchResult.input_sha256 !== sha256(await readFile(batchInput))
+  )
+    throw new Error('岗位批次结果未绑定当前计划或精确输入行数')
+  for (const sample of postBatchSamples(batch.samples, batchResult))
+    result.tenants[sample.identityIndex].posts.push({
+      id: sample.id,
+      code: sample.code,
+      name: sample.name,
+    })
+  result.records = settings.records
+  result.post_batch = batchResult
   const sample = path.join(directory, 'upload.txt')
   for (const identity of identities)
     await identity.session.request({ operation: 'post_auth_refresh' })
@@ -283,7 +392,7 @@ async function main() {
     : null
   const result = args.has('--verify-existing')
     ? await verifyExisting(plan, backend, JSON.parse(original.toString('utf8')), side)
-    : await prepareDataset(plan, backend)
+    : await prepareDataset(plan, backend, args.get('--plan'))
   if (original) {
     if (!original.equals(await readFile(args.get('--verify-existing'))))
       throw new Error('原数据收据在验证期间发生变化')

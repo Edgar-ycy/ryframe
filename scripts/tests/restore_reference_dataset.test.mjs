@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import {
   datasetSpecification,
+  postBatchRows,
+  postBatchSamples,
   sampleContent,
   seedPosts,
   verifyDatasetPreflight,
@@ -24,6 +26,8 @@ function plan() {
     },
     dataset: {
       request_interval_ms: 1000,
+      api_validation_posts: 2,
+      post_batch_rows: 1000,
       tenant_targets: [...Array(9).fill('control'), 'dedicated'],
       records: 100_000,
       object_count: 256,
@@ -64,11 +68,48 @@ test('数据准备严格要求十个普通租户、共享与独立目标、十�
     (value) => {
       value.dataset.request_interval_ms = 100
     },
+    (value) => {
+      value.dataset.api_validation_posts = 0
+    },
+    (value) => {
+      value.dataset.post_batch_rows = 99
+    },
   ]) {
     const candidate = plan()
     change(candidate)
     assert.throws(() => datasetSpecification(candidate))
   }
+})
+
+test('岗位批次从每租户 API 验证记录后的确定索引开始，并只接受受控结果范围', () => {
+  const candidate = plan()
+  candidate.source.scope_id = 'source-scope'
+  const identities = [
+    { tenant_id: 'system' },
+    ...Array.from({ length: 10 }, (_, index) => ({
+      tenant_id: `source-scope-${String(index + 1).padStart(2, '0')}`,
+    })),
+  ]
+  const batch = postBatchRows(candidate, identities)
+  assert.equal(batch.rows.length, 100_000 - 22)
+  assert.deepEqual(batch.rows[0], {
+    tenant_id: 'system',
+    index: 2,
+    code: 'restore-case-2',
+    name: '恢复样本2',
+    sort: 2,
+  })
+  const samples = postBatchSamples(batch.samples, {
+    kind: 'restore-reference-post-batch',
+    first_id: '9007199254740000',
+    last_id: '9007199254839977',
+    rows: batch.rows.length,
+    batch_rows: 1000,
+    batches: 100,
+  })
+  assert.equal(samples[0].id, '9007199254740000')
+  assert.equal(samples.at(-1).code, 'restore-case-9089')
+  assert.throws(() => postBatchSamples(batch.samples, { first_id: '1' }))
 })
 
 test('对象样本大小固定、可重现且不同对象使用不同内容', () => {
