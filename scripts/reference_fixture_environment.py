@@ -70,7 +70,11 @@ def _command(run, arguments: list[str]) -> str:
 
 def _preflight(review: dict, run=subprocess.run) -> dict:
     """重新读取计划绑定的工具，不启动服务、不连接业务资源。"""
-    validate_review(review)
+    if type(review.get("ready_for_execution")) is not bool:
+        raise ValueError("夹具审阅计划就绪状态无效")
+    structural = copy.deepcopy(review)
+    structural["ready_for_execution"] = True
+    validate_review(structural)
     tools = review["tools"]
     observed = {}
     for name in ("mysql", "aws", "rustfs"):
@@ -140,6 +144,7 @@ def revalidate(backend: Path, review_path: Path, output: Path, run=subprocess.ru
     if not output.parent.is_dir():
         raise ValueError("新审阅收据的父目录不存在")
     revised = copy.deepcopy(review)
+    revised["ready_for_execution"] = True
     revised["tools"] = {**review["tools"], **observed}
     seed = revised["scopes"]["seed"]
     service_run = Path(seed["backend_dir"]) / ".local-tests/reference-fixture/service-run"

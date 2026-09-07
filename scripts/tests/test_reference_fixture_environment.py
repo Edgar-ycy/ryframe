@@ -103,6 +103,27 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual(result["preflight"]["status"], "verified")
         self.assertNotIn("preflight", self.review)
 
+    def test_revalidate_can_promote_a_structurally_valid_pending_plan(self):
+        self.review["ready_for_execution"] = False
+        review = self.write("pending-review.json", self.review)
+        output = self.root / "review-r2.json"
+
+        def run(arguments, **_):
+            command = arguments[4:]
+            values = {
+                ("/usr/bin/readlink", "-f", "/usr/bin/redis-server"): "/usr/bin/redis-server",
+                ("/usr/bin/sha256sum", "/usr/bin/redis-server"): "c" * 64 + "  /usr/bin/redis-server",
+                ("/usr/bin/redis-server", "--version"): "Redis server v=7.0.15",
+                ("/usr/bin/readlink", "-f", "/usr/bin/python3"): "/usr/bin/python3.12",
+                ("/usr/bin/sha256sum", "/usr/bin/python3.12"): "d" * 64 + "  /usr/bin/python3.12",
+            }
+            return type("Completed", (), {"stdout": values[tuple(command)].encode()})()
+
+        with patch.object(environment.shutil, "which", return_value=str(self.wsl)):
+            result = environment.revalidate(self.backend, review, output, run)
+        self.assertTrue(result["ready_for_execution"])
+        self.assertEqual(result["preflight"]["status"], "verified")
+
     def test_preflight_binding_rejects_the_unreviewed_plan(self):
         with self.assertRaisesRegex(ValueError, "预检"):
             environment._preflight_binding(self.review)
