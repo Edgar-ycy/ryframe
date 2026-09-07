@@ -89,19 +89,39 @@ function transport(t, dataset, options = {}) {
 }
 
 test('已有数据默认 target，显式 source；造数、缺值、重复及未知侧均失败关闭', () => {
-  const base = ['--plan', 'plan.json', '--backend-dir', backend, '--write']
+  const base = ['--plan', 'plan.json', '--backend-dir', backend, '--preflight', 'preflight.json', '--write']
   assert.equal(datasetArguments(base).has('--side'), false)
   assert.equal(
-    datasetArguments([...base, '--verify-existing', 'data.json']).get('--side'),
+    datasetArguments([
+      '--plan',
+      'plan.json',
+      '--backend-dir',
+      backend,
+      '--verify-existing',
+      'data.json',
+      '--write',
+    ]).get('--side'),
     'target',
   )
   assert.equal(
-    datasetArguments([...base, '--verify-existing', 'data.json', '--side', 'source']).get('--side'),
+    datasetArguments([
+      '--plan',
+      'plan.json',
+      '--backend-dir',
+      backend,
+      '--verify-existing',
+      'data.json',
+      '--side',
+      'source',
+      '--write',
+    ]).get('--side'),
     'source',
   )
   for (const args of [
     [...base, '--side', 'source'],
-    [...base, '--verify-existing', 'data.json', '--side', 'other'],
+    [...base, '--verify-existing', 'data.json'],
+    base.filter((value) => value !== 'preflight.json' && value !== '--preflight'),
+    [...base.filter((value) => value !== 'preflight.json' && value !== '--preflight'), '--verify-existing', 'data.json', '--side', 'other'],
     [...base, '--verify-existing'],
     [...base, '--write'],
     [...base, '--unknown', 'x'],

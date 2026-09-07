@@ -1,8 +1,14 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { datasetSpecification, sampleContent, seedPosts } from '../restore_reference_dataset.mjs'
+import {
+  datasetSpecification,
+  sampleContent,
+  seedPosts,
+  verifyDatasetPreflight,
+} from '../restore_reference_dataset.mjs'
 import { Session } from '../devex/request.mjs'
+import { hash } from '../devex/config.mjs'
 import { requestPacer } from '../restore_reference_pacing.mjs'
 
 function plan() {
@@ -71,6 +77,24 @@ test('对象样本大小固定、可重现且不同对象使用不同内容', ()
   assert.deepEqual(sample, sampleContent('case', 0, 1024))
   assert.notDeepEqual(sample, sampleContent('case', 1, 1024))
   assert.match(sample.toString(), /^[a-f0-9\n]+$/)
+})
+
+test('数据准备只接受当前 source 空源预检收据', () => {
+  const candidate = plan()
+  candidate.source.scope_id = 'source-scope'
+  const preflight = {
+    format_version: 1,
+    kind: 'restore-reference-dataset-preflight',
+    plan_sha256: hash(candidate),
+    side: 'source',
+    scope_id: 'source-scope',
+    actions: { business: 'empty_source_verified' },
+  }
+  verifyDatasetPreflight(candidate, preflight)
+  assert.throws(() => verifyDatasetPreflight(candidate, { ...preflight, side: 'target' }))
+  assert.throws(() =>
+    verifyDatasetPreflight(candidate, { ...preflight, actions: { business: 'unchecked' } }),
+  )
 })
 
 test('每条实际岗位创建与最终精确筛选计数均形成数据收据', async () => {

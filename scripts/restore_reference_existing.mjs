@@ -10,7 +10,14 @@ export function verificationSide(side = 'target') {
 
 export function datasetArguments(argv) {
   const args = new Map()
-  const names = new Set(['--plan', '--backend-dir', '--verify-existing', '--side', '--write'])
+  const names = new Set([
+    '--plan',
+    '--backend-dir',
+    '--preflight',
+    '--verify-existing',
+    '--side',
+    '--write',
+  ])
   for (let index = 0; index < argv.length; index++) {
     const name = argv[index]
     if (!names.has(name) || args.has(name)) throw new Error('数据验收参数未知或重复')
@@ -23,7 +30,12 @@ export function datasetArguments(argv) {
   if (!args.has('--write')) throw new Error('数据准备和认证验收必须显式传入 --write')
   if (args.has('--side') && !args.has('--verify-existing'))
     throw new Error('--side 仅用于已有数据检查，数据准备固定 source')
-  if (args.has('--verify-existing')) args.set('--side', verificationSide(args.get('--side')))
+  if (args.has('--verify-existing')) {
+    if (args.has('--preflight')) throw new Error('已有数据检查不能使用数据准备预检收据')
+    args.set('--side', verificationSide(args.get('--side')))
+  } else if (!args.has('--preflight')) {
+    throw new Error('数据准备必须明确外层签发的预检收据')
+  }
   return args
 }
 

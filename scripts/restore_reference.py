@@ -250,9 +250,22 @@ def execute(args, plan: dict, backend: Path, tools: ExternalTools, work: Path) -
             source = source_snapshot(backend)
             check_api(plan, tools, "source")
             require_empty_source(plan, tools)
+            preflight = {
+                "format_version": 1,
+                "kind": "restore-reference-dataset-preflight",
+                "plan_sha256": plan_hash(plan),
+                "side": "source",
+                "scope_id": plan["source"]["scope_id"],
+                "actions": {"business": "empty_source_verified"},
+            }
+            preflight_path = work / "dataset-preflight.json"
+            write_json(preflight_path, preflight)
             tools.execute([*tools.command("node"), str(backend / "scripts/restore_reference_dataset.mjs"),
-                           "--plan", str(args.plan.resolve()), "--backend-dir", str(backend), "--write"], timeout=timeout)
+                           "--plan", str(args.plan.resolve()), "--backend-dir", str(backend),
+                           "--preflight", str(preflight_path), "--write"], timeout=timeout)
             result = read_json(work / "dataset/result.json")
+            if read_json(preflight_path) != preflight:
+                raise ValueError("数据准备预检收据在执行期间发生变化")
             if source_snapshot(backend) != source:
                 raise ValueError("参考数据准备期间源码发生变化")
             result = {**result, "source": source}

@@ -10,6 +10,18 @@ import { datasetArguments, referenceClient, verifyExisting } from './restore_ref
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 
+export function verifyDatasetPreflight(plan, preflight) {
+  if (
+    preflight?.format_version !== 1 ||
+    preflight.kind !== 'restore-reference-dataset-preflight' ||
+    preflight.plan_sha256 !== hash(plan) ||
+    preflight.side !== 'source' ||
+    preflight.scope_id !== plan.source.scope_id ||
+    preflight.actions?.business !== 'empty_source_verified'
+  )
+    throw new Error('数据准备预检收据未绑定当前计划、source 侧或空源检查')
+}
+
 export function datasetSpecification(plan) {
   const settings = plan.dataset
   if (!/^[a-z][a-z0-9_-]{2,31}$/.test(plan.id)) throw new Error('数据集ID必须为3到32位小写安全标识')
@@ -234,30 +246,38 @@ async function main() {
   const args = datasetArguments(process.argv.slice(2))
   const plan = JSON.parse(await readFile(args.get('--plan'), 'utf8'))
   const backend = path.resolve(args.get('--backend-dir'))
-  const verified = JSON.parse(
-    execFileSync(
-      process.env.RYFRAME_PYTHON || 'python',
-      [
-        '-X',
-        'utf8',
-        path.join(backend, 'scripts/restore_reference.py'),
-        args.has('--verify-existing') ? 'check-existing' : 'check-dataset',
-        '--backend-dir',
-        backend,
-        '--plan',
-        path.resolve(args.get('--plan')),
-        ...(args.has('--verify-existing') ? ['--side', args.get('--side')] : []),
-      ],
-      { encoding: 'utf8', windowsHide: true, timeout: 60_000 },
-    ),
-  )
-  const side = args.has('--verify-existing') ? args.get('--side') : 'source'
-  if (
-    verified.plan_sha256 !== hash(plan) ||
-    verified.side !== side ||
-    verified.scope_id !== plan[side].scope_id
-  )
-    throw new Error('参考计划或检查侧在ownership检查期间发生变化')
+  const originalPreflight = args.has('--preflight')
+    ? await readFile(args.get('--preflight'))
+    : null
+  if (originalPreflight) {
+    verifyDatasetPreflight(plan, JSON.parse(originalPreflight.toString('utf8')))
+  } else {
+    const side = args.get('--side')
+    const verified = JSON.parse(
+      execFileSync(
+        process.env.RYFRAME_PYTHON || 'python',
+        [
+          '-X',
+          'utf8',
+          path.join(backend, 'scripts/restore_reference.py'),
+          'check-existing',
+          '--backend-dir',
+          backend,
+          '--plan',
+          path.resolve(args.get('--plan')),
+          '--side',
+          side,
+        ],
+        { encoding: 'utf8', windowsHide: true, timeout: 60_000 },
+      ),
+    )
+    if (
+      verified.plan_sha256 !== hash(plan) ||
+      verified.side !== side ||
+      verified.scope_id !== plan[side].scope_id
+    )
+      throw new Error('参考计划或检查侧在ownership检查期间发生变化')
+  }
   const original = args.has('--verify-existing')
     ? await readFile(args.get('--verify-existing'))
     : null
@@ -268,6 +288,10 @@ async function main() {
     if (!original.equals(await readFile(args.get('--verify-existing'))))
       throw new Error('原数据收据在验证期间发生变化')
     result.dataset_sha256 = sha256(original)
+  }
+  if (originalPreflight) {
+    if (!originalPreflight.equals(await readFile(args.get('--preflight'))))
+      throw new Error('数据准备预检收据在执行期间发生变化')
   }
   if (hash(JSON.parse(await readFile(args.get('--plan'), 'utf8'))) !== hash(plan))
     throw new Error('参考计划在验证期间发生变化')
