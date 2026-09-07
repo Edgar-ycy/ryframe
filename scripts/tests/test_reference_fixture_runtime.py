@@ -65,10 +65,10 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
             write_json(directory / "runtime.json", value)
             return value
 
-        source = {"head": "b" * 40, "patch_sha256": "d" * 64, "files": []}
+        source = {"head": "b" * 40, "patch_sha256": "d" * 64, "files": [], "clean": False}
         with patch.object(runtime, "write_pair", side_effect=self._pair), \
                 patch.object(runtime, "build_binaries", side_effect=build_binaries), \
-                patch.object(runtime, "snapshot", return_value=(source, b"")), \
+                patch.object(runtime, "source_snapshot", return_value=source), \
                 patch.object(runtime, "capture_inventory", return_value={"source": {"snapshot": source}}), \
                 patch.object(runtime, "register_runtime", side_effect=register_runtime):
             result = runtime.build(self.backend, self.bootstrap, output)
