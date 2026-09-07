@@ -257,6 +257,25 @@ fn fixture_source_pair_uses_the_private_fixture_source_receipt() {
 }
 
 #[test]
+fn fixture_runtime_uses_the_private_device_runtime_controller() {
+    let (script, arguments) = recovery_command(
+        &RecoveryCommand::Fixture(strings(&["runtime", "verify", "--output", "runtime-r1"])),
+        Path::new("unused"),
+    )
+    .unwrap();
+    assert_eq!(script, "scripts/reference_fixture_runtime.py");
+    assert!(
+        arguments
+            .windows(2)
+            .any(|item| item == ["--output", "runtime-r1"])
+    );
+    assert_eq!(
+        arguments.last().map(String::as_str),
+        Some(super::workspace::root_dir().to_str().unwrap())
+    );
+}
+
+#[test]
 fn forwarded_recovery_scripts_exist_in_checkout() {
     let root = super::workspace::root_dir();
     for command in [
