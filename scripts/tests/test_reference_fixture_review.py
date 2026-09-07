@@ -72,13 +72,16 @@ class ReferenceFixtureReviewTests(unittest.TestCase):
         with patch.object(review, "snapshot", return_value=(self.generated, b"")):
             result = review.renew(self.backend, template, fixture,
                                   self.execution / ".local-tests/reference-fixture/recovery-r11",
-                                  "r11-current", 18230, 19230, 4200)
+                                  "r11-current", 18230, 19230, 4200, 29210, 29211, 16391)
         self.assertFalse(result["ready_for_execution"])
         self.assertNotIn("preflight", result)
         self.assertEqual(result["sources"]["backend_head"], "a" * 40)
         self.assertEqual(result["scopes"]["seed"]["scope_id"], "fixture-seed-r11-current")
         self.assertEqual(result["scopes"]["candidate"]["api_url"], "http://127.0.0.1:18232")
         self.assertEqual(result["scopes"]["base"]["backend_dir"], str(self.execution))
+        self.assertEqual(result["services"]["rustfs"]["data_dir"], str(self.execution / ".local-tests/reference-fixture/recovery-r11/rustfs"))
+        self.assertEqual(result["scopes"]["seed"]["objects"]["endpoint"], "http://127.0.0.1:29210")
+        self.assertEqual(result["services"]["redis"]["endpoint"], "127.0.0.1:16391")
         self.assertTrue(all(item["connection_file"].endswith("secrets\\mysql-client.cnf")
                             for item in result["scopes"]["seed"]["databases"]))
 
@@ -89,7 +92,7 @@ class ReferenceFixtureReviewTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "端口不能重叠"):
                 review.renew(self.backend, template, fixture,
                              self.execution / ".local-tests/reference-fixture/recovery-r11",
-                             "r11-current", 18230, 18230, 4200)
+                             "r11-current", 18230, 18230, 4200, 29210, 29211, 16391)
 
 
 if __name__ == "__main__":
