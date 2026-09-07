@@ -10,6 +10,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import full_stack_provenance as provenance
 from full_stack_process import write_receipt
+from reference_fixture_source_pair import write_pair
 from workspace_directory import WorkspaceDirectory
 
 
@@ -126,6 +127,28 @@ class DeviceSourceEvidenceTests(unittest.TestCase):
             {value["sha256"] for value in evidence["fixture_definition"].values()},
             {self.receipt["fixture_sha256"]},
         )
+
+    def test_local_fixture_pair_binds_fixture_without_claiming_ci_identity(self):
+        pair = provenance.reference_fixture_source_pair(self.backend)
+        self.assertEqual(pair["kind"], provenance.REFERENCE_FIXTURE_SOURCE_PAIR)
+        self.assertEqual(pair["sources"], self.sources)
+        (self.root / "source-pair.json").write_text(json.dumps(pair) + "\n", encoding="utf-8")
+        evidence = provenance.full_stack_source_evidence(self.backend, self.root)
+        self.assertEqual(evidence["source_pair"]["kind"], provenance.REFERENCE_FIXTURE_SOURCE_PAIR)
+
+        changed = {**pair, "sources": {**self.sources, "backend": self.source("c" * 40, provenance.EMPTY_SHA256)}}
+        (self.root / "source-pair.json").write_text(json.dumps(changed) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "fixture 原始来源"):
+            provenance.full_stack_source_evidence(self.backend, self.root)
+
+    def test_local_fixture_pair_writer_only_accepts_new_fixture_runtime_receipt(self):
+        output = self.backend / ".local-tests/reference-fixture/runtime/source-pair.json"
+        output.parent.mkdir(parents=True)
+        result = write_pair(self.backend, output)
+        self.assertEqual(result["kind"], provenance.REFERENCE_FIXTURE_SOURCE_PAIR)
+        self.assertEqual(json.loads(output.read_text(encoding="utf-8")), result)
+        with self.assertRaisesRegex(ValueError, "不得覆盖"):
+            write_pair(self.backend, output)
 
     def test_unready_wrong_commit_noncanonical_path_and_changed_definition_fail_closed(self):
         mutations = (

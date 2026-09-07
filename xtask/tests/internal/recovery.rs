@@ -234,6 +234,17 @@ fn fixture_services_use_the_private_service_controller() {
 }
 
 #[test]
+fn fixture_source_pair_uses_the_private_fixture_source_receipt() {
+    let (script, arguments) = recovery_command(
+        &RecoveryCommand::Fixture(strings(&["source-pair", "--output", "pair.json", "--write"])),
+        Path::new("unused"),
+    )
+    .unwrap();
+    assert_eq!(script, "scripts/reference_fixture_source_pair.py");
+    assert!(arguments.windows(2).any(|item| item == ["--output", "pair.json"]));
+}
+
+#[test]
 fn forwarded_recovery_scripts_exist_in_checkout() {
     let root = super::workspace::root_dir();
     for command in [

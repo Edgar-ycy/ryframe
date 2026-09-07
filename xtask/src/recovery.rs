@@ -74,6 +74,11 @@ pub(crate) fn recovery_command(
                     "scripts/reference_fixture_services.py",
                     with_paths(&arguments[1..], &backend, None)?,
                 ))
+            } else if arguments.first().map(String::as_str) == Some("source-pair") {
+                Ok((
+                    "scripts/reference_fixture_source_pair.py",
+                    with_paths(&arguments[1..], &backend, None)?,
+                ))
             } else {
                 Ok((
                     "scripts/prepare_full_stack_fixture.py",

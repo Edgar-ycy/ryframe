@@ -21,6 +21,7 @@ RUNTIME_EVIDENCE = "runtime-evidence.json"
 RUNTIME_RECEIPT = "runtime.json"
 SOURCE_PAIR_RECEIPT = "source-pair.json"
 FIXTURE_RECEIPT = "fixture.json"
+REFERENCE_FIXTURE_SOURCE_PAIR = "reference-fixture-source-pair"
 BINARY_ROLES = frozenset({"ryframe", "ryframe-worker", "ryframe-reset", "ryframe-migrate"})
 DEVICE_FIXTURE = Path("crates/ryframe-generator/tests/fixtures/device.toml")
 DEVICE_RESOURCE = Path("catalog/resources/device.toml")
@@ -557,14 +558,32 @@ def verify_source_pair_receipt(
     return recorded
 
 
-def _source_pair(directory: Path, backend_sha: str, frontend_sha: str | None = None) -> dict:
+def _source_pair(
+    directory: Path,
+    backend_sha: str,
+    frontend_sha: str | None = None,
+    *,
+    fixture_receipt: dict | None = None,
+    fixture_sources: dict | None = None,
+) -> dict:
     root = directory.resolve(strict=True)
     pair, _ = _read_json(root / "source-pair.json", "全栈源码组合收据")
-    _exact(
-        pair,
-        {"format_version", "backend_sha", "frontend_sha", "run_id", "attempt", "sources"},
-        "全栈源码组合收据",
-    )
+    if pair.get("kind") == REFERENCE_FIXTURE_SOURCE_PAIR:
+        _exact(pair, {"format_version", "kind", "fixture_receipt", "sources"}, "参考夹具源码组合收据")
+        if pair["format_version"] != 1 or fixture_receipt is None or fixture_sources is None:
+            raise ValueError("参考夹具源码组合收据缺少已核验的 fixture")
+        binding = _exact(pair["fixture_receipt"], {"path", "bytes", "sha256"}, "参考夹具 fixture 收据绑定")
+        if binding != fixture_receipt:
+            raise ValueError("参考夹具源码组合未绑定当前 fixture 收据")
+        sources = _exact(pair["sources"], {"backend", "frontend"}, "参考夹具源码组合来源")
+        if sources != fixture_sources:
+            raise ValueError("参考夹具源码组合与 fixture 原始来源不匹配")
+        for name, expected_head in (("backend", backend_sha), ("frontend", frontend_sha)):
+            if expected_head is not None:
+                _clean_archive_snapshot(sources[name], f"参考夹具 {name} 原始来源", expected_head)
+        return {**pair, "receipt": _binding(root / "source-pair.json")}
+
+    _exact(pair, {"format_version", "backend_sha", "frontend_sha", "run_id", "attempt", "sources"}, "全栈源码组合收据")
     if pair["format_version"] != 1:
         raise ValueError("全栈源码组合收据格式不受支持")
     for name in ("backend_sha", "frontend_sha"):
@@ -594,7 +613,7 @@ def _source_pair(directory: Path, backend_sha: str, frontend_sha: str | None = N
 def _device_source_evidence(backend: Path, directory: Path) -> dict:
     fixture_root = backend.parent.resolve(strict=True)
     receipt_path = fixture_root / "fixture.json"
-    receipt, raw = _read_json(receipt_path, "Device fixture 收据")
+    receipt, _ = _read_json(receipt_path, "Device fixture 收据")
     _exact(
         receipt,
         {"format_version", "fixture", "status", "fixture_sha256", "sources", "paths", "generated"},
@@ -619,7 +638,14 @@ def _device_source_evidence(backend: Path, directory: Path) -> dict:
     expected_backend = os.environ.get("RYFRAME_CODE_SHA", "")
     if COMMIT_PATTERN.fullmatch(expected_backend) is None or sources["backend"]["head"] != expected_backend:
         raise ValueError("Device 后端原始 SHA 与本次验收提交不匹配")
-    pair = _source_pair(directory, sources["backend"]["head"], sources["frontend"]["head"])
+    fixture_binding = _binding(receipt_path)
+    pair = _source_pair(
+        directory,
+        sources["backend"]["head"],
+        sources["frontend"]["head"],
+        fixture_receipt=fixture_binding,
+        fixture_sources=sources,
+    )
     if pair["sources"] != sources:
         raise ValueError("Device 原始来源与全栈源码组合收据不匹配")
     fixture_sha = _sha256(receipt["fixture_sha256"], "Device fixture 内容摘要")
@@ -633,16 +659,38 @@ def _device_source_evidence(backend: Path, directory: Path) -> dict:
     return {
         "format_version": 1,
         "fixture": "device",
-        "fixture_receipt": {
-            "path": str(receipt_path),
-            "bytes": len(raw),
-            "sha256": hashlib.sha256(raw).hexdigest(),
-        },
+        "fixture_receipt": fixture_binding,
         "fixture_definition": definitions,
         "roots": {name: str(root) for name, root in roots.items()},
         "source_pair": pair,
         "original": sources,
         "generated": actual,
+    }
+
+
+def reference_fixture_source_pair(backend: Path) -> dict:
+    """为已完成的 Device fixture 签发本地来源组合，不伪装为 CI 运行。"""
+    root = backend.resolve(strict=True).parent
+    receipt_path = root / FIXTURE_RECEIPT
+    receipt, _ = _read_json(receipt_path, "Device fixture 收据")
+    _exact(
+        receipt,
+        {"format_version", "fixture", "status", "fixture_sha256", "sources", "paths", "generated"},
+        "Device fixture 收据",
+    )
+    if receipt["format_version"] != 1 or receipt["fixture"] != "device" or receipt["status"] != "ready":
+        raise ValueError("Device fixture 尚未完成或格式不受支持")
+    paths = _exact(receipt["paths"], {"backend", "frontend"}, "Device 工作树路径")
+    if _canonical_root(paths["backend"], root, "Device 后端工作树") != backend.resolve():
+        raise ValueError("Device fixture 与当前后端工作树不匹配")
+    sources = _exact(receipt["sources"], {"backend", "frontend"}, "Device 原始来源")
+    for name in ("backend", "frontend"):
+        _clean_archive_snapshot(sources[name], f"Device {name} 原始来源", sources[name].get("head", ""))
+    return {
+        "format_version": 1,
+        "kind": REFERENCE_FIXTURE_SOURCE_PAIR,
+        "fixture_receipt": _binding(receipt_path),
+        "sources": sources,
     }
 
 
