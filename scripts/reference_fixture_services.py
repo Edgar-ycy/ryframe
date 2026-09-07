@@ -146,7 +146,13 @@ def rustfs(backend: Path, review_path: Path, bootstrap_path: Path, *, write: boo
     execution = Path(bootstrap["execution_backend"])
     run = service_run(review)
     output = run / "rustfs"
-    if run.exists() or output.exists() or not run.parent.is_dir():
+    root = run.parent
+    if root.exists():
+        if linked(root) or not root.is_dir() or any(root.iterdir()):
+            raise ValueError("首代服务根目录已存在且不为空、经过链接或不是目录")
+    else:
+        root.mkdir()
+    if run.exists() or output.exists():
         raise ValueError("首代服务账本目录已经存在或父目录缺失")
     for url in (service["api"], service["console"]):
         require_closed_port(url)
