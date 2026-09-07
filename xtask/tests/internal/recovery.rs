@@ -276,6 +276,25 @@ fn fixture_runtime_uses_the_private_device_runtime_controller() {
 }
 
 #[test]
+fn fixture_dataset_uses_the_private_device_dataset_adapter() {
+    let (script, arguments) = recovery_command(
+        &RecoveryCommand::Fixture(strings(&["dataset", "plan", "--runtime", "runtime-r1"])),
+        Path::new("unused"),
+    )
+    .unwrap();
+    assert_eq!(script, "scripts/reference_fixture_dataset.py");
+    assert!(
+        arguments
+            .windows(2)
+            .any(|item| item == ["--runtime", "runtime-r1"])
+    );
+    assert_eq!(
+        arguments.last().map(String::as_str),
+        Some(super::workspace::root_dir().to_str().unwrap())
+    );
+}
+
+#[test]
 fn forwarded_recovery_scripts_exist_in_checkout() {
     let root = super::workspace::root_dir();
     for command in [
@@ -284,6 +303,7 @@ fn forwarded_recovery_scripts_exist_in_checkout() {
         RecoveryCommand::Source(strings(&["verify"])),
         RecoveryCommand::Clone(strings(&["status"])),
         RecoveryCommand::Fixture(strings(&["--output-dir", "fixture"])),
+        RecoveryCommand::Fixture(strings(&["dataset", "plan"])),
         RecoveryCommand::DatasetPrepare(strings(&["--plan", "reference.json"])),
         RecoveryCommand::FreshTarget(strings(&[
             "--operation",
