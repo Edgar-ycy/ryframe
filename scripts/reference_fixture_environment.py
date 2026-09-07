@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import shutil
 import subprocess
 from urllib.parse import urlsplit
@@ -21,6 +22,11 @@ from restore_build import file_digest
 from restore_reference_plan import plan_hash
 from restore_source_binding import mysql_client
 from source_inventory import snapshot
+
+
+SECRET_FILES = ("mysql-client.cnf", "rustfs-access-key.txt", "rustfs-secret-key.txt", "redis-password.txt",
+                "reset-admin-password.txt", "reset-user-password.txt", "jwt-secret.txt", "metrics-token.txt")
+RESET_SECRET_FILES = {"reset-admin-password.txt", "reset-user-password.txt"}
 
 
 def bound(path: Path) -> dict:
@@ -155,6 +161,71 @@ def _secret(directory: Path, name: str) -> tuple[str, dict]:
     return value, bound(path)
 
 
+def _secret_directory(backend: Path, execution: Path, selected: Path | None = None) -> Path:
+    root = execution / ".local-tests/reference-fixture"
+    directory = root / "secrets" if selected is None else local_path(backend, str(selected))
+    if (not directory.is_relative_to(root) or linked(directory) or not directory.is_dir()
+            or any(linked(directory / name) or not (directory / name).is_file() for name in SECRET_FILES)):
+        raise ValueError("夹具 secret set 必须是执行工作树内完整的普通文件目录")
+    if directory != root / "secrets":
+        manifest = directory / "secret-set.json"
+        value = read_json(manifest)
+        exact = {"format_version", "kind", "status", "source", "files"}
+        if (set(value) != exact or value["format_version"] != 1 or value["kind"] != "reference-fixture-secret-set"
+                or value["status"] != "generated" or set(value["files"]) != set(SECRET_FILES)
+                or any(value["files"][name] != bound(directory / name) for name in SECRET_FILES)):
+            raise ValueError("夹具生成 secret set 收据无效")
+    return directory
+
+
+def _reset_password() -> str:
+    return "Aa1!" + secrets.token_urlsafe(32)
+
+
+def rotate_secrets(backend: Path, fixture_path: Path, output: Path) -> dict:
+    """生成新的夹具 secret set；只写隔离文件，不修改冻结来源或任何远程资源。"""
+    backend = backend.resolve(strict=True)
+    _, fixture = _read(backend, fixture_path)
+    _fixture(fixture)
+    execution = Path(fixture["paths"]["backend"])
+    generated = fixture.get("generated", {}).get("backend")
+    if execution != Path(fixture["paths"]["backend"]) or snapshot(execution)[0] != generated:
+        raise ValueError("Device 执行工作树与生成快照不一致")
+    source = _secret_directory(backend, execution)
+    output = local_path(backend, str(output if output.is_absolute() else backend / output), new=True)
+    root = execution / ".local-tests/reference-fixture"
+    if not output.parent.is_dir() or not output.is_relative_to(root):
+        raise ValueError("新的夹具 secret set 必须写入执行工作树的参考夹具目录")
+    output.mkdir()
+    try:
+        for name in SECRET_FILES:
+            target = output / name
+            if name in RESET_SECRET_FILES:
+                value = _reset_password().encode("utf-8") + b"\n"
+            else:
+                value = (source / name).read_bytes()
+            with target.open("xb") as stream:
+                stream.write(value)
+                stream.flush()
+                os.fsync(stream.fileno())
+        if (output / "reset-admin-password.txt").read_bytes() == (output / "reset-user-password.txt").read_bytes():
+            raise ValueError("夹具 reset 密码不得相同")
+        values = {key: _secret(output, name)[0] for key, name in (
+            ("RYFRAME_RESET_ADMIN_PASSWORD", "reset-admin-password.txt"),
+            ("RYFRAME_RESET_USER_PASSWORD", "reset-user-password.txt"),
+        )}
+        _validate_reset_passwords(values)
+        result = {"format_version": 1, "kind": "reference-fixture-secret-set", "status": "generated",
+                  "source": {name: bound(source / name) for name in SECRET_FILES},
+                  "files": {name: bound(output / name) for name in SECRET_FILES}}
+        write_json(output / "secret-set.json", result)
+        return result
+    except BaseException:
+        if not (output / "secret-set.json").exists():
+            write_json(output / "failed.json", {"status": "failed"})
+        raise
+
+
 def _database_credentials(backend: Path, source: Path, destination: Path) -> dict:
     source = local_path(backend, str(source))
     destination = local_path(backend, str(destination))
@@ -188,7 +259,8 @@ def _validate_reset_passwords(values: dict) -> None:
             raise ValueError(f"{key} 不满足 reset 种子密码复杂度策略")
 
 
-def _environment(backend: Path, review: dict, fixture: dict, output: Path, side: str = "seed") -> tuple[dict, dict]:
+def _environment(backend: Path, review: dict, fixture: dict, output: Path, side: str = "seed",
+                 secret_directory: Path | None = None) -> tuple[dict, dict]:
     seed = review["scopes"]["seed"]
     if side not in review["scopes"]:
         raise ValueError("夹具环境必须选择已审阅侧")
@@ -197,10 +269,11 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
     # Device 收据记录的是生成工作树的内容快照，不包含其后产生的忽略运行目录状态。
     if execution != Path(seed["backend_dir"]) or snapshot(execution)[0] != fixture["generated"]["backend"]:
         raise ValueError("seed Device 工作树与审阅计划或生成快照不一致")
-    secrets = execution / ".local-tests/reference-fixture/secrets"
+    source_secrets = _secret_directory(backend, execution)
+    secrets = _secret_directory(backend, execution, secret_directory)
     seed_database = {item["key"]: item for item in seed["databases"]}
     source_mysql = Path(seed_database["shared-control"]["connection_file"])
-    if source_mysql != secrets / "mysql-client.cnf" or linked(source_mysql) or not source_mysql.is_file():
+    if source_mysql != source_secrets / "mysql-client.cnf" or linked(source_mysql) or not source_mysql.is_file():
         raise ValueError("seed MySQL 凭据路径不属于冻结工作树")
     database = {item["key"]: item for item in selected["databases"]}
     mysql_path = Path(database["shared-control"]["connection_file"])
@@ -300,7 +373,7 @@ def plan(backend: Path, review_path: Path, fixture_path: Path, maintenance_path:
 
 
 def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_path: Path, output: Path,
-            side: str = "seed") -> dict:
+            side: str = "seed", secret_directory: Path | None = None) -> dict:
     """显式准备冻结环境；只写本地私有环境和收据，绝不创建服务或业务资源。"""
     backend = backend.resolve(strict=True)
     result = plan(backend, review_path, fixture_path, maintenance_path, side)
@@ -312,7 +385,7 @@ def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_pa
     fixture = read_json(Path(result["fixture"]["path"]))
     maintenance_path = Path(result["maintenance_build"]["path"])
     execution = Path(fixture["paths"]["backend"])
-    environment, secrets = _environment(backend, review, fixture, output, side)
+    environment, secrets = _environment(backend, review, fixture, output, side, secret_directory)
     output.mkdir()
     (output / "tmp").mkdir()
     try:
@@ -339,28 +412,36 @@ def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_pa
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("plan", "prepare", "review"))
+    parser.add_argument("operation", choices=("plan", "prepare", "review", "rotate-secrets"))
     parser.add_argument("--backend-dir", type=Path, required=True)
-    parser.add_argument("--review", type=Path, required=True)
+    parser.add_argument("--review", type=Path)
     parser.add_argument("--fixture", type=Path)
     parser.add_argument("--maintenance-build", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--secrets-dir", type=Path)
     parser.add_argument("--side", choices=("seed", "base", "candidate"), default="seed")
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
-    if args.operation in ("plan", "prepare") and (args.fixture is None or args.maintenance_build is None):
-        parser.error(f"{args.operation} 需要 --fixture 与 --maintenance-build")
+    if args.operation in ("plan", "prepare") and (args.review is None or args.fixture is None or args.maintenance_build is None):
+        parser.error(f"{args.operation} 需要 --review、--fixture 与 --maintenance-build")
     if args.operation == "plan":
-        if args.output is not None or args.write:
-            parser.error("plan 不接受 --output 或 --write")
+        if args.output is not None or args.write or args.secrets_dir is not None:
+            parser.error("plan 不接受 --output、--write 或 --secrets-dir")
         result = plan(args.backend_dir, args.review, args.fixture, args.maintenance_build, args.side)
     elif args.operation == "prepare":
         if args.output is None or not args.write:
             parser.error("prepare 需要 --output 与 --write")
-        result = prepare(args.backend_dir, args.review, args.fixture, args.maintenance_build, args.output, args.side)
+        result = prepare(args.backend_dir, args.review, args.fixture, args.maintenance_build, args.output, args.side,
+                         args.secrets_dir)
+    elif args.operation == "rotate-secrets":
+        if args.fixture is None or args.output is None or not args.write:
+            parser.error("rotate-secrets 需要 --fixture、--output 与 --write")
+        if args.review is not None or args.maintenance_build is not None or args.secrets_dir is not None:
+            parser.error("rotate-secrets 不接受 --review、--maintenance-build 或 --secrets-dir")
+        result = rotate_secrets(args.backend_dir, args.fixture, args.output)
     else:
-        if args.output is None or not args.write:
-            parser.error("review 需要 --output 与 --write")
+        if args.review is None or args.output is None or not args.write or args.secrets_dir is not None:
+            parser.error("review 需要 --review、--output 与 --write，且不接受 --secrets-dir")
         result = revalidate(args.backend_dir, args.review, args.output)
     print(json.dumps({"status": result.get("status", "planned"), "services_started": result.get("services_started", False),
                       "remote_writes": result.get("remote_writes", 0)}, ensure_ascii=False))

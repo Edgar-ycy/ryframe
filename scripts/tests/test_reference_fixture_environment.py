@@ -137,6 +137,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
             item["connection_file"] = str(secrets / "mysql-client.cnf")
         generated = {"head": "a" * 40, "patch_sha256": "b" * 64, "files": []}
         fixture = {"format_version": 1, "fixture": "device", "status": "ready",
+                   "sources": {"backend": {"head": "a" * 40}, "frontend": {"head": "b" * 40}},
                    "paths": {"backend": str(execution), "frontend": str(self.root / "device-frontend")},
                    "generated": {"backend": generated}}
 
@@ -152,6 +153,19 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual(values["APP_OBJECT_STORAGE_ACCESS_KEY"], "access")
         self.assertEqual(values["APP_MONITOR_METRICS_BEARER_TOKEN"], "metrics")
         self.assertEqual(set(files), {"mysql-client.cnf", *names})
+
+        secret_set = secrets.parent / "secrets-r10"
+        fixture_file = self.write("device-fixture.json", fixture)
+        with patch.object(environment, "snapshot", return_value=(generated, b"")):
+            rotated = environment.rotate_secrets(self.backend, fixture_file, secret_set)
+            rotated_values, rotated_files = environment._environment(
+                self.backend, self.review, fixture, self.root / "rotated-output", secret_directory=secret_set)
+        self.assertEqual(rotated["status"], "generated")
+        self.assertEqual(set(rotated["files"]), set(environment.SECRET_FILES))
+        self.assertEqual(set(rotated_files), {"mysql-client.cnf", *names})
+        self.assertNotEqual(rotated_values["RYFRAME_RESET_ADMIN_PASSWORD"], values["RYFRAME_RESET_ADMIN_PASSWORD"])
+        self.assertNotEqual(rotated_values["RYFRAME_RESET_USER_PASSWORD"], values["RYFRAME_RESET_USER_PASSWORD"])
+        environment._validate_reset_passwords(rotated_values)
 
         values["RYFRAME_RESET_USER_PASSWORD"] = "weak"
         with self.assertRaisesRegex(ValueError, "RYFRAME_RESET_USER_PASSWORD"):
