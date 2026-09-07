@@ -53,10 +53,19 @@ pub(crate) fn recovery_command(
                 with_paths(&forwarded, &backend, None)?,
             ))
         }
-        RecoveryCommand::Fixture(arguments) => Ok((
-            "scripts/prepare_full_stack_fixture.py",
-            with_paths(arguments, &backend, Some(frontend.as_str()))?,
-        )),
+        RecoveryCommand::Fixture(arguments) => {
+            if arguments.first().map(String::as_str) == Some("environment") {
+                Ok((
+                    "scripts/reference_fixture_environment.py",
+                    with_paths(&arguments[1..], &backend, None)?,
+                ))
+            } else {
+                Ok((
+                    "scripts/prepare_full_stack_fixture.py",
+                    with_paths(arguments, &backend, Some(frontend.as_str()))?,
+                ))
+            }
+        }
         RecoveryCommand::DatasetPrepare(arguments) => Ok((
             "scripts/restore_reference_dataset.mjs",
             with_paths(arguments, &backend, None)?,
