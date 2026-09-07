@@ -173,6 +173,22 @@ fn source_fixture_and_dataset_stages_fix_the_current_worktree_paths() {
 }
 
 #[test]
+fn fixture_environment_plan_uses_only_the_current_backend() {
+    let frontend = Path::new("D:/前端 worktree");
+    let backend = super::workspace::root_dir().display().to_string();
+    let (script, arguments) = recovery_command(
+        &RecoveryCommand::Fixture(strings(&["environment", "plan", "--review", "review.json"])),
+        frontend,
+    )
+    .unwrap();
+    assert_eq!(script, "scripts/reference_fixture_environment.py");
+    assert_eq!(
+        arguments,
+        strings(&["plan", "--review", "review.json", "--backend-dir", &backend])
+    );
+}
+
+#[test]
 fn forwarded_recovery_scripts_exist_in_checkout() {
     let root = super::workspace::root_dir();
     for command in [
