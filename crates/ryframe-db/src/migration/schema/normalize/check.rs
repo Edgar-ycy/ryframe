@@ -3,6 +3,7 @@ pub fn normalize_check_clause(value: &str) -> String {
     // 先按词法 token 解析，再用类型和长度编码，避免删除空白后把不同表达式拼成同一串。
     let mut tokens = check_tokens(value);
     strip_redundant_outer_parentheses(&mut tokens);
+    strip_redundant_atomic_parentheses(&mut tokens);
     encode_check_tokens(&tokens)
 }
 
@@ -324,6 +325,59 @@ fn is_wrapped_by_single_outer_group(tokens: &[CheckToken]) -> bool {
     depth == 0
 }
 
+fn strip_redundant_atomic_parentheses(tokens: &mut Vec<CheckToken>) {
+    // MySQL 会给比较项补上括号。只移除逻辑表达式之外的分组；IN 列表、函数调用和
+    // 含 AND/OR 的组继续保留，避免把具有不同优先级的表达式归为同一约束。
+    while let Some((open, close)) = redundant_atomic_group(tokens) {
+        tokens.remove(close);
+        tokens.remove(open);
+    }
+}
+
+fn redundant_atomic_group(tokens: &[CheckToken]) -> Option<(usize, usize)> {
+    let mut opens = Vec::new();
+    for (index, token) in tokens.iter().enumerate() {
+        match token {
+            CheckToken::OpenParenthesis => opens.push(index),
+            CheckToken::CloseParenthesis => {
+                let open = opens.pop()?;
+                if atomic_group(tokens, open, index) {
+                    return Some((open, index));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn atomic_group(tokens: &[CheckToken], open: usize, close: usize) -> bool {
+    let preceding = open.checked_sub(1).and_then(|index| tokens.get(index));
+    if matches!(preceding, Some(CheckToken::Identifier(_)))
+        || matches!(preceding, Some(CheckToken::Keyword(value)) if value == "in")
+    {
+        return false;
+    }
+    let mut depth = 0usize;
+    let mut between_range = false;
+    for token in &tokens[open + 1..close] {
+        match token {
+            CheckToken::OpenParenthesis => depth += 1,
+            CheckToken::CloseParenthesis => depth = depth.saturating_sub(1),
+            CheckToken::Keyword(value) if depth == 0 && value == "between" => between_range = true,
+            CheckToken::Keyword(value) if depth == 0 && value == "and" && between_range => {
+                between_range = false;
+            }
+            CheckToken::Keyword(value) if depth == 0 && matches!(value.as_str(), "and" | "or") => {
+                return false
+            }
+            CheckToken::Symbol(value) if depth == 0 && value == "," => return false,
+            _ => {}
+        }
+    }
+    true
+}
+
 fn encode_check_tokens(tokens: &[CheckToken]) -> String {
     let mut encoded = String::new();
     for token in tokens {
@@ -382,6 +436,20 @@ mod tests {
         assert_ne!(
             normalize_check_clause("TRUE"),
             normalize_check_clause("`true`"),
+        );
+    }
+
+    #[test]
+    fn check_normalization_matches_mysql_parenthesized_comparisons() {
+        assert_eq!(
+            normalize_check_clause(
+                "((`attempts` >= 0) and (`max_attempts` between 1 and 100) and (`claim_sequence` >= `attempts`))",
+            ),
+            normalize_check_clause("`attempts` >= 0 AND `max_attempts` BETWEEN 1 AND 100 AND `claim_sequence` >= `attempts`"),
+        );
+        assert_eq!(
+            normalize_check_clause("((`status` in (_utf8mb4\\'running\\',_utf8mb4\\'failed\\')) and (`completed_at` is null))"),
+            normalize_check_clause("`status` IN ('running', 'failed') AND `completed_at` IS NULL"),
         );
     }
 }
