@@ -59,6 +59,11 @@ pub(crate) fn recovery_command(
                     "scripts/reference_fixture_environment.py",
                     with_paths(&arguments[1..], &backend, None)?,
                 ))
+            } else if arguments.first().map(String::as_str) == Some("review") {
+                Ok((
+                    "scripts/reference_fixture_review.py",
+                    with_paths(&arguments[1..], &backend, None)?,
+                ))
             } else if arguments.first().map(String::as_str) == Some("services") {
                 Ok((
                     "scripts/reference_fixture_services.py",

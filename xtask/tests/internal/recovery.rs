@@ -189,6 +189,22 @@ fn fixture_environment_plan_uses_only_the_current_backend() {
 }
 
 #[test]
+fn fixture_review_uses_only_the_current_backend() {
+    let frontend = Path::new("D:/前端 worktree");
+    let backend = super::workspace::root_dir().display().to_string();
+    let (script, arguments) = recovery_command(
+        &RecoveryCommand::Fixture(strings(&["review", "--template", "review.json"])),
+        frontend,
+    )
+    .unwrap();
+    assert_eq!(script, "scripts/reference_fixture_review.py");
+    assert_eq!(
+        arguments,
+        strings(&["--template", "review.json", "--backend-dir", &backend])
+    );
+}
+
+#[test]
 fn fixture_services_use_the_private_service_controller() {
     for service in ["rustfs", "redis"] {
         let (script, arguments) = recovery_command(
