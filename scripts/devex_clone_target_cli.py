@@ -216,11 +216,18 @@ def _prepared(backend: Path, workspace: Path, value: dict) -> dict:
     return proof
 
 
+def _prepare_binding(backend: Path, value: dict) -> dict:
+    path = Path(value["target_directory"]) / "prepare.json"
+    descriptor = binding(path)
+    if read_bound_json(path, descriptor).get("request") != value["request"]:
+        raise ValueError("fresh 目标 prepare 请求不属于固定 registration")
+    bound_file(backend, value["request"])
+    return descriptor
+
+
 def _initialized(backend: Path, workspace: Path, value: dict) -> tuple[dict, dict]:
     prepare_path = Path(value["target_directory"]) / "prepare.json"
-    prepare_binding = binding(prepare_path)
-    if read_bound_json(prepare_path, prepare_binding).get("request") != value["request"]:
-        raise ValueError("fresh 目标 prepare 请求不属于固定 registration")
+    prepare_binding = _prepare_binding(backend, value)
     prepared = binding(workspace / "prepared-files.json")
     proof = _snapshot(workspace, value, "initialized")
     if binding(workspace / "prepared-files.json") != prepared or binding(prepare_path) != prepare_binding:
@@ -381,6 +388,28 @@ def initialize(backend: Path, workspace: Path) -> dict:
                 "restore_qualified": False}
 
 
+def resume_initialize(backend: Path, workspace: Path) -> dict:
+    from devex_clone_target import inventory_resume_state, resume_inventory_target
+
+    backend, workspace = backend.resolve(strict=True), local_path(backend, str(workspace))
+    with _workspace_control(workspace):
+        _, value, _ = _registration(backend, workspace)
+        _prepare_binding(backend, value)
+        state = inventory_resume_state(backend, Path(value["target_directory"]), value["request"])
+        if not state["resumable"]:
+            raise ValueError("fresh 目标 inventory 不能续作：" + state["reason"])
+
+        def invoke(root, target, *, storage_run):
+            return resume_inventory_target(root, target, storage_run=storage_run,
+                                           request_descriptor=value["request"])
+
+        result = _run_registered(backend, workspace, invoke)
+        snapshot = _write_snapshot(workspace, value, "initialized")
+        return {"status": result["status"], "registration": binding(workspace / "registration.json"),
+                "target": binding(workspace / "target/initialized.json"), "files": snapshot,
+                "resumed": True, "restore_qualified": False}
+
+
 def reconcile_preflight(backend: Path, workspace: Path) -> dict:
     from devex_clone_target import reconcile_preflight_failure
 
@@ -447,7 +476,7 @@ def status(backend: Path, workspace: Path) -> dict:
         _unchanged(backend, path, value, private, storage_state)
         return report("fresh_target_needs_reconciliation", "registered", "reconciliation", None,
                       valid=False, reason="fresh 目标目录结构无效", registration=registration)
-    from devex_clone_target import prepare_resume_state, unresolved_failure
+    from devex_clone_target import inventory_resume_state, prepare_resume_state, unresolved_failure
 
     try:
         if (target / "reconciliation-completed.json").is_file():
@@ -466,10 +495,15 @@ def status(backend: Path, workspace: Path) -> dict:
                 result = report("fresh_target_initialized", "initialized", "verification", "verify",
                                 valid=True, reason=None, registration=registration)
         elif ((target / "initialize.lock").exists() or (target / "initialize.started.json").exists()):
-            result = report("fresh_target_needs_reconciliation", "prepared" if
-                            (workspace / "prepared-files.json").exists() else "registered",
-                            "reconciliation", None, valid=False,
-                            reason="初始化已有 intent、锁或未解决失败", registration=registration)
+            resume = inventory_resume_state(backend, target, value["request"])
+            if resume["resumable"]:
+                result = report("fresh_target_inventory_resume_pending", "reset", "inventory_resume",
+                                "resume-initialize", valid=True, reason=None, registration=registration)
+            else:
+                result = report("fresh_target_needs_reconciliation", "prepared" if
+                                (workspace / "prepared-files.json").exists() else "registered",
+                                "reconciliation", None, valid=False,
+                                reason="初始化已有 intent、锁或未解决失败", registration=registration)
         elif (target / "prepare.json").is_file():
             if (workspace / "prepared-files.json").is_file():
                 if unresolved_failure(backend, target):

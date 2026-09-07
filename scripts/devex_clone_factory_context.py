@@ -85,9 +85,9 @@ def database_observation(value: dict) -> DatabaseObservation:
                                   "ownership": tuple(copy.deepcopy(value["ownership"]))})
 
 
-def unfailed(directory: Path, owned_lock_identity: int | None = None) -> None:
+def unfailed(directory: Path, owned_lock_identity: int | None = None, *, allow_resolved_failure: bool = False) -> None:
     failure = directory / "failure.json"
-    if failure.exists() or linked(failure):
+    if linked(failure) or (failure.exists() and not allow_resolved_failure):
         raise ValueError("目标初始化或库存失败，不能消费残留成功文件")
     lock = directory / "initialize.lock"
     if owned_lock_identity is None:
@@ -98,11 +98,13 @@ def unfailed(directory: Path, owned_lock_identity: int | None = None) -> None:
         raise ValueError("当前调用方持有的真实目标锁缺失或身份变化")
 
 
-def inventory_history(backend: Path, root: Path, initial: dict, request: dict) -> None:
+def inventory_history(backend: Path, root: Path, initial: dict, request: dict, *, resumed: bool = False) -> None:
     filename = bound_file(backend, initial["receipt"])
-    if filename != root / "inventory-initial/inventory.json":
+    initial_directory = root / "inventory-initial"
+    resumed_directory = filename.parent.name.startswith("inventory-resume-")
+    if filename.name != "inventory.json" or (filename.parent != initial_directory and not (resumed and resumed_directory)):
         raise ValueError("初始库存必须属于本初始化代次的精确目录")
-    unfailed(filename.parent)
+    unfailed(filename.parent, allow_resolved_failure=resumed)
     receipt = read_json(filename)
     if (receipt.get("status") != "side_inventory_captured" or receipt.get("format_version") != 1
             or receipt.get("side") != "target" or receipt.get("scope_id") != request["target"]["scope_id"]
@@ -132,7 +134,10 @@ def inventory_history(backend: Path, root: Path, initial: dict, request: dict) -
 
 def initialization_history(backend: Path, filename: Path, owned_lock_identity: int | None = None) -> tuple[dict, dict]:
     root = local_path(backend, str(filename.parent))
-    unfailed(root, owned_lock_identity)
+    from devex_clone_target import unresolved_failure
+
+    resumed = (root / "failure.json").exists() and not unresolved_failure(backend, root)
+    unfailed(root, owned_lock_identity, allow_resolved_failure=resumed)
     result = read_json(filename)
     prepared = read_json(regular_file(root / "prepare.json"))
     request = read_json(bound_file(backend, prepared["request"]))
@@ -143,7 +148,7 @@ def initialization_history(backend: Path, filename: Path, owned_lock_identity: i
             or result["generation"] != prepared["generation"] or prepared["request_sha256"] != plan_hash(request)
             or result["id"] != request["id"] or result["scope_id"] != request["target"]["scope_id"]):
         raise ValueError("目标初始化发布、原请求或完整准备记录已变化")
-    inventory_history(backend, root, result["inventory"], request)
+    inventory_history(backend, root, result["inventory"], request, resumed=resumed)
     reset = read_json(regular_file(root / "reset-plan.json"))
     if reset_completed(root, reset["manifest"], reset["plan_hash"]) != result["reset"]:
         raise ValueError("目标 reset 未取得本代次完整完成及释放证明")

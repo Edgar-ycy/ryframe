@@ -43,7 +43,7 @@ def add_commands(commands) -> None:
     maintenance.add_argument("--write", action="store_true", help="只有 build 需要显式指定")
     fresh = commands.add_parser("fresh-target", help="登记并分阶段准备、初始化和复核一个 fresh 目标")
     fresh.add_argument("--workspace", type=Path, required=True)
-    fresh.add_argument("--operation", choices=("prepare", "resume-prepare", "initialize", "reconcile-preflight", "verify", "status"), required=True)
+    fresh.add_argument("--operation", choices=("prepare", "resume-prepare", "initialize", "resume-initialize", "reconcile-preflight", "verify", "status"), required=True)
     fresh.add_argument("--request", type=Path)
     fresh.add_argument("--environment", type=Path)
     fresh.add_argument("--storage-run", type=Path)
@@ -99,13 +99,14 @@ def dispatch(args, backend: Path) -> dict:
                 "resources_modified": False, "restore_qualified": False}
     if args.command == "fresh-target":
         from devex_clone_target_cli import initialize as initialize_target, reconcile_preflight
-        from devex_clone_target_cli import prepare, resume_prepare, status as target_status, verify
+        from devex_clone_target_cli import prepare, resume_initialize, resume_prepare, status as target_status, verify
 
         workspace = evidence_path(backend, args.workspace, new=args.operation == "prepare")
         supplied = (args.request is not None, args.environment is not None,
                     args.storage_run is not None, args.observation_dir is not None)
         expected = {"prepare": (True, True, True, False), "resume-prepare": (False, False, False, False),
-                    "initialize": (False, False, False, False), "reconcile-preflight": (False, False, False, False),
+                    "initialize": (False, False, False, False), "resume-initialize": (False, False, False, False),
+                    "reconcile-preflight": (False, False, False, False),
                     "verify": (False, False, False, True), "status": (False, False, False, False)}[args.operation]
         if supplied != expected:
             raise ValueError("fresh-target 参数必须严格匹配当前阶段")
@@ -122,6 +123,8 @@ def dispatch(args, backend: Path) -> dict:
             return resume_prepare(backend, workspace)
         if args.operation == "initialize":
             return initialize_target(backend, workspace)
+        if args.operation == "resume-initialize":
+            return resume_initialize(backend, workspace)
         if args.operation == "reconcile-preflight":
             return reconcile_preflight(backend, workspace)
         return verify(backend, workspace, evidence_path(backend, args.observation_dir, new=True))

@@ -294,6 +294,10 @@ class TargetCliTests(unittest.TestCase):
         with patch.object(target_cli, "resume_prepare", return_value={"status": "prepared"}) as operation:
             self.assertEqual(cli.dispatch(resume, self.backend)["status"], "prepared")
             operation.assert_called_once_with(self.backend, self.workspace)
+        resume_initialize = self.args("resume-initialize")
+        with patch.object(target_cli, "resume_initialize", return_value={"status": "initialized"}) as operation:
+            self.assertEqual(cli.dispatch(resume_initialize, self.backend)["status"], "initialized")
+            operation.assert_called_once_with(self.backend, self.workspace)
         invalid = [self.args("prepare", request=self.request, environment=self.environment),
                    self.args("prepare", request=self.request, environment=self.environment,
                              storage_run=self.storage_run, observation=self.local / "unused"),

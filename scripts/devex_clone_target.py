@@ -234,6 +234,9 @@ def unresolved_failure(backend: Path, output: Path) -> bool:
     if any(path.name != "failure.json" for path in failures):
         return True
     try:
+        if (output / "initialized.json").is_file() and _inventory_resume_confirmed(output, read_json(output / "initialized.json")):
+            value = read_json(output / "failure.json")
+            return not (value.get("stage") == "inventory" and value.get("error_type") == "InventoryCaptureError")
         if _prepare_failure(output) is None or not (output / "prepare.json").is_file():
             return True
         prepared_value = read_json(output / "prepare.json")
@@ -247,6 +250,46 @@ def unresolved_failure(backend: Path, output: Path) -> bool:
         return True
 
 
+def _inventory_resume_confirmed(output: Path, initialized: dict) -> bool:
+    """仅接受绑定原 inventory 失败和最终初始化收据的显式恢复确认。"""
+    failure_digest = binding(output / "failure.json")
+    for path in output.glob("resume-initialize-*.confirmed.json"):
+        value = read_json(path)
+        exact(value, {"format_version", "kind", "attempt", "at", "intent", "failure", "initialized", "remote_writes"})
+        if (value["format_version"] == 1 and value["kind"] == "devex-clone-initialize-resume-confirmed"
+                and value["failure"] == failure_digest and value["initialized"] == binding(output / "initialized.json")
+                and value["remote_writes"] == 0):
+            return True
+    return False
+
+
+def inventory_resume_state(backend: Path, output: Path, request_descriptor: dict) -> dict:
+    """只读判定已完成 reset 的 inventory 失败能否显式继续。"""
+    backend, output = backend.resolve(strict=True), local_path(backend, str(output))
+    failure_path = output / "failure.json"
+    if ((output / "initialized.json").exists() or (output / "initialize.lock").exists()
+            or not (output / "initialize.started.json").is_file() or not failure_path.is_file()):
+        return {"resumable": False, "reason": "缺少唯一的已释放 inventory 失败现场"}
+    failed = read_json(failure_path)
+    exact(failed, FAILURE_FIELDS)
+    if (failed["stage"] != "inventory" or failed["error_type"] != "InventoryCaptureError"
+            or failed["automatic_retry"] is not False):
+        return {"resumable": False, "reason": "失败不是可继续的 inventory 采集失败"}
+    prepared = read_json(output / "prepare.json")
+    exact(prepared, PREPARE_FIELDS)
+    request = read_bound_json(local_path(backend, request_descriptor["path"]), request_descriptor)
+    if (prepared["status"] != "fresh_creation_prepared" or prepared["request"] != request_descriptor
+            or prepared["request_sha256"] != plan_hash(request)):
+        return {"resumable": False, "reason": "prepare 请求不属于固定 registration"}
+    reset_confirmation = read_json(output / "reset.confirmed.json")
+    exact(reset_confirmation, {"at", "stage", "observed"})
+    if reset_confirmation["stage"] != "reset" or not isinstance(reset_confirmation["observed"], dict):
+        return {"resumable": False, "reason": "reset 完成确认无效"}
+    if request != read_json(output / "request.json"):
+        return {"resumable": False, "reason": "固定请求文件已变化"}
+    return {"resumable": True, "reason": None}
+
+
 def history_files() -> set[str]:
     stages = ["sentinel", "reset", *("create-" + key for key in KEYS)]
     return {"initialize.started.json", "prepare.json", "request.json", "reset-plan.json", "reset-plan-confirm.json",
@@ -258,12 +301,15 @@ def history(output: Path) -> dict:
     if (output / "failure.json").exists():
         names.add("failure.json")
     names.update(path.name for path in output.glob("resume-prepare-*.json"))
+    names.update(path.name for path in output.glob("resume-initialize-*.intent.json"))
     return {name: file_digest(output / name) for name in sorted(names)}
 
 
-def verify_initial_inventory(backend: Path, output: Path, receipt: dict) -> None:
+def verify_initial_inventory(backend: Path, output: Path, receipt: dict, *, resumed: bool = False) -> None:
     filename = bound_file(backend, receipt)
-    if filename != output / "inventory-initial/inventory.json":
+    resumed_directory = filename.parent.name.startswith("inventory-resume-")
+    if filename.name != "inventory.json" or (filename.parent != output / "inventory-initial"
+                                               and not (resumed and resumed_directory)):
         raise ValueError("初始库存文件不属于本代次")
     value = read_json(filename)
     for name, expected in value["inventories"].items():
@@ -543,6 +589,64 @@ def initialize_target(backend: Path, output: Path, run=subprocess.run, *, storag
         raise
 
 
+def resume_inventory_target(backend: Path, output: Path, run=subprocess.run, *, storage_run: Path | None = None,
+                            request_descriptor: dict | None = None) -> dict:
+    """只恢复 reset 已完成后的库存采集与发布，绝不重放任何资源写入。"""
+    backend, output = backend.resolve(strict=True), local_path(backend, str(output))
+    failure_path = output / "failure.json"
+    prepared = read_json(output / "prepare.json")
+    exact(prepared, PREPARE_FIELDS)
+    expected = prepared["request"] if request_descriptor is None else request_descriptor
+    state = inventory_resume_state(backend, output, expected)
+    if not state["resumable"]:
+        raise ValueError("库存恢复不可继续：" + state["reason"])
+    attempt = uuid.uuid4().hex
+    resume_intent = output / f"resume-initialize-{attempt}.intent.json"
+    write_json(resume_intent, {"format_version": 1, "kind": "devex-clone-initialize-resume-intent", "attempt": attempt,
+                               "at": now(), "failure": binding(failure_path), "remote_writes": 0})
+    stage = "resume_binding"
+    try:
+        with generation_lock(output):
+            prepared = read_json(output / "prepare.json")
+            exact(prepared, PREPARE_FIELDS)
+            expected = prepared["request"] if request_descriptor is None else request_descriptor
+            if prepared["request"] != expected:
+                raise ValueError("库存恢复请求不同于固定 registration")
+            request = read_bound_json(local_path(backend, expected["path"]), expected)
+            if request != read_json(output / "request.json"):
+                raise ValueError("库存恢复请求文件已变化")
+            original, resources = context(backend, request, output, run, storage_run=storage_run)
+            if original != prepared["generation"]:
+                raise ValueError("库存恢复前来源、工具或服务代次变化")
+            stage = "resume_reset_proof"
+            manifest, sha = reset_plan(resources, original["maintenance"], request, original, "resume-reset-plan")
+            reset = reset_completed(output, manifest, sha)
+            if read_json(output / "reset.confirmed.json").get("observed") != reset:
+                raise ValueError("库存恢复 reset 完成收据不同于当前受控计划")
+            stage = "resume_inventory"
+            initial = inventory(backend, request, resources, output / f"inventory-resume-{attempt}")
+            objects, redis = resources.objects(initialized=True), resources.redis_state(initialized=True, sentinel=True)
+            unchanged(backend, request, original, resources, run)
+            result = {"format_version": 1, "status": "fresh_target_initialized", "id": request["id"],
+                      "scope_id": request["target"]["scope_id"], "completed_at": now(), "generation": original,
+                      "prepare_sha256": file_digest(output / "prepare.json")["sha256"], "reset": reset,
+                      "inventory": initial, "objects": objects, "redis": redis, "history": history(output),
+                      "controlled_generation_never_started": True, "external_writers_discovered": False,
+                      "target_ready": False, "clone_verified": False, "restore_qualified": False}
+            write_json(output / "initialized-candidate.json", result)
+        write_json(output / "initialized.json", result)
+        write_json(output / f"resume-initialize-{attempt}.confirmed.json", {
+            "format_version": 1, "kind": "devex-clone-initialize-resume-confirmed", "attempt": attempt, "at": now(),
+            "intent": binding(resume_intent), "failure": binding(failure_path), "initialized": binding(output / "initialized.json"),
+            "remote_writes": 0})
+        return result
+    except BaseException as error:
+        write_json(output / f"resume-initialize-{attempt}.failure.json", {
+            "format_version": 1, "kind": "devex-clone-initialize-resume-failure", "attempt": attempt, "at": now(),
+            "intent": binding(resume_intent), "error_type": type(error).__name__, "remote_writes": 0})
+        raise
+
+
 def verify_target(backend: Path, output: Path, observation_dir: Path, run=subprocess.run,
                   *, storage_run: Path | None = None, request_descriptor: dict | None = None) -> dict:
     """只用于复制前的完整初像复验；复制中不得用它代替逐步骤 live guard。"""
@@ -566,7 +670,8 @@ def verify_target(backend: Path, output: Path, observation_dir: Path, run=subpro
                     or read_json(output / "initialized-candidate.json") != original_result
                     or request != read_json(output / "request.json") or original_result["history"] != history(output)):
                 raise ValueError("初始化发布或请求证据变化")
-            verify_initial_inventory(backend, output, original_result["inventory"]["receipt"])
+            verify_initial_inventory(backend, output, original_result["inventory"]["receipt"],
+                                     resumed=(output / "failure.json").is_file())
             original, resources = context(backend, request, observation_dir, run, storage_run=storage_run,
                                           owned_lock_identity=lock_identity)
             verify_storage_generation(original_result["generation"], original, resources.storage_runtime_binding, resources.cache_runtime_binding)

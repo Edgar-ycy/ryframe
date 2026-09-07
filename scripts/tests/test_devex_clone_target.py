@@ -17,6 +17,7 @@ from devex_clone_target_resources import Resources
 from devex_clone_target_state import generation_lock
 from devex_clone_target_storage import verify_storage_generation
 from devex_clone_target_fixture import Fixture
+from devex_clone_inventory import InventoryCaptureError
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
 
@@ -237,6 +238,38 @@ class TargetTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.initialize()
         self.assertFalse((self.f.output / "initialized.json").exists())
         self.assertTrue((self.f.output / "reset.intent.json").exists())
+
+    def test_inventory_failure_resumes_without_replaying_reset(self):
+        f = self.f
+        self.prepare()
+        original_inventory = target.inventory
+        with patch.object(target, "inventory", side_effect=InventoryCaptureError(f.output)):
+            with self.assertRaises(InventoryCaptureError): self.initialize()
+        completed = len([command for command in f.calls if Path(command[0]).stem == "reset" and command[1] == "execute"])
+        self.assertEqual(completed, 1)
+        descriptor = {"path": str(f.path), **file_digest(f.path)}
+        self.assertTrue(target.inventory_resume_state(f.root, f.output, descriptor)["resumable"])
+
+        with patch.object(target, "inventory", side_effect=original_inventory):
+            result = target.resume_inventory_target(f.root, f.output, f.run, request_descriptor=descriptor)
+
+        self.assertEqual(result["status"], "fresh_target_initialized")
+        self.assertEqual(completed, len([command for command in f.calls
+                                         if Path(command[0]).stem == "reset" and command[1] == "execute"]))
+        self.assertTrue((f.output / "initialized.json").is_file())
+        self.assertFalse(target.unresolved_failure(f.root, f.output))
+        self.assertEqual(target.verify_target(f.root, f.output, f.local / "verify-resumed", f.run)["remote_writes"], 0)
+
+    def test_inventory_resume_rejects_other_initialization_failures(self):
+        self.prepare()
+        self.f.plan_changed = True
+        with self.assertRaises(ValueError): self.initialize()
+        descriptor = {"path": str(self.f.path), **file_digest(self.f.path)}
+        state = target.inventory_resume_state(self.f.root, self.f.output, descriptor)
+        self.assertFalse(state["resumable"])
+        with self.assertRaises(ValueError): target.resume_inventory_target(
+            self.f.root, self.f.output, self.f.run, request_descriptor=descriptor
+        )
 
     def test_storage_restart_after_prepare_refuses_create(self):
         self.prepare(); self.f.storage_restarted = True
