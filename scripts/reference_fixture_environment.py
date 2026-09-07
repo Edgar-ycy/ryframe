@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 from urllib.parse import urlsplit
 
@@ -77,7 +78,13 @@ def _preflight(review: dict, run=subprocess.run) -> dict:
     if not re.fullmatch(r"[A-Za-z0-9._-]+", distribution):
         raise ValueError("审阅计划中的 Redis 发行版无效")
     launcher = "/usr/bin/redis-server"
-    prefix = ["wsl", "--distribution", distribution, "--exec"]
+    wsl_value = shutil.which("wsl")
+    if wsl_value is None:
+        raise ValueError("本机缺少 WSL 启动器，无法预检 Redis 控制器")
+    wsl = Path(wsl_value).resolve(strict=True)
+    if linked(wsl) or not wsl.is_file():
+        raise ValueError("本机 WSL 启动器不是受控普通文件")
+    prefix = [str(wsl), "--distribution", distribution, "--exec"]
     resolved = _command(run, [*prefix, "/usr/bin/readlink", "-f", launcher])
     digest = _command(run, [*prefix, "/usr/bin/sha256sum", launcher]).split(maxsplit=1)[0]
     version = _command(run, [*prefix, launcher, "--version"])
@@ -88,12 +95,24 @@ def _preflight(review: dict, run=subprocess.run) -> dict:
         raise ValueError("本机 WSL Redis 服务二进制未通过只读核验")
     observed["redis_server"] = {"distribution": distribution, "resolved_path": resolved,
                                 "sha256": digest, "version": version}
+    python = "/usr/bin/python3"
+    python_resolved = _command(run, [*prefix, "/usr/bin/readlink", "-f", python])
+    python_digest = _command(run, [*prefix, "/usr/bin/sha256sum", python_resolved]).split(maxsplit=1)[0]
+    if (not re.fullmatch(r"/usr/bin/python3\.[0-9]+", python_resolved)
+            or not re.fullmatch(r"[a-f0-9]{64}", python_digest)):
+        raise ValueError("本机 WSL Python 未通过只读核验")
+    observed["wsl"] = {"path": str(wsl), "sha256": file_digest(wsl)["sha256"]}
+    observed["redis_python"] = {"distribution": distribution, "path": python,
+                                 "resolved_path": python_resolved, "sha256": python_digest}
     return observed
 
 
 def _preflight_binding(review: dict) -> None:
     value = review.get("preflight")
-    expected = {name: review["tools"][name] for name in ("mysql", "aws", "rustfs", "redis_server")}
+    required = ("mysql", "aws", "rustfs", "redis_server", "wsl", "redis_python")
+    if not all(name in review.get("tools", {}) for name in required):
+        raise ValueError("夹具审阅计划缺少当前工具预检收据")
+    expected = {name: review["tools"][name] for name in required}
     seed = review["scopes"]["seed"]
     service_run = Path(seed["backend_dir"]) / ".local-tests/reference-fixture/service-run"
     rustfs = review["services"]["rustfs"]

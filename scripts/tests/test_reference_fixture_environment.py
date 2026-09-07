@@ -25,6 +25,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         tool = self.root / "tool.exe"; tool.write_bytes(b"tool")
+        self.wsl = self.root / "wsl.exe"; self.wsl.write_bytes(b"wsl")
         defaults = self.root / "mysql.cnf"; defaults.write_text("[client]", encoding="utf-8")
         self.review = {"kind": "review-only-perf-resource-plan-with-readonly-preflight", "ready_for_execution": True,
                        "reference": {name: {"databases": []} for name in ("source", "protected_target")},
@@ -69,23 +70,32 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         result = environment.plan(self.backend, review.relative_to(self.backend), fixture.relative_to(self.backend), maintenance.relative_to(self.backend))
         self.assertEqual(result["scope_id"], "fixture-seed")
 
-    def test_revalidate_binds_the_actual_redis_server_path(self):
+    def test_revalidate_binds_redis_server_and_its_supervisor_tools(self):
         review = self.write("review.json", self.review)
         output = self.root / "review-r1.json"
 
         def run(arguments, **_):
-            if arguments[-2:] == ["-f", "/usr/bin/redis-server"]:
+            self.assertEqual(arguments[:4], [str(self.wsl.resolve()), "--distribution", "Ubuntu", "--exec"])
+            command = arguments[4:]
+            if command == ["/usr/bin/readlink", "-f", "/usr/bin/redis-server"]:
                 value = "/usr/bin/redis-server"
-            elif arguments[-2:] == ["/usr/bin/sha256sum", "/usr/bin/redis-server"]:
+            elif command == ["/usr/bin/sha256sum", "/usr/bin/redis-server"]:
                 value = "c" * 64 + "  /usr/bin/redis-server"
-            else:
-                self.assertEqual(arguments[-2:], ["/usr/bin/redis-server", "--version"])
+            elif command == ["/usr/bin/redis-server", "--version"]:
                 value = "Redis server v=7.0.15"
+            elif command == ["/usr/bin/readlink", "-f", "/usr/bin/python3"]:
+                value = "/usr/bin/python3.12"
+            else:
+                self.assertEqual(command, ["/usr/bin/sha256sum", "/usr/bin/python3.12"])
+                value = "d" * 64 + "  /usr/bin/python3.12"
             return type("Completed", (), {"stdout": value.encode()})()
 
-        result = environment.revalidate(self.backend, review, output, run)
+        with patch.object(environment.shutil, "which", return_value=str(self.wsl)):
+            result = environment.revalidate(self.backend, review, output, run)
 
         self.assertEqual(result["tools"]["redis_server"]["resolved_path"], "/usr/bin/redis-server")
+        self.assertEqual(result["tools"]["wsl"], {"path": str(self.wsl.resolve()), "sha256": file_digest(self.wsl)["sha256"]})
+        self.assertEqual(result["tools"]["redis_python"]["resolved_path"], "/usr/bin/python3.12")
         self.assertEqual(result["services"]["rustfs"]["scope_id"], "services-fixture-seed")
         self.assertEqual(result["preflight"]["status"], "verified")
         self.assertNotIn("preflight", self.review)
