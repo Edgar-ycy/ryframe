@@ -38,8 +38,7 @@ sys_background_job_attempt sys_outbox_event sys_export_job
 def schema_catalog(backend: Path) -> tuple[dict, dict]:
     """从当前机器 SQL 快照及租户基线读取完整列，不猜测未知生成业务表。"""
     generated = backend / "crates/ryframe-tenant-db/src/generated/catalog.rs"
-    if not re.search(r"GENERATED_TENANT_DATA_TABLES:[^=]+?=\s*&\[\];", generated.read_text(encoding="utf-8")):
-        raise ValueError("开发复制不支持非空生成租户目录；须先按编译期 GENERATED_TENANT_DATA_TABLES 补齐明确表白名单、完整列及状态/引用回归，不能跳过业务表")
+    generated_tenant = generated_catalog(backend, generated.read_text(encoding="utf-8"))
     control = parse_schema((backend / "sql/ryframe_config.sql").read_text(encoding="utf-8"))
     if set(control) - EXCLUDED != CONTROL_TABLES:
         raise ValueError("控制库表与已审查复制白名单不同；须先审查新增/删除表的状态及物理引用")
@@ -47,14 +46,52 @@ def schema_catalog(backend: Path) -> tuple[dict, dict]:
     if set(tenant) != {"biz_tenant_fence", "biz_tenant_target_slot", "ryframe_resource_ownership"}:
         raise ValueError("租户基线含未审查表；须补齐复制白名单，不能过滤未知业务表")
     tenant = {name: columns for name, columns in tenant.items() if name in {"biz_tenant_fence", "biz_tenant_target_slot"}}
-    if not set(STATES | {name: None for name in EMPTY}).issubset(control) or len(tenant) != 2:
+    if set(tenant) & set(generated_tenant):
+        raise ValueError("生成租户表与固定基线表重复")
+    tenant.update(generated_tenant)
+    if not set(STATES | {name: None for name in EMPTY}).issubset(control):
         raise ValueError("当前 schema 缺少开发复制必须审查的状态表")
     return {name: columns for name, columns in control.items() if name not in EXCLUDED}, tenant
 
 
+def generated_catalog(backend: Path, content: str) -> dict:
+    """从生成描述符及同名迁移读取全部租户业务表，拒绝猜测任意源码目录。"""
+    entries = re.findall(
+        r'TenantDataTableDescriptor \{\s*table: "([a-z0-9_]+)",.*?tenant_column: "([a-z0-9_]+)",.*?'
+        r'column_types: &\[(.*?)\],.*?has_generated_columns: (true|false),', content, re.S)
+    empty = re.search(r"GENERATED_TENANT_DATA_TABLES:[^=]+?=\s*&\[\s*\];", content) is not None
+    if empty:
+        if entries:
+            raise ValueError("空生成租户目录包含描述符")
+        return {}
+    if not entries:
+        raise ValueError("非空生成租户目录缺少可验证描述符")
+    result = {}
+    for table, tenant_column, raw_types, generated_columns in entries:
+        if (not table.startswith("biz_") or table in result or tenant_column != "tenant_id"
+                or generated_columns != "false"):
+            raise ValueError("生成租户描述符包含未审查表、重复表或不支持的列规则")
+        resource = table.removeprefix("biz_")
+        migration = backend / "crates/ryframe-tenant-db/src/generated" / resource / "migration.rs"
+        if not migration.is_file():
+            raise ValueError("生成租户描述符缺少同名迁移")
+        ddl = re.search(r'pub const CREATE_TABLE_DDL: &str = r#"(.*?)"#;', migration.read_text(encoding="utf-8"), re.S)
+        if ddl is None:
+            raise ValueError("生成租户迁移缺少确定性 DDL")
+        tables = parse_schema(ddl.group(1))
+        if set(tables) != {table}:
+            raise ValueError("生成租户迁移包含额外或错误表")
+        columns = tables[table]
+        types = re.findall(r'"([a-z]+)"', raw_types)
+        if len(types) != len(columns) or [kind.lower() for kind in columns.values()] != types:
+            raise ValueError("生成租户描述符与迁移列类型不一致")
+        result[table] = columns
+    return result
+
+
 def parse_schema(content: str) -> dict:
     result = {}
-    for match in re.finditer(r"CREATE TABLE IF NOT EXISTS `([a-z0-9_]+)` \((.*?)\n\s*\) ENGINE=", content, re.S):
+    for match in re.finditer(r"CREATE TABLE(?: IF NOT EXISTS)? `([a-z0-9_]+)` \((.*?)\n\s*\) ENGINE=", content, re.S):
         columns = dict(re.findall(r"^\s*`([a-z0-9_]+)`\s+([A-Za-z]+)", match[2], re.M))
         if not columns or match[1] in result:
             raise ValueError("schema 表或列重复/缺失")

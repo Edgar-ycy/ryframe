@@ -317,6 +317,20 @@ class CloneTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "非空生成"):
             create_plan(self.value, self.backend)
 
+    def test_generated_tenant_catalog_requires_matching_migration_columns(self):
+        catalog = self.backend / "crates/ryframe-tenant-db/src/generated/catalog.rs"
+        catalog.write_text("""pub const GENERATED_TENANT_DATA_TABLES: &[TenantDataTableDescriptor] = &[
+TenantDataTableDescriptor { table: \"biz_device\", tenant_column: \"tenant_id\", column_types: &[\"varchar\", \"bigint\"], has_generated_columns: false, },
+];""", encoding="utf-8")
+        migration = self.backend / "crates/ryframe-tenant-db/src/generated/device/migration.rs"
+        migration.parent.mkdir(parents=True)
+        migration.write_text("""pub const CREATE_TABLE_DDL: &str = r#\"CREATE TABLE `biz_device` (
+  `tenant_id` VARCHAR(64) NOT NULL,
+  `id` BIGINT NOT NULL
+) ENGINE=InnoDB\"#;""", encoding="utf-8")
+        _, tenant = schema_catalog(self.backend)
+        self.assertEqual(tenant["biz_device"], {"tenant_id": "VARCHAR", "id": "BIGINT"})
+
     def test_new_control_table_requires_explicit_policy_and_formal_restore_stays_clean(self):
         schema = self.backend / "sql/ryframe_config.sql"
         with schema.open("a", encoding="utf-8") as stream:
