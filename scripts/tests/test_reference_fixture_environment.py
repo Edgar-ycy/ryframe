@@ -176,7 +176,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         target_fixture_file = self.write("new-device-fixture.json", target_fixture)
         with patch.object(environment, "snapshot", return_value=(generated, b"")):
             bootstrapped = environment.bootstrap_secrets(
-                self.backend, fixture_file, secret_set, target_fixture_file)
+                self.backend, fixture_file, secret_set.relative_to(self.backend), target_fixture_file)
         self.assertEqual(bootstrapped["status"], "imported")
         self.assertEqual(set(bootstrapped["target_files"]), set(environment.SECRET_FILES))
         self.assertFalse(bootstrapped["services_started"])

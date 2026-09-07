@@ -200,7 +200,8 @@ def bootstrap_secrets(backend: Path, source_fixture_path: Path, source_directory
     target_execution = Path(target_fixture["paths"]["backend"])
     if source_execution == target_execution:
         raise ValueError("秘密导入必须在两个不同的 Device 工作树之间进行")
-    source = _secret_directory(backend, source_execution, source_directory)
+    requested_source = source_directory if source_directory.is_absolute() else backend / source_directory
+    source = _secret_directory(backend, source_execution, requested_source)
     destination = target_execution / ".local-tests/reference-fixture/secrets"
     if destination.exists() or linked(destination) or not destination.parent.is_dir():
         raise ValueError("新 Device 默认秘密目录已存在或父目录无效")
