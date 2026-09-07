@@ -17,7 +17,7 @@ from restore_build import file_digest
 from restore_reference_plan import plan_hash
 
 STAGES = {"export", "target-verify", "copy", "runtime-source", "runtime-target", "post-copy", "seed-runtime",
-          "storage-source", "storage-target", "cache-target"}
+          "storage-source", "storage-target", "cache-target", "fixture-buckets"}
 
 
 def now() -> str:

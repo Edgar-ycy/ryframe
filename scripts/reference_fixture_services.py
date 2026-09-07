@@ -4,8 +4,10 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 from pathlib import Path
 import shlex
+import subprocess
 from urllib.parse import urlsplit
 
 from devex_clone_capture import read_json, write_json
@@ -16,7 +18,7 @@ from devex_clone_run_state import begin, bind_controller_attempt, finish, initia
 from devex_clone_source_proof import require_closed_port
 from devex_clone_storage_process import start as start_rustfs
 from restore_build import file_digest
-from restore_reference_plan import plan_hash
+from restore_reference_plan import BUCKETS, plan_hash
 
 
 def bound(path: Path) -> dict:
@@ -65,6 +67,73 @@ def environment(backend: Path, review_file: Path, review: dict, bootstrap_path: 
     if not isinstance(values, dict) or any(type(k) is not str or type(v) is not str for k, v in values.items()):
         raise ValueError("夹具私有环境无效")
     return bootstrap_file, bootstrap, values
+
+
+def _initial_services(state: dict) -> None:
+    expected = (("storage-target", "initial"), ("cache-target", "initial"))
+    actual = tuple((item["stage"], item["mode"], item["status"]) for item in state["attempts"])
+    if actual != tuple((*item, "passed") for item in expected):
+        raise ValueError("对象桶初始化只允许接续同一账本中的完成 RustFS 与 Redis 首代")
+
+
+def _bucket_environment(private: dict) -> dict:
+    access, secret = private.get("APP_OBJECT_STORAGE_ACCESS_KEY"), private.get("APP_OBJECT_STORAGE_SECRET_KEY")
+    if not isinstance(access, str) or not access or not isinstance(secret, str) or not secret:
+        raise ValueError("对象桶初始化缺少私有 S3 凭据")
+    return {**configured(private), "AWS_ACCESS_KEY_ID": access, "AWS_SECRET_ACCESS_KEY": secret}
+
+
+def buckets(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bool) -> dict:
+    """在空 RustFS 首代上一次性建立五个产品桶；失败账本禁止自动接管。"""
+    if not write:
+        raise ValueError("初始化夹具对象桶必须显式指定 --write")
+    review_file, review = document(backend, review_path)
+    bootstrap_file, bootstrap, private = environment(backend, review_file, review, bootstrap_path)
+    execution = Path(bootstrap["execution_backend"])
+    run = execution / ".local-tests/reference-fixture/service-run"
+    manifest = run / "manifest.json"
+    output = run / "buckets"
+    if output.exists() or not manifest.is_file():
+        raise ValueError("对象桶初始化必须复用首代服务账本且不能覆盖已有证据")
+    _initial_services(load_state(run))
+    tool = review["tools"]["aws"]
+    if file_digest(Path(tool["path"]))["sha256"] != tool["sha256"]:
+        raise ValueError("对象桶初始化前 AWS 工具已变化")
+    endpoint, region = review["scopes"]["seed"]["objects"]["endpoint"], review["scopes"]["seed"]["objects"]["region"]
+    environment_values = _bucket_environment(private)
+    output.mkdir()
+    sources = {"review": bound(review_file), "bootstrap": bound(bootstrap_file), "manifest": bound(manifest),
+               "aws": {"path": tool["path"], "sha256": tool["sha256"]}}
+
+    def guard() -> None:
+        current_review, current = document(backend, review_file)
+        current_bootstrap, current_value = document(backend, bootstrap_file)
+        if current_review != review_file or current != review or current_bootstrap != bootstrap_file or current_value != bootstrap:
+            raise ValueError("对象桶初始化期间审阅或私有环境收据发生变化")
+        if bound(manifest) != sources["manifest"]:
+            raise ValueError("对象桶初始化期间服务账本清单发生变化")
+
+    with run_lock(run):
+        _initial_services(load_state(run))
+        number = begin(run, "fixture-buckets", "prepare", sources)
+        try:
+            base = [tool["path"], "--endpoint-url", endpoint, "--region", region, "--no-paginate", "s3api"]
+            for bucket in sorted(BUCKETS):
+                guard()
+                subprocess.run([*base, "create-bucket", "--bucket", bucket], cwd=execution, env=environment_values,
+                               stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, check=True, timeout=30,
+                               creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+                subprocess.run([*base, "head-bucket", "--bucket", bucket], cwd=execution, env=environment_values,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=30,
+                               creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+            guard()
+            result = {"status": "fixture_buckets_ready", "buckets": sorted(BUCKETS), "remote_writes": len(BUCKETS)}
+            finish(run, number, result=result)
+        except BaseException as error:
+            finish(run, number, error=error)
+            raise
+    return result
 
 
 def rustfs(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bool) -> dict:
@@ -189,13 +258,13 @@ def redis(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bool
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("rustfs", "redis"))
+    parser.add_argument("operation", choices=("rustfs", "redis", "buckets"))
     parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--review", type=Path, required=True)
     parser.add_argument("--environment", type=Path, required=True)
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
-    action = rustfs if args.operation == "rustfs" else redis
+    action = {"rustfs": rustfs, "redis": redis, "buckets": buckets}[args.operation]
     result = action(args.backend_dir.resolve(strict=True), args.review, args.environment, write=args.write)
     print(json.dumps({key: result[key] for key in ("status", "services_started", "remote_writes")}, ensure_ascii=False))
 

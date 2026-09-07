@@ -118,8 +118,9 @@ class TargetCliTests(unittest.TestCase):
             "data_directory_was_empty": True,
         })
         run_state.initialize_state(fixture)
-        for stage in ("storage-target", "cache-target"):
-            number = run_state.begin(fixture, stage, "initial", {"fixture": True})
+        for stage, mode in (("storage-target", "initial"), ("cache-target", "initial"),
+                            ("fixture-buckets", "prepare")):
+            number = run_state.begin(fixture, stage, mode, {"fixture": True})
             run_state.finish(fixture, number, result={"status": stage + "-initial"})
         observed = {}
 

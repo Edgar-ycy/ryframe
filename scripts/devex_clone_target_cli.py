@@ -111,10 +111,10 @@ def _fixture_service_run(manifest: dict, state: dict) -> bool:
     if (manifest["format_version"] != 1 or not isinstance(manifest["execution_backend"], str)
             or not isinstance(manifest["scope_id"], str) or manifest["data_directory_was_empty"] is not True):
         raise ValueError("夹具首代服务清单无效")
-    expected = (("storage-target", "initial"), ("cache-target", "initial"))
+    expected = (("storage-target", "initial"), ("cache-target", "initial"), ("fixture-buckets", "prepare"))
     actual = tuple((item["stage"], item["mode"]) for item in state["attempts"])
     if actual != expected or any(item["status"] != "passed" for item in state["attempts"]):
-        raise ValueError("夹具首代服务账本必须只包含已完成的 RustFS 与 Redis 首代")
+        raise ValueError("夹具服务账本必须完整包含 RustFS、Redis 与对象桶初始化")
     return True
 
 
