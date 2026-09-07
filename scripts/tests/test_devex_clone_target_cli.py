@@ -107,6 +107,33 @@ class TargetCliTests(unittest.TestCase):
         self.assertEqual(status["pending_stage"], "initialization")
         self.assertEqual(status["next_action"], "initialize")
 
+    def test_fixture_initial_services_remain_locked_without_being_treated_as_restarts(self):
+        fixture = self.local / "fixture-services"
+        fixture.mkdir()
+        write_json(fixture / "manifest.json", {
+            "format_version": 1, "kind": "reference-fixture-service-run",
+            "review": {"path": "review", "bytes": 1, "sha256": "0" * 64},
+            "bootstrap": {"path": "bootstrap", "bytes": 1, "sha256": "1" * 64},
+            "execution_backend": str(self.backend), "scope_id": "fixture-services",
+            "data_directory_was_empty": True,
+        })
+        run_state.initialize_state(fixture)
+        for stage in ("storage-target", "cache-target"):
+            number = run_state.begin(fixture, stage, "initial", {"fixture": True})
+            run_state.finish(fixture, number, result={"status": stage + "-initial"})
+        observed = {}
+
+        def prepare(backend, request, target, *, storage_run, request_descriptor):
+            observed["storage_run"] = storage_run
+            return self._prepare_stub(backend, request, target, storage_run=fixture,
+                                      request_descriptor=request_descriptor)
+
+        with patch("devex_clone_target.prepare_target", side_effect=prepare):
+            result = target_cli.prepare(self.backend, self.workspace, self.request, self.environment, fixture)
+        self.assertEqual(result["status"], "fresh_creation_prepared")
+        self.assertIsNone(observed["storage_run"])
+        self.assertEqual(target_cli._storage_run(self.backend, read_json(self.workspace / "registration.json")["storage_run"]), fixture)
+
     def test_initialize_and_verify_reopen_registration_and_never_replay(self):
         self.prepare()
         initialized = self.workspace / "target/initialized.json"

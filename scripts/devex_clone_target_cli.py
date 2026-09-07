@@ -73,10 +73,14 @@ def _storage_run(backend: Path, descriptor: dict) -> Path:
     directory = local_path(backend, descriptor["path"])
     if not directory.is_dir():
         raise ValueError("fresh 目标 storage run 目录缺失")
-    manifest, _ = _bound_json(backend, descriptor["manifest"])
-    if manifest != directory / "manifest.json":
+    manifest_path, manifest = _bound_json(backend, descriptor["manifest"])
+    if manifest_path != directory / "manifest.json":
         raise ValueError("fresh 目标 storage manifest 不属于固定统一目录")
     historical = historical_state(directory, descriptor["state"])
+    if _fixture_service_run(manifest, historical["state"]):
+        if historical["historical_attempts"] != len(historical["state"]["attempts"]):
+            raise ValueError("夹具首代服务账本不允许在登记后追加阶段")
+        return directory
     appended = historical["state"]["attempts"][historical["historical_attempts"]:]
     allowed = {"storage-target": {"restart", "stop", "recover"},
                "cache-target": {"restart", "stop", "recover", "reconcile", "resume"}}
@@ -96,6 +100,22 @@ def _storage_run(backend: Path, descriptor: dict) -> Path:
     if binding(directory / "state.json") != historical["current"]:
         raise ValueError("fresh 目标 storage run 在历史绑定核对期间变化")
     return directory
+
+
+def _fixture_service_run(manifest: dict, state: dict) -> bool:
+    """识别只提供首代服务的参考夹具，不能把它伪装成复制重启。"""
+    if manifest.get("kind") != "reference-fixture-service-run":
+        return False
+    exact(manifest, {"format_version", "kind", "review", "bootstrap", "execution_backend", "scope_id",
+                     "data_directory_was_empty"})
+    if (manifest["format_version"] != 1 or not isinstance(manifest["execution_backend"], str)
+            or not isinstance(manifest["scope_id"], str) or manifest["data_directory_was_empty"] is not True):
+        raise ValueError("夹具首代服务清单无效")
+    expected = (("storage-target", "initial"), ("cache-target", "initial"))
+    actual = tuple((item["stage"], item["mode"]) for item in state["attempts"])
+    if actual != expected or any(item["status"] != "passed" for item in state["attempts"]):
+        raise ValueError("夹具首代服务账本必须只包含已完成的 RustFS 与 Redis 首代")
+    return True
 
 
 def _disjoint(*paths: Path) -> None:
@@ -220,6 +240,8 @@ def _run_registered(backend: Path, workspace: Path, operation, *args) -> dict:
     storage_run = _storage_run(backend, value["storage_run"])
     storage_binding = copy.deepcopy(value["storage_run"])
     storage_state = binding(storage_run / "state.json")
+    fixture_services = _fixture_service_run(read_bound_json(storage_run / "manifest.json", storage_binding["manifest"]),
+                                            historical_state(storage_run, storage_binding["state"])["state"])
     environment = configured(private)
     with run_lock(storage_run):
         if (_registration(backend, workspace)[1] != value
@@ -228,7 +250,8 @@ def _run_registered(backend: Path, workspace: Path, operation, *args) -> dict:
             raise ValueError("fresh 目标登记或 storage run 在取得控制锁前变化")
         try:
             with Environments(environment, environment).use("target"):
-                result = operation(backend, Path(value["target_directory"]), *args, storage_run=storage_run)
+                result = operation(backend, Path(value["target_directory"]), *args,
+                                   storage_run=None if fixture_services else storage_run)
         finally:
             _, current_private = _private_environment(backend, value["environment"])
             if (binding(path) != registered or read_bound_json(path, registered) != value
