@@ -205,6 +205,22 @@ fn fixture_review_uses_only_the_current_backend() {
 }
 
 #[test]
+fn fixture_request_uses_only_the_current_backend() {
+    let frontend = Path::new("D:/前端 worktree");
+    let backend = super::workspace::root_dir().display().to_string();
+    let (script, arguments) = recovery_command(
+        &RecoveryCommand::Fixture(strings(&["request", "--id", "fresh-r12"])),
+        frontend,
+    )
+    .unwrap();
+    assert_eq!(script, "scripts/reference_fixture_request.py");
+    assert_eq!(
+        arguments,
+        strings(&["--id", "fresh-r12", "--backend-dir", &backend])
+    );
+}
+
+#[test]
 fn fixture_services_use_the_private_service_controller() {
     for service in ["rustfs", "redis"] {
         let (script, arguments) = recovery_command(
