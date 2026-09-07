@@ -68,6 +68,30 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         result = environment.plan(self.backend, review.relative_to(self.backend), fixture.relative_to(self.backend), maintenance.relative_to(self.backend))
         self.assertEqual(result["scope_id"], "fixture-seed")
 
+    def test_revalidate_binds_the_actual_redis_server_path(self):
+        review = self.write("review.json", self.review)
+        output = self.root / "review-r1.json"
+
+        def run(arguments, **_):
+            if arguments[-2:] == ["-f", "/usr/bin/redis-server"]:
+                value = "/usr/bin/redis-server"
+            elif arguments[-2:] == ["/usr/bin/sha256sum", "/usr/bin/redis-server"]:
+                value = "c" * 64 + "  /usr/bin/redis-server"
+            else:
+                self.assertEqual(arguments[-2:], ["/usr/bin/redis-server", "--version"])
+                value = "Redis server v=7.0.15"
+            return type("Completed", (), {"stdout": value.encode()})()
+
+        result = environment.revalidate(self.backend, review, output, run)
+
+        self.assertEqual(result["tools"]["redis_server"]["resolved_path"], "/usr/bin/redis-server")
+        self.assertEqual(result["preflight"]["status"], "verified")
+        self.assertNotIn("preflight", self.review)
+
+    def test_preflight_binding_rejects_the_unreviewed_plan(self):
+        with self.assertRaisesRegex(ValueError, "预检"):
+            environment._preflight_binding(self.review)
+
     def test_environment_uses_the_frozen_device_tree_and_private_secret_files(self):
         execution = self.root / "device-backend"
         secrets = execution / ".local-tests/reference-fixture/secrets"

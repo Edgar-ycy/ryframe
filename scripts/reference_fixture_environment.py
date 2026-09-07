@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import argparse
 import configparser
+import copy
 import json
 import os
 from pathlib import Path
+import re
+import subprocess
 from urllib.parse import urlsplit
 
 from devex_clone_capture import read_json, write_json
@@ -51,6 +54,66 @@ def _maintenance(value: dict) -> None:
         item = artifacts[name]
         if not isinstance(item, dict) or not isinstance(item.get("executable"), str):
             raise ValueError("维护构建产物描述无效")
+
+
+def _command(run, arguments: list[str]) -> str:
+    completed = run(arguments, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return completed.stdout.decode("utf-8").strip()
+
+
+def _preflight(review: dict, run=subprocess.run) -> dict:
+    """重新读取计划绑定的工具，不启动服务、不连接业务资源。"""
+    validate_review(review)
+    tools = review["tools"]
+    observed = {}
+    for name in ("mysql", "aws", "rustfs"):
+        item = tools[name]
+        path = Path(item["path"])
+        if not path.is_absolute() or linked(path) or not path.is_file() or file_digest(path)["sha256"] != item["sha256"]:
+            raise ValueError(f"审阅计划中的 {name} 工具已变化")
+        observed[name] = {"path": str(path), "sha256": item["sha256"]}
+    redis = tools["redis_server"]
+    distribution = redis["distribution"]
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", distribution):
+        raise ValueError("审阅计划中的 Redis 发行版无效")
+    launcher = "/usr/bin/redis-server"
+    prefix = ["wsl", "--distribution", distribution, "--exec"]
+    resolved = _command(run, [*prefix, "/usr/bin/readlink", "-f", launcher])
+    digest = _command(run, [*prefix, "/usr/bin/sha256sum", launcher]).split(maxsplit=1)[0]
+    version = _command(run, [*prefix, launcher, "--version"])
+    # Ubuntu 将 redis-server 链接到 multi-call 二进制时，内核实际路径可以是 redis-check-rdb；
+    # 启动入口始终固定为 redis-server，运行身份则绑定 readlink 的实际文件。
+    if (not re.fullmatch(r"/usr/bin/(?:redis-server|redis-check-rdb)", resolved) or not re.fullmatch(r"[a-f0-9]{64}", digest)
+            or not version.startswith("Redis server v=")):
+        raise ValueError("本机 WSL Redis 服务二进制未通过只读核验")
+    observed["redis_server"] = {"distribution": distribution, "resolved_path": resolved,
+                                "sha256": digest, "version": version}
+    return observed
+
+
+def _preflight_binding(review: dict) -> None:
+    value = review.get("preflight")
+    expected = {name: review["tools"][name] for name in ("mysql", "aws", "rustfs", "redis_server")}
+    if (not isinstance(value, dict) or value.get("format_version") != 1
+            or value.get("kind") != "reference-fixture-tool-preflight"
+            or value.get("status") != "verified" or value.get("tools") != expected):
+        raise ValueError("夹具审阅计划缺少当前工具预检收据")
+
+
+def revalidate(backend: Path, review_path: Path, output: Path, run=subprocess.run) -> dict:
+    """为旧的只读计划创建一份新的、经本机工具复核的不可变审阅收据。"""
+    backend = backend.resolve(strict=True)
+    review_file, review = _read(backend, review_path)
+    observed = _preflight(review, run)
+    output = local_path(backend, str(output if output.is_absolute() else backend / output), new=True)
+    if not output.parent.is_dir():
+        raise ValueError("新审阅收据的父目录不存在")
+    revised = copy.deepcopy(review)
+    revised["tools"] = {**review["tools"], **observed}
+    revised["preflight"] = {"format_version": 1, "kind": "reference-fixture-tool-preflight", "status": "verified",
+                            "supersedes": bound(review_file), "tools": copy.deepcopy(observed)}
+    write_json(output, revised)
+    return revised
 
 
 def _secret(directory: Path, name: str) -> tuple[str, dict]:
@@ -166,6 +229,7 @@ def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_pa
     if not output.parent.is_dir():
         raise ValueError("夹具环境输出父目录不存在")
     review = read_json(Path(result["review"]["path"]))
+    _preflight_binding(review)
     fixture = read_json(Path(result["fixture"]["path"]))
     maintenance_path = Path(result["maintenance_build"]["path"])
     execution = Path(fixture["paths"]["backend"])
@@ -195,22 +259,28 @@ def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_pa
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("plan", "prepare"))
+    parser.add_argument("operation", choices=("plan", "prepare", "review"))
     parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--review", type=Path, required=True)
-    parser.add_argument("--fixture", type=Path, required=True)
-    parser.add_argument("--maintenance-build", type=Path, required=True)
+    parser.add_argument("--fixture", type=Path)
+    parser.add_argument("--maintenance-build", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
+    if args.operation in ("plan", "prepare") and (args.fixture is None or args.maintenance_build is None):
+        parser.error(f"{args.operation} 需要 --fixture 与 --maintenance-build")
     if args.operation == "plan":
         if args.output is not None or args.write:
             parser.error("plan 不接受 --output 或 --write")
         result = plan(args.backend_dir, args.review, args.fixture, args.maintenance_build)
-    else:
+    elif args.operation == "prepare":
         if args.output is None or not args.write:
             parser.error("prepare 需要 --output 与 --write")
         result = prepare(args.backend_dir, args.review, args.fixture, args.maintenance_build, args.output)
+    else:
+        if args.output is None or not args.write:
+            parser.error("review 需要 --output 与 --write")
+        result = revalidate(args.backend_dir, args.review, args.output)
     print(json.dumps({"status": result.get("status", "planned"), "services_started": result.get("services_started", False),
                       "remote_writes": result.get("remote_writes", 0)}, ensure_ascii=False))
 
