@@ -327,6 +327,30 @@ class TargetCliTests(unittest.TestCase):
         self.assertIsNone(incomplete["next_action"])
         self.assertFalse((self.workspace / target_cli.WORKSPACE_GUARD).exists())
 
+    def test_status_requires_new_workspace_after_verified_preflight_reconciliation(self):
+        self.prepare()
+        target = self.workspace / "target"
+        write_json(target / "initialize.started.json", {"status": "started"})
+        write_json(target / "failure.json", {"status": "needs_reconciliation"})
+        reports = target / "reset-state"
+        reports.mkdir()
+        report = reports / "fixture.report.json"
+        write_json(report, {"status": "failed", "failed_phase": "preflight"})
+        digest = lambda path: {key: value for key, value in binding(path).items() if key != "path"}
+        before = {"databases": [{"exists": True}], "objects": {}, "redis": {}}
+        after = {"databases": [{"exists": False}], "objects": {}, "redis": {}}
+        write_json(target / "reconciliation-completed.json", {
+            "status": "preflight_failure_reconciled", "before": before, "after": after,
+            "failure": digest(target / "failure.json"), "reset_report": digest(report),
+            "automatic_retry": False, "restore_qualified": False,
+        })
+        status = target_cli.status(self.backend, self.workspace)
+        self.assertEqual(status["status"], "fresh_target_preflight_reconciled")
+        self.assertEqual(status["last_successful_stage"], "preflight_reconciled")
+        self.assertEqual(status["pending_stage"], "new_registration")
+        self.assertEqual(status["next_action"], "prepare-new-workspace")
+        self.assertTrue(status["evidence_valid"])
+
     def test_registration_only_interruption_uses_explicit_resume_prepare(self):
         def interrupted(*_args, **_kwargs):
             raise OSError("fixture interruption before target")

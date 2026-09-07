@@ -1,9 +1,11 @@
 """开发性能复制的离线计划模型；校验导出证据，不授予或执行资源写入。"""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import re
 
+from artifact_digests import filesystem_path
 from devex_clone_job_relations import validate_job_relations
 from devex_clone_rows import EXCLUDED, reject_physical, rows, schema_catalog, validate_state
 from devex_clone_schedule import inspect_schedule, schedule_actions
@@ -42,7 +44,9 @@ def name(value: str) -> str:
 
 
 def linked(path: Path) -> bool:
-    return path.is_symlink() or (path.exists() and bool(getattr(path.lstat(), "st_file_attributes", 0) & 0x400))
+    native = filesystem_path(path)
+    return os.path.islink(native) or (os.path.exists(native)
+                                      and bool(getattr(os.lstat(native), "st_file_attributes", 0) & 0x400))
 
 
 def local_path(backend: Path, filename: str, *, new=False) -> Path:

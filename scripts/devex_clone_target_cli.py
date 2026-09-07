@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import copy
 from contextlib import contextmanager
+import os
 from pathlib import Path
 
+from artifact_digests import filesystem_path
+from devex_clone import read_json
 from devex_clone_capture import read_bound_json, write_json
 from devex_clone_factory_context import Environments, configured, initialization_history
 from devex_clone_model import exact, linked, local_path
@@ -133,14 +136,38 @@ def _target_files(target: Path) -> list[dict]:
         if linked(path):
             raise ValueError("fresh 目标阶段文件经过链接")
         item = {"path": path.relative_to(target).as_posix()}
-        if path.is_dir():
+        native = filesystem_path(path)
+        if os.path.isdir(native):
             entries.append({**item, "type": "directory"})
-        elif path.is_file():
+        elif os.path.isfile(native):
             digest = binding(path)
             entries.append({**item, "type": "file", "bytes": digest["bytes"], "sha256": digest["sha256"]})
         else:
             raise ValueError("fresh 目标阶段包含未知文件类型")
     return entries
+
+
+def _digest_binding(path: Path) -> dict:
+    return {key: value for key, value in binding(path).items() if key != "path"}
+
+
+def _preflight_reconciliation(target: Path) -> dict:
+    """验证只允许清空 preflight 失败资源的收尾收据，且不把它当作可重放初始化。"""
+    completed = target / "reconciliation-completed.json"
+    reports = sorted((target / "reset-state").glob("*.report.json"))
+    value = read_json(completed)
+    exact(value, {"status", "before", "after", "failure", "reset_report", "automatic_retry", "restore_qualified"})
+    if (value["status"] != "preflight_failure_reconciled" or value["automatic_retry"] is not False
+            or value["restore_qualified"] is not False or len(reports) != 1
+            or value["failure"] != _digest_binding(target / "failure.json")
+            or value["reset_report"] != _digest_binding(reports[0])):
+        raise ValueError("fresh 目标预检失败收尾收据无效")
+    for name, exists in (("before", True), ("after", False)):
+        state = value[name]
+        if (set(state) != {"databases", "objects", "redis"} or not isinstance(state["databases"], list)
+                or not state["databases"] or any(item.get("exists") is not exists for item in state["databases"])):
+            raise ValueError("fresh 目标预检失败收尾资源前后像无效")
+    return binding(completed)
 
 
 def _write_snapshot(workspace: Path, value: dict, stage: str) -> dict:
@@ -423,7 +450,14 @@ def status(backend: Path, workspace: Path) -> dict:
     from devex_clone_target import prepare_resume_state, unresolved_failure
 
     try:
-        if (target / "initialized.json").is_file():
+        if (target / "reconciliation-completed.json").is_file():
+            reconciliation = _preflight_reconciliation(target)
+            result = report("fresh_target_preflight_reconciled", "preflight_reconciled", "new_registration",
+                            "prepare-new-workspace", valid=True,
+                            reason="原 workspace 已记录收尾，必须使用新的私有环境和工作区重新登记",
+                            registration=registration)
+            result["reconciliation"] = reconciliation
+        elif (target / "initialized.json").is_file():
             if unresolved_failure(backend, target):
                 result = report("fresh_target_needs_reconciliation", "prepared", "reconciliation", None,
                                 valid=False, reason="初始化存在未解决失败", registration=registration)
