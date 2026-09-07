@@ -124,8 +124,8 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
             "rustfs-access-key.txt": "access",
             "rustfs-secret-key.txt": "secret",
             "redis-password.txt": "redis",
-            "reset-admin-password.txt": "admin",
-            "reset-user-password.txt": "user",
+            "reset-admin-password.txt": "Admin1!fixture",
+            "reset-user-password.txt": "User1!fixture",
             "jwt-secret.txt": "jwt",
             "metrics-token.txt": "metrics",
         }
@@ -152,6 +152,10 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual(values["APP_OBJECT_STORAGE_ACCESS_KEY"], "access")
         self.assertEqual(values["APP_MONITOR_METRICS_BEARER_TOKEN"], "metrics")
         self.assertEqual(set(files), {"mysql-client.cnf", *names})
+
+        values["RYFRAME_RESET_USER_PASSWORD"] = "weak"
+        with self.assertRaisesRegex(ValueError, "RYFRAME_RESET_USER_PASSWORD"):
+            environment._validate_reset_passwords(values)
 
         base_mysql = self.root / "base/backend/.local-tests/reference-fixture/secrets/mysql-client.cnf"
         for item in self.review["scopes"]["base"]["databases"]:

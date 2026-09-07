@@ -176,6 +176,18 @@ def _database_credentials(backend: Path, source: Path, destination: Path) -> dic
     return bound(destination)
 
 
+def _validate_reset_passwords(values: dict) -> None:
+    """在创建任何 fresh 资源前复现后端 reset 的密码复杂度门槛。"""
+    for key in ("RYFRAME_RESET_ADMIN_PASSWORD", "RYFRAME_RESET_USER_PASSWORD"):
+        value = values.get(key)
+        if (not isinstance(value, str) or not re.fullmatch(r"[!-~]{8,72}", value)
+                or not any(char.isascii() and char.isupper() for char in value)
+                or not any(char.isascii() and char.islower() for char in value)
+                or not any(char.isascii() and char.isdigit() for char in value)
+                or not any(char.isascii() and not char.isalnum() for char in value)):
+            raise ValueError(f"{key} 不满足 reset 种子密码复杂度策略")
+
+
 def _environment(backend: Path, review: dict, fixture: dict, output: Path, side: str = "seed") -> tuple[dict, dict]:
     seed = review["scopes"]["seed"]
     if side not in review["scopes"]:
@@ -210,6 +222,7 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
                           ("APP_MONITOR_METRICS_BEARER_TOKEN", "metrics-token.txt")):
         value, descriptor = _secret(secrets, filename)
         values[key], files[filename] = value, descriptor
+    _validate_reset_passwords(values)
     targets = []
     for key in ("shared", "dedicated-a", "dedicated-b"):
         item = database[key]
