@@ -199,6 +199,7 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
         client = mysql_client(mysql_path, mysql_descriptor["sha256"])
     except ValueError as error:
         raise ValueError("MySQL 凭据格式无效") from error
+    tls_mode = client["ssl-mode"].lower()
     values, files = {}, {"mysql-client.cnf": mysql_descriptor}
     for key, filename in (("APP_OBJECT_STORAGE_ACCESS_KEY", "rustfs-access-key.txt"),
                           ("APP_OBJECT_STORAGE_SECRET_KEY", "rustfs-secret-key.txt"),
@@ -214,7 +215,7 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
         item = database[key]
         targets.append({"key": key, "kind": "mysql", "mode": item["mode"], "host": item["host"],
                         "port": item["port"], "database": item["database"], "username": client["user"],
-                        "password_env": "APP_DB_PASSWORD", "tls_mode": "disabled"})
+                        "password_env": "APP_DB_PASSWORD", "tls_mode": tls_mode})
     scope = selected["scope_id"]
     environment = {
         "APP_ENV": "test", "APP_SCOPE_ID": scope, "APP_CONFIG_DIR": str(execution / "config"),
@@ -222,7 +223,7 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
         "APP_DATABASE_HOST": client["host"], "APP_DATABASE_PORT": client["port"],
         "APP_DATABASE_NAME": database["shared-control"]["database"],
         "APP_DATABASE_USERNAME": client["user"],
-        "APP_DATABASE_PASSWORD": client["password"], "APP_DATABASE_TLS_MODE": "disabled",
+        "APP_DATABASE_PASSWORD": client["password"], "APP_DATABASE_TLS_MODE": tls_mode,
         "APP_DB_PASSWORD": client["password"],
         "APP_TENANT_DATA_TARGETS": json.dumps(targets, separators=(",", ":")),
         "APP_OBJECT_STORAGE_BACKEND": "rustfs", "APP_OBJECT_STORAGE_ENDPOINT": selected["objects"]["endpoint"],
