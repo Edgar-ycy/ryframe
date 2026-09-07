@@ -84,6 +84,12 @@ class Resources:
         self.database_state(db, exists=False)
         self._mysql(db, f"CREATE DATABASE `{identifier(db['database'])}` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;")
 
+    def drop_empty_database(self, db: dict) -> None:
+        """只回收已由当前 fresh 代次确认为空的精确数据库。"""
+        self.database_state(db, exists=True, empty=True)
+        self._mysql(db, f"DROP DATABASE `{identifier(db['database'])}`;")
+        self.database_state(db, exists=False)
+
     def _aws(self, stage: str, operation: str, bucket: str, *extra: str) -> dict:
         if bucket not in BUCKETS:
             raise ValueError("只允许五个明确对象桶")
@@ -213,6 +219,14 @@ class Resources:
         reset = self.request["reset"]
         if self._redis(["SET", reset["sentinel_key"], reset["sentinel_value"], "NX"]) != "OK":
             raise ValueError("Redis sentinel NX 未确认创建，禁止覆盖或重放")
+
+    def remove_sentinel(self) -> None:
+        reset = self.request["reset"]
+        if self.redis_state(initialized=False, sentinel=True)["sentinel"] != reset["sentinel_value"]:
+            raise ValueError("Redis sentinel 不属于本次 fresh 目标，拒绝删除")
+        if self._redis(["DEL", reset["sentinel_key"]]) != 1:
+            raise ValueError("Redis sentinel 删除未确认")
+        self.redis_state(initialized=False, sentinel=False)
 
     def _cache_owned_lock_identity(self, cache_request: dict) -> int | None:
         initialized = bound_file(self.backend, cache_request["initialized"])

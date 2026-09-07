@@ -354,6 +354,18 @@ def initialize(backend: Path, workspace: Path) -> dict:
                 "restore_qualified": False}
 
 
+def reconcile_preflight(backend: Path, workspace: Path) -> dict:
+    from devex_clone_target import reconcile_preflight_failure
+
+    backend, workspace = backend.resolve(strict=True), local_path(backend, str(workspace))
+    with _workspace_control(workspace):
+        _, value, _ = _registration(backend, workspace)
+        result = _run_registered(backend, workspace, reconcile_preflight_failure)
+        return {"status": result["status"], "registration": binding(workspace / "registration.json"),
+                "reconciliation": binding(workspace / "target/reconciliation-completed.json"),
+                "restore_qualified": False}
+
+
 def verify(backend: Path, workspace: Path, observation_dir: Path) -> dict:
     from devex_clone_target import verify_target
 
