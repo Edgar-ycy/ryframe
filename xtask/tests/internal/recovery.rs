@@ -190,13 +190,15 @@ fn fixture_environment_plan_uses_only_the_current_backend() {
 
 #[test]
 fn fixture_services_use_the_private_service_controller() {
-    let (script, arguments) = recovery_command(
-        &RecoveryCommand::Fixture(strings(&["services", "rustfs", "--write"])),
-        Path::new("unused"),
-    )
-    .unwrap();
-    assert_eq!(script, "scripts/reference_fixture_services.py");
-    assert_eq!(arguments.last().map(String::as_str), Some(super::workspace::root_dir().to_str().unwrap()));
+    for service in ["rustfs", "redis"] {
+        let (script, arguments) = recovery_command(
+            &RecoveryCommand::Fixture(strings(&["services", service, "--write"])),
+            Path::new("unused"),
+        )
+        .unwrap();
+        assert_eq!(script, "scripts/reference_fixture_services.py");
+        assert_eq!(arguments.last().map(String::as_str), Some(super::workspace::root_dir().to_str().unwrap()));
+    }
 }
 
 #[test]
