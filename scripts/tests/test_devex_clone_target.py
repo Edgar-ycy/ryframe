@@ -62,6 +62,30 @@ class TargetTests(unittest.TestCase):
         f = self.f
         return target.initialize_target(f.root, f.output, f.run)
 
+    def test_device_fixture_execution_root_is_bound_to_its_generated_snapshot(self):
+        f = self.f
+        execution = f.local / "device-backend"
+        execution.mkdir()
+        (execution / "Cargo.toml").write_text("[workspace]", encoding="utf-8")
+        (execution / ".git").write_text("gitdir: fixture", encoding="utf-8")
+        generated = {"head": "a" * 40, "patch_sha256": "b" * 64, "files": []}
+        fixture = {
+            "format_version": 1,
+            "fixture": "device",
+            "status": "ready",
+            "paths": {"backend": str(execution), "frontend": str(f.local / "device-frontend")},
+            "generated": {"backend": generated},
+        }
+        receipt = f.bound(f.local / "device-fixture.json", fixture)
+        f.request["execution_backend"] = {"fixture": receipt, "path": str(execution)}
+
+        with patch.object(binding, "source_snapshot", return_value=generated):
+            root, evidence = binding.execution_backend(f.root, f.request)
+
+        self.assertEqual(root, execution)
+        self.assertEqual(evidence["kind"], "device-fixture")
+        self.assertEqual(evidence["source"], generated)
+
     def test_complete_lifecycle_uses_only_bound_cli_then_readonly_verifies(self):
         f = self.f
         prepared = self.prepare()

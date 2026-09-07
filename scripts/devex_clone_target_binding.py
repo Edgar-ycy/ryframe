@@ -13,7 +13,7 @@ from devex_clone_source_proof import bound_file, require_closed_port, verify_api
 from devex_clone_tools import verify as verify_tools
 from full_stack_runtime import configuration_digest, worker_ready_url
 from full_stack_rate_limit_config import load_app_table
-from restore_build import file_digest
+from restore_build import file_digest, source_snapshot
 from restore_reference_plan import BUCKETS, identifier, plan_hash
 from restore_source_binding import defaults_connection, source_binding
 
@@ -78,8 +78,10 @@ def external_file(value: dict) -> None:
 
 
 def request_binding(backend: Path, request: dict) -> tuple[dict, dict]:
-    exact(request, {"format_version", "kind", "id", "review", "side", "target", "maintenance_build",
-                    "configuration_sha256", "tools", "storage", "reset"})
+    required = {"format_version", "kind", "id", "review", "side", "target", "maintenance_build",
+                "configuration_sha256", "tools", "storage", "reset"}
+    optional = {"execution_backend"}
+    exact(request, required | ({"execution_backend"} if "execution_backend" in request else set()))
     if request["format_version"] != 1 or request["kind"] != "devex-clone-fresh-target":
         raise ValueError("新目标请求类型错误")
     name(request["id"])
@@ -123,6 +125,27 @@ def request_binding(backend: Path, request: dict) -> tuple[dict, dict]:
             raise ValueError("目标工具不属于审阅版本")
     exact(request["storage"], {"rustfs", "redis"})
     return review, selected
+
+
+def execution_backend(backend: Path, request: dict) -> tuple[Path, dict]:
+    """解析可选的冻结 Device 执行工作树，默认继续使用当前后端。"""
+    declared = request.get("execution_backend")
+    if declared is None:
+        return backend.resolve(strict=True), {"kind": "current-backend", "path": str(backend.resolve(strict=True))}
+    exact(declared, {"fixture", "path"})
+    fixture_path = bound_file(backend, declared["fixture"])
+    fixture = read_json(fixture_path)
+    if (fixture.get("format_version") != 1 or fixture.get("fixture") != "device"
+            or fixture.get("status") != "ready" or not isinstance(fixture.get("paths"), dict)
+            or not isinstance(fixture.get("generated"), dict)):
+        raise ValueError("冻结 Device 工作树收据无效")
+    root = local_path(backend, declared["path"])
+    expected = Path(fixture["paths"].get("backend", ""))
+    generated = fixture["generated"].get("backend")
+    if (root != expected or not (root / "Cargo.toml").is_file() or not (root / ".git").exists()
+            or not isinstance(generated, dict) or source_snapshot(root) != generated):
+        raise ValueError("冻结 Device 后端工作树或生成来源已变化")
+    return root, {"kind": "device-fixture", "path": str(root), "fixture": declared["fixture"], "source": generated}
 
 
 def reset_config(backend: Path, request: dict, selected: dict) -> None:
@@ -174,17 +197,18 @@ def never_started(backend: Path, selected: dict) -> None:
 
 def generation(backend: Path, request: dict, run) -> dict:
     review, selected = request_binding(backend, request)
+    execution_root, execution = execution_backend(backend, request)
     never_started(backend, selected)
-    if configuration_digest(backend) != digest(request["configuration_sha256"]):
+    if configuration_digest(execution_root) != digest(request["configuration_sha256"]):
         raise ValueError("新目标 APP 配置或秘密发生变化")
-    maintenance = verify_tools(backend, bound_file(backend, request["maintenance_build"]), run)
-    physical = source_binding(backend, {"source": request["target"]})
+    maintenance = verify_tools(execution_root, bound_file(backend, request["maintenance_build"]), run)
+    physical = source_binding(execution_root, {"source": request["target"]})
     planned = {db["key"]: db for db in selected["databases"]}
     for actual in physical["databases"]:
         if any(actual[key] != planned[actual["key"]][key] for key in ("host", "port")):
             raise ValueError("目标 MySQL host/port 不是审阅计划中的地址")
-    configuration = inventory_configuration(backend, os.environ, request["target"])
-    reset_config(backend, request, selected)
+    configuration = inventory_configuration(execution_root, os.environ, request["target"])
+    reset_config(execution_root, request, selected)
     verify_api_address(backend, selected["api_url"])
     if os.environ.get("APP_JOBS_MODE") != "external" or worker_ready_url() != selected["worker_ready_url"]:
         raise ValueError("目标 Worker 必须显式匹配关闭端口与 external 模式")
@@ -194,7 +218,7 @@ def generation(backend: Path, request: dict, run) -> dict:
     secrets = {key: os.environ.get(key) for key in ("RYFRAME_RESET_ADMIN_PASSWORD", "RYFRAME_RESET_USER_PASSWORD")}
     if not all(secrets.values()):
         raise ValueError("必须显式提供本侧两项初始化密码")
-    return {"maintenance": maintenance, "physical": physical, "configuration": configuration,
+    return {"execution": execution, "maintenance": maintenance, "physical": physical, "configuration": configuration,
             "configuration_sha256": request["configuration_sha256"],
             "seed_credentials_sha256": plan_hash(secrets), "request_sha256": plan_hash(request),
             "review_sha256": request["review"]["sha256"], "selected": selected,

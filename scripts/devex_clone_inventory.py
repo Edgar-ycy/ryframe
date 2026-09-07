@@ -127,10 +127,10 @@ def configuration(backend: Path, environment: Mapping[str, str], selected: dict)
 
 
 def capture_side_inventory(backend: Path, side: str, tools: ExternalTools, maintenance_receipt: Path,
-                           output: Path, *, environment: Mapping[str, str]) -> SideInventory:
+                           output: Path, *, environment: Mapping[str, str], evidence_root: Path | None = None) -> SideInventory:
     """完整采集单侧四目标两次；成功只表示本次只读稳定，不证明停止历史或 fresh 资格。"""
     backend = backend.resolve(strict=True)
-    output = local_path(backend, str(output), new=True)
+    output = local_path(evidence_root or backend, str(output), new=True)
     if not output.parent.is_dir():
         raise ValueError("库存输出须使用已有父目录中的新目录")
     output.mkdir()

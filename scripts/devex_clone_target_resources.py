@@ -24,8 +24,10 @@ from restore_source_binding import defaults_connection
 
 class Resources:
     def __init__(self, backend: Path, request: dict, output: Path, selected: dict, review: dict, run,
-                 *, storage_run: Path | None = None, owned_lock_identity: int | None = None):
+                 *, execution_backend: Path | None = None, storage_run: Path | None = None,
+                 owned_lock_identity: int | None = None):
         self.backend, self.request, self.output = backend, request, output
+        self.execution_backend = execution_backend or backend
         self.selected, self.review, self.runner = selected, review, run
         self.storage_run, self.storage_runtime_binding = storage_run, None
         self.cache_runtime_binding = None
@@ -44,7 +46,7 @@ class Resources:
         path = self.output / f"{stage}-{uuid.uuid4().hex}.command.json"
         stdout, stderr, code, error_type = b"", b"", None, None
         try:
-            result = self.runner(args, cwd=self.backend, input=data, env=env or self.environment,
+            result = self.runner(args, cwd=self.execution_backend, input=data, env=env or self.environment,
                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=timeout,
                                  creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
             stdout, stderr, code = result.stdout, result.stderr, result.returncode

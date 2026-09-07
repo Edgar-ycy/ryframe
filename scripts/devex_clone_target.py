@@ -22,7 +22,7 @@ from devex_clone_inventory import capture_side_inventory
 from devex_clone_model import exact, local_path
 from devex_clone_run_state import binding
 from devex_clone_source_proof import bound_file
-from devex_clone_target_binding import KEYS, generation, request_binding, validate_reset_manifest
+from devex_clone_target_binding import KEYS, execution_backend, generation, request_binding, validate_reset_manifest
 from devex_clone_target_resources import Resources
 from devex_clone_target_state import confirmed, failure, generation_lock, intent, now
 from devex_clone_target_storage import verify_storage_generation
@@ -276,8 +276,9 @@ def context(backend: Path, request: dict, output: Path, run, *, storage_run: Pat
             owned_lock_identity: int | None = None) -> tuple[dict, Resources]:
     original = generation(backend, request, run)
     review, selected = request_binding(backend, request)
+    execution_root, _ = execution_backend(backend, request)
     resources = Resources(backend, request, output, selected, review, run, storage_run=storage_run,
-                          owned_lock_identity=owned_lock_identity)
+                          execution_backend=execution_root, owned_lock_identity=owned_lock_identity)
     original["storage"] = resources.storage_identity()
     return original, resources
 
@@ -421,8 +422,11 @@ def initialize_databases(backend: Path, request: dict, original: dict, resources
 def inventory(backend: Path, request: dict, resources: Resources, output: Path) -> dict:
     side = {**request["target"], "runtime_dir": resources.selected["runtime_dir"], "api_url": resources.selected["api_url"]}
     tools = ExternalTools({"target": side, "tools": request["tools"]}, resources.output, resources.runner)
-    captured = capture_side_inventory(backend, "target", tools, bound_file(backend, request["maintenance_build"]),
-                                      output, environment=resources.environment)
+    arguments = {"environment": resources.environment}
+    if resources.execution_backend != backend:
+        arguments["evidence_root"] = backend
+    captured = capture_side_inventory(resources.execution_backend, "target", tools,
+                                      bound_file(backend, request["maintenance_build"]), output, **arguments)
     images = {item.resource["database"]: json.loads(json.dumps(asdict(item))) for item in captured.observations}
     for db in request["target"]["databases"]:
         image = images[db["database"]]
