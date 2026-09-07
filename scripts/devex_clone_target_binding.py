@@ -193,7 +193,8 @@ def never_started(backend: Path, selected: dict) -> None:
         if evidence.exists() or linked(evidence):
             raise ValueError("目标已经出现生产者启动意图或进程收据，不能认定为从未启动的 fresh 目标")
     for field in ("runtime_dir", "identity_ledger"):
-        if local_path(backend, selected[field]).exists():
+        directory = local_path(backend, selected[field])
+        if directory.exists() and (linked(directory) or not directory.is_dir() or any(directory.iterdir())):
             raise ValueError("目标已经出现运行或身份准备历史，不具备本代次 fresh 条件")
 
 

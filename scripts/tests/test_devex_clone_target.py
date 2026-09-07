@@ -325,9 +325,18 @@ class TargetTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.prepare()
         self.assertEqual(self.f.redis_values[self.f.request["reset"]["sentinel_key"]], "existing")
 
+    def test_empty_runtime_directory_does_not_count_as_start_history(self):
+        runtime = Path(self.f.review["scopes"]["seed"]["runtime_dir"])
+        runtime.mkdir()
+        self.prepare()
+        self.assertTrue(runtime.is_dir())
+        self.assertFalse(any(runtime.iterdir()))
+
     def test_runtime_history_or_unclosed_port_fails(self):
         f = self.f
-        Path(f.review["scopes"]["seed"]["runtime_dir"]).mkdir()
+        runtime = Path(f.review["scopes"]["seed"]["runtime_dir"])
+        runtime.mkdir()
+        (runtime / "unknown.json").write_text("{}", encoding="utf-8")
         with self.assertRaises(ValueError): self.prepare()
         self.assertFalse(f.databases)
 
