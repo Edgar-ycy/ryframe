@@ -125,6 +125,13 @@ class FullStackFixtureTests(unittest.TestCase):
                 fixture.register_fixture_migration(self.backend, self.root / "log")
             run.assert_not_called()
 
+    def test_reference_fixture_root_is_created_once_for_new_device_worktree(self):
+        root = fixture.reference_fixture_root(self.backend)
+        self.assertEqual(root, self.backend / ".local-tests/reference-fixture")
+        self.assertTrue(root.is_dir())
+        with self.assertRaisesRegex(ValueError, "已存在"):
+            fixture.reference_fixture_root(self.backend)
+
 
 if __name__ == "__main__":
     unittest.main()

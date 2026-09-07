@@ -87,6 +87,15 @@ def register_fixture_migration(root: Path, log: Path) -> None:
     )
 
 
+def reference_fixture_root(backend: Path) -> Path:
+    """为后续审阅、秘密 bootstrap 和运行计划预置唯一的忽略证据父目录。"""
+    root = backend / ".local-tests/reference-fixture"
+    if root.exists() or root.is_symlink():
+        raise ValueError("新的 Device 工作树已存在参考夹具目录")
+    root.mkdir(parents=True)
+    return root
+
+
 def prepare(backend: Path, frontend: Path, output: Path) -> dict:
     validate_paths(backend, frontend, output)
     backend_receipt, backend_patch = snapshot(backend)
@@ -108,6 +117,7 @@ def prepare(backend: Path, frontend: Path, output: Path) -> dict:
     write_receipt(output / "fixture.json", receipt)
     copy_snapshot(backend, roots["backend"], backend_receipt, backend_patch, log)
     copy_snapshot(frontend, roots["frontend"], frontend_receipt, frontend_patch, log)
+    reference_fixture_root(roots["backend"])
     (roots["backend"] / "catalog/resources/device.toml").write_bytes(fixture_bytes)
     # Corepack 读取快照内 packageManager；使用已安装的离线 store，不复制本机环境文件。
     package = ["corepack", "pnpm", "install", "--offline", "--frozen-lockfile"]
