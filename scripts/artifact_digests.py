@@ -16,8 +16,18 @@ _ACTIVE = None
 _WINDOWS = os.name == "nt"
 
 
+def filesystem_path(path: Path | str) -> str:
+    """返回仅供文件系统调用使用的路径，保留调用方原始 Path 的比较语义。"""
+    value = os.fspath(path)
+    if not _WINDOWS or value.startswith("\\\\?\\") or not os.path.isabs(value):
+        return value
+    if value.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + value[2:]
+    return "\\\\?\\" + value
+
+
 def _plain_digest(path: Path) -> dict:
-    with path.open("rb") as stream:
+    with open(filesystem_path(path), "rb") as stream:
         sha = hashlib.file_digest(stream, "sha256").hexdigest()
         size = os.fstat(stream.fileno()).st_size
     return {"bytes": size, "sha256": sha}
@@ -179,7 +189,9 @@ def protected_digest(path: Path) -> dict | None:
 
 def file_digest(path: Path) -> dict:
     """摘要只接受普通文件；未登记的文件每次完整读取，不复用路径或时间缓存。"""
-    if path.is_symlink() or not path.is_file():
+    path = Path(path)
+    native = filesystem_path(path)
+    if os.path.islink(native) or not os.path.isfile(native):
         raise ValueError("产物必须是普通文件")
     protected = protected_digest(path)
     return protected if protected is not None else _plain_digest(path)

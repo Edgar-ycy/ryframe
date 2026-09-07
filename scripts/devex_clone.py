@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import sys
 from weakref import WeakKeyDictionary
@@ -11,6 +12,7 @@ from weakref import WeakKeyDictionary
 import devex_clone_model
 from devex_clone_model import bound_file, create_plan, exact, local_path
 from restore_build import file_digest
+from artifact_digests import filesystem_path
 from restore_reference_plan import plan_hash
 
 
@@ -105,9 +107,11 @@ def unique_pairs(pairs: list) -> dict:
 
 
 def read_json(path: Path) -> dict:
-    if path.stat().st_size > 16 * 1024 * 1024:
+    native = filesystem_path(path)
+    if os.stat(native).st_size > 16 * 1024 * 1024:
         raise ValueError("复制清单超过 16 MiB")
-    value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_pairs)
+    with open(native, encoding="utf-8") as stream:
+        value = json.load(stream, object_pairs_hook=unique_pairs)
     if not isinstance(value, dict):
         raise ValueError("复制清单必须为对象")
     return value

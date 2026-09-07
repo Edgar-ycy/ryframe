@@ -2,7 +2,9 @@
 from contextlib import contextmanager
 import hashlib
 import json
+import os
 from pathlib import Path
+import shutil
 import sys
 import unittest
 from workspace_directory import WorkspaceDirectory
@@ -97,6 +99,26 @@ class ReleaseTests(unittest.TestCase):
         error = artifact_digests._release([File(1), File(2), File(3)])
         self.assertIsInstance(error, OSError)
         self.assertEqual(closed, [3, 2, 1])
+
+
+@unittest.skipUnless(os.name == "nt", "需要 Windows 扩展路径语义")
+class WindowsLongPathTests(unittest.TestCase):
+    def test_digest_reads_chinese_space_path_beyond_win32_legacy_limit(self):
+        base = Path(__file__).resolve().parents[2] / ".local-tests/python-unit"
+        root = base / ("长路径 空格 " + "x" * 40)
+        nested = root
+        for _ in range(5):
+            nested /= "证据目录 " + "y" * 40
+        os.makedirs(artifact_digests.filesystem_path(nested))
+        self.addCleanup(shutil.rmtree, artifact_digests.filesystem_path(root))
+        payload = nested / "收据 文件.json"
+        content = "{\"状态\":\"已核验\"}".encode("utf-8")
+        with open(artifact_digests.filesystem_path(payload), "wb") as stream:
+            stream.write(content)
+        self.assertGreater(len(str(payload)), 260)
+        self.assertEqual(artifact_digests.file_digest(payload), {
+            "bytes": len(content), "sha256": hashlib.sha256(content).hexdigest(),
+        })
 
 
 if __name__ == "__main__":

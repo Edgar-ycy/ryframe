@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -13,6 +14,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from devex_clone import read_json, verify_plan, write_plan
+from artifact_digests import filesystem_path
 from devex_clone_model import create_plan, local_path, object_plan
 from devex_clone_rows import EXCLUDED, literals, parse_row, reject_physical, schema_catalog, validate_state
 from devex_clone_schedule import canonical_value, schedule_row_sha256
@@ -455,6 +457,27 @@ class CloneTests(unittest.TestCase):
         tenant["status"] = "enabled"; request["tenant_id"] = "missing-tenant"; self.refresh()
         with self.assertRaisesRegex(ValueError, "未登记的逻辑租户"):
             create_plan(self.value, self.backend)
+
+
+@unittest.skipUnless(os.name == "nt", "需要 Windows 扩展路径语义")
+class WindowsLongPathInputTests(unittest.TestCase):
+    def test_read_json_reads_chinese_space_path_beyond_win32_legacy_limit(self):
+        base = REPO / ".local-tests/python-unit"
+        base.mkdir(parents=True, exist_ok=True)
+        temporary = WorkspaceDirectory(dir=base)
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name) / ("长路径 空格 " + "x" * 40)
+        nested = root
+        for _ in range(5):
+            nested /= "复制收据 " + "y" * 40
+        os.makedirs(filesystem_path(nested))
+        self.addCleanup(shutil.rmtree, filesystem_path(root))
+        receipt = nested / "reset report.json"
+        value = {"status": "failed", "阶段": "preflight"}
+        with open(filesystem_path(receipt), "w", encoding="utf-8", newline="\n") as stream:
+            json.dump(value, stream, ensure_ascii=False)
+        self.assertGreater(len(str(receipt)), 260)
+        self.assertEqual(read_json(receipt), value)
 
 
 if __name__ == "__main__":
