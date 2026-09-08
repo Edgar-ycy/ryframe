@@ -18,7 +18,7 @@ use crate::{
 use ryframe_generator::{
     GeneratedCatalog, PlanAction, ResourceAssetPlan, ResourceError, ResourceIr, ResourceWorkspace,
     load_resource, plan_all_resource_changes, plan_resource_changes, render_resources,
-    write_resource,
+    write_resource, write_resources,
 };
 
 #[cfg(feature = "resource")]
@@ -44,8 +44,9 @@ pub(crate) fn run(command: &ResourceCommand, frontend_dir: &Path) -> Result<()> 
             write(&catalog, name, &root, frontend_dir)
         }
         (ResourceTarget::All, ResourceAction::Check) => check_all(&catalog, &root, frontend_dir),
+        (ResourceTarget::All, ResourceAction::Write) => write_all(&catalog, &root, frontend_dir),
         (ResourceTarget::All, _) => {
-            Err("`--all` 仅支持只读的 `cargo xtask generate resource --all --check`".into())
+            Err("`--all` 只支持 `cargo xtask generate resource --all --check|--write`".into())
         }
     }
 }
@@ -292,6 +293,29 @@ fn write(
     for path in &report.removed {
         println!("  删除 {path}");
     }
+    refresh_api(frontend_root)
+}
+
+#[cfg(feature = "resource")]
+fn write_all(catalog: &GeneratedCatalog, backend_root: &Path, frontend_root: &Path) -> Result<()> {
+    let report = write_resources(
+        catalog,
+        ResourceWorkspace {
+            backend_root,
+            frontend_root: Some(frontend_root),
+        },
+    )?;
+    println!(
+        "全部资源生成完成：写入 {}，删除 {}，未变化 {}。",
+        report.written.len(),
+        report.removed.len(),
+        report.unchanged.len()
+    );
+    refresh_api(frontend_root)
+}
+
+#[cfg(feature = "resource")]
+fn refresh_api(frontend_root: &Path) -> Result<()> {
     let api = ApiGenerateCommand {
         reference: None,
         write: true,

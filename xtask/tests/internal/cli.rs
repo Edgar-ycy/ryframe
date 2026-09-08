@@ -26,13 +26,7 @@ fn exposes_exactly_five_top_level_command_families() {
             real: false,
         })
     );
-    assert!(parse_command(&[
-        "check",
-        "recovery",
-        "fixture",
-        "status",
-    ])
-    .is_err());
+    assert!(parse_command(&["check", "recovery", "fixture", "status",]).is_err());
     assert_eq!(
         parse_command(&["generate"]).unwrap(),
         Command::Generate(GenerateCommand::Help)
@@ -266,7 +260,13 @@ fn generation_is_read_only_until_write_is_explicit() {
             action: ResourceAction::Check,
         }))
     );
-    assert!(parse_command(&["generate", "resource", "--all", "--write"]).is_err());
+    assert_eq!(
+        parse_command(&["generate", "resource", "--all", "--write"]).unwrap(),
+        Command::Generate(GenerateCommand::Resource(ResourceCommand {
+            target: ResourceTarget::All,
+            action: ResourceAction::Write,
+        }))
+    );
     assert!(parse_command(&["generate", "resource", "--all"]).is_err());
     assert!(parse_command(&["generate", "resource", "post", "--write", "--explain"]).is_err());
     for (flag, action) in [
