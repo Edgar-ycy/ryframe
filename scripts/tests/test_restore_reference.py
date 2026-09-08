@@ -252,6 +252,14 @@ class ReferenceTests(unittest.TestCase):
         self.assertEqual(preflight["scope_id"], self.plan["source"]["scope_id"])
         self.assertEqual(reference.read_json(work / "dataset.json")["status"], "failed")
 
+    def test_called_process_failure_records_redacted_output(self):
+        error = subprocess.CalledProcessError(1, ["node"], output="normal", stderr="password=private")
+        with patch.dict(reference.os.environ, {"APP_PASSWORD": "private"}, clear=True):
+            result = reference.failure_diagnostic(error)
+        self.assertEqual(result["error_type"], "CalledProcessError")
+        self.assertEqual(result["stdout"], "normal")
+        self.assertEqual(result["stderr"], "password=[REDACTED]")
+
 
 if __name__ == "__main__":
     unittest.main()

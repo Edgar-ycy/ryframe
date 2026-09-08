@@ -6,13 +6,15 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import os
 import shutil
+import subprocess
 from pathlib import Path
 
 from full_stack_process import process_identity, read_process
 from process_sockets import verify_listener
 from restore_build import file_digest, source_snapshot
-from restore_reference_io import ExternalTools, object_index, validate_dump
+from restore_reference_io import ExternalTools, object_index, redact_object_diagnostic, validate_dump
 from restore_reference_plan import (dataset_timeout_seconds, identifier, plan_hash, safe_file,
                                     scope_identifier, validate_inventory, validate_plan,
                                     verify_artifacts)
@@ -28,6 +30,15 @@ def write_json(path: Path, value: dict, *, new=True) -> None:
     with path.open("x" if new else "w", encoding="utf-8", newline="\n") as stream:
         json.dump(value, stream, ensure_ascii=False, indent=2)
         stream.write("\n")
+
+
+def failure_diagnostic(error: Exception) -> dict:
+    """记录外部命令的脱敏输出，保留未知写入阶段的定位证据。"""
+    result = {"error_type": type(error).__name__, "message": str(error)[:1000]}
+    if isinstance(error, subprocess.CalledProcessError):
+        result["stdout"] = redact_object_diagnostic(error.stdout, os.environ)
+        result["stderr"] = redact_object_diagnostic(error.stderr, os.environ)
+    return result
 
 
 def work_directory(plan: dict) -> Path:
@@ -289,7 +300,8 @@ def execute(args, plan: dict, backend: Path, tools: ExternalTools, work: Path) -
         write_json(receipt, {**started, "status": "completed", "completed_at": now(), "result": result}, new=False)
         return result
     except Exception as error:
-        write_json(receipt, {**started, "status": "failed", "completed_at": now(), "failure": str(error)[:1000]}, new=False)
+        write_json(receipt, {**started, "status": "failed", "completed_at": now(),
+                             "failure": failure_diagnostic(error)}, new=False)
         raise
 
 
