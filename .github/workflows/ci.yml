@@ -222,10 +222,6 @@ jobs:
         run: |
           stats_file="$RUNNER_TEMP/sccache-rust-gate.json"
           sccache --show-stats --stats-format=json > "$stats_file"
-          python backend/scripts/summarize_sccache_stats.py \
-            --stats "$stats_file" \
-            --label "Rust Gate" \
-            --summary "$GITHUB_STEP_SUMMARY"
           sccache --show-stats
           sccache --stop-server
 
@@ -559,10 +555,6 @@ jobs:
         run: |
           $statsFile = Join-Path $env:RUNNER_TEMP "sccache-windows-smoke.json"
           sccache --show-stats --stats-format=json | Set-Content -LiteralPath $statsFile -Encoding utf8
-          python ryframe/scripts/summarize_sccache_stats.py `
-            --stats $statsFile `
-            --label "Windows Smoke" `
-            --summary $env:GITHUB_STEP_SUMMARY
           sccache --show-stats
           sccache --stop-server
 
