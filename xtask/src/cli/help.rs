@@ -1,7 +1,7 @@
 pub(crate) fn print_help(topic: Option<&str>) {
     let help = match topic {
         Some("dev") => {
-            "cargo xtask dev [--frontend-dir PATH]\n  管理 API、Worker 与 Vite；只校验数据库迁移。"
+            "cargo xtask dev [--measure-once] [--frontend-dir PATH]\n  管理 API、Worker 与 Vite；只校验数据库迁移。--measure-once 仅供 DevEx 保存场景使用。"
         }
         Some("check") => check_help(),
         Some("build") => {

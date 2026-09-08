@@ -63,6 +63,19 @@ fn default_help_exposes_only_five_task_families_and_exits_zero() {
 }
 
 #[test]
+fn dev_help_lists_every_supported_development_option() {
+    let result = invoke(&["dev", "--help"]);
+    assert!(result.status.success());
+    assert!(result.stderr.is_empty());
+    let output = String::from_utf8(result.stdout).unwrap();
+    assert!(
+        output.contains("cargo xtask dev [--measure-once] [--frontend-dir PATH]"),
+        "{output}"
+    );
+    assert!(output.contains("DevEx 保存场景"), "{output}");
+}
+
+#[test]
 fn check_help_lists_every_supported_performance_operation() {
     let result = invoke(&["check", "--help"]);
     assert!(result.status.success());
