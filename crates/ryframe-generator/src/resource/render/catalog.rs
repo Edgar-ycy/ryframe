@@ -86,7 +86,9 @@ pub(super) fn access_catalog(resources: &[&ResourceIr], source: &str) -> String 
         output.push_str("[[resources]]\n");
         output.push_str(&format!("name = {:?}\n", resource.name));
         output.push_str(&format!("module = {:?}\n", resource.module));
-        output.push_str(&format!("capability = {:?}\n", resource.access.capability));
+        if let Some(capability) = &resource.access.capability {
+            output.push_str(&format!("capability = {capability:?}\n"));
+        }
         output.push_str("[resources.labels]\n");
         output.push_str(&format!("zh_cn = {:?}\n", resource.labels.zh_cn));
         output.push_str(&format!("en = {:?}\n", resource.labels.en));

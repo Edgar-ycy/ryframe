@@ -53,7 +53,9 @@ fn merge_generated_catalog(
     for resource in generated.resources {
         validate_identifier("生成资源名称", &resource.name)?;
         validate_identifier("生成资源模块", &resource.module)?;
-        validate_code("生成资源能力码", &resource.capability, '.')?;
+        if let Some(capability) = &resource.capability {
+            validate_code("生成资源能力码", capability, '.')?;
+        }
         validate_generated_label("生成资源中文标签", &resource.labels.zh_cn)?;
         validate_generated_label("生成资源英文标签", &resource.labels.en)?;
         if !generated_names.insert(resource.name.clone()) {
@@ -99,7 +101,7 @@ fn merge_generated_catalog(
             menu_type: "C".to_owned(),
             page_key: Some(resource.route.key),
             permission: Some(list_permission),
-            // CRUD 清单中的 capability 是前端安全元数据，不隐式创建产品能力门禁。
+            // 基础 CRUD 不隐式创建产品能力门禁；显式产品能力仍由手写目录闭合。
             capability: None,
         });
     }

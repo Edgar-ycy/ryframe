@@ -211,7 +211,8 @@ pub struct ApiIr {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AccessIr {
-    pub capability: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capability: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub owner_field: Option<String>,
     pub permissions: PermissionIr,

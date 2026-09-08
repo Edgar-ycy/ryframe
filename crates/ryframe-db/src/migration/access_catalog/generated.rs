@@ -18,7 +18,8 @@ struct GeneratedAccessCatalog {
 pub(super) struct GeneratedAccessResource {
     pub(super) name: String,
     module: String,
-    capability: String,
+    #[serde(default)]
+    capability: Option<String>,
     labels: GeneratedLabels,
     pub(super) menu: GeneratedMenu,
     route: GeneratedRoute,
@@ -105,7 +106,9 @@ pub(super) fn generated_access_resources() -> Result<Vec<GeneratedAccessResource
     for resource in &catalog.resources {
         validate_generated_identifier("生成资源名称", &resource.name)?;
         validate_generated_identifier("生成资源模块", &resource.module)?;
-        validate_generated_code("生成资源能力码", &resource.capability, '.')?;
+        if let Some(capability) = &resource.capability {
+            validate_generated_code("生成资源能力码", capability, '.')?;
+        }
         validate_generated_label("生成资源中文标签", &resource.labels.zh_cn)?;
         validate_generated_label("生成资源英文标签", &resource.labels.en)?;
         if !names.insert(resource.name.as_str()) {

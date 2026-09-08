@@ -54,8 +54,17 @@ pub(super) fn validate_api_and_access(
         .with_resource(resource)
         .with_file(source_path));
     }
+    if let Some(capability) = &spec.access.capability
+        && !is_safe_symbol(capability)
+    {
+        return Err(ResourceError::new(
+            format!("capability `{capability}` 格式无效"),
+            "只使用字母、数字、下划线、短横线或点",
+        )
+        .with_resource(resource)
+        .with_file(source_path));
+    }
     for (label, value) in [
-        ("capability", &spec.access.capability),
         ("menu.key", &spec.menu.key),
         ("menu.parent", &spec.menu.parent),
         ("route.key", &spec.route.key),

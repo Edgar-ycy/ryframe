@@ -252,11 +252,17 @@ fn render_generated_router(resources: &[&ResourceIr], header: &str) -> String {
             } else {
                 "state.clone()"
             };
-            format!(
-                "        .nest({path:?}, super::{name}::handler::router(Arc::clone(&services.{name}), pagination).layer(from_fn_with_state(CapabilityGuardState::new({state}, {capability:?}), capability_guard)))",
+            let router = format!(
+                "super::{name}::handler::router(Arc::clone(&services.{name}), pagination)",
                 name = resource.name,
-                capability = resource.access.capability,
-            )
+            );
+            let router = match &resource.access.capability {
+                Some(capability) => format!(
+                    "{router}.layer(from_fn_with_state(CapabilityGuardState::new({state}, {capability:?}), capability_guard))"
+                ),
+                None => router,
+            };
+            format!("        .nest({path:?}, {router})")
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -265,13 +271,26 @@ fn render_generated_router(resources: &[&ResourceIr], header: &str) -> String {
     } else {
         "use std::sync::Arc;\n\n"
     };
-    let empty = if resources.is_empty() {
+    let state_usage = if resources.is_empty() {
         "    let _ = (state, services, pagination);\n"
+    } else if !resources
+        .iter()
+        .any(|resource| resource.access.capability.is_some())
+    {
+        "    let _ = &state;\n"
+    } else {
+        ""
+    };
+    let guard_import = if resources
+        .iter()
+        .any(|resource| resource.access.capability.is_some())
+    {
+        "use axum::middleware::from_fn_with_state;\nuse crate::router::{CapabilityGuardState, capability_guard};\n"
     } else {
         ""
     };
     format!(
-        "{header}{arc_import}use axum::{{Router, middleware::from_fn_with_state}};\nuse ryframe_application::generated::GeneratedServices;\nuse ryframe_kernel::PaginationPolicy;\n\nuse crate::{{router::{{CapabilityGuardState, capability_guard}}, state::AppState}};\n\npub fn generated_router(state: AppState, services: &GeneratedServices, pagination: PaginationPolicy) -> Router {{\n{empty}    Router::new()\n{nests}\n}}\n"
+        "{header}{arc_import}use axum::Router;\nuse ryframe_application::generated::GeneratedServices;\nuse ryframe_kernel::PaginationPolicy;\n\n{guard_import}use crate::state::AppState;\n\npub fn generated_router(state: AppState, services: &GeneratedServices, pagination: PaginationPolicy) -> Router {{\n{state_usage}    Router::new()\n{nests}\n}}\n"
     )
 }
 

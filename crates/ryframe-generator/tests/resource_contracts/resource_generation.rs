@@ -75,6 +75,7 @@ fn post_manifest_preserves_the_existing_public_contract_and_extensions() {
     assert_eq!(post.api.path, "/api/v1/system/posts");
     assert_eq!(post.api.operations.list, "get_system_posts");
     assert_eq!(post.api.operations.create, "post_system_posts");
+    assert_eq!(post.access.capability, None);
     let id = post
         .fields
         .iter()
@@ -184,6 +185,10 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
     assert!(!handler.contains("tag = \"岗位\","));
     assert!(handler.contains("use crate::handler_utils::parse_id;"));
     assert!(!handler.contains("fn parse_id(value: &str)"));
+    let router = content("ryframe-api/src/generated/router.rs");
+    assert!(router.contains("super::post::handler::router"));
+    assert!(!router.contains("CapabilityGuardState"));
+    assert!(!router.contains("system.post"));
     assert!(
         generated
             .assets

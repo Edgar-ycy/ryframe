@@ -285,7 +285,8 @@ pub struct OperationSpec {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AccessSpec {
-    pub capability: String,
+    #[serde(default)]
+    pub capability: Option<String>,
     #[serde(default)]
     pub owner_field: Option<String>,
     pub permissions: PermissionSpec,

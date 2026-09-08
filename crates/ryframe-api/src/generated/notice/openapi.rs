@@ -27,7 +27,6 @@ pub struct NoticeOpenApi;
 pub fn crud_resource_metadata() -> serde_json::Value {
     let mut metadata = serde_json::json!({
       "access": {
-        "capability": "system.notice",
         "owner_field": "created_by",
         "permissions": {
           "create": "system:notice:add",

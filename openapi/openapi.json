@@ -34932,7 +34932,6 @@
     "resources": [
       {
         "access": {
-          "capability": "system.notice",
           "owner_field": "created_by",
           "permissions": {
             "create": "system:notice:add",
@@ -35195,7 +35194,6 @@
       },
       {
         "access": {
-          "capability": "system.post",
           "permissions": {
             "create": "system:post:add",
             "delete": "system:post:remove",
