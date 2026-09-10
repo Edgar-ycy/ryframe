@@ -21,6 +21,17 @@ from full_stack_runtime import verify_runtime
 from full_stack_worker import worker_identity
 
 
+WRITE_OPERATIONS = frozenset({"historical-expired", "export-backup"})
+
+
+def validate_write_intent(operation: str, write: bool) -> None:
+    writes = operation in WRITE_OPERATIONS
+    if writes and not write:
+        raise ValueError(f"{operation} 会修改隔离资源，必须显式 --write")
+    if write and not writes:
+        raise ValueError(f"{operation} 是只读操作，不接受 --write")
+
+
 def lock_records(
     session: MysqlSession, control: str, tenant: str, migration: str
 ) -> None:
@@ -294,7 +305,12 @@ def main() -> None:
     parser.add_argument("--tenant", required=True)
     parser.add_argument("--migration", required=True)
     parser.add_argument("--plan-sha256")
+    parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
+    try:
+        validate_write_intent(args.operation, args.write)
+    except ValueError as error:
+        parser.error(str(error))
     print(
         json.dumps(
             run(

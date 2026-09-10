@@ -123,6 +123,16 @@ class HistoryTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
 
+    def test_only_write_operations_accept_explicit_write_intent(self):
+        for operation in history.WRITE_OPERATIONS:
+            history.validate_write_intent(operation, True)
+            with self.assertRaisesRegex(ValueError, "--write"):
+                history.validate_write_intent(operation, False)
+        for operation in ("inspect", "plan-history", "verify-cleaned"):
+            history.validate_write_intent(operation, False)
+            with self.assertRaisesRegex(ValueError, "不接受"):
+                history.validate_write_intent(operation, True)
+
     def test_complete_shift_retains_policy_state_and_original_evidence(self):
         before, after = snapshot(), shifted(snapshot())
         session = mock.Mock()
