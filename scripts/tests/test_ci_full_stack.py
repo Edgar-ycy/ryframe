@@ -168,13 +168,15 @@ class FullStackCiTests(unittest.TestCase):
     def test_api_and_external_worker_have_distinct_id_generators(self) -> None:
         with test_directory() as root:
             environment = {**self.environment(root), "APP_JOBS_MODE": "external"}
-            processes = [mock.Mock(pid=101)]
+            executable = str(Path(sys.executable).resolve())
+            tree = {"process": {"pid": 101}, "supervisor": {"pid": 100}}
+            process = mock.Mock(pid=101, tree=tree)
             with (
                 mock.patch.dict(os.environ, environment, clear=True),
                 mock.patch.object(
                     MODULE,
                     "read_binaries",
-                    return_value={"ryframe": "api", "ryframe-worker": "worker"},
+                    return_value={"ryframe": executable, "ryframe-worker": executable},
                 ),
                 mock.patch.object(
                     MODULE,
@@ -184,28 +186,19 @@ class FullStackCiTests(unittest.TestCase):
                         "worker_ready_url": "http://127.0.0.1:9091/readyz",
                     },
                 ),
-                mock.patch.object(MODULE, "record_process") as record,
                 mock.patch.object(MODULE, "ensure_port_free"),
                 mock.patch.object(MODULE, "wait_for_port_free"),
                 mock.patch.object(MODULE, "verify_listener"),
                 mock.patch.object(MODULE, "control_worker") as worker,
                 mock.patch.object(
-                    MODULE.subprocess, "Popen", side_effect=processes
-                ) as popen,
+                    MODULE, "launch_supervised_process", return_value=process
+                ) as launch,
                 mock.patch.object(MODULE, "wait_for_api") as ready,
             ):
                 MODULE.start(root)
-                self.assertEqual(
-                    [
-                        call.kwargs["env"]["SNOWFLAKE_WORKER_ID"]
-                        for call in popen.call_args_list
-                    ],
-                    ["1"],
-                )
                 self.assertEqual(ready.call_count, 1)
-                record.assert_called_once_with(
-                    root / "runner/ryframe-full-stack", "api", 101, "api", "ci-12-3"
-                )
+                self.assertEqual(launch.call_args.args[5]["SNOWFLAKE_WORKER_ID"], "1")
+                self.assertEqual(launch.call_args.args[3], [executable])
                 worker.assert_called_once_with(
                     "start", root, root / "runner/ryframe-full-stack", timeout=180
                 )
@@ -213,12 +206,14 @@ class FullStackCiTests(unittest.TestCase):
     def test_worker_start_failure_reaps_the_registered_api(self) -> None:
         with test_directory() as root:
             environment = {**self.environment(root), "APP_JOBS_MODE": "external"}
-            process = mock.Mock(pid=101)
+            executable = str(Path(sys.executable).resolve())
             identity = {"pid": 101, "started": "1", "executable": "api"}
+            tree = {"process": identity, "supervisor": {"pid": 100}}
+            process = mock.Mock(pid=101, tree=tree)
             with (
                 mock.patch.dict(os.environ, environment, clear=True),
                 mock.patch.object(
-                    MODULE, "read_binaries", return_value={"ryframe": "api"}
+                    MODULE, "read_binaries", return_value={"ryframe": executable}
                 ),
                 mock.patch.object(
                     MODULE,
@@ -228,23 +223,21 @@ class FullStackCiTests(unittest.TestCase):
                         "worker_ready_url": "http://127.0.0.1:9091/readyz",
                     },
                 ),
-                mock.patch.object(
-                    MODULE, "record_process", return_value={"identity": identity}
-                ),
-                mock.patch.object(MODULE, "read_process", return_value=identity),
                 mock.patch.object(MODULE, "ensure_port_free"),
                 mock.patch.object(MODULE, "wait_for_port_free") as port_free,
                 mock.patch.object(MODULE, "verify_listener"),
-                mock.patch.object(MODULE, "terminate_owned_process") as terminate,
+                mock.patch.object(MODULE, "terminate_owned_process_tree") as terminate,
                 mock.patch.object(
                     MODULE, "control_worker", side_effect=ValueError("worker failed")
                 ),
-                mock.patch.object(MODULE.subprocess, "Popen", return_value=process),
+                mock.patch.object(
+                    MODULE, "launch_supervised_process", return_value=process
+                ),
                 mock.patch.object(MODULE, "wait_for_api"),
             ):
                 with self.assertRaisesRegex(MODULE.FullStackError, "API 已安全回收"):
                     MODULE.start(root)
-            terminate.assert_called_once_with(identity, crash=False)
+            terminate.assert_called_once_with(tree, crash=False)
             process.wait.assert_called_once_with(timeout=5)
             port_free.assert_called_once_with("http://127.0.0.1:8080/readyz")
 
@@ -257,11 +250,11 @@ class FullStackCiTests(unittest.TestCase):
             }
             with (
                 mock.patch.dict(os.environ, environment, clear=True),
-                mock.patch.object(MODULE.subprocess, "Popen") as popen,
+                mock.patch.object(MODULE, "launch_supervised_process") as launch,
             ):
                 with self.assertRaisesRegex(MODULE.FullStackError, "本机 IPv4"):
                     MODULE.start(root)
-            popen.assert_not_called()
+            launch.assert_not_called()
 
     def test_api_and_worker_cannot_share_a_readiness_port(self) -> None:
         with test_directory() as root:
@@ -273,11 +266,11 @@ class FullStackCiTests(unittest.TestCase):
             with (
                 mock.patch.dict(os.environ, environment, clear=True),
                 mock.patch.object(MODULE, "register_runtime", return_value=receipt),
-                mock.patch.object(MODULE.subprocess, "Popen") as popen,
+                mock.patch.object(MODULE, "launch_supervised_process") as launch,
             ):
                 with self.assertRaisesRegex(MODULE.FullStackError, "不同"):
                     MODULE.start(root)
-            popen.assert_not_called()
+            launch.assert_not_called()
 
     def test_prepare_preflight_rejects_unsafe_runtime_inputs_before_build(self) -> None:
         cases = (
@@ -315,6 +308,7 @@ class FullStackCiTests(unittest.TestCase):
             output.mkdir(parents=True)
             (output / "runtime.json").write_text("{}", encoding="utf-8")
             identity = {"pid": 4242, "started": "100", "executable": "/owned/api"}
+            tree = {"process": identity, "supervisor": {"pid": 4241}}
             (output / "api.json").write_text(
                 json.dumps(
                     {
@@ -328,14 +322,15 @@ class FullStackCiTests(unittest.TestCase):
             )
             with (
                 mock.patch.dict(os.environ, environment, clear=True),
-                mock.patch.object(MODULE, "terminate_owned_process") as terminate,
+                mock.patch.object(MODULE, "read_process_tree", return_value=tree),
+                mock.patch.object(MODULE, "terminate_owned_process_tree") as terminate,
                 mock.patch.object(MODULE, "wait_for_port_free"),
                 mock.patch.object(MODULE, "control_worker") as worker,
                 mock.patch.object(MODULE, "_best_effort") as command,
             ):
                 MODULE.collect(root)
 
-            terminate.assert_called_once_with(identity)
+            terminate.assert_called_once_with(tree)
             worker.assert_called_once_with("stop", root, output, timeout=180)
             self.assertEqual(
                 [call.args[0] for call in command.call_args_list],
@@ -365,7 +360,7 @@ class FullStackCiTests(unittest.TestCase):
             )
             with (
                 mock.patch.dict(os.environ, self.environment(root), clear=True),
-                mock.patch.object(MODULE, "terminate_owned_process") as terminate,
+                mock.patch.object(MODULE, "terminate_owned_process_tree") as terminate,
                 mock.patch.object(MODULE, "wait_for_port_free"),
                 mock.patch.object(
                     MODULE, "control_worker", side_effect=ValueError("scope")

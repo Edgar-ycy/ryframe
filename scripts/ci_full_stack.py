@@ -16,7 +16,13 @@ from typing import Callable, Protocol
 
 from ci_full_stack_databases import DatabasePlan, plan_databases, prepare_databases
 from ci_full_stack_resources import build_binaries, prepare_storage, read_binaries
-from full_stack_process import read_process, record_process, terminate_owned_process
+from full_stack_process import read_process
+from full_stack_process_tree import (
+    SupervisedProcess,
+    launch_supervised_process,
+    read_process_tree,
+    terminate_owned_process_tree,
+)
 from full_stack_runtime import register_runtime
 from full_stack_worker import control as control_worker
 from full_stack_worker import ensure_port_free, wait_for_port_free
@@ -30,6 +36,8 @@ class FullStackError(RuntimeError):
 
 
 class ApiProcess(Protocol):
+    pid: int
+
     def poll(self) -> int | None: ...
 
 
@@ -198,12 +206,9 @@ def _tail(path: Path, lines: int = 200) -> str:
 
 
 def _stop_started_process(
-    process, identity: dict | None, ready_url: str, *, crash: bool = True
+    process: SupervisedProcess, ready_url: str, *, crash: bool = True
 ) -> None:
-    if identity is not None:
-        terminate_owned_process(identity, crash=crash)
-    elif process.poll() is None:
-        process.kill()
+    terminate_owned_process_tree(process.tree, crash=crash)
     process.wait(timeout=5)
     wait_for_port_free(ready_url)
 
@@ -221,34 +226,34 @@ def start(backend_root: Path) -> None:
         raise FullStackError("API 和 Worker 必须使用不同的明确监听端口")
     binaries = read_binaries(output_dir)
     for name, binary, ready_url in (("api", "ryframe", api_ready_url),):
-        if (output_dir / f"{name}.json").exists():
-            raise FullStackError("运行目录已有 API 进程收据；请使用新的运行目录")
+        if (output_dir / f"{name}.json").exists() or (
+            output_dir / f"{name}-tree.json"
+        ).exists():
+            raise FullStackError("运行目录已有 API 进程或进程树收据；请先核对现场")
         ensure_port_free(ready_url)
         service_log = output_dir / f"{name}.log"
         service_environment = os.environ.copy()
         service_environment["SNOWFLAKE_WORKER_ID"] = "1" if name == "api" else "2"
-        with service_log.open("ab") as log:
-            process = subprocess.Popen(
-                [binaries[binary]],
-                cwd=backend_root,
-                stdin=subprocess.DEVNULL,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-                env=service_environment,
-            )
-        identity = None
+        process = None
         try:
-            recorded = record_process(
-                output_dir, name, process.pid, binaries[binary], receipt["scope_id"]
-            )
-            identity = recorded["identity"]
+            with service_log.open("ab") as log:
+                process = launch_supervised_process(
+                    output_dir,
+                    name,
+                    receipt["scope_id"],
+                    [str(Path(binaries[binary]).resolve(strict=True))],
+                    backend_root,
+                    service_environment,
+                    log,
+                )
             wait_for_api(process, ready=lambda url=ready_url: _ready(url))
             verify_listener(process.pid, ready_url)
         except BaseException as error:
             try:
-                _stop_started_process(process, identity, ready_url)
+                if process is not None:
+                    _stop_started_process(process, ready_url)
+                else:
+                    wait_for_port_free(ready_url)
             except Exception as cleanup_error:
                 raise FullStackError(
                     f"{name}: {error}；并且启动失败后的进程回收失败：{cleanup_error}"
@@ -261,8 +266,7 @@ def start(backend_root: Path) -> None:
         control_worker("start", backend_root, output_dir, timeout=180)
     except BaseException as error:
         try:
-            identity = read_process(output_dir, "api", receipt["scope_id"])
-            _stop_started_process(process, identity, api_ready_url, crash=False)
+            _stop_started_process(process, api_ready_url, crash=False)
         except Exception as cleanup_error:
             raise FullStackError(
                 f"Worker 启动失败：{error}；并且 API 回收失败：{cleanup_error}"
@@ -303,12 +307,19 @@ def collect(backend_root: Path | None = None) -> None:
     ).exists():
         failures.append("worker: 存在进程或控制收据，但缺少可信 runtime 收据")
     for name in ("api",):
-        if (output_dir / f"{name}.json").is_file():
+        process_path = output_dir / f"{name}.json"
+        tree_path = output_dir / f"{name}-tree.json"
+        if process_path.is_file() or tree_path.is_file():
             try:
-                identity = read_process(
-                    output_dir, name, _required_environment("APP_SCOPE_ID")
+                scope = _required_environment("APP_SCOPE_ID")
+                tree = read_process_tree(
+                    output_dir, name, scope
                 )
-                terminate_owned_process(identity)
+                if not process_path.is_file():
+                    failures.append("api: 进程树已登记，但缺少产品进程收据")
+                elif tree["process"] != read_process(output_dir, name, scope):
+                    raise ValueError("API 进程与进程树收据不一致")
+                terminate_owned_process_tree(tree)
             except Exception as error:
                 failures.append(f"{name}: {error}")
         try:
