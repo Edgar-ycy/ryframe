@@ -63,6 +63,14 @@ class RunArmTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             run.manifest(self.backend, {**value, "copy_stage": "source_to_seed"})
 
+        successor = self.file("review-successor", {"successor": True})
+        successor_value = {**value, "review_successor": successor}
+        with patch.object(run, "_published_seed_source", return_value={}), \
+                patch.object(run, "target_lifecycle_binding", return_value={}):
+            self.assertEqual(
+                run.manifest(self.backend, successor_value), successor_value
+            )
+
     def test_seed_to_arm_forbids_local_source_storage_and_uses_registered_generation(self):
         value = {
             **self.value,
@@ -91,6 +99,48 @@ class RunArmTests(unittest.TestCase):
         with patch("devex_clone_storage.current_storage_binding", return_value=None), \
                 patch("devex_clone_seed_source.published_source", return_value=source), \
                 self.assertRaises(ValueError):
+            run.source_storage_binding(self.backend, self.directory, value)
+
+    def test_successor_seed_to_arm_routes_through_dedicated_published_source(self):
+        source_registration = self.file("source-registration", {"published": True})
+        review_successor = self.file("review-successor", {"successor": True})
+        value = {
+            **self.value,
+            "copy_stage": "seed_to_arm",
+            "source_registration": source_registration,
+            "review_successor": review_successor,
+        }
+        inherited = {"generation": "seed-storage"}
+        source = {
+            "registration": {"source_request": value["source_request"]},
+            "storage": {"storage": inherited},
+            "review_successor": {"source_result": source_registration},
+            "review_successor_binding": review_successor,
+        }
+        with (
+            patch("devex_clone_storage.current_storage_binding", return_value=None),
+            patch(
+                "reference_fixture_successor.published_source", return_value=source
+            ) as published,
+        ):
+            self.assertEqual(
+                run.source_storage_binding(self.backend, self.directory, value),
+                inherited,
+            )
+        published.assert_called_once_with(
+            self.backend, review_successor, live_storage=True
+        )
+
+        source["review_successor"]["source_result"] = self.file(
+            "other-source", {"other": True}
+        )
+        with (
+            patch("devex_clone_storage.current_storage_binding", return_value=None),
+            patch(
+                "reference_fixture_successor.published_source", return_value=source
+            ),
+            self.assertRaisesRegex(ValueError, "successor 与 C52"),
+        ):
             run.source_storage_binding(self.backend, self.directory, value)
 
     def test_explicit_source_to_seed_stage_does_not_require_outer_run_manifest(self):

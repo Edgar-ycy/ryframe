@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import devex_clone_seed_arm as arm
 from devex_clone_capture import read_json, write_json
 from devex_clone_run_state import binding
+from restore_reference_plan import plan_hash
 
 
 class SeedArmTests(unittest.TestCase):
@@ -115,6 +116,53 @@ class SeedArmTests(unittest.TestCase):
             "restore_qualified": False,
         }
 
+    def successor_case(self) -> tuple[dict, dict, dict]:
+        ready_review = {
+            "path": "ready-review.json",
+            "bytes": 1,
+            "sha256": "a" * 64,
+            "canonical_sha256": "b" * 64,
+        }
+        target = {**copy.deepcopy(self.inputs["target"]), "review": ready_review}
+        target_path = self.local / "successor-target.json"
+        write_json(target_path, target)
+        target_binding = {
+            **binding(target_path),
+            "canonical_sha256": plan_hash(target),
+        }
+        successor_binding = self.file("review-successor", {"successor": True})
+        relationship = {
+            "source_result": self.source_registration,
+            "successor_review": ready_review,
+            "requests": {
+                "seed": {**target_binding, "path": str(self.local / "seed.json")},
+                "base": target_binding,
+                "candidate": {
+                    **target_binding,
+                    "path": str(self.local / "candidate.json"),
+                },
+            },
+        }
+        source = copy.deepcopy(self.inputs["source"])
+        source.update(
+            directory=self.directory,
+            review_successor=relationship,
+            review_successor_binding=successor_binding,
+        )
+        source["registration"]["run_directory"] = str(self.directory)
+        lifecycle = {
+            "registration": {"request": binding(target_path)},
+            "initialized": self.inputs["initialized"],
+            "target": target,
+            "target_storage_run": self.target_storage_run,
+        }
+        request = {
+            **self.request,
+            "kind": "devex-clone-seed-successor-arm-input",
+            "review_successor": successor_binding,
+        }
+        return request, source, lifecycle
+
     def test_inputs_close_request_fields_and_manifest_derives_source_bindings(self):
         source = self.inputs["source"]
         target = self.inputs["target"]
@@ -126,7 +174,7 @@ class SeedArmTests(unittest.TestCase):
                 }), \
                 patch.object(arm, "request_binding", return_value=("same-review", {})), \
                 patch.object(arm, "_target_build") as target_build:
-            observed = arm._inputs(self.backend, self.request, live_storage=True)
+            observed = arm._inputs(self.backend, None, self.request, live_storage=True)
         published.assert_called_once_with(self.backend, self.source_registration, live_storage=True)
         target_build.assert_called_once_with(self.backend, target, [])
         manifest = arm._manifest(self.request, observed)
@@ -145,10 +193,115 @@ class SeedArmTests(unittest.TestCase):
         self.assertIsNone(manifest["source_export"])
         self.assertEqual(manifest["copy_stage"], "seed_to_arm")
 
-        for field in ("source_request", "source_environment", "source_storage"):
+        for field in (
+            "source_request",
+            "source_environment",
+            "source_storage",
+            "review_successor",
+        ):
             changed = {**self.request, field: self.source_request}
             with self.subTest(unknown_field=field), self.assertRaises(ValueError):
-                arm._inputs(self.backend, changed, live_storage=False)
+                arm._inputs(self.backend, None, changed, live_storage=False)
+
+    def test_successor_inputs_bind_held_c52_and_exact_target_side(self):
+        request, source, lifecycle = self.successor_case()
+        with (
+            patch(
+                "reference_fixture_successor.published_source", return_value=source
+            ) as published,
+            patch.object(arm, "published_source") as regular,
+            patch.object(
+                arm, "target_lifecycle_binding", return_value=lifecycle
+            ),
+            patch.object(arm, "request_binding", return_value=("ready-review", {})) as target,
+            patch.object(arm, "_require_owned_run") as held,
+            patch.object(arm, "_target_build"),
+        ):
+            observed = arm._inputs(
+                self.backend, self.directory, request, live_storage=True
+            )
+        published.assert_called_once_with(
+            self.backend, request["review_successor"], live_storage=True
+        )
+        regular.assert_not_called()
+        held.assert_called_once_with(self.directory)
+        target.assert_called_once_with(self.backend, lifecycle["target"])
+        self.assertEqual(observed["target_side"], "base")
+        manifest = arm._manifest(request, observed)
+        self.assertEqual(manifest["review_successor"], request["review_successor"])
+        self.assertEqual(manifest["source_registration"], self.source_registration)
+
+    def test_successor_inputs_reject_detached_source_and_target(self):
+        request, source, lifecycle = self.successor_case()
+        detached = copy.deepcopy(source)
+        detached["directory"] = self.local / "other-run"
+        cases = (
+            ("held run", detached, lifecycle),
+            (
+                "C52",
+                {
+                    **source,
+                    "review_successor": {
+                        **source["review_successor"],
+                        "source_result": self.file("other-source", {"other": True}),
+                    },
+                },
+                lifecycle,
+            ),
+            (
+                "精确 fresh 请求",
+                source,
+                {
+                    **lifecycle,
+                    "registration": {
+                        "request": self.file("other-target", {"other": True})
+                    },
+                },
+            ),
+        )
+        for message, selected_source, selected_lifecycle in cases:
+            with (
+                self.subTest(message=message),
+                patch(
+                    "reference_fixture_successor.published_source",
+                    return_value=selected_source,
+                ),
+                patch.object(
+                    arm,
+                    "target_lifecycle_binding",
+                    return_value=selected_lifecycle,
+                ),
+                patch.object(arm, "request_binding", return_value=("ready", {})),
+                patch.object(arm, "_require_owned_run"),
+                patch.object(arm, "_target_build"),
+                self.assertRaises(ValueError),
+            ):
+                arm._inputs(self.backend, self.directory, request, live_storage=False)
+
+    def test_successor_publish_recomputes_all_inputs_and_records_lineage(self):
+        request, source, _ = self.successor_case()
+        self.request_file.unlink()
+        write_json(self.request_file, request)
+        inputs = {**self.inputs, "source": source}
+        with (
+            patch.object(arm, "load_state", return_value={"attempts": []}),
+            patch.object(arm, "_inputs", return_value=inputs) as read_inputs,
+            patch.object(
+                arm, "target_storage_control", return_value=nullcontext()
+            ),
+            patch("devex_clone_run.target_lifecycle_binding", return_value={}),
+            patch("devex_clone_run._published_seed_source", return_value=source),
+            patch("devex_clone_run.inherited_build_bridges", return_value=[]),
+        ):
+            result = arm.publish_arm_input(
+                self.backend, self.directory, self.request_file, 1
+            )
+        self.assertEqual(read_inputs.call_count, 3)
+        for call in read_inputs.call_args_list:
+            self.assertEqual(call.args[:3], (self.backend, self.directory, request))
+        self.assertEqual(result["review_successor"], request["review_successor"])
+        self.assertEqual(result["source_registration"], self.source_registration)
+        self.assertEqual(result["remote_writes"], 0)
 
     def test_target_build_uses_current_audited_bridge_and_verified_tool_receipt(self):
         target = self.inputs["target"]

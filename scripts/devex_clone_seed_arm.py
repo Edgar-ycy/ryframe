@@ -6,12 +6,13 @@ from pathlib import Path
 
 from devex_clone_capture import read_json, write_json
 from devex_clone_model import exact, linked, local_path, name
-from devex_clone_run import target_lifecycle_binding, target_storage_control
+from devex_clone_run import _require_owned_run, target_lifecycle_binding, target_storage_control
 from devex_clone_run_state import binding, load_state
 from devex_clone_seed_source import published_source
 from devex_clone_source_proof import bound_file
 from devex_clone_target_binding import execution_backend, request_binding
 from devex_clone_tools import verify as verify_tools
+from restore_reference_plan import plan_hash
 from source_fingerprints import artifact_sources
 
 
@@ -20,12 +21,14 @@ REQUEST_FIELDS = {
     "target_registration", "target_initialized_files", "target_environment",
     "copy_directory", "build_bridges",
 }
+SUCCESSOR_REQUEST_FIELDS = REQUEST_FIELDS | {"review_successor"}
 RESULT_FIELDS = {
     "status", "request", "manifest", "source_registration", "source_request",
     "source_storage", "generation_verified", "initialized", "target_environment",
     "target_registration", "target_initialized_files", "target_storage_run",
     "target_side", "remote_writes", "outbox_drained", "restore_qualified",
 }
+SUCCESSOR_RESULT_FIELDS = RESULT_FIELDS | {"review_successor"}
 EVIDENCE_SEQUENCE = ("request.json", "manifest.json")
 EVIDENCE_FILES = set(EVIDENCE_SEQUENCE)
 
@@ -52,23 +55,71 @@ def _environment(backend: Path, descriptor: dict) -> dict:
     return value
 
 
-def _inputs(backend: Path, request: dict, *, live_storage: bool) -> dict:
-    exact(request, REQUEST_FIELDS)
-    if request["format_version"] != 1 or request["kind"] != "devex-clone-seed-arm-input":
+def _successor_request(request: dict) -> bool:
+    kind = request.get("kind")
+    if kind == "devex-clone-seed-arm-input":
+        exact(request, REQUEST_FIELDS)
+        return False
+    if kind == "devex-clone-seed-successor-arm-input":
+        exact(request, SUCCESSOR_REQUEST_FIELDS)
+        return True
+    raise ValueError("arm-input 请求类型无效")
+
+
+def _source(backend: Path, request: dict, *, live_storage: bool) -> dict:
+    if not _successor_request(request):
+        return published_source(backend, request["source_registration"], live_storage=live_storage)
+    from reference_fixture_successor import published_source as successor_source
+
+    source = successor_source(backend, request["review_successor"], live_storage=live_storage)
+    relationship = source.get("review_successor")
+    if (source.get("review_successor_binding") != request["review_successor"]
+            or not isinstance(relationship, dict)
+            or relationship.get("source_result") != request["source_registration"]):
+        raise ValueError("successor arm 来源未绑定请求指定的 C52 与 successor")
+    return source
+
+
+def _successor_target(source: dict, lifecycle: dict, target: dict, side: str) -> None:
+    relationship = source["review_successor"]
+    expected = relationship["requests"].get(side)
+    actual = lifecycle["registration"].get("request")
+    if (not isinstance(expected, dict) or set(expected) != {"path", "bytes", "sha256", "canonical_sha256"}
+            or actual != {key: expected[key] for key in ("path", "bytes", "sha256")}
+            or plan_hash(target) != expected["canonical_sha256"]
+            or target.get("review") != relationship["successor_review"]):
+        raise ValueError("successor arm 目标不是 relationship 对应侧的精确 fresh 请求")
+
+
+def _inputs(backend: Path, directory: Path | None, request: dict, *, live_storage: bool) -> dict:
+    successor = _successor_request(request)
+    if request["format_version"] != 1:
         raise ValueError("arm-input 请求类型无效")
     name(request["id"])
-    source = published_source(backend, request["source_registration"], live_storage=live_storage)
+    source = _source(backend, request, live_storage=live_storage)
+    if successor:
+        if directory is None:
+            raise ValueError("successor arm 必须在 C52 来源 run 的当前控制锁内执行")
+        _require_owned_run(directory)
+        if (source.get("directory") != directory
+                or source["registration"].get("run_directory") != str(directory)):
+            raise ValueError("successor arm 的 C52 来源不属于当前 held run")
     lifecycle = target_lifecycle_binding(backend, request, live_storage=live_storage)
     initialized, target = lifecycle["initialized"], lifecycle["target"]
-    source_review, _ = request_binding(backend, source["seed_target"])
     target_review, _ = request_binding(backend, target)
     side = target["side"]
+    if successor:
+        _successor_target(source, lifecycle, target, side)
+        source_review = None
+    else:
+        source_review, _ = request_binding(backend, source["seed_target"])
     source_config, target_config = source["request"]["source"], target["target"]
     source_databases = {(item["server_uuid"], item["database"].lower())
                         for item in source_config["databases"]}
     target_databases = {(item["server_uuid"], item["database"].lower())
                         for item in target_config["databases"]}
-    if (side not in {"base", "candidate"} or target_review != source_review
+    if (side not in {"base", "candidate"}
+            or not successor and target_review != source_review
             or source["seed_target"]["side"] != "seed"
             or target_config["scope_id"] == source_config["scope_id"]
             or source_databases & target_databases):
@@ -86,7 +137,7 @@ def _inputs(backend: Path, request: dict, *, live_storage: bool) -> dict:
 
 def _manifest(request: dict, inputs: dict) -> dict:
     source = inputs["source"]
-    return {
+    result = {
         "format_version": 1,
         "kind": "devex-clone-run",
         "id": request["id"],
@@ -103,6 +154,9 @@ def _manifest(request: dict, inputs: dict) -> dict:
         "target_initialized_files": copy.deepcopy(request["target_initialized_files"]),
         "target_storage_run": copy.deepcopy(inputs["target_storage_run"]),
     }
+    if _successor_request(request):
+        result["review_successor"] = copy.deepcopy(request["review_successor"])
+    return result
 
 
 def _published(backend: Path, directory: Path, number: int) -> list[dict]:
@@ -112,8 +166,13 @@ def _published(backend: Path, directory: Path, number: int) -> list[dict]:
                 or attempt["mode"] != "arm-input" or attempt["status"] != "passed"):
             continue
         value = read_json(bound_file(backend, attempt["result"]))
-        exact(value, RESULT_FIELDS)
-        if value["status"] != "seed_arm_input_published":
+        request = read_json(bound_file(backend, value.get("request", {})))
+        successor = _successor_request(request)
+        fields = SUCCESSOR_RESULT_FIELDS if successor else RESULT_FIELDS
+        exact(value, fields)
+        if (value["status"] != "seed_arm_input_published"
+                or value["source_registration"] != request["source_registration"]
+                or value.get("review_successor") != request.get("review_successor")):
             raise ValueError("历史 arm-input 外层结果类型无效")
         results.append(value)
     if len({item["target_side"] for item in results}) != len(results):
@@ -158,12 +217,13 @@ def publish_arm_input(backend: Path, directory: Path, request_file: Path,
     request_path = local_path(backend, str(request_file))
     original = binding(request_path)
     request = read_json(request_path)
-    initial = _inputs(backend, request, live_storage=False)
+    successor = _successor_request(request)
+    initial = _inputs(backend, directory if successor else None, request, live_storage=False)
     manifest = _manifest(request, initial)
     from devex_clone_run import inherited_build_bridges, manifest as validate_manifest
 
     with target_storage_control(backend, directory, manifest):
-        before = _inputs(backend, request, live_storage=True)
+        before = _inputs(backend, directory if successor else None, request, live_storage=True)
         if before != initial or _manifest(request, before) != manifest:
             raise ValueError("arm-input 取得存储锁后目标或源证据变化")
         validate_manifest(backend, manifest)
@@ -171,6 +231,8 @@ def publish_arm_input(backend: Path, directory: Path, request_file: Path,
         prior = _published(backend, directory, number)
         if any(item["source_registration"] != request["source_registration"] for item in prior):
             raise ValueError("同一 seed run 的 arm 目标必须继承同一已发布源")
+        if any(item.get("review_successor") != request.get("review_successor") for item in prior):
+            raise ValueError("同一 seed run 的 arm 目标必须继承同一 review successor")
         if any(item["target_side"] == before["target_side"] for item in prior):
             raise ValueError("同一 seed run 已发布该 arm 目标侧")
         output = _existing_output(directory, number)
@@ -182,7 +244,7 @@ def publish_arm_input(backend: Path, directory: Path, request_file: Path,
         _write_or_match(output / "request.json", request)
         _write_or_match(output / "manifest.json", manifest)
 
-        after = _inputs(backend, request, live_storage=True)
+        after = _inputs(backend, directory if successor else None, request, live_storage=True)
         if (after != before or _manifest(request, after) != manifest
                 or binding(request_path) != original):
             raise ValueError("arm-input 发布期间源、目标、存储或请求发生变化")
@@ -204,5 +266,7 @@ def publish_arm_input(backend: Path, directory: Path, request_file: Path,
         "outbox_drained": True,
         "restore_qualified": False,
     }
-    exact(result, RESULT_FIELDS)
+    if successor:
+        result["review_successor"] = copy.deepcopy(request["review_successor"])
+    exact(result, SUCCESSOR_RESULT_FIELDS if successor else RESULT_FIELDS)
     return result

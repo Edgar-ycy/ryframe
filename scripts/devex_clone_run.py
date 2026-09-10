@@ -22,6 +22,7 @@ SEED_TO_ARM_FIELDS = FIELDS | {
     "source_registration", "target_registration", "target_initialized_files",
     "target_storage_run",
 }
+SUCCESSOR_SEED_TO_ARM_FIELDS = SEED_TO_ARM_FIELDS | {"review_successor"}
 TARGET_REGISTRATION_FIELDS = {
     "format_version", "kind", "request", "environment", "storage_run", "target_directory",
 }
@@ -30,7 +31,11 @@ TARGET_STORAGE_RUN_FIELDS = {"path", "manifest", "storage", "cache"}
 
 
 def manifest(backend: Path, value: dict) -> dict:
-    fields = SEED_TO_ARM_FIELDS if value.get("copy_stage") == "seed_to_arm" else FIELDS
+    if value.get("copy_stage") == "seed_to_arm":
+        fields = (SUCCESSOR_SEED_TO_ARM_FIELDS if "review_successor" in value
+                  else SEED_TO_ARM_FIELDS)
+    else:
+        fields = FIELDS
     exact(value, fields)
     if value["format_version"] != 1 or value["kind"] != "devex-clone-run":
         raise ValueError("统一验收清单类型无效")
@@ -39,6 +44,9 @@ def manifest(backend: Path, value: dict) -> dict:
         raise ValueError("复制阶段必须明确为来源到 seed 或 seed 到测量侧")
     if value["copy_stage"] == "seed_to_arm":
         bound_file(backend, value["source_registration"])
+        if "review_successor" in value:
+            bound_file(backend, value["review_successor"])
+            _published_seed_source(backend, value, live_storage=False)
         target_lifecycle_binding(backend, value, live_storage=False)
     for key in ("source_request", "initialized", "source_environment", "target_environment"):
         bound_file(backend, value[key])
@@ -88,7 +96,11 @@ def registered_manifest(backend: Path, directory: Path) -> dict:
     local_path(backend, str(directory))
     load_state(directory, verify_results=False)
     value = read_json(directory / "manifest.json")
-    fields = SEED_TO_ARM_FIELDS if value.get("copy_stage") == "seed_to_arm" else FIELDS
+    if value.get("copy_stage") == "seed_to_arm":
+        fields = (SUCCESSOR_SEED_TO_ARM_FIELDS if "review_successor" in value
+                  else SEED_TO_ARM_FIELDS)
+    else:
+        fields = FIELDS
     exact(value, fields)
     if value["format_version"] != 1 or value["kind"] != "devex-clone-run":
         raise ValueError("固定验收清单类型变化")
@@ -277,9 +289,7 @@ def source_storage_binding(backend: Path, directory: Path, value: dict | None = 
         return local
     if local is not None:
         raise ValueError("seed_to_arm 只能继承已发布 seed 存储，不能建立第二套 source authority")
-    from devex_clone_seed_source import published_source
-
-    source = published_source(backend, value["source_registration"], live_storage=True)
+    source = _published_seed_source(backend, value, live_storage=True)
     if source["registration"]["source_request"] != value["source_request"]:
         raise ValueError("seed_to_arm 清单的源请求不属于继承登记")
     return source["storage"]["storage"]
@@ -288,10 +298,9 @@ def source_storage_binding(backend: Path, directory: Path, value: dict | None = 
 def inherited_build_bridges(backend: Path, value: dict) -> list[dict]:
     if value["copy_stage"] != "seed_to_arm":
         return []
-    from devex_clone_seed_source import published_source
     from source_fingerprints import read_binding
 
-    source = published_source(backend, value["source_registration"])
+    source = _published_seed_source(backend, value, live_storage=False)
     if source["registration"]["source_request"] != value["source_request"]:
         raise ValueError("seed_to_arm 产物来源不属于继承源请求")
     bridges = source["manifest"]["build_bridges"]
@@ -309,6 +318,25 @@ def inherited_build_bridges(backend: Path, value: dict) -> list[dict]:
     if len(expected) != 2 or len(actual) != 2 or set(actual) != expected:
         raise ValueError("seed_to_arm 只能继承源请求的 API/Worker 与维护构建桥接")
     return copy.deepcopy(bridges)
+
+
+def _published_seed_source(backend: Path, value: dict, *, live_storage: bool) -> dict:
+    """普通清单保持 ready-only；successor 清单显式采用不可变 pending bridge。"""
+    if "review_successor" not in value:
+        from devex_clone_seed_source import published_source
+
+        return published_source(backend, value["source_registration"],
+                                live_storage=live_storage)
+    from reference_fixture_successor import published_source
+
+    source = published_source(backend, value["review_successor"],
+                              live_storage=live_storage)
+    relationship = source.get("review_successor")
+    if (source.get("review_successor_binding") != value["review_successor"]
+            or not isinstance(relationship, dict)
+            or relationship.get("source_result") != value["source_registration"]):
+        raise ValueError("seed_to_arm 清单的 successor 与 C52 来源不一致")
+    return source
 
 
 def export_binding(backend: Path, directory: Path, value: dict) -> dict:
