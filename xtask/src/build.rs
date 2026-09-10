@@ -1,9 +1,15 @@
-use std::path::{Path, PathBuf};
+use std::{
+    fs::{self, File},
+    io::Read,
+    path::{Path, PathBuf},
+};
+
+use sha2::{Digest, Sha256};
 
 use crate::{
     Result,
     cli::{BuildOptions, BuildProfile},
-    process::{run_owned, run_pnpm},
+    process::{command_output, run_pnpm},
     workspace::root_dir,
 };
 
@@ -20,6 +26,12 @@ const FRONTEND_INPUTS: &[&str] = &[
 pub(crate) enum BuildExecutor {
     Cargo,
     Pnpm,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BuildArtifact {
+    Executable(&'static str),
+    FrontendDirectory,
 }
 
 impl BuildExecutor {
@@ -42,6 +54,7 @@ pub(crate) struct BuildTask {
     pub(crate) inputs: &'static [&'static str],
     pub(crate) compilation: &'static str,
     pub(crate) allowed_writes: &'static str,
+    pub(crate) artifact: BuildArtifact,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,19 +90,32 @@ impl BuildSpec {
             real,
             tasks: vec![
                 BuildTask {
-                    id: "backend-runtime",
+                    id: "backend-api",
                     dependencies: &[],
-                    roles: &["API", "Worker"],
+                    roles: &["API"],
+                    working_directory: self.backend_root.clone(),
+                    executor: BuildExecutor::Cargo,
+                    arguments: cargo_arguments(profile, "bin-api", "ryframe"),
+                    inputs: BACKEND_INPUTS,
+                    compilation: backend_compilation(profile, "bin-api"),
+                    allowed_writes: "target/build",
+                    artifact: BuildArtifact::Executable("ryframe"),
+                },
+                BuildTask {
+                    id: "backend-worker",
+                    dependencies: &["backend-api"],
+                    roles: &["Worker"],
                     working_directory: self.backend_root,
                     executor: BuildExecutor::Cargo,
-                    arguments: cargo_arguments(profile),
+                    arguments: cargo_arguments(profile, "bin-worker", "ryframe-worker"),
                     inputs: BACKEND_INPUTS,
-                    compilation: backend_compilation(profile),
+                    compilation: backend_compilation(profile, "bin-worker"),
                     allowed_writes: "target/build",
+                    artifact: BuildArtifact::Executable("ryframe-worker"),
                 },
                 BuildTask {
                     id: "frontend-production",
-                    dependencies: &["backend-runtime"],
+                    dependencies: &["backend-api", "backend-worker"],
                     roles: &["前端生产产物"],
                     working_directory: self.frontend_root,
                     executor: BuildExecutor::Pnpm,
@@ -101,6 +127,7 @@ impl BuildSpec {
                         "production；bundle 预算核验"
                     },
                     allowed_writes: "前端 dist、构建缓存与后端 target/corepack-bin Corepack shim",
+                    artifact: BuildArtifact::FrontendDirectory,
                 },
             ],
         }
@@ -127,12 +154,20 @@ pub(crate) fn build_plan(
 
 fn execute_plan(plan: &BuildPlan) -> Result<()> {
     for task in &plan.tasks {
-        match task.executor {
-            BuildExecutor::Cargo => run_owned(
-                &task.working_directory,
-                task.executor.label(),
-                &task.arguments,
-            )?,
+        let artifact = match task.executor {
+            BuildExecutor::Cargo => {
+                let arguments = task
+                    .arguments
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>();
+                let messages =
+                    command_output(&task.working_directory, task.executor.label(), &arguments)?;
+                let BuildArtifact::Executable(binary) = task.artifact else {
+                    return Err(format!("Cargo 构建任务 {} 缺少可执行文件声明", task.id).into());
+                };
+                summarize_executable(binary, &messages)?
+            }
             BuildExecutor::Pnpm => {
                 let arguments = task
                     .arguments
@@ -140,10 +175,138 @@ fn execute_plan(plan: &BuildPlan) -> Result<()> {
                     .map(String::as_str)
                     .collect::<Vec<_>>();
                 run_pnpm(&task.working_directory, &arguments)?;
+                let BuildArtifact::FrontendDirectory = task.artifact else {
+                    return Err(format!("前端构建任务 {} 的产物声明无效", task.id).into());
+                };
+                summarize_frontend(&task.working_directory)?
             }
+        };
+        println!(
+            "产物 {}：{}；{} 字节；sha256:{}",
+            task.roles.join("、"),
+            artifact.path.display(),
+            artifact.bytes,
+            artifact.sha256
+        );
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ArtifactSummary {
+    path: PathBuf,
+    bytes: u64,
+    sha256: String,
+}
+
+fn summarize_executable(binary: &str, messages: &str) -> Result<ArtifactSummary> {
+    let path = cargo_executable_from_messages(binary, messages)?;
+    if !path.is_file() {
+        return Err(format!("Cargo 报告的 {binary} 产物不存在：{}", path.display()).into());
+    }
+    summarize_file(path)
+}
+
+pub(crate) fn cargo_executable_from_messages(binary: &str, messages: &str) -> Result<PathBuf> {
+    messages
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|message| {
+            message.get("reason").and_then(serde_json::Value::as_str) == Some("compiler-artifact")
+                && message
+                    .pointer("/target/name")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(binary)
+                && message
+                    .pointer("/target/kind")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|kinds| kinds.iter().any(|kind| kind.as_str() == Some("bin")))
+        })
+        .and_then(|message| {
+            message
+                .get("executable")
+                .and_then(serde_json::Value::as_str)
+                .map(PathBuf::from)
+        })
+        .ok_or_else(|| format!("Cargo 输出缺少 {binary} 可执行文件").into())
+}
+
+fn summarize_file(path: PathBuf) -> Result<ArtifactSummary> {
+    let bytes = fs::metadata(&path)?.len();
+    let mut file = File::open(&path)?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    Ok(ArtifactSummary {
+        path,
+        bytes,
+        sha256: hex_digest(digest.finalize()),
+    })
+}
+
+fn summarize_frontend(frontend_root: &Path) -> Result<ArtifactSummary> {
+    let dist = frontend_root.join("dist");
+    if !dist.join(".vite").join("manifest.json").is_file() {
+        return Err(format!("前端构建产物缺少 Vite manifest：{}", dist.display()).into());
+    }
+    let mut files = Vec::new();
+    collect_files(&dist, &dist, &mut files)?;
+    files.sort();
+    let mut digest = Sha256::new();
+    let mut bytes = 0_u64;
+    for path in files {
+        let relative = path
+            .strip_prefix(&dist)?
+            .to_string_lossy()
+            .replace('\\', "/");
+        let size = fs::metadata(&path)?.len();
+        bytes = bytes.checked_add(size).ok_or("前端产物总字节数溢出")?;
+        digest.update((relative.len() as u64).to_be_bytes());
+        digest.update(relative.as_bytes());
+        digest.update(size.to_be_bytes());
+        let summary = summarize_file(path)?;
+        digest.update(summary.sha256.as_bytes());
+    }
+    Ok(ArtifactSummary {
+        path: dist,
+        bytes,
+        sha256: hex_digest(digest.finalize()),
+    })
+}
+
+fn collect_files(root: &Path, directory: &Path, output: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            return Err(format!(
+                "前端产物不能包含链接：{}",
+                entry.path().strip_prefix(root)?.display()
+            )
+            .into());
+        }
+        if file_type.is_dir() {
+            collect_files(root, &entry.path(), output)?;
+        } else if file_type.is_file() {
+            output.push(entry.path());
         }
     }
     Ok(())
+}
+
+fn hex_digest(bytes: impl AsRef<[u8]>) -> String {
+    let mut value = String::with_capacity(bytes.as_ref().len() * 2);
+    for byte in bytes.as_ref() {
+        use std::fmt::Write;
+        write!(&mut value, "{byte:02x}").expect("写入 String 不会失败");
+    }
+    value
 }
 
 pub(crate) fn render_plan(plan: &BuildPlan) -> String {
@@ -176,7 +339,7 @@ pub(crate) fn render_plan(plan: &BuildPlan) -> String {
     output
 }
 
-fn cargo_arguments(profile: BuildProfile) -> Vec<String> {
+fn cargo_arguments(profile: BuildProfile, feature: &str, binary: &str) -> Vec<String> {
     let mut arguments = [
         "build",
         "--locked",
@@ -186,11 +349,10 @@ fn cargo_arguments(profile: BuildProfile) -> Vec<String> {
         "ryframe",
         "--no-default-features",
         "--features",
-        "bin-api,bin-worker",
+        feature,
         "--bin",
-        "ryframe",
-        "--bin",
-        "ryframe-worker",
+        binary,
+        "--message-format=json-render-diagnostics",
     ]
     .into_iter()
     .map(str::to_owned)
@@ -209,14 +371,21 @@ fn frontend_arguments(real: bool) -> Vec<String> {
     }
 }
 
-fn backend_compilation(profile: BuildProfile) -> &'static str {
-    match profile {
-        BuildProfile::Release => {
-            "host target；release；ryframe；features=bin-api,bin-worker；jobs=继承 Cargo 有效配置"
+fn backend_compilation(profile: BuildProfile, feature: &str) -> &'static str {
+    match (profile, feature) {
+        (BuildProfile::Release, "bin-api") => {
+            "host target；release；ryframe API；features=bin-api；jobs=继承 Cargo 有效配置"
         }
-        BuildProfile::Dev => {
-            "host target；dev；ryframe；features=bin-api,bin-worker；jobs=继承 Cargo 有效配置"
+        (BuildProfile::Release, "bin-worker") => {
+            "host target；release；ryframe Worker；features=bin-worker；jobs=继承 Cargo 有效配置"
         }
+        (BuildProfile::Dev, "bin-api") => {
+            "host target；dev；ryframe API；features=bin-api；jobs=继承 Cargo 有效配置"
+        }
+        (BuildProfile::Dev, "bin-worker") => {
+            "host target；dev；ryframe Worker；features=bin-worker；jobs=继承 Cargo 有效配置"
+        }
+        _ => unreachable!("BuildSpec 只生成已登记的后端角色"),
     }
 }
 

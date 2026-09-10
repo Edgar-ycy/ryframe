@@ -77,9 +77,20 @@ fn build_plan_preserves_effective_parameters_without_spawning_or_writing() {
         output.contains("构建计划：profile=dev，real=true"),
         "{output}"
     );
-    assert!(output.contains("角色=API、Worker"), "{output}");
+    assert!(output.contains("任务 backend-api：角色=API"), "{output}");
+    assert!(
+        output.contains("任务 backend-worker：角色=Worker"),
+        "{output}"
+    );
     assert!(output.contains("--target-dir target/build"), "{output}");
-    assert!(output.contains("--features bin-api,bin-worker"), "{output}");
+    assert!(
+        output.contains("--features bin-api --bin ryframe"),
+        "{output}"
+    );
+    assert!(
+        output.contains("--features bin-worker --bin ryframe-worker"),
+        "{output}"
+    );
     assert!(output.contains("jobs=继承 Cargo 有效配置"), "{output}");
     assert!(output.contains("输入=Cargo 工作区清单"), "{output}");
     assert!(output.contains("角色=前端生产产物"), "{output}");
