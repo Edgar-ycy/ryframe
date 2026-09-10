@@ -27,59 +27,140 @@ def _bound(path: Path) -> dict:
     return {"path": str(path), **file_digest(path)}
 
 
-def _service(backend: Path, run: Path, review_binding: dict, bootstrap_binding: dict) -> dict:
+SIDES = ("seed", "base", "candidate")
+
+
+def _prepared_environment(
+    backend: Path, path: Path, side: str
+) -> tuple[Path, dict, Path, dict]:
+    bootstrap_file, bootstrap = _read(backend, path)
+    if (
+        bootstrap.get("kind") != "reference-fixture-environment"
+        or bootstrap.get("status") != "prepared"
+        or bootstrap.get("services_started") is not False
+        or bootstrap.get("remote_writes") != 0
+    ):
+        raise ValueError("私有环境收据无效或已包含服务副作用")
+    plan = bootstrap.get("plan")
+    if (
+        not isinstance(plan, dict)
+        or plan.get("kind") != "reference-fixture-environment-plan"
+        or plan.get("side") != side
+        or plan.get("scope_id") is None
+    ):
+        raise ValueError("私有环境未绑定请求指定侧")
+    plan_body = {key: value for key, value in plan.items() if key != "sha256"}
+    if plan.get("sha256") != plan_hash(plan_body):
+        raise ValueError("私有环境计划摘要无效")
+    review_binding = plan.get("review")
+    if not isinstance(review_binding, dict):
+        raise ValueError("私有环境缺少审阅计划绑定")
+    review_file, review = _read(backend, Path(review_binding["path"]))
+    expected = {key: review_binding[key] for key in ("path", "bytes", "sha256")}
+    if _bound(review_file) != expected or review_binding.get(
+        "canonical_sha256"
+    ) != plan_hash(review):
+        raise ValueError("私有环境审阅计划摘要已变化")
+    validate_review(review)
+    selected = review["scopes"][side]
+    if plan["scope_id"] != selected["scope_id"] or Path(
+        bootstrap["execution_backend"]
+    ) != Path(selected["backend_dir"]):
+        raise ValueError("私有环境执行工作树与指定审阅侧不符")
+    return bootstrap_file, bootstrap, review_file, review
+
+
+def _service(backend: Path, run: Path, review_binding: dict, review: dict) -> dict:
     manifest_file, manifest = _read(backend, run / "manifest.json")
     state_file, state = _read(backend, run / "state.json")
-    if (manifest.get("kind") != "reference-fixture-service-run" or manifest.get("review") != review_binding
-            or manifest.get("bootstrap") != bootstrap_binding):
-        raise ValueError("首代服务账本未绑定当前审阅计划和私有环境")
-    attempts = tuple((item.get("stage"), item.get("mode"), item.get("status")) for item in state.get("attempts", []))
-    if attempts != (("storage-target", "initial", "passed"), ("cache-target", "initial", "passed"),
-                    ("fixture-buckets", "prepare", "passed")):
+    if (
+        manifest.get("kind") != "reference-fixture-service-run"
+        or manifest.get("review") != review_binding
+    ):
+        raise ValueError("首代服务账本未绑定当前审阅计划")
+    seed_binding = manifest.get("bootstrap")
+    if not isinstance(seed_binding, dict):
+        raise ValueError("首代服务账本缺少 seed 私有环境绑定")
+    seed_file, seed, seed_review_file, seed_review = _prepared_environment(
+        backend, Path(seed_binding["path"]), "seed"
+    )
+    if (
+        _bound(seed_file) != seed_binding
+        or _bound(seed_review_file) != review_binding
+        or seed_review != review
+        or manifest.get("execution_backend") != seed["execution_backend"]
+        or manifest.get("scope_id") != review["services"]["rustfs"]["scope_id"]
+    ):
+        raise ValueError("首代服务账本未绑定当前审阅计划的 seed 私有环境")
+    attempts = tuple(
+        (item.get("stage"), item.get("mode"), item.get("status"))
+        for item in state.get("attempts", [])
+    )
+    if attempts != (
+        ("storage-target", "initial", "passed"),
+        ("cache-target", "initial", "passed"),
+        ("fixture-buckets", "prepare", "passed"),
+    ):
         raise ValueError("首代服务账本阶段不完整或不是同一代次")
     process_file, process = _read(backend, run / "rustfs/process.json")
     launch_file, launch = _read(backend, run / "rustfs/launch.json")
     runtime_file, runtime = _read(backend, run / "redis/runtime.json")
     identity = process.get("identity")
     redis = runtime.get("redis")
-    if (process.get("role") != "rustfs" or process.get("lifecycle") != "running"
-            or not isinstance(identity, dict) or not isinstance(redis, dict)):
+    if (
+        process.get("role") != "rustfs"
+        or process.get("lifecycle") != "running"
+        or not isinstance(identity, dict)
+        or not isinstance(redis, dict)
+    ):
         raise ValueError("首代 RustFS 或 Redis 运行收据无效")
-    return {
-        "run": {"path": str(run), "manifest": _bound(manifest_file), "state": _bound(state_file)},
-        "rustfs": {"identity": identity, "launch_receipt": _bound(launch_file),
-                   "process_receipt": _bound(process_file), "sha256": identity.get("sha256")},
+    result = {
+        "run": {
+            "path": str(run),
+            "manifest": _bound(manifest_file),
+            "state": _bound(state_file),
+        },
+        "bootstrap": _bound(seed_file),
+        "rustfs": {
+            "identity": identity,
+            "launch_receipt": _bound(launch_file),
+            "process_receipt": _bound(process_file),
+            "sha256": identity.get("sha256"),
+        },
         "redis": redis,
     }
+    if (
+        result["run"]["manifest"] != _bound(manifest_file)
+        or result["run"]["state"] != _bound(state_file)
+        or result["bootstrap"] != _bound(seed_file)
+    ):
+        raise ValueError("首代服务账本在请求构造期间变化")
+    return result
 
 
-def build(backend: Path, environment_path: Path, service_run: Path, request_id: str) -> dict:
+def build(
+    backend: Path, environment_path: Path, service_run: Path, request_id: str, side: str
+) -> dict:
     """构造并校验请求；调用方决定是否显式写入新文件。"""
     backend = backend.resolve(strict=True)
-    bootstrap_file, bootstrap = _read(backend, environment_path)
-    if (bootstrap.get("kind") != "reference-fixture-environment" or bootstrap.get("status") != "prepared"
-            or bootstrap.get("services_started") is not False or bootstrap.get("remote_writes") != 0):
-        raise ValueError("私有环境收据无效或已包含服务副作用")
-    plan = bootstrap.get("plan")
-    if not isinstance(plan, dict) or plan.get("side") != "seed":
-        raise ValueError("fresh-target 只能从 seed 私有环境签发")
-    review_binding = plan.get("review")
-    if not isinstance(review_binding, dict):
-        raise ValueError("私有环境缺少审阅计划绑定")
-    review_file, review = _read(backend, Path(review_binding["path"]))
-    if _bound(review_file) != {key: review_binding[key] for key in ("path", "bytes", "sha256")}:
-        raise ValueError("私有环境审阅计划摘要已变化")
-    validate_review(review)
-    selected = review["scopes"]["seed"]
+    if side not in SIDES:
+        raise ValueError("fresh-target 必须选择 seed、base 或 candidate")
+    bootstrap_file, bootstrap, review_file, review = _prepared_environment(
+        backend, environment_path, side
+    )
+    bootstrap_binding = _bound(bootstrap_file)
+    review_binding = _bound(review_file)
+    plan = bootstrap["plan"]
+    selected = review["scopes"][side]
     execution = Path(bootstrap["execution_backend"])
-    if execution != Path(selected["backend_dir"]):
-        raise ValueError("私有环境执行工作树与 seed 审阅侧不符")
     requested_run = service_run if service_run.is_absolute() else backend / service_run
     expected_run = expected_service_run(review)
     actual_run = local_path(backend, str(requested_run))
     if actual_run != expected_run:
         raise ValueError("fresh-target 请求必须绑定本审阅计划的唯一服务账本")
-    service = _service(backend, actual_run, _bound(review_file), _bound(bootstrap_file))
+    service = _service(backend, actual_run, review_binding, review)
+    if side == "seed" and service["bootstrap"] != bootstrap_binding:
+        raise ValueError("seed 请求必须使用启动首代服务的同一私有环境")
     rustfs = service["rustfs"]
     rustfs["sha256"] = review["tools"]["rustfs"]["sha256"]
     if rustfs["identity"].get("executable") != review["tools"]["rustfs"]["path"]:
@@ -90,25 +171,101 @@ def build(backend: Path, environment_path: Path, service_run: Path, request_id: 
     for key in ("shared-control", "shared", "dedicated-a", "dedicated-b"):
         item = next(value for value in selected["databases"] if value["key"] == key)
         defaults = Path(item["connection_file"])
-        databases.append({"key": key, "kind": KEYS[key][0], "mode": KEYS[key][1], "database": item["database"],
-                          "server_uuid": item["expected_server_uuid"], "defaults_file": str(defaults),
-                          "defaults_sha256": file_digest(defaults)["sha256"]})
-    credential_version = read_json(bootstrap_file.parent / "environment.json")["environment"].get("APP_RESET_CREDENTIAL_VERSION")
+        databases.append(
+            {
+                "key": key,
+                "kind": KEYS[key][0],
+                "mode": KEYS[key][1],
+                "database": item["database"],
+                "server_uuid": item["expected_server_uuid"],
+                "defaults_file": str(defaults),
+                "defaults_sha256": file_digest(defaults)["sha256"],
+            }
+        )
+    environment_file, private = _read(
+        backend, bootstrap_file.parent / "environment.json"
+    )
+    environment_binding = _bound(environment_file)
+    values = private.get("environment")
+    if (
+        not isinstance(values, dict)
+        or values.get("APP_SCOPE_ID") != selected["scope_id"]
+    ):
+        raise ValueError("fresh-target 私有环境未绑定当前 scope")
+    credential_version = values.get("APP_RESET_CREDENTIAL_VERSION")
     scope = selected["scope_id"]
     request = {
-        "format_version": 1, "kind": "devex-clone-fresh-target", "id": request_id,
-        "review": {**_bound(review_file), "canonical_sha256": plan["review"]["canonical_sha256"]}, "side": "seed",
-        "target": {"scope_id": scope, "s3": {"endpoint": selected["objects"]["endpoint"], "region": selected["objects"]["region"],
-                   "access_key_env": "APP_OBJECT_STORAGE_ACCESS_KEY", "secret_key_env": "APP_OBJECT_STORAGE_SECRET_KEY"}, "databases": databases},
-        "maintenance_build": plan["maintenance_build"], "configuration_sha256": bootstrap["configuration_sha256"],
-        "tools": {name: {key: review["tools"][name][key] for key in ("path", "sha256")} for name in ("mysql", "aws")},
+        "format_version": 1,
+        "kind": "devex-clone-fresh-target",
+        "id": request_id,
+        "review": {
+            **review_binding,
+            "canonical_sha256": plan["review"]["canonical_sha256"],
+        },
+        "side": side,
+        "target": {
+            "scope_id": scope,
+            "s3": {
+                "endpoint": selected["objects"]["endpoint"],
+                "region": selected["objects"]["region"],
+                "access_key_env": "APP_OBJECT_STORAGE_ACCESS_KEY",
+                "secret_key_env": "APP_OBJECT_STORAGE_SECRET_KEY",
+            },
+            "databases": databases,
+        },
+        "maintenance_build": plan["maintenance_build"],
+        "configuration_sha256": bootstrap["configuration_sha256"],
+        "tools": {
+            name: {key: review["tools"][name][key] for key in ("path", "sha256")}
+            for name in ("mysql", "aws")
+        },
         "storage": {"rustfs": rustfs, "redis": service["redis"]},
-        "reset": {"legacy_ownership": {key: True for key in ("mysql_exclusive", "redis_exclusive", "object_storage_exclusive")},
-                  "credential_version": credential_version, "sentinel_key": f"ryframe:devex-fresh:{scope}:sentinel",
-                  "sentinel_value": f"devex-fresh:{request_id}"},
+        "reset": {
+            "legacy_ownership": {
+                key: True
+                for key in (
+                    "mysql_exclusive",
+                    "redis_exclusive",
+                    "object_storage_exclusive",
+                )
+            },
+            "credential_version": credential_version,
+            "sentinel_key": f"ryframe:devex-fresh:{scope}:sentinel",
+            "sentinel_value": f"devex-fresh:{request_id}",
+        },
         "execution_backend": {"fixture": plan["fixture"], "path": str(execution)},
     }
     request_binding(backend, request)
+    if (
+        _bound(bootstrap_file) != bootstrap_binding
+        or _bound(review_file) != review_binding
+        or _bound(environment_file) != environment_binding
+    ):
+        raise ValueError("fresh-target 私有环境在请求构造期间变化")
+    return request
+
+
+def publish(
+    backend: Path,
+    environment_path: Path,
+    service_run: Path,
+    request_id: str,
+    side: str,
+    output: Path,
+) -> dict:
+    """只写一个新的请求文件，并在写入后重算全部输入绑定。"""
+    backend = backend.resolve(strict=True)
+    requested = output if output.is_absolute() else backend / output
+    target = local_path(backend, str(requested), new=True)
+    if not target.parent.is_dir():
+        raise ValueError("fresh-target 请求输出父目录不存在")
+    request = build(backend, environment_path, service_run, request_id, side)
+    write_json(target, request)
+    if (
+        read_json(target) != request
+        or build(backend, environment_path, service_run, request_id, side) != request
+    ):
+        raise ValueError("fresh-target 请求发布期间输入发生变化")
     return request
 
 
@@ -118,19 +275,26 @@ def main() -> None:
     parser.add_argument("--environment", type=Path, required=True)
     parser.add_argument("--service-run", type=Path, required=True)
     parser.add_argument("--id", required=True)
+    parser.add_argument("--side", choices=SIDES, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
     if not args.write:
         parser.error("签发 fresh-target 请求需要显式 --write")
     backend = args.backend_dir.resolve()
-    request = build(backend, args.environment, args.service_run, args.id)
-    requested = args.output if args.output.is_absolute() else backend / args.output
-    output = local_path(backend, str(requested), new=True)
-    if not output.parent.is_dir():
-        raise ValueError("fresh-target 请求输出父目录不存在")
-    write_json(output, request)
-    print(json.dumps({"status": "requested", "request_sha256": plan_hash(request), "remote_writes": 0}, ensure_ascii=False))
+    request = publish(
+        backend, args.environment, args.service_run, args.id, args.side, args.output
+    )
+    print(
+        json.dumps(
+            {
+                "status": "requested",
+                "request_sha256": plan_hash(request),
+                "remote_writes": 0,
+            },
+            ensure_ascii=False,
+        )
+    )
 
 
 if __name__ == "__main__":
