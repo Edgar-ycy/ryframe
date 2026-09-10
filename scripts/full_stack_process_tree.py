@@ -275,6 +275,14 @@ def enter_supervision() -> object:
     return handle
 
 
+def finish_supervision(membership: object) -> None:
+    """让监督进程退出时同时清理 Unix 组；Windows 由 Job 句柄关闭完成。"""
+
+    _ = membership
+    if os.name != "nt":
+        os.killpg(os.getpgrp(), signal.SIGKILL)
+
+
 def _linux_group(identity: dict) -> tuple[int, int] | None:
     try:
         fields = Path(f"/proc/{identity['pid']}/stat").read_text().rpartition(")")[2].split()
@@ -500,10 +508,7 @@ def _supervise(arguments: list[str]) -> int:
         code = supervise_product(process, tree)
         return code if 0 <= code <= 255 else 1
     finally:
-        # membership 必须一直存活到产品退出；Windows 由进程结束关闭 Job 句柄。
-        _ = membership
-        if os.name != "nt":
-            os.killpg(os.getpgrp(), signal.SIGKILL)
+        finish_supervision(membership)
 
 
 def main() -> None:

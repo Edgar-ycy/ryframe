@@ -25,9 +25,33 @@ from full_stack_runtime import register_runtime, verify_runtime
 FAKE_WORKER = r"""
 import os
 if os.environ.get("SNOWFLAKE_WORKER_ID") == "2":
+    import subprocess
     import socket
+    import sys
     import time
     mode = os.environ.get("RYFRAME_FAKE_WORKER_MODE", "ready")
+    if mode in {"tree", "tree-exit"}:
+        environment = os.environ.copy()
+        environment.pop("PYTHONPATH", None)
+        descendant = subprocess.Popen(
+            [
+                sys.executable,
+                "-S",
+                "-c",
+                "import os,signal,time; "
+                "signal.signal(signal.SIGTERM, lambda *_: None); "
+                "open(os.environ['RYFRAME_FAKE_DESCENDANT_PID'],'w').write(str(os.getpid())); "
+                "time.sleep(60)",
+            ],
+            env=environment,
+        )
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not os.path.isfile(
+            environment["RYFRAME_FAKE_DESCENDANT_PID"]
+        ):
+            time.sleep(0.02)
+        if mode == "tree-exit":
+            os._exit(7)
     if mode == "idle":
         while True:
             time.sleep(1)
@@ -145,6 +169,13 @@ class WorkerControlTests(unittest.TestCase):
                 return
             time.sleep(0.02)
         self.fail("等待进程级测试检查点超时")
+
+    @staticmethod
+    def gone(identity):
+        try:
+            return process_identity(identity["pid"]) is None
+        except PermissionError:
+            return False
 
     def spawn_fake_worker(self, mode: str, *, register: bool) -> dict:
         environment = {
@@ -343,7 +374,7 @@ worker.control(operation, Path(sys.argv[5]), Path(sys.argv[6]), 4)
         with mock.patch.dict(
             os.environ, {"RYFRAME_FAKE_WORKER_MODE": "exit"}, clear=False
         ):
-            with self.assertRaisesRegex(RuntimeError, "Worker.*退出"):
+            with self.assertRaisesRegex(RuntimeError, "Worker.*退出码 7"):
                 self.control("start")
         failed = read_process(self.directory, "worker", "worker-control-test")
         self.assertIsNone(process_identity(failed["pid"]))
@@ -351,6 +382,82 @@ worker.control(operation, Path(sys.argv[5]), Path(sys.argv[6]), 4)
         restarted = self.control("start")
         self.assertEqual(restarted["state"], "running")
         self.control("stop")
+
+    def test_stop_reaps_worker_descendant_and_parent_exit_cannot_orphan_it(self):
+        descendant_pid = self.root / "worker-descendant.pid"
+        with mock.patch.dict(
+            os.environ,
+            {
+                "RYFRAME_FAKE_WORKER_MODE": "tree",
+                "RYFRAME_FAKE_DESCENDANT_PID": str(descendant_pid),
+            },
+            clear=False,
+        ):
+            started = self.control("start")
+            self.wait_for(descendant_pid.is_file)
+            descendant = process_identity(int(descendant_pid.read_text(encoding="utf-8")))
+            self.assertIsNotNone(descendant)
+            tree = json.loads(
+                (self.directory / "worker-tree.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(tree["process"], started["identity"])
+            self.assertEqual(
+                process_identity(tree["supervisor"]["pid"]), tree["supervisor"]
+            )
+            self.assertEqual(self.control("stop")["state"], "stopped")
+            self.wait_for(lambda: self.gone(descendant))
+            normal_control = json.loads(
+                (
+                    self.directory
+                    / f"worker-tree-{tree['operation_id']}-control.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(normal_control["mode"], "normal")
+
+        descendant_pid.unlink()
+        with mock.patch.dict(
+            os.environ,
+            {
+                "RYFRAME_FAKE_WORKER_MODE": "tree-exit",
+                "RYFRAME_FAKE_DESCENDANT_PID": str(descendant_pid),
+            },
+            clear=False,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Worker.*退出"):
+                self.control("start")
+            self.wait_for(descendant_pid.is_file)
+            exited_descendant = process_identity(
+                int(descendant_pid.read_text(encoding="utf-8"))
+            )
+            if exited_descendant is not None:
+                self.wait_for(lambda: self.gone(exited_descendant))
+
+    def test_crash_control_records_force_mode_and_reaps_worker_descendant(self):
+        descendant_pid = self.root / "crash-descendant.pid"
+        with mock.patch.dict(
+            os.environ,
+            {
+                "RYFRAME_FAKE_WORKER_MODE": "tree",
+                "RYFRAME_FAKE_DESCENDANT_PID": str(descendant_pid),
+            },
+            clear=False,
+        ):
+            self.control("start")
+            self.wait_for(descendant_pid.is_file)
+            descendant = process_identity(int(descendant_pid.read_text(encoding="utf-8")))
+            self.assertIsNotNone(descendant)
+            tree = json.loads(
+                (self.directory / "worker-tree.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(self.control("crash")["state"], "stopped")
+            self.wait_for(lambda: self.gone(descendant))
+            crash_control = json.loads(
+                (
+                    self.directory
+                    / f"worker-tree-{tree['operation_id']}-control.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(crash_control["mode"], "crash")
 
     def test_wrong_worker_creation_identity_fails_closed_without_signalling_reused_pid(
         self,

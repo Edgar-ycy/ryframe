@@ -8,6 +8,7 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -23,6 +24,14 @@ from full_stack_process import (
     record_process,
     terminate_owned_process,
     write_receipt,
+)
+from full_stack_process_tree import (
+    enter_supervision,
+    finish_supervision,
+    read_process_tree,
+    record_process_tree,
+    supervise_product,
+    terminate_owned_process_tree,
 )
 from full_stack_runtime import verify_runtime
 from full_stack_worker_protocol import (
@@ -87,6 +96,31 @@ def worker_identity(directory: Path, receipt: dict) -> dict | None:
         if assert_identity(process_identity(identity.get("pid")), identity)
         else None
     )
+
+
+def _worker_tree(directory: Path, receipt: dict, *, required: bool) -> dict | None:
+    path = directory / "worker-tree.json"
+    if not path.is_file():
+        if required:
+            raise ValueError("已登记 Worker 缺少进程树收据")
+        return None
+    tree = read_process_tree(directory, "worker", receipt["scope_id"])
+    if not (directory / "worker.json").is_file():
+        if required:
+            raise ValueError("Worker 进程树缺少对应的产品进程收据")
+        return tree
+    if tree["process"] != read_process(directory, "worker", receipt["scope_id"]):
+        raise ValueError("Worker 进程与进程树收据不一致")
+    return tree
+
+
+def _verify_worker_tree_running(directory: Path, receipt: dict, identity: dict) -> dict:
+    tree = _worker_tree(directory, receipt, required=True)
+    if tree["process"] != identity or not assert_identity(
+        process_identity(tree["supervisor"]["pid"]), tree["supervisor"]
+    ):
+        raise ValueError("Worker 进程树监督器未保持运行")
+    return tree
 
 
 def ready(url: str) -> bool:
@@ -199,12 +233,14 @@ def _current_progress(
     return current
 
 
-def _run_worker(backend: Path, directory: Path, operation: dict) -> dict:
+def _run_worker(
+    backend: Path, directory: Path, operation: dict, supervisor: dict
+) -> tuple[dict, subprocess.Popen | None, dict | None]:
     request = operation["request"]
     executable, url = request["worker_artifact"]["path"], request["worker_ready_url"]
     log_path = directory / request["log"]
     _progress(request["operation_id"], backend, directory, "launching", None)
-    process, spawned_identity, identity = None, None, None
+    process, spawned_identity, identity, tree = None, None, None, None
     try:
         with log_path.open("xb") as log:
             process = subprocess.Popen(
@@ -214,13 +250,22 @@ def _run_worker(backend: Path, directory: Path, operation: dict) -> dict:
                 stdin=subprocess.DEVNULL,
                 stdout=log,
                 stderr=subprocess.STDOUT,
-                start_new_session=True,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
         spawned_identity = process_identity(process.pid)
         if spawned_identity is None:
             raise RuntimeError("Worker 在登记进程创建身份前退出")
         spawned_identity = _valid_identity(spawned_identity, "Worker")
+        if Path(spawned_identity["executable"]) != Path(executable).resolve(strict=True):
+            raise RuntimeError("Worker 启动产物与实际进程可执行文件不一致")
+        tree = record_process_tree(
+            directory,
+            "worker",
+            request["scope_id"],
+            supervisor,
+            spawned_identity,
+            request["operation_id"],
+        )
         identity = record_process(
             directory, "worker", process.pid, executable, request["scope_id"]
         )["identity"]
@@ -229,8 +274,11 @@ def _run_worker(backend: Path, directory: Path, operation: dict) -> dict:
         _progress(request["operation_id"], backend, directory, "started", identity)
         deadline = time.monotonic() + request["timeout_seconds"]
         while time.monotonic() < deadline:
-            if process.poll() is not None:
-                raise RuntimeError(f"Worker 就绪前退出；日志：{log_path.name}")
+            exit_code = process.poll()
+            if exit_code is not None:
+                raise RuntimeError(
+                    f"Worker 就绪前退出，退出码 {exit_code}；日志：{log_path.name}"
+                )
             if ready(url):
                 verify_listener(process.pid, url)
                 if not assert_identity(process_identity(process.pid), identity):
@@ -240,7 +288,7 @@ def _run_worker(backend: Path, directory: Path, operation: dict) -> dict:
                 _progress(
                     request["operation_id"], backend, directory, "ready", identity
                 )
-                return _result(operation, "succeeded", "running", identity)
+                return _result(operation, "succeeded", "running", identity), process, tree
             time.sleep(0.1)
         raise TimeoutError(f"Worker 就绪超时；日志：{log_path.name}")
     except BaseException as error:
@@ -259,7 +307,7 @@ def _run_worker(backend: Path, directory: Path, operation: dict) -> dict:
                 cleanup_identity,
                 error_type=type(cleanup_error).__name__,
                 error=f"{error}；Worker 进程回收失败：{cleanup_error}",
-            )
+            ), None, tree
         return _result(
             operation,
             "failed",
@@ -267,7 +315,7 @@ def _run_worker(backend: Path, directory: Path, operation: dict) -> dict:
             None,
             error_type=type(error).__name__,
             error=str(error) or type(error).__name__,
-        )
+        ), None, tree
 
 
 def _supervise_start(backend: Path, directory: Path, operation_id: str) -> int:
@@ -308,19 +356,28 @@ def _supervise_start(backend: Path, directory: Path, operation_id: str) -> int:
         time.sleep(0.02)
     else:
         return 2
+    membership = enter_supervision()
     try:
-        result = _run_worker(backend, directory, operation)
-    except BaseException as error:
-        result = _result(
-            operation,
-            "failed",
-            "unknown",
-            None,
-            error_type=type(error).__name__,
-            error=str(error) or type(error).__name__,
-        )
-    _publish_result(operation_id, backend, directory, result)
-    return 0 if result["outcome"] == "succeeded" else 1
+        try:
+            result, process, tree = _run_worker(backend, directory, operation, identity)
+        except BaseException as error:
+            result, process, tree = _result(
+                operation,
+                "failed",
+                "unknown",
+                None,
+                error_type=type(error).__name__,
+                error=str(error) or type(error).__name__,
+            ), None, None
+        _publish_result(operation_id, backend, directory, result)
+        if result["outcome"] != "succeeded":
+            return 1
+        if process is None or tree is None:
+            raise RuntimeError("Worker 成功收据缺少受监督的产品进程")
+        code = supervise_product(process, tree)
+        return code if 0 <= code <= 255 else 1
+    finally:
+        finish_supervision(membership)
 
 
 def _authorize_supervisor(
@@ -389,15 +446,24 @@ def _authorize_supervisor(
 
 
 def _simple_result(operation: dict, receipt: dict, operation_name: str) -> dict:
-    identity = worker_identity(operation["path"].parent, receipt)
-    if operation_name in {"stop", "crash"} and identity is not None:
-        terminate_owned_process(identity, crash=operation_name == "crash")
+    directory = operation["path"].parent
+    identity = worker_identity(directory, receipt)
+    if operation_name in {"stop", "crash"}:
+        tree = _worker_tree(directory, receipt, required=identity is not None)
+        if tree is not None:
+            terminate_owned_process_tree(tree, crash=operation_name == "crash")
         identity = None
         wait_for_port_free(receipt["worker_ready_url"])
     elif identity is None:
+        tree = _worker_tree(directory, receipt, required=False)
+        if tree is not None and assert_identity(
+            process_identity(tree["supervisor"]["pid"]), tree["supervisor"]
+        ):
+            raise ValueError("Worker 已退出但进程树监督器仍在运行")
         ensure_port_free(receipt["worker_ready_url"])
     else:
         verify_running(identity, receipt["worker_ready_url"])
+        _verify_worker_tree_running(directory, receipt, identity)
     return _result(
         operation,
         "succeeded",
@@ -417,6 +483,7 @@ def _reconcile_legacy(directory: Path, receipt: dict, source: str) -> str:
         state = "stopped"
     else:
         verify_running(identity, receipt["worker_ready_url"])
+        _verify_worker_tree_running(directory, receipt, identity)
         state = "running"
     observed = process_identity(os.getpid())
     if observed is None:
@@ -476,8 +543,9 @@ def _reconcile_active(
     identity = worker_identity(directory, receipt)
     requested = operation["request"]["operation"]
     if requested in {"stop", "crash"}:
-        if identity is not None:
-            terminate_owned_process(identity, crash=requested == "crash")
+        tree = _worker_tree(directory, receipt, required=identity is not None)
+        if tree is not None:
+            terminate_owned_process_tree(tree, crash=requested == "crash")
         wait_for_port_free(receipt["worker_ready_url"])
         identity, state, outcome, error = None, "stopped", "succeeded", None
     elif (
@@ -488,12 +556,14 @@ def _reconcile_active(
         verify_listener(identity["pid"], receipt["worker_ready_url"])
         if not assert_identity(process_identity(identity["pid"]), identity):
             raise ValueError("Worker 在运行态核验后退出，不能声明正在运行")
+        _verify_worker_tree_running(directory, receipt, identity)
         state, outcome, error = "running", "succeeded", None
     elif requested in {"status", "reconcile"}:
         if identity is None:
             ensure_port_free(receipt["worker_ready_url"])
         else:
             verify_running(identity, receipt["worker_ready_url"])
+            _verify_worker_tree_running(directory, receipt, identity)
         state, outcome, error = (
             "running" if identity else "stopped",
             "succeeded",
@@ -501,7 +571,8 @@ def _reconcile_active(
         )
     else:
         if identity is not None:
-            terminate_owned_process(identity, crash=True)
+            tree = _worker_tree(directory, receipt, required=True)
+            terminate_owned_process_tree(tree, crash=True)
             wait_for_port_free(receipt["worker_ready_url"])
         else:
             ensure_port_free(receipt["worker_ready_url"])
@@ -543,7 +614,20 @@ def _finish_start(
                 if operation["owner"]["operation_id"] != operation_id:
                     raise ValueError("Worker start 操作在等待期间发生变化")
                 result = _archive(operation)
-            supervisor.wait(timeout=5)
+            if result["outcome"] == "succeeded" and result["state"] == "running":
+                tree = _verify_worker_tree_running(
+                    directory, receipt, result["identity"]
+                )
+                actual_supervisor = process_identity(supervisor.pid)
+                if tree["supervisor"] != actual_supervisor:
+                    raise ValueError("Worker 启动监督进程与进程树收据不一致")
+                threading.Thread(
+                    target=supervisor.wait,
+                    name=f"worker-supervisor-{supervisor.pid}",
+                    daemon=True,
+                ).start()
+            else:
+                supervisor.wait(timeout=5)
             return result
         progress = lock / "progress.json"
         if not checkpointed and progress.is_file():
@@ -580,6 +664,12 @@ def _run_control(
         if operation == "start":
             if worker_identity(directory, receipt) is not None:
                 raise ValueError("已登记 Worker 仍在运行，拒绝重复启动")
+            previous_tree = _worker_tree(directory, receipt, required=False)
+            if previous_tree is not None and assert_identity(
+                process_identity(previous_tree["supervisor"]["pid"]),
+                previous_tree["supervisor"],
+            ):
+                raise ValueError("上一代 Worker 进程树监督器仍在运行")
             ensure_port_free(receipt["worker_ready_url"])
         operation_receipt = _claim(
             operation, backend, directory, receipt, source, timeout
