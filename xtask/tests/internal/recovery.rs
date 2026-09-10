@@ -244,6 +244,36 @@ fn fixture_successor_uses_only_the_current_backend() {
 }
 
 #[test]
+fn fixture_artifact_and_retention_use_registered_runtime_tools() {
+    let backend = super::workspace::root_dir().display().to_string();
+    for (operation, script, arguments) in [
+        (
+            "artifact",
+            "scripts/full_stack_artifacts.py",
+            strings(&["snapshot", "--runtime-dir", "D:/验收/runtime"]),
+        ),
+        (
+            "retention",
+            "scripts/full_stack_migration_history.py",
+            strings(&["plan-history", "--runtime-dir", "D:/验收/runtime"]),
+        ),
+    ] {
+        let mut request = vec![operation.to_owned()];
+        request.extend(arguments.clone());
+        let (actual_script, forwarded) =
+            recovery_command(&RecoveryCommand::Fixture(request), Path::new("unused")).unwrap();
+        assert_eq!(actual_script, script);
+        assert_eq!(
+            forwarded,
+            arguments
+                .into_iter()
+                .chain(strings(&["--backend-dir", &backend]))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
 fn fixture_services_use_the_private_service_controller() {
     for service in ["rustfs", "redis"] {
         let (script, arguments) = recovery_command(
@@ -326,6 +356,8 @@ fn forwarded_recovery_scripts_exist_in_checkout() {
         RecoveryCommand::Source(strings(&["verify"])),
         RecoveryCommand::Clone(strings(&["status"])),
         RecoveryCommand::Fixture(strings(&["--output-dir", "fixture"])),
+        RecoveryCommand::Fixture(strings(&["artifact", "snapshot"])),
+        RecoveryCommand::Fixture(strings(&["retention", "inspect"])),
         RecoveryCommand::Fixture(strings(&["dataset", "plan"])),
         RecoveryCommand::DatasetPrepare(strings(&["--plan", "reference.json"])),
         RecoveryCommand::FreshTarget(strings(&[

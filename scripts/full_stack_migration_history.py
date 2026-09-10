@@ -289,7 +289,7 @@ def main() -> None:
             "verify-cleaned",
         ),
     )
-    parser.add_argument("--backend-root", type=Path, required=True)
+    parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--runtime-dir", type=Path, required=True)
     parser.add_argument("--tenant", required=True)
     parser.add_argument("--migration", required=True)
@@ -299,7 +299,7 @@ def main() -> None:
         json.dumps(
             run(
                 args.operation,
-                args.backend_root.resolve(),
+                args.backend_dir.resolve(),
                 args.runtime_dir.resolve(),
                 args.tenant,
                 args.migration,

@@ -229,12 +229,12 @@ def inspect(operation: str, backend: Path, runtime: Path, job_id: str, receipt_p
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=("snapshot", "verify-deleted"))
-    parser.add_argument("--backend-root", type=Path, required=True)
+    parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--runtime-dir", type=Path, required=True)
     parser.add_argument("--job-id", required=True)
     parser.add_argument("--receipt", type=Path, required=True)
     args = parser.parse_args()
-    print(json.dumps(inspect(args.operation, args.backend_root, args.runtime_dir, args.job_id, args.receipt)))
+    print(json.dumps(inspect(args.operation, args.backend_dir, args.runtime_dir, args.job_id, args.receipt)))
 
 
 if __name__ == "__main__":

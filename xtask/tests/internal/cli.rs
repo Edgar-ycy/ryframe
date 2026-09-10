@@ -206,6 +206,23 @@ fn parses_recovery_check_groups() {
             &["--output-dir", "fixture",]
         ))))
     );
+    for operation in ["artifact", "retention"] {
+        assert_eq!(
+            parse_command(&[
+                "check",
+                "recovery",
+                "fixture",
+                operation,
+                "inspect",
+                "--runtime-dir",
+                "D:/验收/runtime",
+            ])
+            .unwrap(),
+            Command::Check(CheckCommand::Recovery(RecoveryCommand::Fixture(strings(
+                &[operation, "inspect", "--runtime-dir", "D:/验收/runtime",]
+            ))))
+        );
+    }
     assert_eq!(
         parse_command(&[
             "check",
