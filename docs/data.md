@@ -41,7 +41,7 @@ cargo xtask data migrate verify tenant-data --all
 
 ## 开发数据复制与性能 seed
 
-开发复制先用 `cargo xtask check recovery clone plan --input <输入清单> --output <新计划> --write` 固定计划，再用 `cargo xtask check recovery clone verify --plan <计划>` 只读复核。已登记 fresh target 的准备、续作、初始化、复核和只读状态使用 `cargo xtask check recovery fresh-target ...`。输入、证据和运行目录必须位于当前后端 `.local-tests`，只接受已审查表、已登记新目标和完整 ownership；未完成任务、迁移历史、未知生成表、物理引用或未知写入都会失败关闭。来源调度必须先停用、复验并重新导出，离线校验不表示真实资源已就绪。
+开发复制先用 `cargo xtask check recovery clone plan --input <输入清单> --output <新计划> --write` 固定计划，再用 `cargo xtask check recovery clone verify --plan <计划>` 只读复核。已登记 fresh target 的准备、续作、初始化、复核和只读状态使用 `cargo xtask check recovery fresh-target ...`；`status` 从原账本派生最后成功阶段与下一合法动作，保持零写入。固定请求若已不能通过当前审阅、来源或路径等可执行条件，状态会转为 reconciliation、清空下一动作并说明阻塞，不再建议 `resume-prepare`；修复阻塞条件后才能重新核对，不改写登记请求或自动重放。输入、证据和运行目录必须位于当前后端 `.local-tests`，只接受已审查表、已登记新目标和完整 ownership；未完成任务、迁移历史、未知生成表、物理引用或未知写入都会失败关闭。来源调度必须先停用、复验并重新导出，离线校验不表示真实资源已就绪。
 
 维护工具使用 `cargo xtask check recovery clone maintenance --operation build --output <新目录> --write` 构建，使用 `--operation verify --output <目录或build.json>` 只读复核。来源通过统一 recovery 的 source 阶段捕获。两者绑定实际 API、Worker、维护二进制、配置、源码和工具指纹；生产者必须停止，数据库关系与对象清单在采集前后保持一致。对象按 HEAD、条件 GET、再次 HEAD 的顺序核验内容和元数据，目标只允许精确 key 的条件创建；失败、竞争或未知结果保留证据，不退回无条件覆盖。
 

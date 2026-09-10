@@ -55,12 +55,14 @@ cargo xtask check --full
 
 `--scope backend|frontend` 可限制主要检查侧。更多迁移、测试和排障命令见[开发指南](docs/development.md)。
 
-生产构建默认生成 release API、Worker 和前端产物；需要查看同一构建任务、输入范围和允许写入而不执行时使用 `--plan`：
+生产构建分别生成 release API、Worker 和前端生产目录，并输出每项产物的路径、大小和 SHA-256。`--plan` 使用同一任务图展示依赖、输入范围和允许写入，不执行任务或写入文件：
 
 ```powershell
 cargo xtask build --plan
 cargo xtask build
 ```
+
+实际构建会在开始和结束时核对前后端工作树指纹；构建期间来源变化时直接失败，不能把混合来源产物作为成功结果。
 
 ## 同步 API 契约
 
