@@ -134,7 +134,9 @@ def _bound_path(receipt: dict, suffix: str) -> Path:
     directory = Path(receipt.get("runtime_directory", ""))
     if not directory.is_absolute() or not directory.is_dir() or directory.is_symlink():
         raise ValueError("进程树收据没有绑定可信运行目录")
-    return directory / f"{receipt['role']}-tree-{suffix}.json"
+    return directory / (
+        f"{receipt['role']}-tree-{receipt['operation_id']}-{suffix}.json"
+    )
 
 
 def _write_control(receipt: dict, mode: str) -> None:
