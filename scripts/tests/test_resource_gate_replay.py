@@ -81,7 +81,7 @@ class ResourceGateReplayTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            report = fixture / "report.json"
+            report = repository / ".local-tests/resource-gate-replay/report.json"
             environment = os.environ.copy()
             environment["PATH"] = str(tools) + os.pathsep + environment.get("PATH", "")
             environment["RYFRAME_REPLAY_TEST_TOOL_LOG"] = str(tool_log)
@@ -118,6 +118,7 @@ class ResourceGateReplayTests(unittest.TestCase):
             self.assertTrue(document["targetedWithinBudget"])
             self.assertTrue(document["replayCoverageEligible"])
             self.assertIsNone(document["sccacheCacheErrors"])
+
             self.assertTrue(document["sccacheHealthy"])
             self.assertLessEqual(document["targetedP95Ms"], 60_000)
             self.assertEqual(
@@ -190,6 +191,21 @@ class ResourceGateReplayTests(unittest.TestCase):
                 ),
                 [],
             )
+
+    def test_report_is_create_only_inside_the_backend_evidence_root(self) -> None:
+        with isolated_test_dir("resource-replay-report") as fixture:
+            repository = fixture / "repository"
+            repository.mkdir()
+            report = MODULE.validated_report_path(
+                repository, Path(".local-tests/resource-gate-replay/report.json")
+            )
+            self.assertTrue(report.is_relative_to(repository.resolve()))
+            with self.assertRaisesRegex(MODULE.ReplayConfigurationError, "子路径"):
+                MODULE.validated_report_path(repository, fixture / "outside.json")
+            report.parent.mkdir(parents=True)
+            report.write_text("existing", encoding="utf-8")
+            with self.assertRaisesRegex(MODULE.ReplayConfigurationError, "尚不存在"):
+                MODULE.validated_report_path(repository, report)
 
     def test_manifest_and_mismatch_result_fail_closed(self) -> None:
         with isolated_test_dir("resource-replay-short") as fixture:

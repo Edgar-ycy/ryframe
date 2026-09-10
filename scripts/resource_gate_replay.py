@@ -1406,6 +1406,20 @@ def repository_record(identity: RepositoryIdentity) -> dict[str, str | None]:
     }
 
 
+def validated_report_path(repository: Path, value: Path) -> Path:
+    root = repository.resolve(strict=True)
+    allowed = (root / ".local-tests/resource-gate-replay").resolve()
+    requested = value if value.is_absolute() else root / value
+    report = requested.resolve()
+    if report == allowed or not report.is_relative_to(allowed):
+        raise ReplayConfigurationError(
+            f"replay report 必须位于 {allowed} 的子路径"
+        )
+    if report.exists():
+        raise ReplayConfigurationError("replay report 必须使用尚不存在的新文件")
+    return report
+
+
 def write_report(
     path: Path,
     run: ReplayRun,
@@ -1456,10 +1470,12 @@ def write_report(
         "evidence": asdict(run.evidence),
         "cases": [asdict(result) for result in results],
     }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("x", encoding="utf-8") as output:
+            output.write(json.dumps(document, ensure_ascii=False, indent=2) + "\n")
+    except OSError as error:
+        raise ReplayConfigurationError(f"无法创建 replay report：{error}") from error
 
 
 def percentile_nearest_rank(samples: list[int], percentile: int) -> int | None:
@@ -1536,6 +1552,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     try:
+        report = validated_report_path(args.repository, args.report)
         manifest = load_manifest(args.manifest)
         if args.activation_gate:
             validate_activation_commands(manifest)
@@ -1547,7 +1564,9 @@ def main() -> int:
             manifest_fingerprint=sha256_file(args.manifest.resolve()),
             activation_gate=args.activation_gate,
         )
-        write_report(args.report, run, activation_gate=args.activation_gate)
+        if validated_report_path(args.repository, report) != report:
+            raise ReplayConfigurationError("replay report 路径在运行期间变化")
+        write_report(report, run, activation_gate=args.activation_gate)
     except ReplayConfigurationError as error:
         print(error, file=sys.stderr)
         return 2
