@@ -306,12 +306,55 @@ fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
         [command] if command == "preflight" => Ok(CiCommand::Preflight),
         [command] if command == "rust-gate" => Ok(CiCommand::RustGate),
         [command] if command == "resource-gate" => Ok(CiCommand::ResourceGate),
+        [command, operation, rest @ ..] if command == "resource-gate" && operation == "replay" => {
+            parse_resource_gate_replay(rest).map(CiCommand::ResourceGateReplay)
+        }
         [command] if command == "integration" => Ok(CiCommand::Integration),
         [command] if command == "consumer-contract" => Ok(CiCommand::ConsumerContract),
         _ => Err(CliError::new(
-            "用法：cargo xtask check ci <plan|preflight|rust-gate|resource-gate|integration|consumer-contract>",
+            "用法：cargo xtask check ci <plan|preflight|rust-gate|resource-gate|integration|consumer-contract>；资源门禁回放使用 resource-gate replay --manifest <文件> --work-dir <目录> --report <文件> [--activation-gate]",
         )),
     }
+}
+
+fn parse_resource_gate_replay(args: &[String]) -> Result<ResourceGateReplayOptions, CliError> {
+    let mut manifest = None;
+    let mut work_dir = None;
+    let mut report = None;
+    let mut activation_gate = false;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--manifest" | "--work-dir" | "--report" => {
+                let option = args[index].as_str();
+                let value = args
+                    .get(index + 1)
+                    .filter(|value| !value.trim().is_empty() && !value.starts_with('-'))
+                    .ok_or_else(|| CliError::new(format!("{option} 缺少取值")))?;
+                let target = match option {
+                    "--manifest" => &mut manifest,
+                    "--work-dir" => &mut work_dir,
+                    "--report" => &mut report,
+                    _ => unreachable!(),
+                };
+                if target.replace(PathBuf::from(value)).is_some() {
+                    return Err(CliError::new(format!("{option} 不能重复")));
+                }
+                index += 2;
+            }
+            "--activation-gate" => {
+                set_once(&mut activation_gate, "--activation-gate")?;
+                index += 1;
+            }
+            unknown => return Err(CliError::new(format!("未知参数：{unknown}"))),
+        }
+    }
+    Ok(ResourceGateReplayOptions {
+        manifest: manifest.ok_or_else(|| CliError::new("缺少必需参数 --manifest"))?,
+        work_dir: work_dir.ok_or_else(|| CliError::new("缺少必需参数 --work-dir"))?,
+        report: report.ok_or_else(|| CliError::new("缺少必需参数 --report"))?,
+        activation_gate,
+    })
 }
 
 fn parse_release(args: &[String]) -> Result<ReleaseOptions, CliError> {

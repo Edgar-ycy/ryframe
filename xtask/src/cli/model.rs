@@ -87,14 +87,23 @@ pub(crate) enum DataCommand {
     Reset(Vec<String>),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CiCommand {
     Plan,
     Preflight,
     RustGate,
     ResourceGate,
+    ResourceGateReplay(ResourceGateReplayOptions),
     Integration,
     ConsumerContract,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ResourceGateReplayOptions {
+    pub(crate) manifest: PathBuf,
+    pub(crate) work_dir: PathBuf,
+    pub(crate) report: PathBuf,
+    pub(crate) activation_gate: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

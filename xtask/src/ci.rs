@@ -14,7 +14,7 @@ use crate::{
         ci_target_policy, ci_test_jobs_from, classify_changes, complete_verify_selection,
         load_workspace_graph, policy_tasks, resource_workspace_compilation,
     },
-    cli::CiCommand,
+    cli::{CiCommand, ResourceGateReplayOptions},
     contract::verify_contract_source,
     process::{command_output, run as run_process, run_owned},
     workspace::root_dir,
@@ -54,9 +54,46 @@ pub(crate) fn run(command: CiCommand, frontend_dir: &Path) -> Result<()> {
         CiCommand::Preflight => preflight(frontend_dir),
         CiCommand::RustGate => rust_gate(frontend_dir),
         CiCommand::ResourceGate => resource_gate::run(frontend_dir),
+        CiCommand::ResourceGateReplay(options) => resource_gate_replay(&options, frontend_dir),
         CiCommand::Integration => integration(),
         CiCommand::ConsumerContract => consumer_contract(frontend_dir),
     }
+}
+
+fn resource_gate_replay(options: &ResourceGateReplayOptions, frontend_dir: &Path) -> Result<()> {
+    let root = root_dir();
+    let arguments = resource_gate_replay_args(options, &root, frontend_dir)?;
+    run_owned(&root, "python", &arguments)
+}
+
+pub(crate) fn resource_gate_replay_args(
+    options: &ResourceGateReplayOptions,
+    backend: &Path,
+    frontend: &Path,
+) -> Result<Vec<String>> {
+    fn utf8(path: &Path) -> Result<String> {
+        path.to_str()
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| "resource gate replay 路径必须能表示为 UTF-8".into())
+    }
+
+    let mut arguments = vec![
+        "scripts/resource_gate_replay.py".to_owned(),
+        "--repository".to_owned(),
+        utf8(backend)?,
+        "--frontend-repository".to_owned(),
+        utf8(frontend)?,
+        "--manifest".to_owned(),
+        utf8(&options.manifest)?,
+        "--work-dir".to_owned(),
+        utf8(&options.work_dir)?,
+        "--report".to_owned(),
+        utf8(&options.report)?,
+    ];
+    if options.activation_gate {
+        arguments.push("--activation-gate".to_owned());
+    }
+    Ok(arguments)
 }
 
 fn rust_gate(frontend_dir: &Path) -> Result<()> {

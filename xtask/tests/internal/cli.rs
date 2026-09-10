@@ -4,7 +4,7 @@ use super::cli::{
     ApiGenerateCommand, BuildOptions, BuildProfile, CheckCommand, CheckOptions, CheckScope,
     CiCommand, CliError, Command, DataCommand, GenerateCommand, MigrationCommand,
     MigrationOperation, MigrationTarget, RecoveryCommand, ResourceAction, ResourceCommand,
-    ResourceTarget, parse,
+    ResourceGateReplayOptions, ResourceTarget, parse,
 };
 
 fn strings(values: &[&str]) -> Vec<String> {
@@ -98,6 +98,62 @@ fn parses_check_task_graph_and_internal_groups() {
     }
     assert!(parse_command(&["check", "ci"]).is_err());
     assert!(parse_command(&["check", "ci", "rust-gate", "extra"]).is_err());
+    assert_eq!(
+        parse_command(&[
+            "check",
+            "ci",
+            "resource-gate",
+            "replay",
+            "--manifest",
+            "replay.json",
+            "--work-dir",
+            ".local-tests/resource-gate-replay/run",
+            "--report",
+            ".local-tests/resource-gate-replay/report.json",
+            "--activation-gate",
+        ])
+        .unwrap(),
+        Command::Check(CheckCommand::Ci(CiCommand::ResourceGateReplay(
+            ResourceGateReplayOptions {
+                manifest: "replay.json".into(),
+                work_dir: ".local-tests/resource-gate-replay/run".into(),
+                report: ".local-tests/resource-gate-replay/report.json".into(),
+                activation_gate: true,
+            }
+        )))
+    );
+    for invalid in [
+        vec!["check", "ci", "resource-gate", "replay"],
+        vec![
+            "check",
+            "ci",
+            "resource-gate",
+            "replay",
+            "--manifest",
+            "one",
+            "--manifest",
+            "two",
+            "--work-dir",
+            "work",
+            "--report",
+            "report",
+        ],
+        vec![
+            "check",
+            "ci",
+            "resource-gate",
+            "replay",
+            "--manifest",
+            "one",
+            "--work-dir",
+            "work",
+            "--report",
+            "report",
+            "--unknown",
+        ],
+    ] {
+        assert!(parse_command(&invalid).is_err(), "{invalid:?}");
+    }
     assert!(parse_command(&["check", "--full", "--full"]).is_err());
     assert!(parse_command(&["check", "--scope", "all", "--scope", "backend"]).is_err());
 }
