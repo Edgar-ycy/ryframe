@@ -18,6 +18,7 @@ from pathlib import Path
 from full_stack_process import (
     assert_identity,
     process_identity,
+    read_process,
     record_process,
     terminate_owned_process,
     write_receipt,
@@ -427,12 +428,14 @@ def launch_supervised_process(
     deadline = time.monotonic() + timeout
     try:
         while time.monotonic() < deadline:
-            if path.is_file():
+            if path.is_file() and (directory / f"{role}.json").is_file():
                 tree = read_process_tree(directory, role, scope)
                 if tree["operation_id"] != operation_id:
                     raise ValueError("进程树收据属于其他启动操作")
                 assert_identity(tree["supervisor"], supervisor_identity)
                 assert_identity(process_identity(tree["process"]["pid"]), tree["process"])
+                if read_process(directory, role, scope) != tree["process"]:
+                    raise ValueError("产品进程与进程树收据不一致")
                 return SupervisedProcess(supervisor, tree)
             if supervisor.poll() is not None:
                 raise RuntimeError(f"全栈监督进程在登记产品进程前退出，退出码 {supervisor.returncode}")
@@ -472,6 +475,17 @@ def _supervise(arguments: list[str]) -> int:
         if identity is None:
             process.wait(timeout=5)
             raise RuntimeError("产品进程在登记创建身份前退出")
+        executable = Path(command[0]).resolve(strict=True)
+        if Path(identity["executable"]) != executable:
+            raise RuntimeError("启动产物与产品进程的实际可执行文件不一致")
+        tree = record_process_tree(
+            args.runtime_dir,
+            args.role,
+            args.scope,
+            supervisor,
+            identity,
+            args.operation_id,
+        )
         recorded = record_process(
             args.runtime_dir.resolve(strict=True),
             args.role,
@@ -481,14 +495,6 @@ def _supervise(arguments: list[str]) -> int:
         )["identity"]
         if identity != recorded:
             raise RuntimeError("产品进程在登记进程树期间身份发生变化")
-        tree = record_process_tree(
-            args.runtime_dir,
-            args.role,
-            args.scope,
-            supervisor,
-            identity,
-            args.operation_id,
-        )
         code = supervise_product(process, tree)
         return code if 0 <= code <= 255 else 1
     finally:
