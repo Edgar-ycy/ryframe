@@ -134,9 +134,10 @@ class PublishedSeedTests(unittest.TestCase):
         with patch.object(source, "load_state", return_value=state), \
                 patch.object(source, "validate_request"), \
                 patch.object(source, "initialization_history", return_value=({}, seed_target)), \
-                patch.object(source, "request_binding"), \
+                patch.object(source, "request_binding") as ready, \
                 patch.object(source, "current_storage_binding", return_value=storage):
             observed = source.published_source(self.backend, descriptor, live_storage=True)
+        ready.assert_called_once_with(self.backend, seed_target)
         self.assertEqual(observed["seed_target"], seed_target)
         self.assertEqual(observed["storage"]["storage"], storage)
         self.assertEqual(observed["registration"]["source_request"], observed["result"]["source_request"])

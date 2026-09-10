@@ -338,6 +338,143 @@ class SuccessorTests(unittest.TestCase):
             successor.main()
         self.assertEqual(raised.exception.code, 2)
 
+    def test_published_source_uses_pending_validator_and_rechecks_relationship(self):
+        historical = {"id": "historical-seed", "side": "seed"}
+        historical_path, historical_binding = self.file(
+            "historical-request.json", historical
+        )
+        predecessor_request = {
+            **historical_binding,
+            "canonical_sha256": plan_hash(historical),
+        }
+        successor_path, successor_binding = self.file(
+            "successor-evidence.json", {"fixture": True}
+        )
+        self.assertTrue(successor_path.is_file())
+        source_result = {"path": "source", "bytes": 1, "sha256": "a" * 64}
+        source_registration = {
+            "path": "registration",
+            "bytes": 1,
+            "sha256": "b" * 64,
+        }
+        predecessor_review = {
+            "path": "review",
+            "bytes": 1,
+            "sha256": "c" * 64,
+            "canonical_sha256": "d" * 64,
+        }
+        relationship = {
+            "source_result": source_result,
+            "source_registration": source_registration,
+            "predecessor_review": predecessor_review,
+            "predecessor_request": predecessor_request,
+        }
+
+        def deep_source(backend, descriptor, *, live_storage, validate_seed_target):
+            self.assertEqual(backend, self.backend)
+            self.assertEqual(descriptor, source_result)
+            self.assertTrue(live_storage)
+            validate_seed_target(backend, historical)
+            return {
+                "result": {"registration": source_registration},
+                "seed_target": historical,
+            }
+
+        with (
+            patch.object(
+                successor,
+                "_validated_relationship",
+                side_effect=[relationship, relationship],
+            ) as validate_relationship,
+            patch.object(successor, "_deep_published_source", side_effect=deep_source),
+            patch.object(successor, "pending_request_binding") as pending,
+        ):
+            observed = successor.published_source(
+                self.backend, successor_binding, live_storage=True
+            )
+        pending.assert_called_once_with(self.backend, historical, predecessor_review)
+        self.assertEqual(validate_relationship.call_count, 2)
+        self.assertEqual(observed["review_successor"], relationship)
+        self.assertEqual(observed["review_successor_binding"], successor_binding)
+
+    def test_published_source_rejects_seed_or_registration_relationship_drift(self):
+        historical = {"id": "historical-seed", "side": "seed"}
+        _, historical_binding = self.file("historical-request.json", historical)
+        _, successor_binding = self.file("successor-evidence.json", {"fixture": True})
+        relationship = {
+            "source_result": {"path": "source", "bytes": 1, "sha256": "a" * 64},
+            "source_registration": {
+                "path": "registration",
+                "bytes": 1,
+                "sha256": "b" * 64,
+            },
+            "predecessor_review": {
+                "path": "review",
+                "bytes": 1,
+                "sha256": "c" * 64,
+                "canonical_sha256": "d" * 64,
+            },
+            "predecessor_request": {
+                **historical_binding,
+                "canonical_sha256": plan_hash(historical),
+            },
+        }
+
+        def wrong_seed(backend, descriptor, *, live_storage, validate_seed_target):
+            changed = {**historical, "id": "different-seed"}
+            validate_seed_target(backend, changed)
+
+        with (
+            patch.object(
+                successor, "_validated_relationship", return_value=relationship
+            ),
+            patch.object(successor, "_deep_published_source", side_effect=wrong_seed),
+            self.assertRaisesRegex(ValueError, "初始化历史"),
+        ):
+            successor.published_source(self.backend, successor_binding)
+
+        def wrong_registration(
+            backend, descriptor, *, live_storage, validate_seed_target
+        ):
+            validate_seed_target(backend, historical)
+            return {
+                "result": {"registration": {"wrong": True}},
+                "seed_target": historical,
+            }
+
+        with (
+            patch.object(
+                successor, "_validated_relationship", return_value=relationship
+            ),
+            patch.object(
+                successor, "_deep_published_source", side_effect=wrong_registration
+            ),
+            patch.object(successor, "pending_request_binding"),
+            self.assertRaisesRegex(ValueError, "关系不一致"),
+        ):
+            successor.published_source(self.backend, successor_binding)
+
+        changed = {**relationship, "source_result": {"changed": True}}
+
+        def valid_source(backend, descriptor, *, live_storage, validate_seed_target):
+            validate_seed_target(backend, historical)
+            return {
+                "result": {"registration": relationship["source_registration"]},
+                "seed_target": historical,
+            }
+
+        with (
+            patch.object(
+                successor,
+                "_validated_relationship",
+                side_effect=[relationship, changed],
+            ),
+            patch.object(successor, "_deep_published_source", side_effect=valid_source),
+            patch.object(successor, "pending_request_binding"),
+            self.assertRaisesRegex(ValueError, "核对期间变化"),
+        ):
+            successor.published_source(self.backend, successor_binding)
+
 
 if __name__ == "__main__":
     unittest.main()

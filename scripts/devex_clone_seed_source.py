@@ -1,6 +1,7 @@
 """将已排空的 seed 运行登记为下一轮复制源；仅写本地不可变证据。"""
 from __future__ import annotations
 
+from collections.abc import Callable
 import copy
 import hashlib
 from pathlib import Path
@@ -75,8 +76,9 @@ def _validate_evidence_bindings(backend: Path, value) -> None:
             _validate_evidence_bindings(backend, item)
 
 
-def published_source(backend: Path, descriptor: dict, *, live_storage: bool = False) -> dict:
-    """从已发布外层结果恢复唯一 seed 源；可选复核其当前 RustFS 代次。"""
+def _published_source(backend: Path, descriptor: dict, *, live_storage: bool,
+                      validate_seed_target: Callable[[Path, dict], tuple[dict, dict]]) -> dict:
+    """恢复发布源，并由调用方选择 seed 初始化请求的执行资格规则。"""
     backend = backend.resolve(strict=True)
     result_path = bound_file(backend, descriptor)
     if result_path.parent.name != "results":
@@ -132,7 +134,7 @@ def published_source(backend: Path, descriptor: dict, *, live_storage: bool = Fa
         raise ValueError("seed 源只能继承完整 source_to_seed 运行")
     _, seed_target = initialization_history(
         backend, bound_file(backend, original_manifest["initialized"]))
-    request_binding(backend, seed_target)
+    validate_seed_target(backend, seed_target)
     handoff = read_json(bound_file(backend, registration["seed_handoff"]))
     expected_source = {**copy.deepcopy(seed_target["target"]),
                        "runtime_dir": request["source"]["runtime_dir"],
@@ -156,6 +158,12 @@ def published_source(backend: Path, descriptor: dict, *, live_storage: bool = Fa
             "request": request, "storage": storage, "generation": generation,
             "manifest": original_manifest, "seed_target": seed_target,
             "environment": environment}
+
+
+def published_source(backend: Path, descriptor: dict, *, live_storage: bool = False) -> dict:
+    """从已发布外层结果恢复唯一 ready seed 源；可选复核其当前 RustFS 代次。"""
+    return _published_source(backend, descriptor, live_storage=live_storage,
+                             validate_seed_target=request_binding)
 
 
 def _attempt_binding(backend: Path, directory: Path, attempt: dict, label: str) -> dict:

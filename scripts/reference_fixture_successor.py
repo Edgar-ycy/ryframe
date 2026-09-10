@@ -9,8 +9,9 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from devex_clone_capture import read_bound_json, write_json
-from devex_clone_model import exact, linked, local_path, name
+from devex_clone_model import digest, exact, linked, local_path, name
 from devex_clone_run_state import binding
+from devex_clone_seed_source import _published_source as _deep_published_source
 from devex_clone_target_binding import (
     pending_request_binding,
     request_binding,
@@ -233,6 +234,109 @@ def relationship_hash(value: dict) -> str:
     return plan_hash(
         {key: value[key] for key in sorted(FIELDS - {"relationship_sha256"})}
     )
+
+
+def _descriptor_path(value: dict, label: str, *, canonical: bool = False) -> Path:
+    fields = {"path", "bytes", "sha256"}
+    if canonical:
+        fields.add("canonical_sha256")
+    if not isinstance(value, dict):
+        raise ValueError(f"successor {label} 绑定结构无效")
+    exact(value, fields)
+    if not isinstance(value["path"], str):
+        raise ValueError(f"successor {label} 路径无效")
+    digest(value["sha256"])
+    if canonical:
+        digest(value["canonical_sha256"])
+    return Path(value["path"])
+
+
+def _validated_relationship(backend: Path, descriptor: dict) -> dict:
+    path = _descriptor_path(descriptor, "证据")
+    filename, value, _ = _document(backend, path, descriptor)
+    exact(value, FIELDS)
+    if (
+        value["format_version"] != 1
+        or value["kind"] != "devex-clone-seed-review-successor"
+        or name(value["id"]) != value["id"]
+        or value["remote_writes"] != 0
+        or value["restore_qualified"] is not False
+        or relationship_hash(value) != value["relationship_sha256"]
+    ):
+        raise ValueError("seed review successor 证据结构或关系摘要无效")
+    requests = value["requests"]
+    if not isinstance(requests, dict) or set(requests) != set(SIDES):
+        raise ValueError("seed review successor 缺少三侧请求绑定")
+    rebuilt = build(
+        backend,
+        _descriptor_path(value["source_result"], "source result"),
+        _descriptor_path(
+            value["predecessor_review"], "predecessor review", canonical=True
+        ),
+        _descriptor_path(
+            value["predecessor_request"], "predecessor request", canonical=True
+        ),
+        _descriptor_path(value["successor_review"], "successor review", canonical=True),
+        {
+            side: _descriptor_path(requests[side], f"{side} request", canonical=True)
+            for side in SIDES
+        },
+        value["id"],
+    )
+    if rebuilt != value or binding(filename) != descriptor:
+        raise ValueError("seed review successor 与当前绑定输入不一致")
+    return value
+
+
+def published_source(
+    backend: Path, descriptor: dict, *, live_storage: bool = False
+) -> dict:
+    """通过 successor 特例恢复历史 pending seed，不改变普通发布源的就绪规则。"""
+    backend = backend.resolve(strict=True)
+    expected_descriptor = copy.deepcopy(descriptor)
+    successor = _validated_relationship(backend, expected_descriptor)
+    expected = successor["predecessor_request"]
+    expected_binding = {key: expected[key] for key in ("path", "bytes", "sha256")}
+    _, historical_request, _ = _document(
+        backend,
+        _descriptor_path(expected, "predecessor request", canonical=True),
+        expected_binding,
+    )
+    if plan_hash(historical_request) != expected["canonical_sha256"]:
+        raise ValueError("successor 历史 seed 请求规范摘要无效")
+    validation_count = 0
+
+    def validate_pending(root: Path, seed_target: dict) -> tuple[dict, dict]:
+        nonlocal validation_count
+        validation_count += 1
+        if seed_target != historical_request:
+            raise ValueError("发布源初始化历史不是 successor 绑定的 seed 请求")
+        return pending_request_binding(
+            root, seed_target, successor["predecessor_review"]
+        )
+
+    source = _deep_published_source(
+        backend,
+        successor["source_result"],
+        live_storage=live_storage,
+        validate_seed_target=validate_pending,
+    )
+    if (
+        validation_count != 1
+        or source["result"].get("registration") != successor["source_registration"]
+        or source["seed_target"] != historical_request
+    ):
+        raise ValueError("发布源与 seed review successor 关系不一致")
+    if (
+        descriptor != expected_descriptor
+        or _validated_relationship(backend, expected_descriptor) != successor
+    ):
+        raise ValueError("seed review successor 或其输入在核对期间变化")
+    return {
+        **source,
+        "review_successor": successor,
+        "review_successor_binding": expected_descriptor,
+    }
 
 
 def build(
