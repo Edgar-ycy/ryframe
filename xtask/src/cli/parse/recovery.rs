@@ -47,6 +47,7 @@ fn parse_fixture(args: &[String]) -> Result<Vec<String>, CliError> {
                 "environment",
                 "review",
                 "request",
+                "successor",
                 "services",
                 "source-pair",
                 "runtime",
@@ -57,7 +58,7 @@ fn parse_fixture(args: &[String]) -> Result<Vec<String>, CliError> {
             Ok(args.to_vec())
         }
         _ => Err(CliError::new(
-            "用法：cargo xtask check recovery fixture --output-dir <目录> --write，或 fixture <environment|review|request|services|source-pair|runtime|dataset> ...",
+            "用法：cargo xtask check recovery fixture --output-dir <目录> --write，或 fixture <environment|review|request|successor|services|source-pair|runtime|dataset> ...",
         )),
     }
 }

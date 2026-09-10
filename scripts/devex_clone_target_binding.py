@@ -1,6 +1,7 @@
 """将新目标严格绑定到已审阅单侧资源、实际配置和三份维护工具。"""
 from __future__ import annotations
 
+import copy
 import hashlib
 import os
 from pathlib import Path
@@ -78,17 +79,16 @@ def external_file(value: dict) -> None:
         raise ValueError("新目标外部工具实际字节或路径已变化")
 
 
-def request_binding(backend: Path, request: dict) -> tuple[dict, dict]:
+def _request_binding(backend: Path, request: dict, validate) -> tuple[dict, dict]:
     required = {"format_version", "kind", "id", "review", "side", "target", "maintenance_build",
                 "configuration_sha256", "tools", "storage", "reset"}
-    optional = {"execution_backend"}
     exact(request, required | ({"execution_backend"} if "execution_backend" in request else set()))
     if request["format_version"] != 1 or request["kind"] != "devex-clone-fresh-target":
         raise ValueError("新目标请求类型错误")
     name(request["id"])
     exact(request["review"], {"path", "bytes", "sha256", "canonical_sha256"})
     review = read_json(bound_file(backend, {k: v for k, v in request["review"].items() if k != "canonical_sha256"}))
-    validate_review(review)
+    validate(review)
     if (plan_hash(review) != digest(request["review"]["canonical_sha256"])
             or request["side"] not in review["scopes"]):
         raise ValueError("必须选择已就绪审阅计划的明确单侧")
@@ -126,6 +126,30 @@ def request_binding(backend: Path, request: dict) -> tuple[dict, dict]:
             raise ValueError("目标工具不属于审阅版本")
     exact(request["storage"], {"rustfs", "redis"})
     return review, selected
+
+
+def request_binding(backend: Path, request: dict) -> tuple[dict, dict]:
+    """只接受已经完成预检并明确就绪的普通 fresh-target 请求。"""
+    return _request_binding(backend, request, validate_review)
+
+
+def pending_request_binding(backend: Path, request: dict, predecessor: dict) -> tuple[dict, dict]:
+    """仅供 review successor 核对历史 seed；不授予该请求执行权限。"""
+    expected = copy.deepcopy(predecessor)
+    if request.get("review") != expected:
+        raise ValueError("历史 seed 请求未绑定指定 pending predecessor")
+
+    def validate_pending(review: dict) -> None:
+        if review.get("ready_for_execution") is not False:
+            raise ValueError("历史 seed predecessor 必须保持 pending")
+        structural = copy.deepcopy(review)
+        structural["ready_for_execution"] = True
+        validate_review(structural)
+
+    result = _request_binding(backend, request, validate_pending)
+    if request.get("review") != expected:
+        raise ValueError("历史 seed 请求的 predecessor 在核对期间变化")
+    return result
 
 
 def execution_backend(backend: Path, request: dict) -> tuple[Path, dict]:
