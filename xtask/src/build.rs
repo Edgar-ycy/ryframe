@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 use crate::{
     Result,
     cli::{BuildOptions, BuildProfile},
+    devex,
     process::{command_output, run_pnpm},
     workspace::root_dir,
 };
@@ -136,12 +137,18 @@ impl BuildSpec {
 
 pub(crate) fn run(options: BuildOptions, frontend_dir: &Path) -> Result<()> {
     let render_only = options.plan;
-    let plan = build_plan(options, &root_dir(), frontend_dir);
+    let backend_root = root_dir();
+    let plan = build_plan(options, &backend_root, frontend_dir);
     if render_only {
         print!("{}", render_plan(&plan));
         return Ok(());
     }
-    execute_plan(&plan)
+    let source = devex::source_fingerprints(&backend_root, frontend_dir)?;
+    execute_plan(&plan)?;
+    if devex::source_fingerprints(&backend_root, frontend_dir)? != source {
+        return Err("构建期间前后端源码发生变化，拒绝把混合来源产物作为成功结果".into());
+    }
+    Ok(())
 }
 
 pub(crate) fn build_plan(

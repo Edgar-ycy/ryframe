@@ -31,6 +31,14 @@ pub(crate) use model::{
 #[allow(unused_imports)]
 pub(crate) use preflight::require_frontend_dependencies;
 
+pub(crate) fn source_fingerprints(
+    backend_root: &Path,
+    frontend_root: &Path,
+) -> Result<(String, Option<String>)> {
+    let value = metadata::collect_source_fingerprints(backend_root, Some(frontend_root))?;
+    Ok((value.backend, value.frontend))
+}
+
 pub(crate) fn parse_command(args: &[String]) -> std::result::Result<DevexCommand, String> {
     let Some(operation) = args.first() else {
         return Err(usage().to_owned());
