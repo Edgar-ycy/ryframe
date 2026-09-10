@@ -33,6 +33,7 @@ fn invalid_public_arguments_exit_two_before_running_tasks() {
         ["help", "unknown"].as_slice(),
         ["check", "--scope", "unknown"].as_slice(),
         ["build", "--write"].as_slice(),
+        ["build", "--plan", "--plan"].as_slice(),
         ["generate", "api", "--commit", "HEAD"].as_slice(),
         ["data", "unknown"].as_slice(),
     ] {
@@ -41,6 +42,50 @@ fn invalid_public_arguments_exit_two_before_running_tasks() {
         assert!(String::from_utf8_lossy(&result.stderr).contains("参数错误"));
         assert!(result.stdout.is_empty());
     }
+}
+
+#[test]
+fn build_plan_preserves_effective_parameters_without_spawning_or_writing() {
+    let missing_frontend = std::env::temp_dir().join(format!(
+        "ryframe-build-plan-{}-不存在 空格",
+        std::process::id()
+    ));
+    assert!(!missing_frontend.exists());
+    let missing_frontend = missing_frontend.to_string_lossy().into_owned();
+    let result = xtask_command()
+        .args([
+            "build",
+            "--profile",
+            "dev",
+            "--real",
+            "--plan",
+            "--frontend-dir",
+            missing_frontend.as_str(),
+        ])
+        .env("PATH", "")
+        .output()
+        .unwrap();
+
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(result.stderr.is_empty());
+    let output = String::from_utf8(result.stdout).unwrap();
+    assert!(
+        output.contains("构建计划：profile=dev，real=true"),
+        "{output}"
+    );
+    assert!(output.contains("角色=API、Worker"), "{output}");
+    assert!(output.contains("--target-dir target/build"), "{output}");
+    assert!(output.contains("--features bin-api,bin-worker"), "{output}");
+    assert!(output.contains("jobs=继承 Cargo 有效配置"), "{output}");
+    assert!(output.contains("输入=Cargo 工作区清单"), "{output}");
+    assert!(output.contains("角色=前端生产产物"), "{output}");
+    assert!(output.contains("corepack pnpm build --real"), "{output}");
+    assert!(output.contains(&missing_frontend), "{output}");
+    assert!(!std::path::Path::new(&missing_frontend).exists());
 }
 
 #[test]

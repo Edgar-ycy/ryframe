@@ -54,6 +54,7 @@ pub(crate) struct CheckOptions {
 pub(crate) struct BuildOptions {
     pub(crate) profile: BuildProfile,
     pub(crate) real: bool,
+    pub(crate) plan: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

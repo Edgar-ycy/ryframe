@@ -55,6 +55,13 @@ cargo xtask check --full
 
 `--scope backend|frontend` 可限制主要检查侧。更多迁移、测试和排障命令见[开发指南](docs/development.md)。
 
+生产构建默认生成 release API、Worker 和前端产物；需要查看同一构建任务、输入范围和允许写入而不执行时使用 `--plan`：
+
+```powershell
+cargo xtask build --plan
+cargo xtask build
+```
+
 ## 同步 API 契约
 
 `openapi/openapi.json` 是后端 HTTP 契约快照。接口变化后同步前端派生契约：

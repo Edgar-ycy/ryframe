@@ -24,6 +24,7 @@ fn exposes_exactly_five_top_level_command_families() {
         Command::Build(BuildOptions {
             profile: BuildProfile::Release,
             real: false,
+            plan: false,
         })
     );
     assert!(parse_command(&["check", "recovery", "fixture", "status",]).is_err());
@@ -203,6 +204,7 @@ fn parses_build_and_development_options() {
         Command::Build(BuildOptions {
             profile: BuildProfile::Release,
             real: true,
+            plan: false,
         })
     );
     assert_eq!(
@@ -210,6 +212,7 @@ fn parses_build_and_development_options() {
         Command::Build(BuildOptions {
             profile: BuildProfile::Dev,
             real: false,
+            plan: false,
         })
     );
     assert_eq!(
@@ -217,12 +220,22 @@ fn parses_build_and_development_options() {
         Command::Build(BuildOptions {
             profile: BuildProfile::Release,
             real: true,
+            plan: false,
+        })
+    );
+    assert_eq!(
+        parse_command(&["build", "--plan", "--profile", "dev", "--real"]).unwrap(),
+        Command::Build(BuildOptions {
+            profile: BuildProfile::Dev,
+            real: true,
+            plan: true,
         })
     );
     assert!(parse_command(&["build", "--profile", "test"]).is_err());
     assert!(parse_command(&["build", "--profile", "--real"]).is_err());
     assert!(parse_command(&["build", "--profile", "dev", "--profile", "release"]).is_err());
     assert!(parse_command(&["build", "--real", "--real"]).is_err());
+    assert!(parse_command(&["build", "--plan", "--plan"]).is_err());
     assert!(parse_command(&["build", "--real", "extra"]).is_err());
     assert!(parse_command(&["dev", "--measure-once", "extra"]).is_err());
 }

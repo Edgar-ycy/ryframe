@@ -145,6 +145,7 @@ fn parse_build(args: &[String]) -> Result<BuildOptions, CliError> {
     let mut profile = BuildProfile::Release;
     let mut profile_seen = false;
     let mut real = false;
+    let mut plan = false;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -170,10 +171,18 @@ fn parse_build(args: &[String]) -> Result<BuildOptions, CliError> {
                 set_once(&mut real, "--real")?;
                 index += 1;
             }
+            "--plan" => {
+                set_once(&mut plan, "--plan")?;
+                index += 1;
+            }
             unknown => return Err(CliError::new(format!("未知参数：{unknown}"))),
         }
     }
-    Ok(BuildOptions { profile, real })
+    Ok(BuildOptions {
+        profile,
+        real,
+        plan,
+    })
 }
 
 fn parse_generate(args: &[String]) -> Result<GenerateCommand, CliError> {

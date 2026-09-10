@@ -5,7 +5,7 @@ pub(crate) fn print_help(topic: Option<&str>) {
         }
         Some("check") => check_help(),
         Some("build") => {
-            "cargo xtask build [--profile release|dev] [--real] [--frontend-dir PATH]\n  默认构建 release API、Worker 与前端生产产物；--real 追加真实前端构建收据。"
+            "cargo xtask build [--profile release|dev] [--real] [--plan] [--frontend-dir PATH]\n  默认构建 release API、Worker 与前端生产产物；--real 追加真实前端构建收据；--plan 只输出同一构建计划，不执行或落盘。"
         }
         Some("generate") => generate_help(),
         Some("data") => data_help(),
