@@ -20,7 +20,7 @@ fn public_perf_plan_resolves_to_the_actual_runtime_driver() {
         "--variant",
         "10",
         "--runs",
-        "5",
+        "6",
         "--cache",
         "warm",
     ]))
@@ -72,7 +72,7 @@ fn runtime_preflight_requires_the_versioned_frontend_login_budget_closure() {
         suite: DevexSuite::RuntimeApi,
         variant: "10".into(),
         cache_state: CacheState::Warm,
-        runs: 5,
+        runs: 6,
     };
     let error = require_frontend_dependencies(&frontend, &options)
         .unwrap_err()
@@ -260,7 +260,7 @@ fn runtime_variants_reject_undefined_concurrency_and_unmeasured_cold_server_stat
             assert!(suite.definition(variant).is_ok());
         }
         assert!(suite.validate_cache_state(CacheState::Cold).is_err());
-        assert_eq!(suite.minimum_runs("10"), 5);
+        assert_eq!(suite.minimum_runs("10"), 6);
     }
     assert!(
         DevexSuite::RuntimeHomepage

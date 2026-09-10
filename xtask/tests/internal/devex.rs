@@ -176,18 +176,23 @@ fn suite_sample_policy_rejects_semantic_cache_mismatches() {
     assert!(DevexSuite::RustColdBuild.definition("baseline").is_err());
     assert!(DevexSuite::CargoDevSave.definition("baseline").is_err());
     assert_eq!(DevexSuite::RustColdBuild.minimum_runs("api"), 20);
-    assert_eq!(DevexSuite::RustIncremental.minimum_runs("application"), 5);
+    assert_eq!(DevexSuite::RustIncremental.minimum_runs("application"), 6);
     assert_eq!(DevexSuite::RustIncremental.minimum_runs("workspace"), 20);
     assert_eq!(DevexSuite::CargoDevSave.minimum_runs("api-only"), 20);
     assert_eq!(DevexSuite::CargoDevSave.minimum_runs("cancellation"), 20);
-    assert_eq!(DevexSuite::CargoDevSave.minimum_runs("config-only"), 5);
+    assert_eq!(DevexSuite::CargoDevSave.minimum_runs("config-only"), 6);
+    assert_eq!(
+        DevexSuite::CargoDevSave.minimum_runs("resource-manifest"),
+        6
+    );
+    assert_eq!(DevexSuite::RustSccache.minimum_runs("workspace"), 20);
     let cancellation = DevexSuite::CargoDevSave.definition("cancellation").unwrap();
     assert!(
         cancellation
             .environment
             .contains(&("RYFRAME_DEVEX_SAVE_CASE", "cancellation"))
     );
-    assert_eq!(DevexSuite::FrontendFast.minimum_runs("default"), 5);
+    assert_eq!(DevexSuite::FrontendFast.minimum_runs("default"), 6);
     assert!(
         DevexSuite::RustColdBuild
             .validate_cache_state(CacheState::Cold)
@@ -248,8 +253,10 @@ fn gate_suite_definitions_preserve_audited_execution_contracts() {
 #[test]
 fn abba_order_and_sccache_targets_are_auditable() {
     assert_eq!(
-        [1, 2, 3, 4].map(abba_pair_order),
+        [1, 2, 3, 4, 5, 6].map(abba_pair_order),
         [
+            [PairedArm::Baseline, PairedArm::Candidate],
+            [PairedArm::Candidate, PairedArm::Baseline],
             [PairedArm::Baseline, PairedArm::Candidate],
             [PairedArm::Candidate, PairedArm::Baseline],
             [PairedArm::Baseline, PairedArm::Candidate],

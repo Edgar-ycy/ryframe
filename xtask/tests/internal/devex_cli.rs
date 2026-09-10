@@ -80,8 +80,8 @@ fn cli_requires_named_run_and_compare_arguments() {
 fn cli_rejects_cache_states_that_change_suite_semantics() {
     for (suite, variant, runs, cache) in [
         ("rust-cold-build", "api", "20", "warm"),
-        ("rust-incremental", "application", "5", "cold"),
-        ("resource-gate", "auto", "5", "cold"),
+        ("rust-incremental", "application", "6", "cold"),
+        ("resource-gate", "auto", "6", "cold"),
         ("rust-gate", "default", "20", "cold"),
         ("rust-sccache", "workspace", "20", "cold"),
     ] {
@@ -193,7 +193,7 @@ fn legacy_baseline_contract_is_closed_to_config_only() {
         "--variant",
         "config-only",
         "--runs",
-        "5",
+        "6",
         "--cache",
         "warm",
     ]))
@@ -247,7 +247,7 @@ fn cli_rejects_under_sampled_and_unknown_variants() {
         "--variant",
         "default",
         "--runs",
-        "4",
+        "5",
         "--cache",
         "warm",
     ]));
@@ -255,7 +255,7 @@ fn cli_rejects_under_sampled_and_unknown_variants() {
         under_sampled
             .unwrap_err()
             .to_string()
-            .contains("至少需要 5 次")
+            .contains("至少需要 6 次")
     );
 
     let unknown = parse(strings(&[
@@ -267,7 +267,7 @@ fn cli_rejects_under_sampled_and_unknown_variants() {
         "--variant",
         "baseline",
         "--runs",
-        "5",
+        "6",
         "--cache",
         "warm",
     ]));

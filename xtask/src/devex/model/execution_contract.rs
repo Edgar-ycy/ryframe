@@ -6,13 +6,20 @@ pub(crate) const RESOURCE_GATE_DECISION_ENV: &str = "RYFRAME_RESOURCE_GATE_DECIS
 pub(crate) const RESOURCE_GATE_DECISION_TEMPLATE: &str =
     "{target}/resource-gate-decision-{label}.json";
 
+const STANDARD_COMPARISON_RUNS: usize = 6;
+const CRITICAL_COMPARISON_RUNS: usize = 20;
+
 impl DevexSuite {
     pub(crate) fn minimum_runs(self, variant: &str) -> usize {
         match self {
-            Self::RustIncremental if variant == "application" => 5,
-            Self::RustColdBuild | Self::RustIncremental | Self::RustGate | Self::RustSccache => 20,
-            Self::CargoDevSave if !matches!(variant, "config-only" | "resource-manifest") => 20,
-            _ => 5,
+            Self::RustIncremental if variant == "application" => STANDARD_COMPARISON_RUNS,
+            Self::RustColdBuild | Self::RustIncremental | Self::RustGate | Self::RustSccache => {
+                CRITICAL_COMPARISON_RUNS
+            }
+            Self::CargoDevSave if !matches!(variant, "config-only" | "resource-manifest") => {
+                CRITICAL_COMPARISON_RUNS
+            }
+            _ => STANDARD_COMPARISON_RUNS,
         }
     }
 
