@@ -83,6 +83,7 @@ def record_process_tree(
     receipt = {
         "format_version": 1,
         "kind": "full-stack-process-tree",
+        "runtime_directory": str(directory.resolve(strict=True)),
         "role": role,
         "scope_id": scope,
         "operation_id": operation_id,
@@ -99,6 +100,7 @@ def read_process_tree(directory: Path, role: str, scope: str) -> dict:
     if set(receipt) != {
         "format_version",
         "kind",
+        "runtime_directory",
         "role",
         "scope_id",
         "operation_id",
@@ -110,6 +112,7 @@ def read_process_tree(directory: Path, role: str, scope: str) -> dict:
         for key, value in {
             "format_version": 1,
             "kind": "full-stack-process-tree",
+            "runtime_directory": str(directory.resolve(strict=True)),
             "role": role,
             "scope_id": scope,
         }.items()
@@ -124,6 +127,83 @@ def read_process_tree(directory: Path, role: str, scope: str) -> dict:
     ):
         raise ValueError("进程树收据缺少可信进程组或操作 ID")
     return {**receipt, "supervisor": supervisor, "process": process}
+
+
+def _bound_path(receipt: dict, suffix: str) -> Path:
+    directory = Path(receipt.get("runtime_directory", ""))
+    if not directory.is_absolute() or not directory.is_dir() or directory.is_symlink():
+        raise ValueError("进程树收据没有绑定可信运行目录")
+    return directory / f"{receipt['role']}-tree-{suffix}.json"
+
+
+def _write_control(receipt: dict, mode: str) -> None:
+    if mode not in {"normal", "crash"}:
+        raise ValueError("未知进程树停止模式")
+    directory = Path(receipt["runtime_directory"])
+    if read_process_tree(directory, receipt["role"], receipt["scope_id"]) != receipt:
+        raise ValueError("进程树收据在停止前发生变化")
+    write_receipt(
+        _bound_path(receipt, "control"),
+        {
+            "format_version": 1,
+            "kind": "full-stack-process-tree-control",
+            "operation_id": receipt["operation_id"],
+            "mode": mode,
+            "requested_at_ns": time.time_ns(),
+        },
+    )
+
+
+def _read_control(receipt: dict) -> str | None:
+    path = _bound_path(receipt, "control")
+    if not path.exists():
+        return None
+    control = _read_object(path)
+    if (
+        set(control)
+        != {"format_version", "kind", "operation_id", "mode", "requested_at_ns"}
+        or control.get("format_version") != 1
+        or control.get("kind") != "full-stack-process-tree-control"
+        or control.get("operation_id") != receipt["operation_id"]
+        or control.get("mode") not in {"normal", "crash"}
+        or type(control.get("requested_at_ns")) is not int
+        or control["requested_at_ns"] <= 0
+    ):
+        raise ValueError("进程树停止收据与当前启动操作不匹配")
+    return control["mode"]
+
+
+def _write_result(receipt: dict, exit_code: int, termination: str) -> None:
+    write_receipt(
+        _bound_path(receipt, "result"),
+        {
+            "format_version": 1,
+            "kind": "full-stack-process-tree-result",
+            "operation_id": receipt["operation_id"],
+            "process": receipt["process"],
+            "exit_code": exit_code,
+            "termination": termination,
+        },
+    )
+
+
+def _read_result(receipt: dict) -> dict | None:
+    path = _bound_path(receipt, "result")
+    if not path.exists():
+        return None
+    result = _read_object(path)
+    if (
+        set(result)
+        != {"format_version", "kind", "operation_id", "process", "exit_code", "termination"}
+        or result.get("format_version") != 1
+        or result.get("kind") != "full-stack-process-tree-result"
+        or result.get("operation_id") != receipt["operation_id"]
+        or result.get("process") != receipt["process"]
+        or type(result.get("exit_code")) is not int
+        or result.get("termination") not in {"natural", "normal", "forced"}
+    ):
+        raise ValueError("进程树结果收据与当前启动操作不匹配")
+    return result
 
 
 class _IoCounters(ctypes.Structure):
@@ -229,6 +309,9 @@ def terminate_owned_process_tree(receipt: dict, *, crash: bool = False) -> bool:
     process_alive = assert_identity(actual_process, process)
     if not supervisor_alive and not process_alive:
         return False
+    _write_control(receipt, "crash" if crash else "normal")
+    if not crash and supervisor_alive and _wait_stopped((supervisor, process), 3):
+        return True
     if os.name == "nt":
         if not supervisor_alive:
             raise ValueError("Job 监督进程已退出但产品进程仍在，拒绝降级为单进程回收")
@@ -260,12 +343,43 @@ class SupervisedProcess:
         return self.tree["process"]["pid"]
 
     def poll(self) -> int | None:
+        result = _read_result(self.tree)
+        if result is not None:
+            return result["exit_code"]
         if _expected_alive(self.tree["process"]):
             return None
-        return self.supervisor.poll() if self.supervisor.poll() is not None else 1
+        return self.supervisor.poll()
 
     def wait(self, timeout: float) -> int:
-        return self.supervisor.wait(timeout=timeout)
+        supervisor_code = self.supervisor.wait(timeout=timeout)
+        result = _read_result(self.tree)
+        return result["exit_code"] if result is not None else supervisor_code
+
+
+def supervise_product(process: subprocess.Popen, receipt: dict, grace: float = 1) -> int:
+    requested, forced, deadline = None, False, None
+    while process.poll() is None:
+        mode = _read_control(receipt)
+        if mode is not None and requested is None:
+            requested = mode
+            if mode == "crash":
+                process.kill()
+                forced = True
+            else:
+                # Windows 无可继承的控制台和温和信号通道，Popen.terminate 等价于
+                # TerminateProcess；结果必须如实标为 forced。
+                process.terminate()
+                forced = os.name == "nt"
+                deadline = time.monotonic() + grace
+        if deadline is not None and time.monotonic() >= deadline and process.poll() is None:
+            process.kill()
+            forced = True
+            deadline = None
+        time.sleep(0.02)
+    code = process.wait()
+    termination = "natural" if requested is None else "forced" if forced else "normal"
+    _write_result(receipt, code, termination)
+    return code
 
 
 def launch_supervised_process(
@@ -367,7 +481,7 @@ def _supervise(arguments: list[str]) -> int:
         )["identity"]
         if identity != recorded:
             raise RuntimeError("产品进程在登记进程树期间身份发生变化")
-        record_process_tree(
+        tree = record_process_tree(
             args.runtime_dir,
             args.role,
             args.scope,
@@ -375,7 +489,7 @@ def _supervise(arguments: list[str]) -> int:
             identity,
             args.operation_id,
         )
-        code = process.wait()
+        code = supervise_product(process, tree)
         return code if 0 <= code <= 255 else 1
     finally:
         # membership 必须一直存活到产品退出；Windows 由进程结束关闭 Job 句柄。

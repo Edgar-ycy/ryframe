@@ -172,8 +172,10 @@ class FullStackProcessTreeTests(unittest.TestCase):
         descendants = self._identities(child_pid, leaf_pid)
 
         self.assertTrue(terminate_owned_process_tree(process.tree))
-        process.wait(timeout=5)
+        self.assertNotEqual(process.wait(timeout=5), 17)
         self._wait_for(lambda: all(self._gone(item) for item in descendants))
+        result = json.loads((self.root / "api-tree-result.json").read_text(encoding="utf-8"))
+        self.assertEqual(result["termination"], "forced")
         self.assertEqual(process_identity(foreign.pid), foreign_identity)
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", port))
@@ -181,7 +183,10 @@ class FullStackProcessTreeTests(unittest.TestCase):
     def test_product_parent_exit_closes_the_tree_and_reaps_rapid_descendants(self):
         process, child_pid, leaf_pid, port = self._launch("exit")
         descendants = self._identities(child_pid, leaf_pid)
-        process.wait(timeout=10)
+        self.assertEqual(process.wait(timeout=10), 17)
+        result = json.loads((self.root / "api-tree-result.json").read_text(encoding="utf-8"))
+        self.assertEqual(result["exit_code"], 17)
+        self.assertEqual(result["termination"], "natural")
         self._wait_for(
             lambda: all(self._gone(item) for item in descendants)
         )
@@ -200,6 +205,8 @@ class FullStackProcessTreeTests(unittest.TestCase):
         self.assertTrue(all(process_identity(item["pid"]) == item for item in descendants))
         self.assertTrue(terminate_owned_process_tree(process.tree, crash=True))
         process.wait(timeout=5)
+        control = json.loads((self.root / "api-tree-control.json").read_text(encoding="utf-8"))
+        self.assertEqual(control["mode"], "crash")
 
     def test_launch_failure_does_not_publish_a_process_tree(self):
         log = (self.root / "failure.log").open("ab")
