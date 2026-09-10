@@ -15,6 +15,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from devex_clone_model import local_path
+
 
 def verify_runtime(backend: Path, runtime: Path) -> dict:
     """延迟导入，避免运行收据与导出物理检查形成模块环。"""
@@ -183,6 +185,13 @@ def object_bytes(scope: str, key: str) -> bytes | None:
 
 
 def inspect(operation: str, backend: Path, runtime: Path, job_id: str, receipt_path: Path) -> dict:
+    if operation not in {"snapshot", "verify-deleted"}:
+        raise ValueError("未知导出物理对象验收操作")
+    backend = backend.resolve(strict=True)
+    requested = receipt_path if receipt_path.is_absolute() else backend / receipt_path
+    receipt_path = local_path(backend, str(requested))
+    if operation == "snapshot" and receipt_path.exists():
+        raise FileExistsError(f"导出物理对象收据已存在：{receipt_path}")
     contract = verify_runtime(backend, runtime)
     scope = contract["scope_id"]
     server = database_identity(scope)

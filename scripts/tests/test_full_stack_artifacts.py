@@ -52,7 +52,8 @@ class ArtifactEvidenceTests(unittest.TestCase):
             patch = mock.patch.object(artifacts, name, return_value=value)
             patch.start()
             self.addCleanup(patch.stop)
-        self.receipt = self.root / "receipt.json"
+        (self.root / ".local-tests").mkdir()
+        self.receipt = self.root / ".local-tests/receipt.json"
 
     def inspect(self, operation):
         return artifacts.inspect(operation, self.root, self.root, "123", self.receipt)
@@ -96,6 +97,14 @@ class ArtifactEvidenceTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"APP_OBJECT_STORAGE_ENDPOINT": "https://example.test"}):
             with self.assertRaisesRegex(ValueError, "本机"):
                 artifacts.signed_request("GET", "exports", "scope/key")
+
+    def test_receipt_must_stay_in_the_current_backend_evidence_root(self):
+        with self.assertRaisesRegex(ValueError, r"\.local-tests"):
+            artifacts.inspect(
+                "snapshot", self.root, self.root, "123", self.root / "outside.json"
+            )
+        with self.assertRaisesRegex(ValueError, "未知"):
+            artifacts.inspect("other", self.root, self.root, "123", self.receipt)
 
     def test_mysql_uses_explicit_endpoint_and_tls_without_client_defaults(self):
         executable = self.root / "mysql.exe"
