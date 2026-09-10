@@ -73,13 +73,22 @@ class ReleaseWorkflowTests(unittest.TestCase):
             step["name"]: step
             for step in workflow("extended-ci.yml")["jobs"]["full-stack-e2e"]["steps"]
         }
+        mysql_container = "${{ job.services.mysql.id }}"
         self.assertEqual(
             steps["执行真实浏览器全栈流程"]["run"],
             "corepack pnpm check --stage browser --real --fixture core --server dev",
         )
+        self.assertEqual(
+            steps["执行真实浏览器全栈流程"]["env"]["RYFRAME_CI_MYSQL_CONTAINER_ID"],
+            mysql_container,
+        )
         self.assertIn(
             'corepack pnpm check --stage browser --real --fixture "${{ matrix.fixture }}" --server preview',
             steps["构建并验收生产前端"]["run"],
+        )
+        self.assertEqual(
+            steps["构建并验收生产前端"]["env"]["RYFRAME_CI_MYSQL_CONTAINER_ID"],
+            mysql_container,
         )
 
     def test_every_release_write_requires_final_ci_and_remote_tag_confirmation(self):
