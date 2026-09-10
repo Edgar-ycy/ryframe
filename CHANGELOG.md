@@ -44,6 +44,7 @@
 
 ### Changed
 
+- 资源门禁回放、导出物理对象及 168 小时保留期 fixture 统一进入 `cargo xtask check` 的 CI 或 recovery 分组；xtask 固定两仓来源，保留期写操作要求显式 `--write`，导出收据限制在当前后端 `.local-tests`。
 - `cargo xtask build` 从同一计划分别构建 API、Worker 和前端生产目录，报告三项产物摘要；`--plan` 只展示同一任务图，实际构建前后核对双端工作树指纹并拒绝混合来源产物。
 - 全栈测试通过每次启动私有的长驻监督进程托管 API 与 external Worker；Windows 在产品代码执行前建立并加入私有 Job Object，Unix 使用独立 session 和进程组。收据绑定 scope、启动代次与两级创建身份，区分正常停止和故障注入，保留产品真实退出码，并等待完整进程树及端口回收。
 - 恢复业务证明绑定实际 API/Worker 进程、Cargo 构建产物及前端生产文件，并在浏览器验收结束时再次核验来源。

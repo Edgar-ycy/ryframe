@@ -55,6 +55,10 @@ fresh target 的准备、续作、初始化、复核和只读状态统一从 `ca
 
 产品构建输入与验收工具来源分开记录。产品输入未变时可复核并复用原产物，工具变化仍需运行对应工具测试；正式恢复始终要求精确干净 SHA。Windows 复制阶段会保护已登记的工具和运行二进制，复制中的数据库和对象写入保持串行，对象前像与回读最多四并发。详细参数以各入口的 `--help` 和账本返回的唯一下一动作准，不复制或改写历史 attempt。
 
+真实全栈导出完成后，通过 `cargo xtask check recovery fixture artifact snapshot ...` 读取精确任务、文件登记和物理对象，并把 create-only 收据写入当前后端 `.local-tests`；删除流程完成后使用同一收据执行 `artifact verify-deleted ...`，只有任务、文件元数据和对象都消失才算完成。xtask 固定后端目录，收据路径不能越出其 `.local-tests`。
+
+Device 的 168 小时保留期边界使用 `cargo xtask check recovery fixture retention ...`。先执行只读 `plan-history`，再把返回的 SHA 交给 `historical-expired --plan-sha256 <SHA> --write`；`export-backup --write` 同样要求 Worker 已停止并持有精确租户写入 fence。`inspect` 和 `verify-cleaned` 保持只读且拒绝 `--write`。人工平移只用于可复现的保留期 fixture，不能替代自然经过七天、正式备份时效或恢复演练证据。
+
 ## 导出快照
 
 导出任务保存版本、规范化筛选、请求指纹、授权指纹、`snapshot_at`、`upper_id`、匹配数和已导出数。申请时新增的上界保证队列等待期间新增记录不会混入结果。
