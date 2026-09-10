@@ -10,7 +10,7 @@ from devex_clone_run import target_lifecycle_binding, target_storage_control
 from devex_clone_run_state import binding, load_state
 from devex_clone_seed_source import published_source
 from devex_clone_source_proof import bound_file
-from devex_clone_target_binding import request_binding
+from devex_clone_target_binding import execution_backend, request_binding
 from devex_clone_tools import verify as verify_tools
 from source_fingerprints import artifact_sources
 
@@ -33,8 +33,9 @@ EVIDENCE_FILES = set(EVIDENCE_SEQUENCE)
 def _target_build(backend: Path, target: dict, bridges: list[dict]) -> None:
     if not isinstance(bridges, list):
         raise ValueError("arm 目标构建桥接必须是明确列表")
-    with artifact_sources(backend, bridges):
-        receipt = verify_tools(backend, bound_file(backend, target["maintenance_build"]))
+    execution, _ = execution_backend(backend, target)
+    with artifact_sources(execution, bridges):
+        receipt = verify_tools(execution, bound_file(execution, target["maintenance_build"]))
         source = receipt.get("source")
         if (receipt.get("kind") != "devex-clone-tool-build" or not isinstance(source, dict)
                 or not isinstance(source.get("worktree_fingerprint"), str)):

@@ -160,12 +160,57 @@ class SeedArmTests(unittest.TestCase):
                 patch.object(arm, "verify_tools", return_value=receipt) as verify:
             arm._target_build(self.backend, target, [])
         audited.assert_called_once_with(self.backend, [])
-        verify.assert_called_once()
+        verify.assert_called_once_with(
+            self.backend, Path(target["maintenance_build"]["path"])
+        )
 
         with patch.object(arm, "artifact_sources", return_value=nullcontext()), \
                 patch.object(arm, "verify_tools", return_value={"kind": "devex-clone-tool-build"}), \
                 self.assertRaises(ValueError):
             arm._target_build(self.backend, target, [])
+
+    def test_target_build_uses_device_execution_root_and_its_receipt(self):
+        execution = self.local / "device-backend"
+        (execution / ".git").mkdir(parents=True)
+        (execution / "Cargo.toml").write_text("[workspace]", encoding="utf-8")
+        build = execution / ".local-tests/build/build.json"
+        build.parent.mkdir(parents=True)
+        write_json(build, {"kind": "devex-clone-tool-build"})
+        generated = {
+            "head": "a" * 40,
+            "patch_sha256": "b" * 64,
+            "files": [],
+        }
+        fixture = self.file(
+            "device-fixture",
+            {
+                "format_version": 1,
+                "fixture": "device",
+                "status": "ready",
+                "paths": {
+                    "backend": str(execution),
+                    "frontend": str(self.local / "device-frontend"),
+                },
+                "generated": {"backend": generated, "frontend": {}},
+            },
+        )
+        target = {
+            **self.inputs["target"],
+            "maintenance_build": binding(build),
+            "execution_backend": {"fixture": fixture, "path": str(execution)},
+        }
+        receipt = {
+            "kind": "devex-clone-tool-build",
+            "source": {"worktree_fingerprint": "device-product"},
+        }
+        with (
+            patch("devex_clone_target_binding.snapshot", return_value=(generated, b"")),
+            patch.object(arm, "artifact_sources", return_value=nullcontext()) as audited,
+            patch.object(arm, "verify_tools", return_value=receipt) as verify,
+        ):
+            arm._target_build(self.backend, target, [])
+        audited.assert_called_once_with(execution, [])
+        verify.assert_called_once_with(execution, build)
 
     def test_publish_resumes_only_identical_failed_prefix(self):
         partial = self.directory / "seed-runtime/attempt-0001"
