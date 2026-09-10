@@ -255,6 +255,14 @@ def _registration(backend: Path, workspace: Path) -> tuple[Path, dict, dict]:
     return path, copy.deepcopy(value), copy.deepcopy(private)
 
 
+def _validate_registered_request(backend: Path, descriptor: dict) -> None:
+    """确认固定请求当前仍满足执行前置条件，不把仅有文件绑定当成可续作。"""
+    from devex_clone_target_binding import request_binding
+
+    _, request = _bound_json(backend, descriptor)
+    request_binding(backend, request)
+
+
 def _unchanged(backend: Path, path: Path, value: dict, private: dict,
                storage_state: dict | None = None) -> None:
     before = binding(path)
@@ -465,6 +473,12 @@ def status(backend: Path, workspace: Path) -> dict:
     except (OSError, TypeError, ValueError):
         return report("fresh_target_needs_reconciliation", None, "reconciliation", None,
                       valid=False, reason="registration、私有环境或受控存储绑定无效")
+    try:
+        _validate_registered_request(backend, value["request"])
+    except (OSError, TypeError, ValueError):
+        _unchanged(backend, path, value, private)
+        return report("fresh_target_needs_reconciliation", "registered", "reconciliation", None,
+                      valid=False, reason="固定请求未达到可执行条件", registration=binding(path))
     registration = binding(path)
     storage = _storage_run(backend, value["storage_run"])
     storage_state = binding(storage / "state.json")

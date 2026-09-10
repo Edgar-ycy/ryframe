@@ -42,6 +42,9 @@ class TargetCliTests(unittest.TestCase):
         write_json(self.environment, {"environment": {
             "APP_SCOPE_ID": "fresh-fixture", "RYFRAME_RESET_ADMIN_PASSWORD": "private-secret",
             "TEMP": str(self.temporary), "TMP": str(self.temporary)}})
+        validator = patch.object(target_cli, "_validate_registered_request", return_value=None)
+        self.request_validator = validator.start()
+        self.addCleanup(validator.stop)
 
     def args(self, operation, *, request=None, environment=None, storage_run=None,
              observation=None, write=True):
@@ -379,6 +382,22 @@ class TargetCliTests(unittest.TestCase):
         self.assertTrue(result["resumed"])
         self.assertEqual(result["status"], "fresh_creation_prepared")
         self.assertTrue((self.workspace / "prepared-files.json").is_file())
+
+    def test_status_does_not_offer_resume_when_registered_request_is_not_executable(self):
+        with patch("devex_clone_target.prepare_target", side_effect=OSError("interrupted")), \
+                self.assertRaises(OSError):
+            target_cli.prepare(self.backend, self.workspace, self.request,
+                               self.environment, self.storage_run)
+        before = self.local_files()
+        self.request_validator.side_effect = ValueError("审阅计划尚未就绪")
+        status = target_cli.status(self.backend, self.workspace)
+        self.assertEqual(status["status"], "fresh_target_needs_reconciliation")
+        self.assertEqual(status["last_successful_stage"], "registered")
+        self.assertEqual(status["pending_stage"], "reconciliation")
+        self.assertIsNone(status["next_action"])
+        self.assertFalse(status["evidence_valid"])
+        self.assertEqual(status["blocking_reason"], "固定请求未达到可执行条件")
+        self.assertEqual(self.local_files(), before)
 
     def test_storage_history_accepts_only_published_target_restart_append(self):
         self.prepare()
