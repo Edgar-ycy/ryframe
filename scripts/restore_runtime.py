@@ -25,8 +25,7 @@ from restore_frontend_build import (
     frontend_files,
     frontend_snapshots,
 )
-from restore_identifiers import valid_identifier, valid_scope_identifier
-from restore_runtime_source import resolve_runtime_sources
+from restore_runtime_source import require_bindings, resolve_runtime_sources, runtime_authority
 from restore_runtime_evidence import (
     HEX_40,
     HEX_64,
@@ -44,37 +43,11 @@ from restore_runtime_evidence import (
     reject_json_constant as _reject_json_constant,
     same_path as _same_path,
     strict_object_pairs as _strict_object_pairs,
-    timestamp as _timestamp,
     validate_authority,
     validate_frontend_receipt as _validate_frontend_receipt,
     validate_runtime_receipt as _validate_runtime_receipt,
 )
 from source_inventory import build_source_domains, capture_inventory, frontend_environment_files
-
-
-def require_bindings(bindings: dict) -> tuple[dict, dict]:
-    if not isinstance(bindings, dict) or set(bindings) != {"record", "manifest"}:
-        raise ValueError("恢复 bindings 字段必须精确匹配当前格式")
-    record, manifest = bindings["record"], bindings["manifest"]
-    if not isinstance(record, dict) or not isinstance(manifest, dict) or not isinstance(record.get("plan"), dict):
-        raise ValueError("恢复 bindings 缺少 record、manifest 或 plan")
-    plan = record["plan"]
-    checks = (
-        record.get("status") == "data_verified",
-        plan.get("backup_id") == manifest.get("id"),
-        isinstance(record.get("plan_hash"), str) and bool(HEX_64.fullmatch(record["plan_hash"])),
-        isinstance(manifest.get("source_sha"), str) and bool(HEX_40.fullmatch(manifest["source_sha"])),
-        isinstance(plan.get("frontend_sha"), str) and bool(HEX_40.fullmatch(plan["frontend_sha"])),
-    )
-    if not all(checks):
-        raise ValueError("运行产物必须绑定已完成数据校验的恢复演练")
-    for field in ("id", "backup_id"):
-        if not valid_identifier(plan.get(field)):
-            raise ValueError(f"恢复 bindings 的 {field} 无效")
-    if not valid_scope_identifier(plan.get("scope_id")):
-        raise ValueError("恢复 bindings 的 scope_id 无效")
-    _timestamp(record.get("data_verified_at"), "恢复数据校验时间")
-    return record, manifest
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -138,26 +111,6 @@ def verify_frontend_artifacts(root: Path, receipt: dict, base_url: str) -> None:
     _files, snapshots = _verify_frontend_artifacts(root, receipt, base_url)
     for snapshot in snapshots:
         snapshot.assert_unchanged()
-
-
-def _context(record: dict, manifest: dict, runtime_source: dict, frontend_endpoint: str) -> dict:
-    plan = record["plan"]
-    return validate_authority(
-        {
-            "format_version": 2,
-            "kind": "restore-runtime-authority",
-            "restore_id": plan["id"],
-            "backup_id": plan["backup_id"],
-            "plan_hash": record["plan_hash"],
-            "scope_id": plan["scope_id"],
-            "data_verified_at": record["data_verified_at"],
-            "backup_source_sha": manifest["source_sha"],
-            **runtime_source,
-            "api_endpoint": plan["api_ready_url"],
-            "worker_endpoint": plan["worker_ready_url"],
-            "frontend_endpoint": frontend_endpoint,
-        }
-    )
 
 
 def _probe_api(url: str) -> dict:
@@ -276,7 +229,7 @@ def bind(
         adapter_contract=adapter_contract,
         product_backend=product_backend,
     )
-    authority = _context(record, manifest, resolved["source"], frontend_url)
+    authority = runtime_authority(record, manifest, resolved["source"], frontend_url)
     source = {"backup_source_sha": authority["backup_source_sha"], **resolved["source"]}
     processes = {}
     for role in ("api", "worker"):
@@ -365,7 +318,9 @@ def verify(
         product_backend=product_backend,
     )
     source = {"backup_source_sha": manifest["source_sha"], **resolved["source"]}
-    if authority != _context(record, manifest, resolved["source"], authority["frontend_endpoint"]):
+    if authority != runtime_authority(
+        record, manifest, resolved["source"], authority["frontend_endpoint"]
+    ):
         raise ValueError("stdin 权威恢复上下文与数据校验 bindings 不匹配")
     expected = {
         "restore": {

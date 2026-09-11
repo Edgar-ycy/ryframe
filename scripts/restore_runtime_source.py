@@ -6,12 +6,63 @@ from pathlib import Path
 
 from restore_build import registered_source, repository, verify_build
 from restore_frontend_build import validate_registered_frontend
-from restore_runtime_evidence import JsonDocument
+from restore_identifiers import valid_identifier, valid_scope_identifier
+from restore_runtime_evidence import HEX_40, HEX_64, JsonDocument, timestamp, validate_authority
 from source_inventory import build_source_domains, capture_inventory
 
 
 def _head(inventory: dict) -> str:
     return inventory["source"]["snapshot"]["head"]
+
+
+def require_bindings(bindings: dict) -> tuple[dict, dict]:
+    if not isinstance(bindings, dict) or set(bindings) != {"record", "manifest"}:
+        raise ValueError("恢复 bindings 字段必须精确匹配当前格式")
+    record, manifest = bindings["record"], bindings["manifest"]
+    if not isinstance(record, dict) or not isinstance(manifest, dict) or not isinstance(record.get("plan"), dict):
+        raise ValueError("恢复 bindings 缺少 record、manifest 或 plan")
+    plan = record["plan"]
+    checks = (
+        record.get("status") == "data_verified",
+        plan.get("backup_id") == manifest.get("id"),
+        isinstance(record.get("plan_hash"), str) and bool(HEX_64.fullmatch(record["plan_hash"])),
+        isinstance(manifest.get("source_sha"), str) and bool(HEX_40.fullmatch(manifest["source_sha"])),
+        isinstance(plan.get("frontend_sha"), str) and bool(HEX_40.fullmatch(plan["frontend_sha"])),
+    )
+    if not all(checks):
+        raise ValueError("运行产物必须绑定已完成数据校验的恢复演练")
+    for field in ("id", "backup_id"):
+        if not valid_identifier(plan.get(field)):
+            raise ValueError(f"恢复 bindings 的 {field} 无效")
+    if not valid_scope_identifier(plan.get("scope_id")):
+        raise ValueError("恢复 bindings 的 scope_id 无效")
+    timestamp(record.get("data_verified_at"), "恢复数据校验时间")
+    return record, manifest
+
+
+def runtime_authority(
+    record: dict,
+    manifest: dict,
+    runtime_source: dict,
+    frontend_endpoint: str,
+) -> dict:
+    plan = record["plan"]
+    return validate_authority(
+        {
+            "format_version": 2,
+            "kind": "restore-runtime-authority",
+            "restore_id": plan["id"],
+            "backup_id": plan["backup_id"],
+            "plan_hash": record["plan_hash"],
+            "scope_id": plan["scope_id"],
+            "data_verified_at": record["data_verified_at"],
+            "backup_source_sha": manifest["source_sha"],
+            **runtime_source,
+            "api_endpoint": plan["api_ready_url"],
+            "worker_endpoint": plan["worker_ready_url"],
+            "frontend_endpoint": frontend_endpoint,
+        }
+    )
 
 
 def _backend_sources(
