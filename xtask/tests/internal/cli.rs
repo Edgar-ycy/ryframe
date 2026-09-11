@@ -223,6 +223,10 @@ fn parses_recovery_check_groups() {
             ))))
         );
     }
+}
+
+#[test]
+fn parses_recovery_dataset_and_clone_groups() {
     assert_eq!(
         parse_command(&[
             "check",
