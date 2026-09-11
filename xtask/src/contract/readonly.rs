@@ -4,7 +4,11 @@ use std::{
     process,
 };
 
-use crate::{Result, process::run as run_process, workspace::root_dir};
+use crate::{
+    Result,
+    process::{command_output, run as run_process},
+    workspace::root_dir,
+};
 
 use super::{
     candidate::{
@@ -12,9 +16,11 @@ use super::{
         prepare_staging_frontend, read_optional, snapshot_managed_files, snapshot_staging_inputs,
         verify_input_snapshots,
     },
-    model::{CANDIDATE_MARKER, Snapshot, StagingFrontend, nonce, sha256_hex},
+    formal::github_repository_identifier,
+    model::{CANDIDATE_MARKER, Snapshot, StagingFrontend, nonce},
     ownership::contract_managed_paths,
     recovery::reject_contract_recovery_artifacts,
+    source::verify_contract_source,
 };
 
 pub(super) fn check_current(frontend_dir: &Path) -> Result<()> {
@@ -68,6 +74,14 @@ where
             )
         })?;
         let candidate = canonical_contract(&exported)?;
+        validate_formal_frontend(frontend_dir, &frontend_before, &candidate)?;
+        compare_snapshot(
+            &backend_openapi,
+            &candidate,
+            "后端提交的 openapi/openapi.json",
+        )?;
+        fs::write(&export_dir.output, &candidate)?;
+        verify_current_source(backend_dir, frontend_dir, &export_dir.output)?;
         verify_readonly_candidate(
             frontend_dir,
             &backend_openapi,
@@ -93,12 +107,6 @@ fn verify_readonly_candidate<G>(
 where
     G: FnOnce(&Path) -> Result<()>,
 {
-    validate_formal_frontend(frontend_dir, frontend_before, candidate)?;
-    compare_snapshot(
-        backend_openapi,
-        candidate,
-        "后端提交的 openapi/openapi.json",
-    )?;
     let staging = prepare_staging_frontend(frontend_dir, frontend_before, inputs)?;
     let result = (|| {
         super::atomic::write_atomically(&staging.path.join("openapi/openapi.json"), candidate)?;
@@ -161,52 +169,20 @@ fn validate_formal_frontend(
         Some(candidate),
         "前端正式 openapi/openapi.json",
     )?;
-    validate_formal_metadata(
-        snapshot_content(snapshots, &frontend_dir.join("openapi/source.json"))?
-            .as_deref()
-            .ok_or("前端正式契约缺少 openapi/source.json")?,
-        candidate,
-    )
+    Ok(())
 }
 
-fn validate_formal_metadata(source: &[u8], candidate: &[u8]) -> Result<()> {
-    let metadata: serde_json::Value = serde_json::from_slice(source)
-        .map_err(|error| format!("前端正式契约来源元数据不是有效 JSON：{error}"))?;
-    let document: serde_json::Value = serde_json::from_slice(candidate)?;
-    let valid_commit = metadata
-        .get("backend_commit")
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(|value| {
-            value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
-        });
-    let valid_repository = metadata
-        .get("backend_repository")
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(|value| {
-            let mut segments = value.split('/');
-            segments.next().is_some_and(|part| !part.is_empty())
-                && segments.next().is_some_and(|part| !part.is_empty())
-                && segments.next().is_none()
-        });
-    if metadata
-        .get("schema_version")
-        .and_then(serde_json::Value::as_u64)
-        != Some(1)
-        || metadata
-            .get("openapi_path")
-            .and_then(serde_json::Value::as_str)
-            != Some("openapi/openapi.json")
-        || metadata
-            .get("openapi_version")
-            .and_then(serde_json::Value::as_str)
-            != document.get("openapi").and_then(serde_json::Value::as_str)
-        || metadata.get("sha256").and_then(serde_json::Value::as_str)
-            != Some(sha256_hex(candidate).as_str())
-        || !valid_commit
-        || !valid_repository
-    {
-        return Err("前端 openapi/source.json 不是当前正式契约的有效来源元数据".into());
-    }
+fn verify_current_source(backend: &Path, frontend: &Path, candidate: &Path) -> Result<()> {
+    let head = command_output(backend, "git", &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    let repository = github_repository_identifier(env!("CARGO_PKG_REPOSITORY"))?;
+    verify_contract_source(
+        backend,
+        head.trim(),
+        &repository,
+        &frontend.join("openapi/source.json"),
+        &frontend.join("openapi/openapi.json"),
+        candidate,
+    )?;
     Ok(())
 }
 
