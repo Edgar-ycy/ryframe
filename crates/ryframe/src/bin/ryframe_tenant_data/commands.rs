@@ -1,4 +1,7 @@
-use super::{args::Command, context::Context};
+use super::{
+    args::{Command, InventoryTime},
+    context::Context,
+};
 use chrono::{DateTime, Utc};
 use ryframe_application::ports::backup::*;
 use ryframe_config::AppConfig;
@@ -18,8 +21,8 @@ pub async fn execute(config: &AppConfig, context: &Context, command: Command) ->
         Command::Inventory {
             output,
             source_sha,
-            quiesced_at,
-        } => inventory(config, context, &output, source_sha, quiesced_at).await,
+            observation,
+        } => inventory(config, context, &output, source_sha, observation).await,
         Command::Register { manifest, .. } => {
             let manifest: BackupManifest = read_json(&manifest)?;
             if manifest.scope_id != config.scope_id.as_str()
@@ -68,7 +71,8 @@ pub async fn status(config: &AppConfig, repository: &dyn BackupRepository) -> Ap
 struct Inventory {
     scope_id: String,
     source_sha: String,
-    quiesced_at: DateTime<Utc>,
+    #[serde(flatten)]
+    observation: InventoryTime<DateTime<Utc>>,
     captured_at: DateTime<Utc>,
     control_schema_fingerprint: String,
     tenant_schema_fingerprint: String,
@@ -81,7 +85,7 @@ async fn inventory(
     context: &Context,
     output: &Path,
     source_sha: String,
-    quiesced: String,
+    observation: InventoryTime<String>,
 ) -> AppResult<()> {
     if source_sha.len() != 40
         || !source_sha
@@ -90,19 +94,25 @@ async fn inventory(
     {
         return Err(AppError::Validation("source-sha 必须是精确源码 SHA".into()));
     }
-    let quiesced_at = DateTime::parse_from_rfc3339(&quiesced)
-        .map_err(|_| AppError::Validation("quiesced-at 必须是 RFC3339".into()))?
+    let value = match &observation {
+        InventoryTime::QuiescedAt(value) | InventoryTime::ObservedAt(value) => value,
+    };
+    let started_at = DateTime::parse_from_rfc3339(value)
+        .map_err(|_| AppError::Validation("库存观察时间必须是 RFC3339".into()))?
         .with_timezone(&Utc);
     let captured_at = context.repository.database_now().await?;
-    if quiesced_at > captured_at {
+    if started_at > captured_at {
         return Err(AppError::Validation(
-            "暂停写入时间不能在采集时间之后".into(),
+            "库存观察开始时间不能在采集时间之后".into(),
         ));
     }
     let inventory = Inventory {
         scope_id: config.scope_id.as_str().into(),
         source_sha,
-        quiesced_at,
+        observation: match observation {
+            InventoryTime::QuiescedAt(_) => InventoryTime::QuiescedAt(started_at),
+            InventoryTime::ObservedAt(_) => InventoryTime::ObservedAt(started_at),
+        },
         captured_at,
         control_schema_fingerprint: ryframe_db::migration::schema_fingerprint(),
         tenant_schema_fingerprint: ryframe_tenant_db::migration::tenant_data_schema_fingerprint()
@@ -111,7 +121,9 @@ async fn inventory(
         objects: context.objects.snapshot().await?,
     };
     write_inventory(output, &inventory)?;
-    println!("已写入只读数据清单；外部备份完成后需补齐 ID、完成时间、保留期和文件校验信息再登记。");
+    println!(
+        "已写入完整只读库存；observed_at 不证明停止或备份资格，正式备份须另行验证 quiesced_at 与全部生产者。"
+    );
     Ok(())
 }
 

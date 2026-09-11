@@ -81,15 +81,16 @@ def cli_executable(maintenance: dict, role: str) -> str:
     return artifact["executable"]
 
 
-def validate_inventory(value: dict, request: dict, models: tuple, source_sha: str, quiesced_at: str) -> None:
-    exact(value, {"scope_id", "source_sha", "quiesced_at", "captured_at", "control_schema_fingerprint",
+def validate_inventory(value: dict, request: dict, models: tuple, source_sha: str, observation_at: str, *, observed: bool = False) -> None:
+    time_field = "observed_at" if observed else "quiesced_at"
+    exact(value, {"scope_id", "source_sha", time_field, "captured_at", "control_schema_fingerprint",
                   "tenant_schema_fingerprint", "databases", "objects"})
     if (value["scope_id"] != request["source"]["scope_id"] or value["source_sha"] != source_sha
-            or dt.datetime.fromisoformat(value["quiesced_at"].replace("Z", "+00:00")) != dt.datetime.fromisoformat(quiesced_at)):
-        raise ValueError("实际 inventory 与源 scope、构建或停止观察不同")
+            or dt.datetime.fromisoformat(value[time_field].replace("Z", "+00:00")) != dt.datetime.fromisoformat(observation_at)):
+        raise ValueError("实际 inventory 与源 scope、构建或明确观察类型不同")
     captured = dt.datetime.fromisoformat(value["captured_at"].replace("Z", "+00:00"))
-    if captured.tzinfo is None or not dt.datetime.fromisoformat(quiesced_at) <= captured <= dt.datetime.now(dt.timezone.utc):
-        raise ValueError("实际 inventory 采集时间与停止观察顺序不符")
+    if captured.tzinfo is None or not dt.datetime.fromisoformat(observation_at) <= captured <= dt.datetime.now(dt.timezone.utc):
+        raise ValueError("实际 inventory 采集时间与观察顺序不符")
     schema_fingerprints(value)
     declared = {db["key"]: db for db in request["source"]["databases"]}
     databases = value["databases"]
@@ -138,14 +139,14 @@ def validate_inventory(value: dict, request: dict, models: tuple, source_sha: st
 
 
 def capture_inventory(tools: ExternalTools, backend: Path, request: dict, generation: dict,
-                      models: tuple, phase: str, quiesced_at: str) -> dict:
+                      models: tuple, phase: str, observation_at: str, *, observed: bool = False) -> dict:
     filename = tools.work / f"inventory-{phase}.json"
     executable = cli_executable(generation["maintenance"], "tenant-data")
     sha = generation["source"]["head"]
     run_cli(tools, "inventory-" + phase, [executable, "backup-inventory", "--output", str(filename),
-            "--source-sha", sha, "--quiesced-at", quiesced_at], backend)
+            "--source-sha", sha, "--observed-at" if observed else "--quiesced-at", observation_at], backend)
     value = read_json(filename)
-    validate_inventory(value, request, models, sha, quiesced_at)
+    validate_inventory(value, request, models, sha, observation_at, observed=observed)
     return value
 
 

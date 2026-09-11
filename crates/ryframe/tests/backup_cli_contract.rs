@@ -3,7 +3,7 @@ mod args;
 #[path = "../src/bin/ryframe_tenant_data/proof.rs"]
 mod proof;
 
-use args::{Command, parse};
+use args::{Command, InventoryTime, parse};
 
 fn arguments(value: &str) -> Result<Command, String> {
     parse(value.split_whitespace().map(String::from))
@@ -58,4 +58,42 @@ fn target_inventory_requires_one_explicit_target_and_output() {
     ] {
         assert!(arguments(command).is_err(), "{command}");
     }
+}
+
+#[test]
+fn inventory_requires_one_observation_kind_and_serializes_only_that_fact() {
+    #[derive(serde::Serialize)]
+    struct Receipt {
+        #[serde(flatten)]
+        observation: InventoryTime<String>,
+    }
+    let base = "backup-inventory --output inventory.json --source-sha head";
+    for (flag, observation, field) in [
+        (
+            "--quiesced-at",
+            InventoryTime::QuiescedAt("time".into()),
+            "quiesced_at",
+        ),
+        (
+            "--observed-at",
+            InventoryTime::ObservedAt("time".into()),
+            "observed_at",
+        ),
+    ] {
+        assert_eq!(
+            arguments(&format!("{base} {flag} time")).unwrap(),
+            Command::Inventory {
+                output: "inventory.json".into(),
+                source_sha: "head".into(),
+                observation: observation.clone(),
+            }
+        );
+        assert_eq!(
+            serde_json::to_value(Receipt { observation }).unwrap(),
+            serde_json::json!({field: "time"})
+        );
+        assert!(arguments(&format!("{base} {flag} time {flag} other")).is_err());
+    }
+    assert!(arguments(base).is_err());
+    assert!(arguments(&format!("{base} --quiesced-at time --observed-at time")).is_err());
 }

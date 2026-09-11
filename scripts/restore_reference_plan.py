@@ -121,6 +121,8 @@ def validate_plan(plan: dict, backend: Path) -> None:
 
 
 def validate_inventory(plan: dict, inventory: dict) -> None:
+    if "observed_at" in inventory or not isinstance(inventory.get("quiesced_at"), str):
+        raise ValueError("正式备份必须使用停机库存，不能采用运行中观察库存")
     if (identifier(inventory["id"]) != plan["id"]
             or scope_identifier(inventory["scope_id"]) != plan["source"]["scope_id"]):
         raise ValueError("备份清单 ID 或 scope 与资源计划不一致")
