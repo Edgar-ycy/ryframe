@@ -11,7 +11,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-PROCESS_ROLES = frozenset({"api", "worker", "rustfs"})
+PROCESS_ROLES = frozenset({"api", "frontend", "worker", "rustfs"})
 
 
 def _linux_identity(pid: int) -> dict | None:

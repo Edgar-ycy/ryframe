@@ -42,12 +42,12 @@ class OwnedProcessTests(unittest.TestCase):
         self.assertFalse(terminate_owned_process(identity))
 
     def test_process_receipt_binds_role_scope_and_actual_binary(self):
-        receipt = record_process(self.root, "worker", self.process.pid, sys.executable, "owned-test")
-        self.assertEqual(read_process(self.root, "worker", "owned-test"), receipt["identity"])
+        receipt = record_process(self.root, "frontend", self.process.pid, sys.executable, "owned-test")
+        self.assertEqual(read_process(self.root, "frontend", "owned-test"), receipt["identity"])
         with self.assertRaisesRegex(ValueError, "scope 不匹配"):
-            read_process(self.root, "worker", "other-test")
+            read_process(self.root, "frontend", "other-test")
         with self.assertRaisesRegex(ValueError, "可执行文件不一致"):
-            record_process(self.root, "worker", self.process.pid, str(self.root / "unknown.exe"), "owned-test")
+            record_process(self.root, "frontend", self.process.pid, str(self.root / "unknown.exe"), "owned-test")
 
     def test_system_pid_values_are_rejected(self):
         for pid in (-1, 0, 1, True, "42"):
