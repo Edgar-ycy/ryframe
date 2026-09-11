@@ -10,6 +10,7 @@ from restore_build import repository
 from restore_reference_backup import bound_document, validate_backup_result
 from restore_reference_target import FIELDS as TARGET_FIELDS, verify_target_plan
 from restore_runtime import validate_launch, verify_live_generation
+from restore_runtime_registration import registration_binding
 from restore_runtime_evidence import (
     HEX_40,
     HEX_64,
@@ -86,6 +87,8 @@ PROOF_FIELDS = {
     "runtime_receipt_sha256",
     "tests_receipt_sha256",
     "target_plan_sha256",
+    "source_generation_sha256",
+    "dataset_lineage_sha256",
     "started_at",
     "completed_at",
     "scenarios",
@@ -155,7 +158,7 @@ def _authority(value: object) -> tuple[dict, dict, dict, dict]:
     return value, record, backup, tools
 
 
-def _verified_target(backend: Path, path: Path) -> tuple[object, dict, dict, dict]:
+def _verified_target(backend: Path, path: Path, runtime: dict) -> tuple[object, dict, dict, dict, dict]:
     document = read_json_document(path)
     value = exact_fields(document.value, TARGET_FIELDS, "正式恢复目标计划")
     backup = bound_document(backend, value["backup_receipt"])
@@ -167,14 +170,40 @@ def _verified_target(backend: Path, path: Path) -> tuple[object, dict, dict, dic
     result = receipt["result"]
     validate_backup_result(result)
     manifest = bound_document(backend, result["manifest"])
-    reference = result["reference_plan"]
+    reference = _runtime_reference(backend, runtime, document)
     verified = verify_target_plan(backend, reference, document.path)
     if verified != value:
         raise ValueError("正式恢复目标计划复核结果不同")
+    dataset = _dataset_authority(backend, result)
     document.assert_unchanged()
     backup.assert_unchanged()
     manifest.assert_unchanged()
-    return document, verified, reference, manifest.value
+    return document, verified, reference, manifest.value, dataset
+
+
+def _dataset_authority(backend: Path, backup: dict) -> dict:
+    """从已完整核验的目标备份链提取唯一数据来源，不接受浏览器指定的独立血缘。"""
+    from devex_clone_seed_generation import RESULT_FIELDS, START_FIELDS
+    from restore_source_runtime import RECEIPT_FIELDS
+
+    stop = bound_document(backend, backup["source_generation"])
+    value = exact_fields(stop.value, RESULT_FIELDS, "备份来源停止代次")
+    start = bound_document(backend, value["start"])
+    runtime = bound_document(backend, value["source_runtime"])
+    lineage = bound_document(backend, value["dataset_lineage"])
+    running = exact_fields(start.value, START_FIELDS, "备份来源启动代次")
+    verified = exact_fields(runtime.value, RECEIPT_FIELDS, "备份来源运行验收")
+    if (
+        backup["source_export"]["source_generation"] != _descriptor(stop)
+        or value["status"] != "seed_source_generation_published"
+        or running["status"] != "seed_source_generation_running"
+        or verified["source_generation"] != _descriptor(start)
+        or any(item["dataset_lineage"] != _descriptor(lineage) for item in (value, running, verified))
+    ):
+        raise ValueError("备份停止、启动、运行验收与数据血缘不是同一不可变来源")
+    for document in (stop, start, runtime, lineage):
+        document.assert_unchanged()
+    return {"source_generation": _descriptor(stop), "dataset_lineage": _descriptor(lineage)}
 
 
 def _adapter(execution: dict) -> str | None:
@@ -229,12 +258,18 @@ def _runtime_authority(record: dict, backup: dict, target: dict, reference: dict
     }
 
 
-def _same_target(runtime: dict, target_document) -> None:
+def _runtime_reference(backend: Path, runtime: dict, target_document) -> dict:
     launch_document = read_json_document(Path(runtime["paths"]["launch"]))
     launch = validate_launch(launch_document.value, launch_document.path.parent)
-    if launch["request"]["registration"]["target_plan"] != _descriptor(target_document):
+    registered = launch["request"]["registration"]
+    if registered["target_plan"] != _descriptor(target_document):
         raise ValueError("恢复运行代次没有绑定显式目标计划")
+    registration = bound_document(backend, registered["registration"])
+    _value, _facts, documents = registration_binding(backend, registration.path, _descriptor(target_document))
+    reference = documents[1].value
+    registration.assert_unchanged()
     launch_document.assert_unchanged()
+    return reference
 
 
 def _clean_source(root: Path, expected: str, label: str) -> Path:
@@ -308,6 +343,7 @@ def _validate_evidence(
     target_document,
     runner: Path,
     verifier: Path,
+    dataset_authority: dict,
 ) -> dict:
     proof = exact_fields(proof_document.value, PROOF_FIELDS, "恢复业务证明")
     runner_sha, verifier_sha = proof["runner_sha"], proof["verifier_sha"]
@@ -322,6 +358,8 @@ def _validate_evidence(
             "restore",
             "runtime",
             "target_plan",
+            "source_generation",
+            "dataset_lineage",
             "sources",
             "frontend_url",
             "started_at",
@@ -333,6 +371,8 @@ def _validate_evidence(
     _validate_runs(receipt["runs"])
     runtime_binding = _receipt_descriptor(receipt["runtime"], "恢复测试运行收据描述")
     target_binding = _receipt_descriptor(receipt["target_plan"], "恢复测试目标计划描述")
+    dataset = {key: _receipt_descriptor(receipt[key], f"恢复测试来源 {key}")
+               for key in ("source_generation", "dataset_lineage")}
     expected_restore = {
         "id": record["plan"]["id"],
         "plan_hash": record["plan_hash"],
@@ -345,6 +385,7 @@ def _validate_evidence(
         or receipt["restore"] != expected_restore
         or runtime_binding != _descriptor(runtime_document)
         or target_binding != _descriptor(target_document)
+        or dataset != dataset_authority
         or receipt["sources"] != expected_source
         or receipt["frontend_url"] != authority["frontend_endpoint"]
     ):
@@ -366,6 +407,7 @@ def _validate_evidence(
         "runtime_receipt_sha256": runtime_document.sha256,
         "tests_receipt_sha256": tests_document.sha256,
         "target_plan_sha256": target_document.sha256,
+        **{key + "_sha256": descriptor["sha256"] for key, descriptor in dataset_authority.items()},
         "started_at": receipt["started_at"],
         "completed_at": receipt["completed_at"],
         "scenarios": [{"name": name, "succeeded": True} for name in REQUIRED_SCENARIOS],
@@ -394,11 +436,10 @@ def verify_business_proof(
     proof = read_json_document(proof_path)
     tests = read_json_document(tests_path)
     runtime = read_json_document(runtime_path)
-    target, target_value, reference, target_manifest = _verified_target(backend, target_path)
+    runtime_value = validate_runtime_receipt(runtime.value)
+    target, target_value, reference, target_manifest, dataset = _verified_target(backend, target_path, runtime_value)
     if target_manifest != backup:
         raise ValueError("正式恢复目标引用的备份清单与登记库权威备份不同")
-    runtime_value = validate_runtime_receipt(runtime.value)
-    _same_target(runtime_value, target)
     runtime_authority = _runtime_authority(record, backup, target_value, reference)
     runner_source = exact_fields(tools["runner"], {"root", "sha"}, "权威测试 runner")
     verifier_source = exact_fields(tools["verifier"], {"root", "sha"}, "权威恢复核验器")
@@ -428,7 +469,7 @@ def verify_business_proof(
     if result["runtime_receipt_sha256"] != runtime.sha256:
         raise ValueError("恢复运行主动核验没有返回当前收据摘要")
     verified = _validate_evidence(
-        record, runtime_authority, proof, tests, runtime, target, runner, verifier
+        record, runtime_authority, proof, tests, runtime, target, runner, verifier, dataset
     )
     for document in (proof, tests, runtime, target):
         document.assert_unchanged()

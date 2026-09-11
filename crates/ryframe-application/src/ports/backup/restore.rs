@@ -174,6 +174,8 @@ pub struct RestoreBusinessProof {
     pub runtime_receipt_sha256: String,
     pub tests_receipt_sha256: String,
     pub target_plan_sha256: String,
+    pub source_generation_sha256: String,
+    pub dataset_lineage_sha256: String,
     pub started_at: DateTime<Utc>,
     pub completed_at: DateTime<Utc>,
     pub scenarios: Vec<RestoreScenarioResult>,

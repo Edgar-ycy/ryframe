@@ -70,6 +70,11 @@ class RestoreBusinessProofTests(unittest.TestCase):
             "worker_endpoint": "http://127.0.0.1:19091/readyz",
             "frontend_endpoint": "http://127.0.0.1:14174",
         }
+        self.dataset = {}
+        for key in ("source_generation", "dataset_lineage"):
+            path = self.verifier / ".local-tests" / (key + ".json")
+            self.write(path, {key: True})
+            self.dataset[key] = proof._descriptor(read_json_document(path))
         self.runner_sha = "e" * 40
         self.verifier_sha = "f" * 40
         self.manifest = {
@@ -107,6 +112,7 @@ class RestoreBusinessProofTests(unittest.TestCase):
             "restore": {"id": "drill", "plan_hash": "a" * 64, "scope_id": "restore-proof"},
             "runtime": proof._descriptor(runtime),
             "target_plan": proof._descriptor(target),
+            **self.dataset,
             "sources": sources,
             "frontend_url": self.authority["frontend_endpoint"],
             "started_at": "2026-09-11T00:03:00Z",
@@ -139,6 +145,7 @@ class RestoreBusinessProofTests(unittest.TestCase):
             "runtime_receipt_sha256": runtime.sha256,
             "tests_receipt_sha256": tests_document.sha256,
             "target_plan_sha256": target.sha256,
+            **{key + "_sha256": value["sha256"] for key, value in self.dataset.items()},
             "started_at": tests["started_at"],
             "completed_at": tests["completed_at"],
             "scenarios": [
@@ -164,6 +171,7 @@ class RestoreBusinessProofTests(unittest.TestCase):
             *documents,
             self.runner,
             self.verifier,
+            self.dataset,
         )
 
     def test_exact_authoritative_evidence_is_accepted(self):
@@ -199,6 +207,9 @@ class RestoreBusinessProofTests(unittest.TestCase):
             ("format_version", True),
             ("runtime", {"path": str(runtime.path), "bytes": 1, "sha256": "9" * 64}),
             ("sources", {**tests.value["sources"], "frontend_sha": "9" * 40}),
+            ("source_generation", {**self.dataset["source_generation"], "sha256": "9" * 64}),
+            ("dataset_lineage", {**self.dataset["dataset_lineage"], "path": str(self.verifier / "other.json")}),
+            ("dataset_lineage", {**self.dataset["dataset_lineage"], "extra": True}),
         ):
             changed = copy.deepcopy(tests.value)
             changed[field] = value
@@ -214,6 +225,7 @@ class RestoreBusinessProofTests(unittest.TestCase):
                     target,
                     self.runner,
                     self.verifier,
+                    self.dataset,
                 )
             self.write(self.tests_path, tests.value)
 
@@ -277,10 +289,10 @@ class RestoreBusinessProofTests(unittest.TestCase):
         with patch.object(proof, "repository", side_effect=lambda path, _label: path), patch.object(
             proof,
             "_verified_target",
-            return_value=(target, target_value, reference, target_manifest or self.manifest),
+            return_value=(target, target_value, reference, target_manifest or self.manifest, self.dataset),
         ), patch.object(proof, "validate_runtime_receipt", return_value=runtime_value), patch.object(
-            proof, "_same_target"
-        ), patch.object(proof, "_clean_source", side_effect=lambda path, _sha, _label: path), patch.object(
+            proof, "_clean_source", side_effect=lambda path, _sha, _label: path
+        ), patch.object(
             proof, "verify_live_generation", return_value=verified_runtime
         ) as live:
             result = proof.verify_business_proof(

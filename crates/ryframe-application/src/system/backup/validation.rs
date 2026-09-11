@@ -324,7 +324,9 @@ pub fn validate_restore_proof(
             && !proof.frontend_url.trim().is_empty()
             && hex(&proof.runtime_receipt_sha256, 64)
             && hex(&proof.tests_receipt_sha256, 64)
-            && hex(&proof.target_plan_sha256, 64),
+            && hex(&proof.target_plan_sha256, 64)
+            && hex(&proof.source_generation_sha256, 64)
+            && hex(&proof.dataset_lineage_sha256, 64),
         "业务验收证据与当前演练、scope 或源码不一致",
     )?;
     require(

@@ -194,6 +194,8 @@ fn proof() -> RestoreBusinessProof {
         runtime_receipt_sha256: "d".repeat(64),
         tests_receipt_sha256: "f".repeat(64),
         target_plan_sha256: "e".repeat(64),
+        source_generation_sha256: "a".repeat(64),
+        dataset_lineage_sha256: "b".repeat(64),
         started_at: timestamp,
         completed_at: timestamp,
         scenarios: Vec::new(),
