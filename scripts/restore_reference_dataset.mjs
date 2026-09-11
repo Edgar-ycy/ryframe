@@ -353,6 +353,7 @@ export async function prepareDataset(plan, backend, planPath) {
 
 async function main() {
   const args = datasetArguments(process.argv.slice(2))
+  const side = args.get('--side')
   const plan = JSON.parse(await readFile(args.get('--plan'), 'utf8'))
   const backend = path.resolve(args.get('--backend-dir'))
   const originalPreflight = args.has('--preflight')
@@ -361,7 +362,6 @@ async function main() {
   if (originalPreflight) {
     verifyDatasetPreflight(plan, JSON.parse(originalPreflight.toString('utf8')))
   } else {
-    const side = args.get('--side')
     const verified = JSON.parse(
       execFileSync(
         process.env.RYFRAME_PYTHON || 'python',
