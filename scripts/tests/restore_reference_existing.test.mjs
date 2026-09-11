@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import path from 'node:path'
+import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import {
   datasetArguments,
@@ -12,6 +14,7 @@ import {
   sourceExistingArguments,
   validateSourceLineage,
   verifySourceExisting,
+  waitForSourceStart,
 } from '../restore_source_existing.mjs'
 import { Session } from '../devex/request.mjs'
 import { hash } from '../devex/config.mjs'
@@ -217,22 +220,70 @@ test('数据帮助使用同一参数表，未知、重复和缺值仍失败关�
 })
 
 test('派生来源参数只接受绝对路径、唯一参数及显式写入授权', () => {
-  const lineage = fileURLToPath(new URL('lineage.json', import.meta.url))
+  const generation = fileURLToPath(new URL('g0001/', import.meta.url))
+  const lineage = path.join(generation, 'dataset-lineage.json')
+  const runDirectory = path.join(generation, 'verification')
+  const operationId = 'd'.repeat(32)
+  const sourceGenerationSha256 = 'e'.repeat(64)
+  const valid = [
+    '--backend-dir',
+    backend,
+    '--lineage',
+    lineage,
+    '--run-dir',
+    runDirectory,
+    '--operation-id',
+    operationId,
+    '--source-generation-sha256',
+    sourceGenerationSha256,
+    '--write',
+  ]
   assert.deepEqual(
-    sourceExistingArguments(['--backend-dir', backend, '--lineage', lineage, '--write']),
+    sourceExistingArguments(valid),
     {
       backend: fileURLToPath(new URL('../../', import.meta.url)).replace(/[\\/]$/, ''),
       lineagePath: lineage,
+      runDirectory,
+      operationId,
+      sourceGenerationSha256,
     },
   )
   for (const args of [
-    ['--backend-dir', backend, '--lineage', lineage],
-    ['--backend-dir', '.', '--lineage', lineage, '--write'],
-    ['--backend-dir', backend, '--lineage', 'lineage.json', '--write'],
-    ['--backend-dir', backend, '--lineage', lineage, '--lineage', lineage, '--write'],
-    ['--backend-dir', backend, '--lineage', lineage, '--unknown', 'x', '--write'],
+    valid.filter((value) => value !== '--write'),
+    valid.with(1, '.'),
+    valid.with(3, 'lineage.json'),
+    valid.with(5, backend),
+    valid.with(7, 'not-an-operation'),
+    valid.with(9, 'bad-sha'),
+    [...valid, '--lineage', lineage],
+    [...valid, '--unknown', 'x'],
   ])
     assert.throws(() => sourceExistingArguments(args))
+})
+
+test('派生来源在任何服务请求前严格绑定生产者授权', async () => {
+  const generation = fileURLToPath(new URL('g0001/', import.meta.url))
+  const args = {
+    runDirectory: path.join(generation, 'verification'),
+    operationId: 'd'.repeat(32),
+    sourceGenerationSha256: 'e'.repeat(64),
+  }
+  const authorization = {
+    operation: 'start',
+    run_dir: args.runDirectory,
+    operation_id: args.operationId,
+    source_generation_sha256: args.sourceGenerationSha256,
+  }
+  await waitForSourceStart(args, Readable.from(`${JSON.stringify(authorization)}\n`))
+  for (const invalid of [
+    '',
+    '{}\n',
+    `${JSON.stringify({ ...authorization, operation_id: 'f'.repeat(32) })}\n`,
+    `${JSON.stringify({ ...authorization, extra: true })}\n`,
+    `${JSON.stringify(authorization)}\n${JSON.stringify(authorization)}\n`,
+    `${'x'.repeat(4097)}\n`,
+  ])
+    await assert.rejects(waitForSourceStart(args, Readable.from(invalid)))
 })
 
 test('派生来源使用血缘中的原租户身份和当前端点完成全量业务读取', async (t) => {

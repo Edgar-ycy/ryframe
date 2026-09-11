@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { lstat, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import readline from 'node:readline'
 import { hash, httpUrl } from './devex/config.mjs'
 import { requestPacer } from './restore_reference_pacing.mjs'
 import { verifyIdentitiesAt } from './restore_reference_existing.mjs'
@@ -262,7 +263,14 @@ export async function verifySourceExisting(backend, lineage) {
 }
 
 export function sourceExistingArguments(argv) {
-  const names = new Set(['--backend-dir', '--lineage', '--write'])
+  const names = new Set([
+    '--backend-dir',
+    '--lineage',
+    '--run-dir',
+    '--operation-id',
+    '--source-generation-sha256',
+    '--write',
+  ])
   const args = new Map()
   for (let index = 0; index < argv.length; index++) {
     const name = argv[index]
@@ -273,12 +281,55 @@ export function sourceExistingArguments(argv) {
     args.set(name, value)
   }
   if (args.size !== names.size || args.get('--write') !== true)
-    throw new Error('必须明确后端目录、派生数据血缘和 --write')
-  if (!path.isAbsolute(args.get('--backend-dir')) || !path.isAbsolute(args.get('--lineage')))
-    throw new Error('后端目录和派生数据血缘必须使用绝对路径')
-  return {
+    throw new Error('必须明确后端目录、派生数据血缘、运行身份和 --write')
+  const result = {
     backend: path.resolve(args.get('--backend-dir')),
     lineagePath: path.resolve(args.get('--lineage')),
+    runDirectory: args.get('--run-dir'),
+    operationId: args.get('--operation-id'),
+    sourceGenerationSha256: args.get('--source-generation-sha256'),
+  }
+  if (
+    !path.isAbsolute(args.get('--backend-dir')) ||
+    !path.isAbsolute(args.get('--lineage')) ||
+    !path.isAbsolute(result.runDirectory) ||
+    path.basename(result.runDirectory) !== 'verification' ||
+    result.lineagePath !== path.join(path.dirname(result.runDirectory), 'dataset-lineage.json') ||
+    !/^[a-f0-9]{32}$/.test(result.operationId) ||
+    !/^[a-f0-9]{64}$/.test(result.sourceGenerationSha256)
+  )
+    throw new Error('来源验收必须绑定同代绝对目录、血缘、operation 与 start 摘要')
+  return result
+}
+
+export async function waitForSourceStart(
+  { runDirectory, operationId, sourceGenerationSha256 },
+  stream = process.stdin,
+) {
+  const input = readline.createInterface({ input: stream, crlfDelay: Infinity })
+  try {
+    let authorization
+    for await (const line of input) {
+      if (authorization !== undefined) throw new Error('来源验收只接受一条启动授权')
+      if (Buffer.byteLength(line) > 4096) throw new Error('来源验收启动授权过大')
+      authorization = JSON.parse(line)
+    }
+    if (authorization === undefined)
+      throw new Error('来源验收尚未取得持久进程身份授权，禁止请求服务')
+    exactFields(
+      authorization,
+      ['operation', 'run_dir', 'operation_id', 'source_generation_sha256'],
+      '来源验收启动授权',
+    )
+    if (
+      authorization.operation !== 'start' ||
+      authorization.run_dir !== runDirectory ||
+      authorization.operation_id !== operationId ||
+      authorization.source_generation_sha256 !== sourceGenerationSha256
+    )
+      throw new Error('来源验收启动授权不属于当前 start 与 operation')
+  } finally {
+    input.close()
   }
 }
 
@@ -293,7 +344,7 @@ async function readSourceLineage(filename) {
   return bytes
 }
 
-export async function verifySourceFile({ backend, lineagePath }) {
+export async function verifySourceFile({ backend, lineagePath, sourceGenerationSha256 }) {
   const backendMetadata = await lstat(backend)
   if (!backendMetadata.isDirectory() || backendMetadata.isSymbolicLink())
     throw new Error('后端目录必须是非链接目录')
@@ -304,11 +355,14 @@ export async function verifySourceFile({ backend, lineagePath }) {
   if (!before.equals(after)) throw new Error('派生数据血缘在业务验收期间发生变化')
   return {
     ...result,
+    source_generation_sha256: sourceGenerationSha256,
     lineage_file_sha256: createHash('sha256').update(before).digest('hex'),
   }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const result = await verifySourceFile(sourceExistingArguments(process.argv.slice(2)))
+  const args = sourceExistingArguments(process.argv.slice(2))
+  await waitForSourceStart(args)
+  const result = await verifySourceFile(args)
   process.stdout.write(JSON.stringify(result) + '\n')
 }
