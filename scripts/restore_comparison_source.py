@@ -68,6 +68,7 @@ def _text(root: Path, *arguments: str, index: Path | None = None) -> str:
 
 def _patch_bytes(root: Path) -> bytes:
     path = root / B0_ADAPTER_PATCH
+    reject_link_or_reparse(path)
     if not path.is_file() or path.is_symlink():
         raise ValueError("B0 内嵌适配补丁不是仓库内普通文件")
     return path.read_bytes()
@@ -75,7 +76,10 @@ def _patch_bytes(root: Path) -> bytes:
 
 def _reconstructed_tree(root: Path, patch: Path) -> str:
     scratch = root / "target"
+    if scratch.exists() or scratch.is_symlink():
+        reject_link_or_reparse(scratch)
     scratch.mkdir(exist_ok=True)
+    reject_link_or_reparse(scratch)
     index = scratch / f"b0-adapter-{os.getpid()}-{uuid.uuid4().hex}.index"
     lock = Path(str(index) + ".lock")
     try:
@@ -89,6 +93,7 @@ def _reconstructed_tree(root: Path, patch: Path) -> str:
 
 def b0_adapter_evidence(root: Path, *, reconstruct: bool = True) -> dict:
     """发布时重建；只读复核用受信父提交、树和逐字节补丁验证已登记重建结果。"""
+    reject_link_or_reparse(root)
     root = root.resolve(strict=True)
     actual_root = Path(_text(root, "rev-parse", "--show-toplevel")).resolve(strict=True)
     if actual_root != root:

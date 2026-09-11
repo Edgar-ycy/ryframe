@@ -1,8 +1,10 @@
 from pathlib import Path
 import copy
 import sys
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+from workspace_directory import WorkspaceDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import restore_comparison_source as comparison
@@ -59,6 +61,29 @@ def adapter():
 
 
 class B0AdapterEvidenceTests(unittest.TestCase):
+    def test_patch_ancestor_reparse_is_rejected_before_reading(self):
+        root = Path(__file__).resolve().parents[2]
+        original = Path.lstat
+        def replaced(path, *args, **kwargs):
+            value = original(path, *args, **kwargs)
+            return SimpleNamespace(st_mode=value.st_mode, st_file_attributes=0x400) if path == root / "xtask/assets" else value
+        with patch.object(Path, "lstat", replaced), patch.object(Path, "read_bytes") as read, self.assertRaises(ValueError):
+            comparison._patch_bytes(root)
+        read.assert_not_called()
+
+    def test_reconstruction_rejects_scratch_reparse_before_git_writes(self):
+        temporary = WorkspaceDirectory(Path(__file__).resolve().parents[2] / ".local-tests/python-unit")
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        (root / "target").mkdir()
+        original = Path.lstat
+        def replaced(path, *args, **kwargs):
+            value = original(path, *args, **kwargs)
+            return SimpleNamespace(st_mode=value.st_mode, st_file_attributes=0x400) if path == root / "target" else value
+        with patch.object(Path, "lstat", replaced), patch.object(comparison, "_git") as git, self.assertRaises(ValueError):
+            comparison._reconstructed_tree(root, root / comparison.B0_ADAPTER_PATCH)
+        git.assert_not_called()
+
     def test_readonly_adapter_verifies_trusted_git_evidence_without_writing(self):
         root = Path(__file__).resolve().parents[2]
         directory = root / "target"
