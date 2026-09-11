@@ -99,7 +99,7 @@ fn restore_record_publication_is_create_new_and_canonical() {
         value
     );
     assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
-    let original = bytes.clone();
+    let original = bytes;
     assert!(output::validate_new_output(&output).is_err());
     assert!(output::publish_json(&output, &json!({"changed": true})).is_err());
     assert_eq!(fs::read(&output).unwrap(), original);
