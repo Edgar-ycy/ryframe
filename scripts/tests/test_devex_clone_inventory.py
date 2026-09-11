@@ -3,6 +3,7 @@ import copy
 from mysql_verification_fixture import mysql_input, mysql_output
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -81,6 +82,25 @@ class InventoryTests(unittest.TestCase):
                     "shared": declared["mode"] == "shared", "placements": [], "tables": [table(name) for name in sorted(all_tables - preserved)]},
                     "preserved_tables": [table(name) for name in sorted(preserved)]}}
 
+    def test_separate_execution_root_keeps_runtime_defaults_and_output_in_coordinator(self):
+        execution = self.backend / "execution"
+        for relative in ("sql/ryframe_config.sql", "crates/ryframe-tenant-db/src/generated/catalog.rs",
+                         "crates/ryframe-tenant-db/src/migration/m20260820_000000_tenant_baseline.rs"):
+            destination = execution / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(self.backend / relative, destination)
+        maintenance = execution / ".local-tests/build.json"
+        maintenance.parent.mkdir()
+        maintenance.write_bytes(self.maintenance_file.read_bytes())
+        self.execution_backend = execution
+        value = inventory.capture_side_inventory(execution, "source", self.tools, maintenance, self.output,
+                    environment=self.environment, evidence_root=self.backend)
+        self.assertEqual(value.receipt["status"], "side_inventory_captured")
+        self.assertEqual(value.binding["configuration"]["directory"], str(self.backend / "config"))
+        with patch("subprocess.run", side_effect=AssertionError("只读复核不运行外部命令")):
+            result = inventory.verify_side_inventory(self.backend, value.receipt_file, self.selected, execution)
+        self.assertEqual(set(result["databases"]), set(inventory.KEYS))
+
     def run_external(self, command, **kwargs):
         self.calls.append(command)
         self.assertEqual(kwargs["env"]["APP_SCOPE_ID"], self.scope)
@@ -104,7 +124,7 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(command[1], "target-inventory")
         self.assertEqual(len(command), 6)
         self.assertTrue(kwargs["check"])
-        self.assertEqual(kwargs["cwd"], self.backend)
+        self.assertEqual(kwargs["cwd"], getattr(self, "execution_backend", self.backend))
         key = command[3]
         value = self.raw(key)
         self.cli_count += 1

@@ -13,7 +13,7 @@ from devex_clone_export import (capture_inventory, dump_databases, inventory_obj
                                 schema_models, schema_snapshot, validate_dump_state, verify_migrations)
 from devex_clone_object_batch import capture_objects
 from devex_clone_model import local_path
-from devex_clone_source_proof import verify_generation
+from devex_clone_source_proof import execution_backend, verify_generation
 from restore_build import file_digest
 from restore_reference_io import ExternalTools, redact_object_diagnostic
 from restore_reference_plan import plan_hash
@@ -52,18 +52,19 @@ def export_source(backend: Path, request_path: Path, output: Path, run=subproces
         write_json(output / "request.json", request)
         stage = "source_generation_before"
         before = verify_generation(backend, request, run)
+        execution = execution_backend(backend, request)
         write_json(output / "generation-before.json", before)
         tools = ExternalTools({"source": request["source"], "tools": request["tools"]}, output, run)
         stage = "source_identity_and_schema"
         tools.verify_databases("source")
         tools.verify_objects("source")
-        models = schema_models(backend)
-        verify_migrations(tools, backend, before["maintenance"], "migrate-before")
+        models = schema_models(execution)
+        verify_migrations(tools, execution, before["maintenance"], "migrate-before")
         schema_before = schema_snapshot(tools, models, "before")
         write_json(output / "schema-before.json", {"databases": schema_before})
         unchanged_generation(backend, request, before, run)
         stage, quiesced = "inventory_before", now()
-        inventory_before = capture_inventory(tools, backend, request, before, models, "before", quiesced)
+        inventory_before = capture_inventory(tools, execution, request, before, models, "before", quiesced)
         stage = "dump_databases"
         dumps = dump_databases(tools, inventory_before, models)
         unchanged_generation(backend, request, before, run)
@@ -77,13 +78,13 @@ def export_source(backend: Path, request_path: Path, output: Path, run=subproces
             raise ValueError("源调度行在对象抓取前后变化，拒绝不同 SQL 快照")
         stage = "inventory_after"
         unchanged_generation(backend, request, before, run)
-        inventory_after = capture_inventory(tools, backend, request, before, models, "after", quiesced)
+        inventory_after = capture_inventory(tools, execution, request, before, models, "after", quiesced)
         if logical_inventory(inventory_before) != logical_inventory(inventory_after):
             raise ValueError("源前后逻辑表摘要、placement 或对象清单变化，拒绝拼接不同快照")
         stage = "source_generation_after"
         tools.verify_databases("source")
         tools.verify_objects("source")
-        verify_migrations(tools, backend, before["maintenance"], "migrate-after")
+        verify_migrations(tools, execution, before["maintenance"], "migrate-after")
         schema_after = schema_snapshot(tools, models, "after")
         write_json(output / "schema-after.json", {"databases": schema_after})
         if schema_before != schema_after:

@@ -19,7 +19,7 @@ from devex_clone_inventory import configuration
 from devex_clone_model import bound_file, digest, exact, linked, local_path
 from devex_clone_object_batch import ordered_batches
 from devex_clone_rows import schema_catalog
-from devex_clone_source_proof import bound_file as request_file, validate_request
+from devex_clone_source_proof import bound_file as request_file, execution_backend, validate_request
 from restore_build import file_digest
 from restore_reference_io import ExternalTools, redact_object_diagnostic
 from restore_reference_plan import BUCKETS, plan_hash
@@ -175,11 +175,12 @@ def verify_source_export(backend: Path, binding: dict) -> dict:
     validate_request(backend, request)
     if request != evidence["request"] or request["source"] != value["source"] or request["id"] != value["id"] or request["source"]["scope_id"] != value["scope_id"]:
         raise ValueError("源导出与外部原请求不同")
-    models = schema_models(backend)
+    execution = execution_backend(backend, request)
+    models = schema_models(execution)
     generation = verify_generation_evidence(value, request, evidence, models)
     build = read_json(request_file(backend, request["backend_build"]))
     if (generation["source"] != build_source(build)["snapshot"]
-            or generation["maintenance"] != read_json(request_file(backend, request["maintenance_build"]))
+            or generation["maintenance"] != read_json(request_file(execution, request["maintenance_build"]))
             or generation["runtime"] != read_json(request_file(backend, request["runtime"]))
             or any(generation["processes"][role] != read_json(request_file(backend, request["processes"][role]))["identity"] for role in ("api", "worker"))):
         raise ValueError("源记录代次与外部已绑定构建、运行或进程收据不同")
@@ -240,7 +241,7 @@ def verify_export_bindings(backend: Path, verified: dict, *, selection="all") ->
             raise ValueError("调用方对象目录被修改")
     if set(verified["proof_files"]) != expected_paths:
         raise ValueError("调用方原始小型证据集合不完整或包含额外项")
-    control, tenant = schema_catalog(backend)
+    control, tenant = schema_catalog(execution_backend(backend, verified["request"]))
     if value["catalog_sha256"] != plan_hash({"control": control, "tenant": tenant}):
         raise ValueError("当前源 catalog 变化")
     selected_paths = global_paths | {filename for _, _, paths in selected.values() for filename in paths}
@@ -285,6 +286,7 @@ class _SourceReader(CaptureReader):
 class _Observation:
     def __init__(self, backend, tools, verified, output, environment):
         self.backend, self.original, self.verified, self.output = backend, tools, verified, output
+        self.execution = execution_backend(backend, verified["request"])
         self.original_environment, self.environment = environment, dict(environment)
         self.plan = copy.deepcopy(tools.plan)
         source, request = verified["export"]["source"], verified["request"]
@@ -309,8 +311,8 @@ class _Observation:
         self.original.command("aws")
         source = self.plan["source"]
         return {"plan_sha256": plan_hash(self.plan), "environment_sha256": plan_hash(self.aws_environment),
-                "physical": source_binding(self.backend, {"source": source}, self.environment),
-                "configuration": configuration(self.backend, self.environment, source)}
+                "physical": source_binding(self.execution, {"source": source}, self.environment, evidence_root=self.backend),
+                "configuration": configuration(self.execution, self.environment, source, evidence_root=self.backend)}
 
     def run(self, command, **kwargs):
         if self.binding() != self.initial or kwargs.get("env") != self.aws_environment:

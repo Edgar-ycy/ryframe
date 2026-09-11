@@ -105,10 +105,11 @@ def observation_from_inventory(backend: Path, value: dict, declared: dict, scope
         ownership=copy.deepcopy(ownership))
 
 
-def configuration(backend: Path, environment: Mapping[str, str], selected: dict) -> dict:
+def configuration(backend: Path, environment: Mapping[str, str], selected: dict, *, evidence_root: Path | None = None) -> dict:
     directory = Path(environment.get("APP_CONFIG_DIR", str(backend / "config")))
     directory = directory if directory.is_absolute() else backend / directory
-    if not directory.resolve().is_relative_to(backend.resolve()) or any(linked(p) for p in (directory, *directory.parents)):
+    if (not any(directory.resolve().is_relative_to(root.resolve()) for root in (backend, evidence_root or backend))
+            or any(linked(p) for p in (directory, *directory.parents))):
         raise ValueError("库存配置必须位于明确后端内且不能经过链接")
     files = {}
     for path in sorted(directory.glob("*.toml")):
@@ -136,7 +137,7 @@ def capture_side_inventory(backend: Path, side: str, tools: ExternalTools, maint
     output.mkdir()
     stage = "inputs"
     try:
-        capture = _Capture(backend, side, tools, maintenance_receipt, output, environment)
+        capture = _Capture(backend, side, tools, maintenance_receipt, output, environment, evidence_root=evidence_root)
         stage = "binding_before"
         before, maintenance = capture.binding()
         write_json(output / "binding-before.json", before)
@@ -172,10 +173,51 @@ def capture_side_inventory(backend: Path, side: str, tools: ExternalTools, maint
         raise InventoryCaptureError(output) from None
 
 
+def verify_side_inventory(backend: Path, descriptor: dict, selected: dict, execution: Path) -> dict:
+    """只读重算已采集的四目标完整像，不将保存证据表述为当前停机或 fresh 资格。"""
+    from devex_clone_source_proof import bound_file
+
+    path = bound_file(backend, descriptor)
+    value = read_json(path)
+    exact(value, {"format_version", "status", "side", "scope_id", "binding_sha256", "keys", "inventories", "observations",
+                  "remote_writes", "producer_stopped_proven", "fresh_target_proven", "target_ready", "clone_verified", "restore_qualified"})
+    if (path.name != "inventory.json" or (path.parent / "failure.json").exists()
+            or value["format_version"] != 1 or value["status"] != "side_inventory_captured"
+            or value["side"] not in {"source", "target"} or value["scope_id"] != selected["scope_id"]
+            or value["keys"] != list(KEYS) or value["remote_writes"] != 0
+            or any(value[key] is not False for key in ("producer_stopped_proven", "fresh_target_proven", "target_ready", "clone_verified", "restore_qualified"))):
+        raise ValueError("四目标完整像收据类型、scope 或资格字段不同")
+    before = read_json(regular_file(path.parent / "binding-before.json"))
+    if before != read_json(regular_file(path.parent / "binding-after.json")) or plan_hash(before) != value["binding_sha256"]:
+        raise ValueError("四目标完整像来源前后绑定不同")
+    names = {f"{phase}-target-{key}.json" for phase in ("before", "after") for key in KEYS}
+    if set(value["inventories"]) != names or set(value["observations"]) != set(KEYS):
+        raise ValueError("四目标完整像缺少明确的八份原始输出")
+    observed, raw = {}, {}
+    for db in selected["databases"]:
+        key = db["key"]
+        phases = []
+        for phase in ("before", "after"):
+            filename = f"{phase}-target-{key}.json"
+            current = regular_file(path.parent / filename)
+            if file_digest(current) != value["inventories"][filename]:
+                raise ValueError("完整数据库像原始输出摘要变化")
+            phases.append(read_json(current))
+        if phases[0] != phases[1]:
+            raise ValueError("完整数据库像采集期间变化")
+        item = observation_from_inventory(execution, phases[0], db, selected["scope_id"], expected_owners(selected["scope_id"], db["kind"] == "combined"))
+        observed[key] = json.loads(json.dumps(asdict(item)))
+        raw[key] = phases[0]
+    if observed != value["observations"] or bound_file(backend, descriptor) != path:
+        raise ValueError("四目标逐表、保留表、placement 或 ownership 与原始输出不同")
+    return {"receipt": value, "binding": before, "databases": raw}
+
+
 class _Capture:
     def __init__(self, backend: Path, side: str, tools: ExternalTools, maintenance: Path,
-                 output: Path, environment: Mapping[str, str]):
+                 output: Path, environment: Mapping[str, str], *, evidence_root: Path | None = None):
         self.backend, self.side, self.output, self.original = backend, side, output, tools
+        self.evidence_root = evidence_root or backend
         self.original_environment, self.environment = environment, dict(environment)
         if any(not isinstance(key, str) or not isinstance(value, str) for key, value in self.environment.items()):
             raise ValueError("库存环境必须是明确文本映射")
@@ -183,7 +225,7 @@ class _Capture:
             raise ValueError("库存必须选择已登记的 source 或 target")
         self.plan = copy.deepcopy(tools.plan)
         self.selected = self.plan[side]
-        validate_source(backend, self.selected)
+        validate_source(self.evidence_root, self.selected)
         declared = self.selected["databases"]
         if len(declared) != len(KEYS) or {item["key"] for item in declared} != set(KEYS):
             raise ValueError("库存必须完整覆盖登记的四个逻辑目标")
@@ -195,7 +237,7 @@ class _Capture:
         self.maintenance_digest = file_digest(self.maintenance)
         self.redaction = dict(self.environment)
         for key, item in self.databases.items():
-            self.redaction["DATABASE_PASSWORD_" + key] = defaults_connection(backend, item)["password"]
+            self.redaction["DATABASE_PASSWORD_" + key] = defaults_connection(self.evidence_root, item)["password"]
         for field in ("access_key", "secret_key"):
             self.redaction[field.upper()] = self.environment.get(self.selected["s3"][field + "_env"], "")
         self.tools = ExternalTools(self.plan, output, self.run)
@@ -237,9 +279,9 @@ class _Capture:
             raise ValueError("调用方计划或显式环境在采集期间变化")
         if file_digest(regular_file(self.maintenance)) != self.maintenance_digest:
             raise ValueError("维护工具收据变化")
-        validate_source(self.backend, self.selected)
-        physical = source_binding(self.backend, {"source": self.selected}, self.environment)
-        config = configuration(self.backend, self.environment, self.selected)
+        validate_source(self.evidence_root, self.selected)
+        physical = source_binding(self.backend, {"source": self.selected}, self.environment, evidence_root=self.evidence_root)
+        config = configuration(self.backend, self.environment, self.selected, evidence_root=self.evidence_root)
         maintenance = verify_tools(self.backend, self.maintenance, self.run)
         self.tools.command("mysql")
         return {"side": self.side, "tools_plan_sha256": plan_hash(self.plan), "configuration": config,

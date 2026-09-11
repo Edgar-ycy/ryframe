@@ -86,8 +86,9 @@ def validate_request(backend: Path, request: dict) -> None:
         if (not path.is_absolute() or any(linked(item) for item in (path, *path.parents))
                 or file_digest(path)["sha256"] != digest(tool["sha256"])):
             raise ValueError("源导出外部工具实际文件与绑定不符")
-    for field in ("backend_build", "maintenance_build", "runtime", "producers_registry"):
+    for field in ("backend_build", "runtime", "producers_registry"):
         bound_file(backend, request[field])
+    bound_file(execution_backend(backend, request), request["maintenance_build"])
     exact(request["processes"], {"api", "worker"})
     directory = Path(request["source"]["runtime_dir"])
     if bound_file(backend, request["runtime"]) != directory / "runtime.json":
@@ -217,18 +218,19 @@ def producer_identities(request: dict, registry: dict, processes: dict, *, run) 
 
 def verify_generation(backend: Path, request: dict, run) -> dict:
     validate_request(backend, request)
+    execution = execution_backend(backend, request)
     build = read_json(bound_file(backend, request["backend_build"]))
-    snapshot = verify_source(backend, build, request["worktree_fingerprint"])
+    snapshot = verify_source(execution, build, request["worktree_fingerprint"])
     verify_build_artifacts(build)
-    maintenance = verify_tools(backend, bound_file(backend, request["maintenance_build"]), run)
+    maintenance = verify_tools(execution, bound_file(execution, request["maintenance_build"]), run)
     if (maintenance["source"]["snapshot"] != snapshot
             or maintenance["source"]["worktree_fingerprint"] != request["worktree_fingerprint"]):
         raise ValueError("维护工具与源实际后端构建不属于同一完整源码")
     source, directory = request["source"], Path(request["source"]["runtime_dir"])
-    runtime = verify_runtime(backend, directory)
+    runtime = verify_runtime(execution, directory)
     if runtime != read_json(bound_file(backend, request["runtime"])) or runtime["scope_id"] != source["scope_id"]:
         raise ValueError("源运行配置或 runtime 代次已变化")
-    physical = source_binding(backend, {"source": source})
+    physical = source_binding(execution, {"source": source}, evidence_root=backend)
     if os.environ.get("APP_JOBS_MODE") != "external":
         raise ValueError("源必须明确使用 external Worker，scheduler/consumer 由 Worker 承载")
     processes = {}
@@ -240,10 +242,20 @@ def verify_generation(backend: Path, request: dict, run) -> dict:
             raise ValueError("源登记进程实际二进制与本侧构建不一致")
         processes[role] = identity
     producers = producer_identities(request, read_json(bound_file(backend, request["producers_registry"])), processes, run=run)
-    verify_api_address(backend, source["api_url"])
+    verify_api_address(execution, source["api_url"])
     require_closed_port(source["api_url"])
     require_closed_port(runtime["worker_ready_url"])
     return {"source": snapshot, "worktree_fingerprint": request["worktree_fingerprint"], "runtime": runtime,
             "processes": processes, "operator_declared_producers": producers, "physical_binding": physical,
             "maintenance": maintenance, "request_sha256": plan_hash(request),
             "external_writers_discovered": False, "clone_verified": False, "restore_qualified": False}
+
+
+def execution_backend(backend: Path, request: dict) -> Path:
+    """运行目录已绑定实际源码根；协调工具目录不冒充源产品执行目录。"""
+    runtime = read_json(bound_file(backend, request["runtime"]))
+    root = Path(runtime["backend_root"])
+    if (not root.is_absolute() or not root.is_dir() or root != root.resolve(strict=True)
+            or any(linked(path) for path in (root, *root.parents))):
+        raise ValueError("源 runtime 的执行后端必须是无链接的规范绝对目录")
+    return root

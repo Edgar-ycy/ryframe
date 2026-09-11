@@ -65,7 +65,7 @@ class SourceFixture:
                 "command": ["cargo", "build", "--locked", "-p", "ryframe", "--no-default-features", "--features", feature,
                             "--bin", executable, "--message-format=json"]}
             identities[role] = {"pid": number, "started": "12345", "executable": str(path)}
-        self.runtime = {"scope_id": self.scope, "worker_ready_url": "http://127.0.0.1:19210/readyz",
+        self.runtime = {"backend_root": str(self.backend), "scope_id": self.scope, "worker_ready_url": "http://127.0.0.1:19210/readyz",
                         "artifacts": {role: {"path": item["executable"], "sha256": item["sha256"]} for role, item in self.build["artifacts"].items()}}
         self.maintenance = {"source": {"snapshot": self.snapshot, "worktree_fingerprint": self.fingerprint}, "artifacts": {}}
         for role in ("reset", "migrate", "tenant-data"):

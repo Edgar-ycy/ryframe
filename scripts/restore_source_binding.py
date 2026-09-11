@@ -184,7 +184,7 @@ def storage_binding(source: dict, table: dict, variables: Mapping[str, str]) -> 
     return {"backend": actual["backend"], "endpoint": endpoint, "region": actual["region"]}
 
 
-def source_binding(backend: Path, plan: dict, variables: Mapping[str, str] | None = None) -> dict:
+def source_binding(backend: Path, plan: dict, variables: Mapping[str, str] | None = None, *, evidence_root: Path | None = None) -> dict:
     """返回可公开的物理描述；调用方另核验 runtime 摘要、进程及实际 ownership。"""
     variables = os.environ if variables is None else variables
     try:
@@ -193,7 +193,7 @@ def source_binding(backend: Path, plan: dict, variables: Mapping[str, str] | Non
                "来源环境与计划 scope 必须明确一致")
         table = load_app_table(backend, variables)
         result = {"format_version": 1, "scope_id": source["scope_id"],
-                  "databases": database_bindings(backend, source, table, variables),
+                  "databases": database_bindings(evidence_root or backend, source, table, variables),
                   "s3": storage_binding(source, table, variables)}
         digest = hashlib.sha256(json.dumps(result, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         return {**result, "sha256": digest}

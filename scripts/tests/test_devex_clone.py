@@ -38,9 +38,9 @@ def sql_value(value):
 
 class CloneTests(unittest.TestCase):
     def setUp(self):
-        location = REPO / ".local-tests/python-unit"
+        location = REPO / ".local-tests/t"
         location.mkdir(parents=True, exist_ok=True)
-        temporary = WorkspaceDirectory(dir=location)
+        temporary = WorkspaceDirectory(dir=location, prefix="")
         self.addCleanup(temporary.cleanup)
         self.backend = Path(temporary.name).resolve()
         for relative in ("sql/ryframe_config.sql", "crates/ryframe-tenant-db/src/generated/catalog.rs",

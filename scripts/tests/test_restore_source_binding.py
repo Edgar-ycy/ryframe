@@ -45,6 +45,20 @@ class SourceBindingTests(unittest.TestCase):
             item.update(defaults_file=str(self.client.resolve()), defaults_sha256=hashlib.sha256(self.client.read_bytes()).hexdigest(),
                         server_uuid="source-server-uuid")
 
+    def test_execution_configuration_and_coordinator_credentials_have_explicit_roots(self):
+        execution = self.backend / "execution"
+        execution.mkdir()
+        variables = {**self.variables, "APP_CONFIG_DIR": str(self.config)}
+        expected = binding.source_binding(self.backend, self.plan, variables)
+        with self.assertRaises(ValueError):
+            binding.source_binding(execution, self.plan, variables)
+        self.assertEqual(binding.source_binding(execution, self.plan, variables, evidence_root=self.backend), expected)
+        foreign = self.backend / "foreign.cnf"
+        foreign.write_bytes(self.client.read_bytes())
+        self.plan["source"]["databases"][0]["defaults_file"] = str(foreign)
+        with self.assertRaises(ValueError):
+            binding.source_binding(execution, self.plan, variables, evidence_root=self.backend)
+
     def write_config(self):
         base = ('[database.primary]\nhost="127.0.0.1"\nport=3306\ndatabase="source_control"\n'
                 'username="fixture-user"\npassword="private-db-value"\ntls_mode="required"\n'
