@@ -236,17 +236,30 @@ class Resources:
 
     def storage_identity(self) -> dict:
         rustfs = self.request["storage"]["rustfs"]
+        fixture = False
         if self.storage_run is not None:
-            from devex_clone_storage import registered_storage_binding
+            manifest = read_json(self.storage_run / "manifest.json")
+            fixture = manifest.get("kind") == "reference-fixture-service-run"
+            if fixture:
+                from reference_fixture_service_context import runtime_transition
 
-            self.storage_runtime_binding = registered_storage_binding(self.backend, self.storage_run, "target")
+                expected = {"storage": self.request["storage"]["rustfs"],
+                            "redis": self.request["storage"]["redis"]}
+                self.storage_runtime_binding, self.cache_runtime_binding = runtime_transition(
+                    self.backend, self.storage_run, expected)
+            else:
+                from devex_clone_storage import registered_storage_binding
+
+                self.storage_runtime_binding = registered_storage_binding(self.backend, self.storage_run, "target")
             if self.storage_runtime_binding is not None:
-                runtime_request = json.loads(bound_file(self.backend, self.storage_runtime_binding["request"]).read_text(encoding="utf-8"))
-                original = self.request["storage"]["rustfs"]
-                if (runtime_request["previous"]["identity"] != original["identity"]
-                        or runtime_request["previous"]["process_receipt"] != original["process_receipt"]
-                        or runtime_request["previous"]["launch_receipt"] != original["launch_receipt"]):
-                    raise ValueError("存储重启证明未绑定本目标的原始 RustFS 收据")
+                if not fixture:
+                    runtime_request = json.loads(bound_file(
+                        self.backend, self.storage_runtime_binding["request"]).read_text(encoding="utf-8"))
+                    original = self.request["storage"]["rustfs"]
+                    if (runtime_request["previous"]["identity"] != original["identity"]
+                            or runtime_request["previous"]["process_receipt"] != original["process_receipt"]
+                            or runtime_request["previous"]["launch_receipt"] != original["launch_receipt"]):
+                        raise ValueError("存储重启证明未绑定本目标的原始 RustFS 收据")
                 rustfs = self.storage_runtime_binding["storage"]
         exact(rustfs, {"identity", "sha256", "process_receipt", "launch_receipt"})
         exact(rustfs["identity"], {"pid", "started", "executable"})
@@ -258,7 +271,7 @@ class Resources:
         verify_listener(rustfs["identity"]["pid"], self.request["target"]["s3"]["endpoint"])
         rustfs_layout(self, rustfs, runtime=self.storage_runtime_binding)
         redis = self.request["storage"]["redis"]
-        if self.storage_run is not None:
+        if self.storage_run is not None and not fixture and self.cache_runtime_binding is None:
             from devex_clone_cache import registered_cache_binding, registration
 
             cache_lock_identity = None

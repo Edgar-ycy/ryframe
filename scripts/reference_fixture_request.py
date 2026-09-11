@@ -94,7 +94,8 @@ def _service(backend: Path, run: Path, review_binding: dict, review: dict) -> di
         or manifest.get("scope_id") != review["services"]["rustfs"]["scope_id"]
     ):
         raise ValueError("首代服务账本未绑定当前审阅计划的 seed 私有环境")
-    if load_state(run) != state or validate_history(run, state)["closed"]:
+    history = validate_history(run, state)
+    if load_state(run) != state or history["closed"] or history["external_recovery"] is not None:
         raise ValueError("首代服务账本发生变化或已经关闭")
     process_file, process = _read(backend, run / "rustfs/process.json")
     launch_file, launch = _read(backend, run / "rustfs/launch.json")
@@ -123,6 +124,11 @@ def _service(backend: Path, run: Path, review_binding: dict, review: dict) -> di
         },
         "redis": redis,
     }
+    if history["active_generation"].get("kind") != "initial":
+        from reference_fixture_service_context import runtime_transition
+
+        storage, cache = runtime_transition(backend, run, {"storage": result["rustfs"], "redis": result["redis"]})
+        result["rustfs"], result["redis"] = storage["storage"], cache["redis"]
     if (
         result["run"]["manifest"] != _bound(manifest_file)
         or result["run"]["state"] != _bound(state_file)

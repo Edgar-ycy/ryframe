@@ -176,7 +176,7 @@ class ServiceLifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "关闭收据"):
             validate_history(self.run, load_state(self.run))
         state = load_state(self.run)
-        state["attempts"][3]["mode"] = "restart"
+        state["attempts"][3]["mode"] = "replace"
         with self.assertRaisesRegex(ValueError, "仅允许"):
             validate_history(self.run, state)
 
@@ -276,6 +276,80 @@ class ServiceLifecycleTests(unittest.TestCase):
         Path(result["evidence"]["path"]).write_text("{}", encoding="utf-8")
         with self.assertRaises(ValueError):
             validate_history(self.run, load_state(self.run))
+
+    def test_restart_appends_a_new_generation_with_previous_lineage(self):
+        old_tree = self.services["tree"]
+        termination = self.external_observation()
+        stopped = {"redis": "stopped", "rustfs": "external-termination-unreconciled",
+                   "termination": termination}
+        old_rustfs = {"scope_id": old_tree["scope_id"],
+                      "executable": {"path": str(self.fixture.tool), "sha256": "1" * 64},
+                      "data_directory": {"path": str(self.run / "rustfs"),
+                                         "device": (self.run / "rustfs").stat().st_dev,
+                                         "inode": (self.run / "rustfs").stat().st_ino},
+                      "api_url": "http://127.0.0.1:29200", "console_url": "http://127.0.0.1:29201",
+                      "credential_files": {}, "timeout_seconds": 60}
+        old_redis = {"previous_identity": None, "previous_boot_id": None, "previous_run_id": None,
+                     "configuration": {"path": str(self.run / "redis/redis.conf")}, "port": 16390}
+        write_json(self.run / "rustfs/request.json", old_rustfs)
+        write_json(self.run / "redis/request.json", old_redis)
+        old_runtime = {"linux_identity": {"pid": 201, "started": "11", "executable": "/usr/bin/redis-server",
+                                           "boot_id": "1b3389bf-ef50-48a5-94d4-4cc51ad55a42"},
+                       "redis": {"run_id": "1" * 40}, "output": str(self.run / "redis")}
+        old_services = {"requests": {"rustfs": old_rustfs, "redis": old_redis}, "tree": old_tree,
+                        "runtime": old_runtime, "storage": {}, "origin": {"storage": {}, "redis": {}},
+                        "evidence": termination["evidence"]}
+        with patch.object(lifecycle, "registered_services", return_value=old_services), \
+                patch.object(lifecycle, "observe_services", return_value=stopped):
+            lifecycle.recover(self.backend, self.review, self.bootstrap,
+                              self.run / "state.json", write=True)
+        prior_state = binding(self.run / "state.json")
+        prior_generation = validate_history(self.run, load_state(self.run))["active_generation"]
+        new_tree = {**old_tree, "operation_id": "c" * 32,
+                    "runtime_directory": str(self.run / "lifecycle-0005/rustfs"),
+                    "supervisor": {**old_tree["supervisor"], "pid": 2147481100},
+                    "monitor": {**old_tree["monitor"], "pid": 2147481101},
+                    "process": {**old_tree["process"], "pid": 2147481102}, "group_id": 2147481100}
+
+        def start_storage(_backend, request, _environment, output, _manifest, _controller, _number, guard, **_options):
+            guard()
+            process = binding(output / "request.json")
+            write_json(output / "process.json", {"process": True})
+            write_json(output / "launch.json", {"launch": True})
+            write_json(output / "rustfs-tree.json", new_tree)
+            return {"identity": new_tree["process"], "sha256": request["executable"]["sha256"],
+                    "process_receipt": binding(output / "process.json"),
+                    "launch_receipt": binding(output / "launch.json"), "tree": binding(output / "rustfs-tree.json")}
+
+        def start_redis(request, _environment, output, guard):
+            guard()
+            runtime = {"linux_identity": {"pid": 301, "started": "22", "executable": "/usr/bin/redis-server",
+                                           "boot_id": "2b3389bf-ef50-48a5-94d4-4cc51ad55a42"},
+                       "redis": {"run_id": "2" * 40}, "output": str(output)}
+            write_json(output / "runtime.json", runtime)
+            return runtime
+
+        def observe(value):
+            return ({"redis": "running", "rustfs": "running", "termination": None}
+                    if value["tree"]["operation_id"] == new_tree["operation_id"] else stopped)
+
+        with patch.object(lifecycle, "registered_services", return_value=old_services), \
+                patch.object(lifecycle, "observe_services", side_effect=observe), \
+                patch("devex_clone_storage_process.start", side_effect=start_storage), \
+                patch.object(lifecycle, "start_cache", side_effect=start_redis), \
+                patch("full_stack_process_tree.read_process_tree", return_value=new_tree):
+            result = lifecycle.restart(self.backend, self.review, self.bootstrap,
+                                       self.run / "state.json", write=True)
+        self.assertEqual(result["status"], "services_restarted")
+        self.assertEqual(result["previous_generation"], prior_generation)
+        self.assertNotEqual(binding(self.run / "state.json"), prior_state)
+        generation = read_json(Path(result["generation"]["path"]))
+        self.assertEqual(generation["previous_generation"], prior_generation)
+        self.assertEqual(generation["predecessor"], load_state(self.run)["attempts"][-2]["result"])
+        self.assertEqual(Path(generation["rustfs"]["request"]["path"]).parent.name, "rustfs")
+        history = validate_history(self.run, load_state(self.run))
+        self.assertIsNone(history["external_recovery"])
+        self.assertEqual(history["active_generation"], load_state(self.run)["attempts"][-1]["result"])
 
     def test_recover_rejects_live_or_reused_controller_without_writes(self):
         owner_file = self.dead_lock()

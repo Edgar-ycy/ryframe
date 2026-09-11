@@ -118,7 +118,7 @@ def _fixture_service_run(manifest: dict, state: dict) -> bool:
     initial = state["attempts"][:len(INITIAL)]
     actual = tuple((item["stage"], item["mode"]) for item in initial)
     if (actual != INITIAL or any(item["status"] != "passed" for item in initial)
-            or any(item["stage"] != LIFECYCLE_STAGE or item["mode"] not in {"close", "recover"}
+            or any(item["stage"] != LIFECYCLE_STAGE or item["mode"] not in {"close", "recover", "restart"}
                    or item["status"] != "passed" for item in state["attempts"][len(INITIAL):])):
         raise ValueError("夹具服务账本必须完整包含 RustFS、Redis 与对象桶初始化")
     return True
@@ -287,12 +287,18 @@ def _run_registered(backend: Path, workspace: Path, operation, *args) -> dict:
     storage_state = binding(storage_run / "state.json")
     fixture_services = _fixture_service_run(read_bound_json(storage_run / "manifest.json", storage_binding["manifest"]),
                                             historical_state(storage_run, storage_binding["state"])["state"])
+    active_storage_run = storage_run
     if fixture_services:
         from reference_fixture_service_history import validate_history
         from devex_clone_run_state import load_state
 
-        if validate_history(storage_run, load_state(storage_run))["closed"]:
+        history = validate_history(storage_run, load_state(storage_run))
+        if history["closed"]:
             raise ValueError("夹具服务已经关闭，不能继续 fresh 目标操作")
+        if history["external_recovery"] is not None:
+            raise ValueError("夹具服务外部终止已核对但尚未重启，不能继续 fresh 目标操作")
+        if history["active_generation"].get("kind") == "initial":
+            active_storage_run = None
     environment = configured(private)
     with run_lock(storage_run):
         if (_registration(backend, workspace)[1] != value
@@ -302,7 +308,7 @@ def _run_registered(backend: Path, workspace: Path, operation, *args) -> dict:
         try:
             with Environments(environment, environment).use("target"):
                 result = operation(backend, Path(value["target_directory"]), *args,
-                                   storage_run=None if fixture_services else storage_run)
+                                   storage_run=active_storage_run)
         finally:
             _, current_private = _private_environment(backend, value["environment"])
             if (binding(path) != registered or read_bound_json(path, registered) != value

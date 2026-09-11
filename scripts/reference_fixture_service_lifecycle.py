@@ -1,10 +1,11 @@
 """在原服务账本中显式关闭服务或恢复死亡控制器，未知结果不自动重放。"""
 from __future__ import annotations
 
+import copy
 from pathlib import Path
 import time
 
-from devex_clone_cache_process import stop as stop_cache
+from devex_clone_cache_process import start as start_cache, stop as stop_cache
 from devex_clone_capture import read_json, write_json
 from devex_clone_factory_context import configured
 from devex_clone_model import local_path
@@ -181,4 +182,125 @@ def _recover_external(value: dict, owner_path: Path) -> dict:
             except BaseException as error:
                 finish(run, number, error=error)
                 raise
+    return result
+
+
+def _restart_requests(services: dict, output: Path) -> dict:
+    rustfs = copy.deepcopy(services["requests"]["rustfs"])
+    redis = copy.deepcopy(services["requests"]["redis"])
+    previous = services["runtime"]
+    redis.update(previous_identity={key: previous["linux_identity"][key]
+                                    for key in ("pid", "started", "executable")},
+                 previous_boot_id=previous["linux_identity"]["boot_id"],
+                 previous_run_id=previous["redis"]["run_id"])
+    for role, request in (("rustfs", rustfs), ("redis", redis)):
+        directory = output / role
+        directory.mkdir()
+        write_json(directory / "request.json", request)
+    return {"rustfs": rustfs, "redis": redis}
+
+
+def _restart_cleanup(services: dict, private: dict, storage: dict | None,
+                     runtime: dict | None, output: Path, original: BaseException) -> None:
+    if not output.exists():
+        return
+    errors = []
+    cleanup = output / "failed-start-cleanup"
+    try:
+        cleanup.mkdir(exist_ok=True)
+    except BaseException as error:
+        original.add_note("夹具服务重启失败后的回收目录无法创建：" + type(error).__name__)
+        return
+    if runtime is not None:
+        try:
+            stop_cache(services["requests"]["redis"], configured(private), runtime, cleanup)
+        except BaseException as error:
+            errors.append("Redis:" + type(error).__name__)
+    if storage is not None:
+        try:
+            from full_stack_process_tree import read_process_tree
+
+            tree = read_process_tree(output / "rustfs", "rustfs", services["requests"]["rustfs"]["scope_id"])
+            terminate_owned_process_tree(tree, crash=True)
+            completion_binding(tree)
+        except BaseException as error:
+            errors.append("RustFS:" + type(error).__name__)
+    if errors:
+        original.add_note("夹具服务重启失败后的精确回收未完成：" + ",".join(errors))
+
+
+def restart(backend: Path, review: Path, bootstrap: Path, owner_file: Path, *, write: bool) -> dict:
+    if not write:
+        raise ValueError("重启夹具服务必须显式指定 --write")
+    value = context(backend, review, bootstrap)
+    run = value["run"]
+    owner_path = local_path(backend, str(owner_file if owner_file.is_absolute() else backend / owner_file))
+    history = validate_history(run, value["state"])
+    if (owner_path != run / "state.json" or binding(owner_path) != value["sources"]["state_before"]):
+        raise ValueError("服务重启必须明确绑定 status 返回的当前 state 文件")
+    if (history["closed"] or history["external_recovery"] is None or history["unsettled"]
+            or unknown_recoveries(run) or controller_observation(run) is not None):
+        raise ValueError("服务重启必须紧接已完成且唯一的外部终止核对")
+    previous = registered_services(value)
+    stopped = observe_services(previous)
+    if stopped["termination"] is None:
+        raise ValueError("重启前原服务代次不是已核对的外部终止状态")
+    with run_lock(run) as owner:
+        guard(value)
+        if observe_services(previous) != stopped:
+            raise ValueError("重启前原服务状态变化")
+        sources = {**value["sources"], "external_recovery": history["external_recovery"]}
+        output = local_path(backend, str(run / f"lifecycle-{len(value['state']['attempts']) + 1:04d}"), new=True)
+        number = begin(run, LIFECYCLE_STAGE, "restart", sources)
+        if output != run / f"lifecycle-{number:04d}":
+            raise ValueError("夹具服务重启代次编号与账本不一致")
+        controller = bind_controller_attempt(run, number, owner)
+        running_state = binding(run / "state.json")
+        storage = runtime = None
+        try:
+            output.mkdir()
+            requests = _restart_requests(previous, output)
+            guard(value, running_state)
+            if observe_services(previous) != stopped:
+                raise ValueError("RustFS 重启前原服务状态变化")
+            from devex_clone_storage_process import start as start_storage
+
+            storage = start_storage(backend, requests["rustfs"], configured(value["private"]),
+                                    output / "rustfs", value["sources"]["manifest"], controller,
+                                    number, lambda: guard(value, running_state), supervised=True)
+            guard(value, running_state)
+            runtime = start_cache(requests["redis"], configured(value["private"]), output / "redis",
+                                  lambda: guard(value, running_state))
+            from full_stack_process_tree import read_process_tree
+
+            tree = read_process_tree(output / "rustfs", "rustfs", requests["rustfs"]["scope_id"])
+            current = {"requests": requests, "tree": tree, "runtime": runtime, "storage": storage,
+                       "storage_observation": None, "origin": previous["origin"],
+                       "evidence": {"rustfs_tree": storage["tree"],
+                                    "redis_runtime": binding(output / "redis/runtime.json")}}
+            expected = {"redis": "running", "rustfs": "running", "termination": None}
+            if observe_services(current) != expected:
+                raise ValueError("夹具服务新代次未同时就绪")
+            generation_file = output / "restart.json"
+            generation = {"format_version": 1, "kind": "reference-fixture-service-generation",
+                          "run": str(run), "attempt": number, "owner": value["sources"]["state_before"],
+                          "predecessor": history["external_recovery"],
+                          "previous_generation": history["active_generation"], "controller": controller,
+                          "services": {"redis": "running", "rustfs": "running"},
+                          "rustfs": {"request": binding(output / "rustfs/request.json"), "storage": storage},
+                          "redis": {"request": binding(output / "redis/request.json"), "runtime": runtime},
+                          "remote_writes": 0, "resources_deleted": False}
+            write_json(generation_file, generation)
+            guard(value, running_state)
+            if observe_services(current) != expected:
+                raise ValueError("发布重启代次前服务状态变化")
+            result = _result(run, "restart", "services_restarted", controller=controller,
+                             services=generation["services"], generation=binding(generation_file),
+                             previous_generation=history["active_generation"], next_operation="close")
+            finish(run, number, result=result)
+        except BaseException as error:
+            active = {"requests": requests} if "requests" in locals() else previous
+            _restart_cleanup(active, value["private"], storage, runtime, output, error)
+            finish(run, number, error=error)
+            raise
     return result

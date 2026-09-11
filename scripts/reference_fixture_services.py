@@ -272,7 +272,7 @@ def redis(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bool
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
-    parser.add_argument("operation", choices=("rustfs", "redis", "buckets", "status", "close", "recover"))
+    parser.add_argument("operation", choices=("rustfs", "redis", "buckets", "status", "close", "recover", "restart"))
     parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--review", type=Path, required=True)
     parser.add_argument("--environment", type=Path, required=True)
@@ -287,19 +287,21 @@ def main() -> None:
         parser.error("status 只读，不接受 --write 或 --owner-binding")
     if args.operation != "status" and not args.write:
         parser.error("服务操作必须显式指定 --write")
-    if (args.operation == "recover") != (args.owner_binding is not None):
-        parser.error("只有 recover 必须指定 --owner-binding")
+    if (args.operation in {"recover", "restart"}) != (args.owner_binding is not None):
+        parser.error("recover 和 restart 必须指定 --owner-binding，其他操作不接受")
     backend = args.backend_dir.resolve(strict=True)
-    if args.operation in {"status", "close", "recover"}:
+    if args.operation in {"status", "close", "recover", "restart"}:
         from reference_fixture_service_context import status
-        from reference_fixture_service_lifecycle import close, recover
+        from reference_fixture_service_lifecycle import close, recover, restart
 
         if args.operation == "status":
             result = status(backend, args.review, args.environment)
         elif args.operation == "close":
             result = close(backend, args.review, args.environment, write=args.write)
-        else:
+        elif args.operation == "recover":
             result = recover(backend, args.review, args.environment, args.owner_binding, write=args.write)
+        else:
+            result = restart(backend, args.review, args.environment, args.owner_binding, write=args.write)
         print(json.dumps(result, ensure_ascii=False))
         return
     action = {"rustfs": rustfs, "redis": redis, "buckets": buckets}[args.operation]

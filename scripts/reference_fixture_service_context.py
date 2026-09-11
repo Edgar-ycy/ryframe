@@ -62,7 +62,7 @@ def unknown_recoveries(run: Path) -> list[str]:
                if not (run / ("recovered-" + path.name[len("recovery-"):-len(".intent.json")] + ".json")).is_file()}
     unknown.update(path.name for path in run.glob("recovered-*.json") if str(path) not in consumed)
     expected = {f"lifecycle-{item['number']:04d}" for item in state["attempts"]
-                if item["stage"] == "fixture-services" and item["mode"] == "close"}
+                if item["stage"] == "fixture-services" and item["mode"] in {"close", "restart"}}
     for item in state["attempts"]:
         if (item["stage"], item["mode"], item["status"]) != ("fixture-services", "recover", "passed"):
             continue
@@ -75,7 +75,7 @@ def unknown_recoveries(run: Path) -> list[str]:
 
 def registered_services(value: dict) -> dict:
     run, backend, state = value["run"], value["backend"], value["state"]
-    validate_history(run, state)
+    history = validate_history(run, state)
     first, second = state["attempts"][:2]
     requests = {}
     for role, attempt in (("rustfs", first), ("redis", second)):
@@ -106,8 +106,34 @@ def registered_services(value: dict) -> dict:
     if (cache.get("service") != "redis" or not isinstance(cache.get("runtime"), dict)
             or read_json(run / "redis/runtime.json") != cache["runtime"]):
         raise ValueError("Redis 首代缺少冻结运行收据")
-    return {"requests": requests, "tree": tree, "runtime": cache["runtime"], "storage": observed,
-            "evidence": {"rustfs_tree": tree_binding, "redis_runtime": binding(run / "redis/runtime.json")}}
+    initial = {"storage": {key: storage[key] for key in ("identity", "sha256", "process_receipt", "launch_receipt")},
+               "redis": cache["runtime"]["redis"]}
+    if history["active_generation"].get("kind") != "initial":
+        outer = read_json(bound_file(backend, history["active_generation"]))
+        generation = read_json(bound_file(backend, outer["generation"]))
+        requests = {role: read_json(bound_file(backend, generation[role]["request"]))
+                    for role in ("rustfs", "redis")}
+        storage, cache = generation["rustfs"]["storage"], {"runtime": generation["redis"]["runtime"]}
+        tree_binding = storage["tree"]
+        tree_path = bound_file(backend, tree_binding)
+        tree = read_process_tree(tree_path.parent, "rustfs", requests["rustfs"]["scope_id"])
+        observed = inspect_attempt(backend, tree_path.parent, value["sources"]["manifest"],
+                                   generation["controller"], generation["attempt"],
+                                   request_binding=generation["rustfs"]["request"])
+        if observed is None or observed["state"] != "recorded" or observed["identity"] != tree["process"]:
+            raise ValueError("RustFS 当前重启代次的意图、进程和树归属不一致")
+        if (any(storage.get(key) != observed.get(key) for key in ("identity", "process_receipt", "launch_receipt"))
+                or storage.get("sha256") != requests["rustfs"]["executable"]["sha256"]):
+            raise ValueError("RustFS 当前重启结果与冻结请求不同")
+        if read_json(Path(cache["runtime"]["output"]) / "runtime.json") != cache["runtime"]:
+            raise ValueError("Redis 当前重启运行收据变化")
+    runtime_path = (run / "redis/runtime.json" if history["active_generation"].get("kind") == "initial"
+                    else Path(cache["runtime"]["output"]) / "runtime.json")
+    return {"requests": requests, "tree": tree, "runtime": cache["runtime"], "storage": storage,
+            "storage_observation": observed,
+            "origin": initial,
+            "evidence": {"rustfs_tree": tree_binding,
+                         "redis_runtime": binding(runtime_path)}}
 
 
 def _identity_observations(tree: dict) -> dict:
@@ -178,6 +204,25 @@ def observe_services(services: dict) -> dict:
     if termination is not None and cache["state"] != "stopped":
         raise ValueError("RustFS 外部终止时 Redis 仍存活或状态未知")
     return {"redis": cache["state"], "rustfs": rustfs, "termination": termination}
+
+
+def runtime_transition(backend: Path, run: Path, expected: dict) -> tuple[dict | None, dict | None]:
+    """让既有 fresh-target 仅沿已验证的夹具服务 lineage 采用新运行身份。"""
+    manifest = read_json(run / "manifest.json")
+    value = context(backend, Path(manifest["review"]["path"]), Path(manifest["bootstrap"]["path"]))
+    if value["history"]["active_generation"].get("kind") == "initial":
+        return None, None
+    services = registered_services(value)
+    if expected != services["origin"]:
+        raise ValueError("夹具服务重启 lineage 未绑定 fresh-target 的原始服务代次")
+    storage = {key: services["storage"][key]
+               for key in ("identity", "sha256", "process_receipt", "launch_receipt")}
+    request = services["requests"]["rustfs"]
+    return ({"storage": storage, "data_directory": request["data_directory"],
+             "api_url": request["api_url"], "console_url": request["console_url"],
+             "generation": value["history"]["active_generation"]},
+            {"redis": services["runtime"]["redis"],
+             "generation": value["history"]["active_generation"]})
 
 
 def status(backend: Path, review: Path, bootstrap: Path) -> dict:
