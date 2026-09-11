@@ -118,22 +118,20 @@ fn fresh_target_uses_the_private_state_machine_with_the_current_backend() {
 fn source_fixture_and_dataset_stages_fix_the_current_worktree_paths() {
     let frontend = Path::new("D:/前端 worktree");
     let backend = super::workspace::root_dir().display().to_string();
-    let (source, source_arguments) = recovery_command(
-        &RecoveryCommand::Source(strings(&["verify", "--plan", "reference.json"])),
-        frontend,
-    )
-    .unwrap();
+    let source_input = strings(&[
+        "verify",
+        "--source-generation",
+        "D:/验收/start.json",
+        "--output",
+        "D:/验收/verification/source-runtime.json",
+        "--write",
+    ]);
+    let (source, source_arguments) =
+        recovery_command(&RecoveryCommand::Source(source_input.clone()), frontend).unwrap();
     assert_eq!(source, "scripts/restore_source.py");
-    assert_eq!(
-        source_arguments,
-        strings(&[
-            "verify",
-            "--plan",
-            "reference.json",
-            "--backend-dir",
-            &backend
-        ])
-    );
+    let mut expected_source = source_input;
+    expected_source.extend(strings(&["--backend-dir", &backend]));
+    assert_eq!(source_arguments, expected_source);
     let (source, comparison_arguments) = recovery_command(
         &RecoveryCommand::Source(strings(&[
             "comparison-verify",

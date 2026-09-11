@@ -219,26 +219,24 @@ class SourceRuntimeTests(unittest.TestCase):
         self.tools.verify_databases.assert_not_called()
         self.assertFalse((self.work / "backup").exists())
 
-    def test_source_cli_requires_write_and_existing_output_never_runs_business_check(self):
-        output = self.work / "new-source.json"
-        args = ["restore_source", "verify", "--backend-dir", str(self.backend), "--plan", str(self.plan_path),
-                "--build-receipt", str(self.build_path), "--dataset", str(self.dataset_path), "--output", str(output)]
+    def test_source_cli_requires_write_and_delegates_only_generation_receipt(self):
+        start = self.work / "results/start.json"
+        output = self.work / "g0001/verification/source-runtime.json"
+        args = ["restore_source", "verify", "--backend-dir", str(self.backend),
+                "--source-generation", str(start), "--output", str(output)]
         with patch.object(sys, "argv", args), contextlib.redirect_stderr(io.StringIO()), \
-                patch.object(source, "verify_source") as verify, self.assertRaises(SystemExit):
+                patch.object(source, "execute_source_verification") as verify, \
+                self.assertRaises(SystemExit) as error:
             source.main()
+        self.assertEqual(error.exception.code, 2)
         verify.assert_not_called()
-        output.write_text("existing evidence")
-        with patch.object(sys, "argv", [*args, "--write"]), patch.object(source, "verify_source") as verify, \
-                self.assertRaisesRegex(ValueError, "新文件"):
+        result = {"output": str(output), "status": "source_runtime_verified"}
+        with patch.object(sys, "argv", [*args, "--write"]), patch.object(
+                source, "execute_source_verification", return_value=result) as verify, \
+                patch("builtins.print") as printed:
             source.main()
-        verify.assert_not_called()
-        self.assertEqual(output.read_text(), "existing evidence")
-        output.unlink()
-        output.with_name(output.name + ".failed.json").write_text("failed evidence")
-        with patch.object(sys, "argv", [*args, "--write"]), patch.object(source, "verify_source") as verify, \
-                self.assertRaisesRegex(ValueError, "新文件"):
-            source.main()
-        verify.assert_not_called()
+        verify.assert_called_once_with(self.backend.resolve(), start, output)
+        printed.assert_called_once_with(json.dumps(result))
 
     def test_backup_cannot_write_manifest_when_source_proof_changes_after_export(self):
         capture = inventory(self.plan)
@@ -272,22 +270,18 @@ class SourceRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "停止观察收据"):
             source.verify_stopped_source(self.backend, self.plan, capture, path, self.quiescence_path)
 
-    def test_cli_failure_preserves_stderr_without_success_receipt_and_releases_only_its_lock(self):
-        output = self.work / "failed-source.json"
-        args = ["restore_source", "verify", "--backend-dir", str(self.backend), "--plan", str(self.plan_path),
-                "--build-receipt", str(self.build_path), "--dataset", str(self.dataset_path),
-                "--output", str(output), "--write"]
-        def write_new(path, value, _root):
-            with path.open("x", encoding="utf-8") as stream:
-                json.dump(value, stream)
+    def test_cli_failure_propagates_without_creating_legacy_lock_or_success_receipt(self):
+        start = self.work / "results/start.json"
+        output = self.work / "g0001/verification/source-runtime.json"
+        args = ["restore_source", "verify", "--backend-dir", str(self.backend),
+                "--source-generation", str(start), "--output", str(output), "--write"]
         failure = subprocess.CalledProcessError(1, ["node"], stderr=b"preserved protocol failure")
-        with patch.object(sys, "argv", args), patch.object(source, "verify_source", side_effect=failure), \
-                patch.object(source, "write_new", side_effect=write_new), self.assertRaises(subprocess.CalledProcessError):
+        with patch.object(sys, "argv", args), patch.object(
+                source, "execute_source_verification", side_effect=failure
+        ), self.assertRaises(subprocess.CalledProcessError):
             source.main()
         self.assertFalse(output.exists())
         self.assertFalse((self.work / ".reference-lock").exists())
-        self.assertEqual(source.read_json(output.with_name(output.name + ".failed.json"))["status"], "failed")
-        self.assertEqual(output.with_name(output.name + ".stderr.log").read_bytes(), b"preserved protocol failure")
 
     def test_comparison_capture_requires_write_and_binds_the_exact_export_result(self):
         export = self.write("source-export-result.json", {"published": True})

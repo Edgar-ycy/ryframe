@@ -226,6 +226,7 @@ fn parses_recovery_check_groups() {
         ));
     }
     assert!(parse_command(&["check", "recovery", "runtime", "restart"]).is_err());
+    assert!(parse_command(&["check", "recovery", "source", "quiesce"]).is_err());
     assert!(matches!(
         parse_command(&[
             "check",

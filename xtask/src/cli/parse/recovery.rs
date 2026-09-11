@@ -18,12 +18,7 @@ pub(super) fn parse_recovery(args: &[String]) -> Result<RecoveryCommand, CliErro
         "source" => parse_recovery_operation(
             "source",
             rest,
-            &[
-                "verify",
-                "quiesce",
-                "comparison-capture",
-                "comparison-verify",
-            ],
+            &["verify", "comparison-capture", "comparison-verify"],
         )
         .map(RecoveryCommand::Source),
         "clone" => parse_recovery_operation(

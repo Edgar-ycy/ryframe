@@ -21,6 +21,7 @@ from restore_reference_plan import plan_hash, validate_plan
 from restore_runtime import NoRedirect, read_json
 from restore_runtime_evidence import read_json_document
 from restore_source_binding import source_binding
+from restore_source_runtime import execute_source_verification
 
 
 def build_sha(build: dict) -> str:
@@ -241,13 +242,16 @@ def _verify_comparison(args, backend: Path) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for operation in ("verify", "quiesce"):
-        command = commands.add_parser(operation)
-        names = ("backend-dir", "plan", "output") + (("build-receipt", "dataset") if operation == "verify" else ("source-runtime",))
-        for name in names:
-            command.add_argument("--" + name, type=Path, required=True)
-        command.add_argument("--write", action="store_true", required=True,
-                             help="显式生成新证据；verify 会登录及注销，quiesce 只读观察已登记进程停止状态")
+    command = commands.add_parser("verify")
+    command.add_argument("--backend-dir", type=Path, required=True)
+    command.add_argument("--source-generation", type=Path, required=True)
+    command.add_argument("--output", type=Path, required=True)
+    command.add_argument(
+        "--write",
+        action="store_true",
+        required=True,
+        help="显式执行同代来源只读业务验收、登记会话副作用并写入严格收据",
+    )
     _add_comparison_capture_parser(commands)
     _add_comparison_verify_parser(commands)
     args = parser.parse_args()
@@ -258,28 +262,9 @@ def main() -> None:
     if args.command == "comparison-verify":
         print(json.dumps(_verify_comparison(args, backend)))
         return
-    output = args.output.resolve()
-    outputs = [output, output.with_name(output.name + ".failed.json"), output.with_name(output.name + ".stderr.log")]
-    if any(path.exists() for path in outputs) or not output.is_relative_to(backend / ".local-tests"):
-        raise ValueError("来源运行证明必须使用忽略目录内的新文件")
-    plan = read_json(args.plan)
-    validate_plan(plan, backend)
-    lock = Path(plan["work_dir"]) / ".reference-lock"
-    lock.mkdir(exist_ok=False)
-    try:
-        receipt = (verify_source(backend, args.plan.resolve(), args.build_receipt.resolve(), args.dataset.resolve())
-                   if args.command == "verify" else quiesce_source(backend, plan, args.source_runtime.resolve()))
-    except Exception as error:
-        write_new(output.with_name(output.name + ".failed.json"), {"status": "failed", "error": type(error).__name__}, backend)
-        if isinstance(error, (subprocess.CalledProcessError, subprocess.TimeoutExpired)) and error.stderr:
-            with output.with_name(output.name + ".stderr.log").open("xb") as stream:
-                stream.write(error.stderr)
-        raise
-    finally:
-        lock.rmdir()
-    write_new(output, receipt, backend)
-    print(json.dumps({"output": str(output), "status": "source_verified" if args.command == "verify" else "source_stopped",
-                      "observed_stopped_at": receipt.get("observed_stopped_at"), "restore_success": False}))
+    print(json.dumps(execute_source_verification(
+        backend, args.source_generation, args.output
+    )))
 
 
 if __name__ == "__main__":
