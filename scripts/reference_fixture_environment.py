@@ -19,6 +19,7 @@ from devex_clone_target_binding import KEYS, validate_review
 from devex_clone_tools import verify as verify_tools
 from full_stack_runtime import configuration_digest
 from reference_fixture_paths import service_run
+from reference_fixture_environment_receipt import load as load_prepared_environment
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
 from restore_source_binding import mysql_client
@@ -40,6 +41,11 @@ def _read(backend: Path, value: Path) -> tuple[Path, dict]:
     if linked(path) or not path.is_file():
         raise ValueError("夹具输入必须是受控目录中的普通文件")
     return path, read_json(path)
+
+
+def prepared_environment(backend: Path, value: Path) -> tuple[Path, Path, dict, dict]:
+    """读取并复核唯一环境 bootstrap、私有环境摘要及全部秘密文件。"""
+    return load_prepared_environment(backend, value, SECRET_FILES, bound)
 
 
 def _fixture(value: dict) -> None:

@@ -14,6 +14,8 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import reference_fixture_browser as browser
+import reference_fixture_browser_security as security
+import reference_fixture_environment as fixture_environment
 import reference_fixture_runtime as runtime
 from devex_clone_capture import write_json
 from workspace_directory import WorkspaceDirectory
@@ -53,20 +55,45 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
                                  "frontend_url": "http://127.0.0.1:14200"}},
         })
         self.bootstrap = self.environment / "bootstrap.json"
-        write_json(self.bootstrap, {
-            "format_version": 1, "kind": "reference-fixture-environment", "status": "prepared",
-            "services_started": False, "remote_writes": 0, "execution_backend": str(self.execution),
-            "plan": {"side": "seed", "review": {"path": str(self.review),
-                                                    **runtime.file_digest(self.review)}},
-        })
         self.private = {
             "APP_ENV": "test", "APP_SCOPE_ID": "fixture-source", "APP_CONFIG_DIR": str(self.execution),
             "APP_APP_HOST": "127.0.0.1", "APP_APP_PORT": "18200", "APP_JOBS_MODE": "external",
             "APP_CORS_ALLOW_ORIGINS": "http://127.0.0.1:14200",
-            "APP_DATABASE_PASSWORD": "Database!Secret123",
+            "APP_DATABASE_HOST": "127.0.0.1", "APP_DATABASE_PORT": "3306", "APP_DATABASE_NAME": "control",
+            "APP_DATABASE_USERNAME": "root", "APP_DATABASE_PASSWORD": "Database!Secret123",
+            "APP_DATABASE_TLS_MODE": "disabled", "APP_DB_PASSWORD": "Database!Secret123",
+            "APP_TENANT_DATA_TARGETS": "[]", "APP_OBJECT_STORAGE_BACKEND": "rustfs",
+            "APP_OBJECT_STORAGE_ENDPOINT": "http://127.0.0.1:29200", "APP_OBJECT_STORAGE_REGION": "us-east-1",
+            "APP_OBJECT_STORAGE_USE_SSL": "false", "APP_OBJECT_STORAGE_ACCESS_KEY": "RustfsAccess123",
+            "APP_OBJECT_STORAGE_SECRET_KEY": "Rustfs!Secret123", "APP_REDIS_HOST": "127.0.0.1",
+            "APP_REDIS_PORT": "16390", "APP_REDIS_DATABASE": "0", "APP_REDIS_TLS": "false",
+            "APP_REDIS_PASSWORD": "Redis!Secret123", "APP_JOBS_HEALTH_HOST": "127.0.0.1",
+            "APP_JOBS_HEALTH_PORT": "19200", "APP_AUTH_JWT_SECRET": "Jwt!Secret123",
+            "APP_MONITOR_METRICS_BEARER_TOKEN": "Metrics!Token123",
             "RYFRAME_RESET_ADMIN_PASSWORD": "Admin!Secret123",
             "TEMP": str(self.root / "tmp"), "TMP": str(self.root / "tmp"),
         }
+        secrets = self.reference / "secrets"
+        secrets.mkdir()
+        secret_values = {
+            "mysql-client.cnf": "[client]\npassword=Database!Secret123\n",
+            "rustfs-access-key.txt": "RustfsAccess123", "rustfs-secret-key.txt": "Rustfs!Secret123",
+            "redis-password.txt": "Redis!Secret123", "reset-admin-password.txt": "Admin!Secret123",
+            "reset-user-password.txt": "User!Secret123", "jwt-secret.txt": "Jwt!Secret123",
+            "metrics-token.txt": "Metrics!Token123",
+        }
+        for name, value in secret_values.items():
+            (secrets / name).write_text(value, encoding="utf-8")
+        write_json(self.bootstrap, {
+            "format_version": 1, "kind": "reference-fixture-environment", "status": "prepared",
+            "services_started": False, "remote_writes": 0, "historical_data_used": False,
+            "execution_backend": str(self.execution),
+            "environment_sha256": fixture_environment.plan_hash(self.private),
+            "secret_files": {name: {"path": str(secrets / name), **runtime.file_digest(secrets / name)}
+                             for name in fixture_environment.SECRET_FILES},
+            "plan": {"side": "seed", "review": {"path": str(self.review),
+                                                    **runtime.file_digest(self.review)}},
+        })
         write_json(self.environment / "environment.json", {"environment": self.private})
         self.output = self.reference / "runtime-r1"
         self.output.mkdir()
@@ -92,7 +119,7 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
             "capacity": 100, "window_secs": 60, "api_window_secs": 30,
             "api_limits": {"POST /api/v1/auth/login": 7},
         }))
-        stack.enter_context(patch.object(browser, "login_budget_environment", return_value={
+        stack.enter_context(patch.object(security, "login_budget_environment", return_value={
             "RYFRAME_E2E_LOGIN_BUDGET_STATE": str(self.output / "browser-r24-device-login-budget.json"),
             "RYFRAME_E2E_LOGIN_RATE_LIMIT_CAPACITY": "7",
             "RYFRAME_E2E_LOGIN_RATE_LIMIT_WINDOW_SECS": "30",
@@ -106,6 +133,7 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
             return {"PATH": str(self.root), "COMSPEC": str(self.tools["launcher.exe"]), **values}
 
         stack.enter_context(patch.object(browser, "configured", side_effect=safe))
+        stack.enter_context(patch.object(security, "configured", side_effect=safe))
         return stack
 
     def bind(self):
@@ -165,6 +193,19 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         self.assertEqual(calls[1][1]["RYFRAME_E2E_LOGIN_RATE_LIMIT_CAPACITY"], "7")
         self.assertEqual(result["status"], "passed")
         self.assertNotIn("Secret123", json.dumps(result))
+        self.assertNotIn("RustfsAccess123", json.dumps(result))
+
+    def test_browser_environment_is_explicit_and_redacts_every_bound_secret(self):
+        with self.patches():
+            binding, context = browser._plan(
+                self.api, self.backend, self.bootstrap, self.output, "r24-device", require_fresh=True)
+            values = security.browser_environment(context["private"], binding)
+        self.assertEqual(values["APP_OBJECT_STORAGE_ACCESS_KEY"], "RustfsAccess123")
+        self.assertEqual(values["RYFRAME_E2E_PASSWORD"], "Admin!Secret123")
+        self.assertNotIn("RYFRAME_RESET_USER_PASSWORD", values)
+        self.assertNotIn("APP_RESET_LEGACY_MYSQL_EXCLUSIVE", values)
+        self.assertIn("RustfsAccess123", context["secrets"])
+        self.assertIn("Database!Secret123", context["secrets"])
 
     def test_failure_preserves_exit_code_blocks_replay_and_does_not_publish_success(self):
         error = subprocess.CalledProcessError(19, ["corepack", "pnpm", "build", "--real"])
@@ -222,7 +263,7 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
     def test_interruption_reclaims_supervised_tree_and_redacts_password_log(self):
         process = Mock()
         process.tree = {"scope_id": "fixture-source"}
-        process.supervisor.stdout = BytesIO(b"Admin!Secret123\n")
+        process.supervisor.stdout = BytesIO(b"Admin!Secret123\nRustfsAccess123\n")
         process.wait.side_effect = [KeyboardInterrupt(), 137]
         binding = {"scope_id": "fixture-source", "tools": {
             "corepack": {"path": str(self.tools["corepack.cmd"])},
@@ -236,10 +277,11 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
                 patch.object(browser, "completion_binding", return_value={"sha256": "e" * 64}):
             with self.assertRaises(KeyboardInterrupt):
                 browser._frontend_command(binding, self.frontend, ["check"], {}, log, process_dir,
-                                          60, ("Admin!Secret123",))
+                                          60, ("Admin!Secret123", "RustfsAccess123"))
         self.assertTrue(Path(started.call_args.args[3][0]).is_absolute())
         terminated.assert_called_once_with(process.tree, crash=True)
         self.assertNotIn("Secret123", log.read_text(encoding="utf-8"))
+        self.assertNotIn("RustfsAccess123", log.read_text(encoding="utf-8"))
         self.assertIn("[REDACTED]", log.read_text(encoding="utf-8"))
 
     def test_successful_frontend_command_binds_tree_and_completion_receipts(self):

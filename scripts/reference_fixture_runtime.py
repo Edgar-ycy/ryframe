@@ -11,11 +11,12 @@ import subprocess
 from ci_full_stack_resources import build_binaries
 from devex_clone_capture import read_json, write_json
 from devex_clone_factory_context import Environments, configured
-from devex_clone_model import linked, local_path
+from devex_clone_model import linked
 from devex_clone_runtime import control
 from full_stack_provenance import verify_build_evidence
 from full_stack_runtime import register_runtime, verify_runtime
 from reference_fixture_browser import RuntimeApi, bind_browser, run_browser
+from reference_fixture_environment import prepared_environment
 from reference_fixture_source_pair import write_pair
 from restore_build import build_command, build_context, file_digest, source_snapshot, verify_build_artifacts
 from source_inventory import build_source_domains, capture_inventory
@@ -25,28 +26,8 @@ def _bound(path: Path) -> dict:
     return {"path": str(path), **file_digest(path)}
 
 
-def _read(backend: Path, value: Path) -> tuple[Path, dict]:
-    requested = value if value.is_absolute() else backend / value
-    path = local_path(backend, str(requested))
-    if linked(path) or not path.is_file():
-        raise ValueError("夹具运行时输入必须是受控普通文件")
-    return path, read_json(path)
-
-
 def _bootstrap(backend: Path, path: Path) -> tuple[Path, Path, dict]:
-    receipt_path, receipt = _read(backend, path)
-    if (receipt.get("format_version") != 1 or receipt.get("kind") != "reference-fixture-environment"
-            or receipt.get("status") != "prepared" or receipt.get("services_started") is not False
-            or receipt.get("remote_writes") != 0 or not isinstance(receipt.get("execution_backend"), str)):
-        raise ValueError("夹具运行时只能使用尚未启动服务的已准备私有环境")
-    execution = Path(receipt["execution_backend"])
-    if not execution.is_absolute() or linked(execution) or not (execution / "Cargo.toml").is_file():
-        raise ValueError("夹具执行工作树无效")
-    environment_path = receipt_path.parent / "environment.json"
-    environment = read_json(environment_path).get("environment")
-    if (not isinstance(environment, dict) or any(not isinstance(key, str) or not isinstance(value, str)
-                                                  for key, value in environment.items())):
-        raise ValueError("夹具私有环境无效")
+    receipt_path, execution, environment, _ = prepared_environment(backend, path)
     return receipt_path, execution, environment
 
 

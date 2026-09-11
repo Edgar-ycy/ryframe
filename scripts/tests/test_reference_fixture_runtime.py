@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import reference_fixture_runtime as runtime
+import reference_fixture_environment as environment
 from devex_clone_capture import write_json
 from workspace_directory import WorkspaceDirectory
 
@@ -27,15 +28,24 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
         self.environment = self.root / "environment"
         self.environment.mkdir()
         self.bootstrap = self.environment / "bootstrap.json"
-        write_json(self.bootstrap, {"format_version": 1, "kind": "reference-fixture-environment",
-                                    "status": "prepared", "services_started": False, "remote_writes": 0,
-                                    "execution_backend": str(self.execution)})
-        write_json(self.environment / "environment.json", {"environment": {
+        private = {
             "APP_ENV": "test", "APP_SCOPE_ID": "fixture-source", "APP_CONFIG_DIR": str(self.execution),
             "APP_APP_HOST": "127.0.0.1", "APP_APP_PORT": "18200", "APP_JOBS_MODE": "external",
             "APP_JOBS_HEALTH_HOST": "127.0.0.1", "APP_JOBS_HEALTH_PORT": "19200",
             "TEMP": str(self.root / "tmp"), "TMP": str(self.root / "tmp"),
-        }})
+        }
+        secrets = self.reference / "secrets"
+        secrets.mkdir()
+        for name in environment.SECRET_FILES:
+            (secrets / name).write_text("secret-" + name, encoding="utf-8")
+        write_json(self.bootstrap, {"format_version": 1, "kind": "reference-fixture-environment",
+                                    "status": "prepared", "services_started": False, "remote_writes": 0,
+                                    "historical_data_used": False, "execution_backend": str(self.execution),
+                                    "environment_sha256": environment.plan_hash(private),
+                                    "secret_files": {name: {"path": str(secrets / name),
+                                                            **runtime.file_digest(secrets / name)}
+                                                     for name in environment.SECRET_FILES}})
+        write_json(self.environment / "environment.json", {"environment": private})
         self.binaries = {}
         for name in ("ryframe", "ryframe-worker", "ryframe-reset", "ryframe-migrate"):
             path = self.root / (name + ".exe")
@@ -97,6 +107,20 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
     def test_output_rejects_paths_outside_the_device_reference_root(self):
         with self.assertRaisesRegex(ValueError, "参考夹具根"):
             runtime._output(self.execution, self.root / "outside", new=True)
+
+    def test_bootstrap_rejects_environment_or_secret_drift(self):
+        original = (self.environment / "environment.json").read_bytes()
+        (self.environment / "environment.json").unlink()
+        write_json(self.environment / "environment.json", {"environment": {"APP_ENV": "other"}})
+        with self.assertRaisesRegex(ValueError, "环境.*摘要"):
+            runtime._bootstrap(self.backend, self.bootstrap)
+        (self.environment / "environment.json").unlink()
+        (self.environment / "environment.json").write_bytes(original)
+
+        secret = self.reference / "secrets/rustfs-access-key.txt"
+        secret.write_text("changed", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "秘密文件"):
+            runtime._bootstrap(self.backend, self.bootstrap)
 
     def test_browser_cli_rejects_missing_write_before_reading_inputs(self):
         missing = self.root / "missing"

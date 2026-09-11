@@ -20,7 +20,8 @@ from devex_clone_source_proof import require_closed_port
 from full_stack_process_monitor import completion_binding
 from full_stack_process_tree import launch_supervised_process, terminate_owned_process_tree
 from full_stack_provenance import verify_build_evidence
-from full_stack_rate_limit_config import login_budget_environment, rate_limit_settings
+from full_stack_rate_limit_config import rate_limit_settings
+from reference_fixture_browser_security import browser_environment, secret_values
 from restore_build import file_digest
 from restore_input_plan import _publish_json
 from restore_runtime_evidence import artifact_snapshot, file_state
@@ -231,9 +232,11 @@ def _plan(api: RuntimeApi, backend: Path, environment_path: Path, output_path: P
         SourceGuard.capture(execution, binding["backend"]["source"]),
         SourceGuard.capture(frontend, frontend_source["generated"]),
     )
+    bootstrap = read_json(bootstrap_file)
     return binding, {"private": private, "frontend": frontend, "runtime": runtime,
                      "outputs": outputs, "source_guards": source_guards,
-                     "input_guards": _input_guards(binding)}
+                     "input_guards": _input_guards(binding),
+                     "secrets": secret_values(private, bootstrap)}
 
 
 def _assert_guards(context: dict) -> None:
@@ -255,12 +258,6 @@ def bind_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_
         raise ValueError("Device 浏览器绑定发布后来源发生变化；保留文件且禁止重放")
     return {"status": "reference_fixture_browser_bound", "binding": _bound(target),
             "run_id": run_id, "remote_writes": 0}
-
-
-def _secret_values(private: dict) -> tuple[str, ...]:
-    names = ("PASSWORD", "SECRET", "TOKEN")
-    return tuple(sorted({value for key, value in private.items()
-                         if any(name in key.upper() for name in names) and value}, key=len, reverse=True))
 
 
 class OutputCapture:
@@ -361,32 +358,6 @@ def _frontend_command(binding: dict, frontend: Path, arguments: list[str], envir
                 error.add_note("Device 前端日志脱敏失败：" + type(cleanup).__name__)
 
 
-def _browser_environment(private: dict, binding: dict) -> dict:
-    request, login = binding["rate_limits"]["request"], binding["rate_limits"]["login"]
-    values = configured(private)
-    values.update({
-        "COREPACK_ENABLE_NETWORK": "0", "PLAYWRIGHT_CHANNEL": "chrome", "PYTHONUTF8": "1",
-        "VITE_APP_PROXY_TARGET": binding["endpoints"]["api"],
-        "RYFRAME_E2E_SCOPE_ID": binding["scope_id"], "RYFRAME_E2E_TENANT_ID": "system",
-        "RYFRAME_E2E_USERNAME": "admin",
-        "RYFRAME_E2E_PASSWORD": private[binding["identity"]["password_env"]],
-        "RYFRAME_E2E_BACKEND_DIR": binding["backend"]["path"],
-        "RYFRAME_E2E_RUNTIME_DIR": str(Path(binding["runtime"]["path"]).parent),
-        "RYFRAME_E2E_PYTHON": binding["tools"]["python"]["path"],
-        "RYFRAME_E2E_MYSQL_CLIENT": binding["tools"]["mysql"]["path"],
-        "RYFRAME_E2E_RATE_LIMIT_CAPACITY": str(request["capacity"]),
-        "RYFRAME_E2E_RATE_LIMIT_WINDOW_SECS": str(request["window_secs"]),
-        "RYFRAME_E2E_FRONTEND_PORT": str(urlsplit(binding["endpoints"]["frontend"]).port),
-        "RYFRAME_E2E_RUN_ID": binding["run_id"],
-    })
-    state = Path(binding["login_budget"]["path"])
-    values.update(login_budget_environment(Path(binding["backend"]["path"]), private, state))
-    if (values["RYFRAME_E2E_LOGIN_RATE_LIMIT_CAPACITY"] != str(login["capacity"])
-            or values["RYFRAME_E2E_LOGIN_RATE_LIMIT_WINDOW_SECS"] != str(login["window_secs"])):
-        raise ValueError("Device 浏览器登录预算与绑定不一致")
-    return values
-
-
 def _failure_process(directory: Path) -> dict:
     result = {"directory": str(directory)}
     for name in ("frontend.json", "frontend-tree.json"):
@@ -419,14 +390,14 @@ def run_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_p
     binding_guard = artifact_snapshot(path)
     _assert_guards(context)
     outputs = context["outputs"]
-    environment = _browser_environment(context["private"], binding)
+    environment = browser_environment(context["private"], binding)
     intent = {"format_version": 1, "kind": "reference-fixture-browser-intent",
               "binding": _bound(path), "commands": binding["commands"],
               "login_budget": {"path": str(outputs["login_budget"]), "existed_before": False}}
     _publish_json(outputs["intent"], intent)
     stage, business_started = "build", False
     processes = {}
-    secrets = _secret_values(context["private"])
+    secrets = context["secrets"]
     try:
         build_environment = configured({"COREPACK_ENABLE_NETWORK": "0",
                                         "VITE_APP_API_ORIGIN": "",
