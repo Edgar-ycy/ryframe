@@ -14,6 +14,8 @@ on:
       - "scripts/ci_full_stack_databases.py"
       - "scripts/full_stack_*.py"
       - "scripts/restore*.py"
+      - "scripts/restore*.mjs"
+      - "scripts/tests/restore*.test.mjs"
       - "scripts/process_sockets.py"
       - "scripts/ci_devex_cgroup.py"
       - "scripts/tests/test_ci_devex_cgroup.py"

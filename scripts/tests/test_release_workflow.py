@@ -91,6 +91,14 @@ class ReleaseWorkflowTests(unittest.TestCase):
             mysql_container,
         )
 
+    def test_extended_ci_tracks_python_and_node_restore_changes(self):
+        document = workflow("extended-ci.yml")
+        triggers = document.get("on", document.get(True))
+        paths = set(triggers["push"]["paths"])
+        self.assertIn("scripts/restore*.py", paths)
+        self.assertIn("scripts/restore*.mjs", paths)
+        self.assertIn("scripts/tests/restore*.test.mjs", paths)
+
     def test_every_release_write_requires_final_ci_and_remote_tag_confirmation(self):
         document = workflow("release.yml")
         self.assertEqual(document["permissions"]["contents"], "read")
