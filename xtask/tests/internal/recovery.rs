@@ -433,6 +433,36 @@ fn fixture_runtime_uses_the_private_device_runtime_controller() {
 }
 
 #[test]
+fn fixture_runtime_forwards_private_browser_binding_without_a_new_public_stage() {
+    let (script, arguments) = recovery_command(
+        &RecoveryCommand::Fixture(strings(&[
+            "runtime",
+            "bind",
+            "--output",
+            "runtime-r1",
+            "--browser-binding",
+            "browser-binding-r24-device.json",
+            "--run-id",
+            "r24-device",
+            "--write",
+        ])),
+        Path::new("unused"),
+    )
+    .unwrap();
+    assert_eq!(script, "scripts/reference_fixture_runtime.py");
+    assert!(
+        arguments
+            .windows(2)
+            .any(|item| { item == ["--browser-binding", "browser-binding-r24-device.json"] })
+    );
+    assert!(
+        arguments
+            .windows(2)
+            .any(|item| item == ["--run-id", "r24-device"])
+    );
+}
+
+#[test]
 fn fixture_dataset_uses_the_private_device_dataset_adapter() {
     let (script, arguments) = recovery_command(
         &RecoveryCommand::Fixture(strings(&["dataset", "plan", "--runtime", "runtime-r1"])),

@@ -97,3 +97,13 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
     def test_output_rejects_paths_outside_the_device_reference_root(self):
         with self.assertRaisesRegex(ValueError, "参考夹具根"):
             runtime._output(self.execution, self.root / "outside", new=True)
+
+    def test_browser_cli_rejects_missing_write_before_reading_inputs(self):
+        missing = self.root / "missing"
+        with patch.object(sys, "argv", ["reference_fixture_runtime.py", "bind",
+                                        "--backend-dir", str(missing), "--environment", str(missing),
+                                        "--output", str(missing), "--browser-binding", str(missing),
+                                        "--run-id", "r24-device"]):
+            with self.assertRaises(SystemExit) as raised:
+                runtime.main()
+        self.assertEqual(raised.exception.code, 2)

@@ -15,6 +15,7 @@ from devex_clone_model import linked, local_path
 from devex_clone_runtime import control
 from full_stack_provenance import verify_build_evidence
 from full_stack_runtime import register_runtime, verify_runtime
+from reference_fixture_browser import RuntimeApi, bind_browser, run_browser
 from reference_fixture_source_pair import write_pair
 from restore_build import build_command, build_context, file_digest, source_snapshot, verify_build_artifacts
 from source_inventory import build_source_domains, capture_inventory
@@ -104,7 +105,7 @@ def build(backend: Path, environment_path: Path, output_path: Path) -> dict:
             inventory = capture_inventory(execution, source)
             context = build_context(execution)
             binaries = build_binaries(_run, execution, output)
-            backend_build = _backend_build(execution, output, binaries, inventory, context)
+            _backend_build(execution, output, binaries, inventory, context)
             runtime = register_runtime(execution, output)
         return {"status": "reference_fixture_runtime_built", "source_pair": _bound(output / "source-pair.json"),
                 "backend_build": _bound(output / "backend-build.json"), "runtime": _bound(output / "runtime.json"),
@@ -145,21 +146,37 @@ def run(backend: Path, environment_path: Path, output_path: Path, operation: str
             "remote_writes": 0}
 
 
+def _browser_api() -> RuntimeApi:
+    return RuntimeApi(_bootstrap, _output, verify, run)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("build", "verify", "start", "stop", "status"))
+    parser.add_argument("operation", choices=("build", "verify", "start", "stop", "status", "bind", "browser"))
     parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--environment", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--browser-binding", type=Path)
+    parser.add_argument("--run-id")
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
-    if args.operation in {"build", "start", "stop"} and not args.write:
-        parser.error("构建、启动和停止夹具运行时需要显式 --write")
+    if args.operation in {"build", "start", "stop", "bind", "browser"} and not args.write:
+        parser.error("构建、启动、停止、绑定和执行夹具运行时需要显式 --write")
     if args.operation in {"verify", "status"} and args.write:
         parser.error("夹具运行时只读核验不接受 --write")
+    if args.operation == "bind" and (args.browser_binding is None or args.run_id is None):
+        parser.error("Device 浏览器 bind 需要 --browser-binding 与 --run-id")
+    if args.operation == "browser" and (args.browser_binding is None or args.run_id is not None):
+        parser.error("Device 浏览器 browser 需要 --browser-binding 且不接受 --run-id")
+    if args.operation not in {"bind", "browser"} and (args.browser_binding is not None or args.run_id is not None):
+        parser.error("--browser-binding 与 --run-id 只用于 Device 浏览器 bind/browser")
     backend = args.backend_dir.resolve(strict=True)
     result = (build(backend, args.environment, args.output) if args.operation == "build"
               else verify(backend, args.environment, args.output) if args.operation == "verify"
+              else bind_browser(_browser_api(), backend, args.environment, args.output,
+                                args.browser_binding, args.run_id) if args.operation == "bind"
+              else run_browser(_browser_api(), backend, args.environment, args.output,
+                               args.browser_binding) if args.operation == "browser"
               else run(backend, args.environment, args.output, args.operation))
     print(json.dumps(result, ensure_ascii=False))
 
