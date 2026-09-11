@@ -2,7 +2,6 @@
 
 import copy
 import hashlib
-import json
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -135,6 +134,14 @@ class SourceDatasetLineageTests(unittest.TestCase):
                     "metadata": {"tenant-id": item["file_path"].split("/", 1)[0]},
                 }
             )
+        self.probe = {
+            "bucket": "uploads",
+            "source_key": f"{self.origin}/system/probe.txt",
+            "target_key": f"{self.current}/system/probe.txt",
+            "artifact": {"bytes": 7, "sha256": self._sha("probe")},
+            "metadata": {},
+        }
+        objects.append(self.probe)
         self.copy_plan = {
             "plan_sha256": "1" * 64,
             "copy_stage": "source_to_seed",
@@ -309,12 +316,6 @@ class SourceDatasetLineageTests(unittest.TestCase):
                 "metadata": item["metadata"],
                 "identity": {"ETag": item["artifact"]["sha256"]},
             }
-        buckets["uploads"][f"{self.current}/probe.txt"] = {
-            "bytes": 7,
-            "sha256": self._sha("probe"),
-            "metadata": {},
-            "identity": {"ETag": "probe"},
-        }
         return {
             "format_version": 1,
             "kind": "seed-source-generation-image",
@@ -336,11 +337,27 @@ class SourceDatasetLineageTests(unittest.TestCase):
         self.assertEqual(result["scale"]["current_post_rows"], 100_044)
         self.assertEqual(result["scale"]["post_samples"], 33)
         self.assertEqual(result["scale"]["business_objects"], 256)
+        self.assertEqual(result["scale"]["verified_objects"], 257)
         self.assertEqual(result["scale"]["object_bytes"], 1024**3)
         self.assertEqual(result["scopes"]["origin_tenant_scope_id"], self.origin)
         self.assertEqual(result["scopes"]["current_object_scope_id"], self.current)
         self.assertEqual(result["tenants"][1]["tenant_id"], f"{self.origin}-01")
-        self.assertNotIn("probe", json.dumps(result["objects"]))
+        self.assertEqual(result["tenants"][1]["username"], "user-1")
+        self.assertEqual(result["tenants"][1]["password_env"], "PASSWORD_1")
+        self.assertEqual(result["tenants"][1]["records"], 9_091)
+        self.assertEqual(len(result["tenants"][1]["posts"]), 3)
+        self.assertTrue(result["tenants"][1]["files"])
+        self.assertEqual(
+            result["objects"]["probe"],
+            {
+                "bucket": self.probe["bucket"],
+                "source_key": self.probe["source_key"],
+                "target_key": self.probe["target_key"],
+                "bytes": self.probe["artifact"]["bytes"],
+                "sha256": self.probe["artifact"]["sha256"],
+                "metadata": self.probe["metadata"],
+            },
+        )
         _, descriptor = self._write("generation/dataset-lineage.json", result)
         self.assertEqual(
             lineage.verify_dataset_lineage(
@@ -378,7 +395,45 @@ class SourceDatasetLineageTests(unittest.TestCase):
         key = self.copy_plan["objects"][0]["target_key"]
         bucket = self.copy_plan["objects"][0]["bucket"]
         self._rewrite_image(lambda value: value["image"]["objects"][bucket][key].update(sha256="f" * 64))
-        with self.assertRaisesRegex(ValueError, "256 个业务对象"):
+        with self.assertRaisesRegex(ValueError, "复制计划对象"):
+            lineage.derive_dataset_lineage(
+                self.backend, self.source, self.image_descriptor, self.image
+            )
+
+    def test_unknown_object_or_second_probe_fails_closed(self):
+        self._rewrite_image(
+            lambda value: value["image"]["objects"]["uploads"].update(
+                {
+                    f"{self.current}/unknown.bin": {
+                        "bytes": 1,
+                        "sha256": self._sha("unknown"),
+                        "metadata": {},
+                        "identity": {"ETag": "unknown"},
+                    }
+                }
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "未知对象"):
+            lineage.derive_dataset_lineage(
+                self.backend, self.source, self.image_descriptor, self.image
+            )
+
+        self.image = self._image(
+            self.reference_plan["dataset"]["tenant_targets"], self.copy_plan["objects"]
+        )
+        second = {
+            "bucket": "exports",
+            "source_key": f"{self.origin}/system/second-probe.txt",
+            "target_key": f"{self.current}/system/second-probe.txt",
+            "artifact": {"bytes": 1, "sha256": self._sha("second-probe")},
+            "metadata": {},
+        }
+        self.copy_plan["objects"].append(second)
+        self.image["image"]["objects"]["exports"][second["target_key"]] = {
+            **second["artifact"], "metadata": {}, "identity": {"ETag": "second"}
+        }
+        self._rewrite_image(lambda value: None)
+        with self.assertRaisesRegex(ValueError, "唯一探针"):
             lineage.derive_dataset_lineage(
                 self.backend, self.source, self.image_descriptor, self.image
             )

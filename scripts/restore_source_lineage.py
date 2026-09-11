@@ -9,7 +9,7 @@ from devex_clone_capture import read_json
 from devex_clone_model import exact
 from devex_clone_run_state import binding, load_state
 from devex_clone_source_proof import bound_file
-from restore_reference_plan import plan_hash, validate_plan
+from restore_reference_plan import BUCKETS, plan_hash, validate_plan
 
 
 LINEAGE_FIELDS = {
@@ -106,6 +106,10 @@ def _dataset_facts(backend: Path, post) -> dict:
         exact(tenant, TENANT_FIELDS)
         if (
             not isinstance(tenant["tenant_id"], str)
+            or not isinstance(tenant["username"], str)
+            or not tenant["username"]
+            or not isinstance(tenant["password_env"], str)
+            or re.fullmatch(r"[A-Z][A-Z0-9_]*", tenant["password_env"]) is None
             or type(tenant["records"]) is not int
             or tenant["records"] < 0
             or not isinstance(tenant["posts"], list)
@@ -206,7 +210,7 @@ def _post_verify(backend: Path, source: dict, chain: dict, post, dataset: dict, 
         or result.get("worker_must_remain_stopped") is not True
         or result.get("restore_qualified") is not False
         or result.get("objects") != {
-            "business_objects": len(copy["plan"]["objects"]),
+            "business_objects": len(dataset["files"]),
             "additional_objects": 1,
             "additional_objects_downloaded": True,
             "all_scoped_keys_verified": True,
@@ -271,8 +275,19 @@ def _tenant_projection(plan: dict, dataset: dict, image: dict) -> list[dict]:
             observed[tenant_id] = key
     if observed != expected:
         raise ValueError("当前完整像没有保留原十一租户的共享/独立 placement")
-    return [{"tenant_id": tenant_id, "database": expected[tenant_id]}
-            for tenant_id in ["system", *[item["tenant_id"] for item in ordinary]]]
+    projected = []
+    for tenant_id in ["system", *[item["tenant_id"] for item in ordinary]]:
+        tenant = tenant_by_id[tenant_id]
+        projected.append({
+            "tenant_id": tenant_id,
+            "database": expected[tenant_id],
+            "username": tenant["username"],
+            "password_env": tenant["password_env"],
+            "records": tenant["records"],
+            "posts": [dict(item) for item in tenant["posts"]],
+            "files": [dict(item) for item in tenant["files"]],
+        })
+    return projected
 
 
 def _object_projection(dataset: dict, copy: dict, image: dict) -> dict:
@@ -282,38 +297,67 @@ def _object_projection(dataset: dict, copy: dict, image: dict) -> dict:
     objects = image.get("image", {}).get("objects")
     if not isinstance(objects, dict):
         raise ValueError("当前完整像缺少对象完整库存")
-    mappings = []
+    exact(objects, BUCKETS)
+    if any(not isinstance(value, dict) for value in objects.values()):
+        raise ValueError("当前完整像的对象桶库存无效")
+    business, additional, planned = [], [], set()
     for item in copy["plan"]["objects"]:
         exact(item, {"bucket", "source_key", "target_key", "artifact", "metadata"})
         prefix = origin + "/"
-        if not item["source_key"].startswith(prefix):
-            raise ValueError("复制计划业务对象没有使用原数据 scope")
+        target_prefix = current + "/"
+        identity = (item["bucket"], item["target_key"])
+        if (
+            item["bucket"] not in BUCKETS
+            or identity in planned
+            or not item["source_key"].startswith(prefix)
+            or not item["target_key"].startswith(target_prefix)
+        ):
+            raise ValueError("复制计划对象的桶、scope 或目标键重复")
+        planned.add(identity)
         relative = item["source_key"][len(prefix):]
         tenant_id = relative.split("/", 1)[0]
         sample = declared.pop((tenant_id, relative), None)
         observed = objects.get(item["bucket"], {}).get(item["target_key"])
         expected_key = current + "/" + relative
         if (
-            sample is None
-            or item["target_key"] != expected_key
-            or item["artifact"].get("bytes") != sample["bytes"]
-            or item["artifact"].get("sha256") != sample["sha256"]
+            item["target_key"] != expected_key
             or not isinstance(observed, dict)
-            or observed.get("bytes") != sample["bytes"]
-            or observed.get("sha256") != sample["sha256"]
+            or observed.get("bytes") != item["artifact"].get("bytes")
+            or observed.get("sha256") != item["artifact"].get("sha256")
             or observed.get("metadata") != item["metadata"]
         ):
-            raise ValueError("当前完整像没有精确保留原 256 个业务对象及 scope 重写")
-        mappings.append({
+            raise ValueError("当前完整像没有精确保留复制计划对象及 scope 重写")
+        projection = {
             "bucket": item["bucket"], "source_key": item["source_key"],
-            "target_key": item["target_key"], "bytes": sample["bytes"],
-            "sha256": sample["sha256"], "metadata": item["metadata"],
-        })
-    if declared or len(mappings) != 256:
-        raise ValueError("原数据集与复制计划的业务对象集合不完整")
-    mappings.sort(key=lambda item: (item["bucket"], item["target_key"]))
-    return {"business_objects": len(mappings), "business_bytes": sum(item["bytes"] for item in mappings),
-            "mapping_sha256": plan_hash(mappings)}
+            "target_key": item["target_key"], "bytes": item["artifact"]["bytes"],
+            "sha256": item["artifact"]["sha256"], "metadata": item["metadata"],
+        }
+        if sample is None:
+            additional.append(projection)
+        elif (
+            item["artifact"].get("bytes") != sample["bytes"]
+            or item["artifact"].get("sha256") != sample["sha256"]
+        ):
+            raise ValueError("复制计划业务对象与原数据集摘要不同")
+        else:
+            business.append(projection)
+    observed = {
+        (bucket, key)
+        for bucket, entries in objects.items()
+        for key in entries
+    }
+    if declared or len(business) != 256 or len(additional) != 1:
+        raise ValueError("原数据集与复制计划的 256 个业务对象及唯一探针不完整")
+    if observed != planned:
+        raise ValueError("当前完整像包含复制计划之外的未知对象")
+    business.sort(key=lambda item: (item["bucket"], item["target_key"]))
+    return {
+        "business_objects": len(business),
+        "business_bytes": sum(item["bytes"] for item in business),
+        "mapping_sha256": plan_hash(business),
+        "probe": additional[0],
+        "verified_objects": len(planned),
+    }
 
 
 def derive_dataset_lineage(
@@ -374,6 +418,7 @@ def derive_dataset_lineage(
             "tenants": len(tenants),
             "post_samples": sum(len(item["posts"]) for item in dataset["tenants"]),
             "business_objects": objects["business_objects"],
+            "verified_objects": objects["verified_objects"],
             "object_bytes": objects["business_bytes"],
         },
         "tenants": tenants,
