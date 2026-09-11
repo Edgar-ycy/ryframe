@@ -15,7 +15,7 @@ from devex_clone_seed_export import published_export
 from devex_clone_source_proof import bound_file
 from reference_fixture_successor import published_source
 from restore_build import file_digest, verify_build
-from restore_runtime import FRONTEND_RECEIPT, frontend_files
+from restore_frontend_build import FRONTEND_RECEIPT, frontend_files
 from restore_runtime_evidence import (
     read_json_document,
     reject_link_or_reparse,

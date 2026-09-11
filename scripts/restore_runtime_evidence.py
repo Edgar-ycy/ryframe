@@ -29,7 +29,10 @@ AUTHORITY_FIELDS = {
     "plan_hash",
     "scope_id",
     "data_verified_at",
-    "backend_sha",
+    "backup_source_sha",
+    "backend_product_sha",
+    "backend_execution_sha",
+    "backend_adapter_contract",
     "frontend_sha",
     "api_endpoint",
     "worker_endpoint",
@@ -223,16 +226,28 @@ def canonical_endpoint(url: object, path: str, label: str) -> str:
 
 def validate_authority(value: object) -> dict:
     authority = exact_fields(value, AUTHORITY_FIELDS, "权威恢复上下文")
-    if authority["format_version"] != 1 or authority["kind"] != "restore-runtime-authority":
+    if authority["format_version"] != 2 or authority["kind"] != "restore-runtime-authority":
         raise ValueError("权威恢复上下文版本或类型不匹配")
     for field in ("restore_id", "backup_id"):
         if not valid_identifier(authority[field]):
             raise ValueError(f"权威恢复上下文的 {field} 无效")
     if not valid_scope_identifier(authority["scope_id"]):
         raise ValueError("权威恢复上下文的 scope_id 无效")
-    for field, pattern in (("plan_hash", HEX_64), ("backend_sha", HEX_40), ("frontend_sha", HEX_40)):
+    for field, pattern in (
+        ("plan_hash", HEX_64),
+        ("backup_source_sha", HEX_40),
+        ("backend_product_sha", HEX_40),
+        ("backend_execution_sha", HEX_40),
+        ("frontend_sha", HEX_40),
+    ):
         if not isinstance(authority[field], str) or not pattern.fullmatch(authority[field]):
             raise ValueError(f"权威恢复上下文的 {field} 无效")
+    adapter = authority["backend_adapter_contract"]
+    same_backend = authority["backend_product_sha"] == authority["backend_execution_sha"]
+    if (same_backend and adapter is not None) or (
+        not same_backend and adapter != "legacy-stable-readiness-b0-v1"
+    ):
+        raise ValueError("权威恢复上下文的后端产品、执行来源与适配合同不一致")
     timestamp = authority["data_verified_at"]
     if not isinstance(timestamp, str):
         raise ValueError("权威恢复上下文缺少 data_verified_at")
@@ -394,22 +409,43 @@ def validate_runtime_receipt(receipt: object) -> dict:
     )
     paths = exact_fields(
         value["paths"],
-        {"backend_root", "frontend_root", "runtime_dir", "bindings", "backend_build", "frontend_build"},
+        {
+            "backend_product_root",
+            "backend_execution_root",
+            "frontend_root",
+            "runtime_dir",
+            "bindings",
+            "backend_build",
+            "frontend_build",
+        },
         "恢复路径绑定",
     )
     digests = exact_fields(value["digests"], {"bindings", "backend_build", "frontend_build"}, "恢复摘要绑定")
-    source = exact_fields(value["source"], {"backend_sha", "frontend_sha"}, "恢复源码绑定")
+    source = exact_fields(
+        value["source"],
+        {
+            "backup_source_sha",
+            "backend_product_sha",
+            "backend_execution_sha",
+            "backend_adapter_contract",
+            "frontend_sha",
+        },
+        "恢复源码绑定",
+    )
     endpoints = exact_fields(value["endpoints"], {"api", "worker", "frontend"}, "恢复端点绑定")
     validate_authority(
         {
-            "format_version": 1,
+            "format_version": 2,
             "kind": "restore-runtime-authority",
             "restore_id": restore["id"],
             "backup_id": restore["backup_id"],
             "plan_hash": restore["plan_hash"],
             "scope_id": restore["scope_id"],
             "data_verified_at": restore["data_verified_at"],
-            "backend_sha": source["backend_sha"],
+            "backup_source_sha": source["backup_source_sha"],
+            "backend_product_sha": source["backend_product_sha"],
+            "backend_execution_sha": source["backend_execution_sha"],
+            "backend_adapter_contract": source["backend_adapter_contract"],
             "frontend_sha": source["frontend_sha"],
             "api_endpoint": endpoints["api"],
             "worker_endpoint": endpoints["worker"],

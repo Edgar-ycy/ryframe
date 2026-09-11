@@ -27,11 +27,8 @@ pub(crate) fn recovery_command(
             with_paths(arguments, &backend, None)?,
         )),
         RecoveryCommand::Runtime(arguments) => {
-            let frontend = matches!(
-                arguments.first().map(String::as_str),
-                Some("build" | "bind" | "verify")
-            )
-            .then_some(frontend.as_str());
+            let frontend = matches!(arguments.first().map(String::as_str), Some("build"))
+                .then_some(frontend.as_str());
             Ok((
                 "scripts/restore_runtime.py",
                 with_paths(arguments, &backend, frontend)?,

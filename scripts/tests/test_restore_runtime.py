@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import restore_build
+import restore_frontend_build
 import restore_runtime
 import restore_runtime_evidence
 import source_inventory
@@ -67,6 +68,13 @@ class RestoreRuntimeTests(unittest.TestCase):
                 side_effect=lambda *_args: copy.deepcopy(INVENTORY),
             )
         )
+        self.enterContext(
+            patch.object(
+                restore_frontend_build,
+                "capture_inventory",
+                side_effect=lambda *_args: copy.deepcopy(INVENTORY),
+            )
+        )
         local = ROOT / ".local-tests/python-unit"
         self.directory = WorkspaceDirectory(local)
         self.addCleanup(self.directory.cleanup)
@@ -99,14 +107,17 @@ class RestoreRuntimeTests(unittest.TestCase):
 
     def authority(self, **changes):
         value = {
-            "format_version": 1,
+            "format_version": 2,
             "kind": "restore-runtime-authority",
             "restore_id": "restore-one",
             "backup_id": "backup-one",
             "plan_hash": "c" * 64,
             "scope_id": "restore-test",
             "data_verified_at": "2026-09-06T08:00:00+08:00",
-            "backend_sha": SOURCE["head"],
+            "backup_source_sha": "f" * 40,
+            "backend_product_sha": SOURCE["head"],
+            "backend_execution_sha": SOURCE["head"],
+            "backend_adapter_contract": None,
             "frontend_sha": SOURCE["head"],
             "api_endpoint": "http://127.0.0.1:18080/readyz",
             "worker_endpoint": "http://127.0.0.1:19091/readyz",
@@ -133,7 +144,7 @@ class RestoreRuntimeTests(unittest.TestCase):
                                 "sha256": source_inventory.canonical_digest([])},
                 "environment_files": [],
             },
-            "files": restore_runtime.frontend_files(self.frontend),
+            "files": restore_frontend_build.frontend_files(self.frontend),
         }
         frontend_path = self.write_json(
             self.frontend / "dist" / restore_runtime.FRONTEND_RECEIPT,
@@ -154,7 +165,13 @@ class RestoreRuntimeTests(unittest.TestCase):
         }
         bindings_path = self.write_json(
             self.root / "bindings.json",
-            {"record": record, "manifest": {"id": authority["backup_id"], "source_sha": authority["backend_sha"]}},
+            {
+                "record": record,
+                "manifest": {
+                    "id": authority["backup_id"],
+                    "source_sha": authority["backup_source_sha"],
+                },
+            },
         )
         for index, (role, artifact) in enumerate(backend_build["artifacts"].items()):
             identity = {
@@ -169,6 +186,21 @@ class RestoreRuntimeTests(unittest.TestCase):
             )
         return authority, build_path, frontend_path, bindings_path
 
+    def resolved_sources(self, authority):
+        return {
+            "roots": {
+                "backend_product": str(self.backend),
+                "backend_execution": str(self.backend),
+                "frontend": str(self.frontend),
+            },
+            "source": {
+                "backend_product_sha": authority["backend_product_sha"],
+                "backend_execution_sha": authority["backend_execution_sha"],
+                "backend_adapter_contract": authority["backend_adapter_contract"],
+                "frontend_sha": authority["frontend_sha"],
+            },
+        }
+
     @contextlib.contextmanager
     def runtime_patches(self, *, fake_probes):
         with contextlib.ExitStack() as stack:
@@ -181,12 +213,19 @@ class RestoreRuntimeTests(unittest.TestCase):
                 )
             )
             stack.enter_context(patch.object(restore_runtime, "verify_listener"))
+            stack.enter_context(
+                patch.object(
+                    restore_runtime,
+                    "resolve_runtime_sources",
+                    side_effect=lambda *_args, **_kwargs: self.resolved_sources(self.authority()),
+                )
+            )
             if fake_probes:
                 stack.enter_context(patch.object(restore_runtime, "_probe_api", return_value=READY))
                 stack.enter_context(patch.object(restore_runtime, "_probe_worker"))
 
                 def local_frontend(root, receipt, _url):
-                    files, snapshots = restore_runtime._frontend_snapshots(root)
+                    files, snapshots = restore_frontend_build.frontend_snapshots(root)
                     if files != receipt["files"]:
                         raise ValueError("前端生产构建与文件收据不一致")
                     return files, snapshots
@@ -204,6 +243,7 @@ class RestoreRuntimeTests(unittest.TestCase):
         authority, build_path, _frontend_path, bindings_path = self.prepare(authority)
         with self.runtime_patches(fake_probes=fake_probes):
             receipt = restore_runtime.bind(
+                self.backend,
                 self.backend,
                 self.frontend,
                 build_path,
@@ -274,6 +314,11 @@ class RestoreRuntimeTests(unittest.TestCase):
             {**expected, "backup_id": "b" + "-" * 63},
             {**expected, "scope_id": "a1"},
             {**expected, "scope_id": "a" + "_" * 46 + "z"},
+            {
+                **expected,
+                "backend_execution_sha": "e" * 40,
+                "backend_adapter_contract": "legacy-stable-readiness-b0-v1",
+            },
         ]
         for value in valid:
             with self.subTest(valid=value):
@@ -299,6 +344,8 @@ class RestoreRuntimeTests(unittest.TestCase):
             {**expected, "api_endpoint": "http://127.0.0.1/readyz"},
             {**expected, "worker_endpoint": expected["api_endpoint"]},
             {**expected, "frontend_endpoint": "http://127.0.0.1:14174/"},
+            {**expected, "backend_execution_sha": "e" * 40},
+            {**expected, "backend_adapter_contract": "legacy-stable-readiness-b0-v1"},
         ]
         for value in invalid:
             with self.subTest(value=value), self.assertRaises(ValueError):
@@ -340,7 +387,16 @@ class RestoreRuntimeTests(unittest.TestCase):
         authority, receipt, bindings = self.bind_receipt()
         self.assertEqual(receipt["paths"]["bindings"], str(bindings))
         self.assertEqual(receipt["restore"]["data_verified_at"], authority["data_verified_at"])
-        self.assertEqual(receipt["source"], {"backend_sha": authority["backend_sha"], "frontend_sha": authority["frontend_sha"]})
+        self.assertEqual(
+            receipt["source"],
+            {
+                "backup_source_sha": authority["backup_source_sha"],
+                "backend_product_sha": authority["backend_product_sha"],
+                "backend_execution_sha": authority["backend_execution_sha"],
+                "backend_adapter_contract": authority["backend_adapter_contract"],
+                "frontend_sha": authority["frontend_sha"],
+            },
+        )
         self.assertEqual(
             receipt["endpoints"],
             {
@@ -356,13 +412,13 @@ class RestoreRuntimeTests(unittest.TestCase):
         authority, receipt, bindings = self.bind_receipt()
         changed = {**receipt, "extra": True}
         with patch.object(restore_runtime, "_probe_api") as probe, self.assertRaisesRegex(ValueError, "字段必须精确"):
-            restore_runtime.verify(changed, self.backend, self.frontend, bindings, authority, "f" * 64)
+            restore_runtime.verify(changed, self.backend, self.backend, self.frontend, bindings, authority, "f" * 64)
         probe.assert_not_called()
         process_path = self.root / "api.json"
         process = restore_runtime.read_json(process_path)
         self.write_json(process_path, {**process, "extra": True})
         with self.runtime_patches(fake_probes=True), self.assertRaises(ValueError):
-            restore_runtime.verify(receipt, self.backend, self.frontend, bindings, authority, "f" * 64)
+            restore_runtime.verify(receipt, self.backend, self.backend, self.frontend, bindings, authority, "f" * 64)
 
     def test_tampered_bindings_build_frontend_process_and_dist_are_rejected(self):
         authority, receipt, bindings = self.bind_receipt()
@@ -379,7 +435,7 @@ class RestoreRuntimeTests(unittest.TestCase):
                 original = path.read_bytes()
                 path.write_bytes(original + b"tampered")
                 with self.runtime_patches(fake_probes=True), self.assertRaises(ValueError):
-                    restore_runtime.verify(receipt, self.backend, self.frontend, bindings, authority, "f" * 64)
+                    restore_runtime.verify(receipt, self.backend, self.backend, self.frontend, bindings, authority, "f" * 64)
                 path.write_bytes(original)
 
     def test_full_verification_checks_api_worker_and_all_frontend_bytes(self):
@@ -397,13 +453,14 @@ class RestoreRuntimeTests(unittest.TestCase):
         with self.runtime_patches(fake_probes=False):
             receipt = restore_runtime.bind(
                 self.backend,
+                self.backend,
                 self.frontend,
                 build_path,
                 self.root,
                 bindings,
                 authority["frontend_endpoint"],
             )
-            result = restore_runtime.verify(receipt, self.backend, self.frontend, bindings, authority, "f" * 64)
+            result = restore_runtime.verify(receipt, self.backend, self.backend, self.frontend, bindings, authority, "f" * 64)
         self.assertEqual(result["status"], "verified")
         self.assertEqual(result["runtime_receipt_sha256"], "f" * 64)
         self.assertEqual(result["api_readiness"], READY)
@@ -450,7 +507,7 @@ class RestoreRuntimeTests(unittest.TestCase):
 
         with self.runtime_patches(fake_probes=True), patch.object(restore_runtime, "_probe_api", side_effect=mutate), \
                 self.assertRaisesRegex(ValueError, "被替换或修改"):
-            restore_runtime.verify(receipt, self.backend, self.frontend, bindings, authority, "f" * 64)
+            restore_runtime.verify(receipt, self.backend, self.backend, self.frontend, bindings, authority, "f" * 64)
 
     def test_source_or_process_identity_change_after_probe_is_detected(self):
         authority, receipt, bindings = self.bind_receipt()
@@ -463,7 +520,7 @@ class RestoreRuntimeTests(unittest.TestCase):
                 {**self.identities[42], "started": "restarted"},
             ],
         ), self.assertRaisesRegex(ValueError, "进程已退出、重启"):
-            restore_runtime.verify(receipt, self.backend, self.frontend, bindings, authority, "f" * 64)
+            restore_runtime.verify(receipt, self.backend, self.backend, self.frontend, bindings, authority, "f" * 64)
 
     def test_cli_requires_explicit_write_before_build_or_bind(self):
         common = ["--backend-dir", str(self.backend), "--output", str(self.backend / ".local-tests/out.json")]
@@ -480,7 +537,9 @@ class RestoreRuntimeTests(unittest.TestCase):
             SOURCE["head"],
         ]
         binding = [
-            "--frontend-dir",
+            "--source-backend",
+            str(self.backend),
+            "--source-frontend",
             str(self.frontend),
             "--bindings",
             str(self.root / "bindings.json"),
@@ -564,14 +623,14 @@ class RestoreRuntimeTests(unittest.TestCase):
         self.prepare()
         scripts = self.frontend / "scripts"
         scripts.mkdir()
-        for relative in restore_runtime.FRONTEND_BUILD_TOOL_FILES:
+        for relative in restore_frontend_build.FRONTEND_BUILD_TOOL_FILES:
             (self.frontend / relative).write_text(relative, encoding="utf-8")
         with patch.object(
-            restore_runtime,
+            restore_frontend_build,
             "repository",
             side_effect=lambda path, _label: Path(path).resolve(),
-        ), patch.object(restore_runtime.subprocess, "run") as run:
-            source, receipt, action = restore_runtime.build_registered_frontend(
+        ), patch.object(restore_frontend_build.subprocess, "run") as run:
+            source, receipt, action = restore_frontend_build.build_registered_frontend(
                 self.frontend, self.frontend, SOURCE["head"]
             )
         self.assertEqual(source, self.frontend)
@@ -585,7 +644,7 @@ class RestoreRuntimeTests(unittest.TestCase):
         frontend_path.unlink()
         scripts = self.frontend / "scripts"
         scripts.mkdir()
-        for relative in restore_runtime.FRONTEND_BUILD_TOOL_FILES:
+        for relative in restore_frontend_build.FRONTEND_BUILD_TOOL_FILES:
             (self.frontend / relative).write_text(relative, encoding="utf-8")
 
         def run(command, **options):
@@ -598,11 +657,11 @@ class RestoreRuntimeTests(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0)
 
         with patch.object(
-            restore_runtime,
+            restore_frontend_build,
             "repository",
             side_effect=lambda path, _label: Path(path).resolve(),
         ):
-            source, receipt, action = restore_runtime.build_registered_frontend(
+            source, receipt, action = restore_frontend_build.build_registered_frontend(
                 self.frontend, self.frontend, SOURCE["head"], run
             )
         self.assertEqual(source, self.frontend)
@@ -624,7 +683,9 @@ class RestoreRuntimeTests(unittest.TestCase):
             "verify",
             "--backend-dir",
             str(self.backend),
-            "--frontend-dir",
+            "--source-backend",
+            str(self.backend),
+            "--source-frontend",
             str(self.frontend),
             "--bindings",
             str(bindings),
@@ -637,9 +698,9 @@ class RestoreRuntimeTests(unittest.TestCase):
                 ) as verify_call:
             restore_runtime.main()
         self.assertEqual(json.loads(output.getvalue()), result)
-        self.assertEqual(verify_call.call_args.args[4], authority)
+        self.assertEqual(verify_call.call_args.args[5], authority)
 
-        def mutate(*_args):
+        def mutate(*_args, **_kwargs):
             runtime_path.write_text('{"fixture":"changed"}', encoding="utf-8")
             return result
 

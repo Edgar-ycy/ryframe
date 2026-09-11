@@ -8,7 +8,7 @@ fn strings(values: &[&str]) -> Vec<String> {
 }
 
 #[test]
-fn runtime_stage_uses_private_verifier_and_forwards_the_global_frontend() {
+fn runtime_stage_uses_private_verifier_and_only_build_forwards_the_tool_frontend() {
     let frontend = Path::new("D:/前端 worktree");
     let (script, forwarded) = recovery_command(
         &RecoveryCommand::Runtime(strings(&["verify", "--receipt", "runtime.json"])),
@@ -21,7 +21,6 @@ fn runtime_stage_uses_private_verifier_and_forwards_the_global_frontend() {
         strings(&["verify", "--receipt", "runtime.json", "--backend-dir",])
             .into_iter()
             .chain([super::workspace::root_dir().display().to_string()])
-            .chain(strings(&["--frontend-dir", "D:/前端 worktree",]))
             .collect::<Vec<_>>()
     );
 

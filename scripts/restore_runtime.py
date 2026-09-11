@@ -6,8 +6,6 @@ import argparse
 import hashlib
 import json
 import os
-import stat
-import subprocess
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -19,10 +17,16 @@ from restore_build import (
     build_registered,
     repository,
     validate_new_output,
-    verify_build,
     write_new,
 )
+from restore_frontend_build import (
+    FRONTEND_RECEIPT,
+    build_registered_frontend,
+    frontend_files,
+    frontend_snapshots,
+)
 from restore_identifiers import valid_identifier, valid_scope_identifier
+from restore_runtime_source import resolve_runtime_sources
 from restore_runtime_evidence import (
     HEX_40,
     HEX_64,
@@ -33,7 +37,6 @@ from restore_runtime_evidence import (
     digest_matches as _digest_matches,
     directory as _directory,
     exact_fields as _exact_fields,
-    is_reparse as _is_reparse,
     process_document as _process_document,
     read_authority,
     read_json as read_json,
@@ -47,90 +50,6 @@ from restore_runtime_evidence import (
     validate_runtime_receipt as _validate_runtime_receipt,
 )
 from source_inventory import build_source_domains, capture_inventory, frontend_environment_files
-
-FRONTEND_RECEIPT = ".vite/restore-build.json"
-FRONTEND_BUILD_TOOL_FILES = (
-    "scripts/build-source-inventory.mjs",
-    "scripts/build-source.mjs",
-    "scripts/restore-build.mjs",
-)
-
-
-def _frontend_build_receipt(root: Path) -> Path:
-    return root / "dist" / FRONTEND_RECEIPT
-
-
-def _registered_frontend_inventory(root: Path, expected_head: str) -> dict:
-    if not HEX_40.fullmatch(expected_head):
-        raise ValueError("前端构建来源提交必须是完整小写 SHA")
-    inventory = capture_inventory(root)
-    snapshot = inventory["source"]["snapshot"]
-    if snapshot["head"] != expected_head or not snapshot["clean"]:
-        raise ValueError("恢复构建必须使用登记的精确干净前端源码")
-    return inventory
-
-
-def _validate_registered_frontend(root: Path, expected_head: str) -> tuple[dict, JsonDocument]:
-    inventory = _registered_frontend_inventory(root, expected_head)
-    receipt = read_json_document(_frontend_build_receipt(root))
-    value = _validate_frontend_receipt(receipt.value)
-    files, snapshots = _frontend_snapshots(root)
-    if (
-        value["sources"] != build_source_domains(inventory, "frontend")
-        or value["build"]["environment_files"] != frontend_environment_files(root)
-        or value["files"] != files
-    ):
-        raise ValueError("前端构建收据与登记源码、环境或生产文件不一致")
-    receipt.assert_unchanged()
-    for snapshot in snapshots:
-        snapshot.assert_unchanged()
-    if capture_inventory(root) != inventory:
-        raise ValueError("核验期间前端源码发生变化")
-    return inventory, receipt
-
-
-def build_registered_frontend(
-    tools_frontend: Path,
-    source_frontend: Path,
-    expected_head: str,
-    run=subprocess.run,
-) -> tuple[Path, JsonDocument, str]:
-    """使用当前受控工具构建历史前端，或严格核验已有的同格式真实收据。"""
-    tools = repository(tools_frontend, "前端构建工具源码")
-    source = repository(source_frontend, "前端构建来源")
-    tools_inventory = capture_inventory(tools)
-    if not tools_inventory["source"]["snapshot"]["clean"]:
-        raise ValueError("前端构建工具必须来自干净工作树")
-    source_inventory = _registered_frontend_inventory(source, expected_head)
-    tool_files = [artifact_snapshot(tools / relative) for relative in FRONTEND_BUILD_TOOL_FILES]
-    receipt_path = _frontend_build_receipt(source)
-    action = "verified"
-    if not receipt_path.exists():
-        command = [
-            "node",
-            str(tools / "scripts/restore-build.mjs"),
-            "external-build",
-            "--source-root",
-            str(source),
-            "--expected-head",
-            expected_head,
-            "--write",
-        ]
-        run(
-            command,
-            cwd=tools,
-            check=True,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-        )
-        action = "built"
-    inventory, receipt = _validate_registered_frontend(source, expected_head)
-    if inventory != source_inventory:
-        raise ValueError("前端构建期间登记源码发生变化")
-    if capture_inventory(tools) != tools_inventory:
-        raise ValueError("前端构建期间受控工具源码发生变化")
-    for snapshot in tool_files:
-        snapshot.assert_unchanged()
-    return source, receipt, action
 
 
 def require_bindings(bindings: dict) -> tuple[dict, dict]:
@@ -158,33 +77,6 @@ def require_bindings(bindings: dict) -> tuple[dict, dict]:
     return record, manifest
 
 
-def _frontend_snapshots(root: Path) -> tuple[list[dict], list[ArtifactSnapshot]]:
-    dist = _directory(root / "dist", "前端 dist")
-    snapshots = []
-    for directory, names, filenames in os.walk(dist, followlinks=False):
-        base = Path(directory)
-        for name in names:
-            child = base / name
-            metadata = child.lstat()
-            if stat.S_ISLNK(metadata.st_mode) or _is_reparse(metadata) or not stat.S_ISDIR(metadata.st_mode):
-                raise ValueError("前端产物包含链接、重解析点或非普通目录")
-        for name in filenames:
-            path = base / name
-            relative = path.relative_to(dist).as_posix()
-            if relative != FRONTEND_RECEIPT:
-                snapshots.append(artifact_snapshot(path))
-    snapshots.sort(key=lambda item: item.path.relative_to(dist).as_posix())
-    files = [
-        {"path": item.path.relative_to(dist).as_posix(), "bytes": item.bytes, "sha256": item.sha256}
-        for item in snapshots
-    ]
-    return files, snapshots
-
-
-def frontend_files(root: Path) -> list[dict]:
-    return _frontend_snapshots(root)[0]
-
-
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *_args, **_kwargs):
         return None
@@ -209,7 +101,7 @@ def _read_response(url: str, limit: int, headers: dict | None = None) -> tuple[o
 def _verify_frontend_artifacts(root: Path, receipt: dict, base_url: str) -> tuple[list[dict], list[ArtifactSnapshot]]:
     _canonical_endpoint(base_url, "", "前端端点")
     receipt = _validate_frontend_receipt(receipt)
-    files, snapshots = _frontend_snapshots(root)
+    files, snapshots = frontend_snapshots(root)
     if files != receipt["files"]:
         raise ValueError("前端生产构建与文件收据不一致")
     if not {"index.html", ".vite/manifest.json"}.issubset({item["path"] for item in files}):
@@ -248,19 +140,19 @@ def verify_frontend_artifacts(root: Path, receipt: dict, base_url: str) -> None:
         snapshot.assert_unchanged()
 
 
-def _context(record: dict, manifest: dict, frontend_endpoint: str) -> dict:
+def _context(record: dict, manifest: dict, runtime_source: dict, frontend_endpoint: str) -> dict:
     plan = record["plan"]
     return validate_authority(
         {
-            "format_version": 1,
+            "format_version": 2,
             "kind": "restore-runtime-authority",
             "restore_id": plan["id"],
             "backup_id": plan["backup_id"],
             "plan_hash": record["plan_hash"],
             "scope_id": plan["scope_id"],
             "data_verified_at": record["data_verified_at"],
-            "backend_sha": manifest["source_sha"],
-            "frontend_sha": plan["frontend_sha"],
+            "backup_source_sha": manifest["source_sha"],
+            **runtime_source,
             "api_endpoint": plan["api_ready_url"],
             "worker_endpoint": plan["worker_ready_url"],
             "frontend_endpoint": frontend_endpoint,
@@ -358,22 +250,34 @@ def _receipt_documents(receipt: dict, bindings_path: Path) -> tuple[JsonDocument
 
 
 def bind(
-    backend: Path,
+    coordinator: Path,
+    execution_backend: Path,
     frontend: Path,
     build_path: Path,
     runtime: Path,
     bindings_path: Path,
     frontend_url: str,
+    *,
+    adapter_contract: str | None = None,
+    product_backend: Path | None = None,
 ) -> dict:
-    backend = _directory(backend, "后端源码")
-    frontend = _directory(frontend, "前端源码")
     runtime = _directory(runtime, "恢复运行目录")
     bindings = read_json_document(bindings_path)
     backend_build = read_json_document(build_path)
-    frontend_path = frontend / "dist" / FRONTEND_RECEIPT
-    frontend_build = read_json_document(frontend_path)
+    frontend_build = read_json_document(frontend / "dist" / FRONTEND_RECEIPT)
     record, manifest = require_bindings(bindings.value)
-    authority = _context(record, manifest, frontend_url)
+    resolved = resolve_runtime_sources(
+        coordinator,
+        execution_backend,
+        frontend,
+        backend_build,
+        frontend_build,
+        record["plan"]["frontend_sha"],
+        adapter_contract=adapter_contract,
+        product_backend=product_backend,
+    )
+    authority = _context(record, manifest, resolved["source"], frontend_url)
+    source = {"backup_source_sha": authority["backup_source_sha"], **resolved["source"]}
     processes = {}
     for role in ("api", "worker"):
         process_document, identity = _process_document(runtime / f"{role}.json", role, authority["scope_id"])
@@ -393,8 +297,9 @@ def bind(
             "data_verified_at": authority["data_verified_at"],
         },
         "paths": {
-            "backend_root": str(backend),
-            "frontend_root": str(frontend),
+            "backend_product_root": resolved["roots"]["backend_product"],
+            "backend_execution_root": resolved["roots"]["backend_execution"],
+            "frontend_root": resolved["roots"]["frontend"],
             "runtime_dir": str(runtime),
             "bindings": str(bindings.path),
             "backend_build": str(backend_build.path),
@@ -405,7 +310,7 @@ def bind(
             "backend_build": backend_build.sha256,
             "frontend_build": frontend_build.sha256,
         },
-        "source": {"backend_sha": authority["backend_sha"], "frontend_sha": authority["frontend_sha"]},
+        "source": source,
         "endpoints": {
             "api": authority["api_endpoint"],
             "worker": authority["worker_endpoint"],
@@ -415,29 +320,52 @@ def bind(
         "frontend": frontend_build.value,
         "processes": processes,
     }
-    verify(receipt, backend, frontend, bindings.path, authority, None)
+    verify(
+        receipt,
+        coordinator,
+        execution_backend,
+        frontend,
+        bindings.path,
+        authority,
+        None,
+        product_backend=product_backend,
+    )
     return receipt
 
 
 def verify(
     receipt: dict,
-    backend: Path,
+    coordinator: Path,
+    execution_backend: Path,
     frontend: Path,
     bindings_path: Path,
     authority: dict,
     runtime_receipt_sha256: str | None,
+    *,
+    product_backend: Path | None = None,
 ) -> dict:
     receipt = _validate_runtime_receipt(receipt)
     authority = validate_authority(authority)
-    backend = _directory(backend, "后端源码")
-    frontend = _directory(frontend, "前端源码")
     paths = receipt["paths"]
-    _same_path(paths["backend_root"], backend, "后端源码")
+    _same_path(paths["backend_execution_root"], execution_backend, "后端执行源码")
+    expected_product = execution_backend if product_backend is None else product_backend
+    _same_path(paths["backend_product_root"], expected_product, "后端产品源码")
     _same_path(paths["frontend_root"], frontend, "前端源码")
     _directory(Path(paths["runtime_dir"]), "恢复运行目录")
     bindings, backend_build, frontend_build = _receipt_documents(receipt, bindings_path)
     record, manifest = require_bindings(bindings.value)
-    if authority != _context(record, manifest, authority["frontend_endpoint"]):
+    resolved = resolve_runtime_sources(
+        coordinator,
+        execution_backend,
+        frontend,
+        backend_build,
+        frontend_build,
+        record["plan"]["frontend_sha"],
+        adapter_contract=authority["backend_adapter_contract"],
+        product_backend=product_backend,
+    )
+    source = {"backup_source_sha": manifest["source_sha"], **resolved["source"]}
+    if authority != _context(record, manifest, resolved["source"], authority["frontend_endpoint"]):
         raise ValueError("stdin 权威恢复上下文与数据校验 bindings 不匹配")
     expected = {
         "restore": {
@@ -447,7 +375,7 @@ def verify(
             "scope_id": authority["scope_id"],
             "data_verified_at": authority["data_verified_at"],
         },
-        "source": {"backend_sha": authority["backend_sha"], "frontend_sha": authority["frontend_sha"]},
+        "source": source,
         "endpoints": {
             "api": authority["api_endpoint"],
             "worker": authority["worker_endpoint"],
@@ -456,19 +384,6 @@ def verify(
     }
     if any(receipt[key] != value for key, value in expected.items()):
         raise ValueError("恢复运行收据与权威上下文不匹配")
-    backend_source = capture_inventory(backend)
-    frontend_source = capture_inventory(frontend)
-    verify_build(backend, backend_build.value, authority["backend_sha"])
-    if backend_build.value["sources"]["full"] != backend_source:
-        raise ValueError("后端构建收据的完整源码清单不匹配")
-    frontend_snapshot = frontend_source["source"]["snapshot"]
-    if (
-        frontend_build.value["sources"] != build_source_domains(frontend_source, "frontend")
-        or frontend_build.value["build"]["environment_files"] != frontend_environment_files(frontend)
-        or frontend_snapshot["head"] != authority["frontend_sha"]
-        or not frontend_snapshot["clean"]
-    ):
-        raise ValueError("前端构建收据没有绑定权威干净源码")
     observations, process_documents, executables = _observe_processes(receipt, receipt["endpoints"])
     readiness = _probe_api(receipt["endpoints"]["api"])
     _probe_worker(receipt["endpoints"]["worker"])
@@ -482,8 +397,17 @@ def verify(
         document.assert_unchanged()
     for snapshot in frontend_files_snapshot:
         snapshot.assert_unchanged()
-    if (capture_inventory(backend) != backend_source or capture_inventory(frontend) != frontend_source
-            or frontend_build.value["build"]["environment_files"] != frontend_environment_files(frontend)):
+    repeated = resolve_runtime_sources(
+        coordinator,
+        execution_backend,
+        frontend,
+        backend_build,
+        frontend_build,
+        authority["frontend_sha"],
+        adapter_contract=authority["backend_adapter_contract"],
+        product_backend=product_backend,
+    )
+    if repeated != resolved:
         raise ValueError("恢复运行核验期间源码发生变化")
     return {
         "format_version": 1,
@@ -522,7 +446,10 @@ def main() -> None:
             command.add_argument("--adapter-contract")
             command.add_argument("--product-backend", type=Path)
         if operation in ("bind", "verify"):
-            command.add_argument("--frontend-dir", type=Path, required=True)
+            command.add_argument("--source-backend", type=Path, required=True)
+            command.add_argument("--source-frontend", type=Path, required=True)
+            command.add_argument("--adapter-contract")
+            command.add_argument("--product-backend", type=Path)
             command.add_argument("--bindings", type=Path, required=True)
         if operation == "bind":
             command.add_argument("--frontend-url", required=True)
@@ -560,20 +487,33 @@ def main() -> None:
         return
     elif args.command == "bind":
         output = validate_new_output(args.output, backend)
-        receipt = bind(backend, args.frontend_dir.resolve(), args.build_receipt.resolve(),
-                        args.runtime_dir.resolve(), args.bindings.resolve(), args.frontend_url)
+        receipt = bind(
+            backend,
+            args.source_backend,
+            args.source_frontend,
+            args.build_receipt.resolve(),
+            args.runtime_dir.resolve(),
+            args.bindings.resolve(),
+            args.frontend_url,
+            adapter_contract=args.adapter_contract,
+            product_backend=args.product_backend,
+        )
     else:
         runtime = read_json_document(args.receipt)
         authority = read_authority()
         if args.frontend_url is not None and args.frontend_url != authority["frontend_endpoint"]:
             raise ValueError("命令行前端地址与 stdin 权威恢复上下文不匹配")
+        if args.adapter_contract != authority["backend_adapter_contract"]:
+            raise ValueError("命令行适配合同与 stdin 权威恢复上下文不匹配")
         result = verify(
             runtime.value,
             backend,
-            args.frontend_dir.resolve(),
+            args.source_backend,
+            args.source_frontend,
             args.bindings.resolve(),
             authority,
             runtime.sha256,
+            product_backend=args.product_backend,
         )
         runtime.assert_unchanged()
         print(json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
