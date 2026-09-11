@@ -14,6 +14,13 @@ use crate::{Result, workspace::root_dir};
 #[path = "process/child.rs"]
 mod child;
 pub(crate) use child::{ChildGroup, ManagedChild};
+#[path = "process/cancellation.rs"]
+mod cancellation;
+#[allow(unused_imports)]
+pub(crate) use cancellation::{
+    ProcessCancellation, is_process_cancellation, with_process_cancellation,
+};
+use cancellation::{command_output_result, command_status};
 #[path = "process/cache.rs"]
 mod cache;
 use cache::configure_cargo_cache;
@@ -22,6 +29,8 @@ pub(crate) use cache::rustc_cache_label;
 #[path = "process/exit_status.rs"]
 mod exit_status;
 use exit_status::CommandFailure;
+#[allow(unused_imports)]
+pub(crate) use exit_status::PreservedFailure;
 #[allow(unused_imports)]
 pub(crate) use exit_status::failure_exit_code;
 #[path = "process/logging.rs"]
@@ -104,14 +113,14 @@ pub(crate) fn run_with_env_removed(
         .current_dir(dir)
         .stdin(Stdio::inherit());
     configure_output(&mut command)?;
-    let status = command.status();
+    let status = command_status(command);
     let elapsed = started.elapsed().as_secs_f64();
     let label = format!("{command_label} {}", args.join(" "));
     let status = match status {
         Ok(status) => status,
         Err(error) => {
             record_step(label, elapsed, false);
-            return Err(error.into());
+            return Err(error);
         }
     };
     record_step(label, elapsed, status.success());
@@ -150,14 +159,14 @@ pub(crate) fn run_pnpm_with_env(
     configure_pnpm_environment(&mut command, environment);
     command.args(args).stdin(Stdio::inherit());
     configure_output(&mut command)?;
-    let status = command.status();
+    let status = command_status(command);
     let elapsed = started.elapsed().as_secs_f64();
     let label = format!("pnpm {}", args.join(" "));
     let status = match status {
         Ok(status) => status,
         Err(error) => {
             record_step(label, elapsed, false);
-            return Err(error.into());
+            return Err(error);
         }
     };
     record_step(label, elapsed, status.success());
@@ -203,11 +212,14 @@ pub(crate) fn command_output_with_env(
     }
     let mut command = child_command(&command_executable);
     configure_cargo_cache(executable, &mut command);
-    let output = command
+    command
         .args(args)
         .envs(environment.iter().copied())
         .current_dir(dir)
-        .output()?;
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let output = command_output_result(command)?;
     let elapsed = started.elapsed().as_secs_f64();
     let label = format!("{command_label} {}", args.join(" "));
     record_step(label, elapsed, output.status.success());

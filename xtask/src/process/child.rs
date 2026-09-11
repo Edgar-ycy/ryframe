@@ -82,6 +82,22 @@ impl ManagedChild {
         }
     }
 
+    /// 与 stdout 相同地把 stderr 管道交给同步读取线程，供可取消的捕获命令使用。
+    pub(crate) fn take_stderr_reader(&mut self) -> Result<Option<Box<dyn Read + Send>>> {
+        let Some(stderr) = self.child.stderr.take() else {
+            return Ok(None);
+        };
+        #[cfg(windows)]
+        {
+            let handle = stderr.into_owned_handle()?;
+            Ok(Some(Box::new(std::fs::File::from(handle))))
+        }
+        #[cfg(not(windows))]
+        {
+            Ok(Some(Box::new(stderr)))
+        }
+    }
+
     #[cfg(windows)]
     pub(crate) fn active_process_count(&self) -> Result<Option<u32>> {
         let active = self.job_stats()?.active_process_count;

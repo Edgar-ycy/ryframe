@@ -44,6 +44,9 @@ pub(crate) use context::{
     VerifyTargetPolicy, ci_environment_from, ci_target_policy, ci_target_policy_from,
     resolve_target_dir, verify_job_budget_from, verify_target_policy_from,
 };
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use execution::run_parallel_tasks;
 #[allow(unused_imports)]
 pub(crate) use execution::verify;
 #[allow(unused_imports)]

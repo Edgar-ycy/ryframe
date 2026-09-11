@@ -23,10 +23,21 @@ use super::{
 use crate::{
     Result,
     cli::CheckScope,
-    process::{run as run_process, run_owned, run_owned_with_env, run_pnpm, with_process_log},
+    process::{
+        PreservedFailure, ProcessCancellation, failure_exit_code, is_process_cancellation,
+        run as run_process, run_owned, run_owned_with_env, run_pnpm, with_process_cancellation,
+        with_process_log,
+    },
     workspace::root_dir,
 };
-use std::{collections::BTreeSet, path::Path, thread, time::Instant};
+use std::{
+    collections::BTreeSet,
+    panic::{AssertUnwindSafe, catch_unwind},
+    path::Path,
+    sync::{Arc, Mutex},
+    thread,
+    time::Instant,
+};
 
 mod task_execution;
 
@@ -167,7 +178,7 @@ pub(crate) fn ci_consumer_contract_against_committed_snapshot(
     run_consumer_contract(root, frontend_dir, &snapshots, false)
 }
 
-fn run_parallel_tasks<Left, Right>(
+pub(crate) fn run_parallel_tasks<Left, Right>(
     root: &Path,
     left_label: &str,
     left: Left,
@@ -179,27 +190,100 @@ where
     Right: FnOnce() -> Result<()> + Send,
 {
     let logs = root.join("target/verify/logs");
-    let (left_result, right_result) = thread::scope(|scope| {
+    let cancellation = ProcessCancellation::new();
+    let first_failure = Arc::new(Mutex::new(None));
+    thread::scope(|scope| {
         let left_log = logs.join(format!("{left_label}.log"));
         let right_log = logs.join(format!("{right_label}.log"));
+        let left_cancellation = cancellation.clone();
+        let left_failure = Arc::clone(&first_failure);
         let left = scope.spawn(move || {
-            with_process_log(left_label, &left_log, left).map_err(|error| error.to_string())
+            run_parallel_branch(
+                left_label,
+                &left_log,
+                &left_cancellation,
+                &left_failure,
+                left,
+            );
         });
+        let right_cancellation = cancellation.clone();
+        let right_failure = Arc::clone(&first_failure);
         let right = scope.spawn(move || {
-            with_process_log(right_label, &right_log, right).map_err(|error| error.to_string())
+            run_parallel_branch(
+                right_label,
+                &right_log,
+                &right_cancellation,
+                &right_failure,
+                right,
+            );
         });
-        (left.join(), right.join())
+        let _ = left.join();
+        let _ = right.join();
     });
-    let left_result = left_result.map_err(|_| format!("并行任务 {left_label} 发生 panic"))?;
-    let right_result = right_result.map_err(|_| format!("并行任务 {right_label} 发生 panic"))?;
-    match (left_result, right_result) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Err(left), Ok(())) => Err(left.into()),
-        (Ok(()), Err(right)) => Err(right.into()),
-        (Err(left), Err(right)) => {
-            Err(format!("并行任务同时失败：{left_label}: {left}；{right_label}: {right}").into())
-        }
+    let mut failure = first_failure
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(failure) = failure.take() {
+        Err(failure.into())
+    } else {
+        Ok(())
     }
+}
+
+fn run_parallel_branch<Action>(
+    label: &str,
+    log: &Path,
+    cancellation: &ProcessCancellation,
+    first_failure: &Mutex<Option<PreservedFailure>>,
+    action: Action,
+) where
+    Action: FnOnce() -> Result<()>,
+{
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        with_process_cancellation(cancellation, || with_process_log(label, log, action))
+    }));
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) if is_process_cancellation(error.as_ref()) => {}
+        Ok(Err(error)) => record_parallel_failure(
+            first_failure,
+            cancellation,
+            PreservedFailure::new(
+                format!("并行任务 {label} 失败：{error}"),
+                failure_exit_code(error.as_ref()),
+            ),
+        ),
+        Err(payload) => record_parallel_failure(
+            first_failure,
+            cancellation,
+            PreservedFailure::new(
+                format!("并行任务 {label} 发生 panic：{}", panic_message(&payload)),
+                None,
+            ),
+        ),
+    }
+}
+
+fn record_parallel_failure(
+    first_failure: &Mutex<Option<PreservedFailure>>,
+    cancellation: &ProcessCancellation,
+    failure: PreservedFailure,
+) {
+    let mut slot = first_failure
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if slot.is_none() {
+        *slot = Some(failure);
+        cancellation.request();
+    }
+}
+
+fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("未知 panic")
 }
 
 fn require_frontend_dependencies(frontend_dir: &Path) -> Result<()> {

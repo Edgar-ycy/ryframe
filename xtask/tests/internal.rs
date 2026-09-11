@@ -44,6 +44,8 @@ mod data;
 
 #[path = "internal/build.rs"]
 mod build_tests;
+#[path = "internal/check_cancellation.rs"]
+mod check_cancellation_tests;
 #[path = "internal/check_plan.rs"]
 mod check_plan_tests;
 #[path = "internal/check_policy_tasks.rs"]
