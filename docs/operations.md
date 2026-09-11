@@ -150,7 +150,7 @@ cargo xtask data restore verify --id <演练ID> --proof .local-tests/restore/bus
 | 阶段 | 操作与输出 |
 | --- | --- |
 | `dataset` | 通过当前 API 建立套餐、十个租户、业务记录和关联对象，保存逐条创建证据与 `dataset/result.json`。 |
-| `backup --inventory <清单JSON> --source-runtime <来源运行证明JSON> --source-quiescence <停止观察收据JSON>` | 核对停止前实际干净构建、源侧业务复验和采集前的停止观察收据，按 `backup-inventory` 清单精确导出数据和对象、核对摘要，生成 `backup/manifest.json`，随后用产品 `backup-register` 登记。 |
+| `backup --inventory <清单JSON> --source-runtime <来源运行证明JSON> --source-quiescence <停止观察收据JSON> --source-export-result <已发布共享导出结果>` | 核对停止前实际干净构建、源侧业务复验、停止观察和已发布共享导出的同一库存及运行代次，精确导出数据和对象、核对摘要；`backup.json` 绑定共享导出身份、来源证明和 `backup/manifest.json` 文件摘要，随后用产品 `backup-register` 登记。清单使用共享导出的原始 inventory 并添加本次备份 `id`。 |
 | `restore --backup-root <备份目录> --record <restore-begin记录>` | 先核对全部产物和目标，再还原到停止写入的隔离环境；输出只表示复制完成，后续仍需数据验证和真实业务证明。 |
 | `copy --backup-root <备份目录> --copy-id <独立副本ID>` | 创建保留原摘要的独立备份副本；先登记副本并执行 `restore-begin`。 |
 | `damage --backup-root <副本目录> --artifact <清单内路径> [--missing]` | 仅损坏或删除指定副本产物，保留原备份；随后用 `restore-verify-data` 验证失败状态及告警。 |

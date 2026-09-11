@@ -215,7 +215,7 @@ class SourceRuntimeTests(unittest.TestCase):
         with patch.object(restore_reference, "verify_stopped_source", side_effect=ValueError("unbound")), \
                 self.assertRaisesRegex(ValueError, "unbound"):
             restore_reference.backup(self.plan, self.tools, self.work, capture, self.backend,
-                                     self.work / "missing.json", self.work / "missing-stopped.json")
+                                     self.work / "missing.json", self.work / "missing-stopped.json", self.work / "export-result.json")
         self.tools.verify_databases.assert_not_called()
         self.assertFalse((self.work / "backup").exists())
 
@@ -245,10 +245,11 @@ class SourceRuntimeTests(unittest.TestCase):
         capture.update(captured_at="2026-01-01T00:00:00Z")
         self.tools.dump.side_effect = lambda _db, _tables, path: path.write_text("data")
         with patch.object(restore_reference, "verify_stopped_source", side_effect=["a" * 64, "b" * 64]), \
+                patch.object(restore_reference, "backup_source", return_value={}), \
                 patch.object(restore_reference, "require_stopped"), \
                 patch.object(restore_reference, "verify_artifacts"), self.assertRaisesRegex(ValueError, "被替换"):
             restore_reference.backup(self.plan, self.tools, self.work, capture, self.backend,
-                                     self.work / "source.json", self.work / "stopped.json")
+                                     self.work / "source.json", self.work / "stopped.json", self.work / "export-result.json")
         self.assertFalse((self.work / "backup/manifest.json").exists())
 
     def test_inventory_captured_before_observed_stop_is_rejected_even_if_source_is_now_stopped(self):
