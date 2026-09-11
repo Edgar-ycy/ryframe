@@ -120,6 +120,8 @@ def _verify_worker_tree_running(directory: Path, receipt: dict, identity: dict) 
         process_identity(tree["supervisor"]["pid"]), tree["supervisor"]
     ):
         raise ValueError("Worker 进程树监督器未保持运行")
+    if not assert_identity(process_identity(tree["monitor"]["pid"]), tree["monitor"]):
+        raise ValueError("Worker 完整成员监督器未保持运行")
     return tree
 
 
@@ -234,7 +236,7 @@ def _current_progress(
 
 
 def _run_worker(
-    backend: Path, directory: Path, operation: dict, supervisor: dict
+    backend: Path, directory: Path, operation: dict, supervisor: dict, monitor: dict
 ) -> tuple[dict, subprocess.Popen | None, dict | None]:
     request = operation["request"]
     executable, url = request["worker_artifact"]["path"], request["worker_ready_url"]
@@ -265,6 +267,7 @@ def _run_worker(
             supervisor,
             spawned_identity,
             request["operation_id"],
+            monitor,
         )
         identity = record_process(
             directory, "worker", process.pid, executable, request["scope_id"]
@@ -356,10 +359,10 @@ def _supervise_start(backend: Path, directory: Path, operation_id: str) -> int:
         time.sleep(0.02)
     else:
         return 2
-    membership = enter_supervision()
+    membership = enter_supervision(directory, "worker", operation["request"]["scope_id"], operation_id)
     try:
         try:
-            result, process, tree = _run_worker(backend, directory, operation, identity)
+            result, process, tree = _run_worker(backend, directory, operation, identity, membership)
         except BaseException as error:
             result, process, tree = _result(
                 operation,
@@ -460,6 +463,9 @@ def _simple_result(operation: dict, receipt: dict, operation_name: str) -> dict:
             process_identity(tree["supervisor"]["pid"]), tree["supervisor"]
         ):
             raise ValueError("Worker 已退出但进程树监督器仍在运行")
+        if tree is not None:
+            from full_stack_process_monitor import wait_members
+            wait_members(tree, timeout=0)
         ensure_port_free(receipt["worker_ready_url"])
     else:
         verify_running(identity, receipt["worker_ready_url"])
@@ -613,6 +619,7 @@ def _finish_start(
                 operation = _operation(directory, source)
                 if operation["owner"]["operation_id"] != operation_id:
                     raise ValueError("Worker start 操作在等待期间发生变化")
+                owner = _validate_child(operation, "supervisor.json", "full-stack-worker-control-supervisor")
                 result = _archive(operation)
             if result["outcome"] == "succeeded" and result["state"] == "running":
                 tree = _verify_worker_tree_running(
@@ -628,6 +635,8 @@ def _finish_start(
                 ).start()
             else:
                 supervisor.wait(timeout=5)
+                from full_stack_process_monitor import wait_startup_cleanup
+                wait_startup_cleanup(directory, "worker", receipt["scope_id"], operation_id, owner["identity"])
             return result
         progress = lock / "progress.json"
         if not checkpointed and progress.is_file():

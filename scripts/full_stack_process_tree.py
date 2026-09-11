@@ -78,13 +78,14 @@ def record_process_tree(
     supervisor: dict,
     process: dict,
     operation_id: str,
+    monitor: dict,
 ) -> dict:
     if not isinstance(scope, str) or not scope:
         raise ValueError("进程树必须绑定非空隔离 scope")
     if not isinstance(operation_id, str) or OPERATION_ID.fullmatch(operation_id) is None:
         raise ValueError("进程树操作 ID 无效")
     receipt = {
-        "format_version": 1,
+        "format_version": 2,
         "kind": "full-stack-process-tree",
         "runtime_directory": str(directory.resolve(strict=True)),
         "role": role,
@@ -92,6 +93,7 @@ def record_process_tree(
         "operation_id": operation_id,
         "supervisor": _valid_identity(supervisor, "监督进程"),
         "process": _valid_identity(process, "产品进程"),
+        "monitor": _valid_identity(monitor, "树外成员监督器"),
         "group_id": supervisor["pid"],
     }
     write_receipt(_tree_path(directory, role), receipt)
@@ -109,11 +111,12 @@ def read_process_tree(directory: Path, role: str, scope: str) -> dict:
         "operation_id",
         "supervisor",
         "process",
+        "monitor",
         "group_id",
     } or any(
         receipt.get(key) != value
         for key, value in {
-            "format_version": 1,
+            "format_version": 2,
             "kind": "full-stack-process-tree",
             "runtime_directory": str(directory.resolve(strict=True)),
             "role": role,
@@ -123,8 +126,10 @@ def read_process_tree(directory: Path, role: str, scope: str) -> dict:
         raise ValueError("进程树收据与角色或隔离 scope 不匹配")
     supervisor = _valid_identity(receipt["supervisor"], "监督进程")
     process = _valid_identity(receipt["process"], "产品进程")
+    _valid_identity(receipt["monitor"], "树外成员监督器")
     if (
         receipt["group_id"] != supervisor["pid"]
+        or receipt["monitor"]["pid"] in {supervisor["pid"], process["pid"]}
         or not isinstance(receipt["operation_id"], str)
         or OPERATION_ID.fullmatch(receipt["operation_id"]) is None
     ):
@@ -243,46 +248,16 @@ class _ExtendedLimitInformation(ctypes.Structure):
     ]
 
 
-def enter_supervision() -> object:
+def enter_supervision(directory: Path, role: str, scope: str, operation_id: str) -> dict:
     """在启动产品代码前建立 Job Object 或独立 Unix session。"""
 
-    if os.name != "nt":
-        pid = os.getpid()
-        if os.getsid(0) != pid or os.getpgid(0) != pid:
-            raise RuntimeError("Unix 全栈监督进程必须先成为独立 session 和进程组")
-        return pid
-    from ctypes import wintypes
-
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
-    kernel.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
-    kernel.CreateJobObjectW.restype = wintypes.HANDLE
-    kernel.SetInformationJobObject.argtypes = (
-        wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
-    )
-    kernel.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
-    kernel.GetCurrentProcess.restype = wintypes.HANDLE
-    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
-    handle = kernel.CreateJobObjectW(None, None)
-    if not handle:
-        raise ctypes.WinError(ctypes.get_last_error())
-    information = _ExtendedLimitInformation()
-    information.BasicLimitInformation.LimitFlags = 0x2000
-    if not kernel.SetInformationJobObject(
-        handle, 9, ctypes.byref(information), ctypes.sizeof(information)
-    ) or not kernel.AssignProcessToJobObject(handle, kernel.GetCurrentProcess()):
-        error = ctypes.get_last_error()
-        kernel.CloseHandle(handle)
-        raise ctypes.WinError(error)
-    # 故意由监督进程终止时让系统关闭句柄；提前关闭会触发整棵树退出。
-    return handle
+    from full_stack_process_monitor import start_monitor
+    return start_monitor(directory, role, scope, operation_id)
 
 
 def finish_supervision(membership: object) -> None:
-    """让监督进程退出时同时清理 Unix 组；Windows 由 Job 句柄关闭完成。"""
-
+    """树外 monitor 观察原监督进程退出后回收全部成员并签发完成证明。"""
     _ = membership
-    if os.name != "nt":
-        os.killpg(os.getpgrp(), signal.SIGKILL)
 
 
 def _linux_group(identity: dict) -> tuple[int, int] | None:
@@ -295,7 +270,7 @@ def _linux_group(identity: dict) -> tuple[int, int] | None:
 
 def _expected_alive(identity: dict) -> bool:
     try:
-        return process_identity(identity["pid"]) == identity
+        return assert_identity(process_identity(identity["pid"]), identity)
     except PermissionError:
         # Windows 正在终止的 Job 成员可能短暂拒绝查询镜像路径；继续等待句柄消失。
         return True
@@ -311,6 +286,8 @@ def _wait_stopped(identities: tuple[dict, ...], timeout: float) -> bool:
 
 
 def terminate_owned_process_tree(receipt: dict, *, crash: bool = False) -> bool:
+    from full_stack_process_monitor import wait_members
+
     supervisor = _valid_identity(receipt.get("supervisor"), "监督进程")
     process = _valid_identity(receipt.get("process"), "产品进程")
     group_id = receipt.get("group_id")
@@ -321,9 +298,11 @@ def terminate_owned_process_tree(receipt: dict, *, crash: bool = False) -> bool:
     supervisor_alive = assert_identity(actual_supervisor, supervisor)
     process_alive = assert_identity(actual_process, process)
     if not supervisor_alive and not process_alive:
+        wait_members(receipt)
         return False
     _write_control(receipt, "crash" if crash else "normal")
     if not crash and supervisor_alive and _wait_stopped((supervisor, process), 3):
+        wait_members(receipt)
         return True
     if os.name == "nt":
         if not supervisor_alive:
@@ -331,6 +310,7 @@ def terminate_owned_process_tree(receipt: dict, *, crash: bool = False) -> bool:
         terminate_owned_process(supervisor, crash=True)
         if not _wait_stopped((supervisor, process), 5):
             raise TimeoutError("Windows Job Object 未在期限内回收完整进程树")
+        wait_members(receipt)
         return True
     for identity, alive in ((supervisor, supervisor_alive), (process, process_alive)):
         if alive and _linux_group(identity) != (group_id, group_id):
@@ -338,11 +318,13 @@ def terminate_owned_process_tree(receipt: dict, *, crash: bool = False) -> bool:
     try:
         os.killpg(group_id, signal.SIGKILL if crash else signal.SIGTERM)
     except ProcessLookupError:
+        wait_members(receipt)
         return False
     if not _wait_stopped((supervisor, process), 5):
         os.killpg(group_id, signal.SIGKILL)
         if not _wait_stopped((supervisor, process), 5):
             raise TimeoutError("Unix 进程组未在期限内退出")
+    wait_members(receipt)
     return True
 
 
@@ -358,13 +340,20 @@ class SupervisedProcess:
     def poll(self) -> int | None:
         result = _read_result(self.tree)
         if result is not None:
+            from full_stack_process_monitor import wait_members
+            if _expected_alive(self.tree["monitor"]):
+                return None
+            wait_members(self.tree, timeout=0)
             return result["exit_code"]
         if _expected_alive(self.tree["process"]):
             return None
         return self.supervisor.poll()
 
     def wait(self, timeout: float) -> int:
+        from full_stack_process_monitor import wait_members
+
         supervisor_code = self.supervisor.wait(timeout=timeout)
+        wait_members(self.tree, timeout=timeout)
         result = _read_result(self.tree)
         return result["exit_code"] if result is not None else supervisor_code
 
@@ -445,6 +434,8 @@ def launch_supervised_process(
                 if tree["operation_id"] != operation_id:
                     raise ValueError("进程树收据属于其他启动操作")
                 assert_identity(tree["supervisor"], supervisor_identity)
+                if not assert_identity(process_identity(tree["monitor"]["pid"]), tree["monitor"]):
+                    raise ValueError("完整成员监督器在登记产品进程前退出")
                 assert_identity(process_identity(tree["process"]["pid"]), tree["process"])
                 if read_process(directory, role, scope) != tree["process"]:
                     raise ValueError("产品进程与进程树收据不一致")
@@ -453,10 +444,15 @@ def launch_supervised_process(
                 raise RuntimeError(f"全栈监督进程在登记产品进程前退出，退出码 {supervisor.returncode}")
             time.sleep(0.02)
         raise TimeoutError("全栈监督进程未在期限内登记产品进程")
-    except BaseException:
+    except BaseException as error:
         if process_identity(supervisor_identity["pid"]) == supervisor_identity:
             terminate_owned_process(supervisor_identity, crash=True)
         supervisor.wait(timeout=5)
+        from full_stack_process_monitor import wait_startup_cleanup
+        try:
+            wait_startup_cleanup(directory, role, scope, operation_id, supervisor_identity)
+        except BaseException as cleanup:
+            error.add_note("完整成员启动失败回收：" + str(cleanup))
         raise
 
 
@@ -472,7 +468,7 @@ def _supervise(arguments: list[str]) -> int:
         command = command[1:]
     if not command:
         raise ValueError("监督进程缺少产品启动命令")
-    membership = enter_supervision()
+    membership = enter_supervision(args.runtime_dir, args.role, args.scope, args.operation_id)
     try:
         supervisor = process_identity(os.getpid())
         if supervisor is None:
@@ -497,6 +493,7 @@ def _supervise(arguments: list[str]) -> int:
             supervisor,
             identity,
             args.operation_id,
+            membership,
         )
         recorded = record_process(
             args.runtime_dir.resolve(strict=True),

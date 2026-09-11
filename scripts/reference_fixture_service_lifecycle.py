@@ -11,6 +11,7 @@ from devex_clone_model import local_path
 from devex_clone_run_state import (begin, bind_controller_attempt, binding, claim_run_lock,
                                    controller_observation, finish, load_state, recover_run_lock, run_lock)
 from full_stack_process_tree import terminate_owned_process_tree
+from full_stack_process_monitor import completion_binding
 from full_stack_process import process_identity
 from process_guard import process_guard
 from reference_fixture_service_context import (context, guard, observe_services, registered_services,
@@ -79,10 +80,11 @@ def close(backend: Path, review: Path, bootstrap: Path, *, write: bool) -> dict:
             # Redis 已经精确退出后才操作 RustFS，始终通过原监督器的树控制合同。
             terminated = terminate_owned_process_tree(services["tree"])
             observations = _closed_services(services)
+            completion = completion_binding(services["tree"])
             _stable_services(value, services, running_state)
             storage_file = output / "rustfs-stopped.json"
             write_json(storage_file, {"tree": services["tree"], "terminated": terminated,
-                                      "state": "stopped", "process_tree_confirmed": True})
+                                      "state": "stopped", "completion": completion})
             result = _result(run, "close", "services_closed", services=observations, controller=controller,
                              evidence={"redis": binding(output / "stopped.json"), "rustfs": binding(storage_file)})
             if cache.get("status") != "redis_process_stopped":

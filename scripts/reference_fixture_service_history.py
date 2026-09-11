@@ -63,8 +63,8 @@ def validate_history(run: Path, state: dict, *, ready: bool = True, settled: boo
                 if role == "redis" and (proof.get("status") != "redis_process_stopped"
                                         or proof.get("alive") is not False or proof.get("resources_deleted") is not False):
                     raise ValueError("Redis 关闭收据未确认精确退出")
-                if role == "rustfs" and (proof.get("state") != "stopped" or proof.get("process_tree_confirmed") is not True):
-                    raise ValueError("RustFS 关闭收据未确认进程树退出")
+                if role == "rustfs":
+                    _validate_members(proof, run)
             closed = True
         else:
             receipt = result.get("recovery", {})
@@ -77,3 +77,21 @@ def validate_history(run: Path, state: dict, *, ready: bool = True, settled: boo
     return {"closed": closed, "initial_complete": len(initial) == len(INITIAL)
             and all(item["status"] == "passed" for item in initial),
             "unsettled": [item["number"] for item in attempts if item["status"] != "passed"]}
+
+
+def _validate_members(proof: dict, run: Path) -> None:
+    from full_stack_process_monitor import receipt_path
+
+    tree = proof.get("tree", {})
+    completion = proof.get("completion", {})
+    if proof.get("state") != "stopped" or tree.get("format_version") != 2:
+        raise ValueError("RustFS 关闭收据未绑定当前进程树")
+    path = receipt_path(run / "rustfs", "rustfs", tree["operation_id"], "stopped")
+    if completion.get("path") != str(path) or linked(path) or binding(path) != completion:
+        raise ValueError("RustFS 完整成员关闭证明缺失或变化")
+    members = read_json(path)
+    if (members.get("status") != "stopped" or members.get("error_type") is not None
+            or any(members.get(key) != tree.get(key) for key in ("operation_id", "role", "scope_id", "supervisor", "monitor"))
+            or members.get("directory") != tree.get("runtime_directory")
+            or not isinstance(members.get("members"), list) or tree.get("supervisor") not in members["members"]):
+        raise ValueError("RustFS 完整成员关闭证明不属于原进程树或未收尾")

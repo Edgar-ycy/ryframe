@@ -30,7 +30,11 @@ class ServiceLifecycleTests(unittest.TestCase):
         self.fixture = fixture
         self.backend, self.root, self.run = fixture.backend, fixture.root, fixture.service_run
         self.review, self.bootstrap = fixture.review_path, fixture.environments["seed"]
-        self.services = {"requests": {"redis": {}}, "runtime": {}, "tree": {"id": "original"}}
+        identity = {"pid": 2147481000, "started": "1", "executable": str(Path(sys.executable).resolve())}
+        tree = {"format_version": 2, "runtime_directory": str(self.run / "rustfs"), "role": "rustfs",
+                "scope_id": "fixture-service-test", "operation_id": "b" * 32, "supervisor": identity,
+                "monitor": {**identity, "pid": 2147481001}, "process": {**identity, "pid": 2147481002}}
+        self.services = {"requests": {"redis": {}}, "runtime": {}, "tree": tree}
 
     def snapshot(self):
         return {str(path.relative_to(self.root)): path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
@@ -49,6 +53,15 @@ class ServiceLifecycleTests(unittest.TestCase):
         stack.enter_context(patch.object(lifecycle, "stop_cache", side_effect=redis_stop))
         stack.enter_context(patch.object(lifecycle, "terminate_owned_process_tree", side_effect=lambda tree: self.events.append("rustfs") or True))
         stack.enter_context(patch.object(lifecycle, "_closed_services", return_value={"redis": "stopped", "rustfs": "stopped"}))
+        def completed(_tree):
+            from full_stack_process_monitor import receipt_path
+            tree = self.services["tree"]
+            path = receipt_path(self.run / "rustfs", "rustfs", tree["operation_id"], "stopped")
+            write_json(path, {"directory": tree["runtime_directory"], "status": "stopped", "error_type": None,
+                              "members": [tree["supervisor"]],
+                              **{key: tree[key] for key in ("operation_id", "role", "scope_id", "monitor", "supervisor")}})
+            return binding(path)
+        stack.enter_context(patch.object(lifecycle, "completion_binding", side_effect=completed))
         self.events = []
         return stack
 
@@ -212,7 +225,8 @@ class ServiceLifecycleTests(unittest.TestCase):
             path = self.run / role / "request.json"
             write_json(path, body)
             state["attempts"][index]["sources"]["request"] = binding(path)
-        tree = record_process_tree(self.run / "rustfs", "rustfs", request["scope_id"], supervisor, storage_identity, "a" * 32)
+        tree = record_process_tree(self.run / "rustfs", "rustfs", request["scope_id"], supervisor, storage_identity, "a" * 32,
+                                   {**supervisor, "pid": 12347})
         write_json(self.run / "controller-0001.json", {"fixture": True})
         observed = {"state": "recorded", "identity": storage_identity,
                     "process_receipt": binding(self.run / "rustfs/process.json"),

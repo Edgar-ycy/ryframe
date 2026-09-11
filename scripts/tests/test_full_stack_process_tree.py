@@ -29,10 +29,12 @@ def _ignore_termination() -> None:
 def _fixture_leaf(arguments: list[str]) -> None:
     pid_file, ready_file, port = Path(arguments[0]), Path(arguments[1]), int(arguments[2])
     _ignore_termination()
-    listener = socket.socket()
-    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    listener.bind(("127.0.0.1", port))
-    listener.listen()
+    listener = None
+    if port:
+        listener = socket.socket()
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", port))
+        listener.listen()
     pid_file.write_text(str(os.getpid()), encoding="utf-8")
     ready_file.write_text("ready", encoding="utf-8")
     while True:
@@ -124,7 +126,7 @@ class FullStackProcessTreeTests(unittest.TestCase):
             return False
 
     def _launch(self, mode: str, role: str = "api"):
-        port = self._free_port()
+        port = 0 if mode == "no-port" else self._free_port()
         child_pid = self.root / "child.pid"
         leaf_pid = self.root / "leaf.pid"
         ready = self.root / "ready"
@@ -173,7 +175,7 @@ class FullStackProcessTreeTests(unittest.TestCase):
 
         self.assertTrue(terminate_owned_process_tree(process.tree))
         self.assertNotEqual(process.wait(timeout=5), 17)
-        self._wait_for(lambda: all(self._gone(item) for item in descendants))
+        self.assertTrue(all(self._gone(item) for item in descendants))
         result_path = self.root / f"api-tree-{process.tree['operation_id']}-result.json"
         result = json.loads(result_path.read_text(encoding="utf-8"))
         self.assertEqual(result["termination"], "forced")
@@ -189,9 +191,7 @@ class FullStackProcessTreeTests(unittest.TestCase):
         result = json.loads(result_path.read_text(encoding="utf-8"))
         self.assertEqual(result["exit_code"], 17)
         self.assertEqual(result["termination"], "natural")
-        self._wait_for(
-            lambda: all(self._gone(item) for item in descendants)
-        )
+        self.assertTrue(all(self._gone(item) for item in descendants))
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", port))
 
@@ -235,9 +235,23 @@ class FullStackProcessTreeTests(unittest.TestCase):
         self.assertEqual(read_process_tree(self.root, "rustfs", "tree-test"), process.tree)
         self.assertTrue(terminate_owned_process_tree(process.tree))
         process.wait(timeout=5)
-        self._wait_for(lambda: all(self._gone(item) for item in descendants))
+        self.assertTrue(all(self._gone(item) for item in descendants))
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", port))
+
+    def test_no_port_grandchild_is_confirmed_before_return_in_unicode_space_path(self):
+        self.root = self.root / "中文 空格"
+        self.root.mkdir()
+        process, child_pid, leaf_pid, _ = self._launch("no-port")
+        descendants = self._identities(child_pid, leaf_pid)
+        self.children.extend(descendants)
+        self.assertTrue(terminate_owned_process_tree(process.tree, crash=True))
+        self.assertTrue(all(self._gone(item) for item in descendants))
+        self.assertTrue(self._gone(process.tree["monitor"]))
+        from full_stack_process_monitor import wait_members
+        proof = wait_members(process.tree, timeout=0)
+        self.assertTrue(all(item in proof["members"] for item in descendants))
+        process.wait(timeout=5)
 
 
 if __name__ == "__main__":

@@ -405,7 +405,7 @@ worker.control(operation, Path(sys.argv[5]), Path(sys.argv[6]), 4)
                 process_identity(tree["supervisor"]["pid"]), tree["supervisor"]
             )
             self.assertEqual(self.control("stop")["state"], "stopped")
-            self.wait_for(lambda: self.gone(descendant))
+            self.assertTrue(self.gone(descendant))
             normal_control = json.loads(
                 (
                     self.directory
@@ -429,8 +429,7 @@ worker.control(operation, Path(sys.argv[5]), Path(sys.argv[6]), 4)
             exited_descendant = process_identity(
                 int(descendant_pid.read_text(encoding="utf-8"))
             )
-            if exited_descendant is not None:
-                self.wait_for(lambda: self.gone(exited_descendant))
+            self.assertIsNone(exited_descendant)
 
     def test_crash_control_records_force_mode_and_reaps_worker_descendant(self):
         descendant_pid = self.root / "crash-descendant.pid"
@@ -450,7 +449,7 @@ worker.control(operation, Path(sys.argv[5]), Path(sys.argv[6]), 4)
                 (self.directory / "worker-tree.json").read_text(encoding="utf-8")
             )
             self.assertEqual(self.control("crash")["state"], "stopped")
-            self.wait_for(lambda: self.gone(descendant))
+            self.assertTrue(self.gone(descendant))
             crash_control = json.loads(
                 (
                     self.directory

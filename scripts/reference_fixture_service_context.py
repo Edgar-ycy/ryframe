@@ -113,9 +113,13 @@ def observe_services(services: dict) -> dict:
         raise ValueError("RustFS 监督器 PID 已复用")
     if alive and supervisor is None:
         raise ValueError("RustFS 产品仍存活但原进程树监督器缺失")
+    if alive and process_identity(tree["monitor"]["pid"]) != tree["monitor"]:
+        raise ValueError("RustFS 完整成员监督器缺失或身份变化")
     if not alive:
         if supervisor is not None:
             raise ValueError("RustFS 产品已退出但监督进程尚未退出")
+        from full_stack_process_monitor import wait_members
+        wait_members(tree, timeout=0)
         require_closed_port(request["api_url"])
         require_closed_port(request["console_url"])
     return {"redis": cache["state"], "rustfs": "running" if alive else "stopped"}
