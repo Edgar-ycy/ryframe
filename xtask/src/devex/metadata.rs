@@ -80,23 +80,7 @@ pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
         context.devex_root,
     );
     let frontend_suite = context.definition.requires_frontend;
-    let toolchain = Toolchain {
-        cargo: version(context.backend_root, "cargo", &["--version"]),
-        rustc: version(context.backend_root, "rustc", &["-vV"]),
-        sccache: context
-            .options
-            .suite
-            .uses_sccache()
-            .then(|| version(context.backend_root, "sccache", &["--version"])),
-        node: frontend_suite.then(|| version(context.frontend_root, "node", &["--version"])),
-        pnpm: frontend_suite.then(|| {
-            version(
-                context.frontend_root,
-                corepack_executable(),
-                &["pnpm", "--version"],
-            )
-        }),
-    };
+    let toolchain = collect_toolchain(&context, frontend_suite);
     let comparable_environment = comparable_environment(context.effective_environment, &normalizer);
     let environment_hash = environment_hash(&comparable_environment);
     let environment = visible_environment(&comparable_environment);
@@ -154,6 +138,26 @@ pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
         input_fingerprint,
         pairing: context.pairing,
     })
+}
+
+fn collect_toolchain(context: &MetadataContext<'_>, frontend_suite: bool) -> Toolchain {
+    Toolchain {
+        cargo: version(context.backend_root, "cargo", &["--version"]),
+        rustc: version(context.backend_root, "rustc", &["-vV"]),
+        sccache: context
+            .options
+            .suite
+            .uses_sccache()
+            .then(|| version(context.backend_root, "sccache", &["--version"])),
+        node: frontend_suite.then(|| version(context.frontend_root, "node", &["--version"])),
+        pnpm: frontend_suite.then(|| {
+            version(
+                context.frontend_root,
+                corepack_executable(),
+                &["pnpm", "--version"],
+            )
+        }),
+    }
 }
 
 pub(super) fn inherited_environment() -> BTreeMap<String, String> {
