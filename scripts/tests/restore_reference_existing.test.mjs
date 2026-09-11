@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import {
   datasetArguments,
+  datasetHelp,
   referenceClient,
   verifyExisting,
 } from '../restore_reference_existing.mjs'
@@ -88,6 +89,20 @@ function transport(t, dataset, options = {}) {
   return calls
 }
 
+test('数据帮助使用同一参数表，未知、重复和缺值仍失败关闭', () => {
+  for (const flag of ['--help', '-h']) {
+    assert.equal(datasetArguments([flag]).get('--help'), true)
+    assert.equal(datasetArguments(['--plan', 'missing.json', flag]).get('--help'), true)
+  }
+  assert.match(datasetHelp(), /--verify-existing PATH/)
+  assert.match(datasetHelp(), /--side source\|target/)
+  for (const args of [
+    ['--help', '--unknown'],
+    ['--help', '-h'],
+    ['--help', '--plan'],
+  ])
+    assert.throws(() => datasetArguments(args))
+})
 test('已有数据默认 target，显式 source；造数、缺值、重复及未知侧均失败关闭', () => {
   const base = ['--plan', 'plan.json', '--backend-dir', backend, '--preflight', 'preflight.json', '--write']
   assert.equal(datasetArguments(base).has('--side'), false)

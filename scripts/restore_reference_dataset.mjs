@@ -6,7 +6,12 @@ import path from 'node:path'
 import { operationCatalog } from './devex/request.mjs'
 import { hash, httpUrl } from './devex/config.mjs'
 import { requestPacer } from './restore_reference_pacing.mjs'
-import { datasetArguments, referenceClient, verifyExisting } from './restore_reference_existing.mjs'
+import {
+  datasetArguments,
+  datasetHelp,
+  referenceClient,
+  verifyExisting,
+} from './restore_reference_existing.mjs'
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 
@@ -353,6 +358,10 @@ export async function prepareDataset(plan, backend, planPath) {
 
 async function main() {
   const args = datasetArguments(process.argv.slice(2))
+  if (args.has('--help')) {
+    process.stdout.write(datasetHelp())
+    return
+  }
   const side = args.get('--side')
   const plan = JSON.parse(await readFile(args.get('--plan'), 'utf8'))
   const backend = path.resolve(args.get('--backend-dir'))

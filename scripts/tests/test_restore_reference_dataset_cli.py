@@ -28,6 +28,14 @@ class DatasetCliTests(unittest.TestCase):
             capture_output=True, text=True, encoding="utf-8", timeout=30,
         )
 
+    def test_help_never_reads_missing_inputs_or_creates_files(self):
+        for flag in ("--help", "-h"):
+            result = self.invoke("--plan", "missing.json", "--backend-dir", "missing", flag)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("--verify-existing PATH", result.stdout)
+            self.assertEqual(result.stderr, "")
+            self.assertEqual(list(self.root.iterdir()), [])
+
     def test_existing_side_reaches_dataset_validation_after_exact_ownership_check(self):
         plan = {"source": {"scope_id": "source"}, "target": {"scope_id": "target"}}
         encoded = json.dumps(plan, sort_keys=True, separators=(",", ":")).encode()

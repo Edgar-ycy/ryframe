@@ -46,6 +46,58 @@ fn invalid_public_arguments_exit_two_before_running_tasks() {
 }
 
 #[test]
+fn recovery_help_uses_the_actual_stage_parser_without_creating_requested_output() {
+    let output = std::env::temp_dir().join(format!(
+        "ryframe-recovery-help-{}-未创建/output.json",
+        std::process::id()
+    ));
+    assert!(!output.parent().unwrap().exists());
+    let result = xtask_command()
+        .env("PYTHONIOENCODING", "utf-8")
+        .args(["check", "recovery", "runtime", "register", "--output"])
+        .arg(&output)
+        .arg("--help")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let text = String::from_utf8(result.stdout).unwrap();
+    assert!(text.contains("--target-plan"), "{text}");
+    assert!(text.contains("--output"), "{text}");
+    assert!(!output.parent().unwrap().exists());
+    for (arguments, expected) in [
+        (
+            ["check", "recovery", "runtime", "--help"].as_slice(),
+            "usage: restore_runtime.py",
+        ),
+        (
+            ["check", "recovery", "fresh-target", "-h"].as_slice(),
+            "--workspace",
+        ),
+        (
+            ["check", "recovery", "source", "comparison-verify", "--help"].as_slice(),
+            "--receipt",
+        ),
+        (
+            ["check", "recovery", "dataset-prepare", "--help"].as_slice(),
+            "--verify-existing PATH",
+        ),
+    ] {
+        let result = invoke_with_environment(arguments, &[("PYTHONIOENCODING", "utf-8")]);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let text = String::from_utf8(result.stdout).unwrap();
+        assert!(text.contains(expected), "{text}");
+    }
+}
+
+#[test]
 fn build_plan_preserves_effective_parameters_without_spawning_or_writing() {
     let missing_frontend = std::env::temp_dir().join(format!(
         "ryframe-build-plan-{}-不存在 空格",

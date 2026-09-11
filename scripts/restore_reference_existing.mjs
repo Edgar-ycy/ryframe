@@ -8,24 +8,36 @@ export function verificationSide(side = 'target') {
   return side
 }
 
+const datasetOptions = new Map([
+  ['--plan', 'PATH'],
+  ['--backend-dir', 'PATH'],
+  ['--preflight', 'PATH'],
+  ['--verify-existing', 'PATH'],
+  ['--side', 'source|target'],
+  ['--write', ''],
+  ['--help', ''],
+])
+
+export function datasetHelp() {
+  return (
+    'cargo xtask check recovery dataset-prepare [参数]\n' +
+    [...datasetOptions].map(([name, value]) => `  ${name}${value ? ' ' + value : ''}`).join('\n') +
+    '\n明确 plan、backend-dir 和 write；准备新数据需要 preflight，已有数据验证需要 verify-existing。\n' +
+    '已有数据验证默认 target，side 只接受 source 或 target；帮助只输出参数，不读取计划或访问服务。\n'
+  )
+}
+
 export function datasetArguments(argv) {
   const args = new Map()
-  const names = new Set([
-    '--plan',
-    '--backend-dir',
-    '--preflight',
-    '--verify-existing',
-    '--side',
-    '--write',
-  ])
   for (let index = 0; index < argv.length; index++) {
-    const name = argv[index]
-    if (!names.has(name) || args.has(name)) throw new Error('数据验收参数未知或重复')
-    const value = name === '--write' ? true : argv[++index]
+    const name = argv[index] === '-h' ? '--help' : argv[index]
+    if (!datasetOptions.has(name) || args.has(name)) throw new Error('数据验收参数未知或重复')
+    const value = datasetOptions.get(name) === '' ? true : argv[++index]
     if (!value || (typeof value === 'string' && value.startsWith('--')))
       throw new Error('数据验收参数缺少值')
     args.set(name, value)
   }
+  if (args.has('--help')) return args
   if (!args.has('--plan') || !args.has('--backend-dir')) throw new Error('必须明确计划和后端目录')
   if (!args.has('--write')) throw new Error('数据准备和认证验收必须显式传入 --write')
   if (args.has('--side') && !args.has('--verify-existing'))

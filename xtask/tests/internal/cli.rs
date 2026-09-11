@@ -70,6 +70,48 @@ fn help_accepts_only_current_command_families() {
 }
 
 #[test]
+fn recovery_help_reaches_the_selected_stage_parser() {
+    for flag in ["--help", "-h"] {
+        for stage in ["runtime", "source", "clone"] {
+            let actual = parse_command(&["check", "recovery", stage, flag]).unwrap();
+            let arguments = strings(&[flag]);
+            let expected = match stage {
+                "runtime" => RecoveryCommand::Runtime(arguments),
+                "source" => RecoveryCommand::Source(arguments),
+                _ => RecoveryCommand::Clone(arguments),
+            };
+            assert_eq!(actual, Command::Check(CheckCommand::Recovery(expected)));
+        }
+        assert_eq!(
+            parse_command(&["check", "recovery", "runtime", "register", flag]).unwrap(),
+            Command::Check(CheckCommand::Recovery(RecoveryCommand::Runtime(strings(
+                &["register", flag,]
+            ))))
+        );
+        assert_eq!(
+            parse_command(&[
+                "check",
+                "recovery",
+                "fixture",
+                "successor",
+                "generation-request",
+                flag
+            ])
+            .unwrap(),
+            Command::Check(CheckCommand::Recovery(RecoveryCommand::Fixture(strings(
+                &["successor", "generation-request", flag,]
+            ))))
+        );
+        assert_eq!(
+            parse_command(&["check", "recovery", flag]).unwrap(),
+            Command::Help(Some("check".into()))
+        );
+        assert!(parse_command(&["check", "recovery", "unknown", flag]).is_err());
+        assert!(parse_command(&["check", "recovery", "runtime", "unknown", flag]).is_err());
+    }
+}
+
+#[test]
 fn parses_check_task_graph_and_internal_groups() {
     assert_eq!(
         parse_command(&["check", "--scope", "frontend", "--full", "--plan"]).unwrap(),

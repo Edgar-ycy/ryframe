@@ -90,6 +90,9 @@ fn parse_recovery_operation(
             "check recovery {stage} 缺少明确子操作"
         )));
     };
+    if args.len() == 1 && matches!(operation.as_str(), "--help" | "-h") {
+        return Ok(args.to_vec());
+    }
     if !operations.contains(&operation.as_str()) {
         return Err(CliError::new(format!(
             "未知 recovery {stage} 子操作：{operation}"

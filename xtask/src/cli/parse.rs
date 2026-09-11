@@ -33,7 +33,10 @@ pub(crate) fn parse(mut args: Vec<String>) -> Result<Cli, CliError> {
         });
     }
     require_command_family(&command_name)?;
-    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+    let recovery_help = command_name == "check"
+        && args.first().is_some_and(|arg| arg == "recovery")
+        && args.get(1).is_some_and(|arg| !arg.starts_with('-'));
+    if !recovery_help && args.iter().any(|arg| arg == "--help" || arg == "-h") {
         return Ok(Cli {
             frontend_dir,
             command: Command::Help(Some(command_name)),
