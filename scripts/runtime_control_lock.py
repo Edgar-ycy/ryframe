@@ -93,8 +93,32 @@ def controller_lock(directory: Path, operation: str, spec: ControllerLockSpec):
         write_receipt(path / "owner.json", owner)
         try:
             yield owner
-        finally:
+        except BaseException as error:
+            try:
+                _remove(path, lock_identity, owner)
+            except BaseException as cleanup:
+                error.add_note("运行控制失败后 ownership 锁清理也失败：" + str(cleanup))
+            raise
+        else:
             _remove(path, lock_identity, owner)
+
+
+def assert_controller_lock(
+    directory: Path,
+    owner: dict,
+    spec: ControllerLockSpec,
+) -> None:
+    """供锁内阶段在外部写入前复核同一控制器仍持有原 ownership。"""
+    spec.validate()
+    directory = _directory(directory)
+    path = _directory(directory / spec.lock_name)
+    if (
+        {entry.name for entry in path.iterdir()} != {"owner.json"}
+        or _read(path / "owner.json") != owner
+        or owner.get("runtime_directory") != str(directory)
+        or process_identity(owner.get("identity", {}).get("pid", 0)) != owner.get("identity")
+    ):
+        raise ValueError("运行控制锁不再属于当前创建身份")
 
 
 def reconcile_lock(

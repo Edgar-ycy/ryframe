@@ -429,11 +429,19 @@ def verify(
 
 
 def main() -> None:
+    from restore_runtime_registration import (
+        add_arguments as add_registration_arguments,
+        execute as execute_registration,
+    )
+
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for operation in ("build", "bind", "verify"):
+    for operation in ("build", "register", "bind", "verify"):
         command = subparsers.add_parser(operation)
         command.add_argument("--backend-dir", type=Path, required=True)
+        if operation == "register":
+            add_registration_arguments(command)
+            continue
         if operation in ("build", "bind"):
             command.add_argument("--output", type=Path, required=True)
             command.add_argument("--write", action="store_true", required=True)
@@ -460,6 +468,10 @@ def main() -> None:
             command.add_argument("--frontend-url")
     args = parser.parse_args()
     backend = args.backend_dir.resolve()
+    if args.command == "register":
+        print(json.dumps(execute_registration(args, backend), ensure_ascii=False,
+                         sort_keys=True, separators=(",", ":")))
+        return
     if args.command == "build":
         expected_source = repository(args.source_backend, "后端构建来源")
         output = validate_new_output(args.output, expected_source)

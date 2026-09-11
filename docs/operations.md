@@ -127,6 +127,12 @@ cargo xtask data restore verify-data --id <演练ID> --backup-root .local-tests/
 cargo xtask data restore verify --id <演练ID> --proof .local-tests/restore/business-proof.json --restore-config-dir .local-tests/restore/config
 ```
 
+首次向 fresh target 写入数据库或对象前，先把参考计划与该侧完整目标计划登记为“从未启动”。登记入口在取得 ownership 控制锁后，写入前后都核验目标运行目录没有 lifecycle、launch、进程树或未知文件，并证明 API、Worker、前端三个精确端口空闲；缺少进程收据本身不能作为停止证明。正式恢复执行器使用同一登记锁包住完整写入临界区，并在每次数据库或对象写入前及退出时重新核验。登记文件只绑定两个计划的绝对路径、大小和 SHA-256，以及当次零进程观察，不复制目标侧、scope 或端点作为第二事实源；恢复收据应绑定该登记文件的完整描述，计划或运行现场变化后必须新建登记，不能覆盖旧文件。
+
+```powershell
+cargo xtask check recovery runtime register --plan <参考计划JSON> --target-plan <目标计划JSON> --output <新runtime-registration.json> --write
+```
+
 一次完整验收需保留成功恢复和损坏或缺失备份失败演练的原始日志、校验结果、trace、截图和视频。失败不会被登记覆盖为成功，也不会自动操作原业务资源。`running`、`data_verified`、`succeeded`、`failed` 分别表示已开始、数据通过、全部通过与失败；超过时限且未完成的演练仍会触发告警。
 
 ### 生成恢复业务证明

@@ -37,6 +37,30 @@ fn runtime_stage_uses_private_verifier_and_only_build_forwards_the_tool_frontend
             .chain(strings(&["--frontend-dir", "D:/前端 worktree"]))
             .collect::<Vec<_>>()
     );
+
+    let (_, registration) = recovery_command(
+        &RecoveryCommand::Runtime(strings(&[
+            "register",
+            "--target-plan",
+            "D:/恢复 target.json",
+            "--write",
+        ])),
+        frontend,
+    )
+    .unwrap();
+    assert_eq!(
+        registration,
+        strings(&[
+            "register",
+            "--target-plan",
+            "D:/恢复 target.json",
+            "--write",
+            "--backend-dir",
+        ])
+        .into_iter()
+        .chain([super::workspace::root_dir().display().to_string()])
+        .collect::<Vec<_>>()
+    );
 }
 
 #[test]
