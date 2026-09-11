@@ -39,12 +39,16 @@ pub async fn execute(config: &AppConfig, context: &Context, command: Command) ->
             print_json(&context.service.begin_restore(read_json(&plan)?).await?)
         }
         Command::VerifyData { id, .. } => print_json(&context.service.verify_data(&id).await?),
-        Command::VerifyRuntime { id, proof, .. } => print_json(
-            &context
-                .service
-                .finish_restore(&id, &read_json(&proof)?)
-                .await?,
-        ),
+        Command::VerifyRuntime {
+            id,
+            proof,
+            tests_receipt,
+            ..
+        } => {
+            let proof = read_json(&proof)?;
+            super::proof::verify_tests_receipt(&proof, &tests_receipt)?;
+            print_json(&context.service.finish_restore(&id, &proof).await?)
+        }
         Command::Status => status(config, context.repository.as_ref()).await,
         Command::Help => Ok(()),
     }

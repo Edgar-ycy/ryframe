@@ -40,6 +40,7 @@ rustls = { workspace = true, optional = true }
 
 [dev-dependencies]
 futures-util.workspace = true
+tempfile.workspace = true
 
 [features]
 default = ["bin-api", "runtime-swagger-ui"]
@@ -109,6 +110,8 @@ bin-tenant-data = [
     "ryframe-db/repositories",
     "ryframe-tenant-db/repositories",
     "dep:chrono",
+    "dep:sha2",
+    "dep:hex",
     "dep:ryframe-application",
     "dep:ryframe-adapters",
     "dep:serde",

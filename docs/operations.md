@@ -124,7 +124,7 @@ cargo xtask data backup status
 ```powershell
 cargo xtask data restore begin --plan .local-tests/restore/plan.json --restore-config-dir .local-tests/restore/config
 cargo xtask data restore verify-data --id <演练ID> --backup-root .local-tests/backup/files --restore-config-dir .local-tests/restore/config
-cargo xtask data restore verify --id <演练ID> --proof .local-tests/restore/business-proof.json --restore-config-dir .local-tests/restore/config
+cargo xtask data restore verify --id <演练ID> --proof .local-tests/restore/business-proof.json --tests-receipt .local-tests/restore/business-proof-tests.json --restore-config-dir .local-tests/restore/config
 ```
 
 首次向 fresh target 写入数据库或对象前，执行 `cargo xtask check recovery runtime register --plan <参考计划JSON> --target-plan <目标计划JSON> --output <新runtime-registration.json> --write`，登记目标从未启动。登记入口在 ownership 控制锁内，写入前后核验目标运行目录没有 lifecycle、launch、进程树或未知文件，并证明 API、Worker、前端三个精确端口空闲；缺少进程收据本身不能作为停止证明。正式恢复执行器使用同一登记锁包住完整写入过程，并在每次数据库或对象写入前及退出时重新核验。登记文件绑定两个计划的绝对路径、大小和 SHA-256 及零进程观察；恢复收据绑定该登记文件，计划或运行现场变化后必须新建登记，不能覆盖旧文件。
@@ -138,9 +138,9 @@ cargo xtask data restore verify --id <演练ID> --proof .local-tests/restore/bus
 `runtime start` 必须同时传入 runtime registration、完整 target plan、双端来源、构建收据和数据绑定；它从 target plan 绑定的环境文件启动 API、Worker、前端，并为每个角色先保存 operation intent，再用同一 Job Object 或进程组登记完整树。首次创建运行目录前还会在目录外写入唯一 creation intent，因此控制器在目录创建、状态写入或进程收据发布的任一切点退出后，都只能通过绑定 owner 和 generation 的 `runtime recover --write` 接管。每个 generation 只允许当前 operation ID 对应的日志、进程、完整树、成员、控制、结果、完成和 launch 收据；未知文件、目录或链接会阻断继续操作并保留现场。`runtime status` 只读派生真实的 `registered_not_started`、`running`、`degraded`、`exited`、`interrupted` 或停止状态；`runtime stop --generation <N> --write` 反向回收三棵树并证明端口释放。
 三端就绪后，用 `cargo xtask check recovery runtime bind --source-backend <执行后端工作树> --source-frontend <前端工作树> --build-receipt <build.json> --launch-receipt <generation目录/runtime-launch.json> --bindings <绑定文件> --output .local-tests/restore/runtime.json --write` 签发 v3 运行收据。普通候选的产品与执行后端必须是同一提交；B0 另外显式传入 `--adapter-contract legacy-stable-readiness-b0-v1 --product-backend <815c5eaf 产品工作树>`，执行来源必须是已登记的 `c05114bc` 适配提交。运行收据分别保存备份来源、后端产品来源、后端执行来源、适配合同、前端来源以及三进程 generation，不能用备份清单的源码 SHA 冒充运行二进制来源。该入口核对源码、二进制、进程创建身份、完整树、探针监听端口及实际返回的前端文件，配置目录正确或 HTTP 200 均不能单独充当来源证明。
 
-前端设置 `RYFRAME_RESTORE_BINDINGS`、`RYFRAME_RESTORE_RUNTIME_RECEIPT`、`RYFRAME_RESTORE_BACKEND_DIR`、`RYFRAME_E2E_SCOPE_ID` 和 `RYFRAME_E2E_BASE_URL`，分别指向绑定文件、运行收据、干净后端源码、新 scope 和已启动的生产站点；同时用 `RYFRAME_RESTORE_REFERENCE_PLAN` 和 `RYFRAME_RESTORE_DATASET_RECEIPT` 指向参考环境计划和原数据准备收据，再运行 `corepack pnpm check --stage browser --real --server preview`。测试开始及结束均复核来源；运行期间替换进程、修改源码或产物都会拒绝生成成功证明。各文件只保存摘要和资源归属，不包含密钥。
+前端成组设置 `RYFRAME_RESTORE_BINDINGS`、`RYFRAME_RESTORE_RUNTIME_RECEIPT`、`RYFRAME_RESTORE_TARGET_PLAN`、`RYFRAME_RESTORE_BACKEND_DIR` 和 `RYFRAME_RESTORE_RUNNER_SHA`：前三项分别指向绑定文件、运行收据和严格目标计划，后两项指向当前干净协调器源码及当前干净前端测试 runner 的完整 SHA。另用 `RYFRAME_E2E_SCOPE_ID`、`RYFRAME_E2E_BASE_URL` 和 `RYFRAME_RESTORE_DATASET_RECEIPT` 绑定新 scope、已启动的生产站点和派生数据血缘收据，再运行 `corepack pnpm check --stage browser --real --server preview`。目标计划和运行收据独立绑定实际产品前后端，因此 B0 产品前端可以与当前测试 runner 不同。测试开始及结束均复核来源；运行期间替换进程、修改源码或产物都会拒绝生成成功证明。各文件只保存摘要和资源归属，不包含密钥。
 
-测试覆盖全部恢复核心场景并通过控制台、网络和 axe 断言后，结果写入 `.local-tests/playwright-real/restore-<演练ID>.json`，测试明细另存相邻文件。已有结果不会覆盖；有失败、跳过、重试、缺场景、源码不匹配或数据验证尚未完成时不生成成功证明。将该文件传给维护 CLI 的 `restore-verify --proof`。这一步仍会重新检查服务就绪和恢复时间，浏览器通过不等于最终恢复登记成功。
+测试覆盖全部恢复核心场景并通过控制台、网络和 axe 断言后，结果写入 `.local-tests/playwright-real/restore-<演练ID>.json`，测试明细另存相邻文件。证明记录经过干净检出的测试 runner SHA，并绑定测试明细文件摘要。已有结果不会覆盖；有失败、跳过、重试、缺场景、源码不匹配、明细不一致或数据验证尚未完成时不生成成功证明。将证明文件和相邻测试明细分别传给维护 CLI 的 `restore-verify --proof` 与 `--tests-receipt`。这一步仍会重新检查服务就绪和恢复时间，浏览器通过不等于最终恢复登记成功。
 
 ### 参考环境的外部验收驱动
 

@@ -1,5 +1,7 @@
 #[path = "../src/bin/ryframe_tenant_data/args.rs"]
 mod args;
+#[path = "../src/bin/ryframe_tenant_data/proof.rs"]
+mod proof;
 
 use args::{Command, parse};
 
@@ -24,6 +26,16 @@ fn explicit_commands_require_scoped_inputs_and_reject_duplicate_flags() {
     .unwrap();
     assert_eq!(command.restore_config().unwrap().to_str(), Some("isolated"));
     assert_eq!(command.backup_root().to_str(), Some("data"));
+    assert!(
+        arguments("restore-verify --id drill --proof proof.json --restore-config-dir isolated")
+            .is_err()
+    );
+    assert!(
+        arguments(
+            "restore-verify --id drill --proof proof.json --tests-receipt tests.json --restore-config-dir isolated"
+        )
+        .is_ok()
+    );
     assert!(args::USAGE.contains("外部工具"));
 }
 

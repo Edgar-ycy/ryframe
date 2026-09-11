@@ -311,8 +311,10 @@ pub fn validate_restore_proof(
             && proof.plan_hash == record.plan_hash
             && proof.backend_sha == backup.manifest.source_sha
             && proof.frontend_sha == record.plan.frontend_sha
+            && hex(&proof.runner_sha, 40)
             && proof.scope_id == record.plan.scope_id
-            && hex(&proof.runtime_receipt_sha256, 64),
+            && hex(&proof.runtime_receipt_sha256, 64)
+            && hex(&proof.tests_receipt_sha256, 64),
         "业务验收证据与当前演练、scope 或源码不一致",
     )?;
     require(

@@ -320,8 +320,10 @@ pub fn proof(record: &RestoreRecord) -> RestoreBusinessProof {
         plan_hash: record.plan_hash.clone(),
         backend_sha: "a".repeat(40),
         frontend_sha: record.plan.frontend_sha.clone(),
+        runner_sha: "e".repeat(40),
         scope_id: record.plan.scope_id.clone(),
         runtime_receipt_sha256: "f".repeat(64),
+        tests_receipt_sha256: "d".repeat(64),
         started_at: record.data_verified_at.unwrap(),
         completed_at: record.data_verified_at.unwrap(),
         scenarios: [
