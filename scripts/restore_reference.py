@@ -1,4 +1,4 @@
-"""参考环境辅助：计划、已有数据检查、数据准备和备份恢复；所有写步骤要求 --write。"""
+"""严格恢复目标计划、已有数据检查、来源数据准备与备份恢复；写入阶段要求 --write。"""
 
 from __future__ import annotations
 
@@ -250,11 +250,11 @@ def main() -> None:
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--inventory", type=Path)
-    parser.add_argument("--source-generation", type=Path, help="backup 必须绑定同代 start、当前业务复验与完整停止后像的最终发布结果")
+    parser.add_argument("--source-generation", type=Path, help="backup 必须绑定同代 START、source verify 与完整停止后像的最终 STOP 发布结果")
     parser.add_argument("--source-export-result", type=Path, help="backup 必须绑定已发布的同一共享 source-export 结果")
     parser.add_argument("--backup-root", type=Path)
     parser.add_argument("--record", type=Path)
-    parser.add_argument("--runtime-registration", type=Path)
+    parser.add_argument("--runtime-registration", type=Path, help="restore 必须绑定同一 target plan 的三端停止登记")
     parser.add_argument("--copy-id")
     parser.add_argument("--artifact")
     parser.add_argument("--missing", action="store_true")
@@ -264,13 +264,13 @@ def main() -> None:
     add_arguments(parser)
     options = [value.partition("=")[0] for value in sys.argv[1:] if value.startswith("--")]
     if len(options) != len(set(options)):
-        parser.error("参考恢复选项不能重复")
+        parser.error("恢复验收选项不能重复")
     args = parser.parse_args()
     validate_arguments(parser, args)
     if args.side is not None and args.command != "check-existing":
         parser.error("--side 仅用于 check-existing；数据准备固定 source，恢复固定 target")
     if any(value is not None for value in (args.source_generation, args.source_export_result)) and args.command != "backup":
-        parser.error("来源运行与停止观察收据仅用于 backup")
+        parser.error("--source-generation 与 --source-export-result 仅用于 backup")
     backend, plan = args.backend_dir.resolve(), read_json(args.plan)
     validate_plan(plan, backend)
     if args.command == "plan":
@@ -359,7 +359,7 @@ def execute(args, plan: dict, backend: Path, tools: ExternalTools, work: Path) -
             inventory = {"id": plan["id"], **inventory}
             source = source_snapshot(backend)
             if not source["clean"] or source["head"] != inventory["source_sha"]:
-                raise ValueError("正式备份必须绑定当前精确干净源码；候选数据集不能冒充发布来源")
+                raise ValueError("正式备份协调器必须是共享导出库存 source_sha 对应的干净工作树")
             result = backup(plan, tools, work, inventory, backend, args.source_generation.absolute(), args.source_export_result.absolute())
         elif args.command == "restore":
             result = restore(plan, tools, backend, inputs)
