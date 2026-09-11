@@ -309,6 +309,7 @@ class SuccessorTests(unittest.TestCase):
     def test_cli_requires_explicit_write_before_reading_inputs(self):
         arguments = [
             "reference_fixture_successor.py",
+            "relationship",
             "--backend-dir",
             str(self.backend),
             "--source-result",

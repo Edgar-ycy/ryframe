@@ -232,14 +232,56 @@ fn fixture_successor_uses_only_the_current_backend() {
     let frontend = Path::new("D:/前端 worktree");
     let backend = super::workspace::root_dir().display().to_string();
     let (script, arguments) = recovery_command(
-        &RecoveryCommand::Fixture(strings(&["successor", "--id", "successor-r1"])),
+        &RecoveryCommand::Fixture(strings(&[
+            "successor",
+            "relationship",
+            "--id",
+            "successor-r1",
+        ])),
         frontend,
     )
     .unwrap();
     assert_eq!(script, "scripts/reference_fixture_successor.py");
     assert_eq!(
         arguments,
-        strings(&["--id", "successor-r1", "--backend-dir", &backend])
+        strings(&[
+            "relationship",
+            "--id",
+            "successor-r1",
+            "--backend-dir",
+            &backend,
+        ])
+    );
+}
+
+#[test]
+fn fixture_successor_arm_request_preserves_spaced_paths() {
+    let frontend = Path::new("D:/前端 worktree");
+    let backend = super::workspace::root_dir().display().to_string();
+    let (script, arguments) = recovery_command(
+        &RecoveryCommand::Fixture(strings(&[
+            "successor",
+            "arm-request",
+            "--workspace",
+            "D:/fresh target/base",
+            "--side",
+            "base",
+        ])),
+        frontend,
+    )
+    .unwrap();
+    assert_eq!(script, "scripts/reference_fixture_successor.py");
+    assert_eq!(
+        arguments,
+        strings(&[
+            "arm-request",
+            "--workspace",
+            "D:/fresh target/base",
+            "--side",
+            "base",
+            "--backend-dir",
+            &backend,
+        ])
     );
 }
 

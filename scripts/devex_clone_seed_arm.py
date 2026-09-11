@@ -91,19 +91,13 @@ def _successor_target(source: dict, lifecycle: dict, target: dict, side: str) ->
         raise ValueError("successor arm 目标不是 relationship 对应侧的精确 fresh 请求")
 
 
-def _inputs(backend: Path, directory: Path | None, request: dict, *, live_storage: bool) -> dict:
+def _validate_arm_request(
+    backend: Path, request: dict, source: dict, *, live_storage: bool
+) -> dict:
     successor = _successor_request(request)
     if request["format_version"] != 1:
         raise ValueError("arm-input 请求类型无效")
     name(request["id"])
-    source = _source(backend, request, live_storage=live_storage)
-    if successor:
-        if directory is None:
-            raise ValueError("successor arm 必须在 C52 来源 run 的当前控制锁内执行")
-        _require_owned_run(directory)
-        if (source.get("directory") != directory
-                or source["registration"].get("run_directory") != str(directory)):
-            raise ValueError("successor arm 的 C52 来源不属于当前 held run")
     lifecycle = target_lifecycle_binding(backend, request, live_storage=live_storage)
     initialized, target = lifecycle["initialized"], lifecycle["target"]
     target_review, _ = request_binding(backend, target)
@@ -133,6 +127,25 @@ def _inputs(backend: Path, directory: Path | None, request: dict, *, live_storag
             "target_registration": lifecycle["registration"],
             "target_storage_run": lifecycle["target_storage_run"],
             "target_side": side, "copy_directory": copy_directory}
+
+
+def validate_arm_request(backend: Path, request: dict, *, live_storage: bool) -> dict:
+    """核对 arm 请求绑定的来源、fresh target、环境和构建证据，不取得运行锁。"""
+    source = _source(backend, request, live_storage=live_storage)
+    return _validate_arm_request(backend, request, source, live_storage=live_storage)
+
+
+def _inputs(backend: Path, directory: Path | None, request: dict, *, live_storage: bool) -> dict:
+    successor = _successor_request(request)
+    source = _source(backend, request, live_storage=live_storage)
+    if successor:
+        if directory is None:
+            raise ValueError("successor arm 必须在 C52 来源 run 的当前控制锁内执行")
+        _require_owned_run(directory)
+        if (source.get("directory") != directory
+                or source["registration"].get("run_directory") != str(directory)):
+            raise ValueError("successor arm 的 C52 来源不属于当前 held run")
+    return _validate_arm_request(backend, request, source, live_storage=live_storage)
 
 
 def _manifest(request: dict, inputs: dict) -> dict:

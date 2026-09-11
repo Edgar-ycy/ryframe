@@ -466,17 +466,47 @@ def publish(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--backend-dir", type=Path, required=True)
-    parser.add_argument("--source-result", type=Path, required=True)
-    parser.add_argument("--predecessor-review", type=Path, required=True)
-    parser.add_argument("--predecessor-request", type=Path, required=True)
-    parser.add_argument("--successor-review", type=Path, required=True)
+    operations = parser.add_subparsers(dest="operation", required=True)
+    relationship = operations.add_parser("relationship")
+    relationship.add_argument("--backend-dir", type=Path, required=True)
+    relationship.add_argument("--source-result", type=Path, required=True)
+    relationship.add_argument("--predecessor-review", type=Path, required=True)
+    relationship.add_argument("--predecessor-request", type=Path, required=True)
+    relationship.add_argument("--successor-review", type=Path, required=True)
     for side in SIDES:
-        parser.add_argument(f"--{side}-request", type=Path, required=True)
-    parser.add_argument("--id", required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--write", action="store_true")
+        relationship.add_argument(f"--{side}-request", type=Path, required=True)
+    relationship.add_argument("--id", required=True)
+    relationship.add_argument("--output", type=Path, required=True)
+    relationship.add_argument("--write", action="store_true")
+    arm = operations.add_parser("arm-request")
+    arm.add_argument("--backend-dir", type=Path, required=True)
+    arm.add_argument("--successor", type=Path, required=True)
+    arm.add_argument("--workspace", type=Path, required=True)
+    arm.add_argument("--id", required=True)
+    arm.add_argument("--side", choices=("base", "candidate"), required=True)
+    arm.add_argument("--copy-directory", type=Path, required=True)
+    arm.add_argument("--output", type=Path)
+    arm.add_argument("--write", action="store_true")
     args = parser.parse_args()
+    if args.operation == "arm-request":
+        from reference_fixture_successor_arm import build as build_arm
+        from reference_fixture_successor_arm import publish as publish_arm
+        from reference_fixture_successor_arm import summary
+
+        if args.write != (args.output is not None):
+            parser.error("arm-request 写入必须同时指定 --output 与 --write；默认只读不接受 --output")
+        action = publish_arm if args.write else build_arm
+        values = (
+            args.backend_dir,
+            args.successor,
+            args.workspace,
+            args.id,
+            args.side,
+            args.copy_directory,
+        )
+        request = action(*values, args.output) if args.write else action(*values)
+        print(json.dumps(summary(request, side=args.side, written=args.write), ensure_ascii=False))
+        return
     if not args.write:
         parser.error("签发 seed review successor 必须显式 --write")
     requests = {side: getattr(args, side + "_request") for side in SIDES}
