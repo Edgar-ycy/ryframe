@@ -324,14 +324,12 @@ class RequiredJobsTests(unittest.TestCase):
         self.assertIn("branches: [ main ]", workflow)
         self.assertIn('tags: [ "v*.*.*" ]', workflow)
         self.assertIn('"Dockerfile"', workflow)
-        self.assertIn('"scripts/ci_full_stack.py"', workflow)
-        self.assertIn('"scripts/check_deployment_assets.py"', workflow)
-        for path in (
-            "scripts/check_supply_chain.py",
-            "scripts/supply_chain_policy.json",
-            "scripts/tests/test_check_supply_chain.py",
-        ):
+        for path in ("Cargo.lock", "Cargo.toml", "crates/**", "config/**", "migrations/**",
+                     "openapi/**", "scripts/**", "vendor/**", "xtask/**"):
             self.assertIn(f'"{path}"', workflow)
+        self.assertNotIn('"scripts/ci_full_stack.py"', workflow.split("schedule:", 1)[0])
+        for path in ("scripts/check_supply_chain.py", "scripts/supply_chain_policy.json",
+                     "scripts/tests/test_check_supply_chain.py"):
             self.assertTrue((ROOT / path).is_file())
         self.assertNotIn("check_vulnerability_exceptions.py", workflow)
         self.assertNotIn("vulnerability-exceptions.json", workflow)
