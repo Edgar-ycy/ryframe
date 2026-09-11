@@ -154,7 +154,19 @@ function transport(t, dataset, options = {}) {
   const calls = []
   t.mock.method(Session.prototype, 'login', async function () {
     calls.push({ operation: 'login', identity: this.identity, api: this.config.bindings.api_url })
-    this.token = 'fixture-token'
+    const tenantIndex = dataset.tenants.findIndex(
+      (tenant) => tenant.tenant_id === this.identity.tenant_id,
+    )
+    const claims = Buffer.from(
+      JSON.stringify({
+        sub: String(tenantIndex + 1),
+        tenant_id: this.identity.tenant_id,
+        username: this.identity.username,
+        token_type: 'access',
+        user_authorization_version: 1,
+      }),
+    ).toString('base64url')
+    this.token = `header.${claims}.signature`
     this.beforeRequest = async () => {}
   })
   t.mock.method(Session.prototype, 'request', async function (step) {
@@ -162,6 +174,7 @@ function transport(t, dataset, options = {}) {
       operation: step.operation,
       identity: this.identity,
       api: this.config.bindings.api_url,
+      authorization: this.token,
     })
     if (step.operation === 'post_auth_logout') {
       if (options.logoutFailure) throw new Error('logout failed')
@@ -300,6 +313,11 @@ test('派生来源使用血缘中的原租户身份和当前端点完成全量�
     lineage_sha256: hash(lineage),
     actions: { business: 'read_only', objects: 'read_only', session: 'login_logout' },
     restore_success: false,
+    subjects: lineage.tenants.map((tenant, index) => ({
+      tenant_id: tenant.tenant_id,
+      user_id: index + 1,
+      user_authorization_version: 1,
+    })),
     tenants: 11,
     posts: 33,
     files: 256,
@@ -309,6 +327,11 @@ test('派生来源使用血缘中的原租户身份和当前端点完成全量�
   assert.deepEqual(
     calls.filter((call) => call.operation === 'login').map((call) => call.identity.tenant_id),
     lineage.tenants.map((tenant) => tenant.tenant_id),
+  )
+  assert.ok(
+    calls
+      .filter((call) => call.operation === 'post_auth_logout')
+      .every((call) => call.authorization === undefined),
   )
   for (const call of calls) {
     if (call.operation === 'download') {

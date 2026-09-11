@@ -205,7 +205,19 @@ export async function verifyIdentitiesAt(
   target,
   network,
   requestIntervalMs,
+  controls,
 ) {
+  if (
+    controls !== undefined &&
+    (!controls ||
+      typeof controls !== 'object' ||
+      Array.isArray(controls) ||
+      Object.keys(controls).sort().join(',') !== 'clearBearerBeforeLogout,subjects' ||
+      controls.clearBearerBeforeLogout !== true ||
+      !Array.isArray(controls.subjects) ||
+      controls.subjects.length)
+  )
+    throw new Error('已有数据会话控制必须是空的受控身份收集器')
   const catalog = await operationCatalog(backend)
   if (catalog.get('get_system_posts_by_id')?.method !== 'GET')
     throw new Error('旧岗位验收必须使用只读查询契约')
@@ -221,6 +233,7 @@ export async function verifyIdentitiesAt(
       requestIntervalMs,
     )
     await session.login()
+    if (controls) controls.subjects.push(accessSubject(session.token, identity))
     let failure
     try {
       for (const post of identity.posts) {
@@ -237,6 +250,7 @@ export async function verifyIdentitiesAt(
       failure = error
     }
     try {
+      if (controls?.clearBearerBeforeLogout) session.token = undefined
       await session.request({ operation: 'post_auth_logout' })
     } catch (error) {
       failure = failure ? new AggregateError([failure, error], '已有数据验证及注销均失败') : error
@@ -244,6 +258,37 @@ export async function verifyIdentitiesAt(
     if (failure) throw failure
   }
   return { tenants: identities.length, posts, files }
+}
+
+function accessSubject(token, identity) {
+  if (typeof token !== 'string' || token.split('.').length !== 3)
+    throw new Error('来源验收无法读取当前访问令牌身份')
+  let claims
+  try {
+    claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'))
+  } catch {
+    throw new Error('来源验收访问令牌声明无效')
+  }
+  const userId = Number(claims.sub)
+  if (
+    !claims ||
+    typeof claims !== 'object' ||
+    Array.isArray(claims) ||
+    claims.token_type !== 'access' ||
+    claims.tenant_id !== identity.tenant_id ||
+    claims.username !== identity.username ||
+    !Number.isSafeInteger(userId) ||
+    userId <= 0 ||
+    typeof claims.user_authorization_version !== 'number' ||
+    !Number.isSafeInteger(claims.user_authorization_version) ||
+    claims.user_authorization_version < 0
+  )
+    throw new Error('来源验收访问令牌没有绑定当前租户用户')
+  return {
+    tenant_id: claims.tenant_id,
+    user_id: userId,
+    user_authorization_version: claims.user_authorization_version,
+  }
 }
 
 function exactFields(value, fields) {

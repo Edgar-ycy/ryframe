@@ -241,12 +241,14 @@ export function validateSourceLineage(lineage) {
 export async function verifySourceExisting(backend, lineage) {
   validateSourceLineage(lineage)
   const original = hash(lineage)
+  const subjects = []
   const counts = await verifyIdentitiesAt(
     backend,
     lineage.tenants,
     lineage.verification,
     18,
     lineage.verification.request_interval_ms,
+    { clearBearerBeforeLogout: true, subjects },
   )
   if (hash(lineage) !== original) throw new Error('派生数据血缘在业务验证期间发生变化')
   return {
@@ -258,6 +260,7 @@ export async function verifySourceExisting(backend, lineage) {
     lineage_sha256: original,
     actions: { business: 'read_only', objects: 'read_only', session: 'login_logout' },
     restore_success: false,
+    subjects,
     ...counts,
   }
 }
