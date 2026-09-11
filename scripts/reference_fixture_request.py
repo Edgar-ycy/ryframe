@@ -13,6 +13,8 @@ from devex_clone_target_binding import KEYS, request_binding, validate_review
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
 from reference_fixture_paths import service_run as expected_service_run
+from reference_fixture_service_history import validate_history
+from devex_clone_run_state import load_state
 
 
 def _read(backend: Path, value: Path) -> tuple[Path, dict]:
@@ -92,16 +94,8 @@ def _service(backend: Path, run: Path, review_binding: dict, review: dict) -> di
         or manifest.get("scope_id") != review["services"]["rustfs"]["scope_id"]
     ):
         raise ValueError("首代服务账本未绑定当前审阅计划的 seed 私有环境")
-    attempts = tuple(
-        (item.get("stage"), item.get("mode"), item.get("status"))
-        for item in state.get("attempts", [])
-    )
-    if attempts != (
-        ("storage-target", "initial", "passed"),
-        ("cache-target", "initial", "passed"),
-        ("fixture-buckets", "prepare", "passed"),
-    ):
-        raise ValueError("首代服务账本阶段不完整或不是同一代次")
+    if load_state(run) != state or validate_history(run, state)["closed"]:
+        raise ValueError("首代服务账本发生变化或已经关闭")
     process_file, process = _read(backend, run / "rustfs/process.json")
     launch_file, launch = _read(backend, run / "rustfs/launch.json")
     runtime_file, runtime = _read(backend, run / "redis/runtime.json")

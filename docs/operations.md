@@ -222,4 +222,8 @@ scrape_configs:
 
 ## 故障记录
 
+隔离参考夹具服务通过 `cargo xtask check recovery fixture services status --review <审阅收据> --environment <bootstrap.json>` 查看只读状态，输出原账本、控制器身份及下一合法操作。关闭时改用 `close` 并显式追加 `--write`，按 Redis、RustFS 顺序回收原进程树，确认端口释放；数据库、对象及服务目录保留。新首代 RustFS 在产品代码执行前建立监督进程和 Job Object 或 Unix session。历史收据缺少进程树归属时不能补造完整关闭证据。
+
+死亡控制器通过同一入口的 `recover --review <审阅收据> --environment <bootstrap.json> --owner-binding <状态输出中的 owner 文件绑定 JSON> --write` 显式恢复。它只清理已核对的本地控制锁并追加账本，不停止服务或重放未收尾操作；PID 已复用、来源改变、未知启动或关闭结果均须保留现场核对完整前后像。已关闭代次不能再签发 fresh-target 请求；已登记目标只接受严格核验过的已收尾生命周期追加。
+
 记录时间线、影响租户、请求或任务 ID、根因、处置和验证结果。配置字段以配置结构为准，指标和告警以部署资产为准，不在本文维护重复清单。

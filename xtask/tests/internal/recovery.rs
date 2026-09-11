@@ -317,12 +317,13 @@ fn fixture_artifact_and_retention_use_registered_runtime_tools() {
 
 #[test]
 fn fixture_services_use_the_private_service_controller() {
-    for service in ["rustfs", "redis"] {
-        let (script, arguments) = recovery_command(
-            &RecoveryCommand::Fixture(strings(&["services", service, "--write"])),
-            Path::new("unused"),
-        )
-        .unwrap();
+    for service in ["rustfs", "redis", "buckets", "status", "close", "recover"] {
+        let mut input = strings(&["services", service]);
+        if service != "status" {
+            input.push("--write".to_owned());
+        }
+        let (script, arguments) =
+            recovery_command(&RecoveryCommand::Fixture(input), Path::new("unused")).unwrap();
         assert_eq!(script, "scripts/reference_fixture_services.py");
         assert_eq!(
             arguments.last().map(String::as_str),

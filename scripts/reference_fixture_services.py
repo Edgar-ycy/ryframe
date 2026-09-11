@@ -1,6 +1,9 @@
 """以统一账本启动隔离参考夹具的首代服务。"""
 from __future__ import annotations
 
+import sys
+sys.dont_write_bytecode = True
+
 import argparse
 import copy
 import json
@@ -269,14 +272,34 @@ def redis(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bool
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("rustfs", "redis", "buckets"))
+    parser.add_argument("operation", choices=("rustfs", "redis", "buckets", "status", "close", "recover"))
     parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--review", type=Path, required=True)
     parser.add_argument("--environment", type=Path, required=True)
     parser.add_argument("--write", action="store_true")
+    parser.add_argument("--owner-binding", type=Path)
     args = parser.parse_args()
+    if args.operation == "status" and (args.write or args.owner_binding is not None):
+        parser.error("status 只读，不接受 --write 或 --owner-binding")
+    if args.operation != "status" and not args.write:
+        parser.error("服务操作必须显式指定 --write")
+    if (args.operation == "recover") != (args.owner_binding is not None):
+        parser.error("只有 recover 必须指定 --owner-binding")
+    backend = args.backend_dir.resolve(strict=True)
+    if args.operation in {"status", "close", "recover"}:
+        from reference_fixture_service_context import status
+        from reference_fixture_service_lifecycle import close, recover
+
+        if args.operation == "status":
+            result = status(backend, args.review, args.environment)
+        elif args.operation == "close":
+            result = close(backend, args.review, args.environment, write=args.write)
+        else:
+            result = recover(backend, args.review, args.environment, args.owner_binding, write=args.write)
+        print(json.dumps(result, ensure_ascii=False))
+        return
     action = {"rustfs": rustfs, "redis": redis, "buckets": buckets}[args.operation]
-    result = action(args.backend_dir.resolve(strict=True), args.review, args.environment, write=args.write)
+    result = action(backend, args.review, args.environment, write=args.write)
     summary = {"status": result["status"], "remote_writes": result["remote_writes"]}
     if "services_started" in result:
         summary["services_started"] = result["services_started"]

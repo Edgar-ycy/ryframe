@@ -38,7 +38,8 @@ def running(expected: dict, args: list[str], urls: tuple[str, str], *, listeners
     return True
 
 
-def inspect_attempt(backend: Path, output: Path, registration: dict, controller: dict, number: int) -> dict | None:
+def inspect_attempt(backend: Path, output: Path, registration: dict, controller: dict, number: int,
+                    *, request_binding: dict | None = None) -> dict | None:
     path = output / "intent.json"
     if not path.exists():
         if any((output / name).exists() for name in ("process.json", "launch.json", "ready.json", "spawned.json")):
@@ -46,7 +47,10 @@ def inspect_attempt(backend: Path, output: Path, registration: dict, controller:
         return None
     intent = read_json(path)
     exact(intent, {"format_version", "kind", "request", "controller", "attempt", "arguments", "environment"})
-    request = read_json(bound_file(backend, registration))
+    request_path = bound_file(backend, request_binding or registration)
+    if request_binding is not None and request_path != output / "request.json":
+        raise ValueError("服务账本嵌入请求必须位于原始启动目录")
+    request = read_json(request_path)
     if (intent["format_version"] != 1 or intent["kind"] != "devex-clone-storage-intent"
             or intent["request"] != registration or intent["controller"] != controller or intent["attempt"] != number
             or intent["arguments"] != arguments(request) or intent["environment"] != configuration(request)):

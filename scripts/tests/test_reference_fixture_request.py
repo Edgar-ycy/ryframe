@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import reference_fixture_request as request
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
+from devex_clone_run_state import initialize_state, begin, finish
 
 
 class ReferenceFixtureRequestTests(unittest.TestCase):
@@ -29,7 +30,7 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
     def setUp(self):
         self.backend = Path(__file__).resolve().parents[2]
         self.root = (
-            self.backend / ".local-tests" / f"reference-request-test-{uuid.uuid4().hex}"
+            self.backend / ".local-tests" / f"rf-{uuid.uuid4().hex}"
         )
         self.root.mkdir()
         self.addCleanup(shutil.rmtree, self.root)
@@ -180,16 +181,10 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
                 "data_directory_was_empty": True,
             },
         )
-        self.write(
-            run / "state.json",
-            {
-                "attempts": [
-                    {"stage": "storage-target", "mode": "initial", "status": "passed"},
-                    {"stage": "cache-target", "mode": "initial", "status": "passed"},
-                    {"stage": "fixture-buckets", "mode": "prepare", "status": "passed"},
-                ]
-            },
-        )
+        initialize_state(run)
+        for stage, mode in (("storage-target", "initial"), ("cache-target", "initial"), ("fixture-buckets", "prepare")):
+            number = begin(run, stage, mode, {"fixture": True})
+            finish(run, number, result={"status": stage})
         identity = {
             "executable": str(self.tool),
             "sha256": file_digest(self.tool)["sha256"],

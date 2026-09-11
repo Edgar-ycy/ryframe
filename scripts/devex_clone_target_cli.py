@@ -81,8 +81,11 @@ def _storage_run(backend: Path, descriptor: dict) -> Path:
         raise ValueError("fresh 目标 storage manifest 不属于固定统一目录")
     historical = historical_state(directory, descriptor["state"])
     if _fixture_service_run(manifest, historical["state"]):
-        if historical["historical_attempts"] != len(historical["state"]["attempts"]):
-            raise ValueError("夹具首代服务账本不允许在登记后追加阶段")
+        from reference_fixture_service_history import validate_history
+
+        validate_history(directory, historical["state"])
+        if historical["historical_attempts"] < 3 or binding(directory / "state.json") != historical["current"]:
+            raise ValueError("夹具服务登记未包含完整首代或核验期间账本变化")
         return directory
     appended = historical["state"]["attempts"][historical["historical_attempts"]:]
     allowed = {"storage-target": {"restart", "stop", "recover"},
@@ -109,14 +112,14 @@ def _fixture_service_run(manifest: dict, state: dict) -> bool:
     """识别只提供首代服务的参考夹具，不能把它伪装成复制重启。"""
     if manifest.get("kind") != "reference-fixture-service-run":
         return False
-    exact(manifest, {"format_version", "kind", "review", "bootstrap", "execution_backend", "scope_id",
-                     "data_directory_was_empty"})
-    if (manifest["format_version"] != 1 or not isinstance(manifest["execution_backend"], str)
-            or not isinstance(manifest["scope_id"], str) or manifest["data_directory_was_empty"] is not True):
-        raise ValueError("夹具首代服务清单无效")
-    expected = (("storage-target", "initial"), ("cache-target", "initial"), ("fixture-buckets", "prepare"))
-    actual = tuple((item["stage"], item["mode"]) for item in state["attempts"])
-    if actual != expected or any(item["status"] != "passed" for item in state["attempts"]):
+    from reference_fixture_service_history import INITIAL, LIFECYCLE_STAGE, validate_manifest
+
+    validate_manifest(manifest)
+    initial = state["attempts"][:len(INITIAL)]
+    actual = tuple((item["stage"], item["mode"]) for item in initial)
+    if (actual != INITIAL or any(item["status"] != "passed" for item in initial)
+            or any(item["stage"] != LIFECYCLE_STAGE or item["mode"] not in {"close", "recover"}
+                   or item["status"] != "passed" for item in state["attempts"][len(INITIAL):])):
         raise ValueError("夹具服务账本必须完整包含 RustFS、Redis 与对象桶初始化")
     return True
 
@@ -284,6 +287,12 @@ def _run_registered(backend: Path, workspace: Path, operation, *args) -> dict:
     storage_state = binding(storage_run / "state.json")
     fixture_services = _fixture_service_run(read_bound_json(storage_run / "manifest.json", storage_binding["manifest"]),
                                             historical_state(storage_run, storage_binding["state"])["state"])
+    if fixture_services:
+        from reference_fixture_service_history import validate_history
+        from devex_clone_run_state import load_state
+
+        if validate_history(storage_run, load_state(storage_run))["closed"]:
+            raise ValueError("夹具服务已经关闭，不能继续 fresh 目标操作")
     environment = configured(private)
     with run_lock(storage_run):
         if (_registration(backend, workspace)[1] != value

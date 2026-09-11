@@ -56,6 +56,13 @@ class NativeProcessTests(unittest.TestCase):
         self.assertEqual(cleanup["pid"], child["pid"])
         with patch.object(process, "arguments", return_value=self.args):
             observed = process.inspect_attempt(self.backend, self.output, self.registration, self.controller, 1)
+            embedded = self.output / "request.json"
+            write_json(embedded, self.request)
+            self.assertEqual(process.inspect_attempt(self.backend, self.output, self.registration, self.controller, 1,
+                                                     request_binding=binding(embedded)), observed)
+            with self.assertRaisesRegex(ValueError, "原始启动目录"):
+                process.inspect_attempt(self.backend, self.output, self.registration, self.controller, 1,
+                                        request_binding=self.registration)
         self.assertEqual(observed["state"], "not_started")
 
     def test_supervised_start_records_original_identity_and_reaps_failure_tree(self):
