@@ -10,9 +10,10 @@ use crate::{
     Result,
     check::{
         BACKEND_CI_TARGET_DIR, BackendSnapshotProfile, PolicyProfile, RESOURCE_CI_TARGET_DIR,
-        VerifySelection, changed_paths, changed_paths_between, ci_consumer_contract, ci_rust_gate,
-        ci_target_policy, ci_test_jobs_from, classify_changes, complete_verify_selection,
-        load_workspace_graph, policy_tasks, resource_workspace_compilation,
+        STRICT_MIGRATION_HISTORY_ARGS, VerifySelection, changed_paths, changed_paths_between,
+        ci_consumer_contract, ci_rust_gate, ci_target_policy, ci_test_jobs_from, classify_changes,
+        complete_verify_selection, load_workspace_graph, policy_tasks,
+        resource_workspace_compilation,
     },
     cli::{CiCommand, ResourceGateReplayOptions},
     contract::verify_contract_source,
@@ -333,10 +334,10 @@ fn preflight(frontend_dir: &Path) -> Result<()> {
 }
 
 pub(crate) fn preflight_migration_args(base: Option<&str>) -> Vec<String> {
-    let mut args = vec![
-        "scripts/check_migration_history.py".to_owned(),
-        "--require-frozen".to_owned(),
-    ];
+    let mut args = STRICT_MIGRATION_HISTORY_ARGS
+        .iter()
+        .map(|argument| (*argument).to_owned())
+        .collect::<Vec<_>>();
     if let Some(base) = base.filter(|base| valid_git_sha(base)) {
         args.extend(["--trusted-ref".to_owned(), base.to_owned()]);
     }

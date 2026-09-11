@@ -143,6 +143,9 @@ pub(crate) fn render_plan(plan: &TaskPlan) {
             task.executor.label(),
             task.executor.description()
         );
+        if let Some(arguments) = task.executor.static_arguments() {
+            println!("  固定参数={}", arguments.join(" "));
+        }
         println!(
             "  编译覆盖={}；允许写入={}；外部资源={}",
             display_metadata(task.compilation_coverage),

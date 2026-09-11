@@ -151,7 +151,9 @@ fn execute_full_task(
         CheckTaskExecutor::FullMigrationHistory => run_process(
             &context.root,
             "python",
-            &["scripts/check_migration_history.py", "--require-frozen"],
+            executor
+                .static_arguments()
+                .ok_or("迁移历史任务缺少静态参数")?,
         ),
         CheckTaskExecutor::FullWorkspaces => run_full_workspaces(
             context,

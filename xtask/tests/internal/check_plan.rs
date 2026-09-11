@@ -57,6 +57,17 @@ fn full_all_plan_exposes_the_executed_topology_and_metadata() {
     assert_eq!(workspaces.executor, CheckTaskExecutor::FullWorkspaces);
     assert!(workspaces.compilation_coverage.contains(&"feature matrix"));
     assert!(workspaces.allowed_writes.contains(&"并行任务日志"));
+    let migrations = tasks
+        .iter()
+        .filter(|task| task.executor == CheckTaskExecutor::FullMigrationHistory)
+        .collect::<Vec<_>>();
+    assert_eq!(migrations.len(), 1, "完整任务图只能执行一次迁移历史检查");
+    assert_eq!(migrations[0].id, "full.migration-history");
+    assert_eq!(migrations[0].dependencies, ["full.python-tests"]);
+    assert_eq!(
+        migrations[0].executor.static_arguments(),
+        Some(["scripts/check_migration_history.py", "--require-frozen"].as_slice())
+    );
     let python = tasks
         .iter()
         .find(|task| task.id == "full.python-environment")

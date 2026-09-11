@@ -133,14 +133,13 @@ fn full_gate_discovers_repository_python_tests() {
         ]
     );
     assert_eq!(
-        policy_tasks(PolicyProfile::Full)
+        policy_tasks(PolicyProfile::FullStatic)
             .into_iter()
             .map(|task| task.script)
             .collect::<Vec<_>>(),
         [
             "scripts/check_architecture.py",
             "scripts/check_deployment_assets.py",
-            "scripts/check_migration_history.py",
             "scripts/check_prerelease_dependencies.py",
             "scripts/check_permission_routes.py",
             "scripts/check_removed_identity.py",

@@ -4,10 +4,14 @@ use crate::Result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PolicyProfile {
-    Full,
+    FullStatic,
     Smart,
     CiPreflight,
 }
+
+pub(crate) const MIGRATION_HISTORY_SCRIPT: &str = "scripts/check_migration_history.py";
+pub(crate) const STRICT_MIGRATION_HISTORY_ARGS: &[&str] =
+    &[MIGRATION_HISTORY_SCRIPT, "--require-frozen"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PythonPolicyTask {
@@ -22,7 +26,7 @@ pub(crate) struct PythonPolicyTask {
 impl PythonPolicyTask {
     const fn order(self, profile: PolicyProfile) -> Option<u8> {
         match profile {
-            PolicyProfile::Full => self.full_order,
+            PolicyProfile::FullStatic => self.full_order,
             PolicyProfile::Smart => self.smart_order,
             PolicyProfile::CiPreflight => self.ci_preflight_order,
         }
@@ -71,8 +75,8 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
     },
     PythonPolicyTask {
         id: "migration-history",
-        script: "scripts/check_migration_history.py",
-        full_order: Some(2),
+        script: MIGRATION_HISTORY_SCRIPT,
+        full_order: None,
         smart_order: Some(1),
         ci_preflight_order: None,
         requires_frontend: false,

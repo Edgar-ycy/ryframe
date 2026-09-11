@@ -44,7 +44,6 @@ pub(crate) use context::{
     VerifyTargetPolicy, ci_environment_from, ci_target_policy, ci_target_policy_from,
     resolve_target_dir, verify_job_budget_from, verify_target_policy_from,
 };
-#[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use execution::run_parallel_tasks;
 #[allow(unused_imports)]
@@ -72,7 +71,10 @@ pub(crate) use plan::{
     validate_plan,
 };
 #[allow(unused_imports)]
-pub(crate) use policy_tasks::{PYTHON_POLICY_TASKS, PolicyProfile, PythonPolicyTask, policy_tasks};
+pub(crate) use policy_tasks::{
+    MIGRATION_HISTORY_SCRIPT, PYTHON_POLICY_TASKS, PolicyProfile, PythonPolicyTask,
+    STRICT_MIGRATION_HISTORY_ARGS, policy_tasks,
+};
 #[allow(unused_imports)]
 pub(crate) use resource::{
     ResourceWorkspaceProfile, resolve_frontend_dir, resource_test_executable_from_messages,

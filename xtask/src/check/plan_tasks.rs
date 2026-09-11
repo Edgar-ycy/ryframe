@@ -9,6 +9,7 @@ use super::{
     },
     CheckPlanMode,
 };
+use crate::check::policy_tasks::STRICT_MIGRATION_HISTORY_ARGS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CheckTaskRepository {
@@ -115,7 +116,7 @@ impl CheckTaskExecutor {
             Self::FullBackendStatic => "执行后端 feature 注册、格式、Clippy 与策略检查",
             Self::FullSnapshotPrepare => "准备当前后端 OpenAPI 与 MySQL 候选快照",
             Self::FullPythonTests => "执行仓库 Python 检查测试",
-            Self::FullMigrationHistory => "核验冻结迁移历史",
+            Self::FullMigrationHistory => "以 --require-frozen 核验冻结迁移历史",
             Self::FullWorkspaces => "并行执行后端 Workspace 与资源 Workspace 门禁",
             Self::FullSnapshotVerify => "核验候选快照与已提交事实一致",
             Self::FullBackendConsumerContract => "使用候选 OpenAPI 执行前端契约检查",
@@ -126,6 +127,13 @@ impl CheckTaskExecutor {
             Self::SmartSnapshotVerify => "生成或复用候选快照并核验",
             Self::SmartConsumerContract => "使用候选 OpenAPI 执行前端契约检查",
             Self::SmartFrontend => "执行所选前端检查画像",
+        }
+    }
+
+    pub(crate) const fn static_arguments(self) -> Option<&'static [&'static str]> {
+        match self {
+            Self::FullMigrationHistory => Some(STRICT_MIGRATION_HISTORY_ARGS),
+            _ => None,
         }
     }
 

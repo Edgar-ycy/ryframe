@@ -303,7 +303,7 @@ fn backend(root: &Path, backend_target: &str, jobs: usize, frontend_dir: &Path) 
     // Clippy 会先完成 Workspace 全目标类型检查，无需再执行覆盖范围更小的 cargo check。
     let clippy = workspace_clippy_args(backend_target, jobs);
     run_owned(root, "cargo", &clippy)?;
-    for task in policy_tasks(PolicyProfile::Full) {
+    for task in policy_tasks(PolicyProfile::FullStatic) {
         run_owned(root, "python", &task.arguments(root, frontend_dir)?)?;
     }
     Ok(())
