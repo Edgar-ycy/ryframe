@@ -384,7 +384,7 @@ class SourceRuntimeTests(unittest.TestCase):
 
             extra = output.parent / "after/unknown.txt"
             extra.write_text("unknown", encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "文件集合"):
+            with self.assertRaisesRegex(ValueError, "文件集合|未登记文件"):
                 runtime.verify_source_runtime(self.backend, binding(output), live=False)
 
     def test_parameter_and_existing_directory_fail_before_lock_or_spawn(self):
@@ -459,6 +459,54 @@ class SourceRuntimeTests(unittest.TestCase):
             if boundary == 2:
                 stop.assert_called_once_with(self.process_identity, crash=True)
             self.assertFalse(self.process_state["alive"])
+
+    def test_failed_and_interrupted_producer_evidence_proves_exit_without_claiming_verification(self):
+        from devex_clone_factory_context import configured
+
+        directory = self.generation / "verification"
+        directory.mkdir()
+        before = descriptor_file(directory / "before/image.json", {"image": self.before_image})
+        descriptor_file(directory / "audit/login-before.tsv", {"fixture": "original audit"})
+        with patch.object(producer, "process_identity", side_effect=self.identity), \
+                self.assertRaisesRegex(ValueError, "Node 失败"):
+            producer.run_source_producer(self.backend, self.backend, directory, "c" * 32,
+                Path(sys.executable).resolve(), self.start, self.lineage, configured({}), coordinator_source=self.coordinator_source,
+                popen=lambda *_a, **_kw: FailedProcess(self.process_state, self.node_result))
+        descriptor_file(directory / "failed.json", {"status": "failed", "error": "ValueError"})
+        tools = SimpleNamespace(command=lambda _name: [sys.executable])
+        with self.modules(), patch.object(producer, "process_identity", side_effect=self.identity), \
+                patch("restore_reference_io.ExternalTools", return_value=tools):
+            observed = producer.require_source_verifier_stopped(self.backend, self.start)
+            self.assertEqual(observed["status"], "stopped")
+            self.assertEqual(observed["exit_code"], 7)
+            self.assertIn(producer.STDERR, [row["path"] for row in observed["evidence"]["files"]])
+            self.assertEqual(binding(Path(before["path"])), before)
+            completion_path = directory / producer.COMPLETION
+            original_completion = completion_path.read_bytes()
+            changed = read_json(completion_path)
+            changed["stdout"]["sha256"] = "f" * 64
+            completion_path.write_text(json.dumps(changed), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "完成证据"):
+                producer.require_source_verifier_stopped(self.backend, self.start)
+            completion_path.write_bytes(original_completion)
+            (directory / producer.COMPLETION).unlink()
+            interrupted = producer.require_source_verifier_stopped(self.backend, self.start)
+            self.assertIsNone(interrupted["exit_code"])
+            (directory / "after").mkdir()
+            interrupted = producer.require_source_verifier_stopped(self.backend, self.start)
+            self.assertIn("after", interrupted["evidence"]["directories"])
+            unknown = directory / "after/unknown.txt"
+            unknown.write_text("unknown", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "未登记文件"):
+                producer.require_source_verifier_stopped(self.backend, self.start)
+            unknown.unlink()
+            self.process_state["alive"] = True
+            with self.assertRaisesRegex(ValueError, "仍在运行"):
+                producer.require_source_verifier_stopped(self.backend, self.start)
+            self.process_state["alive"] = False
+            Path(before["path"]).write_text("{}", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "授权前完整证据"):
+                producer.require_source_verifier_stopped(self.backend, self.start)
 
 
 class SourceRuntimeCliTests(unittest.TestCase):

@@ -32,7 +32,7 @@ PRODUCER_FILES = {INTENT, PROCESS, STDOUT, STDERR, COMPLETION}
 INTENT_FIELDS = {
     "format_version", "kind", "operation_id", "controller", "source_generation",
     "dataset_lineage", "executable", "script", "argv", "cwd", "environment_sha256",
-    "started_at", "coordinator_source",
+    "started_at", "coordinator_source", "inputs",
 }
 PROCESS_FIELDS = {
     "format_version", "kind", "operation_id", "intent", "controller", "process",
@@ -60,6 +60,50 @@ def _validate_operation(value: object) -> str:
     if not isinstance(value, str) or len(value) != 32 or any(char not in "0123456789abcdef" for char in value):
         raise ValueError("来源验收生产者 operation ID 无效")
     return value
+
+
+def _evidence_files(directory: Path) -> list[dict]:
+    from restore_source_runtime import _manifest
+    from devex_clone_model import linked
+
+    rows = []
+    for path in directory.iterdir():
+        if linked(path):
+            raise ValueError("来源验收中间证据包含链接或重解析点")
+        if path.is_dir():
+            if path.name not in {"before", "after", "audit"}:
+                raise ValueError("来源验收中间证据包含未知目录")
+            # 采集器可能在创建阶段目录后中断；内部未知或空嵌套目录仍由唯一 manifest 拒绝。
+            if any(path.iterdir()):
+                rows.extend({**row, "path": path.name + "/" + row["path"]} for row in _manifest(path))
+        else:
+            snapshot = artifact_snapshot(path)
+            rows.append({"path": path.name, "bytes": snapshot.bytes, "sha256": snapshot.sha256})
+    return sorted(rows, key=lambda row: row["path"])
+
+
+def _verify_inputs(directory: Path, inputs: object) -> list[dict]:
+    """入口授权前的采集文件保持不可变，后续只允许协议已有的精确文件集合。"""
+    if not isinstance(inputs, list):
+        raise ValueError("来源生产者缺少授权前证据清单")
+    previous = ""
+    for row in inputs:
+        exact_fields(row, {"path", "bytes", "sha256"}, "来源生产者授权前证据")
+        if (not isinstance(row["path"], str) or row["path"] <= previous
+                or not row["path"].startswith(("before/", "audit/"))):
+            raise ValueError("来源生产者授权前证据路径不属于固定采集阶段")
+        previous = row["path"]
+    observed = _evidence_files(directory)
+    by_path = {row["path"]: row for row in observed}
+    if any(by_path.get(row["path"]) != row for row in inputs):
+        raise ValueError("来源生产者授权前完整证据已变化")
+    allowed = {row["path"] for row in inputs} | PRODUCER_FILES | {
+        "failed.json", "cache-cleanup.json", "source-runtime.json",
+        "audit/login-after-old.tsv", "audit/login-after-new.tsv", "audit/login-audit.json"}
+    allowed.update("after/" + row["path"].removeprefix("before/") for row in inputs if row["path"].startswith("before/"))
+    if set(by_path) - allowed:
+        raise ValueError("来源验收中间证据包含未登记文件")
+    return observed
 
 
 def _producer_command(
@@ -120,6 +164,8 @@ def run_source_producer(
     script, argv = _producer_command(
         backend, execution, directory, operation_id, node.resolve(strict=True), start, lineage
     )
+    inputs = _evidence_files(directory)
+    _verify_inputs(directory, inputs)
     intent = {
         "format_version": 1,
         "kind": "restore-source-producer-intent",
@@ -134,6 +180,7 @@ def run_source_producer(
         "environment_sha256": plan_hash(environment),
         "started_at": _timestamp(),
         "coordinator_source": coordinator_source,
+        "inputs": inputs,
     }
     write_json(directory / INTENT, intent)
     process = None
@@ -235,6 +282,7 @@ def verify_registered_source_producer(
     intent = _read_bound(backend, binding(directory / INTENT), directory / INTENT)
     require_current_execution_source(backend, coordinator_source)
     exact_fields(intent, INTENT_FIELDS, "来源验收生产者 intent")
+    _verify_inputs(directory, intent["inputs"])
     producer = _read_bound(backend, binding(directory / PROCESS), directory / PROCESS)
     exact_fields(producer, PROCESS_FIELDS, "来源验收生产者")
     operation = _validate_operation(intent["operation_id"])
@@ -281,6 +329,25 @@ def verify_registered_source_producer(
     return intent, producer
 
 
+def _completion(backend: Path, directory: Path, intent: dict, producer: dict) -> dict:
+    completion = _read_bound(backend, binding(directory / COMPLETION), directory / COMPLETION)
+    exact_fields(completion, COMPLETION_FIELDS, "来源验收生产者 completion")
+    if (type(completion["format_version"]) is not int or type(completion["exit_code"]) is not int
+            or completion != {
+                "format_version": 1, "kind": "restore-source-producer-completion",
+                "operation_id": intent["operation_id"], "intent": binding(directory / INTENT),
+                "producer": binding(directory / PROCESS),
+                "stdout": artifact_snapshot(directory / STDOUT).descriptor(),
+                "stderr": artifact_snapshot(directory / STDERR).descriptor(), "process": producer["process"],
+                "exit_code": completion["exit_code"], "completed_at": completion["completed_at"]}):
+        raise ValueError("来源验收生产者完成证据或退出状态不可信")
+    started = dt.datetime.fromisoformat(timestamp(intent["started_at"], "生产者开始时间").replace("Z", "+00:00"))
+    completed = dt.datetime.fromisoformat(timestamp(completion["completed_at"], "生产者完成时间").replace("Z", "+00:00"))
+    if not started <= completed <= dt.datetime.now(dt.timezone.utc):
+        raise ValueError("来源生产者完成时间不属于同一次执行")
+    return completion
+
+
 def verify_source_producer(
     backend: Path,
     execution: Path,
@@ -297,26 +364,10 @@ def verify_source_producer(
         backend, execution, directory, start, lineage, environment, node,
         coordinator_source=coordinator_source,
     )
-    completion = _read_bound(backend, binding(directory / COMPLETION), directory / COMPLETION)
-    exact_fields(completion, COMPLETION_FIELDS, "来源验收生产者 completion")
+    completion = _completion(backend, directory, intent, producer)
     identity = producer["process"]
     if (
-        type(completion["format_version"]) is not int
-        or type(completion["exit_code"]) is not int
-        or completion != {
-            "format_version": 1,
-            "kind": "restore-source-producer-completion",
-            "operation_id": intent["operation_id"],
-            "intent": binding(directory / INTENT),
-            "producer": binding(directory / PROCESS),
-            "stdout": binding(directory / STDOUT),
-            "stderr": artifact_snapshot(directory / STDERR).descriptor(),
-            "process": identity,
-            "exit_code": 0,
-            "completed_at": completion["completed_at"],
-        }
-        or timestamp(completion["completed_at"], "来源验收生产者完成时间")
-        != completion["completed_at"]
+        completion["exit_code"] != 0
         or (directory / STDERR).read_bytes() != b""
         or process_identity(identity["pid"]) == identity
     ):
@@ -353,7 +404,7 @@ def require_source_verifier_stopped(backend: Path, start: dict) -> dict:
     node = Path(
         ExternalTools(facts["source"]["request"], directory).command("node")[0]
     ).resolve(strict=True)
-    _, producer = verify_registered_source_producer(
+    intent, producer = verify_registered_source_producer(
         backend,
         facts["execution"],
         directory,
@@ -366,13 +417,24 @@ def require_source_verifier_stopped(backend: Path, start: dict) -> dict:
     identity = producer["process"]
     if process_identity(identity["pid"]) == identity:
         raise ValueError("来源验收 Node 仍在运行，generation recover 必须失败关闭")
-    if "source-runtime.json" in names:
+    if "source-runtime.json" in names and "failed.json" not in names:
         from restore_source_runtime import verify_source_runtime
 
         verified = verify_source_runtime(backend, binding(directory / "source-runtime.json"), live=False)
         if verified["receipt"]["source_generation"] != start:
             raise ValueError("来源验收完成收据不属于当前 source generation")
         return {"status": "verified_stopped", "process": identity}
-    if names != {INTENT, PROCESS}:
-        raise ValueError("来源验收未完成且包含无法证明安全的中间证据")
-    return {"status": "stopped", "process": identity}
+    if STDERR in names and STDOUT not in names or COMPLETION in names and not {STDOUT, STDERR}.issubset(names):
+        raise ValueError("来源验收生产者输出发布顺序不成立")
+    completion = _completion(backend, directory, intent, producer) if COMPLETION in names else None
+    if "failed.json" in names:
+        failure = _read_bound(backend, binding(directory / "failed.json"), directory / "failed.json")
+        exact_fields(failure, {"status", "error"}, "来源验收失败记录")
+        if failure["status"] != "failed" or not isinstance(failure["error"], str) or not failure["error"]:
+            raise ValueError("来源验收失败记录无效")
+    evidence = _verify_inputs(directory, intent["inputs"])
+    if process_identity(identity["pid"]) == identity:
+        raise ValueError("来源验收 Node 在中间证据复核期间重新出现")
+    directories = sorted(path.relative_to(directory).as_posix() for path in directory.rglob("*") if path.is_dir())
+    return {"status": "stopped", "process": identity, "evidence": {"files": evidence, "directories": directories},
+            "exit_code": None if completion is None else completion["exit_code"]}
