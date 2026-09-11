@@ -17,7 +17,7 @@ pub mod artifact_store;
 pub mod authorization_cache;
 pub mod authorization_cache_keyspace;
 pub mod background_services;
-#[cfg(feature = "bin-api")]
+#[cfg(any(feature = "bin-api", feature = "bin-worker"))]
 pub mod backup;
 pub mod control_plane;
 pub mod datasource;

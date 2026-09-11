@@ -15,6 +15,7 @@ use axum::{
 use ryframe::boot::{
     application_policy as process_application_policy, artifact_store as process_artifact_store,
     background_services::{BackgroundServiceInfrastructure, build as build_background_services},
+    backup as process_backup,
     control_plane::{self, ControlPlaneStartup},
     jobs as process_jobs, logging as process_logging, readiness as process_readiness,
     startup as process_startup,
@@ -27,6 +28,7 @@ use ryframe_application::{
     AuthorizationCache, CallbackJobMetricsObserver, JobQueue, JobScheduleService, JobWorker,
     OutboxWorker,
     ports::{
+        backup::BackupHealthCache,
         files::ArtifactStore,
         health::DependencyHealthCache,
         jobs::{ExecutionTenantScope, OutboxPersistencePort},
@@ -228,6 +230,19 @@ async fn start_health_tasks(
     .await
 }
 
+fn start_backup_health_collector(
+    runtime: &WorkerRuntime,
+    startup: &WorkerStartup,
+    shutdown_receiver: watch::Receiver<bool>,
+) -> tokio::task::JoinHandle<()> {
+    process_backup::spawn(
+        runtime.database.clone(),
+        startup.config.scope_id.as_str().to_owned(),
+        BackupHealthCache::new(process_backup::CACHE_MAX_AGE),
+        shutdown_receiver,
+    )
+}
+
 async fn run_probe(runtime: WorkerRuntime, startup: &WorkerStartup) -> Result<(), AppError> {
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
     let mut health_tasks = start_health_tasks(&runtime, startup, shutdown_receiver).await?;
@@ -242,6 +257,11 @@ async fn run_probe(runtime: WorkerRuntime, startup: &WorkerStartup) -> Result<()
 async fn run_continuous(runtime: WorkerRuntime, startup: &WorkerStartup) -> Result<(), AppError> {
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
     let mut health_tasks = start_health_tasks(&runtime, startup, shutdown_receiver.clone()).await?;
+    health_tasks.push(start_backup_health_collector(
+        &runtime,
+        startup,
+        shutdown_receiver.clone(),
+    ));
     let mut worker_tasks = runtime.worker.spawn(shutdown_receiver.clone());
     if let Some(schedules) = runtime.schedules {
         worker_tasks.push(schedules.spawn(shutdown_receiver.clone()));
