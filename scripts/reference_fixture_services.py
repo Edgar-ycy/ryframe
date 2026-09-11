@@ -271,13 +271,16 @@ def redis(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bool
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("operation", choices=("rustfs", "redis", "buckets", "status", "close", "recover"))
     parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--review", type=Path, required=True)
     parser.add_argument("--environment", type=Path, required=True)
     parser.add_argument("--write", action="store_true")
     parser.add_argument("--owner-binding", type=Path)
+    options = [value.partition("=")[0] for value in sys.argv[1:] if value.startswith("--")]
+    if len(options) != len(set(options)):
+        parser.error("服务控制选项不能重复")
     args = parser.parse_args()
     if args.operation == "status" and (args.write or args.owner_binding is not None):
         parser.error("status 只读，不接受 --write 或 --owner-binding")

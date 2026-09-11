@@ -260,6 +260,20 @@ class ServiceLifecycleTests(unittest.TestCase):
                 cli.main()
             self.assertEqual(error.exception.code, 2)
 
+    def test_cli_rejects_duplicate_and_abbreviated_options_before_reading_inputs(self):
+        common = ["--backend-dir", str(self.backend), "--review", str(self.review), "--environment", str(self.bootstrap)]
+        before = self.snapshot()
+        invalid = [("status", "--review", "other"), ("status", "--environment=other"),
+                   ("close", "--write", "--write"), ("status", "--rev", "other")]
+        for args in invalid:
+            with self.subTest(args=args), patch.object(sys, "argv", ["services", *args, *common]), \
+                    patch("sys.stderr", new_callable=io.StringIO), patch.object(cli, "document") as read, \
+                    self.assertRaises(SystemExit) as error:
+                cli.main()
+            self.assertEqual(error.exception.code, 2)
+            read.assert_not_called()
+            self.assertEqual(before, self.snapshot())
+
 
 if __name__ == "__main__":
     unittest.main()
