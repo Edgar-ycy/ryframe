@@ -11,6 +11,7 @@ from devex_clone_model import exact, local_path, name
 from devex_clone_run_state import binding, load_state
 from devex_clone_source_proof import bound_file, validate_request
 from restore_reference_plan import plan_hash
+from source_fingerprints import require_current_execution_source
 
 START = "source-generation-start"
 STOP = "source-generation-stop"
@@ -26,7 +27,7 @@ RESULT_FIELDS.add("dataset_lineage")
 RESULT_FIELDS.update({"start", "source_runtime", "running", "stop_before"})
 START_FIELDS = {"status", "request", "source_registration", "source_rebind", "review_successor", "current_storage",
                 "history_length", "history_sha256", "generation_id", "intent", "runtime_evidence", "before", "running",
-                "dataset_lineage", "remote_writes", "restore_qualified"}
+                "dataset_lineage", "coordinator_source", "remote_writes", "restore_qualified"}
 
 
 def preflight(directory: Path) -> None:
@@ -53,6 +54,7 @@ def inputs(backend: Path, directory: Path, request_path: Path, number: int) -> t
     if not state["attempts"] or tuple(state["attempts"][-1][key] for key in ("number", "stage", "mode", "status")) != (
             number, "seed-runtime", START, "running"):
         raise ValueError("source-generation 不是同一账本的当前持锁阶段")
+    require_current_execution_source(backend, state["attempts"][-1]["sources"])
     source = _source(backend, directory, live=False)
     expected = {"source_registration": source["review_successor"]["source_result"],
                 "review_successor": source["review_successor_binding"], "source_rebind": source["source_rebind"],
@@ -109,6 +111,7 @@ def verify_running_source(backend: Path, start_descriptor: dict, *, live: bool) 
     if (len(records) != 1 or records[0]["status"] != "passed" or records[0]["result"] != start_descriptor
             or path != directory / "results" / f"{records[0]['number']:04d}.json"):
         raise ValueError("source verify 必须绑定同一账本唯一成功 start 的外层收据")
+    coordinator_source = require_current_execution_source(backend, records[0]["sources"])
     if live and any(row["stage"] == "seed-runtime" and row["mode"] in {STOP, RECOVER}
                     and row["status"] != "running" for row in state["attempts"]):
         raise ValueError("源运行代次已执行停止或恢复，不能再次验证或重放")
@@ -120,6 +123,7 @@ def verify_running_source(backend: Path, start_descriptor: dict, *, live: bool) 
     exact(request, REQUEST_FIELDS)
     prefix = [row for row in state["attempts"] if row["number"] < records[0]["number"]]
     expected = {"status": "seed_source_generation_running", "generation_id": output.name,
+                "coordinator_source": coordinator_source,
                 "history_length": len(prefix), "history_sha256": plan_hash(prefix),
                 "source_registration": source["review_successor"]["source_result"],
                 "source_rebind": source["source_rebind"], "review_successor": source["review_successor_binding"],
@@ -151,9 +155,10 @@ def verify_running_source(backend: Path, start_descriptor: dict, *, live: bool) 
             raise ValueError("源运行中的存储代次变化")
     if binding(path) != start_descriptor or binding(directory / "state.json") != state_binding:
         raise ValueError("源运行收据或账本在复核期间变化")
+    require_current_execution_source(backend, coordinator_source)
     return {"receipt": value, "start_descriptor": start_descriptor, "directory": directory, "output": output,
             "request": request, "source": source, "execution": Path(request["execution_backend"]), "selected": selected,
-            "runtime": runtime, **images, "lineage": lineage,
+            "runtime": runtime, **images, "lineage": lineage, "coordinator_source": coordinator_source,
             "environment": read_json(bound_file(backend, request["source_environment"]))}
 
 
@@ -202,11 +207,13 @@ def execute_generation(backend: Path, directory: Path, request_path: Path, numbe
 
     original = inputs(backend, directory, request_path, number)
     request, source, prefix = original
+    coordinator_source = require_current_execution_source(backend, load_state(directory)["attempts"][-1]["sources"])
     descriptor = binding(request_path)
     output = local_path(backend, str(directory / f"g{number:04d}"), new=True)
     runtime = GenerationRuntime(backend, directory, output, request, source, run)
 
     def checkpoint():
+        require_current_execution_source(backend, coordinator_source)
         if inputs(backend, directory, request_path, number) != original or binding(request_path) != descriptor:
             raise ValueError("source-generation 执行期间来源、请求或账本前缀发生变化")
         runtime.checkpoint()
@@ -245,6 +252,7 @@ def execute_generation(backend: Path, directory: Path, request_path: Path, numbe
                 failure.add_note("源代次停止或失败后像复核失败：" + type(error).__name__)
             raise
     return {"status": "seed_source_generation_running", "request": descriptor,
+            "coordinator_source": coordinator_source,
             **{key: request[key] for key in ("source_registration", "source_rebind", "review_successor", "current_storage")},
             "history_length": len(prefix), "history_sha256": plan_hash(prefix),
             "generation_id": output.name, "intent": binding(output / "intent.json"),

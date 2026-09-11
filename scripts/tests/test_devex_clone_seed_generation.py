@@ -16,11 +16,17 @@ import devex_clone_seed_rebind as rebind
 from devex_clone_capture import read_json, write_json
 from devex_clone_run_state import binding
 from restore_reference_plan import plan_hash
+import source_fingerprints
+from test_source_fingerprints import inventory
 
 
 class GenerationTests(unittest.TestCase):
     def setUp(self):
         self.backend = Path(__file__).resolve().parents[2]
+        tools = inventory()
+        tools["source"]["snapshot"]["clean"] = True
+        self.coordinator_source = source_fingerprints.execution_source(tools)
+        self.enterContext(patch.object(source_fingerprints, "current_execution_source", return_value=self.coordinator_source))
         temp = WorkspaceDirectory(dir=self.backend / ".local-tests/t", prefix="g")
         self.addCleanup(temp.cleanup)
         self.directory = Path(temp.name)
@@ -47,6 +53,7 @@ class GenerationTests(unittest.TestCase):
             "generation_verified": self.file("old-generation.json", self.source["generation"]), "source_environment": self.request["source_environment"]}
         self.prefix = [self.record(52, "source-register", self.registration), self.record(53, "source-rebind", self.rebound)]
         self.state = {"attempts": self.prefix + [self.record(54, generation.START, status="running")]}
+        self.state["attempts"][-1]["sources"] = self.coordinator_source
         self.output = self.directory / "g0054"
         self.runtime = Mock(execution=self.backend, selected=self.source["request"]["source"], runtime=self.output / "runtime")
         self.runtime.environment.return_value = nullcontext({})
@@ -96,6 +103,7 @@ class GenerationTests(unittest.TestCase):
 
     def execute(self):
         with patch.object(generation, "inputs", return_value=(self.request, self.source, self.prefix)), \
+                patch.object(generation, "load_state", return_value=self.state), \
                 patch("restore_source_lineage.derive_dataset_lineage", return_value={"derived": "C52"}), \
                 patch.object(runtime, "GenerationRuntime", return_value=self.runtime), \
                 patch("devex_clone_seed_generation_images.capture_image", side_effect=self.capture), \
@@ -199,6 +207,7 @@ class GenerationTests(unittest.TestCase):
         descriptor = binding(start_path)
         self.file("state.json", {"fixed": "state"})
         state = {"attempts": self.prefix + [self.record(54, generation.START, descriptor)]}
+        state["attempts"][-1]["sources"] = self.coordinator_source
         with ExitStack() as stack:
             stack.enter_context(patch.object(generation, "load_state", return_value=state))
             stack.enter_context(patch.object(generation, "predecessor", return_value=self.source))
@@ -236,6 +245,18 @@ class GenerationTests(unittest.TestCase):
             state["attempts"][-1]["result"] = changed
             with self.assertRaises(ValueError):
                 generation.verify_running_source(self.backend, changed, live=False)
+
+    def test_registered_start_tools_cannot_be_rebound_or_change_during_validation(self):
+        with self.running_fixture() as (descriptor, state, _verifier, _storage):
+            changed = copy.deepcopy(self.coordinator_source)
+            changed["fingerprints"]["test_tools"]["sha256"] = "e" * 64
+            with patch.object(source_fingerprints, "current_execution_source", side_effect=[self.coordinator_source, changed]), \
+                    self.assertRaisesRegex(ValueError, "test_tools"):
+                generation.verify_running_source(self.backend, descriptor, live=False)
+            state["attempts"][-1]["sources"] = changed
+            with patch.object(source_fingerprints, "current_execution_source", return_value=changed), \
+                    self.assertRaisesRegex(ValueError, "完整前缀"):
+                generation.verify_running_source(self.backend, descriptor, live=False)
 
     def test_registered_checkpoint_holds_one_run_lock_and_expires_after_exit(self):
         @contextmanager

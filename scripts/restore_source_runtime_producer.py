@@ -13,6 +13,7 @@ from devex_clone_run_state import binding
 from devex_clone_source_proof import bound_file
 from full_stack_process import process_identity, terminate_owned_process
 from restore_reference_plan import plan_hash
+from source_fingerprints import require_current_execution_source
 from restore_runtime_evidence import (
     artifact_snapshot,
     decode_object,
@@ -31,7 +32,7 @@ PRODUCER_FILES = {INTENT, PROCESS, STDOUT, STDERR, COMPLETION}
 INTENT_FIELDS = {
     "format_version", "kind", "operation_id", "controller", "source_generation",
     "dataset_lineage", "executable", "script", "argv", "cwd", "environment_sha256",
-    "started_at",
+    "started_at", "coordinator_source",
 }
 PROCESS_FIELDS = {
     "format_version", "kind", "operation_id", "intent", "controller", "process",
@@ -94,6 +95,7 @@ def run_source_producer(
     lineage: dict,
     environment: dict[str, str],
     *,
+    coordinator_source: dict,
     timeout: int = 1800,
     popen=subprocess.Popen,
 ) -> tuple[dict, dict]:
@@ -111,6 +113,7 @@ def run_source_producer(
         raise ValueError("来源验收生产者目录、Node 或环境无效")
     bound_file(backend, start)
     bound_file(backend, lineage)
+    require_current_execution_source(backend, coordinator_source)
     controller = process_identity(os.getpid())
     if controller is None:
         raise ValueError("来源验收控制器缺少内核创建身份")
@@ -130,11 +133,13 @@ def run_source_producer(
         "cwd": str(backend),
         "environment_sha256": plan_hash(environment),
         "started_at": _timestamp(),
+        "coordinator_source": coordinator_source,
     }
     write_json(directory / INTENT, intent)
     process = None
     identity = None
     try:
+        require_current_execution_source(backend, coordinator_source)
         process = popen(
             argv,
             cwd=backend,
@@ -160,6 +165,7 @@ def run_source_producer(
         write_json(directory / PROCESS, producer)
         if process_identity(os.getpid()) != controller or process_identity(process.pid) != identity:
             raise ValueError("来源验收在启动授权前控制器或 Node 身份变化")
+        require_current_execution_source(backend, coordinator_source)
         authorization = json.dumps(
             {
                 "operation": "start",
@@ -189,6 +195,7 @@ def run_source_producer(
             "completed_at": _timestamp(),
         }
         write_json(directory / COMPLETION, completion)
+        require_current_execution_source(backend, coordinator_source)
         if process.returncode != 0 or stderr or process_identity(identity["pid"]) == identity:
             raise ValueError("来源验收 Node 失败、写入 stderr 或尚未退出")
         stdout_value = decode_object(stdout.strip(), "来源验收 Node stdout")
@@ -221,9 +228,12 @@ def verify_registered_source_producer(
     lineage: dict,
     environment: dict[str, str],
     node: Path,
+    *,
+    coordinator_source: dict,
 ) -> tuple[dict, dict]:
     """只读复核已登记生产者与同一 start、血缘、源码和环境的绑定。"""
     intent = _read_bound(backend, binding(directory / INTENT), directory / INTENT)
+    require_current_execution_source(backend, coordinator_source)
     exact_fields(intent, INTENT_FIELDS, "来源验收生产者 intent")
     producer = _read_bound(backend, binding(directory / PROCESS), directory / PROCESS)
     exact_fields(producer, PROCESS_FIELDS, "来源验收生产者")
@@ -243,6 +253,7 @@ def verify_registered_source_producer(
         "argv": argv,
         "cwd": str(backend),
         "environment_sha256": plan_hash(environment),
+        "coordinator_source": coordinator_source,
     }
     if any(intent.get(key) != value for key, value in expected.items()):
         raise ValueError("来源验收生产者 intent 没有绑定同一 start、血缘、源码或环境")
@@ -266,6 +277,7 @@ def verify_registered_source_producer(
         != intent["started_at"]
     ):
         raise ValueError("来源验收生产者登记与当前输入不同")
+    require_current_execution_source(backend, coordinator_source)
     return intent, producer
 
 
@@ -277,10 +289,13 @@ def verify_source_producer(
     lineage: dict,
     environment: dict[str, str],
     node: Path,
+    *,
+    coordinator_source: dict,
 ) -> tuple[dict, dict]:
     """只读复核生产者身份、实际参数、stdout/stderr 和自然退出。"""
     intent, producer = verify_registered_source_producer(
-        backend, execution, directory, start, lineage, environment, node
+        backend, execution, directory, start, lineage, environment, node,
+        coordinator_source=coordinator_source,
     )
     completion = _read_bound(backend, binding(directory / COMPLETION), directory / COMPLETION)
     exact_fields(completion, COMPLETION_FIELDS, "来源验收生产者 completion")
@@ -346,6 +361,7 @@ def require_source_verifier_stopped(backend: Path, start: dict) -> dict:
         facts["receipt"]["dataset_lineage"],
         environment,
         node,
+        coordinator_source=facts["coordinator_source"],
     )
     identity = producer["process"]
     if process_identity(identity["pid"]) == identity:

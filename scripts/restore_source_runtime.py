@@ -357,7 +357,8 @@ def execute_source_verification(
                 operation = uuid.uuid4().hex
                 node_result, _ = run_source_producer(
                     backend, facts["execution"], expected_directory, operation, node, start,
-                    facts["receipt"]["dataset_lineage"], environment, popen=popen,
+                    facts["receipt"]["dataset_lineage"], environment,
+                    coordinator_source=facts["coordinator_source"], popen=popen,
                 )
                 verified_node = validate_node_result(
                     node_result, facts["lineage"], start, facts["receipt"]["dataset_lineage"]
@@ -553,6 +554,7 @@ def verify_source_runtime(backend: Path, descriptor: dict, *, live: bool) -> dic
     producer, stdout = verify_source_producer(
         backend, facts["execution"], directory, receipt["source_generation"],
         receipt["dataset_lineage"], environment, node,
+        coordinator_source=facts["coordinator_source"],
     )
     for key, filename in (("intent", INTENT), ("process", PROCESS), ("stdout", STDOUT),
                           ("stderr", STDERR), ("completion", COMPLETION)):

@@ -50,6 +50,36 @@ def build_receipt(value, artifacts=None):
 
 
 class SourceFingerprintsTests(unittest.TestCase):
+    def test_registered_execution_requires_clean_head_and_all_tool_files(self):
+        value = inventory()
+        value["source"]["snapshot"]["clean"] = True
+        registered = execution(value)
+        with patch.object(sources, "current_execution_source", return_value=registered):
+            self.assertEqual(sources.require_current_execution_source(ROOT, registered), registered)
+        for mutate in (
+            lambda item: item["snapshot"].update(head="e" * 40),
+            lambda item: item["snapshot"].update(clean=False),
+            lambda item: item["fingerprints"]["test_tools"].update(sha256="e" * 64),
+        ):
+            current = copy.deepcopy(registered)
+            mutate(current)
+            with patch.object(sources, "current_execution_source", return_value=current), self.assertRaises(ValueError):
+                sources.require_current_execution_source(ROOT, registered)
+        registered["snapshot"]["clean"] = False
+        with patch.object(sources, "current_execution_source", return_value=registered), self.assertRaises(ValueError):
+            sources.require_current_execution_source(ROOT, registered)
+
+    def test_indirect_and_dynamic_node_imports_belong_to_complete_tool_domain(self):
+        value = inventory()
+        helpers = ["scripts/devex/request.mjs", "scripts/restore_reference_existing.mjs"]
+        value["files"] = sorted(value["files"] + [{"path": path, "sha256": "a" * 64} for path in helpers], key=lambda item: item["path"])
+        original = sources.fingerprints(value)
+        for path in helpers:
+            changed = copy.deepcopy(value)
+            next(item for item in changed["files"] if item["path"] == path)["sha256"] = "f" * 64
+            self.assertNotEqual(sources.fingerprints(changed)["test_tools"], original["test_tools"])
+            self.assertEqual(sources.fingerprints(changed)["product"], original["product"])
+
     def test_execution_source_records_snapshot_worktree_and_domains(self):
         value = sources.execution_source(inventory())
         self.assertEqual(value["snapshot"]["head"], "c" * 40)

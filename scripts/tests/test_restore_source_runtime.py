@@ -22,6 +22,8 @@ import restore_source as source_cli
 import restore_source_runtime as runtime
 import restore_source_runtime_producer as producer
 from workspace_directory import WorkspaceDirectory
+import source_fingerprints
+from test_source_fingerprints import inventory
 
 
 def descriptor_file(path: Path, value=None) -> dict:
@@ -144,6 +146,10 @@ class FakeResources:
 
 class SourceRuntimeTests(unittest.TestCase):
     def setUp(self):
+        tools = inventory()
+        tools["source"]["snapshot"]["clean"] = True
+        self.coordinator_source = source_fingerprints.execution_source(tools)
+        self.enterContext(patch.object(source_fingerprints, "current_execution_source", return_value=self.coordinator_source))
         repository = Path(__file__).resolve().parents[2]
         temporary = WorkspaceDirectory(
             dir=repository / ".local-tests/python-unit", prefix="source-runtime-"
@@ -189,6 +195,7 @@ class SourceRuntimeTests(unittest.TestCase):
             "lineage_file_sha256": self.lineage["sha256"],
         }
         self.facts = {
+            "coordinator_source": self.coordinator_source,
             "receipt": {
                 "source_registration": self.source_registration,
                 "dataset_lineage": self.lineage,
@@ -412,6 +419,7 @@ class SourceRuntimeTests(unittest.TestCase):
                 self.start,
                 self.lineage,
                 {},
+                coordinator_source=self.coordinator_source,
                 popen=lambda *_args, **_kwargs: FailedProcess(
                     self.process_state, self.node_result
                 ),
@@ -423,6 +431,34 @@ class SourceRuntimeTests(unittest.TestCase):
         completion = read_json(directory / producer.COMPLETION)
         self.assertEqual(completion["exit_code"], 7)
         self.assertEqual(completion["process"], self.process_identity)
+
+    def test_tool_drift_before_spawn_before_authorization_or_after_node_fails_closed(self):
+        changed = copy.deepcopy(self.coordinator_source)
+        changed["fingerprints"]["test_tools"]["sha256"] = "f" * 64
+        for boundary in (0, 2, 3):
+            directory = self.copy_run / str(boundary) / "verification"
+            directory.mkdir(parents=True)
+            self.process_state = {"alive": False}
+            with self.subTest(boundary=boundary), \
+                    patch.object(source_fingerprints, "current_execution_source", side_effect=[
+                        *[self.coordinator_source] * boundary, changed]), \
+                    patch.object(producer, "process_identity", side_effect=self.identity), \
+                    patch.object(producer, "terminate_owned_process", side_effect=lambda *_a, **_k: self.process_state.update(alive=False)) as stop, \
+                    patch.object(self, "fake_popen", wraps=self.fake_popen) as spawn, \
+                    self.assertRaisesRegex(ValueError, "test_tools"):
+                producer.run_source_producer(self.backend, self.backend, directory, "b" * 32,
+                    Path(sys.executable).resolve(), self.start, self.lineage, {},
+                    coordinator_source=self.coordinator_source, popen=spawn)
+            if boundary == 0:
+                spawn.assert_not_called()
+                self.assertEqual(list(directory.iterdir()), [])
+            if boundary < 3:
+                self.assertNotIn("authorization", self.process_state)
+            else:
+                self.assertTrue((directory / producer.COMPLETION).is_file())
+            if boundary == 2:
+                stop.assert_called_once_with(self.process_identity, crash=True)
+            self.assertFalse(self.process_state["alive"])
 
 
 class SourceRuntimeCliTests(unittest.TestCase):

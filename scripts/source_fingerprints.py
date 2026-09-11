@@ -30,6 +30,15 @@ def current_execution_source(root: Path) -> dict:
     return execution_source(capture_inventory(root))
 
 
+def require_current_execution_source(root: Path, expected: dict) -> dict:
+    """精确绑定已登记干净来源及全部分域，包含间接和动态加载的验收工具。"""
+    verify_execution_source(expected, "登记的执行工具")
+    current = current_execution_source(root)
+    if not expected["snapshot"]["clean"] or current != expected:
+        raise ValueError("协调器必须保持 START 登记的干净 SHA 和完整 test_tools 来源")
+    return current
+
+
 def build_source(receipt: dict) -> dict:
     if receipt.get("kind") == "devex-clone-tool-build":
         return receipt["source"]
