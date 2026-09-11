@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
+from urllib.parse import urlsplit
 
 from devex_clone_capture import read_json
 from devex_clone_model import exact
@@ -17,7 +18,7 @@ LINEAGE_FIELDS = {
     "post_copy", "post_verify", "post_verify_evidence", "post_verify_target",
     "reference_plan", "dataset", "copy_stage_receipt", "copy_result", "ledger_head",
     "copy_plan", "current_image", "scopes", "scale", "tenants", "objects",
-    "restore_qualified",
+    "verification", "restore_qualified",
 }
 DATASET_FIELDS = {
     "format_version", "plan_sha256", "source_scope_id", "started_at", "records",
@@ -38,6 +39,26 @@ BUSINESS_FIELDS = {
 BUSINESS_TARGET_FIELDS = {
     "copy", "format_version", "kind", "source_plan_sha256", "source_scope_id", "target",
 }
+
+
+def _loopback_root(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme in {"http", "https"}
+        and parsed.hostname in {"127.0.0.1", "::1"}
+        and port is not None
+        and parsed.path in {"", "/"}
+        and not parsed.username
+        and not parsed.password
+        and not parsed.query
+        and not parsed.fragment
+    )
 
 
 def _descriptor(backend: Path, value: dict, label: str) -> tuple[Path, dict]:
@@ -97,6 +118,8 @@ def _dataset_facts(backend: Path, post) -> dict:
         or dataset["records"] < 100_000
         or type(dataset.get("object_bytes")) is not int
         or dataset["object_bytes"] < 1024**3
+        or type(dataset.get("request_interval_ms")) is not int
+        or not 0 <= dataset["request_interval_ms"] <= 60_000
         or not isinstance(dataset.get("tenants"), list)
         or len(dataset["tenants"]) != 11
     ):
@@ -198,6 +221,7 @@ def _post_verify(backend: Path, source: dict, chain: dict, post, dataset: dict, 
     target = read_json(bound_file(backend, target_descriptor))
     exact(evidence, BUSINESS_FIELDS)
     exact(target, BUSINESS_TARGET_FIELDS)
+    exact(target.get("target"), {"scope_id", "api_url", "frontend_url"})
     expected_actions = {"business": "read_only", "objects": "read_only", "session": "login_logout"}
     expected_inputs = {
         "plan_sha256": post.request["reference_plan"]["sha256"],
@@ -235,14 +259,18 @@ def _post_verify(backend: Path, source: dict, chain: dict, post, dataset: dict, 
         or target.get("copy") != copy["copy"]
         or target.get("source_plan_sha256") != dataset["dataset"]["plan_sha256"]
         or target.get("source_scope_id") != dataset["dataset"]["source_scope_id"]
-        or target.get("target") != {
-            "scope_id": source["request"]["source"]["scope_id"],
-            "api_url": source["request"]["source"]["api_url"],
-            "frontend_url": source["request"]["source"]["frontend_url"],
-        }
+        or target["target"].get("scope_id") != source["request"]["source"].get("scope_id")
+        or target["target"].get("api_url") != source["request"]["source"].get("api_url")
+        or not _loopback_root(target["target"].get("api_url"))
+        or not _loopback_root(target["target"].get("frontend_url"))
     ):
         raise ValueError("C29 没有精确绑定原数据样本、C18 复制账本与当前 seed scope")
-    return {"result": descriptor, "evidence": result["evidence"], "target": binding(target_path)}
+    return {
+        "result": descriptor,
+        "evidence": result["evidence"],
+        "target": binding(target_path),
+        "target_value": target["target"],
+    }
 
 
 def _tenant_projection(plan: dict, dataset: dict, image: dict) -> list[dict]:
@@ -423,6 +451,10 @@ def derive_dataset_lineage(
         },
         "tenants": tenants,
         "objects": objects,
+        "verification": {
+            **verification["target_value"],
+            "request_interval_ms": dataset["dataset"]["request_interval_ms"],
+        },
         "restore_qualified": False,
     }
 

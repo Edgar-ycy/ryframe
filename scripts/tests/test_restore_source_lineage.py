@@ -199,6 +199,7 @@ class SourceDatasetLineageTests(unittest.TestCase):
         target_path, target_descriptor = self._write(
             "copy-run/post-copy/attempt-0029/business-target.json", target
         )
+        self.target_path = target_path
         self.assertEqual(target_path, evidence_dir / "business-target.json")
         evidence = {
             "format_version": 1,
@@ -341,6 +342,15 @@ class SourceDatasetLineageTests(unittest.TestCase):
         self.assertEqual(result["scale"]["object_bytes"], 1024**3)
         self.assertEqual(result["scopes"]["origin_tenant_scope_id"], self.origin)
         self.assertEqual(result["scopes"]["current_object_scope_id"], self.current)
+        self.assertEqual(
+            result["verification"],
+            {
+                "scope_id": self.current,
+                "api_url": "http://127.0.0.1:18210",
+                "frontend_url": "http://127.0.0.1:4190",
+                "request_interval_ms": 0,
+            },
+        )
         self.assertEqual(result["tenants"][1]["tenant_id"], f"{self.origin}-01")
         self.assertEqual(result["tenants"][1]["username"], "user-1")
         self.assertEqual(result["tenants"][1]["password_env"], "PASSWORD_1")
@@ -447,6 +457,31 @@ class SourceDatasetLineageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "字段"):
             lineage.verify_dataset_lineage(
                 self.backend, self.source, descriptor, self.image_descriptor, self.image
+            )
+
+    def test_verification_endpoints_and_pacing_come_from_bound_evidence(self):
+        changed = copy.deepcopy(self.dataset)
+        changed["request_interval_ms"] = -1
+        self.dataset_path.unlink()
+        write_json(self.dataset_path, changed)
+        post = SimpleNamespace(
+            request={
+                "reference_plan": self.post.request["reference_plan"],
+                "dataset": binding(self.dataset_path),
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "正式恢复规模"):
+            lineage._dataset_facts(self.backend, post)
+
+        self.dataset_path.unlink()
+        write_json(self.dataset_path, self.dataset)
+        target = lineage.read_json(self.target_path)
+        target["target"]["api_url"] = "http://127.0.0.1:19999"
+        self.target_path.unlink()
+        write_json(self.target_path, target)
+        with self.assertRaisesRegex(ValueError, "C29"):
+            lineage.derive_dataset_lineage(
+                self.backend, self.source, self.image_descriptor, self.image
             )
 
 
