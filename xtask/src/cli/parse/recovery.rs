@@ -9,8 +9,17 @@ pub(super) fn parse_recovery(args: &[String]) -> Result<RecoveryCommand, CliErro
         | "damage" => Ok(RecoveryCommand::Reference(args.to_vec())),
         "runtime" => parse_recovery_operation("runtime", rest, &["build", "bind", "verify"])
             .map(RecoveryCommand::Runtime),
-        "source" => parse_recovery_operation("source", rest, &["verify", "quiesce"])
-            .map(RecoveryCommand::Source),
+        "source" => parse_recovery_operation(
+            "source",
+            rest,
+            &[
+                "verify",
+                "quiesce",
+                "comparison-capture",
+                "comparison-verify",
+            ],
+        )
+        .map(RecoveryCommand::Source),
         "clone" => parse_recovery_operation(
             "clone",
             rest,

@@ -192,6 +192,22 @@ fn parses_recovery_check_groups() {
                 "status",
             ])
     ));
+    assert_eq!(
+        parse_command(&[
+            "check",
+            "recovery",
+            "source",
+            "comparison-verify",
+            "--receipt",
+            "comparison.json",
+        ])
+        .unwrap(),
+        Command::Check(CheckCommand::Recovery(RecoveryCommand::Source(strings(&[
+            "comparison-verify",
+            "--receipt",
+            "comparison.json"
+        ]))))
+    );
     for values in [
         ["check", "recovery", "source"].as_slice(),
         ["check", "recovery", "source", "unknown"].as_slice(),

@@ -14,10 +14,12 @@ from urllib.parse import urlsplit
 from full_stack_process import process_identity, read_process
 from full_stack_runtime import verify_runtime
 from process_sockets import endpoint, verify_listener
-from restore_build import file_digest, verify_build, write_new
+from restore_build import file_digest, validate_new_output, verify_build, write_new
+from restore_comparison_source import capture_comparison_sources, verify_comparison_sources
 from restore_reference_io import ExternalTools
 from restore_reference_plan import plan_hash, validate_plan
 from restore_runtime import NoRedirect, read_json
+from restore_runtime_evidence import read_json_document
 from restore_source_binding import source_binding
 
 
@@ -174,6 +176,68 @@ def verify_stopped_source(backend: Path, plan: dict, inventory: dict, receipt_pa
     return {"source_runtime_sha256": digest, "source_quiescence_sha256": observed_digest["sha256"]}
 
 
+def _add_comparison_capture_parser(commands) -> None:
+    command = commands.add_parser("comparison-capture")
+    for name in (
+        "backend-dir", "b0-backend", "b0-adapter-backend", "b0-frontend",
+        "b0-backend-build", "b0-frontend-build", "b1-backend", "b1-frontend",
+        "b1-backend-build", "b1-frontend-build", "source-export-result", "output",
+    ):
+        command.add_argument("--" + name, type=Path, required=True)
+    command.add_argument(
+        "--write", action="store_true", required=True,
+        help="显式写入新的双版本来源清单；只读取源码、构建收据和已发布 source-export",
+    )
+
+
+def _add_comparison_verify_parser(commands) -> None:
+    command = commands.add_parser("comparison-verify")
+    command.add_argument("--backend-dir", type=Path, required=True)
+    command.add_argument("--receipt", type=Path, required=True)
+
+
+def _comparison_result_binding(path: Path) -> tuple[dict, object]:
+    document = read_json_document(path)
+    return {
+        "path": str(document.path),
+        "bytes": len(document.raw),
+        "sha256": document.sha256,
+    }, document
+
+
+def _capture_comparison(args, backend: Path) -> dict:
+    output = validate_new_output(args.output, backend)
+    export, document = _comparison_result_binding(args.source_export_result)
+    result = capture_comparison_sources(
+        backend,
+        b0_backend=args.b0_backend,
+        b0_adapter_backend=args.b0_adapter_backend,
+        b0_frontend=args.b0_frontend,
+        b0_backend_build=args.b0_backend_build,
+        b0_frontend_build=args.b0_frontend_build,
+        b1_backend=args.b1_backend,
+        b1_frontend=args.b1_frontend,
+        b1_backend_build=args.b1_backend_build,
+        b1_frontend_build=args.b1_frontend_build,
+        source_export_result=export,
+    )
+    document.assert_unchanged()
+    write_new(output, result, backend)
+    return {"output": str(output), "status": "comparison_sources_captured", "restore_success": False}
+
+
+def _verify_comparison(args, backend: Path) -> dict:
+    document = read_json_document(args.receipt)
+    result = verify_comparison_sources(backend, document.value)
+    document.assert_unchanged()
+    return {
+        "receipt": str(document.path),
+        "status": "comparison_sources_verified",
+        "source_export_identity_sha256": result["source_export"]["identity_sha256"],
+        "restore_success": False,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -184,8 +248,17 @@ def main() -> None:
             command.add_argument("--" + name, type=Path, required=True)
         command.add_argument("--write", action="store_true", required=True,
                              help="显式生成新证据；verify 会登录及注销，quiesce 只读观察已登记进程停止状态")
+    _add_comparison_capture_parser(commands)
+    _add_comparison_verify_parser(commands)
     args = parser.parse_args()
-    backend, output = args.backend_dir.resolve(), args.output.resolve()
+    backend = args.backend_dir.resolve()
+    if args.command == "comparison-capture":
+        print(json.dumps(_capture_comparison(args, backend)))
+        return
+    if args.command == "comparison-verify":
+        print(json.dumps(_verify_comparison(args, backend)))
+        return
+    output = args.output.resolve()
     outputs = [output, output.with_name(output.name + ".failed.json"), output.with_name(output.name + ".stderr.log")]
     if any(path.exists() for path in outputs) or not output.is_relative_to(backend / ".local-tests"):
         raise ValueError("来源运行证明必须使用忽略目录内的新文件")

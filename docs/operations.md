@@ -163,6 +163,8 @@ cargo xtask data restore verify --id <演练ID> --proof .local-tests/restore/bus
 
 成功后停止全部生产者，再执行 `cargo xtask check recovery source quiesce --plan <原计划JSON> --source-runtime <来源运行证明JSON> --output <新停止观察收据JSON> --write`。该命令不终止进程；它核对同一代次已停止并记录实际观察时间。之后才能重新采集 Inventory，其 `quiesced_at` 使用该收据的 `observed_stopped_at`。给 `backup` 同时传入两份证明；备份前后均检查来源进程已停止、未换代，以及复验、实际停止观察、采集时间的先后关系。清单先采集、进程后来才停止的流程会失败。重新复验使用新的输出文件，失败日志保留；不改写原计划、数据收据和历史证据的摘要或完成时间。
 
+B0/B1 正式对照前，使用 `cargo xtask check recovery source comparison-capture --help` 查看来源参数，再以 `comparison-capture ... --source-export-result <唯一导出外层结果> --output <新来源清单> --write` 生成严格的双版本来源清单。B0 必须分别提供原产品源码、已登记的工具适配源码和前端源码；B1 必须提供最终干净的双端源码。两侧都必须提供对应源码上的 v2 后端与前端生产构建收据，并共同绑定同一个已发布 `source-export` 的外层文件摘要及内部导出身份。`cargo xtask check recovery source comparison-verify --receipt <来源清单>` 只读重建并核对全部来源、构建产物、完整前端 `dist` 和导出证据；它不创建恢复 run、锁或业务写入，也不接受旧格式字段。
+
 恢复浏览器套件逐一登录十一个租户读取备份前已有的岗位，下载并校验全部原有上传对象，再执行正常核心业务。故障与 Worker 重启场景继续由普通全栈套件执行。每阶段保留独立收据，失败不覆盖、不自动清理资源；只有最终产品 CLI 核算后的成功记录能证明 24 小时恢复点与 60 分钟恢复时间。
 
 ### 指标与告警

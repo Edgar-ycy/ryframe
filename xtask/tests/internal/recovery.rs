@@ -110,6 +110,26 @@ fn source_fixture_and_dataset_stages_fix_the_current_worktree_paths() {
             &backend
         ])
     );
+    let (source, comparison_arguments) = recovery_command(
+        &RecoveryCommand::Source(strings(&[
+            "comparison-verify",
+            "--receipt",
+            "D:/验收 comparison.json",
+        ])),
+        frontend,
+    )
+    .unwrap();
+    assert_eq!(source, "scripts/restore_source.py");
+    assert_eq!(
+        comparison_arguments,
+        strings(&[
+            "comparison-verify",
+            "--receipt",
+            "D:/验收 comparison.json",
+            "--backend-dir",
+            &backend,
+        ])
+    );
 
     let (fixture, fixture_arguments) = recovery_command(
         &RecoveryCommand::Fixture(strings(&["--output-dir", "fixture"])),
