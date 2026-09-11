@@ -2,8 +2,12 @@
 from contextlib import ExitStack, contextmanager, nullcontext
 import copy
 from pathlib import Path
+import sys
 import unittest
 from unittest.mock import Mock, patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from workspace_directory import WorkspaceDirectory
 import devex_clone_seed_generation as generation

@@ -5,8 +5,12 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
 import unittest
 from unittest.mock import Mock, patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import devex_clone_seed_generation_images as images
 import test_devex_clone_inventory as inventory_fixtures

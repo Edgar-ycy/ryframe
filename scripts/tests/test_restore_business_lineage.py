@@ -8,6 +8,9 @@ import sys
 import unittest
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 import restore_business_proof as proof
 from devex_clone_seed_generation import RESULT_FIELDS, START_FIELDS
 from restore_source_runtime import RECEIPT_FIELDS

@@ -4,8 +4,12 @@ from contextlib import ExitStack, contextmanager, redirect_stderr
 import copy
 from io import StringIO
 from pathlib import Path
+import sys
 import unittest
 from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import reference_fixture_successor_generation as producer
 import test_devex_clone_seed_generation as fixtures
