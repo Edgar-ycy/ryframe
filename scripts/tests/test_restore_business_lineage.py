@@ -1,7 +1,10 @@
 """浏览器证明从目标计划的完整来源链派生血缘，不能用另一份文件自证。"""
 
+import contextlib
+import io
 import json
 from pathlib import Path
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -115,6 +118,63 @@ class BusinessLineageTests(unittest.TestCase):
                 patch.object(proof, "registration_binding") as verify, self.assertRaisesRegex(ValueError, "目标计划"):
             proof._runtime_reference(self.backend, runtime, target)
         verify.assert_not_called()
+
+    def test_preflight_returns_bound_projection_without_live_calls_or_file_changes(self):
+        _backup, dataset = self.chain()
+        runtime = proof.read_json_document(Path(self.write("runtime-input.json", {"runtime": True})["path"]))
+        target = proof.read_json_document(Path(self.write("target.json", {"target": True})["path"]))
+        selected = {"scope_id": "candidate", "api_url": "http://127.0.0.1:3200",
+                    "frontend_url": "http://127.0.0.1:4200"}
+        verified = {"product_execution": {"roots": {"execution_backend": str(self.backend)}}}
+        before = {str(path): path.read_bytes() for path in self.root.iterdir()}
+        with patch.object(proof, "repository", return_value=self.backend), \
+                patch.object(proof, "validate_runtime_receipt", return_value={"runtime": True}), \
+                patch.object(proof, "_verified_target", return_value=(target, verified, {"target": selected}, {}, dataset)) as check, \
+                patch.object(proof, "verify_live_generation") as live:
+            result = proof.dataset_preflight(self.backend, runtime.path, target.path)
+        check.assert_called_once_with(self.backend, target.path, {"runtime": True})
+        live.assert_not_called()
+        self.assertEqual(result, {"format_version": 1, "kind": "restore-dataset-authority",
+                                 "runtime": proof._descriptor(runtime), "target_plan": proof._descriptor(target),
+                                 **dataset, "target": selected, "execution_backend": str(self.backend)})
+        self.assertEqual(before, {str(path): path.read_bytes() for path in self.root.iterdir()})
+
+    def test_preflight_cli_emits_only_json_and_rejects_writing_or_ambiguous_options(self):
+        args = ["restore_business_proof", "--preflight", "--backend-dir", str(self.backend),
+                "--runtime-receipt", "runtime.json", "--target-plan", "target.json"]
+        result = {"verified": True}
+        output = io.StringIO()
+        with patch.object(sys, "argv", args), patch.object(sys, "stdin", io.StringIO("must not read")), \
+                patch.object(proof, "dataset_preflight", return_value=result) as preflight, contextlib.redirect_stdout(output):
+            proof.main()
+        self.assertEqual(output.getvalue(), json.dumps(result, separators=(",", ":")) + "\n")
+        preflight.assert_called_once_with(self.backend, Path("runtime.json"), Path("target.json"))
+        for change in (["--write"], ["--preflight"], ["--output", "new.json"], ["--proof", "proof.json"],
+                       ["--runner-root", "runner"], ["--tests-receipt", "tests.json"]):
+            with patch.object(sys, "argv", args + change), patch.object(proof, "dataset_preflight") as preflight, \
+                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                proof.main()
+            self.assertEqual(error.exception.code, 2)
+            preflight.assert_not_called()
+        with patch.object(sys, "argv", [arg.replace("--preflight", "--prefl") for arg in args]), \
+                contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+            proof.main()
+        self.assertEqual(error.exception.code, 2)
+
+    def test_preflight_minimal_forged_chain_produces_no_authority(self):
+        runtime = self.write("runtime-input.json", {"runtime": True})
+        target = self.write("target.json", {"backup_receipt": {"source_generation": {"dataset_lineage": {}}}})
+        args = ["restore_business_proof", "--preflight", "--backend-dir", str(self.backend),
+                "--runtime-receipt", runtime["path"], "--target-plan", target["path"]]
+        output = io.StringIO()
+        before = {str(path): path.read_bytes() for path in self.root.iterdir()}
+        with patch.object(sys, "argv", args), patch.object(proof, "repository", return_value=self.backend), \
+                patch.object(proof, "_verified_target") as check, contextlib.redirect_stdout(output), \
+                self.assertRaises(ValueError):
+            proof.main()
+        self.assertEqual(output.getvalue(), "")
+        check.assert_not_called()
+        self.assertEqual(before, {str(path): path.read_bytes() for path in self.root.iterdir()})
 
 
 if __name__ == "__main__":

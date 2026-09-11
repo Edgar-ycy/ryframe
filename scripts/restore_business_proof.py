@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -479,15 +480,47 @@ def verify_business_proof(
     return verified
 
 
+def dataset_preflight(backend: Path, runtime_path: Path, target_path: Path) -> dict:
+    """在浏览器首次会话写入前完整只读重验来源链，仅返回内存投影。"""
+    backend = repository(backend, "恢复数据核验后端")
+    runtime = read_json_document(runtime_path)
+    value = validate_runtime_receipt(runtime.value)
+    target, verified, reference, _manifest, dataset = _verified_target(backend, target_path, value)
+    selected = reference["target"]
+    result = {
+        "format_version": 1, "kind": "restore-dataset-authority",
+        "runtime": _descriptor(runtime), "target_plan": _descriptor(target), **dataset,
+        "target": {key: selected[key] for key in ("scope_id", "api_url", "frontend_url")},
+        "execution_backend": verified["product_execution"]["roots"]["execution_backend"],
+    }
+    runtime.assert_unchanged()
+    target.assert_unchanged()
+    return result
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("--backend-dir", type=Path, required=True)
-    parser.add_argument("--runner-root", type=Path, required=True)
-    parser.add_argument("--proof", type=Path, required=True)
-    parser.add_argument("--tests-receipt", type=Path, required=True)
+    parser.add_argument("--preflight", action="store_true",
+                        help="浏览器首次会话前完整只读重验目标来源，仅向标准输出返回数据血缘绑定")
+    parser.add_argument("--runner-root", type=Path)
+    parser.add_argument("--proof", type=Path)
+    parser.add_argument("--tests-receipt", type=Path)
     parser.add_argument("--runtime-receipt", type=Path, required=True)
     parser.add_argument("--target-plan", type=Path, required=True)
+    options = [value.partition("=")[0] for value in sys.argv[1:] if value.startswith("--")]
+    if len(options) != len(set(options)):
+        parser.error("恢复业务证明或数据预检选项不能重复")
     args = parser.parse_args()
+    provided = (args.runner_root, args.proof, args.tests_receipt)
+    if args.preflight:
+        if any(value is not None for value in provided):
+            parser.error("只读数据预检不能接收 runner、proof 或 tests-receipt")
+        print(json.dumps(dataset_preflight(args.backend_dir, args.runtime_receipt, args.target_plan),
+                         ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+        return
+    if any(value is None for value in provided):
+        parser.error("最终业务证明必须同时提供 runner-root、proof 和 tests-receipt")
     raw = sys.stdin.buffer.read(MAX_JSON_BYTES + 1)
     if not raw or len(raw) > MAX_JSON_BYTES:
         raise ValueError("恢复业务权威上下文必须是 16 MiB 内的非空 JSON")
@@ -501,8 +534,6 @@ def main() -> None:
         args.target_plan,
         authority,
     )
-    import json
-
     print(json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
 
 
