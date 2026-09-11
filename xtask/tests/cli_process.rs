@@ -36,6 +36,7 @@ fn invalid_public_arguments_exit_two_before_running_tasks() {
         ["build", "--plan", "--plan"].as_slice(),
         ["generate", "api", "--commit", "HEAD"].as_slice(),
         ["data", "unknown"].as_slice(),
+        ["check", "recovery", "runtime", "restart"].as_slice(),
     ] {
         let result = invoke(arguments);
         assert_eq!(result.status.code(), Some(2), "参数：{arguments:?}");
@@ -144,26 +145,22 @@ fn check_help_lists_every_supported_performance_operation() {
 }
 
 #[test]
-fn recovery_runtime_forwards_the_global_frontend_as_one_argument() {
-    let missing = "missing-runtime-receipt.json";
+fn recovery_runtime_status_forwards_registered_lifecycle_paths() {
+    let missing = "missing-runtime-target-plan.json";
     let result = invoke(&[
         "check",
         "recovery",
         "runtime",
-        "verify",
-        "--bindings",
-        "missing-bindings.json",
-        "--frontend-url",
-        "http://127.0.0.1:4174",
-        "--receipt",
+        "status",
+        "--runtime-registration",
+        "missing-runtime-registration.json",
+        "--target-plan",
         missing,
-        "--frontend-dir",
-        "D:/前端 worktree",
     ]);
     assert_eq!(result.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&result.stderr);
     assert!(stderr.contains(missing), "{stderr}");
-    assert!(!stderr.contains("the following arguments are required: --frontend-dir"));
+    assert!(!stderr.contains("未知 recovery runtime 子操作"));
 }
 
 #[test]

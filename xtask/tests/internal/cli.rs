@@ -174,6 +174,16 @@ fn parses_recovery_check_groups() {
             &["verify", "--receipt", "runtime.json",]
         ))))
     );
+    for operation in [
+        "build", "register", "start", "status", "stop", "recover", "bind",
+    ] {
+        assert!(matches!(
+            parse_command(&["check", "recovery", "runtime", operation]),
+            Ok(Command::Check(CheckCommand::Recovery(RecoveryCommand::Runtime(arguments))))
+                if arguments == strings(&[operation])
+        ));
+    }
+    assert!(parse_command(&["check", "recovery", "runtime", "restart"]).is_err());
     assert!(matches!(
         parse_command(&[
             "check",

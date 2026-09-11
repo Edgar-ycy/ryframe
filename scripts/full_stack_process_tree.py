@@ -51,6 +51,57 @@ def _tree_path(directory: Path, role: str) -> Path:
     return directory / f"{role}-tree.json"
 
 
+def validate_process_tree_directory(
+    directory: Path,
+    operations: dict[str, str],
+    *,
+    extra_files: tuple[str, ...] = (),
+) -> tuple[str, ...]:
+    """只接受绑定到明确角色和 operation ID 的进程树文件集合。"""
+    if (
+        not directory.is_absolute()
+        or not directory.is_dir()
+        or directory.is_symlink()
+        or (hasattr(directory, "is_junction") and directory.is_junction())
+        or not operations
+        or any(role not in ROLES for role in operations)
+        or any(OPERATION_ID.fullmatch(operation) is None for operation in operations.values())
+        or len(set(operations.values())) != len(operations)
+        or len(set(extra_files)) != len(extra_files)
+        or any(
+            not name or Path(name).name != name or name in {".", ".."}
+            for name in extra_files
+        )
+    ):
+        raise ValueError("进程树目录、角色、operation ID 或额外文件声明无效")
+    allowed = set(extra_files)
+    for role, operation in operations.items():
+        allowed.update(
+            {
+                f"{role}.log",
+                f"{role}.json",
+                f"{role}-tree.json",
+                f"{role}-members-{operation}-ready.json",
+                f"{role}-members-{operation}-stopped.json",
+                f"{role}-tree-{operation}-control.json",
+                f"{role}-tree-{operation}-result.json",
+            }
+        )
+    entries = tuple(sorted(directory.iterdir(), key=lambda item: item.name))
+    if any(
+        not entry.is_file()
+        or entry.is_symlink()
+        or (hasattr(entry, "is_junction") and entry.is_junction())
+        for entry in entries
+    ):
+        raise ValueError("进程树目录包含目录、链接或重解析点")
+    names = tuple(entry.name for entry in entries)
+    unknown = sorted(set(names) - allowed)
+    if unknown:
+        raise ValueError("进程树目录包含未登记文件：" + ", ".join(unknown))
+    return names
+
+
 def _read_object(path: Path) -> dict:
     def unique(pairs: list[tuple[str, object]]) -> dict:
         value = {}
@@ -357,6 +408,15 @@ class SupervisedProcess:
         result = _read_result(self.tree)
         return result["exit_code"] if result is not None else supervisor_code
 
+    def release_controller_handle(self) -> None:
+        """启动收据发布后释放当前短命控制器的 Popen 所有权。"""
+        if self.poll() is not None:
+            self.wait(timeout=10)
+            return
+        # Popen 没有公开 detach；该对象此后不再使用。设置已消费状态可让析构
+        # 关闭本机句柄而不把仍由 monitor 管理的监督进程登记为资源泄漏。
+        self.supervisor.returncode = 0
+
 
 def supervise_product(process: subprocess.Popen, receipt: dict, grace: float = 1) -> int:
     requested, forced, deadline = None, False, None
@@ -393,10 +453,13 @@ def launch_supervised_process(
     environment: dict[str, str],
     output,
     timeout: float = 5,
+    operation_id: str | None = None,
 ) -> SupervisedProcess:
     if not arguments or not Path(arguments[0]).is_absolute():
         raise ValueError("监督进程要求明确的绝对产品可执行文件")
-    operation_id = uuid.uuid4().hex
+    operation_id = uuid.uuid4().hex if operation_id is None else operation_id
+    if OPERATION_ID.fullmatch(operation_id) is None:
+        raise ValueError("监督进程操作 ID 无效")
     path = _tree_path(directory, role)
     if path.exists():
         raise ValueError("运行目录已有进程树收据；必须先核对并回收原进程树")

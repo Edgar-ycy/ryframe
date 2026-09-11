@@ -184,6 +184,58 @@ class RestoreRuntimeTests(unittest.TestCase):
                 self.root / f"{role}.json",
                 {"format_version": 1, "role": role, "scope_id": authority["scope_id"], "identity": identity},
             )
+        frontend_identity = {
+            "pid": 44,
+            "started": "created-frontend",
+            "executable": str(Path(sys.executable).resolve()),
+        }
+        self.identities[frontend_identity["pid"]] = frontend_identity
+        self.write_json(
+            self.root / "frontend.json",
+            {
+                "format_version": 1,
+                "role": "frontend",
+                "scope_id": authority["scope_id"],
+                "identity": frontend_identity,
+            },
+        )
+        self.launch_path = self.root / "runtime-launch.json"
+        self.write_json(
+            self.launch_path,
+            {
+                "format_version": 1,
+                "kind": "restore-runtime-launch",
+                "runtime_directory": str(self.root),
+                "request": {
+                    "authority": authority,
+                    "roots": {
+                        "backend_product": str(self.backend),
+                        "backend_execution": str(self.backend),
+                        "frontend": str(self.frontend),
+                    },
+                    "paths": {
+                        "bindings": str(bindings_path),
+                        "backend_build": str(build_path),
+                        "frontend_build": str(frontend_path),
+                    },
+                    "digests": {
+                        "bindings": restore_build.file_digest(bindings_path)["sha256"],
+                        "backend_build": restore_build.file_digest(build_path)["sha256"],
+                        "frontend_build": restore_build.file_digest(frontend_path)["sha256"],
+                    },
+                },
+                "processes": {
+                    role: {
+                        "command": [
+                            backend_build["artifacts"][role]["executable"]
+                            if role != "frontend"
+                            else frontend_identity["executable"]
+                        ]
+                    }
+                    for role in ("api", "worker", "frontend")
+                },
+            },
+        )
         return authority, build_path, frontend_path, bindings_path
 
     def resolved_sources(self, authority):
@@ -213,6 +265,9 @@ class RestoreRuntimeTests(unittest.TestCase):
                 )
             )
             stack.enter_context(patch.object(restore_runtime, "verify_listener"))
+            stack.enter_context(
+                patch.object(restore_runtime, "validate_launch", side_effect=lambda value, _path: value)
+            )
             stack.enter_context(
                 patch.object(
                     restore_runtime,
@@ -247,9 +302,8 @@ class RestoreRuntimeTests(unittest.TestCase):
                 self.backend,
                 self.frontend,
                 build_path,
-                self.root,
+                self.launch_path,
                 bindings_path,
-                authority["frontend_endpoint"],
             )
         return authority, receipt, bindings_path
 
@@ -386,6 +440,8 @@ class RestoreRuntimeTests(unittest.TestCase):
     def test_bind_records_reviewable_paths_and_every_authoritative_field(self):
         authority, receipt, bindings = self.bind_receipt()
         self.assertEqual(receipt["paths"]["bindings"], str(bindings))
+        self.assertEqual(receipt["paths"]["launch"], str(self.launch_path))
+        self.assertEqual(receipt["format_version"], 3)
         self.assertEqual(receipt["restore"]["data_verified_at"], authority["data_verified_at"])
         self.assertEqual(
             receipt["source"],
@@ -405,7 +461,7 @@ class RestoreRuntimeTests(unittest.TestCase):
                 "frontend": authority["frontend_endpoint"],
             },
         )
-        for role in ("api", "worker"):
+        for role in ("api", "worker", "frontend"):
             self.assertEqual(receipt["processes"][role]["receipt_path"], str(self.root / f"{role}.json"))
 
     def test_runtime_and_process_receipts_reject_extra_fields_before_probes(self):
@@ -427,6 +483,8 @@ class RestoreRuntimeTests(unittest.TestCase):
             Path(receipt["paths"]["backend_build"]),
             Path(receipt["paths"]["frontend_build"]),
             Path(receipt["processes"]["api"]["receipt_path"]),
+            Path(receipt["processes"]["frontend"]["receipt_path"]),
+            Path(receipt["paths"]["launch"]),
             self.frontend / "dist/app.js",
             Path(receipt["backend"]["artifacts"]["worker"]["executable"]),
         ]
@@ -456,15 +514,14 @@ class RestoreRuntimeTests(unittest.TestCase):
                 self.backend,
                 self.frontend,
                 build_path,
-                self.root,
+                self.launch_path,
                 bindings,
-                authority["frontend_endpoint"],
             )
             result = restore_runtime.verify(receipt, self.backend, self.backend, self.frontend, bindings, authority, "f" * 64)
         self.assertEqual(result["status"], "verified")
         self.assertEqual(result["runtime_receipt_sha256"], "f" * 64)
         self.assertEqual(result["api_readiness"], READY)
-        self.assertEqual(set(result["processes"]), {"api", "worker"})
+        self.assertEqual(set(result["processes"]), {"api", "worker", "frontend"})
         self.assertEqual({item["path"] for item in result["frontend"]["files"]}, {"index.html", "app.js", ".vite/manifest.json"})
 
     def test_arbitrary_200_and_invalid_readiness_payloads_are_rejected(self):
@@ -543,12 +600,10 @@ class RestoreRuntimeTests(unittest.TestCase):
             str(self.frontend),
             "--bindings",
             str(self.root / "bindings.json"),
-            "--frontend-url",
-            "http://127.0.0.1:4174",
             "--build-receipt",
             str(self.root / "build.json"),
-            "--runtime-dir",
-            str(self.root),
+            "--launch-receipt",
+            str(self.root / "runtime-launch.json"),
         ]
         for operation, arguments in (("build", common + build_source), ("bind", common + binding)):
             with self.subTest(operation=operation), patch.object(
@@ -563,6 +618,48 @@ class RestoreRuntimeTests(unittest.TestCase):
                 build_call.assert_not_called()
                 bind_call.assert_not_called()
                 write.assert_not_called()
+
+    def test_bind_cli_delegates_receipt_write_to_the_locked_operation(self):
+        output = self.backend / ".local-tests/runtime.json"
+        output.parent.mkdir()
+        arguments = [
+            "restore_runtime.py",
+            "bind",
+            "--backend-dir",
+            str(self.backend),
+            "--source-backend",
+            str(self.backend),
+            "--source-frontend",
+            str(self.frontend),
+            "--bindings",
+            str(self.root / "bindings.json"),
+            "--build-receipt",
+            str(self.root / "build.json"),
+            "--launch-receipt",
+            str(self.root / "generation-0001/runtime-launch.json"),
+            "--output",
+            str(output),
+            "--write",
+        ]
+        with patch.object(sys, "argv", arguments), patch.object(
+            sys, "stdout", io.StringIO()
+        ) as stdout, patch.object(restore_runtime, "bind_and_write") as bind_write, patch.object(
+            restore_runtime, "write_new"
+        ) as raw_write:
+            restore_runtime.main()
+        bind_write.assert_called_once_with(
+            self.backend.resolve(),
+            self.backend,
+            self.frontend,
+            (self.root / "build.json").resolve(),
+            (self.root / "generation-0001/runtime-launch.json").resolve(),
+            (self.root / "bindings.json").resolve(),
+            output,
+            adapter_contract=None,
+            product_backend=None,
+        )
+        raw_write.assert_not_called()
+        self.assertEqual(json.loads(stdout.getvalue()), {"output": str(output.resolve())})
 
     def test_build_cli_separates_current_coordinator_from_explicit_source_worktree(self):
         output = self.backend / ".local-tests/build.json"

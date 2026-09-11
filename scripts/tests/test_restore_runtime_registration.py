@@ -26,6 +26,7 @@ class RestoreRuntimeRegistrationTests(unittest.TestCase):
         self.runtime = self.root / "target-runtime"
         self.reference_path = self.root / "reference.json"
         self.target_path = self.root / "target.json"
+        self.environment_path = self.root / "environment.json"
         (self.root / "receipts").mkdir()
         self.output = self.root / "receipts/runtime-registration.json"
         self.reference = {
@@ -42,12 +43,47 @@ class RestoreRuntimeRegistrationTests(unittest.TestCase):
             "kind": "restore-reference-target-plan",
             "target_side": "base",
             "product_plan": {
+                "id": "restore-one",
+                "backup_id": "backup-one",
                 "scope_id": "formal-restore-b0",
                 "api_ready_url": "http://127.0.0.1:18080/readyz",
                 "worker_ready_url": "http://127.0.0.1:19091/readyz",
                 "frontend_sha": "a" * 40,
             },
+            "fresh_target": {
+                "environment": {},
+            },
+            "maintenance_execution": {
+                "root": str(ROOT),
+                "binding": {},
+                "build": {},
+            },
+            "product_execution": {
+                "roots": {},
+                "backend_product_sha": "b" * 40,
+                "backend_execution_sha": "b" * 40,
+                "frontend_sha": "a" * 40,
+                "builds": {},
+                "adapter": None,
+            },
         }
+        self.write_json(
+            self.environment_path,
+            {
+                "environment": {
+                    "APP_ENV": "test",
+                    "APP_SCOPE_ID": "formal-restore-b0",
+                    "APP_JOBS_MODE": "external",
+                    "APP_APP_HOST": "127.0.0.1",
+                    "APP_APP_PORT": "18080",
+                    "APP_JOBS_HEALTH_HOST": "127.0.0.1",
+                    "APP_JOBS_HEALTH_PORT": "19091",
+                }
+            },
+        )
+        self.target["fresh_target"]["environment"] = artifact_snapshot(
+            self.environment_path
+        ).descriptor()
         self.write_json(self.reference_path, self.reference)
         self.write_json(self.target_path, self.target)
 

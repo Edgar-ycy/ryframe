@@ -118,6 +118,34 @@ def _ports(endpoints: dict) -> list[str]:
     return list(ROLES)
 
 
+def _facts(reference, target, reference_descriptor: dict, target_descriptor: dict) -> dict:
+    product = target.value["product_plan"]
+    selected = reference.value["target"]
+    endpoints = {
+        "api": canonical_endpoint(product["api_ready_url"], "/readyz", "目标 API 端点"),
+        "worker": canonical_endpoint(product["worker_ready_url"], "/readyz", "目标 Worker 端点"),
+        "frontend": canonical_endpoint(selected["frontend_url"], "", "目标前端端点"),
+    }
+    if (
+        target.value["target_side"] != reference.value["target_side"]
+        or product["scope_id"] != selected["scope_id"]
+        or not isinstance(product["frontend_sha"], str)
+        or HEX_40.fullmatch(product["frontend_sha"]) is None
+        or len({endpoint(url)[2] for url in endpoints.values()}) != len(ROLES)
+    ):
+        raise ValueError("恢复运行登记与目标侧、scope 或三端端点不一致")
+    return {
+        "reference_plan": reference_descriptor,
+        "target_plan": target_descriptor,
+        "runtime_directory": str(Path(selected["runtime_dir"]).absolute()),
+        "endpoints": endpoints,
+        "product_plan": product,
+        "fresh_target": target.value["fresh_target"],
+        "maintenance_execution": target.value["maintenance_execution"],
+        "product_execution": target.value["product_execution"],
+    }
+
+
 def registration_inputs(
     backend: Path,
     reference_path: Path,
@@ -135,31 +163,29 @@ def registration_inputs(
     verified = target_verifier(backend, reference.value, target.path)
     if verified != target.value:
         raise ValueError("正式恢复目标计划核验结果与登记文件不同")
-    product = target.value["product_plan"]
-    selected = reference.value["target"]
-    endpoints = {
-        "api": canonical_endpoint(product["api_ready_url"], "/readyz", "目标 API 端点"),
-        "worker": canonical_endpoint(product["worker_ready_url"], "/readyz", "目标 Worker 端点"),
-        "frontend": canonical_endpoint(selected["frontend_url"], "", "目标前端端点"),
-    }
-    runtime = Path(selected["runtime_dir"]).absolute()
-    if (
-        target.value["target_side"] != reference.value["target_side"]
-        or product["scope_id"] != selected["scope_id"]
-        or not isinstance(product["frontend_sha"], str)
-        or HEX_40.fullmatch(product["frontend_sha"]) is None
-        or len({endpoint(value)[2] for value in endpoints.values()}) != len(ROLES)
-    ):
-        raise ValueError("恢复运行登记与目标侧、scope 或三端端点不一致")
-    facts = {
-        "reference_plan": _descriptor(reference),
-        "target_plan": _descriptor(target),
-        "runtime_directory": str(runtime),
-        "endpoints": endpoints,
-    }
+    facts = _facts(reference, target, _descriptor(reference), _descriptor(target))
     reference.assert_unchanged()
     target.assert_unchanged()
     return facts, (reference, target)
+
+
+def registration_binding(
+    backend: Path,
+    registration_path: Path,
+    target_plan_descriptor: dict,
+) -> tuple[dict, dict, tuple[object, ...]]:
+    """运行开始后只重验登记时已经证明的不可变文件绑定，不重演 fresh 状态。"""
+    backend = repository(backend, "恢复运行登记后端")
+    registration = read_json_document(registration_path)
+    value = validate_registration(registration.value)
+    if value["target_plan"] != target_plan_descriptor:
+        raise ValueError("调用方绑定的目标计划描述与恢复运行登记不同")
+    reference = _bound_document(backend, value["reference_plan"], "参考恢复计划")
+    target = _bound_document(backend, value["target_plan"], "正式恢复目标计划")
+    facts = _facts(reference, target, value["reference_plan"], value["target_plan"])
+    for document in (registration, reference, target):
+        document.assert_unchanged()
+    return value, facts, (registration, reference, target)
 
 
 def _observation(facts: dict) -> dict:
@@ -169,7 +195,7 @@ def _observation(facts: dict) -> dict:
     }
 
 
-def _control_directory(backend: Path) -> Path:
+def runtime_control_directory(backend: Path) -> Path:
     """正式恢复共享外部资源，同一后端工作树只允许一个运行控制器。"""
     return (backend / ".local-tests").resolve(strict=True)
 
@@ -220,24 +246,24 @@ def verify_registration(
     target_verifier=None,
 ) -> tuple[dict, dict, tuple[object, ...]]:
     backend = repository(backend, "恢复运行登记后端")
-    registration = read_json_document(registration_path)
-    value = validate_registration(registration.value)
-    if value["target_plan"] != target_plan_descriptor:
-        raise ValueError("调用方绑定的目标计划描述与恢复运行登记不同")
-    facts, inputs = registration_inputs(
+    value, facts, documents = registration_binding(
+        backend, registration_path, target_plan_descriptor
+    )
+    inputs_facts, inputs = registration_inputs(
         backend,
         Path(value["reference_plan"]["path"]),
         Path(value["target_plan"]["path"]),
         target_verifier=target_verifier,
     )
-    if value["reference_plan"] != facts["reference_plan"] or value["target_plan"] != facts["target_plan"]:
+    if any(facts[key] != inputs_facts[key] for key in (
+        "reference_plan", "target_plan", "runtime_directory", "endpoints"
+    )):
         raise ValueError("恢复运行登记的计划输入已经变化")
     if value["observation"] != _observation(facts):
         raise ValueError("fresh target 运行目录或三端口不再保持登记的零进程状态")
-    registration.assert_unchanged()
-    for document in inputs:
+    for document in (*documents, *inputs):
         document.assert_unchanged()
-    return value, facts, (registration, *inputs)
+    return value, facts, (*documents, *inputs)
 
 
 def register_runtime(
@@ -257,7 +283,7 @@ def register_runtime(
     runtime = Path(facts["runtime_directory"])
     if output.is_relative_to(runtime):
         raise ValueError("恢复运行登记不能写入需要证明为空的目标运行目录")
-    control = _control_directory(backend)
+    control = runtime_control_directory(backend)
     operation = "register:" + facts["target_plan"]["sha256"]
     with controller_lock(control, operation, REGISTRATION_LOCK):
         repeated, repeated_inputs = registration_inputs(
@@ -321,7 +347,7 @@ def registered_stopped_runtime(
         target_plan_descriptor,
         target_verifier=target_verifier,
     )
-    control = _control_directory(backend)
+    control = runtime_control_directory(backend)
     operation = f"restore:{documents[0].sha256}:{facts['target_plan']['sha256']}"
     with controller_lock(control, operation, REGISTRATION_LOCK) as owner:
         current, current_facts, current_documents = verify_registration(

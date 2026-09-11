@@ -110,12 +110,12 @@ def require_closed_port(url: str) -> None:
         raise ValueError("源精确端口仍在监听或无法明确证明连接被拒绝")
 
 
-def verify_api_address(backend: Path, url: str) -> None:
-    app = load_app_table(backend, os.environ)["app"]
-    if any(key in os.environ for key in ("APP_APP_HOST_FILE", "APP_APP_PORT_FILE")):
+def verify_api_address_environment(backend: Path, url: str, environment) -> None:
+    app = load_app_table(backend, environment)["app"]
+    if any(key in environment for key in ("APP_APP_HOST_FILE", "APP_APP_PORT_FILE")):
         raise ValueError("源 API 地址文件覆盖未被运行收据绑定")
-    host = os.environ.get("APP_APP_HOST", app.get("host"))
-    port = os.environ.get("APP_APP_PORT", app.get("port"))
+    host = environment.get("APP_APP_HOST", app.get("host"))
+    port = environment.get("APP_APP_PORT", app.get("port"))
     if isinstance(port, str) and re.fullmatch(r"[0-9]+", port):
         port = int(port)
     parsed = urlsplit(url)
@@ -123,6 +123,10 @@ def verify_api_address(backend: Path, url: str) -> None:
     if (parsed.hostname not in allowed or host not in allowed[parsed.hostname] or type(port) is not int
             or parsed.port != port or parsed.path not in ("", "/")):
         raise ValueError("源 API 精确端口未绑定实际 APP 配置")
+
+
+def verify_api_address(backend: Path, url: str) -> None:
+    verify_api_address_environment(backend, url, os.environ)
 
 
 def _cim_creation_time(pid: int, run) -> int:

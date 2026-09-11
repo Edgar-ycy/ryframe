@@ -16,6 +16,7 @@ from full_stack_process_tree import (
     launch_supervised_process,
     read_process_tree,
     terminate_owned_process_tree,
+    validate_process_tree_directory,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -125,7 +126,7 @@ class FullStackProcessTreeTests(unittest.TestCase):
         except PermissionError:
             return False
 
-    def _launch(self, mode: str, role: str = "api"):
+    def _launch(self, mode: str, role: str = "api", operation_id: str | None = None):
         port = 0 if mode == "no-port" else self._free_port()
         child_pid = self.root / "child.pid"
         leaf_pid = self.root / "leaf.pid"
@@ -149,9 +150,41 @@ class FullStackProcessTreeTests(unittest.TestCase):
             self.root,
             os.environ.copy(),
             log,
+            operation_id=operation_id,
         )
         self._wait_for(ready.is_file)
         return process, child_pid, leaf_pid, port
+
+    def test_launch_uses_the_pre_registered_operation_id(self):
+        operation_id = "a" * 32
+        process, _child, _leaf, _port = self._launch("no-port", operation_id=operation_id)
+        self.assertEqual(process.tree["operation_id"], operation_id)
+        terminate_owned_process_tree(process.tree, crash=True)
+        process.wait(timeout=5)
+
+    def test_generation_directory_rejects_unknown_or_nested_files(self):
+        operation = "a" * 32
+        (self.root / "api.log").write_text("diagnostic", encoding="utf-8")
+        (self.root / "runtime.json").write_text("{}", encoding="utf-8")
+        self.assertEqual(
+            validate_process_tree_directory(
+                self.root, {"api": operation}, extra_files=("runtime.json",)
+            ),
+            ("api.log", "runtime.json"),
+        )
+        unknown = self.root / "foreign.json"
+        unknown.write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "未登记文件"):
+            validate_process_tree_directory(
+                self.root, {"api": operation}, extra_files=("runtime.json",)
+            )
+        unknown.unlink()
+        nested = self.root / "nested"
+        nested.mkdir()
+        with self.assertRaisesRegex(ValueError, "目录、链接"):
+            validate_process_tree_directory(
+                self.root, {"api": operation}, extra_files=("runtime.json",)
+            )
 
     def _identities(self, *pid_files: Path) -> list[dict]:
         identities = [process_identity(int(path.read_text(encoding="utf-8"))) for path in pid_files]

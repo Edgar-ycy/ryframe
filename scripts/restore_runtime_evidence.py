@@ -400,7 +400,7 @@ def validate_runtime_receipt(receipt: object) -> dict:
         {"format_version", "kind", "restore", "paths", "digests", "source", "endpoints", "backend", "frontend", "processes"},
         "恢复运行收据",
     )
-    if value["format_version"] != 2 or value["kind"] != "restore-runtime":
+    if value["format_version"] != 3 or value["kind"] != "restore-runtime":
         raise ValueError("恢复运行收据版本或类型不匹配")
     restore = exact_fields(
         value["restore"],
@@ -417,10 +417,13 @@ def validate_runtime_receipt(receipt: object) -> dict:
             "bindings",
             "backend_build",
             "frontend_build",
+            "launch",
         },
         "恢复路径绑定",
     )
-    digests = exact_fields(value["digests"], {"bindings", "backend_build", "frontend_build"}, "恢复摘要绑定")
+    digests = exact_fields(
+        value["digests"], {"bindings", "backend_build", "frontend_build", "launch"}, "恢复摘要绑定"
+    )
     source = exact_fields(
         value["source"],
         {
@@ -456,8 +459,8 @@ def validate_runtime_receipt(receipt: object) -> dict:
         raise ValueError("恢复运行收据必须保存绝对路径")
     if any(not isinstance(digest, str) or not HEX_64.fullmatch(digest) for digest in digests.values()):
         raise ValueError("恢复运行收据摘要无效")
-    processes = exact_fields(value["processes"], {"api", "worker"}, "恢复进程绑定")
-    for role in ("api", "worker"):
+    processes = exact_fields(value["processes"], {"api", "worker", "frontend"}, "恢复进程绑定")
+    for role in ("api", "worker", "frontend"):
         item = exact_fields(processes[role], {"receipt_path", "receipt_sha256", "identity"}, f"{role} 进程绑定")
         if (
             not isinstance(item["receipt_path"], str)
