@@ -9,15 +9,13 @@ use std::{
 use crate::{
     Result,
     check::{
-        BACKEND_CI_TARGET_DIR, PolicyProfile, RESOURCE_CI_TARGET_DIR,
-        STRICT_MIGRATION_HISTORY_ARGS, VerifySelection, changed_paths, changed_paths_between,
-        ci_consumer_contract, ci_rust_gate, ci_target_policy, ci_test_jobs_from, classify_changes,
-        complete_verify_selection, load_workspace_graph, policy_tasks,
-        resource_workspace_compilation,
+        BACKEND_CI_TARGET_DIR, RESOURCE_CI_TARGET_DIR, VerifySelection, changed_paths,
+        changed_paths_between, ci_target_policy, ci_test_jobs_from, classify_changes,
+        complete_verify_selection, load_workspace_graph, resource_workspace_compilation,
     },
     cli::{CiCommand, ResourceGateReplayOptions},
     contract::verify_contract_source,
-    process::{command_output, run as run_process, run_owned},
+    process::{command_output, run_owned},
     workspace::root_dir,
 };
 
@@ -26,7 +24,10 @@ pub(crate) mod resource_gate;
 #[path = "ci/task_plan.rs"]
 mod task_plan;
 
-pub(crate) use task_plan::{CiTaskExecutor, ci_execution_plan_for, ci_plan_for, plan_outputs};
+#[allow(unused_imports)]
+pub(crate) use task_plan::{
+    CiJob, ci_execution_plan_for, ci_execution_plan_for_profile, ci_plan_for, plan_outputs,
+};
 
 const FULL_CI_EVENTS: &[&str] = &["push", "schedule", "workflow_dispatch"];
 const INTEGRATION_PACKAGES: &[&str] = &["ryframe-adapters", "ryframe-db", "ryframe-tenant-db"];
@@ -36,11 +37,13 @@ pub(crate) fn run(command: CiCommand, frontend_dir: &Path) -> Result<()> {
     match command {
         CiCommand::Plan => plan(),
         CiCommand::ResourceGateReplay(options) => resource_gate_replay(&options, frontend_dir),
-        command => {
-            let plan = ci_execution_plan_for(&command)?;
-            task_plan::execute_ci_job(&plan, frontend_dir)
-        }
+        command => execute_ci_command(&command, frontend_dir),
     }
+}
+
+fn execute_ci_command(command: &CiCommand, frontend_dir: &Path) -> Result<()> {
+    let plan = ci_execution_plan_for(command)?;
+    task_plan::execute_ci_job(command, &plan, frontend_dir)
 }
 
 fn resource_gate_replay(options: &ResourceGateReplayOptions, frontend_dir: &Path) -> Result<()> {
@@ -77,26 +80,6 @@ pub(crate) fn resource_gate_replay_args(
         arguments.push("--activation-gate".to_owned());
     }
     Ok(arguments)
-}
-
-fn rust_gate(frontend_dir: &Path) -> Result<()> {
-    match env::var("RYFRAME_CI_RUST_GATE_PROFILE").ok().as_deref() {
-        None | Some("") | Some("standard") => {
-            verify_frontend_checkout_from_environment(frontend_dir)?;
-            ci_rust_gate(frontend_dir)
-        }
-        Some(WINDOWS_RUST_GATE_PROFILE) => windows_smoke(frontend_dir),
-        Some(profile) => Err(format!(
-            "RYFRAME_CI_RUST_GATE_PROFILE 只允许 standard 或 {WINDOWS_RUST_GATE_PROFILE}，实际为 {profile}"
-        )
-        .into()),
-    }
-}
-
-fn consumer_contract(frontend_dir: &Path) -> Result<()> {
-    verify_frontend_checkout_from_environment(frontend_dir)?;
-    verify_formal_contract_source_from_environment(frontend_dir)?;
-    ci_consumer_contract(frontend_dir)
 }
 
 fn plan() -> Result<()> {
@@ -220,7 +203,7 @@ pub(crate) fn resource_gate_required_for_ci_range(
     event == "pull_request" && !repository_range_valid
 }
 
-fn write_github_outputs(plan: &crate::check::TaskPlan<CiTaskExecutor>) -> Result<()> {
+fn write_github_outputs(plan: &[CiJob]) -> Result<()> {
     let Some(path) = env::var_os("GITHUB_OUTPUT").map(PathBuf::from) else {
         return Ok(());
     };
@@ -231,48 +214,7 @@ fn write_github_outputs(plan: &crate::check::TaskPlan<CiTaskExecutor>) -> Result
     Ok(())
 }
 
-fn preflight(frontend_dir: &Path) -> Result<()> {
-    let root = root_dir();
-    run_process(&root, "cargo", &["fmt", "--all", "--", "--check"])?;
-    run_process(&root, "python", &["scripts/check_python_environment.py"])?;
-    run_process(
-        &root,
-        "python",
-        &[
-            "-m",
-            "unittest",
-            "discover",
-            "-s",
-            "scripts/tests",
-            "-p",
-            "test_*.py",
-        ],
-    )?;
-    for task in policy_tasks(PolicyProfile::CiPreflight) {
-        run_owned(&root, "python", &task.arguments(&root, frontend_dir)?)?;
-    }
-    let migration_args = preflight_migration_args(
-        env::var("RYFRAME_CI_BASE_SHA")
-            .or_else(|_| env::var("GITHUB_BASE_SHA"))
-            .ok()
-            .as_deref(),
-    );
-    run_owned(&root, "python", &migration_args)
-}
-
-pub(crate) fn preflight_migration_args(base: Option<&str>) -> Vec<String> {
-    let mut args = STRICT_MIGRATION_HISTORY_ARGS
-        .iter()
-        .map(|argument| (*argument).to_owned())
-        .collect::<Vec<_>>();
-    if let Some(base) = base.filter(|base| valid_git_sha(base)) {
-        args.extend(["--trusted-ref".to_owned(), base.to_owned()]);
-    }
-    args
-}
-
 fn windows_smoke(frontend_dir: &Path) -> Result<()> {
-    verify_frontend_checkout_from_environment(frontend_dir)?;
     let root = root_dir();
     let jobs = ci_test_jobs_from(
         env::var("RYFRAME_CI_TEST_JOBS").ok().as_deref(),

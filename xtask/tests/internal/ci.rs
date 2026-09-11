@@ -1,10 +1,13 @@
 use super::cli::{CiCommand, ResourceGateReplayOptions};
 use super::{
-    check::{BackendSnapshotProfile, TaskPlan, VerifySelection, WorkspaceGraph},
+    check::{
+        BackendSnapshotProfile, CheckPlanMode, TaskExecutor, VerifySelection, WorkspaceGraph,
+        preflight_migration_args, tasks_for,
+    },
     ci::{
-        CiTaskExecutor, ci_execution_plan_for, ci_plan_for, ci_selection_for_paths,
-        integration_test_args_for_target, parse_changed_paths, plan_outputs,
-        preflight_migration_args,
+        CiJob, ci_execution_plan_for, ci_execution_plan_for_profile, ci_plan_for,
+        ci_selection_for_paths, integration_test_args_for_target, parse_changed_paths,
+        plan_outputs,
         resource_gate::{delegates_generic_ci_path, should_run_for_paths},
         resource_gate_replay_args, resource_gate_required_for_ci_range, tls_integration_args,
         verify_frontend_checkout_ref, windows_check_args, windows_process_test_args,
@@ -12,8 +15,8 @@ use super::{
 };
 use std::path::Path;
 
-fn planned(plan: &TaskPlan<CiTaskExecutor>, executor: CiTaskExecutor) -> bool {
-    plan.contains(&executor)
+fn planned(plan: &[CiJob], job: CiJob) -> bool {
+    plan.contains(&job)
 }
 
 #[test]
@@ -53,11 +56,11 @@ fn resource_gate_replay_fixes_repository_paths_at_the_xtask_boundary() {
 fn pull_request_edit_rechecks_identity_policy_and_consumer_contract() {
     let plan = ci_plan_for("pull_request", "edited", &VerifySelection::default(), true).unwrap();
 
-    assert!(planned(&plan, CiTaskExecutor::Preflight));
-    assert!(!planned(&plan, CiTaskExecutor::RustGate));
-    assert!(!planned(&plan, CiTaskExecutor::ResourceGate));
-    assert!(!planned(&plan, CiTaskExecutor::Integration));
-    assert!(planned(&plan, CiTaskExecutor::ConsumerContract));
+    assert!(planned(&plan, CiJob::Preflight));
+    assert!(!planned(&plan, CiJob::RustGate));
+    assert!(!planned(&plan, CiJob::ResourceGate));
+    assert!(!planned(&plan, CiJob::Integration));
+    assert!(planned(&plan, CiJob::ConsumerContract));
 }
 
 #[test]
@@ -70,11 +73,11 @@ fn documentation_change_runs_only_preflight() {
     )
     .unwrap();
 
-    assert!(planned(&plan, CiTaskExecutor::Preflight));
-    assert!(!planned(&plan, CiTaskExecutor::RustGate));
-    assert!(!planned(&plan, CiTaskExecutor::ResourceGate));
-    assert!(!planned(&plan, CiTaskExecutor::Integration));
-    assert!(!planned(&plan, CiTaskExecutor::ConsumerContract));
+    assert!(planned(&plan, CiJob::Preflight));
+    assert!(!planned(&plan, CiJob::RustGate));
+    assert!(!planned(&plan, CiJob::ResourceGate));
+    assert!(!planned(&plan, CiJob::Integration));
+    assert!(!planned(&plan, CiJob::ConsumerContract));
 }
 
 #[test]
@@ -93,11 +96,11 @@ fn database_change_selects_rust_integration_and_consumer_gates() {
 
     let plan = ci_plan_for("pull_request", "synchronize", &selection, false).unwrap();
 
-    assert!(planned(&plan, CiTaskExecutor::Preflight));
-    assert!(planned(&plan, CiTaskExecutor::RustGate));
-    assert!(!planned(&plan, CiTaskExecutor::ResourceGate));
-    assert!(planned(&plan, CiTaskExecutor::Integration));
-    assert!(planned(&plan, CiTaskExecutor::ConsumerContract));
+    assert!(planned(&plan, CiJob::Preflight));
+    assert!(planned(&plan, CiJob::RustGate));
+    assert!(!planned(&plan, CiJob::ResourceGate));
+    assert!(planned(&plan, CiJob::Integration));
+    assert!(planned(&plan, CiJob::ConsumerContract));
 }
 
 #[test]
@@ -106,22 +109,22 @@ fn shared_pull_request_change_expands_to_full_plan() {
     selection.full_reason = Some("共享配置变化".to_owned());
     let plan = ci_plan_for("pull_request", "synchronize", &selection, false).unwrap();
 
-    assert!(planned(&plan, CiTaskExecutor::Preflight));
-    assert!(planned(&plan, CiTaskExecutor::RustGate));
-    assert!(planned(&plan, CiTaskExecutor::ResourceGate));
-    assert!(planned(&plan, CiTaskExecutor::Integration));
-    assert!(planned(&plan, CiTaskExecutor::ConsumerContract));
+    assert!(planned(&plan, CiJob::Preflight));
+    assert!(planned(&plan, CiJob::RustGate));
+    assert!(planned(&plan, CiJob::ResourceGate));
+    assert!(planned(&plan, CiJob::Integration));
+    assert!(planned(&plan, CiJob::ConsumerContract));
 }
 
 #[test]
 fn non_pr_events_run_full_backend_gates_without_consumer_contract() {
     for event in ["push", "schedule", "workflow_dispatch"] {
         let plan = ci_plan_for(event, "", &VerifySelection::default(), false).unwrap();
-        assert!(planned(&plan, CiTaskExecutor::Preflight), "{event}");
-        assert!(planned(&plan, CiTaskExecutor::RustGate), "{event}");
-        assert!(planned(&plan, CiTaskExecutor::ResourceGate), "{event}");
-        assert!(planned(&plan, CiTaskExecutor::Integration), "{event}");
-        assert!(!planned(&plan, CiTaskExecutor::ConsumerContract), "{event}");
+        assert!(planned(&plan, CiJob::Preflight), "{event}");
+        assert!(planned(&plan, CiJob::RustGate), "{event}");
+        assert!(planned(&plan, CiJob::ResourceGate), "{event}");
+        assert!(planned(&plan, CiJob::Integration), "{event}");
+        assert!(!planned(&plan, CiJob::ConsumerContract), "{event}");
     }
 }
 
@@ -135,11 +138,11 @@ fn resource_change_selects_the_resource_gate_without_unrelated_backend_work() {
     )
     .unwrap();
 
-    assert!(planned(&plan, CiTaskExecutor::Preflight));
-    assert!(!planned(&plan, CiTaskExecutor::RustGate));
-    assert!(planned(&plan, CiTaskExecutor::ResourceGate));
-    assert!(!planned(&plan, CiTaskExecutor::Integration));
-    assert!(!planned(&plan, CiTaskExecutor::ConsumerContract));
+    assert!(planned(&plan, CiJob::Preflight));
+    assert!(!planned(&plan, CiJob::RustGate));
+    assert!(planned(&plan, CiJob::ResourceGate));
+    assert!(!planned(&plan, CiJob::Integration));
+    assert!(!planned(&plan, CiJob::ConsumerContract));
 }
 
 #[test]
@@ -164,20 +167,11 @@ fn resource_aware_ci_selection_keeps_targeted_and_full_surfaces_distinct() {
         .unwrap();
         assert!(delegates_generic_ci_path(path), "{name}: {path}");
         assert!(selection.full_reason.is_none(), "{name}: {path}");
-        assert!(planned(&plan, CiTaskExecutor::Preflight), "{name}: {path}");
-        assert!(!planned(&plan, CiTaskExecutor::RustGate), "{name}: {path}");
-        assert!(
-            planned(&plan, CiTaskExecutor::ResourceGate),
-            "{name}: {path}"
-        );
-        assert!(
-            !planned(&plan, CiTaskExecutor::Integration),
-            "{name}: {path}"
-        );
-        assert!(
-            !planned(&plan, CiTaskExecutor::ConsumerContract),
-            "{name}: {path}"
-        );
+        assert!(planned(&plan, CiJob::Preflight), "{name}: {path}");
+        assert!(!planned(&plan, CiJob::RustGate), "{name}: {path}");
+        assert!(planned(&plan, CiJob::ResourceGate), "{name}: {path}");
+        assert!(!planned(&plan, CiJob::Integration), "{name}: {path}");
+        assert!(!planned(&plan, CiJob::ConsumerContract), "{name}: {path}");
     }
 
     for (name, path) in [
@@ -202,20 +196,11 @@ fn resource_aware_ci_selection_keeps_targeted_and_full_surfaces_distinct() {
         .unwrap();
         assert!(!delegates_generic_ci_path(path), "{name}: {path}");
         assert!(selection.full_reason.is_some(), "{name}: {path}");
-        assert!(planned(&plan, CiTaskExecutor::Preflight), "{name}: {path}");
-        assert!(planned(&plan, CiTaskExecutor::RustGate), "{name}: {path}");
-        assert!(
-            planned(&plan, CiTaskExecutor::ResourceGate),
-            "{name}: {path}"
-        );
-        assert!(
-            planned(&plan, CiTaskExecutor::Integration),
-            "{name}: {path}"
-        );
-        assert!(
-            planned(&plan, CiTaskExecutor::ConsumerContract),
-            "{name}: {path}"
-        );
+        assert!(planned(&plan, CiJob::Preflight), "{name}: {path}");
+        assert!(planned(&plan, CiJob::RustGate), "{name}: {path}");
+        assert!(planned(&plan, CiJob::ResourceGate), "{name}: {path}");
+        assert!(planned(&plan, CiJob::Integration), "{name}: {path}");
+        assert!(planned(&plan, CiJob::ConsumerContract), "{name}: {path}");
     }
 }
 
@@ -234,26 +219,115 @@ fn ci_plan_and_each_independent_job_share_the_same_task_specs() {
             ("consumer_contract", true),
         ]
     );
-    for (command, executor) in [
-        (CiCommand::Preflight, CiTaskExecutor::Preflight),
-        (CiCommand::RustGate, CiTaskExecutor::RustGate),
-        (CiCommand::ResourceGate, CiTaskExecutor::ResourceGate),
-        (CiCommand::Integration, CiTaskExecutor::Integration),
+    for (command, expected) in [
+        (
+            CiCommand::Preflight,
+            &[
+                TaskExecutor::CargoFormat,
+                TaskExecutor::PythonEnvironment,
+                TaskExecutor::PythonTests,
+                TaskExecutor::PolicyChecks,
+                TaskExecutor::MigrationHistory,
+            ][..],
+        ),
+        (
+            CiCommand::RustGate,
+            &[
+                TaskExecutor::CiFrontendCheckout,
+                TaskExecutor::SnapshotPrepare,
+                TaskExecutor::FeatureRegistry,
+                TaskExecutor::WorkspaceClippy,
+                TaskExecutor::WorkspaceGates,
+                TaskExecutor::SnapshotVerify,
+            ][..],
+        ),
+        (CiCommand::ResourceGate, &[TaskExecutor::CiResourceGate][..]),
+        (CiCommand::Integration, &[TaskExecutor::CiIntegration][..]),
         (
             CiCommand::ConsumerContract,
-            CiTaskExecutor::ConsumerContract,
+            &[
+                TaskExecutor::CiFrontendCheckout,
+                TaskExecutor::CiContractSource,
+                TaskExecutor::FrontendDependencies,
+                TaskExecutor::ConsumerContract,
+            ][..],
         ),
     ] {
-        let execution = ci_execution_plan_for(&command).unwrap();
-        assert_eq!(execution.tasks.len(), 1);
-        let planned_task = full
+        let execution = ci_execution_plan_for_profile(&command, Some("standard")).unwrap();
+        assert_eq!(
+            execution
+                .tasks
+                .iter()
+                .map(|task| task.executor)
+                .collect::<Vec<_>>(),
+            expected
+        );
+        for task in &execution.tasks {
+            assert_eq!(task.definition().id, task.id);
+        }
+    }
+
+    let check_full = tasks_for(super::cli::CheckScope::All, &CheckPlanMode::ExplicitFull).unwrap();
+    let backend_full = tasks_for(
+        super::cli::CheckScope::Backend,
+        &CheckPlanMode::ExplicitFull,
+    )
+    .unwrap();
+    for shared in [
+        TaskExecutor::CargoFormat,
+        TaskExecutor::PythonEnvironment,
+        TaskExecutor::PythonTests,
+        TaskExecutor::PolicyChecks,
+        TaskExecutor::MigrationHistory,
+        TaskExecutor::SnapshotPrepare,
+        TaskExecutor::FeatureRegistry,
+        TaskExecutor::WorkspaceClippy,
+        TaskExecutor::WorkspaceGates,
+        TaskExecutor::SnapshotVerify,
+        TaskExecutor::FrontendDependencies,
+        TaskExecutor::ConsumerContract,
+    ] {
+        assert!(
+            check_full.tasks.iter().any(|task| task.executor == shared)
+                || backend_full
+                    .tasks
+                    .iter()
+                    .any(|task| task.executor == shared),
+            "普通完整检查与 CI 应共用原子节点 {shared:?}"
+        );
+    }
+}
+
+#[test]
+fn rust_gate_profile_only_changes_the_selected_primitive_nodes() {
+    let standard = ci_execution_plan_for_profile(&CiCommand::RustGate, Some("standard")).unwrap();
+    assert_eq!(standard.tasks[0].executor, TaskExecutor::CiFrontendCheckout);
+    assert_eq!(standard.tasks[1].executor, TaskExecutor::SnapshotPrepare);
+
+    let windows =
+        ci_execution_plan_for_profile(&CiCommand::RustGate, Some("windows-smoke")).unwrap();
+    assert_eq!(
+        windows
             .tasks
             .iter()
-            .find(|task| task.executor == executor)
-            .unwrap();
-        assert_eq!(&execution.tasks[0], planned_task);
-        assert!(execution.tasks[0].dependencies.is_empty());
-    }
+            .map(|task| task.executor)
+            .collect::<Vec<_>>(),
+        [
+            TaskExecutor::CiFrontendCheckout,
+            TaskExecutor::CiWindowsSmoke,
+        ]
+    );
+    assert!(
+        ci_execution_plan_for_profile(&CiCommand::RustGate, Some("unknown"))
+            .unwrap_err()
+            .to_string()
+            .contains("只允许 standard 或 windows-smoke")
+    );
+    assert!(
+        ci_execution_plan_for_profile(&CiCommand::Preflight, Some("unknown")).is_ok(),
+        "Rust gate profile 不得改变其他独立 job"
+    );
+    assert!(ci_execution_plan_for(&CiCommand::Plan).is_err());
 }
 
 #[test]

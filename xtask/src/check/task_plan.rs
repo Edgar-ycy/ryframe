@@ -2,81 +2,44 @@ use std::collections::BTreeSet;
 
 use crate::Result;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TaskRepository {
-    Backend,
-    Frontend,
-    CrossRepository,
-}
-
-impl TaskRepository {
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Backend => "后端",
-            Self::Frontend => "前端",
-            Self::CrossRepository => "跨仓",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TaskStage {
-    Prerequisite,
-    Static,
-    Test,
-    Contract,
-    Build,
-}
-
-impl TaskStage {
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Prerequisite => "前置",
-            Self::Static => "静态",
-            Self::Test => "测试",
-            Self::Contract => "契约",
-            Self::Build => "构建",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum TaskWorkingDirectory {
-    Backend,
-    Frontend,
-}
-
-impl TaskWorkingDirectory {
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Backend => "后端工作区",
-            Self::Frontend => "前端工作区",
-        }
-    }
-}
+pub(crate) use super::task_registry::{
+    TASK_REGISTRY, TaskDefinition, TaskExecutor, TaskRepository, TaskStage, TaskWorkingDirectory,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TaskSpec<Executor> {
+pub(crate) struct TaskSpec {
     pub(crate) id: &'static str,
     pub(crate) dependencies: Vec<&'static str>,
-    pub(crate) repository: TaskRepository,
-    pub(crate) stage: TaskStage,
-    pub(crate) working_directory: TaskWorkingDirectory,
-    pub(crate) executor: Executor,
-    pub(crate) compilation_coverage: &'static [&'static str],
-    pub(crate) allowed_writes: &'static [&'static str],
-    pub(crate) external_resources: &'static [&'static str],
+    pub(crate) executor: TaskExecutor,
+}
+
+impl TaskSpec {
+    pub(crate) fn definition(&self) -> &'static TaskDefinition {
+        self.executor.definition()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TaskPlan<Executor> {
-    pub(crate) tasks: Vec<TaskSpec<Executor>>,
+pub(crate) struct TaskPlan {
+    pub(crate) tasks: Vec<TaskSpec>,
 }
 
-impl<Executor> TaskPlan<Executor> {
-    pub(crate) fn new(tasks: Vec<TaskSpec<Executor>>) -> Result<Self> {
-        validate_task_graph(&tasks)?;
-        Ok(Self { tasks })
+impl TaskPlan {
+    pub(crate) fn sequence(executors: &[TaskExecutor]) -> Result<Self> {
+        validate_registry()?;
+        let mut tasks = Vec::<TaskSpec>::with_capacity(executors.len());
+        for executor in executors {
+            let definition = executor.definition();
+            let dependencies = tasks.last().map(|task| task.id).into_iter().collect();
+            tasks.push(TaskSpec {
+                id: definition.id,
+                dependencies,
+                executor: *executor,
+            });
+        }
+        let plan = Self { tasks };
+        plan.validate()?;
+        Ok(plan)
     }
 
     pub(crate) fn validate(&self) -> Result<()> {
@@ -84,13 +47,22 @@ impl<Executor> TaskPlan<Executor> {
     }
 }
 
-impl<Executor: PartialEq> TaskPlan<Executor> {
-    pub(crate) fn contains(&self, executor: &Executor) -> bool {
-        self.tasks.iter().any(|task| &task.executor == executor)
+fn validate_registry() -> Result<()> {
+    let mut ids = BTreeSet::new();
+    let mut executors = Vec::new();
+    for definition in TASK_REGISTRY {
+        if !ids.insert(definition.id) {
+            return Err(format!("检查任务注册 ID 重复：{}", definition.id).into());
+        }
+        if executors.contains(&definition.executor) {
+            return Err(format!("检查任务执行器重复登记：{:?}", definition.executor).into());
+        }
+        executors.push(definition.executor);
     }
+    Ok(())
 }
 
-fn validate_task_graph<Executor>(tasks: &[TaskSpec<Executor>]) -> Result<()> {
+fn validate_task_graph(tasks: &[TaskSpec]) -> Result<()> {
     let mut seen = BTreeSet::new();
     for task in tasks {
         if !seen.insert(task.id) {

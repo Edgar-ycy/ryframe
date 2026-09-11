@@ -13,8 +13,9 @@ use crate::{
     Result,
     check::{
         BackendSnapshotProfile, BackendSnapshots, ci_consumer_contract_against_committed_snapshot,
-        ci_target_policy, prepare_backend_snapshots, resource_workspace_compilation,
-        targeted_resource_workspace_compilation, verify_backend_snapshots, verify_job_budget_from,
+        ci_target_policy, preflight_migration_args, prepare_backend_snapshots,
+        resource_workspace_compilation, targeted_resource_workspace_compilation,
+        verify_backend_snapshots, verify_job_budget_from,
     },
     process::{run as run_process, run_owned},
     workspace::root_dir,
@@ -348,7 +349,7 @@ fn execute_targeted_cross_contracts(
                 run_owned(root, "python", &args)?;
             }
             GateStep::MigrationContract => {
-                let args = super::preflight_migration_args(base);
+                let args = preflight_migration_args(base);
                 run_owned(root, "python", &args)?;
             }
             GateStep::OpenApiAndFrontendConsumer => {
@@ -394,9 +395,15 @@ fn execute_step(
     targets: &crate::check::VerifyTargetPolicy,
 ) -> Result<()> {
     match step {
-        GateStep::FullRustGate => super::rust_gate(frontend_dir)?,
-        GateStep::FullIntegration => super::integration()?,
-        GateStep::FullConsumerContract => super::consumer_contract(frontend_dir)?,
+        GateStep::FullRustGate => {
+            super::execute_ci_command(&crate::cli::CiCommand::RustGate, frontend_dir)?
+        }
+        GateStep::FullIntegration => {
+            super::execute_ci_command(&crate::cli::CiCommand::Integration, frontend_dir)?
+        }
+        GateStep::FullConsumerContract => {
+            super::execute_ci_command(&crate::cli::CiCommand::ConsumerContract, frontend_dir)?
+        }
         GateStep::ResourceDrift => {
             run_owned(
                 root,
@@ -426,10 +433,12 @@ fn execute_step(
             run_process(root, "python", &["scripts/check_permission_routes.py"])?;
         }
         GateStep::MigrationContract => {
-            let args = super::preflight_migration_args(base);
+            let args = preflight_migration_args(base);
             run_owned(root, "python", &args)?;
         }
-        GateStep::OpenApiAndFrontendConsumer => super::consumer_contract(frontend_dir)?,
+        GateStep::OpenApiAndFrontendConsumer => {
+            super::execute_ci_command(&crate::cli::CiCommand::ConsumerContract, frontend_dir)?
+        }
     }
     Ok(())
 }

@@ -1,23 +1,15 @@
 use super::{
-    cargo_command::{
-        backend_package_operation_args, cargo_operation_jobs, ci_test_jobs_from,
-        default_test_jobs_from, workspace_clippy_args, workspace_test_args,
-    },
-    context::{VerifyExecutionContext, ci_target_policy},
-    feature::{
-        check_feature_registry, feature_matrix_with_jobs, load_feature_registry,
-        run_feature_operations, run_feature_tests, validate_feature_registry,
-    },
+    cargo_command::{backend_package_operation_args, cargo_operation_jobs, default_test_jobs_from},
+    context::VerifyExecutionContext,
+    feature::{load_feature_registry, run_feature_operations, run_feature_tests},
     metrics,
     model::{BackendSnapshotProfile, FrontendProfile},
     plan::{CheckPlanMode, build_task_plan, render_plan, validate_plan},
-    policy_tasks::{PYTHON_POLICY_TASKS, PolicyProfile, policy_tasks},
-    resource::resource_workspace_compilation,
-    selection::{frontend_profile_commands, load_workspace_metadata},
+    policy_tasks::PYTHON_POLICY_TASKS,
+    selection::frontend_profile_commands,
     snapshot::{
-        export_and_verify_backend_snapshots, prepare_backend_snapshots,
         prepare_consumer_backend_snapshots, run_consumer_contract,
-        stage_committed_backend_snapshots, verify_backend_snapshots,
+        stage_committed_backend_snapshots,
     },
 };
 use crate::{
@@ -25,10 +17,8 @@ use crate::{
     cli::CheckScope,
     process::{
         PreservedFailure, ProcessCancellation, failure_exit_code, is_process_cancellation,
-        run as run_process, run_owned, run_owned_with_env, run_pnpm, with_process_cancellation,
-        with_process_log,
+        run_owned, run_owned_with_env, run_pnpm, with_process_cancellation, with_process_log,
     },
-    workspace::root_dir,
 };
 use std::{
     collections::BTreeSet,
@@ -42,6 +32,9 @@ use std::{
 mod task_execution;
 
 use task_execution::execute_plan;
+pub(crate) use task_execution::{
+    CheckExecutionState, TaskExecutionMode, execute_registered_task, preflight_migration_args,
+};
 
 pub(crate) const PYTHON_TEST_ARGS: &[&str] = &[
     "-m",
@@ -103,66 +96,6 @@ const fn scope_label(scope: CheckScope) -> &'static str {
         CheckScope::Backend => "后端",
         CheckScope::Frontend => "前端",
     }
-}
-
-pub(crate) fn ci_rust_gate(frontend_dir: &Path) -> Result<()> {
-    let root = root_dir();
-    let context = VerifyExecutionContext::new(frontend_dir, true)?;
-    let targets = ci_target_policy()?;
-    let snapshots = prepare_backend_snapshots(
-        &root,
-        &[
-            BackendSnapshotProfile::OpenApiContract,
-            BackendSnapshotProfile::Mysql,
-        ]
-        .into_iter()
-        .collect(),
-    )?;
-    check_feature_registry(&root)?;
-    run_owned(
-        &root,
-        "cargo",
-        &workspace_clippy_args(&targets.backend, context.jobs.backend),
-    )?;
-    feature_matrix_with_jobs(&root, &targets.backend, context.jobs.backend)?;
-
-    let test_jobs = ci_test_jobs_from(
-        std::env::var("RYFRAME_CI_TEST_JOBS").ok().as_deref(),
-        cfg!(windows),
-        context.jobs.total,
-    )?;
-    let test_args = workspace_test_args(&targets.backend, test_jobs);
-    run_owned_with_env(
-        &root,
-        "cargo",
-        &test_args,
-        &snapshots.workspace_test_environment(),
-    )?;
-    resource_workspace_compilation(
-        &root,
-        frontend_dir,
-        &targets.resource,
-        context.jobs.resource,
-    )?;
-    verify_backend_snapshots(&root, &snapshots)
-}
-
-pub(crate) fn ci_consumer_contract(frontend_dir: &Path) -> Result<()> {
-    let targets = ci_target_policy()?;
-    ci_consumer_contract_with_target(frontend_dir, &targets.backend)
-}
-
-pub(crate) fn ci_consumer_contract_with_target(
-    frontend_dir: &Path,
-    target_dir: &str,
-) -> Result<()> {
-    require_frontend_dependencies(frontend_dir)?;
-    let root = root_dir();
-    let profiles = [BackendSnapshotProfile::OpenApiContract]
-        .into_iter()
-        .collect();
-    let snapshots = export_and_verify_backend_snapshots(&root, &profiles, target_dir)?;
-    run_consumer_contract(&root, frontend_dir, &snapshots, false)
 }
 
 pub(crate) fn ci_consumer_contract_against_committed_snapshot(
@@ -333,29 +266,13 @@ fn require_frontend_dependencies(frontend_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn backend(root: &Path, backend_target: &str, jobs: usize, frontend_dir: &Path) -> Result<()> {
-    check_feature_registry(root)?;
-    run_process(root, "cargo", &["fmt", "--all", "--", "--check"])?;
-    // Clippy 会先完成 Workspace 全目标类型检查，无需再执行覆盖范围更小的 cargo check。
-    let clippy = workspace_clippy_args(backend_target, jobs);
-    run_owned(root, "cargo", &clippy)?;
-    for task in policy_tasks(PolicyProfile::FullStatic) {
-        run_owned(root, "python", &task.arguments(root, frontend_dir)?)?;
-    }
-    Ok(())
-}
-
 fn backend_packages(
     context: &VerifyExecutionContext,
     packages: &BTreeSet<String>,
     snapshots: Option<&super::snapshot::BackendSnapshots>,
 ) -> Result<()> {
     let root = &context.root;
-    let metadata = load_workspace_metadata(root)?;
     let registry = load_feature_registry(root)?;
-    validate_feature_registry(&metadata, &registry)?;
-    println!("Cargo feature 注册表检查通过。");
-    run_process(root, "cargo", &["fmt", "--all", "--", "--check"])?;
     let compile_jobs = context.jobs.total;
     for &operation in SMART_BACKEND_OPERATIONS {
         let jobs = cargo_operation_jobs(operation, cfg!(windows), compile_jobs);
@@ -392,13 +309,6 @@ fn backend_packages(
             entry,
             context.targets.backend.as_str(),
             default_test_jobs_from(cfg!(windows), compile_jobs),
-        )?;
-    }
-    for task in policy_tasks(PolicyProfile::Smart) {
-        run_owned(
-            root,
-            "python",
-            &task.arguments(root, &context.frontend_dir)?,
         )?;
     }
     Ok(())

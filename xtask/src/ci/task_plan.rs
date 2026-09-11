@@ -1,26 +1,46 @@
-use std::path::Path;
+use std::{env, path::Path};
 
 use crate::{
     Result,
     check::{
-        BackendSnapshotProfile, TaskPlan, TaskRepository, TaskSpec, TaskStage,
-        TaskWorkingDirectory, VerifySelection,
+        BackendSnapshotProfile, CheckExecutionState, TaskExecutionMode, TaskExecutor, TaskPlan,
+        VerifyExecutionContext, VerifySelection, execute_registered_task,
     },
     cli::CiCommand,
 };
 
-use super::{FULL_CI_EVENTS, INTEGRATION_PACKAGES};
+use super::{FULL_CI_EVENTS, INTEGRATION_PACKAGES, WINDOWS_RUST_GATE_PROFILE};
 
-const CI_TASKS: [CiTaskExecutor; 5] = [
-    CiTaskExecutor::Preflight,
-    CiTaskExecutor::RustGate,
-    CiTaskExecutor::ResourceGate,
-    CiTaskExecutor::Integration,
-    CiTaskExecutor::ConsumerContract,
+const PREFLIGHT_TASKS: &[TaskExecutor] = &[
+    TaskExecutor::CargoFormat,
+    TaskExecutor::PythonEnvironment,
+    TaskExecutor::PythonTests,
+    TaskExecutor::PolicyChecks,
+    TaskExecutor::MigrationHistory,
+];
+const RUST_GATE_TASKS: &[TaskExecutor] = &[
+    TaskExecutor::CiFrontendCheckout,
+    TaskExecutor::SnapshotPrepare,
+    TaskExecutor::FeatureRegistry,
+    TaskExecutor::WorkspaceClippy,
+    TaskExecutor::WorkspaceGates,
+    TaskExecutor::SnapshotVerify,
+];
+const WINDOWS_RUST_GATE_TASKS: &[TaskExecutor] = &[
+    TaskExecutor::CiFrontendCheckout,
+    TaskExecutor::CiWindowsSmoke,
+];
+const RESOURCE_GATE_TASKS: &[TaskExecutor] = &[TaskExecutor::CiResourceGate];
+const INTEGRATION_TASKS: &[TaskExecutor] = &[TaskExecutor::CiIntegration];
+const CONSUMER_CONTRACT_TASKS: &[TaskExecutor] = &[
+    TaskExecutor::CiFrontendCheckout,
+    TaskExecutor::CiContractSource,
+    TaskExecutor::FrontendDependencies,
+    TaskExecutor::ConsumerContract,
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CiTaskExecutor {
+pub(crate) enum CiJob {
     Preflight,
     RustGate,
     ResourceGate,
@@ -28,25 +48,53 @@ pub(crate) enum CiTaskExecutor {
     ConsumerContract,
 }
 
-impl CiTaskExecutor {
-    const fn output_name(self) -> &'static str {
-        match self {
-            Self::Preflight => "preflight",
-            Self::RustGate => "rust_gate",
-            Self::ResourceGate => "resource_gate",
-            Self::Integration => "integration",
-            Self::ConsumerContract => "consumer_contract",
-        }
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CiJobDefinition {
+    job: CiJob,
+    output_name: &'static str,
+    command_name: &'static str,
+    tasks: &'static [TaskExecutor],
+}
 
-    const fn command_name(self) -> &'static str {
-        match self {
-            Self::Preflight => "preflight",
-            Self::RustGate => "rust-gate",
-            Self::ResourceGate => "resource-gate",
-            Self::Integration => "integration",
-            Self::ConsumerContract => "consumer-contract",
-        }
+const CI_JOBS: &[CiJobDefinition] = &[
+    CiJobDefinition {
+        job: CiJob::Preflight,
+        output_name: "preflight",
+        command_name: "preflight",
+        tasks: PREFLIGHT_TASKS,
+    },
+    CiJobDefinition {
+        job: CiJob::RustGate,
+        output_name: "rust_gate",
+        command_name: "rust-gate",
+        tasks: RUST_GATE_TASKS,
+    },
+    CiJobDefinition {
+        job: CiJob::ResourceGate,
+        output_name: "resource_gate",
+        command_name: "resource-gate",
+        tasks: RESOURCE_GATE_TASKS,
+    },
+    CiJobDefinition {
+        job: CiJob::Integration,
+        output_name: "integration",
+        command_name: "integration",
+        tasks: INTEGRATION_TASKS,
+    },
+    CiJobDefinition {
+        job: CiJob::ConsumerContract,
+        output_name: "consumer_contract",
+        command_name: "consumer-contract",
+        tasks: CONSUMER_CONTRACT_TASKS,
+    },
+];
+
+impl CiJob {
+    fn definition(self) -> &'static CiJobDefinition {
+        CI_JOBS
+            .iter()
+            .find(|definition| definition.job == self)
+            .expect("每个 CI job 必须在分组表中登记")
     }
 }
 
@@ -55,16 +103,25 @@ pub(crate) fn ci_plan_for(
     action: &str,
     selection: &VerifySelection,
     resource_gate: bool,
-) -> Result<TaskPlan<CiTaskExecutor>> {
+) -> Result<Vec<CiJob>> {
     if event == "pull_request" && action == "edited" {
         // PR 正文承载精确前端提交；编辑 marker 后必须重新核对跨仓删除策略。
-        return task_plan(&[CiTaskExecutor::Preflight, CiTaskExecutor::ConsumerContract]);
+        return selected_jobs(&[CiJob::Preflight, CiJob::ConsumerContract]);
     }
     if FULL_CI_EVENTS.contains(&event) {
-        return task_plan(&CI_TASKS[..4]);
+        return selected_jobs(&[
+            CiJob::Preflight,
+            CiJob::RustGate,
+            CiJob::ResourceGate,
+            CiJob::Integration,
+        ]);
     }
     if selection.full_reason.is_some() {
-        return task_plan(&CI_TASKS);
+        let jobs = CI_JOBS
+            .iter()
+            .map(|definition| definition.job)
+            .collect::<Vec<_>>();
+        return selected_jobs(&jobs);
     }
 
     let has_backend_work =
@@ -76,112 +133,115 @@ pub(crate) fn ci_plan_for(
     let consumer_contract = selection
         .backend_snapshot_profiles
         .contains(&BackendSnapshotProfile::OpenApiContract);
-    let selected = [
-        (CiTaskExecutor::Preflight, true),
-        (CiTaskExecutor::RustGate, has_backend_work),
-        (CiTaskExecutor::ResourceGate, resource_gate),
-        (CiTaskExecutor::Integration, integration),
-        (CiTaskExecutor::ConsumerContract, consumer_contract),
+    let jobs = [
+        (CiJob::Preflight, true),
+        (CiJob::RustGate, has_backend_work),
+        (CiJob::ResourceGate, resource_gate),
+        (CiJob::Integration, integration),
+        (CiJob::ConsumerContract, consumer_contract),
     ]
     .into_iter()
-    .filter_map(|(executor, enabled)| enabled.then_some(executor))
+    .filter_map(|(job, enabled)| enabled.then_some(job))
     .collect::<Vec<_>>();
-    task_plan(&selected)
+    selected_jobs(&jobs)
 }
 
-pub(crate) fn ci_execution_plan_for(command: &CiCommand) -> Result<TaskPlan<CiTaskExecutor>> {
-    let executor = match command {
-        CiCommand::Preflight => CiTaskExecutor::Preflight,
-        CiCommand::RustGate => CiTaskExecutor::RustGate,
-        CiCommand::ResourceGate => CiTaskExecutor::ResourceGate,
-        CiCommand::Integration => CiTaskExecutor::Integration,
-        CiCommand::ConsumerContract => CiTaskExecutor::ConsumerContract,
-        CiCommand::Plan | CiCommand::ResourceGateReplay(_) => {
-            return Err("该 CI 子命令不是独立 GitHub job 任务".into());
+pub(crate) fn ci_execution_plan_for(command: &CiCommand) -> Result<TaskPlan> {
+    let profile = env::var("RYFRAME_CI_RUST_GATE_PROFILE").ok();
+    ci_execution_plan_for_profile(command, profile.as_deref())
+}
+
+pub(crate) fn ci_execution_plan_for_profile(
+    command: &CiCommand,
+    rust_gate_profile: Option<&str>,
+) -> Result<TaskPlan> {
+    let job = job_for_command(command)?;
+    let tasks = if job == CiJob::RustGate {
+        match rust_gate_profile {
+            None | Some("") | Some("standard") => job.definition().tasks,
+            Some(WINDOWS_RUST_GATE_PROFILE) => WINDOWS_RUST_GATE_TASKS,
+            Some(profile) => {
+                return Err(format!(
+                    "RYFRAME_CI_RUST_GATE_PROFILE 只允许 standard 或 \
+                     {WINDOWS_RUST_GATE_PROFILE}，实际为 {profile}"
+                )
+                .into());
+            }
         }
+    } else {
+        job.definition().tasks
     };
-    task_plan(&[executor])
+    TaskPlan::sequence(tasks)
 }
 
-pub(crate) fn plan_outputs(plan: &TaskPlan<CiTaskExecutor>) -> [(&'static str, bool); 5] {
-    CI_TASKS.map(|executor| (executor.output_name(), plan.contains(&executor)))
+pub(crate) fn plan_outputs(plan: &[CiJob]) -> [(&'static str, bool); 5] {
+    CI_JOBS
+        .iter()
+        .map(|definition| (definition.output_name, plan.contains(&definition.job)))
+        .collect::<Vec<_>>()
+        .try_into()
+        .expect("CI 输出契约固定为五项")
 }
 
-pub(super) fn execute_ci_job(plan: &TaskPlan<CiTaskExecutor>, frontend_dir: &Path) -> Result<()> {
-    let [task] = plan.tasks.as_slice() else {
-        return Err("每次 check ci 执行必须精确选择一个独立 job 任务".into());
-    };
+pub(super) fn execute_ci_job(
+    command: &CiCommand,
+    plan: &TaskPlan,
+    frontend_dir: &Path,
+) -> Result<()> {
+    let job = job_for_command(command)?;
     println!(
-        "开始 CI 任务：{}（cargo xtask check ci {}）",
-        task.id,
-        task.executor.command_name()
+        "开始 CI job：{}（cargo xtask check ci {}）",
+        job.definition().output_name,
+        job.definition().command_name
     );
-    match task.executor {
-        CiTaskExecutor::Preflight => super::preflight(frontend_dir),
-        CiTaskExecutor::RustGate => super::rust_gate(frontend_dir),
-        CiTaskExecutor::ResourceGate => super::resource_gate::run(frontend_dir),
-        CiTaskExecutor::Integration => super::integration(),
-        CiTaskExecutor::ConsumerContract => super::consumer_contract(frontend_dir),
+    let context = VerifyExecutionContext::new_ci(frontend_dir)?;
+    let mut state = CheckExecutionState::default();
+    for task in &plan.tasks {
+        println!("开始 CI 原子任务：{}", task.id);
+        execute_ci_task(task.executor, &context, &mut state)?;
+    }
+    Ok(())
+}
+
+fn execute_ci_task(
+    executor: TaskExecutor,
+    context: &VerifyExecutionContext,
+    state: &mut CheckExecutionState,
+) -> Result<()> {
+    match executor {
+        TaskExecutor::CiFrontendCheckout => {
+            super::verify_frontend_checkout_from_environment(&context.frontend_dir)
+        }
+        TaskExecutor::CiContractSource => {
+            super::verify_formal_contract_source_from_environment(&context.frontend_dir)
+        }
+        TaskExecutor::CiWindowsSmoke => super::windows_smoke(&context.frontend_dir),
+        TaskExecutor::CiResourceGate => super::resource_gate::run(&context.frontend_dir),
+        TaskExecutor::CiIntegration => super::integration(),
+        executor => execute_registered_task(executor, TaskExecutionMode::Ci, context, state),
     }
 }
 
-fn task_plan(selected: &[CiTaskExecutor]) -> Result<TaskPlan<CiTaskExecutor>> {
-    let tasks = CI_TASKS
-        .into_iter()
-        .filter(|executor| selected.contains(executor))
-        .map(task_spec)
-        .collect();
-    TaskPlan::new(tasks)
+fn job_for_command(command: &CiCommand) -> Result<CiJob> {
+    match command {
+        CiCommand::Preflight => Ok(CiJob::Preflight),
+        CiCommand::RustGate => Ok(CiJob::RustGate),
+        CiCommand::ResourceGate => Ok(CiJob::ResourceGate),
+        CiCommand::Integration => Ok(CiJob::Integration),
+        CiCommand::ConsumerContract => Ok(CiJob::ConsumerContract),
+        CiCommand::Plan | CiCommand::ResourceGateReplay(_) => {
+            Err("该 CI 子命令不是独立 GitHub job 任务".into())
+        }
+    }
 }
 
-fn task_spec(executor: CiTaskExecutor) -> TaskSpec<CiTaskExecutor> {
-    let (repository, stage, compilation_coverage, allowed_writes, external_resources) =
-        match executor {
-            CiTaskExecutor::Preflight => (
-                TaskRepository::CrossRepository,
-                TaskStage::Static,
-                &[][..],
-                &["Python 测试缓存"][..],
-                &[][..],
-            ),
-            CiTaskExecutor::RustGate => (
-                TaskRepository::CrossRepository,
-                TaskStage::Test,
-                &["Workspace Clippy/test/feature matrix", "资源 Workspace"][..],
-                &["Cargo target", "候选后端快照"][..],
-                &[][..],
-            ),
-            CiTaskExecutor::ResourceGate => (
-                TaskRepository::CrossRepository,
-                TaskStage::Test,
-                &["资源反向依赖闭包"][..],
-                &["Cargo target", "资源门禁报告"][..],
-                &[][..],
-            ),
-            CiTaskExecutor::Integration => (
-                TaskRepository::Backend,
-                TaskStage::Test,
-                &["MySQL、Redis 与 TLS 真实协议目标"][..],
-                &["Cargo target", "隔离测试资源"][..],
-                &["已登记的 MySQL、Redis 与 TLS 测试资源"][..],
-            ),
-            CiTaskExecutor::ConsumerContract => (
-                TaskRepository::CrossRepository,
-                TaskStage::Contract,
-                &["OpenAPI 生产者与前端消费者"][..],
-                &["候选 OpenAPI", "前端检查产物"][..],
-                &[][..],
-            ),
-        };
-    TaskSpec {
-        id: executor.output_name(),
-        dependencies: Vec::new(),
-        repository,
-        stage,
-        working_directory: TaskWorkingDirectory::Backend,
-        executor,
-        compilation_coverage,
-        allowed_writes,
-        external_resources,
+fn selected_jobs(selected: &[CiJob]) -> Result<Vec<CiJob>> {
+    let jobs = CI_JOBS
+        .iter()
+        .filter_map(|definition| selected.contains(&definition.job).then_some(definition.job))
+        .collect::<Vec<_>>();
+    if jobs.len() != selected.len() {
+        return Err("CI job 计划包含重复或未登记项".into());
     }
+    Ok(jobs)
 }

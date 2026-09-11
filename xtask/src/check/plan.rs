@@ -18,10 +18,7 @@ use super::{
 #[path = "plan_tasks.rs"]
 mod tasks;
 
-pub(crate) use tasks::{
-    CheckTask, CheckTaskExecutor, CheckTaskRepository, CheckTaskStage, CheckTaskWorkingDirectory,
-    tasks_for,
-};
+pub(crate) use tasks::tasks_for;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CheckPlanMode {
@@ -34,7 +31,7 @@ pub(crate) enum CheckPlanMode {
 pub(crate) struct CheckTaskPlan {
     pub(crate) surface: ChangeSurfaceReport,
     pub(crate) mode: CheckPlanMode,
-    pub(crate) task_plan: TaskPlan<CheckTaskExecutor>,
+    pub(crate) task_plan: TaskPlan,
 }
 
 pub(crate) fn plan(scope: CheckScope, full: bool, frontend_dir: &Path) -> Result<()> {
@@ -68,7 +65,7 @@ pub(crate) fn build_task_plan(
         WorkspaceGraph::default()
     };
     let mode = select_check_mode(scope, full, &backend_changes, &frontend_changes, &graph);
-    let task_plan = TaskPlan::new(tasks_for(scope, &mode))?;
+    let task_plan = tasks_for(scope, &mode)?;
     Ok(CheckTaskPlan {
         surface,
         mode,
@@ -125,6 +122,7 @@ pub(crate) fn render_plan(plan: &CheckTaskPlan) {
         return;
     }
     for task in &plan.task_plan.tasks {
+        let definition = task.definition();
         let dependencies = if task.dependencies.is_empty() {
             "无".to_owned()
         } else {
@@ -133,13 +131,13 @@ pub(crate) fn render_plan(plan: &CheckTaskPlan) {
         println!(
             "任务 {}：仓库={}，阶段={}，依赖={}",
             task.id,
-            task.repository.label(),
-            task.stage.label(),
+            definition.repository.label(),
+            definition.stage.label(),
             dependencies
         );
         println!(
             "  工作目录={}；调用={}（{}）",
-            task.working_directory.label(),
+            definition.working_directory.label(),
             task.executor.label(),
             task.executor.description()
         );
@@ -148,12 +146,12 @@ pub(crate) fn render_plan(plan: &CheckTaskPlan) {
         }
         println!(
             "  编译覆盖={}；允许写入={}；外部资源={}",
-            display_metadata(task.compilation_coverage),
-            display_metadata(task.allowed_writes),
-            if task.external_resources.is_empty() {
+            display_metadata(definition.compilation_coverage),
+            display_metadata(definition.allowed_writes),
+            if definition.external_resources.is_empty() {
                 "禁止".to_owned()
             } else {
-                task.external_resources.join("、")
+                definition.external_resources.join("、")
             }
         );
     }

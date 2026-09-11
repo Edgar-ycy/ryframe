@@ -26,6 +26,8 @@ mod selection;
 mod snapshot;
 #[path = "check/task_plan.rs"]
 mod task_plan;
+#[path = "check/task_registry.rs"]
+mod task_registry;
 
 pub(crate) use cargo_command::ci_test_jobs_from;
 #[allow(unused_imports)]
@@ -46,16 +48,17 @@ pub(crate) use context::{
     VerifyTargetPolicy, ci_environment_from, ci_target_policy, ci_target_policy_from,
     resolve_target_dir, verify_job_budget_from, verify_target_policy_from,
 };
-#[allow(unused_imports)]
-pub(crate) use execution::run_parallel_tasks;
+pub(crate) use execution::ci_consumer_contract_against_committed_snapshot;
 #[allow(unused_imports)]
 pub(crate) use execution::verify;
 #[allow(unused_imports)]
 pub(crate) use execution::{
-    PYTHON_ENVIRONMENT_ARGS, PYTHON_TEST_ARGS, SMART_BACKEND_OPERATIONS, SMART_FEATURE_OPERATIONS,
+    CheckExecutionState, TaskExecutionMode, execute_registered_task, preflight_migration_args,
+    run_parallel_tasks,
 };
+#[allow(unused_imports)]
 pub(crate) use execution::{
-    ci_consumer_contract, ci_consumer_contract_against_committed_snapshot, ci_rust_gate,
+    PYTHON_ENVIRONMENT_ARGS, PYTHON_TEST_ARGS, SMART_BACKEND_OPERATIONS, SMART_FEATURE_OPERATIONS,
 };
 #[allow(unused_imports)]
 pub(crate) use feature::{
@@ -68,8 +71,7 @@ pub(crate) use model::{
 };
 #[allow(unused_imports)]
 pub(crate) use plan::{
-    CheckPlanMode, CheckTask, CheckTaskExecutor, CheckTaskPlan, CheckTaskRepository,
-    CheckTaskStage, CheckTaskWorkingDirectory, build_task_plan, plan, select_check_mode, tasks_for,
+    CheckPlanMode, CheckTaskPlan, build_task_plan, plan, select_check_mode, tasks_for,
     validate_plan,
 };
 #[allow(unused_imports)]
@@ -96,4 +98,8 @@ pub(crate) use snapshot::{
     package_tests_generate_snapshots, prepare_backend_snapshots,
     prepare_consumer_backend_snapshots, verify_backend_snapshots,
 };
-pub(crate) use task_plan::{TaskPlan, TaskRepository, TaskSpec, TaskStage, TaskWorkingDirectory};
+#[allow(unused_imports)]
+pub(crate) use task_plan::{
+    TASK_REGISTRY, TaskExecutor, TaskPlan, TaskRepository, TaskSpec, TaskStage,
+    TaskWorkingDirectory,
+};
