@@ -33,7 +33,8 @@ for await (const line of input) {
       const { Session, operationCatalog } = await import(pathToFileURL(path.join(request.backend, 'scripts/devex/request.mjs')))
       const { createPacing } = await import(pathToFileURL(path.join(request.backend, 'scripts/devex/pacing.mjs')))
       const config = request.config
-      pacing = await createPacing(config, { backend: request.backend, frontend: request.frontend, artifacts: request.artifacts })
+      pacing = await createPacing(config, { backend: request.backend,
+        runner_frontend: request.frontend, artifacts: request.artifacts })
       session = new Session(config, await operationCatalog(request.backend), request.identity,
         await pacing.createPreparationControls(request.identity))
       await session.login()

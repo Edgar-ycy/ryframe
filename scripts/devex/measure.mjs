@@ -43,7 +43,7 @@ async function measureVerified(config, values, cache, concurrency, artifacts, de
   let measurement, resources
   try {
     measurement = values.suite === 'homepage'
-      ? await (dependencies.homepage ?? homepage)(config, values.frontend, cache, artifacts)
+      ? await (dependencies.homepage ?? homepage)(config, values.runner_frontend, cache, artifacts)
       : await (dependencies.load ?? load)(config, catalog, values.suite, concurrency, artifacts, { multipartSample, pacing: dependencies.pacing })
   } finally { resources = await stop() }
   await measurement.finalize?.()

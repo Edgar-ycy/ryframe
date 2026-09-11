@@ -32,6 +32,8 @@ pub(crate) use model::{
 pub(crate) use preflight::parse_frontend_fast_plan;
 #[allow(unused_imports)]
 pub(crate) use preflight::require_frontend_dependencies;
+#[allow(unused_imports)]
+pub(crate) use preflight::require_runtime_frontend_layout;
 
 pub(crate) fn source_fingerprints(
     backend_root: &Path,

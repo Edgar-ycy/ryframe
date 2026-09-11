@@ -157,7 +157,8 @@ export async function runQuotaBridge(argv, input = process.stdin, output = proce
           const environment = await readPlan(args, request.backend)
           validateQuotaGrant(args, request, environment)
           const modules = await load(request.backend)
-          pacing = await modules.createPacing(request.config, { backend: request.backend, frontend: request.frontend, artifacts: request.artifacts })
+          pacing = await modules.createPacing(request.config, { backend: request.backend,
+            runner_frontend: request.frontend, artifacts: request.artifacts })
           session = new modules.Session(request.config, await modules.operationCatalog(request.backend), request.identity,
             await pacing.createPreparationControls(request.identity))
           await session.login()

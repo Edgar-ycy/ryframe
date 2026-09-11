@@ -72,7 +72,7 @@ impl BaselineContract {
                 options.suite == DevexSuite::CargoDevSave
                     && matches!(options.variant.as_str(), "api-only" | "worker-only")
             }
-            Self::LegacyStableReadinessB0V1 => !options.suite.is_runtime(),
+            Self::LegacyStableReadinessB0V1 => true,
         };
         valid.then_some(()).ok_or_else(|| {
             format!(

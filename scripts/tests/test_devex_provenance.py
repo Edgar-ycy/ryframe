@@ -31,6 +31,15 @@ DRIVER_SOURCE = {
         for name, character in (("product", "d"), ("test_tools", "e"), ("support", "f"))
     },
 }
+RUNNER_FINGERPRINT = "sha256:" + "9" * 64
+RUNNER_SOURCE = {
+    **DRIVER_SOURCE,
+    "worktree_fingerprint": RUNNER_FINGERPRINT,
+    "fingerprints": {
+        name: {"sha256": character * 64, "files": 2}
+        for name, character in (("product", "1"), ("test_tools", "2"), ("support", "3"))
+    },
+}
 
 
 class Response(io.BytesIO):
@@ -47,16 +56,18 @@ class ProvenanceTests(unittest.TestCase):
         self.enterContext(patch.object(restore_runtime, "capture_inventory",
                                       side_effect=lambda *_args: copy.deepcopy(inventory)))
         self.enterContext(patch.object(provenance, "reusable_artifact_source", return_value=None))
-        self.driver_source = self.enterContext(
-            patch.object(provenance, "current_execution_source", return_value=DRIVER_SOURCE)
-        )
         local = ROOT / ".local-tests/python-unit"
         temporary = WorkspaceDirectory(local)
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()
-        self.backend, self.frontend, self.runtime = [self.root / name for name in ("backend", "frontend", "runtime")]
+        self.backend, self.frontend, self.runtime, self.runner_frontend = [
+            self.root / name for name in ("backend", "frontend", "runtime", "runner-frontend")]
         self.backend.mkdir()
         self.runtime.mkdir()
+        self.runner_frontend.mkdir()
+        self.driver_source = self.enterContext(patch.object(
+            provenance, "current_execution_source",
+            side_effect=lambda root: RUNNER_SOURCE if root == self.runner_frontend else DRIVER_SOURCE))
         (self.frontend / "dist/.vite").mkdir(parents=True)
         for name, value in (("index.html", "current index"), ("app.js", "current JS"), (".vite/manifest.json", "{}")):
             (self.frontend / "dist" / name).write_text(value)
@@ -88,8 +99,11 @@ class ProvenanceTests(unittest.TestCase):
         environment = self.root / "environment.md"
         environment.write_text("# 已登记测试环境\n硬件、存储、网络与初始数据集由操作人员核实。", encoding="utf-8")
         self.request = {"backend": str(self.backend), "frontend": str(self.frontend), "driver": str(self.backend),
-                        "driver_fingerprint": FINGERPRINT, "scope_id": "perf-isolated",
-                        "source_fingerprints": {"backend": FINGERPRINT, "frontend": FINGERPRINT},
+                        "runner_frontend": str(self.runner_frontend),
+                        "driver_fingerprint": FINGERPRINT,
+                        "runner_frontend_fingerprint": RUNNER_FINGERPRINT, "scope_id": "perf-isolated",
+                        "source_fingerprints": {"backend": FINGERPRINT, "frontend": FINGERPRINT,
+                                                "runner_frontend": RUNNER_FINGERPRINT},
                         "api_url": "http://127.0.0.1:18082", "frontend_url": "http://127.0.0.1:4176",
                         "metrics_urls": {"api": "http://127.0.0.1:18082/metrics", "worker": "http://127.0.0.1:19093/metrics"},
                         "environment_sha256": restore_build.file_digest(environment)["sha256"],
@@ -131,7 +145,11 @@ class ProvenanceTests(unittest.TestCase):
         result = provenance.verify(self.request)
         self.assertFalse(result["sources"]["backend"]["clean"])
         self.assertEqual(result["sources"]["driver"], SOURCE)
-        self.assertEqual(result["execution_source"], DRIVER_SOURCE)
+        self.assertEqual(result["sources"]["runner_frontend"], SOURCE)
+        self.assertEqual(result["execution_sources"], {
+            "driver": DRIVER_SOURCE, "runner_frontend": RUNNER_SOURCE})
+        self.assertEqual(result["frontend_root"], str(self.frontend))
+        self.assertEqual(result["runner_frontend_root"], str(self.runner_frontend))
         self.assertEqual(result["environment_evidence"], "operator_declared_document")
         self.assertEqual(before, {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()})
         backend = json.loads((self.root / "build.json").read_text())
@@ -170,16 +188,31 @@ class ProvenanceTests(unittest.TestCase):
         self.request["driver_fingerprint"] = FINGERPRINT
         self.driver_source.side_effect = [
             DRIVER_SOURCE,
+            RUNNER_SOURCE,
             {**DRIVER_SOURCE, "worktree_fingerprint": "sha256:" + "1" * 64},
         ]
         with self.assertRaisesRegex(provenance.ProvenanceError, "driver_source_stable"):
+            provenance.verify(self.request)
+        self.driver_source.side_effect = [
+            DRIVER_SOURCE, RUNNER_SOURCE, DRIVER_SOURCE,
+            {**RUNNER_SOURCE, "worktree_fingerprint": "sha256:" + "2" * 64},
+        ]
+        with self.assertRaisesRegex(provenance.ProvenanceError, "runner_frontend_source_stable"):
+            provenance.verify(self.request)
+
+    def test_runner_frontend_identity_is_independent_from_product_frontend(self):
+        self.request["runner_frontend_fingerprint"] = "sha256:" + "0" * 64
+        self.request["source_fingerprints"]["runner_frontend"] = "sha256:" + "0" * 64
+        with self.assertRaisesRegex(provenance.ProvenanceError, "runner_frontend_source"):
             provenance.verify(self.request)
 
     def test_unknown_or_missing_driver_binding_is_rejected_before_receipt_access(self):
         for mutate in (
             lambda value: value.pop("driver"),
+            lambda value: value.pop("runner_frontend"),
             lambda value: value.update(extra="unexpected"),
             lambda value: value.update(driver_fingerprint="invalid"),
+            lambda value: value.update(runner_frontend_fingerprint="invalid"),
         ):
             changed = copy.deepcopy(self.request)
             mutate(changed)

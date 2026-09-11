@@ -47,11 +47,15 @@ fn validate_stable_readiness_b0(
     candidate: &RunSummary,
     pairing: &PairingMetadata,
 ) -> Result<()> {
-    if baseline.suite != candidate.suite
-        || baseline.variant != candidate.variant
-        || baseline.suite.is_runtime()
+    if baseline.suite != candidate.suite || baseline.variant != candidate.variant {
+        return Err("legacy-stable-readiness-b0-v1 只允许同一 suite 与变体".into());
+    }
+    if baseline.suite.is_runtime()
+        && (baseline.source_fingerprints.runner_frontend.is_none()
+            || baseline.source_fingerprints.runner_frontend
+                != candidate.source_fingerprints.runner_frontend)
     {
-        return Err("legacy-stable-readiness-b0-v1 当前只允许同一非运行时 suite 与变体".into());
+        return Err("stable-readiness 运行时两侧必须使用同一 runner 前端工具闭包".into());
     }
     let provenance = pairing
         .baseline_provenance

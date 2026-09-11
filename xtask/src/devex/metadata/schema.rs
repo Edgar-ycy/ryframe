@@ -17,6 +17,8 @@ pub(crate) struct RunMetadata {
     pub(crate) requested_runs: usize,
     pub(crate) backend: SourceState,
     pub(crate) frontend: Option<SourceState>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) runner_frontend: Option<SourceState>,
     pub(crate) toolchain: Toolchain,
     pub(crate) target: String,
     pub(crate) features: Vec<String>,
@@ -43,6 +45,8 @@ pub(crate) struct SourceState {
 pub(crate) struct SourceFingerprints {
     pub(crate) backend: String,
     pub(crate) frontend: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) runner_frontend: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -65,6 +69,7 @@ pub(crate) struct CommandMetadata {
 pub(crate) struct MetadataContext<'a> {
     pub(crate) backend_root: &'a Path,
     pub(crate) frontend_root: &'a Path,
+    pub(crate) runner_frontend_root: &'a Path,
     pub(crate) devex_root: &'a Path,
     pub(crate) run_id: &'a str,
     pub(crate) options: &'a DevexRunOptions,

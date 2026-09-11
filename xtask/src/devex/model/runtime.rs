@@ -30,7 +30,7 @@ fn concurrency(variant: &str) -> &'static [(&'static str, &'static str)] {
 macro_rules! runtime_step {
     ($name:ident, $suite:literal) => {
         const $name: &[StepDefinition] = &[StepDefinition {
-            working_directory: WorkingDirectory::Frontend,
+            working_directory: WorkingDirectory::RunnerFrontend,
             program: "node",
             args: &[
                 "{driver}/scripts/devex/runtime.mjs",
@@ -40,6 +40,8 @@ macro_rules! runtime_step {
                 "{backend}",
                 "--frontend",
                 "{frontend}",
+                "--runner-frontend",
+                "{runner-frontend}",
                 "--output",
                 "{target}/runtime-{label}.json",
             ],

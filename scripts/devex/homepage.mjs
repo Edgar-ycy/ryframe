@@ -5,10 +5,13 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { summarize } from './load.mjs'
 import { homepageFailure, homepageVisitors } from './homepage-model.mjs'
 
-export async function homepage(config, frontend, cache, artifacts) {
+export function runtimeChromium(runnerFrontend) {
+  return createRequire(path.join(runnerFrontend, 'package.json'))('@playwright/test').chromium
+}
+
+export async function homepage(config, runnerFrontend, cache, artifacts) {
   const { identities, interval } = homepageVisitors(config)
-  const require = createRequire(path.join(frontend, 'package.json'))
-  const { chromium } = require('@playwright/test')
+  const chromium = runtimeChromium(runnerFrontend)
   const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || (process.env.CI ? undefined : 'chrome') })
   const navigation = [], lcp = [], content = [], network = []
   let failed = 0, sessionFailures = 0

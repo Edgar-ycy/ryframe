@@ -394,6 +394,7 @@ pub(crate) enum DevexCommand {
 pub(crate) enum WorkingDirectory {
     Backend,
     Frontend,
+    RunnerFrontend,
 }
 
 #[derive(Debug, Clone, Copy)]

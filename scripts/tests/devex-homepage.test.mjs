@@ -1,5 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { runtimeChromium } from '../devex/homepage.mjs'
 import { browserFailure, homepageFailure, homepageVisitors } from '../devex/homepage-model.mjs'
 import { identityPool } from './devex-selection-fixture.mjs'
 
@@ -18,6 +22,18 @@ test('首页客户模型使用预登记身份与固定地址，保持同一顺�
   assert.deepEqual(visitors.identities, input.bindings.identity_pools.visitors.map((identity, index) => ({
     ...identity, client_address: input.contract.identity_pools.visitors.slots[index].client_address })))
   assert.deepEqual(homepageVisitors(input), visitors)
+})
+
+test('首页浏览器只从统一 runner 前端加载，不依赖产品前端依赖目录', async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'devex-homepage-runner-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const runner = path.join(root, 'runner')
+  const packageRoot = path.join(runner, 'node_modules/@playwright/test')
+  await mkdir(packageRoot, { recursive: true })
+  await writeFile(path.join(packageRoot, 'package.json'), '{"main":"index.cjs"}\n')
+  await writeFile(path.join(packageRoot, 'index.cjs'),
+    'module.exports = { chromium: { source: "runner" } }\n')
+  assert.deepEqual(runtimeChromium(runner), { source: 'runner' })
 })
 
 test('首页拒绝不完整、重复、外部地址以及未显式声明的客户节奏', () => {

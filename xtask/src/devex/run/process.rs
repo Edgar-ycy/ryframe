@@ -14,24 +14,23 @@ use std::{
 pub(super) fn execute_steps(
     backend_root: &Path,
     frontend_root: &Path,
+    runner_frontend_root: &Path,
     target: &Path,
     definition: SuiteDefinition,
     environment: &BTreeMap<String, String>,
     label: &str,
 ) -> Result<(ExitStatus, MemoryEvidence)> {
+    let roots = StepRoots {
+        backend: backend_root,
+        frontend: frontend_root,
+        runner_frontend: runner_frontend_root,
+        target,
+    };
     let mut last_status = success_status()?;
     let mut memory = MemoryEvidence::new();
     for (index, step) in definition.steps.iter().enumerate() {
         println!("  → {label} step {:02}: {}", index + 1, display_step(step));
-        let command = step_command(
-            step,
-            backend_root,
-            frontend_root,
-            target,
-            definition,
-            environment,
-            label,
-        );
+        let command = step_command(step, roots, definition, environment, label);
         let (status, reading) = memory::execute(command)?;
         last_status = status;
         memory.steps.push(reading);
@@ -42,11 +41,17 @@ pub(super) fn execute_steps(
     Ok((last_status, memory))
 }
 
+#[derive(Clone, Copy)]
+struct StepRoots<'a> {
+    backend: &'a Path,
+    frontend: &'a Path,
+    runner_frontend: &'a Path,
+    target: &'a Path,
+}
+
 fn step_command(
     step: &StepDefinition,
-    backend_root: &Path,
-    frontend_root: &Path,
-    target: &Path,
+    roots: StepRoots<'_>,
     definition: SuiteDefinition,
     environment: &BTreeMap<String, String>,
     label: &str,
@@ -57,9 +62,10 @@ fn step_command(
         step.program
     };
     let mut command = Command::new(program);
-    let target = target.to_string_lossy();
-    let frontend = frontend_root.to_string_lossy();
-    let backend = backend_root.to_string_lossy();
+    let target = roots.target.to_string_lossy();
+    let frontend = roots.frontend.to_string_lossy();
+    let runner_frontend = roots.runner_frontend.to_string_lossy();
+    let backend = roots.backend.to_string_lossy();
     let driver_root = crate::workspace::root_dir();
     let driver = driver_root.to_string_lossy();
     let args = step
@@ -70,14 +76,16 @@ fn step_command(
                 .replace("{backend}", &backend)
                 .replace("{target}", &target)
                 .replace("{frontend}", &frontend)
+                .replace("{runner-frontend}", &runner_frontend)
                 .replace("{label}", label)
         })
         .collect::<Vec<_>>();
     command
         .args(args)
         .current_dir(match step.working_directory {
-            WorkingDirectory::Backend => backend_root,
-            WorkingDirectory::Frontend => frontend_root,
+            WorkingDirectory::Backend => roots.backend,
+            WorkingDirectory::Frontend => roots.frontend,
+            WorkingDirectory::RunnerFrontend => roots.runner_frontend,
         })
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
@@ -91,6 +99,7 @@ fn step_command(
             value
                 .replace("{target}", &target)
                 .replace("{frontend}", &frontend)
+                .replace("{runner-frontend}", &runner_frontend)
                 .replace("{label}", label),
         );
     }

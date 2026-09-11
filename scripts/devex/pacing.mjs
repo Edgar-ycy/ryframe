@@ -19,7 +19,7 @@ async function readAuthority(python, backend) {
   } catch { throw new Error('无法从实际 APP 配置取得限流 authority') }
 }
 
-export async function createPacing(config, { backend, frontend, artifacts }, dependencies = {}) {
+export async function createPacing(config, { backend, runner_frontend, artifacts }, dependencies = {}) {
   const pacing = config.contract.pacing
   const binding = config.bindings.pacing
   const now = dependencies.now ?? (() => performance.now())
@@ -42,10 +42,10 @@ export async function createPacing(config, { backend, frontend, artifacts }, dep
       actual_sha256: authority ? hash(authority) : undefined, expected_sha256: pacing?.authority_sha256,
     }, null, 2) + '\n', { flag: 'wx' })
   }
-  return pacingContext(config, { frontend, artifacts }, authority, catalog, { now, sleep, ...dependencies })
+  return pacingContext(config, { runner_frontend, artifacts }, authority, catalog, { now, sleep, ...dependencies })
 }
 
-function pacingContext(config, { frontend, artifacts }, authority, catalog, { now, sleep, loginBudget }) {
+function pacingContext(config, { runner_frontend, artifacts }, authority, catalog, { now, sleep, loginBudget }) {
   const summary = { measurement: {}, preparation: {}, login_budget: { waits: 0, requested_ms: 0 } }
   const fixed = fixedPacer(config.contract.pacing, authority, catalog, { now, sleep,
     onWait: ({ phase, operation, requested_ms, duration_ms }) => {
@@ -57,7 +57,7 @@ function pacingContext(config, { frontend, artifacts }, authority, catalog, { no
     if (!budget) {
       budget = (async () => {
         const create = loginBudget ?? (await import(pathToFileURL(
-          path.join(frontend, 'scripts/browser-login-budget.mjs')).href)).createLoginBudget
+          path.join(runner_frontend, 'scripts/browser-login-budget.mjs')).href)).createLoginBudget
         return create({ statePath: config.bindings.pacing.login_budget_state, scope: config.bindings.scope_id,
           capacity: authority.login.capacity, windowMs: authority.login.window_ms,
           onWait: (milliseconds) => { summary.login_budget.waits++; summary.login_budget.requested_ms += milliseconds } })

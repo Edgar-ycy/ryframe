@@ -48,10 +48,22 @@ pub(super) fn execute(
         .suite
         .definition(&options.variant)
         .map_err(|error| format!("DevEx 变体无效：{error}"))?;
-    preflight::check(backend_root, frontend_root, options, definition)?;
+    preflight::check(
+        backend_root,
+        frontend_root,
+        frontend_root,
+        options,
+        definition,
+    )?;
     let session = prepare_run(backend_root, frontend_root, options, definition)?;
     let execution = (|| {
-        execute_warmup(backend_root, frontend_root, options, &session)?;
+        execute_warmup(
+            backend_root,
+            frontend_root,
+            frontend_root,
+            options,
+            &session,
+        )?;
         capture_sccache_stats(
             backend_root,
             options.suite,
@@ -59,7 +71,13 @@ pub(super) fn execute(
             &session.run_dir,
             "sccache-before.json",
         )?;
-        execute_measurements(backend_root, frontend_root, options, &session)?;
+        execute_measurements(
+            backend_root,
+            frontend_root,
+            frontend_root,
+            options,
+            &session,
+        )?;
         capture_sccache_stats(
             backend_root,
             options.suite,
@@ -152,6 +170,7 @@ fn prepare_run(
     prepare_run_at(
         backend_root,
         frontend_root,
+        frontend_root,
         &devex_root,
         options,
         definition,
@@ -165,6 +184,7 @@ fn prepare_run(
 pub(super) fn prepare_run_at(
     backend_root: &Path,
     frontend_root: &Path,
+    runner_frontend_root: &Path,
     devex_root: &Path,
     options: &DevexRunOptions,
     definition: SuiteDefinition,
@@ -194,11 +214,17 @@ pub(super) fn prepare_run_at(
         }
     }
     if options.suite.is_runtime() {
-        super::runtime::prepare(backend_root, options.cache_state, &mut environment)?;
+        super::runtime::prepare(
+            backend_root,
+            runner_frontend_root,
+            options.cache_state,
+            &mut environment,
+        )?;
     }
     let metadata = collect_metadata(MetadataContext {
         backend_root,
         frontend_root,
+        runner_frontend_root,
         devex_root,
         run_id: &run_id,
         options,
@@ -208,6 +234,13 @@ pub(super) fn prepare_run_at(
     })?;
     let source_fingerprints = metadata.source_fingerprints();
     if options.suite.is_runtime() {
+        if source_fingerprints.runner_frontend.as_deref()
+            != environment
+                .get("RYFRAME_DEVEX_RUNNER_FRONTEND_FINGERPRINT")
+                .map(String::as_str)
+        {
+            return Err("运行时 runner 前端在准备收据期间发生变化".into());
+        }
         environment.insert(
             "RYFRAME_DEVEX_SOURCE_FINGERPRINTS".into(),
             serde_json::to_string(&source_fingerprints)?,
@@ -236,12 +269,14 @@ fn available_sccache_port() -> Result<u16> {
 pub(super) fn execute_warmup(
     backend_root: &Path,
     frontend_root: &Path,
+    runner_frontend_root: &Path,
     options: &DevexRunOptions,
     session: &RunSession,
 ) -> Result<()> {
     execute_warmup_with_contract(
         backend_root,
         frontend_root,
+        runner_frontend_root,
         options,
         session,
         SaveMeasurementContract::Current,
@@ -251,6 +286,7 @@ pub(super) fn execute_warmup(
 pub(super) fn execute_warmup_with_contract(
     backend_root: &Path,
     frontend_root: &Path,
+    runner_frontend_root: &Path,
     options: &DevexRunOptions,
     session: &RunSession,
     save_contract: SaveMeasurementContract,
@@ -260,6 +296,7 @@ pub(super) fn execute_warmup_with_contract(
         let outcome = execute_sample_with_contract(
             backend_root,
             frontend_root,
+            runner_frontend_root,
             &target,
             session.definition,
             &session.environment,
@@ -297,6 +334,7 @@ pub(super) fn execute_warmup_with_contract(
 fn execute_measurements(
     backend_root: &Path,
     frontend_root: &Path,
+    runner_frontend_root: &Path,
     options: &DevexRunOptions,
     session: &RunSession,
 ) -> Result<()> {
@@ -318,6 +356,7 @@ fn execute_measurements(
         let outcome = execute_sample(
             backend_root,
             frontend_root,
+            runner_frontend_root,
             &target,
             session.definition,
             &session.environment,
@@ -376,6 +415,7 @@ pub(super) struct SampleOutcome {
 pub(super) fn execute_sample(
     backend_root: &Path,
     frontend_root: &Path,
+    runner_frontend_root: &Path,
     target: &Path,
     definition: SuiteDefinition,
     environment: &BTreeMap<String, String>,
@@ -386,6 +426,7 @@ pub(super) fn execute_sample(
     execute_sample_with_contract(
         backend_root,
         frontend_root,
+        runner_frontend_root,
         target,
         definition,
         environment,
@@ -400,6 +441,7 @@ pub(super) fn execute_sample(
 pub(super) fn execute_sample_with_contract(
     backend_root: &Path,
     frontend_root: &Path,
+    runner_frontend_root: &Path,
     target: &Path,
     definition: SuiteDefinition,
     environment: &BTreeMap<String, String>,
@@ -419,6 +461,7 @@ pub(super) fn execute_sample_with_contract(
         execute_steps(
             backend_root,
             frontend_root,
+            runner_frontend_root,
             target,
             definition,
             environment,

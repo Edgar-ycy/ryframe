@@ -115,7 +115,8 @@ export async function runDepartmentBridge(argv, input = process.stdin, output = 
           plan = await readPlan(args, request.backend)
           data = validateDepartmentGrant(args, request, plan)
           const modules = await load(request.backend)
-          pacing = await modules.createPacing(request.config, { backend: request.backend, frontend: request.frontend, artifacts: request.artifacts })
+          pacing = await modules.createPacing(request.config, { backend: request.backend,
+            runner_frontend: request.frontend, artifacts: request.artifacts })
           catalog = await modules.operationCatalog(request.backend)
           SessionType = modules.Session
           config = request.config

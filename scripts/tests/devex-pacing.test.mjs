@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { hash } from '../devex/config.mjs'
@@ -78,7 +78,8 @@ test('每次独立sample调用都有完整准备窗口，包括预热及ABBA相�
   for (const name of ['warmup-base', 'warmup-candidate', 'base-1', 'candidate-1', 'candidate-2', 'base-2']) {
     const output = path.join(root, name + '.json'), before = clock.now()
     let observedAt
-    const result = await measure(config(root), { suite: 'homepage', backend: root, frontend: root, output }, 'warm', {
+    const result = await measure(config(root), { suite: 'homepage', backend: root,
+      frontend: root, runner_frontend: root, output }, 'warm', {
       verifyProvenance: async () => async () => {},
       createPacing: (value, paths) => createPacing(value, paths, { ...clock, catalog, readAuthority: async () => authority }),
       prepareImportSamples: async () => {},
@@ -99,7 +100,7 @@ test('每次独立sample调用都有完整准备窗口，包括预热及ABBA相�
 test('authority摘要不匹配先落盘失败，不进入样本窗口或请求', async (t) => {
   const root = await directory(t), value = config(root)
   value.contract.pacing.authority_sha256 = '0'.repeat(64)
-  await assert.rejects(createPacing(value, { backend: root, frontend: root, artifacts: root }, {
+  await assert.rejects(createPacing(value, { backend: root, runner_frontend: root, artifacts: root }, {
     catalog, readAuthority: async () => authority,
   }), /摘要不一致/)
   const receipt = JSON.parse(await readFile(path.join(root, 'pacing-authority.json')))
@@ -126,7 +127,7 @@ test('嵌套CSRF及跨Session同客户共用固定时钟，登录principal也不
 
 test('准备阶段复用共享principal/IP登录预算，429不重试且失败仍完成预约', async (t) => {
   const root = await directory(t), clock = virtualClock(), budgetEvents = [], received = []
-  const context = await createPacing(config(root), { backend: root, frontend: root, artifacts: root }, {
+  const context = await createPacing(config(root), { backend: root, runner_frontend: root, artifacts: root }, {
     ...clock, catalog, readAuthority: async () => authority,
     loginBudget: (options) => {
       assert.equal(options.capacity, 5); assert.equal(options.windowMs, 60000)
@@ -145,6 +146,24 @@ test('准备阶段复用共享principal/IP登录预算，429不重试且失败�
   const summary = JSON.parse(await readFile(path.join(root, 'pacing-summary.json')))
   assert.equal(summary.preparation.post_auth_login.requests, 1)
   assert.deepEqual(summary.measurement, {})
+})
+
+test('登录预算实现只从统一 runner 前端加载', async (t) => {
+  const root = await directory(t), runner = path.join(root, 'runner')
+  await mkdir(path.join(runner, 'scripts'), { recursive: true })
+  await writeFile(path.join(runner, 'scripts/browser-login-budget.mjs'), `
+    export const createLoginBudget = () => ({
+      reserve: async () => 'runner-reservation', complete: async () => {}
+    })\n`)
+  const context = await createPacing(config(root), {
+    backend: root, runner_frontend: runner, artifacts: root,
+  }, { ...virtualClock(), catalog, readAuthority: async () => authority })
+  const controls = await context.createPreparationControls(identity)
+  const complete = await controls.beforeRequest(metadata('post_auth_login'))
+  await complete()
+  await context.close()
+  assert.equal((await readFile(path.join(runner, 'scripts/browser-login-budget.mjs'), 'utf8'))
+    .includes('runner-reservation'), true)
 })
 
 test('完成hook同时保留网络/HTTP失败与预约失败，metadata含当前契约事实', async (t) => {
@@ -184,7 +203,7 @@ test('测量阶段固定间隔进入周期耗时与吞吐，准备窗口不进�
   fast.global.window_ms = 10; fast.api.window_ms = 10; fast.login.window_ms = 10
   value.contract.pacing = { authority_sha256: hash(fast), request_interval_ms: 15,
     operation_intervals_ms: {}, sample_prepare_wait_ms: 300 }
-  const context = await createPacing(value, { backend: root, frontend: root, artifacts: root }, {
+  const context = await createPacing(value, { backend: root, runner_frontend: root, artifacts: root }, {
     ...clock, catalog, readAuthority: async () => fast,
   })
   class Client {

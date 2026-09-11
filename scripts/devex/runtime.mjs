@@ -18,6 +18,7 @@ function runtimeArguments(args) {
         suite: { type: 'string' },
         backend: { type: 'string' },
         frontend: { type: 'string' },
+        'runner-frontend': { type: 'string' },
         output: { type: 'string' },
       },
       strict: true,
@@ -29,7 +30,7 @@ function runtimeArguments(args) {
   if (!['api', 'jobs', 'tenants', 'homepage'].includes(values.suite)) {
     throw new ParameterError('未知运行时场景')
   }
-  for (const name of ['backend', 'frontend', 'output']) {
+  for (const name of ['backend', 'frontend', 'runner-frontend', 'output']) {
     if (typeof values[name] !== 'string' || !path.isAbsolute(values[name])) {
       throw new ParameterError(`--${name} 必须是绝对路径`)
     }
@@ -66,11 +67,18 @@ export async function runRuntimeDriver(
     if (!/^sha256:[a-f0-9]{64}$/.test(driverFingerprint ?? '')) {
       throw new Error('必须绑定实际运行 driver 的完整源码指纹')
     }
+    const runnerFrontendFingerprint = environment.RYFRAME_DEVEX_RUNNER_FRONTEND_FINGERPRINT
+    if (!/^sha256:[a-f0-9]{64}$/.test(runnerFrontendFingerprint ?? '')) {
+      throw new Error('必须绑定实际 runner 前端的完整源码指纹')
+    }
     const runtimeValues = {
       ...values,
+      runner_frontend: values['runner-frontend'],
       driver: DRIVER_ROOT,
       driver_fingerprint: driverFingerprint,
+      runner_frontend_fingerprint: runnerFrontendFingerprint,
     }
+    delete runtimeValues['runner-frontend']
     const { measurement, resources } = await execute(
       config,
       runtimeValues,

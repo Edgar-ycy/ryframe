@@ -8,19 +8,23 @@ const verifier = fileURLToPath(new URL('../devex_provenance.py', import.meta.url
 
 function requestFor(config, values) {
   const { python, ...provenance } = config.bindings.provenance ?? {}
-  const roots = ['backend', 'frontend', 'driver']
+  const { scope_id, source_fingerprints, api_url, frontend_url, metrics_urls } = config.bindings
+  const roots = ['backend', 'frontend', 'driver', 'runner_frontend']
   if (
     typeof python !== 'string' ||
     !path.isAbsolute(python) ||
     roots.some((name) => typeof values[name] !== 'string' || !path.isAbsolute(values[name])) ||
-    !/^sha256:[a-f0-9]{64}$/.test(values.driver_fingerprint ?? '')
+    !/^sha256:[a-f0-9]{64}$/.test(values.driver_fingerprint ?? '') ||
+    !/^sha256:[a-f0-9]{64}$/.test(values.runner_frontend_fingerprint ?? '') ||
+    source_fingerprints?.runner_frontend !== values.runner_frontend_fingerprint
   )
     throw new Error('bindings')
-  const { scope_id, source_fingerprints, api_url, frontend_url, metrics_urls } = config.bindings
   return { python, request: structuredClone({ provenance, scope_id, source_fingerprints,
     api_url, frontend_url, metrics_urls, backend: path.resolve(values.backend),
     frontend: path.resolve(values.frontend), driver: path.resolve(values.driver),
+    runner_frontend: path.resolve(values.runner_frontend),
     driver_fingerprint: values.driver_fingerprint,
+    runner_frontend_fingerprint: values.runner_frontend_fingerprint,
     environment_sha256: config.contract.environment_sha256 }) }
 }
 
@@ -61,7 +65,7 @@ export async function verifyProvenance(config, values, artifacts, run = python) 
     try {
       specification ??= requestFor(config, values)
       receipt = await run(specification.python, specification.request)
-      if (receipt?.format_version !== 1 || receipt.kind !== 'devex-runtime-provenance')
+      if (receipt?.format_version !== 2 || receipt.kind !== 'devex-runtime-provenance')
         throw new Error('verifier_result')
       if (before && hash(receipt) !== hash(before)) throw new Error('sample_changed')
       return receipt

@@ -77,14 +77,17 @@ test('运行时公开驱动保留输入输出、失败传播和配置前后像',
   context.after(() => rm(root, { recursive: true, force: true }))
   const backend = path.join(root, 'backend')
   const frontend = path.join(root, 'frontend')
+  const runnerFrontend = path.join(root, 'runner-frontend')
   const runtimeConfig = path.join(backend, '.local-tests/devex/runtime.json')
   await mkdir(path.dirname(runtimeConfig), { recursive: true })
   await mkdir(frontend)
+  await mkdir(runnerFrontend)
   await writeFile(runtimeConfig, '{"fixed":true}\n')
   const environment = {
     RYFRAME_DEVEX_CACHE: 'warm',
     RYFRAME_DEVEX_RUNTIME_INPUT_SHA256: 'a'.repeat(64),
     RYFRAME_DEVEX_DRIVER_FINGERPRINT: `sha256:${'d'.repeat(64)}`,
+    RYFRAME_DEVEX_RUNNER_FRONTEND_FINGERPRINT: `sha256:${'e'.repeat(64)}`,
   }
   const result = {
     measurement: {
@@ -97,7 +100,8 @@ test('运行时公开驱动保留输入输出、失败传播和配置前后像',
     resources: { collector_failures: 0, cpu_seconds: 1 },
   }
   const argumentsFor = (output) => [
-    '--suite', 'api', '--backend', backend, '--frontend', frontend, '--output', output,
+    '--suite', 'api', '--backend', backend, '--frontend', frontend,
+    '--runner-frontend', runnerFrontend, '--output', output,
   ]
   const messages = []
   const runtimeValues = []
@@ -120,6 +124,8 @@ test('运行时公开驱动保留输入输出、失败传播和配置前后像',
   })
   assert.equal(runtimeValues[0].driver, ROOT)
   assert.equal(runtimeValues[0].driver_fingerprint, `sha256:${'d'.repeat(64)}`)
+  assert.equal(runtimeValues[0].runner_frontend, runnerFrontend)
+  assert.equal(runtimeValues[0].runner_frontend_fingerprint, `sha256:${'e'.repeat(64)}`)
 
   const failedEvidence = structuredClone(result)
   failedEvidence.measurement.completed_cycles = 0
@@ -155,11 +161,23 @@ test('运行时公开驱动保留输入输出、失败传播和配置前后像',
   assert.equal(await runRuntimeDriver(argumentsFor(unboundOutput), unboundEnvironment, dependencies), 1)
   await assert.rejects(readFile(unboundOutput), /ENOENT/)
 
+  const unboundRunnerOutput = path.join(root, 'unbound-runner.json')
+  const unboundRunnerEnvironment = { ...environment }
+  delete unboundRunnerEnvironment.RYFRAME_DEVEX_RUNNER_FRONTEND_FINGERPRINT
+  assert.equal(await runRuntimeDriver(
+    argumentsFor(unboundRunnerOutput), unboundRunnerEnvironment, dependencies), 1)
+  await assert.rejects(readFile(unboundRunnerOutput), /ENOENT/)
+
+  const relativeRunner = argumentsFor(path.join(root, 'relative-runner.json'))
+  relativeRunner[relativeRunner.indexOf('--runner-frontend') + 1] = 'relative'
+  assert.equal(await runRuntimeDriver(relativeRunner, environment, dependencies), 2)
+
   assert.equal(await runRuntimeDriver([], environment, dependencies), 2)
   assert.equal(await runRuntimeDriver(['--unknown'], environment, dependencies), 2)
   assert.ok(messages.some((message) => message.includes('fixture failure')))
   assert.ok(messages.some((message) => message.includes('配置发生变化')))
   assert.ok(messages.some((message) => message.includes('driver')))
+  assert.ok(messages.some((message) => message.includes('runner 前端')))
   assert.ok(messages.filter((message) => message.includes('参数无效')).length >= 2)
 })
 

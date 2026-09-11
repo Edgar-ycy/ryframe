@@ -237,13 +237,14 @@ fn legacy_baseline_contract_is_closed_to_config_only() {
 }
 
 #[test]
-fn stable_readiness_b0_contract_accepts_nonruntime_suites_and_binds_both_product_roots() {
+fn stable_readiness_b0_contract_accepts_all_suites_and_binds_both_product_roots() {
     for (suite, variant, runs, cache) in [
         ("rust-cold-build", "api", "20", "cold"),
         ("resource-generator", "post", "6", "warm"),
         ("resource-gate", "auto", "6", "warm"),
         ("rust-gate", "default", "20", "warm"),
         ("frontend-fast", "default", "6", "warm"),
+        ("runtime-api", "10", "6", "warm"),
     ] {
         let cli = parse(strings(&[
             "check",

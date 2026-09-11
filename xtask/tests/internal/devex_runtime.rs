@@ -1,6 +1,6 @@
 use super::cli::{CheckCommand, Command, parse};
 use super::devex::{CacheState, DevexCommand, DevexSuite, comparison_checks, distribution};
-use super::devex::{DevexRunOptions, require_frontend_dependencies};
+use super::devex::{DevexRunOptions, require_runtime_frontend_layout};
 use super::devex_acceptance_tests::summary;
 use serde_json::json;
 use std::{fs, path::Path, process::Command as ProcessCommand};
@@ -33,6 +33,11 @@ fn public_perf_plan_resolves_to_the_actual_runtime_driver() {
     let step = &definition.steps[0];
     assert_eq!(step.program, "node");
     assert_eq!(step.args[0], "{driver}/scripts/devex/runtime.mjs");
+    assert!(
+        step.args
+            .windows(2)
+            .any(|pair| { pair == ["--runner-frontend", "{runner-frontend}"] })
+    );
 
     let backend = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let driver = backend.join("scripts/devex/runtime.mjs");
@@ -61,20 +66,103 @@ fn public_perf_plan_resolves_to_the_actual_runtime_driver() {
 }
 
 #[test]
-fn runtime_preflight_requires_the_versioned_frontend_login_budget_closure() {
-    let frontend = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+fn stable_b0_paired_runtime_plan_binds_both_products_and_the_shared_runner_argument() {
+    let cli = parse(strings(&[
+        "check",
+        "perf",
+        "paired",
+        "--base-backend",
+        "D:/worktrees/b0-adapter",
+        "--candidate-backend",
+        "D:/worktrees/b1-backend",
+        "--base-frontend",
+        "D:/worktrees/b0-frontend",
+        "--candidate-frontend",
+        "D:/worktrees/b1-frontend",
+        "--baseline-contract",
+        "legacy-stable-readiness-b0-v1",
+        "--suite",
+        "runtime-api",
+        "--variant",
+        "10",
+        "--runs",
+        "6",
+        "--cache",
+        "warm",
+    ]))
+    .unwrap();
+    let Command::Check(CheckCommand::Perf(DevexCommand::Paired(options))) = cli.command else {
+        panic!("应解析为 stable-readiness B0/B1 runtime paired");
+    };
+    assert_eq!(
+        options.baseline_backend,
+        Path::new("D:/worktrees/b0-adapter")
+    );
+    assert_eq!(
+        options.baseline_frontend.as_deref(),
+        Some(Path::new("D:/worktrees/b0-frontend"))
+    );
+    assert_eq!(
+        options.candidate_frontend.as_deref(),
+        Some(Path::new("D:/worktrees/b1-frontend"))
+    );
+    let definitions = [
+        options
+            .run
+            .suite
+            .paired_definition(
+                &options.run.variant,
+                options.baseline_contract,
+                super::devex::PairedArm::Baseline,
+            )
+            .unwrap(),
+        options
+            .run
+            .suite
+            .paired_definition(
+                &options.run.variant,
+                options.baseline_contract,
+                super::devex::PairedArm::Candidate,
+            )
+            .unwrap(),
+    ];
+    for definition in definitions {
+        assert_eq!(definition.steps.len(), 1);
+        assert_eq!(definition.steps[0].program, "node");
+        assert!(
+            definition.steps[0]
+                .args
+                .windows(2)
+                .any(|pair| pair == ["--frontend", "{frontend}"])
+        );
+        assert!(
+            definition.steps[0]
+                .args
+                .windows(2)
+                .any(|pair| pair == ["--runner-frontend", "{runner-frontend}"])
+        );
+    }
+}
+
+#[test]
+fn runtime_preflight_separates_product_from_versioned_runner_frontend() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
         "target/runtime-frontend-preflight-{}",
         std::process::id()
     ));
-    fs::create_dir_all(frontend.join("node_modules")).unwrap();
-    fs::write(frontend.join("package.json"), "{}\n").unwrap();
+    let product = root.join("product");
+    let runner = root.join("runner");
+    fs::create_dir_all(&product).unwrap();
+    fs::create_dir_all(runner.join("node_modules")).unwrap();
+    fs::write(product.join("package.json"), "{}\n").unwrap();
+    fs::write(runner.join("package.json"), "{}\n").unwrap();
     let options = DevexRunOptions {
         suite: DevexSuite::RuntimeApi,
         variant: "10".into(),
         cache_state: CacheState::Warm,
         runs: 6,
     };
-    let error = require_frontend_dependencies(&frontend, &options)
+    let error = require_runtime_frontend_layout(&product, &runner, &options)
         .unwrap_err()
         .to_string();
     assert!(error.contains("browser-login-budget.mjs"));
@@ -83,12 +171,14 @@ fn runtime_preflight_requires_the_versioned_frontend_login_budget_closure() {
         "scripts/browser-login-budget-model.mjs",
         "scripts/browser-login-ledger.mjs",
     ] {
-        let path = frontend.join(relative);
+        let path = runner.join(relative);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, "// fixture\n").unwrap();
     }
-    require_frontend_dependencies(&frontend, &options).unwrap();
-    fs::remove_dir_all(frontend).unwrap();
+    require_runtime_frontend_layout(&product, &runner, &options).unwrap();
+    assert!(!product.join("node_modules").exists());
+    assert!(!product.join("scripts/browser-login-budget.mjs").exists());
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

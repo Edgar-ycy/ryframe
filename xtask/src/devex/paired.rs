@@ -63,6 +63,7 @@ pub(super) fn execute(
     preflight::check_paired(
         &roots.baseline_backend,
         &roots.baseline_frontend,
+        &roots.runner_frontend,
         &options.run,
         baseline_definition,
         options.baseline_contract,
@@ -71,6 +72,7 @@ pub(super) fn execute(
     preflight::check_paired(
         &roots.candidate_backend,
         &roots.candidate_frontend,
+        &roots.runner_frontend,
         &options.run,
         candidate_definition,
         options.baseline_contract,
@@ -87,6 +89,7 @@ pub(super) fn execute(
     let baseline = prepare_arm(
         &roots.baseline_backend,
         &roots.baseline_frontend,
+        &roots.runner_frontend,
         &devex_root,
         &options.run,
         baseline_definition,
@@ -98,6 +101,7 @@ pub(super) fn execute(
     let candidate = prepare_arm(
         &roots.candidate_backend,
         &roots.candidate_frontend,
+        &roots.runner_frontend,
         &devex_root,
         &options.run,
         candidate_definition,
@@ -163,6 +167,7 @@ struct PairedRoots {
     candidate_backend: PathBuf,
     baseline_frontend: PathBuf,
     candidate_frontend: PathBuf,
+    runner_frontend: PathBuf,
 }
 
 fn paired_roots(
@@ -182,7 +187,7 @@ fn paired_roots(
     )?;
     let binds_stable_product =
         options.baseline_contract == Some(BaselineContract::LegacyStableReadinessB0V1);
-    let (baseline_frontend, candidate_frontend) =
+    let (baseline_frontend, candidate_frontend, runner_frontend) =
         if definition.requires_frontend || binds_stable_product {
             let coordinator = canonical_worktree(coordinator_frontend, "当前前端")?;
             let baseline = canonical_worktree(
@@ -200,9 +205,10 @@ fn paired_roots(
                 "候选前端",
             )?;
             ensure_distinct_roots("前端", &coordinator, &baseline, &candidate)?;
-            (baseline, candidate)
+            (baseline, candidate, coordinator)
         } else {
             (
+                coordinator_frontend.to_path_buf(),
                 coordinator_frontend.to_path_buf(),
                 coordinator_frontend.to_path_buf(),
             )
@@ -212,6 +218,7 @@ fn paired_roots(
         candidate_backend,
         baseline_frontend,
         candidate_frontend,
+        runner_frontend,
     })
 }
 
@@ -264,6 +271,7 @@ struct PairedRunDirectories {
 fn prepare_arm(
     backend_root: &Path,
     frontend_root: &Path,
+    runner_frontend_root: &Path,
     devex_root: &Path,
     options: &DevexRunOptions,
     definition: SuiteDefinition,
@@ -279,6 +287,7 @@ fn prepare_arm(
     prepare_run_at(
         backend_root,
         frontend_root,
+        runner_frontend_root,
         devex_root,
         options,
         definition,
@@ -305,6 +314,7 @@ fn execute_samples(
     execute_warmup_with_contract(
         &roots.baseline_backend,
         &roots.baseline_frontend,
+        &roots.runner_frontend,
         options,
         baseline,
         save_contract(baseline_contract, PairedArm::Baseline),
@@ -312,6 +322,7 @@ fn execute_samples(
     execute_warmup_with_contract(
         &roots.candidate_backend,
         &roots.candidate_frontend,
+        &roots.runner_frontend,
         options,
         candidate,
         save_contract(baseline_contract, PairedArm::Candidate),
@@ -392,7 +403,8 @@ fn execute_measurement(
             candidate,
         ),
     };
-    let expected_fingerprints = source_fingerprints(backend_root, frontend_root, session)?;
+    let expected_fingerprints =
+        source_fingerprints(backend_root, frontend_root, &roots.runner_frontend, session)?;
     let target = sample_target(&session.run_dir, options.suite, options.cache_state, pair);
     let label = format!("{}-pair-{pair:03}-order-{order:03}", arm.as_str());
     println!(
@@ -405,6 +417,7 @@ fn execute_measurement(
     let outcome = execute_sample_with_contract(
         backend_root,
         frontend_root,
+        &roots.runner_frontend,
         &target,
         session.definition,
         &session.environment,
@@ -413,7 +426,8 @@ fn execute_measurement(
         &label,
         save_contract(baseline_contract, arm),
     )?;
-    let restored = source_fingerprints(backend_root, frontend_root, session)?;
+    let restored =
+        source_fingerprints(backend_root, frontend_root, &roots.runner_frontend, session)?;
     if restored != expected_fingerprints {
         return Err(format!(
             "paired {} 第 {pair} 对样本结束后源码指纹发生变化",
@@ -475,15 +489,20 @@ fn save_contract(
 fn source_fingerprints(
     backend_root: &Path,
     frontend_root: &Path,
+    runner_frontend_root: &Path,
     session: &RunSession,
 ) -> Result<super::metadata::SourceFingerprints> {
-    let observed = collect_source_fingerprints(
-        backend_root,
-        session
+    let observed = if session.definition.requires_frontend {
+        let runner = session
             .definition
-            .requires_frontend
-            .then_some(frontend_root),
-    )?;
+            .steps
+            .iter()
+            .any(|step| step.working_directory == super::model::WorkingDirectory::RunnerFrontend)
+            .then_some(runner_frontend_root);
+        super::metadata::collect_runtime_source_fingerprints(backend_root, frontend_root, runner)?
+    } else {
+        collect_source_fingerprints(backend_root, None)?
+    };
     if observed != session.source_fingerprints {
         return Err(format!(
             "paired {} worktree 在测量期间发生变化，拒绝混入样本",

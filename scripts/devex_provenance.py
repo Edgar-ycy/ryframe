@@ -38,9 +38,10 @@ def absolute_path(value: str) -> Path:
     return path.resolve(strict=True)
 
 
-def request_roots(request: dict) -> tuple[Path, Path, Path]:
+def request_roots(request: dict) -> tuple[Path, Path, Path, Path]:
     expected_fields = {
-        "backend", "frontend", "driver", "driver_fingerprint", "scope_id",
+        "backend", "frontend", "driver", "runner_frontend", "driver_fingerprint",
+        "runner_frontend_fingerprint", "scope_id",
         "source_fingerprints", "api_url", "frontend_url", "metrics_urls",
         "environment_sha256", "provenance",
     }
@@ -50,16 +51,20 @@ def request_roots(request: dict) -> tuple[Path, Path, Path]:
         or set(request) != expected_fields
         or not isinstance(request.get("driver_fingerprint"), str)
         or re.fullmatch(r"sha256:[a-f0-9]{64}", request["driver_fingerprint"]) is None
+        or not isinstance(request.get("runner_frontend_fingerprint"), str)
+        or re.fullmatch(r"sha256:[a-f0-9]{64}", request["runner_frontend_fingerprint"]) is None
         or not isinstance(source_fingerprints, dict)
-        or set(source_fingerprints) != {"backend", "frontend"}
+        or set(source_fingerprints) != {"backend", "frontend", "runner_frontend"}
         or any(
             not isinstance(value, str)
             or re.fullmatch(r"sha256:[a-f0-9]{64}", value) is None
             for value in source_fingerprints.values()
         )
+        or source_fingerprints["runner_frontend"] != request["runner_frontend_fingerprint"]
     ):
         raise ValueError("运行来源请求字段不完整")
-    return tuple(absolute_path(request[name]) for name in ("backend", "frontend", "driver"))
+    return tuple(absolute_path(request[name]) for name in (
+        "backend", "frontend", "driver", "runner_frontend"))
 
 
 def bound_file(binding: dict, *, document: bool = False):
@@ -165,7 +170,8 @@ def verify_runtime_binding(request: dict, receipts: dict, backend: Path, directo
 
 
 def verify(request: dict) -> dict:
-    backend, frontend, driver = checked("bindings", lambda: request_roots(request))
+    backend, frontend, driver, runner_frontend = checked(
+        "bindings", lambda: request_roots(request))
     files = checked("bindings", lambda: file_bindings(request, frontend))
     environment = {"path": request["provenance"]["environment_document"], "sha256": request["environment_sha256"]}
     checked("environment_document", lambda: bound_file(environment, document=True))
@@ -180,6 +186,11 @@ def verify(request: dict) -> dict:
     if driver_source["worktree_fingerprint"] != request["driver_fingerprint"]:
         raise ProvenanceError("driver_source")
     sources["driver"] = driver_source["snapshot"]
+    runner_source = checked(
+        "runner_frontend_source", lambda: current_execution_source(runner_frontend))
+    if runner_source["worktree_fingerprint"] != request["runner_frontend_fingerprint"]:
+        raise ProvenanceError("runner_frontend_source")
+    sources["runner_frontend"] = runner_source["snapshot"]
     checked("backend_artifacts", lambda: verify_build_artifacts(receipts["backend"]))
     checked("runtime_configuration", lambda: verify_runtime_binding(request, receipts, backend, directory))
     processes = checked("processes", lambda: verify_processes(request, receipts, directory))
@@ -192,13 +203,17 @@ def verify(request: dict) -> dict:
         checked(f"{role}_source_stable", lambda: verify_source(root, receipts[role], request["source_fingerprints"][role]))
     if checked("driver_source_stable", lambda: current_execution_source(driver)) != driver_source:
         raise ProvenanceError("driver_source_stable")
+    if checked("runner_frontend_source_stable", lambda: current_execution_source(
+            runner_frontend)) != runner_source:
+        raise ProvenanceError("runner_frontend_source_stable")
     checked("backend_artifacts_stable", lambda: verify_build_artifacts(receipts["backend"]))
     checked("runtime_configuration_stable", lambda: verify_runtime_binding(request, receipts, backend, directory))
     checked("processes_stable", lambda: verify_processes(request, receipts, directory))
-    return {"format_version": 1, "kind": "devex-runtime-provenance", "scope_id": request["scope_id"],
-            "backend_root": str(backend), "frontend_root": str(frontend), "sources": sources,
+    return {"format_version": 2, "kind": "devex-runtime-provenance", "scope_id": request["scope_id"],
+            "backend_root": str(backend), "frontend_root": str(frontend),
+            "runner_frontend_root": str(runner_frontend), "sources": sources,
             "source_fingerprints": request["source_fingerprints"], "receipts": files, "processes": processes,
-            "execution_source": driver_source,
+            "execution_sources": {"driver": driver_source, "runner_frontend": runner_source},
             "environment_document": environment, "environment_evidence": "operator_declared_document",
             "api_url": request["api_url"], "frontend_url": request["frontend_url"], "metrics_urls": request["metrics_urls"]}
 

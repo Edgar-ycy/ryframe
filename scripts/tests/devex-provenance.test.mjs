@@ -10,16 +10,20 @@ import { identityPool } from './devex-selection-fixture.mjs'
 const config = () => ({ contract: { environment_sha256: 'a'.repeat(64), cycles: 10,
   identity_pools: { users: identityPool(10).contract }, homepage: { identity_pool: 'users' } }, bindings: {
   identity_pools: { users: identityPool(10).binding },
-  provenance: { python: process.execPath }, source_fingerprints: { backend: 'b', frontend: 'f' },
+  provenance: { python: process.execPath }, source_fingerprints: {
+    backend: `sha256:${'b'.repeat(64)}`, frontend: `sha256:${'f'.repeat(64)}`,
+    runner_frontend: `sha256:${'e'.repeat(64)}` },
 } })
 const values = () => ({
   backend: process.cwd(),
   frontend: process.cwd(),
+  runner_frontend: process.cwd(),
   driver: process.cwd(),
   driver_fingerprint: `sha256:${'d'.repeat(64)}`,
+  runner_frontend_fingerprint: `sha256:${'e'.repeat(64)}`,
   suite: 'homepage',
 })
-const receipt = () => ({ format_version: 1, kind: 'devex-runtime-provenance',
+const receipt = () => ({ format_version: 2, kind: 'devex-runtime-provenance',
   processes: { api: { pid: 42, started: 'original' } } })
 async function directory(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'devex-provenance-'))
@@ -37,6 +41,8 @@ test('前后验证绑定同一请求快照，保存独立来源收据与校验�
   assert.deepEqual(requests[0], requests[1])
   assert.equal(requests[0].driver, process.cwd())
   assert.equal(requests[0].driver_fingerprint, `sha256:${'d'.repeat(64)}`)
+  assert.equal(requests[0].runner_frontend, process.cwd())
+  assert.equal(requests[0].runner_frontend_fingerprint, `sha256:${'e'.repeat(64)}`)
   for (const phase of ['before', 'after']) {
     const result = JSON.parse(await readFile(path.join(root, `provenance-${phase}.json`)))
     assert.equal(result.success, true)
@@ -77,6 +83,8 @@ test('driver 路径与完整指纹必须显式绑定', async (t) => {
   for (const changed of [
     { ...values(), driver: 'relative' },
     { ...values(), driver_fingerprint: 'invalid' },
+    { ...values(), runner_frontend: 'relative' },
+    { ...values(), runner_frontend_fingerprint: 'invalid' },
   ]) {
     const root = await directory(t)
     await assert.rejects(verifyProvenance(config(), changed, root), /bindings/)

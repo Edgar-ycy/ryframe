@@ -44,7 +44,8 @@ export async function preparationContext(plan, ledger, phase, dependencies = {})
     scope_id: environment.scope_id, api_url: environment.api_url, frontend_url: environment.frontend_url,
     pacing: environment.pacing.bindings } }
   const factory = dependencies.createPacing ?? (await import('./pacing.mjs')).createPacing
-  const pacing = await factory(config, { backend: environment.backend_dir, frontend: environment.frontend_dir, artifacts })
+  const pacing = await factory(config, { backend: environment.backend_dir,
+    runner_frontend: environment.frontend_dir, artifacts })
   let catalog
   try { catalog = await (dependencies.operationCatalog ?? operationCatalog)(environment.backend_dir) }
   catch (error) { await pacing.close(); throw error }

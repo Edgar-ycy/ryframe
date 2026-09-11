@@ -12,6 +12,7 @@ use super::{
 pub(super) fn check(
     backend_root: &Path,
     frontend_root: &Path,
+    runner_frontend_root: &Path,
     options: &DevexRunOptions,
     definition: SuiteDefinition,
 ) -> Result<()> {
@@ -22,6 +23,9 @@ pub(super) fn check(
                 require_frontend_tooling(frontend_root, options)?;
             }
             executable_available(backend_root, executable, &["--version"])
+        }
+        SuiteRequirement::Frontend if options.suite.is_runtime() => {
+            require_runtime_frontend_tooling(frontend_root, runner_frontend_root, options)
         }
         SuiteRequirement::Frontend => require_frontend_tooling(frontend_root, options),
         SuiteRequirement::FrontendFiles => {
@@ -34,12 +38,19 @@ pub(super) fn check(
 pub(super) fn check_paired(
     backend_root: &Path,
     frontend_root: &Path,
+    runner_frontend_root: &Path,
     options: &DevexRunOptions,
     definition: SuiteDefinition,
     contract: Option<BaselineContract>,
     arm: PairedArm,
 ) -> Result<()> {
-    check(backend_root, frontend_root, options, definition)?;
+    check(
+        backend_root,
+        frontend_root,
+        runner_frontend_root,
+        options,
+        definition,
+    )?;
     if contract == Some(BaselineContract::LegacyStableReadinessB0V1)
         && options.suite == DevexSuite::FrontendFast
     {
@@ -115,14 +126,35 @@ fn require_frontend_tooling(frontend_root: &Path, options: &DevexRunOptions) -> 
     executable_available(frontend_root, corepack_executable(), &["pnpm", "--version"])
 }
 
+pub(crate) fn require_runtime_frontend_tooling(
+    product_frontend_root: &Path,
+    runner_frontend_root: &Path,
+    options: &DevexRunOptions,
+) -> Result<()> {
+    require_runtime_frontend_layout(product_frontend_root, runner_frontend_root, options)?;
+    executable_available(runner_frontend_root, "node", &["--version"])?;
+    executable_available(
+        runner_frontend_root,
+        corepack_executable(),
+        &["pnpm", "--version"],
+    )
+}
+
+pub(crate) fn require_runtime_frontend_layout(
+    product_frontend_root: &Path,
+    runner_frontend_root: &Path,
+    options: &DevexRunOptions,
+) -> Result<()> {
+    require_frontend_manifest(product_frontend_root, options, "产品工作区")?;
+    require_frontend_dependencies(runner_frontend_root, options)?;
+    require_runtime_frontend_files(runner_frontend_root, options)
+}
+
 pub(crate) fn require_frontend_dependencies(
     frontend_root: &Path,
     options: &DevexRunOptions,
 ) -> Result<()> {
     require_frontend_manifest(frontend_root, options, "目录")?;
-    if options.suite.is_runtime() {
-        require_runtime_frontend_files(frontend_root, options)?;
-    }
     if frontend_root.join("node_modules").is_dir() {
         return Ok(());
     }
@@ -134,7 +166,10 @@ pub(crate) fn require_frontend_dependencies(
     .into())
 }
 
-fn require_runtime_frontend_files(frontend_root: &Path, options: &DevexRunOptions) -> Result<()> {
+pub(crate) fn require_runtime_frontend_files(
+    frontend_root: &Path,
+    options: &DevexRunOptions,
+) -> Result<()> {
     const FILES: &[&str] = &[
         "scripts/browser-login-budget.mjs",
         "scripts/browser-login-budget-model.mjs",

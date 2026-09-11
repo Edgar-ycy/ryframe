@@ -471,6 +471,12 @@ fn validate_source_fingerprints(summary: &RunSummary) -> Result<()> {
                 .frontend
                 .as_deref()
                 .is_none_or(|fingerprint| fingerprint.trim().is_empty()))
+        || (summary.suite.is_runtime()
+            && summary
+                .source_fingerprints
+                .runner_frontend
+                .as_deref()
+                .is_none_or(|fingerprint| fingerprint.trim().is_empty()))
     {
         return Err("DevEx paired 源码指纹缺失".into());
     }

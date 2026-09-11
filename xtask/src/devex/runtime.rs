@@ -67,6 +67,7 @@ pub(super) struct ScenarioSummary {
 
 pub(super) fn prepare(
     root: &Path,
+    runner_frontend_root: &Path,
     cache: CacheState,
     environment: &mut BTreeMap<String, String>,
 ) -> Result<()> {
@@ -84,11 +85,17 @@ pub(super) fn prepare(
     let driver_root = crate::workspace::root_dir();
     let driver_fingerprint =
         super::metadata::collect_source_fingerprints(&driver_root, None)?.backend;
+    let runner_frontend_fingerprint =
+        super::metadata::collect_source_fingerprints(runner_frontend_root, None)?.backend;
     environment.insert("RYFRAME_DEVEX_RUNTIME_INPUT_SHA256".into(), hash);
     environment.insert("RYFRAME_DEVEX_CACHE".into(), cache.as_str().into());
     environment.insert(
         "RYFRAME_DEVEX_DRIVER_FINGERPRINT".into(),
         driver_fingerprint,
+    );
+    environment.insert(
+        "RYFRAME_DEVEX_RUNNER_FRONTEND_FINGERPRINT".into(),
+        runner_frontend_fingerprint,
     );
     Ok(())
 }
