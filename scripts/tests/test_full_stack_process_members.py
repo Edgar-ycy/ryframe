@@ -1,6 +1,7 @@
 """完整成员退出确认与失败传播边界，不启动外部服务。"""
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import sys
@@ -18,6 +19,20 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class ProcessMembersTests(unittest.TestCase):
+    def test_atomic_receipt_publish_supports_deep_runtime_directory(self):
+        directory = WorkspaceDirectory(dir=ROOT / ".local-tests")
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name)
+        while len(str(root)) < 180:
+            root /= "深层 路径 xxxxxxxxxx"
+        root.mkdir(parents=True)
+        path = receipt_path(root, "rustfs", "a" * 32, "ready")
+
+        write_receipt(path, {"status": "ready"})
+
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"status": "ready"})
+        self.assertEqual(list(root.glob(".*.tmp")), [])
+
     def test_empty_job_list_does_not_skip_delayed_member_handle(self):
         members = Mock()
         members.capture.side_effect = [2, 0, 0]

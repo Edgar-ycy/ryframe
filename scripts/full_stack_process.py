@@ -120,7 +120,9 @@ def terminate_owned_process(expected: dict, *, crash: bool = False) -> bool:
 
 
 def write_receipt(path: Path, receipt: dict) -> None:
-    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    # 临时文件只需要在同一目录内保持唯一。不要重复目标文件名，否则深层的
+    # Windows 验收目录会让原子发布的临时路径超过 MAX_PATH。
+    temporary = path.with_name(f".{uuid.uuid4().hex}.tmp")
     try:
         with temporary.open("x", encoding="utf-8", newline="\n") as output:
             output.write(json.dumps(receipt, indent=2) + "\n")
