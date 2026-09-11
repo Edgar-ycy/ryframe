@@ -29,6 +29,8 @@ pub(crate) use model::{
     PairedArm,
 };
 #[allow(unused_imports)]
+pub(crate) use preflight::parse_frontend_fast_plan;
+#[allow(unused_imports)]
 pub(crate) use preflight::require_frontend_dependencies;
 
 pub(crate) fn source_fingerprints(
@@ -110,13 +112,13 @@ fn parse_paired(args: &[String]) -> std::result::Result<DevexCommand, String> {
     if baseline_frontend.is_some() != candidate_frontend.is_some() {
         return Err("paired 的 --base-frontend 与 --candidate-frontend 必须成对提供".to_owned());
     }
-    if run
+    let requires_frontend = run
         .suite
         .definition(&run.variant)
         .map_err(|error| format!("DevEx 变体无效：{error}"))?
         .requires_frontend
-        && !has_frontend_pair
-    {
+        || baseline_contract == Some(BaselineContract::LegacyStableReadinessB0V1);
+    if requires_frontend && !has_frontend_pair {
         return Err("该 paired suite 必须显式提供两个前端 worktree".to_owned());
     }
     Ok(DevexCommand::Paired(DevexPairedOptions {

@@ -214,6 +214,11 @@ pub(super) const FRONTEND_FAST: &[StepDefinition] = &[StepDefinition {
     program: "corepack",
     args: &["pnpm", "check"],
 }];
+pub(super) const FRONTEND_FAST_STABLE_READINESS_B0: &[StepDefinition] = &[StepDefinition {
+    working_directory: WorkingDirectory::Frontend,
+    program: "corepack",
+    args: &["pnpm", "check:fast"],
+}];
 pub(super) const FRONTEND_BUILD: &[StepDefinition] = &[StepDefinition {
     working_directory: WorkingDirectory::Frontend,
     program: "corepack",

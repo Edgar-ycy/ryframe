@@ -42,17 +42,39 @@ pub(super) fn execute(
         options,
         definition,
     )?;
-    preflight::check(
+    let baseline_definition = options
+        .run
+        .suite
+        .paired_definition(
+            &options.run.variant,
+            options.baseline_contract,
+            PairedArm::Baseline,
+        )
+        .map_err(|error| format!("DevEx 基线变体无效：{error}"))?;
+    let candidate_definition = options
+        .run
+        .suite
+        .paired_definition(
+            &options.run.variant,
+            options.baseline_contract,
+            PairedArm::Candidate,
+        )
+        .map_err(|error| format!("DevEx 候选变体无效：{error}"))?;
+    preflight::check_paired(
         &roots.baseline_backend,
         &roots.baseline_frontend,
         &options.run,
-        definition,
+        baseline_definition,
+        options.baseline_contract,
+        PairedArm::Baseline,
     )?;
-    preflight::check(
+    preflight::check_paired(
         &roots.candidate_backend,
         &roots.candidate_frontend,
         &options.run,
-        definition,
+        candidate_definition,
+        options.baseline_contract,
+        PairedArm::Candidate,
     )?;
     let baseline_provenance = provenance::collect(
         &roots.baseline_backend,
@@ -67,7 +89,7 @@ pub(super) fn execute(
         &roots.baseline_frontend,
         &devex_root,
         &options.run,
-        definition,
+        baseline_definition,
         &directories,
         PairedArm::Baseline,
         options.baseline_contract,
@@ -78,7 +100,7 @@ pub(super) fn execute(
         &roots.candidate_frontend,
         &devex_root,
         &options.run,
-        definition,
+        candidate_definition,
         &directories,
         PairedArm::Candidate,
         options.baseline_contract,
@@ -158,30 +180,33 @@ fn paired_roots(
         &baseline_backend,
         &candidate_backend,
     )?;
-    let (baseline_frontend, candidate_frontend) = if definition.requires_frontend {
-        let coordinator = canonical_worktree(coordinator_frontend, "当前前端")?;
-        let baseline = canonical_worktree(
-            options
-                .baseline_frontend
-                .as_deref()
-                .ok_or("paired 前端 suite 缺少 --base-frontend")?,
-            "基线前端",
-        )?;
-        let candidate = canonical_worktree(
-            options
-                .candidate_frontend
-                .as_deref()
-                .ok_or("paired 前端 suite 缺少 --candidate-frontend")?,
-            "候选前端",
-        )?;
-        ensure_distinct_roots("前端", &coordinator, &baseline, &candidate)?;
-        (baseline, candidate)
-    } else {
-        (
-            coordinator_frontend.to_path_buf(),
-            coordinator_frontend.to_path_buf(),
-        )
-    };
+    let binds_stable_product =
+        options.baseline_contract == Some(BaselineContract::LegacyStableReadinessB0V1);
+    let (baseline_frontend, candidate_frontend) =
+        if definition.requires_frontend || binds_stable_product {
+            let coordinator = canonical_worktree(coordinator_frontend, "当前前端")?;
+            let baseline = canonical_worktree(
+                options
+                    .baseline_frontend
+                    .as_deref()
+                    .ok_or("paired 前端 suite 缺少 --base-frontend")?,
+                "基线前端",
+            )?;
+            let candidate = canonical_worktree(
+                options
+                    .candidate_frontend
+                    .as_deref()
+                    .ok_or("paired 前端 suite 缺少 --candidate-frontend")?,
+                "候选前端",
+            )?;
+            ensure_distinct_roots("前端", &coordinator, &baseline, &candidate)?;
+            (baseline, candidate)
+        } else {
+            (
+                coordinator_frontend.to_path_buf(),
+                coordinator_frontend.to_path_buf(),
+            )
+        };
     Ok(PairedRoots {
         baseline_backend,
         candidate_backend,
@@ -264,6 +289,8 @@ fn prepare_arm(
             arm,
             baseline_contract,
             baseline_provenance,
+            workload_contract: baseline_contract
+                .and_then(|contract| contract.workload_contract(options.suite, &options.variant)),
         }),
     )
 }

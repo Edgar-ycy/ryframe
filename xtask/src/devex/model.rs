@@ -12,7 +12,7 @@ mod runtime;
 mod steps;
 use steps::*;
 
-pub(crate) use baseline::{BaselineContract, BaselineProvenance};
+pub(crate) use baseline::{BaselineContract, BaselineProvenance, PairedWorkloadContract};
 pub(crate) use execution_contract::{
     RESOURCE_GATE_DECISION_ENV, RESOURCE_GATE_DECISION_TEMPLATE, RESOURCE_GATE_TARGETED_ACTIVATION,
     RESOURCE_GATE_TARGETED_ENV,
@@ -175,6 +175,22 @@ impl DevexSuite {
                 requires_frontend: true,
             }),
         }
+    }
+
+    pub(crate) fn paired_definition(
+        self,
+        variant: &str,
+        contract: Option<BaselineContract>,
+        arm: PairedArm,
+    ) -> Result<SuiteDefinition, String> {
+        let mut definition = self.definition(variant)?;
+        if contract == Some(BaselineContract::LegacyStableReadinessB0V1)
+            && arm == PairedArm::Baseline
+            && self == Self::FrontendFast
+        {
+            definition.steps = FRONTEND_FAST_STABLE_READINESS_B0;
+        }
+        Ok(definition)
     }
 
     pub(crate) const fn variant_help(self) -> &'static str {
@@ -352,6 +368,8 @@ pub(crate) struct PairingMetadata {
     pub(crate) baseline_contract: Option<BaselineContract>,
     #[serde(default)]
     pub(crate) baseline_provenance: Option<BaselineProvenance>,
+    #[serde(default)]
+    pub(crate) workload_contract: Option<PairedWorkloadContract>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -13,8 +13,8 @@ use super::{
     devex::{
         BaselineContract, CacheState, DevexRunOptions, DevexSuite, PairedArm, PathNormalizer,
         abba_pair_order, cleanup_successful_sample_target, compare, distribution,
-        filter_environment, read_resource_gate_decision, require_frontend_dependencies,
-        sample_target, summarize, with_source_edit,
+        filter_environment, parse_frontend_fast_plan, read_resource_gate_decision,
+        require_frontend_dependencies, sample_target, summarize, with_source_edit,
     },
     source_edit::SourceEdit,
 };
@@ -142,6 +142,36 @@ fn suite_definitions_select_the_measured_workload() {
     );
     let frontend = DevexSuite::FrontendFast.definition("default").unwrap();
     assert_eq!(frontend.steps[0].args, &["pnpm", "check"]);
+    let baseline_frontend = DevexSuite::FrontendFast
+        .paired_definition(
+            "default",
+            Some(BaselineContract::LegacyStableReadinessB0V1),
+            PairedArm::Baseline,
+        )
+        .unwrap();
+    assert_eq!(baseline_frontend.steps[0].args, &["pnpm", "check:fast"]);
+    let candidate_frontend = DevexSuite::FrontendFast
+        .paired_definition(
+            "default",
+            Some(BaselineContract::LegacyStableReadinessB0V1),
+            PairedArm::Candidate,
+        )
+        .unwrap();
+    assert_eq!(candidate_frontend.steps[0].args, &["pnpm", "check"]);
+    let workload = BaselineContract::LegacyStableReadinessB0V1
+        .workload_contract(DevexSuite::FrontendFast, "default")
+        .unwrap();
+    assert_eq!(workload.baseline_primitives.len(), 9);
+    assert_eq!(workload.candidate_primitives.len(), 8);
+    assert_eq!(
+        workload
+            .candidate_primitives
+            .iter()
+            .find(|primitive| primitive.id == "imports")
+            .unwrap()
+            .covers,
+        ["imports", "api-operation-policy"]
+    );
 
     let incremental = DevexSuite::RustIncremental
         .definition("application")
@@ -169,6 +199,12 @@ fn suite_definitions_select_the_measured_workload() {
         api.remove_environment
             .contains(&"CMAKE_CXX_COMPILER_LAUNCHER")
     );
+}
+
+#[test]
+fn frontend_fast_machine_plan_extracts_the_exact_candidate_primitive_ids() {
+    let plan = "将执行以下任务：\n  阶段 1:\n    format {\"cache\":true}\n    imports {}\n";
+    assert_eq!(parse_frontend_fast_plan(plan), ["format", "imports"]);
 }
 
 #[test]
@@ -599,6 +635,25 @@ fn stable_readiness_comparison_reports_and_enforces_adapter_provenance() {
     }
 }
 
+#[test]
+fn stable_frontend_fast_records_equivalent_primitives_and_distinct_real_entries() {
+    let baseline = fake_stable_frontend_fast_run("stable-fast-b0", PairedArm::Baseline);
+    let candidate = fake_stable_frontend_fast_run("stable-fast-b1", PairedArm::Candidate);
+    compare(&baseline, &candidate).unwrap();
+
+    let metadata_path = candidate.join("metadata.json");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
+    metadata["commands"][0]["args"] = serde_json::json!(["pnpm", "check:fast"]);
+    fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    let error = compare(&baseline, &candidate).unwrap_err().to_string();
+    assert!(error.contains("实际执行入口不匹配"), "{error}");
+
+    for path in [baseline, candidate] {
+        fs::remove_dir_all(path).unwrap();
+    }
+}
+
 fn fake_paired_run(
     name: &str,
     fingerprint: &str,
@@ -829,6 +884,33 @@ fn fake_stable_readiness_run(name: &str, arm: PairedArm) -> PathBuf {
         .collect::<Vec<_>>()
         .join("\n");
     fs::write(samples_path, format!("{samples}\n")).unwrap();
+    directory
+}
+
+fn fake_stable_frontend_fast_run(name: &str, arm: PairedArm) -> PathBuf {
+    let directory = fake_stable_readiness_run(name, arm);
+    let metadata_path = directory.join("metadata.json");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
+    metadata["suite"] = serde_json::json!("frontend-fast");
+    metadata["variant"] = serde_json::json!("default");
+    metadata["features"] = serde_json::json!([]);
+    metadata["commands"] = serde_json::json!([{
+        "working_directory": "$FRONTEND",
+        "program": "corepack",
+        "args": if arm == PairedArm::Baseline {
+            vec!["pnpm", "check:fast"]
+        } else {
+            vec!["pnpm", "check"]
+        },
+    }]);
+    metadata["pairing"]["workload_contract"] = serde_json::to_value(
+        BaselineContract::LegacyStableReadinessB0V1
+            .workload_contract(DevexSuite::FrontendFast, "default")
+            .unwrap(),
+    )
+    .unwrap();
+    fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
     directory
 }
 

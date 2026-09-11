@@ -1,10 +1,12 @@
-use std::{path::Path, process::Command};
+use std::{fs, path::Path, process::Command};
 
 use crate::Result;
 
 use super::{
     metadata::corepack_executable,
-    model::{DevexRunOptions, SuiteDefinition, SuiteRequirement},
+    model::{
+        BaselineContract, DevexRunOptions, DevexSuite, PairedArm, SuiteDefinition, SuiteRequirement,
+    },
 };
 
 pub(super) fn check(
@@ -27,6 +29,84 @@ pub(super) fn check(
             executable_available(backend_root, "cargo", &["--version"])
         }
     }
+}
+
+pub(super) fn check_paired(
+    backend_root: &Path,
+    frontend_root: &Path,
+    options: &DevexRunOptions,
+    definition: SuiteDefinition,
+    contract: Option<BaselineContract>,
+    arm: PairedArm,
+) -> Result<()> {
+    check(backend_root, frontend_root, options, definition)?;
+    if contract == Some(BaselineContract::LegacyStableReadinessB0V1)
+        && options.suite == DevexSuite::FrontendFast
+    {
+        verify_frontend_fast_contract(frontend_root, options, arm)?;
+    }
+    Ok(())
+}
+
+fn verify_frontend_fast_contract(
+    frontend_root: &Path,
+    options: &DevexRunOptions,
+    arm: PairedArm,
+) -> Result<()> {
+    let contract = BaselineContract::LegacyStableReadinessB0V1
+        .workload_contract(options.suite, &options.variant)
+        .ok_or("stable-readiness frontend-fast 缺少逻辑任务合同")?;
+    match arm {
+        PairedArm::Baseline => {
+            let manifest: serde_json::Value =
+                serde_json::from_slice(&fs::read(frontend_root.join("package.json"))?)?;
+            if manifest
+                .pointer("/scripts/check:fast")
+                .and_then(|value| value.as_str())
+                != Some("node scripts/run-fast-checks.mjs")
+                || !frontend_root.join("scripts/run-fast-checks.mjs").is_file()
+            {
+                return Err("stable-readiness B0 前端缺少已登记 check:fast 执行器".into());
+            }
+        }
+        PairedArm::Candidate => {
+            let output = Command::new(corepack_executable())
+                .args(["pnpm", "check", "--plan"])
+                .current_dir(frontend_root)
+                .output()?;
+            if !output.status.success() {
+                return Err(format!(
+                    "候选前端无法只读解析统一快速任务图：{}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                )
+                .into());
+            }
+            let actual = parse_frontend_fast_plan(&String::from_utf8(output.stdout)?);
+            let expected = contract
+                .candidate_primitives
+                .iter()
+                .map(|primitive| primitive.id.clone())
+                .collect::<Vec<_>>();
+            if actual != expected {
+                return Err(format!(
+                    "候选前端快速任务集合与性能合同不一致：预期 {expected:?}，实际 {actual:?}"
+                )
+                .into());
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn parse_frontend_fast_plan(output: &str) -> Vec<String> {
+    output
+        .lines()
+        .filter_map(|line| {
+            line.strip_prefix("    ")
+                .and_then(|line| line.split_once(' '))
+                .map(|(id, _)| id.to_owned())
+        })
+        .collect()
 }
 
 fn require_frontend_tooling(frontend_root: &Path, options: &DevexRunOptions) -> Result<()> {

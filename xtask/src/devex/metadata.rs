@@ -110,6 +110,10 @@ pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
         &target,
         context.definition,
         &commands,
+        context
+            .pairing
+            .as_ref()
+            .and_then(|pairing| pairing.workload_contract.as_ref()),
         &environment_hash,
         jobs,
     )?;
@@ -234,9 +238,14 @@ fn compile_surface_fingerprint(
     target: &str,
     definition: SuiteDefinition,
     commands: &[CommandMetadata],
+    workload_contract: Option<&super::model::PairedWorkloadContract>,
     environment_hash: &str,
     jobs: usize,
 ) -> Result<String> {
+    let execution = workload_contract.map_or_else(
+        || json!({"commands": commands}),
+        |contract| json!({"paired_workload_contract": contract}),
+    );
     let document = json!({
         "schema_version": 1,
         "suite": suite,
@@ -246,7 +255,7 @@ fn compile_surface_fingerprint(
         "features": definition.features,
         "jobs": jobs,
         "environment_hash": environment_hash,
-        "commands": commands,
+        "execution": execution,
     });
     Ok(sha256(&serde_json::to_vec(&document)?))
 }

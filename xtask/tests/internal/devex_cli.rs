@@ -237,11 +237,13 @@ fn legacy_baseline_contract_is_closed_to_config_only() {
 }
 
 #[test]
-fn stable_readiness_b0_contract_only_accepts_adapted_suites() {
-    for (suite, variant, runs) in [
-        ("resource-generator", "post", "6"),
-        ("resource-gate", "auto", "6"),
-        ("rust-gate", "default", "20"),
+fn stable_readiness_b0_contract_accepts_nonruntime_suites_and_binds_both_product_roots() {
+    for (suite, variant, runs, cache) in [
+        ("rust-cold-build", "api", "20", "cold"),
+        ("resource-generator", "post", "6", "warm"),
+        ("resource-gate", "auto", "6", "warm"),
+        ("rust-gate", "default", "20", "warm"),
+        ("frontend-fast", "default", "6", "warm"),
     ] {
         let cli = parse(strings(&[
             "check",
@@ -264,7 +266,7 @@ fn stable_readiness_b0_contract_only_accepts_adapted_suites() {
             "--runs",
             runs,
             "--cache",
-            "warm",
+            cache,
         ]))
         .unwrap();
         let Command::Check(CheckCommand::Perf(DevexCommand::Paired(options))) = cli.command else {
@@ -284,24 +286,20 @@ fn stable_readiness_b0_contract_only_accepts_adapted_suites() {
         "D:/worktrees/base",
         "--candidate-backend",
         "D:/worktrees/candidate",
-        "--base-frontend",
-        "D:/worktrees/base-frontend",
-        "--candidate-frontend",
-        "D:/worktrees/candidate-frontend",
         "--baseline-contract",
         "legacy-stable-readiness-b0-v1",
         "--suite",
-        "frontend-fast",
+        "rust-cold-build",
         "--variant",
-        "default",
+        "api",
         "--runs",
-        "6",
+        "20",
         "--cache",
-        "warm",
+        "cold",
     ]))
     .unwrap_err()
     .to_string();
-    assert!(error.contains("不允许 suite `frontend-fast`"), "{error}");
+    assert!(error.contains("两个前端 worktree"), "{error}");
 
     let cli = parse(strings(&[
         "check",

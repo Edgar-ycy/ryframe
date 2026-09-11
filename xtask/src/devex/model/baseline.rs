@@ -2,6 +2,21 @@ use serde::{Deserialize, Serialize};
 
 use super::{DevexRunOptions, DevexSuite};
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct WorkloadPrimitive {
+    pub(crate) id: String,
+    pub(crate) covers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct PairedWorkloadContract {
+    pub(crate) format_version: u8,
+    pub(crate) kind: String,
+    pub(crate) logical_tasks: Vec<String>,
+    pub(crate) baseline_primitives: Vec<WorkloadPrimitive>,
+    pub(crate) candidate_primitives: Vec<WorkloadPrimitive>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum BaselineContract {
@@ -57,10 +72,7 @@ impl BaselineContract {
                 options.suite == DevexSuite::CargoDevSave
                     && matches!(options.variant.as_str(), "api-only" | "worker-only")
             }
-            Self::LegacyStableReadinessB0V1 => matches!(
-                options.suite,
-                DevexSuite::ResourceGenerator | DevexSuite::ResourceGate | DevexSuite::RustGate
-            ),
+            Self::LegacyStableReadinessB0V1 => !options.suite.is_runtime(),
         };
         valid.then_some(()).ok_or_else(|| {
             format!(
@@ -86,6 +98,67 @@ impl BaselineContract {
             Self::LegacyCargoDevV2 => Some(Self::LEGACY_CARGO_DEV_V2_ADAPTER_COMMIT),
             Self::LegacyStableReadinessB0V1 => None,
         }
+    }
+
+    pub(crate) fn workload_contract(
+        self,
+        suite: DevexSuite,
+        variant: &str,
+    ) -> Option<PairedWorkloadContract> {
+        (self == Self::LegacyStableReadinessB0V1
+            && suite == DevexSuite::FrontendFast
+            && variant == "default")
+            .then(frontend_fast_contract)
+    }
+}
+
+fn primitive(id: &str, covers: &[&str]) -> WorkloadPrimitive {
+    WorkloadPrimitive {
+        id: id.to_owned(),
+        covers: covers.iter().map(|value| (*value).to_owned()).collect(),
+    }
+}
+
+fn frontend_fast_contract() -> PairedWorkloadContract {
+    let logical_tasks = [
+        "format",
+        "source-size",
+        "imports",
+        "api-operation-policy",
+        "api-artifacts",
+        "eslint",
+        "stylelint",
+        "typecheck-app",
+        "unit",
+    ];
+    PairedWorkloadContract {
+        format_version: 1,
+        kind: "stable-readiness-frontend-fast".to_owned(),
+        logical_tasks: logical_tasks
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect(),
+        baseline_primitives: vec![
+            primitive("format:check:fast", &["format"]),
+            primitive("check:source-size", &["source-size"]),
+            primitive("check:imports", &["imports"]),
+            primitive("check:api-operations", &["api-operation-policy"]),
+            primitive("check:api-artifacts", &["api-artifacts"]),
+            primitive("lint", &["eslint"]),
+            primitive("lint:styles", &["stylelint"]),
+            primitive("typecheck:app", &["typecheck-app"]),
+            primitive("test:unit", &["unit"]),
+        ],
+        candidate_primitives: vec![
+            primitive("format", &["format"]),
+            primitive("source-size", &["source-size"]),
+            primitive("imports", &["imports", "api-operation-policy"]),
+            primitive("api-artifacts", &["api-artifacts"]),
+            primitive("eslint", &["eslint"]),
+            primitive("stylelint", &["stylelint"]),
+            primitive("typecheck", &["typecheck-app"]),
+            primitive("unit", &["unit"]),
+        ],
     }
 }
 
