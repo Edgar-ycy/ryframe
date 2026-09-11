@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import io
 import os
 from pathlib import Path
 import sys
@@ -128,6 +129,33 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
                                         "--backend-dir", str(missing), "--environment", str(missing),
                                         "--output", str(missing), "--browser-binding", str(missing),
                                         "--run-id", "r24-device"]):
+            with self.assertRaises(SystemExit) as raised:
+                runtime.main()
+        self.assertEqual(raised.exception.code, 2)
+
+    def test_browser_bind_requires_explicit_server_before_reading_inputs(self):
+        missing = self.root / "missing"
+        with patch.object(sys, "argv", ["reference_fixture_runtime.py", "bind",
+                                        "--backend-dir", str(missing), "--environment", str(missing),
+                                        "--output", str(missing), "--browser-binding", str(missing),
+                                        "--run-id", "r24-device", "--write"]):
+            with self.assertRaises(SystemExit) as raised:
+                runtime.main()
+        self.assertEqual(raised.exception.code, 2)
+
+    def test_browser_close_is_read_only_and_selects_closed_consumer(self):
+        result = {"status": "reference_fixture_browser_closed"}
+        arguments = ["reference_fixture_runtime.py", "browser-close", "--backend-dir",
+                     str(self.backend), "--environment", str(self.bootstrap), "--output",
+                     str(self.reference / "runtime-r1"), "--browser-binding", "binding.json"]
+        with patch.object(sys, "argv", arguments), patch.object(
+                runtime, "verify_browser", return_value=result) as verify, \
+                patch.object(sys, "stdout", io.StringIO()) as output:
+            runtime.main()
+        self.assertEqual(json.loads(output.getvalue()), result)
+        self.assertTrue(verify.call_args.kwargs["closed"])
+
+        with patch.object(sys, "argv", [*arguments, "--write"]):
             with self.assertRaises(SystemExit) as raised:
                 runtime.main()
         self.assertEqual(raised.exception.code, 2)

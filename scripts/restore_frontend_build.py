@@ -69,8 +69,9 @@ def registered_frontend_inventory(root: Path, expected_head: str) -> dict:
     return inventory
 
 
-def validate_registered_frontend(root: Path, expected_head: str) -> tuple[dict, JsonDocument]:
-    inventory = registered_frontend_inventory(root, expected_head)
+def validate_frontend_build(root: Path, inventory: dict | None = None) -> tuple[dict, JsonDocument]:
+    """核验当前前端源码、有效环境与完整 dist 仍匹配真实构建收据。"""
+    inventory = capture_inventory(root) if inventory is None else inventory
     receipt = read_json_document(frontend_build_receipt(root))
     value = validate_frontend_receipt(receipt.value)
     files, snapshots = frontend_snapshots(root)
@@ -86,6 +87,10 @@ def validate_registered_frontend(root: Path, expected_head: str) -> tuple[dict, 
     if capture_inventory(root) != inventory:
         raise ValueError("核验期间前端源码发生变化")
     return inventory, receipt
+
+
+def validate_registered_frontend(root: Path, expected_head: str) -> tuple[dict, JsonDocument]:
+    return validate_frontend_build(root, registered_frontend_inventory(root, expected_head))
 
 
 def build_registered_frontend(

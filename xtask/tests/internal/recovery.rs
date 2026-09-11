@@ -444,6 +444,8 @@ fn fixture_runtime_forwards_private_browser_binding_without_a_new_public_stage()
             "browser-binding-r24-device.json",
             "--run-id",
             "r24-device",
+            "--server",
+            "preview",
             "--write",
         ])),
         Path::new("unused"),
@@ -459,6 +461,11 @@ fn fixture_runtime_forwards_private_browser_binding_without_a_new_public_stage()
         arguments
             .windows(2)
             .any(|item| item == ["--run-id", "r24-device"])
+    );
+    assert!(
+        arguments
+            .windows(2)
+            .any(|item| item == ["--server", "preview"])
     );
 }
 

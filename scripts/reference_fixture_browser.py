@@ -21,8 +21,17 @@ from full_stack_process_monitor import completion_binding
 from full_stack_process_tree import launch_supervised_process, terminate_owned_process_tree
 from full_stack_provenance import verify_build_evidence
 from full_stack_rate_limit_config import rate_limit_settings
+from reference_fixture_browser_evidence import (
+    ArtifactManifestSnapshot,
+    artifact_manifest_snapshot,
+    device_tests,
+    login_budget,
+    verify_artifact_manifest,
+)
+from reference_fixture_browser_review import verify_browser_result
 from reference_fixture_browser_security import browser_environment, secret_values
 from restore_build import file_digest
+from restore_frontend_build import validate_frontend_build
 from restore_input_plan import _publish_json
 from restore_runtime_evidence import artifact_snapshot, file_state
 from source_inventory import capture_inventory, source_file
@@ -123,21 +132,37 @@ def _frontend_source(build: dict) -> tuple[Path, dict]:
     return frontend, {"original": originals["frontend"], "generated": generated["frontend"]}
 
 
-def browser_outputs(frontend: Path, runtime: Path, run_id: str) -> dict[str, Path]:
+def browser_outputs(frontend: Path, runtime: Path, run_id: str, server: str) -> dict[str, Path]:
     prefix = f"browser-{run_id}"
-    return {
+    outputs = {
         "login_budget": runtime / f"{prefix}-login-budget.json",
         "intent": runtime / f"{prefix}-intent.json",
         "result": runtime / f"{prefix}-result.json",
         "failure": runtime / f"{prefix}-failure.json",
-        "build_log": runtime / f"{prefix}-build.log",
         "browser_log": runtime / f"{prefix}-check.log",
-        "build_process": runtime / f"{prefix}-build-process",
         "browser_process": runtime / f"{prefix}-check-process",
-        "build_receipt": frontend / "dist/.vite/restore-build.json",
-        "report": frontend / f".local-tests/playwright-real/report/device/preview/{run_id}/index.html",
-        "results": frontend / f".local-tests/playwright-real/results/device/preview/{run_id}",
+        "report": frontend / f".local-tests/playwright-real/report/device/{server}/{run_id}",
+        "results": frontend / f".local-tests/playwright-real/results/device/{server}/{run_id}",
     }
+    if server == "preview":
+        outputs.update({
+            "build_log": runtime / f"{prefix}-build.log",
+            "build_process": runtime / f"{prefix}-build-process",
+            "build_verify_before_log": runtime / f"{prefix}-build-verify-before.log",
+            "build_verify_before_process": runtime / f"{prefix}-build-verify-before-process",
+            "build_verify_after_log": runtime / f"{prefix}-build-verify-after.log",
+            "build_verify_after_process": runtime / f"{prefix}-build-verify-after-process",
+            "build_receipt": frontend / "dist/.vite/restore-build.json",
+        })
+    return outputs
+
+
+def _commands(frontend: Path, server: str) -> list[list[str]]:
+    browser = ["check", "--stage", "browser", "--real", "--fixture", "device", "--server", server]
+    if server == "dev":
+        return [browser]
+    verify = ["exec", "node", "scripts/restore-build.mjs", "verify", "--source-root", str(frontend)]
+    return [["build", "--real"], verify, browser, verify]
 
 
 def _input_guards(binding: dict) -> tuple:
@@ -162,15 +187,21 @@ def _input_guards(binding: dict) -> tuple:
 
 
 def _plan(api: RuntimeApi, backend: Path, environment_path: Path, output_path: Path,
-          run_id: str, *, require_fresh: bool) -> tuple[dict, dict]:
+          run_id: str, server: str, *, require_fresh: bool,
+          process_state: str = "running") -> tuple[dict, dict]:
     if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", run_id) is None:
         raise ValueError("Device 浏览器 run id 必须是小写字母、数字或连字符")
+    if server not in {"dev", "preview"}:
+        raise ValueError("Device 浏览器 server 必须是 dev 或 preview")
+    if process_state not in {"running", "stopped"}:
+        raise ValueError("Device 浏览器运行时状态无效")
     bootstrap_file, execution, private = api.bootstrap(backend, environment_path)
     runtime = api.output(execution, output_path, new=False)
     verified = api.verify(backend, environment_path, runtime)
     status = api.control(backend, environment_path, runtime, "status")
-    if status["processes"] != {"api": "running", "worker": "running"}:
-        raise ValueError("Device 浏览器绑定要求 API 与 Worker 均已运行")
+    expected_processes = {"api": process_state, "worker": process_state}
+    if status["processes"] != expected_processes:
+        raise ValueError(f"Device 浏览器核验要求 API 与 Worker 均为 {process_state}")
     build = verify_build_evidence(execution, runtime)
     frontend, frontend_source = _frontend_source(build)
     review, selected, review_binding = _review(backend, bootstrap_file)
@@ -195,14 +226,14 @@ def _plan(api: RuntimeApi, backend: Path, environment_path: Path, output_path: P
     if corepack_path is None or not launcher_path:
         raise ValueError("本机缺少 Corepack 或安全命令启动器")
     limits = rate_limit_settings(execution, private)
-    outputs = browser_outputs(frontend, runtime, run_id)
-    if require_fresh and (frontend / "dist").exists():
+    outputs = browser_outputs(frontend, runtime, run_id, server)
+    if require_fresh and server == "preview" and (frontend / "dist").exists():
         raise ValueError("Device 前端已有生产产物，禁止覆盖未知构建")
     if require_fresh and any(path.exists() or linked(path) for path in outputs.values()):
         raise ValueError("Device 浏览器 run id 已存在产物，禁止重放")
     binding = {
         "format_version": 1, "kind": "reference-fixture-browser-binding", "status": "bound",
-        "run_id": run_id, "scope_id": private["APP_SCOPE_ID"],
+        "run_id": run_id, "server": server, "scope_id": private["APP_SCOPE_ID"],
         "bootstrap": _bound(bootstrap_file),
         "environment": _bound(bootstrap_file.parent / "environment.json"),
         "review": review_binding, "runtime": verified["runtime"],
@@ -222,8 +253,7 @@ def _plan(api: RuntimeApi, backend: Path, environment_path: Path, output_path: P
                             "POST /api/v1/auth/login", 5), "window_secs": limits["api_window_secs"]}},
         "login_budget": {"path": str(outputs["login_budget"]), "initial_state": "absent",
                          "first_writer": "frontend-real-browser-login"},
-        "commands": ["corepack pnpm build --real",
-                     "corepack pnpm check --stage browser --real --fixture device --server preview"],
+        "commands": _commands(frontend, server),
         "remote_writes": 0,
     }
     if not private.get(binding["identity"]["password_env"]):
@@ -245,19 +275,23 @@ def _assert_guards(context: dict) -> None:
 
 
 def bind_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_path: Path,
-                 binding_path: Path, run_id: str) -> dict:
+                 binding_path: Path, run_id: str, server: str) -> dict:
     _, execution, _ = api.bootstrap(backend, environment_path)
     runtime = api.output(execution, output_path, new=False)
     target = _binding_path(execution, runtime, binding_path, new=True, run_id=run_id)
-    binding, context = _plan(api, backend, environment_path, output_path, run_id, require_fresh=True)
+    binding, context = _plan(
+        api, backend, environment_path, output_path, run_id, server, require_fresh=True
+    )
     _assert_guards(context)
     _publish_json(target, binding)
     _assert_guards(context)
-    repeated, _ = _plan(api, backend, environment_path, output_path, run_id, require_fresh=True)
+    repeated, _ = _plan(
+        api, backend, environment_path, output_path, run_id, server, require_fresh=True
+    )
     if read_json(target) != binding or repeated != binding:
         raise ValueError("Device 浏览器绑定发布后来源发生变化；保留文件且禁止重放")
     return {"status": "reference_fixture_browser_bound", "binding": _bound(target),
-            "run_id": run_id, "remote_writes": 0}
+            "run_id": run_id, "server": server, "remote_writes": 0}
 
 
 class OutputCapture:
@@ -374,6 +408,72 @@ def _failure_process(directory: Path) -> dict:
     return result
 
 
+def _build_environment(context: dict, binding: dict) -> dict:
+    return configured({"COREPACK_ENABLE_NETWORK": "0", "VITE_APP_API_ORIGIN": "",
+                       "VITE_APP_PROXY_TARGET": binding["endpoints"]["api"],
+                       "TEMP": context["private"]["TEMP"], "TMP": context["private"]["TMP"]})
+
+
+def _preview_build(binding: dict, context: dict,
+                   processes: dict) -> tuple[dict, ArtifactManifestSnapshot]:
+    outputs, frontend = context["outputs"], context["frontend"]
+    environment = _build_environment(context, binding)
+    processes["build"] = _frontend_command(
+        binding, frontend, binding["commands"][0], environment,
+        outputs["build_log"], outputs["build_process"], 1800, (),
+    )
+    processes["build_verify_before"] = _frontend_command(
+        binding, frontend, binding["commands"][1], environment, outputs["build_verify_before_log"],
+        outputs["build_verify_before_process"], 300, (),
+    )
+    _, receipt = validate_frontend_build(frontend)
+    snapshot = artifact_manifest_snapshot(frontend / "dist", frontend, "Device 前端生产产物")
+    if receipt.path != outputs["build_receipt"]:
+        raise ValueError("Device 前端真实构建收据路径不一致")
+    return {"receipt": _bound(receipt.path), "dist": snapshot.manifest}, snapshot
+
+
+def _verify_preview_after(binding: dict, context: dict, processes: dict,
+                          build: dict, build_guard: ArtifactManifestSnapshot) -> None:
+    outputs, frontend = context["outputs"], context["frontend"]
+    processes["build_verify_after"] = _frontend_command(
+        binding, frontend, binding["commands"][3], _build_environment(context, binding),
+        outputs["build_verify_after_log"], outputs["build_verify_after_process"], 300, (),
+    )
+    build_guard.assert_unchanged()
+    _, receipt = validate_frontend_build(frontend)
+    if _bound(receipt.path) != build["receipt"]:
+        raise ValueError("Device 浏览器期间生产构建收据发生变化")
+    verify_artifact_manifest(build["dist"], frontend / "dist", frontend, "Device 前端生产产物")
+
+
+def _browser_artifacts(binding: dict, context: dict) -> tuple[dict, tuple[ArtifactManifestSnapshot, ...]]:
+    outputs, frontend = context["outputs"], context["frontend"]
+    report, results = outputs["report"], outputs["results"]
+    sidecar = results / "device-tests.json"
+    if not (report / "index.html").is_file():
+        raise ValueError("Device 浏览器报告缺少首页")
+    tests = device_tests(sidecar, binding["server"], binding["run_id"])
+    report_snapshot = artifact_manifest_snapshot(
+        report, frontend / ".local-tests/playwright-real/report", "Device 浏览器 HTML 报告"
+    )
+    results_snapshot = artifact_manifest_snapshot(
+        results, frontend / ".local-tests/playwright-real/results", "Device 浏览器结果"
+    )
+    report_manifest, results_manifest = report_snapshot.manifest, results_snapshot.manifest
+    if not any(item["path"] == "index.html" for item in report_manifest["files"]) \
+            or not any(item["path"] == "device-tests.json" for item in results_manifest["files"]):
+        raise ValueError("Device 浏览器完整清单缺少报告首页或场景收据")
+    return ({"report": report_manifest, "results": results_manifest, "tests": tests},
+            (report_snapshot, results_snapshot))
+
+def _run_logs(outputs: dict, server: str) -> dict:
+    keys = ["browser"] if server == "dev" else [
+        "build", "build_verify_before", "browser", "build_verify_after"
+    ]
+    return {name: _bound(outputs[name + "_log"]) for name in keys}
+
+
 def run_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_path: Path,
                 binding_path: Path) -> dict:
     _, execution, _ = api.bootstrap(backend, environment_path)
@@ -381,61 +481,71 @@ def run_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_p
     path = _binding_path(execution, runtime, binding_path, new=False)
     binding = read_json(path)
     run_id = binding.get("run_id") if isinstance(binding, dict) else None
-    if not isinstance(run_id, str):
-        raise ValueError("Device 浏览器绑定缺少 run id")
+    server = binding.get("server") if isinstance(binding, dict) else None
+    if not isinstance(run_id, str) or not isinstance(server, str):
+        raise ValueError("Device 浏览器绑定缺少 run id 或 server")
     _binding_path(execution, runtime, path, new=False, run_id=run_id)
-    expected, context = _plan(api, backend, environment_path, output_path, run_id, require_fresh=True)
+    expected, context = _plan(
+        api, backend, environment_path, output_path, run_id, server, require_fresh=True
+    )
     if binding != expected:
         raise ValueError("Device 浏览器绑定与当前源码、运行时或环境不一致")
     binding_guard = artifact_snapshot(path)
     _assert_guards(context)
     outputs = context["outputs"]
-    environment = browser_environment(context["private"], binding)
     intent = {"format_version": 1, "kind": "reference-fixture-browser-intent",
               "binding": _bound(path), "commands": binding["commands"],
               "login_budget": {"path": str(outputs["login_budget"]), "existed_before": False}}
     _publish_json(outputs["intent"], intent)
-    stage, business_started = "build", False
+    stage, business_started = ("build", False) if server == "preview" else ("browser", True)
     processes = {}
     secrets = context["secrets"]
     try:
-        build_environment = configured({"COREPACK_ENABLE_NETWORK": "0",
-                                        "VITE_APP_API_ORIGIN": "",
-                                        "VITE_APP_PROXY_TARGET": binding["endpoints"]["api"],
-                                        "TEMP": context["private"]["TEMP"],
-                                        "TMP": context["private"]["TMP"]})
-        processes["build"] = _frontend_command(
-            binding, context["frontend"], ["build", "--real"], build_environment,
-            outputs["build_log"], outputs["build_process"], 1800, (),
-        )
-        if not outputs["build_receipt"].is_file():
-            raise ValueError("Device 前端真实构建未生成来源收据")
+        if server == "preview":
+            build, build_guard = _preview_build(binding, context, processes)
+        else:
+            build, build_guard = None, None
         _assert_guards(context)
-        repeated, _ = _plan(api, backend, environment_path, output_path, run_id, require_fresh=False)
+        repeated, _ = _plan(
+            api, backend, environment_path, output_path, run_id, server, require_fresh=False
+        )
         if repeated != binding:
             raise ValueError("Device 前端构建后来源或运行端点发生变化")
         binding_guard.assert_unchanged()
         stage, business_started = "browser", True
+        if outputs["login_budget"].exists():
+            raise ValueError("Device 登录预算在浏览器首次写入前已经出现")
+        environment = browser_environment(context["private"], binding)
         processes["browser"] = _frontend_command(
-            binding, context["frontend"],
-            ["check", "--stage", "browser", "--real", "--fixture", "device",
-             "--server", "preview"], environment, outputs["browser_log"],
+            binding, context["frontend"], binding["commands"][2 if server == "preview" else 0],
+            environment, outputs["browser_log"],
             outputs["browser_process"], 3600, secrets,
         )
+        if server == "preview":
+            stage = "build_verify_after"
+            _verify_preview_after(binding, context, processes, build, build_guard)
+        stage = "evidence"
         _assert_guards(context)
         binding_guard.assert_unchanged()
-        repeated, _ = _plan(api, backend, environment_path, output_path, run_id, require_fresh=False)
-        if repeated != binding or not outputs["report"].is_file() or not outputs["results"].is_dir():
+        repeated, _ = _plan(
+            api, backend, environment_path, output_path, run_id, server, require_fresh=False
+        )
+        if repeated != binding:
             raise ValueError("Device 浏览器结束后的来源、端点或结果不完整")
+        artifacts, artifact_guards = _browser_artifacts(binding, context)
+        budget = login_budget(outputs["login_budget"], binding)
         result = {"format_version": 1, "kind": "reference-fixture-browser-result", "status": "passed",
-                  "binding": _bound(path), "intent": _bound(outputs["intent"]),
-                  "build": _bound(outputs["build_receipt"]),
-                  "build_log": _bound(outputs["build_log"]),
-                  "browser_log": _bound(outputs["browser_log"]), "processes": processes,
-                  "report": str(outputs["report"]), "results": str(outputs["results"]),
-                  "login_budget": _bound(outputs["login_budget"]),
+                  "run_id": run_id, "server": server, "binding": _bound(path),
+                  "intent": _bound(outputs["intent"]), "build": build,
+                  "logs": _run_logs(outputs, server), "processes": processes,
+                  "artifacts": artifacts, "login_budget": budget,
                   "remote_writes": {"business_data": True}}
         _publish_json(outputs["result"], result)
+        for guard in artifact_guards:
+            guard.assert_unchanged()
+        verify_browser_result(binding, context, path)
+        _assert_guards(context)
+        binding_guard.assert_unchanged()
         return result
     except BaseException as error:
         if outputs["result"].exists():
@@ -445,10 +555,14 @@ def run_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_p
                    "status": "failed", "stage": stage, "binding": _bound(path),
                    "intent": _bound(outputs["intent"]), "error_type": type(error).__name__,
                    "returncode": getattr(error, "returncode", None),
-                   "unknown_business_writes": business_started,
-                   "process": _failure_process(outputs[stage + "_process"])}
-        log = outputs["browser_log" if stage == "browser" else "build_log"]
-        if log.is_file():
+                   "unknown_business_writes": business_started}
+        process = outputs.get(stage + "_process")
+        if process is not None:
+            failure["process"] = _failure_process(process)
+        log = outputs.get(stage + "_log")
+        if log is None and business_started:
+            log = outputs["browser_log"]
+        if log is not None and log.is_file():
             failure["log"] = _bound(log)
         if outputs["login_budget"].is_file():
             failure["login_budget"] = _bound(outputs["login_budget"])
@@ -457,3 +571,30 @@ def run_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_p
         except Exception as evidence_error:
             raise RuntimeError(f"Device 浏览器失败且失败证据保存失败：{evidence_error}") from error
         raise
+
+
+def verify_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_path: Path,
+                   binding_path: Path, *, closed: bool = False) -> dict:
+    _, execution, _ = api.bootstrap(backend, environment_path)
+    runtime = api.output(execution, output_path, new=False)
+    path = _binding_path(execution, runtime, binding_path, new=False)
+    binding = read_json(path)
+    run_id, server = binding.get("run_id"), binding.get("server")
+    if not isinstance(run_id, str) or not isinstance(server, str):
+        raise ValueError("Device 浏览器绑定缺少 run id 或 server")
+    _binding_path(execution, runtime, path, new=False, run_id=run_id)
+    expected, context = _plan(
+        api, backend, environment_path, output_path, run_id, server,
+        require_fresh=False, process_state="stopped" if closed else "running",
+    )
+    if binding != expected:
+        raise ValueError("Device 浏览器绑定与当前源码、运行时或环境不一致")
+    binding_guard = artifact_snapshot(path)
+    _assert_guards(context)
+    verify_browser_result(binding, context, path)
+    _assert_guards(context)
+    binding_guard.assert_unchanged()
+    return {"status": "reference_fixture_browser_closed" if closed else
+            "reference_fixture_browser_verified", "binding": _bound(path),
+            "result": _bound(context["outputs"]["result"]), "run_id": run_id,
+            "server": server, "remote_writes": 0}
