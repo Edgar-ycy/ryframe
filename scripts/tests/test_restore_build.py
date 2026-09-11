@@ -102,6 +102,10 @@ class RestoreBuildTests(unittest.TestCase):
             changed["artifacts"][role]["command"] += ["--release"]
             with self.assertRaises(ValueError):
                 build.verify_build_artifacts(changed)
+        changed = copy.deepcopy(receipt)
+        changed["artifacts"]["api"]["cargo_executable"] = changed["artifacts"]["api"]["executable"]
+        with self.assertRaises(ValueError):
+            build.verify_build_artifacts(changed)
         with self.assertRaises(ValueError):
             build.verify_build(self.root, receipt, "d" * 40, self.cargo_run)
 
@@ -117,7 +121,15 @@ class RestoreBuildTests(unittest.TestCase):
         environment = {
             "RUSTUP_TOOLCHAIN": "stable-fixture",
             "RUSTC_BOOTSTRAP": "0",
+            "RYFRAME_BUILD_COMMIT": "a" * 40,
             "SOURCE_DATE_EPOCH": "1",
+            "PATH": "fixture-native-tools",
+            "INCLUDE": "fixture-headers",
+            "LIB": "fixture-libraries",
+            "LIBCLANG_PATH": "fixture-clang",
+            "PKG_CONFIG": "fixture-pkg-config",
+            "AWS_LC_SYS": "fixture-aws-lc",
+            "OPENSSL": "fixture-openssl-command",
             "AR_x86_64_pc_windows_msvc": "llvm-lib",
             "CXXFLAGS_x86_64_pc_windows_msvc": "/O2",
             "PKG_CONFIG_PATH": "fixture-pkg",

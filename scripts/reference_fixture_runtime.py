@@ -78,11 +78,9 @@ def _run(command: list[str], *, cwd: Path, capture_output: bool) -> subprocess.C
                           creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
 
 
-def _backend_build(execution: Path, output: Path, binaries: dict[str, str]) -> dict:
-    source = source_snapshot(execution)
-    inventory = capture_inventory(execution, source)
+def _backend_build(execution: Path, output: Path, binaries: dict[str, str], inventory: dict,
+                   context: dict) -> dict:
     sources = build_source_domains(inventory, "backend")
-    context = build_context(execution)
     artifacts = {
         role: {"executable": binaries[name], "command": build_command(role), **file_digest(Path(binaries[name]))}
         for role, name in (("api", "ryframe"), ("worker", "ryframe-worker"))
@@ -102,8 +100,11 @@ def build(backend: Path, environment_path: Path, output_path: Path) -> dict:
     try:
         values = _environment(execution, private, output)
         with Environments(values, values).use("source"):
+            source = source_snapshot(execution)
+            inventory = capture_inventory(execution, source)
+            context = build_context(execution)
             binaries = build_binaries(_run, execution, output)
-            backend_build = _backend_build(execution, output, binaries)
+            backend_build = _backend_build(execution, output, binaries, inventory, context)
             runtime = register_runtime(execution, output)
         return {"status": "reference_fixture_runtime_built", "source_pair": _bound(output / "source-pair.json"),
                 "backend_build": _bound(output / "backend-build.json"), "runtime": _bound(output / "runtime.json"),

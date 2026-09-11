@@ -4,9 +4,11 @@ import hashlib
 import os
 from pathlib import Path
 import shutil
+import stat
 import struct
 import subprocess
 import sys
+from types import SimpleNamespace
 import unittest
 import uuid
 from unittest.mock import patch
@@ -115,7 +117,7 @@ class SourceInventoryTests(unittest.TestCase):
                 sources.source_snapshot(self.root)
 
     def test_path_escape_is_rejected_before_reading_file_content(self):
-        for name in ("../outside", "C:/outside", "C:relative", "nested\\file", "/absolute"):
+        for name in (".", "../outside", "C:/outside", "C:relative", "nested\\file", "/absolute"):
             self.untracked = [name]
             with self.subTest(name=name), patch.object(sources, "file_digest") as digest:
                 for operation in (sources.snapshot, sources.file_inventory):
@@ -125,6 +127,22 @@ class SourceInventoryTests(unittest.TestCase):
                     sources.worktree_fingerprint(self.root, self.head)
                 # 已跟踪文件可先被扫描；非法文件本身不得进入内容读取。
                 self.assertTrue(all(call.args[0].is_relative_to(self.root) for call in digest.call_args_list))
+
+    def test_intermediate_reparse_point_is_rejected_before_file_read(self):
+        directory = self.root / "nested"
+        directory.mkdir()
+        (directory / "file.txt").write_text("fixture", encoding="utf-8")
+        original_lstat = Path.lstat
+
+        def lstat(path):
+            observed = original_lstat(path)
+            if path == directory:
+                return SimpleNamespace(st_mode=stat.S_IFDIR, st_file_attributes=0x400)
+            return observed
+
+        with patch.object(Path, "lstat", autospec=True, side_effect=lstat), \
+                self.assertRaisesRegex(ValueError, "junction"):
+            sources.source_file(self.root, "nested/file.txt")
 
     def test_product_classification_stays_conservative_and_tools_remain_separate(self):
         for name in ("Cargo.lock", "config/app.toml", "vendor/lib.rs", "xtask/src/main.rs",

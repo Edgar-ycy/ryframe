@@ -15,6 +15,7 @@ from source_inventory import (
     file_inventory,
     fingerprints,
     validate_build_source_domains,
+    validate_inventory,
 )
 
 _BRIDGES = ContextVar("artifact_source_bridges", default=None)
@@ -37,6 +38,11 @@ def build_source(receipt: dict) -> dict:
     )
     if repository is None:
         raise ValueError("构建来源类型无效")
+    expected = ({"format_version", "kind", "sources", "build", "artifacts"}
+                if repository == "backend"
+                else {"format_version", "kind", "sources", "build", "files"})
+    if receipt.get("format_version") != 2 or set(receipt) != expected:
+        raise ValueError("当前构建来源必须使用严格 v2 收据")
     return validate_build_source_domains(receipt.get("sources"), repository)["full"]["source"]
 
 
@@ -48,6 +54,14 @@ def verify_inventory_source(inventory: dict, receipt: dict) -> None:
             or not re.fullmatch(r"sha256:[a-f0-9]{64}", source["worktree_fingerprint"])):
         raise ValueError("原始文件清单没有绑定构建时的完整源码")
     fingerprints(inventory)
+
+
+def bridge_product_inputs(receipt: dict, inventory: dict) -> dict:
+    """按实际产物角色计算复用边界；维护构建继续使用自身的产品集合。"""
+    validate_inventory(inventory)
+    if receipt.get("kind") == "restore-backend-build":
+        return build_source_domains(inventory, "backend")["product"]
+    return fingerprints(inventory)["product"]
 
 
 def file_binding(path: Path) -> dict:
@@ -109,14 +123,19 @@ def write_bridge(root: Path, build_path: Path, inventory_path: Path, output_path
         raise ValueError("来源桥接只接受 API/Worker 或维护 CLI 构建收据")
     _verify_bridge_build(root, build_path, receipt)
     verify_inventory_source(inventory, receipt)
+    if (receipt.get("kind") == "restore-backend-build"
+            and receipt["sources"]["full"] != inventory):
+        raise ValueError("API/Worker 构建收据与构建时 inventory 不一致")
     current_inventory = capture_inventory(root)
-    current = execution_source(current_inventory)
-    original = fingerprints(inventory)
-    if original["product"] != current["fingerprints"]["product"]:
+    current, original = execution_source(current_inventory), fingerprints(inventory)
+    product_inputs = {"build": bridge_product_inputs(receipt, inventory),
+                      "audited": bridge_product_inputs(receipt, current_inventory)}
+    if product_inputs["build"] != product_inputs["audited"]:
         raise ValueError("产品构建输入已经变化，必须重新编译")
     value = {"format_version": 1, "kind": "devex-artifact-source-bridge", "backend_root": str(root),
              "build": build_binding, "inventory": inventory_binding, "original_fingerprints": original,
-             "audited_source": current, "restore_qualified": False, "compiled": False}
+             "audited_source": current, "audited_inventory": current_inventory,
+             "product_inputs": product_inputs, "restore_qualified": False, "compiled": False}
     output = local_path(root, str(output_path), new=True)
     if current_execution_source(root) != current:
         raise ValueError("桥接核验期间源码发生变化")
@@ -176,7 +195,7 @@ def _verify_bridge_build(root: Path, path: Path, receipt: dict) -> None:
         core = {"executable", "command", "bytes", "sha256"}
         for artifact in receipt.get("artifacts", {}).values():
             artifact_fields = frozenset(artifact) if isinstance(artifact, dict) else frozenset()
-            if artifact_fields not in {frozenset(core), frozenset(core | {"cargo_executable"})}:
+            if artifact_fields != frozenset(core):
                 raise ValueError("API/Worker 构建产物字段无效")
         verify_build_artifacts(receipt)
         return
@@ -188,10 +207,12 @@ def _verify_bridge_build(root: Path, path: Path, receipt: dict) -> None:
     raise ValueError("来源桥接只接受 API/Worker 或维护 CLI 构建收据")
 
 
-def _bridge_registration(root: Path, binding: dict, current: dict, *, inherited: bool) -> tuple[str, str, dict]:
+def _bridge_registration(root: Path, binding: dict, current: dict, current_inventory: dict,
+                         *, inherited: bool) -> tuple[str, str, dict]:
     bridge = read_binding(root, binding)
     if (set(bridge) != {"format_version", "kind", "backend_root", "build", "inventory",
-                       "original_fingerprints", "audited_source", "restore_qualified", "compiled"}
+                       "original_fingerprints", "audited_source", "audited_inventory", "product_inputs",
+                       "restore_qualified", "compiled"}
             or bridge["format_version"] != 1 or bridge["kind"] != "devex-artifact-source-bridge"
             or bridge["backend_root"] != str(root) or bridge["restore_qualified"] is not False
             or bridge["compiled"] is not False):
@@ -205,9 +226,15 @@ def _bridge_registration(root: Path, binding: dict, current: dict, *, inherited:
         raise ValueError("构建收据与来源桥接绑定了不同的构建时 inventory")
     original = fingerprints(inventory)
     verify_execution_source(bridge["audited_source"], "来源桥接 audited_source")
+    audited_inventory = validate_inventory(bridge["audited_inventory"])
+    expected_products = {"build": bridge_product_inputs(receipt, inventory),
+                         "audited": bridge_product_inputs(receipt, audited_inventory)}
     if (original != bridge["original_fingerprints"]
-            or bridge["audited_source"]["fingerprints"]["product"] != original["product"]
-            or not inherited and original["product"] != current["fingerprints"]["product"]):
+            or execution_source(audited_inventory) != bridge["audited_source"]
+            or bridge["product_inputs"] != expected_products
+            or expected_products["build"] != expected_products["audited"]
+            or not inherited and (audited_inventory != current_inventory
+                                  or bridge["audited_source"] != current)):
         raise ValueError("产物来源桥接的产品指纹不匹配")
     return (canonical_digest(receipt), _bridge_build_identity(receipt),
             {"inventory": inventory, "inherited": inherited})
@@ -227,7 +254,7 @@ def artifact_sources(root: Path, bridge_bindings: list[dict],
                    for binding in (inherited_bridge_bindings or []))
     checks = []
     for binding, inherited in entries:
-        key, identity, registration = _bridge_registration(root, binding, current,
+        key, identity, registration = _bridge_registration(root, binding, current, current_inventory,
                                                             inherited=inherited)
         if key in registered or identity in identities:
             raise ValueError("同一构建不能重复登记来源桥接")
@@ -240,7 +267,8 @@ def artifact_sources(root: Path, bridge_bindings: list[dict],
     finally:
         try:
             for (binding, inherited), expected in zip(entries, checks, strict=True):
-                if _bridge_registration(root, binding, current, inherited=inherited) != expected:
+                if _bridge_registration(root, binding, current, current_inventory,
+                                        inherited=inherited) != expected:
                     raise ValueError("阶段结束时构建桥接或冻结产物发生变化")
             if capture_inventory(root) != current_inventory:
                 raise ValueError("阶段结束时完整源码变化，不能发布成功结果")

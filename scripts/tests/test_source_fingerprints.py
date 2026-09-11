@@ -20,9 +20,10 @@ CAPTURE = sources.capture_inventory
 CURRENT_EXECUTION = sources.current_execution_source
 
 
-def inventory(tool="a", product="b", head="c"):
+def inventory(tool="a", product="b", head="c", xtask="3"):
     files = [{"path": "Cargo.toml", "sha256": product * 64},
-             {"path": "scripts/check.py", "sha256": tool * 64}]
+             {"path": "scripts/check.py", "sha256": tool * 64},
+             {"path": "xtask/src/main.rs", "sha256": xtask * 64}]
     return {"source": {"snapshot": {"head": head * 40, "patch_sha256": tool * 64,
                                       "files": [], "clean": False},
                        "worktree_fingerprint": "sha256:" + tool * 64}, "files": files,
@@ -119,6 +120,12 @@ class SourceFingerprintsTests(unittest.TestCase):
                     {"source": inventory()["source"]["snapshot"]},
                 )
             )
+
+    def test_restore_build_source_rejects_v1_and_extra_fields(self):
+        value = build_receipt(inventory())
+        for changed in ({**value, "format_version": 1}, {**value, "unexpected": True}):
+            with self.subTest(fields=set(changed)), self.assertRaisesRegex(ValueError, "严格 v2"):
+                sources.build_source(changed)
 
     def test_tool_only_change_reuses_original_product_source(self):
         original = inventory(tool="d")
@@ -249,8 +256,10 @@ class SourceFingerprintsTests(unittest.TestCase):
     def test_added_and_removed_test_files_change_only_test_tool_fingerprint(self):
         before = sources.fingerprints(self.original)
         added = {**self.original, "files": [*self.original["files"],
-                                          {"path": "tests/new.rs", "sha256": "f" * 64}]}
-        removed = {**self.original, "files": self.original["files"][:1]}
+                                           {"path": "tests/new.rs", "sha256": "f" * 64}]}
+        added["files"].sort(key=lambda item: item["path"])
+        removed = {**self.original,
+                   "files": [item for item in self.original["files"] if item["path"] != "scripts/check.py"]}
         for value in (added, removed):
             after = sources.fingerprints(value)
             self.assertEqual(before["product"], after["product"])
@@ -278,6 +287,16 @@ class SourceFingerprintsTests(unittest.TestCase):
                 pass
         self.assertEqual(sources.reusable_artifact_source(self.root, self.receipt), self.original["source"])
         self.assertEqual(self.build_path.read_bytes(), before)
+
+    def test_xtask_only_change_uses_explicit_audited_inventory_without_rebuilding_product(self):
+        self.set_current(inventory(tool="d", xtask="4"))
+        binding = self.bridge()
+        bridge = json.loads(Path(binding["path"]).read_text(encoding="utf-8"))
+        self.assertEqual(bridge["product_inputs"]["build"], bridge["product_inputs"]["audited"])
+        self.assertNotEqual(bridge["audited_inventory"], self.original)
+        with sources.artifact_sources(self.root, [binding]):
+            self.assertEqual(sources.reusable_artifact_source(self.root, self.receipt),
+                             self.original["source"])
 
     def test_bridge_rejects_changed_product_or_forged_original_snapshot(self):
         self.set_current(inventory(product="e"))
@@ -332,24 +351,13 @@ class SourceFingerprintsTests(unittest.TestCase):
                         self.root, ordinary, inherited_bridge_bindings=inherited):
                 pass
 
-    def test_bridge_registration_uses_stable_build_identity_across_receipt_shells(self):
-        first = self.bridge()
-        second_receipt = copy.deepcopy(self.receipt)
-        for artifact in second_receipt["artifacts"].values():
-            artifact["cargo_executable"] = artifact["executable"]
-        self.assertNotEqual(sources.canonical_digest(self.receipt),
-                            sources.canonical_digest(second_receipt))
-        second_build = self.write("build-copy.json", second_receipt)
-        second_bridge_path = self.local / "bridge-copy.json"
-        sources.write_bridge(self.root, second_build, self.inventory_path, second_bridge_path)
-        second = sources.file_binding(second_bridge_path)
-
-        for ordinary, inherited in (([first, second], []), ([first], [second])):
-            with self.subTest(inherited=bool(inherited)), \
-                    self.assertRaisesRegex(ValueError, "同一构建.*重复登记"), \
-                    sources.artifact_sources(
-                        self.root, ordinary, inherited_bridge_bindings=inherited):
-                pass
+    def test_bridge_rejects_noncanonical_v2_artifact_fields(self):
+        changed = copy.deepcopy(self.receipt)
+        artifact = changed["artifacts"]["api"]
+        artifact["cargo_executable"] = artifact["executable"]
+        build_path = self.write("build-copy.json", changed)
+        with self.assertRaisesRegex(ValueError, "产物字段无效"):
+            sources.write_bridge(self.root, build_path, self.inventory_path, self.bridge_path)
 
     def test_bridge_checks_artifact_bytes_and_every_bound_evidence_file(self):
         binary = Path(self.receipt["artifacts"]["api"]["executable"])

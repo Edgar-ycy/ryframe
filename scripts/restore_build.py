@@ -24,13 +24,18 @@ ROLES = {"api": ("bin-api", "ryframe"), "worker": ("bin-worker", "ryframe-worker
 # 正式恢复夹具沿用既有的无 --release 定向 Cargo 构建；统一 xtask build 的默认 release 另行管理。
 RESTORE_BUILD_PROFILE = "dev"
 BUILD_ENVIRONMENT_NAMES = {
-    "AR", "BINDGEN_EXTRA_CLANG_ARGS", "CARGO_BUILD_JOBS", "CARGO_BUILD_TARGET",
+    "AR", "AWS_LC_SYS", "BINDGEN_EXTRA_CLANG_ARGS", "CARGO_BUILD_JOBS", "CARGO_BUILD_TARGET",
     "CARGO_ENCODED_RUSTFLAGS", "CARGO_HOME", "CARGO_INCREMENTAL", "CARGO_NET_OFFLINE",
-    "CARGO_TARGET_DIR", "CC", "CC_ENABLE_DEBUG_OUTPUT", "CC_FORCE_DISABLE", "CFLAGS", "CMAKE",
+    "CARGO_MAKEFLAGS", "CARGO_TARGET_DIR", "CC", "CC_ENABLE_DEBUG_OUTPUT", "CC_FORCE_DISABLE",
+    "CFLAGS", "CLANG", "CLANG_PATH", "CMAKE",
     "CMAKE_GENERATOR", "CMAKE_TOOLCHAIN_FILE", "CRATE_CC_NO_DEFAULTS", "CXX", "CXXFLAGS",
-    "CXXSTDLIB", "HOST", "LDFLAGS", "RANLIB", "RUSTC", "RUSTC_BOOTSTRAP", "RUSTC_WRAPPER",
-    "RUSTC_WORKSPACE_WRAPPER", "RUSTDOCFLAGS", "RUSTFLAGS", "RUSTUP_TOOLCHAIN", "SDKROOT",
-    "SOURCE_DATE_EPOCH", "TARGET", "VCPKGRS_DYNAMIC", "VCPKGRS_TRIPLET",
+    "CXXSTDLIB", "HOST", "INCLUDE", "LDFLAGS", "LIB", "LIBCLANG_PATH", "LIBPATH", "MAKE",
+    "NASM", "NINJA", "OPENSSL", "PATH", "PERL", "PKG_CONFIG", "RANLIB", "RUSTC",
+    "RUSTC_BOOTSTRAP", "RUSTC_LINKER", "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER",
+    "RUSTDOCFLAGS", "RUSTFLAGS", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN", "RYFRAME_BUILD_COMMIT",
+    "SDKROOT", "SOURCE_DATE_EPOCH", "TARGET", "UCRTVERSION", "UNIVERSALCRTSDKDIR",
+    "VCINSTALLDIR", "VCPKGRS_DYNAMIC", "VCPKGRS_TRIPLET", "VCTOOLSINSTALLDIR",
+    "WINDOWSSDKDIR", "WINDOWSSDKVERSION",
 }
 BUILD_ENVIRONMENT_PREFIXES = (
     "AR_", "AWS_LC_", "AWS_LC_SYS_", "BINDGEN_", "CARGO_PROFILE_", "CARGO_TARGET_", "CC_",
@@ -42,10 +47,16 @@ BUILD_ENVIRONMENT_PREFIXES = (
 def build_environment(environment: dict[str, str] | None = None) -> dict:
     """只记录会影响 Cargo 产物的变量名及值摘要，不把环境值写入收据。"""
     environment = os.environ if environment is None else environment
+
+    def selected(name: str) -> bool:
+        # Windows 环境变量名不区分大小写；收据仍保留操作系统提供的实际名称。
+        candidate = name.upper() if os.name == "nt" else name
+        return candidate in BUILD_ENVIRONMENT_NAMES or candidate.startswith(BUILD_ENVIRONMENT_PREFIXES)
+
     entries = [
         {"name": name, "sha256": hashlib.sha256(environment[name].encode()).hexdigest()}
         for name in sorted(environment)
-        if name in BUILD_ENVIRONMENT_NAMES or name.startswith(BUILD_ENVIRONMENT_PREFIXES)
+        if selected(name)
     ]
     return {"variables": [item["name"] for item in entries], "sha256": canonical_digest(entries)}
 
@@ -179,11 +190,15 @@ def verify_build(root: Path, receipt: dict, sha: str, run=subprocess.run) -> Non
 
 
 def verify_build_artifacts(receipt: dict) -> None:
-    if (receipt.get("format_version") != 2 or receipt.get("kind") != "restore-backend-build"
+    fields = {"format_version", "kind", "sources", "build", "artifacts"}
+    if (not isinstance(receipt, dict) or set(receipt) != fields
+            or receipt.get("format_version") != 2 or receipt.get("kind") != "restore-backend-build"
             or set(receipt.get("artifacts", {})) != set(ROLES)):
         raise ValueError("构建收据缺少完整 API 与 Worker 产物")
     for role, artifact in receipt["artifacts"].items():
-        if artifact.get("command") != build_command(role):
+        if (not isinstance(artifact, dict)
+                or set(artifact) != {"executable", "command", "bytes", "sha256"}
+                or artifact.get("command") != build_command(role)):
             raise ValueError("恢复二进制构建命令不匹配")
         actual = file_digest(Path(artifact["executable"]))
         if any(artifact.get(key) != value for key, value in actual.items()):

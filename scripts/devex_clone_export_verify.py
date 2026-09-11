@@ -24,6 +24,7 @@ from restore_build import file_digest
 from restore_reference_io import ExternalTools, redact_object_diagnostic
 from restore_reference_plan import BUCKETS, plan_hash
 from restore_source_binding import source_binding
+from source_fingerprints import build_source
 
 EVIDENCE = {"request", "generation-before", "generation-after", "inventory-before", "inventory-after", "schema-before", "schema-after"}
 EXPORT_FIELDS = {"format_version", "kind", "status", "id", "scope_id", "request", "source_snapshot", "worktree_fingerprint",
@@ -177,7 +178,7 @@ def verify_source_export(backend: Path, binding: dict) -> dict:
     models = schema_models(backend)
     generation = verify_generation_evidence(value, request, evidence, models)
     build = read_json(request_file(backend, request["backend_build"]))
-    if (generation["source"] != build["source"]
+    if (generation["source"] != build_source(build)["snapshot"]
             or generation["maintenance"] != read_json(request_file(backend, request["maintenance_build"]))
             or generation["runtime"] != read_json(request_file(backend, request["runtime"]))
             or any(generation["processes"][role] != read_json(request_file(backend, request["processes"][role]))["identity"] for role in ("api", "worker"))):

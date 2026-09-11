@@ -75,10 +75,10 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
                    "environment": {"variables": [], "sha256": runtime.build_source_domains(
                        inventory, "backend")["tools"]["sha256"]}}
         with patch.object(runtime, "write_pair", side_effect=self._pair), \
+                patch.object(runtime, "source_snapshot", return_value=source) as source_probe, \
+                patch.object(runtime, "capture_inventory", return_value=inventory) as inventory_probe, \
+                patch.object(runtime, "build_context", return_value=context) as context_probe, \
                 patch.object(runtime, "build_binaries", side_effect=build_binaries), \
-                patch.object(runtime, "source_snapshot", return_value=source), \
-                patch.object(runtime, "capture_inventory", return_value=inventory), \
-                patch.object(runtime, "build_context", return_value=context), \
                 patch.object(runtime, "register_runtime", side_effect=register_runtime):
             result = runtime.build(self.backend, self.bootstrap, output)
 
@@ -86,6 +86,10 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
         self.assertEqual(captured["environment"]["APP_API_DOCS_ENABLED"], "false")
         self.assertEqual(captured["environment"]["RYFRAME_E2E_FIXTURE"], "device")
         self.assertEqual(captured["environment"]["RYFRAME_CODE_SHA"], "b" * 40)
+        self.assertEqual(source_probe.call_count, 1)
+        self.assertEqual(inventory_probe.call_args_list[0].args, (self.execution, source))
+        self.assertGreaterEqual(inventory_probe.call_count, 2)
+        self.assertGreaterEqual(context_probe.call_count, 2)
         build = json.loads((output / "backend-build.json").read_text(encoding="utf-8"))
         self.assertEqual(set(build["artifacts"]), {"api", "worker"})
         self.assertTrue((output / "source-pair.json").is_file())

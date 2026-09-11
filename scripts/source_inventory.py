@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import stat
@@ -12,10 +13,34 @@ import subprocess
 from artifact_digests import file_digest
 
 FRONTEND_ENVIRONMENT_PATHS = (".env", ".env.local", ".env.production", ".env.production.local")
+WINDOWS_REPARSE_POINT = 0x400
 
 
 def git(root: Path, *arguments: str) -> bytes:
     return subprocess.check_output(["git", "-C", str(root), *arguments])
+
+
+def source_file(root: Path, relative: str, *, allow_missing: bool = False) -> tuple[Path, os.stat_result] | None:
+    """只接受仓库根目录内、路径各层均非链接的普通文件。"""
+    source_domain(relative)
+    path = root
+    observed = None
+    for part in PurePosixPath(relative).parts:
+        path /= part
+        try:
+            observed = path.lstat()
+        except FileNotFoundError:
+            if allow_missing:
+                return None
+            raise ValueError("源码文件不存在") from None
+        if (stat.S_ISLNK(observed.st_mode)
+                or (getattr(observed, "st_file_attributes", 0) or 0) & WINDOWS_REPARSE_POINT):
+            raise ValueError("源码路径不能包含符号链接或 junction")
+    if observed is None or not stat.S_ISREG(observed.st_mode):
+        raise ValueError("源码清单只能绑定普通文件")
+    if not path.resolve(strict=True).is_relative_to(root.resolve(strict=True)):
+        raise ValueError("源码文件越界")
+    return path, observed
 
 
 def snapshot(root: Path) -> tuple[dict, bytes]:
@@ -28,10 +53,9 @@ def snapshot(root: Path) -> tuple[dict, bytes]:
         if not raw:
             continue
         relative = raw.decode("utf-8")
-        source_domain(relative)
-        path = root / relative
-        if path.is_symlink() or not path.resolve().is_relative_to(root) or not path.is_file():
-            raise ValueError("未跟踪文件越界、不是普通文件或包含符号链接")
+        result = source_file(root, relative)
+        assert result is not None
+        path = result[0]
         files.append({"path": relative, "sha256": file_digest(path)["sha256"]})
     return {"head": head, "patch_sha256": hashlib.sha256(patch).hexdigest(), "files": files}, patch
 
@@ -57,12 +81,10 @@ def worktree_fingerprint(root: Path, commit: str) -> str:
     for raw in git(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0"):
         if not raw:
             continue
-        source_domain(raw.decode("utf-8"))
-        relative = Path(raw.decode("utf-8"))
-        path = root / relative
-        if (relative.is_absolute() or ".." in relative.parts or path.is_symlink()
-                or not path.resolve(strict=True).is_relative_to(root.resolve())):
-            raise ValueError("源码包含越界的未跟踪路径")
+        relative = raw.decode("utf-8")
+        result = source_file(root, relative)
+        assert result is not None
+        path = result[0]
         update(raw)
         update(path.read_bytes())
     return "sha256:" + digest.hexdigest()
@@ -75,7 +97,7 @@ def canonical_digest(value: object) -> str:
 
 def source_domain(relative: str) -> str:
     path = PurePosixPath(relative)
-    if (not relative or path.is_absolute() or PureWindowsPath(relative).drive
+    if (not relative or not path.parts or path.is_absolute() or PureWindowsPath(relative).drive
             or ".." in path.parts or "\\" in relative
             or path.as_posix() != relative):
         raise ValueError("源码清单路径无效")
@@ -264,32 +286,25 @@ def frontend_environment_files(root: Path) -> list[dict]:
     """绑定 Vite production 模式会读取的四个环境文件；只记录文件摘要。"""
     result = []
     for relative in FRONTEND_ENVIRONMENT_PATHS:
-        path = root / relative
-        if not path.exists():
+        found = source_file(root, relative, allow_missing=True)
+        if found is None:
             continue
-        if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(root.resolve()):
-            raise ValueError("Vite 环境文件必须是前端仓库内的普通文件")
+        path = found[0]
         result.append({"path": relative, "sha256": file_digest(path)["sha256"]})
     return result
 
 
 def file_inventory(root: Path) -> dict:
-    resolved, files, modes = root.resolve(), [], []
+    files, modes = [], []
     paths = git(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
     for raw in sorted(set(paths.split(b"\0"))):
         if not raw:
             continue
         relative = raw.decode("utf-8")
-        source_domain(relative)
-        path = root / relative
-        try:
-            observed = path.lstat()
-        except FileNotFoundError:
+        found = source_file(root, relative, allow_missing=True)
+        if found is None:
             continue
-        if stat.S_ISLNK(observed.st_mode) or not path.resolve().is_relative_to(resolved):
-            raise ValueError("源码清单包含链接或越界路径")
-        if not stat.S_ISREG(observed.st_mode):
-            raise ValueError("源码清单只能绑定普通文件")
+        path, observed = found
         files.append({"path": relative, "sha256": file_digest(path)["sha256"]})
         modes.append({"path": relative, "executable": observed.st_mode & 0o111})
     return {"files": files, "head": git(root, "rev-parse", "HEAD").decode().strip(),
