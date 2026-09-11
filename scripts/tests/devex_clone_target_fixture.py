@@ -25,6 +25,9 @@ class Fixture:
     def __init__(self, root: Path, test):
         self.root, self.local = root, root / ".local-tests"
         self.local.mkdir()
+        (self.local / "manifest.json").write_text(
+            json.dumps({"kind": "offline-run"}), encoding="utf-8"
+        )
         self.scope, self.uuid = "perf-seed-fixture", "67cd8d4a-fe90-11ef-98fd-5847ca786499"
         self.paths = {}
         for role in ("mysql", "aws", "rustfs", "wsl", "reset", "migrate", "tenant-data"):

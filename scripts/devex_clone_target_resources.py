@@ -280,15 +280,17 @@ class Resources:
                 cache_lock_identity = self._cache_owned_lock_identity(cache_request)
             self.cache_runtime_binding = registered_cache_binding(self.backend, self.storage_run,
                                                                  owned_lock_identity=cache_lock_identity)
-            if self.cache_runtime_binding is not None:
-                cache_request = json.loads(bound_file(self.backend, self.cache_runtime_binding["request"]).read_text(encoding="utf-8"))
-                if cache_request["previous"] != redis:
-                    raise ValueError("缓存恢复证明未绑定本目标的原始 Redis")
-                resumed = self.cache_runtime_binding["redis"]
-                allowed = {**redis, **{key: resumed[key] for key in ("pid", "started", "run_id")}}
-                if resumed != allowed:
-                    raise ValueError("缓存恢复不能改变原 WSL、配置、产物、端口或发行版")
-                redis = resumed
+        if self.cache_runtime_binding is not None:
+            cache_request = json.loads(bound_file(
+                self.backend, self.cache_runtime_binding["request"]
+            ).read_text(encoding="utf-8"))
+            if cache_request["previous"] != redis:
+                raise ValueError("缓存恢复证明未绑定本目标的原始 Redis")
+            resumed = self.cache_runtime_binding["redis"]
+            allowed = {**redis, **{key: resumed[key] for key in ("pid", "started", "run_id")}}
+            if resumed != allowed:
+                raise ValueError("缓存恢复不能改变原 WSL、配置、产物、端口或发行版")
+            redis = resumed
         exact(redis, {"port", "wsl", "distribution", "pid", "started", "executable", "sha256", "run_id", "configuration"})
         external_file(redis["wsl"])
         expected = self.review["tools"]["redis_server"]
