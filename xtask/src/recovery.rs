@@ -27,6 +27,10 @@ pub(crate) fn recovery_command(
             "scripts/restore_reference.py",
             with_paths(arguments, &backend, None)?,
         )),
+        RecoveryCommand::Inputs(arguments) => Ok((
+            "scripts/restore_input_plan.py",
+            with_paths(arguments, &backend, None)?,
+        )),
         RecoveryCommand::Runtime(arguments) => {
             let frontend = matches!(arguments.first().map(String::as_str), Some("build"))
                 .then_some(frontend.as_str());

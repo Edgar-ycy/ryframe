@@ -34,7 +34,7 @@ def backup_source(backend: Path, plan: dict, inventory: dict, generation_path: P
     exported = verify_source_export(backend, identity["export"])
     generation, request = exported["generation"], exported["request"]
     expected_inventory = {"id": plan["id"], **exported["inventory"]}
-    selected = {key: value for key, value in plan["source"].items() if key != "frontend_url"}
+    selected = plan["source"]
     build = bound_document(backend, request["backend_build"])
     descriptor = document_binding(published_generation)
     if (identity["source_generation"] != descriptor or source["source_generation"] != descriptor

@@ -7,6 +7,8 @@ pub(super) fn parse_recovery(args: &[String]) -> Result<RecoveryCommand, CliErro
     match stage.as_str() {
         "plan" | "check-dataset" | "check-existing" | "dataset" | "backup" | "restore" | "copy"
         | "damage" => Ok(RecoveryCommand::Reference(args.to_vec())),
+        "inputs" => parse_recovery_operation("inputs", rest, &["reference", "product", "bindings"])
+            .map(RecoveryCommand::Inputs),
         "runtime" => parse_recovery_operation(
             "runtime",
             rest,

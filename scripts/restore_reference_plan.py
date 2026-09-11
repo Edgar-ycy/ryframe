@@ -77,8 +77,11 @@ def validate_plan(plan: dict, backend: Path) -> None:
         side = plan[name]
         scope_identifier(side["scope_id"])
         endpoint(side["s3"]["endpoint"])
-        for key in ("api_url", "frontend_url"):
+        endpoints = ("api_url",) if name == "source" else ("api_url", "worker_ready_url", "frontend_url")
+        for key in endpoints:
             endpoint(side[key])
+        if name == "target" and side["api_url"].rstrip("/") + "/readyz" == side["worker_ready_url"]:
+            raise ValueError("恢复目标 API 和 Worker 探针不得重叠")
         runtime = Path(side["runtime_dir"])
         if not runtime.is_absolute() or not runtime.resolve().is_relative_to(local):
             raise ValueError("运行进程收据必须显式保存在当前 .local-tests")

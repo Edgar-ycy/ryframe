@@ -72,10 +72,11 @@ fn help_accepts_only_current_command_families() {
 #[test]
 fn recovery_help_reaches_the_selected_stage_parser() {
     for flag in ["--help", "-h"] {
-        for stage in ["runtime", "source", "clone"] {
+        for stage in ["inputs", "runtime", "source", "clone"] {
             let actual = parse_command(&["check", "recovery", stage, flag]).unwrap();
             let arguments = strings(&[flag]);
             let expected = match stage {
+                "inputs" => RecoveryCommand::Inputs(arguments),
                 "runtime" => RecoveryCommand::Runtime(arguments),
                 "source" => RecoveryCommand::Source(arguments),
                 _ => RecoveryCommand::Clone(arguments),
@@ -107,6 +108,7 @@ fn recovery_help_reaches_the_selected_stage_parser() {
             Command::Help(Some("check".into()))
         );
         assert!(parse_command(&["check", "recovery", "unknown", flag]).is_err());
+        assert!(parse_command(&["check", "recovery", "inputs", "unknown", flag]).is_err());
         assert!(parse_command(&["check", "recovery", "runtime", "unknown", flag]).is_err());
     }
 }
@@ -140,6 +142,14 @@ fn parses_check_task_graph_and_internal_groups() {
     }
     assert!(parse_command(&["check", "ci"]).is_err());
     assert!(parse_command(&["check", "ci", "rust-gate", "extra"]).is_err());
+    assert_eq!(
+        parse_command(&["check", "recovery", "inputs", "reference", "--side", "base",]).unwrap(),
+        Command::Check(CheckCommand::Recovery(RecoveryCommand::Inputs(strings(&[
+            "reference",
+            "--side",
+            "base",
+        ]))))
+    );
     assert_eq!(
         parse_command(&[
             "check",
@@ -263,6 +273,8 @@ fn parses_recovery_check_groups() {
     );
     for values in [
         ["check", "recovery", "source"].as_slice(),
+        ["check", "recovery", "inputs"].as_slice(),
+        ["check", "recovery", "inputs", "unknown"].as_slice(),
         ["check", "recovery", "source", "unknown"].as_slice(),
         ["check", "recovery", "runtime", "unknown"].as_slice(),
         ["check", "recovery", "missing"].as_slice(),

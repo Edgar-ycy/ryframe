@@ -43,8 +43,9 @@ def setup(test):
                        for role in ("backend", "frontend")},
             "adapter": {"contract": "legacy-stable-readiness-b0-v1"} if name == "b0" else None}
     test.write("comparison.json", test.comparison)
-    test.selected = {**{key: test.plan["target"][key] for key in ("runtime_dir", "api_url", "frontend_url")},
-                     "worker_ready_url": "http://127.0.0.1:19200/readyz", "backend_dir": str(test.backend)}
+    test.selected = {**{key: test.plan["target"][key]
+                        for key in ("runtime_dir", "api_url", "worker_ready_url", "frontend_url")},
+                     "backend_dir": str(test.backend)}
     test.maintenance_binding = {"kind": "current-backend", "path": str(test.backend)}
     test.request = {"side": "base", "target": {key: test.plan["target"][key] for key in ("scope_id", "s3", "databases")},
                     "maintenance_build": test.write_binding("maintenance-build.json", {"kind": "devex-clone-tool-build"})}

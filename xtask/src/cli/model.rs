@@ -35,6 +35,7 @@ pub(crate) enum CheckCommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RecoveryCommand {
     Reference(Vec<String>),
+    Inputs(Vec<String>),
     Runtime(Vec<String>),
     Source(Vec<String>),
     Clone(Vec<String>),

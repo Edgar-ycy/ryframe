@@ -26,13 +26,15 @@ def environment(test):
                       for name in ("mysql", "mysqldump", "aws", "node")}}
     for side in ("source", "target"):
         plan[side] = {"scope_id": side, "runtime_dir": str(config.parent / side),
-                      "api_url": "http://127.0.0.1:3000", "frontend_url": "http://127.0.0.1:4174",
+                      "api_url": "http://127.0.0.1:3000",
                       "s3": {"endpoint": "http://127.0.0.1:9000", "region": "us-east-1",
                              "access_key_env": "TEST_ACCESS", "secret_key_env": "TEST_SECRET"},
                       "databases": [{"key": key, "kind": kind, "mode": mode,
                                      "database": f"{side}_{key}", "server_uuid": "uuid-1", "defaults_file": str(config),
                                      "defaults_sha256": file_digest(config)["sha256"]}
                                     for key, kind, mode in (("control", "combined", "shared"), ("dedicated", "tenant", "dedicated"))]}
+    plan["target"].update(worker_ready_url="http://127.0.0.1:3001/readyz",
+                          frontend_url="http://127.0.0.1:4174")
     return backend, plan
 
 

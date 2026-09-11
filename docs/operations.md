@@ -144,11 +144,20 @@ cargo xtask data restore verify --id <演练ID> --proof <runner>/.local-tests/pl
 
 ### 参考环境的外部验收驱动
 
-`cargo xtask check recovery` 调用私有的本机 MySQL、mysqldump、AWS CLI 和 Node 阶段程序准备演练数据与外部备份。先把源、目标的精确地址、不同 scope、数据库 ownership、运行收据目录和工具摘要写入忽略目录中的计划文件；字段校验以恢复计划规则为准。MySQL 使用计划内明确的客户端配置文件及其摘要，S3 凭据只引用环境变量。工具不创建或扫描数据库，源目标均需事先初始化。参考规模为 system 加十个普通租户、至少十万条实际岗位记录及至少 1 GiB 已登记上传对象，租户分布覆盖共享和独立目标；例如 256 个 4 MiB 对象。岗位记录属于控制库，租户业务表复制另由 Device 生成资源验收覆盖。
+`cargo xtask check recovery` 调用私有的本机 MySQL、mysqldump、AWS CLI 和 Node 阶段程序准备演练数据与外部备份。参考计划只能通过 `inputs reference` 从已发布共享导出、对应侧 arm 和 fresh-target 完整前像推导，不能手工拼接源、工具或目标字段。入口固定来源和工具摘要、目标侧、fresh ownership 及独立工作目录；默认只在标准输出预览，加 `--output <新文件> --write` 才发布且不覆盖已有文件。MySQL 使用计划内明确的客户端配置文件及其摘要，S3 凭据只引用环境变量。工具不创建或扫描数据库，源目标均需事先初始化。参考规模为 system 加十个普通租户、至少十万条实际岗位记录及至少 1 GiB 已登记上传对象，租户分布覆盖共享和独立目标；例如 256 个 4 MiB 对象。岗位记录属于控制库，租户业务表复制另由 Device 生成资源验收覆盖。
 
 数据准备计划的 `dataset.request_interval_ms` 必须为 1000 至 5000 毫秒，限制每个固定客户端的实际 HTTP 请求启动频率；十一个租户可并发准备，每个租户使用自己的身份与地址。`dataset.timeout_seconds` 显式设置整阶段时限（1 至 604800 秒），例如参考规模预留 21600 秒；其他外部命令仍使用 1800 秒超时。收到 429 时保留失败，不通过重试或更换地址绕过限流。数据准备发生在备份与恢复开始之前，其耗时不计入恢复时间。
 
 所有命令从对应干净后端工作树执行；`cargo xtask check recovery` 固定当前 `--backend-dir`，各阶段共用 `--plan <计划JSON>`。`plan` 默认只核对或输出计划，显式发布目标计划和其他写步骤必须传入 `--write`：
+
+```text
+cargo xtask check recovery inputs reference --arm-input <本侧arm结果> --fresh-target-verify <本侧观察目录/verify.json> --side base|candidate --id <备份ID> --work-dir <本侧新目录>
+cargo xtask check recovery inputs reference ... --output <本侧参考计划.json> --write
+cargo xtask check recovery inputs product --reference-plan <本侧参考计划.json> --backup-receipt <同一backup.json> --comparison-sources <双版本来源清单> --arm-input <本侧arm结果> --fresh-target-verify <本侧观察目录/verify.json> --side base|candidate --id <恢复ID> --fault-at <UTC时间>
+cargo xtask check recovery inputs product ... --output <本侧产品计划.json> --write
+```
+
+`inputs product` 从同一备份、比较来源、arm、fresh 目标和对应侧产品 SHA 推导原生 `RestorePlan`，并校验 `fault_at` 位于备份实际采集后 24 小时内。省略 `--output` 与 `--write` 时只读重算；两者必须同时出现。参考计划的源侧只记录实际备份需要的 API，目标侧另记录 API、Worker 和前端三个互不混淆的端点。
 
 | 阶段 | 操作与输出 |
 | --- | --- |

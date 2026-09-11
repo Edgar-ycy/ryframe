@@ -79,6 +79,25 @@ fn reference_stages_keep_their_existing_arguments() {
 }
 
 #[test]
+fn restore_input_plans_use_the_private_generator() {
+    let arguments = strings(&["reference", "--side", "base", "--work-dir", "D:/恢复 work"]);
+    let (script, forwarded) = recovery_command(
+        &RecoveryCommand::Inputs(arguments.clone()),
+        Path::new("unused"),
+    )
+    .unwrap();
+    assert_eq!(script, "scripts/restore_input_plan.py");
+    assert_eq!(
+        forwarded,
+        arguments
+            .into_iter()
+            .chain(strings(&["--backend-dir"]))
+            .chain([super::workspace::root_dir().display().to_string()])
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn fresh_target_uses_the_private_state_machine_with_the_current_backend() {
     let (script, forwarded) = recovery_command(
         &RecoveryCommand::FreshTarget(strings(&[
@@ -437,6 +456,7 @@ fn forwarded_recovery_scripts_exist_in_checkout() {
     let root = super::workspace::root_dir();
     for command in [
         RecoveryCommand::Reference(strings(&["plan"])),
+        RecoveryCommand::Inputs(strings(&["reference"])),
         RecoveryCommand::Runtime(strings(&["verify"])),
         RecoveryCommand::Source(strings(&["verify"])),
         RecoveryCommand::Clone(strings(&["status"])),

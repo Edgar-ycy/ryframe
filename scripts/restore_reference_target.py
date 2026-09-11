@@ -53,7 +53,10 @@ def _plan(plan: dict, backend: Path) -> None:
         reject_link_or_reparse(Path(tool["path"]))
     for name in ("source", "target"):
         side = plan[name]
-        exact(side, {"scope_id", "runtime_dir", "api_url", "frontend_url", "s3", "databases"})
+        fields = {"scope_id", "runtime_dir", "api_url", "s3", "databases"}
+        if name == "target":
+            fields |= {"worker_ready_url", "frontend_url"}
+        exact(side, fields)
         exact(side["s3"], {"endpoint", "region", "access_key_env", "secret_key_env"})
         local_path(backend, side["runtime_dir"])
         for database in side["databases"]:
@@ -205,7 +208,8 @@ def capture_target_plan(backend: Path, plan: dict, *, backup_receipt: Path,
             or arm["binding"] != document_binding(arm_document)
             or arm["target_side"] != side or request["side"] != side
             or request["target"] != {key: plan["target"][key] for key in ("scope_id", "s3", "databases")}
-            or any(plan["target"][key] != selected[key] for key in ("runtime_dir", "api_url", "frontend_url"))
+            or any(plan["target"][key] != selected[key]
+                   for key in ("runtime_dir", "api_url", "worker_ready_url", "frontend_url"))
             or str(execution) != selected["backend_dir"]):
         raise ValueError("目标计划的比较 arm、共享导出、维护源码或物理目标不一致")
     maintenance = bound_document(backend, request["maintenance_build"])
