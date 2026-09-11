@@ -195,30 +195,36 @@ where
     thread::scope(|scope| {
         let left_log = logs.join(format!("{left_label}.log"));
         let right_log = logs.join(format!("{right_label}.log"));
-        let left_cancellation = cancellation.clone();
-        let left_failure = Arc::clone(&first_failure);
-        let left = scope.spawn(move || {
-            run_parallel_branch(
-                left_label,
-                &left_log,
-                &left_cancellation,
-                &left_failure,
-                left,
-            );
-        });
-        let right_cancellation = cancellation.clone();
-        let right_failure = Arc::clone(&first_failure);
-        let right = scope.spawn(move || {
-            run_parallel_branch(
-                right_label,
-                &right_log,
-                &right_cancellation,
-                &right_failure,
-                right,
-            );
-        });
-        let _ = left.join();
-        let _ = right.join();
+        let left = spawn_parallel_branch(
+            scope,
+            left_label,
+            left_log,
+            &cancellation,
+            &first_failure,
+            left,
+        );
+        let right = spawn_parallel_branch(
+            scope,
+            right_label,
+            right_log,
+            &cancellation,
+            &first_failure,
+            right,
+        );
+        for (label, task) in [(left_label, left), (right_label, right)] {
+            if let Some(task) = task
+                && let Err(payload) = task.join()
+            {
+                record_parallel_failure(
+                    &first_failure,
+                    &cancellation,
+                    PreservedFailure::new(
+                        format!("并行任务 {label} 发生 panic：{}", panic_message(&payload)),
+                        None,
+                    ),
+                );
+            }
+        }
     });
     let mut failure = first_failure
         .lock()
@@ -227,6 +233,34 @@ where
         Err(failure.into())
     } else {
         Ok(())
+    }
+}
+
+fn spawn_parallel_branch<'scope, 'env, Action>(
+    scope: &'scope thread::Scope<'scope, 'env>,
+    label: &'scope str,
+    log: std::path::PathBuf,
+    cancellation: &ProcessCancellation,
+    first_failure: &Arc<Mutex<Option<PreservedFailure>>>,
+    action: Action,
+) -> Option<thread::ScopedJoinHandle<'scope, ()>>
+where
+    Action: FnOnce() -> Result<()> + Send + 'scope,
+{
+    let child_cancellation = cancellation.clone();
+    let child_failure = Arc::clone(first_failure);
+    match thread::Builder::new().spawn_scoped(scope, move || {
+        run_parallel_branch(label, &log, &child_cancellation, &child_failure, action);
+    }) {
+        Ok(task) => Some(task),
+        Err(error) => {
+            record_parallel_failure(
+                first_failure,
+                cancellation,
+                PreservedFailure::new(format!("无法启动并行任务 {label}：{error}"), None),
+            );
+            None
+        }
     }
 }
 
@@ -240,19 +274,18 @@ fn run_parallel_branch<Action>(
     Action: FnOnce() -> Result<()>,
 {
     let result = catch_unwind(AssertUnwindSafe(|| {
-        with_process_cancellation(cancellation, || with_process_log(label, log, action))
-    }));
-    match result {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) if is_process_cancellation(error.as_ref()) => {}
-        Ok(Err(error)) => record_parallel_failure(
-            first_failure,
-            cancellation,
-            PreservedFailure::new(
+        match with_process_cancellation(cancellation, || with_process_log(label, log, action)) {
+            Ok(()) => None,
+            Err(error) if is_process_cancellation(error.as_ref()) => None,
+            Err(error) => Some(PreservedFailure::new(
                 format!("并行任务 {label} 失败：{error}"),
                 failure_exit_code(error.as_ref()),
-            ),
-        ),
+            )),
+        }
+    }));
+    match result {
+        Ok(None) => {}
+        Ok(Some(failure)) => record_parallel_failure(first_failure, cancellation, failure),
         Err(payload) => record_parallel_failure(
             first_failure,
             cancellation,
@@ -275,6 +308,9 @@ fn record_parallel_failure(
     if slot.is_none() {
         *slot = Some(failure);
         cancellation.request();
+    } else if let Some(first) = slot.as_mut() {
+        // 保留首个真实退出码，同时不能把兄弟进程树回收失败吞掉。
+        first.append_context(&failure.to_string());
     }
 }
 

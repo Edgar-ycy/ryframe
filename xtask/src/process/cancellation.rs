@@ -12,7 +12,7 @@ use std::{
 
 use crate::Result;
 
-use super::{ChildGroup, ManagedChild, stop_child};
+use super::{ChildGroup, CommandFailure, ManagedChild, stop_child};
 
 thread_local! {
     static PROCESS_CANCELLATION: RefCell<Option<ProcessCancellation>> = const { RefCell::new(None) };
@@ -74,7 +74,9 @@ pub(crate) fn with_process_cancellation<T>(
 }
 
 pub(crate) fn is_process_cancellation(error: &(dyn std::error::Error + 'static)) -> bool {
-    error.downcast_ref::<ProcessCancelled>().is_some()
+    error
+        .downcast_ref::<ProcessCancelled>()
+        .is_some_and(|cancelled| cancelled.cleanup_error.is_none())
 }
 
 pub(super) fn command_status(mut command: Command) -> Result<ExitStatus> {
@@ -129,6 +131,18 @@ fn wait_for_command(
 ) -> Result<ExitStatus> {
     loop {
         if let Some(status) = child.try_wait()? {
+            // 父进程退出不能证明整树退出，尤其是仍持有捕获管道的后代。
+            // 显式确认回收，不能只依赖 Drop 发送终止请求后立即返回。
+            if let Err(error) = stop_child(child) {
+                return if status.success() {
+                    Err(error)
+                } else {
+                    Err(
+                        CommandFailure::new(format!("命令退出且进程树回收失败：{error}"), status)
+                            .into(),
+                    )
+                };
+            }
             return Ok(status);
         }
         if cancellation.requested() {

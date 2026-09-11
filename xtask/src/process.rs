@@ -13,6 +13,9 @@ use crate::{Result, workspace::root_dir};
 
 #[path = "process/child.rs"]
 mod child;
+#[cfg(windows)]
+#[path = "process/windows_members.rs"]
+mod windows_members;
 pub(crate) use child::{ChildGroup, ManagedChild};
 #[path = "process/cancellation.rs"]
 mod cancellation;
@@ -309,14 +312,15 @@ fn pnpm_executable(dir: &Path) -> Result<PathBuf> {
     let executable = shim_dir.join("pnpm");
 
     if !executable.is_file() {
-        let status = Command::new(COREPACK_EXECUTABLE)
+        let mut command = Command::new(COREPACK_EXECUTABLE);
+        command
             .args(["enable", "--install-directory"])
             .arg(&shim_dir)
             .current_dir(dir)
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()?;
+            .stderr(Stdio::inherit());
+        let status = command_status(command)?;
         if !status.success() {
             return Err("无法创建项目级 Corepack pnpm shim".into());
         }
@@ -386,12 +390,13 @@ pub(crate) fn process_is_running(pid: u32) -> bool {
 pub(crate) fn stop_child(child: &mut ManagedChild) -> Result<()> {
     #[cfg(windows)]
     {
+        let members = child.member_handles()?;
         child.terminate_tree()?;
         let deadline = Instant::now() + Duration::from_secs(1);
         loop {
             let direct_exited = child.try_wait()?.is_some();
             let tree_exited = child.active_process_count()? == Some(0);
-            if direct_exited && tree_exited {
+            if direct_exited && tree_exited && members.all_exited()? {
                 break;
             }
             if Instant::now() >= deadline {
@@ -413,6 +418,7 @@ pub(crate) fn stop_child(child: &mut ManagedChild) -> Result<()> {
             signal_process_group(process_group_id, Signal::SIGKILL)?;
             if !wait_for_process_group_exit(child, process_group_id, FORCE_KILL_GRACE)? {
                 let _ = child.kill();
+                return Err("Unix 子进程组强制终止后仍未确认退出".into());
             }
         }
     }

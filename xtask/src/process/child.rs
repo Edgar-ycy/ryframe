@@ -123,6 +123,11 @@ impl ManagedChild {
     }
 
     #[cfg(windows)]
+    pub(super) fn member_handles(&self) -> Result<super::windows_members::MemberHandles> {
+        super::windows_members::MemberHandles::capture(self.group())
+    }
+
+    #[cfg(windows)]
     fn group(&self) -> &processkit::ProcessGroup {
         self.group
             .as_ref()

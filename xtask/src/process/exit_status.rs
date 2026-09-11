@@ -34,6 +34,11 @@ impl PreservedFailure {
     pub(crate) fn new(message: String, exit_code: Option<i32>) -> Self {
         Self { message, exit_code }
     }
+
+    pub(crate) fn append_context(&mut self, message: &str) {
+        self.message.push_str("；后续任务报告：");
+        self.message.push_str(message);
+    }
 }
 
 impl fmt::Display for PreservedFailure {
