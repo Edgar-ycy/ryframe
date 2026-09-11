@@ -7,6 +7,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 from types import SimpleNamespace
 import unittest
@@ -37,17 +38,38 @@ def encoded(value):
 
 
 class FakeProcess:
-    def __init__(self, state, stdout):
+    def __init__(self, state, result, argv):
         self.pid = 987654
         self.returncode = None
         self.state = state
-        self.stdout = stdout
+        self.result = result
+        script = Path(argv[1])
+        staging = script.parents[1]
+        manifest = read_json(staging / "manifest.json")
+        contract = next(row for row in manifest["files"] if row["path"] == manifest["contract"])
+        value = {
+            "format_version": 1,
+            "kind": "restore-source-producer-ready",
+            "operation_id": argv[argv.index("--operation-id") + 1],
+            "source_generation_sha256": argv[argv.index("--source-generation-sha256") + 1],
+            "staging_manifest_sha256": binding(staging / "manifest.json")["sha256"],
+            "runtime_files_sha256": plan_hash(
+                [
+                    {"path": row["path"], "bytes": row["bytes"], "sha256": row["sha256"]}
+                    for row in manifest["files"]
+                    if row["path"] in manifest["runtime_modules"]
+                ]
+            ),
+            "contract_file_sha256": contract["sha256"],
+            "lineage_file_sha256": binding(Path(argv[argv.index("--lineage") + 1]))["sha256"],
+        }
+        self.stdout = io.BytesIO(json.dumps(value, sort_keys=True).encode() + b"\n")
 
     def communicate(self, *, input, timeout):
         self.state["authorization"] = json.loads(input)
         self.state["alive"] = False
         self.returncode = 0
-        return json.dumps(self.stdout, sort_keys=True).encode() + b"\n", b""
+        return json.dumps(self.result, sort_keys=True).encode() + b"\n", b""
 
     def wait(self, timeout):
         self.returncode = 137
@@ -61,6 +83,17 @@ class FailedProcess(FakeProcess):
         self.state["alive"] = False
         self.returncode = 7
         return b"", b"preserved source verification failure"
+
+
+class InvalidReadyProcess(FakeProcess):
+    def __init__(self, state, result, argv):
+        super().__init__(state, result, argv)
+        value = json.loads(self.stdout.getvalue())
+        value["contract_file_sha256"] = "f" * 64
+        self.stdout = io.BytesIO(json.dumps(value, sort_keys=True).encode() + b"\n")
+
+    def communicate(self, *, input, timeout):
+        raise AssertionError("无效 ready 不能取得服务请求授权")
 
 
 class FakeResources:
@@ -148,6 +181,10 @@ class SourceRuntimeTests(unittest.TestCase):
     def setUp(self):
         tools = inventory()
         tools["source"]["snapshot"]["clean"] = True
+        self.execution_sha = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[2], text=True
+        ).strip()
+        tools["source"]["snapshot"]["head"] = self.execution_sha
         self.coordinator_source = source_fingerprints.execution_source(tools)
         self.enterContext(patch.object(source_fingerprints, "current_execution_source", return_value=self.coordinator_source))
         repository = Path(__file__).resolve().parents[2]
@@ -202,7 +239,7 @@ class SourceRuntimeTests(unittest.TestCase):
             },
             "directory": self.copy_run,
             "output": self.generation,
-            "request": {},
+            "request": {"expected_backend_sha": self.execution_sha},
             "source": {
                 "request": {"tools": {"node": {"path": sys.executable, "sha256": "unused"}}},
                 "seed_target": {
@@ -317,9 +354,9 @@ class SourceRuntimeTests(unittest.TestCase):
             },
         )
 
-    def fake_popen(self, *_args, **_kwargs):
+    def fake_popen(self, argv, **_kwargs):
         self.process_state["alive"] = True
-        return FakeProcess(self.process_state, self.node_result)
+        return FakeProcess(self.process_state, self.node_result, argv)
 
     def test_execute_and_static_validator_bind_same_generation_and_exact_effects(self):
         output = self.generation / "verification/source-runtime.json"
@@ -420,8 +457,9 @@ class SourceRuntimeTests(unittest.TestCase):
                 self.lineage,
                 {},
                 coordinator_source=self.coordinator_source,
-                popen=lambda *_args, **_kwargs: FailedProcess(
-                    self.process_state, self.node_result
+                execution_sha=self.execution_sha,
+                popen=lambda argv, **_kwargs: FailedProcess(
+                    self.process_state, self.node_result, argv
                 ),
             )
         self.assertEqual(
@@ -431,6 +469,36 @@ class SourceRuntimeTests(unittest.TestCase):
         completion = read_json(directory / producer.COMPLETION)
         self.assertEqual(completion["exit_code"], 7)
         self.assertEqual(completion["process"], self.process_identity)
+
+    def test_invalid_ready_is_preserved_and_rejected_before_authorization(self):
+        directory = self.copy_run / "invalid-ready/verification"
+        directory.mkdir(parents=True)
+        self.process_state = {"alive": True}
+        with patch.object(producer, "process_identity", side_effect=self.identity), \
+                patch.object(
+                    producer,
+                    "terminate_owned_process",
+                    side_effect=lambda *_a, **_k: self.process_state.update(alive=False),
+                ) as stop, self.assertRaisesRegex(ValueError, "ready 未绑定"):
+            producer.run_source_producer(
+                self.backend,
+                self.backend,
+                directory,
+                "a" * 32,
+                Path(sys.executable).resolve(),
+                self.start,
+                self.lineage,
+                {},
+                coordinator_source=self.coordinator_source,
+                execution_sha=self.execution_sha,
+                popen=lambda argv, **_kwargs: InvalidReadyProcess(
+                    self.process_state, self.node_result, argv
+                ),
+            )
+        self.assertTrue((directory / producer.READY).is_file())
+        self.assertNotIn("authorization", self.process_state)
+        self.assertFalse(self.process_state["alive"])
+        stop.assert_called_once_with(self.process_identity, crash=True)
 
     def test_tool_drift_before_spawn_before_authorization_or_after_node_fails_closed(self):
         changed = copy.deepcopy(self.coordinator_source)
@@ -448,7 +516,8 @@ class SourceRuntimeTests(unittest.TestCase):
                     self.assertRaisesRegex(ValueError, "test_tools"):
                 producer.run_source_producer(self.backend, self.backend, directory, "b" * 32,
                     Path(sys.executable).resolve(), self.start, self.lineage, {},
-                    coordinator_source=self.coordinator_source, popen=spawn)
+                    coordinator_source=self.coordinator_source,
+                    execution_sha=self.execution_sha, popen=spawn)
             if boundary == 0:
                 spawn.assert_not_called()
                 self.assertEqual(list(directory.iterdir()), [])
@@ -470,8 +539,9 @@ class SourceRuntimeTests(unittest.TestCase):
         with patch.object(producer, "process_identity", side_effect=self.identity), \
                 self.assertRaisesRegex(ValueError, "Node 失败"):
             producer.run_source_producer(self.backend, self.backend, directory, "c" * 32,
-                Path(sys.executable).resolve(), self.start, self.lineage, configured({}), coordinator_source=self.coordinator_source,
-                popen=lambda *_a, **_kw: FailedProcess(self.process_state, self.node_result))
+                Path(sys.executable).resolve(), self.start, self.lineage, configured({}),
+                coordinator_source=self.coordinator_source, execution_sha=self.execution_sha,
+                popen=lambda argv, **_kw: FailedProcess(self.process_state, self.node_result, argv))
         descriptor_file(directory / "failed.json", {"status": "failed", "error": "ValueError"})
         tools = SimpleNamespace(command=lambda _name: [sys.executable])
         with self.modules(), patch.object(producer, "process_identity", side_effect=self.identity), \

@@ -6,13 +6,20 @@ import datetime as dt
 import json
 import os
 from pathlib import Path
+import queue
 import subprocess
+import threading
 
 from devex_clone_capture import write_json
 from devex_clone_run_state import binding
 from devex_clone_source_proof import bound_file
 from full_stack_process import process_identity, terminate_owned_process
 from restore_reference_plan import plan_hash
+from restore_source_runtime_staging import (
+    DIRECTORY as STAGING_DIRECTORY,
+    create_tool_staging,
+    verify_tool_staging,
+)
 from source_fingerprints import require_current_execution_source
 from restore_runtime_evidence import (
     artifact_snapshot,
@@ -25,22 +32,28 @@ from restore_runtime_evidence import (
 
 INTENT = "source-producer-intent.json"
 PROCESS = "source-producer.json"
+READY = "source-producer-ready.json"
 STDOUT = "source-producer.stdout.json"
 STDERR = "source-producer.stderr.log"
 COMPLETION = "source-producer-completion.json"
-PRODUCER_FILES = {INTENT, PROCESS, STDOUT, STDERR, COMPLETION}
+PRODUCER_FILES = {INTENT, PROCESS, READY, STDOUT, STDERR, COMPLETION}
 INTENT_FIELDS = {
     "format_version", "kind", "operation_id", "controller", "source_generation",
     "dataset_lineage", "executable", "script", "argv", "cwd", "environment_sha256",
-    "started_at", "coordinator_source", "inputs",
+    "started_at", "coordinator_source", "execution_sha", "staging", "inputs",
 }
 PROCESS_FIELDS = {
     "format_version", "kind", "operation_id", "intent", "controller", "process",
     "executable", "argv",
 }
 COMPLETION_FIELDS = {
-    "format_version", "kind", "operation_id", "intent", "producer", "stdout", "stderr",
+    "format_version", "kind", "operation_id", "intent", "producer", "ready", "stdout", "stderr",
     "process", "exit_code", "completed_at",
+}
+READY_FIELDS = {
+    "format_version", "kind", "operation_id", "source_generation_sha256",
+    "staging_manifest_sha256", "runtime_files_sha256", "contract_file_sha256",
+    "lineage_file_sha256",
 }
 
 
@@ -71,7 +84,7 @@ def _evidence_files(directory: Path) -> list[dict]:
         if linked(path):
             raise ValueError("来源验收中间证据包含链接或重解析点")
         if path.is_dir():
-            if path.name not in {"before", "after", "audit"}:
+            if path.name not in {"before", "after", "audit", STAGING_DIRECTORY}:
                 raise ValueError("来源验收中间证据包含未知目录")
             # 采集器可能在创建阶段目录后中断；内部未知或空嵌套目录仍由唯一 manifest 拒绝。
             if any(path.iterdir()):
@@ -90,7 +103,7 @@ def _verify_inputs(directory: Path, inputs: object) -> list[dict]:
     for row in inputs:
         exact_fields(row, {"path", "bytes", "sha256"}, "来源生产者授权前证据")
         if (not isinstance(row["path"], str) or row["path"] <= previous
-                or not row["path"].startswith(("before/", "audit/"))):
+                or not row["path"].startswith(("before/", "audit/", STAGING_DIRECTORY + "/"))):
             raise ValueError("来源生产者授权前证据路径不属于固定采集阶段")
         previous = row["path"]
     observed = _evidence_files(directory)
@@ -107,19 +120,18 @@ def _verify_inputs(directory: Path, inputs: object) -> list[dict]:
 
 
 def _producer_command(
-    backend: Path,
-    execution: Path,
+    staging: Path,
     directory: Path,
     operation_id: str,
     node: Path,
     start: dict,
     lineage: dict,
 ) -> tuple[Path, list[str]]:
-    script = (backend / "scripts/restore_source_existing.mjs").resolve(strict=True)
+    script = (staging / "scripts/restore_source_existing.mjs").resolve(strict=True)
     arguments = [
         str(node),
         str(script),
-        "--backend-dir", str(execution),
+        "--backend-dir", str(staging),
         "--lineage", lineage["path"],
         "--run-dir", str(directory),
         "--operation-id", operation_id,
@@ -127,6 +139,63 @@ def _producer_command(
         "--write",
     ]
     return script, arguments
+
+
+def _node_environment(environment: dict[str, str]) -> dict[str, str]:
+    """凭据继续显式传入，但 Node 不能通过环境变量加载 staging 外代码或写缓存。"""
+    blocked = {"NODE_OPTIONS", "NODE_PATH", "NODE_COMPILE_CACHE", "NODE_V8_COVERAGE"}
+    return {key: value for key, value in environment.items() if key.upper() not in blocked}
+
+
+def _ready_line(process, timeout: int) -> bytes:
+    """在任何请求授权前有界等待 Node 完成 ESM 与契约预载。"""
+    if process.stdout is None or type(timeout) is not int or timeout <= 0:
+        raise ValueError("来源验收生产者缺少 ready 管道或有效超时")
+    result = queue.Queue(maxsize=1)
+
+    def read() -> None:
+        try:
+            result.put((process.stdout.readline(64 * 1024 + 1), None))
+        except BaseException as error:
+            result.put((None, error))
+
+    threading.Thread(target=read, name="restore-source-ready", daemon=True).start()
+    try:
+        line, error = result.get(timeout=min(timeout, 60))
+    except queue.Empty as error:
+        raise ValueError("来源验收 Node 未在授权前发布 ready") from error
+    if error is not None:
+        raise ValueError("来源验收 Node ready 管道读取失败") from error
+    if not line or len(line) > 64 * 1024 or not line.endswith(b"\n"):
+        raise ValueError("来源验收 Node ready 不是有界单行证据")
+    return line
+
+
+def _verify_ready(raw: bytes, operation: str, start: dict, lineage: dict, staging: dict) -> dict:
+    value = decode_object(raw.strip(), "来源验收 Node ready")
+    exact_fields(value, READY_FIELDS, "来源验收 Node ready")
+    contract = next(
+        (row for row in staging["manifest"]["files"] if row["path"] == staging["manifest"]["contract"]),
+        None,
+    )
+    modules = [
+        {"path": row["path"], "bytes": row["bytes"], "sha256": row["sha256"]}
+        for row in staging["manifest"]["files"]
+        if row["path"] in staging["manifest"]["runtime_modules"]
+    ]
+    expected = {
+        "format_version": 1,
+        "kind": "restore-source-producer-ready",
+        "operation_id": operation,
+        "source_generation_sha256": start["sha256"],
+        "staging_manifest_sha256": staging["descriptor"]["sha256"],
+        "runtime_files_sha256": plan_hash(modules),
+        "contract_file_sha256": None if contract is None else contract["sha256"],
+        "lineage_file_sha256": lineage["sha256"],
+    }
+    if type(value["format_version"]) is not int or value != expected:
+        raise ValueError("来源验收 Node ready 未绑定预载 ESM、契约、血缘或运行身份")
+    return value
 
 
 def run_source_producer(
@@ -140,6 +209,7 @@ def run_source_producer(
     environment: dict[str, str],
     *,
     coordinator_source: dict,
+    execution_sha: str,
     timeout: int = 1800,
     popen=subprocess.Popen,
 ) -> tuple[dict, dict]:
@@ -161,13 +231,20 @@ def run_source_producer(
     controller = process_identity(os.getpid())
     if controller is None:
         raise ValueError("来源验收控制器缺少内核创建身份")
-    script, argv = _producer_command(
-        backend, execution, directory, operation_id, node.resolve(strict=True), start, lineage
+    staging_descriptor = create_tool_staging(
+        backend, execution, directory, coordinator_source, execution_sha
     )
+    staging = verify_tool_staging(
+        backend, execution, directory, staging_descriptor, coordinator_source, execution_sha
+    )
+    script, argv = _producer_command(
+        staging["root"], directory, operation_id, node.resolve(strict=True), start, lineage
+    )
+    node_environment = _node_environment(environment)
     inputs = _evidence_files(directory)
     _verify_inputs(directory, inputs)
     intent = {
-        "format_version": 1,
+        "format_version": 2,
         "kind": "restore-source-producer-intent",
         "operation_id": operation_id,
         "controller": controller,
@@ -176,10 +253,12 @@ def run_source_producer(
         "executable": str(node.resolve(strict=True)),
         "script": binding(script),
         "argv": argv,
-        "cwd": str(backend),
-        "environment_sha256": plan_hash(environment),
+        "cwd": str(staging["root"]),
+        "environment_sha256": plan_hash(node_environment),
         "started_at": _timestamp(),
         "coordinator_source": coordinator_source,
+        "execution_sha": execution_sha,
+        "staging": staging_descriptor,
         "inputs": inputs,
     }
     write_json(directory / INTENT, intent)
@@ -187,10 +266,13 @@ def run_source_producer(
     identity = None
     try:
         require_current_execution_source(backend, coordinator_source)
+        verify_tool_staging(
+            backend, execution, directory, staging_descriptor, coordinator_source, execution_sha
+        )
         process = popen(
             argv,
-            cwd=backend,
-            env=environment,
+            cwd=staging["root"],
+            env=node_environment,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -212,7 +294,13 @@ def run_source_producer(
         write_json(directory / PROCESS, producer)
         if process_identity(os.getpid()) != controller or process_identity(process.pid) != identity:
             raise ValueError("来源验收在启动授权前控制器或 Node 身份变化")
+        ready_raw = _ready_line(process, timeout)
+        ready_binding = _write_bytes(directory / READY, ready_raw)
+        _verify_ready(ready_raw, operation_id, start, lineage, staging)
         require_current_execution_source(backend, coordinator_source)
+        verify_tool_staging(
+            backend, execution, directory, staging_descriptor, coordinator_source, execution_sha
+        )
         authorization = json.dumps(
             {
                 "operation": "start",
@@ -235,6 +323,7 @@ def run_source_producer(
             "operation_id": operation_id,
             "intent": binding(directory / INTENT),
             "producer": binding(directory / PROCESS),
+            "ready": ready_binding,
             "stdout": stdout_binding,
             "stderr": stderr_binding,
             "process": identity,
@@ -243,6 +332,9 @@ def run_source_producer(
         }
         write_json(directory / COMPLETION, completion)
         require_current_execution_source(backend, coordinator_source)
+        verify_tool_staging(
+            backend, execution, directory, staging_descriptor, coordinator_source, execution_sha
+        )
         if process.returncode != 0 or stderr or process_identity(identity["pid"]) == identity:
             raise ValueError("来源验收 Node 失败、写入 stderr 或尚未退出")
         stdout_value = decode_object(stdout.strip(), "来源验收 Node stdout")
@@ -277,21 +369,25 @@ def verify_registered_source_producer(
     node: Path,
     *,
     coordinator_source: dict,
+    execution_sha: str,
 ) -> tuple[dict, dict]:
     """只读复核已登记生产者与同一 start、血缘、源码和环境的绑定。"""
     intent = _read_bound(backend, binding(directory / INTENT), directory / INTENT)
     require_current_execution_source(backend, coordinator_source)
     exact_fields(intent, INTENT_FIELDS, "来源验收生产者 intent")
+    staging = verify_tool_staging(
+        backend, execution, directory, intent["staging"], coordinator_source, execution_sha
+    )
     _verify_inputs(directory, intent["inputs"])
     producer = _read_bound(backend, binding(directory / PROCESS), directory / PROCESS)
     exact_fields(producer, PROCESS_FIELDS, "来源验收生产者")
     operation = _validate_operation(intent["operation_id"])
     node = node.resolve(strict=True)
     script, argv = _producer_command(
-        backend, execution.resolve(strict=True), directory, operation, node, start, lineage
+        staging["root"], directory, operation, node, start, lineage
     )
     expected = {
-        "format_version": 1,
+        "format_version": 2,
         "kind": "restore-source-producer-intent",
         "operation_id": operation,
         "source_generation": start,
@@ -299,9 +395,11 @@ def verify_registered_source_producer(
         "executable": str(node),
         "script": binding(script),
         "argv": argv,
-        "cwd": str(backend),
-        "environment_sha256": plan_hash(environment),
+        "cwd": str(staging["root"]),
+        "environment_sha256": plan_hash(_node_environment(environment)),
         "coordinator_source": coordinator_source,
+        "execution_sha": execution_sha,
+        "staging": intent["staging"],
     }
     if any(intent.get(key) != value for key, value in expected.items()):
         raise ValueError("来源验收生产者 intent 没有绑定同一 start、血缘、源码或环境")
@@ -309,7 +407,7 @@ def verify_registered_source_producer(
     identity = process_identity_record(producer["process"], "来源验收 Node 身份")
     if (
         type(intent["format_version"]) is not int
-        or intent["format_version"] != 1
+        or intent["format_version"] != 2
         or type(producer["format_version"]) is not int
         or producer != {
             "format_version": 1,
@@ -326,6 +424,9 @@ def verify_registered_source_producer(
     ):
         raise ValueError("来源验收生产者登记与当前输入不同")
     require_current_execution_source(backend, coordinator_source)
+    verify_tool_staging(
+        backend, execution, directory, intent["staging"], coordinator_source, execution_sha
+    )
     return intent, producer
 
 
@@ -337,6 +438,7 @@ def _completion(backend: Path, directory: Path, intent: dict, producer: dict) ->
                 "format_version": 1, "kind": "restore-source-producer-completion",
                 "operation_id": intent["operation_id"], "intent": binding(directory / INTENT),
                 "producer": binding(directory / PROCESS),
+                "ready": artifact_snapshot(directory / READY).descriptor(),
                 "stdout": artifact_snapshot(directory / STDOUT).descriptor(),
                 "stderr": artifact_snapshot(directory / STDERR).descriptor(), "process": producer["process"],
                 "exit_code": completion["exit_code"], "completed_at": completion["completed_at"]}):
@@ -358,11 +460,18 @@ def verify_source_producer(
     node: Path,
     *,
     coordinator_source: dict,
+    execution_sha: str,
 ) -> tuple[dict, dict]:
     """只读复核生产者身份、实际参数、stdout/stderr 和自然退出。"""
     intent, producer = verify_registered_source_producer(
         backend, execution, directory, start, lineage, environment, node,
-        coordinator_source=coordinator_source,
+        coordinator_source=coordinator_source, execution_sha=execution_sha,
+    )
+    staging = verify_tool_staging(
+        backend, execution, directory, intent["staging"], coordinator_source, execution_sha
+    )
+    _verify_ready(
+        (directory / READY).read_bytes(), intent["operation_id"], start, lineage, staging
     )
     completion = _completion(backend, directory, intent, producer)
     identity = producer["process"]
@@ -394,7 +503,10 @@ def require_source_verifier_stopped(backend: Path, start: dict) -> dict:
     if any(linked(entry) for entry in entries):
         raise ValueError("来源验收包含链接或重解析点")
     names = {entry.name for entry in entries}
-    allowed = PRODUCER_FILES | {"before", "after", "audit", "cache-cleanup.json", "source-runtime.json", "failed.json"}
+    allowed = PRODUCER_FILES | {
+        "before", "after", "audit", STAGING_DIRECTORY, "cache-cleanup.json",
+        "source-runtime.json", "failed.json",
+    }
     if names - allowed or PROCESS not in names or INTENT not in names:
         raise ValueError("来源验收缺少已登记进程身份或包含未知证据")
     from devex_clone_factory_context import configured
@@ -413,7 +525,17 @@ def require_source_verifier_stopped(backend: Path, start: dict) -> dict:
         environment,
         node,
         coordinator_source=facts["coordinator_source"],
+        execution_sha=facts["request"]["expected_backend_sha"],
     )
+    if READY in names:
+        staging = verify_tool_staging(
+            backend, facts["execution"], directory, intent["staging"],
+            facts["coordinator_source"], facts["request"]["expected_backend_sha"],
+        )
+        _verify_ready(
+            (directory / READY).read_bytes(), intent["operation_id"], start,
+            facts["receipt"]["dataset_lineage"], staging,
+        )
     identity = producer["process"]
     if process_identity(identity["pid"]) == identity:
         raise ValueError("来源验收 Node 仍在运行，generation recover 必须失败关闭")
@@ -424,7 +546,11 @@ def require_source_verifier_stopped(backend: Path, start: dict) -> dict:
         if verified["receipt"]["source_generation"] != start:
             raise ValueError("来源验收完成收据不属于当前 source generation")
         return {"status": "verified_stopped", "process": identity}
-    if STDERR in names and STDOUT not in names or COMPLETION in names and not {STDOUT, STDERR}.issubset(names):
+    if (
+        names & {STDOUT, STDERR, COMPLETION} and READY not in names
+        or STDERR in names and STDOUT not in names
+        or COMPLETION in names and not {STDOUT, STDERR}.issubset(names)
+    ):
         raise ValueError("来源验收生产者输出发布顺序不成立")
     completion = _completion(backend, directory, intent, producer) if COMPLETION in names else None
     if "failed.json" in names:

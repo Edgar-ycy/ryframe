@@ -166,7 +166,7 @@ cargo xtask data restore verify --id <演练ID> --proof <runner>/.local-tests/pl
 
 验证结果记录实际侧、scope、原计划及数据收据摘要和只读动作范围，状态为 `existing_data_verified`，不表示恢复成功，也不单独证明源码干净。源侧复验结果不能用于目标恢复证明。
 
-正式备份源按[数据文档](data.md#开发数据复制与性能-seed)在原复制账本完成 source-generation start，再执行 `cargo xtask check recovery source verify --source-generation <同代START外层结果> --output <同代gNNNN/verification/source-runtime.json> --write`。构建、原数据集血缘、当前 scope、API、前端 Origin 与 pacing 均由已绑定的 start 和 lineage 推导，不接受另一份计划、构建或旧 dataset 作为替代输入。复验核对 API/Worker 的摘要、配置、创建身份、监听端口和就绪状态，并披露登录注销的精确行级副作用。
+正式备份源按[数据文档](data.md#开发数据复制与性能-seed)在原复制账本完成 source-generation start，再执行 `cargo xtask check recovery source verify --source-generation <同代START外层结果> --output <同代gNNNN/verification/source-runtime.json> --write`。构建、原数据集血缘、当前 scope、API、前端 Origin 与 pacing 均由已绑定的 start 和 lineage 推导，不接受另一份计划、构建或旧 dataset 作为替代输入。复验从协调器和产品执行 commit 创建同代不可覆盖的 Node 工具 staging；Node 先预载静态 ESM 闭包、OpenAPI 和血缘并发布 ready 摘要，Python 在服务授权前核对完整文件集合及摘要。业务阶段只使用内存中的预载契约，因此授权窗口修改后再恢复 staging 也不能改变实际请求。复验同时核对 API/Worker 的摘要、配置、创建身份、监听端口和就绪状态，并披露登录注销的精确行级副作用。
 
 成功后在同一账本执行 source-generation-stop，显式消费该 `source-runtime.json`。停止阶段亲自回收已登记 API/Worker 树，核对完整前后像并记录停止观察时间，然后才允许唯一 source-export。给 `backup` 传入同一停止外层结果、共享导出外层结果及其原始库存；备份前后均验证源没有换代，以及当前复验、实际停止观察、正式库存的时间顺序。清单先采集、进程后来才停止的流程会失败。验证或停止失败均保留证据且不可重放；不改写历史计划、收据、摘要或完成时间。
 

@@ -30,11 +30,13 @@ from restore_source_runtime_producer import (
     COMPLETION,
     INTENT,
     PROCESS,
+    READY,
     STDERR,
     STDOUT,
     run_source_producer,
     verify_source_producer,
 )
+from restore_source_runtime_staging import DIRECTORY as STAGING_DIRECTORY
 
 
 FORMAT_VERSION = 2
@@ -44,9 +46,9 @@ RECEIPT_FIELDS = {
     "evidence", "write_effects", "started_at", "verified_at", "remote_writes",
     "restore_qualified",
 }
-PRODUCER_BINDING_FIELDS = {"intent", "process", "stdout", "stderr", "completion"}
+PRODUCER_BINDING_FIELDS = {"intent", "process", "ready", "stdout", "stderr", "completion"}
 ROOT_ENTRIES = {
-    "before", "after", "audit", INTENT, PROCESS, STDOUT, STDERR, COMPLETION,
+    "before", "after", "audit", STAGING_DIRECTORY, INTENT, PROCESS, READY, STDOUT, STDERR, COMPLETION,
     "cache-cleanup.json", "source-runtime.json",
 }
 LOGIN_FIELDS = (
@@ -299,6 +301,7 @@ def _producer_bindings(directory: Path) -> dict:
     return {
         "intent": binding(directory / INTENT),
         "process": binding(directory / PROCESS),
+        "ready": binding(directory / READY),
         "stdout": binding(directory / STDOUT),
         "stderr": artifact_snapshot(directory / STDERR).descriptor(),
         "completion": binding(directory / COMPLETION),
@@ -358,7 +361,8 @@ def execute_source_verification(
                 node_result, _ = run_source_producer(
                     backend, facts["execution"], expected_directory, operation, node, start,
                     facts["receipt"]["dataset_lineage"], environment,
-                    coordinator_source=facts["coordinator_source"], popen=popen,
+                    coordinator_source=facts["coordinator_source"],
+                    execution_sha=facts["request"]["expected_backend_sha"], popen=popen,
                 )
                 verified_node = validate_node_result(
                     node_result, facts["lineage"], start, facts["receipt"]["dataset_lineage"]
@@ -555,8 +559,9 @@ def verify_source_runtime(backend: Path, descriptor: dict, *, live: bool) -> dic
         backend, facts["execution"], directory, receipt["source_generation"],
         receipt["dataset_lineage"], environment, node,
         coordinator_source=facts["coordinator_source"],
+        execution_sha=facts["request"]["expected_backend_sha"],
     )
-    for key, filename in (("intent", INTENT), ("process", PROCESS), ("stdout", STDOUT),
+    for key, filename in (("intent", INTENT), ("process", PROCESS), ("ready", READY), ("stdout", STDOUT),
                           ("stderr", STDERR), ("completion", COMPLETION)):
         actual = artifact_snapshot(directory / filename).descriptor()
         if receipt["producer"][key] != actual:

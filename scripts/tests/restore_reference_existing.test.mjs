@@ -1,9 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
+import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { Readable } from 'node:stream'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   datasetArguments,
   datasetHelp,
@@ -150,9 +151,9 @@ function sourceLineageFixture() {
   }
 }
 
-function transport(t, dataset, options = {}) {
+function transport(t, dataset, options = {}, SessionClass = Session) {
   const calls = []
-  t.mock.method(Session.prototype, 'login', async function () {
+  t.mock.method(SessionClass.prototype, 'login', async function () {
     calls.push({ operation: 'login', identity: this.identity, api: this.config.bindings.api_url })
     const tenantIndex = dataset.tenants.findIndex(
       (tenant) => tenant.tenant_id === this.identity.tenant_id,
@@ -169,7 +170,7 @@ function transport(t, dataset, options = {}) {
     this.token = `header.${claims}.signature`
     this.beforeRequest = async () => {}
   })
-  t.mock.method(Session.prototype, 'request', async function (step) {
+  t.mock.method(SessionClass.prototype, 'request', async function (step) {
     calls.push({
       operation: step.operation,
       identity: this.identity,
@@ -297,6 +298,104 @@ test('派生来源在任何服务请求前严格绑定生产者授权', async ()
     `${'x'.repeat(4097)}\n`,
   ])
     await assert.rejects(waitForSourceStart(args, Readable.from(invalid)))
+})
+
+test('来源授权窗口的 staging A→B→A 不改变已预载 ESM 与 OpenAPI', async (t) => {
+  const parent = path.join(backend, '.local-tests', 'node-unit')
+  await mkdir(parent, { recursive: true })
+  const staging = await mkdtemp(path.join(parent, 'source-staging-'))
+  t.after(() => rm(staging, { recursive: true, force: true }))
+  const modules = [
+    'scripts/devex/config.mjs',
+    'scripts/devex/failure.mjs',
+    'scripts/devex/pacing-model.mjs',
+    'scripts/devex/request.mjs',
+    'scripts/restore_reference_existing.mjs',
+    'scripts/restore_reference_pacing.mjs',
+    'scripts/restore_source_existing.mjs',
+  ]
+  for (const relative of modules) {
+    const target = path.join(staging, relative)
+    await mkdir(path.dirname(target), { recursive: true })
+    await copyFile(path.join(backend, relative), target)
+  }
+  await mkdir(path.join(staging, 'openapi'))
+  await copyFile(path.join(backend, 'openapi/openapi.json'), path.join(staging, 'openapi/openapi.json'))
+  const stagedFiles = []
+  for (const relative of [...modules, 'openapi/openapi.json'].sort()) {
+    const content = await readFile(path.join(staging, relative))
+    stagedFiles.push({
+      path: relative,
+      origin: relative === 'openapi/openapi.json' ? 'execution' : 'coordinator',
+      bytes: content.length,
+      sha256: createHash('sha256').update(content).digest('hex'),
+    })
+  }
+  await writeFile(
+    path.join(staging, 'manifest.json'),
+    JSON.stringify({
+      format_version: 1,
+      kind: 'restore-source-tool-staging',
+      coordinator_source: { snapshot: 'A' },
+      execution_sha: 'a'.repeat(40),
+      entry: 'scripts/restore_source_existing.mjs',
+      contract: 'openapi/openapi.json',
+      runtime_modules: modules,
+      files: stagedFiles,
+    }),
+  )
+  const lineage = sourceLineageFixture()
+  const lineagePath = path.join(staging, 'dataset-lineage.json')
+  await writeFile(lineagePath, JSON.stringify(lineage))
+  const loaded = await import(
+    `${pathToFileURL(path.join(staging, 'scripts/restore_source_existing.mjs')).href}?test=${Date.now()}`
+  )
+  const stagedRequest = await import(
+    pathToFileURL(path.join(staging, 'scripts/devex/request.mjs')).href
+  )
+  const args = {
+    backend: staging,
+    lineagePath,
+    runDirectory: path.join(staging, 'verification'),
+    operationId: 'd'.repeat(32),
+    sourceGenerationSha256: 'e'.repeat(64),
+  }
+  const prepared = await loaded.prepareSourceFile(args)
+  await loaded.waitForSourceStart(
+    args,
+    Readable.from(
+      `${JSON.stringify({
+        operation: 'start',
+        run_dir: args.runDirectory,
+        operation_id: args.operationId,
+        source_generation_sha256: args.sourceGenerationSha256,
+      })}\n`,
+    ),
+  )
+  const entry = path.join(staging, 'scripts/restore_source_existing.mjs')
+  const reference = path.join(staging, 'scripts/restore_reference_existing.mjs')
+  const contract = path.join(staging, 'openapi/openapi.json')
+  const original = await Promise.all([entry, reference, contract].map((file) => readFile(file)))
+  await writeFile(entry, "throw new Error('staging B entry executed')\n")
+  await writeFile(reference, "throw new Error('staging B dependency executed')\n")
+  await writeFile(contract, '{"x-ryframe-api-prefix":{"value":"/api"},"paths":{}}\n')
+  const calls = transport(
+    t,
+    lineage,
+    { fileBytes: scaleBytes, streamFile: true },
+    stagedRequest.Session,
+  )
+  let result
+  try {
+    result = await loaded.verifyPreparedSource(args, prepared)
+  } finally {
+    await Promise.all(
+      [entry, reference, contract].map((file, index) => writeFile(file, original[index])),
+    )
+  }
+  assert.equal(result.status, 'source_existing_data_verified')
+  assert.equal(result.files, 256)
+  assert.equal(calls.length, 311)
 })
 
 test('派生来源使用血缘中的原租户身份和当前端点完成全量业务读取', async (t) => {

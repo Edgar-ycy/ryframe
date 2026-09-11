@@ -70,7 +70,7 @@ cargo xtask check recovery clone seed-runtime --run-dir <原运行目录> --oper
 
 `START序号` 使用同一账本实际返回的四位 attempt 编号，不预先猜测。start 保留四库完整业务表、保留表、placement、五桶全部对象字节与元数据、ownership、Redis 和存储身份的启动前后像，要求零漂移；成功后保留同一 API/Worker 受控进程树。数据血缘递归绑定原发布、复制计划与账本、完整数据集和业务验证，保留原租户 ID 与对象映射，不重新造数。独立 `source verify --write` 在同一运行代次验证当前 API，并披露登录登出的精确会话与审计副作用；只有同代验证收据可用于 stop。stop 先对照验证后像，再要求停止前后完整像零漂移，最后发布唯一 effective/quiesced generation；这两个控制阶段的 `remote_writes=0` 不表示独立 source verify 没有会话写入。
 
-START 外层与 Node 生产者 intent 均绑定原 START attempt 登记的协调器完整来源，包含干净 SHA、产品和全部 `test_tools` 指纹；启动前后、登录授权前及验收完成后持续复核。修改入口或间接、动态导入的辅助模块都会阻断本代验收，不能改写账本来源给旧 START 换签。
+START 外层与 Node 生产者 intent 均绑定原 START attempt 登记的协调器完整来源，包含干净 SHA、产品和全部 `test_tools` 指纹；启动前后、登录授权前及验收完成后持续复核。生产者只从登记 Git 对象 create-only 地生成同代 `source-tools` staging，清单绑定唯一入口的完整静态 ESM 闭包和产品执行 SHA 上的 OpenAPI；该闭包禁止动态加载代码。Node 在取得请求授权前预载契约和数据血缘并发布 ready 摘要，协调器复核 staging 全集后才授权，授权后的业务请求只使用已载入内存。修改入口、间接模块、契约或 staging 未知文件都会阻断本代验收，不能通过 A→B→A 修改或改写账本来源给旧 START 换签。
 
 start 或 stop 失败后禁止重放。先执行只读 `source-generation-status`；账本控制器死亡时，先按 `clone status` 返回的原 owner binding 显式执行既有 `clone recover` 收尾锁，再使用 `cargo xtask check recovery clone seed-runtime --run-dir <原运行目录> --operation source-generation-recover --request <原generation-request.json> --write` 精确回收已有树。recover 只停止同代已登记进程并保留前后像，不发布可导出代次，也不允许第二次启动。回收前的实时完整像必须等于 START 绑定的运行像；只有已完整通过的同代 source verify 才允许使用其披露会话副作用后的完整像。两份回收现状相等不能替代历史前像。未知写入或失败 START 缺少已发布运行前像时，精确树仍会回收并保留证据，回收记录保持失败，不声明全数据库零漂移。树尚未完整发布的崩溃窗口报告 `unknown`，缺少树不能解释为已停止；PID 复用、未知代次文件、链接或不完整归属均阻断自动回收。已登记 Node 的非零退出、stdout/stderr 发布后但完成收据尚未发布的中断，可以只读确认原进程已退出，并把全部中间证据纳入回收记录；生产者 intent 绑定授权前采集文件，未知文件或该前像修改仍阻断回收。缺少已登记 Node 身份的窗口继续失败关闭。保留现场以便人工核对，不补签或猜测退出事实。
 

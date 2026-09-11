@@ -5,8 +5,8 @@ import path from 'node:path'
 import { expand, pointer } from './config.mjs'
 import { RequestFailure } from './failure.mjs'
 
-export async function operationCatalog(backend) {
-  const schema = JSON.parse(await readFile(path.join(backend, 'openapi/openapi.json'), 'utf8'))
+export function operationCatalogDocument(document) {
+  const schema = JSON.parse(Buffer.isBuffer(document) ? document.toString('utf8') : document)
   const operations = new Map()
   const prefix = schema['x-ryframe-api-prefix']?.value
   if (typeof prefix !== 'string' || !prefix.startsWith('/') || prefix.startsWith('//')) {
@@ -23,6 +23,10 @@ export async function operationCatalog(backend) {
     }
   }
   return operations
+}
+
+export async function operationCatalog(backend) {
+  return operationCatalogDocument(await readFile(path.join(backend, 'openapi/openapi.json')))
 }
 
 export class Session {

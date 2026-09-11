@@ -6,6 +6,7 @@ import readline from 'node:readline'
 import { hash, httpUrl } from './devex/config.mjs'
 import { requestPacer } from './restore_reference_pacing.mjs'
 import { verifyIdentitiesAt } from './restore_reference_existing.mjs'
+import { operationCatalogDocument } from './devex/request.mjs'
 
 const descriptorFields = [
   'source_registration',
@@ -238,7 +239,7 @@ export function validateSourceLineage(lineage) {
     throw new Error('派生来源租户汇总与完整血缘规模不同')
 }
 
-export async function verifySourceExisting(backend, lineage) {
+export async function verifySourceExisting(backend, lineage, preparedCatalog) {
   validateSourceLineage(lineage)
   const original = hash(lineage)
   const subjects = []
@@ -249,6 +250,7 @@ export async function verifySourceExisting(backend, lineage) {
     18,
     lineage.verification.request_interval_ms,
     { clearBearerBeforeLogout: true, subjects },
+    preparedCatalog,
   )
   if (hash(lineage) !== original) throw new Error('派生数据血缘在业务验证期间发生变化')
   return {
@@ -336,36 +338,142 @@ export async function waitForSourceStart(
   }
 }
 
-async function readSourceLineage(filename) {
+async function readBoundInput(filename, maximum, label) {
   const before = await lstat(filename)
-  if (!before.isFile() || before.isSymbolicLink() || before.size > 16 * 1024 * 1024)
-    throw new Error('派生数据血缘必须是有界普通文件')
+  if (!before.isFile() || before.isSymbolicLink() || before.size > maximum)
+    throw new Error(`${label}必须是有界普通文件`)
   const bytes = await readFile(filename)
   const after = await lstat(filename)
   if (bytes.length !== before.size || after.size !== before.size || after.mtimeMs !== before.mtimeMs)
-    throw new Error('派生数据血缘在读取期间发生变化')
+    throw new Error(`${label}在读取期间发生变化`)
   return bytes
 }
 
-export async function verifySourceFile({ backend, lineagePath, sourceGenerationSha256 }) {
+function validateStagingManifest(manifest) {
+  exactFields(
+    manifest,
+    [
+      'format_version',
+      'kind',
+      'coordinator_source',
+      'execution_sha',
+      'entry',
+      'contract',
+      'runtime_modules',
+      'files',
+    ],
+    '来源工具 staging 清单',
+  )
+  if (
+    manifest.format_version !== 1 ||
+    manifest.kind !== 'restore-source-tool-staging' ||
+    !Array.isArray(manifest.runtime_modules) ||
+    !Array.isArray(manifest.files) ||
+    manifest.entry !== 'scripts/restore_source_existing.mjs' ||
+    manifest.contract !== 'openapi/openapi.json'
+  )
+    throw new Error('来源工具 staging 清单身份或入口无效')
+  const byPath = new Map(manifest.files.map((row) => [row.path, row]))
+  if (byPath.size !== manifest.files.length) throw new Error('来源工具 staging 文件重复')
+  return byPath
+}
+
+async function preloadRuntimeFiles(backend, manifest, byPath) {
+  const runtimeFiles = []
+  for (const relative of manifest.runtime_modules) {
+    const row = byPath.get(relative)
+    if (
+      !row ||
+      row.origin !== 'coordinator' ||
+      !Number.isSafeInteger(row.bytes) ||
+      row.bytes <= 0 ||
+      !/^[a-f0-9]{64}$/.test(row.sha256)
+    )
+      throw new Error('来源工具 staging 运行模块未绑定协调器摘要')
+    const bytes = await readBoundInput(path.join(backend, relative), 2 * 1024 * 1024, '来源 ESM')
+    const sha256 = createHash('sha256').update(bytes).digest('hex')
+    if (bytes.length !== row.bytes || sha256 !== row.sha256)
+      throw new Error('来源 ESM 与 staging 清单不同')
+    runtimeFiles.push({ path: relative, bytes: bytes.length, sha256 })
+  }
+  return runtimeFiles
+}
+
+export async function prepareSourceFile({
+  backend,
+  lineagePath,
+  operationId,
+  sourceGenerationSha256,
+}) {
   const backendMetadata = await lstat(backend)
   if (!backendMetadata.isDirectory() || backendMetadata.isSymbolicLink())
     throw new Error('后端目录必须是非链接目录')
-  const before = await readSourceLineage(lineagePath)
-  const lineage = JSON.parse(before.toString('utf8'))
-  const result = await verifySourceExisting(backend, lineage)
-  const after = await readSourceLineage(lineagePath)
-  if (!before.equals(after)) throw new Error('派生数据血缘在业务验收期间发生变化')
+  const lineageBytes = await readBoundInput(lineagePath, 16 * 1024 * 1024, '派生数据血缘')
+  const manifestBytes = await readBoundInput(
+    path.join(backend, 'manifest.json'),
+    1024 * 1024,
+    '来源工具 staging 清单',
+  )
+  const contractBytes = await readBoundInput(
+    path.join(backend, 'openapi/openapi.json'),
+    16 * 1024 * 1024,
+    '来源 OpenAPI 契约',
+  )
+  const manifest = JSON.parse(manifestBytes.toString('utf8'))
+  const byPath = validateStagingManifest(manifest)
+  const runtimeFiles = await preloadRuntimeFiles(backend, manifest, byPath)
+  const contractRow = byPath.get(manifest.contract)
+  const contractSha256 = createHash('sha256').update(contractBytes).digest('hex')
+  if (
+    !contractRow ||
+    contractRow.origin !== 'execution' ||
+    contractRow.bytes !== contractBytes.length ||
+    contractRow.sha256 !== contractSha256
+  )
+    throw new Error('来源 OpenAPI 与 staging 清单不同')
+  const lineage = JSON.parse(lineageBytes.toString('utf8'))
+  validateSourceLineage(lineage)
+  const catalog = operationCatalogDocument(contractBytes)
+  if (catalog.get('get_system_posts_by_id')?.method !== 'GET')
+    throw new Error('旧岗位验收必须使用只读查询契约')
+  return {
+    lineage,
+    catalog,
+    lineageValueSha256: hash(lineage),
+    lineageSha256: createHash('sha256').update(lineageBytes).digest('hex'),
+    ready: {
+      format_version: 1,
+      kind: 'restore-source-producer-ready',
+      operation_id: operationId,
+      source_generation_sha256: sourceGenerationSha256,
+      staging_manifest_sha256: createHash('sha256').update(manifestBytes).digest('hex'),
+      runtime_files_sha256: hash(runtimeFiles),
+      contract_file_sha256: contractSha256,
+      lineage_file_sha256: createHash('sha256').update(lineageBytes).digest('hex'),
+    },
+  }
+}
+
+export async function verifyPreparedSource({ backend, sourceGenerationSha256 }, prepared) {
+  if (!prepared || hash(prepared.lineage) !== prepared.lineageValueSha256)
+    throw new Error('派生数据血缘预载内存发生变化')
+  const result = await verifySourceExisting(backend, prepared.lineage, prepared.catalog)
   return {
     ...result,
     source_generation_sha256: sourceGenerationSha256,
-    lineage_file_sha256: createHash('sha256').update(before).digest('hex'),
+    lineage_file_sha256: prepared.lineageSha256,
   }
+}
+
+export async function verifySourceFile(args) {
+  return verifyPreparedSource(args, await prepareSourceFile(args))
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = sourceExistingArguments(process.argv.slice(2))
+  const prepared = await prepareSourceFile(args)
+  process.stdout.write(JSON.stringify(prepared.ready) + '\n')
   await waitForSourceStart(args)
-  const result = await verifySourceFile(args)
+  const result = await verifyPreparedSource(args, prepared)
   process.stdout.write(JSON.stringify(result) + '\n')
 }

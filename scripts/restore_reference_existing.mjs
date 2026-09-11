@@ -206,6 +206,7 @@ export async function verifyIdentitiesAt(
   network,
   requestIntervalMs,
   controls,
+  preparedCatalog,
 ) {
   if (
     controls !== undefined &&
@@ -218,7 +219,9 @@ export async function verifyIdentitiesAt(
       controls.subjects.length)
   )
     throw new Error('已有数据会话控制必须是空的受控身份收集器')
-  const catalog = await operationCatalog(backend)
+  if (preparedCatalog !== undefined && !(preparedCatalog instanceof Map))
+    throw new Error('已有数据预载契约必须是 operation Map')
+  const catalog = preparedCatalog ?? (await operationCatalog(backend))
   if (catalog.get('get_system_posts_by_id')?.method !== 'GET')
     throw new Error('旧岗位验收必须使用只读查询契约')
   let files = 0,
