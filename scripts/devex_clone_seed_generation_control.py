@@ -8,7 +8,7 @@ from devex_clone_capture import read_json, write_json
 from devex_clone_model import exact, local_path, name
 from devex_clone_run_state import binding, load_state
 from devex_clone_seed_generation import START, STOP, RECOVER, REQUEST_FIELDS, predecessor, source_request, verify_running_source
-from devex_clone_seed_generation_images import capture_image
+from devex_clone_seed_generation_images import capture_image, verify_image
 from devex_clone_seed_generation_runtime import GenerationRuntime, generation_directory, ROLES, EXTRA_FILES
 from devex_clone_source_proof import bound_file
 from full_stack_process import process_identity
@@ -202,10 +202,13 @@ def execute_recover(backend: Path, directory: Path, request_path: Path, number: 
     runtime = existing_runtime(backend, {"directory": directory, "output": output, "request": request, "source": source,
                                 "runtime": read_json(output / "runtime/runtime.json")}, run)
     with runtime.environment() as environment:
-        failure, before = None, None
+        failure, before, baseline = None, None, None
         try:
             before = capture_image(backend, runtime.execution, runtime.selected, request, source,
                                    environment, output / "recover-before", run)
+            baseline, original = _recovery_baseline(backend, output, prefix, verifier, source, runtime.selected)
+            if read_json(Path(before["path"]))["image"] != original["image"]:
+                raise ValueError("START 运行像或已验证会话后像之后存在未知写入；仅回收树，禁止声明零漂移或重放")
         except BaseException as error:
             failure = error
         if _active(directory, number, RECOVER) != prefix or binding(request_path) != request_descriptor:
@@ -230,9 +233,30 @@ def execute_recover(backend: Path, directory: Path, request_path: Path, number: 
             raise ValueError("源回收后缺少完整双角色退出证明")
         if _verifier_stopped(backend, directory, prefix) != verifier:
             raise ValueError("回收后来源验收生产者退出事实变化")
+        bound_file(backend, baseline)
     return {"status": "seed_source_generation_abandoned", "request": request_descriptor, "intent": observed["intent"],
+            "baseline": baseline, "source_verifier": verifier,
             "before": before, "after": after, "runtime": stopped, "remote_writes": 0,
             "source_generation_published": False, "replay_allowed": False, "restore_qualified": False}
+
+
+def _recovery_baseline(backend: Path, output: Path, prefix: list, verifier: dict, source: dict, selected: dict):
+    """已完成的独立会话验收才允许替代 START 运行像；失败会话不获得写入白名单。"""
+    start = next(row for row in prefix if (row["stage"], row["mode"]) == ("seed-runtime", START))
+    if start["status"] != "passed":
+        raise ValueError("未发布 START 的失败代次缺少不可变运行前像；只回收树，不能声明零漂移")
+    receipt = read_json(bound_file(backend, start["result"]))
+    baseline = receipt["running"]
+    if verifier["status"] == "verified_stopped":
+        from restore_source_runtime import verify_source_runtime
+
+        verified = verify_source_runtime(backend, binding(output / "verification/source-runtime.json"), live=False)
+        if verified["receipt"]["source_generation"] != start["result"]:
+            raise ValueError("回收会话后像没有绑定同一 START")
+        baseline = verified["receipt"]["after"]
+    value = verify_image(backend, baseline, selected, source["request"],
+                         source_registration=receipt["source_registration"])
+    return baseline, value
 
 
 def _verifier_stopped(backend: Path, directory: Path, prefix: list[dict]) -> dict:

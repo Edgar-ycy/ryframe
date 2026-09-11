@@ -136,6 +136,7 @@ class GenerationControlTests(unittest.TestCase):
                 patch.object(control, "load_state", return_value={"attempts": self.prefix}), \
                 patch.object(control, "predecessor", return_value=self.f.source), \
                 patch.object(control, "existing_runtime", return_value=self.f.runtime), \
+                patch.object(control, "verify_image", side_effect=lambda _b, descriptor, *_a, **_kw: read_json(Path(descriptor["path"]))), \
                 patch.object(control, "capture_image", side_effect=self.f.capture) as capture:
             yield capture
 
@@ -156,6 +157,7 @@ class GenerationControlTests(unittest.TestCase):
             control._verifier_stopped(self.f.backend, self.f.directory, failed)
 
     def test_known_tree_recovery_only_stops_and_never_publishes_or_replays(self):
+        self.f.image = read_json(Path(self.start["running"]["path"]))["image"]
         with self.recovery():
             result = control.execute_recover(self.f.backend, self.f.directory, self.f.request_path, 55)
         self.assertEqual(result["status"], "seed_source_generation_abandoned")
@@ -164,6 +166,36 @@ class GenerationControlTests(unittest.TestCase):
         self.f.runtime.stop.assert_called_once()
         self.f.runtime.start.assert_not_called()
         self.f.runtime.finish.assert_not_called()
+
+    def test_recovery_does_not_label_equal_current_images_as_zero_historical_writes(self):
+        self.f.image["objects"]["bytes"] = "external-write-before-recover"
+        with self.recovery(), self.assertRaisesRegex(ValueError, "未知写入"):
+            control.execute_recover(self.f.backend, self.f.directory, self.f.request_path, 55)
+        self.f.runtime.stop.assert_called_once()
+        before = read_json(self.f.output / "recover-before/image.json")["image"]
+        after = read_json(self.f.output / "recover-after/image.json")["image"]
+        self.assertEqual(before, after)
+        self.assertNotEqual(before, read_json(Path(self.start["running"]["path"]))["image"])
+        self.f.runtime.finish.assert_not_called()
+
+    def test_failed_start_without_published_running_image_is_reclaimed_but_not_qualified(self):
+        self.prefix[-1].update(status="failed", result=None)
+        with self.recovery(), self.assertRaisesRegex(ValueError, "缺少不可变运行前像"):
+            control.execute_recover(self.f.backend, self.f.directory, self.f.request_path, 55)
+        self.f.runtime.stop.assert_called_once()
+
+    def test_verified_session_after_image_is_the_only_allowed_recovery_baseline(self):
+        verification = self.f.output / "verification"
+        verification.mkdir()
+        write_json(verification / "source-runtime.json", self.verified["receipt"])
+        self.verified["receipt"]["after"] = self.f.file("verified-after.json", self.verified["after"])
+        with self.recovery(), patch("restore_source_runtime_producer.require_source_verifier_stopped",
+                return_value={"status": "verified_stopped", "process": {"pid": 123}}), \
+                patch.dict("sys.modules", {"restore_source_runtime": SimpleNamespace(
+                    verify_source_runtime=Mock(return_value=self.verified))}):
+            result = control.execute_recover(self.f.backend, self.f.directory, self.f.request_path, 55)
+        self.assertEqual(result["baseline"], self.verified["receipt"]["after"])
+        self.assertEqual(result["remote_writes"], 0)
 
     def test_known_tree_recovery_still_stops_when_before_image_capture_fails(self):
         def capture(*args):
