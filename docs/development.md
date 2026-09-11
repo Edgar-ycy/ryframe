@@ -32,8 +32,7 @@ cargo xtask dev
 | 未识别的后端文件 | 保守地重新构建 API 和 Worker |
 | `xtask` 自身 | 退出码 `75`，提示开发者重新运行 `cargo xtask dev` |
 
-常用排障从 `cargo xtask check doctor` 开始；运行中的 API 和 Worker 探针由
-`cargo xtask dev` 统一收集并记录，维护操作通过 `cargo xtask data --help` 选择明确子操作。
+常用排障从 `cargo xtask check doctor` 开始；运行中的 API 和 Worker 探针由 `cargo xtask dev` 统一收集并记录，维护操作通过 `cargo xtask data --help` 选择明确子操作。
 ## 数据库迁移
 
 控制库使用默认目标；租户数据可操作全部已登记目标或单个目标；新迁移必须用对应命令创建骨架：
@@ -67,7 +66,6 @@ cargo xtask generate resource post --explain
 3. 补充前端业务交互，执行 `cargo xtask check`，用浏览器验证新增、查询、编辑和删除。
 
 租户资源生成同时更新建表迁移和复制目录；路由键须与菜单键一致。需要验证完整 Device 链路时，在隔离后端工作树执行 `cargo xtask check recovery fixture --output-dir <后端根目录>/.local-tests/device-fixture --write`。该入口固定当前后端与 `--frontend-dir` 选择的前端工作树，在新建隔离工作树生成资源并验证只读幂等性，不启动外部服务；随后给隔离工作树显式配置全栈测试资源，并以 `RYFRAME_E2E_FIXTURE=device` 运行真实浏览器验收。工作树收据记录源代码与生成内容指纹，失败证据保留在输出目录。
-
 ## 开发自定义业务
 
 不能由标准资源表达的流程按以下顺序实现：
@@ -78,13 +76,11 @@ cargo xtask generate resource post --explain
 ## API 与前后端联调
 
 接口变化后运行 `cargo xtask generate api --write`，从当前后端代码生成候选 OpenAPI 并刷新前端 operation descriptor；随后进入前端项目执行消费者检查和浏览器 smoke，确认请求、权限、菜单与页面行为一致。OpenAPI 与数据库结构快照均由对应的生成或迁移维护入口产生，不直接运行内部二进制。
-
 ## 生产构建
 
 `cargo xtask build` 从同一构建计划依次运行三个任务：关闭默认 feature 后分别定向构建 API 和 Worker，再通过 Corepack 构建前端生产目录。每项完成后输出 Cargo 实际报告的可执行文件或完整前端目录的路径、字节数和 SHA-256；`--profile dev` 只改变构建 profile，任务边界保持不变。
 
 `cargo xtask build --plan` 渲染这份计划的依赖、有效参数、输入范围、编译覆盖和允许写入，不启动 Cargo、Corepack 或服务，也不创建目录、缓存和报告。实际执行在首个任务前和全部任务后核对前后端工作树指纹；任一来源在构建期间变化都会失败，已生成文件不能作为同源成功产物。
-
 ## 测试与检查
 
 日常修改使用智能检查，联调完成后使用完整检查：
@@ -113,7 +109,6 @@ cargo xtask check ci integration
 TLS fixture 会生成两日有效的临时 CA，在动态回环端口启动 Redis TLS 代理和 HTTPS 服务；相关测试结束或失败后都会停止监听并删除临时证书。日志默认保存在 `.local-tests/integration/tls/<run-id>/`，历史目录不会覆盖；可用 `RYFRAME_TLS_ARTIFACT_DIR` 指定日志根目录。CI 对成功和失败运行都上传 14 天，失败摘要会输出每个已运行测试的最近日志。`RYFRAME_REDIS_HOST` 不是 `127.0.0.1`、`::1` 或 `localhost` 时门禁直接拒绝启动，避免误连共享 Redis。
 
 真实全栈的 API 与 external Worker 每次分别由私有长驻监督进程托管。Windows 监督进程先把自身加入启用关闭即终止的私有 Job Object，Unix 监督进程先建立独立 session 和进程组，再启动产品代码；进程树收据绑定 scope、启动操作以及监督进程和产品进程的创建身份。停止与故障注入使用不同控制收据，保留产品真实退出码；正常停止先请求产品退出并等待宽限，随后才回收完整 Job 或进程组。Windows 当前没有可继承的温和控制台通道，正常停止触发的 `TerminateProcess` 会如实记录为强制终止。控制操作只有在完整进程树停止且监听端口释放后才完成，不会按 PID 猜测或影响未登记进程。
-
 ## 开发反馈性能测量
 
 需要测量保存反馈、编译、资源门禁或前端构建时，先用 `cargo xtask check --help` 查看性能子任务，再通过统一入口执行和汇总：
@@ -128,7 +123,6 @@ cargo xtask check perf compare --base <日期/run-id> --candidate <日期/run-id
 稳定版准备的原始 B0（后端 `815c5eafb09d4b493319d255fb7ab88ddd02c8b6`、前端 `0087ea2ecf62530d042b9e52f5c950fb34c66d78`）尚未提供当前命令路由。对 `resource-generator`、`resource-gate` 或 `rust-gate` 做 B0/B1 对照时，在后端 B0 上创建独立工作树，应用当前仓库的 `xtask/assets/baseline-adapters/stable-readiness-b0-v1.patch` 并提交，然后将该工作树传给 `--base-backend`，同时将精确、干净的前端 B0 传给 `--base-frontend`，并指定 `--baseline-contract legacy-stable-readiness-b0-v1`。原始 B0 源码保持不变；协调器会在测量前核对两端提交及干净状态、适配提交的直接父提交、补丁字节与摘要、适配树，以及只修改 `xtask/src/cli.rs` 的范围，任一不符即停止。运行记录还会把两端实际源码身份绑定到来源证据，并在开始采样前复核一次。报告会明确记录实际适配提交及来源。受控补丁保存在主分支，因此临时适配分支删除后仍可重建；测量入口始终是 `cargo xtask check perf paired`。
 
 测量产物写入 `.local-tests/devex/<日期>/<run-id>/`，包含源码与环境指纹、逐次样本及 P50/P95/P99；编译缓存 suite 同时保存前后统计。进程树峰值内存区分 Windows Job 提交内存与 Linux cgroup 计费内存，后者需显式设置有写入权限的 RYFRAME_DEVEX_CGROUP_ROOT；Extended CI 显式运行独立 cgroup 的孙进程用例，保存降权运行、测量与精确清理证据，缺少父级 memory controller 时失败。采集不可用保留原因，不记为零，不同口径拒绝比较。runner 校验源码、工具、缓存语义与样本完整性，输入变化、失败或证据缺失均阻止达标结论。Windows 深层工作树的临时 Cargo target 使用 `.local-tests/d/<摘要>` 避免长路径，测量报告仍保存在 DevEx 目录。`cargo-dev-save` 使用真实 watcher、只读迁移验证和探活，不自动升级数据库。日常 `CI` 使用 6 个业务任务加 `Required` 汇总；`Extended CI` 定期或由 tag、手动及部署/全栈脚本变更触发，验收容器、SBOM、镜像与真实浏览器。全栈准备仅在本 Job 创建控制库、共享库与两个独立库，写入不含密码的临时目标配置，完成初始化与 verify 后启动 API、external Worker；开发服务器与生产构建均连接同一隔离环境。
-
 ## 真实运行性能
 
 运行时测量使用同一 DevEx 入口：`runtime-homepage --variant default` 分别测量 `cold` 和 `warm` 浏览器缓存；`runtime-api`、`runtime-jobs`、`runtime-tenants` 使用 `--variant 10|50|100 --cache warm`。后者不宣称清空服务器缓存。固定回归使用 10 并发，50、100 并发用于容量探索。每个 workflow 与 `contract.homepage` 必须显式选择 `identity_pool`：`contract.identity_pools` 固定 `roles_sha256`、`permissions_sha256`、`client_address_model: 'fixed-benchmark-per-user'`、有序 `slots`（`tenant_slot`、`user_slot`、`client_address`）及各选中数量对应的租户分布 `selections`；`bindings.identity_pools` 按相同顺序绑定 `tenant_id`、`username`、`password_env`。角色权限摘要应在准备阶段核对真实认证上下文后登记。实际前 N 个用户、逻辑用户槽位和固定测试地址必须独立，逻辑租户与真实租户一一对应，分布必须匹配 contract，尾部身份不能补齐前 N 的缺口。多租户及导入场景均匀覆盖十个普通租户，10 并发导入每租户一个用户；调度使用对应数量的 system 普通用户。单租户导入活动任务上限保持不变，50/100 探索中的真实限制与失败照常记录。`identity-selection.json` 保存脱敏选择、分布与摘要，不把账户名或密码写入选择收据。用 `node scripts/devex_prepare_identities.mjs plan --environment <manifest> --output <plan> --write` 审查固定 200 个普通测量账号，再用 `apply|verify --plan <plan> --state-dir <后端独立忽略目录> --write` 创建或核验。工具只接受预先登记的独立性能环境，保留真实权限、模板与固定消息 audience 收据；未知写入结果标为 `needs-reconciliation`，不自动重放。
