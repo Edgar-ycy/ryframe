@@ -237,6 +237,74 @@ fn legacy_baseline_contract_is_closed_to_config_only() {
 }
 
 #[test]
+fn stable_readiness_b0_contract_only_accepts_adapted_suites() {
+    for (suite, variant, runs) in [
+        ("resource-generator", "post", "6"),
+        ("resource-gate", "auto", "6"),
+        ("rust-gate", "default", "20"),
+    ] {
+        let cli = parse(strings(&[
+            "check",
+            "perf",
+            "paired",
+            "--base-backend",
+            "D:/worktrees/base",
+            "--candidate-backend",
+            "D:/worktrees/candidate",
+            "--base-frontend",
+            "D:/worktrees/base-frontend",
+            "--candidate-frontend",
+            "D:/worktrees/candidate-frontend",
+            "--baseline-contract",
+            "legacy-stable-readiness-b0-v1",
+            "--suite",
+            suite,
+            "--variant",
+            variant,
+            "--runs",
+            runs,
+            "--cache",
+            "warm",
+        ]))
+        .unwrap();
+        let Command::Check(CheckCommand::Perf(DevexCommand::Paired(options))) = cli.command else {
+            panic!("应解析为 DevEx paired");
+        };
+        assert_eq!(
+            options.baseline_contract,
+            Some(BaselineContract::LegacyStableReadinessB0V1)
+        );
+    }
+
+    let error = parse(strings(&[
+        "check",
+        "perf",
+        "paired",
+        "--base-backend",
+        "D:/worktrees/base",
+        "--candidate-backend",
+        "D:/worktrees/candidate",
+        "--base-frontend",
+        "D:/worktrees/base-frontend",
+        "--candidate-frontend",
+        "D:/worktrees/candidate-frontend",
+        "--baseline-contract",
+        "legacy-stable-readiness-b0-v1",
+        "--suite",
+        "frontend-fast",
+        "--variant",
+        "default",
+        "--runs",
+        "6",
+        "--cache",
+        "warm",
+    ]))
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("不允许 suite `frontend-fast`"), "{error}");
+}
+
+#[test]
 fn cli_rejects_under_sampled_and_unknown_variants() {
     let under_sampled = parse(strings(&[
         "check",

@@ -535,6 +535,40 @@ fn compare_enforces_legacy_baseline_cargo_counts() {
     }
 }
 
+#[test]
+fn stable_readiness_comparison_reports_and_enforces_adapter_provenance() {
+    let baseline = fake_stable_readiness_run("stable-b0", PairedArm::Baseline);
+    let candidate = fake_stable_readiness_run("stable-b1", PairedArm::Candidate);
+    let report = compare(&baseline, &candidate).unwrap();
+    assert!(report.contains("legacy-stable-readiness-b0-v1"));
+    assert!(report.contains("legacy adapter"));
+    let comparison: serde_json::Value =
+        serde_json::from_slice(&fs::read(candidate.join("comparison.json")).unwrap()).unwrap();
+    assert_eq!(
+        comparison["baselineContract"],
+        "legacy-stable-readiness-b0-v1"
+    );
+    assert_eq!(
+        comparison["baselineProvenance"]["patch_sha256"],
+        BaselineContract::STABLE_READINESS_B0_PATCH_SHA256
+    );
+
+    for run in [&baseline, &candidate] {
+        let metadata_path = run.join("metadata.json");
+        let mut metadata: serde_json::Value =
+            serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
+        metadata["pairing"]["baseline_provenance"]["patch_sha256"] =
+            serde_json::json!(format!("sha256:{}", "0".repeat(64)));
+        fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    }
+    let error = compare(&baseline, &candidate).unwrap_err().to_string();
+    assert!(error.contains("来源或工具层适配证据无效"), "{error}");
+
+    for path in [baseline, candidate] {
+        fs::remove_dir_all(path).unwrap();
+    }
+}
+
 fn fake_paired_run(
     name: &str,
     fingerprint: &str,
@@ -691,6 +725,57 @@ fn fake_legacy_paired_run(name: &str, arm: PairedArm, cargo_invocations: usize) 
         .collect::<Vec<_>>()
         .join("\n");
     fs::write(directory.join("samples.jsonl"), format!("{samples}\n")).unwrap();
+    directory
+}
+
+fn fake_stable_readiness_run(name: &str, arm: PairedArm) -> PathBuf {
+    let directory = fake_paired_run(
+        name,
+        "sha256:stable-readiness-surface",
+        &[100.0, 101.0, 102.0, 103.0, 104.0, 105.0],
+        "stable-readiness-comparison",
+        arm,
+    );
+    let metadata_path = directory.join("metadata.json");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
+    metadata["suite"] = serde_json::json!("resource-generator");
+    metadata["variant"] = serde_json::json!("post");
+    metadata["cache_state"] = serde_json::json!("warm");
+    metadata["features"] = serde_json::json!(["resource"]);
+    metadata["frontend"] = serde_json::json!({
+        "commit": if arm == PairedArm::Baseline {
+            BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT
+        } else {
+            "1111111111111111111111111111111111111111"
+        },
+        "dirty": false,
+        "worktree_fingerprint": format!("sha256:frontend-{}", arm.as_str()),
+    });
+    metadata["pairing"]["baseline_contract"] = serde_json::json!("legacy-stable-readiness-b0-v1");
+    metadata["pairing"]["baseline_provenance"] = serde_json::json!({
+        "base_commit": BaselineContract::STABLE_READINESS_B0_BASE_COMMIT,
+        "adapter_commit": "c05114bcdf5c369cd74087db6317ce3c8f89bee8",
+        "patch_sha256": BaselineContract::STABLE_READINESS_B0_PATCH_SHA256,
+        "frontend_commit": BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT,
+        "adapter_paths": BaselineContract::STABLE_READINESS_B0_ADAPTER_PATHS,
+    });
+    fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+
+    let samples_path = directory.join("samples.jsonl");
+    let samples = fs::read_to_string(&samples_path)
+        .unwrap()
+        .lines()
+        .map(|line| {
+            let mut sample: serde_json::Value = serde_json::from_str(line).unwrap();
+            sample["cache_state"] = serde_json::json!("warm");
+            sample["source_fingerprints"]["frontend"] =
+                serde_json::json!(format!("sha256:frontend-{}", arm.as_str()));
+            sample.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(samples_path, format!("{samples}\n")).unwrap();
     directory
 }
 

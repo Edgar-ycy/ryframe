@@ -5,7 +5,6 @@ use std::{
 };
 
 use chrono::Utc;
-use sha2::{Digest, Sha256};
 
 use crate::{Result, dev::SaveMeasurementContract};
 
@@ -24,6 +23,9 @@ use super::{
     support::{cleanup_successful_sample_target, sample_target},
 };
 
+#[path = "paired/provenance.rs"]
+mod provenance;
+
 pub(super) fn execute(
     coordinator_backend: &Path,
     coordinator_frontend: &Path,
@@ -40,8 +42,11 @@ pub(super) fn execute(
         options,
         definition,
     )?;
-    let baseline_provenance =
-        baseline_provenance(&roots.baseline_backend, options.baseline_contract)?;
+    let baseline_provenance = provenance::collect(
+        &roots.baseline_backend,
+        &roots.baseline_frontend,
+        options.baseline_contract,
+    )?;
     preflight::check(
         &roots.baseline_backend,
         &roots.baseline_frontend,
@@ -207,99 +212,6 @@ fn ensure_distinct_roots(
         );
     }
     Ok(())
-}
-
-fn baseline_provenance(
-    baseline_root: &Path,
-    contract: Option<BaselineContract>,
-) -> Result<Option<BaselineProvenance>> {
-    let Some(contract @ (BaselineContract::LegacyCargoDevV1 | BaselineContract::LegacyCargoDevV2)) =
-        contract
-    else {
-        return Ok(None);
-    };
-    let (base_commit, adapter_commit) = match contract {
-        BaselineContract::LegacyCargoDevV1 => (
-            BaselineContract::LEGACY_CARGO_DEV_BASE_COMMIT,
-            BaselineContract::LEGACY_CARGO_DEV_ADAPTER_COMMIT,
-        ),
-        BaselineContract::LegacyCargoDevV2 => (
-            BaselineContract::LEGACY_CARGO_DEV_V2_BASE_COMMIT,
-            BaselineContract::LEGACY_CARGO_DEV_V2_ADAPTER_COMMIT,
-        ),
-    };
-    let head = git_text(baseline_root, &["rev-parse", "HEAD"])?;
-    if head != adapter_commit {
-        return Err(format!(
-            "{} 基线必须是已审核适配提交 {}，实际为 {head}",
-            contract.as_str(),
-            adapter_commit
-        )
-        .into());
-    }
-    let parent = git_text(baseline_root, &["rev-parse", "HEAD^"])?;
-    if parent != base_commit {
-        return Err(format!(
-            "{} 适配提交不再直接基于基线提交 {}",
-            contract.as_str(),
-            base_commit
-        )
-        .into());
-    }
-    if !git_text(
-        baseline_root,
-        &["status", "--porcelain", "--untracked-files=all"],
-    )?
-    .is_empty()
-    {
-        return Err(format!("{} 基线 worktree 必须干净", contract.as_str()).into());
-    }
-    let patch = git_output(
-        baseline_root,
-        &[
-            "diff",
-            "--binary",
-            "--full-index",
-            base_commit,
-            adapter_commit,
-            "--",
-            ".",
-        ],
-    )?;
-    Ok(Some(BaselineProvenance {
-        base_commit: base_commit.to_owned(),
-        adapter_commit: adapter_commit.to_owned(),
-        patch_sha256: sha256(&patch),
-    }))
-}
-
-fn git_text(root: &Path, args: &[&str]) -> Result<String> {
-    Ok(String::from_utf8(git_output(root, args)?)?
-        .trim()
-        .to_owned())
-}
-
-fn git_output(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
-    let output = Command::new("git").args(args).current_dir(root).output()?;
-    if output.status.success() {
-        Ok(output.stdout)
-    } else {
-        Err(format!(
-            "无法读取 legacy baseline 证据：git {}\n{}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr).trim()
-        )
-        .into())
-    }
-}
-
-fn sha256(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let hex = digest
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    format!("sha256:{hex}")
 }
 
 struct PairedRunDirectories {

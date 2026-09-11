@@ -33,7 +33,44 @@ pub(super) fn validate(
             candidate_records,
             baseline_pairing,
         ),
+        Some(BaselineContract::LegacyStableReadinessB0V1) => {
+            validate_stable_readiness_b0(baseline, candidate, baseline_pairing)
+        }
     }
+}
+
+fn validate_stable_readiness_b0(
+    baseline: &RunSummary,
+    candidate: &RunSummary,
+    pairing: &PairingMetadata,
+) -> Result<()> {
+    if baseline.suite != candidate.suite
+        || baseline.variant != candidate.variant
+        || !matches!(
+            baseline.suite,
+            DevexSuite::ResourceGenerator | DevexSuite::ResourceGate | DevexSuite::RustGate
+        )
+    {
+        return Err(
+            "legacy-stable-readiness-b0-v1 只允许同一 resource-generator、resource-gate 或 rust-gate 任务"
+                .into(),
+        );
+    }
+    let provenance = pairing
+        .baseline_provenance
+        .as_ref()
+        .ok_or("legacy-stable-readiness-b0-v1 缺少 baseline 来源证据")?;
+    if provenance.base_commit != BaselineContract::STABLE_READINESS_B0_BASE_COMMIT
+        || !valid_git_commit(&provenance.adapter_commit)
+        || provenance.adapter_commit == provenance.base_commit
+        || provenance.patch_sha256 != BaselineContract::STABLE_READINESS_B0_PATCH_SHA256
+        || provenance.frontend_commit.as_deref()
+            != Some(BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT)
+        || provenance.adapter_paths != BaselineContract::STABLE_READINESS_B0_ADAPTER_PATHS
+    {
+        return Err("legacy-stable-readiness-b0-v1 来源或工具层适配证据无效".into());
+    }
+    Ok(())
 }
 
 fn validate_legacy_cargo_dev(
@@ -113,4 +150,11 @@ fn valid_sha256(value: &str) -> bool {
     value
         .strip_prefix("sha256:")
         .is_some_and(|hex| hex.len() == 64 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+}
+
+fn valid_git_commit(value: &str) -> bool {
+    value.len() == 40
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }

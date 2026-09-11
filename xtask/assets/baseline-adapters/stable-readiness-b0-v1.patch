@@ -1,0 +1,24 @@
+diff --git a/xtask/src/cli.rs b/xtask/src/cli.rs
+index 4d2fcd597f19b69038bb8c60942751a236644c7e..f5b4333a44754e53f3861aa0e614f5b421be281b 100644
+--- a/xtask/src/cli.rs
++++ b/xtask/src/cli.rs
+@@ -192,6 +192,9 @@ pub(crate) fn parse(mut args: Vec<String>) -> Result<Cli, CliError> {
+             require_empty(&args, "cargo xtask doctor")?;
+             Command::Doctor
+         }
++        "check" if args.first().is_some_and(|value| value == "ci") => {
++            Command::Ci(parse_ci(&args[1..])?)
++        }
+         "check" => Command::Check {
+             scope: parse_scope_options(&args, false)?.0,
+         },
+@@ -219,6 +222,9 @@ pub(crate) fn parse(mut args: Vec<String>) -> Result<Cli, CliError> {
+             let (scope, full) = parse_scope_options(&args, true)?;
+             Command::Verify { scope, full }
+         }
++        "generate" if args.first().is_some_and(|value| value == "resource") => {
++            Command::Resource(parse_resource(&args[1..])?)
++        }
+         "resource" => Command::Resource(parse_resource(&args)?),
+         "api-sync" => Command::ApiSync(parse_api_sync(&args)?),
+         "migrate" => Command::Migrate(parse_migration(&args)?),

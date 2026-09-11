@@ -125,6 +125,8 @@ cargo xtask check perf summarize <日期/run-id>
 cargo xtask check perf compare --base <日期/run-id> --candidate <日期/run-id>
 ```
 
+稳定版准备的原始 B0（后端 `815c5eafb09d4b493319d255fb7ab88ddd02c8b6`、前端 `0087ea2ecf62530d042b9e52f5c950fb34c66d78`）尚未提供当前命令路由。对 `resource-generator`、`resource-gate` 或 `rust-gate` 做 B0/B1 对照时，在后端 B0 上创建独立工作树，应用当前仓库的 `xtask/assets/baseline-adapters/stable-readiness-b0-v1.patch` 并提交，然后将该工作树传给 `--base-backend`，同时将精确、干净的前端 B0 传给 `--base-frontend`，并指定 `--baseline-contract legacy-stable-readiness-b0-v1`。原始 B0 源码保持不变；协调器会在测量前核对两端提交及干净状态、适配提交的直接父提交、补丁字节与摘要，以及只修改 `xtask/src/cli.rs` 的范围，任一不符即停止。报告会明确记录实际适配提交及来源。受控补丁保存在主分支，因此临时适配分支删除后仍可重建；测量入口始终是 `cargo xtask check perf paired`。
+
 测量产物写入 `.local-tests/devex/<日期>/<run-id>/`，包含源码与环境指纹、逐次样本及 P50/P95/P99；编译缓存 suite 同时保存前后统计。进程树峰值内存区分 Windows Job 提交内存与 Linux cgroup 计费内存，后者需显式设置有写入权限的 RYFRAME_DEVEX_CGROUP_ROOT；Extended CI 显式运行独立 cgroup 的孙进程用例，保存降权运行、测量与精确清理证据，缺少父级 memory controller 时失败。采集不可用保留原因，不记为零，不同口径拒绝比较。runner 校验源码、工具、缓存语义与样本完整性，输入变化、失败或证据缺失均阻止达标结论。Windows 深层工作树的临时 Cargo target 使用 `.local-tests/d/<摘要>` 避免长路径，测量报告仍保存在 DevEx 目录。`cargo-dev-save` 使用真实 watcher、只读迁移验证和探活，不自动升级数据库。日常 `CI` 使用 6 个业务任务加 `Required` 汇总；`Extended CI` 定期或由 tag、手动及部署/全栈脚本变更触发，验收容器、SBOM、镜像与真实浏览器。全栈准备仅在本 Job 创建控制库、共享库与两个独立库，写入不含密码的临时目标配置，完成初始化与 verify 后启动 API、external Worker；开发服务器与生产构建均连接同一隔离环境。
 
 ## 真实运行性能

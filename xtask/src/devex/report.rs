@@ -10,7 +10,9 @@ use crate::{Result, dev::ReadyKind};
 
 use super::{
     metadata::{RunMetadata, SourceFingerprints},
-    model::{CacheState, DevexSuite, PairedArm, PairingMetadata},
+    model::{
+        BaselineContract, BaselineProvenance, CacheState, DevexSuite, PairedArm, PairingMetadata,
+    },
 };
 
 #[path = "report/acceptance.rs"]
@@ -169,6 +171,8 @@ struct ComparisonReport<'a> {
     candidate_memory: &'a Option<super::memory::MemorySummary>,
     baseline_resource_gate_targeted_decisions: usize,
     candidate_resource_gate_targeted_decisions: usize,
+    baseline_contract: Option<BaselineContract>,
+    baseline_provenance: Option<&'a BaselineProvenance>,
     checks: &'a [acceptance::ComparisonCheck],
     passed: bool,
 }
@@ -277,14 +281,13 @@ pub(crate) fn compare(baseline_dir: &Path, candidate_dir: &Path) -> Result<Strin
     if !passed {
         document.push_str(&format!("\n## 未通过项\n\n{}\n", violations.join("\n")));
     }
-    let comparison_id = &baseline
+    let pairing = baseline
         .pairing
         .as_ref()
-        .expect("ensure_comparable 已校验 pairing")
-        .comparison_id;
+        .expect("ensure_comparable 已校验 pairing");
     let report = ComparisonReport {
         schema_version: 1,
-        comparison_id,
+        comparison_id: &pairing.comparison_id,
         suite: baseline.suite,
         variant: &baseline.variant,
         cache_state: baseline.cache_state,
@@ -299,6 +302,8 @@ pub(crate) fn compare(baseline_dir: &Path, candidate_dir: &Path) -> Result<Strin
         candidate_memory: &candidate.memory,
         baseline_resource_gate_targeted_decisions: baseline.resource_gate_targeted_decisions,
         candidate_resource_gate_targeted_decisions: candidate.resource_gate_targeted_decisions,
+        baseline_contract: pairing.baseline_contract,
+        baseline_provenance: pairing.baseline_provenance.as_ref(),
         checks: &checks,
         passed,
     };

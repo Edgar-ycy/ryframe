@@ -35,13 +35,7 @@ pub(super) fn render(summary: &RunSummary) -> String {
     let pairing = summary
         .pairing
         .as_ref()
-        .map_or_else(String::new, |pairing| {
-            format!(
-                "- paired：`{}` / `{}`\n",
-                pairing.comparison_id,
-                pairing.arm.as_str()
-            )
-        });
+        .map_or_else(String::new, pairing_details);
     let resource_gate = if summary.resource_gate_targeted_decisions > 0 {
         format!(
             "- resource-gate targeted decision：{} 个测量样本\n",
@@ -126,12 +120,18 @@ pub(super) fn render_comparison(
     sccache_version: &str,
     checks: &[ComparisonCheck],
 ) -> String {
+    let pairing = baseline
+        .pairing
+        .as_ref()
+        .expect("ensure_comparable 已校验 pairing");
+    let baseline_contract = pairing_contract_details(pairing);
     let mut document = format!(
         "# DevEx 对比\n\n\
          - suite：`{}`\n\
          - variant：`{}`\n\
          - cache：`{}`\n\
          - paired comparison：`{}`\n\
+         {}\
          - execution surface：`{}`\n\
          - sccache executable：`{}`\n\
          - input：基线 `{}` / 候选 `{}`\n\n\
@@ -143,11 +143,8 @@ pub(super) fn render_comparison(
         baseline.suite.as_str(),
         baseline.variant,
         baseline.cache_state.as_str(),
-        baseline
-            .pairing
-            .as_ref()
-            .expect("ensure_comparable 已校验 pairing")
-            .comparison_id,
+        pairing.comparison_id,
+        baseline_contract,
         baseline.compile_surface_fingerprint,
         sccache_version,
         baseline.input_fingerprint,
@@ -189,4 +186,43 @@ pub(super) fn render_comparison(
         "\n- 总判定：失败\n"
     });
     document
+}
+
+fn pairing_details(pairing: &crate::devex::model::PairingMetadata) -> String {
+    format!(
+        "- paired：`{}` / `{}`\n{}",
+        pairing.comparison_id,
+        pairing.arm.as_str(),
+        pairing_contract_details(pairing)
+    )
+}
+
+fn pairing_contract_details(pairing: &crate::devex::model::PairingMetadata) -> String {
+    let Some(contract) = pairing.baseline_contract else {
+        return String::new();
+    };
+    let Some(provenance) = pairing.baseline_provenance.as_ref() else {
+        return format!(
+            "- baseline contract：`{}`（来源证据缺失）\n",
+            contract.as_str()
+        );
+    };
+    let frontend = provenance
+        .frontend_commit
+        .as_deref()
+        .map_or_else(|| "n/a".to_owned(), ToOwned::to_owned);
+    let paths = if provenance.adapter_paths.is_empty() {
+        "n/a".to_owned()
+    } else {
+        provenance.adapter_paths.join(", ")
+    };
+    format!(
+        "- baseline contract：`{}`\n- legacy adapter：backend `{}` → `{}`，frontend `{}`，patch `{}`，paths `{}`\n",
+        contract.as_str(),
+        provenance.base_commit,
+        provenance.adapter_commit,
+        frontend,
+        provenance.patch_sha256,
+        paths,
+    )
 }
