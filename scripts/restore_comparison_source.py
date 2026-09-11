@@ -46,7 +46,9 @@ EXPORT_FIELDS = {"result", "origin_attempt", "source_registration", "source_rebi
 
 
 def _git(root: Path, *arguments: str, index: Path | None = None) -> bytes:
-    environment = os.environ if index is None else {**os.environ, "GIT_INDEX_FILE": str(index)}
+    environment = {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
+    if index is not None:
+        environment["GIT_INDEX_FILE"] = str(index)
     result = subprocess.run(
         ["git", *arguments], cwd=root, env=environment, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, check=False,
@@ -85,8 +87,8 @@ def _reconstructed_tree(root: Path, patch: Path) -> str:
             path.unlink(missing_ok=True)
 
 
-def b0_adapter_evidence(root: Path) -> dict:
-    """证明登记提交恰由内嵌工具补丁从原 B0 重建，且未越过工具层。"""
+def b0_adapter_evidence(root: Path, *, reconstruct: bool = True) -> dict:
+    """发布时重建；只读复核用受信父提交、树和逐字节补丁验证已登记重建结果。"""
     root = root.resolve(strict=True)
     actual_root = Path(_text(root, "rev-parse", "--show-toplevel")).resolve(strict=True)
     if actual_root != root:
@@ -101,16 +103,19 @@ def b0_adapter_evidence(root: Path) -> dict:
     paths = [item.decode("utf-8", errors="strict") for item in _git(
         root, "diff", "--name-only", "-z", B0_BACKEND_COMMIT, B0_ADAPTER_COMMIT,
         "--", ".").split(b"\0") if item]
-    rebuilt = _reconstructed_tree(root, patch_path)
     if (parent != B0_BACKEND_COMMIT or tree != B0_ADAPTER_TREE or paths != B0_ADAPTER_PATHS
-            or digest != B0_ADAPTER_PATCH_SHA256 or reference != patch or rebuilt != tree):
+            or digest != B0_ADAPTER_PATCH_SHA256 or reference != patch):
         raise ValueError("B0 工具适配提交、补丁摘要、路径或重建树不匹配")
+    rebuilt = _reconstructed_tree(root, patch_path) if reconstruct else tree
+    if rebuilt != tree:
+        raise ValueError("B0 工具补丁重建树与受信适配提交不匹配")
     return {
         "contract": "legacy-stable-readiness-b0-v1",
         "base_backend_sha": B0_BACKEND_COMMIT,
         "base_frontend_sha": B0_FRONTEND_COMMIT,
         "reference_adapter_sha": B0_ADAPTER_COMMIT,
         "adapter_tree": B0_ADAPTER_TREE,
+        "reconstructed_tree": rebuilt,
         "adapter_paths": B0_ADAPTER_PATHS,
         "patch": {"path": B0_ADAPTER_PATCH.as_posix(), **file_digest(patch_path)},
     }
@@ -202,7 +207,7 @@ def _source_export(backend: Path, descriptor: dict) -> dict:
 
 def _b0_arm(coordinator: Path, source_backend: Path, execution_backend: Path,
             frontend: Path, backend_build: Path, frontend_build: Path,
-            export: dict) -> dict:
+            export: dict, *, reconstruct_adapter: bool = True) -> dict:
     source_root, source_inventory = _inventory(source_backend, "B0 后端产品来源", B0_BACKEND_COMMIT)
     execution_root, execution_inventory = _inventory(
         execution_backend, "B0 后端适配来源", B0_ADAPTER_COMMIT)
@@ -217,7 +222,7 @@ def _b0_arm(coordinator: Path, source_backend: Path, execution_backend: Path,
         {"backend": source_inventory, "frontend": frontend_inventory},
         {"backend": execution_inventory, "frontend": frontend_inventory},
         {"backend": backend_binding, "frontend": frontend_binding},
-        b0_adapter_evidence(coordinator), export,
+        b0_adapter_evidence(coordinator, reconstruct=reconstruct_adapter), export,
     )
 
 
@@ -251,12 +256,13 @@ def capture_comparison_sources(
     backend: Path, *, b0_backend: Path, b0_adapter_backend: Path, b0_frontend: Path,
     b0_backend_build: Path, b0_frontend_build: Path, b1_backend: Path, b1_frontend: Path,
     b1_backend_build: Path, b1_frontend_build: Path, source_export_result: dict,
+    reconstruct_adapter: bool = True,
 ) -> dict:
     """只读生成双版本来源清单；不创建恢复 run、锁或业务数据。"""
     coordinator = _repository(backend, "来源协调后端")
     export = _source_export(coordinator, source_export_result)
     b0 = _b0_arm(coordinator, b0_backend, b0_adapter_backend, b0_frontend,
-                 b0_backend_build, b0_frontend_build, export)
+                 b0_backend_build, b0_frontend_build, export, reconstruct_adapter=reconstruct_adapter)
     b1 = _b1_arm(b1_backend, b1_frontend, b1_backend_build, b1_frontend_build, export)
     roots = [Path(path) for arm in (b0, b1) for path in arm["roots"].values()]
     if len(set(roots)) != 5:
@@ -269,7 +275,7 @@ def capture_comparison_sources(
     repeated = {
         "export": _source_export(coordinator, source_export_result),
         "b0": _b0_arm(coordinator, b0_backend, b0_adapter_backend, b0_frontend,
-                       b0_backend_build, b0_frontend_build, export),
+                       b0_backend_build, b0_frontend_build, export, reconstruct_adapter=reconstruct_adapter),
         "b1": _b1_arm(b1_backend, b1_frontend, b1_backend_build, b1_frontend_build, export),
     }
     if repeated != {"export": export, "b0": b0, "b1": b1}:
@@ -323,7 +329,7 @@ def _validate_arm_shape(name: str, arm: dict, export: dict) -> None:
         if not isinstance(arm["adapter"], dict):
             raise ValueError("B0 缺少工具适配来源")
         exact(arm["adapter"], {"contract", "base_backend_sha", "base_frontend_sha",
-                               "reference_adapter_sha", "adapter_tree", "adapter_paths", "patch"})
+                               "reference_adapter_sha", "adapter_tree", "reconstructed_tree", "adapter_paths", "patch"})
         exact(arm["adapter"]["patch"], {"path", "bytes", "sha256"})
         expected = {
             "contract": "legacy-stable-readiness-b0-v1",
@@ -331,6 +337,7 @@ def _validate_arm_shape(name: str, arm: dict, export: dict) -> None:
             "base_frontend_sha": B0_FRONTEND_COMMIT,
             "reference_adapter_sha": B0_ADAPTER_COMMIT,
             "adapter_tree": B0_ADAPTER_TREE,
+            "reconstructed_tree": B0_ADAPTER_TREE,
             "adapter_paths": B0_ADAPTER_PATHS,
             "patch_path": B0_ADAPTER_PATCH.as_posix(),
             "patch_sha256": B0_ADAPTER_PATCH_SHA256,
@@ -344,7 +351,7 @@ def _validate_arm_shape(name: str, arm: dict, export: dict) -> None:
         raise ValueError("B1 不得携带 B0 工具适配或不同执行来源")
 
 
-def verify_comparison_sources(backend: Path, value: dict) -> dict:
+def verify_comparison_sources(backend: Path, value: dict, *, read_only: bool = True) -> dict:
     """按清单声明的路径重建同一结果；strict v1 不接受旧字段或双读。"""
     exact(value, MANIFEST_FIELDS)
     if value["format_version"] != 1 or value["kind"] != "restore-comparison-sources":
@@ -366,6 +373,7 @@ def verify_comparison_sources(backend: Path, value: dict) -> dict:
         b1_backend_build=Path(b1["builds"]["backend"]["path"]),
         b1_frontend_build=Path(b1["builds"]["frontend"]["path"]),
         source_export_result=value["source_export"]["result"],
+        reconstruct_adapter=not read_only,
     )
     if expected != value:
         raise ValueError("双版本源码、构建或共享导出与来源清单不一致")

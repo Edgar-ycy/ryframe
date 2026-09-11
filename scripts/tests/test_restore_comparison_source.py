@@ -51,6 +51,7 @@ def adapter():
         "base_frontend_sha": comparison.B0_FRONTEND_COMMIT,
         "reference_adapter_sha": comparison.B0_ADAPTER_COMMIT,
         "adapter_tree": comparison.B0_ADAPTER_TREE,
+        "reconstructed_tree": comparison.B0_ADAPTER_TREE,
         "adapter_paths": comparison.B0_ADAPTER_PATHS,
         "patch": {"path": comparison.B0_ADAPTER_PATCH.as_posix(), "bytes": 1,
                   "sha256": comparison.B0_ADAPTER_PATCH_SHA256},
@@ -58,6 +59,35 @@ def adapter():
 
 
 class B0AdapterEvidenceTests(unittest.TestCase):
+    def test_readonly_adapter_verifies_trusted_git_evidence_without_writing(self):
+        root = Path(__file__).resolve().parents[2]
+        directory = root / "target"
+        before = {path.name: path.stat().st_mtime_ns for path in directory.iterdir()} if directory.exists() else None
+        original = comparison._git
+        calls = []
+        def readonly_git(location, *arguments, **kwargs):
+            calls.append(arguments)
+            self.assertNotIn(arguments[0], {"read-tree", "write-tree", "apply", "hash-object", "update-index"})
+            self.assertIsNone(kwargs.get("index"))
+            return original(location, *arguments, **kwargs)
+        with patch.object(comparison, "_git", side_effect=readonly_git), \
+                patch.object(comparison, "_reconstructed_tree", side_effect=AssertionError("只读不能重建")):
+            observed = comparison.b0_adapter_evidence(root, reconstruct=False)
+        self.assertEqual(observed["reconstructed_tree"], comparison.B0_ADAPTER_TREE)
+        self.assertEqual(before, {path.name: path.stat().st_mtime_ns for path in directory.iterdir()} if directory.exists() else None)
+        self.assertTrue(any(arguments[0] == "diff" for arguments in calls))
+
+    def test_readonly_adapter_rejects_wrong_tree_parent_or_patch(self):
+        root = Path(__file__).resolve().parents[2]
+        original = comparison._text
+        for field in (f"{comparison.B0_ADAPTER_COMMIT}^", f"{comparison.B0_ADAPTER_COMMIT}^{{tree}}"):
+            def changed(location, *arguments, **kwargs):
+                return "f" * 40 if field in arguments else original(location, *arguments, **kwargs)
+            with patch.object(comparison, "_text", side_effect=changed), self.assertRaises(ValueError):
+                comparison.b0_adapter_evidence(root, reconstruct=False)
+        with patch.object(comparison, "_patch_bytes", return_value=b"changed"), self.assertRaises(ValueError):
+            comparison.b0_adapter_evidence(root, reconstruct=False)
+
     def test_registered_adapter_is_reconstructed_from_embedded_patch(self):
         root = Path(__file__).resolve().parents[2]
         value = comparison.b0_adapter_evidence(root)
@@ -184,12 +214,21 @@ class ComparisonSourceTests(unittest.TestCase):
                 b1_frontend_build=self.root / "b1-frontend.json", source_export_result=self.export["result"])
         self.assertEqual({arm["source_export_identity_sha256"] for arm in manifest["arms"].values()},
                          {self.export["identity_sha256"]})
-        with patch.object(comparison, "capture_comparison_sources", return_value=manifest):
+        with patch.object(comparison, "capture_comparison_sources", return_value=manifest) as capture:
             self.assertIs(comparison.verify_comparison_sources(self.root, manifest), manifest)
+            self.assertIs(capture.call_args.kwargs["reconstruct_adapter"], False)
+            comparison.verify_comparison_sources(self.root, manifest, read_only=False)
+            self.assertIs(capture.call_args.kwargs["reconstruct_adapter"], True)
         invalid = copy.deepcopy(manifest)
         invalid["legacy"] = True
         with patch.object(comparison, "capture_comparison_sources") as capture, \
                 self.assertRaises(ValueError):
+            comparison.verify_comparison_sources(self.root, invalid)
+        capture.assert_not_called()
+
+        invalid = copy.deepcopy(manifest)
+        invalid["arms"]["b0"]["adapter"].pop("reconstructed_tree")
+        with patch.object(comparison, "capture_comparison_sources") as capture, self.assertRaises(ValueError):
             comparison.verify_comparison_sources(self.root, invalid)
         capture.assert_not_called()
 

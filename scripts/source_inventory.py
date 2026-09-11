@@ -17,7 +17,8 @@ WINDOWS_REPARSE_POINT = 0x400
 
 
 def git(root: Path, *arguments: str) -> bytes:
-    return subprocess.check_output(["git", "-C", str(root), *arguments])
+    return subprocess.check_output(["git", "-C", str(root), *arguments],
+                                   env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"})
 
 
 def source_file(root: Path, relative: str, *, allow_missing: bool = False) -> tuple[Path, os.stat_result] | None:
