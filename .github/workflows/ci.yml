@@ -670,10 +670,6 @@ jobs:
         if: steps.deployment-changes.outputs.required == 'true'
         run: python scripts/check_deployment_assets.py
 
-      - name: 校验供应链固定版本与例外策略
-        if: steps.deployment-changes.outputs.required == 'true'
-        run: python scripts/check_supply_chain.py
-
       - name: 校验 Compose 展开结果
         if: steps.deployment-changes.outputs.required == 'true'
         run: >-

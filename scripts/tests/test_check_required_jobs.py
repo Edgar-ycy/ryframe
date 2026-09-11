@@ -300,6 +300,8 @@ class RequiredJobsTests(unittest.TestCase):
             "\n  #", 1
         )[0]
         self.assertIn("--verify-cargo-graph", security)
+        self.assertEqual(security.count("python scripts/check_supply_chain.py"), 1)
+        self.assertEqual(security.count("python scripts/check_deployment_assets.py"), 2)
         self.assertIn("$GITHUB_WORKSPACE/backend/deploy/nginx", security)
         self.assertIn("$GITHUB_WORKSPACE/backend/deploy/prometheus", security)
         self.assertNotIn("$GITHUB_WORKSPACE/deploy/", security)

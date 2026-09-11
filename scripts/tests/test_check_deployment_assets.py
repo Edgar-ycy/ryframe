@@ -9,7 +9,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import DEFAULT, patch
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "check_deployment_assets.py"
@@ -46,6 +46,45 @@ def write_archive(path: Path, extra: dict[str, tuple[bytes, int]] | None = None)
 
 
 class CheckDeploymentAssetsTests(unittest.TestCase):
+    def test_cli_runs_static_and_image_checks_in_distinct_phases(self) -> None:
+        static_checks = [
+            "check_dockerfile",
+            "check_online_generator",
+            "check_compose_fixture",
+            "check_alert_runbooks",
+            "check_pinned_actions",
+        ]
+        with (
+            patch.object(MODULE.sys, "argv", [str(SCRIPT)]),
+            patch.object(MODULE, "inspect_image", return_value=[]) as inspect_image,
+            patch.multiple(
+                MODULE,
+                **{name: DEFAULT for name in static_checks},
+            ) as static_mocks,
+        ):
+            self.assertEqual(MODULE.main(), 0)
+            inspect_image.assert_not_called()
+            for check in static_mocks.values():
+                check.assert_called_once()
+
+        commit = "a" * 40
+        with (
+            patch.object(
+                MODULE.sys,
+                "argv",
+                [str(SCRIPT), "--image", "ryframe:test", "--expected-commit", commit],
+            ),
+            patch.object(MODULE, "inspect_image", return_value=[]) as inspect_image,
+            patch.multiple(
+                MODULE,
+                **{name: DEFAULT for name in static_checks},
+            ) as static_mocks,
+        ):
+            self.assertEqual(MODULE.main(), 0)
+            inspect_image.assert_called_once_with("ryframe:test", commit)
+            for check in static_mocks.values():
+                check.assert_not_called()
+
     def test_rust_toolchain_versions_stay_aligned(self) -> None:
         cases = [
             ("1.98.0", "1.98", "1.98.0", None),
