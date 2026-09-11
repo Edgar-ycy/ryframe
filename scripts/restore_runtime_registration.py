@@ -207,8 +207,10 @@ def validate_registration(value: object) -> dict:
         "恢复运行登记",
     )
     if (
-        registration["format_version"] != 1
+        type(registration["format_version"]) is not int
+        or registration["format_version"] != 1
         or registration["kind"] != "restore-runtime-registration"
+        or type(registration["remote_writes"]) is not int
         or registration["remote_writes"] != 0
     ):
         raise ValueError("恢复运行登记版本、类型或远端写入声明无效")

@@ -46,10 +46,23 @@ pub async fn execute(config: &AppConfig, context: &Context, command: Command) ->
             id,
             proof,
             tests_receipt,
+            runtime_receipt,
+            target_plan,
+            runner_root,
             ..
         } => {
-            let proof = read_json(&proof)?;
-            super::proof::verify_tests_receipt(&proof, &tests_receipt)?;
+            let proof = super::proof::verify(
+                context.repository.as_ref(),
+                &id,
+                super::proof::EvidencePaths {
+                    proof: &proof,
+                    tests: &tests_receipt,
+                    runtime: &runtime_receipt,
+                    target: &target_plan,
+                    runner: &runner_root,
+                },
+            )
+            .await?;
             print_json(&context.service.finish_restore(&id, &proof).await?)
         }
         Command::Status => status(config, context.repository.as_ref()).await,

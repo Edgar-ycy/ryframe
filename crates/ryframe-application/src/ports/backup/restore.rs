@@ -157,17 +157,23 @@ pub fn validate_restore_record(record: &RestoreRecord) -> AppResult<()> {
 }
 
 /// 由真实服务浏览器验收入口写出的结果；必须绑定当前演练与精确源码。
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RestoreBusinessProof {
     pub restore_id: String,
     pub plan_hash: String,
-    pub backend_sha: String,
+    pub backup_source_sha: String,
+    pub backend_product_sha: String,
+    pub backend_execution_sha: String,
+    pub backend_adapter_contract: Option<String>,
     pub frontend_sha: String,
     pub runner_sha: String,
+    pub verifier_sha: String,
     pub scope_id: String,
+    pub frontend_url: String,
     pub runtime_receipt_sha256: String,
     pub tests_receipt_sha256: String,
+    pub target_plan_sha256: String,
     pub started_at: DateTime<Utc>,
     pub completed_at: DateTime<Utc>,
     pub scenarios: Vec<RestoreScenarioResult>,
@@ -176,7 +182,7 @@ pub struct RestoreBusinessProof {
     pub axe_serious_or_critical: u64,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RestoreScenarioResult {
     pub name: String,

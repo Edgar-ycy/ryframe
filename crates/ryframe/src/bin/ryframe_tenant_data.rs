@@ -11,6 +11,8 @@ mod commands;
 mod context;
 #[path = "ryframe_tenant_data/proof.rs"]
 mod proof;
+#[path = "ryframe_tenant_data/proof_file.rs"]
+mod proof_file;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

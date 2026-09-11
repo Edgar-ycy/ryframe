@@ -654,7 +654,7 @@ async fn runtime_probe_time_counts_towards_the_one_hour_limit() {
 
 #[tokio::test]
 async fn stale_or_incomplete_business_evidence_never_marks_recovery_successful() {
-    for case in 0..10 {
+    for case in 0..16 {
         let (service, repository, _) = fixture();
         let manifest = manifest();
         service
@@ -691,6 +691,24 @@ async fn stale_or_incomplete_business_evidence_never_marks_recovery_successful()
             }
             8 => {
                 proof.tests_receipt_sha256.clear();
+            }
+            9 => {
+                proof.backup_source_sha = "f".repeat(40);
+            }
+            10 => {
+                proof.backend_execution_sha.clear();
+            }
+            11 => {
+                proof.backend_execution_sha = "f".repeat(40);
+            }
+            12 => {
+                proof.verifier_sha.clear();
+            }
+            13 => {
+                proof.target_plan_sha256.clear();
+            }
+            14 => {
+                proof.frontend_url.clear();
             }
             _ => proof.scenarios.push(RestoreScenarioResult {
                 name: "unknown-extra-scenario".into(),

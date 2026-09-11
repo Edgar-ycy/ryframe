@@ -31,6 +31,7 @@ futures-util = { workspace = true, optional = true }
 md5 = { version = "0.8", optional = true }
 sha2 = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
+same-file = { version = "1.0.6", optional = true }
 serde = { workspace = true, optional = true, features = ["derive"] }
 serde_json = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
@@ -112,6 +113,7 @@ bin-tenant-data = [
     "dep:chrono",
     "dep:sha2",
     "dep:hex",
+    "dep:same-file",
     "dep:ryframe-application",
     "dep:ryframe-adapters",
     "dep:serde",

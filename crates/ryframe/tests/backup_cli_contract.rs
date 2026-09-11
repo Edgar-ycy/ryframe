@@ -1,12 +1,27 @@
 #[path = "../src/bin/ryframe_tenant_data/args.rs"]
 mod args;
-#[path = "../src/bin/ryframe_tenant_data/proof.rs"]
-mod proof;
+#[path = "../src/bin/ryframe_tenant_data/proof_file.rs"]
+mod proof_file;
 
 use args::{Command, InventoryTime, parse};
+use std::{thread, time::Duration};
 
 fn arguments(value: &str) -> Result<Command, String> {
     parse(value.split_whitespace().map(String::from))
+}
+
+#[test]
+fn artifact_source_detects_same_file_same_length_rewrite() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("python.exe");
+    std::fs::write(&path, b"before").unwrap();
+    let original = proof_file::stable_artifact(&path, "测试解释器").unwrap();
+    assert_eq!(original.bytes, 6);
+    let result = proof_file::stable_artifact_with_hook(&path, "测试解释器", || {
+        thread::sleep(Duration::from_millis(20));
+        std::fs::write(&path, b"after!").unwrap();
+    });
+    assert!(result.is_err());
 }
 
 #[test]
@@ -32,7 +47,7 @@ fn explicit_commands_require_scoped_inputs_and_reject_duplicate_flags() {
     );
     assert!(
         arguments(
-            "restore-verify --id drill --proof proof.json --tests-receipt tests.json --restore-config-dir isolated"
+            "restore-verify --id drill --proof proof.json --tests-receipt tests.json --runtime-receipt runtime.json --target-plan target.json --runner-root runner --restore-config-dir isolated"
         )
         .is_ok()
     );

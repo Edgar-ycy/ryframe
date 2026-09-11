@@ -236,7 +236,11 @@ def validate_request(value: object) -> dict:
         },
         "恢复运行启动请求",
     )
-    if request["format_version"] != 1 or request["kind"] != "restore-runtime-launch-request":
+    if (
+        type(request["format_version"]) is not int
+        or request["format_version"] != 1
+        or request["kind"] != "restore-runtime-launch-request"
+    ):
         raise ValueError("恢复运行启动请求版本或类型不匹配")
     authority = validate_authority(request["authority"])
     registration = exact_fields(

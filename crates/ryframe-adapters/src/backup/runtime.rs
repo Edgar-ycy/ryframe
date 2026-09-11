@@ -52,7 +52,7 @@ impl BackupRuntimeVerifier for RuntimeVerification {
     async fn restored_runtime(
         &self,
         record: &RestoreRecord,
-        _proof: &RestoreBusinessProof,
+        proof: &RestoreBusinessProof,
     ) -> AppResult<()> {
         if record.plan.api_ready_url != self.api_ready_url
             || record.plan.worker_ready_url != self.worker_ready_url
@@ -61,15 +61,20 @@ impl BackupRuntimeVerifier for RuntimeVerification {
                 "API 或 Worker 端点与恢复配置不一致".into(),
             ));
         }
-        for url in [&self.api_ready_url, &self.worker_ready_url] {
+        validate_endpoint(&proof.frontend_url)?;
+        for url in [
+            &self.api_ready_url,
+            &self.worker_ready_url,
+            &proof.frontend_url,
+        ] {
             let response = self
                 .client
                 .get(url)
                 .send()
                 .await
-                .map_err(|_| AppError::Validation("恢复后的 API 或 Worker 无法连接".into()))?;
+                .map_err(|_| AppError::Validation("恢复后的三端服务无法连接".into()))?;
             if response.status() != reqwest::StatusCode::OK {
-                return Err(AppError::Validation("恢复后的 API 或 Worker 未就绪".into()));
+                return Err(AppError::Validation("恢复后的三端服务未就绪".into()));
             }
         }
         Ok(())

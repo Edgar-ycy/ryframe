@@ -15,8 +15,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import restore_runtime_generation as generation_model
+import restore_runtime_evidence as evidence_model
 import restore_runtime_lifecycle as lifecycle
 import restore_runtime_launch as launch_model
+import restore_runtime_registration as registration_model
 import restore_runtime
 import runtime_control_lock
 from full_stack_process import process_identity, write_receipt
@@ -303,6 +305,97 @@ class RestoreRuntimeLifecycleTests(unittest.TestCase):
         invalid["roots"]["backend_execution"] = str(self.base / "adapter")
         self.assertEqual(launch_model.validate_request(invalid), invalid)
 
+    def test_lifecycle_documents_reject_boolean_format_versions(self):
+        request = json.loads(json.dumps(self.request))
+        request["format_version"] = True
+        cases = (
+            (launch_model.validate_request, request, ()),
+            (
+                generation_model.validate_creation,
+                {
+                    "format_version": True,
+                    "kind": "restore-runtime-create-intent",
+                    "runtime_directory": str(self.runtime),
+                    "generation": 1,
+                    "registration": self.binding,
+                    "request": self.request,
+                },
+                (self.runtime, self.binding),
+            ),
+            (
+                generation_model.validate_state,
+                {
+                    "format_version": True,
+                    "kind": "restore-runtime-lifecycle",
+                    "runtime_directory": str(self.runtime),
+                    "registration": self.binding,
+                    "creation_intent": {},
+                    "generations": [{}],
+                },
+                (self.runtime, self.binding),
+            ),
+            (
+                generation_model.validate_launch,
+                {
+                    "format_version": True,
+                    "kind": "restore-runtime-launch",
+                    "generation": 1,
+                    "runtime_directory": str(self.runtime / "generation-0001"),
+                    "request": self.request,
+                    "processes": {},
+                },
+                (self.runtime / "generation-0001",),
+            ),
+            (
+                registration_model.validate_registration,
+                {
+                    "format_version": True,
+                    "kind": "restore-runtime-registration",
+                    "reference_plan": {},
+                    "target_plan": {},
+                    "observation": {},
+                    "remote_writes": 0,
+                },
+                (),
+            ),
+        )
+        for validator, value, arguments in cases:
+            with self.subTest(validator=validator.__name__), self.assertRaises(ValueError):
+                validator(value, *arguments)
+        creation = json.loads(json.dumps(cases[1][1]))
+        creation["format_version"] = 1
+        creation["generation"] = True
+        with self.assertRaises(ValueError):
+            generation_model.validate_creation(creation, self.runtime, self.binding)
+        invalid_generation = {
+            "number": True,
+            "directory": str(self.runtime / "generation-0001"),
+            "status": "starting",
+            "request": self.request,
+            "roles": {},
+            "launch": None,
+            "error_type": None,
+        }
+        with self.assertRaises(ValueError):
+            generation_model.validate_generation(invalid_generation, self.runtime, 1, self.binding)
+        registration = json.loads(json.dumps(cases[-1][1]))
+        registration["format_version"] = 1
+        registration["remote_writes"] = False
+        with self.assertRaises(ValueError):
+            registration_model.validate_registration(registration)
+        process = self.base / "process.json"
+        write_receipt(
+            process,
+            {
+                "format_version": True,
+                "role": "api",
+                "scope_id": self.authority["scope_id"],
+                "identity": {},
+            },
+        )
+        with self.assertRaises(ValueError):
+            evidence_model.process_document(process, "api", self.authority["scope_id"])
+
     def test_target_and_environment_descriptors_fail_closed(self):
         backend_path = self.base / "product-backend-build.json"
         frontend_path = self.base / "product-frontend-build.json"
@@ -425,6 +518,75 @@ class RestoreRuntimeLifecycleTests(unittest.TestCase):
         self.assertEqual([event[0] for event in events], ["lock", "bind", "write", "unlock"])
         self.assertEqual(events[0][1], self.coordinator / ".local-tests")
         self.assertEqual(events[0][3], REGISTRATION_LOCK)
+
+    def test_live_verification_holds_ownership_lock_and_rechecks_generation(self):
+        documents = tuple(
+            read_json_document(self.base / name)
+            for name in ("registration.json", "target-plan.json")
+        )
+        launch = {"generation": 1, "runtime_directory": str(self.runtime)}
+        inputs = (self.runtime, self.binding, launch, documents)
+        receipt = {
+            "paths": {
+                "launch": str(self.runtime / "runtime-launch.json"),
+                "runtime_dir": str(self.runtime),
+            }
+        }
+
+        @contextlib.contextmanager
+        def locked(*_args):
+            yield
+
+        with patch.object(restore_runtime, "_validate_runtime_receipt", return_value=receipt), patch.object(
+            restore_runtime, "_bind_control_inputs", side_effect=[inputs, inputs, inputs]
+        ), patch.object(restore_runtime, "verify", return_value={"status": "verified"}) as verify, patch.object(
+            runtime_control_lock, "controller_lock", side_effect=locked
+        ):
+            result = restore_runtime.verify_live_generation(
+                receipt,
+                self.coordinator,
+                self.base,
+                self.base,
+                self.base / "bindings.json",
+                {"authority": True},
+                "f" * 64,
+            )
+        self.assertEqual(result, {"status": "verified"})
+        verify.assert_called_once()
+
+    def test_live_verification_rejects_generation_that_stops_during_probe(self):
+        documents = tuple(
+            read_json_document(self.base / name)
+            for name in ("registration.json", "target-plan.json")
+        )
+        launch = {"generation": 1, "runtime_directory": str(self.runtime)}
+        inputs = (self.runtime, self.binding, launch, documents)
+        stopped = (self.runtime, self.binding, {**launch, "generation": 2}, documents)
+        receipt = {
+            "paths": {
+                "launch": str(self.runtime / "runtime-launch.json"),
+                "runtime_dir": str(self.runtime),
+            }
+        }
+
+        @contextlib.contextmanager
+        def locked(*_args):
+            yield
+
+        with patch.object(restore_runtime, "_validate_runtime_receipt", return_value=receipt), patch.object(
+            restore_runtime, "_bind_control_inputs", side_effect=[inputs, inputs, stopped]
+        ), patch.object(restore_runtime, "verify", return_value={"status": "verified"}), patch.object(
+            runtime_control_lock, "controller_lock", side_effect=locked
+        ), self.assertRaisesRegex(ValueError, "lifecycle 代次发生变化"):
+            restore_runtime.verify_live_generation(
+                receipt,
+                self.coordinator,
+                self.base,
+                self.base,
+                self.base / "bindings.json",
+                {"authority": True},
+                "f" * 64,
+            )
 
 
 if __name__ == "__main__":

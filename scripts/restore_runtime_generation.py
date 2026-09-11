@@ -39,9 +39,11 @@ def validate_creation(value: object, root: Path, binding: dict) -> dict:
         "恢复运行首次目录 intent",
     )
     if (
-        value["format_version"] != 1
+        type(value["format_version"]) is not int
+        or value["format_version"] != 1
         or value["kind"] != "restore-runtime-create-intent"
         or value["runtime_directory"] != str(root)
+        or type(value["generation"]) is not int
         or value["generation"] != 1
         or value["registration"] != binding
     ):
@@ -111,7 +113,8 @@ def validate_generation(generation: object, root: Path, number: int, binding: di
     )
     expected = root / f"generation-{number:04d}"
     if (
-        generation["number"] != number
+        type(generation["number"]) is not int
+        or generation["number"] != number
         or generation["directory"] != str(expected)
         or generation["status"] not in ACTIVE_STATES | FINAL_STATES
         or generation["request"].get("registration") != binding
@@ -242,7 +245,8 @@ def validate_state(value: object, root: Path, binding: dict) -> dict:
         "恢复运行生命周期",
     )
     if (
-        state["format_version"] != 1
+        type(state["format_version"]) is not int
+        or state["format_version"] != 1
         or state["kind"] != "restore-runtime-lifecycle"
         or state["runtime_directory"] != str(root)
         or state["registration"] != binding
@@ -307,7 +311,8 @@ def validate_launch(value: object, generation: Path) -> dict:
         "恢复运行启动收据",
     )
     if (
-        launch["format_version"] != 1
+        type(launch["format_version"]) is not int
+        or launch["format_version"] != 1
         or launch["kind"] != "restore-runtime-launch"
         or launch["runtime_directory"] != str(generation)
         or type(launch["generation"]) is not int

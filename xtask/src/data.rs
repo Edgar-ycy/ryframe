@@ -1,4 +1,9 @@
-use crate::{Result, cli::DataCommand, process::run_owned, workspace::root_dir};
+use crate::{
+    Result,
+    cli::DataCommand,
+    process::{command_output, run_owned_with_env},
+    workspace::root_dir,
+};
 
 pub(crate) fn run(command: &DataCommand) -> Result<()> {
     let (feature, binary, arguments) = match command {
@@ -45,7 +50,23 @@ pub(crate) fn run(command: &DataCommand) -> Result<()> {
     .map(str::to_owned)
     .collect::<Vec<_>>();
     cargo_args.extend(arguments);
-    run_owned(&root_dir(), "cargo", &cargo_args)
+    let root = root_dir();
+    let source_sha = command_output(&root, "git", &["rev-parse", "--verify", "HEAD^{commit}"])?
+        .trim()
+        .to_owned();
+    if source_sha.len() != 40
+        || !source_sha
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err("data 维护程序的后端源码提交无效".into());
+    }
+    run_owned_with_env(
+        &root,
+        "cargo",
+        &cargo_args,
+        &[("RYFRAME_BUILD_COMMIT", source_sha)],
+    )
 }
 
 pub(crate) fn tenant_data_arguments(kind: &str, arguments: &[String]) -> Result<Vec<String>> {

@@ -30,6 +30,7 @@ class CloneToolsTests(unittest.TestCase):
         self.fingerprint = patch.object(tools, "worktree_fingerprint", return_value="sha256:" + "b" * 64).start()
         self.addCleanup(patch.stopall)
         self.calls = []
+        self.build_environments = []
         self.artifact_mode = "valid"
 
     def cargo(self, args, **kwargs):
@@ -38,6 +39,7 @@ class CloneToolsTests(unittest.TestCase):
             return subprocess.CompletedProcess(args, 0, stdout=b"rustc 1.98.0\nhost: test", stderr=b"")
         if args == ["cargo", "-V"]:
             return subprocess.CompletedProcess(args, 0, stdout=b"cargo 1.98.0", stderr=b"")
+        self.build_environments.append(kwargs["env"])
         name = args[args.index("--bin") + 1]
         executable = tools.target_directory(self.backend) / "debug" / (name + ".exe")
         executable.parent.mkdir(parents=True, exist_ok=True)
@@ -74,6 +76,10 @@ class CloneToolsTests(unittest.TestCase):
         for item in receipt["artifacts"].values():
             self.assertEqual(Path(item["executable"]).parent, self.directory)
             Path(item["cargo_executable"]).write_bytes(b"later unrelated build")
+        self.assertEqual(
+            [environment["RYFRAME_BUILD_COMMIT"] for environment in self.build_environments],
+            [self.source["head"]] * 3,
+        )
         self.calls.clear()
         before = {p.name: p.read_bytes() for p in self.directory.iterdir()}
         self.assertEqual(self.verify(), receipt)

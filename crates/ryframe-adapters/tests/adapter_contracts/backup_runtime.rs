@@ -182,12 +182,18 @@ fn proof() -> RestoreBusinessProof {
     RestoreBusinessProof {
         restore_id: "runtime-drill".into(),
         plan_hash: "b".repeat(64),
-        backend_sha: "c".repeat(40),
+        backup_source_sha: "c".repeat(40),
+        backend_product_sha: "b".repeat(40),
+        backend_execution_sha: "b".repeat(40),
+        backend_adapter_contract: None,
         frontend_sha: "a".repeat(40),
         runner_sha: "e".repeat(40),
+        verifier_sha: "f".repeat(40),
         scope_id: "restored".into(),
+        frontend_url: "http://127.0.0.1:4174".into(),
         runtime_receipt_sha256: "d".repeat(64),
         tests_receipt_sha256: "f".repeat(64),
+        target_plan_sha256: "e".repeat(64),
         started_at: timestamp,
         completed_at: timestamp,
         scenarios: Vec::new(),
@@ -197,26 +203,35 @@ fn proof() -> RestoreBusinessProof {
     }
 }
 
-async fn verify(api: String, worker: String) -> ryframe_kernel::AppResult<()> {
+async fn verify(api: String, worker: String, frontend: String) -> ryframe_kernel::AppResult<()> {
     let record = restore_record(api.clone(), worker.clone());
+    let mut proof = proof();
+    proof.frontend_url = frontend;
     runtime_verifier(api, worker)?
-        .restored_runtime(&record, &proof())
+        .restored_runtime(&record, &proof)
         .await
 }
 
 #[tokio::test]
-async fn both_api_and_worker_must_return_exactly_ok() {
-    let fixture =
-        LocalHttpFixture::start(&[("/api/readyz", 200, None), ("/worker/readyz", 200, None)]);
-    verify(fixture.url("/api/readyz"), fixture.url("/worker/readyz"))
-        .await
-        .unwrap();
-    assert_eq!(fixture.finish(), ["/api/readyz", "/worker/readyz"]);
+async fn api_worker_and_frontend_must_return_exactly_ok() {
+    let fixture = LocalHttpFixture::start(&[
+        ("/api/readyz", 200, None),
+        ("/worker/readyz", 200, None),
+        ("/", 200, None),
+    ]);
+    verify(
+        fixture.url("/api/readyz"),
+        fixture.url("/worker/readyz"),
+        fixture.url("/"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(fixture.finish(), ["/api/readyz", "/worker/readyz", "/"]);
 }
 
 #[tokio::test]
-async fn either_non_ok_endpoint_fails_closed() {
-    for failed in ["/api/readyz", "/worker/readyz"] {
+async fn any_non_ok_endpoint_fails_closed() {
+    for failed in ["/api/readyz", "/worker/readyz", "/"] {
         let routes = [
             (
                 "/api/readyz",
@@ -228,18 +243,29 @@ async fn either_non_ok_endpoint_fails_closed() {
                 if failed == "/worker/readyz" { 503 } else { 200 },
                 None,
             ),
+            ("/", if failed == "/" { 503 } else { 200 }, None),
         ];
         let fixture = LocalHttpFixture::start(&routes);
         assert!(
-            verify(fixture.url("/api/readyz"), fixture.url("/worker/readyz"))
-                .await
-                .is_err(),
+            verify(
+                fixture.url("/api/readyz"),
+                fixture.url("/worker/readyz"),
+                fixture.url("/"),
+            )
+            .await
+            .is_err(),
             "{failed}"
         );
-        let expected = if failed == "/api/readyz" {
-            vec!["/api/readyz".to_owned()]
-        } else {
-            vec!["/api/readyz".to_owned(), "/worker/readyz".to_owned()]
+        let expected = match failed {
+            "/api/readyz" => vec!["/api/readyz".to_owned()],
+            "/worker/readyz" => {
+                vec!["/api/readyz".to_owned(), "/worker/readyz".to_owned()]
+            }
+            _ => vec![
+                "/api/readyz".to_owned(),
+                "/worker/readyz".to_owned(),
+                "/".to_owned(),
+            ],
         };
         assert_eq!(fixture.finish(), expected, "{failed}");
     }
@@ -251,11 +277,16 @@ async fn redirect_is_not_followed() {
         ("/api/readyz", 302, Some("/redirected")),
         ("/redirected", 200, None),
         ("/worker/readyz", 200, None),
+        ("/", 200, None),
     ]);
     assert!(
-        verify(fixture.url("/api/readyz"), fixture.url("/worker/readyz"))
-            .await
-            .is_err()
+        verify(
+            fixture.url("/api/readyz"),
+            fixture.url("/worker/readyz"),
+            fixture.url("/"),
+        )
+        .await
+        .is_err()
     );
     assert_eq!(fixture.finish(), ["/api/readyz"]);
 }

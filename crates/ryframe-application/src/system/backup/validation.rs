@@ -309,12 +309,22 @@ pub fn validate_restore_proof(
         record.status == RestoreStatus::DataVerified
             && proof.restore_id == record.plan.id
             && proof.plan_hash == record.plan_hash
-            && proof.backend_sha == backup.manifest.source_sha
+            && proof.backup_source_sha == backup.manifest.source_sha
+            && hex(&proof.backend_product_sha, 40)
+            && hex(&proof.backend_execution_sha, 40)
+            && if proof.backend_product_sha == proof.backend_execution_sha {
+                proof.backend_adapter_contract.is_none()
+            } else {
+                proof.backend_adapter_contract.as_deref() == Some("legacy-stable-readiness-b0-v1")
+            }
             && proof.frontend_sha == record.plan.frontend_sha
             && hex(&proof.runner_sha, 40)
+            && hex(&proof.verifier_sha, 40)
             && proof.scope_id == record.plan.scope_id
+            && !proof.frontend_url.trim().is_empty()
             && hex(&proof.runtime_receipt_sha256, 64)
-            && hex(&proof.tests_receipt_sha256, 64),
+            && hex(&proof.tests_receipt_sha256, 64)
+            && hex(&proof.target_plan_sha256, 64),
         "业务验收证据与当前演练、scope 或源码不一致",
     )?;
     require(

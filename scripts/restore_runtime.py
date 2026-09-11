@@ -342,6 +342,11 @@ def _bind_control_inputs(coordinator: Path, launch_path: Path):
 
     launch_document = read_json_document(launch_path)
     launch = validate_launch(launch_document.value, launch_document.path.parent)
+    _same_path(
+        str(launch_document.path),
+        Path(launch["runtime_directory"]) / "runtime-launch.json",
+        "恢复运行启动收据",
+    )
     binding = launch["request"]["registration"]
     registration_path = Path(binding["registration"]["path"])
     target_path = Path(binding["target_plan"]["path"])
@@ -377,6 +382,59 @@ def _bind_control_inputs(coordinator: Path, launch_path: Path):
     for document in documents:
         document.assert_unchanged()
     return root, binding, launch, documents
+
+
+def verify_live_generation(
+    receipt: dict,
+    coordinator: Path,
+    execution_backend: Path,
+    frontend: Path,
+    bindings_path: Path,
+    authority: dict,
+    runtime_receipt_sha256: str | None,
+    *,
+    product_backend: Path | None = None,
+) -> dict:
+    """在 registration ownership 锁内复核仍为 running 的同一运行代次。"""
+    from restore_runtime_registration import REGISTRATION_LOCK, runtime_control_directory
+    from runtime_control_lock import controller_lock
+
+    receipt = _validate_runtime_receipt(receipt)
+    launch_path = Path(receipt["paths"]["launch"])
+    root, binding, launch, documents = _bind_control_inputs(coordinator, launch_path)
+    _same_path(receipt["paths"]["runtime_dir"], Path(launch["runtime_directory"]), "恢复运行目录")
+    operation = (
+        f"runtime-verify:{binding['registration']['sha256']}:"
+        f"{binding['target_plan']['sha256']}:{launch['generation']}"
+    )
+    with controller_lock(runtime_control_directory(coordinator), operation, REGISTRATION_LOCK):
+        repeated = _bind_control_inputs(coordinator, launch_path)
+        if (
+            repeated[:3] != (root, binding, launch)
+            or [_descriptor(item) for item in repeated[3]]
+            != [_descriptor(item) for item in documents]
+        ):
+            raise ValueError("取得 ownership 控制锁前恢复运行代次发生变化")
+        result = verify(
+            receipt,
+            coordinator,
+            execution_backend,
+            frontend,
+            bindings_path,
+            authority,
+            runtime_receipt_sha256,
+            product_backend=product_backend,
+        )
+        final = _bind_control_inputs(coordinator, launch_path)
+        if (
+            final[:3] != (root, binding, launch)
+            or [_descriptor(item) for item in final[3]]
+            != [_descriptor(item) for item in documents]
+        ):
+            raise ValueError("恢复运行主动核验期间 lifecycle 代次发生变化")
+        for document in (*documents, *repeated[3], *final[3]):
+            document.assert_unchanged()
+    return result
 
 
 def bind_and_write(

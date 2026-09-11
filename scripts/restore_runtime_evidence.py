@@ -359,7 +359,12 @@ def process_identity_record(value: object, label: str) -> dict:
 def process_document(path: Path, role: str, scope: str) -> tuple[JsonDocument, dict]:
     document = read_json_document(path)
     receipt = exact_fields(document.value, {"format_version", "role", "scope_id", "identity"}, "进程收据")
-    if receipt["format_version"] != 1 or receipt["role"] != role or receipt["scope_id"] != scope:
+    if (
+        type(receipt["format_version"]) is not int
+        or receipt["format_version"] != 1
+        or receipt["role"] != role
+        or receipt["scope_id"] != scope
+    ):
         raise ValueError("进程收据的版本、角色或隔离 scope 不匹配")
     return document, process_identity_record(receipt["identity"], f"{role} 进程身份")
 

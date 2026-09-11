@@ -93,8 +93,10 @@ def build(backend: Path, directory: Path, run=subprocess.run) -> dict:
             stage = "build_" + role
             args = command(role, target)
             output, errors = directory / f"{role}.cargo.jsonl", directory / f"{role}.cargo.log"
+            environment = {**os.environ, "RYFRAME_BUILD_COMMIT": before["snapshot"]["head"]}
             with output.open("xb") as stdout, errors.open("xb") as stderr:
                 run(args, cwd=backend, stdout=stdout, stderr=stderr, check=True,
+                    env=environment,
                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
             executable = cargo_artifact(backend, name, output.read_text(encoding="utf-8"))
             if not executable.is_relative_to(target.resolve()) or any(linked(p) for p in (executable, *executable.parents)):
