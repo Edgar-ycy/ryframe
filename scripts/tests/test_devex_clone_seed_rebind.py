@@ -258,6 +258,22 @@ class SeedRebindTests(unittest.TestCase):
             rebind.register_rebind(self.backend, self.directory, Path(self.successor["path"]), 55)
         current.assert_not_called()
 
+    def test_failed_export_only_opens_exact_explicit_owned_reconcile(self):
+        _, state = self.published_rebind()
+        failed = self.record(55, "seed-runtime", "source-export", status="failed")
+        active = self.record(56, "seed-runtime", "source-export-reconcile", status="running")
+        state["attempts"] += [failed, active]
+        with patch("devex_clone_run._require_owned_run") as owned:
+            rebind.history(self.directory, state, self.published, current=56)
+        owned.assert_called_once_with(self.directory)
+        with patch("devex_clone_run._require_owned_run", side_effect=ValueError("not owner")), self.assertRaises(ValueError):
+            rebind.history(self.directory, state, self.published, current=56)
+        with self.assertRaises(ValueError):
+            rebind.history(self.directory, state, self.published)
+        active["mode"] = "arm-input"
+        with patch("devex_clone_run._require_owned_run"), self.assertRaises(ValueError):
+            rebind.history(self.directory, state, self.published, current=56)
+
 
 if __name__ == "__main__":
     unittest.main()

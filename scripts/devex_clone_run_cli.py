@@ -62,11 +62,12 @@ def add_commands(commands) -> None:
     post.add_argument("--operation", choices=("register", "amend", "prepare", "schedules", "reconcile", "verify", "recover-session"), required=True)
     post.add_argument("--request", type=Path, help="register 或 amend 必须提供完整且不可变的请求")
     post.add_argument("--producer-binding", type=Path, help="recover-session 必须明确原 Node 收据路径与摘要")
-    seed = commands.add_parser("seed-runtime", help="固定身份准备完成后登记新的 seed API/Worker 运行，不改变原 API 证据")
+    seed = commands.add_parser("seed-runtime", help="seed 运行、冻结来源、一次导出与 arm 交接；失败候选显式核对")
     seed.add_argument("--operation", choices=("register", "quotas-plan", "quotas-apply", "quotas-reconcile",
                       "departments-plan", "departments-apply", "departments-reconcile", "departments-verify",
                       "identities-apply", "identities-verify", "prepare",
-                      "start", "close", "source-register", "source-rebind", "arm-input", "stop", "status", "recover",
+                      "start", "close", "source-register", "source-rebind", "source-export", "source-export-reconcile",
+                      "arm-input", "stop", "status", "recover",
                       "recover-session"), required=True)
     seed.add_argument("--request", type=Path)
     seed.add_argument("--producer-binding", type=Path)

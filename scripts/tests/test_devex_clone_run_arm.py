@@ -72,7 +72,8 @@ class RunArmTests(unittest.TestCase):
             run.manifest(self.backend, {**value, "copy_stage": "source_to_seed"})
 
         successor = self.file("review-successor", {"successor": True})
-        successor_value = {**value, "review_successor": successor}
+        successor_value = {**value, "review_successor": successor,
+                           "source_export_result": self.file("export-result", {"published": True})}
         with patch.object(run, "_published_seed_source", return_value={}), \
                 patch.object(run, "target_lifecycle_binding", return_value={}):
             self.assertEqual(
@@ -127,6 +128,7 @@ class RunArmTests(unittest.TestCase):
         }
         with (
             patch("devex_clone_storage.current_storage_binding", return_value=None),
+            patch("devex_clone_seed_export.require_export_binding"),
             patch(
                 "reference_fixture_successor.published_source", return_value=source
             ) as published,

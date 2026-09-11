@@ -15,8 +15,9 @@ from restore_reference_plan import plan_hash
 
 FIELDS = {"status", "source_registration", "review_successor", "original_storage", "current_storage",
           "history_length", "history_sha256", "remote_writes", "restore_qualified"}
-READ_ONLY_AFTER = {("seed-runtime", "arm-input"), ("storage-target", "status"), ("seed-runtime", "source-export")}
-BEFORE_REBIND = READ_ONLY_AFTER - {("seed-runtime", "source-export")} | {
+READ_ONLY_AFTER = {("seed-runtime", "arm-input"), ("storage-target", "status"),
+                   ("seed-runtime", "source-export"), ("seed-runtime", "source-export-reconcile")}
+BEFORE_REBIND = READ_ONLY_AFTER - {("seed-runtime", "source-export"), ("seed-runtime", "source-export-reconcile")} | {
     ("storage-target", "restart"), ("storage-target", "stop"), ("storage-target", "recover"),
     ("seed-runtime", "stop"), ("seed-runtime", "recover"),
 }
@@ -37,6 +38,8 @@ def history(directory: Path, state: dict, descriptor: dict, *, current: int | No
             if not rebound or exported:
                 raise ValueError("source-export 只允许在重绑定后执行并发布一次")
             exported = True
+        if operation == ("seed-runtime", "source-export-reconcile") and not exported:
+            raise ValueError("source-export-reconcile 必须继承原导出阶段")
         if item["number"] == current:
             from devex_clone_run import _require_owned_run
 
@@ -52,6 +55,11 @@ def history(directory: Path, state: dict, descriptor: dict, *, current: int | No
         elif operation not in (READ_ONLY_AFTER if rebound else BEFORE_REBIND):
             raise ValueError("seed 发布后出现未知写入或重绑定后存储再次换代")
         if item["status"] != "passed":
+            if operation == ("seed-runtime", "source-export"):
+                from devex_clone_seed_export import reconciles_failed_export
+
+                if reconciles_failed_export(directory, state, item, current, descriptor):
+                    continue
             raise ValueError("seed 发布后存在失败或未收尾阶段")
     return later
 

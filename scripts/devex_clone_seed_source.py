@@ -48,6 +48,7 @@ ALLOWED_AFTER_CLOSE = {
     ("seed-runtime", "source-register"),
     ("seed-runtime", "source-rebind"),
     ("seed-runtime", "source-export"),
+    ("seed-runtime", "source-export-reconcile"),
     ("seed-runtime", "arm-input"),
     ("seed-runtime", "stop"),
     ("seed-runtime", "recover"),

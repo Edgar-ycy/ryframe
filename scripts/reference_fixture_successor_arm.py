@@ -12,6 +12,7 @@ from devex_clone_capture import read_json
 from devex_clone_model import linked, local_path, name
 from devex_clone_run_state import binding
 from devex_clone_seed_arm import validate_arm_request
+from devex_clone_seed_export import published_export
 from devex_clone_source_proof import bound_file
 from restore_reference_plan import plan_hash
 
@@ -58,6 +59,7 @@ def build(
     request_id: str,
     side: str,
     copy_directory: Path,
+    *, source_export_result_path: Path,
 ) -> dict:
     """只读构造请求，并用复制流程自身的校验器证明全部绑定。"""
     backend = backend.resolve(strict=True)
@@ -74,6 +76,10 @@ def build(
     from reference_fixture_successor import published_source
 
     source = published_source(backend, successor_binding, live_storage=False)
+    export_file = local_path(backend, str(source_export_result_path if source_export_result_path.is_absolute()
+                                           else backend / source_export_result_path))
+    export_binding = _descriptor(backend, export_file, "seed source-export result")
+    exported = published_export(backend, export_binding, source)
     relationship = source["review_successor"]
     workspace = _controlled_directory(backend, workspace_path, "fresh target workspace")
     registration, initialized, initialized_files, environment = _target_descriptors(
@@ -91,6 +97,8 @@ def build(
         "kind": "devex-clone-seed-successor-arm-input",
         "source_registration": copy.deepcopy(relationship["source_result"]),
         "review_successor": successor_binding,
+        "source_export": copy.deepcopy(exported["export"]),
+        "source_export_result": export_binding,
         "id": request_id,
         "initialized": initialized,
         "target_registration": registration,
@@ -137,6 +145,7 @@ def publish(
     side: str,
     copy_directory: Path,
     output: Path,
+    *, source_export_result_path: Path,
 ) -> dict:
     """以同目录独占链接发布完整 JSON，发布前后都重算全部输入。"""
     backend = backend.resolve(strict=True)
@@ -145,15 +154,18 @@ def publish(
     if not target.parent.is_dir():
         raise ValueError("successor arm 请求输出父目录不存在")
     first = build(
-        backend, successor_path, workspace_path, request_id, side, copy_directory
+        backend, successor_path, workspace_path, request_id, side, copy_directory,
+        source_export_result_path=source_export_result_path,
     )
     if build(
-        backend, successor_path, workspace_path, request_id, side, copy_directory
+        backend, successor_path, workspace_path, request_id, side, copy_directory,
+        source_export_result_path=source_export_result_path,
     ) != first:
         raise ValueError("successor arm 请求输入在发布前发生变化")
     _publish_json(target, first)
     if read_json(target) != first or build(
-        backend, successor_path, workspace_path, request_id, side, copy_directory
+        backend, successor_path, workspace_path, request_id, side, copy_directory,
+        source_export_result_path=source_export_result_path,
     ) != first:
         raise ValueError("successor arm 请求发布后无法重算；保留文件供现场核对")
     return first

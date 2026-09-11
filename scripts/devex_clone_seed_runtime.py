@@ -329,6 +329,10 @@ def execute_seed(backend, directory, value, mode, number, request_file=None, pro
                 observed.update(restart_ready=False, stopped_evidence_error_type=type(error).__name__)
         return observed
     require_quiet(backend, directory, number)
+    if mode in {"source-export", "source-export-reconcile"}:
+        from devex_clone_seed_export import execute_export
+
+        return execute_export(backend, directory, number, reconcile=mode == "source-export-reconcile")
     if mode == "source-rebind":
         if request_file is None:
             raise ValueError("source-rebind 需要明确 successor --request")

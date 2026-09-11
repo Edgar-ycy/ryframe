@@ -57,6 +57,10 @@ fresh target 的准备、续作、初始化、复核和只读状态统一从 `ca
 
 重绑定后生成的 base/candidate arm 请求、清单和结果显式绑定同一重绑定收据；来源代次再次变化时停止，不能把原 arm 自动改绑到新进程。只读来源核验不会创建锁或报告，实际导出及复制前还会核对进程创建身份、完整参数和监听端口。上述交接仅恢复开发复制来源的可用性，不构成正式恢复或 RTO 达标证据。
 
+完成重绑定后，在同一运行执行 `cargo xtask check recovery clone seed-runtime --run-dir <运行目录> --operation source-export --write`。该阶段只读取源数据库和对象，把完整导出、校验摘要与来源写入原 attempt 目录，并在原账本追加唯一发布结果。重复导出在创建新 attempt 前被拒绝。失败后先用 `clone status` 核对状态，死亡控制器通过原 `clone recover` 处理；只有已收尾失败且具有完整 `export.json` 的候选才能用 `--operation source-export-reconcile --write` 完整复核并采用。采用不会重新导出；缺少完整候选、输入漂移或未收尾状态继续失败关闭，保留证据。
+
+用 `cargo xtask check recovery fixture successor arm-request --successor <关系文件> --source-export-result <导出外层结果> --workspace <已初始化目标目录> --id <本侧标识> --side base|candidate --copy-directory <新复制目录>` 预览两侧请求；实际写入再加 `--output <请求文件> --write`。两侧必须传入完全相同的导出外层结果。生成的请求、清单和 arm 结果同时绑定该结果与其中的实际 `export.json`，后续两侧的 clone export 阶段只完整核验这份导出，不再各自读取源并导出。
+
 产品构建输入与验收工具来源分开记录。产品输入未变时可复核并复用原产物，工具变化仍需运行对应工具测试；正式恢复始终要求精确干净 SHA。Windows 复制阶段会保护已登记的工具和运行二进制，复制中的数据库和对象写入保持串行，对象前像与回读最多四并发。详细参数以各入口的 `--help` 和账本返回的唯一下一动作准，不复制或改写历史 attempt。
 
 真实全栈导出完成后，通过 `cargo xtask check recovery fixture artifact snapshot ...` 读取精确任务、文件登记和物理对象，并把 create-only 收据写入当前后端 `.local-tests`；删除流程完成后使用同一收据执行 `artifact verify-deleted ...`，只有任务、文件元数据和对象都消失才算完成。xtask 固定后端目录，收据路径不能越出其 `.local-tests`。

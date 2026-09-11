@@ -490,6 +490,7 @@ def main() -> None:
     arm = operations.add_parser("arm-request")
     arm.add_argument("--backend-dir", type=Path, required=True)
     arm.add_argument("--successor", type=Path, required=True)
+    arm.add_argument("--source-export-result", type=Path, required=True)
     arm.add_argument("--workspace", type=Path, required=True)
     arm.add_argument("--id", required=True)
     arm.add_argument("--side", choices=("base", "candidate"), required=True)
@@ -513,7 +514,8 @@ def main() -> None:
             args.side,
             args.copy_directory,
         )
-        request = action(*values, args.output) if args.write else action(*values)
+        keywords = {"source_export_result_path": args.source_export_result}
+        request = action(*values, args.output, **keywords) if args.write else action(*values, **keywords)
         print(json.dumps(summary(request, side=args.side, written=args.write), ensure_ascii=False))
         return
     if not args.write:

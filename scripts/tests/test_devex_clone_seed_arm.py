@@ -160,7 +160,12 @@ class SeedArmTests(unittest.TestCase):
             **self.request,
             "kind": "devex-clone-seed-successor-arm-input",
             "review_successor": successor_binding,
+            "source_export": self.file("source-export", {"request": self.source_request}),
+            "source_export_result": self.file("source-export-result", {"published": True}),
         }
+        export_check = patch.object(arm, "require_export_binding")
+        self.addCleanup(export_check.stop)
+        export_check.start()
         return request, source, lifecycle
 
     def test_inputs_close_request_fields_and_manifest_derives_source_bindings(self):

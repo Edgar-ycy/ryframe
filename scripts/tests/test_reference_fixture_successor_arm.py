@@ -31,6 +31,11 @@ class SuccessorArmRequestTests(unittest.TestCase):
         self.local.mkdir()
         self.successor = self.file("successor.json", {"relationship": True})
         self.source = self.file("source-result.json", {"source": True})
+        self.export_result = self.file("source-export-result.json", {"published": True})
+        self.exported = self.file("export.json", {"export": True})
+        export_check = patch.object(arm, "published_export", return_value={"export": binding(self.exported)})
+        self.addCleanup(export_check.stop)
+        self.export_check = export_check.start()
         self.bridge = self.file("build-bridge.json", {"bridge": True})
         self.environment = self.file("target-environment.json", {"environment": {}})
         self.workspace = self.local / "fresh target"
@@ -75,10 +80,14 @@ class SuccessorArmRequestTests(unittest.TestCase):
                 "successor-base-r23",
                 "base",
                 copy_directory,
+                source_export_result_path=self.export_result,
             )
         self.assertEqual(published.call_count, 2)
         self.assertEqual(request["source_registration"], binding(self.source))
         self.assertEqual(request["review_successor"], binding(self.successor))
+        self.assertEqual(request["source_export"], binding(self.exported))
+        self.assertEqual(request["source_export_result"], binding(self.export_result))
+        self.export_check.assert_called_once_with(self.backend, binding(self.export_result), self.published)
         self.assertEqual(request["target_registration"], binding(self.registration))
         self.assertEqual(request["initialized"], binding(self.initialized))
         self.assertEqual(request["target_initialized_files"], binding(self.initialized_files))
@@ -109,6 +118,7 @@ class SuccessorArmRequestTests(unittest.TestCase):
                 "successor-base-r23",
                 "base",
                 self.local / "copy-base",
+                source_export_result_path=self.export_result,
             )
 
     def test_publish_rechecks_before_and_after_atomic_publication(self):
@@ -124,6 +134,7 @@ class SuccessorArmRequestTests(unittest.TestCase):
                     "base",
                     self.local / "copy-base",
                     output,
+                    source_export_result_path=self.export_result,
                 ),
                 request,
             )
@@ -147,6 +158,7 @@ class SuccessorArmRequestTests(unittest.TestCase):
                 "base",
                 self.local / "copy-base",
                 output,
+                source_export_result_path=self.export_result,
             )
         self.assertEqual(json.loads(output.read_text(encoding="utf-8")), request)
 
@@ -165,6 +177,7 @@ class SuccessorArmRequestTests(unittest.TestCase):
                 "base",
                 self.local / "copy-base",
                 output,
+                source_export_result_path=self.export_result,
             )
         self.assertFalse(output.exists())
 
@@ -186,6 +199,8 @@ class SuccessorArmRequestTests(unittest.TestCase):
             str(self.backend),
             "--successor",
             str(self.successor),
+            "--source-export-result",
+            str(self.export_result),
             "--workspace",
             str(self.workspace),
             "--id",

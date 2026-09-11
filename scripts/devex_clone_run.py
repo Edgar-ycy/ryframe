@@ -22,7 +22,7 @@ SEED_TO_ARM_FIELDS = FIELDS | {
     "source_registration", "target_registration", "target_initialized_files",
     "target_storage_run",
 }
-SUCCESSOR_SEED_TO_ARM_FIELDS = SEED_TO_ARM_FIELDS | {"review_successor"}
+SUCCESSOR_SEED_TO_ARM_FIELDS = SEED_TO_ARM_FIELDS | {"review_successor", "source_export_result"}
 TARGET_REGISTRATION_FIELDS = {
     "format_version", "kind", "request", "environment", "storage_run", "target_directory",
 }
@@ -371,6 +371,9 @@ def _published_seed_source(backend: Path, value: dict, *, live_storage: bool) ->
         raise ValueError("seed_to_arm 清单的 successor 与 C52 来源不一致")
     if source.get("source_rebind") != value.get("source_rebind"):
         raise ValueError("seed_to_arm 来源的冻结重绑定收据变化")
+    from devex_clone_seed_export import require_export_binding
+
+    require_export_binding(backend, source, value)
     return source
 
 
@@ -606,7 +609,9 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
     seed_cleanup = stage == "seed-runtime" and mode in {"stop", "recover"}
     storage_cleanup = (stage.startswith("storage-") or stage == "cache-target") and mode in {"stop", "recover"}
     cleanup = session_cleanup or seed_cleanup or storage_cleanup or (stage.startswith("runtime-") and mode in {"stop", "recover"})
-    evidence_handoff = stage == "seed-runtime" and mode in {"arm-input", "source-rebind"}
+    evidence_handoff = stage == "seed-runtime" and mode in {
+        "arm-input", "source-rebind", "source-export", "source-export-reconcile",
+    }
     if session_cleanup or seed_cleanup or storage_cleanup or evidence_handoff:
         value, environment = registered_manifest(backend, directory), None
     elif cleanup:
@@ -620,6 +625,10 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
     with process_guard(directory, "run-control.guard"):
         try:
             with claim_run_lock(directory) as owner, source_context:
+                if stage == "seed-runtime" and mode in {"source-export", "source-export-reconcile"}:
+                    from devex_clone_seed_export import preflight
+
+                    preflight(directory, mode)
                 try:
                     sources = current_execution_source(backend)
                 except Exception as error:

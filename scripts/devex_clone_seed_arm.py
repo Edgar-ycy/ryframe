@@ -9,6 +9,7 @@ from devex_clone_model import exact, linked, local_path, name
 from devex_clone_run import _require_owned_run, target_lifecycle_binding, target_storage_control
 from devex_clone_run_state import binding, load_state
 from devex_clone_seed_source import published_source
+from devex_clone_seed_export import require_export_binding
 from devex_clone_source_proof import bound_file
 from devex_clone_target_binding import execution_backend, request_binding
 from devex_clone_tools import verify as verify_tools
@@ -21,14 +22,14 @@ REQUEST_FIELDS = {
     "target_registration", "target_initialized_files", "target_environment",
     "copy_directory", "build_bridges",
 }
-SUCCESSOR_REQUEST_FIELDS = REQUEST_FIELDS | {"review_successor"}
+SUCCESSOR_REQUEST_FIELDS = REQUEST_FIELDS | {"review_successor", "source_export", "source_export_result"}
 RESULT_FIELDS = {
     "status", "request", "manifest", "source_registration", "source_request",
     "source_storage", "generation_verified", "initialized", "target_environment",
     "target_registration", "target_initialized_files", "target_storage_run",
     "target_side", "remote_writes", "outbox_drained", "restore_qualified",
 }
-SUCCESSOR_RESULT_FIELDS = RESULT_FIELDS | {"review_successor"}
+SUCCESSOR_RESULT_FIELDS = RESULT_FIELDS | {"review_successor", "source_export", "source_export_result"}
 EVIDENCE_SEQUENCE = ("request.json", "manifest.json")
 EVIDENCE_FILES = set(EVIDENCE_SEQUENCE)
 
@@ -100,6 +101,8 @@ def _validate_arm_request(
         raise ValueError("arm 请求必须冻结来源当前的显式重绑定收据")
     if "source_rebind" in request:
         bound_file(backend, request["source_rebind"])
+    if successor:
+        require_export_binding(backend, source, request)
     if request["format_version"] != 1:
         raise ValueError("arm-input 请求类型无效")
     name(request["id"])
@@ -174,6 +177,8 @@ def _manifest(request: dict, inputs: dict) -> dict:
     }
     if _successor_request(request):
         result["review_successor"] = copy.deepcopy(request["review_successor"])
+        result["source_export"] = copy.deepcopy(request["source_export"])
+        result["source_export_result"] = copy.deepcopy(request["source_export_result"])
     if "source_rebind" in request:
         result["source_rebind"] = copy.deepcopy(request["source_rebind"])
     return result
@@ -195,6 +200,8 @@ def _published(backend: Path, directory: Path, number: int) -> list[dict]:
         if (value["status"] != "seed_arm_input_published"
                 or value["source_registration"] != request["source_registration"]
                 or value.get("source_rebind") != request.get("source_rebind")
+                or value.get("source_export") != request.get("source_export")
+                or value.get("source_export_result") != request.get("source_export_result")
                 or value.get("review_successor") != request.get("review_successor")):
             raise ValueError("历史 arm-input 外层结果类型无效")
         results.append(value)
@@ -258,6 +265,8 @@ def publish_arm_input(backend: Path, directory: Path, request_file: Path,
             raise ValueError("同一 seed run 的 arm 目标必须继承同一 review successor")
         if any(item.get("source_rebind") != request.get("source_rebind") for item in prior):
             raise ValueError("两侧 arm 必须共享同一冻结存储重绑定")
+        if any(any(item.get(field) != request.get(field) for field in ("source_export", "source_export_result")) for item in prior):
+            raise ValueError("两侧 arm 必须共享同一已发布 seed 导出")
         if any(item["target_side"] == before["target_side"] for item in prior):
             raise ValueError("同一 seed run 已发布该 arm 目标侧")
         output = _existing_output(directory, number)
@@ -293,6 +302,8 @@ def publish_arm_input(backend: Path, directory: Path, request_file: Path,
     }
     if successor:
         result["review_successor"] = copy.deepcopy(request["review_successor"])
+        result["source_export"] = copy.deepcopy(request["source_export"])
+        result["source_export_result"] = copy.deepcopy(request["source_export_result"])
     fields = SUCCESSOR_RESULT_FIELDS if successor else RESULT_FIELDS
     if "source_rebind" in request:
         result["source_rebind"] = copy.deepcopy(request["source_rebind"])

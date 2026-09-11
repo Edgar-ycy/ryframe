@@ -40,14 +40,14 @@ def _controller(backend: Path, directory: Path, attempt: dict) -> dict:
 
 
 def prepare_attempt(backend: Path, directory: Path, value: dict, number: int,
-                    sources: dict, storage: dict | None) -> Path:
+                    sources: dict, storage: dict | None, *, seed: bool = False) -> Path:
     """远端读取开始前固定原控制器、源码和 storage provenance；不预建 export 输出目录。"""
     state = load_state(directory)
     if not state["attempts"] or state["attempts"][-1]["number"] != number:
         raise ValueError("只能为当前 export attempt 固定恢复意图")
     attempt = state["attempts"][-1]
     if (attempt["stage"], attempt["mode"], attempt["status"], attempt["sources"]) != (
-            "export", "run", "running", sources):
+            "seed-runtime" if seed else "export", "source-export" if seed else "run", "running", sources):
         raise ValueError("源导出恢复意图与当前 attempt 或执行源码不同")
     output = local_path(backend, str(directory / f"e{number:04d}"), new=True)
     intent = {"format_version": 1, "kind": "devex-clone-export-attempt", "attempt": number,
@@ -64,10 +64,12 @@ def _result(backend: Path, attempt: dict) -> dict | None:
     return read_json(bound_file(backend, attempt["result"])) if attempt["result"] is not None else None
 
 
-def _candidate_attempts(backend: Path, directory: Path, *, before: int) -> list[dict]:
+def _candidate_attempts(backend: Path, directory: Path, *, before: int, seed: bool = False) -> list[dict]:
     candidates = []
     for attempt in load_state(directory)["attempts"]:
-        if attempt["number"] >= before or attempt["stage"] != "export" or attempt["mode"] != "run":
+        if (attempt["number"] >= before
+                or attempt["stage"] != ("seed-runtime" if seed else "export")
+                or attempt["mode"] != ("source-export" if seed else "run")):
             continue
         output = local_path(backend, str(directory / f"e{attempt['number']:04d}"))
         if output.exists() and (linked(output) or not output.is_dir()):
@@ -86,8 +88,8 @@ def reject_reexport(backend: Path, directory: Path, number: int) -> None:
 
 
 def _intent(backend: Path, directory: Path, value: dict, attempt: dict) -> tuple[dict, dict]:
-    if attempt["status"] != "failed":
-        raise ValueError("只能采用已经明确收尾为失败的原 export attempt")
+    if attempt["status"] not in {"passed", "failed"}:
+        raise ValueError("只能核对已经明确收尾的原 export attempt")
     number = attempt["number"]
     path = local_path(backend, str(directory / f"export-{number:04d}.intent.json"))
     saved = read_json(regular_file(path))
@@ -149,8 +151,8 @@ def _verified_seal(directory: Path, attempt: dict, intent: dict, intent_binding:
         raise ValueError("原 export attempt 的完整复核摘要与当前候选矛盾")
 
 
-def _only_candidate(backend: Path, directory: Path, value: dict, number: int) -> tuple[dict, dict, dict, dict]:
-    attempts = _candidate_attempts(backend, directory, before=number)
+def _only_candidate(backend: Path, directory: Path, value: dict, number: int, *, seed: bool = False) -> tuple[dict, dict, dict, dict]:
+    attempts = _candidate_attempts(backend, directory, before=number, seed=seed)
     if len(attempts) != 1 or attempts[0]["status"] != "failed":
         raise ValueError("export reconcile 必须恰有一个由原 failed attempt 推导的完整候选")
     attempt = attempts[0]
@@ -177,28 +179,28 @@ def _adoptions(backend: Path, directory: Path, *, before: int) -> list[tuple[dic
 
 
 def _verify_candidate(backend: Path, directory: Path, value: dict, number: int,
-                      sources: dict, environment) -> tuple[dict, dict, dict, dict, dict]:
+                      sources: dict, environment, *, seed: bool = False) -> tuple[dict, dict, dict, dict, dict]:
     from devex_clone_export_verify import verify_source_export
     from devex_clone_storage import current_storage_binding
 
-    attempt, intent, intent_binding, exported = _only_candidate(backend, directory, value, number)
+    attempt, intent, intent_binding, exported = _only_candidate(backend, directory, value, number, seed=seed)
     if _product(intent["execution_source"]) != _product(sources):
         raise ValueError("原 export attempt 与当前恢复执行的产品源码指纹不同")
     with environment.use("source"):
-        storage_before = current_storage_binding(backend, directory, "source")
+        storage_before = current_storage_binding(backend, directory, "target" if seed else "source")
         if storage_before != intent["source_storage"]:
             raise ValueError("源 storage provenance 与原 export attempt 不同")
         verified = verify_source_export(backend, exported)
         request = read_json(bound_file(backend, value["source_request"]))
         current_generation = verify_generation(backend, request, subprocess.run)
-        storage_after = current_storage_binding(backend, directory, "source")
+        storage_after = current_storage_binding(backend, directory, "target" if seed else "source")
     if (verified["binding"] != exported or verified["request"] != request
             or verified["export"]["request"] != value["source_request"]
             or verified["generation"] != current_generation or storage_after != storage_before):
         raise ValueError("候选 export 的请求、generation 或 storage 前后复核不一致")
     summary = complete_summary(verified)
     _verified_seal(directory, attempt, intent, intent_binding, exported, summary)
-    adopted = _adoptions(backend, directory, before=number)
+    adopted = [] if seed else _adoptions(backend, directory, before=number)
     if adopted and any(item[1]["export"] != exported for item in adopted):
         raise ValueError("同一 run 已采用另一份 export")
     return attempt, intent, intent_binding, exported, summary
