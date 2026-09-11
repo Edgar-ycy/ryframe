@@ -41,6 +41,10 @@ class TargetPlanTests(unittest.TestCase):
         base = self.capture()
         self.assertEqual(base["comparison_arm"], "b0")
         self.assertEqual(base["product_plan"], self.product)
+        self.assertEqual(base["maintenance_execution"], {"root": str(self.backend), "binding": self.maintenance_binding,
+                                                        "build": self.request["maintenance_build"]})
+        self.assertEqual(base["product_execution"], target._product_execution(self.comparison["arms"]["b0"]))
+        self.assertNotEqual(base["maintenance_execution"]["root"], base["product_execution"]["roots"]["execution_backend"])
         self.assertEqual(base["fresh_target"]["ownership_sha256"], target._ownership(self.arm))
         self.assertEqual(target.verify_target_plan(self.backend, self.plan, self.write("target-plan.json", base)), base)
         self.plan["target_side"] = self.arm["target_side"] = self.request["side"] = "candidate"
@@ -49,6 +53,8 @@ class TargetPlanTests(unittest.TestCase):
         candidate = self.capture()
         self.assertEqual(candidate["comparison_arm"], "b1")
         self.assertEqual(candidate["backup_receipt"], base["backup_receipt"])
+        self.assertEqual(candidate["maintenance_execution"], base["maintenance_execution"])
+        self.assertEqual(candidate["product_execution"], target._product_execution(self.comparison["arms"]["b1"]))
         self.assertNotEqual(candidate["comparison_arm_sha256"], base["comparison_arm_sha256"])
 
     def test_unknown_fields_and_missing_bindings_are_rejected(self):
@@ -71,6 +77,7 @@ class TargetPlanTests(unittest.TestCase):
         plan_path = self.write("target-plan.json", value)
         descriptors = [value[key] for key in ("backup_receipt", "comparison_sources", "arm_input", "product_plan_file")]
         descriptors += [value["fresh_target"][key] for key in target.FRESH_FIELDS - {"ownership_sha256"}]
+        descriptors += [value["maintenance_execution"]["build"], *value["product_execution"]["builds"].values()]
         for descriptor in descriptors:
             path = Path(descriptor["path"])
             before = path.read_bytes()
@@ -98,7 +105,7 @@ class TargetPlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "共享导出"):
             self.capture()
 
-    def test_arm_cannot_substitute_another_export_or_execution_backend(self):
+    def test_arm_cannot_substitute_another_export_or_maintenance_backend(self):
         original = copy.deepcopy(self.arm)
         for key in ("source_export", "source_export_result"):
             self.arm = copy.deepcopy(original)
@@ -108,6 +115,23 @@ class TargetPlanTests(unittest.TestCase):
         self.arm = original
         with patch.object(target, "execution_backend", return_value=(self.backend / "other", {})), self.assertRaises(ValueError):
             self.capture()
+
+    def test_execution_authorities_cannot_be_swapped_or_extended(self):
+        original = self.capture()
+        changes = [lambda value: value["maintenance_execution"].update(extra=True),
+                   lambda value: value["maintenance_execution"].update(root=str(self.backend / "other")),
+                   lambda value: value["maintenance_execution"]["binding"].update(kind="other"),
+                   lambda value: value["product_execution"].update(extra=True),
+                   lambda value: value["product_execution"].update(backend_execution_sha="f" * 40),
+                   lambda value: value["product_execution"].update(backend_product_sha="f" * 40),
+                   lambda value: value["product_execution"].update(adapter=None),
+                   lambda value: value["product_execution"]["roots"].update(execution_backend=str(self.backend)),
+                   lambda value: value.update(product_execution=target._product_execution(self.comparison["arms"]["b1"]))]
+        for change in changes:
+            value = copy.deepcopy(original)
+            change(value)
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                target.verify_target_plan(self.backend, self.plan, self.write("invalid-execution.json", value))
 
     def test_product_plan_rejects_extra_fields_sha_target_and_endpoint_drift(self):
         changes = [lambda value: value.update(extra=True), lambda value: value.update(frontend_sha="e" * 40),

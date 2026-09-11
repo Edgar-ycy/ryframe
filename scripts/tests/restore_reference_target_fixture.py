@@ -33,14 +33,22 @@ def setup(test):
                          "artifacts": len(manifest["artifacts"]), **test.source_inputs}
     test.write("backup.json", {"command": "backup", "status": "completed", "plan_sha256": reference.plan_hash(test.plan),
                                "started_at": reference.now(), "completed_at": reference.now(), "result": test.backup_value})
-    test.comparison = {"source_export": copy.deepcopy(test.source_inputs["source_export"]),
-                       "arms": {name: {"roots": {"execution_backend": str(test.backend)},
-                                       "sources": {"frontend": {"source": {"snapshot": {"head": head * 40}}}}}
-                                for name, head in (("b0", "b"), ("b1", "c"))}}
+    test.comparison = {"source_export": copy.deepcopy(test.source_inputs["source_export"]), "arms": {}}
+    for name, head in (("b0", "b"), ("b1", "c")):
+        inventory = {"source": {"snapshot": {"head": head * 40}}}
+        test.comparison["arms"][name] = {
+            "roots": {key: str(test.backend / name / key) for key in ("source_backend", "execution_backend", "frontend")},
+            "sources": {"backend": inventory, "frontend": inventory},
+            "execution_sources": {"backend": {"source": {"snapshot": {"head": ("a" if name == "b0" else head) * 40}}}},
+            "builds": {role: test.write_binding(f"{name}/{role}-build.json", {"role": role, "arm": name})
+                       for role in ("backend", "frontend")},
+            "adapter": {"contract": "legacy-stable-readiness-b0-v1"} if name == "b0" else None}
     test.write("comparison.json", test.comparison)
     test.selected = {**{key: test.plan["target"][key] for key in ("runtime_dir", "api_url", "frontend_url")},
-                     "worker_ready_url": "http://127.0.0.1:19200/readyz"}
-    test.request = {"side": "base", "target": {key: test.plan["target"][key] for key in ("scope_id", "s3", "databases")}}
+                     "worker_ready_url": "http://127.0.0.1:19200/readyz", "backend_dir": str(test.backend)}
+    test.maintenance_binding = {"kind": "current-backend", "path": str(test.backend)}
+    test.request = {"side": "base", "target": {key: test.plan["target"][key] for key in ("scope_id", "s3", "databases")},
+                    "maintenance_build": test.write_binding("maintenance-build.json", {"kind": "devex-clone-tool-build"})}
     _fresh(test)
     test.product = {"id": "restore-run-base", "backup_id": test.plan["id"], "scope_id": test.plan["target"]["scope_id"],
                     "fault_at": "2026-09-05T00:00:00Z", "databases": [{"source_key": db["key"], "target_key": db["key"],
@@ -56,7 +64,7 @@ def setup(test):
                patch.object(target, "verify_comparison_sources", side_effect=lambda _root, value, **_kwargs: value),
                patch.object(target, "verify_published_arm_input", side_effect=lambda *_: copy.deepcopy(test.arm)),
                patch.object(target, "request_binding", side_effect=lambda *_: ({}, copy.deepcopy(test.selected))),
-               patch.object(target, "execution_backend", side_effect=lambda *_: (test.backend, {}))]
+               patch.object(target, "execution_backend", side_effect=lambda *_: (test.backend, copy.deepcopy(test.maintenance_binding)))]
     for item in patches:
         item.start()
         test.addCleanup(item.stop)

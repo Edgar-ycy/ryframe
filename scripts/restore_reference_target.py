@@ -19,11 +19,22 @@ from restore_runtime_evidence import canonical_endpoint, read_json_document, rej
 
 FIELDS = {"format_version", "kind", "target_side", "reference_plan_sha256", "backup_receipt",
           "comparison_sources", "comparison_arm", "comparison_arm_sha256", "arm_input",
-          "fresh_target", "product_plan_file", "product_plan", "product_plan_sha256"}
+          "fresh_target", "maintenance_execution", "product_execution", "product_plan_file",
+          "product_plan", "product_plan_sha256"}
 FRESH_FIELDS = {"verify", "initialized", "registration", "initialized_files", "environment",
                 "inventory", "ownership_sha256"}
 PRODUCT_FIELDS = {"id", "backup_id", "scope_id", "fault_at", "databases", "object_endpoint",
                   "object_prefix", "api_ready_url", "worker_ready_url", "frontend_sha"}
+EXECUTION_FIELDS = {"roots", "backend_product_sha", "backend_execution_sha", "frontend_sha", "builds", "adapter"}
+
+
+def _product_execution(arm: dict) -> dict:
+    """只投影已完整核验的比较来源；维护工具不参与产品运行身份。"""
+    return {"roots": arm["roots"],
+            "backend_product_sha": arm["sources"]["backend"]["source"]["snapshot"]["head"],
+            "backend_execution_sha": arm["execution_sources"]["backend"]["source"]["snapshot"]["head"],
+            "frontend_sha": arm["sources"]["frontend"]["source"]["snapshot"]["head"],
+            "builds": arm["builds"], "adapter": arm["adapter"]}
 
 
 def _plan(plan: dict, backend: Path) -> None:
@@ -187,7 +198,7 @@ def capture_target_plan(backend: Path, plan: dict, *, backup_receipt: Path,
     arm = verify_published_arm_input(backend, arm_document.path, side)
     result, request = arm["result"], arm["target"]
     _review, selected = request_binding(backend, request)
-    execution, _binding = execution_backend(backend, request)
+    execution, maintenance_binding = execution_backend(backend, request)
     if (sources["source_export"] != copied["source_export"]
             or result["source_export_result"] != sources["source_export"]["result"]
             or result["source_export"] != sources["source_export"]["export"]
@@ -195,17 +206,21 @@ def capture_target_plan(backend: Path, plan: dict, *, backup_receipt: Path,
             or arm["target_side"] != side or request["side"] != side
             or request["target"] != {key: plan["target"][key] for key in ("scope_id", "s3", "databases")}
             or any(plan["target"][key] != selected[key] for key in ("runtime_dir", "api_url", "frontend_url"))
-            or str(execution) != source_arm["roots"]["execution_backend"]):
-        raise ValueError("目标计划的比较 arm、共享导出、执行源码或物理目标不一致")
+            or str(execution) != selected["backend_dir"]):
+        raise ValueError("目标计划的比较 arm、共享导出、维护源码或物理目标不一致")
+    maintenance = bound_document(backend, request["maintenance_build"])
     _product(plan, product.value, source_arm, selected)
     target = _fresh(backend, arm, fresh)
-    for document in documents:
+    for document in (*documents, maintenance):
         document.assert_unchanged()
     return {"format_version": 1, "kind": "restore-reference-target-plan", "target_side": side,
             "reference_plan_sha256": plan_hash(plan), "backup_receipt": document_binding(backup),
             "comparison_sources": document_binding(comparison), "comparison_arm": name,
             "comparison_arm_sha256": plan_hash(source_arm), "arm_input": document_binding(arm_document),
-            "fresh_target": target, "product_plan_file": document_binding(product),
+            "fresh_target": target,
+            "maintenance_execution": {"root": str(execution), "binding": maintenance_binding,
+                                      "build": document_binding(maintenance)},
+            "product_execution": _product_execution(source_arm), "product_plan_file": document_binding(product),
             "product_plan": product.value, "product_plan_sha256": plan_hash(product.value)}
 
 
@@ -214,6 +229,10 @@ def verify_target_plan(backend: Path, plan: dict, path: Path, *, read_only: bool
     value = document.value
     exact(value, FIELDS)
     exact(value["fresh_target"], FRESH_FIELDS)
+    exact(value["maintenance_execution"], {"root", "binding", "build"})
+    exact(value["product_execution"], EXECUTION_FIELDS)
+    exact(value["product_execution"]["roots"], {"source_backend", "execution_backend", "frontend"})
+    exact(value["product_execution"]["builds"], {"backend", "frontend"})
     if (type(value["format_version"]) is not int or value["format_version"] != 1
             or value["kind"] != "restore-reference-target-plan"
             or value["target_side"] != plan["target_side"]
@@ -223,6 +242,7 @@ def verify_target_plan(backend: Path, plan: dict, path: Path, *, read_only: bool
         raise ValueError("正式恢复目标计划类型、侧别或摘要不同")
     descriptors = [value[key] for key in ("backup_receipt", "comparison_sources", "arm_input", "product_plan_file")]
     descriptors += [value["fresh_target"][key] for key in FRESH_FIELDS - {"ownership_sha256"}]
+    descriptors += [value["maintenance_execution"]["build"], *value["product_execution"]["builds"].values()]
     for descriptor in descriptors:
         bound_document(backend, descriptor).assert_unchanged()
     digest(value["comparison_arm_sha256"])
