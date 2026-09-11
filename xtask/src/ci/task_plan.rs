@@ -38,6 +38,7 @@ const CONSUMER_CONTRACT_TASKS: &[TaskExecutor] = &[
     TaskExecutor::FrontendDependencies,
     TaskExecutor::ConsumerContract,
 ];
+const REQUIRED_TASKS: &[TaskExecutor] = &[TaskExecutor::CiRequiredJobs];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CiJob {
@@ -53,6 +54,7 @@ struct CiJobDefinition {
     job: CiJob,
     output_name: &'static str,
     command_name: &'static str,
+    workflow_job_name: Option<&'static str>,
     tasks: &'static [TaskExecutor],
 }
 
@@ -61,30 +63,35 @@ const CI_JOBS: &[CiJobDefinition] = &[
         job: CiJob::Preflight,
         output_name: "preflight",
         command_name: "preflight",
+        workflow_job_name: None,
         tasks: PREFLIGHT_TASKS,
     },
     CiJobDefinition {
         job: CiJob::RustGate,
         output_name: "rust_gate",
         command_name: "rust-gate",
+        workflow_job_name: Some("rust-gate"),
         tasks: RUST_GATE_TASKS,
     },
     CiJobDefinition {
         job: CiJob::ResourceGate,
         output_name: "resource_gate",
         command_name: "resource-gate",
+        workflow_job_name: Some("resource-gate"),
         tasks: RESOURCE_GATE_TASKS,
     },
     CiJobDefinition {
         job: CiJob::Integration,
         output_name: "integration",
         command_name: "integration",
+        workflow_job_name: Some("integration"),
         tasks: INTEGRATION_TASKS,
     },
     CiJobDefinition {
         job: CiJob::ConsumerContract,
         output_name: "consumer_contract",
         command_name: "consumer-contract",
+        workflow_job_name: None,
         tasks: CONSUMER_CONTRACT_TASKS,
     },
 ];
@@ -96,6 +103,18 @@ impl CiJob {
             .find(|definition| definition.job == self)
             .expect("每个 CI job 必须在分组表中登记")
     }
+
+    pub(crate) fn output_name(self) -> &'static str {
+        self.definition().output_name
+    }
+}
+
+pub(crate) fn required_ci_jobs() -> impl Iterator<Item = (CiJob, &'static str)> {
+    CI_JOBS.iter().filter_map(|definition| {
+        definition
+            .workflow_job_name
+            .map(|name| (definition.job, name))
+    })
 }
 
 pub(crate) fn ci_plan_for(
@@ -155,6 +174,9 @@ pub(crate) fn ci_execution_plan_for_profile(
     command: &CiCommand,
     rust_gate_profile: Option<&str>,
 ) -> Result<TaskPlan> {
+    if matches!(command, CiCommand::Required(_)) {
+        return TaskPlan::sequence(REQUIRED_TASKS);
+    }
     let job = job_for_command(command)?;
     let tasks = if job == CiJob::RustGate {
         match rust_gate_profile {
@@ -188,6 +210,10 @@ pub(super) fn execute_ci_job(
     plan: &TaskPlan,
     frontend_dir: &Path,
 ) -> Result<()> {
+    if let CiCommand::Required(options) = command {
+        println!("开始 CI job：required（cargo xtask check ci required）");
+        return execute_required_plan(options, plan);
+    }
     let job = job_for_command(command)?;
     println!(
         "开始 CI job：{}（cargo xtask check ci {}）",
@@ -201,6 +227,17 @@ pub(super) fn execute_ci_job(
         execute_ci_task(task.executor, &context, &mut state)?;
     }
     Ok(())
+}
+
+fn execute_required_plan(options: &crate::cli::RequiredOptions, plan: &TaskPlan) -> Result<()> {
+    let [task] = plan.tasks.as_slice() else {
+        return Err("Required 计划必须仅包含一个汇总任务".into());
+    };
+    if task.executor != TaskExecutor::CiRequiredJobs {
+        return Err("Required 计划包含非汇总任务".into());
+    }
+    println!("开始 CI 原子任务：{}", task.id);
+    super::required::run(options)
 }
 
 fn execute_ci_task(
@@ -229,7 +266,7 @@ fn job_for_command(command: &CiCommand) -> Result<CiJob> {
         CiCommand::ResourceGate => Ok(CiJob::ResourceGate),
         CiCommand::Integration => Ok(CiJob::Integration),
         CiCommand::ConsumerContract => Ok(CiJob::ConsumerContract),
-        CiCommand::Plan | CiCommand::ResourceGateReplay(_) => {
+        CiCommand::Plan | CiCommand::ResourceGateReplay(_) | CiCommand::Required(_) => {
             Err("该 CI 子命令不是独立 GitHub job 任务".into())
         }
     }

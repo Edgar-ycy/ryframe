@@ -3,8 +3,9 @@ use std::path::PathBuf;
 use super::cli::{
     ApiGenerateCommand, BuildOptions, BuildProfile, CheckCommand, CheckOptions, CheckScope,
     CiCommand, CliError, Command, DataCommand, GenerateCommand, MigrationCommand,
-    MigrationOperation, MigrationTarget, RecoveryCommand, ResourceAction, ResourceCommand,
-    ResourceGateReplayOptions, ResourceTarget, parse,
+    MigrationOperation, MigrationTarget, RecoveryCommand, RequiredAction, RequiredEvent,
+    RequiredJobResult, ResourceAction, ResourceCommand, ResourceGateReplayOptions, ResourceTarget,
+    parse,
 };
 
 fn strings(values: &[&str]) -> Vec<String> {
@@ -208,6 +209,102 @@ fn parses_check_task_graph_and_internal_groups() {
     }
     assert!(parse_command(&["check", "--full", "--full"]).is_err());
     assert!(parse_command(&["check", "--scope", "all", "--scope", "backend"]).is_err());
+}
+
+#[test]
+fn parses_required_ci_inputs_before_execution() {
+    let needs = r#"{"plan":{"result":"success","outputs":{"preflight":"true"}}}"#;
+    let command = parse_command(&[
+        "check",
+        "ci",
+        "required",
+        "--event",
+        "push",
+        "--action",
+        "",
+        "--needs-json",
+        needs,
+    ])
+    .unwrap();
+    let Command::Check(CheckCommand::Ci(CiCommand::Required(options))) = command else {
+        panic!("必须解析为 typed required 命令");
+    };
+    assert_eq!(options.event, RequiredEvent::Push);
+    assert_eq!(options.action, None);
+    assert_eq!(options.needs["plan"].result, RequiredJobResult::Success);
+    assert_eq!(options.needs["plan"].outputs["preflight"], "true");
+
+    let pr = parse_command(&[
+        "check",
+        "ci",
+        "required",
+        "--event",
+        "pull_request",
+        "--action",
+        "synchronize",
+        "--needs-json",
+        needs,
+    ])
+    .unwrap();
+    let Command::Check(CheckCommand::Ci(CiCommand::Required(pr))) = pr else {
+        panic!("必须解析为 typed required 命令");
+    };
+    assert_eq!(pr.action, Some(RequiredAction::Synchronize));
+
+    for invalid in [
+        vec!["check", "ci", "required"],
+        vec![
+            "check",
+            "ci",
+            "required",
+            "--event",
+            "schedule",
+            "--needs-json",
+            needs,
+        ],
+        vec![
+            "check",
+            "ci",
+            "required",
+            "--event",
+            "push",
+            "--event",
+            "push",
+            "--needs-json",
+            needs,
+        ],
+        vec![
+            "check",
+            "ci",
+            "required",
+            "--event",
+            "push",
+            "--needs-json",
+            "not-json",
+        ],
+        vec![
+            "check",
+            "ci",
+            "required",
+            "--event",
+            "pull_request",
+            "--action",
+            "closed",
+            "--needs-json",
+            needs,
+        ],
+        vec![
+            "check",
+            "ci",
+            "required",
+            "--event",
+            "push",
+            "--needs-json",
+            r#"{"plan":{"result":"success","outputs":{},"unknown":true}}"#,
+        ],
+    ] {
+        assert!(parse_command(&invalid).is_err(), "{invalid:?}");
+    }
 }
 
 #[test]

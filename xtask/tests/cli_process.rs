@@ -37,12 +37,81 @@ fn invalid_public_arguments_exit_two_before_running_tasks() {
         ["generate", "api", "--commit", "HEAD"].as_slice(),
         ["data", "unknown"].as_slice(),
         ["check", "recovery", "runtime", "restart"].as_slice(),
+        ["check", "ci", "required"].as_slice(),
+        [
+            "check",
+            "ci",
+            "required",
+            "--event",
+            "push",
+            "--needs-json",
+            "not-json",
+        ]
+        .as_slice(),
+        [
+            "check",
+            "ci",
+            "required",
+            "--event",
+            "pull_request",
+            "--action",
+            "closed",
+            "--needs-json",
+            "{}",
+        ]
+        .as_slice(),
     ] {
         let result = invoke(arguments);
         assert_eq!(result.status.code(), Some(2), "参数：{arguments:?}");
         assert!(String::from_utf8_lossy(&result.stderr).contains("参数错误"));
         assert!(result.stdout.is_empty());
     }
+}
+
+#[test]
+fn required_ci_command_preserves_usage_and_task_failure_exit_codes() {
+    let valid = r#"{"plan":{"result":"success","outputs":{"preflight":"true","rust_gate":"true","resource_gate":"true","integration":"true","consumer_contract":"false"}},"rust-gate":{"result":"success"},"resource-gate":{"result":"success"},"integration":{"result":"success"},"windows-smoke":{"result":"success"},"security-audit":{"result":"success"}}"#;
+    let success = invoke(&[
+        "check",
+        "ci",
+        "required",
+        "--event",
+        "push",
+        "--action",
+        "",
+        "--needs-json",
+        valid,
+    ]);
+    assert!(
+        success.status.success(),
+        "{}",
+        String::from_utf8_lossy(&success.stderr)
+    );
+    let stdout = String::from_utf8(success.stdout).unwrap();
+    assert!(
+        stdout.contains("开始 CI 原子任务：ci.required-jobs"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("Required 汇总校验通过"), "{stdout}");
+
+    let failed = valid.replacen(
+        r#""rust-gate":{"result":"success"}"#,
+        r#""rust-gate":{"result":"failure"}"#,
+        1,
+    );
+    let failure = invoke(&[
+        "check",
+        "ci",
+        "required",
+        "--event",
+        "push",
+        "--needs-json",
+        &failed,
+    ]);
+    assert_eq!(failure.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&failure.stderr).contains("rust-gate 期望 success，实际 failure")
+    );
 }
 
 #[test]

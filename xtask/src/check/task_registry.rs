@@ -78,6 +78,7 @@ pub(crate) enum TaskExecutor {
     CiWindowsSmoke,
     CiResourceGate,
     CiIntegration,
+    CiRequiredJobs,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -418,6 +419,19 @@ pub(crate) const TASK_REGISTRY: &[TaskDefinition] = &[
         &["MySQL、Redis 与 TLS 真实协议目标"],
         &["Cargo target", "隔离测试资源"],
         &["已登记的 MySQL、Redis 与 TLS 测试资源"]
+    ),
+    task_definition!(
+        CiRequiredJobs,
+        "ci.required-jobs",
+        "verify_required_jobs",
+        "核对 Required 汇总与动态 CI 计划一致",
+        Backend,
+        Static,
+        Backend,
+        None,
+        &[],
+        &[],
+        &[]
     ),
 ];
 

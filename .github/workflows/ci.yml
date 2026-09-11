@@ -743,13 +743,16 @@ jobs:
       - name: 检出汇总规则
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+
       - name: 汇总必须门禁
         env:
           EVENT_NAME: ${{ github.event_name }}
           EVENT_ACTION: ${{ github.event.action }}
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: >-
-          python scripts/check_required_jobs.py
+          cargo xtask check ci required
           --event "$EVENT_NAME"
           --action "$EVENT_ACTION"
           --needs-json "$NEEDS_JSON"

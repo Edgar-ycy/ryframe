@@ -19,14 +19,19 @@ use crate::{
     workspace::root_dir,
 };
 
+#[path = "ci/required.rs"]
+mod required;
 #[path = "ci/resource_gate.rs"]
 pub(crate) mod resource_gate;
 #[path = "ci/task_plan.rs"]
 mod task_plan;
 
 #[allow(unused_imports)]
+pub(crate) use required::validate_required_jobs;
+#[allow(unused_imports)]
 pub(crate) use task_plan::{
     CiJob, ci_execution_plan_for, ci_execution_plan_for_profile, ci_plan_for, plan_outputs,
+    required_ci_jobs,
 };
 
 const FULL_CI_EVENTS: &[&str] = &["push", "schedule", "workflow_dispatch"];

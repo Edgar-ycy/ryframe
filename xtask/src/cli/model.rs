@@ -1,4 +1,4 @@
-use std::{fmt, path::PathBuf};
+use std::{collections::BTreeMap, fmt, path::PathBuf};
 
 use crate::devex;
 
@@ -97,6 +97,113 @@ pub(crate) enum CiCommand {
     ResourceGateReplay(ResourceGateReplayOptions),
     Integration,
     ConsumerContract,
+    Required(RequiredOptions),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RequiredEvent {
+    Push,
+    PullRequest,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RequiredAction {
+    Opened,
+    Synchronize,
+    Reopened,
+    Edited,
+}
+
+impl RequiredAction {
+    pub(super) fn parse(
+        event: RequiredEvent,
+        value: Option<&str>,
+    ) -> Result<Option<Self>, CliError> {
+        match (event, value.unwrap_or_default()) {
+            (RequiredEvent::Push, "") => Ok(None),
+            (RequiredEvent::Push, _) => Err(CliError::new("push 事件不得提供 --action")),
+            (RequiredEvent::PullRequest, "opened") => Ok(Some(Self::Opened)),
+            (RequiredEvent::PullRequest, "synchronize") => Ok(Some(Self::Synchronize)),
+            (RequiredEvent::PullRequest, "reopened") => Ok(Some(Self::Reopened)),
+            (RequiredEvent::PullRequest, "edited") => Ok(Some(Self::Edited)),
+            (RequiredEvent::PullRequest, "") => {
+                Err(CliError::new("pull_request 事件必须提供 --action"))
+            }
+            (RequiredEvent::PullRequest, _) => Err(CliError::new(
+                "pull_request --action 只允许 opened、synchronize、reopened 或 edited",
+            )),
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Opened => "opened",
+            Self::Synchronize => "synchronize",
+            Self::Reopened => "reopened",
+            Self::Edited => "edited",
+        }
+    }
+}
+
+impl RequiredEvent {
+    pub(super) fn parse(value: &str) -> Result<Self, CliError> {
+        match value {
+            "push" => Ok(Self::Push),
+            "pull_request" => Ok(Self::PullRequest),
+            _ => Err(CliError::new("--event 只允许 push 或 pull_request")),
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Push => "push",
+            Self::PullRequest => "pull_request",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RequiredJobResult {
+    Success,
+    Failure,
+    Cancelled,
+    Skipped,
+}
+
+impl RequiredJobResult {
+    pub(super) fn parse(value: &str) -> Result<Self, CliError> {
+        match value {
+            "success" => Ok(Self::Success),
+            "failure" => Ok(Self::Failure),
+            "cancelled" => Ok(Self::Cancelled),
+            "skipped" => Ok(Self::Skipped),
+            _ => Err(CliError::new(format!(
+                "required job 结果只允许 success、failure、cancelled 或 skipped，实际为 {value}"
+            ))),
+        }
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Failure => "failure",
+            Self::Cancelled => "cancelled",
+            Self::Skipped => "skipped",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RequiredNeed {
+    pub(crate) result: RequiredJobResult,
+    pub(crate) outputs: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RequiredOptions {
+    pub(crate) event: RequiredEvent,
+    pub(crate) action: Option<RequiredAction>,
+    pub(crate) needs: BTreeMap<String, RequiredNeed>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

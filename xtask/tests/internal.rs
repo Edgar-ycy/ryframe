@@ -58,6 +58,8 @@ mod check_snapshot_tests;
 mod check_tests;
 #[path = "internal/child_environment.rs"]
 mod child_environment_tests;
+#[path = "internal/ci_required.rs"]
+mod ci_required_tests;
 #[path = "internal/ci.rs"]
 mod ci_tests;
 #[path = "internal/cli.rs"]
