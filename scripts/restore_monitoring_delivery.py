@@ -17,7 +17,7 @@ from restore_monitoring_authority import monitoring_preflight
 from restore_monitoring_evidence import (
     build_binding,
     descriptor,
-    read_binding,
+    require_run_members,
     verify_binding_inputs,
 )
 from restore_runtime_evidence import reject_link_or_reparse
@@ -51,8 +51,10 @@ def bind(
     if output.name != "binding.json":
         raise ValueError("监控绑定输出必须命名为 binding.json")
     run_directory = output.parent
-    if any(run_directory.iterdir()):
-        raise ValueError("监控绑定要求独立的空 run 目录")
+    try:
+        require_run_members(run_directory, set())
+    except ValueError:
+        raise ValueError("监控绑定要求独立的空 run 目录") from None
     authority = preflight(backend, runtime_receipt, target_plan)
     binding = build_binding(
         backend,
@@ -64,22 +66,13 @@ def bind(
         run=run,
         port_check=port_check,
     )
-    if any(run_directory.iterdir()):
-        raise ValueError("监控绑定期间 run 目录出现未知写入")
-    write_new(output, binding, backend)
-    document, observed = read_binding(backend, output)
-    if observed != binding or descriptor(output) != {
-        "path": str(document.path),
-        "bytes": len(document.raw),
-        "sha256": document.sha256,
-    }:
-        raise ValueError("监控绑定发布后内容或摘要不同")
-    verified, snapshots = verify_binding_inputs(backend, observed, preflight, run)
+    verified, snapshots = verify_binding_inputs(backend, binding, preflight, run)
     if verified != binding:
-        raise ValueError("监控绑定发布后无法重建相同权威")
-    document.assert_unchanged()
+        raise ValueError("监控绑定发布前无法重建相同权威")
     for snapshot in snapshots:
         snapshot.assert_unchanged()
+    require_run_members(run_directory, set())
+    write_new(output, binding, backend)
     return binding
 
 

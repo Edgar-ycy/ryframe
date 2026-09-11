@@ -6,6 +6,7 @@ import copy
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import unittest
@@ -17,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import restore_monitoring_authority as authority_module
 import restore_monitoring_delivery as delivery
 import restore_monitoring_evidence as evidence
+import restore_monitoring_rules as rules
 from workspace_directory import WorkspaceDirectory
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -173,8 +175,12 @@ class MonitoringBindingTests(unittest.TestCase):
             path = self.backend / ".local-tests/tools" / (name + ".exe")
             path.write_bytes((name + "-binary").encode())
             self.tools[name] = path
-        (self.backend / "deploy/prometheus/ryframe-alerts.yml").write_text("groups: []\n", encoding="utf-8")
-        (self.backend / "deploy/prometheus/ryframe-alerts.test.yml").write_text("tests: []\n", encoding="utf-8")
+        self.rule_heads = {}
+        for relative in rules.RULE_PATHS.values():
+            source = ROOT / relative
+            target = self.backend / relative
+            shutil.copyfile(source, target)
+            self.rule_heads[relative] = source.read_bytes()
         self.coordinator = {"root": str(self.backend), "head": "a" * 40, "inventory_sha256": "b" * 64}
         self.authority = self._authority()
 
@@ -248,6 +254,13 @@ class MonitoringBindingTests(unittest.TestCase):
     def _write(path, value, _root):
         path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
+    def _git(self, _root, *arguments):
+        if arguments[:3] == ("ls-files", "--error-unmatch", "--"):
+            return (arguments[3] + "\n").encode()
+        if arguments[0] == "show":
+            return self.rule_heads[arguments[1].removeprefix("HEAD:")]
+        raise AssertionError(f"未登记的 Git 调用：{arguments}")
+
     def _bind(self):
         output = self.backend / ".local-tests/run/binding.json"
         patches = (
@@ -256,8 +269,9 @@ class MonitoringBindingTests(unittest.TestCase):
             patch.object(delivery, "write_new", side_effect=self._write),
             patch.object(evidence, "repository", side_effect=lambda path, _label: path),
             patch.object(evidence, "coordinator_binding", return_value=self.coordinator),
+            patch.object(rules, "git", side_effect=self._git),
         )
-        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
             result = delivery.bind(
                 self.backend,
                 self.files["runtime"],
@@ -282,6 +296,94 @@ class MonitoringBindingTests(unittest.TestCase):
         self.assertEqual(observed["credential"], {"path": str(self.credential), "bytes": self.credential.stat().st_size})
         self.assertEqual(observed["contact_policy"]["external_receivers"], [])
         self.assertEqual(observed["authority"]["source_generation"], self.authority["source_generation"])
+        self.assertEqual(set(output.parent.iterdir()), {output})
+        self.assertEqual(
+            {name: item["path"] for name, item in observed["rules"].items()},
+            rules.expected_paths(self.backend),
+        )
+
+    def test_rules_must_be_tracked_head_files_with_all_fixed_alerts(self):
+        alerts = self.backend / rules.RULE_PATHS["alerts"]
+        original_alerts = alerts.read_bytes()
+        with (
+            patch.object(rules, "git", side_effect=subprocess.CalledProcessError(1, ["git"])),
+            self.assertRaisesRegex(ValueError, "HEAD 跟踪"),
+        ):
+            rules.bind_rules(self.backend)
+        changed = alerts.read_text(encoding="utf-8").replace(
+            "alert: RyFrameBackupAging", "alert: RyFrameBackupAgingChanged", 1
+        )
+        alerts.write_text(changed, encoding="utf-8")
+        output = self.backend / ".local-tests/run/binding.json"
+        with self.assertRaisesRegex(ValueError, "HEAD 跟踪内容不同"):
+            self._bind()
+        self.assertFalse(output.exists())
+
+        self.rule_heads[rules.RULE_PATHS["alerts"]] = alerts.read_bytes()
+        with self.assertRaisesRegex(ValueError, "固定的 8 个"):
+            self._bind()
+        self.assertFalse(output.exists())
+
+        alerts.write_bytes(original_alerts)
+        self.rule_heads[rules.RULE_PATHS["alerts"]] = original_alerts
+        tests = self.backend / rules.RULE_PATHS["tests"]
+        changed_tests = tests.read_text(encoding="utf-8").replace(
+            "alertname: RyFrameRestoreOverdue", "alertname: RyFrameRestoreOverdueChanged"
+        )
+        tests.write_text(changed_tests, encoding="utf-8")
+        self.rule_heads[rules.RULE_PATHS["tests"]] = tests.read_bytes()
+        with self.assertRaisesRegex(ValueError, "精确覆盖固定的 8 个"):
+            self._bind()
+        self.assertFalse(output.exists())
+
+    def test_binding_rejects_noncanonical_run_id_and_rule_path(self):
+        for value in ("", "1-monitor", "Monitor", "monitor-", "monitor--run", "monitor_run", "a" * 65):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                evidence.canonical_run_id(value)
+        self.assertEqual(evidence.canonical_run_id("r24-monitoring"), "r24-monitoring")
+        _output, binding = self._bind()
+        changed = copy.deepcopy(binding)
+        changed["run_id"] = "monitor--run"
+        with self.assertRaisesRegex(ValueError, "run-id"):
+            evidence.validate_binding(changed)
+        changed = copy.deepcopy(binding)
+        changed["rules"]["alerts"]["path"] = str(self.backend / ".local-tests/alerts.yml")
+        with self.assertRaisesRegex(ValueError, "固定的正式文件"):
+            evidence.validate_binding(changed)
+
+    def test_failed_final_verification_never_publishes_binding(self):
+        output = self.backend / ".local-tests/run/binding.json"
+        with (
+            patch.object(delivery, "verify_binding_inputs", side_effect=ValueError("最终复核失败")),
+            self.assertRaisesRegex(ValueError, "最终复核失败"),
+        ):
+            self._bind()
+        self.assertFalse(output.exists())
+        self.assertEqual(list(output.parent.iterdir()), [])
+
+    def test_unknown_sibling_during_bind_or_read_fails_closed(self):
+        output = self.backend / ".local-tests/run/binding.json"
+        marker = output.parent / "unknown.txt"
+
+        def inject_unknown(*_args, **_kwargs):
+            marker.write_text("unknown", encoding="utf-8")
+            return _args[1], ()
+
+        with (
+            patch.object(delivery, "verify_binding_inputs", side_effect=inject_unknown),
+            self.assertRaisesRegex(ValueError, "未知文件"),
+        ):
+            self._bind()
+        self.assertFalse(output.exists())
+        marker.unlink()
+
+        output, _binding = self._bind()
+        marker.write_text("unknown", encoding="utf-8")
+        with (
+            patch.object(evidence, "repository", side_effect=lambda path, _label: path),
+            self.assertRaisesRegex(ValueError, "未知文件"),
+        ):
+            evidence.read_binding(self.backend, output)
 
     def test_binding_rejects_secret_tool_authority_and_unknown_fields_drift(self):
         output, binding = self._bind()

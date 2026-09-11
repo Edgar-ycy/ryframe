@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -13,6 +14,7 @@ from devex_clone_factory_context import configured
 from devex_clone_source_proof import require_closed_port
 from process_sockets import endpoint
 from restore_build import repository
+from restore_monitoring_rules import bind_rules, expected_paths, verify_rules
 from restore_runtime_evidence import (
     HEX_40,
     HEX_64,
@@ -31,18 +33,7 @@ TOOL_VERSIONS = {
     "alertmanager": "alertmanager, version 0.34.0",
     "amtool": "amtool, version 0.34.0",
 }
-ALERTS = frozenset(
-    {
-        "RyFrameBackupAging",
-        "RyFrameBackupStale",
-        "RyFrameBackupMissing",
-        "RyFrameBackupExpired",
-        "RyFrameBackupInvalid",
-        "RyFrameBackupMetricMissing",
-        "RyFrameRestoreFailed",
-        "RyFrameRestoreOverdue",
-    }
-)
+RUN_ID = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
 ALLOWED_WRITES = ["alertmanager-data", "configs", "evidence", "processes", "prometheus-data"]
 BINDING_FIELDS = {
     "format_version",
@@ -70,8 +61,23 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
+def canonical_run_id(value: object) -> str:
+    if not isinstance(value, str) or len(value) > 64 or RUN_ID.fullmatch(value) is None:
+        raise ValueError("监控 run-id 必须是规范的小写连字符标识")
+    return value
+
+
 def descriptor(path: Path) -> dict:
     return artifact_snapshot(path).descriptor()
+
+
+def require_run_members(directory: Path, expected: set[str]) -> None:
+    reject_link_or_reparse(directory)
+    if not directory.is_dir():
+        raise ValueError("监控 run 路径必须是已存在的普通目录")
+    observed = {item.name for item in directory.iterdir()}
+    if observed != expected:
+        raise ValueError("监控 run 目录包含未知文件或缺少固定文件")
 
 
 def _receipt_descriptor(value: object, label: str) -> dict:
@@ -86,14 +92,6 @@ def _receipt_descriptor(value: object, label: str) -> dict:
     ):
         raise ValueError(f"{label}不是完整文件描述")
     return value
-
-
-def bound_artifact(value: object, label: str) -> object:
-    binding = _receipt_descriptor(value, label)
-    snapshot = artifact_snapshot(Path(binding["path"]))
-    if snapshot.descriptor() != binding:
-        raise ValueError(f"{label}与当前普通文件不同")
-    return snapshot
 
 
 def _source(value: object) -> dict:
@@ -380,12 +378,8 @@ def validate_binding(value: object) -> dict:
     if value["format_version"] != 1 or value["kind"] != "restore-monitoring-binding" or value["status"] != "bound":
         raise ValueError("监控投递绑定版本、类型或状态无效")
     authority = validate_authority(value["authority"])
-    if (
-        not isinstance(value["run_id"], str)
-        or not value["run_id"]
-        or len(value["run_id"]) > 64
-        or value["scope_id"] != authority["restore"]["scope_id"]
-    ):
+    canonical_run_id(value["run_id"])
+    if value["scope_id"] != authority["restore"]["scope_id"]:
         raise ValueError("监控投递 run 或 scope 无效")
     coordinator = exact_fields(value["coordinator"], {"root", "head", "inventory_sha256"}, "监控协调源码")
     if (
@@ -411,6 +405,8 @@ def validate_binding(value: object) -> dict:
     rules = exact_fields(value["rules"], {"alerts", "tests"}, "监控规则")
     for name in rules:
         _receipt_descriptor(rules[name], f"监控规则 {name}")
+    if {name: rules[name]["path"] for name in rules} != expected_paths(Path(coordinator["root"])):
+        raise ValueError("监控规则路径不是协调器内固定的正式文件")
     endpoints = exact_fields(value["endpoints"], {"prometheus", "alertmanager", "webhook"}, "监控投递端点")
     ports = exact_fields(value["ports"], set(endpoints), "监控投递端口")
     for name, url in endpoints.items():
@@ -451,9 +447,7 @@ def verify_binding_inputs(backend: Path, binding: dict, preflight, run=subproces
         if actual != expected:
             raise ValueError(f"监控工具 {name} 在绑定后发生变化")
         snapshots.append(snapshot)
-    for name, expected in value["rules"].items():
-        snapshot = bound_artifact(expected, f"监控规则 {name}")
-        snapshots.append(snapshot)
+    snapshots.extend(verify_rules(backend, value["rules"]))
     return value, tuple(snapshots)
 
 
@@ -470,8 +464,7 @@ def build_binding(
 ) -> dict:
     backend = repository(backend, "监控验收协调后端")
     authority = validate_authority(authority)
-    if not isinstance(run_id, str) or not run_id or len(run_id) > 64 or any(character not in "abcdefghijklmnopqrstuvwxyz0123456789-" for character in run_id):
-        raise ValueError("监控 run-id 只能使用小写字母、数字和连字符")
+    run_id = canonical_run_id(run_id)
     private, credential, environment = load_environment(backend, authority, credential_path)
     if private.get("APP_SCOPE_ID") != authority["restore"]["scope_id"]:
         raise ValueError("监控私有环境与恢复 scope 不一致")
@@ -488,10 +481,9 @@ def build_binding(
     for name, path in tools.items():
         tool_receipts[name], snapshot = tool_binding(path, name, backend, run)
         snapshots.append(snapshot)
-    rules = {
-        "alerts": descriptor(backend / "deploy/prometheus/ryframe-alerts.yml"),
-        "tests": descriptor(backend / "deploy/prometheus/ryframe-alerts.test.yml"),
-    }
+    coordinator = coordinator_binding(backend)
+    rules, rule_snapshots = bind_rules(backend)
+    snapshots.extend(rule_snapshots)
     binding = {
         "format_version": 1,
         "kind": "restore-monitoring-binding",
@@ -499,7 +491,7 @@ def build_binding(
         "run_id": run_id,
         "scope_id": authority["restore"]["scope_id"],
         "authority": authority,
-        "coordinator": coordinator_binding(backend),
+        "coordinator": coordinator,
         "python": python,
         "runner": descriptor(Path(__file__).with_name("restore_monitoring_delivery.py")),
         "environment": authority["environment"],
@@ -521,7 +513,13 @@ def build_binding(
 
 def read_binding(backend: Path, path: Path) -> tuple[object, dict]:
     backend = repository(backend, "监控验收协调后端")
+    if not path.is_absolute():
+        raise ValueError("监控绑定必须使用绝对路径")
+    require_run_members(path.parent, {"binding.json"})
     document = read_json_document(path)
     if document.path.name != "binding.json" or not document.path.parent.is_relative_to((backend / ".local-tests").resolve(strict=True)):
         raise ValueError("监控绑定必须位于协调器忽略目录的独立 run 目录")
-    return document, validate_binding(document.value)
+    value = validate_binding(document.value)
+    require_run_members(document.path.parent, {"binding.json"})
+    document.assert_unchanged()
+    return document, value
