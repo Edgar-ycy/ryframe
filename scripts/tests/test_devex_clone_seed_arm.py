@@ -254,6 +254,109 @@ class SeedArmTests(unittest.TestCase):
         self.assertEqual(manifest["review_successor"], request["review_successor"])
         self.assertEqual(manifest["source_registration"], self.source_registration)
 
+    def test_published_successor_arm_rebuilds_exact_source_target_and_manifest(self):
+        request, source, lifecycle = self.successor_case()
+        self.request_file.unlink()
+        write_json(self.request_file, request)
+        inputs = {
+            **self.inputs,
+            "source": source,
+            "target": lifecycle["target"],
+            "initialized": lifecycle["initialized"],
+            "target_registration": lifecycle["registration"],
+            "target_storage_run": lifecycle["target_storage_run"],
+        }
+        manifest_path = self.local / "published-manifest.json"
+        write_json(manifest_path, arm._manifest(request, inputs))
+        result = {
+            **self.result(),
+            "request": binding(self.request_file),
+            "manifest": binding(manifest_path),
+            "review_successor": request["review_successor"],
+            "source_export": request["source_export"],
+            "source_export_result": request["source_export_result"],
+        }
+        result_path = self.local / "published-result.json"
+        write_json(result_path, result)
+        Path(request["copy_directory"]).mkdir()
+        with (
+            patch.object(arm, "_source", return_value=source),
+            patch.object(arm, "_validate_arm_request", return_value=inputs) as validate,
+            patch("devex_clone_run.manifest") as validate_manifest,
+        ):
+            observed = arm.verify_published_arm_input(
+                self.backend, result_path, "base"
+            )
+        self.assertEqual(observed["binding"], binding(result_path))
+        self.assertEqual(observed["target"], lifecycle["target"])
+        self.assertEqual(observed["target_side"], "base")
+        self.assertFalse(validate.call_args.kwargs["require_new_copy_directory"])
+        validate_manifest.assert_called_once_with(
+            self.backend, arm._manifest(request, inputs)
+        )
+
+        changed = copy.deepcopy(result)
+        changed["source_export"] = self.source_registration
+        changed_path = self.local / "changed-result.json"
+        write_json(changed_path, changed)
+        with (
+            patch.object(arm, "_source", return_value=source),
+            patch.object(arm, "_validate_arm_request", return_value=inputs),
+            patch("devex_clone_run.manifest"),
+            self.assertRaisesRegex(ValueError, "未完整绑定"),
+        ):
+            arm.verify_published_arm_input(self.backend, changed_path, "base")
+
+    def test_published_successor_arm_rejects_wrong_side_before_rebuilding_inputs(self):
+        result_path = self.local / "published-result.json"
+        value = self.result()
+        value.update(
+            review_successor=self.source_registration,
+            source_export=self.source_request,
+            source_export_result=self.source_storage,
+        )
+        write_json(result_path, value)
+        with patch.object(arm, "_source") as source, self.assertRaises(ValueError):
+            arm.verify_published_arm_input(self.backend, result_path, "candidate")
+        source.assert_not_called()
+
+    def test_historical_arm_verification_accepts_only_an_existing_copy_directory(self):
+        request, source, lifecycle = self.successor_case()
+        copy_directory = Path(request["copy_directory"])
+        copy_directory.mkdir()
+        with (
+            patch.object(arm, "target_lifecycle_binding", return_value=lifecycle),
+            patch.object(arm, "request_binding", return_value=("ready-review", {})),
+            patch.object(arm, "_target_build"),
+        ):
+            with self.assertRaises(ValueError):
+                arm._validate_arm_request(
+                    self.backend, request, source, live_storage=False
+                )
+            observed = arm._validate_arm_request(
+                self.backend,
+                request,
+                source,
+                live_storage=False,
+                require_new_copy_directory=False,
+            )
+        self.assertEqual(observed["copy_directory"], copy_directory)
+        copy_directory.rmdir()
+        copy_directory.write_text("not-a-directory", encoding="utf-8")
+        with (
+            patch.object(arm, "target_lifecycle_binding", return_value=lifecycle),
+            patch.object(arm, "request_binding", return_value=("ready-review", {})),
+            patch.object(arm, "_target_build"),
+            self.assertRaises(ValueError),
+        ):
+            arm._validate_arm_request(
+                self.backend,
+                request,
+                source,
+                live_storage=False,
+                require_new_copy_directory=False,
+            )
+
     def test_successor_inputs_reject_detached_source_and_target(self):
         request, source, lifecycle = self.successor_case()
         detached = copy.deepcopy(source)

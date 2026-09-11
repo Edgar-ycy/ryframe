@@ -94,7 +94,12 @@ def _successor_target(source: dict, lifecycle: dict, target: dict, side: str) ->
 
 
 def _validate_arm_request(
-    backend: Path, request: dict, source: dict, *, live_storage: bool
+    backend: Path,
+    request: dict,
+    source: dict,
+    *,
+    live_storage: bool,
+    require_new_copy_directory: bool = True,
 ) -> dict:
     successor = _successor_request(request)
     if request.get("source_rebind") != source.get("source_rebind"):
@@ -127,9 +132,18 @@ def _validate_arm_request(
             or source_databases & target_databases):
         raise ValueError("arm 目标不属于同一审阅计划的独立 base/candidate 侧")
     _environment(backend, request["target_environment"])
-    copy_directory = local_path(backend, request["copy_directory"], new=True)
-    if copy_directory.exists() or linked(copy_directory) or not copy_directory.parent.is_dir():
-        raise ValueError("arm 复制目录必须是已有父目录下的明确新路径")
+    copy_directory = local_path(
+        backend, request["copy_directory"], new=require_new_copy_directory
+    )
+    invalid_existing = copy_directory.exists() and (
+        linked(copy_directory) or not copy_directory.is_dir()
+    )
+    if (
+        require_new_copy_directory and copy_directory.exists()
+        or invalid_existing
+        or not copy_directory.parent.is_dir()
+    ):
+        raise ValueError("arm 复制目录必须是已有父目录下的明确受控路径")
     _target_build(backend, target, request["build_bridges"])
     return {"source": source, "initialized": initialized, "target": target,
             "target_registration": lifecycle["registration"],
@@ -141,6 +155,82 @@ def validate_arm_request(backend: Path, request: dict, *, live_storage: bool) ->
     """核对 arm 请求绑定的来源、fresh target、环境和构建证据，不取得运行锁。"""
     source = _source(backend, request, live_storage=live_storage)
     return _validate_arm_request(backend, request, source, live_storage=live_storage)
+
+
+def verify_published_arm_input(backend: Path, result_path: Path, side: str) -> dict:
+    """只读重建已发布 successor arm-input；允许复制目录尚未创建或已经创建。"""
+    if side not in {"base", "candidate"}:
+        raise ValueError("必须显式选择 base 或 candidate arm")
+    backend = backend.resolve(strict=True)
+    path = local_path(backend, str(result_path))
+    original = binding(path)
+    result = read_json(bound_file(backend, original))
+    fields = SUCCESSOR_RESULT_FIELDS | (
+        {"source_rebind"} if "source_rebind" in result else set()
+    )
+    exact(result, fields)
+    if (
+        result["status"] != "seed_arm_input_published"
+        or result["target_side"] != side
+        or result["remote_writes"] != 0
+        or result["outbox_drained"] is not True
+        or result["restore_qualified"] is not False
+    ):
+        raise ValueError("successor arm-input 外层结果状态或目标侧无效")
+    request = read_json(bound_file(backend, result["request"]))
+    if not _successor_request(request):
+        raise ValueError("正式恢复只接受绑定共享 source-export 的 successor arm-input")
+    source = _source(backend, request, live_storage=False)
+    inputs = _validate_arm_request(
+        backend,
+        request,
+        source,
+        live_storage=False,
+        require_new_copy_directory=False,
+    )
+    manifest_path = bound_file(backend, result["manifest"])
+    manifest = read_json(manifest_path)
+    if manifest != _manifest(request, inputs):
+        raise ValueError("successor arm-input 清单与当前请求、来源或目标不一致")
+    from devex_clone_run import manifest as validate_manifest
+
+    validate_manifest(backend, manifest)
+    expected = {
+        "source_registration": request["source_registration"],
+        "source_request": source["registration"]["source_request"],
+        "source_storage": source["registration"]["source_storage"],
+        "generation_verified": source["registration"]["generation_verified"],
+        "initialized": request["initialized"],
+        "target_environment": request["target_environment"],
+        "target_registration": request["target_registration"],
+        "target_initialized_files": request["target_initialized_files"],
+        "target_storage_run": inputs["target_storage_run"],
+        "target_side": inputs["target_side"],
+        "review_successor": request["review_successor"],
+        "source_export": request["source_export"],
+        "source_export_result": request["source_export_result"],
+    }
+    if "source_rebind" in request:
+        expected["source_rebind"] = request["source_rebind"]
+    if any(result.get(key) != value for key, value in expected.items()):
+        raise ValueError("successor arm-input 外层结果未完整绑定当前来源与 fresh 目标")
+    if (
+        binding(path) != original
+        or bound_file(backend, result["request"]) != Path(result["request"]["path"])
+        or bound_file(backend, result["manifest"]) != manifest_path
+    ):
+        raise ValueError("successor arm-input 在核验期间发生变化")
+    return {
+        "binding": original,
+        "result": copy.deepcopy(result),
+        "request": copy.deepcopy(request),
+        "manifest": copy.deepcopy(manifest),
+        "source": source,
+        "target": inputs["target"],
+        "initialized": inputs["initialized"],
+        "target_storage_run": inputs["target_storage_run"],
+        "target_side": side,
+    }
 
 
 def _inputs(backend: Path, directory: Path | None, request: dict, *, live_storage: bool) -> dict:
