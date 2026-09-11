@@ -10,6 +10,8 @@ mod formal;
 mod model;
 #[path = "contract/ownership.rs"]
 mod ownership;
+#[path = "contract/readonly.rs"]
+mod readonly;
 #[path = "contract/recovery.rs"]
 mod recovery;
 #[path = "contract/source.rs"]
@@ -31,6 +33,8 @@ pub(crate) use candidate::{
 pub(crate) use formal::{FORMAL_SYNC_ARGS, github_repository_identifier, validate_formal_sync};
 #[allow(unused_imports)]
 pub(crate) use model::{ContractFileOperations, Snapshot, sha256_hex};
+#[allow(unused_imports)]
+pub(crate) use readonly::check_current_with;
 #[allow(unused_imports)]
 pub(crate) use source::verify_contract_source;
 #[allow(unused_imports)]

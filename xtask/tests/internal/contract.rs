@@ -1,4 +1,6 @@
 use std::{
+    cell::{Cell, RefCell},
+    collections::BTreeMap,
     fs, io,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
@@ -6,9 +8,9 @@ use std::{
 
 use super::contract::{
     CANDIDATE_GENERATION_ARGS, ContractFileOperations, FORMAL_SYNC_ARGS, Snapshot, apply_candidate,
-    apply_candidate_with_staging_hook, generated_artifact_paths, github_repository_identifier,
-    install_snapshots_with, sha256_hex, validate_candidate_contract, validate_formal_sync,
-    write_atomically_with,
+    apply_candidate_with_staging_hook, check_current_with, generated_artifact_paths,
+    github_repository_identifier, install_snapshots_with, sha256_hex, validate_candidate_contract,
+    validate_formal_sync, write_atomically_with,
 };
 
 const CANDIDATE_MANAGED_PATHS: &[&str] = &[
@@ -102,6 +104,242 @@ impl Drop for TestFrontend {
 
 fn candidate() -> &'static [u8] {
     b"{\n  \"info\": {\n    \"title\": \"RyFrame API\"\n  },\n  \"openapi\": \"3.1.0\"\n}\n"
+}
+
+fn generated_content(relative: &str) -> Vec<u8> {
+    if relative == "src/api/generated/ownership.json" {
+        serde_json::to_vec(
+            &serde_json::json!({"version": 1, "files": &CANDIDATE_MANAGED_PATHS[1..]}),
+        )
+        .unwrap()
+    } else {
+        format!("generated:{relative}").into_bytes()
+    }
+}
+
+fn prepare_readonly_fixture(frontend: &TestFrontend) {
+    fs::write(frontend.backend().join("openapi/openapi.json"), candidate()).unwrap();
+    fs::write(frontend.0.join("openapi/openapi.json"), candidate()).unwrap();
+    let metadata = serde_json::json!({
+        "schema_version": 1,
+        "backend_repository": "Edgar-ycy/ryframe",
+        "backend_commit": "a".repeat(40),
+        "openapi_path": "openapi/openapi.json",
+        "openapi_version": "3.1.0",
+        "sha256": sha256_hex(candidate()),
+    });
+    let mut metadata = serde_json::to_string_pretty(&metadata)
+        .unwrap()
+        .into_bytes();
+    metadata.push(b'\n');
+    fs::write(frontend.0.join("openapi/source.json"), metadata).unwrap();
+    let _ = fs::remove_file(frontend.0.join("openapi/candidate.json"));
+    for relative in &CANDIDATE_MANAGED_PATHS[1..] {
+        fs::write(frontend.0.join(relative), generated_content(relative)).unwrap();
+    }
+    fs::create_dir_all(frontend.0.join(".local-tests")).unwrap();
+}
+
+fn write_generated_artifacts(staging: &Path) -> super::Result<()> {
+    for relative in &CANDIDATE_MANAGED_PATHS[1..] {
+        fs::write(staging.join(relative), generated_content(relative))?;
+    }
+    Ok(())
+}
+
+fn controlled_tree(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    fn collect(root: &Path, current: &Path, result: &mut BTreeMap<PathBuf, Vec<u8>>) {
+        for entry in fs::read_dir(current).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            let relative = path.strip_prefix(root).unwrap();
+            if relative.starts_with(".local-tests") || relative.starts_with("backend/target") {
+                continue;
+            }
+            if entry.file_type().unwrap().is_dir() {
+                collect(root, &path, result);
+            } else {
+                result.insert(relative.to_path_buf(), fs::read(path).unwrap());
+            }
+        }
+    }
+    let mut result = BTreeMap::new();
+    collect(root, root, &mut result);
+    result
+}
+
+fn contract_staging_directories(frontend: &TestFrontend) -> Vec<PathBuf> {
+    fs::read_dir(frontend.0.join(".local-tests"))
+        .unwrap()
+        .filter_map(std::result::Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("contract-stage-"))
+        })
+        .collect()
+}
+
+#[test]
+fn readonly_api_generation_compares_current_backend_and_all_frontend_artifacts() {
+    let frontend = TestFrontend::new();
+    prepare_readonly_fixture(&frontend);
+    let before = controlled_tree(&frontend.0);
+    let exported = Cell::new(false);
+    let generated = Cell::new(false);
+    let export_path = RefCell::new(None::<PathBuf>);
+
+    check_current_with(
+        &frontend.backend(),
+        &frontend.0,
+        |output| {
+            exported.set(true);
+            export_path.replace(Some(output.to_path_buf()));
+            fs::write(output, candidate())?;
+            Ok(())
+        },
+        |staging| {
+            generated.set(true);
+            write_generated_artifacts(staging)
+        },
+    )
+    .unwrap();
+
+    assert!(exported.get() && generated.get());
+    assert_eq!(controlled_tree(&frontend.0), before);
+    assert!(contract_staging_directories(&frontend).is_empty());
+    assert!(
+        !export_path
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .exists()
+    );
+}
+
+#[test]
+fn readonly_api_generation_rejects_backend_fact_drift_without_running_generator() {
+    let frontend = TestFrontend::new();
+    prepare_readonly_fixture(&frontend);
+    fs::write(
+        frontend.backend().join("openapi/openapi.json"),
+        b"{\"openapi\":\"3.1.0\",\"info\":{\"title\":\"RyFrame API\"}}\n",
+    )
+    .unwrap();
+    let generated = Cell::new(false);
+
+    let error = check_current_with(
+        &frontend.backend(),
+        &frontend.0,
+        |output| {
+            fs::write(output, candidate())?;
+            Ok(())
+        },
+        |_| {
+            generated.set(true);
+            Ok(())
+        },
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(error.contains("后端提交的 openapi/openapi.json"), "{error}");
+    assert!(!generated.get());
+    assert!(contract_staging_directories(&frontend).is_empty());
+}
+
+#[test]
+fn readonly_api_generation_cleans_temporary_paths_after_export_or_generation_failure() {
+    let frontend = TestFrontend::new();
+    prepare_readonly_fixture(&frontend);
+    let export_path = RefCell::new(None::<PathBuf>);
+    let error = check_current_with(
+        &frontend.backend(),
+        &frontend.0,
+        |output| {
+            export_path.replace(Some(output.to_path_buf()));
+            Err("模拟 OpenAPI 导出失败".into())
+        },
+        |_| Ok(()),
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("模拟 OpenAPI 导出失败"));
+    assert!(
+        !export_path
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .exists()
+    );
+
+    let stage_path = RefCell::new(None::<PathBuf>);
+    let error = check_current_with(
+        &frontend.backend(),
+        &frontend.0,
+        |output| {
+            fs::write(output, candidate())?;
+            Ok(())
+        },
+        |staging| {
+            stage_path.replace(Some(staging.to_path_buf()));
+            Err("模拟前端派生失败".into())
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("模拟前端派生失败"));
+    assert!(!stage_path.borrow().as_ref().unwrap().exists());
+    assert!(contract_staging_directories(&frontend).is_empty());
+}
+
+#[test]
+fn readonly_api_generation_rejects_derived_drift_and_concurrent_input_changes() {
+    let frontend = TestFrontend::new();
+    prepare_readonly_fixture(&frontend);
+    let drifted = frontend.0.join(CANDIDATE_MANAGED_PATHS[1]);
+    fs::write(&drifted, "manual-drift").unwrap();
+    let error = check_current_with(
+        &frontend.backend(),
+        &frontend.0,
+        |output| {
+            fs::write(output, candidate())?;
+            Ok(())
+        },
+        write_generated_artifacts,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains(CANDIDATE_MANAGED_PATHS[1]), "{error}");
+    assert!(contract_staging_directories(&frontend).is_empty());
+
+    prepare_readonly_fixture(&frontend);
+    let manifest = frontend.0.join("scripts/api-artifacts.mjs");
+    let error = check_current_with(
+        &frontend.backend(),
+        &frontend.0,
+        |output| {
+            fs::write(output, candidate())?;
+            Ok(())
+        },
+        |staging| {
+            write_generated_artifacts(staging)?;
+            fs::write(
+                &manifest,
+                "export const generatedArtifactPaths = Object.freeze([])\n",
+            )?;
+            Ok(())
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("契约生成输入在事务期间发生变化"), "{error}");
+    assert!(contract_staging_directories(&frontend).is_empty());
 }
 
 struct AtomicFaults {

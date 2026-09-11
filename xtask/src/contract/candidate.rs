@@ -4,12 +4,7 @@ use std::{
     process,
 };
 
-use crate::{
-    Result,
-    cli::ApiGenerateCommand,
-    process::{run as run_process, run_pnpm},
-    workspace::root_dir,
-};
+use crate::{Result, cli::ApiGenerateCommand, process::run as run_process, workspace::root_dir};
 
 use super::{
     atomic::write_atomically,
@@ -28,7 +23,7 @@ pub(crate) const CANDIDATE_GENERATION_ARGS: &[&str] =
 
 pub(crate) fn generate_api(command: &ApiGenerateCommand, frontend_dir: &Path) -> Result<()> {
     match (&command.reference, command.write) {
-        (_, false) => run_pnpm(frontend_dir, &["check", "--stage", "contract"]),
+        (_, false) => super::readonly::check_current(frontend_dir),
         (None, true) => sync_candidate(frontend_dir),
         (Some(reference), true) => sync_commit(reference, frontend_dir),
     }
@@ -111,7 +106,7 @@ pub(crate) fn validate_candidate_contract(bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn canonical_contract(bytes: &[u8]) -> Result<Vec<u8>> {
+pub(super) fn canonical_contract(bytes: &[u8]) -> Result<Vec<u8>> {
     validate_candidate_contract(bytes)?;
     let document: serde_json::Value = serde_json::from_slice(bytes)?;
     let mut canonical = serde_json::to_string_pretty(&document)?.into_bytes();
@@ -332,7 +327,10 @@ pub(super) fn snapshot_managed_files(managed_paths: &[PathBuf]) -> Result<Vec<Sn
 
 pub(super) fn snapshot_staging_inputs(frontend_dir: &Path) -> Result<Vec<Snapshot>> {
     let scripts = frontend_dir.join("scripts");
-    let mut paths = vec![frontend_dir.join("package.json")];
+    let mut paths = vec![
+        frontend_dir.join("package.json"),
+        frontend_dir.join("pnpm-lock.yaml"),
+    ];
     collect_file_paths(&scripts, &mut paths)?;
     paths.sort();
     paths.dedup();
