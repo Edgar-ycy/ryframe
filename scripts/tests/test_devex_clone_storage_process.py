@@ -58,6 +58,19 @@ class NativeProcessTests(unittest.TestCase):
             observed = process.inspect_attempt(self.backend, self.output, self.registration, self.controller, 1)
         self.assertEqual(observed["state"], "not_started")
 
+    def test_supervised_start_records_original_identity_and_reaps_failure_tree(self):
+        from full_stack_process_tree import read_process_tree
+
+        with patch.object(process, "arguments", return_value=self.args), patch.object(process, "actual_arguments"), \
+                patch.object(process, "wait_ready", side_effect=RuntimeError("就绪失败")):
+            with self.assertRaisesRegex(RuntimeError, "就绪失败"):
+                process.start(self.backend, self.request, dict(os.environ), self.output, self.registration,
+                              self.controller, 1, lambda: None, supervised=True)
+        tree = read_process_tree(self.output, "rustfs", self.request["scope_id"])
+        self.assertEqual(read_json(self.output / "process.json")["identity"], tree["process"])
+        self.assertIsNone(process_identity(tree["process"]["pid"]))
+        self.assertIsNone(process_identity(tree["supervisor"]["pid"]))
+
     def test_parent_crash_leaves_precise_child_receipt_for_explicit_recovery(self):
         launcher = self.root / "parent.py"
         code = "\n".join([

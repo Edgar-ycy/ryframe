@@ -178,12 +178,14 @@ def rustfs(backend: Path, review_path: Path, bootstrap_path: Path, *, write: boo
                "data_directory": {"path": str(data), "device": data.stat().st_dev, "inode": data.stat().st_ino},
                "api_url": service["api"], "console_url": service["console"], "credential_files": files,
                "timeout_seconds": 60}
+    write_json(output / "request.json", request)
     with run_lock(run) as owner:
-        number = begin(run, "storage-target", "initial", {"review": bound(review_file), "bootstrap": bound(bootstrap_file)})
+        number = begin(run, "storage-target", "initial", {"review": bound(review_file), "bootstrap": bound(bootstrap_file),
+                                                         "request": bound(output / "request.json")})
         controller = bind_controller_attempt(run, number, owner)
         try:
             result = start_rustfs(backend, request, configured(private), output, bound(run / "manifest.json"), controller,
-                                  number, lambda: None)
+                                  number, lambda: None, supervised=True)
             finish(run, number, result=result)
         except BaseException as error:
             finish(run, number, error=error)
@@ -240,7 +242,9 @@ def redis(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bool
                "password_env": "APP_REDIS_PASSWORD", "timeout_seconds": 60,
                "python": {"path": python["path"], "executable": python["resolved_path"], "sha256": python["sha256"]}}
     output.mkdir()
-    sources = {"review": bound(review_file), "bootstrap": bound(bootstrap_file), "manifest": bound(manifest)}
+    write_json(output / "request.json", request)
+    sources = {"review": bound(review_file), "bootstrap": bound(bootstrap_file), "manifest": bound(manifest),
+               "request": bound(output / "request.json")}
     def guard() -> None:
         current_review, current = document(backend, review_file)
         current_bootstrap, current_value = document(backend, bootstrap_file)

@@ -24,7 +24,9 @@ from full_stack_process import (
     write_receipt,
 )
 
-ROLES = frozenset({"api", "worker"})
+from full_stack_process import PROCESS_ROLES
+
+ROLES = PROCESS_ROLES
 OPERATION_ID = re.compile(r"^[a-f0-9]{32}$")
 
 

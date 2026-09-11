@@ -123,7 +123,7 @@ class FullStackProcessTreeTests(unittest.TestCase):
         except PermissionError:
             return False
 
-    def _launch(self, mode: str):
+    def _launch(self, mode: str, role: str = "api"):
         port = self._free_port()
         child_pid = self.root / "child.pid"
         leaf_pid = self.root / "leaf.pid"
@@ -132,7 +132,7 @@ class FullStackProcessTreeTests(unittest.TestCase):
         self.addCleanup(log.close)
         process = launch_supervised_process(
             self.root,
-            "api",
+            role,
             "tree-test",
             [
                 sys.executable,
@@ -226,6 +226,18 @@ class FullStackProcessTreeTests(unittest.TestCase):
             )
         self.assertFalse((self.root / "api-tree.json").exists())
         self.assertFalse((self.root / "api.json").exists())
+
+    def test_rustfs_role_uses_the_same_container_and_reaps_listener_descendants(self):
+        process, child_pid, leaf_pid, port = self._launch("wait", "rustfs")
+        descendants = self._identities(child_pid, leaf_pid)
+        self.children.extend(descendants)
+        self.addCleanup(terminate_owned_process_tree, process.tree, crash=True)
+        self.assertEqual(read_process_tree(self.root, "rustfs", "tree-test"), process.tree)
+        self.assertTrue(terminate_owned_process_tree(process.tree))
+        process.wait(timeout=5)
+        self._wait_for(lambda: all(self._gone(item) for item in descendants))
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", port))
 
 
 if __name__ == "__main__":

@@ -11,6 +11,8 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+PROCESS_ROLES = frozenset({"api", "worker", "rustfs"})
+
 
 def _linux_identity(pid: int) -> dict | None:
     try:
@@ -128,7 +130,7 @@ def write_receipt(path: Path, receipt: dict) -> None:
 
 
 def record_process(directory: Path, role: str, pid: int, executable: str, scope: str) -> dict:
-    if role not in {"api", "worker"}:
+    if role not in PROCESS_ROLES:
         raise ValueError("未知全栈进程角色")
     identity = process_identity(pid)
     if identity is None or Path(identity["executable"]) != Path(executable).resolve():
@@ -139,7 +141,7 @@ def record_process(directory: Path, role: str, pid: int, executable: str, scope:
 
 
 def read_process(directory: Path, role: str, scope: str) -> dict:
-    if role not in {"api", "worker"}:
+    if role not in PROCESS_ROLES:
         raise ValueError("未知全栈进程角色")
     receipt = json.loads((directory / f"{role}.json").read_text(encoding="utf-8"))
     if any(receipt.get(key) != value for key, value in {
