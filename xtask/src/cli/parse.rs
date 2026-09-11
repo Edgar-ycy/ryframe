@@ -227,7 +227,7 @@ fn parse_api(args: &[String]) -> Result<ApiGenerateCommand, CliError> {
 }
 
 fn parse_resource(args: &[String]) -> Result<ResourceCommand, CliError> {
-    const USAGE: &str = "用法：cargo xtask generate resource <资源名> [--check|--write|--explain] | cargo xtask generate resource --all [--check|--write]";
+    const USAGE: &str = "用法：cargo xtask generate resource <资源名> [--check|--write|--explain] | cargo xtask generate resource --all <--check|--write>";
     let (target, action) = match args {
         [all, check] if all == "--all" && check == "--check" => {
             (ResourceTarget::All, ResourceAction::Check)
