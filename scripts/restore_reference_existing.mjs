@@ -53,10 +53,6 @@ export function datasetArguments(argv) {
 
 export function referenceClient(plan, catalog, identity, side = 'source') {
   verificationSide(side)
-  return referenceSession(plan, catalog, identity, plan[side], side === 'source' ? 18 : 19)
-}
-
-function referenceSession(plan, catalog, identity, target, network) {
   const index = identity.tenant_id === 'system' ? 0 : Number(identity.tenant_id.slice(-2))
   if (
     identity.tenant_id !== 'system' &&
@@ -65,6 +61,19 @@ function referenceSession(plan, catalog, identity, target, network) {
       identity.tenant_id !== `${plan.source.scope_id}-${String(index).padStart(2, '0')}`)
   )
     throw new Error('参考身份不属于本次确定的十个普通租户')
+  return referenceSession(
+    catalog,
+    identity,
+    plan[side],
+    side === 'source' ? 18 : 19,
+    index,
+    plan.dataset.request_interval_ms,
+  )
+}
+
+function referenceSession(catalog, identity, target, network, index, requestIntervalMs) {
+  if (!Number.isSafeInteger(index) || index < 0 || index > 10 || !identity.tenant_id)
+    throw new Error('参考身份序号或明确租户无效')
   for (const value of [target.api_url, target.frontend_url]) {
     const url = httpUrl(value)
     if (!['127.0.0.1', '[::1]'].includes(url.hostname) || url.pathname !== '/')
@@ -77,7 +86,7 @@ function referenceSession(plan, catalog, identity, target, network) {
     },
     catalog,
     { ...identity, client_address: `198.${network}.20.${index + 1}` },
-    { beforeRequest: requestPacer(plan.dataset.request_interval_ms) },
+    { beforeRequest: requestPacer(requestIntervalMs) },
   )
 }
 
@@ -181,13 +190,36 @@ export async function verifyExisting(plan, backend, dataset, side = 'target') {
 
 async function verifyExistingAt(plan, backend, dataset, target, network) {
   validateDataset(plan, dataset)
+  return verifyIdentitiesAt(
+    backend,
+    dataset.tenants,
+    target,
+    network,
+    plan.dataset.request_interval_ms,
+  )
+}
+
+export async function verifyIdentitiesAt(
+  backend,
+  identities,
+  target,
+  network,
+  requestIntervalMs,
+) {
   const catalog = await operationCatalog(backend)
   if (catalog.get('get_system_posts_by_id')?.method !== 'GET')
     throw new Error('旧岗位验收必须使用只读查询契约')
   let files = 0,
     posts = 0
-  for (const identity of dataset.tenants) {
-    const session = referenceSession(plan, catalog, identity, target, network)
+  for (const [index, identity] of identities.entries()) {
+    const session = referenceSession(
+      catalog,
+      identity,
+      target,
+      network,
+      index,
+      requestIntervalMs,
+    )
     await session.login()
     let failure
     try {
@@ -211,7 +243,7 @@ async function verifyExistingAt(plan, backend, dataset, target, network) {
     }
     if (failure) throw failure
   }
-  return { tenants: dataset.tenants.length, posts, files }
+  return { tenants: identities.length, posts, files }
 }
 
 function exactFields(value, fields) {

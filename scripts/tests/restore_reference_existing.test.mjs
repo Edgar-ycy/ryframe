@@ -8,11 +8,18 @@ import {
   referenceClient,
   verifyExisting,
 } from '../restore_reference_existing.mjs'
+import {
+  sourceExistingArguments,
+  validateSourceLineage,
+  verifySourceExisting,
+} from '../restore_source_existing.mjs'
 import { Session } from '../devex/request.mjs'
 import { hash } from '../devex/config.mjs'
 
 const backend = fileURLToPath(new URL('../../', import.meta.url))
 const bytes = Buffer.from('existing-object')
+const scaleBytes = Buffer.alloc(4 * 1024 * 1024, 23)
+const scaleSha256 = createHash('sha256').update(scaleBytes).digest('hex')
 
 function fixture() {
   const plan = {
@@ -47,6 +54,99 @@ function fixture() {
   }
 }
 
+function sourceLineageFixture() {
+  const descriptor = (name) => ({
+    bytes: 1,
+    path: fileURLToPath(new URL(`${name}.json`, import.meta.url)),
+    sha256: 'a'.repeat(64),
+  })
+  let fileId = 1
+  const tenants = Array.from({ length: 11 }, (_, index) => {
+    const tenantId = index ? `frozen-source-${String(index).padStart(2, '0')}` : 'system'
+    const fileCount = 23 + (index < 3 ? 1 : 0)
+    return {
+      tenant_id: tenantId,
+      database: index === 10 ? 'dedicated-a' : index === 0 ? 'shared-control' : 'shared',
+      username: index ? 'owner' : 'admin',
+      password_env: 'TEST_PASSWORD',
+      records: 9090 + (index < 10 ? 1 : 0),
+      posts: Array.from({ length: 3 }, (_, post) => ({
+        id: String(index * 3 + post + 1),
+        code: `post-${index}-${post}`,
+        name: `岗位${index}-${post}`,
+      })),
+      files: Array.from({ length: fileCount }, (_, file) => {
+        const id = String(fileId++)
+        return {
+          file_id: id,
+          file_name: `${id}.bin`,
+          file_path: `${tenantId}/objects/${id}.bin`,
+          file_url: `/common/file/download?path=${id}`,
+          bytes: scaleBytes.length,
+          sha256: scaleSha256,
+        }
+      }),
+    }
+  })
+  const fields = [
+    'source_registration',
+    'seed_registration',
+    'post_copy',
+    'post_verify',
+    'post_verify_evidence',
+    'post_verify_target',
+    'reference_plan',
+    'dataset',
+    'copy_stage_receipt',
+    'copy_result',
+    'ledger_head',
+    'copy_plan',
+    'current_image',
+  ]
+  return {
+    format_version: 1,
+    kind: 'restore-source-derived-dataset-lineage',
+    status: 'derived_dataset_verified',
+    ...Object.fromEntries(fields.map((field) => [field, descriptor(field)])),
+    scopes: {
+      origin_tenant_scope_id: 'frozen-source',
+      current_source_scope_id: 'perf-seed',
+      current_object_scope_id: 'perf-seed',
+    },
+    scale: {
+      records: 100_000,
+      current_post_rows: 100_000,
+      tenants: 11,
+      post_samples: 33,
+      business_objects: 256,
+      verified_objects: 257,
+      object_bytes: 1024 ** 3,
+    },
+    tenants,
+    objects: {
+      business_objects: 256,
+      business_bytes: 1024 ** 3,
+      mapping_sha256: 'b'.repeat(64),
+      probe: {
+        bucket: 'uploads',
+        source_key: 'frozen-source/system/probe.txt',
+        target_key: 'perf-seed/system/probe.txt',
+        bytes: 1,
+        sha256: 'c'.repeat(64),
+        metadata: { content_type: 'text/plain' },
+      },
+      verified_objects: 257,
+    },
+    verification: {
+      scope_id: 'perf-seed',
+      api_url: 'http://127.0.0.1:18210',
+      frontend_url: 'http://127.0.0.1:4190',
+      request_interval_ms: 1000,
+    },
+    restore_qualified: false,
+  }
+}
+
 function transport(t, dataset, options = {}) {
   const calls = []
   t.mock.method(Session.prototype, 'login', async function () {
@@ -65,8 +165,10 @@ function transport(t, dataset, options = {}) {
       return {}
     }
     assert.equal(step.operation, 'get_system_posts_by_id')
-    const post = dataset.tenants.find((value) => value.tenant_id === this.identity.tenant_id)
-      .posts[0]
+    const post = dataset.tenants
+      .find((value) => value.tenant_id === this.identity.tenant_id)
+      .posts.find((value) => value.id === step.path.id)
+    assert.ok(post)
     assert.equal(step.path.id, post.id)
     return { data: { ...post, ...(options.wrongPost ? { code: 'wrong' } : {}) } }
   })
@@ -84,7 +186,17 @@ function transport(t, dataset, options = {}) {
           },
         }),
       )
-    return new Response(options.wrongFile ? 'wrong' : bytes)
+    const body = options.wrongFile ? Buffer.from('wrong') : (options.fileBytes ?? bytes)
+    if (options.streamFile)
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(body)
+            controller.close()
+          },
+        }),
+      )
+    return new Response(body)
   })
   return calls
 }
@@ -103,6 +215,87 @@ test('数据帮助使用同一参数表，未知、重复和缺值仍失败关�
   ])
     assert.throws(() => datasetArguments(args))
 })
+
+test('派生来源参数只接受绝对路径、唯一参数及显式写入授权', () => {
+  const lineage = fileURLToPath(new URL('lineage.json', import.meta.url))
+  assert.deepEqual(
+    sourceExistingArguments(['--backend-dir', backend, '--lineage', lineage, '--write']),
+    {
+      backend: fileURLToPath(new URL('../../', import.meta.url)).replace(/[\\/]$/, ''),
+      lineagePath: lineage,
+    },
+  )
+  for (const args of [
+    ['--backend-dir', backend, '--lineage', lineage],
+    ['--backend-dir', '.', '--lineage', lineage, '--write'],
+    ['--backend-dir', backend, '--lineage', 'lineage.json', '--write'],
+    ['--backend-dir', backend, '--lineage', lineage, '--lineage', lineage, '--write'],
+    ['--backend-dir', backend, '--lineage', lineage, '--unknown', 'x', '--write'],
+  ])
+    assert.throws(() => sourceExistingArguments(args))
+})
+
+test('派生来源使用血缘中的原租户身份和当前端点完成全量业务读取', async (t) => {
+  const lineage = sourceLineageFixture()
+  const original = JSON.stringify(lineage)
+  const calls = transport(t, lineage, { fileBytes: scaleBytes, streamFile: true })
+  const result = await verifySourceExisting(backend, lineage)
+  assert.deepEqual(result, {
+    format_version: 1,
+    kind: 'restore-source-existing-verification',
+    status: 'source_existing_data_verified',
+    scope_id: 'perf-seed',
+    origin_tenant_scope_id: 'frozen-source',
+    lineage_sha256: hash(lineage),
+    actions: { business: 'read_only', objects: 'read_only', session: 'login_logout' },
+    restore_success: false,
+    tenants: 11,
+    posts: 33,
+    files: 256,
+  })
+  assert.equal(JSON.stringify(lineage), original)
+  assert.equal(calls.length, 311)
+  assert.deepEqual(
+    calls.filter((call) => call.operation === 'login').map((call) => call.identity.tenant_id),
+    lineage.tenants.map((tenant) => tenant.tenant_id),
+  )
+  for (const call of calls) {
+    if (call.operation === 'download') {
+      assert.equal(call.url.origin, 'http://127.0.0.1:18210')
+      assert.ok(
+        lineage.tenants.some(
+          (tenant) => tenant.tenant_id === call.request.headers['X-Tenant-Id'],
+        ),
+      )
+    } else {
+      assert.equal(call.api, 'http://127.0.0.1:18210')
+    }
+  }
+})
+
+test('派生来源拒绝当前 scope 重写租户、汇总漂移和血缘外探针', () => {
+  const original = sourceLineageFixture()
+  validateSourceLineage(original)
+  for (const change of [
+    (value) => {
+      value.tenants[1].tenant_id = 'perf-seed-01'
+    },
+    (value) => {
+      value.tenants[1].records++
+    },
+    (value) => {
+      value.objects.probe.target_key = 'other/system/probe.txt'
+    },
+    (value) => {
+      value.current_image.extra = true
+    },
+  ]) {
+    const candidate = structuredClone(original)
+    change(candidate)
+    assert.throws(() => validateSourceLineage(candidate))
+  }
+})
+
 test('已有数据默认 target，显式 source；造数、缺值、重复及未知侧均失败关闭', () => {
   const base = ['--plan', 'plan.json', '--backend-dir', backend, '--preflight', 'preflight.json', '--write']
   assert.equal(datasetArguments(base).has('--side'), false)

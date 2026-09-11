@@ -116,7 +116,7 @@ class SourceDatasetLineageTests(unittest.TestCase):
             "records": 100_000,
             "object_bytes": 1024**3,
             "tenants": tenants,
-            "request_interval_ms": 0,
+            "request_interval_ms": 1000,
             "post_concurrency": 4,
             "completed_at": "2026-09-03T00:00:00Z",
         }
@@ -348,7 +348,7 @@ class SourceDatasetLineageTests(unittest.TestCase):
                 "scope_id": self.current,
                 "api_url": "http://127.0.0.1:18210",
                 "frontend_url": "http://127.0.0.1:4190",
-                "request_interval_ms": 0,
+                "request_interval_ms": 1000,
             },
         )
         self.assertEqual(result["tenants"][1]["tenant_id"], f"{self.origin}-01")

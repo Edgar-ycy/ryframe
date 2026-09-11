@@ -119,7 +119,7 @@ def _dataset_facts(backend: Path, post) -> dict:
         or type(dataset.get("object_bytes")) is not int
         or dataset["object_bytes"] < 1024**3
         or type(dataset.get("request_interval_ms")) is not int
-        or not 0 <= dataset["request_interval_ms"] <= 60_000
+        or not 1_000 <= dataset["request_interval_ms"] <= 5_000
         or not isinstance(dataset.get("tenants"), list)
         or len(dataset["tenants"]) != 11
     ):
