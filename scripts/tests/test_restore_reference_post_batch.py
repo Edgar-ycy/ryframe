@@ -1,9 +1,9 @@
 import hashlib
 import json
-import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
+from workspace_directory import WorkspaceDirectory
 
 import sys
 
@@ -22,7 +22,7 @@ def plan(root: Path) -> dict:
 
 class RestoreReferencePostBatchTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = WorkspaceDirectory(Path(__file__).resolve().parents[2] / ".local-tests/python-unit")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         (self.root / "dataset").mkdir()

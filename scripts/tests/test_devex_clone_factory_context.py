@@ -5,11 +5,11 @@ import json
 import os
 from pathlib import Path
 import sys
-import tempfile
 import threading
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+from workspace_directory import WorkspaceDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import devex_clone_factory_context as context
@@ -114,7 +114,7 @@ class EnvironmentTests(unittest.TestCase):
 
 class TargetHistoryTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="devex-history-")
+        temporary = WorkspaceDirectory(Path(__file__).resolve().parents[2] / ".local-tests/t", prefix="")
         self.addCleanup(temporary.cleanup)
         self.f = Fixture(Path(temporary.name), self)
         self.f.mocks[-1].side_effect = self.inventory_fixture
