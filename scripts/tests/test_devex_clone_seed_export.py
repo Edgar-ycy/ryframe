@@ -129,6 +129,42 @@ class SeedExportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             export.preflight(self.directory, "source-export-reconcile")
 
+    def test_failed_readonly_reconcile_can_retry_same_candidate_without_reexport(self):
+        _, original, _ = self.complete(failed=True)
+        first = self.start("source-export-reconcile")
+        state.finish(self.directory, first, error=RuntimeError("temporary verifier failure"))
+        export.preflight(self.directory, "source-export-reconcile")
+        second = self.start("source-export-reconcile")
+        with self.context(), patch.object(export, "export_source") as capture, \
+                patch("devex_clone_export_verify.verify_source_export", side_effect=lambda _, item: self.verified(item)), \
+                patch("devex_clone_storage.current_storage_binding", return_value=self.storage), \
+                patch.object(recovery, "verify_generation", return_value=self.generation):
+            adopted = export.execute_export(self.backend, self.directory, second, reconcile=True)
+        capture.assert_not_called()
+        self.assertEqual(adopted, original)
+        state.finish(self.directory, second, result=adopted)
+        descriptor = state.binding(self.directory / f"results/{second:04d}.json")
+        self.assertEqual(export.published_export(self.backend, descriptor, self.source), adopted)
+        history = state.load_state(self.directory)
+        self.assertTrue(export.reconciles_failed_export(
+            self.directory, history, history["attempts"][0], None, self.registration))
+
+    def test_retry_rejects_a_conflicting_prior_reconcile_result(self):
+        _, original, _ = self.complete(failed=True)
+        first = self.start("source-export-reconcile")
+        changed = copy.deepcopy(original)
+        changed["source_storage"] = {"generation": "conflicting"}
+        state.finish(self.directory, first, result=changed, error=RuntimeError("outer failure"))
+        second = self.start("source-export-reconcile")
+        with self.context(), patch.object(export, "export_source") as capture, \
+                patch("devex_clone_export_verify.verify_source_export", side_effect=lambda _, item: self.verified(item)), \
+                patch("devex_clone_storage.current_storage_binding", return_value=self.storage), \
+                patch.object(recovery, "verify_generation", return_value=self.generation), self.assertRaisesRegex(
+                    ValueError, "重试采用结果"):
+            export.execute_export(self.backend, self.directory, second, reconcile=True)
+        capture.assert_not_called()
+        state.finish(self.directory, second, error=RuntimeError("conflicting receipt"))
+
     def test_partial_failed_attempt_never_reexports_or_adopts_missing_candidate(self):
         number = self.start("source-export")
         state.finish(self.directory, number, error=RuntimeError("partial"))

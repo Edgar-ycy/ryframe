@@ -31,13 +31,14 @@ def history(directory: Path, state: dict, descriptor: dict, *, current: int | No
     if len(published) != 1:
         raise ValueError("重绑定必须继承唯一已发布 seed 源")
     later = [item for item in attempts if item["number"] > published[0]["number"]]
-    rebound, exported = False, False
+    rebound, exported, export_origin = False, False, None
     for item in later:
         operation = (item["stage"], item["mode"])
         if operation == ("seed-runtime", "source-export"):
             if not rebound or exported:
                 raise ValueError("source-export 只允许在重绑定后执行并发布一次")
             exported = True
+            export_origin = item
         if operation == ("seed-runtime", "source-export-reconcile") and not exported:
             raise ValueError("source-export-reconcile 必须继承原导出阶段")
         if item["number"] == current:
@@ -55,10 +56,11 @@ def history(directory: Path, state: dict, descriptor: dict, *, current: int | No
         elif operation not in (READ_ONLY_AFTER if rebound else BEFORE_REBIND):
             raise ValueError("seed 发布后出现未知写入或重绑定后存储再次换代")
         if item["status"] != "passed":
-            if operation == ("seed-runtime", "source-export"):
+            if operation in {("seed-runtime", "source-export"),
+                             ("seed-runtime", "source-export-reconcile")} and export_origin is not None:
                 from devex_clone_seed_export import reconciles_failed_export
 
-                if reconciles_failed_export(directory, state, item, current, descriptor):
+                if reconciles_failed_export(directory, state, export_origin, current, descriptor):
                     continue
             raise ValueError("seed 发布后存在失败或未收尾阶段")
     return later

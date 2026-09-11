@@ -53,9 +53,12 @@ def _active(directory: Path, number: int, mode: str) -> tuple[dict, list[dict]]:
 def _eligibility(prior: list[dict], mode: str) -> None:
     if mode == "source-export" and prior:
         raise ValueError("seed 只允许一次 source-export；失败先 status/recover，再显式 source-export-reconcile")
-    if mode == "source-export-reconcile" and (len(prior) != 1 or prior[0]["mode"] != "source-export"
-                                              or prior[0]["status"] != "failed"):
-        raise ValueError("source-export-reconcile 只能采用唯一已收尾失败的原导出")
+    if mode != "source-export-reconcile":
+        return
+    if (not prior or prior[0]["mode"] != "source-export" or prior[0]["status"] != "failed"
+            or any(item["mode"] != "source-export-reconcile" or item["status"] != "failed"
+                   for item in prior[1:])):
+        raise ValueError("source-export-reconcile 只能采用唯一失败原导出；已发布后不得重复采用")
 
 
 def preflight(directory: Path, mode: str) -> None:
@@ -71,7 +74,7 @@ def preflight(directory: Path, mode: str) -> None:
 
 def execute_export(backend: Path, directory: Path, number: int, *, reconcile: bool = False) -> dict:
     mode = "source-export-reconcile" if reconcile else "source-export"
-    current, _ = _active(directory, number, mode)
+    current, prior = _active(directory, number, mode)
     source = _source(backend, directory, live=True)
     environment = Environments(source["environment"]["environment"], source["environment"]["environment"])
     value = {"source_request": source["registration"]["source_request"]}
@@ -96,11 +99,29 @@ def execute_export(backend: Path, directory: Path, number: int, *, reconcile: bo
             origin_number, intent_binding = number, binding(directory / f"export-{number:04d}.intent.json")
         if _source(backend, directory, live=True) != source or _active(directory, number, mode)[0] != current:
             raise ValueError("seed 导出期间发布来源、存储、生产者或执行阶段变化")
-    return {"status": "seed_source_export_published", "origin_attempt": origin_number,
-            "origin_intent": intent_binding, "source_registration": source["review_successor"]["source_result"],
-            "source_rebind": source["source_rebind"], "review_successor": source["review_successor_binding"],
-            "source_request": value["source_request"], "source_storage": copy.deepcopy(storage),
-            "export": exported, "summary": summary, "remote_writes": 0, "restore_qualified": False}
+    result = {"status": "seed_source_export_published", "origin_attempt": origin_number,
+              "origin_intent": intent_binding, "source_registration": source["review_successor"]["source_result"],
+              "source_rebind": source["source_rebind"], "review_successor": source["review_successor_binding"],
+              "source_request": value["source_request"], "source_storage": copy.deepcopy(storage),
+              "export": exported, "summary": summary, "remote_writes": 0, "restore_qualified": False}
+    if reconcile and any(item != result for item in _reconcile_results(backend, directory, prior)):
+        raise ValueError("seed export 重试采用结果与先前已写出的只读结果不同")
+    return result
+
+
+def _reconcile_results(backend: Path, directory: Path, records: list[dict]) -> list[dict]:
+    results = []
+    for record in records:
+        if record["mode"] != "source-export-reconcile" or record["result"] is None:
+            continue
+        path = bound_file(backend, record["result"])
+        if path != directory / "results" / f"{record['number']:04d}.json":
+            raise ValueError("seed export 重试结果不属于原固定 attempt")
+        value = read_json(path)
+        exact(value, FIELDS)
+        exact(value["summary"], SUMMARY_FIELDS)
+        results.append(value)
+    return results
 
 
 def published_export(backend: Path, descriptor: dict, source: dict) -> dict:
@@ -114,8 +135,16 @@ def published_export(backend: Path, descriptor: dict, source: dict) -> dict:
             or path != directory / "results" / f"{successful[0]['number']:04d}.json"):
         raise ValueError("arm 必须绑定唯一已发布 seed source-export 外层结果")
     record = successful[0]
-    if len(records) != (1 if record["mode"] == "source-export" else 2):
-        raise ValueError("seed 导出存在重复或未收尾采用")
+    if record["mode"] == "source-export":
+        valid_history = records == [record]
+    else:
+        valid_history = (len(records) >= 2 and records[-1] == record
+                         and records[0]["mode"] == "source-export"
+                         and records[0]["status"] == "failed"
+                         and all(item["mode"] == "source-export-reconcile" and item["status"] == "failed"
+                                 for item in records[1:-1]))
+    if not valid_history:
+        raise ValueError("seed 导出存在重复、未收尾或非法采用历史")
     value = read_json(path)
     exact(value, FIELDS)
     exact(value["summary"], SUMMARY_FIELDS)
@@ -145,6 +174,8 @@ def published_export(backend: Path, descriptor: dict, source: dict) -> dict:
             or exported.get("logical_inventory_sha256") != value["summary"]["logical_inventory_sha256"]
             or plan_hash(exported) != value["summary"]["export_sha256"]):
         raise ValueError("seed 导出清单不属于已完整复核的发布摘要")
+    if any(item != value for item in _reconcile_results(backend, directory, records)):
+        raise ValueError("seed 导出发布与先前只读采用结果不同")
     if binding(path) != descriptor or load_state(directory) != state:
         raise ValueError("seed 导出发布在只读核验期间变化")
     return value
@@ -160,18 +191,30 @@ def reconciles_failed_export(directory: Path, state: dict, failed: dict, current
     """仅开放当前持锁的显式采用，或已发布且绑定同一 origin 的采用记录。"""
     records = [item for item in state["attempts"] if item["number"] > failed["number"]
                and (item["stage"], item["mode"]) == ("seed-runtime", "source-export-reconcile")]
-    if failed["status"] != "failed" or len(records) != 1:
+    if ((failed["stage"], failed["mode"], failed["status"])
+            != ("seed-runtime", "source-export", "failed") or not records):
         return False
-    record = records[0]
-    if record["number"] == current and record["status"] == "running":
-        return True
-    if record["status"] != "passed":
+    active = [item for item in records if item["number"] == current and item["status"] == "running"]
+    passed = [item for item in records if item["status"] == "passed"]
+    terminal = {item["number"] for item in active + passed}
+    if (len(active) + len(passed) != 1 or active and records[-1] != active[0]
+            or passed and records[-1] != passed[0]
+            or any(item["number"] not in terminal and item["status"] != "failed" for item in records)):
         return False
-    path = directory / "results" / f"{record['number']:04d}.json"
-    if binding(path) != record["result"]:
-        raise ValueError("seed export 采用结果发生变化")
-    value = read_json(path)
-    exact(value, FIELDS)
-    return (value["status"] == "seed_source_export_published" and value["origin_attempt"] == failed["number"]
-            and value["source_registration"] == source_registration
-            and value["remote_writes"] == 0 and value["restore_qualified"] is False)
+    values = []
+    for record in records:
+        if record["result"] is None:
+            continue
+        path = directory / "results" / f"{record['number']:04d}.json"
+        if binding(path) != record["result"]:
+            raise ValueError("seed export 采用结果发生变化")
+        value = read_json(path)
+        exact(value, FIELDS)
+        exact(value["summary"], SUMMARY_FIELDS)
+        if (value["status"] != "seed_source_export_published"
+                or value["origin_attempt"] != failed["number"]
+                or value["source_registration"] != source_registration
+                or value["remote_writes"] != 0 or value["restore_qualified"] is not False):
+            return False
+        values.append(value)
+    return not values or all(item == values[0] for item in values)

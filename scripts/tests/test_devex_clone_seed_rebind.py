@@ -274,6 +274,18 @@ class SeedRebindTests(unittest.TestCase):
         with patch("devex_clone_run._require_owned_run"), self.assertRaises(ValueError):
             rebind.history(self.directory, state, self.published, current=56)
 
+    def test_failed_readonly_reconcile_can_retry_under_the_same_owned_run(self):
+        _, state = self.published_rebind()
+        failed_export = self.record(55, "seed-runtime", "source-export", status="failed")
+        failed_reconcile = self.record(56, "seed-runtime", "source-export-reconcile", status="failed")
+        active = self.record(57, "seed-runtime", "source-export-reconcile", status="running")
+        state["attempts"] += [failed_export, failed_reconcile, active]
+        with patch("devex_clone_run._require_owned_run") as owned:
+            rebind.history(self.directory, state, self.published, current=57)
+        owned.assert_called_once_with(self.directory)
+        with self.assertRaises(ValueError):
+            rebind.history(self.directory, state, self.published)
+
 
 if __name__ == "__main__":
     unittest.main()
