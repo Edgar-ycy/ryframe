@@ -248,10 +248,22 @@ pub(super) fn run_consumer_contract(
     let plan = load_consumer_contract_plan(frontend_dir, candidate_commit.as_deref())?;
     let arguments = consumer_contract_arguments(&plan, openapi);
     let context = serde_json::to_string(&arguments)?;
+    let source_domain_checker = backend_root.join("scripts/source_domain_contract.py");
+    let source_domain_checker = source_domain_checker
+        .to_str()
+        .ok_or("来源分域检查器路径不是有效 UTF-8")?;
+    let python = std::env::var("RYFRAME_PYTHON")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "python".to_owned());
     run_pnpm_with_env(
         frontend_dir,
         consumer_contract_command(full),
-        &[("RYFRAME_CONSUMER_CONTRACT", context.as_str())],
+        &[
+            ("RYFRAME_CONSUMER_CONTRACT", context.as_str()),
+            ("RYFRAME_BACKEND_SOURCE_DOMAIN_CHECK", source_domain_checker),
+            ("RYFRAME_PYTHON", python.as_str()),
+        ],
     )
 }
 

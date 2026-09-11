@@ -16,8 +16,8 @@ from devex_clone_runtime import control
 from full_stack_provenance import verify_build_evidence
 from full_stack_runtime import register_runtime, verify_runtime
 from reference_fixture_source_pair import write_pair
-from restore_build import file_digest, source_snapshot, verify_build_artifacts
-from source_inventory import capture_inventory
+from restore_build import build_command, build_context, file_digest, source_snapshot, verify_build_artifacts
+from source_inventory import build_source_domains, capture_inventory
 
 
 def _bound(path: Path) -> dict:
@@ -81,17 +81,15 @@ def _run(command: list[str], *, cwd: Path, capture_output: bool) -> subprocess.C
 def _backend_build(execution: Path, output: Path, binaries: dict[str, str]) -> dict:
     source = source_snapshot(execution)
     inventory = capture_inventory(execution, source)
-    commands = {
-        "api": ["cargo", "build", "--locked", "-p", "ryframe", "--no-default-features", "--features", "bin-api", "--bin", "ryframe", "--message-format=json"],
-        "worker": ["cargo", "build", "--locked", "-p", "ryframe", "--no-default-features", "--features", "bin-worker", "--bin", "ryframe-worker", "--message-format=json"],
-    }
+    sources = build_source_domains(inventory, "backend")
+    context = build_context(execution)
     artifacts = {
-        role: {"executable": binaries[name], "command": commands[role], **file_digest(Path(binaries[name]))}
+        role: {"executable": binaries[name], "command": build_command(role), **file_digest(Path(binaries[name]))}
         for role, name in (("api", "ryframe"), ("worker", "ryframe-worker"))
     }
-    receipt = {"format_version": 1, "kind": "restore-backend-build", "source": source,
-               "source_inventory": inventory, "artifacts": artifacts}
-    if source_snapshot(execution) != source:
+    receipt = {"format_version": 2, "kind": "restore-backend-build", "sources": sources,
+               "build": context, "artifacts": artifacts}
+    if capture_inventory(execution) != inventory or build_context(execution) != context:
         raise ValueError("夹具源构建期间源码发生变化")
     write_json(output / "backend-build.json", receipt)
     return receipt

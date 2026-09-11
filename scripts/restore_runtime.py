@@ -16,7 +16,6 @@ from full_stack_process import process_identity
 from process_sockets import verify_listener
 from restore_build import (
     build,
-    source_snapshot,
     validate_new_output,
     verify_build,
     write_new,
@@ -45,7 +44,7 @@ from restore_runtime_evidence import (
     validate_frontend_receipt as _validate_frontend_receipt,
     validate_runtime_receipt as _validate_runtime_receipt,
 )
-from source_inventory import capture_inventory
+from source_inventory import build_source_domains, capture_inventory, frontend_environment_files
 
 FRONTEND_RECEIPT = ".vite/restore-build.json"
 
@@ -142,15 +141,18 @@ def _verify_frontend_artifacts(root: Path, receipt: dict, base_url: str) -> tupl
 
 
 def verify_frontend(root: Path, receipt: dict, sha: str, base_url: str) -> None:
-    before = source_snapshot(root)
+    receipt = _validate_frontend_receipt(receipt)
+    before = capture_inventory(root)
+    snapshot = before["source"]["snapshot"]
     if (
-        receipt.get("source", {}).get("head") != sha
-        or not receipt.get("source", {}).get("clean")
-        or receipt["source"] != before
+        snapshot["head"] != sha
+        or not snapshot["clean"]
+        or receipt["sources"] != build_source_domains(before, "frontend")
+        or receipt["build"]["environment_files"] != frontend_environment_files(root)
     ):
         raise ValueError("恢复前端必须使用精确干净 SHA 的生产构建")
     _files, snapshots = _verify_frontend_artifacts(root, receipt, base_url)
-    if source_snapshot(root) != before:
+    if capture_inventory(root) != before or receipt["build"]["environment_files"] != frontend_environment_files(root):
         raise ValueError("核验期间前端源码发生变化")
     for snapshot in snapshots:
         snapshot.assert_unchanged()
@@ -370,15 +372,17 @@ def verify(
     }
     if any(receipt[key] != value for key, value in expected.items()):
         raise ValueError("恢复运行收据与权威上下文不匹配")
-    backend_source = source_snapshot(backend)
-    frontend_source = source_snapshot(frontend)
+    backend_source = capture_inventory(backend)
+    frontend_source = capture_inventory(frontend)
     verify_build(backend, backend_build.value, authority["backend_sha"])
-    if capture_inventory(backend, backend_source) != backend_build.value["source_inventory"]:
+    if backend_build.value["sources"]["full"] != backend_source:
         raise ValueError("后端构建收据的完整源码清单不匹配")
+    frontend_snapshot = frontend_source["source"]["snapshot"]
     if (
-        frontend_build.value["source"] != frontend_source
-        or frontend_source.get("head") != authority["frontend_sha"]
-        or not frontend_source.get("clean")
+        frontend_build.value["sources"] != build_source_domains(frontend_source, "frontend")
+        or frontend_build.value["build"]["environment_files"] != frontend_environment_files(frontend)
+        or frontend_snapshot["head"] != authority["frontend_sha"]
+        or not frontend_snapshot["clean"]
     ):
         raise ValueError("前端构建收据没有绑定权威干净源码")
     observations, process_documents, executables = _observe_processes(receipt, receipt["endpoints"])
@@ -394,7 +398,8 @@ def verify(
         document.assert_unchanged()
     for snapshot in frontend_files_snapshot:
         snapshot.assert_unchanged()
-    if source_snapshot(backend) != backend_source or source_snapshot(frontend) != frontend_source:
+    if (capture_inventory(backend) != backend_source or capture_inventory(frontend) != frontend_source
+            or frontend_build.value["build"]["environment_files"] != frontend_environment_files(frontend)):
         raise ValueError("恢复运行核验期间源码发生变化")
     return {
         "format_version": 1,

@@ -5,19 +5,19 @@ import json
 import os
 from pathlib import Path
 import sys
-import tempfile
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import reference_fixture_runtime as runtime
 from devex_clone_capture import write_json
+from workspace_directory import WorkspaceDirectory
 
 
 class ReferenceFixtureRuntimeTests(unittest.TestCase):
     def setUp(self):
         self.backend = Path(__file__).resolve().parents[2]
-        self.temporary = tempfile.TemporaryDirectory(dir=self.backend / ".local-tests")
+        self.temporary = WorkspaceDirectory(dir=self.backend / ".local-tests", prefix="reference-runtime-")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.execution = self.root / "device"
@@ -66,10 +66,19 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
             return value
 
         source = {"head": "b" * 40, "patch_sha256": "d" * 64, "files": [], "clean": False}
+        inventory = {"source": {"snapshot": source, "worktree_fingerprint": "sha256:" + "e" * 64},
+                     "files": [], "guard": {"head": source["head"], "index_sha256": "f" * 64,
+                                             "modes_sha256": "1" * 64}}
+        context = {"commands": {role: runtime.build_command(role) for role in ("api", "worker")},
+                   "profile": "dev", "target": "x86_64-pc-windows-msvc", "jobs": "cargo-default",
+                   "toolchain": {"cargo": "cargo fixture", "rustc": "rustc fixture"},
+                   "environment": {"variables": [], "sha256": runtime.build_source_domains(
+                       inventory, "backend")["tools"]["sha256"]}}
         with patch.object(runtime, "write_pair", side_effect=self._pair), \
                 patch.object(runtime, "build_binaries", side_effect=build_binaries), \
                 patch.object(runtime, "source_snapshot", return_value=source), \
-                patch.object(runtime, "capture_inventory", return_value={"source": {"snapshot": source}}), \
+                patch.object(runtime, "capture_inventory", return_value=inventory), \
+                patch.object(runtime, "build_context", return_value=context), \
                 patch.object(runtime, "register_runtime", side_effect=register_runtime):
             result = runtime.build(self.backend, self.bootstrap, output)
 

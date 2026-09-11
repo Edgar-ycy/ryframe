@@ -21,6 +21,10 @@ from restore_runtime import NoRedirect, read_json
 from restore_source_binding import source_binding
 
 
+def build_sha(build: dict) -> str:
+    return build["sources"]["full"]["source"]["snapshot"]["head"]
+
+
 def instant(value: str) -> dt.datetime:
     result = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
     if result.tzinfo is None:
@@ -29,7 +33,7 @@ def instant(value: str) -> dt.datetime:
 
 
 def source_state(backend: Path, plan: dict, build: dict, *, stopped=False) -> dict:
-    verify_build(backend, build, build["source"]["head"])
+    verify_build(backend, build, build_sha(build))
     side = plan["source"]
     directory = Path(side["runtime_dir"])
     runtime = verify_runtime(backend, directory)
@@ -123,7 +127,7 @@ def stopped_source_evidence(backend: Path, plan: dict, receipt_path: Path) -> tu
                 "backend_root": str(backend), "scope_id": plan["source"]["scope_id"]}
     if any(receipt.get(key) != value for key, value in expected.items()):
         raise ValueError("备份来源运行证明与本次计划、源码目录或 scope 不匹配")
-    verify_build(backend, receipt["build"], receipt["build"]["source"]["head"])
+    verify_build(backend, receipt["build"], build_sha(receipt["build"]))
     for filename, digest in receipt["inputs"].items():
         if file_digest(Path(filename)) != digest:
             raise ValueError("来源复验证据已变化")
@@ -146,7 +150,7 @@ def quiesce_source(backend: Path, plan: dict, receipt_path: Path) -> dict:
     receipt, state, digest = stopped_source_evidence(backend, plan, receipt_path)
     return {"format_version": 1, "kind": "restore-source-quiescence", "plan_sha256": plan_hash(plan),
             "scope_id": plan["source"]["scope_id"], "source_runtime_sha256": digest,
-            "source_sha": receipt["build"]["source"]["head"], "processes": state["processes"],
+            "source_sha": build_sha(receipt["build"]), "processes": state["processes"],
             "observed_stopped_at": dt.datetime.now(dt.timezone.utc).isoformat()}
 
 

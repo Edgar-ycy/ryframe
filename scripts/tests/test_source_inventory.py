@@ -1,4 +1,5 @@
 """只读来源核心的编码、路径、完整输入和竞争校验；Git 使用固定响应替身。"""
+import copy
 import hashlib
 import os
 from pathlib import Path
@@ -137,6 +138,28 @@ class SourceInventoryTests(unittest.TestCase):
         changed = sources.fingerprints({"files": [files[0], files[1] | {"sha256": "c" * 64}]})
         self.assertEqual(before["product"], changed["product"])
         self.assertNotEqual(before["test_tools"], changed["test_tools"])
+
+    def test_build_domains_keep_tool_only_changes_out_of_product_roles(self):
+        before_inventory = sources.capture_inventory(self.root)
+        after_inventory = copy.deepcopy(before_inventory)
+        tool = next(item for item in after_inventory["files"] if item["path"] == "scripts/check.py")
+        tool["sha256"] = "f" * 64
+        before = sources.build_source_domains(before_inventory, "backend")
+        after = sources.build_source_domains(after_inventory, "backend")
+        self.assertEqual(before["product"], after["product"])
+        self.assertNotEqual(before["tools"], after["tools"])
+        self.assertNotEqual(before["full"], after["full"])
+        self.assertNotIn("scripts/check.py", before["product"]["api"]["files"])
+        self.assertNotIn("scripts/check.py", before["product"]["worker"]["files"])
+        inventory_with_classifier = copy.deepcopy(before_inventory)
+        inventory_with_classifier["files"].append(
+            {"path": "scripts/source_inventory.py", "sha256": "9" * 64}
+        )
+        inventory_with_classifier["files"].sort(key=lambda item: item["path"])
+        classified = sources.build_source_domains(inventory_with_classifier, "backend")
+        self.assertIn("scripts/source_inventory.py", classified["tools"]["files"])
+        self.assertNotIn("scripts/source_inventory.py", classified["product"]["api"]["files"])
+        self.assertNotIn("scripts/source_inventory.py", classified["product"]["worker"]["files"])
 
     def test_duplicate_unordered_or_malformed_inventory_is_rejected(self):
         first = {"path": "Cargo.toml", "sha256": "a" * 64}

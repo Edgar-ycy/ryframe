@@ -9,6 +9,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import devex_clone_tools
 import devex_provenance
+import restore_build
 import source_fingerprints as sources
 import source_inventory
 
@@ -53,8 +54,15 @@ class SourceCheckTests(unittest.TestCase):
 
     def test_nested_checks_share_one_content_scan_and_consumers_use_current_complete_source(self):
         original = sources.capture_inventory(self.root)
-        receipt = {"kind": "restore-backend-build", "source": original["source"]["snapshot"], "source_inventory": original}
-        with sources.artifact_sources(self.root, []) as stage:
+        context = {"commands": {role: restore_build.build_command(role) for role in restore_build.ROLES},
+                   "profile": "dev", "target": "fixture", "jobs": "cargo-default",
+                   "toolchain": {"cargo": "fixture", "rustc": "fixture"},
+                   "environment": {"variables": [], "sha256": source_inventory.canonical_digest([])}}
+        receipt = {"format_version": 2, "kind": "restore-backend-build",
+                   "sources": source_inventory.build_source_domains(original, "backend"),
+                   "build": context, "artifacts": {}}
+        with patch.object(restore_build, "build_context", return_value=context), \
+                sources.artifact_sources(self.root, []) as stage:
             with patch.object(sources, "file_inventory", wraps=sources.file_inventory) as scan, sources.source_check(self.root):
                 with sources.source_check(self.root):
                     for _ in range(3):
@@ -63,7 +71,8 @@ class SourceCheckTests(unittest.TestCase):
                             binding = devex_clone_tools.source_binding(self.root)
                             self.assertEqual(binding["snapshot"], stage["snapshot"])
                             self.assertEqual(devex_provenance.verify_source(self.root, receipt,
-                                             original["source"]["worktree_fingerprint"]), receipt["source"])
+                                             original["source"]["worktree_fingerprint"]),
+                                             original["source"]["snapshot"])
                 self.assertEqual(scan.call_count, 1)
             self.assertIsNone(sources.checked_source(self.root))
 

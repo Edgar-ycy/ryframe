@@ -24,11 +24,21 @@ class RestoreBuildTests(unittest.TestCase):
         self.local = self.root / ".local-tests"
         self.local.mkdir()
         self.source = self.enterContext(patch.object(build, "source_snapshot", return_value=copy.deepcopy(SOURCE)))
-        self.enterContext(patch.object(build, "capture_inventory", side_effect=lambda _, source: {
-            "source": {"snapshot": source, "worktree_fingerprint": "sha256:" + "c" * 64}, "files": [],
-        }))
+        def inventory(_, source=None):
+            snapshot = copy.deepcopy(source if source is not None else self.source())
+            return {
+                "source": {"snapshot": snapshot, "worktree_fingerprint": "sha256:" + "c" * 64},
+                "files": [],
+                "guard": {"head": snapshot["head"], "index_sha256": "d" * 64,
+                          "modes_sha256": "e" * 64},
+            }
+        self.enterContext(patch.object(build, "capture_inventory", side_effect=inventory))
 
     def cargo_run(self, command, **kwargs):
+        if command == ["rustc", "-vV"]:
+            return subprocess.CompletedProcess(command, 0, stdout="rustc 1.91.0\nhost: x86_64-pc-windows-msvc\n")
+        if command == ["cargo", "-V"]:
+            return subprocess.CompletedProcess(command, 0, stdout="cargo 1.91.0\n")
         name = command[command.index("--bin") + 1]
         self.assertEqual(kwargs["cwd"], self.root)
         self.assertTrue(kwargs["check"])
@@ -40,19 +50,19 @@ class RestoreBuildTests(unittest.TestCase):
 
     def test_cargo_artifacts_are_bound_to_workspace_source_and_actual_file_bytes(self):
         receipt = build.build(self.root, self.cargo_run)
-        build.verify_build(self.root, receipt, SOURCE["head"])
-        self.assertEqual(receipt["source_inventory"]["source"]["snapshot"], SOURCE)
+        build.verify_build(self.root, receipt, SOURCE["head"], self.cargo_run)
+        self.assertEqual(receipt["sources"]["full"]["source"]["snapshot"], SOURCE)
         self.assertEqual(set(receipt["artifacts"]), {"api", "worker"})
         binary = Path(receipt["artifacts"]["api"]["executable"])
         binary.write_bytes(b"changed")
         with self.assertRaisesRegex(ValueError, "二进制文件"):
-            build.verify_build(self.root, receipt, SOURCE["head"])
+            build.verify_build(self.root, receipt, SOURCE["head"], self.cargo_run)
 
     def test_dirty_source_and_changes_during_build_never_become_formal_evidence(self):
         dirty = SOURCE | {"clean": False, "files": [{"path": "new.rs", "sha256": "c" * 64}]}
         self.source.return_value = dirty
         receipt = build.build(self.root, self.cargo_run)
-        self.assertEqual(receipt["source"], dirty)
+        self.assertEqual(receipt["sources"]["full"]["source"]["snapshot"], dirty)
         with self.assertRaisesRegex(ValueError, "干净 SHA"):
             build.verify_build(self.root, receipt, SOURCE["head"])
         self.source.side_effect = [SOURCE, dirty]
@@ -93,7 +103,36 @@ class RestoreBuildTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 build.verify_build_artifacts(changed)
         with self.assertRaises(ValueError):
-            build.verify_build(self.root, receipt, "d" * 40)
+            build.verify_build(self.root, receipt, "d" * 40, self.cargo_run)
+
+    def test_build_context_change_rejects_artifact_reuse(self):
+        receipt = build.build(self.root, self.cargo_run)
+        changed = copy.deepcopy(receipt)
+        changed["build"]["jobs"] = "8"
+        build.validate_build_context(changed["build"])
+        with self.assertRaisesRegex(ValueError, "干净 SHA"):
+            build.verify_build(self.root, changed, SOURCE["head"], self.cargo_run)
+
+    def test_build_environment_covers_toolchain_native_and_reproducibility_inputs(self):
+        environment = {
+            "RUSTUP_TOOLCHAIN": "stable-fixture",
+            "RUSTC_BOOTSTRAP": "0",
+            "SOURCE_DATE_EPOCH": "1",
+            "AR_x86_64_pc_windows_msvc": "llvm-lib",
+            "CXXFLAGS_x86_64_pc_windows_msvc": "/O2",
+            "PKG_CONFIG_PATH": "fixture-pkg",
+            "AWS_LC_SYS_CMAKE_BUILDER": "1",
+            "OPENSSL_DIR": "fixture-openssl",
+            "APP_SECRET": "must-not-be-recorded",
+        }
+        first = build.build_environment(environment)
+        self.assertEqual(
+            first["variables"],
+            sorted(name for name in environment if name != "APP_SECRET"),
+        )
+        self.assertNotIn("must-not-be-recorded", json.dumps(first))
+        changed = dict(environment, SOURCE_DATE_EPOCH="2")
+        self.assertNotEqual(first["sha256"], build.build_environment(changed)["sha256"])
 
     def test_receipt_write_is_explicit_scoped_and_never_overwrites_existing_evidence(self):
         path = self.local / "receipt.json"

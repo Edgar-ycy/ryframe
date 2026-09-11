@@ -12,7 +12,8 @@ from unittest.mock import patch
 import test_devex_clone as clone_fixture
 import devex_clone_export as export
 import devex_clone_source_proof as proof
-from restore_build import ROLES, file_digest
+from restore_build import ROLES, build_command, file_digest
+from source_inventory import build_source_domains, canonical_digest
 from restore_reference_io import DATA_HEADER
 from restore_reference_plan import BUCKETS, plan_hash
 
@@ -28,7 +29,7 @@ class SourceFixture:
         self.runtime_dir = self.local / "runtime"
         self.runtime_dir.mkdir()
         self.scope = self.case.value["source"]["scope_id"]
-        self.snapshot = {"head": "a" * 40, "clean": False, "files": []}
+        self.snapshot = {"head": "a" * 40, "clean": False, "patch_sha256": "c" * 64, "files": []}
         self.fingerprint = "sha256:" + "b" * 64
         client = self.local / "client.cnf"
         client.write_text("[client]\nhost=127.0.0.1\nport=3306\nuser=fixture\npassword=fixture-secret\nssl-mode=DISABLED\n")
@@ -41,7 +42,21 @@ class SourceFixture:
         self.write_config(source)
         tool = self.local / "external.exe"
         tool.write_bytes(b"fixed-external-fixture")
-        self.build = {"format_version": 1, "kind": "restore-backend-build", "source": self.snapshot, "artifacts": {}}
+        source_inventory = {
+            "source": {"snapshot": self.snapshot, "worktree_fingerprint": self.fingerprint},
+            "files": [],
+            "guard": {"head": self.snapshot["head"], "index_sha256": "d" * 64,
+                      "modes_sha256": "e" * 64},
+        }
+        self.build = {
+            "format_version": 2, "kind": "restore-backend-build",
+            "sources": build_source_domains(source_inventory, "backend"),
+            "build": {"commands": {role: build_command(role) for role in ROLES},
+                      "profile": "dev", "target": "fixture", "jobs": "cargo-default",
+                      "toolchain": {"cargo": "fixture", "rustc": "fixture"},
+                      "environment": {"variables": [], "sha256": canonical_digest([])}},
+            "artifacts": {},
+        }
         identities = {}
         for number, (role, (feature, executable)) in enumerate(ROLES.items(), 100):
             path = self.local / (executable + ".exe")
@@ -92,7 +107,8 @@ class SourceFixture:
             test.addCleanup(value.stop)
 
     def verify_source(self, _backend, build, fingerprint):
-        if build["source"] != self.snapshot or fingerprint != self.fingerprint:
+        if (build["sources"]["full"]["source"]["snapshot"] != self.snapshot
+                or fingerprint != self.fingerprint):
             raise ValueError("fixture source changed")
         return copy.deepcopy(self.snapshot)
 

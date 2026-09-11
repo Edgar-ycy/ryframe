@@ -14,7 +14,9 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
 from process_sockets import endpoint
+from restore_build import validate_build_context
 from restore_identifiers import valid_identifier, valid_scope_identifier
+from source_inventory import validate_build_source_domains
 
 MAX_JSON_BYTES = 16 * 1024 * 1024
 HEX_40 = re.compile(r"[a-f0-9]{40}")
@@ -260,10 +262,50 @@ def read_authority(stream=None) -> dict:
     return validate_authority(decode_object(raw, "stdin 权威恢复上下文"))
 
 
+def validate_frontend_build_context(value: object) -> dict:
+    value = exact_fields(
+        value,
+        {"command", "mode", "target", "toolchain", "environment", "environment_files"},
+        "前端构建上下文",
+    )
+    toolchain = exact_fields(value["toolchain"], {"node", "pnpm", "vite"}, "前端构建工具链")
+    pnpm = exact_fields(toolchain["pnpm"], {"pinned", "observed"}, "前端 pnpm 工具链")
+    environment = exact_fields(value["environment"], {"variables", "sha256"}, "前端构建环境摘要")
+    if (value["command"] != ["vite", "build"] or value["mode"] != "production"
+            or value["target"] != "vite-default"
+            or any(not isinstance(toolchain[item], str) or not toolchain[item]
+                   for item in ("node", "vite"))
+            or not isinstance(pnpm["pinned"], str) or not pnpm["pinned"]
+            or pnpm["observed"] != pnpm["pinned"]
+            or not isinstance(environment["variables"], list)
+            or environment["variables"] != sorted(set(environment["variables"]))
+            or any(not isinstance(item, str) or not item.startswith("VITE_")
+                   for item in environment["variables"])
+            or not isinstance(environment["sha256"], str) or not HEX_64.fullmatch(environment["sha256"])
+            or not isinstance(value["environment_files"], list)):
+        raise ValueError("前端构建上下文无效")
+    allowed = {".env", ".env.local", ".env.production", ".env.production.local"}
+    previous = ""
+    for item in value["environment_files"]:
+        item = exact_fields(item, {"path", "sha256"}, "前端构建环境文件")
+        if (item["path"] not in allowed or item["path"] <= previous
+                or not isinstance(item["sha256"], str) or not HEX_64.fullmatch(item["sha256"])):
+            raise ValueError("前端构建环境文件摘要无效")
+        previous = item["path"]
+    return value
+
+
 def validate_frontend_receipt(receipt: object) -> dict:
-    value = exact_fields(receipt, {"format_version", "kind", "source", "files"}, "前端构建收据")
-    if value["format_version"] != 1 or value["kind"] != "restore-frontend-build" or not isinstance(value["files"], list):
+    value = exact_fields(
+        receipt,
+        {"format_version", "kind", "sources", "build", "files"},
+        "前端构建收据",
+    )
+    if value["format_version"] != 2 or value["kind"] != "restore-frontend-build" or not isinstance(value["files"], list):
         raise ValueError("前端必须使用生产构建收据")
+    validate_build_source_domains(value["sources"], "frontend")
+    # 前端工具链结构与后端不同，由跨仓 schema 校验器在运行时核对。
+    validate_frontend_build_context(value["build"])
     previous = ""
     for item in value["files"]:
         item = exact_fields(item, {"path", "bytes", "sha256"}, "前端文件收据")
@@ -310,21 +352,13 @@ def process_document(path: Path, role: str, scope: str) -> tuple[JsonDocument, d
 def validate_backend_receipt(receipt: object) -> dict:
     value = exact_fields(
         receipt,
-        {"format_version", "kind", "source", "source_inventory", "artifacts"},
+        {"format_version", "kind", "sources", "build", "artifacts"},
         "后端构建收据",
     )
-    if value["format_version"] != 1 or value["kind"] != "restore-backend-build":
+    if value["format_version"] != 2 or value["kind"] != "restore-backend-build":
         raise ValueError("后端构建收据版本或类型不匹配")
-    source = exact_fields(value["source"], {"head", "patch_sha256", "files", "clean"}, "后端源码快照")
-    if (
-        not isinstance(source["head"], str)
-        or not HEX_40.fullmatch(source["head"])
-        or not isinstance(source["patch_sha256"], str)
-        or not HEX_64.fullmatch(source["patch_sha256"])
-        or not isinstance(source["files"], list)
-        or type(source["clean"]) is not bool
-    ):
-        raise ValueError("后端源码快照字段无效")
+    validate_build_source_domains(value["sources"], "backend")
+    validate_build_context(value["build"])
     artifacts = exact_fields(value["artifacts"], {"api", "worker"}, "后端构建产物")
     for role in ("api", "worker"):
         artifact = exact_fields(

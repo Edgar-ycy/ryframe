@@ -337,7 +337,7 @@ TenantDataTableDescriptor { table: \"biz_device\", tenant_column: \"tenant_id\",
             stream.write("\nCREATE TABLE IF NOT EXISTS `sys_future_queue` (\n    `id` BIGINT\n) ENGINE=InnoDB;\n")
         with self.assertRaisesRegex(ValueError, "白名单不同"):
             create_plan(self.value, self.backend)
-        with self.assertRaisesRegex(ValueError, "精确干净"):
+        with self.assertRaisesRegex(ValueError, "构建来源"):
             verify_build(self.backend, {"format_version": 1, "kind": "restore-backend-build",
                                         "source": self.value["source_snapshot"]}, "a" * 40)
 

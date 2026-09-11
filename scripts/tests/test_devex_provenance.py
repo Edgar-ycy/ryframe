@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import devex_provenance as provenance
 import restore_build
 import restore_runtime
+import source_inventory
 from workspace_directory import WorkspaceDirectory
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -38,8 +39,13 @@ class Response(io.BytesIO):
 
 class ProvenanceTests(unittest.TestCase):
     def setUp(self):
-        self.enterContext(patch.object(restore_build, "capture_inventory", side_effect=lambda _root, source: {
-            "source": {"snapshot": source, "worktree_fingerprint": FINGERPRINT}, "files": []}))
+        inventory = {"source": {"snapshot": SOURCE, "worktree_fingerprint": FINGERPRINT},
+                     "files": [], "guard": {"head": SOURCE["head"], "index_sha256": "1" * 64,
+                                             "modes_sha256": "2" * 64}}
+        self.enterContext(patch.object(restore_build, "capture_inventory",
+                                      side_effect=lambda *_args: copy.deepcopy(inventory)))
+        self.enterContext(patch.object(restore_runtime, "capture_inventory",
+                                      side_effect=lambda *_args: copy.deepcopy(inventory)))
         self.enterContext(patch.object(provenance, "reusable_artifact_source", return_value=None))
         self.driver_source = self.enterContext(
             patch.object(provenance, "current_execution_source", return_value=DRIVER_SOURCE)
@@ -57,9 +63,18 @@ class ProvenanceTests(unittest.TestCase):
         with patch.object(restore_build, "source_snapshot", return_value=SOURCE):
             build = restore_build.build(self.backend, self.cargo_run)
         backend_binding = self.write(self.root / "build.json", build)
-        frontend_binding = self.write(self.frontend / "dist" / restore_runtime.FRONTEND_RECEIPT,
-                                      {"format_version": 1, "kind": "restore-frontend-build", "source": SOURCE,
-                                       "files": restore_runtime.frontend_files(self.frontend)})
+        frontend_binding = self.write(self.frontend / "dist" / restore_runtime.FRONTEND_RECEIPT, {
+            "format_version": 2, "kind": "restore-frontend-build",
+            "sources": source_inventory.build_source_domains(inventory, "frontend"),
+            "build": {"command": ["vite", "build"], "mode": "production", "target": "vite-default",
+                      "toolchain": {"node": "v24.0.0",
+                                    "pnpm": {"pinned": "11.20.0", "observed": "11.20.0"},
+                                    "vite": "7.1.7"},
+                      "environment": {"variables": [],
+                                      "sha256": source_inventory.canonical_digest([])},
+                      "environment_files": []},
+            "files": restore_runtime.frontend_files(self.frontend),
+        })
         self.identities = {role: {"pid": 42 + index, "started": "original", "executable": artifact["executable"]}
                            for index, (role, artifact) in enumerate(build["artifacts"].items())}
         process_hashes = {role: self.write(self.runtime / f"{role}.json", {
@@ -98,6 +113,8 @@ class ProvenanceTests(unittest.TestCase):
         return {"path": str(path), "sha256": restore_build.file_digest(path)["sha256"]}
 
     def cargo_run(self, command, **_kwargs):
+        if command in (["rustc", "-vV"], ["cargo", "-V"]):
+            return subprocess.run(command, **_kwargs)
         name = command[command.index("--bin") + 1]
         binary = self.backend / name
         binary.write_bytes(name.encode())
@@ -121,7 +138,7 @@ class ProvenanceTests(unittest.TestCase):
         frontend = json.loads((self.frontend / "dist" / restore_runtime.FRONTEND_RECEIPT).read_text())
         with patch.object(restore_build, "source_snapshot", return_value=SOURCE), self.assertRaisesRegex(ValueError, "干净 SHA"):
             restore_build.verify_build(self.backend, backend, SOURCE["head"])
-        with patch.object(restore_runtime, "source_snapshot", return_value=SOURCE), self.assertRaisesRegex(ValueError, "干净 SHA"):
+        with self.assertRaisesRegex(ValueError, "干净 SHA"):
             restore_runtime.verify_frontend(self.frontend, frontend, SOURCE["head"], self.request["frontend_url"])
 
     def test_old_binary_and_old_runtime_artifact_are_rejected(self):
@@ -195,7 +212,7 @@ class ProvenanceTests(unittest.TestCase):
     def test_frontend_old_snapshot_rejected_even_when_receipt_hash_is_rebound(self):
         filename = self.frontend / "dist" / restore_runtime.FRONTEND_RECEIPT
         receipt = json.loads(filename.read_text())
-        receipt["source"]["patch_sha256"] = "0" * 64
+        receipt["sources"]["full"]["source"]["snapshot"]["patch_sha256"] = "0" * 64
         self.request["provenance"]["frontend_build_sha256"] = self.write(filename, receipt)["sha256"]
         with self.assertRaisesRegex(provenance.ProvenanceError, "frontend_source"):
             provenance.verify(self.request)

@@ -33,6 +33,21 @@ def execution(value):
     return {**value["source"], "fingerprints": sources.fingerprints(value)}
 
 
+def build_context():
+    return {
+        "commands": {role: restore_build.build_command(role) for role in restore_build.ROLES},
+        "profile": "dev", "target": "x86_64-pc-windows-msvc", "jobs": "cargo-default",
+        "toolchain": {"cargo": "cargo fixture", "rustc": "rustc fixture"},
+        "environment": {"variables": [], "sha256": source_inventory.canonical_digest([])},
+    }
+
+
+def build_receipt(value, artifacts=None):
+    return {"format_version": 2, "kind": "restore-backend-build",
+            "sources": source_inventory.build_source_domains(value, "backend"),
+            "build": build_context(), "artifacts": artifacts or {}}
+
+
 class SourceFingerprintsTests(unittest.TestCase):
     def test_execution_source_records_snapshot_worktree_and_domains(self):
         value = sources.execution_source(inventory())
@@ -50,10 +65,10 @@ class SourceFingerprintsTests(unittest.TestCase):
         capture.assert_called_once_with(Path("repository"))
 
     def test_build_source_accepts_product_and_maintenance_receipt_shapes(self):
-        snapshot = inventory()["source"]["snapshot"]
+        value = inventory()
         self.assertEqual(
-            sources.build_source({"kind": "restore-backend-build", "source": snapshot}),
-            {"snapshot": snapshot},
+            sources.build_source(build_receipt(value)),
+            value["source"],
         )
         value = inventory()["source"]
         self.assertEqual(
@@ -63,17 +78,14 @@ class SourceFingerprintsTests(unittest.TestCase):
 
     def test_inventory_source_must_match_build_snapshot(self):
         value = inventory()
-        snapshot = value["source"]["snapshot"]
-        sources.verify_inventory_source(
-            value,
-            {"kind": "restore-backend-build", "source": snapshot},
-        )
+        receipt = build_receipt(value)
+        sources.verify_inventory_source(value, receipt)
         changed = copy.deepcopy(value)
         changed["source"]["snapshot"]["head"] = "0" * 40
         with self.assertRaisesRegex(ValueError, "构建时"):
             sources.verify_inventory_source(
                 changed,
-                {"kind": "restore-backend-build", "source": snapshot},
+                receipt,
             )
 
     def test_maintenance_inventory_must_match_complete_fingerprint(self):
@@ -88,13 +100,12 @@ class SourceFingerprintsTests(unittest.TestCase):
             sources.verify_inventory_source(value, receipt)
 
     def test_inventory_rejects_invalid_worktree_fingerprint(self):
-        value = inventory()
+        original = inventory()
+        receipt = build_receipt(original)
+        value = copy.deepcopy(original)
         value["source"]["worktree_fingerprint"] = "invalid"
-        with self.assertRaisesRegex(ValueError, "构建时"):
-            sources.verify_inventory_source(
-                value,
-                {"kind": "restore-backend-build", "source": value["source"]["snapshot"]},
-            )
+        with self.assertRaisesRegex(ValueError, "构建时|格式"):
+            sources.verify_inventory_source(value, receipt)
 
     def test_receipt_without_inventory_cannot_claim_reusable_source(self):
         with patch.object(
@@ -112,12 +123,9 @@ class SourceFingerprintsTests(unittest.TestCase):
     def test_tool_only_change_reuses_original_product_source(self):
         original = inventory(tool="d")
         current = sources.execution_source(inventory(tool="e"))
-        receipt = {
-            "kind": "restore-backend-build",
-            "source": original["source"]["snapshot"],
-            "source_inventory": original,
-        }
-        with patch.object(sources, "current_execution_source", return_value=current):
+        receipt = build_receipt(original)
+        with patch.object(sources, "capture_inventory", return_value=inventory(tool="e")), \
+                patch.object(restore_build, "build_context", return_value=build_context()):
             result = sources.reusable_artifact_source(Path("repository"), receipt)
         self.assertEqual(result, original["source"])
         result["snapshot"]["head"] = "0" * 40
@@ -126,13 +134,20 @@ class SourceFingerprintsTests(unittest.TestCase):
     def test_product_change_rejects_existing_artifact(self):
         original = inventory(product="c")
         current = sources.execution_source(inventory(product="0"))
-        receipt = {
-            "kind": "restore-backend-build",
-            "source": original["source"]["snapshot"],
-            "source_inventory": original,
-        }
-        with patch.object(sources, "current_execution_source", return_value=current), \
+        receipt = build_receipt(original)
+        with patch.object(sources, "capture_inventory", return_value=inventory(product="0")), \
+                patch.object(restore_build, "build_context", return_value=build_context()), \
                 self.assertRaisesRegex(ValueError, "重新编译"):
+            sources.reusable_artifact_source(Path("repository"), receipt)
+
+    def test_build_parameter_change_rejects_existing_artifact(self):
+        original = inventory(tool="d")
+        receipt = build_receipt(original)
+        changed = build_context()
+        changed["jobs"] = "8"
+        with patch.object(sources, "capture_inventory", return_value=inventory(tool="e")), \
+                patch.object(restore_build, "build_context", return_value=changed), \
+                self.assertRaisesRegex(ValueError, "构建命令、工具链"):
             sources.reusable_artifact_source(Path("repository"), receipt)
 
     def setUp(self):
@@ -147,6 +162,7 @@ class SourceFingerprintsTests(unittest.TestCase):
         self.set_current(inventory(tool="d"))
         self.probe = self.enterContext(patch.object(sources, "current_execution_source", side_effect=lambda _: self.current))
         self.enterContext(patch.object(sources, "capture_inventory", side_effect=lambda _: copy.deepcopy(self.current_inventory)))
+        self.enterContext(patch.object(restore_build, "build_context", return_value=build_context()))
         artifacts = {}
         for role, (feature, name) in restore_build.ROLES.items():
             binary = self.local / f"{name}.exe"
@@ -155,9 +171,7 @@ class SourceFingerprintsTests(unittest.TestCase):
                        "--features", feature, "--bin", name, "--message-format=json"]
             artifacts[role] = {"executable": str(binary), "command": command,
                                **restore_build.file_digest(binary)}
-        self.receipt = {"format_version": 1, "kind": "restore-backend-build",
-                        "source": self.original["source"]["snapshot"],
-                        "artifacts": artifacts}
+        self.receipt = build_receipt(self.original, artifacts)
         self.build_path = self.write("build.json", self.receipt)
         self.inventory_path = self.write("inventory.json", self.original)
         self.bridge_path = self.local / "bridge.json"
@@ -251,17 +265,18 @@ class SourceFingerprintsTests(unittest.TestCase):
     def test_explicit_bridge_preserves_original_receipts_and_context_does_not_leak(self):
         before = self.build_path.read_bytes()
         binding = self.bridge()
-        self.assertIsNone(sources.reusable_artifact_source(self.root, self.receipt))
+        self.assertEqual(sources.reusable_artifact_source(self.root, self.receipt), self.original["source"])
         with sources.artifact_sources(self.root, [binding]) as actual:
             self.assertEqual(actual, self.current)
             self.assertEqual(sources.reusable_artifact_source(self.root, self.receipt), self.original["source"])
             self.assertEqual(devex_provenance.verify_source(self.root, self.receipt,
-                             self.original["source"]["worktree_fingerprint"]), self.receipt["source"])
+                             self.original["source"]["worktree_fingerprint"]),
+                             self.original["source"]["snapshot"])
             with self.assertRaisesRegex(ValueError, "构建时"):
                 devex_provenance.verify_source(self.root, self.receipt, "sha256:" + "f" * 64)
             with self.assertRaisesRegex(ValueError, "嵌套"), sources.artifact_sources(self.root, []):
                 pass
-        self.assertIsNone(sources.reusable_artifact_source(self.root, self.receipt))
+        self.assertEqual(sources.reusable_artifact_source(self.root, self.receipt), self.original["source"])
         self.assertEqual(self.build_path.read_bytes(), before)
 
     def test_bridge_rejects_changed_product_or_forged_original_snapshot(self):
@@ -320,7 +335,6 @@ class SourceFingerprintsTests(unittest.TestCase):
     def test_bridge_registration_uses_stable_build_identity_across_receipt_shells(self):
         first = self.bridge()
         second_receipt = copy.deepcopy(self.receipt)
-        second_receipt["source_inventory"] = self.original
         for artifact in second_receipt["artifacts"].values():
             artifact["cargo_executable"] = artifact["executable"]
         self.assertNotEqual(sources.canonical_digest(self.receipt),
@@ -413,10 +427,11 @@ class SourceFingerprintsTests(unittest.TestCase):
         binding = self.bridge()
         with sources.artifact_sources(self.root, [binding]):
             self.assertIsNone(sources.reusable_artifact_source(self.root / "other", self.receipt))
-            self.assertIsNone(sources.reusable_artifact_source(self.root, {**self.receipt, "other": True}))
+            with self.assertRaisesRegex(ValueError, "字段无效"):
+                sources.reusable_artifact_source(self.root, {**self.receipt, "other": True})
 
     def test_new_build_inventory_can_reuse_without_rebuilding_but_rejects_product_change(self):
-        receipt = {**self.receipt, "source_inventory": self.original}
+        receipt = self.receipt
         self.assertEqual(sources.reusable_artifact_source(self.root, receipt), self.original["source"])
         self.set_current(inventory(product="e"))
         with self.assertRaisesRegex(ValueError, "重新编译"):

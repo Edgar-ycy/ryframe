@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import restore_build
 import restore_reference
 import restore_source as source
+import source_inventory
 from restore_reference_fixture import environment, inventory
 
 
@@ -21,8 +22,16 @@ class SourceRuntimeTests(unittest.TestCase):
         self.backend, self.plan = environment(self)
         self.work = restore_reference.work_directory(self.plan)
         self.snapshot = {"head": "a" * 40, "clean": True, "patch_sha256": "b" * 64, "files": []}
-        self.build = {"format_version": 1, "kind": "restore-backend-build",
-                      "source": self.snapshot, "artifacts": {}}
+        self.inventory = self.source_inventory()
+        self.context = {
+            "commands": {role: restore_build.build_command(role) for role in restore_build.ROLES},
+            "profile": "dev", "target": "x86_64-pc-windows-msvc", "jobs": "cargo-default",
+            "toolchain": {"cargo": "cargo fixture", "rustc": "rustc fixture"},
+            "environment": {"variables": [], "sha256": source_inventory.canonical_digest([])},
+        }
+        self.build = {"format_version": 2, "kind": "restore-backend-build",
+                      "sources": source_inventory.build_source_domains(self.inventory, "backend"),
+                      "build": self.context, "artifacts": {}}
         self.identities = {}
         for index, (role, (feature, name)) in enumerate(restore_build.ROLES.items()):
             binary = self.backend / name
@@ -48,6 +57,8 @@ class SourceRuntimeTests(unittest.TestCase):
         self.stop = False
         self.addCleanup(patch.stopall)
         patch.object(restore_build, "source_snapshot", side_effect=lambda _: self.snapshot).start()
+        patch.object(restore_build, "capture_inventory", side_effect=lambda *_: self.source_inventory()).start()
+        patch.object(restore_build, "build_context", return_value=self.context).start()
         patch.object(source, "verify_runtime", side_effect=lambda *_: copy.deepcopy(self.runtime)).start()
         self.binding = patch.object(source, "source_binding", return_value={"scope_id": self.plan["source"]["scope_id"],
                                                                             "sha256": "e" * 64}).start()
@@ -62,6 +73,15 @@ class SourceRuntimeTests(unittest.TestCase):
         self.tools = patch.object(source, "ExternalTools").start().return_value
         self.tools.command.return_value = ["node"]
         self.tools.execute.side_effect = self.execute_node
+
+    def source_inventory(self):
+        return {
+            "source": {"snapshot": copy.deepcopy(self.snapshot),
+                       "worktree_fingerprint": "sha256:" + "c" * 64},
+            "files": [],
+            "guard": {"head": self.snapshot["head"], "index_sha256": "d" * 64,
+                      "modes_sha256": "e" * 64},
+        }
 
     def write(self, name, value):
         path = self.work / name

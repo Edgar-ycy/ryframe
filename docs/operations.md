@@ -131,7 +131,7 @@ cargo xtask data restore verify --id <演练ID> --proof .local-tests/restore/bus
 
 ### 生成恢复业务证明
 
-把 `restore-verify-data` 成功返回的完整记录放入绑定文件的 `record`，原备份清单放入 `manifest`，参考数据准备收据的 SHA-256 放入 `dataset_sha256`，保存到忽略目录。前后端必须是清单绑定 SHA 的干净源码，先用 `cargo xtask check recovery runtime build --output .local-tests/restore/build.json --write` 构建并登记实际 API/Worker 产物；前端通过 `corepack pnpm build --real` 生成生产文件和 `.vite/restore-build.json`。按构建收据启动隔离 API/Worker，并在明确运行目录保存对应 `api.json`、`worker.json` 进程收据。
+把 `restore-verify-data` 成功返回的完整记录放入绑定文件的 `record`，原备份清单放入 `manifest`，参考数据准备收据的 SHA-256 放入 `dataset_sha256`，保存到忽略目录。前后端必须是清单绑定 SHA 的干净源码，先用 `cargo xtask check recovery runtime build --output .local-tests/restore/build.json --write` 构建并登记实际 API/Worker 产物；前端通过 `corepack pnpm build --real` 生成生产文件和 `.vite/restore-build.json`。两份当前构建收据均使用 v2 格式，分开绑定按产物角色计算的产品输入、验收工具输入、完整源码清单、实际工具链和有效构建参数；前端另绑定 production 模式读取的环境文件及完整 `dist` 文件清单。旧格式仅保留为历史文件，不能用于当前恢复。按构建收据启动隔离 API/Worker，并在明确运行目录保存对应 `api.json`、`worker.json` 进程收据。
 
 启动前端生产 preview 后，执行 `cargo xtask check recovery runtime bind --build-receipt <build.json> --runtime-dir <进程收据目录> --bindings <绑定文件> --frontend-url <本机站点地址> --output .local-tests/restore/runtime.json --write`。该入口固定当前后端和 `--frontend-dir` 选择的前端工作树，核对源码、二进制、进程创建身份、探针监听端口及实际返回的前端文件，配置目录正确或 HTTP 200 均不能单独充当来源证明。
 

@@ -9,10 +9,12 @@ from pathlib import Path
 import re
 
 from source_inventory import (
+    build_source_domains,
     capture_inventory,
     canonical_digest,
     file_inventory,
     fingerprints,
+    validate_build_source_domains,
 )
 
 _BRIDGES = ContextVar("artifact_source_bridges", default=None)
@@ -30,7 +32,12 @@ def current_execution_source(root: Path) -> dict:
 def build_source(receipt: dict) -> dict:
     if receipt.get("kind") == "devex-clone-tool-build":
         return receipt["source"]
-    return {"snapshot": receipt["source"]}
+    repository = {"restore-backend-build": "backend", "restore-frontend-build": "frontend"}.get(
+        receipt.get("kind")
+    )
+    if repository is None:
+        raise ValueError("构建来源类型无效")
+    return validate_build_source_domains(receipt.get("sources"), repository)["full"]["source"]
 
 
 def verify_inventory_source(inventory: dict, receipt: dict) -> None:
@@ -159,13 +166,13 @@ def _maintenance_build_root(root: Path, path: Path, receipt: dict) -> Path:
 def _verify_bridge_build(root: Path, path: Path, receipt: dict) -> None:
     kind = receipt.get("kind")
     if kind == "restore-backend-build":
-        from restore_build import verify_build_artifacts
+        from restore_build import validate_build_context, verify_build_artifacts
 
-        fields = {"format_version", "kind", "source", "artifacts"}
-        if "source_inventory" in receipt:
-            fields.add("source_inventory")
-        if set(receipt) != fields or receipt.get("format_version") != 1:
+        fields = {"format_version", "kind", "sources", "build", "artifacts"}
+        if set(receipt) != fields or receipt.get("format_version") != 2:
             raise ValueError("API/Worker 构建收据字段无效")
+        validate_build_source_domains(receipt["sources"], "backend")
+        validate_build_context(receipt["build"])
         core = {"executable", "command", "bytes", "sha256"}
         for artifact in receipt.get("artifacts", {}).values():
             artifact_fields = frozenset(artifact) if isinstance(artifact, dict) else frozenset()
@@ -193,7 +200,8 @@ def _bridge_registration(root: Path, binding: dict, current: dict, *, inherited:
     inventory = read_binding(root, bridge["inventory"])
     _verify_bridge_build(root, Path(bridge["build"]["path"]), receipt)
     verify_inventory_source(inventory, receipt)
-    if receipt.get("source_inventory") is not None and receipt["source_inventory"] != inventory:
+    if (receipt.get("kind") == "restore-backend-build"
+            and receipt["sources"]["full"] != inventory):
         raise ValueError("构建收据与来源桥接绑定了不同的构建时 inventory")
     original = fingerprints(inventory)
     verify_execution_source(bridge["audited_source"], "来源桥接 audited_source")
@@ -274,6 +282,35 @@ def source_check(root: Path):
 
 def reusable_artifact_source(root: Path, receipt: dict) -> dict | None:
     """返回构建时的原始来源；执行时的工具来源由调用方单独记录。"""
+    kind = receipt.get("kind")
+    repository = {"restore-backend-build": "backend", "restore-frontend-build": "frontend"}.get(kind)
+    if repository is not None:
+        expected_fields = ({"format_version", "kind", "sources", "build", "artifacts"}
+                           if repository == "backend"
+                           else {"format_version", "kind", "sources", "build", "files"})
+        if receipt.get("format_version") != 2 or set(receipt) != expected_fields:
+            raise ValueError("当前构建收据字段无效")
+        sources = validate_build_source_domains(receipt.get("sources"), repository)
+        scope = _BRIDGES.get()
+        if scope is not None and root.resolve() != scope[0]:
+            return None
+        registration = scope[1].get(canonical_digest(receipt)) if scope is not None else None
+        current_inventory = (scope[3] if scope is not None and root.resolve() == scope[0]
+                             else capture_inventory(root))
+        if (not registration or not registration["inherited"]) and (
+                sources["product"] != build_source_domains(current_inventory, repository)["product"]):
+            raise ValueError("产品构建输入已经变化，必须重新编译")
+        if kind == "restore-frontend-build":
+            from source_inventory import frontend_environment_files
+
+            if receipt.get("build", {}).get("environment_files") != frontend_environment_files(root):
+                raise ValueError("前端有效构建环境文件已经变化，必须重新编译")
+            return copy.deepcopy(sources["full"]["source"])
+        from restore_build import build_context
+
+        if receipt.get("build") != build_context(root):
+            raise ValueError("构建命令、工具链或有效环境已经变化，必须重新编译")
+        return copy.deepcopy(sources["full"]["source"])
     inventory, inherited = receipt.get("source_inventory"), False
     scope = _BRIDGES.get()
     if scope is not None:

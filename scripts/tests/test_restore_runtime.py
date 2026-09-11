@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import restore_build
 import restore_runtime
 import restore_runtime_evidence
+import source_inventory
 from workspace_directory import WorkspaceDirectory
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -56,14 +57,14 @@ class RestoreRuntimeTests(unittest.TestCase):
             patch.object(
                 restore_build,
                 "capture_inventory",
-                side_effect=lambda _root, _source: copy.deepcopy(INVENTORY),
+                side_effect=lambda *_args: copy.deepcopy(INVENTORY),
             )
         )
         self.enterContext(
             patch.object(
                 restore_runtime,
                 "capture_inventory",
-                side_effect=lambda _root, _source: copy.deepcopy(INVENTORY),
+                side_effect=lambda *_args: copy.deepcopy(INVENTORY),
             )
         )
         local = ROOT / ".local-tests/python-unit"
@@ -83,6 +84,8 @@ class RestoreRuntimeTests(unittest.TestCase):
         return path
 
     def cargo_run(self, command, **_kwargs):
+        if command in (["rustc", "-vV"], ["cargo", "-V"]):
+            return subprocess.run(command, **_kwargs)
         name = command[command.index("--bin") + 1]
         executable = self.backend / name
         executable.write_bytes(name.encode())
@@ -118,9 +121,18 @@ class RestoreRuntimeTests(unittest.TestCase):
             backend_build = restore_build.build(self.backend, self.cargo_run)
         build_path = self.write_json(self.root / "backend-build.json", backend_build)
         frontend_build = {
-            "format_version": 1,
+            "format_version": 2,
             "kind": "restore-frontend-build",
-            "source": SOURCE,
+            "sources": source_inventory.build_source_domains(INVENTORY, "frontend"),
+            "build": {
+                "command": ["vite", "build"], "mode": "production", "target": "vite-default",
+                "toolchain": {"node": "v24.0.0",
+                              "pnpm": {"pinned": "11.20.0", "observed": "11.20.0"},
+                              "vite": "7.1.7"},
+                "environment": {"variables": [],
+                                "sha256": source_inventory.canonical_digest([])},
+                "environment_files": [],
+            },
             "files": restore_runtime.frontend_files(self.frontend),
         }
         frontend_path = self.write_json(
@@ -161,7 +173,6 @@ class RestoreRuntimeTests(unittest.TestCase):
     def runtime_patches(self, *, fake_probes):
         with contextlib.ExitStack() as stack:
             stack.enter_context(patch.object(restore_build, "source_snapshot", return_value=SOURCE))
-            stack.enter_context(patch.object(restore_runtime, "source_snapshot", return_value=SOURCE))
             stack.enter_context(
                 patch.object(
                     restore_runtime,
