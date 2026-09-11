@@ -137,7 +137,17 @@ def validate_request(backend: Path, directory: Path, value: dict, request: dict,
 
 def producers_stopped(backend: Path, directory: Path, value: dict) -> None:
     if any((directory / name).exists() for name in ("post-copy.json", "seed-runtime.json")):
-        raise ValueError("本存储重启入口限定复制后业务交接之前")
+        from devex_clone_run_state import load_state
+        from devex_clone_seed_rebind import published_restart_guard
+
+        attempts = load_state(directory)["attempts"]
+        if not attempts:
+            raise ValueError("已发布 seed 存储重启缺少当前持锁阶段")
+        attempt = attempts[-1]
+        if (attempt["stage"], attempt["mode"], attempt["status"]) != ("storage-target", "restart", "running"):
+            raise ValueError("已发布 seed 仅允许当前持锁的 target 存储重启")
+        published_restart_guard(backend, directory, attempt["number"])
+        return
     source = read_json(bound_file(backend, value["source_request"]))
     processes = {role: read_json(bound_file(backend, item))["identity"] for role, item in source["processes"].items()}
     # 此启动证明没有外部查询 runner；权限不足时仍只接受原生身份结果。

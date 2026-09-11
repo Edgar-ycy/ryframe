@@ -329,6 +329,12 @@ def execute_seed(backend, directory, value, mode, number, request_file=None, pro
                 observed.update(restart_ready=False, stopped_evidence_error_type=type(error).__name__)
         return observed
     require_quiet(backend, directory, number)
+    if mode == "source-rebind":
+        if request_file is None:
+            raise ValueError("source-rebind 需要明确 successor --request")
+        from devex_clone_seed_rebind import register_rebind
+
+        return register_rebind(backend, directory, request_file, number)
     if mode == "arm-input":
         if request_file is None:
             raise ValueError("arm-input 需要明确 --request")

@@ -57,11 +57,12 @@ def _environment(backend: Path, descriptor: dict) -> dict:
 
 def _successor_request(request: dict) -> bool:
     kind = request.get("kind")
+    rebind = {"source_rebind"} if "source_rebind" in request else set()
     if kind == "devex-clone-seed-arm-input":
-        exact(request, REQUEST_FIELDS)
+        exact(request, REQUEST_FIELDS | rebind)
         return False
     if kind == "devex-clone-seed-successor-arm-input":
-        exact(request, SUCCESSOR_REQUEST_FIELDS)
+        exact(request, SUCCESSOR_REQUEST_FIELDS | rebind)
         return True
     raise ValueError("arm-input 请求类型无效")
 
@@ -95,6 +96,10 @@ def _validate_arm_request(
     backend: Path, request: dict, source: dict, *, live_storage: bool
 ) -> dict:
     successor = _successor_request(request)
+    if request.get("source_rebind") != source.get("source_rebind"):
+        raise ValueError("arm 请求必须冻结来源当前的显式重绑定收据")
+    if "source_rebind" in request:
+        bound_file(backend, request["source_rebind"])
     if request["format_version"] != 1:
         raise ValueError("arm-input 请求类型无效")
     name(request["id"])
@@ -169,6 +174,8 @@ def _manifest(request: dict, inputs: dict) -> dict:
     }
     if _successor_request(request):
         result["review_successor"] = copy.deepcopy(request["review_successor"])
+    if "source_rebind" in request:
+        result["source_rebind"] = copy.deepcopy(request["source_rebind"])
     return result
 
 
@@ -182,9 +189,12 @@ def _published(backend: Path, directory: Path, number: int) -> list[dict]:
         request = read_json(bound_file(backend, value.get("request", {})))
         successor = _successor_request(request)
         fields = SUCCESSOR_RESULT_FIELDS if successor else RESULT_FIELDS
+        if "source_rebind" in request:
+            fields = fields | {"source_rebind"}
         exact(value, fields)
         if (value["status"] != "seed_arm_input_published"
                 or value["source_registration"] != request["source_registration"]
+                or value.get("source_rebind") != request.get("source_rebind")
                 or value.get("review_successor") != request.get("review_successor")):
             raise ValueError("历史 arm-input 外层结果类型无效")
         results.append(value)
@@ -246,6 +256,8 @@ def publish_arm_input(backend: Path, directory: Path, request_file: Path,
             raise ValueError("同一 seed run 的 arm 目标必须继承同一已发布源")
         if any(item.get("review_successor") != request.get("review_successor") for item in prior):
             raise ValueError("同一 seed run 的 arm 目标必须继承同一 review successor")
+        if any(item.get("source_rebind") != request.get("source_rebind") for item in prior):
+            raise ValueError("两侧 arm 必须共享同一冻结存储重绑定")
         if any(item["target_side"] == before["target_side"] for item in prior):
             raise ValueError("同一 seed run 已发布该 arm 目标侧")
         output = _existing_output(directory, number)
@@ -281,5 +293,9 @@ def publish_arm_input(backend: Path, directory: Path, request_file: Path,
     }
     if successor:
         result["review_successor"] = copy.deepcopy(request["review_successor"])
-    exact(result, SUCCESSOR_RESULT_FIELDS if successor else RESULT_FIELDS)
+    fields = SUCCESSOR_RESULT_FIELDS if successor else RESULT_FIELDS
+    if "source_rebind" in request:
+        result["source_rebind"] = copy.deepcopy(request["source_rebind"])
+        fields = fields | {"source_rebind"}
+    exact(result, fields)
     return result

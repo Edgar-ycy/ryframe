@@ -66,7 +66,7 @@ def add_commands(commands) -> None:
     seed.add_argument("--operation", choices=("register", "quotas-plan", "quotas-apply", "quotas-reconcile",
                       "departments-plan", "departments-apply", "departments-reconcile", "departments-verify",
                       "identities-apply", "identities-verify", "prepare",
-                      "start", "close", "source-register", "arm-input", "stop", "status", "recover",
+                      "start", "close", "source-register", "source-rebind", "arm-input", "stop", "status", "recover",
                       "recover-session"), required=True)
     seed.add_argument("--request", type=Path)
     seed.add_argument("--producer-binding", type=Path)
@@ -162,9 +162,9 @@ def dispatch(args, backend: Path) -> dict:
         result = execute(backend, directory, "cache-target", args.operation, cache_request=args.request)
         return {key: result[key] for key in ("status", "stage", "mode", "attempt", "restore_qualified")}
     if args.command == "seed-runtime":
-        request_operations = {"register", "arm-input"}
+        request_operations = {"register", "arm-input", "source-rebind"}
         if (args.operation in request_operations) != (args.request is not None):
-            raise ValueError("仅 seed register/arm-input 且必须明确提供 --request")
+            raise ValueError("仅 seed register/arm-input/source-rebind 且必须明确提供 --request")
         if (args.operation == "recover-session") != (args.producer_binding is not None):
             raise ValueError("仅 seed recover-session 且必须明确提供 --producer-binding")
         if args.operation == "status":
@@ -174,7 +174,8 @@ def dispatch(args, backend: Path) -> dict:
         if not args.write:
             raise ValueError("seed 操作需要显式 --write")
         producer = read_json(local_path(backend, str(args.producer_binding))) if args.producer_binding else None
-        result = execute(backend, directory, "seed-runtime", args.operation, seed_request=args.request, producer_binding=producer)
+        request = evidence_path(backend, args.request) if args.request is not None else None
+        result = execute(backend, directory, "seed-runtime", args.operation, seed_request=request, producer_binding=producer)
         return {key: result[key] for key in ("status", "stage", "mode", "attempt", "restore_qualified")}
     if args.command == "post-copy":
         if (args.operation in {"register", "amend"}) != (args.request is not None):

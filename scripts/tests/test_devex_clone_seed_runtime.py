@@ -258,7 +258,7 @@ class RuntimeTests(unittest.TestCase):
         def args(mode, *extra):
             return parser.parse_args(["seed-runtime", "--backend-dir", str(self.backend),
                 "--run-dir", str(self.directory), "--operation", mode, *extra])
-        for mode in ("register", "arm-input", "recover-session", "start", "identities-apply", "quotas-plan", "quotas-apply",
+        for mode in ("register", "arm-input", "source-rebind", "recover-session", "start", "identities-apply", "quotas-plan", "quotas-apply",
                      "quotas-reconcile", "departments-plan", "departments-apply", "departments-reconcile",
                      "departments-verify"):
             with self.subTest(mode=mode), self.assertRaises(ValueError):

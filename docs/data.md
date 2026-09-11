@@ -53,6 +53,10 @@ fresh target 的准备、续作、初始化、复核和只读状态统一从 `ca
 
 复制成功后，`post-copy` 依次登记数据集、准备目标、停用调度并复验实际记录和对象。性能 seed 在同一账本中核对十一个明确租户的配额，创建固定身份并再次验证权限；身份开始后不再调整配额。API 与 Worker 的启动和停止使用登记收据，任务处理完成且全部生产者停止后才生成新的 seed 导出。任何阶段成功都不能替代最终业务、数据或正式恢复验证。
 
+已发布 seed 的对象存储退出后，先通过同一运行的 `cargo xtask check recovery clone storage --run-dir <运行目录> --side target --operation restart --write` 恢复已登记的固定请求，再执行 `cargo xtask check recovery clone seed-runtime --run-dir <运行目录> --operation source-rebind --request <successor关系文件> --write`。重绑定只追加本地结果，保留原发布与内层登记的字节；新结果绑定原存储、当前成功重启收据和完整阶段历史。数据目录的路径及文件身份、端点、二进制、凭据和请求均须相同，原进程必须已退出，全部业务生产者仍须停止。失败或未收尾阶段先核对，不能重复重绑定或用重绑定掩盖未知写入。
+
+重绑定后生成的 base/candidate arm 请求、清单和结果显式绑定同一重绑定收据；来源代次再次变化时停止，不能把原 arm 自动改绑到新进程。只读来源核验不会创建锁或报告，实际导出及复制前还会核对进程创建身份、完整参数和监听端口。上述交接仅恢复开发复制来源的可用性，不构成正式恢复或 RTO 达标证据。
+
 产品构建输入与验收工具来源分开记录。产品输入未变时可复核并复用原产物，工具变化仍需运行对应工具测试；正式恢复始终要求精确干净 SHA。Windows 复制阶段会保护已登记的工具和运行二进制，复制中的数据库和对象写入保持串行，对象前像与回读最多四并发。详细参数以各入口的 `--help` 和账本返回的唯一下一动作准，不复制或改写历史 attempt。
 
 真实全栈导出完成后，通过 `cargo xtask check recovery fixture artifact snapshot ...` 读取精确任务、文件登记和物理对象，并把 create-only 收据写入当前后端 `.local-tests`；删除流程完成后使用同一收据执行 `artifact verify-deleted ...`，只有任务、文件元数据和对象都消失才算完成。xtask 固定后端目录，收据路径不能越出其 `.local-tests`。

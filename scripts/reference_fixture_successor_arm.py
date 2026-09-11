@@ -99,6 +99,8 @@ def build(
         "copy_directory": str(target_copy),
         "build_bridges": copy.deepcopy(source["manifest"]["build_bridges"]),
     }
+    if source.get("source_rebind") is not None:
+        request["source_rebind"] = copy.deepcopy(source["source_rebind"])
     inputs = validate_arm_request(backend, request, live_storage=False)
     if inputs["target_side"] != side:
         raise ValueError("fresh target workspace 与请求 side 不一致")

@@ -203,6 +203,24 @@ class SeedArmTests(unittest.TestCase):
             with self.subTest(unknown_field=field), self.assertRaises(ValueError):
                 arm._inputs(self.backend, None, changed, live_storage=False)
 
+    def test_arm_request_manifest_and_consumer_freeze_same_rebind_receipt(self):
+        import devex_clone_run as run
+
+        receipt = self.file("source-rebind", {"status": "seed_source_rebound"})
+        source = {**self.inputs["source"], "source_rebind": receipt}
+        for request in (self.request, {**self.request, "source_rebind": self.source_registration}):
+            with self.subTest(request=request), self.assertRaises(ValueError):
+                arm._validate_arm_request(self.backend, request, source, live_storage=False)
+        request = {**self.request, "source_rebind": receipt}
+        inputs = {**self.inputs, "source": source}
+        manifest = arm._manifest(request, inputs)
+        self.assertEqual(manifest["source_rebind"], receipt)
+        with patch("devex_clone_seed_source.published_source", return_value=source):
+            self.assertEqual(run._published_seed_source(self.backend, manifest, live_storage=False), source)
+            manifest["source_rebind"] = self.source_registration
+            with self.assertRaises(ValueError):
+                run._published_seed_source(self.backend, manifest, live_storage=False)
+
     def test_successor_inputs_bind_held_c52_and_exact_target_side(self):
         request, source, lifecycle = self.successor_case()
         with (

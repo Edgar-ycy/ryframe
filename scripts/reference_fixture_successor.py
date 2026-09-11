@@ -288,8 +288,8 @@ def _validated_relationship(backend: Path, descriptor: dict) -> dict:
     return value
 
 
-def published_source(
-    backend: Path, descriptor: dict, *, live_storage: bool = False
+def _source_with_loader(
+    backend: Path, descriptor: dict, *, live_storage: bool, loader
 ) -> dict:
     """通过 successor 特例恢复历史 pending seed，不改变普通发布源的就绪规则。"""
     backend = backend.resolve(strict=True)
@@ -315,7 +315,7 @@ def published_source(
             root, seed_target, successor["predecessor_review"]
         )
 
-    source = _deep_published_source(
+    source = loader(
         backend,
         successor["source_result"],
         live_storage=live_storage,
@@ -327,6 +327,10 @@ def published_source(
         or source["seed_target"] != historical_request
     ):
         raise ValueError("发布源与 seed review successor 关系不一致")
+    if source.get("source_rebind") is not None:
+        _, rebind, _ = _document(backend, Path(source["source_rebind"]["path"]), source["source_rebind"])
+        if rebind.get("review_successor") != expected_descriptor:
+            raise ValueError("存储重绑定不属于当前 successor 关系")
     if (
         descriptor != expected_descriptor
         or _validated_relationship(backend, expected_descriptor) != successor
@@ -337,6 +341,11 @@ def published_source(
         "review_successor": successor,
         "review_successor_binding": expected_descriptor,
     }
+
+
+def published_source(backend: Path, descriptor: dict, *, live_storage: bool = False) -> dict:
+    return _source_with_loader(backend, descriptor, live_storage=live_storage,
+                               loader=_deep_published_source)
 
 
 def build(

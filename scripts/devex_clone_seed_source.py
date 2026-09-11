@@ -46,6 +46,8 @@ EVIDENCE_SEQUENCE = (
 EVIDENCE_FILES = set(EVIDENCE_SEQUENCE)
 ALLOWED_AFTER_CLOSE = {
     ("seed-runtime", "source-register"),
+    ("seed-runtime", "source-rebind"),
+    ("seed-runtime", "source-export"),
     ("seed-runtime", "arm-input"),
     ("seed-runtime", "stop"),
     ("seed-runtime", "recover"),
@@ -76,7 +78,7 @@ def _validate_evidence_bindings(backend: Path, value) -> None:
             _validate_evidence_bindings(backend, item)
 
 
-def _published_source(backend: Path, descriptor: dict, *, live_storage: bool,
+def _registered_source(backend: Path, descriptor: dict, *, live_storage: bool,
                       validate_seed_target: Callable[[Path, dict], tuple[dict, dict]]) -> dict:
     """恢复发布源，并由调用方选择 seed 初始化请求的执行资格规则。"""
     backend = backend.resolve(strict=True)
@@ -150,14 +152,24 @@ def _published_source(backend: Path, descriptor: dict, *, live_storage: bool,
             or any(not isinstance(key, str) or not isinstance(value, str)
                    for key, value in environment["environment"].items())):
         raise ValueError("seed 源环境必须是固定文本映射")
-    if live_storage:
-        current = current_storage_binding(backend, directory, "target")
-        if current != storage["storage"]:
-            raise ValueError("seed 源 RustFS 已停止、重启或不再属于原发布代次")
     return {"directory": directory, "result": result, "registration": registration,
             "request": request, "storage": storage, "generation": generation,
             "manifest": original_manifest, "seed_target": seed_target,
             "environment": environment}
+
+
+def _published_source(backend: Path, descriptor: dict, *, live_storage: bool,
+                      validate_seed_target: Callable[[Path, dict], tuple[dict, dict]]) -> dict:
+    from devex_clone_seed_rebind import resolve_storage
+
+    source = _registered_source(backend, descriptor, live_storage=False,
+                                validate_seed_target=validate_seed_target)
+    state = load_state(source["directory"])
+    result = resolve_storage(backend, descriptor, source, state, live_storage=live_storage,
+                              current_storage=current_storage_binding)
+    if load_state(source["directory"]) != state:
+        raise ValueError("seed 发布源核验期间阶段历史变化")
+    return result
 
 
 def published_source(backend: Path, descriptor: dict, *, live_storage: bool = False) -> dict:

@@ -36,6 +36,8 @@ def manifest(backend: Path, value: dict) -> dict:
                   else SEED_TO_ARM_FIELDS)
     else:
         fields = FIELDS
+    if value.get("copy_stage") == "seed_to_arm" and "source_rebind" in value:
+        fields = fields | {"source_rebind"}
     exact(value, fields)
     if value["format_version"] != 1 or value["kind"] != "devex-clone-run":
         raise ValueError("统一验收清单类型无效")
@@ -44,6 +46,8 @@ def manifest(backend: Path, value: dict) -> dict:
         raise ValueError("复制阶段必须明确为来源到 seed 或 seed 到测量侧")
     if value["copy_stage"] == "seed_to_arm":
         bound_file(backend, value["source_registration"])
+        if "source_rebind" in value:
+            bound_file(backend, value["source_rebind"])
         if "review_successor" in value:
             bound_file(backend, value["review_successor"])
             _published_seed_source(backend, value, live_storage=False)
@@ -101,6 +105,8 @@ def registered_manifest(backend: Path, directory: Path) -> dict:
                   else SEED_TO_ARM_FIELDS)
     else:
         fields = FIELDS
+    if value.get("copy_stage") == "seed_to_arm" and "source_rebind" in value:
+        fields = fields | {"source_rebind"}
     exact(value, fields)
     if value["format_version"] != 1 or value["kind"] != "devex-clone-run":
         raise ValueError("固定验收清单类型变化")
@@ -350,8 +356,10 @@ def _published_seed_source(backend: Path, value: dict, *, live_storage: bool) ->
     if "review_successor" not in value:
         from devex_clone_seed_source import published_source
 
-        return published_source(backend, value["source_registration"],
-                                live_storage=live_storage)
+        source = published_source(backend, value["source_registration"], live_storage=live_storage)
+        if source.get("source_rebind") != value.get("source_rebind"):
+            raise ValueError("seed_to_arm 来源的冻结重绑定收据变化")
+        return source
     from reference_fixture_successor import published_source
 
     source = published_source(backend, value["review_successor"],
@@ -361,6 +369,8 @@ def _published_seed_source(backend: Path, value: dict, *, live_storage: bool) ->
             or not isinstance(relationship, dict)
             or relationship.get("source_result") != value["source_registration"]):
         raise ValueError("seed_to_arm 清单的 successor 与 C52 来源不一致")
+    if source.get("source_rebind") != value.get("source_rebind"):
+        raise ValueError("seed_to_arm 来源的冻结重绑定收据变化")
     return source
 
 
@@ -596,7 +606,7 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
     seed_cleanup = stage == "seed-runtime" and mode in {"stop", "recover"}
     storage_cleanup = (stage.startswith("storage-") or stage == "cache-target") and mode in {"stop", "recover"}
     cleanup = session_cleanup or seed_cleanup or storage_cleanup or (stage.startswith("runtime-") and mode in {"stop", "recover"})
-    evidence_handoff = stage == "seed-runtime" and mode == "arm-input"
+    evidence_handoff = stage == "seed-runtime" and mode in {"arm-input", "source-rebind"}
     if session_cleanup or seed_cleanup or storage_cleanup or evidence_handoff:
         value, environment = registered_manifest(backend, directory), None
     elif cleanup:

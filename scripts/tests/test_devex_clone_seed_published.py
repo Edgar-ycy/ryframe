@@ -135,7 +135,8 @@ class PublishedSeedTests(unittest.TestCase):
                 patch.object(source, "validate_request"), \
                 patch.object(source, "initialization_history", return_value=({}, seed_target)), \
                 patch.object(source, "request_binding") as ready, \
-                patch.object(source, "current_storage_binding", return_value=storage):
+                patch.object(source, "current_storage_binding", return_value=storage), \
+                patch("devex_clone_seed_rebind.quiet_producers"):
             observed = source.published_source(self.backend, descriptor, live_storage=True)
         ready.assert_called_once_with(self.backend, seed_target)
         self.assertEqual(observed["seed_target"], seed_target)
