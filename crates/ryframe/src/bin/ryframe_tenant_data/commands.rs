@@ -1,7 +1,18 @@
 use super::{
     args::{Command, InventoryTime},
     context::Context,
+    output,
 };
+
+pub fn validate_outputs(command: &mut Command) -> AppResult<()> {
+    match command {
+        Command::Begin { output, .. } | Command::VerifyData { output, .. } => {
+            *output = output::validate_new_output(output)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
 use chrono::{DateTime, Utc};
 use ryframe_application::ports::backup::*;
 use ryframe_config::AppConfig;
@@ -38,10 +49,16 @@ pub async fn execute(config: &AppConfig, context: &Context, command: Command) ->
             let required = context.repository.required_resources().await?;
             print_json(&context.service.register(manifest, &required).await?)
         }
-        Command::Begin { plan, .. } => {
-            print_json(&context.service.begin_restore(read_json(&plan)?).await?)
-        }
-        Command::VerifyData { id, .. } => print_json(&context.service.verify_data(&id).await?),
+        Command::Begin { plan, output, .. } => output::publish_result(
+            &output,
+            context.service.begin_restore(read_json(&plan)?).await,
+            "恢复开始记录",
+        ),
+        Command::VerifyData { id, output, .. } => output::publish_result(
+            &output,
+            context.service.verify_data(&id).await,
+            "恢复数据核验记录",
+        ),
         Command::VerifyRuntime {
             id,
             proof,

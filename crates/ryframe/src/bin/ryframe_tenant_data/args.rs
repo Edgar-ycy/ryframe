@@ -6,8 +6,8 @@ pub const USAGE: &str = "用法：
   ryframe-tenant-data backup-inventory --output <inventory.json> --source-sha <SHA> <--quiesced-at|--observed-at> <RFC3339>
   ryframe-tenant-data backup-register --manifest <manifest.json> --backup-root <目录>
   ryframe-tenant-data backup-status
-  ryframe-tenant-data restore-begin --plan <plan.json> --restore-config-dir <目录>
-  ryframe-tenant-data restore-verify-data --id <演练ID> --backup-root <目录> --restore-config-dir <目录>
+  ryframe-tenant-data restore-begin --plan <plan.json> --output <running.json> --restore-config-dir <目录>
+  ryframe-tenant-data restore-verify-data --id <演练ID> --backup-root <目录> --output <data-verified.json> --restore-config-dir <目录>
   ryframe-tenant-data restore-verify --id <演练ID> --proof <business-proof.json> --tests-receipt <tests.json> --runtime-receipt <runtime.json> --target-plan <target-plan.json> --runner-root <测试源码目录> --restore-config-dir <目录>
 
 登记库使用 APP_CONFIG_DIR。恢复目标使用独立配置目录；APP_* 覆盖仍生效，最终 scope、物理身份、JWT 与 Redis namespace 必须隔离。
@@ -42,11 +42,13 @@ pub enum Command {
     Begin {
         plan: PathBuf,
         config: PathBuf,
+        output: PathBuf,
     },
     VerifyData {
         id: String,
         root: PathBuf,
         config: PathBuf,
+        output: PathBuf,
     },
     VerifyRuntime {
         id: String,
@@ -105,11 +107,13 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
         "restore-begin" => Command::Begin {
             plan: take("--plan")?.into(),
             config: take("--restore-config-dir")?.into(),
+            output: take("--output")?.into(),
         },
         "restore-verify-data" => Command::VerifyData {
             id: take("--id")?,
             root: take("--backup-root")?.into(),
             config: take("--restore-config-dir")?.into(),
+            output: take("--output")?.into(),
         },
         "restore-verify" => Command::VerifyRuntime {
             id: take("--id")?,

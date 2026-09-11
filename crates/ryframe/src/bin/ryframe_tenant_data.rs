@@ -9,6 +9,8 @@ mod args;
 mod commands;
 #[path = "ryframe_tenant_data/context.rs"]
 mod context;
+#[path = "ryframe_tenant_data/output.rs"]
+mod output;
 #[path = "ryframe_tenant_data/proof.rs"]
 mod proof;
 #[path = "ryframe_tenant_data/proof_file.rs"]
@@ -17,11 +19,12 @@ mod proof_file;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ryframe::crypto::install_crypto_provider()?;
-    let command = args::parse(std::env::args().skip(1)).map_err(AppError::Validation)?;
+    let mut command = args::parse(std::env::args().skip(1)).map_err(AppError::Validation)?;
     if command == args::Command::Help {
         println!("{}", args::USAGE);
         return Ok(());
     }
+    commands::validate_outputs(&mut command)?;
     let environment = Environment::from_env()?;
     let config = AppConfig::load_from_env(environment)?;
     ryframe_kernel::snowflake::initialize(config.snowflake_worker_id)?;

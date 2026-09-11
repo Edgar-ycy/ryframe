@@ -190,6 +190,9 @@ class RestoreInputPlanTests(unittest.TestCase):
         output = self.work / "published-reference.json"
         self.assertEqual(inputs._publish(self.backend, output, lambda: value, ()), value)
         original = output.read_bytes()
+        self.assertEqual(original, inputs._canonical_json_bytes(value))
+        inputs._verify_published(output, value, original)
+        self.assertEqual(list(self.work.glob(f".{output.name}.*.pending")), [])
         with self.assertRaises(ValueError):
             inputs._publish(self.backend, output, lambda: value, ())
         self.assertEqual(output.read_bytes(), original)
@@ -198,6 +201,27 @@ class RestoreInputPlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "发布后"):
             inputs._publish(self.backend, drift_output, build, ())
         self.assertEqual(json.loads(drift_output.read_text(encoding="utf-8")), value)
+
+    def test_publish_rejects_truncated_reread_and_preserves_racing_target(self):
+        value = self.build_reference()
+        content = inputs._canonical_json_bytes(value)
+        truncated = self.work / "truncated-reference.json"
+        truncated.write_bytes(content[:-1])
+        with self.assertRaisesRegex(ValueError, "写后字节"):
+            inputs._verify_published(truncated, value, content)
+
+        output = self.work / "racing-reference.json"
+        original_link = inputs.os.link
+
+        def racing_link(source, destination):
+            Path(destination).write_bytes(b"unrelated partial writer")
+            return original_link(source, destination)
+
+        with patch.object(inputs.os, "link", side_effect=racing_link), \
+                self.assertRaisesRegex(ValueError, "并发创建"):
+            inputs._publish(self.backend, output, lambda: value, ())
+        self.assertEqual(output.read_bytes(), b"unrelated partial writer")
+        self.assertEqual(list(self.work.glob(f".{output.name}.*.pending")), [])
 
     def test_cli_requires_explicit_write_pair_and_accepts_injected_backend_last(self):
         arguments = [

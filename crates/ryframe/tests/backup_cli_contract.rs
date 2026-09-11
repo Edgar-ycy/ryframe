@@ -1,10 +1,14 @@
 #[path = "../src/bin/ryframe_tenant_data/args.rs"]
 mod args;
+#[path = "../src/bin/ryframe_tenant_data/output.rs"]
+mod output;
 #[path = "../src/bin/ryframe_tenant_data/proof_file.rs"]
 mod proof_file;
 
 use args::{Command, InventoryTime, parse};
-use std::{thread, time::Duration};
+use ryframe_kernel::AppError;
+use serde_json::json;
+use std::{fs, thread, time::Duration};
 
 fn arguments(value: &str) -> Result<Command, String> {
     parse(value.split_whitespace().map(String::from))
@@ -36,7 +40,7 @@ fn explicit_commands_require_scoped_inputs_and_reject_duplicate_flags() {
     );
     assert!(arguments("backup-status --backup-root data").is_err());
     let command = arguments(
-        "restore-verify-data --id drill --backup-root data --restore-config-dir isolated",
+        "restore-verify-data --id drill --backup-root data --output verified.json --restore-config-dir isolated",
     )
     .unwrap();
     assert_eq!(command.restore_config().unwrap().to_str(), Some("isolated"));
@@ -52,6 +56,71 @@ fn explicit_commands_require_scoped_inputs_and_reject_duplicate_flags() {
         .is_ok()
     );
     assert!(args::USAGE.contains("外部工具"));
+}
+
+#[test]
+fn restore_records_require_outputs_without_touching_existing_files_on_argument_failure() {
+    assert!(arguments("restore-begin --plan plan.json --restore-config-dir isolated").is_err());
+    assert!(
+        arguments(
+            "restore-verify-data --id drill --backup-root data --restore-config-dir isolated"
+        )
+        .is_err()
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("running.json");
+    let absent = directory.path().join("absent.json");
+    let invalid_absent = format!(
+        "restore-begin --plan plan.json --output {} --restore-config-dir isolated --unknown value",
+        absent.display()
+    );
+    assert!(arguments(&invalid_absent).is_err());
+    assert!(!absent.exists());
+    fs::write(&output, b"keep").unwrap();
+    let invalid = format!(
+        "restore-begin --plan plan.json --output {} --restore-config-dir isolated --unknown value",
+        output.display()
+    );
+    assert!(arguments(&invalid).is_err());
+    assert_eq!(fs::read(&output).unwrap(), b"keep");
+}
+
+#[test]
+fn restore_record_publication_is_create_new_and_canonical() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("恢复 record.json");
+    let value = json!({"z": 1, "nested": {"b": false, "a": "值"}});
+    let published = output::publish_json(&output, &value).unwrap();
+    assert_eq!(published, output.canonicalize().unwrap());
+    let bytes = fs::read(&output).unwrap();
+    assert!(bytes.ends_with(b"\n"));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+        value
+    );
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+    let original = bytes.clone();
+    assert!(output::validate_new_output(&output).is_err());
+    assert!(output::publish_json(&output, &json!({"changed": true})).is_err());
+    assert_eq!(fs::read(&output).unwrap(), original);
+
+    fs::write(&output, b"{}\n").unwrap();
+    assert!(output::verify_published(&output, &value, &original).is_err());
+}
+
+#[test]
+fn business_failure_keeps_original_error_and_does_not_publish_a_record() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("failed.json");
+    let error = output::publish_result::<serde_json::Value>(
+        &output,
+        Err(AppError::Conflict("原始业务失败".into())),
+        "恢复开始记录",
+    )
+    .unwrap_err();
+    assert_eq!(error.to_string(), "数据冲突: 原始业务失败");
+    assert!(!output.exists());
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
 }
 
 #[test]

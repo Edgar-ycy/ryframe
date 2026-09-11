@@ -6,10 +6,11 @@ import argparse
 import copy
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import sys
+import uuid
 
-from devex_clone_capture import read_json, write_json
 from devex_clone_model import exact, local_path
 from devex_clone_seed_arm import verify_published_arm_input
 from devex_clone_source_proof import REQUEST_FIELDS
@@ -39,7 +40,58 @@ def _new_path(backend: Path, path: Path, label: str) -> Path:
     result = local_path(backend, str(requested.absolute()), new=True)
     if not result.parent.is_dir():
         raise ValueError(f"{label}的父目录必须已经存在")
-    return result
+    return result.parent.resolve(strict=True) / result.name
+
+
+def _canonical_json_bytes(value: dict) -> bytes:
+    content = (
+        json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    ).encode("utf-8")
+    if len(content) > 16 * 1024 * 1024:
+        raise ValueError("正式恢复输入不能超过 16 MiB")
+    return content
+
+
+def _verify_published(path: Path, value: dict, content: bytes) -> None:
+    with path.open("rb") as stream:
+        observed = stream.read(16 * 1024 * 1024 + 1)
+    if observed != content:
+        raise ValueError("正式恢复输入写后字节与规范结果不同")
+    if json.loads(observed) != value:
+        raise ValueError("正式恢复输入写后内容与规范结果不同")
+
+
+def _publish_json(target: Path, value: dict) -> None:
+    """在同目录完整落盘后以 create-new 语义发布，绝不删除已发布结果。"""
+    content = _canonical_json_bytes(value)
+    pending = target.with_name(f".{target.name}.{uuid.uuid4().hex}.pending")
+    published = False
+    try:
+        with pending.open("xb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        _verify_published(pending, value, content)
+        try:
+            os.link(pending, target)
+        except FileExistsError as error:
+            raise ValueError("正式恢复输入已被并发创建，禁止覆盖") from error
+        published = True
+        try:
+            _verify_published(target, value, content)
+            if target.resolve(strict=True) != target:
+                raise ValueError("正式恢复输入写后规范路径发生变化")
+        except (OSError, ValueError) as error:
+            raise ValueError(
+                "正式恢复输入已经创建但写后复核失败；必须保留并核对"
+            ) from error
+    finally:
+        try:
+            pending.unlink(missing_ok=True)
+        except OSError as error:
+            if not published:
+                raise
+            print(f"正式恢复输入已发布，但临时文件清理失败：{error}", file=sys.stderr)
 
 
 def _independent_work_dir(
@@ -255,8 +307,8 @@ def _publish(backend: Path, output: Path, build, arguments: tuple) -> dict:
     value = build(*arguments)
     if build(*arguments) != value:
         raise ValueError("正式恢复输入在发布前发生变化")
-    write_json(target, value)
-    if read_json(target) != value or build(*arguments) != value:
+    _publish_json(target, value)
+    if build(*arguments) != value:
         raise ValueError("正式恢复输入在发布后发生变化；保留文件且禁止重放")
     return value
 
