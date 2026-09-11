@@ -68,6 +68,23 @@ class ReleaseWorkflowTests(unittest.TestCase):
                     if "RYFRAME_CI_BACKEND_REPOSITORY" in step.get("env", {})]
         self.assertEqual(bindings, ["${{ github.repository }}"])
 
+    def test_release_validation_uses_the_unified_xtask_entry(self):
+        steps = workflow("release.yml")["jobs"]["validate-release"]["steps"]
+        by_name = {step["name"]: step for step in steps}
+        command = by_name["Validate release inputs"]["run"]
+        self.assertIn("cargo xtask check release", command)
+        self.assertIn("--frontend-dir frontend", command)
+        self.assertNotIn("python scripts/validate_release.py", command)
+        self.assertEqual(
+            by_name["固定发布核验 Python 3.12"]["with"]["python-version"],
+            "3.12",
+        )
+        self.assertTrue(
+            by_name["安装发布核验 Rust 工具链"]["uses"].startswith(
+                "dtolnay/rust-toolchain@"
+            )
+        )
+
     def test_extended_browser_commands_bind_fixture_and_server_explicitly(self):
         steps = {
             step["name"]: step

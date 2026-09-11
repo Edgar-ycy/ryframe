@@ -76,6 +76,14 @@ jobs:
             exit 1
           }
 
+      - name: 固定发布核验 Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: 安装发布核验 Rust 工具链
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+
       - name: Validate release inputs
         shell: bash
         env:
@@ -84,7 +92,7 @@ jobs:
           set -euo pipefail
           backend_commit="$(git rev-parse "${RELEASE_TAG}^{commit}")"
           frontend_commit="$(git -C frontend rev-parse "${RELEASE_TAG}^{commit}")"
-          python scripts/validate_release.py \
+          cargo xtask check release \
             --tag "$RELEASE_TAG" \
             --frontend-dir frontend \
             --backend-repository "$BACKEND_REPOSITORY" \
