@@ -42,11 +42,6 @@ pub(super) fn execute(
         options,
         definition,
     )?;
-    let baseline_provenance = provenance::collect(
-        &roots.baseline_backend,
-        &roots.baseline_frontend,
-        options.baseline_contract,
-    )?;
     preflight::check(
         &roots.baseline_backend,
         &roots.baseline_frontend,
@@ -58,6 +53,11 @@ pub(super) fn execute(
         &roots.candidate_frontend,
         &options.run,
         definition,
+    )?;
+    let baseline_provenance = provenance::collect(
+        &roots.baseline_backend,
+        &roots.baseline_frontend,
+        options.baseline_contract,
     )?;
 
     let devex_root = coordinator_backend.join(".local-tests/devex");
@@ -84,6 +84,19 @@ pub(super) fn execute(
         options.baseline_contract,
         baseline_provenance,
     )?;
+    let prepared_provenance = provenance::collect(
+        &roots.baseline_backend,
+        &roots.baseline_frontend,
+        options.baseline_contract,
+    )?;
+    if prepared_provenance
+        != baseline
+            .pairing
+            .as_ref()
+            .and_then(|value| value.baseline_provenance.clone())
+    {
+        return Err("baseline 来源在创建运行记录期间发生变化，拒绝开始测量".into());
+    }
 
     let execution = execute_samples(
         &roots,

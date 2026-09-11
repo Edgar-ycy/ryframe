@@ -37,9 +37,12 @@ pub(super) fn collect(
     let patch_sha256 = sha256(&patch);
     let mut frontend_commit = None;
     let mut adapter_paths = Vec::new();
+    let mut adapter_tree = None;
     if contract == BaselineContract::LegacyStableReadinessB0V1 {
         adapter_paths = changed_paths(backend_root, base_commit, &adapter_commit)?;
-        validate_stable_readiness_adapter(&patch, &patch_sha256, &adapter_paths)?;
+        let tree = git_text(backend_root, &["rev-parse", "HEAD^{tree}"])?;
+        validate_stable_readiness_adapter(&patch, &patch_sha256, &adapter_paths, &tree)?;
+        adapter_tree = Some(tree);
         require_commit(
             frontend_root,
             "前端 B0",
@@ -54,6 +57,7 @@ pub(super) fn collect(
         base_commit: base_commit.to_owned(),
         adapter_commit,
         patch_sha256,
+        adapter_tree,
         frontend_commit,
         adapter_paths,
     }))
@@ -63,6 +67,7 @@ fn validate_stable_readiness_adapter(
     patch: &[u8],
     patch_sha256: &str,
     paths: &[String],
+    tree: &str,
 ) -> Result<()> {
     if sha256(BaselineContract::STABLE_READINESS_B0_ADAPTER_PATCH)
         != BaselineContract::STABLE_READINESS_B0_PATCH_SHA256
@@ -78,6 +83,13 @@ fn validate_stable_readiness_adapter(
     if paths.iter().map(String::as_str).ne(expected) {
         return Err(format!(
             "stable-readiness B0 适配越过工具层：预期 {expected:?}，实际 {paths:?}"
+        )
+        .into());
+    }
+    if tree != BaselineContract::STABLE_READINESS_B0_ADAPTER_TREE {
+        return Err(format!(
+            "stable-readiness B0 适配树不匹配：预期 {}，实际 {tree}",
+            BaselineContract::STABLE_READINESS_B0_ADAPTER_TREE
         )
         .into());
     }
@@ -193,5 +205,63 @@ mod tests {
             patch.matches("diff --git ").count(),
             BaselineContract::STABLE_READINESS_B0_ADAPTER_PATHS.len()
         );
+    }
+
+    #[test]
+    fn embedded_adapter_reconstructs_the_registered_b0_tree() {
+        let root = crate::workspace::root_dir();
+        let index = root.join("target").join(format!(
+            "stable-readiness-b0-adapter-{}.index",
+            std::process::id()
+        ));
+        let patch = root.join("xtask/assets/baseline-adapters/stable-readiness-b0-v1.patch");
+        let _ = std::fs::remove_file(&index);
+        let result = (|| -> Result<()> {
+            run_git_with_index(
+                &root,
+                &index,
+                &[
+                    "read-tree",
+                    BaselineContract::STABLE_READINESS_B0_BASE_COMMIT,
+                ],
+            )?;
+            let output = Command::new("git")
+                .args(["apply", "--cached", "--whitespace=nowarn"])
+                .arg(&patch)
+                .env("GIT_INDEX_FILE", &index)
+                .current_dir(&root)
+                .output()?;
+            if !output.status.success() {
+                return Err(format!(
+                    "无法从内嵌补丁重建 B0 适配树：{}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                )
+                .into());
+            }
+            let tree = run_git_with_index(&root, &index, &["write-tree"])?;
+            if tree != BaselineContract::STABLE_READINESS_B0_ADAPTER_TREE {
+                return Err(format!("B0 适配树不一致：{tree}").into());
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_file(index);
+        result.unwrap();
+    }
+
+    fn run_git_with_index(root: &Path, index: &Path, args: &[&str]) -> Result<String> {
+        let output = Command::new("git")
+            .args(args)
+            .env("GIT_INDEX_FILE", index)
+            .current_dir(root)
+            .output()?;
+        if !output.status.success() {
+            return Err(format!(
+                "Git 临时索引命令失败：git {}：{}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stderr).trim()
+            )
+            .into());
+        }
+        Ok(String::from_utf8(output.stdout)?.trim().to_owned())
     }
 }

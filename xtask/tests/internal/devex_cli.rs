@@ -302,6 +302,39 @@ fn stable_readiness_b0_contract_only_accepts_adapted_suites() {
     .unwrap_err()
     .to_string();
     assert!(error.contains("不允许 suite `frontend-fast`"), "{error}");
+
+    let cli = parse(strings(&[
+        "check",
+        "perf",
+        "paired",
+        "--base-backend",
+        "D:/性能 基线/后端",
+        "--candidate-backend",
+        "D:/性能 候选/后端",
+        "--base-frontend",
+        "D:/性能 基线/前端",
+        "--candidate-frontend",
+        "D:/性能 候选/前端",
+        "--baseline-contract",
+        "legacy-stable-readiness-b0-v1",
+        "--suite",
+        "resource-generator",
+        "--variant",
+        "post",
+        "--runs",
+        "6",
+        "--cache",
+        "warm",
+    ]))
+    .unwrap();
+    let Command::Check(CheckCommand::Perf(DevexCommand::Paired(options))) = cli.command else {
+        panic!("应解析为 DevEx paired");
+    };
+    assert_eq!(options.baseline_backend, Path::new("D:/性能 基线/后端"));
+    assert_eq!(
+        options.candidate_frontend.as_deref(),
+        Some(Path::new("D:/性能 候选/前端"))
+    );
 }
 
 #[test]

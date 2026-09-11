@@ -25,6 +25,8 @@ impl BaselineContract {
         "0087ea2ecf62530d042b9e52f5c950fb34c66d78";
     pub(crate) const STABLE_READINESS_B0_PATCH_SHA256: &'static str =
         "sha256:28ad29f21ca9fd58356d059700bcc871172466e0a62286c5ccdbf68b1ed3fba3";
+    pub(crate) const STABLE_READINESS_B0_ADAPTER_TREE: &'static str =
+        "2ff15e7f34da1749c7eb27a1a025b9d3811b87a7";
     pub(crate) const STABLE_READINESS_B0_ADAPTER_PATHS: [&'static str; 1] = ["xtask/src/cli.rs"];
     pub(crate) const STABLE_READINESS_B0_ADAPTER_PATCH: &'static [u8] =
         include_bytes!("../../../assets/baseline-adapters/stable-readiness-b0-v1.patch");
@@ -92,6 +94,8 @@ pub(crate) struct BaselineProvenance {
     pub(crate) base_commit: String,
     pub(crate) adapter_commit: String,
     pub(crate) patch_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) adapter_tree: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) frontend_commit: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

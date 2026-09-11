@@ -1,7 +1,10 @@
+use sha2::{Digest, Sha256};
+
 use crate::{Result, dev::ReadyKind};
 
 use super::{RunSummary, SampleRecord};
-use crate::devex::model::{BaselineContract, DevexSuite, PairingMetadata};
+use crate::devex::metadata::RunMetadata;
+use crate::devex::model::{BaselineContract, BaselineProvenance, DevexSuite, PairingMetadata};
 
 pub(super) fn validate(
     baseline: &RunSummary,
@@ -60,17 +63,73 @@ fn validate_stable_readiness_b0(
         .baseline_provenance
         .as_ref()
         .ok_or("legacy-stable-readiness-b0-v1 缺少 baseline 来源证据")?;
-    if provenance.base_commit != BaselineContract::STABLE_READINESS_B0_BASE_COMMIT
-        || !valid_git_commit(&provenance.adapter_commit)
-        || provenance.adapter_commit == provenance.base_commit
-        || provenance.patch_sha256 != BaselineContract::STABLE_READINESS_B0_PATCH_SHA256
-        || provenance.frontend_commit.as_deref()
-            != Some(BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT)
-        || provenance.adapter_paths != BaselineContract::STABLE_READINESS_B0_ADAPTER_PATHS
-    {
+    if !valid_stable_readiness_provenance(provenance) {
         return Err("legacy-stable-readiness-b0-v1 来源或工具层适配证据无效".into());
     }
     Ok(())
+}
+
+pub(super) fn validate_source_binding(metadata: &RunMetadata) -> Result<()> {
+    let Some(pairing) = metadata.pairing.as_ref() else {
+        return Ok(());
+    };
+    if pairing.arm != crate::devex::model::PairedArm::Baseline
+        || pairing.baseline_contract != Some(BaselineContract::LegacyStableReadinessB0V1)
+    {
+        return Ok(());
+    }
+    let provenance = pairing
+        .baseline_provenance
+        .as_ref()
+        .ok_or("legacy-stable-readiness-b0-v1 缺少 baseline 来源证据")?;
+    if !valid_stable_readiness_provenance(provenance) {
+        return Err("legacy-stable-readiness-b0-v1 来源或工具层适配证据无效".into());
+    }
+    let frontend = metadata
+        .frontend
+        .as_ref()
+        .ok_or("legacy-stable-readiness-b0-v1 缺少前端 B0 来源")?;
+    if metadata.backend.commit.as_deref() != Some(provenance.adapter_commit.as_str())
+        || metadata.backend.dirty != Some(false)
+        || metadata.backend.worktree_fingerprint
+            != clean_worktree_fingerprint(&provenance.adapter_commit)
+        || frontend.commit.as_deref() != provenance.frontend_commit.as_deref()
+        || frontend.dirty != Some(false)
+        || frontend.worktree_fingerprint
+            != clean_worktree_fingerprint(BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT)
+    {
+        return Err("legacy-stable-readiness-b0-v1 报告与实际 B0 源码身份不一致".into());
+    }
+    Ok(())
+}
+
+fn valid_stable_readiness_provenance(provenance: &BaselineProvenance) -> bool {
+    provenance.base_commit == BaselineContract::STABLE_READINESS_B0_BASE_COMMIT
+        && valid_git_commit(&provenance.adapter_commit)
+        && provenance.adapter_commit != provenance.base_commit
+        && provenance.patch_sha256 == BaselineContract::STABLE_READINESS_B0_PATCH_SHA256
+        && provenance.adapter_tree.as_deref()
+            == Some(BaselineContract::STABLE_READINESS_B0_ADAPTER_TREE)
+        && provenance.frontend_commit.as_deref()
+            == Some(BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT)
+        && provenance.adapter_paths == BaselineContract::STABLE_READINESS_B0_ADAPTER_PATHS
+}
+
+fn clean_worktree_fingerprint(commit: &str) -> String {
+    let mut digest = Sha256::new();
+    update_digest(&mut digest, commit.as_bytes());
+    update_digest(&mut digest, &[]);
+    let hex = digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("sha256:{hex}")
+}
+
+fn update_digest(digest: &mut Sha256, value: &[u8]) {
+    digest.update((value.len() as u64).to_le_bytes());
+    digest.update(value);
 }
 
 fn validate_legacy_cargo_dev(

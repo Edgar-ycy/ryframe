@@ -193,6 +193,7 @@ pub(super) fn append_sample(run_dir: &Path, sample: &SampleRecord) -> Result<()>
 pub(crate) fn summarize(run_dir: &Path) -> Result<RunSummary> {
     let metadata = read_metadata(run_dir)?;
     validate_execution_contract(&metadata)?;
+    baseline_contract::validate_source_binding(&metadata)?;
     let records = read_samples(run_dir)?;
     validate_samples(&metadata, &records)?;
     let measurements = records
