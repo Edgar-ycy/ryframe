@@ -17,11 +17,19 @@ from full_stack_process import (
     assert_identity, process_identity, read_process, record_process, terminate_owned_process, write_receipt,
 )
 from full_stack_runtime import verify_runtime
-from process_guard import process_guard
 from process_sockets import endpoint, verify_listener
+from runtime_control_lock import ControllerLockSpec, controller_lock as _controller_lock
+from runtime_control_lock import reconcile_lock as _reconcile_controller_lock
 
 LOCK = "worker-control.lock"
 HISTORY = "producer-history.json"
+LOCK_SPEC = ControllerLockSpec(
+    lock_name=LOCK,
+    guard_name="runtime-control.guard",
+    owner_kind="devex-clone-runtime-lock",
+    recovery_kind="devex-clone-runtime-lock-reconciliation",
+    recovery_prefix="controller-reconcile",
+)
 
 
 def _read(path: Path) -> dict:
@@ -33,11 +41,6 @@ def _read(path: Path) -> dict:
     return value
 
 
-def _file_identity(path: Path) -> tuple[int, int]:
-    stat = path.stat()
-    return stat.st_dev, stat.st_ino
-
-
 def _directory(path: Path) -> Path:
     if not path.is_absolute() or any(
             part.is_symlink() or (hasattr(part, "is_junction") and part.is_junction())
@@ -46,68 +49,16 @@ def _directory(path: Path) -> Path:
     return path.resolve(strict=True)
 
 
-def _remove_lock(path: Path, inode: tuple[int, int], owner: dict) -> None:
-    if (_file_identity(path) != inode or _read(path / "owner.json") != owner
-            or {entry.name for entry in path.iterdir()} != {"owner.json"}):
-        raise ValueError("运行控制锁已变化，保留现场并拒绝清理")
-    (path / "owner.json").unlink()
-    path.rmdir()
-
-
-@contextmanager
-def _claim_lock(directory: Path, operation: str):
-    # 与已有 Worker CLI 共用互斥路径；旧的空锁不能被猜测为可清理。
-    path = directory / LOCK
-    identity = process_identity(os.getpid())
-    if identity is None:
-        raise ValueError("无法取得控制器的进程创建身份")
-    owner = {"format_version": 1, "kind": "devex-clone-runtime-lock", "identity": identity,
-             "runtime_directory": str(directory), "operation": operation, "token": uuid.uuid4().hex}
-    try:
-        path.mkdir()
-    except FileExistsError as error:
-        raise ValueError("运行控制正在执行或异常退出；拒绝并发操作，请先核实控制锁") from error
-    inode = _file_identity(path)
-    write_receipt(path / "owner.json", owner)
-    try:
-        yield
-    finally:
-        _remove_lock(path, inode, owner)
-
-
 @contextmanager
 def controller_lock(directory: Path, operation: str):
-    with process_guard(directory, "runtime-control.guard"), _claim_lock(directory, operation):
+    with _controller_lock(directory, operation, LOCK_SPEC):
         yield
-
-
-def _reconcile_lock(directory: Path) -> dict:
-    path = directory / LOCK
-    inode = _file_identity(path)
-    owner = _read(path / "owner.json")
-    if (owner.get("format_version") != 1 or owner.get("kind") != "devex-clone-runtime-lock"
-            or owner.get("runtime_directory") != str(directory)
-            or not isinstance(owner.get("identity"), dict)):
-        raise ValueError("控制锁缺少已登记的创建身份，必须核实现场")
-    identity = owner["identity"]
-    actual = process_identity(identity.get("pid"))
-    if actual == identity:
-        raise ValueError("控制器仍在运行，禁止释放运行控制锁")
-    if not isinstance(identity.get("started"), str) or not identity["started"].isdigit() \
-            or not Path(identity.get("executable", "")).is_absolute():
-        raise ValueError("控制锁的进程创建身份无效")
-    result = {"format_version": 1, "kind": "devex-clone-runtime-lock-reconciliation",
-              "owner": owner, "observed_identity": actual, "remote_writes_reconciled": False}
-    write_receipt(directory / f"controller-reconcile-{uuid.uuid4().hex}.json", result)
-    _remove_lock(path, inode, owner)
-    return result
 
 
 def reconcile_lock(runtime_directory: Path) -> dict:
     """显式核验已退出的控制器，仅释放其精确锁；不停止进程或推定远端写入成功。"""
-    directory = _directory(runtime_directory)
-    with process_guard(directory, "runtime-control.guard"):
-        return _reconcile_lock(directory)
+    result = _reconcile_controller_lock(_directory(runtime_directory), LOCK_SPEC)
+    return {key: value for key, value in result.items() if key != "receipt"}
 
 
 def _identity(directory: Path, receipt: dict, role: str) -> dict | None:

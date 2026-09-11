@@ -161,7 +161,7 @@ class RuntimeControlTests(unittest.TestCase):
         path.mkdir()
         write_receipt(path / "owner.json", {
             "format_version": 1, "kind": "devex-clone-runtime-lock", "identity": identity,
-            "runtime_directory": str(self.directory), "operation": "start", "token": "test",
+            "runtime_directory": str(self.directory), "operation": "start", "token": "a" * 32,
         })
 
     def test_dead_owner_lock_reconciliation_does_not_claim_remote_writes(self):
