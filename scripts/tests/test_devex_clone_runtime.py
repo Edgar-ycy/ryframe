@@ -109,6 +109,18 @@ class RuntimeControlTests(unittest.TestCase):
         self.control("stop", ("worker",))
         self.children[1].wait(timeout=5)
 
+    def test_unlocked_observation_creates_no_lock_history_or_receipt(self):
+        before = {path: path.read_bytes() for path in self.directory.rglob("*") if path.is_file()}
+        result = runtime.observe(
+            self.root, self.directory, ("api", "worker"), "http://127.0.0.1:18210"
+        )
+        after = {path: path.read_bytes() for path in self.directory.rglob("*") if path.is_file()}
+        self.assertEqual(before, after)
+        self.assertEqual(result["kind"], "devex-clone-runtime-observation")
+        self.assertTrue(all(item["state"] == "stopped" for item in result["processes"].values()))
+        self.assertFalse((self.directory / runtime.LOCK).exists())
+        self.assertFalse((self.directory / runtime.HISTORY).exists())
+
     def test_second_role_failure_rolls_back_only_newly_started_roles(self):
         self.verify_listener.side_effect = [None, ValueError("端口身份不匹配")]
         with self.assertRaisesRegex(ValueError, "端口身份不匹配"):

@@ -7,9 +7,7 @@ import os
 from pathlib import Path
 import re
 import shutil
-import subprocess
 import sys
-import threading
 from typing import Callable
 from urllib.parse import urlsplit
 
@@ -17,8 +15,6 @@ from devex_clone_capture import read_json
 from devex_clone_factory_context import configured
 from devex_clone_model import linked, local_path
 from devex_clone_source_proof import require_closed_port
-from full_stack_process_monitor import completion_binding
-from full_stack_process_tree import launch_supervised_process, terminate_owned_process_tree
 from full_stack_provenance import verify_build_evidence
 from full_stack_rate_limit_config import rate_limit_settings
 from reference_fixture_browser_evidence import (
@@ -29,6 +25,10 @@ from reference_fixture_browser_evidence import (
     verify_artifact_manifest,
 )
 from reference_fixture_browser_review import verify_browser_result
+from reference_fixture_browser_process import (
+    failure_process as _failure_process,
+    run_frontend_command as _frontend_command,
+)
 from reference_fixture_browser_security import browser_environment, secret_values
 from restore_build import file_digest
 from restore_frontend_build import validate_frontend_build
@@ -43,6 +43,7 @@ class RuntimeApi:
     output: Callable
     verify: Callable
     control: Callable
+    observe: Callable
 
 
 @dataclass(frozen=True)
@@ -157,6 +158,15 @@ def browser_outputs(frontend: Path, runtime: Path, run_id: str, server: str) -> 
     return outputs
 
 
+def _assert_output_set(runtime: Path, run_id: str, outputs: dict[str, Path], *, fresh: bool) -> None:
+    expected = {path for path in outputs.values() if path.parent == runtime}
+    actual = set(runtime.glob(f"browser-{run_id}-*"))
+    if actual - expected:
+        raise ValueError("Device 浏览器运行目录包含未登记的同 run id 产物")
+    if fresh and (actual or any(path.exists() or linked(path) for path in outputs.values())):
+        raise ValueError("Device 浏览器 run id 已存在产物，禁止重放")
+
+
 def _commands(frontend: Path, server: str) -> list[list[str]]:
     browser = ["check", "--stage", "browser", "--real", "--fixture", "device", "--server", server]
     if server == "dev":
@@ -188,7 +198,7 @@ def _input_guards(binding: dict) -> tuple:
 
 def _plan(api: RuntimeApi, backend: Path, environment_path: Path, output_path: Path,
           run_id: str, server: str, *, require_fresh: bool,
-          process_state: str = "running") -> tuple[dict, dict]:
+          process_state: str = "running", read_only: bool = False) -> tuple[dict, dict]:
     if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", run_id) is None:
         raise ValueError("Device 浏览器 run id 必须是小写字母、数字或连字符")
     if server not in {"dev", "preview"}:
@@ -198,7 +208,9 @@ def _plan(api: RuntimeApi, backend: Path, environment_path: Path, output_path: P
     bootstrap_file, execution, private = api.bootstrap(backend, environment_path)
     runtime = api.output(execution, output_path, new=False)
     verified = api.verify(backend, environment_path, runtime)
-    status = api.control(backend, environment_path, runtime, "status")
+    status = (api.observe if read_only else api.control)(
+        backend, environment_path, runtime, "status"
+    )
     expected_processes = {"api": process_state, "worker": process_state}
     if status["processes"] != expected_processes:
         raise ValueError(f"Device 浏览器核验要求 API 与 Worker 均为 {process_state}")
@@ -229,8 +241,7 @@ def _plan(api: RuntimeApi, backend: Path, environment_path: Path, output_path: P
     outputs = browser_outputs(frontend, runtime, run_id, server)
     if require_fresh and server == "preview" and (frontend / "dist").exists():
         raise ValueError("Device 前端已有生产产物，禁止覆盖未知构建")
-    if require_fresh and any(path.exists() or linked(path) for path in outputs.values()):
-        raise ValueError("Device 浏览器 run id 已存在产物，禁止重放")
+    _assert_output_set(runtime, run_id, outputs, fresh=require_fresh)
     binding = {
         "format_version": 1, "kind": "reference-fixture-browser-binding", "status": "bound",
         "run_id": run_id, "server": server, "scope_id": private["APP_SCOPE_ID"],
@@ -292,120 +303,6 @@ def bind_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_
         raise ValueError("Device 浏览器绑定发布后来源发生变化；保留文件且禁止重放")
     return {"status": "reference_fixture_browser_bound", "binding": _bound(target),
             "run_id": run_id, "server": server, "remote_writes": 0}
-
-
-class OutputCapture:
-    """先在内存中收集受控子进程输出，脱敏后才写入证据文件。"""
-
-    def __init__(self, stream, maximum: int = 64 * 1024 * 1024):
-        self.stream = stream
-        self.maximum = maximum
-        self.chunks: list[bytes] = []
-        self.size = 0
-        self.overflow = False
-        self.error: BaseException | None = None
-        self.thread = threading.Thread(target=self._read, name="device-browser-log", daemon=False)
-
-    def _read(self) -> None:
-        try:
-            while block := self.stream.read(64 * 1024):
-                if not self.overflow and self.size + len(block) <= self.maximum:
-                    self.chunks.append(block)
-                    self.size += len(block)
-                else:
-                    self.overflow = True
-        except BaseException as error:
-            self.error = error
-
-    def start(self) -> None:
-        self.thread.start()
-
-    def finish(self, path: Path, secrets: tuple[str, ...]) -> None:
-        self.thread.join(timeout=15)
-        if self.thread.is_alive():
-            raise TimeoutError("Device 前端日志管道未在进程树停止后关闭")
-        if self.error is not None:
-            raise RuntimeError("Device 前端日志读取失败") from self.error
-        raw = b"".join(self.chunks)
-        for secret in secrets:
-            raw = raw.replace(secret.encode("utf-8"), b"[REDACTED]")
-        with path.open("xb") as stream:
-            stream.write(raw)
-            stream.flush()
-            os.fsync(stream.fileno())
-        if self.overflow:
-            raise ValueError("Device 前端日志超过 64 MiB，完整输出未写入证据")
-
-
-def _command(binding: dict, arguments: list[str]) -> list[str]:
-    corepack = binding["tools"]["corepack"]["path"]
-    if os.name != "nt":
-        return [corepack, "pnpm", *arguments]
-    command = subprocess.list2cmdline([corepack, "pnpm", *arguments])
-    return [binding["tools"]["launcher"]["path"], "/d", "/s", "/c", command]
-
-
-def _process_evidence(process, directory: Path) -> dict:
-    tree = directory / "frontend-tree.json"
-    receipt = directory / "frontend.json"
-    return {"directory": str(directory), "process": _bound(receipt), "tree": _bound(tree),
-            "completion": completion_binding(process.tree)}
-
-
-def _frontend_command(binding: dict, frontend: Path, arguments: list[str], environment: dict,
-                      log: Path, process_dir: Path, timeout: float, secrets: tuple[str, ...]) -> dict:
-    process_dir.mkdir()
-    process = None
-    capture = None
-    error = None
-    try:
-        process = launch_supervised_process(
-            process_dir, "frontend", binding["scope_id"], _command(binding, arguments),
-            frontend, environment, subprocess.PIPE,
-        )
-        if process.supervisor.stdout is None:
-            raise ValueError("Device 前端监督进程没有提供受控日志管道")
-        capture = OutputCapture(process.supervisor.stdout)
-        capture.start()
-        exit_code = process.wait(timeout=timeout)
-        evidence = _process_evidence(process, process_dir)
-        if exit_code != 0:
-            raise subprocess.CalledProcessError(exit_code, ["corepack", "pnpm", *arguments])
-        return evidence
-    except BaseException as caught:
-        error = caught
-        if process is not None:
-            try:
-                terminate_owned_process_tree(process.tree, crash=True)
-                process.wait(timeout=10)
-                completion_binding(process.tree)
-            except BaseException as cleanup:
-                caught.add_note("Device 前端进程树回收失败：" + type(cleanup).__name__)
-        raise
-    finally:
-        if capture is not None:
-            try:
-                capture.finish(log, secrets)
-            except BaseException as cleanup:
-                if error is None:
-                    raise
-                error.add_note("Device 前端日志脱敏失败：" + type(cleanup).__name__)
-
-
-def _failure_process(directory: Path) -> dict:
-    result = {"directory": str(directory)}
-    for name in ("frontend.json", "frontend-tree.json"):
-        path = directory / name
-        if path.is_file():
-            result[name.removesuffix(".json")] = _bound(path)
-    tree_path = directory / "frontend-tree.json"
-    if tree_path.is_file():
-        operation = read_json(tree_path).get("operation_id")
-        for label in ("result", "stopped"):
-            path = directory / f"frontend-tree-{operation}-{label}.json"
-            if isinstance(operation, str) and path.is_file():
-                result[label] = _bound(path)
-    return result
 
 
 def _build_environment(context: dict, binding: dict) -> dict:
@@ -472,6 +369,23 @@ def _run_logs(outputs: dict, server: str) -> dict:
         "build", "build_verify_before", "browser", "build_verify_after"
     ]
     return {name: _bound(outputs[name + "_log"]) for name in keys}
+
+
+def _failure_evidence(outputs: dict, server: str, scope_id: str,
+                      completed: dict) -> tuple[dict, dict]:
+    keys = ["browser"] if server == "dev" else [
+        "build", "build_verify_before", "browser", "build_verify_after"
+    ]
+    processes = dict(completed)
+    logs = {}
+    for name in keys:
+        process_dir = outputs[name + "_process"]
+        if name not in processes and process_dir.is_dir():
+            processes[name] = _failure_process(process_dir, scope_id)
+        log = outputs[name + "_log"]
+        if log.is_file():
+            logs[name] = _bound(log)
+    return processes, logs
 
 
 def run_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_path: Path,
@@ -556,14 +470,9 @@ def run_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_p
                    "intent": _bound(outputs["intent"]), "error_type": type(error).__name__,
                    "returncode": getattr(error, "returncode", None),
                    "unknown_business_writes": business_started}
-        process = outputs.get(stage + "_process")
-        if process is not None:
-            failure["process"] = _failure_process(process)
-        log = outputs.get(stage + "_log")
-        if log is None and business_started:
-            log = outputs["browser_log"]
-        if log is not None and log.is_file():
-            failure["log"] = _bound(log)
+        failure["processes"], failure["logs"] = _failure_evidence(
+            outputs, server, binding["scope_id"], processes
+        )
         if outputs["login_budget"].is_file():
             failure["login_budget"] = _bound(outputs["login_budget"])
         try:
@@ -585,7 +494,7 @@ def verify_browser(api: RuntimeApi, backend: Path, environment_path: Path, outpu
     _binding_path(execution, runtime, path, new=False, run_id=run_id)
     expected, context = _plan(
         api, backend, environment_path, output_path, run_id, server,
-        require_fresh=False, process_state="stopped" if closed else "running",
+        require_fresh=False, process_state="stopped" if closed else "running", read_only=True,
     )
     if binding != expected:
         raise ValueError("Device 浏览器绑定与当前源码、运行时或环境不一致")

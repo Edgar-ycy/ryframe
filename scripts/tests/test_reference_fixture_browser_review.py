@@ -55,10 +55,18 @@ class ReferenceFixtureBrowserReviewTests(unittest.TestCase):
         process = directory / "frontend.json"
         tree = directory / "frontend-tree.json"
         completion = directory / f"frontend-members-{operation}-stopped.json"
+        product = {"pid": 123, "started": "1", "executable": str(process)}
+        supervisor = {"pid": 124, "started": "2", "executable": str(process)}
+        monitor = {"pid": 125, "started": "3", "executable": str(process)}
         write_json(process, {"format_version": 1, "role": "frontend",
-                             "scope_id": "fixture-source", "identity": {
-                                 "pid": 123, "started": "1", "executable": str(process)}})
-        write_json(tree, {"operation_id": operation})
+                             "scope_id": "fixture-source", "identity": product})
+        write_json(tree, {
+            "format_version": 2, "kind": "full-stack-process-tree",
+            "runtime_directory": str(directory.resolve()), "role": "frontend",
+            "scope_id": "fixture-source", "operation_id": operation,
+            "supervisor": supervisor, "process": product, "monitor": monitor,
+            "group_id": supervisor["pid"],
+        })
         write_json(completion, {"status": "stopped"})
         return {"directory": str(directory), "process": bound(process), "tree": bound(tree),
                 "completion": bound(completion)}
@@ -117,7 +125,7 @@ class ReferenceFixtureBrowserReviewTests(unittest.TestCase):
         for index, name in enumerate(keys):
             outputs[name + "_log"].write_text(name, encoding="utf-8")
             logs[name] = bound(outputs[name + "_log"])
-            processes[name] = self.process(outputs[name + "_process"], f"operation-{index}")
+            processes[name] = self.process(outputs[name + "_process"], f"{index + 1:032x}")
         build = None
         if server == "preview":
             outputs["build_receipt"].parent.mkdir(parents=True)
@@ -178,6 +186,25 @@ class ReferenceFixtureBrowserReviewTests(unittest.TestCase):
         write_json(outputs["result"], value)
         context = {"outputs": outputs, "frontend": self.frontend, "secrets": ("AdminSecret",)}
         with self.assertRaisesRegex(ValueError, "未脱敏"):
+            review.verify_browser_result(binding, context, path)
+
+    def test_consumer_rejects_process_receipt_from_an_unrelated_tree(self):
+        binding, path, outputs, _ = self.prepare("dev", "r24-device-dev")
+        process = __import__("json").loads(
+            (outputs["browser_process"] / "frontend.json").read_text(encoding="utf-8")
+        )
+        process["identity"]["started"] = "unrelated"
+        (outputs["browser_process"] / "frontend.json").unlink()
+        write_json(outputs["browser_process"] / "frontend.json", process)
+        value = __import__("json").loads(outputs["result"].read_text(encoding="utf-8"))
+        value["processes"]["browser"]["process"] = bound(
+            outputs["browser_process"] / "frontend.json"
+        )
+        outputs["result"].unlink()
+        write_json(outputs["result"], value)
+        context = {"outputs": outputs, "frontend": self.frontend, "secrets": ()}
+        with patch.object(review, "wait_members", return_value={"status": "stopped"}), \
+                self.assertRaisesRegex(ValueError, "产品进程身份"):
             review.verify_browser_result(binding, context, path)
 
 

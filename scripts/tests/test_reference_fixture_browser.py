@@ -15,6 +15,7 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import reference_fixture_browser as browser
+import reference_fixture_browser_process as browser_process
 import reference_fixture_browser_security as security
 import reference_fixture_environment as fixture_environment
 import reference_fixture_runtime as runtime
@@ -111,10 +112,11 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
                                 **runtime.file_digest(self.output / "runtime.json")},
                     "scope_id": "fixture-source", "remote_writes": 0}
         self.process_state = "running"
+        state = lambda *_args: {"processes": {
+            "api": self.process_state, "worker": self.process_state}}
         self.api = browser.RuntimeApi(
             runtime._bootstrap, runtime._output, Mock(return_value=verified),
-            Mock(side_effect=lambda *_args: {"processes": {
-                "api": self.process_state, "worker": self.process_state}}),
+            Mock(side_effect=state), Mock(side_effect=state),
         )
 
     def patches(self):
@@ -198,6 +200,13 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         self.assertEqual(value["server"], "preview")
         self.assertEqual(value["login_budget"]["initial_state"], "absent")
         self.assertFalse(Path(value["login_budget"]["path"]).exists())
+
+    def test_binding_rejects_every_unregistered_run_output(self):
+        unknown = self.output / "browser-r24-device-unknown.json"
+        unknown.write_text("{}", encoding="utf-8")
+        with self.patches(), self.assertRaisesRegex(ValueError, "未登记"):
+            self.bind()
+        self.assertFalse((self.output / "browser-binding-r24-device.json").exists())
 
     def test_real_build_precedes_device_browser_and_binds_same_origin(self):
         calls = []
@@ -288,6 +297,7 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         with self.patches(), patch.object(browser, "verify_browser_result", return_value={}) as verify:
             binding, _ = self.bind("dev", "r24-device-dev")
             write_json(self.output / "browser-r24-device-dev-result.json", {"status": "fixture"})
+            control_count = self.api.control.call_count
             before = {path: path.read_bytes() for path in self.output.rglob("*") if path.is_file()}
             result = browser.verify_browser(
                 self.api, self.backend, self.bootstrap, self.output, binding, closed=False
@@ -301,6 +311,8 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         self.assertEqual(result["status"], "reference_fixture_browser_verified")
         self.assertEqual(closed["status"], "reference_fixture_browser_closed")
         self.assertEqual(verify.call_count, 2)
+        self.assertEqual(self.api.control.call_count, control_count)
+        self.assertEqual(self.api.observe.call_count, 2)
 
     def test_binding_rejects_port_or_review_source_change_before_intent(self):
         with self.patches():
@@ -351,12 +363,14 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         log = self.output / "interrupt.log"
         process_dir = self.output / "interrupt-process"
 
-        with patch.object(browser, "launch_supervised_process", return_value=process) as started, \
-                patch.object(browser, "terminate_owned_process_tree") as terminated, \
-                patch.object(browser, "completion_binding", return_value={"sha256": "e" * 64}):
+        with patch.object(browser_process, "launch_supervised_process", return_value=process) as started, \
+                patch.object(browser_process, "terminate_owned_process_tree") as terminated, \
+                patch.object(browser_process, "completion_binding", return_value={"sha256": "e" * 64}):
             with self.assertRaises(KeyboardInterrupt):
-                browser._frontend_command(binding, self.frontend, ["check"], {}, log, process_dir,
-                                          60, ("Admin!Secret123", "RustfsAccess123"))
+                browser_process.run_frontend_command(
+                    binding, self.frontend, ["check"], {}, log, process_dir,
+                    60, ("Admin!Secret123", "RustfsAccess123")
+                )
         self.assertTrue(Path(started.call_args.args[3][0]).is_absolute())
         terminated.assert_called_once_with(process.tree, crash=True)
         self.assertNotIn("Secret123", log.read_text(encoding="utf-8"))
@@ -380,15 +394,53 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
             return process
 
         completion = {"path": str(process_dir / "stopped.json"), "bytes": 1, "sha256": "e" * 64}
-        with patch.object(browser, "launch_supervised_process", side_effect=launch), \
-                patch.object(browser, "completion_binding", return_value=completion):
-            evidence = browser._frontend_command(
+        tree = {"scope_id": "fixture-source", "process": {"pid": 123}}
+        process.tree = tree
+        document = Mock(unsafe=True)
+        document.path = process_dir / "frontend.json"
+        document.assert_unchanged.return_value = None
+        with patch.object(browser_process, "launch_supervised_process", side_effect=launch), \
+                patch.object(browser_process, "read_process_tree", return_value=tree), \
+                patch.object(browser_process, "process_document",
+                             return_value=(document, tree["process"])), \
+                patch.object(browser_process, "completion_binding", return_value=completion):
+            evidence = browser_process.run_frontend_command(
                 binding, self.frontend, ["build", "--real"], {}, self.output / "success.log",
                 process_dir, 60, (),
             )
         self.assertEqual(evidence["completion"], completion)
         self.assertEqual(set(evidence), {"directory", "process", "tree", "completion"})
         self.assertEqual((self.output / "success.log").read_text(encoding="utf-8"), "completed\n")
+
+    def test_failure_evidence_uses_tree_result_and_members_completion_names(self):
+        directory = self.output / "failed-process"
+        directory.mkdir()
+        write_json(directory / "frontend-tree.json", {"operation_id": "operation-1"})
+        write_json(directory / "frontend-tree-operation-1-result.json", {"status": "failed"})
+        write_json(directory / "frontend-members-operation-1-stopped.json", {"status": "stopped"})
+        with patch.object(browser_process, "process_evidence", side_effect=ValueError("incomplete")):
+            result = browser_process.failure_process(directory, "fixture-source")
+        self.assertEqual(set(result), {"directory", "tree", "tree_result", "completion"})
+        self.assertTrue(result["tree_result"]["path"].endswith("-result.json"))
+        self.assertTrue(result["completion"]["path"].endswith("-stopped.json"))
+
+    def test_failure_collects_all_completed_processes_and_logs(self):
+        outputs = browser.browser_outputs(self.frontend, self.output, "r24-device", "preview")
+        completed = {"build": {"completion": "build"},
+                     "build_verify_before": {"completion": "before"}}
+        for name in ("build", "build_verify_before", "browser"):
+            outputs[name + "_process"].mkdir()
+            outputs[name + "_log"].write_text(name, encoding="utf-8")
+        captured_browser = {"directory": str(outputs["browser_process"])}
+        with patch.object(browser, "_failure_process", side_effect=lambda path, _scope: {
+                "directory": str(path)}) as capture:
+            processes, logs = browser._failure_evidence(
+                outputs, "preview", "fixture-source", completed
+            )
+        self.assertEqual(set(processes), {"build", "build_verify_before", "browser"})
+        self.assertEqual(processes["browser"], captured_browser)
+        self.assertEqual(set(logs), {"build", "build_verify_before", "browser"})
+        capture.assert_called_once_with(outputs["browser_process"], "fixture-source")
 
 
 def read(path: Path) -> dict:

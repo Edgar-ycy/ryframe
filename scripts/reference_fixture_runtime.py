@@ -12,7 +12,7 @@ from ci_full_stack_resources import build_binaries
 from devex_clone_capture import read_json, write_json
 from devex_clone_factory_context import Environments, configured
 from devex_clone_model import linked
-from devex_clone_runtime import control
+from devex_clone_runtime import control, observe
 from full_stack_provenance import verify_build_evidence
 from full_stack_runtime import register_runtime, verify_runtime
 from reference_fixture_browser import RuntimeApi, bind_browser, run_browser, verify_browser
@@ -127,8 +127,25 @@ def run(backend: Path, environment_path: Path, output_path: Path, operation: str
             "remote_writes": 0}
 
 
+def observe_runtime(backend: Path, environment_path: Path, output_path: Path,
+                    operation: str) -> dict:
+    if operation != "status":
+        raise ValueError("夹具运行时只读观察仅支持 status")
+    verified = verify(backend, environment_path, output_path)
+    _, execution, private = _bootstrap(backend, environment_path)
+    output = _output(execution, output_path, new=False)
+    pair = read_json(output / "source-pair.json")
+    values = _runtime_environment(private, pair)
+    api_url = f"http://{values['APP_APP_HOST']}:{values['APP_APP_PORT']}"
+    with Environments(values, values).use("source"):
+        result = observe(execution, output, ("api", "worker"), api_url)
+    return {"status": "reference_fixture_runtime_observed", "runtime": verified["runtime"],
+            "processes": {role: value["state"] for role, value in result["processes"].items()},
+            "remote_writes": 0}
+
+
 def _browser_api() -> RuntimeApi:
-    return RuntimeApi(_bootstrap, _output, verify, run)
+    return RuntimeApi(_bootstrap, _output, verify, run, observe_runtime)
 
 
 def main() -> None:

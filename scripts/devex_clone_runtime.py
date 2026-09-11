@@ -175,23 +175,52 @@ def _observe(directory: Path, receipt: dict, roles: tuple[str, ...], urls: dict,
     return results
 
 
+def _control_paths(backend: Path, runtime_directory: Path, roles: tuple[str, ...],
+                   api_url: str) -> tuple[Path, Path]:
+    if not roles or len(set(roles)) != len(roles) or not set(roles) <= {"api", "worker"}:
+        raise ValueError("运行控制角色必须是明确且不重复的 API/Worker")
+    backend, directory = _directory(backend), _directory(runtime_directory)
+    endpoint(api_url)
+    return backend, directory
+
+
+def _control_context(backend: Path, runtime_directory: Path, roles: tuple[str, ...],
+                     api_url: str) -> tuple[Path, Path, dict, dict]:
+    backend, directory = _control_paths(backend, runtime_directory, roles, api_url)
+    receipt = verify_runtime(backend, directory)
+    verify_api_address(backend, api_url)
+    urls = {"api": api_url.rstrip("/") + "/readyz", "worker": receipt["worker_ready_url"]}
+    if endpoint(urls["api"]) == endpoint(urls["worker"]):
+        raise ValueError("API 和 Worker 必须使用不同的明确监听端口")
+    return backend, directory, receipt, urls
+
+
+def observe(backend: Path, runtime_directory: Path, roles: tuple[str, ...], api_url: str) -> dict:
+    """无锁观察运行状态；不创建控制锁、历史事件或其他收据。"""
+    backend, directory, receipt, urls = _control_context(
+        backend, runtime_directory, roles, api_url
+    )
+    results = _observe(directory, receipt, roles, urls, False)
+    if verify_runtime(backend, directory) != receipt:
+        raise ValueError("运行时收据在无锁观察期间发生变化")
+    verify_api_address(backend, api_url)
+    return {"format_version": 1, "kind": "devex-clone-runtime-observation",
+            "operation": "status", "scope_id": receipt["scope_id"],
+            "runtime_directory": str(directory), "processes": results}
+
+
 def control(backend: Path, runtime_directory: Path, operation: str, roles: tuple[str, ...],
             api_url: str, timeout: float = 60) -> dict:
     """使用调用方注入的测试环境；不读取全源码指纹，不改写源停止或新库初始化证明。"""
     if operation not in {"start", "stop", "status"}:
         raise ValueError("未知运行控制操作")
-    if not roles or len(set(roles)) != len(roles) or not set(roles) <= {"api", "worker"}:
-        raise ValueError("运行控制角色必须是明确且不重复的 API/Worker")
     if isinstance(timeout, bool) or not 0 < timeout <= 180:
         raise ValueError("运行就绪超时必须在 0 到 180 秒之间")
-    backend, directory = _directory(backend), _directory(runtime_directory)
-    endpoint(api_url)
+    backend, directory = _control_paths(backend, runtime_directory, roles, api_url)
     with controller_lock(directory, operation):
-        receipt = verify_runtime(backend, directory)
-        verify_api_address(backend, api_url)
-        urls = {"api": api_url.rstrip("/") + "/readyz", "worker": receipt["worker_ready_url"]}
-        if endpoint(urls["api"]) == endpoint(urls["worker"]):
-            raise ValueError("API 和 Worker 必须使用不同的明确监听端口")
+        backend, directory, receipt, urls = _control_context(
+            backend, directory, roles, api_url
+        )
         results = (_start(backend, directory, receipt, roles, urls, timeout) if operation == "start"
                    else _observe(directory, receipt, roles, urls, operation == "stop"))
         return {"format_version": 1, "kind": "devex-clone-runtime-control", "operation": operation,

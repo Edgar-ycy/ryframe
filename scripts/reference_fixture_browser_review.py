@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from full_stack_process_monitor import wait_members
+from full_stack_process_tree import read_process_tree
 from reference_fixture_browser_evidence import (
     device_tests,
     login_budget,
@@ -31,15 +32,17 @@ def _process(value: object, directory: Path, scope_id: str, label: str) -> dict:
     evidence = exact_fields(value, {"directory", "process", "tree", "completion"}, label)
     if evidence["directory"] != str(directory):
         raise ValueError(f"{label}目录不一致")
-    process, _ = process_document(directory / "frontend.json", "frontend", scope_id)
+    process, identity = process_document(directory / "frontend.json", "frontend", scope_id)
     _descriptor(evidence["process"], process.path, label + "进程")
     tree_path = directory / "frontend-tree.json"
     tree_document = read_json_document(tree_path)
-    tree = tree_document.value
+    tree = read_process_tree(directory, "frontend", scope_id)
+    if tree_document.value != tree:
+        raise ValueError(f"{label}进程树在严格读取期间发生变化")
     _descriptor(evidence["tree"], tree_path, label + "进程树")
-    operation = tree.get("operation_id") if isinstance(tree, dict) else None
-    if not isinstance(operation, str):
-        raise ValueError(f"{label}进程树缺少 operation id")
+    if identity != tree["process"]:
+        raise ValueError(f"{label}产品进程身份与原进程树不一致")
+    operation = tree["operation_id"]
     completion_path = directory / f"frontend-members-{operation}-stopped.json"
     completion = read_json_document(completion_path)
     _descriptor(evidence["completion"], completion_path, label + "完整成员关闭证明")
