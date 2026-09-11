@@ -9,7 +9,7 @@ from restore_runtime_source import require_bindings, runtime_authority
 
 
 def verify_static_runtime(backend: Path, receipt: dict, target_document, target: dict,
-                          reference: dict, manifest: dict) -> None:
+                          reference: dict, manifest: dict) -> dict:
     """不探测服务、不创建锁；输入必须已由完整 target-plan validator 验证。"""
     receipt = validate_runtime_receipt(receipt)
     paths = receipt["paths"]
@@ -58,3 +58,4 @@ def verify_static_runtime(backend: Path, receipt: dict, target_document, target:
             raise ValueError("恢复预检运行收据的进程与完整 launch 进程树不一致")
     for document in (bindings, backend_build, frontend_build, launch_document, target_document, *documents):
         document.assert_unchanged()
+    return authority

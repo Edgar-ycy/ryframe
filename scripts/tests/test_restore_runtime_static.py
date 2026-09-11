@@ -55,12 +55,12 @@ class StaticRuntimeTests(unittest.TestCase):
             self.enterContext(patch.object(restore_runtime, name, side_effect=AssertionError("预检不得执行网络、探针或重建")))
 
     def verify(self, receipt=None):
-        static.verify_static_runtime(self.fixture.backend, receipt or self.receipt, self.target_doc,
-                                     self.target, self.reference, self.manifest)
+        return static.verify_static_runtime(self.fixture.backend, receipt or self.receipt, self.target_doc,
+                                            self.target, self.reference, self.manifest)
 
     def test_accepts_exact_static_chain_without_network_or_writes(self):
         before = {str(path): path.read_bytes() for path in self.fixture.root.rglob("*") if path.is_file()}
-        self.verify()
+        self.assertEqual(self.verify(), self.authority)
         self.assertEqual(before, {str(path): path.read_bytes() for path in self.fixture.root.rglob("*") if path.is_file()})
         self.control.assert_called_once()
 
