@@ -7,10 +7,22 @@ import { verifyProvenance } from '../devex/provenance.mjs'
 import { measure } from '../devex/measure.mjs'
 import { identityPool } from './devex-selection-fixture.mjs'
 
+const descriptor = (name, digit) => ({
+  path: path.join(process.cwd(), name),
+  bytes: 42,
+  sha256: digit.repeat(64),
+})
 const config = () => ({ contract: { environment_sha256: 'a'.repeat(64), cycles: 10,
   identity_pools: { users: identityPool(10).contract }, homepage: { identity_pool: 'users' } }, bindings: {
   identity_pools: { users: identityPool(10).binding },
-  provenance: { python: process.execPath }, source_fingerprints: {
+  provenance: {
+    python: process.execPath,
+    runtime_receipt: descriptor('restore-runtime.json', '1'),
+    target_plan: descriptor('target-plan.json', '2'),
+    runtime_registration: descriptor('runtime-registration.json', '3'),
+    runtime_launch: descriptor('runtime-launch.json', '4'),
+    environment_document: path.join(process.cwd(), 'environment.md'),
+  }, source_fingerprints: {
     backend: `sha256:${'b'.repeat(64)}`, frontend: `sha256:${'f'.repeat(64)}`,
     runner_frontend: `sha256:${'e'.repeat(64)}` },
 } })
@@ -23,7 +35,7 @@ const values = () => ({
   runner_frontend_fingerprint: `sha256:${'e'.repeat(64)}`,
   suite: 'homepage',
 })
-const receipt = () => ({ format_version: 2, kind: 'devex-runtime-provenance',
+const receipt = () => ({ format_version: 3, kind: 'devex-runtime-provenance',
   processes: { api: { pid: 42, started: 'original' } } })
 async function directory(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'devex-provenance-'))
@@ -43,6 +55,8 @@ test('前后验证绑定同一请求快照，保存独立来源收据与校验�
   assert.equal(requests[0].driver_fingerprint, `sha256:${'d'.repeat(64)}`)
   assert.equal(requests[0].runner_frontend, process.cwd())
   assert.equal(requests[0].runner_frontend_fingerprint, `sha256:${'e'.repeat(64)}`)
+  assert.deepEqual(requests[0].provenance.runtime_receipt,
+    descriptor('restore-runtime.json', '1'))
   for (const phase of ['before', 'after']) {
     const result = JSON.parse(await readFile(path.join(root, `provenance-${phase}.json`)))
     assert.equal(result.success, true)
@@ -89,6 +103,27 @@ test('driver 路径与完整指纹必须显式绑定', async (t) => {
     const root = await directory(t)
     await assert.rejects(verifyProvenance(config(), changed, root), /bindings/)
   }
+})
+
+test('旧全栈收据字段和不完整 v3 descriptor 在启动 Python 前拒绝', async (t) => {
+  const legacy = config()
+  legacy.bindings.provenance = {
+    python: process.execPath,
+    backend_build: { path: path.join(process.cwd(), 'build.json'), sha256: '1'.repeat(64) },
+    runtime: { path: path.join(process.cwd(), 'runtime.json'), sha256: '2'.repeat(64) },
+    processes: { api: '3'.repeat(64), worker: '4'.repeat(64) },
+    frontend_build_sha256: '5'.repeat(64),
+    environment_document: path.join(process.cwd(), 'environment.md'),
+  }
+  let called = false
+  await assert.rejects(verifyProvenance(legacy, values(), await directory(t), async () => {
+    called = true
+    return receipt()
+  }), /bindings/)
+  assert.equal(called, false)
+  const invalid = config()
+  invalid.bindings.provenance.target_plan.bytes = true
+  await assert.rejects(verifyProvenance(invalid, values(), await directory(t)), /bindings/)
 })
 
 test('来源失败不启动业务观察；业务失败与后验失败同时保留', async (t) => {

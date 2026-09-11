@@ -7,12 +7,28 @@ import { hash } from './config.mjs'
 const verifier = fileURLToPath(new URL('../devex_provenance.py', import.meta.url))
 
 function requestFor(config, values) {
-  const { python, ...provenance } = config.bindings.provenance ?? {}
+  const binding = config.bindings.provenance ?? {}
+  const { python, ...provenance } = binding
   const { scope_id, source_fingerprints, api_url, frontend_url, metrics_urls } = config.bindings
   const roots = ['backend', 'frontend', 'driver', 'runner_frontend']
+  const descriptors = ['runtime_receipt', 'target_plan', 'runtime_registration', 'runtime_launch']
+  const fields = ['python', ...descriptors, 'environment_document'].sort().join()
+  const descriptor = (value) =>
+    value &&
+    !Array.isArray(value) &&
+    Object.keys(value).sort().join() === 'bytes,path,sha256' &&
+    typeof value.path === 'string' &&
+    path.isAbsolute(value.path) &&
+    Number.isSafeInteger(value.bytes) &&
+    value.bytes > 0 &&
+    /^[a-f0-9]{64}$/.test(value.sha256)
   if (
+    Object.keys(binding).sort().join() !== fields ||
     typeof python !== 'string' ||
     !path.isAbsolute(python) ||
+    descriptors.some((name) => !descriptor(provenance[name])) ||
+    typeof provenance.environment_document !== 'string' ||
+    !path.isAbsolute(provenance.environment_document) ||
     roots.some((name) => typeof values[name] !== 'string' || !path.isAbsolute(values[name])) ||
     !/^sha256:[a-f0-9]{64}$/.test(values.driver_fingerprint ?? '') ||
     !/^sha256:[a-f0-9]{64}$/.test(values.runner_frontend_fingerprint ?? '') ||
@@ -30,7 +46,7 @@ function requestFor(config, values) {
 
 function python(executable, request) {
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, ['-X', 'utf8', verifier], {
+    const child = spawn(executable, ['-B', '-X', 'utf8', verifier], {
       env: process.env, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'],
     })
     const chunks = []
@@ -65,7 +81,7 @@ export async function verifyProvenance(config, values, artifacts, run = python) 
     try {
       specification ??= requestFor(config, values)
       receipt = await run(specification.python, specification.request)
-      if (receipt?.format_version !== 2 || receipt.kind !== 'devex-runtime-provenance')
+      if (receipt?.format_version !== 3 || receipt.kind !== 'devex-runtime-provenance')
         throw new Error('verifier_result')
       if (before && hash(receipt) !== hash(before)) throw new Error('sample_changed')
       return receipt
