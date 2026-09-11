@@ -121,6 +121,8 @@ class PostTests(unittest.TestCase):
         inherited = {'directory': self.local / 'seed-run',
             'registration': {'source_request': source_request, 'source_environment': source_environment,
                              'post_copy': self.file('old-post', {'post': True})},
+            'source_request': source_request,
+            'source_environment': source_environment,
             'request': {'source': {'scope_id': 'seed-one'}},
             'manifest': {'source_request': original_request}}
         previous = SimpleNamespace(request={'reference_plan': self.request['reference_plan'],
@@ -129,7 +131,7 @@ class PostTests(unittest.TestCase):
         with patch('devex_clone_seed_source.published_source', return_value=inherited) as published, \
                 patch.object(post, 'resolve_post_registration', return_value=previous) as resolved:
             post._validate_business_lineage(self.backend, value, self.request, plan)
-        published.assert_called_once_with(self.backend, source_registration)
+        published.assert_called_once_with(self.backend, source_registration, live_storage=False)
         resolved.assert_called_once_with(self.backend, inherited['directory'],
                                          descriptor=inherited['registration']['post_copy'], cleanup=True)
 
@@ -142,6 +144,8 @@ class PostTests(unittest.TestCase):
         inherited = {'directory': self.local / 'seed-run',
             'registration': {'source_request': source_request, 'source_environment': source_environment,
                              'post_copy': self.file('old-post', {'post': True})},
+            'source_request': source_request,
+            'source_environment': source_environment,
             'request': {'source': {'scope_id': 'seed-one'}},
             'manifest': {'source_request': self.file('original-source-request', {'source': {'scope_id': 'source-one'}})}}
         detached = SimpleNamespace(request={'reference_plan': self.file('other-plan', {'source': {'scope_id': 'source-one'}}),

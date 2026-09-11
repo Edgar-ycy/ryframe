@@ -72,8 +72,10 @@ class RunArmTests(unittest.TestCase):
             run.manifest(self.backend, {**value, "copy_stage": "source_to_seed"})
 
         successor = self.file("review-successor", {"successor": True})
+        source_generation = self.file("source-generation", {"published": True})
         successor_value = {**value, "review_successor": successor,
-                           "source_export_result": self.file("export-result", {"published": True})}
+                           "source_export_result": self.file("export-result", {"published": True}),
+                           "source_generation": source_generation}
         with patch.object(run, "_published_seed_source", return_value={}), \
                 patch.object(run, "target_lifecycle_binding", return_value={}):
             self.assertEqual(
@@ -95,6 +97,7 @@ class RunArmTests(unittest.TestCase):
         inherited = {"generation": "seed-storage"}
         source = {
             "registration": {"source_request": value["source_request"]},
+            "source_request": value["source_request"],
             "storage": {"storage": inherited},
         }
         with patch("devex_clone_storage.current_storage_binding", return_value=None), \
@@ -104,7 +107,7 @@ class RunArmTests(unittest.TestCase):
             self.backend, value["source_registration"], live_storage=True
         )
 
-        source["registration"]["source_request"] = self.file("other-request", {"other": True})
+        source["source_request"] = self.file("other-request", {"other": True})
         with patch("devex_clone_storage.current_storage_binding", return_value=None), \
                 patch("devex_clone_seed_source.published_source", return_value=source), \
                 self.assertRaises(ValueError):
@@ -113,18 +116,23 @@ class RunArmTests(unittest.TestCase):
     def test_successor_seed_to_arm_routes_through_dedicated_published_source(self):
         source_registration = self.file("source-registration", {"published": True})
         review_successor = self.file("review-successor", {"successor": True})
+        source_generation = self.file("source-generation", {"published": True})
         value = {
             **self.value,
             "copy_stage": "seed_to_arm",
             "source_registration": source_registration,
             "review_successor": review_successor,
+            "source_export_result": self.file("export-result", {"published": True}),
+            "source_generation": source_generation,
         }
         inherited = {"generation": "seed-storage"}
         source = {
             "registration": {"source_request": value["source_request"]},
+            "source_request": value["source_request"],
             "storage": {"storage": inherited},
             "review_successor": {"source_result": source_registration},
             "review_successor_binding": review_successor,
+            "source_generation": source_generation,
         }
         with (
             patch("devex_clone_storage.current_storage_binding", return_value=None),
