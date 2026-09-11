@@ -172,6 +172,20 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
                  "scenarios": ["crash-recovery"]},
             ],
         })
+        if server == "preview":
+            files = []
+            for path, destination in (("/login", "document"), ("/assets/app.js", "script")):
+                target = self.frontend / ("dist/index.html" if path == "/login" else "dist/assets/app.js")
+                files.append({"sequence": len(files) + 1, "method": "GET", "path": path,
+                              "destination": destination, "status": 200,
+                              **runtime.file_digest(target), "representation": "identity"})
+            write_json(outputs["response_audit"], {
+                "format_version": 1, "kind": "device-preview-static-responses",
+                "status": "complete", "run_id": run_id, "scope_id": "fixture-source",
+                "limits": {"entries": 10_000, "bytes": 8 * 1024 * 1024 * 1024},
+                "total_entries": len(files), "total_bytes": sum(item["bytes"] for item in files),
+                "entries": files,
+            })
         now = int(time.time() * 1000)
         write_json(outputs["login_budget"], {
             "version": 1,
@@ -219,6 +233,9 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
                 receipt = frontend / "dist/.vite/restore-build.json"
                 receipt.parent.mkdir(parents=True)
                 receipt.write_text("{}\n", encoding="utf-8")
+                (frontend / "dist/index.html").write_text("built", encoding="utf-8")
+                (frontend / "dist/assets").mkdir()
+                (frontend / "dist/assets/app.js").write_text("script", encoding="utf-8")
             elif arguments[0] == "check":
                 self.browser_artifacts()
             return {"directory": str(process_dir), "completion": {"sha256": "d" * 64}}
@@ -226,7 +243,7 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         receipt = Mock(path=self.frontend / "dist/.vite/restore-build.json")
         with self.patches(), patch.object(browser, "_frontend_command", side_effect=execute), \
                 patch.object(browser, "validate_frontend_build", return_value=({}, receipt)), \
-                patch.object(browser, "verify_browser_result", return_value={}):
+                patch.object(browser, "verify_browser_evidence", return_value={}):
             binding, _ = self.bind()
             result = browser.run_browser(self.api, self.backend, self.bootstrap, self.output, binding)
         self.assertEqual([call[0] for call in calls], [
@@ -240,6 +257,8 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         self.assertEqual(calls[0][1]["VITE_APP_PROXY_TARGET"], "http://127.0.0.1:18200")
         self.assertEqual(calls[2][1]["RYFRAME_E2E_PASSWORD"], "Admin!Secret123")
         self.assertEqual(calls[2][1]["RYFRAME_E2E_RUNTIME_DIR"], str(self.output))
+        self.assertEqual(calls[2][1]["RYFRAME_E2E_PREVIEW_RESPONSE_AUDIT"],
+                         str(self.output / "browser-r24-device-preview-responses.json"))
         self.assertEqual(calls[2][1]["RYFRAME_E2E_LOGIN_RATE_LIMIT_CAPACITY"], "7")
         self.assertEqual(result["status"], "passed")
         self.assertNotIn("Secret123", json.dumps(result))
@@ -256,7 +275,7 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
             return {"directory": str(process_dir), "completion": {"sha256": "d" * 64}}
 
         with self.patches(), patch.object(browser, "_frontend_command", side_effect=execute), \
-                patch.object(browser, "verify_browser_result", return_value={}):
+                patch.object(browser, "verify_browser_evidence", return_value={}):
             binding, _ = self.bind("dev", "r24-device-dev")
             result = browser.run_browser(self.api, self.backend, self.bootstrap, self.output, binding)
         self.assertEqual(calls, [["check", "--stage", "browser", "--real", "--fixture",
@@ -292,6 +311,60 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         self.assertFalse(failure["unknown_business_writes"])
         self.assertEqual(execute.call_count, 1)
         self.assertFalse((self.output / "browser-r24-device-result.json").exists())
+
+    def test_late_artifact_failure_precedes_success_publication_and_blocks_restored_result(self):
+        def execute(_binding, _frontend, _arguments, _environment, log, process_dir,
+                    _timeout, _secrets):
+            process_dir.mkdir()
+            log.write_text("ok\n", encoding="utf-8")
+            self.browser_artifacts("dev", "r24-device-dev")
+            return {"directory": str(process_dir)}
+
+        guard = Mock(spec=["assert_unchanged"])
+        guard.assert_unchanged.side_effect = ValueError("late artifact drift")
+        outputs = browser.browser_outputs(self.frontend, self.output, "r24-device-dev", "dev")
+        with self.patches(), patch.object(browser, "_frontend_command", side_effect=execute), \
+                patch.object(browser, "_browser_artifacts", return_value=({
+                    "report": {}, "results": {}, "tests": {}, "responses": None}, (guard,))), \
+                patch.object(browser, "verify_browser_evidence", return_value={}):
+            binding, _ = self.bind("dev", "r24-device-dev")
+            with self.assertRaisesRegex(ValueError, "late artifact drift"):
+                browser.run_browser(self.api, self.backend, self.bootstrap, self.output, binding)
+        self.assertFalse(outputs["result"].exists())
+        self.assertTrue(outputs["failure"].is_file())
+        write_json(outputs["result"], {"status": "restored"})
+        with self.assertRaisesRegex(ValueError, "没有唯一成功结果"):
+            browser.verify_browser_result({}, {"outputs": outputs}, binding)
+
+    def test_uncertain_atomic_success_publication_also_publishes_failure_marker(self):
+        def execute(_binding, _frontend, _arguments, _environment, log, process_dir,
+                    _timeout, _secrets):
+            process_dir.mkdir()
+            log.write_text("ok\n", encoding="utf-8")
+            self.browser_artifacts("dev", "r24-device-dev")
+            return {"directory": str(process_dir)}
+
+        with self.patches():
+            binding, _ = self.bind("dev", "r24-device-dev")
+        outputs = browser.browser_outputs(self.frontend, self.output, "r24-device-dev", "dev")
+        publish = browser._publish_json
+
+        def uncertain(path, value):
+            publish(path, value)
+            if path == outputs["result"]:
+                raise OSError("post-link read failed")
+
+        with self.patches(), patch.object(browser, "_frontend_command", side_effect=execute), \
+                patch.object(browser, "verify_browser_evidence", return_value={}), \
+                patch.object(browser, "_publish_json", side_effect=uncertain):
+            with self.assertRaisesRegex(OSError, "post-link"):
+                browser.run_browser(self.api, self.backend, self.bootstrap, self.output, binding)
+        self.assertTrue(outputs["result"].is_file())
+        failure = read(outputs["failure"])
+        self.assertEqual(failure["stage"], "publish")
+        self.assertEqual(failure["published_result"]["path"], str(outputs["result"]))
+        with self.assertRaisesRegex(ValueError, "没有唯一成功结果"):
+            browser.verify_browser_result({}, {"outputs": outputs}, binding)
 
     def test_verify_and_close_are_read_only_and_require_the_expected_runtime_state(self):
         with self.patches(), patch.object(browser, "verify_browser_result", return_value={}) as verify:

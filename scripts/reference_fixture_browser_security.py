@@ -76,4 +76,12 @@ def browser_environment(private: dict, binding: dict) -> dict:
     if (values["RYFRAME_E2E_LOGIN_RATE_LIMIT_CAPACITY"] != str(login["capacity"])
             or values["RYFRAME_E2E_LOGIN_RATE_LIMIT_WINDOW_SECS"] != str(login["window_secs"])):
         raise ValueError("Device 浏览器登录预算与绑定不一致")
+    response_audit = binding.get("response_audit")
+    if binding["server"] == "preview":
+        if not isinstance(response_audit, dict) or set(response_audit) != {
+                "path", "initial_state", "first_writer"}:
+            raise ValueError("Device preview 缺少静态响应审计绑定")
+        values["RYFRAME_E2E_PREVIEW_RESPONSE_AUDIT"] = response_audit["path"]
+    elif response_audit is not None:
+        raise ValueError("Device dev 不得绑定生产静态响应审计")
     return values

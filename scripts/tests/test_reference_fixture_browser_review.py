@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import reference_fixture_browser_evidence as evidence
 import reference_fixture_browser_review as review
+import reference_fixture_browser_responses as responses
 from devex_clone_capture import write_json
 from restore_build import file_digest
 from workspace_directory import WorkspaceDirectory
@@ -48,6 +49,7 @@ class ReferenceFixtureBrowserReviewTests(unittest.TestCase):
                 outputs[name + "_log"] = self.runtime / f"{prefix}-{name}.log"
                 outputs[name + "_process"] = self.runtime / f"{prefix}-{name}-process"
             outputs["build_receipt"] = self.frontend / "dist/.vite/restore-build.json"
+            outputs["response_audit"] = self.runtime / f"{prefix}-preview-responses.json"
         return outputs
 
     def process(self, directory: Path, operation: str) -> dict:
@@ -97,12 +99,16 @@ class ReferenceFixtureBrowserReviewTests(unittest.TestCase):
         binding = {
             "run_id": run_id, "server": server, "scope_id": "fixture-source",
             "commands": commands, "rate_limits": {"login": {"capacity": 7, "window_secs": 30}},
+            "response_audit": ({"path": str(outputs["response_audit"]), "initial_state": "absent",
+                                "first_writer": "frontend-preview-static-proxy"}
+                               if server == "preview" else None),
         }
         write_json(binding_path, binding)
         write_json(outputs["intent"], {
             "format_version": 1, "kind": "reference-fixture-browser-intent",
             "binding": bound(binding_path), "commands": commands,
             "login_budget": {"path": str(outputs["login_budget"]), "existed_before": False},
+            "response_audit": binding["response_audit"],
         })
         outputs["report"].mkdir(parents=True)
         (outputs["report"] / "index.html").write_text("report", encoding="utf-8")
@@ -131,9 +137,25 @@ class ReferenceFixtureBrowserReviewTests(unittest.TestCase):
             outputs["build_receipt"].parent.mkdir(parents=True)
             outputs["build_receipt"].write_text("{}\n", encoding="utf-8")
             (self.frontend / "dist/index.html").write_text("built", encoding="utf-8")
+            (self.frontend / "dist/assets").mkdir()
+            (self.frontend / "dist/assets/app.js").write_text("script", encoding="utf-8")
             build = {"receipt": bound(outputs["build_receipt"]),
                      "dist": evidence.artifact_manifest(self.frontend / "dist", self.frontend,
                                                         "Device 前端生产产物")}
+            entries = []
+            for request_path, target, destination in (
+                    ("/login", self.frontend / "dist/index.html", "document"),
+                    ("/assets/app.js", self.frontend / "dist/assets/app.js", "script")):
+                entries.append({"sequence": len(entries) + 1, "method": "GET",
+                                "path": request_path, "destination": destination, "status": 200,
+                                **file_digest(target), "representation": "identity"})
+            write_json(outputs["response_audit"], {
+                "format_version": 1, "kind": "device-preview-static-responses",
+                "status": "complete", "run_id": run_id, "scope_id": "fixture-source",
+                "limits": {"entries": 10_000, "bytes": 8 * 1024 * 1024 * 1024},
+                "total_entries": len(entries),
+                "total_bytes": sum(entry["bytes"] for entry in entries), "entries": entries,
+            })
         artifacts = {
             "report": evidence.artifact_manifest(
                 outputs["report"], self.frontend / ".local-tests/playwright-real/report",
@@ -142,6 +164,9 @@ class ReferenceFixtureBrowserReviewTests(unittest.TestCase):
                 outputs["results"], self.frontend / ".local-tests/playwright-real/results",
                 "Device 浏览器结果"),
             "tests": evidence.device_tests(outputs["results"] / "device-tests.json", server, run_id),
+            "responses": (responses.preview_responses(
+                outputs["response_audit"], binding, build["dist"]
+            ) if server == "preview" else None),
         }
         result = {
             "format_version": 1, "kind": "reference-fixture-browser-result", "status": "passed",

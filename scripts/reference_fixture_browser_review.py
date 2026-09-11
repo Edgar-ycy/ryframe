@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from full_stack_process_monitor import wait_members
@@ -12,6 +13,7 @@ from reference_fixture_browser_evidence import (
     verify_redacted_log,
     verify_artifact_manifest,
 )
+from reference_fixture_browser_responses import preview_responses
 from restore_build import file_digest
 from restore_frontend_build import validate_frontend_build
 from restore_runtime_evidence import exact_fields, process_document, read_json_document
@@ -54,15 +56,16 @@ def _process(value: object, directory: Path, scope_id: str, label: str) -> dict:
     return evidence
 
 
-def verify_browser_result(binding: dict, context: dict, binding_path: Path) -> dict:
+def verify_browser_evidence(binding: dict, context: dict, binding_path: Path,
+                            value: object) -> dict:
     outputs = context["outputs"]
-    if outputs["failure"].exists() or not outputs["result"].is_file():
+    if outputs["failure"].exists():
         raise ValueError("Device 浏览器没有唯一成功结果，必须核对失败或不确定状态")
-    document = read_json_document(outputs["result"])
-    if any(secret.encode("utf-8") in document.raw for secret in context["secrets"]):
+    raw = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if any(secret.encode("utf-8") in raw for secret in context["secrets"]):
         raise ValueError("Device 浏览器成功结果包含未脱敏凭据")
     result = exact_fields(
-        document.value,
+        value,
         {"format_version", "kind", "status", "run_id", "server", "binding", "intent",
          "build", "logs", "processes", "artifacts", "login_budget", "remote_writes"},
         "Device 浏览器成功结果",
@@ -80,9 +83,10 @@ def verify_browser_result(binding: dict, context: dict, binding_path: Path) -> d
     _descriptor(result["binding"], binding_path, "Device 浏览器绑定")
     intent = read_json_document(outputs["intent"])
     expected_intent = {"format_version": 1, "kind": "reference-fixture-browser-intent",
-                       "binding": result["binding"], "commands": binding["commands"],
-                       "login_budget": {"path": str(outputs["login_budget"]),
-                                        "existed_before": False}}
+                        "binding": result["binding"], "commands": binding["commands"],
+                        "login_budget": {"path": str(outputs["login_budget"]),
+                                         "existed_before": False},
+                        "response_audit": binding["response_audit"]}
     if intent.value != expected_intent:
         raise ValueError("Device 浏览器 intent 与首次写入边界不一致")
     _descriptor(result["intent"], outputs["intent"], "Device 浏览器 intent")
@@ -95,7 +99,9 @@ def verify_browser_result(binding: dict, context: dict, binding_path: Path) -> d
         verify_redacted_log(outputs[name + "_log"], logs[name], context["secrets"])
         _process(processes[name], outputs[name + "_process"], binding["scope_id"],
                  f"Device {name} 进程")
-    artifacts = exact_fields(result["artifacts"], {"report", "results", "tests"}, "Device 浏览器产物")
+    artifacts = exact_fields(
+        result["artifacts"], {"report", "results", "tests", "responses"}, "Device 浏览器产物"
+    )
     verify_artifact_manifest(
         artifacts["report"], outputs["report"], context["frontend"] /
         ".local-tests/playwright-real/report", "Device 浏览器 HTML 报告"
@@ -117,8 +123,20 @@ def verify_browser_result(binding: dict, context: dict, binding_path: Path) -> d
             build["dist"], context["frontend"] / "dist", context["frontend"],
             "Device 前端生产产物"
         )
-    elif result["build"] is not None:
+        responses = preview_responses(outputs["response_audit"], binding, build["dist"])
+        if artifacts["responses"] != responses:
+            raise ValueError("Device preview 静态响应收据与成功结果不一致")
+    elif result["build"] is not None or artifacts["responses"] is not None:
         raise ValueError("Device dev 浏览器结果不得绑定未使用的生产构建")
     intent.assert_unchanged()
+    return result
+
+
+def verify_browser_result(binding: dict, context: dict, binding_path: Path) -> dict:
+    outputs = context["outputs"]
+    if outputs["failure"].exists() or not outputs["result"].is_file():
+        raise ValueError("Device 浏览器没有唯一成功结果，必须核对失败或不确定状态")
+    document = read_json_document(outputs["result"])
+    result = verify_browser_evidence(binding, context, binding_path, document.value)
     document.assert_unchanged()
     return result
