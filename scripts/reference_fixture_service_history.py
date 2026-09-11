@@ -31,6 +31,7 @@ def validate_history(run: Path, state: dict, *, ready: bool = True, settled: boo
     if ready and (len(initial) != len(INITIAL) or any(item["status"] != "passed" for item in initial)):
         raise ValueError("夹具首代服务尚未完整就绪")
     closed = False
+    external_recovery = None
     for index, item in enumerate(attempts[boundary:], boundary):
         if item["stage"] != LIFECYCLE_STAGE or item["mode"] not in {"close", "recover"}:
             raise ValueError("夹具服务仅允许明确 close/recover 生命周期追加")
@@ -69,14 +70,51 @@ def validate_history(run: Path, state: dict, *, ready: bool = True, settled: boo
         else:
             receipt = result.get("recovery", {})
             path = Path(receipt.get("path", ""))
+            if result.get("status") == "external_termination_reconciled":
+                if closed or external_recovery is not None:
+                    raise ValueError("夹具外部终止不能在关闭后或未重启时重复核对")
+                evidence = result.get("evidence", {})
+                evidence_path = Path(evidence.get("path", ""))
+                if (result.get("owner") != sources.get("state_before")
+                        or evidence_path != run / f"lifecycle-{index + 1:04d}/external-termination.json"
+                        or linked(evidence_path) or binding(evidence_path) != evidence):
+                    raise ValueError("夹具外部终止核对未绑定完整先行账本及独立证据")
+                _validate_external_termination(read_json(evidence_path), run, sources["state_before"])
+                external_recovery = item["result"]
+                continue
             if (result.get("status") != "controller_recovered" or path.parent != run
                     or not path.name.startswith("recovered-") or not path.name.endswith(".json")
                     or linked(path) or binding(path) != receipt
                     or read_json(path).get("status") != "controller_recovered"):
                 raise ValueError("夹具控制器恢复结果不完整")
-    return {"closed": closed, "initial_complete": len(initial) == len(INITIAL)
+    return {"closed": closed, "external_recovery": external_recovery,
+            "initial_complete": len(initial) == len(INITIAL)
             and all(item["status"] == "passed" for item in initial),
             "unsettled": [item["number"] for item in attempts if item["status"] != "passed"]}
+
+
+def _validate_external_termination(proof: dict, run: Path, state_before: dict) -> None:
+    exact(proof, {"format_version", "kind", "run", "owner", "observation",
+                  "normal_shutdown_proof", "remote_writes", "resources_deleted"})
+    observation = proof["observation"]
+    evidence = observation.get("evidence", {}) if isinstance(observation, dict) else {}
+    tree_path = run / "rustfs/rustfs-tree.json"
+    runtime_path = run / "redis/runtime.json"
+    if (proof["format_version"] != 1 or proof["kind"] != "reference-fixture-external-termination"
+            or proof["run"] != str(run) or proof["owner"] != state_before
+            or proof["normal_shutdown_proof"] is not None or proof["remote_writes"] != 0
+            or proof["resources_deleted"] is not False
+            or observation.get("status") != "external-termination-unreconciled"
+            or observation.get("normal_shutdown_proof") is not None
+            or observation.get("identities") != {role: "missing" for role in ("supervisor", "monitor", "process")}
+            or set(evidence) != {"rustfs_tree", "redis_runtime", "rustfs_monitor_ready"}
+            or evidence["rustfs_tree"] != binding(tree_path)
+            or evidence["redis_runtime"] != binding(runtime_path)):
+        raise ValueError("夹具外部终止证据未证明全部身份消失或原运行来源")
+    ready_path = Path(evidence["rustfs_monitor_ready"].get("path", ""))
+    if (ready_path.parent != run / "rustfs" or not ready_path.name.endswith("-ready.json")
+            or binding(ready_path) != evidence["rustfs_monitor_ready"]):
+        raise ValueError("夹具外部终止证据未绑定原成员监督启动归属")
 
 
 def _validate_members(proof: dict, run: Path) -> None:

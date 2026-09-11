@@ -63,6 +63,12 @@ def unknown_recoveries(run: Path) -> list[str]:
     unknown.update(path.name for path in run.glob("recovered-*.json") if str(path) not in consumed)
     expected = {f"lifecycle-{item['number']:04d}" for item in state["attempts"]
                 if item["stage"] == "fixture-services" and item["mode"] == "close"}
+    for item in state["attempts"]:
+        if (item["stage"], item["mode"], item["status"]) != ("fixture-services", "recover", "passed"):
+            continue
+        result = read_json(Path(item["result"]["path"]))
+        if result.get("status") == "external_termination_reconciled":
+            expected.add(f"lifecycle-{item['number']:04d}")
     unknown.update(path.name for path in run.glob("lifecycle-*") if path.name not in expected)
     return sorted(unknown)
 
@@ -198,17 +204,20 @@ def status(backend: Path, review: Path, bootstrap: Path) -> dict:
     else:
         observations = observe_services(registered_services(value))
         if observations["termination"] is not None:
-            next_operation = "recover"
+            reconciled = value["history"].get("external_recovery")
+            next_operation = "restart" if reconciled is not None else "recover"
             reconciliation = {**observations["termination"],
-                              "owner": value["sources"]["state_before"]}
-            observations = "external-termination-unreconciled"
+                              "owner": value["sources"]["state_before"], "receipt": reconciled}
+            observations = ("external-termination-reconciled" if reconciled is not None
+                            else "external-termination-unreconciled")
         else:
             reconciliation = None
         if value["history"]["closed"]:
             if observations != {"redis": "stopped", "rustfs": "stopped", "termination": None}:
                 raise ValueError("已关闭夹具服务又出现存活进程")
             next_operation = "none"
-    if observations != "external-termination-unreconciled":
+    if (not isinstance(observations, str)
+            or observations not in {"external-termination-unreconciled", "external-termination-reconciled"}):
         reconciliation = None
     guard(value)
     return {"status": "service_status", "run": str(value["run"]), "controller": controller,

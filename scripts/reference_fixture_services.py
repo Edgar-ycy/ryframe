@@ -277,7 +277,8 @@ def main() -> None:
     parser.add_argument("--review", type=Path, required=True)
     parser.add_argument("--environment", type=Path, required=True)
     parser.add_argument("--write", action="store_true")
-    parser.add_argument("--owner-binding", type=Path)
+    parser.add_argument("--owner-binding", type=Path,
+                        help="recover 控制器时传绑定描述文件；核对外部终止时传 status 返回的 state 文件")
     options = [value.partition("=")[0] for value in sys.argv[1:] if value.startswith("--")]
     if len(options) != len(set(options)):
         parser.error("服务控制选项不能重复")

@@ -67,6 +67,21 @@ class ServiceLifecycleTests(unittest.TestCase):
         self.events = []
         return stack
 
+    def external_observation(self):
+        from full_stack_process_monitor import receipt_path
+
+        tree_path = self.run / "rustfs/rustfs-tree.json"
+        write_json(tree_path, self.services["tree"])
+        ready_path = receipt_path(self.run / "rustfs", "rustfs",
+                                  self.services["tree"]["operation_id"], "ready")
+        write_json(ready_path, {"ready": True})
+        return {"status": "external-termination-unreconciled",
+                "identities": {role: "missing" for role in ("supervisor", "monitor", "process")},
+                "normal_shutdown_proof": None,
+                "evidence": {"rustfs_tree": binding(tree_path),
+                             "redis_runtime": binding(self.run / "redis/runtime.json"),
+                             "rustfs_monitor_ready": binding(ready_path)}}
+
     def test_status_has_no_writes_and_reports_unique_next_operation(self):
         before = self.snapshot()
         with patch.object(context, "registered_services", return_value=self.services), \
@@ -201,6 +216,66 @@ class ServiceLifecycleTests(unittest.TestCase):
         cache_stop.assert_not_called()
         tree_stop.assert_not_called()
         self.assertFalse(validate_history(self.run, load_state(self.run))["closed"])
+
+    def test_recover_reconciles_external_termination_without_stopping_or_starting_services(self):
+        termination = self.external_observation()
+        observed = {"redis": "stopped", "rustfs": "external-termination-unreconciled",
+                    "termination": termination}
+        with patch.object(lifecycle, "registered_services", return_value=self.services), \
+                patch.object(lifecycle, "observe_services", return_value=observed), \
+                patch.object(lifecycle, "stop_cache") as cache_stop, \
+                patch.object(lifecycle, "terminate_owned_process_tree") as tree_stop:
+            result = lifecycle.recover(self.backend, self.review, self.bootstrap,
+                                       self.run / "state.json", write=True)
+        self.assertEqual(result["status"], "external_termination_reconciled")
+        self.assertEqual(result["next_operation"], "restart")
+        cache_stop.assert_not_called()
+        tree_stop.assert_not_called()
+        self.assertFalse(any(self.run.rglob("*-stopped.json")))
+        evidence = read_json(Path(result["evidence"]["path"]))
+        self.assertIsNone(evidence["normal_shutdown_proof"])
+        history = validate_history(self.run, load_state(self.run))
+        self.assertEqual(history["external_recovery"], load_state(self.run)["attempts"][-1]["result"])
+
+        with patch.object(context, "registered_services", return_value=self.services), \
+                patch.object(context, "observe_services", return_value=observed):
+            status = context.status(self.backend, self.review, self.bootstrap)
+        self.assertEqual(status["services"], "external-termination-reconciled")
+        self.assertEqual(status["next_operation"], "restart")
+        self.assertEqual(status["reconciliation"]["receipt"], history["external_recovery"])
+
+    def test_external_recovery_rejects_stale_owner_or_changed_service_state_without_writes(self):
+        services = {**self.services, "evidence": {}}
+        stopped = {"redis": "stopped", "rustfs": "external-termination-unreconciled",
+                   "termination": {"status": "external-termination-unreconciled"}}
+        wrong = self.root / "wrong-state.json"
+        write_json(wrong, read_json(self.run / "state.json"))
+        before = self.snapshot()
+        with patch.object(lifecycle, "registered_services", return_value=services), \
+                patch.object(lifecycle, "observe_services", return_value=stopped), \
+                self.assertRaisesRegex(ValueError, "当前 state"):
+            lifecycle.recover(self.backend, self.review, self.bootstrap, wrong, write=True)
+        self.assertEqual(before, self.snapshot())
+
+        running = {"redis": "running", "rustfs": "running", "termination": None}
+        with patch.object(lifecycle, "registered_services", return_value=services), \
+                patch.object(lifecycle, "observe_services", return_value=running), \
+                self.assertRaisesRegex(ValueError, "全部登记服务"):
+            lifecycle.recover(self.backend, self.review, self.bootstrap,
+                              self.run / "state.json", write=True)
+        self.assertEqual(before, self.snapshot())
+
+    def test_external_recovery_evidence_tampering_is_rejected(self):
+        termination = self.external_observation()
+        observed = {"redis": "stopped", "rustfs": "external-termination-unreconciled",
+                    "termination": termination}
+        with patch.object(lifecycle, "registered_services", return_value=self.services), \
+                patch.object(lifecycle, "observe_services", return_value=observed):
+            result = lifecycle.recover(self.backend, self.review, self.bootstrap,
+                                       self.run / "state.json", write=True)
+        Path(result["evidence"]["path"]).write_text("{}", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            validate_history(self.run, load_state(self.run))
 
     def test_recover_rejects_live_or_reused_controller_without_writes(self):
         owner_file = self.dead_lock()

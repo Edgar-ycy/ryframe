@@ -104,8 +104,11 @@ def recover(backend: Path, review: Path, bootstrap: Path, owner_file: Path, *, w
         raise ValueError("恢复夹具控制锁必须显式指定 --write")
     value = context(backend, review, bootstrap)
     run = value["run"]
-    owner_binding = read_json(local_path(backend, str(owner_file if owner_file.is_absolute() else backend / owner_file)))
+    owner_path = local_path(backend, str(owner_file if owner_file.is_absolute() else backend / owner_file))
     observed = controller_observation(run)
+    if observed is None:
+        return _recover_external(value, owner_path)
+    owner_binding = read_json(owner_path)
     if observed is None or observed["owner"] != owner_binding or observed["process_missing"] is not True:
         raise ValueError("只允许回收用户明确绑定且确已死亡的原控制器；存活或 PID 复用均拒绝")
     if unknown_recoveries(run):
@@ -131,4 +134,51 @@ def recover(backend: Path, review: Path, bootstrap: Path, owner_file: Path, *, w
             if recovered.get("status") != "controller_recovered":
                 raise ValueError("控制恢复未返回已收尾状态")
             finish(run, number, result=result)
+    return result
+
+
+def _recover_external(value: dict, owner_path: Path) -> dict:
+    run = value["run"]
+    history = validate_history(run, value["state"])
+    if (owner_path != run / "state.json" or binding(owner_path) != value["sources"]["state_before"]):
+        raise ValueError("外部终止恢复必须明确绑定 status 返回的当前 state 文件")
+    if (history["closed"] or history["external_recovery"] is not None or history["unsettled"]
+            or not history["initial_complete"] or unknown_recoveries(run)):
+        raise ValueError("当前服务账本不允许重复或跨阶段核对外部终止")
+    services = registered_services(value)
+    observed = observe_services(services)
+    if observed["termination"] is None:
+        raise ValueError("只有全部登记服务明确外部终止时才能执行该恢复")
+    with process_guard(run, "run-control.guard"):
+        guard(value)
+        if controller_observation(run) is not None:
+            raise ValueError("核对外部终止前出现其他控制器")
+        if observe_services(services) != observed:
+            raise ValueError("核对外部终止前服务状态变化")
+        with claim_run_lock(run) as owner:
+            sources = {**value["sources"], "external_owner": value["sources"]["state_before"]}
+            number = begin(run, LIFECYCLE_STAGE, "recover", sources)
+            controller = bind_controller_attempt(run, number, owner)
+            running_state = binding(run / "state.json")
+            try:
+                output = local_path(value["backend"], str(run / f"lifecycle-{number:04d}"), new=True)
+                output.mkdir()
+                guard(value, running_state)
+                if observe_services(services) != observed:
+                    raise ValueError("发布外部终止证据前服务状态变化")
+                evidence_file = output / "external-termination.json"
+                write_json(evidence_file, {"format_version": 1, "kind": "reference-fixture-external-termination",
+                    "run": str(run), "owner": value["sources"]["state_before"],
+                    "observation": observed["termination"], "normal_shutdown_proof": None,
+                    "remote_writes": 0, "resources_deleted": False})
+                guard(value, running_state)
+                if observe_services(services) != observed:
+                    raise ValueError("保存外部终止证据后服务状态变化")
+                result = _result(run, "recover", "external_termination_reconciled", controller=controller,
+                                 owner=value["sources"]["state_before"], evidence=binding(evidence_file),
+                                 next_operation="restart")
+                finish(run, number, result=result)
+            except BaseException as error:
+                finish(run, number, error=error)
+                raise
     return result
