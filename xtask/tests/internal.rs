@@ -82,6 +82,8 @@ mod devex_cli_tests;
 mod devex_memory_tests;
 #[path = "internal/devex_paths.rs"]
 mod devex_paths_tests;
+#[path = "internal/devex_provenance.rs"]
+mod devex_provenance_tests;
 #[path = "internal/devex_runtime.rs"]
 mod devex_runtime_tests;
 #[path = "internal/devex_sccache.rs"]
