@@ -121,17 +121,11 @@ cargo xtask data backup status
 4. 停止目标业务写入，执行 `restore-verify-data`。它重新验证备份文件、当前 schema、完整表内容、租户关系和完整对象集合，缺失、多余、损坏或错误 ownership 都会失败。
 5. 使用全新 Redis 临时状态启动 API、Worker 和前端，完成真实浏览器业务验收，再提交绑定演练 ID、plan hash、源码 SHA、scope 和时间范围的 `RestoreBusinessProof`。`restore-verify` 再检查两项就绪探针，只有数据与业务验证均通过且总计时不超过 60 分钟、备份恢复点距离故障不超过 24 小时才记录成功。
 
-```powershell
-cargo xtask data restore begin --plan .local-tests/restore/plan.json --output .local-tests/restore/running.json --restore-config-dir .local-tests/restore/config
-cargo xtask data restore verify-data --id <演练ID> --backup-root .local-tests/backup/files --output .local-tests/restore/data-verified.json --restore-config-dir .local-tests/restore/config
-cargo xtask data restore verify --id <演练ID> --proof <runner>/.local-tests/playwright-real/restore-<演练ID>.json --tests-receipt <runner>/.local-tests/playwright-real/restore-<演练ID>-tests.json --runtime-receipt <runner>/.local-tests/playwright-real/restore-<演练ID>-runtime.json --target-plan .local-tests/restore/target-plan.json --runner-root <干净测试runner工作树> --restore-config-dir .local-tests/restore/config
-```
-
-`restore-begin` 和 `restore-verify-data` 在连接数据库前核对 `--output`，只接受父目录已存在且目标不存在的路径。业务操作成功后，命令先在同目录写入并同步完整临时文件，再以 create-new 语义原子发布，随后重读规范字节、JSON 内容和路径；参数错误、业务失败或已有目标都不会创建或截断成功记录。若业务写入已经成功但记录发布或写后复核失败，保留登记库状态和任何已经发布的文件，先运行只读状态核对，不得盲目重放。
+依次运行 `cargo xtask data restore begin --plan <计划> --output <新running.json> --restore-config-dir <目标配置>`、`cargo xtask data restore verify-data --id <演练ID> --backup-root <备份根> --output <新data-verified.json> --restore-config-dir <目标配置>` 和 `cargo xtask data restore verify --id <演练ID> --proof <业务证明> --tests-receipt <测试明细> --runtime-receipt <运行收据> --target-plan <目标计划> --runner-root <干净测试runner工作树> --restore-config-dir <目标配置>`。前两项在连接数据库前核对 `--output`，只接受父目录已存在且目标不存在的路径；业务成功后先在同目录写入并同步临时文件，再以 create-new 语义原子发布并重读规范字节、JSON 和路径。参数错误、业务失败或已有目标不会创建或截断成功记录；若业务写入成功后发布或复核失败，保留登记库状态和任何已发布文件，先运行只读状态核对，不得盲目重放。
 
 首次向 fresh target 写入数据库或对象前，执行 `cargo xtask check recovery runtime register --plan <参考计划JSON> --target-plan <目标计划JSON> --output <新runtime-registration.json> --write`，登记目标从未启动。登记入口在 ownership 控制锁内，写入前后核验目标运行目录没有 lifecycle、launch、进程树或未知文件，并证明 API、Worker、前端三个精确端口空闲；缺少进程收据本身不能作为停止证明。正式恢复执行器使用同一登记锁包住完整写入过程，并在每次数据库或对象写入前及退出时重新核验。登记文件绑定两个计划的绝对路径、大小和 SHA-256 及零进程观察；恢复收据绑定该登记文件，计划或运行现场变化后必须新建登记，不能覆盖旧文件。
 
-一次完整验收需保留成功恢复和损坏或缺失备份失败演练的原始日志、校验结果、trace、截图和视频。失败不会被登记覆盖为成功，也不会自动操作原业务资源。`running`、`data_verified`、`succeeded`、`failed` 分别表示已开始、数据通过、全部通过与失败；超过时限且未完成的演练仍会触发告警。
+完整验收保留成功恢复及损坏或缺失备份失败演练的原始日志、校验结果、trace、截图和视频。失败不会被登记覆盖为成功，也不会自动操作原业务资源；`running`、`data_verified`、`succeeded`、`failed` 分别表示已开始、数据通过、全部通过与失败，超时未完成仍会触发告警。
 
 ### 生成恢复业务证明
 
@@ -150,16 +144,9 @@ cargo xtask data restore verify --id <演练ID> --proof <runner>/.local-tests/pl
 
 数据准备计划的 `dataset.request_interval_ms` 必须为 1000 至 5000 毫秒，限制每个固定客户端的实际 HTTP 请求启动频率；十一个租户可并发准备，每个租户使用自己的身份与地址。`dataset.timeout_seconds` 显式设置整阶段时限（1 至 604800 秒），例如参考规模预留 21600 秒；其他外部命令仍使用 1800 秒超时。收到 429 时保留失败，不通过重试或更换地址绕过限流。数据准备发生在备份与恢复开始之前，其耗时不计入恢复时间。
 
-所有命令从对应干净后端工作树执行；`cargo xtask check recovery` 固定当前 `--backend-dir`，各阶段共用 `--plan <计划JSON>`。`plan` 默认只核对或输出计划，显式发布目标计划和其他写步骤必须传入 `--write`：
+所有命令从对应干净后端工作树执行；`cargo xtask check recovery` 固定当前 `--backend-dir`，各阶段共用 `--plan <计划JSON>`。先用 `inputs reference --arm-input <本侧arm结果> --fresh-target-verify <本侧观察目录/verify.json> --side base|candidate --id <备份ID> --work-dir <本侧新目录>` 预览参考计划，再追加 `--output <本侧参考计划.json> --write` 发布。
 
-```text
-cargo xtask check recovery inputs reference --arm-input <本侧arm结果> --fresh-target-verify <本侧观察目录/verify.json> --side base|candidate --id <备份ID> --work-dir <本侧新目录>
-cargo xtask check recovery inputs reference ... --output <本侧参考计划.json> --write
-cargo xtask check recovery inputs product --reference-plan <本侧参考计划.json> --backup-receipt <同一backup.json> --comparison-sources <双版本来源清单> --arm-input <本侧arm结果> --fresh-target-verify <本侧观察目录/verify.json> --side base|candidate --id <恢复ID> --fault-at <UTC时间>
-cargo xtask check recovery inputs product ... --output <本侧产品计划.json> --write
-```
-
-`inputs product` 从同一备份、比较来源、arm、fresh 目标和对应侧产品 SHA 推导原生 `RestorePlan`，并校验 `fault_at` 位于备份实际采集后 24 小时内。省略 `--output` 与 `--write` 时只读重算；两者必须同时出现。参考计划的源侧只记录实际备份需要的 API，目标侧另记录 API、Worker 和前端三个互不混淆的端点。
+随后用 `inputs product --reference-plan <本侧参考计划> --backup-receipt <同一backup.json> --comparison-sources <双版本来源清单> --arm-input <本侧arm结果> --fresh-target-verify <本侧观察目录/verify.json> --side base|candidate --id <恢复ID> --fault-at <UTC时间>` 预览产品计划，追加 `--output <本侧产品计划.json> --write` 发布。该入口从同一备份、比较来源、arm、fresh 目标和对应侧产品 SHA 推导原生 `RestorePlan`，并校验 `fault_at` 位于备份实际采集后 24 小时内；`--output` 与 `--write` 必须同时出现。参考计划的源侧只记录备份所需 API，目标侧另记录 API、Worker 和前端三个端点。
 
 | 阶段 | 操作与输出 |
 | --- | --- |
