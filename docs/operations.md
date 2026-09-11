@@ -153,7 +153,7 @@ cargo xtask data restore verify --id <演练ID> --proof <runner>/.local-tests/pl
 | 阶段 | 操作与输出 |
 | --- | --- |
 | `dataset` | 通过当前 API 建立套餐、十个租户、业务记录和关联对象，保存逐条创建证据与 `dataset/result.json`。 |
-| `backup --inventory <清单JSON> --source-runtime <来源运行证明JSON> --source-quiescence <停止观察收据JSON> --source-export-result <已发布共享导出结果>` | 核对停止前实际干净构建、源侧业务复验、停止观察和已发布共享导出的同一库存及运行代次，精确导出数据和对象、核对摘要；`backup.json` 绑定共享导出身份、来源证明和 `backup/manifest.json` 文件摘要，随后用产品 `backup-register` 登记。清单使用共享导出的原始 inventory 并添加本次备份 `id`。 |
+| `backup --inventory <共享导出的原始inventory-before.json> --source-generation <同代STOP外层结果> --source-export-result <已发布共享导出结果>` | 核对同一源代次的干净构建、当前业务复验、完整停止前后像与共享导出；精确导出数据和对象并核对摘要。`backup.json` 绑定共享导出身份、完整 source-generation 和 `backup/manifest.json`，随后用产品 `backup-register` 登记。库存直接使用共享导出的原始文件，备份 `id` 由计划派生，不能手工增补。 |
 | `restore --target-plan <本侧目标计划> --runtime-registration <本侧运行登记> --backup-root <备份目录> --record <restore-begin记录>` | 先复核全部输入与产品计划精确一致性，持运行控制锁重新核对完整源码、B0 重建及目标四库五桶完整前像。每次写前核验三端口空闲，完成后采集完整后像。分别保存 `restore-base.json` 或 `restore-candidate.json`，绑定原计划、备份、运行记录、运行登记和前后像；复制完成后仍需产品数据验证和真实业务证明。 |
 | `copy --backup-root <备份目录> --copy-id <独立副本ID>` | 创建保留原摘要的独立备份副本；先登记副本并执行 `restore-begin`。 |
 | `damage --backup-root <副本目录> --artifact <清单内路径> [--missing]` | 仅损坏或删除指定副本产物，保留原备份；随后用 `restore-verify-data` 验证失败状态及告警。 |
@@ -166,9 +166,9 @@ cargo xtask data restore verify --id <演练ID> --proof <runner>/.local-tests/pl
 
 验证结果记录实际侧、scope、原计划及数据收据摘要和只读动作范围，状态为 `existing_data_verified`，不表示恢复成功，也不单独证明源码干净。源侧复验结果不能用于目标恢复证明。
 
-正式备份前，在同一配置下启动真实干净构建的 API 和 external Worker，使用 `cargo xtask check recovery source verify --plan <原计划JSON> --build-receipt <本次构建收据JSON> --dataset <原dataset/result.json> --output <新来源运行证明JSON> --write`。该命令会亲自执行源侧已有数据复验，在前后核对 API/Worker 的构建摘要、配置、创建身份、监听端口及就绪状态。
+正式备份源按[数据文档](data.md#开发数据复制与性能-seed)在原复制账本完成 source-generation start，再执行 `cargo xtask check recovery source verify --source-generation <同代START外层结果> --output <同代gNNNN/verification/source-runtime.json> --write`。构建、原数据集血缘、当前 scope、API、前端 Origin 与 pacing 均由已绑定的 start 和 lineage 推导，不接受另一份计划、构建或旧 dataset 作为替代输入。复验核对 API/Worker 的摘要、配置、创建身份、监听端口和就绪状态，并披露登录注销的精确行级副作用。
 
-成功后停止全部生产者，再执行 `cargo xtask check recovery source quiesce --plan <原计划JSON> --source-runtime <来源运行证明JSON> --output <新停止观察收据JSON> --write`。该命令不终止进程；它核对同一代次已停止并记录实际观察时间。之后才能重新采集 Inventory，其 `quiesced_at` 使用该收据的 `observed_stopped_at`。给 `backup` 同时传入两份证明；备份前后均检查来源进程已停止、未换代，以及复验、实际停止观察、采集时间的先后关系。清单先采集、进程后来才停止的流程会失败。重新复验使用新的输出文件，失败日志保留；不改写原计划、数据收据和历史证据的摘要或完成时间。
+成功后在同一账本执行 source-generation-stop，显式消费该 `source-runtime.json`。停止阶段亲自回收已登记 API/Worker 树，核对完整前后像并记录停止观察时间，然后才允许唯一 source-export。给 `backup` 传入同一停止外层结果、共享导出外层结果及其原始库存；备份前后均验证源没有换代，以及当前复验、实际停止观察、正式库存的时间顺序。清单先采集、进程后来才停止的流程会失败。验证或停止失败均保留证据且不可重放；不改写历史计划、收据、摘要或完成时间。
 
 B0/B1 正式对照前，使用 `cargo xtask check recovery source comparison-capture --help` 查看来源参数，再以 `comparison-capture ... --source-export-result <唯一导出外层结果> --output <新来源清单> --write` 生成严格的双版本来源清单。B0 必须分别提供原产品源码、已登记的工具适配源码和前端源码；B1 必须提供最终干净的双端源码。两侧都必须提供对应源码上的 v2 后端与前端生产构建收据，并共同绑定同一个已发布 `source-export` 的外层文件摘要及内部导出身份。`cargo xtask check recovery source comparison-verify --receipt <来源清单>` 只读重建并核对全部来源、构建产物、完整前端 `dist` 和导出证据；它不创建恢复 run、锁或业务写入，也不接受旧格式字段。
 

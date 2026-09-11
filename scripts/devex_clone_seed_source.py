@@ -47,6 +47,9 @@ EVIDENCE_FILES = set(EVIDENCE_SEQUENCE)
 ALLOWED_AFTER_CLOSE = {
     ("seed-runtime", "source-register"),
     ("seed-runtime", "source-rebind"),
+    ("seed-runtime", "source-generation-start"),
+    ("seed-runtime", "source-generation-stop"),
+    ("seed-runtime", "source-generation-recover"),
     ("seed-runtime", "source-export"),
     ("seed-runtime", "source-export-reconcile"),
     ("seed-runtime", "arm-input"),
@@ -168,6 +171,9 @@ def _published_source(backend: Path, descriptor: dict, *, live_storage: bool,
     state = load_state(source["directory"])
     result = resolve_storage(backend, descriptor, source, state, live_storage=live_storage,
                               current_storage=current_storage_binding)
+    from devex_clone_seed_generation import resolve_generation
+
+    result = resolve_generation(backend, descriptor, result, state, live=live_storage)
     if load_state(source["directory"]) != state:
         raise ValueError("seed 发布源核验期间阶段历史变化")
     return result

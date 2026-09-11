@@ -200,6 +200,12 @@ def reset_config(backend: Path, request: dict, selected: dict) -> None:
             or declared["sentinel_value"] != f"devex-fresh:{request['id']}"
             or declared["sentinel_key"].startswith(selected["redis"]["namespace"])):
         raise ValueError("sentinel 必须是仅归本 scope 的精确外部哨兵")
+    redis_configuration(request, selected)
+
+
+def redis_configuration(request: dict, selected: dict) -> None:
+    """核对精确 Redis 连接与 namespace；复用于只读来源代次，不执行 reset。"""
+    scope = request["target"]["scope_id"]
     redis = selected["redis"]
     if redis["namespace"] != f"ryframe:{{{scope}}}:" or redis["ownership_key"] != redis["namespace"] + ".ryframe-owner":
         raise ValueError("Redis 计划 namespace 无效")

@@ -66,7 +66,8 @@ def add_commands(commands) -> None:
     seed.add_argument("--operation", choices=("register", "quotas-plan", "quotas-apply", "quotas-reconcile",
                       "departments-plan", "departments-apply", "departments-reconcile", "departments-verify",
                       "identities-apply", "identities-verify", "prepare",
-                      "start", "close", "source-register", "source-rebind", "source-export", "source-export-reconcile",
+                      "start", "close", "source-register", "source-rebind", "source-generation-start", "source-generation-stop",
+                      "source-generation-status", "source-generation-recover", "source-export", "source-export-reconcile",
                       "arm-input", "stop", "status", "recover",
                       "recover-session"), required=True)
     seed.add_argument("--request", type=Path)
@@ -163,15 +164,21 @@ def dispatch(args, backend: Path) -> dict:
         result = execute(backend, directory, "cache-target", args.operation, cache_request=args.request)
         return {key: result[key] for key in ("status", "stage", "mode", "attempt", "restore_qualified")}
     if args.command == "seed-runtime":
-        request_operations = {"register", "arm-input", "source-rebind"}
+        request_operations = {"register", "arm-input", "source-rebind", "source-generation-start", "source-generation-stop", "source-generation-recover"}
         if (args.operation in request_operations) != (args.request is not None):
-            raise ValueError("仅 seed register/arm-input/source-rebind 且必须明确提供 --request")
+            raise ValueError("当前 seed 操作的 --request 缺失或不适用")
         if (args.operation == "recover-session") != (args.producer_binding is not None):
             raise ValueError("仅 seed recover-session 且必须明确提供 --producer-binding")
         if args.operation == "status":
             from devex_clone_seed_runtime import execute_seed
 
             return execute_seed(backend, directory, None, "status", None)
+        if args.operation == "source-generation-status":
+            from devex_clone_seed_generation_control import status as generation_status
+
+            if args.write:
+                raise ValueError("source-generation-status 是只读操作，不接受 --write")
+            return generation_status(backend, directory)
         if not args.write:
             raise ValueError("seed 操作需要显式 --write")
         producer = read_json(local_path(backend, str(args.producer_binding))) if args.producer_binding else None

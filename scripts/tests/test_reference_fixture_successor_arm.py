@@ -50,6 +50,7 @@ class SuccessorArmRequestTests(unittest.TestCase):
             self.workspace / "initialized-files.json", {"files": []}
         )
         self.published = {
+            "source_generation": binding(self.file("source-generation.json", {"v2": True})),
             "review_successor": {"source_result": binding(self.source)},
             "manifest": {"build_bridges": [binding(self.bridge)]},
         }

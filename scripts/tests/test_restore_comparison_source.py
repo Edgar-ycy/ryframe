@@ -37,6 +37,7 @@ def export_identity():
         "result": binding("export-result.json"), "origin_attempt": 7,
         "source_registration": binding("source-registration.json"),
         "source_rebind": binding("source-rebind.json"),
+        "source_generation": binding("source-generation.json"),
         "review_successor": binding("review-successor.json"),
         "source_request": binding("source-request.json"), "export": binding("export.json"),
         "export_sha256": "7" * 64, "generation_sha256": "8" * 64,
@@ -169,6 +170,7 @@ class ComparisonSourceTests(unittest.TestCase):
         value = {
             "review_successor": binding("successor.json"), "origin_attempt": 4,
             "source_registration": binding("registration.json"), "source_rebind": binding("rebind.json"),
+            "source_generation": binding("generation.json"),
             "source_request": binding("request.json"), "export": binding("payload.json"),
             "summary": {"export_sha256": "a" * 64, "generation_sha256": "b" * 64,
                         "logical_inventory_sha256": "c" * 64}, "source_storage": {"secret": "hidden"},

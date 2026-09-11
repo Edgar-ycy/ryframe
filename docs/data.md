@@ -57,9 +57,24 @@ fresh target 的准备、续作、初始化、复核和只读状态统一从 `ca
 
 已发布 seed 的对象存储退出后，先通过同一运行的 `cargo xtask check recovery clone storage --run-dir <运行目录> --side target --operation restart --write` 恢复已登记的固定请求，再执行 `cargo xtask check recovery clone seed-runtime --run-dir <运行目录> --operation source-rebind --request <successor关系文件> --write`。重绑定只追加本地结果，保留原发布与内层登记的字节；新结果绑定原存储、当前成功重启收据和完整阶段历史。数据目录的路径及文件身份、端点、二进制、凭据和请求均须相同，原进程必须已退出，全部业务生产者仍须停止。失败或未收尾阶段先核对，不能重复重绑定或用重绑定掩盖未知写入。
 
-重绑定后生成的 base/candidate arm 请求、清单和结果显式绑定同一重绑定收据；来源代次再次变化时停止，不能把原 arm 自动改绑到新进程。只读来源核验不会创建锁或报告，实际导出及复制前还会核对进程创建身份、完整参数和监听端口。上述交接仅恢复开发复制来源的可用性，不构成正式恢复或 RTO 达标证据。
+重绑定后，使用最终干净源码的已登记 v2 API/Worker 构建、同源维护构建及原物理源环境发布新运行请求。请求由唯一生产者从旧发布结果、successor 关系与当前 storage rebind 重算，不手写 JSON，也不修改原发布收据。以下命令从协调后端根目录执行；尖括号参数替换为已登记的绝对路径，构建 SHA 使用完整 40 位值。预览不传 `--output` 或 `--write`，不会创建文件、锁、Git index 或对象；实际发布必须同时传入二者，并使用已有父目录中的新路径。
 
-完成重绑定后，在同一运行执行 `cargo xtask check recovery clone seed-runtime --run-dir <运行目录> --operation source-export --write`。该阶段只读取源数据库和对象，把完整导出、校验摘要与来源写入原 attempt 目录，并在原账本追加唯一发布结果。重复导出在创建新 attempt 前被拒绝。失败后先用 `clone status` 核对状态，死亡控制器通过原 `clone recover` 处理；只有已收尾失败且具有完整 `export.json` 的候选才能用 `--operation source-export-reconcile --write` 完整复核并采用。只读 reconcile 在失败收尾后可以显式重试，但始终核对同一候选，任何已有结果不一致时失败关闭。采用不会重新导出；缺少完整候选、输入漂移或未收尾状态继续失败关闭，保留证据。
+```powershell
+cargo xtask check recovery fixture successor generation-request --successor <关系文件> --source-backend <当前源执行仓库> --expected-head <干净源码SHA> --backend-build <v2构建收据> --maintenance-build <维护build.json> --source-environment <原物理源环境文件> --id <本次源代次标识>
+cargo xtask check recovery fixture successor generation-request --successor <关系文件> --source-backend <当前源执行仓库> --expected-head <干净源码SHA> --backend-build <v2构建收据> --maintenance-build <维护build.json> --source-environment <原物理源环境文件> --id <本次源代次标识> --output <新generation-request.json> --write
+cargo xtask check recovery clone seed-runtime --run-dir <原运行目录> --operation source-generation-start --request <generation-request.json> --write
+cargo xtask check recovery clone seed-runtime --run-dir <原运行目录> --operation source-generation-status
+cargo xtask check recovery source verify --source-generation <原运行目录/results/START序号.json> --output <原运行目录/gSTART序号/verification/source-runtime.json> --write
+cargo xtask check recovery clone seed-runtime --run-dir <原运行目录> --operation source-generation-stop --request <原运行目录/gSTART序号/verification/source-runtime.json> --write
+```
+
+`START序号` 使用同一账本实际返回的四位 attempt 编号，不预先猜测。start 保留四库完整业务表、保留表、placement、五桶全部对象字节与元数据、ownership、Redis 和存储身份的启动前后像，要求零漂移；成功后保留同一 API/Worker 受控进程树。数据血缘递归绑定原发布、复制计划与账本、完整数据集和业务验证，保留原租户 ID 与对象映射，不重新造数。独立 `source verify --write` 在同一运行代次验证当前 API，并披露登录登出的精确会话与审计副作用；只有同代验证收据可用于 stop。stop 先对照验证后像，再要求停止前后完整像零漂移，最后发布唯一 effective/quiesced generation；这两个控制阶段的 `remote_writes=0` 不表示独立 source verify 没有会话写入。
+
+start 或 stop 失败后禁止重放。先执行只读 `source-generation-status`；账本控制器死亡时，先按 `clone status` 返回的原 owner binding 显式执行既有 `clone recover` 收尾锁，再使用 `cargo xtask check recovery clone seed-runtime --run-dir <原运行目录> --operation source-generation-recover --request <原generation-request.json> --write` 精确回收已有树。recover 只停止同代已登记进程并保留前后像，不发布可导出代次，也不允许第二次启动。树尚未完整发布的崩溃窗口报告 `unknown`，缺少树不能解释为已停止；PID 复用、未知代次文件、链接或不完整归属均阻断自动回收。保留现场以便人工核对，不补签或猜测退出事实。
+
+完成代次停止后生成的 base/candidate arm 请求、清单和结果显式绑定同一重绑定及 source-generation 收据；来源代次再次变化时停止，不能把原 arm 自动改绑到新进程。只读来源核验不会创建锁或报告，实际导出及复制前还会核对进程创建身份、完整参数和监听端口。上述交接仅恢复开发复制来源的可用性，不构成正式恢复或 RTO 达标证据。
+
+完成 source-generation-stop 后，在同一运行执行 `cargo xtask check recovery clone seed-runtime --run-dir <运行目录> --operation source-export --write`。该阶段只读取源数据库和对象，把完整导出、校验摘要与来源写入原 attempt 目录，并在原账本追加唯一发布结果。重复导出在创建新 attempt 前被拒绝。失败后先用 `clone status` 核对状态，死亡控制器通过原 `clone recover` 处理；只有已收尾失败且具有完整 `export.json` 的候选才能用 `--operation source-export-reconcile --write` 完整复核并采用。只读 reconcile 在失败收尾后可以显式重试，但始终核对同一候选，任何已有结果不一致时失败关闭。采用不会重新导出；缺少完整候选、输入漂移或未收尾状态继续失败关闭，保留证据。
 
 用 `cargo xtask check recovery fixture successor arm-request --successor <关系文件> --source-export-result <导出外层结果> --workspace <已初始化目标目录> --id <本侧标识> --side base|candidate --copy-directory <新复制目录>` 预览两侧请求；实际写入再加 `--output <请求文件> --write`。两侧必须传入完全相同的导出外层结果。生成的请求、清单和 arm 结果同时绑定该结果与其中的实际 `export.json`，后续两侧的 clone export 阶段只完整核验这份导出，不再各自读取源并导出。
 

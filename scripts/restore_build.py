@@ -66,8 +66,9 @@ def registered_source(
     *,
     adapter_contract: str | None = None,
     product_backend: Path | None = None,
+    reconstruct: bool = True,
 ) -> tuple[Path, dict, tuple[Path, dict] | None]:
-    """核验本次构建声明的 clean 源；B0 额外重建内嵌适配补丁及产品域。"""
+    """核验声明的 clean 源；发布重建 B0 补丁，预览只读复核已绑定提交及产品域。"""
     if re.fullmatch(r"[a-f0-9]{40}", expected_head) is None:
         raise ValueError("构建来源提交必须是完整小写 SHA")
     source = repository(source_backend, "后端构建来源")
@@ -96,7 +97,7 @@ def registered_source(
     if (expected_head != B0_ADAPTER_COMMIT or snapshot["head"] != B0_ADAPTER_COMMIT
             or product_snapshot["head"] != B0_BACKEND_COMMIT or not product_snapshot["clean"]):
         raise ValueError("B0 构建来源与登记的产品或适配提交不匹配")
-    evidence = b0_adapter_evidence(coordinator)
+    evidence = b0_adapter_evidence(coordinator, reconstruct=reconstruct)
     if evidence["contract"] != adapter_contract:
         raise ValueError("B0 内嵌适配证据与构建声明不匹配")
     product_domains = build_source_domains(product_inventory, "backend")["product"]

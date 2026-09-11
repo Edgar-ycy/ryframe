@@ -487,6 +487,9 @@ def main() -> None:
     relationship.add_argument("--id", required=True)
     relationship.add_argument("--output", type=Path, required=True)
     relationship.add_argument("--write", action="store_true")
+    from reference_fixture_successor_generation import arguments as generation_arguments
+
+    generation_arguments(operations.add_parser("generation-request", allow_abbrev=False))
     arm = operations.add_parser("arm-request")
     arm.add_argument("--backend-dir", type=Path, required=True)
     arm.add_argument("--successor", type=Path, required=True)
@@ -498,6 +501,11 @@ def main() -> None:
     arm.add_argument("--output", type=Path)
     arm.add_argument("--write", action="store_true")
     args = parser.parse_args()
+    if args.operation == "generation-request":
+        from reference_fixture_successor_generation import execute
+
+        print(json.dumps(execute(args, parser), ensure_ascii=False))
+        return
     if args.operation == "arm-request":
         from reference_fixture_successor_arm import build as build_arm
         from reference_fixture_successor_arm import publish as publish_arm

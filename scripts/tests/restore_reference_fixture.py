@@ -37,8 +37,9 @@ def environment(test):
 
 
 def inventory(plan):
+    observed = now()
     return {"id": plan["id"], "scope_id": "source", "source_sha": "a" * 40,
-            "captured_at": now(), "quiesced_at": now(),
+            "captured_at": observed, "quiesced_at": observed,
             "databases": [{**{key: db[key] for key in ("key", "kind", "database", "server_uuid")},
                            "shared": db["mode"] == "shared",
                            "tables": [{"table": "sys_post", "rows": 1, "sha256": "b" * 64}]}

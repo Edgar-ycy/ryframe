@@ -22,7 +22,7 @@ SEED_TO_ARM_FIELDS = FIELDS | {
     "source_registration", "target_registration", "target_initialized_files",
     "target_storage_run",
 }
-SUCCESSOR_SEED_TO_ARM_FIELDS = SEED_TO_ARM_FIELDS | {"review_successor", "source_export_result"}
+SUCCESSOR_SEED_TO_ARM_FIELDS = SEED_TO_ARM_FIELDS | {"review_successor", "source_export_result", "source_generation"}
 TARGET_REGISTRATION_FIELDS = {
     "format_version", "kind", "request", "environment", "storage_run", "target_directory",
 }
@@ -321,7 +321,7 @@ def source_storage_binding(backend: Path, directory: Path, value: dict | None = 
     if local is not None:
         raise ValueError("seed_to_arm 只能继承已发布 seed 存储，不能建立第二套 source authority")
     source = _published_seed_source(backend, value, live_storage=True)
-    if source["registration"]["source_request"] != value["source_request"]:
+    if source["source_request"] != value["source_request"]:
         raise ValueError("seed_to_arm 清单的源请求不属于继承登记")
     return source["storage"]["storage"]
 
@@ -332,8 +332,11 @@ def inherited_build_bridges(backend: Path, value: dict) -> list[dict]:
     from source_fingerprints import read_binding
 
     source = _published_seed_source(backend, value, live_storage=False)
-    if source["registration"]["source_request"] != value["source_request"]:
+    if source["source_request"] != value["source_request"]:
         raise ValueError("seed_to_arm 产物来源不属于继承源请求")
+    if source.get("source_generation") is not None:
+        # 后继代次自身绑定当前 clean 注册来源；历史 C52 的旧产物桥接仍保留在原清单中。
+        return []
     bridges = source["manifest"]["build_bridges"]
     expected = {
         (source["request"][field]["path"], source["request"][field]["sha256"])
@@ -371,6 +374,8 @@ def _published_seed_source(backend: Path, value: dict, *, live_storage: bool) ->
         raise ValueError("seed_to_arm 清单的 successor 与 C52 来源不一致")
     if source.get("source_rebind") != value.get("source_rebind"):
         raise ValueError("seed_to_arm 来源的冻结重绑定收据变化")
+    if source.get("source_generation") is None or source["source_generation"] != value["source_generation"]:
+        raise ValueError("seed_to_arm 必须绑定当前已发布 source-generation")
     from devex_clone_seed_export import require_export_binding
 
     require_export_binding(backend, source, value)
@@ -606,11 +611,12 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
 
     # 停止只依据已登记运行产物及内核身份，不能被后来源码变化阻挡。
     session_cleanup = stage in {"post-copy", "seed-runtime"} and mode == "recover-session"
-    seed_cleanup = stage == "seed-runtime" and mode in {"stop", "recover"}
+    seed_cleanup = stage == "seed-runtime" and mode in {"stop", "recover", "source-generation-recover"}
     storage_cleanup = (stage.startswith("storage-") or stage == "cache-target") and mode in {"stop", "recover"}
     cleanup = session_cleanup or seed_cleanup or storage_cleanup or (stage.startswith("runtime-") and mode in {"stop", "recover"})
     evidence_handoff = stage == "seed-runtime" and mode in {
-        "arm-input", "source-rebind", "source-export", "source-export-reconcile",
+        "arm-input", "source-rebind", "source-generation-start", "source-generation-stop", "source-generation-recover",
+        "source-export", "source-export-reconcile",
     }
     if session_cleanup or seed_cleanup or storage_cleanup or evidence_handoff:
         value, environment = registered_manifest(backend, directory), None
@@ -625,6 +631,14 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
     with process_guard(directory, "run-control.guard"):
         try:
             with claim_run_lock(directory) as owner, source_context:
+                if stage == "seed-runtime" and mode == "source-generation-start":
+                    from devex_clone_seed_generation import preflight as generation_preflight
+
+                    generation_preflight(directory)
+                if stage == "seed-runtime" and mode in {"source-generation-stop", "source-generation-recover"}:
+                    from devex_clone_seed_generation_control import preflight as generation_control_preflight
+
+                    generation_control_preflight(directory, mode)
                 if stage == "seed-runtime" and mode in {"source-export", "source-export-reconcile"}:
                     from devex_clone_seed_export import preflight
 

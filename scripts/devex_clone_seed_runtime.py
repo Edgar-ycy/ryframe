@@ -328,6 +328,15 @@ def execute_seed(backend, directory, value, mode, number, request_file=None, pro
             except (ValueError, OSError, KeyError, TypeError) as error:
                 observed.update(restart_ready=False, stopped_evidence_error_type=type(error).__name__)
         return observed
+    if mode in {"source-generation-start", "source-generation-stop", "source-generation-recover"}:
+        if request_file is None:
+            raise ValueError("source-generation 需要明确 --request")
+        from devex_clone_seed_generation import execute_generation
+        from devex_clone_seed_generation_control import execute_stop, execute_recover
+
+        operation = {"source-generation-start": execute_generation, "source-generation-stop": execute_stop,
+                     "source-generation-recover": execute_recover}[mode]
+        return operation(backend, directory, request_file, number)
     require_quiet(backend, directory, number)
     if mode in {"source-export", "source-export-reconcile"}:
         from devex_clone_seed_export import execute_export

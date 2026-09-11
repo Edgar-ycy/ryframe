@@ -38,15 +38,15 @@ def _validate_business_lineage(backend: Path, value: dict, request: dict, plan: 
     if stage != "seed_to_arm":
         raise ValueError("post-copy 不支持当前复制阶段")
 
-    from devex_clone_seed_source import published_source
+    from devex_clone_run import _published_seed_source
 
     descriptor = value.get("source_registration")
     if not isinstance(descriptor, dict):
         raise ValueError("seed_to_arm 缺少已发布 seed 来源登记")
-    inherited = published_source(backend, descriptor)
+    inherited = _published_seed_source(backend, value, live_storage=False)
     registration = inherited["registration"]
-    if (registration["source_request"] != value.get("source_request")
-            or registration["source_environment"] != value.get("source_environment")
+    if (inherited["source_request"] != value.get("source_request")
+            or inherited["source_environment"] != value.get("source_environment")
             or inherited["request"].get("source", {}).get("scope_id") != plan.get("source_scope")):
         raise ValueError("seed_to_arm 直接来源不属于当前复制计划")
     previous = resolve_post_registration(

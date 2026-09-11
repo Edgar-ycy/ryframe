@@ -178,14 +178,25 @@ class SeedRebindTests(unittest.TestCase):
 
     def test_source_export_requires_rebind_and_is_allowed_once(self):
         receipt, state = self.published_rebind()
-        export = self.record(55, "seed-runtime", "source-export", receipt)
+        state["attempts"] += [self.record(55, "seed-runtime", "source-generation-start", self.successor),
+                              self.record(56, "seed-runtime", "source-generation-stop", self.successor)]
+        export = self.record(57, "seed-runtime", "source-export", receipt)
         rebind.history(self.directory, {"attempts": state["attempts"] + [export]}, self.published)
         for attempts in (self.prefix + [export], state["attempts"] + [export, {**export, "number": 56}]):
             with self.subTest(attempts=attempts), self.assertRaises(ValueError):
                 rebind.history(self.directory, {"attempts": attempts}, self.published)
         active = {**export, "status": "running", "result": None}
         with patch("devex_clone_run._require_owned_run"):
-            rebind.history(self.directory, {"attempts": state["attempts"] + [active]}, self.published, current=55)
+            rebind.history(self.directory, {"attempts": state["attempts"] + [active]}, self.published, current=57)
+
+    def test_published_generation_cannot_be_recovered_then_reused_as_export_source(self):
+        receipt, state = self.published_rebind()
+        state["attempts"] += [self.record(55, "seed-runtime", "source-generation-start", receipt),
+                              self.record(56, "seed-runtime", "source-generation-stop", receipt),
+                              self.record(57, "seed-runtime", "source-generation-recover", receipt),
+                              self.record(58, "seed-runtime", "source-export", receipt)]
+        with self.assertRaisesRegex(ValueError, "不能重放"):
+            rebind.history(self.directory, state, self.published)
 
     def test_changed_runtime_history_is_not_hidden_by_old_stopped_identities(self):
         runtime_history = self.file("producer-history.json", {"events": ["stopped"]})
@@ -260,28 +271,32 @@ class SeedRebindTests(unittest.TestCase):
 
     def test_failed_export_only_opens_exact_explicit_owned_reconcile(self):
         _, state = self.published_rebind()
-        failed = self.record(55, "seed-runtime", "source-export", status="failed")
-        active = self.record(56, "seed-runtime", "source-export-reconcile", status="running")
+        state["attempts"] += [self.record(55, "seed-runtime", "source-generation-start", self.successor),
+                              self.record(56, "seed-runtime", "source-generation-stop", self.successor)]
+        failed = self.record(57, "seed-runtime", "source-export", status="failed")
+        active = self.record(58, "seed-runtime", "source-export-reconcile", status="running")
         state["attempts"] += [failed, active]
         with patch("devex_clone_run._require_owned_run") as owned:
-            rebind.history(self.directory, state, self.published, current=56)
+            rebind.history(self.directory, state, self.published, current=58)
         owned.assert_called_once_with(self.directory)
         with patch("devex_clone_run._require_owned_run", side_effect=ValueError("not owner")), self.assertRaises(ValueError):
-            rebind.history(self.directory, state, self.published, current=56)
+            rebind.history(self.directory, state, self.published, current=58)
         with self.assertRaises(ValueError):
             rebind.history(self.directory, state, self.published)
         active["mode"] = "arm-input"
         with patch("devex_clone_run._require_owned_run"), self.assertRaises(ValueError):
-            rebind.history(self.directory, state, self.published, current=56)
+            rebind.history(self.directory, state, self.published, current=58)
 
     def test_failed_readonly_reconcile_can_retry_under_the_same_owned_run(self):
         _, state = self.published_rebind()
-        failed_export = self.record(55, "seed-runtime", "source-export", status="failed")
-        failed_reconcile = self.record(56, "seed-runtime", "source-export-reconcile", status="failed")
-        active = self.record(57, "seed-runtime", "source-export-reconcile", status="running")
+        state["attempts"] += [self.record(55, "seed-runtime", "source-generation-start", self.successor),
+                              self.record(56, "seed-runtime", "source-generation-stop", self.successor)]
+        failed_export = self.record(57, "seed-runtime", "source-export", status="failed")
+        failed_reconcile = self.record(58, "seed-runtime", "source-export-reconcile", status="failed")
+        active = self.record(59, "seed-runtime", "source-export-reconcile", status="running")
         state["attempts"] += [failed_export, failed_reconcile, active]
         with patch("devex_clone_run._require_owned_run") as owned:
-            rebind.history(self.directory, state, self.published, current=57)
+            rebind.history(self.directory, state, self.published, current=59)
         owned.assert_called_once_with(self.directory)
         with self.assertRaises(ValueError):
             rebind.history(self.directory, state, self.published)

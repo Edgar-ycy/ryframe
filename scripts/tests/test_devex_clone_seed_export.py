@@ -33,6 +33,7 @@ class SeedExportTests(unittest.TestCase):
         self.generation = {"physical": "same-source"}
         self.source = {
             "directory": self.directory, "registration": {"source_request": self.request},
+            "source_request": self.request, "source_generation": self.file("generation.json", {"v2": True}),
             "source_rebind": self.rebound, "review_successor": {"source_result": self.registration},
             "review_successor_binding": self.successor, "storage": {"storage": self.storage},
             "environment": {"environment": {}}, "manifest": {"build_bridges": []},
@@ -68,7 +69,6 @@ class SeedExportTests(unittest.TestCase):
         stack = ExitStack()
         stack.enter_context(patch.object(run, "_require_owned_run"))
         stack.enter_context(patch.object(export, "_source", return_value=copy.deepcopy(self.source)))
-        stack.enter_context(patch.object(export, "artifact_sources", return_value=nullcontext()))
         stack.enter_context(patch.object(export, "verify_source_export", side_effect=lambda _, value: self.verified(value)))
         return stack
 
@@ -193,7 +193,7 @@ class SeedExportTests(unittest.TestCase):
             elif field == "review_successor":
                 changed["review_successor_binding"] = self.request
             elif field == "source_request":
-                changed["registration"]["source_request"] = self.successor
+                changed["source_request"] = self.successor
             elif field == "source_storage":
                 changed["storage"]["storage"] = {"generation": "replaced"}
             else:

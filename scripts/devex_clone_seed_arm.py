@@ -22,14 +22,14 @@ REQUEST_FIELDS = {
     "target_registration", "target_initialized_files", "target_environment",
     "copy_directory", "build_bridges",
 }
-SUCCESSOR_REQUEST_FIELDS = REQUEST_FIELDS | {"review_successor", "source_export", "source_export_result"}
+SUCCESSOR_REQUEST_FIELDS = REQUEST_FIELDS | {"review_successor", "source_export", "source_export_result", "source_generation"}
 RESULT_FIELDS = {
     "status", "request", "manifest", "source_registration", "source_request",
     "source_storage", "generation_verified", "initialized", "target_environment",
     "target_registration", "target_initialized_files", "target_storage_run",
     "target_side", "remote_writes", "outbox_drained", "restore_qualified",
 }
-SUCCESSOR_RESULT_FIELDS = RESULT_FIELDS | {"review_successor", "source_export", "source_export_result"}
+SUCCESSOR_RESULT_FIELDS = RESULT_FIELDS | {"review_successor", "source_export", "source_export_result", "source_generation"}
 EVIDENCE_SEQUENCE = ("request.json", "manifest.json")
 EVIDENCE_FILES = set(EVIDENCE_SEQUENCE)
 
@@ -107,6 +107,8 @@ def _validate_arm_request(
     if "source_rebind" in request:
         bound_file(backend, request["source_rebind"])
     if successor:
+        if source.get("source_generation") is None or request["source_generation"] != source["source_generation"]:
+            raise ValueError("successor arm 必须绑定同一已发布 source-generation")
         require_export_binding(backend, source, request)
     if request["format_version"] != 1:
         raise ValueError("arm-input 请求类型无效")
@@ -197,9 +199,9 @@ def verify_published_arm_input(backend: Path, result_path: Path, side: str) -> d
     validate_manifest(backend, manifest)
     expected = {
         "source_registration": request["source_registration"],
-        "source_request": source["registration"]["source_request"],
+        "source_request": source["source_request"],
         "source_storage": source["registration"]["source_storage"],
-        "generation_verified": source["registration"]["generation_verified"],
+        "generation_verified": source["generation_verified"],
         "initialized": request["initialized"],
         "target_environment": request["target_environment"],
         "target_registration": request["target_registration"],
@@ -209,6 +211,7 @@ def verify_published_arm_input(backend: Path, result_path: Path, side: str) -> d
         "review_successor": request["review_successor"],
         "source_export": request["source_export"],
         "source_export_result": request["source_export_result"],
+        "source_generation": request["source_generation"],
     }
     if "source_rebind" in request:
         expected["source_rebind"] = request["source_rebind"]
@@ -252,10 +255,10 @@ def _manifest(request: dict, inputs: dict) -> dict:
         "format_version": 1,
         "kind": "devex-clone-run",
         "id": request["id"],
-        "source_request": copy.deepcopy(source["registration"]["source_request"]),
+        "source_request": copy.deepcopy(source["source_request"]),
         "source_export": None,
         "initialized": copy.deepcopy(request["initialized"]),
-        "source_environment": copy.deepcopy(source["registration"]["source_environment"]),
+        "source_environment": copy.deepcopy(source["source_environment"]),
         "target_environment": copy.deepcopy(request["target_environment"]),
         "copy_directory": str(inputs["copy_directory"]),
         "copy_stage": "seed_to_arm",
@@ -269,6 +272,7 @@ def _manifest(request: dict, inputs: dict) -> dict:
         result["review_successor"] = copy.deepcopy(request["review_successor"])
         result["source_export"] = copy.deepcopy(request["source_export"])
         result["source_export_result"] = copy.deepcopy(request["source_export_result"])
+        result["source_generation"] = copy.deepcopy(request["source_generation"])
     if "source_rebind" in request:
         result["source_rebind"] = copy.deepcopy(request["source_rebind"])
     return result
@@ -292,6 +296,7 @@ def _published(backend: Path, directory: Path, number: int) -> list[dict]:
                 or value.get("source_rebind") != request.get("source_rebind")
                 or value.get("source_export") != request.get("source_export")
                 or value.get("source_export_result") != request.get("source_export_result")
+                or value.get("source_generation") != request.get("source_generation")
                 or value.get("review_successor") != request.get("review_successor")):
             raise ValueError("历史 arm-input 外层结果类型无效")
         results.append(value)
@@ -355,7 +360,7 @@ def publish_arm_input(backend: Path, directory: Path, request_file: Path,
             raise ValueError("同一 seed run 的 arm 目标必须继承同一 review successor")
         if any(item.get("source_rebind") != request.get("source_rebind") for item in prior):
             raise ValueError("两侧 arm 必须共享同一冻结存储重绑定")
-        if any(any(item.get(field) != request.get(field) for field in ("source_export", "source_export_result")) for item in prior):
+        if any(any(item.get(field) != request.get(field) for field in ("source_export", "source_export_result", "source_generation")) for item in prior):
             raise ValueError("两侧 arm 必须共享同一已发布 seed 导出")
         if any(item["target_side"] == before["target_side"] for item in prior):
             raise ValueError("同一 seed run 已发布该 arm 目标侧")
@@ -377,9 +382,9 @@ def publish_arm_input(backend: Path, directory: Path, request_file: Path,
         "request": binding(output / "request.json"),
         "manifest": binding(output / "manifest.json"),
         "source_registration": copy.deepcopy(request["source_registration"]),
-        "source_request": copy.deepcopy(before["source"]["registration"]["source_request"]),
+        "source_request": copy.deepcopy(before["source"]["source_request"]),
         "source_storage": copy.deepcopy(before["source"]["registration"]["source_storage"]),
-        "generation_verified": copy.deepcopy(before["source"]["registration"]["generation_verified"]),
+        "generation_verified": copy.deepcopy(before["source"]["generation_verified"]),
         "initialized": copy.deepcopy(request["initialized"]),
         "target_environment": copy.deepcopy(request["target_environment"]),
         "target_registration": copy.deepcopy(request["target_registration"]),
@@ -394,6 +399,7 @@ def publish_arm_input(backend: Path, directory: Path, request_file: Path,
         result["review_successor"] = copy.deepcopy(request["review_successor"])
         result["source_export"] = copy.deepcopy(request["source_export"])
         result["source_export_result"] = copy.deepcopy(request["source_export_result"])
+        result["source_generation"] = copy.deepcopy(request["source_generation"])
     fields = SUCCESSOR_RESULT_FIELDS if successor else RESULT_FIELDS
     if "source_rebind" in request:
         result["source_rebind"] = copy.deepcopy(request["source_rebind"])

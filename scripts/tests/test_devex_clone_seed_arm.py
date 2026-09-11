@@ -64,6 +64,8 @@ class SeedArmTests(unittest.TestCase):
 
     def fake_inputs(self, *, side: str = "base") -> dict:
         source = {
+            "source_request": self.source_request, "generation_verified": self.generation_verified,
+            "source_environment": self.source_environment,
             "registration": {
                 "source_request": self.source_request,
                 "source_environment": self.source_environment,
@@ -148,6 +150,7 @@ class SeedArmTests(unittest.TestCase):
             directory=self.directory,
             review_successor=relationship,
             review_successor_binding=successor_binding,
+            source_generation=self.file("source-generation", {"v2": True}),
         )
         source["registration"]["run_directory"] = str(self.directory)
         lifecycle = {
@@ -162,6 +165,7 @@ class SeedArmTests(unittest.TestCase):
             "review_successor": successor_binding,
             "source_export": self.file("source-export", {"request": self.source_request}),
             "source_export_result": self.file("source-export-result", {"published": True}),
+            "source_generation": source["source_generation"],
         }
         export_check = patch.object(arm, "require_export_binding")
         self.addCleanup(export_check.stop)
@@ -275,6 +279,7 @@ class SeedArmTests(unittest.TestCase):
             "review_successor": request["review_successor"],
             "source_export": request["source_export"],
             "source_export_result": request["source_export_result"],
+            "source_generation": request["source_generation"],
         }
         result_path = self.local / "published-result.json"
         write_json(result_path, result)

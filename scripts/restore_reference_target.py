@@ -92,8 +92,8 @@ def _backup(backend: Path, plan: dict, document) -> tuple[dict, dict]:
     verify_artifacts(root, manifest.value)
     inventory = {key: value for key, value in manifest.value.items()
                  if key not in {"completed_at", "retention_until", "artifacts"}}
-    inputs = backup_source(backend, original, inventory, Path(result["source_runtime"]["path"]),
-                           Path(result["source_quiescence"]["path"]), Path(result["source_export"]["result"]["path"]))
+    inputs = backup_source(backend, original, inventory, Path(result["source_generation"]["path"]),
+                           Path(result["source_export"]["result"]["path"]))
     if any(result[key] != value for key, value in inputs.items()):
         raise ValueError("正式备份来源证明或共享导出摘要已变化")
     for item in (document, owner, manifest):

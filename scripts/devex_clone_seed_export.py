@@ -14,10 +14,9 @@ from devex_clone_run_state import binding, load_state
 from devex_clone_source import export_source
 from devex_clone_source_proof import bound_file
 from reference_fixture_successor import published_source
-from source_fingerprints import artifact_sources
 
 MODES = {"source-export", "source-export-reconcile"}
-FIELDS = {"status", "origin_attempt", "origin_intent", "source_registration", "source_rebind",
+FIELDS = {"status", "origin_attempt", "origin_intent", "source_registration", "source_rebind", "source_generation",
           "review_successor", "source_request", "source_storage", "export", "summary",
           "remote_writes", "restore_qualified"}
 
@@ -76,10 +75,12 @@ def execute_export(backend: Path, directory: Path, number: int, *, reconcile: bo
     mode = "source-export-reconcile" if reconcile else "source-export"
     current, prior = _active(directory, number, mode)
     source = _source(backend, directory, live=True)
+    if source.get("source_generation") is None:
+        raise ValueError("seed export 必须消费已发布 source-generation，不得拼接旧 C52 与独立构建")
     environment = Environments(source["environment"]["environment"], source["environment"]["environment"])
-    value = {"source_request": source["registration"]["source_request"]}
+    value = {"source_request": source["source_request"]}
     storage = source["storage"]["storage"]
-    with artifact_sources(backend, source["manifest"]["build_bridges"]), environment.use("source"):
+    with environment.use("source"):
         if reconcile:
             origin, intent, intent_binding, exported, summary = _verify_candidate(
                 backend, directory, value, number, current["sources"], environment, seed=True)
@@ -102,6 +103,7 @@ def execute_export(backend: Path, directory: Path, number: int, *, reconcile: bo
     result = {"status": "seed_source_export_published", "origin_attempt": origin_number,
               "origin_intent": intent_binding, "source_registration": source["review_successor"]["source_result"],
               "source_rebind": source["source_rebind"], "review_successor": source["review_successor_binding"],
+              "source_generation": source["source_generation"],
               "source_request": value["source_request"], "source_storage": copy.deepcopy(storage),
               "export": exported, "summary": summary, "remote_writes": 0, "restore_qualified": False}
     if reconcile and any(item != result for item in _reconcile_results(backend, directory, prior)):
@@ -150,9 +152,11 @@ def published_export(backend: Path, descriptor: dict, source: dict) -> dict:
     exact(value["summary"], SUMMARY_FIELDS)
     expected = {"status": "seed_source_export_published", "source_registration": source["review_successor"]["source_result"],
                 "source_rebind": source.get("source_rebind"), "review_successor": source["review_successor_binding"],
-                "source_request": source["registration"]["source_request"], "source_storage": source["storage"]["storage"],
+                "source_generation": source.get("source_generation"),
+                "source_request": source["source_request"], "source_storage": source["storage"]["storage"],
                 "remote_writes": 0, "restore_qualified": False}
-    if source.get("source_rebind") is None or any(value.get(key) != item for key, item in expected.items()):
+    if (source.get("source_rebind") is None or source.get("source_generation") is None
+            or any(value.get(key) != item for key, item in expected.items())):
         raise ValueError("seed 导出不属于当前冻结的 C52、重绑定和 successor")
     origins = [item for item in records if item["number"] == value["origin_attempt"] and item["mode"] == "source-export"]
     if len(origins) != 1 or (origins[0] != record and (origins[0]["status"] != "failed" or record["mode"] != "source-export-reconcile")):

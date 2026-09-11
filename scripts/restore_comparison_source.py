@@ -40,7 +40,7 @@ B0_ADAPTER_PATHS = ["xtask/src/cli.rs"]
 MANIFEST_FIELDS = {"format_version", "kind", "source_export", "arms"}
 ARM_FIELDS = {"roots", "sources", "execution_sources", "builds", "adapter",
               "source_export_result_sha256", "source_export_identity_sha256"}
-EXPORT_FIELDS = {"result", "origin_attempt", "source_registration", "source_rebind",
+EXPORT_FIELDS = {"result", "origin_attempt", "source_registration", "source_rebind", "source_generation",
                  "review_successor", "source_request", "export", "export_sha256",
                  "generation_sha256", "logical_inventory_sha256", "identity_sha256"}
 
@@ -198,6 +198,7 @@ def _source_export(backend: Path, descriptor: dict) -> dict:
         "origin_attempt": value["origin_attempt"],
         "source_registration": copy.deepcopy(value["source_registration"]),
         "source_rebind": copy.deepcopy(value["source_rebind"]),
+        "source_generation": copy.deepcopy(value["source_generation"]),
         "review_successor": copy.deepcopy(value["review_successor"]),
         "source_request": copy.deepcopy(value["source_request"]),
         "export": copy.deepcopy(value["export"]),
@@ -300,7 +301,7 @@ def _binding_shape(value: object, label: str) -> dict:
 
 def _validate_export_shape(value: dict) -> None:
     exact(value, EXPORT_FIELDS)
-    for field in ("result", "source_registration", "source_rebind", "review_successor",
+    for field in ("result", "source_registration", "source_rebind", "source_generation", "review_successor",
                   "source_request", "export"):
         _binding_shape(value[field], f"source-export {field}")
     if (type(value["origin_attempt"]) is not int or value["origin_attempt"] <= 0

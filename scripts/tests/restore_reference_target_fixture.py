@@ -26,9 +26,8 @@ def setup(test):
     test.source_inputs = {
         "source_export": {"result": test.write_binding("export-result.json", {"published": True}),
                           "export": test.write_binding("export.json", {"exported": True})},
-        "source_runtime": test.write_binding("source-runtime.json", {"runtime": True}),
-        "source_quiescence": test.write_binding("source-quiescence.json", {"quiesced": True})}
-    test.backup_value = {"format_version": 1, "kind": "restore-reference-backup", "reference_plan": copy.deepcopy(test.plan),
+        "source_generation": test.write_binding("source-generation.json", {"quiesced": True})}
+    test.backup_value = {"format_version": 2, "kind": "restore-reference-backup", "reference_plan": copy.deepcopy(test.plan),
                          "manifest": test.descriptor(root / "manifest.json"), "backup_root": str(root),
                          "artifacts": len(manifest["artifacts"]), **test.source_inputs}
     test.write("backup.json", {"command": "backup", "status": "completed", "plan_sha256": reference.plan_hash(test.plan),

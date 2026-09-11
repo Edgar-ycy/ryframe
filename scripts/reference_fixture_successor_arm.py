@@ -109,6 +109,9 @@ def build(
     }
     if source.get("source_rebind") is not None:
         request["source_rebind"] = copy.deepcopy(source["source_rebind"])
+    if source.get("source_generation") is None:
+        raise ValueError("successor arm 必须在 source-generation 发布后签发")
+    request["source_generation"] = copy.deepcopy(source["source_generation"])
     inputs = validate_arm_request(backend, request, live_storage=False)
     if inputs["target_side"] != side:
         raise ValueError("fresh target workspace 与请求 side 不一致")

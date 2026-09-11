@@ -28,7 +28,6 @@ from restore_reference_plan import (dataset_timeout_seconds, identifier, plan_ha
 from restore_runtime import read_json
 from restore_runtime_evidence import read_json_document
 from restore_runtime_registration import registered_stopped_runtime
-from restore_source import verify_stopped_source
 from restore_reference_target_cli import add_arguments, execute_plan, validate_arguments
 
 
@@ -79,11 +78,10 @@ def artifact(root: Path, path: Path, resource: str) -> dict:
 
 
 def backup(plan: dict, tools: ExternalTools, work: Path, inventory: dict,
-           backend: Path, source_runtime: Path, source_quiescence: Path,
+           backend: Path, source_generation: Path,
            source_export_result: Path) -> dict:
     validate_inventory(plan, inventory)
-    source_digests = verify_stopped_source(backend, plan, inventory, source_runtime, source_quiescence)
-    inputs = backup_source(backend, plan, inventory, source_runtime, source_quiescence, source_export_result)
+    inputs = backup_source(backend, plan, inventory, source_generation, source_export_result, live=True)
     require_stopped(plan, "source")
     tools.verify_databases("source")
     tools.verify_objects("source")
@@ -117,12 +115,10 @@ def backup(plan: dict, tools: ExternalTools, work: Path, inventory: dict,
                 "retention_until": (captured + dt.timedelta(days=7)).isoformat(), "artifacts": artifacts}
     verify_artifacts(root, manifest)
     require_stopped(plan, "source")
-    if verify_stopped_source(backend, plan, inventory, source_runtime, source_quiescence) != source_digests:
-        raise ValueError("备份期间来源运行证明被替换")
-    if backup_source(backend, plan, inventory, source_runtime, source_quiescence, source_export_result) != inputs:
+    if backup_source(backend, plan, inventory, source_generation, source_export_result, live=True) != inputs:
         raise ValueError("备份期间共享导出或来源绑定被替换")
     write_json(root / "manifest.json", manifest)
-    result = {"format_version": 1, "kind": "restore-reference-backup", "reference_plan": plan,
+    result = {"format_version": 2, "kind": "restore-reference-backup", "reference_plan": plan,
             "manifest": document_binding(read_json_document(root / "manifest.json")),
             "backup_root": str(root), "artifacts": len(artifacts), **inputs}
     validate_backup_result(result)
@@ -254,8 +250,7 @@ def main() -> None:
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--inventory", type=Path)
-    parser.add_argument("--source-runtime", type=Path, help="backup 必须绑定停止前真实干净构建与源侧已有数据复验的运行证明")
-    parser.add_argument("--source-quiescence", type=Path, help="backup 必须绑定采集清单前观察到同代次进程已停止的收据")
+    parser.add_argument("--source-generation", type=Path, help="backup 必须绑定同代 start、当前业务复验与完整停止后像的最终发布结果")
     parser.add_argument("--source-export-result", type=Path, help="backup 必须绑定已发布的同一共享 source-export 结果")
     parser.add_argument("--backup-root", type=Path)
     parser.add_argument("--record", type=Path)
@@ -274,7 +269,7 @@ def main() -> None:
     validate_arguments(parser, args)
     if args.side is not None and args.command != "check-existing":
         parser.error("--side 仅用于 check-existing；数据准备固定 source，恢复固定 target")
-    if any(value is not None for value in (args.source_runtime, args.source_quiescence, args.source_export_result)) and args.command != "backup":
+    if any(value is not None for value in (args.source_generation, args.source_export_result)) and args.command != "backup":
         parser.error("来源运行与停止观察收据仅用于 backup")
     backend, plan = args.backend_dir.resolve(), read_json(args.plan)
     validate_plan(plan, backend)
@@ -297,7 +292,7 @@ def main() -> None:
         return
     if not args.write:
         parser.error("所有执行阶段必须显式传入 --write")
-    required = {"backup": ("inventory", "source_runtime", "source_quiescence", "source_export_result"),
+    required = {"backup": ("inventory", "source_generation", "source_export_result"),
                 "restore": ("backup_root", "record", "target_plan", "runtime_registration"),
                 "copy": ("backup_root", "copy_id"), "damage": ("backup_root", "artifact")}
     for name in required.get(args.command, ()):
@@ -359,11 +354,13 @@ def execute(args, plan: dict, backend: Path, tools: ExternalTools, work: Path) -
             result = {**result, "source": source}
         elif args.command == "backup":
             inventory = read_json(args.inventory)
+            if "id" in inventory:
+                raise ValueError("backup 必须直接消费共享导出的原始库存，不能手工补写 id")
+            inventory = {"id": plan["id"], **inventory}
             source = source_snapshot(backend)
             if not source["clean"] or source["head"] != inventory["source_sha"]:
                 raise ValueError("正式备份必须绑定当前精确干净源码；候选数据集不能冒充发布来源")
-            result = backup(plan, tools, work, inventory, backend, args.source_runtime.absolute(),
-                            args.source_quiescence.absolute(), args.source_export_result.absolute())
+            result = backup(plan, tools, work, inventory, backend, args.source_generation.absolute(), args.source_export_result.absolute())
         elif args.command == "restore":
             result = restore(plan, tools, backend, inputs)
         else:

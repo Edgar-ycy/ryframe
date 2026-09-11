@@ -108,7 +108,19 @@ class RestoreBuildTests(unittest.TestCase):
         self.assertEqual(source, self.root)
         self.assertEqual(inventory["source"]["snapshot"], adapter)
         self.assertEqual(bound_product[1]["source"]["snapshot"], product)
-        evidence.assert_called_once_with(self.root)
+        evidence.assert_called_once_with(self.root, reconstruct=True)
+
+    def test_registered_b0_preview_uses_readonly_evidence_without_rebuilding_git_tree(self):
+        import restore_comparison_source as comparison
+
+        adapter = SOURCE | {"head": comparison.B0_ADAPTER_COMMIT}
+        product = SOURCE | {"head": comparison.B0_BACKEND_COMMIT}
+        self.source.side_effect = [adapter, product]
+        with patch.object(build, "repository", side_effect=lambda path, _label: path), \
+                patch.object(comparison, "b0_adapter_evidence", return_value={"contract": "legacy-stable-readiness-b0-v1"}) as evidence:
+            build.registered_source(self.root, self.root, comparison.B0_ADAPTER_COMMIT,
+                                    adapter_contract="legacy-stable-readiness-b0-v1", product_backend=self.local, reconstruct=False)
+        evidence.assert_called_once_with(self.root, reconstruct=False)
 
     def test_wrong_workspace_or_duplicate_cargo_events_cannot_register_artifact(self):
         output = self.cargo_run(["--bin", "ryframe"], cwd=self.root, check=True).stdout

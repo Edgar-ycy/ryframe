@@ -16,8 +16,12 @@ from restore_reference_plan import plan_hash
 FIELDS = {"status", "source_registration", "review_successor", "original_storage", "current_storage",
           "history_length", "history_sha256", "remote_writes", "restore_qualified"}
 READ_ONLY_AFTER = {("seed-runtime", "arm-input"), ("storage-target", "status"),
+                   ("seed-runtime", "source-generation-start"), ("seed-runtime", "source-generation-stop"),
+                   ("seed-runtime", "source-generation-recover"),
                    ("seed-runtime", "source-export"), ("seed-runtime", "source-export-reconcile")}
-BEFORE_REBIND = READ_ONLY_AFTER - {("seed-runtime", "source-export"), ("seed-runtime", "source-export-reconcile")} | {
+BEFORE_REBIND = READ_ONLY_AFTER - {("seed-runtime", "source-export"), ("seed-runtime", "source-export-reconcile"),
+                                  ("seed-runtime", "source-generation-start"), ("seed-runtime", "source-generation-stop"),
+                                  ("seed-runtime", "source-generation-recover")} | {
     ("storage-target", "restart"), ("storage-target", "stop"), ("storage-target", "recover"),
     ("seed-runtime", "stop"), ("seed-runtime", "recover"),
 }
@@ -31,12 +35,26 @@ def history(directory: Path, state: dict, descriptor: dict, *, current: int | No
     if len(published) != 1:
         raise ValueError("重绑定必须继承唯一已发布 seed 源")
     later = [item for item in attempts if item["number"] > published[0]["number"]]
-    rebound, exported, export_origin = False, False, None
+    rebound, started, generated, recovered, exported, export_origin = False, False, False, False, False, None
     for item in later:
         operation = (item["stage"], item["mode"])
+        if operation == ("seed-runtime", "source-generation-start"):
+            if not rebound or started or exported:
+                raise ValueError("source-generation-start 只能在唯一重绑定后执行一次")
+            started = True
+        if operation == ("seed-runtime", "source-generation-stop"):
+            if not started or generated or recovered or exported:
+                raise ValueError("source-generation-stop 只能消费唯一启动代次并发布一次")
+            generated = True
+        if operation == ("seed-runtime", "source-generation-recover"):
+            completed = any(row["number"] < item["number"] and row["stage"] == "seed-runtime"
+                            and row["mode"] == "source-generation-stop" and row["status"] == "passed" for row in later)
+            if not started or recovered or exported or completed:
+                raise ValueError("source-generation-recover 只能收回已有代次，不能重放或改变已导出来源")
+            recovered = True
         if operation == ("seed-runtime", "source-export"):
-            if not rebound or exported:
-                raise ValueError("source-export 只允许在重绑定后执行并发布一次")
+            if not rebound or not generated or recovered or exported:
+                raise ValueError("source-export 只允许在后继源代次发布后执行并发布一次")
             exported = True
             export_origin = item
         if operation == ("seed-runtime", "source-export-reconcile") and not exported:
@@ -56,6 +74,11 @@ def history(directory: Path, state: dict, descriptor: dict, *, current: int | No
         elif operation not in (READ_ONLY_AFTER if rebound else BEFORE_REBIND):
             raise ValueError("seed 发布后出现未知写入或重绑定后存储再次换代")
         if item["status"] != "passed":
+            if operation in {("seed-runtime", "source-generation-start"), ("seed-runtime", "source-generation-stop")}:
+                recovery = [row for row in later if row["number"] > item["number"]
+                            and (row["stage"], row["mode"]) == ("seed-runtime", "source-generation-recover")]
+                if len(recovery) == 1 and recovery[0]["number"] == current:
+                    continue
             if operation in {("seed-runtime", "source-export"),
                              ("seed-runtime", "source-export-reconcile")} and export_origin is not None:
                 from devex_clone_seed_export import reconciles_failed_export
