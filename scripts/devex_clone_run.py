@@ -211,6 +211,21 @@ def _require_owned_run(directory: Path) -> None:
         raise ValueError("当前控制器没有持有 target_storage_run 的固定运行锁")
 
 
+def _target_storage_snapshot(directory: Path) -> tuple[tuple[int, int], dict]:
+    """同时固定 storage run 目录文件身份与当前追加式账本。"""
+    if linked(directory) or not directory.is_dir():
+        raise ValueError("target_storage_run 目录缺失、类型错误或经过链接")
+    state = directory.stat()
+    identity = state.st_dev, state.st_ino
+    state_binding = binding(directory / "state.json")
+    current = directory.stat()
+    if (linked(directory) or not directory.is_dir()
+            or (current.st_dev, current.st_ino) != identity
+            or binding(directory / "state.json") != state_binding):
+        raise ValueError("target_storage_run 在目录与账本快照期间变化")
+    return identity, state_binding
+
+
 @contextmanager
 def target_storage_control(backend: Path, current_run: Path, value: dict):
     """在目标核验或复制期间锁住 seed_to_arm 继承的存储运行，阻止重启与停止竞态。"""
@@ -221,25 +236,35 @@ def target_storage_control(backend: Path, current_run: Path, value: dict):
     if _overlap(current_run, selected) and current_run != selected:
         raise ValueError("当前运行与 target_storage_run 不能互相包含")
     expected = copy.deepcopy(value["target_storage_run"])
+    observed = _target_storage_snapshot(selected)
 
-    def unchanged() -> None:
-        if value["target_storage_run"] != expected or target_storage_run(backend, value) != selected:
+    def unchanged(frozen: tuple[tuple[int, int], dict]) -> None:
+        if (value["target_storage_run"] != expected
+                or _target_storage_snapshot(selected) != frozen
+                or target_storage_run(backend, value) != selected
+                or _target_storage_snapshot(selected) != frozen):
             raise ValueError("target_storage_run 在阶段期间变化")
 
     if selected == current_run:
         _require_owned_run(current_run)
-        unchanged()
+        frozen = _target_storage_snapshot(selected)
+        if frozen != observed:
+            raise ValueError("target_storage_run 在取得控制锁前变化")
+        unchanged(frozen)
         try:
             yield selected
         finally:
-            unchanged()
+            unchanged(frozen)
         return
     with run_lock(selected):
-        unchanged()
+        frozen = _target_storage_snapshot(selected)
+        if frozen != observed:
+            raise ValueError("target_storage_run 在取得控制锁前变化")
+        unchanged(frozen)
         try:
             yield selected
         finally:
-            unchanged()
+            unchanged(frozen)
 
 
 def cleanup_inputs(backend: Path, directory: Path, side: str) -> tuple[dict, Environments]:

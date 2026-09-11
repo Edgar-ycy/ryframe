@@ -303,6 +303,41 @@ class SeedArmTests(unittest.TestCase):
         self.assertEqual(result["source_registration"], self.source_registration)
         self.assertEqual(result["remote_writes"], 0)
 
+    def test_successor_publish_rejects_target_state_change_after_manifest_write(self):
+        request, source, _ = self.successor_case()
+        self.request_file.unlink()
+        write_json(self.request_file, request)
+        inputs = {**self.inputs, "source": source}
+        storage = self.local / "guarded-target-storage"
+        storage.mkdir()
+        write_json(storage / "manifest.json", {"run": True})
+        write_json(storage / "state.json", {"generation": 1})
+        publish = arm._write_or_match
+
+        def publish_then_change_storage(path: Path, value: dict) -> None:
+            publish(path, value)
+            if path.name == "manifest.json":
+                (storage / "state.json").write_text(
+                    '{"generation": 2}\n', encoding="utf-8"
+                )
+
+        with (
+            patch.object(arm, "load_state", return_value={"attempts": []}),
+            patch.object(arm, "_inputs", return_value=inputs),
+            patch("devex_clone_run.target_storage_run", return_value=storage),
+            patch.object(arm, "_write_or_match", side_effect=publish_then_change_storage),
+            patch("devex_clone_run.target_lifecycle_binding", return_value={}),
+            patch("devex_clone_run._published_seed_source", return_value=source),
+            patch("devex_clone_run.inherited_build_bridges", return_value=[]),
+            self.assertRaisesRegex(ValueError, "阶段期间变化"),
+        ):
+            arm.publish_arm_input(
+                self.backend, self.directory, self.request_file, 1
+            )
+        output = self.directory / "seed-runtime/attempt-0001"
+        self.assertTrue((output / "request.json").is_file())
+        self.assertTrue((output / "manifest.json").is_file())
+
     def test_target_build_uses_current_audited_bridge_and_verified_tool_receipt(self):
         target = self.inputs["target"]
         receipt = {
