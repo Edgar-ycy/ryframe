@@ -133,10 +133,12 @@ class BusinessLineageTests(unittest.TestCase):
         with patch.object(proof, "repository", return_value=self.backend), \
                 patch.object(proof, "validate_runtime_receipt", return_value={"runtime": True}), \
                 patch.object(proof, "_verified_target", return_value=(target, verified, {"target": selected}, {}, dataset)) as check, \
+                patch.object(proof, "verify_static_runtime") as static, \
                 patch.object(proof, "verify_live_generation") as live:
             result = proof.dataset_preflight(self.backend, runtime.path, target.path)
         check.assert_called_once_with(self.backend, target.path, {"runtime": True})
         live.assert_not_called()
+        static.assert_called_once_with(self.backend, {"runtime": True}, target, verified, {"target": selected}, {})
         self.assertEqual(result, {"format_version": 1, "kind": "restore-dataset-authority",
                                  "runtime": proof._descriptor(runtime), "target_plan": proof._descriptor(target),
                                  **dataset, "target": selected, "execution_backend": str(self.backend)})

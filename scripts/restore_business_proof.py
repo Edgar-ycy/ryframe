@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import sys
+
+# 只读入口即使未传 -B，也不能在加载当前及动态验证模块时生成字节码。
+sys.dont_write_bytecode = True
+
 import argparse
 import json
-import sys
 from pathlib import Path
 
 from restore_build import repository
@@ -12,6 +16,7 @@ from restore_reference_backup import bound_document, validate_backup_result
 from restore_reference_target import FIELDS as TARGET_FIELDS, verify_target_plan
 from restore_runtime import validate_launch, verify_live_generation
 from restore_runtime_registration import registration_binding
+from restore_runtime_static import verify_static_runtime
 from restore_runtime_evidence import (
     HEX_40,
     HEX_64,
@@ -485,7 +490,8 @@ def dataset_preflight(backend: Path, runtime_path: Path, target_path: Path) -> d
     backend = repository(backend, "恢复数据核验后端")
     runtime = read_json_document(runtime_path)
     value = validate_runtime_receipt(runtime.value)
-    target, verified, reference, _manifest, dataset = _verified_target(backend, target_path, value)
+    target, verified, reference, manifest, dataset = _verified_target(backend, target_path, value)
+    verify_static_runtime(backend, value, target, verified, reference, manifest)
     selected = reference["target"]
     result = {
         "format_version": 1, "kind": "restore-dataset-authority",
