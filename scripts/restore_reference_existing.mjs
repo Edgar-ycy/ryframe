@@ -269,7 +269,11 @@ function accessSubject(token, identity) {
   } catch {
     throw new Error('来源验收访问令牌声明无效')
   }
-  const userId = Number(claims.sub)
+  const userId = claims?.sub
+  const validUserId =
+    typeof userId === 'string' &&
+    /^[1-9][0-9]{0,18}$/.test(userId) &&
+    BigInt(userId) <= 9223372036854775807n
   if (
     !claims ||
     typeof claims !== 'object' ||
@@ -277,8 +281,7 @@ function accessSubject(token, identity) {
     claims.token_type !== 'access' ||
     claims.tenant_id !== identity.tenant_id ||
     claims.username !== identity.username ||
-    !Number.isSafeInteger(userId) ||
-    userId <= 0 ||
+    !validUserId ||
     typeof claims.user_authorization_version !== 'number' ||
     !Number.isSafeInteger(claims.user_authorization_version) ||
     claims.user_authorization_version < 0

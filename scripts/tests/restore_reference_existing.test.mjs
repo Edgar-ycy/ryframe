@@ -159,7 +159,7 @@ function transport(t, dataset, options = {}) {
     )
     const claims = Buffer.from(
       JSON.stringify({
-        sub: String(tenantIndex + 1),
+        sub: String(9_007_199_254_740_993n + BigInt(tenantIndex)),
         tenant_id: this.identity.tenant_id,
         username: this.identity.username,
         token_type: 'access',
@@ -315,7 +315,7 @@ test('派生来源使用血缘中的原租户身份和当前端点完成全量�
     restore_success: false,
     subjects: lineage.tenants.map((tenant, index) => ({
       tenant_id: tenant.tenant_id,
-      user_id: index + 1,
+      user_id: String(9_007_199_254_740_993n + BigInt(index)),
       user_authorization_version: 1,
     })),
     tenants: 11,
