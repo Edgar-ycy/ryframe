@@ -42,7 +42,8 @@ class ServiceLifecycleTests(unittest.TestCase):
     def mocks(self, *, failure=False):
         stack = ExitStack()
         stack.enter_context(patch.object(lifecycle, "registered_services", return_value=self.services))
-        stack.enter_context(patch.object(lifecycle, "observe_services", return_value={"redis": "running", "rustfs": "running"}))
+        stack.enter_context(patch.object(lifecycle, "observe_services", return_value={
+            "redis": "running", "rustfs": "running", "termination": None}))
         def redis_stop(_request, _environment, _runtime, output):
             self.events.append("redis")
             if failure:
@@ -52,7 +53,8 @@ class ServiceLifecycleTests(unittest.TestCase):
             return value
         stack.enter_context(patch.object(lifecycle, "stop_cache", side_effect=redis_stop))
         stack.enter_context(patch.object(lifecycle, "terminate_owned_process_tree", side_effect=lambda tree: self.events.append("rustfs") or True))
-        stack.enter_context(patch.object(lifecycle, "_closed_services", return_value={"redis": "stopped", "rustfs": "stopped"}))
+        stack.enter_context(patch.object(lifecycle, "_closed_services", return_value={
+            "redis": "stopped", "rustfs": "stopped", "termination": None}))
         def completed(_tree):
             from full_stack_process_monitor import receipt_path
             tree = self.services["tree"]
@@ -68,11 +70,65 @@ class ServiceLifecycleTests(unittest.TestCase):
     def test_status_has_no_writes_and_reports_unique_next_operation(self):
         before = self.snapshot()
         with patch.object(context, "registered_services", return_value=self.services), \
-                patch.object(context, "observe_services", return_value={"redis": "running", "rustfs": "running"}):
+                patch.object(context, "observe_services", return_value={"redis": "running", "rustfs": "running",
+                                                                         "termination": None}):
             result = context.status(self.backend, self.review, self.bootstrap)
         self.assertEqual(result["next_operation"], "close")
         self.assertEqual(before, self.snapshot())
         self.assertFalse((self.run / "run-control.guard").exists())
+
+    def test_status_reports_external_termination_without_writing_or_inventing_shutdown_proof(self):
+        before = self.snapshot()
+        evidence = {"status": "external-termination-unreconciled",
+                    "identities": {role: "missing" for role in ("supervisor", "monitor", "process")},
+                    "normal_shutdown_proof": None,
+                    "evidence": {"rustfs_tree": {"path": "tree"}, "redis_runtime": {"path": "runtime"},
+                                 "rustfs_monitor_ready": {"path": "ready"}}}
+        with patch.object(context, "registered_services", return_value=self.services), \
+                patch.object(context, "observe_services", return_value={"redis": "stopped",
+                    "rustfs": "external-termination-unreconciled", "termination": evidence}):
+            result = context.status(self.backend, self.review, self.bootstrap)
+        self.assertEqual(result["services"], "external-termination-unreconciled")
+        self.assertEqual(result["next_operation"], "recover")
+        self.assertEqual(result["reconciliation"]["owner"], result["state"])
+        self.assertIsNone(result["reconciliation"]["normal_shutdown_proof"])
+        self.assertEqual(before, self.snapshot())
+
+    def test_external_termination_requires_every_identity_missing_and_redis_stopped(self):
+        request = {"api_url": "http://127.0.0.1:29200", "console_url": "http://127.0.0.1:29201"}
+        services = {**self.services, "requests": {"rustfs": request, "redis": {}}, "evidence": {}}
+        identities = {role: "missing" for role in ("supervisor", "monitor", "process")}
+        ready = {"format_version": 1, "operation_id": self.services["tree"]["operation_id"],
+                 "directory": self.services["tree"]["runtime_directory"], "role": "rustfs",
+                 "scope_id": self.services["tree"]["scope_id"],
+                 "supervisor": self.services["tree"]["supervisor"], "monitor": self.services["tree"]["monitor"]}
+        with patch.object(context, "read_json", return_value=ready), \
+                patch.object(context, "binding", return_value={"path": "ready"}), \
+                patch.object(context, "require_closed_port") as closed, \
+                patch.object(context, "_identity_observations", return_value=identities):
+            result = context._external_termination(services, identities)
+        self.assertEqual(result["status"], "external-termination-unreconciled")
+        self.assertEqual(closed.call_count, 2)
+
+        with patch("devex_clone_cache_process.status", return_value={"state": "running"}), \
+                patch.object(context, "_identity_observations", return_value=identities), \
+                patch("full_stack_process_monitor.wait_members", side_effect=ValueError(
+                    "成员监督器退出但没有完整成员关闭证明")), \
+                patch.object(context, "_external_termination", return_value=result), \
+                self.assertRaisesRegex(ValueError, "Redis 仍存活"):
+            context.observe_services(services)
+
+    def test_service_observation_rejects_pid_reuse_or_partial_tree(self):
+        reused = {**self.services["tree"]["monitor"], "started": "2"}
+        with patch.object(context, "process_identity", side_effect=lambda pid: reused
+                          if pid == self.services["tree"]["monitor"]["pid"] else None), \
+                self.assertRaisesRegex(ValueError, "PID 已复用"):
+            context._identity_observations(self.services["tree"])
+        with patch("devex_clone_cache_process.status", return_value={"state": "stopped"}), \
+                patch.object(context, "_identity_observations", return_value={
+                    "supervisor": "missing", "monitor": "missing", "process": "running"}), \
+                self.assertRaisesRegex(ValueError, "部分存活"):
+            context.observe_services({**self.services, "requests": {"redis": {}, "rustfs": {}}, "evidence": {}})
 
     def test_close_orders_services_and_preserves_registered_history_prefix(self):
         descriptor = {"path": str(self.run), "manifest": binding(self.run / "manifest.json"), "state": binding(self.run / "state.json")}
@@ -220,7 +276,10 @@ class ServiceLifecycleTests(unittest.TestCase):
         executable = str(self.fixture.tool)
         storage_identity = {"pid": 12345, "started": "1", "executable": executable}
         supervisor = {"pid": 12346, "started": "2", "executable": str(Path(sys.executable).resolve())}
-        request = {"scope_id": "services-fixture-seed", "executable": {"sha256": "1" * 64}}
+        data = self.run / "rustfs-data"
+        data.mkdir()
+        request = {"scope_id": "services-fixture-seed", "executable": {"sha256": "1" * 64},
+                   "data_directory": {"path": str(data), "device": data.stat().st_dev, "inode": data.stat().st_ino}}
         for role, body, index in (("rustfs", request, 0), ("redis", {}, 1)):
             path = self.run / role / "request.json"
             write_json(path, body)

@@ -43,7 +43,7 @@ def _closed_services(services: dict) -> dict:
             pending |= actual is not None
         if not pending:
             observed = observe_services(services)
-            if observed != {"redis": "stopped", "rustfs": "stopped"}:
+            if observed != {"redis": "stopped", "rustfs": "stopped", "termination": None}:
                 raise ValueError("夹具服务完整进程树尚未退出")
             return observed
         if time.monotonic() >= deadline:
@@ -62,7 +62,9 @@ def close(backend: Path, review: Path, bootstrap: Path, *, write: bool) -> dict:
     if controller_observation(run) is not None:
         raise ValueError("存在当前或遗留控制器，不能开始服务关闭")
     services = registered_services(value)
-    observe_services(services)
+    observed = observe_services(services)
+    if observed["termination"] is not None:
+        raise ValueError("夹具服务遭外部终止，必须先显式 recover 核对现场")
     if history["closed"]:
         return _result(run, "close", "services_already_closed", services=_closed_services(services))
     with run_lock(run) as owner:
@@ -85,7 +87,8 @@ def close(backend: Path, review: Path, bootstrap: Path, *, write: bool) -> dict:
             storage_file = output / "rustfs-stopped.json"
             write_json(storage_file, {"tree": services["tree"], "terminated": terminated,
                                       "state": "stopped", "completion": completion})
-            result = _result(run, "close", "services_closed", services=observations, controller=controller,
+            result = _result(run, "close", "services_closed",
+                             services={key: observations[key] for key in ("redis", "rustfs")}, controller=controller,
                              evidence={"redis": binding(output / "stopped.json"), "rustfs": binding(storage_file)})
             if cache.get("status") != "redis_process_stopped":
                 raise ValueError("Redis 关闭未返回明确结果")

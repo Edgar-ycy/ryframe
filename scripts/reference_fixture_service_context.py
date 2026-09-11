@@ -8,7 +8,7 @@ from devex_clone_model import local_path
 from devex_clone_run_state import binding, controller_observation, load_state
 from devex_clone_source_proof import bound_file, require_closed_port
 from devex_clone_storage_process import inspect_attempt, running
-from devex_clone_storage_request import arguments
+from devex_clone_storage_request import arguments, directory_identity
 from full_stack_process import process_identity
 from full_stack_process_tree import read_process_tree
 from reference_fixture_paths import service_run
@@ -80,6 +80,7 @@ def registered_services(value: dict) -> dict:
         if path != run / role / "request.json":
             raise ValueError("冻结服务请求不属于原启动目录")
         requests[role] = read_json(path)
+    directory_identity(backend, requests["rustfs"]["data_directory"])
     storage = read_json(bound_file(backend, first["result"]))
     tree_binding = storage.get("tree")
     if not isinstance(tree_binding, dict) or bound_file(backend, tree_binding) != run / "rustfs/rustfs-tree.json":
@@ -99,7 +100,47 @@ def registered_services(value: dict) -> dict:
     if (cache.get("service") != "redis" or not isinstance(cache.get("runtime"), dict)
             or read_json(run / "redis/runtime.json") != cache["runtime"]):
         raise ValueError("Redis 首代缺少冻结运行收据")
-    return {"requests": requests, "tree": tree, "runtime": cache["runtime"], "storage": observed}
+    return {"requests": requests, "tree": tree, "runtime": cache["runtime"], "storage": observed,
+            "evidence": {"rustfs_tree": tree_binding, "redis_runtime": binding(run / "redis/runtime.json")}}
+
+
+def _identity_observations(tree: dict) -> dict:
+    observations = {}
+    for role in ("supervisor", "monitor", "process"):
+        expected = tree[role]
+        actual = process_identity(expected["pid"])
+        if actual is not None and actual != expected:
+            raise ValueError(f"RustFS {role} PID 已复用")
+        observations[role] = "running" if actual is not None else "missing"
+    return observations
+
+
+def _external_termination(services: dict, identities: dict) -> dict:
+    from full_stack_process_monitor import receipt_path
+
+    request, tree = services["requests"]["rustfs"], services["tree"]
+    directory = Path(tree["runtime_directory"])
+    operation = tree["operation_id"]
+    ready_path = receipt_path(directory, tree["role"], operation, "ready")
+    ready = read_json(ready_path)
+    expected = {"format_version": 1, "operation_id": operation, "directory": str(directory),
+                "role": tree["role"], "scope_id": tree["scope_id"],
+                "supervisor": tree["supervisor"], "monitor": tree["monitor"]}
+    if ready != expected:
+        raise ValueError("RustFS 成员监督器启动归属证据缺失或变化")
+    unexpected = [path.name for path in (
+        directory / f"{tree['role']}-tree-{operation}-control.json",
+        directory / f"{tree['role']}-tree-{operation}-result.json",
+    ) if path.exists()]
+    if unexpected:
+        raise ValueError("RustFS 外部终止现场包含未完成的控制或关闭证据")
+    for url in (request["api_url"], request["console_url"]):
+        require_closed_port(url)
+    if _identity_observations(tree) != identities:
+        raise ValueError("RustFS 外部终止核对期间进程身份变化")
+    return {"status": "external-termination-unreconciled", "identities": identities,
+            "normal_shutdown_proof": None,
+            "evidence": {**services["evidence"], "rustfs_monitor_ready": binding(ready_path)}}
 
 
 def observe_services(services: dict) -> dict:
@@ -107,22 +148,30 @@ def observe_services(services: dict) -> dict:
 
     cache = cache_status(services["requests"]["redis"], services["runtime"])
     request, tree = services["requests"]["rustfs"], services["tree"]
-    alive = running(tree["process"], arguments(request), (request["api_url"], request["console_url"]), listeners=False)
-    supervisor = process_identity(tree["supervisor"]["pid"])
-    if supervisor is not None and supervisor != tree["supervisor"]:
-        raise ValueError("RustFS 监督器 PID 已复用")
-    if alive and supervisor is None:
-        raise ValueError("RustFS 产品仍存活但原进程树监督器缺失")
-    if alive and process_identity(tree["monitor"]["pid"]) != tree["monitor"]:
-        raise ValueError("RustFS 完整成员监督器缺失或身份变化")
-    if not alive:
-        if supervisor is not None:
-            raise ValueError("RustFS 产品已退出但监督进程尚未退出")
-        from full_stack_process_monitor import wait_members
-        wait_members(tree, timeout=0)
-        require_closed_port(request["api_url"])
-        require_closed_port(request["console_url"])
-    return {"redis": cache["state"], "rustfs": "running" if alive else "stopped"}
+    identities = _identity_observations(tree)
+    if set(identities.values()) == {"running"}:
+        if not running(tree["process"], arguments(request),
+                       (request["api_url"], request["console_url"])):
+            raise ValueError("RustFS 完整进程树观察期间产品进程退出")
+        rustfs, termination = "running", None
+    elif set(identities.values()) == {"missing"}:
+        from full_stack_process_monitor import receipt_path, wait_members
+
+        stopped = receipt_path(
+            Path(tree["runtime_directory"]), tree["role"], tree["operation_id"], "stopped")
+        if stopped.exists():
+            wait_members(tree, timeout=0)
+            for url in (request["api_url"], request["console_url"]):
+                require_closed_port(url)
+            rustfs, termination = "stopped", None
+        else:
+            termination = _external_termination(services, identities)
+            rustfs = termination["status"]
+    else:
+        raise ValueError("RustFS 进程树仅部分存活，不能判定服务状态")
+    if termination is not None and cache["state"] != "stopped":
+        raise ValueError("RustFS 外部终止时 Redis 仍存活或状态未知")
+    return {"redis": cache["state"], "rustfs": rustfs, "termination": termination}
 
 
 def status(backend: Path, review: Path, bootstrap: Path) -> dict:
@@ -148,11 +197,21 @@ def status(backend: Path, review: Path, bootstrap: Path) -> dict:
                           and not (value["run"] / operation).exists() else "reconcile-evidence")
     else:
         observations = observe_services(registered_services(value))
+        if observations["termination"] is not None:
+            next_operation = "recover"
+            reconciliation = {**observations["termination"],
+                              "owner": value["sources"]["state_before"]}
+            observations = "external-termination-unreconciled"
+        else:
+            reconciliation = None
         if value["history"]["closed"]:
-            if observations != {"redis": "stopped", "rustfs": "stopped"}:
+            if observations != {"redis": "stopped", "rustfs": "stopped", "termination": None}:
                 raise ValueError("已关闭夹具服务又出现存活进程")
             next_operation = "none"
+    if observations != "external-termination-unreconciled":
+        reconciliation = None
     guard(value)
     return {"status": "service_status", "run": str(value["run"]), "controller": controller,
             "state": value["sources"]["state_before"], "services": observations, "unsettled": unsettled,
-            "unknown_recoveries": unknown, "next_operation": next_operation, "remote_writes": 0}
+            "unknown_recoveries": unknown, "reconciliation": reconciliation,
+            "next_operation": next_operation, "remote_writes": 0}
