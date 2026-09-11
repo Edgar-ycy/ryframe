@@ -29,7 +29,7 @@ pub(crate) fn recovery_command(
         RecoveryCommand::Runtime(arguments) => {
             let frontend = matches!(
                 arguments.first().map(String::as_str),
-                Some("bind" | "verify")
+                Some("build" | "bind" | "verify")
             )
             .then_some(frontend.as_str());
             Ok((

@@ -35,6 +35,7 @@ fn runtime_stage_uses_private_verifier_and_forwards_the_global_frontend() {
         strings(&["build", "--write", "--backend-dir"])
             .into_iter()
             .chain([super::workspace::root_dir().display().to_string()])
+            .chain(strings(&["--frontend-dir", "D:/前端 worktree"]))
             .collect::<Vec<_>>()
     );
 }

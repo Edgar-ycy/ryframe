@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import stat
+import subprocess
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -16,6 +17,7 @@ from full_stack_process import process_identity
 from process_sockets import verify_listener
 from restore_build import (
     build_registered,
+    repository,
     validate_new_output,
     verify_build,
     write_new,
@@ -47,6 +49,88 @@ from restore_runtime_evidence import (
 from source_inventory import build_source_domains, capture_inventory, frontend_environment_files
 
 FRONTEND_RECEIPT = ".vite/restore-build.json"
+FRONTEND_BUILD_TOOL_FILES = (
+    "scripts/build-source-inventory.mjs",
+    "scripts/build-source.mjs",
+    "scripts/restore-build.mjs",
+)
+
+
+def _frontend_build_receipt(root: Path) -> Path:
+    return root / "dist" / FRONTEND_RECEIPT
+
+
+def _registered_frontend_inventory(root: Path, expected_head: str) -> dict:
+    if not HEX_40.fullmatch(expected_head):
+        raise ValueError("前端构建来源提交必须是完整小写 SHA")
+    inventory = capture_inventory(root)
+    snapshot = inventory["source"]["snapshot"]
+    if snapshot["head"] != expected_head or not snapshot["clean"]:
+        raise ValueError("恢复构建必须使用登记的精确干净前端源码")
+    return inventory
+
+
+def _validate_registered_frontend(root: Path, expected_head: str) -> tuple[dict, JsonDocument]:
+    inventory = _registered_frontend_inventory(root, expected_head)
+    receipt = read_json_document(_frontend_build_receipt(root))
+    value = _validate_frontend_receipt(receipt.value)
+    files, snapshots = _frontend_snapshots(root)
+    if (
+        value["sources"] != build_source_domains(inventory, "frontend")
+        or value["build"]["environment_files"] != frontend_environment_files(root)
+        or value["files"] != files
+    ):
+        raise ValueError("前端构建收据与登记源码、环境或生产文件不一致")
+    receipt.assert_unchanged()
+    for snapshot in snapshots:
+        snapshot.assert_unchanged()
+    if capture_inventory(root) != inventory:
+        raise ValueError("核验期间前端源码发生变化")
+    return inventory, receipt
+
+
+def build_registered_frontend(
+    tools_frontend: Path,
+    source_frontend: Path,
+    expected_head: str,
+    run=subprocess.run,
+) -> tuple[Path, JsonDocument, str]:
+    """使用当前受控工具构建历史前端，或严格核验已有的同格式真实收据。"""
+    tools = repository(tools_frontend, "前端构建工具源码")
+    source = repository(source_frontend, "前端构建来源")
+    tools_inventory = capture_inventory(tools)
+    if not tools_inventory["source"]["snapshot"]["clean"]:
+        raise ValueError("前端构建工具必须来自干净工作树")
+    source_inventory = _registered_frontend_inventory(source, expected_head)
+    tool_files = [artifact_snapshot(tools / relative) for relative in FRONTEND_BUILD_TOOL_FILES]
+    receipt_path = _frontend_build_receipt(source)
+    action = "verified"
+    if not receipt_path.exists():
+        command = [
+            "node",
+            str(tools / "scripts/restore-build.mjs"),
+            "external-build",
+            "--source-root",
+            str(source),
+            "--expected-head",
+            expected_head,
+            "--write",
+        ]
+        run(
+            command,
+            cwd=tools,
+            check=True,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        action = "built"
+    inventory, receipt = _validate_registered_frontend(source, expected_head)
+    if inventory != source_inventory:
+        raise ValueError("前端构建期间登记源码发生变化")
+    if capture_inventory(tools) != tools_inventory:
+        raise ValueError("前端构建期间受控工具源码发生变化")
+    for snapshot in tool_files:
+        snapshot.assert_unchanged()
+    return source, receipt, action
 
 
 def require_bindings(bindings: dict) -> tuple[dict, dict]:
@@ -430,8 +514,11 @@ def main() -> None:
             command.add_argument("--output", type=Path, required=True)
             command.add_argument("--write", action="store_true", required=True)
         if operation == "build":
+            command.add_argument("--frontend-dir", type=Path, required=True)
             command.add_argument("--source-backend", type=Path, required=True)
             command.add_argument("--expected-head", required=True)
+            command.add_argument("--source-frontend", type=Path, required=True)
+            command.add_argument("--expected-frontend-head", required=True)
             command.add_argument("--adapter-contract")
             command.add_argument("--product-backend", type=Path)
         if operation in ("bind", "verify"):
@@ -447,18 +534,32 @@ def main() -> None:
     args = parser.parse_args()
     backend = args.backend_dir.resolve()
     if args.command == "build":
+        expected_source = repository(args.source_backend, "后端构建来源")
+        output = validate_new_output(args.output, expected_source)
+        frontend_source, frontend_receipt, frontend_action = build_registered_frontend(
+            args.frontend_dir.resolve(),
+            args.source_frontend,
+            args.expected_frontend_head,
+        )
         source, receipt = build_registered(
             backend,
-            args.source_backend,
+            expected_source,
             args.expected_head,
             adapter_contract=args.adapter_contract,
             product_backend=args.product_backend,
         )
-        output = validate_new_output(args.output, source)
-        write_root = source
+        if source != expected_source:
+            raise ValueError("后端构建来源在校验与构建之间发生变化")
+        write_new(output, receipt, source)
+        print(json.dumps({
+            "backend_receipt": str(output),
+            "frontend_receipt": str(frontend_receipt.path),
+            "frontend_source": str(frontend_source),
+            "frontend_action": frontend_action,
+        }, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
+        return
     elif args.command == "bind":
         output = validate_new_output(args.output, backend)
-        write_root = backend
         receipt = bind(backend, args.frontend_dir.resolve(), args.build_receipt.resolve(),
                         args.runtime_dir.resolve(), args.bindings.resolve(), args.frontend_url)
     else:
@@ -477,7 +578,7 @@ def main() -> None:
         runtime.assert_unchanged()
         print(json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
         return
-    write_new(output, receipt, write_root)
+    write_new(output, receipt, backend)
     print(json.dumps({"output": str(output)}))
 
 

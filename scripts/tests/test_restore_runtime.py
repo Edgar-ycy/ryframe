@@ -467,7 +467,18 @@ class RestoreRuntimeTests(unittest.TestCase):
 
     def test_cli_requires_explicit_write_before_build_or_bind(self):
         common = ["--backend-dir", str(self.backend), "--output", str(self.backend / ".local-tests/out.json")]
-        build_source = ["--source-backend", str(self.backend), "--expected-head", SOURCE["head"]]
+        build_source = [
+            "--frontend-dir",
+            str(self.frontend),
+            "--source-backend",
+            str(self.backend),
+            "--expected-head",
+            SOURCE["head"],
+            "--source-frontend",
+            str(self.frontend),
+            "--expected-frontend-head",
+            SOURCE["head"],
+        ]
         binding = [
             "--frontend-dir",
             str(self.frontend),
@@ -497,6 +508,12 @@ class RestoreRuntimeTests(unittest.TestCase):
     def test_build_cli_separates_current_coordinator_from_explicit_source_worktree(self):
         output = self.backend / ".local-tests/build.json"
         receipt = {"format_version": 2, "kind": "restore-backend-build"}
+        frontend_receipt = restore_runtime.read_json_document(
+            self.write_json(
+                self.frontend / "dist" / restore_runtime.FRONTEND_RECEIPT,
+                {"format_version": 2, "kind": "restore-frontend-build"},
+            )
+        )
         arguments = [
             "restore_runtime.py",
             "build",
@@ -506,17 +523,26 @@ class RestoreRuntimeTests(unittest.TestCase):
             str(self.root),
             "--expected-head",
             SOURCE["head"],
+            "--frontend-dir",
+            str(self.frontend),
+            "--source-frontend",
+            str(self.frontend),
+            "--expected-frontend-head",
+            SOURCE["head"],
             "--output",
             str(output),
             "--write",
         ]
-        with patch.object(sys, "argv", arguments), patch.object(
-            sys, "stdout", io.StringIO()
-        ), patch.object(
+        with patch.object(sys, "argv", arguments), patch.object(sys, "stdout", io.StringIO()) as stdout, \
+                patch.object(restore_runtime, "repository", return_value=self.root), patch.object(
             restore_runtime,
             "build_registered",
             return_value=(self.root, receipt),
         ) as build_call, patch.object(
+            restore_runtime,
+            "build_registered_frontend",
+            return_value=(self.frontend, frontend_receipt, "verified"),
+        ) as frontend_build, patch.object(
             restore_runtime, "validate_new_output", return_value=output
         ) as validate, patch.object(restore_runtime, "write_new") as write:
             restore_runtime.main()
@@ -527,8 +553,61 @@ class RestoreRuntimeTests(unittest.TestCase):
             adapter_contract=None,
             product_backend=None,
         )
+        frontend_build.assert_called_once_with(
+            self.frontend.resolve(), self.frontend, SOURCE["head"]
+        )
         validate.assert_called_once_with(output, self.root)
         write.assert_called_once_with(output, receipt, self.root)
+        self.assertEqual(json.loads(stdout.getvalue())["frontend_action"], "verified")
+
+    def test_registered_frontend_reuses_only_an_exact_existing_receipt(self):
+        self.prepare()
+        scripts = self.frontend / "scripts"
+        scripts.mkdir()
+        for relative in restore_runtime.FRONTEND_BUILD_TOOL_FILES:
+            (self.frontend / relative).write_text(relative, encoding="utf-8")
+        with patch.object(
+            restore_runtime,
+            "repository",
+            side_effect=lambda path, _label: Path(path).resolve(),
+        ), patch.object(restore_runtime.subprocess, "run") as run:
+            source, receipt, action = restore_runtime.build_registered_frontend(
+                self.frontend, self.frontend, SOURCE["head"]
+            )
+        self.assertEqual(source, self.frontend)
+        self.assertEqual(receipt.value["kind"], "restore-frontend-build")
+        self.assertEqual(action, "verified")
+        run.assert_not_called()
+
+    def test_registered_frontend_builds_with_the_target_vite_when_receipt_is_absent(self):
+        _authority, _backend, frontend_path, _bindings = self.prepare()
+        value = json.loads(frontend_path.read_text(encoding="utf-8"))
+        frontend_path.unlink()
+        scripts = self.frontend / "scripts"
+        scripts.mkdir()
+        for relative in restore_runtime.FRONTEND_BUILD_TOOL_FILES:
+            (self.frontend / relative).write_text(relative, encoding="utf-8")
+
+        def run(command, **options):
+            self.assertEqual(command[0], "node")
+            self.assertEqual(command[2:4], ["external-build", "--source-root"])
+            self.assertEqual(command[-3:], ["--expected-head", SOURCE["head"], "--write"])
+            self.assertEqual(options["cwd"], self.frontend)
+            self.assertTrue(options["check"])
+            self.write_json(frontend_path, value)
+            return subprocess.CompletedProcess(command, 0)
+
+        with patch.object(
+            restore_runtime,
+            "repository",
+            side_effect=lambda path, _label: Path(path).resolve(),
+        ):
+            source, receipt, action = restore_runtime.build_registered_frontend(
+                self.frontend, self.frontend, SOURCE["head"], run
+            )
+        self.assertEqual(source, self.frontend)
+        self.assertEqual(receipt.path, frontend_path)
+        self.assertEqual(action, "built")
 
     def test_verify_cli_reads_authority_from_stdin_and_outputs_only_detailed_result(self):
         runtime_path = self.write_json(self.root / "runtime.json", {"fixture": True})
