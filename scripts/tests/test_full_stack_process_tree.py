@@ -272,6 +272,22 @@ class FullStackProcessTreeTests(unittest.TestCase):
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", port))
 
+    def test_monitoring_roles_use_the_same_container_and_reap_listener_descendants(self):
+        for role in ("prometheus", "alertmanager", "webhook"):
+            with self.subTest(role=role):
+                process, child_pid, leaf_pid, port = self._launch("wait", role)
+                descendants = self._identities(child_pid, leaf_pid)
+                self.children.extend(descendants)
+                self.addCleanup(terminate_owned_process_tree, process.tree, crash=True)
+                self.assertEqual(read_process_tree(self.root, role, "tree-test"), process.tree)
+                self.assertTrue(terminate_owned_process_tree(process.tree))
+                process.wait(timeout=5)
+                self.assertTrue(all(self._gone(item) for item in descendants))
+                with socket.socket() as listener:
+                    listener.bind(("127.0.0.1", port))
+                for path in (child_pid, leaf_pid, self.root / "ready"):
+                    path.unlink(missing_ok=True)
+
     def test_no_port_grandchild_is_confirmed_before_return_in_unicode_space_path(self):
         self.root = self.root / "中文 空格"
         self.root.mkdir()
