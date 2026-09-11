@@ -4,8 +4,10 @@ import contextlib
 import copy
 import io
 import json
+import os
 from pathlib import Path
 import sys
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -121,6 +123,17 @@ class TargetPlanTests(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 self.capture()
 
+    def test_product_fault_time_must_survive_rust_serialization_unchanged(self):
+        for value in ("2026-09-05T00:00:00Z", "2026-09-05T00:00:00.100Z", "2026-09-05T00:00:00.123450Z"):
+            self.write("product.json", {**self.product, "fault_at": value})
+            self.assertEqual(self.capture()["product_plan"]["fault_at"], value)
+        for value in ("2026-09-05T00:00:00+00:00", "2026-09-05T08:00:00+08:00",
+                      "2026-09-05T00:00:00.1Z", "2026-09-05T00:00:00.100000Z",
+                      "2026-09-05T00:00:00.000Z", "2026-09-05T00:00:00.1234567Z"):
+            self.write("product.json", {**self.product, "fault_at": value})
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "Rust 原生"):
+                self.capture()
+
     def test_original_backup_receipt_and_owner_are_strict(self):
         original = reference.read_json(self.paths["backup_receipt"])
         for change in (lambda value: value.update(status="failed"), lambda value: value.update(extra=True),
@@ -225,6 +238,17 @@ class TargetPlanTests(unittest.TestCase):
                     contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 reference.main()
             read.assert_not_called()
+
+    def test_plan_cli_with_cold_bytecode_prefix_does_not_create_any_file(self):
+        plan = self.write("reference-plan.json", self.plan)
+        cache = self.work / "cold-bytecode"
+        before = {str(path): (path.stat().st_size, path.stat().st_mtime_ns) for path in self.backend.rglob("*")}
+        result = subprocess.run([sys.executable, "-B", str(Path(reference.__file__).absolute()), "plan",
+            "--backend-dir", str(self.backend), "--plan", str(plan)], cwd=self.backend,
+            env={**os.environ, "PYTHONPYCACHEPREFIX": str(cache)}, capture_output=True, check=True)
+        self.assertEqual(json.loads(result.stdout)["id"], self.plan["id"])
+        self.assertFalse(cache.exists())
+        self.assertEqual(before, {str(path): (path.stat().st_size, path.stat().st_mtime_ns) for path in self.backend.rglob("*")})
 
 
 if __name__ == "__main__":

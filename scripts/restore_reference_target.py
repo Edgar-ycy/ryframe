@@ -1,8 +1,9 @@
-"""双侧正式恢复目标计划：只读重建全部输入关系，显式发布不可覆盖的新文件。"""
+"""双侧正式恢复目标计划：复核全部输入关系，显式发布不可覆盖的新文件。"""
 
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime
 from pathlib import Path
 
 from devex_clone_factory_context import inventory_history, unfailed
@@ -148,6 +149,10 @@ def _product(plan: dict, value: dict, comparison: dict, selected: dict) -> None:
     identifier(value["backup_id"])
     scope_identifier(value["scope_id"])
     timestamp(value["fault_at"], "恢复故障时间")
+    fault = datetime.fromisoformat(value["fault_at"].replace("Z", "+00:00"))
+    precision = "seconds" if not fault.microsecond else "milliseconds" if fault.microsecond % 1000 == 0 else "microseconds"
+    if value["fault_at"] != fault.isoformat(timespec=precision).replace("+00:00", "Z") or not value["fault_at"].endswith("Z"):
+        raise ValueError("产品恢复故障时间必须使用 Rust 原生 UTC Z 格式及秒、毫秒或微秒精度")
     for database in value["databases"]:
         exact(database, {"source_key", "target_key", "server_uuid", "database"})
     databases = [{"source_key": db["key"], "target_key": db["key"],
@@ -168,14 +173,14 @@ def _product(plan: dict, value: dict, comparison: dict, selected: dict) -> None:
 
 def capture_target_plan(backend: Path, plan: dict, *, backup_receipt: Path,
                         comparison_sources: Path, arm_input: Path, fresh_target_verify: Path,
-                        product_plan: Path) -> dict:
-    """只读推导同一输入快照；只调用现有离线来源及 ownership 校验器。"""
+                        product_plan: Path, read_only: bool = True) -> dict:
+    """推导同一输入快照；预览只读，实际执行重建 B0 适配树。"""
     _plan(plan, backend)
     documents = [_input(backend, path) for path in
                  (backup_receipt, comparison_sources, arm_input, fresh_target_verify, product_plan)]
     backup, comparison, arm_document, fresh, product = documents
     copied, _manifest = _backup(backend, plan, backup)
-    sources = verify_comparison_sources(backend, comparison.value)
+    sources = verify_comparison_sources(backend, comparison.value, read_only=read_only)
     side = plan["target_side"]
     name = {"base": "b0", "candidate": "b1"}[side]
     source_arm = sources["arms"][name]
@@ -204,7 +209,7 @@ def capture_target_plan(backend: Path, plan: dict, *, backup_receipt: Path,
             "product_plan": product.value, "product_plan_sha256": plan_hash(product.value)}
 
 
-def verify_target_plan(backend: Path, plan: dict, path: Path) -> dict:
+def verify_target_plan(backend: Path, plan: dict, path: Path, *, read_only: bool = True) -> dict:
     document = _input(backend, path)
     value = document.value
     exact(value, FIELDS)
@@ -225,7 +230,7 @@ def verify_target_plan(backend: Path, plan: dict, path: Path) -> dict:
     expected = capture_target_plan(backend, plan,
         backup_receipt=Path(value["backup_receipt"]["path"]), comparison_sources=Path(value["comparison_sources"]["path"]),
         arm_input=Path(value["arm_input"]["path"]), fresh_target_verify=Path(value["fresh_target"]["verify"]["path"]),
-        product_plan=Path(value["product_plan_file"]["path"]))
+        product_plan=Path(value["product_plan_file"]["path"]), read_only=read_only)
     if expected != value:
         raise ValueError("正式恢复目标计划与当前完整来源、ownership 或产品计划不同")
     document.assert_unchanged()

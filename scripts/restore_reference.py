@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import sys
+
+sys.dont_write_bytecode = True
+
 import argparse
 import datetime as dt
 import hashlib
@@ -15,12 +19,15 @@ from full_stack_process import process_identity, read_process
 from process_sockets import verify_listener
 from restore_build import file_digest, source_snapshot
 from restore_reference_backup import backup_source, document_binding, validate_backup_result
+from restore_reference_execution import RestoreInputs, restore_inputs, restore_output
+from restore_reference_images import RestoreImages
 from restore_reference_io import ExternalTools, object_index, redact_object_diagnostic, validate_dump
 from restore_reference_plan import (dataset_timeout_seconds, identifier, plan_hash, safe_file,
-                                    scope_identifier, validate_inventory, validate_plan,
+                                    validate_inventory, validate_plan,
                                     verify_artifacts)
 from restore_runtime import read_json
 from restore_runtime_evidence import read_json_document
+from restore_runtime_registration import registered_stopped_runtime
 from restore_source import verify_stopped_source
 from restore_reference_target_cli import add_arguments, execute_plan, validate_arguments
 
@@ -35,9 +42,11 @@ def write_json(path: Path, value: dict, *, new=True) -> None:
         stream.write("\n")
 
 
-def failure_diagnostic(error: Exception) -> dict:
+def failure_diagnostic(error: BaseException) -> dict:
     """记录外部命令的脱敏输出，保留未知写入阶段的定位证据。"""
     result = {"error_type": type(error).__name__, "message": str(error)[:1000]}
+    if getattr(error, "__notes__", None):
+        result["notes"] = [redact_object_diagnostic(note[:1000], os.environ) for note in error.__notes__[:20]]
     if isinstance(error, subprocess.CalledProcessError):
         result["stdout"] = redact_object_diagnostic(error.stdout, os.environ)
         result["stderr"] = redact_object_diagnostic(error.stderr, os.environ)
@@ -120,49 +129,87 @@ def backup(plan: dict, tools: ExternalTools, work: Path, inventory: dict,
     return result
 
 
-def validate_restore_record(plan: dict, manifest: dict, record: dict) -> None:
-    target = plan["target"]
-    restore_plan = record["plan"]
-    identifier(restore_plan["id"])
-    identifier(restore_plan["backup_id"])
-    scope_identifier(restore_plan["scope_id"])
-    expected = {(db["key"], db["key"], db["server_uuid"], db["database"]) for db in target["databases"]}
-    actual = {(db["source_key"], db["target_key"], db["server_uuid"], db["database"])
-              for db in restore_plan["databases"]}
-    if (record["status"] != "running" or restore_plan["backup_id"] != manifest["id"]
-            or restore_plan["backup_id"] != plan["id"]
-            or restore_plan["scope_id"] != target["scope_id"] or actual != expected
-            or len(restore_plan["databases"]) != len(expected)
-            or restore_plan["object_endpoint"] != target["s3"]["endpoint"]
-            or restore_plan["object_prefix"] != target["scope_id"] + "/"):
-        raise ValueError("还原必须绑定 restore-begin 的运行中记录和相同精确目标")
-    started = dt.datetime.fromisoformat(record["started_at"].replace("Z", "+00:00"))
-    elapsed = (dt.datetime.now(dt.timezone.utc) - started).total_seconds()
-    if not 0 <= elapsed <= 3600:
-        raise ValueError("恢复操作尚未开始、时钟回退或已超过 60 分钟")
+def restore(plan: dict, tools: ExternalTools, backend: Path, inputs: RestoreInputs) -> dict:
+    inputs.assert_unchanged()
+    result = None
+    try:
+        with registered_stopped_runtime(backend, inputs.registration.path, document_binding(inputs.target)) as checkpoint:
+            result = restore_locked(plan, tools, backend, inputs, checkpoint)
+        return result
+    except BaseException as error:
+        if result is not None:
+            error.restore_evidence = result["resource_images"]
+        raise
 
 
-def restore(plan: dict, tools: ExternalTools, root: Path, manifest: dict, record: dict) -> dict:
+def restore_locked(plan: dict, tools: ExternalTools, backend: Path, inputs: RestoreInputs, checkpoint) -> dict:
+    runtime = checkpoint()
+    current = restore_inputs(backend, plan, inputs.target.path, inputs.root, inputs.record.path,
+                             inputs.registration.path, read_only=False)
+    if current.bindings() != inputs.bindings():
+        raise ValueError("恢复执行前目标计划或运行记录发生变化")
+    root, manifest, record = current.root, current.manifest.value, current.record.value
     validate_inventory(plan, manifest)
-    validate_restore_record(plan, manifest, record)
     verify_artifacts(root, manifest)
     # 全部 SQL 与对象索引先校验；任一缺失或篡改不能留下部分目标写入。
     for db in manifest["databases"]:
         validate_dump(safe_file(root, f"databases/{db['key']}.sql"), {table["table"] for table in db["tables"]})
     indices = {objects["bucket"]: object_index(root, objects, manifest["artifacts"]) for objects in manifest["objects"]}
-    require_stopped(plan, "target")
-    tools.verify_databases("target")
-    tools.verify_objects("target")
+    images = RestoreImages(backend, plan, current, tools)
+    try:
+        with images.control():
+            checkpoint()
+            images.capture("before", after=False)
+            checkpoint()
+            current.assert_unchanged()
+            try:
+                restore_resources(plan, tools, current, indices, checkpoint, images)
+                checkpoint()
+                verify_artifacts(root, manifest)
+                images.capture("after", after=True)
+            except BaseException as error:
+                if "after" not in images.bindings:
+                    try:
+                        checkpoint()
+                        images.capture("failure-after", after=True)
+                    except BaseException as failure:
+                        error.add_note("恢复失败后完整资源像复核也失败：" + type(failure).__name__)
+                raise
+            checkpoint()
+            final = restore_inputs(backend, plan, current.target.path, current.root, current.record.path,
+                                   current.registration.path, read_only=True)
+            if final.bindings() != current.bindings():
+                raise ValueError("恢复完成复核时来源或输入绑定发生变化")
+    except BaseException as error:
+        error.restore_evidence = dict(images.bindings)
+        raise
+    return {"restore_id": record["plan"]["id"], "status": "external_copy_completed",
+            **current.bindings(), "runtime": runtime, "resource_images": images.bindings,
+            "next": "执行 restore-verify-data；外部复制完成不代表恢复成功"}
+
+
+def restore_resources(plan: dict, tools: ExternalTools, current: RestoreInputs, indices: dict,
+                      checkpoint, images: RestoreImages) -> None:
+    root, manifest = current.root, current.manifest.value
+    artifacts = {entry["relative_path"]: entry for entry in manifest["artifacts"]}
+    def bound_artifact(relative):
+        path = safe_file(root, relative)
+        if any(artifacts[relative][key] != value for key, value in file_digest(path).items()):
+            raise ValueError("恢复写入前当前产物字节与备份清单不同")
+        return path
     for db in manifest["databases"]:
+        checkpoint()
+        current.assert_unchanged()
         target = next(value for value in plan["target"]["databases"] if value["key"] == db["key"])
-        tools.restore_database(target, [table["table"] for table in db["tables"]], safe_file(root, f"databases/{db['key']}.sql"))
+        with images.target_environment():
+            tools.restore_database(target, [table["table"] for table in db["tables"]], bound_artifact(f"databases/{db['key']}.sql"))
     for bucket, index in indices.items():
         for entry in index["entries"]:
+            checkpoint()
+            current.assert_unchanged()
             key = plan["target"]["scope_id"] + "/" + entry["key"].removeprefix(plan["source"]["scope_id"] + "/")
-            tools.aws("target", "put-object", bucket, key, safe_file(root, entry["file"]), content_type=entry["content_type"])
-    require_stopped(plan, "target")
-    return {"restore_id": record["plan"]["id"], "status": "external_copy_completed",
-            "next": "执行 restore-verify-data；外部复制完成不代表恢复成功"}
+            with images.target_environment():
+                tools.aws("target", "put-object", bucket, key, bound_artifact(entry["file"]), content_type=entry["content_type"])
 
 
 def copy_backup(work: Path, manifest: dict, source: Path, new_id: str) -> dict:
@@ -202,7 +249,7 @@ def damage(work: Path, root: Path, manifest: dict, relative: str, missing: bool)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("command", choices=("plan", "check-dataset", "check-existing", "dataset", "backup", "restore", "copy", "damage"))
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--backend-dir", type=Path, required=True)
@@ -212,6 +259,7 @@ def main() -> None:
     parser.add_argument("--source-export-result", type=Path, help="backup 必须绑定已发布的同一共享 source-export 结果")
     parser.add_argument("--backup-root", type=Path)
     parser.add_argument("--record", type=Path)
+    parser.add_argument("--runtime-registration", type=Path)
     parser.add_argument("--copy-id")
     parser.add_argument("--artifact")
     parser.add_argument("--missing", action="store_true")
@@ -219,6 +267,9 @@ def main() -> None:
                         help="仅 check-existing 可指定检查侧，默认 target；不改变数据准备或恢复目标")
     parser.add_argument("--write", action="store_true")
     add_arguments(parser)
+    options = [value.partition("=")[0] for value in sys.argv[1:] if value.startswith("--")]
+    if len(options) != len(set(options)):
+        parser.error("参考恢复选项不能重复")
     args = parser.parse_args()
     validate_arguments(parser, args)
     if args.side is not None and args.command != "check-existing":
@@ -246,11 +297,16 @@ def main() -> None:
         return
     if not args.write:
         parser.error("所有执行阶段必须显式传入 --write")
-    required = {"backup": ("inventory", "source_runtime", "source_quiescence", "source_export_result"), "restore": ("backup_root", "record"),
+    required = {"backup": ("inventory", "source_runtime", "source_quiescence", "source_export_result"),
+                "restore": ("backup_root", "record", "target_plan", "runtime_registration"),
                 "copy": ("backup_root", "copy_id"), "damage": ("backup_root", "artifact")}
     for name in required.get(args.command, ()):
         if getattr(args, name) is None:
             parser.error(f"当前阶段必须提供 --{name.replace('_', '-')}")
+    if args.command == "restore":
+        args.restore_inputs = restore_inputs(backend, plan, args.target_plan, args.backup_root, args.record,
+                                             args.runtime_registration, read_only=True)
+        restore_output(backend, plan, args.restore_inputs)
     work = work_directory(plan)
     tools = ExternalTools(plan, work)
     lock = work / ".reference-lock"
@@ -267,7 +323,14 @@ def execute(args, plan: dict, backend: Path, tools: ExternalTools, work: Path) -
     if args.command == "damage":
         name += "-" + identifier(args.backup_root.resolve().name)
     receipt = work / f"{name}.json"
+    inputs = None
+    if args.command == "restore":
+        inputs = getattr(args, "restore_inputs", None) or restore_inputs(
+            backend, plan, args.target_plan, args.backup_root, args.record, args.runtime_registration, read_only=True)
+        receipt = restore_output(backend, plan, inputs)
     started = {"command": args.command, "plan_sha256": plan_hash(plan), "started_at": now(), "status": "running"}
+    if inputs is not None:
+        started.update(inputs.bindings())
     write_json(receipt, started)
     try:
         if args.command == "dataset":
@@ -301,22 +364,23 @@ def execute(args, plan: dict, backend: Path, tools: ExternalTools, work: Path) -
                 raise ValueError("正式备份必须绑定当前精确干净源码；候选数据集不能冒充发布来源")
             result = backup(plan, tools, work, inventory, backend, args.source_runtime.absolute(),
                             args.source_quiescence.absolute(), args.source_export_result.absolute())
+        elif args.command == "restore":
+            result = restore(plan, tools, backend, inputs)
         else:
             root = args.backup_root.resolve()
             if not root.is_relative_to(work.resolve()):
                 raise ValueError("参考备份根目录必须位于本次明确演练目录内")
             manifest = read_json(root / "manifest.json")
-            if args.command == "restore":
-                result = restore(plan, tools, root, manifest, read_json(args.record))
-            elif args.command == "copy":
+            if args.command == "copy":
                 result = copy_backup(work, manifest, root, args.copy_id)
             else:
                 result = damage(work, root, manifest, args.artifact, args.missing)
         write_json(receipt, {**started, "status": "completed", "completed_at": now(), "result": result}, new=False)
         return result
-    except Exception as error:
+    except BaseException as error:
         write_json(receipt, {**started, "status": "failed", "completed_at": now(),
-                             "failure": failure_diagnostic(error)}, new=False)
+                             "failure": failure_diagnostic(error),
+                             **({"resource_images": error.restore_evidence} if hasattr(error, "restore_evidence") else {})}, new=False)
         raise
 
 

@@ -127,11 +127,7 @@ cargo xtask data restore verify-data --id <演练ID> --backup-root .local-tests/
 cargo xtask data restore verify --id <演练ID> --proof .local-tests/restore/business-proof.json --restore-config-dir .local-tests/restore/config
 ```
 
-首次向 fresh target 写入数据库或对象前，先把参考计划与该侧完整目标计划登记为“从未启动”。登记入口在取得 ownership 控制锁后，写入前后都核验目标运行目录没有 lifecycle、launch、进程树或未知文件，并证明 API、Worker、前端三个精确端口空闲；缺少进程收据本身不能作为停止证明。正式恢复执行器使用同一登记锁包住完整写入临界区，并在每次数据库或对象写入前及退出时重新核验。登记文件只绑定两个计划的绝对路径、大小和 SHA-256，以及当次零进程观察，不复制目标侧、scope 或端点作为第二事实源；恢复收据应绑定该登记文件的完整描述，计划或运行现场变化后必须新建登记，不能覆盖旧文件。
-
-```powershell
-cargo xtask check recovery runtime register --plan <参考计划JSON> --target-plan <目标计划JSON> --output <新runtime-registration.json> --write
-```
+首次向 fresh target 写入数据库或对象前，执行 `cargo xtask check recovery runtime register --plan <参考计划JSON> --target-plan <目标计划JSON> --output <新runtime-registration.json> --write`，登记目标从未启动。登记入口在 ownership 控制锁内，写入前后核验目标运行目录没有 lifecycle、launch、进程树或未知文件，并证明 API、Worker、前端三个精确端口空闲；缺少进程收据本身不能作为停止证明。正式恢复执行器使用同一登记锁包住完整写入过程，并在每次数据库或对象写入前及退出时重新核验。登记文件绑定两个计划的绝对路径、大小和 SHA-256 及零进程观察；恢复收据绑定该登记文件，计划或运行现场变化后必须新建登记，不能覆盖旧文件。
 
 一次完整验收需保留成功恢复和损坏或缺失备份失败演练的原始日志、校验结果、trace、截图和视频。失败不会被登记覆盖为成功，也不会自动操作原业务资源。`running`、`data_verified`、`succeeded`、`failed` 分别表示已开始、数据通过、全部通过与失败；超过时限且未完成的演练仍会触发告警。
 
@@ -157,11 +153,13 @@ cargo xtask check recovery runtime register --plan <参考计划JSON> --target-p
 | --- | --- |
 | `dataset` | 通过当前 API 建立套餐、十个租户、业务记录和关联对象，保存逐条创建证据与 `dataset/result.json`。 |
 | `backup --inventory <清单JSON> --source-runtime <来源运行证明JSON> --source-quiescence <停止观察收据JSON> --source-export-result <已发布共享导出结果>` | 核对停止前实际干净构建、源侧业务复验、停止观察和已发布共享导出的同一库存及运行代次，精确导出数据和对象、核对摘要；`backup.json` 绑定共享导出身份、来源证明和 `backup/manifest.json` 文件摘要，随后用产品 `backup-register` 登记。清单使用共享导出的原始 inventory 并添加本次备份 `id`。 |
-| `restore --backup-root <备份目录> --record <restore-begin记录>` | 先核对全部产物和目标，再还原到停止写入的隔离环境；输出只表示复制完成，后续仍需数据验证和真实业务证明。 |
+| `restore --target-plan <本侧目标计划> --runtime-registration <本侧运行登记> --backup-root <备份目录> --record <restore-begin记录>` | 先复核全部输入与产品计划精确一致性，持运行控制锁重新核对完整源码、B0 重建及目标四库五桶完整前像。每次写前核验三端口空闲，完成后采集完整后像。分别保存 `restore-base.json` 或 `restore-candidate.json`，绑定原计划、备份、运行记录、运行登记和前后像；复制完成后仍需产品数据验证和真实业务证明。 |
 | `copy --backup-root <备份目录> --copy-id <独立副本ID>` | 创建保留原摘要的独立备份副本；先登记副本并执行 `restore-begin`。 |
 | `damage --backup-root <副本目录> --artifact <清单内路径> [--missing]` | 仅损坏或删除指定副本产物，保留原备份；随后用 `restore-verify-data` 验证失败状态及告警。 |
 
-正式双侧恢复分别使用 `target_side: base` 与 `target_side: candidate` 的参考计划和独立工作目录。通过 `cargo xtask check recovery plan --plan <本侧参考计划> --backup-receipt <同一backup.json> --comparison-sources <双版本来源清单> --arm-input <本侧已发布arm结果> --fresh-target-verify <本侧观察目录/verify.json> --product-plan <产品RestorePlan文件>` 推导完整目标计划；加 `--output <新目标计划文件> --write` 才发布。它把 base 固定映射到 b0、candidate 固定映射到 b1，并绑定同一共享导出、原备份摘要、本侧初始化与完整 ownership、探针、前端 SHA 和产品恢复计划。`plan --plan <本侧参考计划> --target-plan <已发布目标计划>` 重新核对全部绑定；未知字段、侧别混用、证据漂移或输出覆盖都会失败。
+发布本侧目标计划后，先用 `cargo xtask check recovery runtime register --plan <本侧参考计划> --target-plan <本侧目标计划> --output <新运行登记文件> --write` 登记从未启动的目标。产品 `backup-register`、`restore-begin`、后续验证的状态仍写入 `APP_CONFIG_DIR` 指定的源侧登记库，`--restore-config-dir` 只指定独立恢复目标；把 `restore-begin` 返回记录保存到新文件再传给外部恢复阶段。目标侧 ownership 与备份、恢复登记表必须完整保持初始化前像，不因登记操作获得例外。运行登记、完整资源像或任意产物漂移都会失败；失败记录保留后像复核结果，未知写入不能自动重放。
+
+正式双侧恢复分别使用 `target_side: base` 与 `target_side: candidate` 的参考计划和独立工作目录。通过 `cargo xtask check recovery plan --plan <本侧参考计划> --backup-receipt <同一backup.json> --comparison-sources <双版本来源清单> --arm-input <本侧已发布arm结果> --fresh-target-verify <本侧观察目录/verify.json> --product-plan <产品RestorePlan文件>` 推导完整目标计划；加 `--output <新目标计划文件> --write` 才发布。它把 base 固定映射到 b0、candidate 固定映射到 b1，并绑定同一共享导出、原备份摘要、本侧初始化与完整 ownership、探针、前端 SHA 和产品恢复计划。产品计划的 `fault_at` 必须使用 UTC `Z` 格式，小数位按实际精度保留 0、3 或 6 位，保证经过产品序列化后仍逐字段一致。`plan --plan <本侧参考计划> --target-plan <已发布目标计划>` 重新核对全部绑定；未知字段、侧别混用、证据漂移或输出覆盖都会失败。
 
 已有数据可以在原计划不变的前提下复验。先用 `cargo xtask check recovery check-existing --plan <原计划JSON> --side source` 核对源侧数据库 ownership 和已登记 API；随后运行 `cargo xtask check recovery dataset-prepare --plan <原计划JSON> --verify-existing <原dataset/result.json> --side source --write`，读取原岗位样本并下载校验全部登记对象，将标准输出保存到新的独立证据文件。`--write` 表示登录、注销会产生会话及审计副作用，业务记录和对象始终只读。省略 `--side` 时已有数据验证仍固定为 `target`；数据准备仍固定为 `source`，其他阶段不接受该选项。
 

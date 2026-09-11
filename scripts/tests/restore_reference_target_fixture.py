@@ -43,7 +43,7 @@ def setup(test):
     test.request = {"side": "base", "target": {key: test.plan["target"][key] for key in ("scope_id", "s3", "databases")}}
     _fresh(test)
     test.product = {"id": "restore-run-base", "backup_id": test.plan["id"], "scope_id": test.plan["target"]["scope_id"],
-                    "fault_at": reference.now(), "databases": [{"source_key": db["key"], "target_key": db["key"],
+                    "fault_at": "2026-09-05T00:00:00Z", "databases": [{"source_key": db["key"], "target_key": db["key"],
                     "server_uuid": db["server_uuid"], "database": db["database"]} for db in test.plan["target"]["databases"]],
                     "object_endpoint": test.plan["target"]["s3"]["endpoint"], "object_prefix": "target/",
                     "api_ready_url": test.selected["api_url"] + "/readyz", "worker_ready_url": test.selected["worker_ready_url"],
@@ -53,7 +53,7 @@ def setup(test):
                   "arm_input": test.work / "arm-input.json", "fresh_target_verify": test.work / "observe/verify.json",
                   "product_plan": test.work / "product.json"}
     patches = [patch.object(target, "backup_source", side_effect=lambda *_: copy.deepcopy(test.source_inputs)),
-               patch.object(target, "verify_comparison_sources", side_effect=lambda _root, value: value),
+               patch.object(target, "verify_comparison_sources", side_effect=lambda _root, value, **_kwargs: value),
                patch.object(target, "verify_published_arm_input", side_effect=lambda *_: copy.deepcopy(test.arm)),
                patch.object(target, "request_binding", side_effect=lambda *_: ({}, copy.deepcopy(test.selected))),
                patch.object(target, "execution_backend", side_effect=lambda *_: (test.backend, {}))]

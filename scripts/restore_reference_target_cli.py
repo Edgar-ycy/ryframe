@@ -18,6 +18,12 @@ def add_arguments(parser) -> None:
 
 
 def validate_arguments(parser, args) -> None:
+    stages = {"inventory": {"backup"}, "backup_root": {"restore", "copy", "damage"},
+              "record": {"restore"}, "runtime_registration": {"restore"},
+              "copy_id": {"copy"}, "artifact": {"damage"}, "missing": {"damage"}}
+    for field, commands in stages.items():
+        if getattr(args, field) not in (None, False) and args.command not in commands:
+            parser.error(f"--{field.replace('_', '-')} 不属于当前阶段")
     creating = any(getattr(args, field) is not None for field in INPUTS)
     if (creating or args.output is not None) and args.command != "plan":
         parser.error("目标计划创建输入及 --output 仅用于 plan")

@@ -10,6 +10,7 @@ pub(crate) fn run(command: &RecoveryCommand, frontend_dir: &Path) -> Result<()> 
     let executable = if program.ends_with(".mjs") {
         "node"
     } else {
+        command.insert(0, "-B".to_owned());
         "python"
     };
     run_owned(&root_dir(), executable, &command)

@@ -75,10 +75,16 @@ def stored_backup(plan, work):
     return root, manifest
 
 
-def restore_record(plan):
-    return {"status": "running", "started_at": (dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=1)).isoformat(),
-            "plan": {"id": "restore-run", "backup_id": plan["id"], "scope_id": "target",
+def restore_record(plan, captured_at=None):
+    from restore_reference_execution import product_plan_hash
+
+    started = now()
+    product = {"id": "restore-run", "backup_id": plan["id"], "scope_id": "target",
+                     "fault_at": started, "frontend_sha": "f" * 40,
+                     "api_ready_url": plan["target"]["api_url"] + "/readyz", "worker_ready_url": "http://127.0.0.1:19200/readyz",
                      "object_endpoint": plan["target"]["s3"]["endpoint"], "object_prefix": "target/",
                      "databases": [{"source_key": db["key"], "target_key": db["key"],
                                     "server_uuid": db["server_uuid"], "database": db["database"]}
-                                   for db in plan["target"]["databases"]]}}
+                                   for db in plan["target"]["databases"]]}
+    return {"status": "running", "started_at": started, "plan": product, "plan_hash": product_plan_hash(product),
+            "recovered_at": captured_at or started, "completed_at": None, "data_verified_at": None, "failure": None}
