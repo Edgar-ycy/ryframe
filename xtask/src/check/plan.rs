@@ -12,12 +12,12 @@ use super::{
         changed_paths, classify_changes, complete_verify_selection, load_workspace_graph,
         print_selection,
     },
+    task_plan::TaskPlan,
 };
 
 #[path = "plan_tasks.rs"]
 mod tasks;
 
-use tasks::validate_task_graph;
 pub(crate) use tasks::{
     CheckTask, CheckTaskExecutor, CheckTaskRepository, CheckTaskStage, CheckTaskWorkingDirectory,
     tasks_for,
@@ -31,10 +31,10 @@ pub(crate) enum CheckPlanMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct TaskPlan {
+pub(crate) struct CheckTaskPlan {
     pub(crate) surface: ChangeSurfaceReport,
     pub(crate) mode: CheckPlanMode,
-    pub(crate) tasks: Vec<CheckTask>,
+    pub(crate) task_plan: TaskPlan<CheckTaskExecutor>,
 }
 
 pub(crate) fn plan(scope: CheckScope, full: bool, frontend_dir: &Path) -> Result<()> {
@@ -49,7 +49,7 @@ pub(crate) fn build_task_plan(
     full: bool,
     root: &Path,
     frontend_dir: &Path,
-) -> Result<TaskPlan> {
+) -> Result<CheckTaskPlan> {
     let backend_changes = changed_paths(root)?;
     let frontend_changes = changed_paths(frontend_dir)?;
     let policy = load_change_surface_policy(root)?;
@@ -68,17 +68,17 @@ pub(crate) fn build_task_plan(
         WorkspaceGraph::default()
     };
     let mode = select_check_mode(scope, full, &backend_changes, &frontend_changes, &graph);
-    let tasks = tasks_for(scope, &mode);
-    Ok(TaskPlan {
+    let task_plan = TaskPlan::new(tasks_for(scope, &mode))?;
+    Ok(CheckTaskPlan {
         surface,
         mode,
-        tasks,
+        task_plan,
     })
 }
 
-pub(crate) fn validate_plan(plan: &TaskPlan) -> Result<()> {
+pub(crate) fn validate_plan(plan: &CheckTaskPlan) -> Result<()> {
     enforce_change_surface(&plan.surface)?;
-    validate_task_graph(&plan.tasks)
+    plan.task_plan.validate()
 }
 
 pub(crate) fn select_check_mode(
@@ -109,7 +109,7 @@ pub(crate) fn select_check_mode(
     CheckPlanMode::Selected(selection)
 }
 
-pub(crate) fn render_plan(plan: &TaskPlan) {
+pub(crate) fn render_plan(plan: &CheckTaskPlan) {
     print_change_surface(&plan.surface);
     match &plan.mode {
         CheckPlanMode::ExplicitFull => println!("任务图模式：完整（显式 --full）。"),
@@ -120,11 +120,11 @@ pub(crate) fn render_plan(plan: &TaskPlan) {
             print_selection(selection);
         }
     }
-    if plan.tasks.is_empty() {
+    if plan.task_plan.tasks.is_empty() {
         println!("任务图为空：当前范围仅有文档变更或没有变更。");
         return;
     }
-    for task in &plan.tasks {
+    for task in &plan.task_plan.tasks {
         let dependencies = if task.dependencies.is_empty() {
             "无".to_owned()
         } else {

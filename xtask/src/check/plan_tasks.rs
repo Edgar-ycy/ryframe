@@ -1,68 +1,19 @@
-use std::collections::BTreeSet;
-
-use crate::{Result, cli::CheckScope};
+use crate::cli::CheckScope;
 
 use super::{
     super::{
-        model::VerifySelection, selection::needs_consumer_contract,
+        model::VerifySelection,
+        selection::needs_consumer_contract,
         snapshot::package_tests_generate_snapshots,
+        task_plan::{TaskRepository, TaskSpec, TaskStage, TaskWorkingDirectory},
     },
     CheckPlanMode,
 };
 use crate::check::policy_tasks::STRICT_MIGRATION_HISTORY_ARGS;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CheckTaskRepository {
-    Backend,
-    Frontend,
-    CrossRepository,
-}
-
-impl CheckTaskRepository {
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Backend => "后端",
-            Self::Frontend => "前端",
-            Self::CrossRepository => "跨仓",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CheckTaskStage {
-    Prerequisite,
-    Static,
-    Test,
-    Contract,
-    Build,
-}
-
-impl CheckTaskStage {
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Prerequisite => "前置",
-            Self::Static => "静态",
-            Self::Test => "测试",
-            Self::Contract => "契约",
-            Self::Build => "构建",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CheckTaskWorkingDirectory {
-    Backend,
-    Frontend,
-}
-
-impl CheckTaskWorkingDirectory {
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Backend => "后端工作区",
-            Self::Frontend => "前端工作区",
-        }
-    }
-}
+pub(crate) type CheckTaskRepository = TaskRepository;
+pub(crate) type CheckTaskStage = TaskStage;
+pub(crate) type CheckTaskWorkingDirectory = TaskWorkingDirectory;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CheckTaskExecutor {
@@ -151,18 +102,7 @@ impl CheckTaskExecutor {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CheckTask {
-    pub(crate) id: &'static str,
-    pub(crate) dependencies: Vec<&'static str>,
-    pub(crate) repository: CheckTaskRepository,
-    pub(crate) stage: CheckTaskStage,
-    pub(crate) working_directory: CheckTaskWorkingDirectory,
-    pub(crate) executor: CheckTaskExecutor,
-    pub(crate) compilation_coverage: &'static [&'static str],
-    pub(crate) allowed_writes: &'static [&'static str],
-    pub(crate) external_resources: &'static [&'static str],
-}
+pub(crate) type CheckTask = TaskSpec<CheckTaskExecutor>;
 
 pub(crate) fn tasks_for(scope: CheckScope, mode: &CheckPlanMode) -> Vec<CheckTask> {
     match mode {
@@ -400,7 +340,7 @@ fn task(
     compilation_coverage: &'static [&'static str],
     allowed_writes: &'static [&'static str],
 ) -> CheckTask {
-    CheckTask {
+    TaskSpec {
         id,
         dependencies: dependencies.to_vec(),
         repository,
@@ -411,23 +351,4 @@ fn task(
         allowed_writes,
         external_resources: &[],
     }
-}
-
-pub(super) fn validate_task_graph(tasks: &[CheckTask]) -> Result<()> {
-    let mut seen = BTreeSet::new();
-    for task in tasks {
-        if !seen.insert(task.id) {
-            return Err(format!("检查任务 ID 重复：{}", task.id).into());
-        }
-        for dependency in &task.dependencies {
-            if !seen.contains(dependency) {
-                return Err(format!(
-                    "检查任务 {} 的依赖 {} 不存在或未按拓扑顺序声明",
-                    task.id, dependency
-                )
-                .into());
-            }
-        }
-    }
-    Ok(())
 }

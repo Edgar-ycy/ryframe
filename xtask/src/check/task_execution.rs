@@ -14,7 +14,7 @@ use super::super::{
     context::VerifyExecutionContext,
     feature::feature_matrix_with_jobs,
     model::{BackendSnapshotProfile, VerifySelection},
-    plan::{CheckPlanMode, CheckTaskExecutor, TaskPlan},
+    plan::{CheckPlanMode, CheckTaskExecutor, CheckTaskPlan},
     resource::resource_workspace_compilation,
     snapshot::{
         BackendSnapshots, export_and_verify_backend_snapshots, prepare_backend_snapshots,
@@ -28,13 +28,13 @@ struct CheckExecutionState {
     consumer_contract_ran: bool,
 }
 
-pub(super) fn execute_plan(plan: &TaskPlan, context: &VerifyExecutionContext) -> Result<()> {
+pub(super) fn execute_plan(plan: &CheckTaskPlan, context: &VerifyExecutionContext) -> Result<()> {
     let mut state = CheckExecutionState::default();
-    for task in &plan.tasks {
+    for task in &plan.task_plan.tasks {
         println!("开始检查任务：{}", task.id);
         execute_task(task.executor, plan, context, &mut state)?;
     }
-    if plan.tasks.is_empty() {
+    if plan.task_plan.tasks.is_empty() {
         println!("没有需要执行的代码检查；当前变更仅包含文档，或工作树没有变更。");
     }
     Ok(())
@@ -42,7 +42,7 @@ pub(super) fn execute_plan(plan: &TaskPlan, context: &VerifyExecutionContext) ->
 
 fn execute_task(
     executor: CheckTaskExecutor,
-    plan: &TaskPlan,
+    plan: &CheckTaskPlan,
     context: &VerifyExecutionContext,
     state: &mut CheckExecutionState,
 ) -> Result<()> {
@@ -61,7 +61,7 @@ fn execute_task(
 
 fn execute_smart_task(
     executor: CheckTaskExecutor,
-    plan: &TaskPlan,
+    plan: &CheckTaskPlan,
     context: &VerifyExecutionContext,
     state: &mut CheckExecutionState,
 ) -> Result<()> {

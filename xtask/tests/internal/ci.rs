@@ -1,8 +1,9 @@
-use super::cli::ResourceGateReplayOptions;
+use super::cli::{CiCommand, ResourceGateReplayOptions};
 use super::{
-    check::{BackendSnapshotProfile, VerifySelection, WorkspaceGraph},
+    check::{BackendSnapshotProfile, TaskPlan, VerifySelection, WorkspaceGraph},
     ci::{
-        ci_plan_for, ci_selection_for_paths, integration_test_args_for_target, parse_changed_paths,
+        CiTaskExecutor, ci_execution_plan_for, ci_plan_for, ci_selection_for_paths,
+        integration_test_args_for_target, parse_changed_paths, plan_outputs,
         preflight_migration_args,
         resource_gate::{delegates_generic_ci_path, should_run_for_paths},
         resource_gate_replay_args, resource_gate_required_for_ci_range, tls_integration_args,
@@ -10,6 +11,10 @@ use super::{
     },
 };
 use std::path::Path;
+
+fn planned(plan: &TaskPlan<CiTaskExecutor>, executor: CiTaskExecutor) -> bool {
+    plan.contains(&executor)
+}
 
 #[test]
 fn resource_gate_replay_fixes_repository_paths_at_the_xtask_boundary() {
@@ -46,13 +51,13 @@ fn resource_gate_replay_fixes_repository_paths_at_the_xtask_boundary() {
 
 #[test]
 fn pull_request_edit_rechecks_identity_policy_and_consumer_contract() {
-    let plan = ci_plan_for("pull_request", "edited", &VerifySelection::default(), true);
+    let plan = ci_plan_for("pull_request", "edited", &VerifySelection::default(), true).unwrap();
 
-    assert!(plan.preflight);
-    assert!(!plan.rust_gate);
-    assert!(!plan.resource_gate);
-    assert!(!plan.integration);
-    assert!(plan.consumer_contract);
+    assert!(planned(&plan, CiTaskExecutor::Preflight));
+    assert!(!planned(&plan, CiTaskExecutor::RustGate));
+    assert!(!planned(&plan, CiTaskExecutor::ResourceGate));
+    assert!(!planned(&plan, CiTaskExecutor::Integration));
+    assert!(planned(&plan, CiTaskExecutor::ConsumerContract));
 }
 
 #[test]
@@ -62,13 +67,14 @@ fn documentation_change_runs_only_preflight() {
         "synchronize",
         &VerifySelection::default(),
         false,
-    );
+    )
+    .unwrap();
 
-    assert!(plan.preflight);
-    assert!(!plan.rust_gate);
-    assert!(!plan.resource_gate);
-    assert!(!plan.integration);
-    assert!(!plan.consumer_contract);
+    assert!(planned(&plan, CiTaskExecutor::Preflight));
+    assert!(!planned(&plan, CiTaskExecutor::RustGate));
+    assert!(!planned(&plan, CiTaskExecutor::ResourceGate));
+    assert!(!planned(&plan, CiTaskExecutor::Integration));
+    assert!(!planned(&plan, CiTaskExecutor::ConsumerContract));
 }
 
 #[test]
@@ -85,37 +91,37 @@ fn database_change_selects_rust_integration_and_consumer_gates() {
     .into_iter()
     .collect();
 
-    let plan = ci_plan_for("pull_request", "synchronize", &selection, false);
+    let plan = ci_plan_for("pull_request", "synchronize", &selection, false).unwrap();
 
-    assert!(plan.preflight);
-    assert!(plan.rust_gate);
-    assert!(!plan.resource_gate);
-    assert!(plan.integration);
-    assert!(plan.consumer_contract);
+    assert!(planned(&plan, CiTaskExecutor::Preflight));
+    assert!(planned(&plan, CiTaskExecutor::RustGate));
+    assert!(!planned(&plan, CiTaskExecutor::ResourceGate));
+    assert!(planned(&plan, CiTaskExecutor::Integration));
+    assert!(planned(&plan, CiTaskExecutor::ConsumerContract));
 }
 
 #[test]
 fn shared_pull_request_change_expands_to_full_plan() {
     let mut selection = VerifySelection::default();
     selection.full_reason = Some("共享配置变化".to_owned());
-    let plan = ci_plan_for("pull_request", "synchronize", &selection, false);
+    let plan = ci_plan_for("pull_request", "synchronize", &selection, false).unwrap();
 
-    assert!(plan.preflight);
-    assert!(plan.rust_gate);
-    assert!(plan.resource_gate);
-    assert!(plan.integration);
-    assert!(plan.consumer_contract);
+    assert!(planned(&plan, CiTaskExecutor::Preflight));
+    assert!(planned(&plan, CiTaskExecutor::RustGate));
+    assert!(planned(&plan, CiTaskExecutor::ResourceGate));
+    assert!(planned(&plan, CiTaskExecutor::Integration));
+    assert!(planned(&plan, CiTaskExecutor::ConsumerContract));
 }
 
 #[test]
 fn non_pr_events_run_full_backend_gates_without_consumer_contract() {
     for event in ["push", "schedule", "workflow_dispatch"] {
-        let plan = ci_plan_for(event, "", &VerifySelection::default(), false);
-        assert!(plan.preflight, "{event}");
-        assert!(plan.rust_gate, "{event}");
-        assert!(plan.resource_gate, "{event}");
-        assert!(plan.integration, "{event}");
-        assert!(!plan.consumer_contract, "{event}");
+        let plan = ci_plan_for(event, "", &VerifySelection::default(), false).unwrap();
+        assert!(planned(&plan, CiTaskExecutor::Preflight), "{event}");
+        assert!(planned(&plan, CiTaskExecutor::RustGate), "{event}");
+        assert!(planned(&plan, CiTaskExecutor::ResourceGate), "{event}");
+        assert!(planned(&plan, CiTaskExecutor::Integration), "{event}");
+        assert!(!planned(&plan, CiTaskExecutor::ConsumerContract), "{event}");
     }
 }
 
@@ -126,13 +132,14 @@ fn resource_change_selects_the_resource_gate_without_unrelated_backend_work() {
         "synchronize",
         &VerifySelection::default(),
         true,
-    );
+    )
+    .unwrap();
 
-    assert!(plan.preflight);
-    assert!(!plan.rust_gate);
-    assert!(plan.resource_gate);
-    assert!(!plan.integration);
-    assert!(!plan.consumer_contract);
+    assert!(planned(&plan, CiTaskExecutor::Preflight));
+    assert!(!planned(&plan, CiTaskExecutor::RustGate));
+    assert!(planned(&plan, CiTaskExecutor::ResourceGate));
+    assert!(!planned(&plan, CiTaskExecutor::Integration));
+    assert!(!planned(&plan, CiTaskExecutor::ConsumerContract));
 }
 
 #[test]
@@ -153,14 +160,24 @@ fn resource_aware_ci_selection_keeps_targeted_and_full_surfaces_distinct() {
             "synchronize",
             &selection,
             should_run_for_paths(&paths),
-        );
+        )
+        .unwrap();
         assert!(delegates_generic_ci_path(path), "{name}: {path}");
         assert!(selection.full_reason.is_none(), "{name}: {path}");
-        assert!(plan.preflight, "{name}: {path}");
-        assert!(!plan.rust_gate, "{name}: {path}");
-        assert!(plan.resource_gate, "{name}: {path}");
-        assert!(!plan.integration, "{name}: {path}");
-        assert!(!plan.consumer_contract, "{name}: {path}");
+        assert!(planned(&plan, CiTaskExecutor::Preflight), "{name}: {path}");
+        assert!(!planned(&plan, CiTaskExecutor::RustGate), "{name}: {path}");
+        assert!(
+            planned(&plan, CiTaskExecutor::ResourceGate),
+            "{name}: {path}"
+        );
+        assert!(
+            !planned(&plan, CiTaskExecutor::Integration),
+            "{name}: {path}"
+        );
+        assert!(
+            !planned(&plan, CiTaskExecutor::ConsumerContract),
+            "{name}: {path}"
+        );
     }
 
     for (name, path) in [
@@ -181,14 +198,61 @@ fn resource_aware_ci_selection_keeps_targeted_and_full_surfaces_distinct() {
             "synchronize",
             &selection,
             should_run_for_paths(&paths),
-        );
+        )
+        .unwrap();
         assert!(!delegates_generic_ci_path(path), "{name}: {path}");
         assert!(selection.full_reason.is_some(), "{name}: {path}");
-        assert!(plan.preflight, "{name}: {path}");
-        assert!(plan.rust_gate, "{name}: {path}");
-        assert!(plan.resource_gate, "{name}: {path}");
-        assert!(plan.integration, "{name}: {path}");
-        assert!(plan.consumer_contract, "{name}: {path}");
+        assert!(planned(&plan, CiTaskExecutor::Preflight), "{name}: {path}");
+        assert!(planned(&plan, CiTaskExecutor::RustGate), "{name}: {path}");
+        assert!(
+            planned(&plan, CiTaskExecutor::ResourceGate),
+            "{name}: {path}"
+        );
+        assert!(
+            planned(&plan, CiTaskExecutor::Integration),
+            "{name}: {path}"
+        );
+        assert!(
+            planned(&plan, CiTaskExecutor::ConsumerContract),
+            "{name}: {path}"
+        );
+    }
+}
+
+#[test]
+fn ci_plan_and_each_independent_job_share_the_same_task_specs() {
+    let mut selection = VerifySelection::default();
+    selection.full_reason = Some("共享工具变化".to_owned());
+    let full = ci_plan_for("pull_request", "synchronize", &selection, false).unwrap();
+    assert_eq!(
+        plan_outputs(&full),
+        [
+            ("preflight", true),
+            ("rust_gate", true),
+            ("resource_gate", true),
+            ("integration", true),
+            ("consumer_contract", true),
+        ]
+    );
+    for (command, executor) in [
+        (CiCommand::Preflight, CiTaskExecutor::Preflight),
+        (CiCommand::RustGate, CiTaskExecutor::RustGate),
+        (CiCommand::ResourceGate, CiTaskExecutor::ResourceGate),
+        (CiCommand::Integration, CiTaskExecutor::Integration),
+        (
+            CiCommand::ConsumerContract,
+            CiTaskExecutor::ConsumerContract,
+        ),
+    ] {
+        let execution = ci_execution_plan_for(&command).unwrap();
+        assert_eq!(execution.tasks.len(), 1);
+        let planned_task = full
+            .tasks
+            .iter()
+            .find(|task| task.executor == executor)
+            .unwrap();
+        assert_eq!(&execution.tasks[0], planned_task);
+        assert!(execution.tasks[0].dependencies.is_empty());
     }
 }
 

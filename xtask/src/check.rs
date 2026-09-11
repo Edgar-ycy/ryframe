@@ -24,6 +24,8 @@ mod resource;
 mod selection;
 #[path = "check/snapshot.rs"]
 mod snapshot;
+#[path = "check/task_plan.rs"]
+mod task_plan;
 
 pub(crate) use cargo_command::ci_test_jobs_from;
 #[allow(unused_imports)]
@@ -66,8 +68,8 @@ pub(crate) use model::{
 };
 #[allow(unused_imports)]
 pub(crate) use plan::{
-    CheckPlanMode, CheckTask, CheckTaskExecutor, CheckTaskRepository, CheckTaskStage,
-    CheckTaskWorkingDirectory, TaskPlan, build_task_plan, plan, select_check_mode, tasks_for,
+    CheckPlanMode, CheckTask, CheckTaskExecutor, CheckTaskPlan, CheckTaskRepository,
+    CheckTaskStage, CheckTaskWorkingDirectory, build_task_plan, plan, select_check_mode, tasks_for,
     validate_plan,
 };
 #[allow(unused_imports)]
@@ -94,3 +96,4 @@ pub(crate) use snapshot::{
     package_tests_generate_snapshots, prepare_backend_snapshots,
     prepare_consumer_backend_snapshots, verify_backend_snapshots,
 };
+pub(crate) use task_plan::{TaskPlan, TaskRepository, TaskSpec, TaskStage, TaskWorkingDirectory};
