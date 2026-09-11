@@ -44,6 +44,67 @@ BUILD_ENVIRONMENT_PREFIXES = (
 )
 
 
+def repository(path: Path, label: str) -> Path:
+    """只接受调用方明确给出的、无链接的规范 Git 工作树根目录。"""
+    if not path.is_absolute():
+        raise ValueError(f"{label}必须是绝对路径")
+    for candidate in (path, *path.parents):
+        metadata = candidate.lstat()
+        if candidate.is_symlink() or (getattr(metadata, "st_file_attributes", 0) or 0) & 0x400:
+            raise ValueError(f"{label}路径不能包含符号链接或 junction")
+    root = path.resolve(strict=True)
+    actual = Path(git(root, "rev-parse", "--show-toplevel").decode("utf-8", errors="strict").strip())
+    if root != path or actual.resolve(strict=True) != root:
+        raise ValueError(f"{label}必须是规范 Git 工作树根目录")
+    return root
+
+
+def registered_source(
+    coordinator: Path,
+    source_backend: Path,
+    expected_head: str,
+    *,
+    adapter_contract: str | None = None,
+    product_backend: Path | None = None,
+) -> tuple[Path, dict, tuple[Path, dict] | None]:
+    """核验本次构建声明的 clean 源；B0 额外重建内嵌适配补丁及产品域。"""
+    if re.fullmatch(r"[a-f0-9]{40}", expected_head) is None:
+        raise ValueError("构建来源提交必须是完整小写 SHA")
+    source = repository(source_backend, "后端构建来源")
+    inventory = capture_inventory(source)
+    snapshot = inventory["source"]["snapshot"]
+    if snapshot["head"] != expected_head or not snapshot["clean"]:
+        raise ValueError("恢复构建必须使用声明的精确干净后端源码")
+    if adapter_contract is None:
+        if product_backend is not None:
+            raise ValueError("普通构建来源不接受独立产品来源")
+        return source, inventory, None
+    if adapter_contract != "legacy-stable-readiness-b0-v1" or product_backend is None:
+        raise ValueError("未知或不完整的 B0 构建适配声明")
+
+    # 延迟导入避免 comparison 模块与本模块的构建收据核验形成导入环。
+    from restore_comparison_source import (
+        B0_ADAPTER_COMMIT,
+        B0_BACKEND_COMMIT,
+        b0_adapter_evidence,
+    )
+
+    coordinator = repository(coordinator, "构建协调后端")
+    product = repository(product_backend, "B0 后端产品来源")
+    product_inventory = capture_inventory(product)
+    product_snapshot = product_inventory["source"]["snapshot"]
+    if (expected_head != B0_ADAPTER_COMMIT or snapshot["head"] != B0_ADAPTER_COMMIT
+            or product_snapshot["head"] != B0_BACKEND_COMMIT or not product_snapshot["clean"]):
+        raise ValueError("B0 构建来源与登记的产品或适配提交不匹配")
+    evidence = b0_adapter_evidence(coordinator)
+    if evidence["contract"] != adapter_contract:
+        raise ValueError("B0 内嵌适配证据与构建声明不匹配")
+    product_domains = build_source_domains(product_inventory, "backend")["product"]
+    if build_source_domains(inventory, "backend")["product"] != product_domains:
+        raise ValueError("B0 工具适配改变了 API 或 Worker 产品输入")
+    return source, inventory, (product, product_inventory)
+
+
 def build_environment(environment: dict[str, str] | None = None) -> dict:
     """只记录会影响 Cargo 产物的变量名及值摘要，不把环境值写入收据。"""
     environment = os.environ if environment is None else environment
@@ -143,9 +204,11 @@ def write_new(path: Path, value: dict, root: Path) -> None:
         stream.write("\n")
 
 
-def build(root: Path, run=subprocess.run) -> dict:
+def build(root: Path, run=subprocess.run, expected_inventory: dict | None = None) -> dict:
     source = source_snapshot(root)
     inventory = capture_inventory(root, source)
+    if expected_inventory is not None and inventory != expected_inventory:
+        raise ValueError("构建开始前源码与已核验来源不一致")
     sources = build_source_domains(inventory, "backend")
     context = build_context(root, run)
     built = build_artifacts(
@@ -173,6 +236,31 @@ def build(root: Path, run=subprocess.run) -> dict:
         raise ValueError("构建期间源码发生变化，不能登记混合来源产物")
     return {"format_version": 2, "kind": "restore-backend-build", "sources": sources,
             "build": context, "artifacts": artifacts}
+
+
+def build_registered(
+    coordinator: Path,
+    source_backend: Path,
+    expected_head: str,
+    *,
+    adapter_contract: str | None = None,
+    product_backend: Path | None = None,
+    run=subprocess.run,
+) -> tuple[Path, dict]:
+    source, inventory, product = registered_source(
+        coordinator,
+        source_backend,
+        expected_head,
+        adapter_contract=adapter_contract,
+        product_backend=product_backend,
+    )
+    receipt = build(source, run, inventory)
+    verify_build(source, receipt, expected_head, run)
+    if capture_inventory(source) != inventory:
+        raise ValueError("构建结束后已登记后端来源发生变化")
+    if product is not None and capture_inventory(product[0]) != product[1]:
+        raise ValueError("构建期间 B0 产品来源发生变化")
+    return source, receipt
 
 
 def verify_build(root: Path, receipt: dict, sha: str, run=subprocess.run) -> None:

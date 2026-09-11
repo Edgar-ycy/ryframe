@@ -467,6 +467,7 @@ class RestoreRuntimeTests(unittest.TestCase):
 
     def test_cli_requires_explicit_write_before_build_or_bind(self):
         common = ["--backend-dir", str(self.backend), "--output", str(self.backend / ".local-tests/out.json")]
+        build_source = ["--source-backend", str(self.backend), "--expected-head", SOURCE["head"]]
         binding = [
             "--frontend-dir",
             str(self.frontend),
@@ -479,10 +480,12 @@ class RestoreRuntimeTests(unittest.TestCase):
             "--runtime-dir",
             str(self.root),
         ]
-        for operation, arguments in (("build", common), ("bind", common + binding)):
+        for operation, arguments in (("build", common + build_source), ("bind", common + binding)):
             with self.subTest(operation=operation), patch.object(
                 sys, "argv", ["restore_runtime.py", operation, *arguments]
-            ), patch.object(sys, "stderr", io.StringIO()), patch.object(restore_runtime, "build") as build_call, \
+            ), patch.object(sys, "stderr", io.StringIO()), patch.object(
+                restore_runtime, "build_registered"
+            ) as build_call, \
                     patch.object(restore_runtime, "bind") as bind_call, patch.object(restore_runtime, "write_new") as write:
                 with self.assertRaises(SystemExit) as error:
                     restore_runtime.main()
@@ -490,6 +493,42 @@ class RestoreRuntimeTests(unittest.TestCase):
                 build_call.assert_not_called()
                 bind_call.assert_not_called()
                 write.assert_not_called()
+
+    def test_build_cli_separates_current_coordinator_from_explicit_source_worktree(self):
+        output = self.backend / ".local-tests/build.json"
+        receipt = {"format_version": 2, "kind": "restore-backend-build"}
+        arguments = [
+            "restore_runtime.py",
+            "build",
+            "--backend-dir",
+            str(self.backend),
+            "--source-backend",
+            str(self.root),
+            "--expected-head",
+            SOURCE["head"],
+            "--output",
+            str(output),
+            "--write",
+        ]
+        with patch.object(sys, "argv", arguments), patch.object(
+            sys, "stdout", io.StringIO()
+        ), patch.object(
+            restore_runtime,
+            "build_registered",
+            return_value=(self.root, receipt),
+        ) as build_call, patch.object(
+            restore_runtime, "validate_new_output", return_value=output
+        ) as validate, patch.object(restore_runtime, "write_new") as write:
+            restore_runtime.main()
+        build_call.assert_called_once_with(
+            self.backend.resolve(),
+            self.root,
+            SOURCE["head"],
+            adapter_contract=None,
+            product_backend=None,
+        )
+        validate.assert_called_once_with(output, self.root)
+        write.assert_called_once_with(output, receipt, self.root)
 
     def test_verify_cli_reads_authority_from_stdin_and_outputs_only_detailed_result(self):
         runtime_path = self.write_json(self.root / "runtime.json", {"fixture": True})

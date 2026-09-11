@@ -69,6 +69,47 @@ class RestoreBuildTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "源码发生变化"):
             build.build(self.root, self.cargo_run)
 
+    def test_registered_source_requires_explicit_exact_clean_sha_before_build(self):
+        with patch.object(build, "repository", side_effect=lambda path, _label: path):
+            source, inventory, product = build.registered_source(
+                self.root, self.root, SOURCE["head"]
+            )
+            self.assertEqual(source, self.root)
+            self.assertEqual(inventory["source"]["snapshot"], SOURCE)
+            self.assertIsNone(product)
+            with self.assertRaisesRegex(ValueError, "完整小写 SHA"):
+                build.registered_source(self.root, self.root, "short")
+            with self.assertRaisesRegex(ValueError, "独立产品来源"):
+                build.registered_source(
+                    self.root, self.root, SOURCE["head"], product_backend=self.root
+                )
+            self.source.return_value = SOURCE | {"clean": False}
+            with self.assertRaisesRegex(ValueError, "精确干净"):
+                build.registered_source(self.root, self.root, SOURCE["head"])
+
+    def test_registered_b0_adapter_is_bound_to_embedded_patch_and_unchanged_product_domains(self):
+        import restore_comparison_source as comparison
+
+        adapter = SOURCE | {"head": comparison.B0_ADAPTER_COMMIT}
+        product = SOURCE | {"head": comparison.B0_BACKEND_COMMIT}
+        self.source.side_effect = [adapter, product]
+        with patch.object(build, "repository", side_effect=lambda path, _label: path), patch.object(
+            comparison,
+            "b0_adapter_evidence",
+            return_value={"contract": "legacy-stable-readiness-b0-v1"},
+        ) as evidence:
+            source, inventory, bound_product = build.registered_source(
+                self.root,
+                self.root,
+                comparison.B0_ADAPTER_COMMIT,
+                adapter_contract="legacy-stable-readiness-b0-v1",
+                product_backend=self.local,
+            )
+        self.assertEqual(source, self.root)
+        self.assertEqual(inventory["source"]["snapshot"], adapter)
+        self.assertEqual(bound_product[1]["source"]["snapshot"], product)
+        evidence.assert_called_once_with(self.root)
+
     def test_wrong_workspace_or_duplicate_cargo_events_cannot_register_artifact(self):
         output = self.cargo_run(["--bin", "ryframe"], cwd=self.root, check=True).stdout
         event = json.loads(output)

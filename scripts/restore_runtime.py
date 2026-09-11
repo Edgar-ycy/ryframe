@@ -15,7 +15,7 @@ from urllib.parse import quote
 from full_stack_process import process_identity
 from process_sockets import verify_listener
 from restore_build import (
-    build,
+    build_registered,
     validate_new_output,
     verify_build,
     write_new,
@@ -429,6 +429,11 @@ def main() -> None:
         if operation in ("build", "bind"):
             command.add_argument("--output", type=Path, required=True)
             command.add_argument("--write", action="store_true", required=True)
+        if operation == "build":
+            command.add_argument("--source-backend", type=Path, required=True)
+            command.add_argument("--expected-head", required=True)
+            command.add_argument("--adapter-contract")
+            command.add_argument("--product-backend", type=Path)
         if operation in ("bind", "verify"):
             command.add_argument("--frontend-dir", type=Path, required=True)
             command.add_argument("--bindings", type=Path, required=True)
@@ -441,12 +446,21 @@ def main() -> None:
             command.add_argument("--frontend-url")
     args = parser.parse_args()
     backend = args.backend_dir.resolve()
-    output = validate_new_output(args.output, backend) if hasattr(args, "output") else None
     if args.command == "build":
-        receipt = build(backend)
+        source, receipt = build_registered(
+            backend,
+            args.source_backend,
+            args.expected_head,
+            adapter_contract=args.adapter_contract,
+            product_backend=args.product_backend,
+        )
+        output = validate_new_output(args.output, source)
+        write_root = source
     elif args.command == "bind":
+        output = validate_new_output(args.output, backend)
+        write_root = backend
         receipt = bind(backend, args.frontend_dir.resolve(), args.build_receipt.resolve(),
-                       args.runtime_dir.resolve(), args.bindings.resolve(), args.frontend_url)
+                        args.runtime_dir.resolve(), args.bindings.resolve(), args.frontend_url)
     else:
         runtime = read_json_document(args.receipt)
         authority = read_authority()
@@ -463,7 +477,7 @@ def main() -> None:
         runtime.assert_unchanged()
         print(json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
         return
-    write_new(output, receipt, backend)
+    write_new(output, receipt, write_root)
     print(json.dumps({"output": str(output)}))
 
 

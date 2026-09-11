@@ -131,7 +131,7 @@ cargo xtask data restore verify --id <演练ID> --proof .local-tests/restore/bus
 
 ### 生成恢复业务证明
 
-把 `restore-verify-data` 成功返回的完整记录放入绑定文件的 `record`，原备份清单放入 `manifest`，参考数据准备收据的 SHA-256 放入 `dataset_sha256`，保存到忽略目录。前后端必须是清单绑定 SHA 的干净源码，先用 `cargo xtask check recovery runtime build --output .local-tests/restore/build.json --write` 构建并登记实际 API/Worker 产物；前端通过 `corepack pnpm build --real` 生成生产文件和 `.vite/restore-build.json`。两份当前构建收据均使用 v2 格式，分开绑定按产物角色计算的产品输入、验收工具输入、完整源码清单、实际工具链和有效构建参数；前端另绑定 production 模式读取的环境文件及完整 `dist` 文件清单。旧格式仅保留为历史文件，不能用于当前恢复。按构建收据启动隔离 API/Worker，并在明确运行目录保存对应 `api.json`、`worker.json` 进程收据。
+把 `restore-verify-data` 成功返回的完整记录放入绑定文件的 `record`，原备份清单放入 `manifest`，参考数据准备收据的 SHA-256 放入 `dataset_sha256`，保存到忽略目录。前后端必须是清单绑定 SHA 的干净源码，先用 `cargo xtask check recovery runtime build --source-backend <绝对工作树> --expected-head <完整 SHA> --output <该工作树/.local-tests/restore/build.json> --write` 构建并登记实际 API/Worker 产物；前端通过 `corepack pnpm build --real` 生成生产文件和 `.vite/restore-build.json`。两份当前构建收据均使用 v2 格式，分开绑定按产物角色计算的产品输入、验收工具输入、完整源码清单、实际工具链和有效构建参数；前端另绑定 production 模式读取的环境文件及完整 `dist` 文件清单。旧格式仅保留为历史文件，不能用于当前恢复。按构建收据启动隔离 API/Worker，并在明确运行目录保存对应 `api.json`、`worker.json` 进程收据。
 
 启动前端生产 preview 后，执行 `cargo xtask check recovery runtime bind --build-receipt <build.json> --runtime-dir <进程收据目录> --bindings <绑定文件> --frontend-url <本机站点地址> --output .local-tests/restore/runtime.json --write`。该入口固定当前后端和 `--frontend-dir` 选择的前端工作树，核对源码、二进制、进程创建身份、探针监听端口及实际返回的前端文件，配置目录正确或 HTTP 200 均不能单独充当来源证明。
 
@@ -164,6 +164,8 @@ cargo xtask data restore verify --id <演练ID> --proof .local-tests/restore/bus
 成功后停止全部生产者，再执行 `cargo xtask check recovery source quiesce --plan <原计划JSON> --source-runtime <来源运行证明JSON> --output <新停止观察收据JSON> --write`。该命令不终止进程；它核对同一代次已停止并记录实际观察时间。之后才能重新采集 Inventory，其 `quiesced_at` 使用该收据的 `observed_stopped_at`。给 `backup` 同时传入两份证明；备份前后均检查来源进程已停止、未换代，以及复验、实际停止观察、采集时间的先后关系。清单先采集、进程后来才停止的流程会失败。重新复验使用新的输出文件，失败日志保留；不改写原计划、数据收据和历史证据的摘要或完成时间。
 
 B0/B1 正式对照前，使用 `cargo xtask check recovery source comparison-capture --help` 查看来源参数，再以 `comparison-capture ... --source-export-result <唯一导出外层结果> --output <新来源清单> --write` 生成严格的双版本来源清单。B0 必须分别提供原产品源码、已登记的工具适配源码和前端源码；B1 必须提供最终干净的双端源码。两侧都必须提供对应源码上的 v2 后端与前端生产构建收据，并共同绑定同一个已发布 `source-export` 的外层文件摘要及内部导出身份。`cargo xtask check recovery source comparison-verify --receipt <来源清单>` 只读重建并核对全部来源、构建产物、完整前端 `dist` 和导出证据；它不创建恢复 run、锁或业务写入，也不接受旧格式字段。
+
+B0 后端构建仍由当前受信任工具执行，但 `--source-backend` 必须指向登记的适配提交，并同时提供 `--expected-head <适配 SHA> --adapter-contract legacy-stable-readiness-b0-v1 --product-backend <原 B0 绝对工作树>`。入口会从当前工具内嵌补丁重建适配树，核对原 B0、适配提交、补丁摘要和产品输入域，任一项不匹配都会在调用 Cargo 前失败；不能复制当前脚本到旧工作树或手工补写 v2 收据。
 
 恢复浏览器套件逐一登录十一个租户读取备份前已有的岗位，下载并校验全部原有上传对象，再执行正常核心业务。故障与 Worker 重启场景继续由普通全栈套件执行。每阶段保留独立收据，失败不覆盖、不自动清理资源；只有最终产品 CLI 核算后的成功记录能证明 24 小时恢复点与 60 分钟恢复时间。
 
