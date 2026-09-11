@@ -122,8 +122,11 @@ def _write_prepare_failure(runtime: Path, plan_file: Path, error: subprocess.Cal
     return output
 
 
-def build_plan(backend: Path, environment_path: Path, runtime_path: Path, work_dir: Path) -> dict:
+def build_plan(backend: Path, environment_path: Path, runtime_path: Path, work_dir: Path,
+               side: str) -> dict:
     """从同代次 bootstrap、运行时和审阅计划派生单一的参考数据计划。"""
+    if side not in {"base", "candidate"}:
+        raise ValueError("参考恢复目标必须显式选择 base 或 candidate")
     bootstrap_file, execution, private = _bootstrap(backend, environment_path)
     runtime = _output(execution, runtime_path, new=False)
     verified = verify_runtime(backend, environment_path, runtime)
@@ -136,7 +139,7 @@ def build_plan(backend: Path, environment_path: Path, runtime_path: Path, work_d
     if _bound(review_file) != {key: review_binding.get(key) for key in ("path", "bytes", "sha256")}:
         raise ValueError("夹具审阅计划摘要已变化")
     validate_review(review)
-    source, target = _side(review["scopes"]["seed"]), _side(review["scopes"]["base"])
+    source, target = _side(review["scopes"]["seed"]), _side(review["scopes"][side])
     source["runtime_dir"] = str(runtime)
     if source["scope_id"] != verified["scope_id"]:
         raise ValueError("夹具源运行时与审阅计划不属于同一代次")
@@ -148,6 +151,7 @@ def build_plan(backend: Path, environment_path: Path, runtime_path: Path, work_d
     result = {
         "format_version": 1,
         "id": "fixture-dataset-" + source["scope_id"].removeprefix("fixture-seed-"),
+        "target_side": side,
         "work_dir": str(work),
         "source": source,
         "target": target,
@@ -167,21 +171,25 @@ def build_plan(backend: Path, environment_path: Path, runtime_path: Path, work_d
     return result
 
 
-def write_plan(backend: Path, environment_path: Path, runtime_path: Path, work_dir: Path, output: Path) -> dict:
+def write_plan(backend: Path, environment_path: Path, runtime_path: Path, work_dir: Path,
+               output: Path, side: str) -> dict:
     _, execution, _ = _bootstrap(backend, environment_path)
     runtime = _output(execution, runtime_path, new=False)
     target = _plan_file(execution, runtime, output, new=True)
-    plan = build_plan(backend, environment_path, runtime_path, work_dir)
+    plan = build_plan(backend, environment_path, runtime_path, work_dir, side)
     write_json(target, plan)
     return plan
 
 
-def prepare(backend: Path, environment_path: Path, runtime_path: Path, plan_path: Path) -> dict:
+def prepare(backend: Path, environment_path: Path, runtime_path: Path, plan_path: Path,
+            side: str) -> dict:
     _, execution, private = _bootstrap(backend, environment_path)
     runtime = _output(execution, runtime_path, new=False)
     plan_file = _plan_file(execution, runtime, plan_path, new=False)
     plan = read_json(plan_file)
-    expected = build_plan(backend, environment_path, runtime, Path(plan.get("work_dir", "")))
+    if plan.get("target_side") != side:
+        raise ValueError("参考数据计划与显式恢复目标侧不一致")
+    expected = build_plan(backend, environment_path, runtime, Path(plan.get("work_dir", "")), side)
     if plan != expected:
         raise ValueError("参考数据计划与当前夹具来源、工具或运行时不一致")
     pair = read_json(runtime / "source-pair.json")
@@ -216,17 +224,20 @@ def main() -> None:
     parser.add_argument("--work-dir", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--plan", type=Path)
+    parser.add_argument("--side", choices=("base", "candidate"), required=True)
     parser.add_argument("--write", action="store_true")
     args = parser.parse_args()
     if args.operation == "plan":
         if not args.write or args.work_dir is None or args.output is None or args.plan is not None:
             parser.error("plan 需要 --work-dir、--output 与显式 --write，且不接受 --plan")
-        result = write_plan(args.backend_dir.resolve(), args.environment, args.runtime, args.work_dir, args.output)
+        result = write_plan(args.backend_dir.resolve(), args.environment, args.runtime, args.work_dir,
+                            args.output, args.side)
         print(json.dumps({"status": "reference_fixture_dataset_planned", "plan_sha256": plan_hash(result), "remote_writes": 0}, ensure_ascii=False))
         return
     if not args.write or args.plan is None or args.work_dir is not None or args.output is not None:
         parser.error("prepare 需要 --plan 与显式 --write，且不接受 --work-dir 或 --output")
-    print(json.dumps(prepare(args.backend_dir.resolve(), args.environment, args.runtime, args.plan), ensure_ascii=False))
+    print(json.dumps(prepare(args.backend_dir.resolve(), args.environment, args.runtime, args.plan,
+                             args.side), ensure_ascii=False))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,9 @@
+import contextlib
 import copy
+import io
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -60,13 +63,15 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
     def _review(self):
         tools = {name: {"path": str(self.tool), "sha256": dataset.file_digest(self.tool)["sha256"]}
                  for name in ("mysql", "mysqldump", "aws")}
-        return {"scopes": {"seed": self._scope("seed"), "base": self._scope("base")}, "tools": tools}
+        return {"scopes": {side: self._scope(side) for side in ("seed", "base", "candidate")},
+                "tools": tools}
 
     def test_build_plan_binds_current_runtime_and_required_dataset_scale(self):
-        value = dataset.build_plan(self.backend, self.bootstrap, self.runtime, self.work)
+        value = dataset.build_plan(self.backend, self.bootstrap, self.runtime, self.work, "base")
         self.assertEqual(value["source"]["runtime_dir"], str(self.runtime))
         self.assertEqual(value["source"]["scope_id"], "fixture-seed-r1")
         self.assertEqual(value["target"]["scope_id"], "fixture-base-r1")
+        self.assertEqual(value["target_side"], "base")
         self.assertEqual(value["dataset"]["records"], 100_000)
         self.assertEqual(value["dataset"]["object_count"] * value["dataset"]["object_bytes"], 1024**3)
         self.assertEqual(value["dataset"]["tenant_targets"].count("shared"), 8)
@@ -75,7 +80,46 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
     def test_build_plan_rejects_runtime_scope_mismatch(self):
         with patch.object(dataset, "verify_runtime", return_value={"scope_id": "other", "runtime": {}}):
             with self.assertRaisesRegex(ValueError, "同一代次"):
-                dataset.build_plan(self.backend, self.bootstrap, self.runtime, self.work)
+                dataset.build_plan(self.backend, self.bootstrap, self.runtime, self.work, "base")
+
+    def test_build_plan_requires_and_selects_exact_restore_side(self):
+        candidate = dataset.build_plan(
+            self.backend, self.bootstrap, self.runtime, self.work, "candidate"
+        )
+        self.assertEqual(candidate["target_side"], "candidate")
+        self.assertEqual(candidate["target"]["scope_id"], "fixture-candidate-r1")
+        self.assertTrue(all(item["database"].startswith("candidate_")
+                            for item in candidate["target"]["databases"]))
+        for side in ("seed", "source", "target", "", None):
+            with self.subTest(side=side), self.assertRaisesRegex(ValueError, "base 或 candidate"):
+                dataset.build_plan(self.backend, self.bootstrap, self.runtime, self.work, side)
+
+    def test_cli_requires_side_before_planning_or_writing(self):
+        arguments = [
+            "reference_fixture_dataset", "plan", "--backend-dir", str(self.backend),
+            "--environment", str(self.bootstrap), "--runtime", str(self.runtime),
+            "--work-dir", str(self.work), "--output", str(self.runtime / "plan.json"),
+            "--write",
+        ]
+        with patch.object(sys, "argv", arguments), contextlib.redirect_stderr(io.StringIO()), \
+                patch.object(dataset, "write_plan") as write, self.assertRaises(SystemExit) as error:
+            dataset.main()
+        self.assertEqual(error.exception.code, 2)
+        write.assert_not_called()
+
+    def test_prepare_rejects_side_different_from_saved_plan_before_execution(self):
+        plan = dataset.build_plan(
+            self.backend, self.bootstrap, self.runtime, self.work, "base"
+        )
+        plan_file = self.runtime / "plan.json"
+        dataset.write_json(plan_file, plan)
+        with patch.object(dataset.subprocess, "run") as run, self.assertRaisesRegex(
+            ValueError, "显式恢复目标侧不一致"
+        ):
+            dataset.prepare(
+                self.backend, self.bootstrap, self.runtime, plan_file, "candidate"
+            )
+        run.assert_not_called()
 
     def test_prepare_failure_records_redacted_diagnostic_once(self):
         error = subprocess.CalledProcessError(1, ["node"], output="password=secret", stderr="secret")

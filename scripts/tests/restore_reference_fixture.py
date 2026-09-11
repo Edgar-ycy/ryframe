@@ -20,7 +20,8 @@ def environment(test):
     config.write_text("[client]\nhost=127.0.0.1\nport=3306\nuser=test\npassword=fixture\n")
     executable = backend / "tool.exe"
     executable.write_bytes(b"unit-test-tool")
-    plan = {"format_version": 1, "id": "restore-case", "work_dir": str(config.parent / "reference"),
+    plan = {"format_version": 1, "id": "restore-case", "target_side": "base",
+            "work_dir": str(config.parent / "reference"),
             "tools": {name: {"path": str(executable), "sha256": file_digest(executable)["sha256"]}
                       for name in ("mysql", "mysqldump", "aws", "node")}}
     for side in ("source", "target"):

@@ -22,6 +22,8 @@ class ReferenceTests(unittest.TestCase):
     def test_plan_rejects_overlap_wrong_modes_remote_endpoints_and_changed_tools(self):
         validate_plan(self.plan, self.backend)
         changes = [
+            lambda value: value.pop("target_side"),
+            lambda value: value.update(target_side="source"),
             lambda value: value["target"].update(scope_id="source"),
             lambda value: value["target"]["databases"][0].update(database="source_control"),
             lambda value: value["target"]["databases"][0].update(key="unknown"),

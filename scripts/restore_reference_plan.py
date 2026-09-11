@@ -56,6 +56,8 @@ def validate_plan(plan: dict, backend: Path) -> None:
     if plan.get("format_version") != 1:
         raise ValueError("参考演练计划版本无效")
     identifier(plan["id"])
+    if plan.get("target_side") not in {"base", "candidate"}:
+        raise ValueError("参考恢复目标必须显式选择 base 或 candidate")
     if "dataset" in plan:
         dataset_timeout_seconds(plan)
     local = (backend / ".local-tests").resolve()
