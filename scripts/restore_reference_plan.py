@@ -28,6 +28,8 @@ def scope_identifier(value: str) -> str:
 
 
 def safe_file(root: Path, relative: str, *, exists: bool = True) -> Path:
+    from restore_runtime_evidence import reject_link_or_reparse
+
     if (not isinstance(relative, str) or not relative or "\\" in relative or ":" in relative
             or any(part in ("", ".", "..") for part in relative.split("/"))
             or any(ord(character) < 32 for character in relative)):
@@ -37,6 +39,12 @@ def safe_file(root: Path, relative: str, *, exists: bool = True) -> Path:
         raise ValueError("备份文件通过链接越界")
     if exists and not path.is_file():
         raise ValueError("备份文件缺失")
+    ancestor = path
+    while not ancestor.exists():
+        if ancestor.is_symlink():
+            raise ValueError("备份文件经过悬空链接")
+        ancestor = ancestor.parent
+    reject_link_or_reparse(ancestor)
     return path
 
 

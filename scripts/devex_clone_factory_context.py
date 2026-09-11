@@ -98,9 +98,10 @@ def unfailed(directory: Path, owned_lock_identity: int | None = None, *, allow_r
         raise ValueError("当前调用方持有的真实目标锁缺失或身份变化")
 
 
-def inventory_history(backend: Path, root: Path, initial: dict, request: dict, *, resumed: bool = False) -> None:
+def inventory_history(backend: Path, root: Path, initial: dict, request: dict, *, resumed: bool = False,
+                      inventory_directory: Path | None = None) -> None:
     filename = bound_file(backend, initial["receipt"])
-    initial_directory = root / "inventory-initial"
+    initial_directory = root / "inventory-initial" if inventory_directory is None else inventory_directory
     resumed_directory = filename.parent.name.startswith("inventory-resume-")
     if filename.name != "inventory.json" or (filename.parent != initial_directory and not (resumed and resumed_directory)):
         raise ValueError("初始库存必须属于本初始化代次的精确目录")

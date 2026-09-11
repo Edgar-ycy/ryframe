@@ -22,6 +22,7 @@ from restore_reference_plan import (dataset_timeout_seconds, identifier, plan_ha
 from restore_runtime import read_json
 from restore_runtime_evidence import read_json_document
 from restore_source import verify_stopped_source
+from restore_reference_target_cli import add_arguments, execute_plan, validate_arguments
 
 
 def now() -> str:
@@ -217,7 +218,9 @@ def main() -> None:
     parser.add_argument("--side", choices=("source", "target"),
                         help="仅 check-existing 可指定检查侧，默认 target；不改变数据准备或恢复目标")
     parser.add_argument("--write", action="store_true")
+    add_arguments(parser)
     args = parser.parse_args()
+    validate_arguments(parser, args)
     if args.side is not None and args.command != "check-existing":
         parser.error("--side 仅用于 check-existing；数据准备固定 source，恢复固定 target")
     if any(value is not None for value in (args.source_runtime, args.source_quiescence, args.source_export_result)) and args.command != "backup":
@@ -225,7 +228,8 @@ def main() -> None:
     backend, plan = args.backend_dir.resolve(), read_json(args.plan)
     validate_plan(plan, backend)
     if args.command == "plan":
-        print(json.dumps({"id": plan["id"], "plan_sha256": plan_hash(plan), "work_dir": plan["work_dir"],
+        result = execute_plan(args, backend, plan)
+        print(json.dumps(result if result is not None else {"id": plan["id"], "plan_sha256": plan_hash(plan), "work_dir": plan["work_dir"],
                           "targets": {side: [{key: db[key] for key in ("key", "server_uuid", "database")} for db in plan[side]["databases"]]
                                       for side in ("source", "target")}}, ensure_ascii=False))
         return
