@@ -15,7 +15,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from devex_clone_model import local_path
+from reference_fixture_control_protocol import run_private
+
+
+PROTOCOL_SCHEMAS = {
+    "snapshot": (("runtime_dir", "job_id", "receipt"), (), True),
+    "verify-deleted": (("runtime_dir", "job_id", "receipt"), (), False),
+}
 
 
 def verify_runtime(backend: Path, runtime: Path) -> dict:
@@ -185,6 +191,8 @@ def object_bytes(scope: str, key: str) -> bytes | None:
 
 
 def inspect(operation: str, backend: Path, runtime: Path, job_id: str, receipt_path: Path) -> dict:
+    from devex_clone_model import local_path
+
     if operation not in {"snapshot", "verify-deleted"}:
         raise ValueError("未知导出物理对象验收操作")
     backend = backend.resolve(strict=True)
@@ -235,16 +243,23 @@ def inspect(operation: str, backend: Path, runtime: Path, job_id: str, receipt_p
     return {"state": "deleted" if remaining == "0" and missing else "pending", "job_id": job_id}
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+def main(arguments: list[str]) -> None:
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("operation", choices=("snapshot", "verify-deleted"))
     parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--runtime-dir", type=Path, required=True)
     parser.add_argument("--job-id", required=True)
     parser.add_argument("--receipt", type=Path, required=True)
-    args = parser.parse_args()
+    parser.add_argument("--write", action="store_true")
+    args = parser.parse_args(arguments)
+    if args.operation == "snapshot" and not args.write:
+        parser.error("snapshot 私有请求缺少写入授权")
+    if args.operation == "verify-deleted" and args.write:
+        parser.error("verify-deleted 是只读操作，不接受写入授权")
     print(json.dumps(inspect(args.operation, args.backend_dir, args.runtime_dir, args.job_id, args.receipt)))
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(
+        run_private("artifact", PROTOCOL_SCHEMAS, main, positional_operation=True)
+    )

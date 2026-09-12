@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import sys
 from typing import Callable
 
@@ -19,12 +20,14 @@ PATH_FIELDS = {
     "service_run", "source_result", "predecessor_review", "predecessor_request",
     "successor_review", "seed_request", "base_request", "candidate_request", "successor",
     "source_backend", "backend_build", "source_environment", "product_backend",
-    "source_export_result", "workspace", "copy_directory", "owner_binding",
+    "source_export_result", "workspace", "copy_directory", "owner_binding", "runtime_dir",
+    "receipt",
 }
 INTEGER_FIELDS = {
     "api_port", "worker_port", "frontend_port", "rustfs_api_port", "rustfs_console_port",
     "redis_port",
 }
+POSITIVE_I64_TEXT_FIELDS = {"job_id"}
 
 
 class FixtureControlProtocolError(ValueError):
@@ -97,7 +100,7 @@ def private_arguments(
     ):
         raise FixtureControlProtocolError("参考夹具控制私有协议版本、类型或子域无效")
     operation = protocol.get("operation")
-    if operation not in schemas:
+    if not isinstance(operation, str) or operation not in schemas:
         raise FixtureControlProtocolError("参考夹具控制私有协议操作无效")
     required, optional, write_policy = schemas[operation]
     expected = BASE_FIELDS | set(required)
@@ -118,6 +121,13 @@ def private_arguments(
             if type(value) is not int:
                 raise FixtureControlProtocolError(f"{name} 必须是整数")
             value = str(value)
+        elif name in POSITIVE_I64_TEXT_FIELDS:
+            if (
+                not isinstance(value, str)
+                or not re.fullmatch(r"[1-9][0-9]{0,18}", value)
+                or int(value) > 2**63 - 1
+            ):
+                raise FixtureControlProtocolError(f"{name} 必须是按字符串传输的正 i64")
         else:
             value = _text(value, name)
         result.extend(("--" + name.replace("_", "-"), value))

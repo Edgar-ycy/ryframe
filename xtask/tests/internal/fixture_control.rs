@@ -8,9 +8,10 @@ use serde_json::Value;
 
 use super::{
     cli::{
-        CheckCommand, Command, FixtureControlCommand, FixtureEnvironmentCommand,
-        FixtureRequestCommand, FixtureReviewCommand, FixtureServicesCommand,
-        FixtureSourcePairCommand, FixtureSuccessorCommand, RecoveryCommand, parse,
+        CheckCommand, Command, FixtureArtifactCommand, FixtureControlCommand,
+        FixtureEnvironmentCommand, FixtureRequestCommand, FixtureReviewCommand,
+        FixtureServicesCommand, FixtureSourcePairCommand, FixtureSuccessorCommand, RecoveryCommand,
+        parse,
     },
     recovery::fixture_control::private_invocation_at,
     workspace::root_dir,
@@ -95,6 +96,104 @@ fn command(domain: &str, operation: Option<&str>, values: Vec<String>) -> Vec<St
     }
     arguments.extend(values);
     arguments
+}
+
+#[test]
+fn parses_artifact_operations_and_serializes_job_id_as_text() {
+    let fixture = Fixture::new();
+    let receipt = fixture.path("artifact receipt.json");
+    let snapshot = parse_control(command(
+        "artifact",
+        Some("snapshot"),
+        vec![
+            "--runtime-dir".to_owned(),
+            text(&fixture.controlled_dir),
+            "--job-id".to_owned(),
+            "9223372036854775807".to_owned(),
+            "--receipt".to_owned(),
+            text(&receipt),
+        ],
+    ))
+    .unwrap();
+    assert!(matches!(
+        snapshot,
+        FixtureControlCommand::Artifact(FixtureArtifactCommand::Snapshot(_))
+    ));
+    let invocation = private_invocation_at(&snapshot, &root_dir()).unwrap();
+    assert_eq!(invocation.script, "scripts/full_stack_artifacts.py");
+    let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
+    assert_eq!(protocol["domain"], "artifact");
+    assert_eq!(protocol["operation"], "snapshot");
+    assert_eq!(protocol["runtime_dir"], text(&fixture.controlled_dir));
+    assert_eq!(protocol["job_id"], "9223372036854775807");
+    assert_eq!(protocol["receipt"], text(&receipt));
+    assert_eq!(protocol["write"], true);
+
+    fs::write(&receipt, b"{}\n").unwrap();
+    let verify = parse_control(command(
+        "artifact",
+        Some("verify-deleted"),
+        vec![
+            "--runtime-dir".to_owned(),
+            text(&fixture.controlled_dir),
+            "--job-id".to_owned(),
+            "1".to_owned(),
+            "--receipt".to_owned(),
+            text(&receipt),
+        ],
+    ))
+    .unwrap();
+    let invocation = private_invocation_at(&verify, &root_dir()).unwrap();
+    let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
+    assert_eq!(protocol["operation"], "verify-deleted");
+    assert_eq!(protocol["write"], false);
+}
+
+#[test]
+fn rejects_invalid_artifact_identifiers_writes_and_path_contracts() {
+    let fixture = Fixture::new();
+    let base = vec![
+        "--runtime-dir".to_owned(),
+        text(&fixture.controlled_dir),
+        "--job-id".to_owned(),
+        "123".to_owned(),
+        "--receipt".to_owned(),
+        text(&fixture.path("new receipt.json")),
+    ];
+    for job_id in ["0", "01", "-1", "9223372036854775808", "not-an-id"] {
+        let mut values = base.clone();
+        values[3] = job_id.to_owned();
+        assert!(
+            parse_control(command("artifact", Some("snapshot"), values)).is_err(),
+            "{job_id}"
+        );
+    }
+    for suffix in [
+        vec!["--write".to_owned()],
+        vec!["--job-id".to_owned(), "124".to_owned()],
+        vec!["--unknown".to_owned(), "value".to_owned()],
+    ] {
+        let mut values = base.clone();
+        values.extend(suffix);
+        assert!(parse_control(command("artifact", Some("snapshot"), values)).is_err());
+    }
+    let mut relative = base.clone();
+    relative[1] = "relative runtime".to_owned();
+    assert!(parse_control(command("artifact", Some("snapshot"), relative)).is_err());
+    let mut missing_receipt = base.clone();
+    missing_receipt[5] = text(&fixture.path("missing receipt.json"));
+    assert!(parse_control(command("artifact", Some("verify-deleted"), missing_receipt,)).is_err());
+    let mut existing_snapshot_receipt = base.clone();
+    existing_snapshot_receipt[5] = text(&fixture.input);
+    assert!(
+        parse_control(command(
+            "artifact",
+            Some("snapshot"),
+            existing_snapshot_receipt,
+        ))
+        .is_err()
+    );
+    assert!(parse_control(command("artifact", Some("snapshot"), Vec::new())).is_err());
 }
 
 #[test]
@@ -486,6 +585,19 @@ fn rejects_linked_components_before_private_protocol_creation() {
         ],
     );
     assert!(parse_control(arguments).is_err());
+    let artifact = command(
+        "artifact",
+        Some("snapshot"),
+        vec![
+            "--runtime-dir".to_owned(),
+            text(&linked_directory),
+            "--job-id".to_owned(),
+            "1".to_owned(),
+            "--receipt".to_owned(),
+            text(&fixture.path("artifact receipt.json")),
+        ],
+    );
+    assert!(parse_control(artifact).is_err());
     fs::remove_dir(linked_directory).unwrap();
 }
 

@@ -8,6 +8,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import reference_fixture_environment as fixture_environment
+import full_stack_artifacts as fixture_artifact
 import reference_fixture_request as fixture_request
 import reference_fixture_review as fixture_review
 import reference_fixture_services as fixture_services
@@ -96,6 +97,16 @@ class FixtureControlProtocolTests(unittest.TestCase):
             self.arguments("services", fixture_services.PROTOCOL_SCHEMAS, services, positional=True)[0],
             "status",
         )
+        artifact = self.protocol(
+            "artifact", "snapshot", True,
+            runtime_dir=directory, job_id="9223372036854775807", receipt=input_path,
+        )
+        artifact_args = self.arguments(
+            "artifact", fixture_artifact.PROTOCOL_SCHEMAS, artifact, positional=True
+        )
+        self.assertEqual(artifact_args[0], "snapshot")
+        self.assertIn("9223372036854775807", artifact_args)
+        self.assertIn("--write", artifact_args)
         successor = self.protocol(
             "successor", "arm-request", False,
             successor=input_path, source_export_result=input_path, workspace=directory,
@@ -118,6 +129,9 @@ class FixtureControlProtocolTests(unittest.TestCase):
             self.protocol("services", "status", True, review=path, environment=path),
             valid.replace('"format_version":1', '"format_version":true'),
         ]
+        non_text_operation = json.loads(valid)
+        non_text_operation["operation"] = []
+        cases.append(json.dumps(non_text_operation, separators=(",", ":")))
         for raw in cases:
             with self.subTest(raw=raw), self.assertRaises(FixtureControlProtocolError):
                 self.arguments("services", fixture_services.PROTOCOL_SCHEMAS, raw, positional=True)
@@ -154,8 +168,47 @@ class FixtureControlProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(FixtureControlProtocolError, "绝对路径"):
             self.arguments("services", fixture_services.PROTOCOL_SCHEMAS, relative, positional=True)
 
+    def test_artifact_protocol_requires_string_positive_i64_and_exact_write_policy(self):
+        path = str(Path(self.root) / ".local-tests" / "input.json")
+        directory = str(Path(self.root) / ".local-tests" / "run")
+        for job_id in (0, "0", "01", "9223372036854775808", "invalid"):
+            raw = self.protocol(
+                "artifact", "snapshot", True,
+                runtime_dir=directory, job_id=job_id, receipt=path,
+            )
+            with self.subTest(job_id=job_id), self.assertRaisesRegex(
+                FixtureControlProtocolError, "正 i64"
+            ):
+                self.arguments(
+                    "artifact", fixture_artifact.PROTOCOL_SCHEMAS, raw, positional=True
+                )
+        readonly = self.protocol(
+            "artifact", "verify-deleted", True,
+            runtime_dir=directory, job_id="1", receipt=path,
+        )
+        with self.assertRaisesRegex(FixtureControlProtocolError, "写入授权"):
+            self.arguments(
+                "artifact", fixture_artifact.PROTOCOL_SCHEMAS, readonly, positional=True
+            )
+
+        for field in ("runtime_dir", "receipt"):
+            unsafe_path = json.loads(self.protocol(
+                "artifact", "snapshot", True,
+                runtime_dir=directory, job_id="1", receipt=path,
+            ))
+            unsafe_path[field] = "relative/path"
+            with self.subTest(field=field), self.assertRaisesRegex(
+                FixtureControlProtocolError, "绝对路径"
+            ):
+                self.arguments(
+                    "artifact", fixture_artifact.PROTOCOL_SCHEMAS,
+                    json.dumps(unsafe_path, separators=(",", ":")),
+                    positional=True,
+                )
+
     def test_all_direct_python_programs_reject_argv_before_business_logic(self):
         scripts = [
+            "full_stack_artifacts.py",
             "prepare_full_stack_fixture.py",
             "reference_fixture_environment.py",
             "reference_fixture_review.py",

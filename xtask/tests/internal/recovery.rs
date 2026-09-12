@@ -200,7 +200,14 @@ fn monitoring_stage_uses_the_private_lifecycle_and_fixed_backend() {
 
 #[test]
 fn fixture_control_domains_cannot_bypass_typed_private_protocol() {
-    for domain in ["environment", "review", "request", "successor", "services"] {
+    for domain in [
+        "artifact",
+        "environment",
+        "review",
+        "request",
+        "successor",
+        "services",
+    ] {
         assert!(
             recovery_command(
                 &RecoveryCommand::Fixture(strings(&[domain, "unparsed"])),
@@ -212,33 +219,22 @@ fn fixture_control_domains_cannot_bypass_typed_private_protocol() {
 }
 
 #[test]
-fn fixture_artifact_and_retention_use_registered_runtime_tools() {
+fn fixture_retention_uses_the_registered_runtime_tool() {
     let backend = super::workspace::root_dir().display().to_string();
-    for (operation, script, arguments) in [
-        (
-            "artifact",
-            "scripts/full_stack_artifacts.py",
-            strings(&["snapshot", "--runtime-dir", "D:/验收/runtime"]),
-        ),
-        (
-            "retention",
-            "scripts/full_stack_migration_history.py",
-            strings(&["plan-history", "--runtime-dir", "D:/验收/runtime"]),
-        ),
-    ] {
-        let mut request = vec![operation.to_owned()];
-        request.extend(arguments.clone());
-        let (actual_script, forwarded) =
-            recovery_command(&RecoveryCommand::Fixture(request), Path::new("unused")).unwrap();
-        assert_eq!(actual_script, script);
-        assert_eq!(
-            forwarded,
-            arguments
-                .into_iter()
-                .chain(strings(&["--backend-dir", &backend]))
-                .collect::<Vec<_>>()
-        );
-    }
+    let arguments = strings(&["plan-history", "--runtime-dir", "D:/验收/runtime"]);
+    let request = std::iter::once("retention".to_owned())
+        .chain(arguments.clone())
+        .collect();
+    let (actual_script, forwarded) =
+        recovery_command(&RecoveryCommand::Fixture(request), Path::new("unused")).unwrap();
+    assert_eq!(actual_script, "scripts/full_stack_migration_history.py");
+    assert_eq!(
+        forwarded,
+        arguments
+            .into_iter()
+            .chain(strings(&["--backend-dir", &backend]))
+            .collect::<Vec<_>>()
+    );
 }
 
 #[test]
@@ -280,7 +276,6 @@ fn fixture_dataset_uses_the_private_device_dataset_adapter() {
 fn forwarded_recovery_scripts_exist_in_checkout() {
     let root = super::workspace::root_dir();
     for command in [
-        RecoveryCommand::Fixture(strings(&["artifact", "snapshot"])),
         RecoveryCommand::Fixture(strings(&["retention", "inspect"])),
         RecoveryCommand::Fixture(strings(&["dataset", "plan"])),
         RecoveryCommand::FullStack(FullStackCommand::Collect),
@@ -291,6 +286,7 @@ fn forwarded_recovery_scripts_exist_in_checkout() {
             "恢复入口转发的脚本不在当前检出中：{script}"
         );
     }
+    assert!(root.join("scripts/full_stack_artifacts.py").is_file());
     assert!(root.join("scripts/devex_clone.py").is_file());
     assert!(root.join("scripts/restore_runtime.py").is_file());
     assert!(root.join("scripts/restore_source.py").is_file());

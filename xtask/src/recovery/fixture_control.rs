@@ -9,6 +9,8 @@ use crate::{
     process::run_with_env_removed,
 };
 
+#[path = "fixture_control/artifact.rs"]
+mod artifact;
 #[path = "fixture_control/environment.rs"]
 mod environment;
 #[path = "fixture_control/request.rs"]
@@ -53,6 +55,10 @@ pub(crate) fn private_invocation_at(
         return Err("fixture 控制帮助不启动私有阶段程序".into());
     }
     let (script, fields) = match command {
+        FixtureControlCommand::Artifact(command) => (
+            "scripts/full_stack_artifacts.py",
+            artifact::fields(command, root)?,
+        ),
         FixtureControlCommand::Environment(command) => (
             "scripts/reference_fixture_environment.py",
             environment::fields(command, root)?,

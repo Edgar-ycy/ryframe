@@ -51,6 +51,25 @@ impl Fixture {
             self.environment.to_string_lossy().into_owned(),
         ]
     }
+
+    fn artifact_snapshot(&self) -> Vec<String> {
+        vec![
+            "check".to_owned(),
+            "recovery".to_owned(),
+            "fixture".to_owned(),
+            "artifact".to_owned(),
+            "snapshot".to_owned(),
+            "--runtime-dir".to_owned(),
+            self.directory.to_string_lossy().into_owned(),
+            "--job-id".to_owned(),
+            "123".to_owned(),
+            "--receipt".to_owned(),
+            self.directory
+                .join("artifact receipt.json")
+                .to_string_lossy()
+                .into_owned(),
+        ]
+    }
 }
 
 impl Drop for Fixture {
@@ -158,4 +177,75 @@ fn source_pair_request_uses_the_same_private_protocol_without_forwarded_paths() 
         "{stderr}"
     );
     assert!(!output.exists());
+}
+
+#[test]
+fn artifact_snapshot_uses_private_protocol_without_public_write_or_forwarded_values() {
+    let fixture = Fixture::new();
+    let arguments = fixture.artifact_snapshot();
+    let result = invoke(&arguments);
+    assert_eq!(result.status.code(), Some(1));
+    let stdout = String::from_utf8(result.stdout).unwrap();
+    let stderr = String::from_utf8(result.stderr).unwrap();
+    assert!(
+        stdout.contains("scripts/full_stack_artifacts.py"),
+        "{stdout}"
+    );
+    for private in ["--runtime-dir", "--job-id", "--receipt", "123"] {
+        assert!(!stdout.contains(private), "{stdout}");
+    }
+    assert!(
+        stderr.contains("reference_fixture_artifact_failed"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("protocol_error"), "{stderr}");
+}
+
+#[test]
+fn artifact_invalid_arguments_exit_two_before_python_starts() {
+    let fixture = Fixture::new();
+    let base = fixture.artifact_snapshot();
+    let mut cases = Vec::new();
+    let mut public_write = base.clone();
+    public_write.push("--write".to_owned());
+    cases.push(public_write);
+    let mut invalid_id = base.clone();
+    invalid_id[8] = "0".to_owned();
+    cases.push(invalid_id);
+    let mut relative_runtime = base.clone();
+    relative_runtime[6] = "relative-runtime".to_owned();
+    cases.push(relative_runtime);
+    let mut duplicate = base;
+    duplicate.extend([
+        "--receipt".to_owned(),
+        fixture.review.to_string_lossy().into_owned(),
+    ]);
+    cases.push(duplicate);
+    cases.push(vec![
+        "check".to_owned(),
+        "recovery".to_owned(),
+        "fixture".to_owned(),
+        "artifact".to_owned(),
+        "destroy".to_owned(),
+        "--help".to_owned(),
+    ]);
+    for arguments in cases {
+        let result = invoke(&arguments);
+        assert_eq!(result.status.code(), Some(2), "参数：{arguments:?}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("参数错误"));
+        assert!(!String::from_utf8_lossy(&result.stdout).contains("full_stack_artifacts.py"));
+    }
+}
+
+#[test]
+fn artifact_private_process_rejects_conflicting_fixture_protocol_environment() {
+    let fixture = Fixture::new();
+    let result = Command::new(env!("CARGO_BIN_EXE_xtask"))
+        .args(fixture.artifact_snapshot())
+        .env("RYFRAME_REFERENCE_FIXTURE_CONTROL_CONFLICT", "untrusted")
+        .env("PYTHONUTF8", "1")
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("protocol_error"));
 }

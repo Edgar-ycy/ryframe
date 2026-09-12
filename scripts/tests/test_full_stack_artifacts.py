@@ -9,6 +9,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import full_stack_artifacts as artifacts
+from reference_fixture_control_protocol import PROTOCOL_KEY
 
 
 class ArtifactEvidenceTests(unittest.TestCase):
@@ -129,6 +130,39 @@ class ArtifactEvidenceTests(unittest.TestCase):
             os.environ["APP_DATABASE_TLS_MODE"] = "verify_identity"
             with self.assertRaisesRegex(ValueError, "TLS"):
                 artifacts.mysql("SELECT 1;")
+
+    def test_private_protocol_is_removed_before_artifact_business_logic(self):
+        protocol = json.dumps({
+            "backend_dir": str(self.root),
+            "domain": "artifact",
+            "format_version": 1,
+            "kind": "ryframe-reference-fixture-control",
+            "operation": "snapshot",
+            "write": True,
+            "runtime_dir": str(self.root),
+            "job_id": "123",
+            "receipt": str(self.receipt),
+        })
+
+        def inspect_without_protocol(*_args):
+            self.assertNotIn(PROTOCOL_KEY, os.environ)
+            return {"state": "present", "job_id": "123"}
+
+        with (
+            mock.patch.dict(os.environ, {PROTOCOL_KEY: protocol}),
+            mock.patch.object(sys, "argv", ["full_stack_artifacts.py"]),
+            mock.patch.object(artifacts, "inspect", side_effect=inspect_without_protocol),
+        ):
+            self.assertEqual(
+                artifacts.run_private(
+                    "artifact",
+                    artifacts.PROTOCOL_SCHEMAS,
+                    artifacts.main,
+                    positional_operation=True,
+                ),
+                0,
+            )
+            self.assertEqual(os.environ[PROTOCOL_KEY], protocol)
 
 
 if __name__ == "__main__":

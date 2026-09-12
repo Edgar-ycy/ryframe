@@ -9,6 +9,8 @@ use crate::{
     workspace::root_dir,
 };
 
+#[path = "fixture_control/artifact.rs"]
+mod artifact;
 #[path = "fixture_control/environment.rs"]
 mod environment;
 #[path = "fixture_control/request.rs"]
@@ -27,6 +29,7 @@ pub(super) fn parse_fixture_control(
     args: &[String],
 ) -> Result<FixtureControlCommand, CliError> {
     match domain {
+        "artifact" => artifact::parse(args).map(FixtureControlCommand::Artifact),
         "environment" => environment::parse(args).map(FixtureControlCommand::Environment),
         "review" => review::parse(args).map(FixtureControlCommand::Review),
         "request" => request::parse(args).map(FixtureControlCommand::Request),

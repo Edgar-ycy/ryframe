@@ -585,23 +585,21 @@ fn parses_fixture_generation_and_rejects_ambiguous_sources() {
         command.extend(invalid);
         assert!(parse_command(&command).is_err(), "{command:?}");
     }
-    for operation in ["artifact", "retention"] {
-        assert_eq!(
-            parse_command(&[
-                "check",
-                "recovery",
-                "fixture",
-                operation,
-                "inspect",
-                "--runtime-dir",
-                "D:/验收/runtime",
-            ])
-            .unwrap(),
-            Command::Check(CheckCommand::Recovery(RecoveryCommand::Fixture(strings(
-                &[operation, "inspect", "--runtime-dir", "D:/验收/runtime",]
-            ))))
-        );
-    }
+    assert_eq!(
+        parse_command(&[
+            "check",
+            "recovery",
+            "fixture",
+            "retention",
+            "inspect",
+            "--runtime-dir",
+            "D:/验收/runtime",
+        ])
+        .unwrap(),
+        Command::Check(CheckCommand::Recovery(RecoveryCommand::Fixture(strings(
+            &["retention", "inspect", "--runtime-dir", "D:/验收/runtime",]
+        ))))
+    );
 }
 
 #[test]

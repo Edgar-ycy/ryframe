@@ -131,6 +131,7 @@ fn parse_fixture(args: &[String]) -> Result<RecoveryCommand, CliError> {
                 "source-pair",
                 "successor",
                 "services",
+                "artifact",
             ]
             .contains(&operation.as_str()) =>
         {
@@ -138,7 +139,7 @@ fn parse_fixture(args: &[String]) -> Result<RecoveryCommand, CliError> {
                 .map(Box::new)
                 .map(RecoveryCommand::FixtureControl)
         }
-        [operation, ..] if ["artifact", "retention", "dataset"].contains(&operation.as_str()) => {
+        [operation, ..] if ["retention", "dataset"].contains(&operation.as_str()) => {
             Ok(RecoveryCommand::Fixture(args.to_vec()))
         }
         _ => Err(CliError::new(
