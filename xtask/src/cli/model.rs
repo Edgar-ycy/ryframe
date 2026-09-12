@@ -35,6 +35,12 @@ pub(crate) use recovery_inputs::*;
 #[path = "model/recovery_reference.rs"]
 mod recovery_reference;
 pub(crate) use recovery_reference::*;
+#[path = "model/recovery_runtime.rs"]
+mod recovery_runtime;
+pub(crate) use recovery_runtime::*;
+#[path = "model/recovery_source.rs"]
+mod recovery_source;
+pub(crate) use recovery_source::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Cli {
@@ -70,8 +76,8 @@ pub(crate) enum CheckCommand {
 pub(crate) enum RecoveryCommand {
     Reference(RecoveryReferenceCommand),
     Inputs(RecoveryInputsCommand),
-    Runtime(Vec<String>),
-    Source(Vec<String>),
+    Runtime(RuntimeCommand),
+    Source(SourceCommand),
     Clone(Vec<String>),
     SeedSource(SeedSourceOptions),
     FreshTarget(FreshTargetCommand),

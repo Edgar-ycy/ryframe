@@ -633,7 +633,7 @@ fn recovery_help_uses_the_actual_stage_parser_without_creating_requested_output(
     for (arguments, expected) in [
         (
             ["check", "recovery", "runtime", "--help"].as_slice(),
-            "usage: restore_runtime.py",
+            "cargo xtask check recovery runtime",
         ),
         (
             ["check", "recovery", "fresh-target", "-h"].as_slice(),
@@ -945,8 +945,7 @@ fn check_help_lists_every_supported_performance_operation() {
 }
 
 #[test]
-fn recovery_runtime_status_forwards_registered_lifecycle_paths() {
-    let missing = "missing-runtime-target-plan.json";
+fn recovery_runtime_status_rejects_missing_evidence_before_python() {
     let result = invoke(&[
         "check",
         "recovery",
@@ -955,12 +954,12 @@ fn recovery_runtime_status_forwards_registered_lifecycle_paths() {
         "--runtime-registration",
         "missing-runtime-registration.json",
         "--target-plan",
-        missing,
+        "missing-runtime-target-plan.json",
     ]);
-    assert_eq!(result.status.code(), Some(1));
+    assert_eq!(result.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&result.stderr);
-    assert!(stderr.contains(missing), "{stderr}");
-    assert!(!stderr.contains("未知 recovery runtime 子操作"));
+    assert!(stderr.contains("参数错误："), "{stderr}");
+    assert!(!stderr.contains("任务失败："));
 }
 
 #[test]

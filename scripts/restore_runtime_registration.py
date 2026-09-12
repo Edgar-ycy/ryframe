@@ -32,13 +32,6 @@ REGISTRATION_LOCK = ControllerLockSpec(
 ROLES = ("api", "worker", "frontend")
 
 
-def add_arguments(parser) -> None:
-    parser.add_argument("--plan", type=Path, required=True)
-    parser.add_argument("--target-plan", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--write", action="store_true", required=True)
-
-
 def _descriptor(document) -> dict:
     snapshot = artifact_snapshot(document.path)
     if snapshot.sha256 != document.sha256:

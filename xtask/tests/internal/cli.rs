@@ -5,8 +5,9 @@ use super::cli::{
     CheckScope, CiCommand, CliError, Command, DataCommand, DeploymentOptions, DeploymentPhase,
     GenerateCommand, MigrationCommand, MigrationOperation, MigrationTarget, MonitoringCommand,
     RecoveryCommand, RecoveryInputsCommand, RequiredAction, RequiredEvent, RequiredJobResult,
-    ResourceAction, ResourceCommand, ResourceGateReplayOptions, ResourceTarget, SecurityCommand,
-    SecurityReportKind, SecurityReportOptions, parse,
+    ResourceAction, ResourceCommand, ResourceGateReplayOptions, ResourceTarget, RuntimeCommand,
+    RuntimeOperation, SecurityCommand, SecurityReportKind, SecurityReportOptions, SourceCommand,
+    parse,
 };
 
 fn strings(values: &[&str]) -> Vec<String> {
@@ -79,9 +80,10 @@ fn recovery_help_reaches_the_selected_stage_parser() {
             let arguments = strings(&[flag]);
             let expected = match stage {
                 "inputs" => RecoveryCommand::Inputs(RecoveryInputsCommand::Help),
-                "runtime" => RecoveryCommand::Runtime(arguments),
-                "source" => RecoveryCommand::Source(arguments),
-                _ => RecoveryCommand::Clone(arguments),
+                "runtime" => RecoveryCommand::Runtime(RuntimeCommand::Help(None)),
+                "source" => RecoveryCommand::Source(SourceCommand::Help(None)),
+                "clone" => RecoveryCommand::Clone(arguments),
+                _ => unreachable!(),
             };
             assert_eq!(actual, Command::Check(CheckCommand::Recovery(expected)));
         }
@@ -93,9 +95,9 @@ fn recovery_help_reaches_the_selected_stage_parser() {
         );
         assert_eq!(
             parse_command(&["check", "recovery", "runtime", "register", flag]).unwrap(),
-            Command::Check(CheckCommand::Recovery(RecoveryCommand::Runtime(strings(
-                &["register", flag,]
-            ))))
+            Command::Check(CheckCommand::Recovery(RecoveryCommand::Runtime(
+                RuntimeCommand::Help(Some(RuntimeOperation::Register))
+            )))
         );
         assert_eq!(
             parse_command(&[

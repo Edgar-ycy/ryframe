@@ -18,8 +18,14 @@ mod inputs;
 mod monitoring;
 #[path = "recovery/reference.rs"]
 mod reference;
+#[path = "recovery/runtime.rs"]
+mod runtime;
+#[path = "recovery/runtime_values.rs"]
+mod runtime_values;
 #[path = "recovery/seed_source.rs"]
 mod seed_source;
+#[path = "recovery/source.rs"]
+mod source;
 
 use fixture_control::parse_fixture_control;
 use fixture_runtime::parse_fixture_runtime;
@@ -32,20 +38,8 @@ pub(super) fn parse_recovery(args: &[String]) -> Result<RecoveryCommand, CliErro
         "plan" | "check-dataset" | "check-existing" | "dataset" | "backup" | "restore" | "copy"
         | "damage" => reference::parse(args).map(RecoveryCommand::Reference),
         "inputs" => inputs::parse(rest).map(RecoveryCommand::Inputs),
-        "runtime" => parse_recovery_operation(
-            "runtime",
-            rest,
-            &[
-                "build", "register", "start", "status", "stop", "recover", "bind", "verify",
-            ],
-        )
-        .map(RecoveryCommand::Runtime),
-        "source" => parse_recovery_operation(
-            "source",
-            rest,
-            &["verify", "comparison-capture", "comparison-verify"],
-        )
-        .map(RecoveryCommand::Source),
+        "runtime" => runtime::parse(rest).map(RecoveryCommand::Runtime),
+        "source" => source::parse(rest).map(RecoveryCommand::Source),
         "clone" => parse_clone(rest),
         "fresh-target" => fresh_target::parse(rest).map(RecoveryCommand::FreshTarget),
         "fixture" => parse_fixture(rest),

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import time
 from pathlib import Path
 
@@ -39,25 +38,6 @@ from restore_runtime_registration import (
     verify_registration,
 )
 from runtime_control_lock import controller_lock, reconcile_lock
-
-
-def add_arguments(parser: argparse.ArgumentParser, operation: str) -> None:
-    parser.add_argument("--runtime-registration", type=Path, required=True)
-    parser.add_argument("--target-plan", type=Path, required=True)
-    if operation == "start":
-        parser.add_argument("--source-backend", type=Path, required=True)
-        parser.add_argument("--source-frontend", type=Path, required=True)
-        parser.add_argument("--build-receipt", type=Path, required=True)
-        parser.add_argument("--bindings", type=Path, required=True)
-        parser.add_argument("--adapter-contract")
-        parser.add_argument("--product-backend", type=Path)
-        parser.add_argument("--timeout", type=float, default=60)
-        parser.add_argument("--write", action="store_true", required=True)
-    elif operation in {"stop", "recover"}:
-        parser.add_argument("--generation", type=int, required=True)
-        parser.add_argument("--write", action="store_true", required=True)
-        if operation == "recover":
-            parser.add_argument("--owner", type=Path, required=True)
 
 
 def _descriptor(document) -> dict:

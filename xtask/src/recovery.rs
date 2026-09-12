@@ -13,6 +13,8 @@ use crate::{
 
 const FRESH_TARGET_PROTOCOL_ENV: &str = "RYFRAME_XTASK_RECOVERY_FRESH_TARGET";
 const SEED_SOURCE_PROTOCOL_ENV: &str = "RYFRAME_XTASK_RECOVERY_SEED_SOURCE";
+const RUNTIME_PROTOCOL_ENV: &str = "RYFRAME_RESTORE_RUNTIME_PROTOCOL";
+const SOURCE_PROTOCOL_ENV: &str = "RYFRAME_RESTORE_SOURCE_PROTOCOL";
 
 #[path = "recovery/dataset_prepare.rs"]
 pub(crate) mod dataset_prepare;
@@ -28,6 +30,10 @@ pub(crate) mod inputs;
 pub(crate) mod monitoring;
 #[path = "recovery/reference.rs"]
 pub(crate) mod reference;
+#[path = "recovery/runtime.rs"]
+pub(crate) mod runtime;
+#[path = "recovery/source.rs"]
+pub(crate) mod source;
 
 pub(crate) fn run(command: &RecoveryCommand, frontend_dir: &Path) -> Result<()> {
     if let RecoveryCommand::FullStack(command) = command {
@@ -60,6 +66,12 @@ pub(crate) fn run(command: &RecoveryCommand, frontend_dir: &Path) -> Result<()> 
     if let RecoveryCommand::Inputs(command) = command {
         return inputs::run(command, &root_dir());
     }
+    if let RecoveryCommand::Runtime(command) = command {
+        return runtime::run(command, &root_dir(), frontend_dir);
+    }
+    if let RecoveryCommand::Source(command) = command {
+        return source::run(command, &root_dir());
+    }
     let (program, forwarded) = recovery_command(command, frontend_dir)?;
     let mut command = Vec::with_capacity(forwarded.len() + 1);
     command.push(program.to_owned());
@@ -75,10 +87,9 @@ pub(crate) fn run(command: &RecoveryCommand, frontend_dir: &Path) -> Result<()> 
 
 pub(crate) fn recovery_command(
     command: &RecoveryCommand,
-    frontend_dir: &Path,
+    _frontend_dir: &Path,
 ) -> Result<(&'static str, Vec<String>)> {
     let backend = path_argument(&root_dir(), "后端目录")?;
-    let frontend = path_argument(frontend_dir, "前端目录")?;
     match command {
         RecoveryCommand::Reference(_) => Err("reference 必须通过版本化私有协议执行，不能透传 argv"
             .to_owned()
@@ -88,18 +99,12 @@ pub(crate) fn recovery_command(
                 .to_owned()
                 .into())
         }
-        RecoveryCommand::Runtime(arguments) => {
-            let frontend = matches!(arguments.first().map(String::as_str), Some("build"))
-                .then_some(frontend.as_str());
-            Ok((
-                "scripts/restore_runtime.py",
-                with_paths(arguments, &backend, frontend)?,
-            ))
+        RecoveryCommand::Runtime(_) => {
+            Err("runtime 必须通过版本化私有协议执行，不能透传 argv".into())
         }
-        RecoveryCommand::Source(arguments) => Ok((
-            "scripts/restore_source.py",
-            with_paths(arguments, &backend, None)?,
-        )),
+        RecoveryCommand::Source(_) => {
+            Err("source 必须通过版本化私有协议执行，不能透传 argv".into())
+        }
         RecoveryCommand::Clone(arguments) => Ok((
             "scripts/devex_clone.py",
             with_paths(arguments, &backend, None)?,

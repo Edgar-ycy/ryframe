@@ -3,7 +3,7 @@ use std::path::Path;
 use super::cli::{
     BindingsInputOptions, DatasetPrepareCommand, ExistingReferenceSide, FreshTargetCommand,
     FreshTargetOperation, FreshTargetOptions, FullStackCommand, MonitoringCommand, RecoveryCommand,
-    RecoveryInputsCommand, RecoveryReferenceCommand,
+    RecoveryInputsCommand, RecoveryReferenceCommand, RuntimeCommand, SourceCommand,
 };
 use super::recovery::{
     fresh_target_protocol, full_stack_environment, inputs, recovery_command, reference,
@@ -14,58 +14,20 @@ fn strings(values: &[&str]) -> Vec<String> {
 }
 
 #[test]
-fn runtime_stage_uses_private_verifier_and_only_build_forwards_the_tool_frontend() {
-    let frontend = Path::new("D:/前端 worktree");
-    let (script, forwarded) = recovery_command(
-        &RecoveryCommand::Runtime(strings(&["verify", "--receipt", "runtime.json"])),
-        frontend,
-    )
-    .unwrap();
-    assert_eq!(script, "scripts/restore_runtime.py");
-    assert_eq!(
-        forwarded,
-        strings(&["verify", "--receipt", "runtime.json", "--backend-dir",])
-            .into_iter()
-            .chain([super::workspace::root_dir().display().to_string()])
-            .collect::<Vec<_>>()
+fn runtime_and_source_are_not_available_through_the_argv_forwarder() {
+    assert!(
+        recovery_command(
+            &RecoveryCommand::Runtime(RuntimeCommand::Help(None)),
+            Path::new("unused"),
+        )
+        .is_err()
     );
-
-    let (_, build) = recovery_command(
-        &RecoveryCommand::Runtime(strings(&["build", "--write"])),
-        frontend,
-    )
-    .unwrap();
-    assert_eq!(
-        build,
-        strings(&["build", "--write", "--backend-dir"])
-            .into_iter()
-            .chain([super::workspace::root_dir().display().to_string()])
-            .chain(strings(&["--frontend-dir", "D:/前端 worktree"]))
-            .collect::<Vec<_>>()
-    );
-
-    let (_, registration) = recovery_command(
-        &RecoveryCommand::Runtime(strings(&[
-            "register",
-            "--target-plan",
-            "D:/恢复 target.json",
-            "--write",
-        ])),
-        frontend,
-    )
-    .unwrap();
-    assert_eq!(
-        registration,
-        strings(&[
-            "register",
-            "--target-plan",
-            "D:/恢复 target.json",
-            "--write",
-            "--backend-dir",
-        ])
-        .into_iter()
-        .chain([super::workspace::root_dir().display().to_string()])
-        .collect::<Vec<_>>()
+    assert!(
+        recovery_command(
+            &RecoveryCommand::Source(SourceCommand::Help(None)),
+            Path::new("unused"),
+        )
+        .is_err()
     );
 }
 
@@ -204,44 +166,9 @@ fn fresh_target_uses_a_versioned_private_protocol_without_forwarded_argv() {
 }
 
 #[test]
-fn source_and_dataset_stages_fix_the_current_worktree_paths() {
+fn dataset_stage_and_clone_keep_current_boundaries() {
     let frontend = Path::new("D:/前端 worktree");
     let backend = super::workspace::root_dir().display().to_string();
-    let source_input = strings(&[
-        "verify",
-        "--source-generation",
-        "D:/验收/start.json",
-        "--output",
-        "D:/验收/verification/source-runtime.json",
-        "--write",
-    ]);
-    let (source, source_arguments) =
-        recovery_command(&RecoveryCommand::Source(source_input.clone()), frontend).unwrap();
-    assert_eq!(source, "scripts/restore_source.py");
-    let mut expected_source = source_input;
-    expected_source.extend(strings(&["--backend-dir", &backend]));
-    assert_eq!(source_arguments, expected_source);
-    let (source, comparison_arguments) = recovery_command(
-        &RecoveryCommand::Source(strings(&[
-            "comparison-verify",
-            "--receipt",
-            "D:/验收 comparison.json",
-        ])),
-        frontend,
-    )
-    .unwrap();
-    assert_eq!(source, "scripts/restore_source.py");
-    assert_eq!(
-        comparison_arguments,
-        strings(&[
-            "comparison-verify",
-            "--receipt",
-            "D:/验收 comparison.json",
-            "--backend-dir",
-            &backend,
-        ])
-    );
-
     assert!(
         recovery_command(
             &RecoveryCommand::DatasetPrepare(DatasetPrepareCommand::Help),
@@ -362,8 +289,6 @@ fn fixture_dataset_uses_the_private_device_dataset_adapter() {
 fn forwarded_recovery_scripts_exist_in_checkout() {
     let root = super::workspace::root_dir();
     for command in [
-        RecoveryCommand::Runtime(strings(&["verify"])),
-        RecoveryCommand::Source(strings(&["verify"])),
         RecoveryCommand::Clone(strings(&["status"])),
         RecoveryCommand::Fixture(strings(&["artifact", "snapshot"])),
         RecoveryCommand::Fixture(strings(&["retention", "inspect"])),
@@ -376,6 +301,8 @@ fn forwarded_recovery_scripts_exist_in_checkout() {
             "恢复入口转发的脚本不在当前检出中：{script}"
         );
     }
+    assert!(root.join("scripts/restore_runtime.py").is_file());
+    assert!(root.join("scripts/restore_source.py").is_file());
     assert!(root.join("scripts/restore_reference_dataset.mjs").is_file());
     assert!(
         root.join("scripts/restore_monitoring_delivery.py")

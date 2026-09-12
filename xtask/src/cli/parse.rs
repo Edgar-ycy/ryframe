@@ -22,7 +22,9 @@ use recovery::parse_recovery;
 use release::parse_release;
 
 pub(crate) fn parse(mut args: Vec<String>) -> Result<Cli, CliError> {
-    let frontend_dir = take_unique_option(&mut args, "--frontend-dir")?
+    let frontend_option = take_unique_option(&mut args, "--frontend-dir")?;
+    let frontend_was_explicit = frontend_option.is_some();
+    let frontend_dir = frontend_option
         .map(PathBuf::from)
         .unwrap_or_else(default_frontend_dir);
     let Some(command_name) = args.first().cloned() else {
@@ -68,8 +70,28 @@ pub(crate) fn parse(mut args: Vec<String>) -> Result<Cli, CliError> {
         "data" => Command::Data(parse_data(&args)?),
         _ => return Err(CliError::new(format!("未知命令：{command_name}"))),
     };
-    if matches!(command, Command::Check(CheckCommand::Release(_))) && !frontend_dir.is_absolute() {
-        return Err(CliError::new("发布核验的 --frontend-dir 必须是绝对路径"));
+    let requires_absolute_frontend = matches!(
+        command,
+        Command::Check(CheckCommand::Release(_))
+            | Command::Check(CheckCommand::Recovery(RecoveryCommand::Runtime(
+                RuntimeCommand::Build(_)
+            )))
+    );
+    let recovery_frontend_misuse = match &command {
+        Command::Check(CheckCommand::Recovery(RecoveryCommand::Runtime(command))) => !matches!(
+            command,
+            RuntimeCommand::Build(_) | RuntimeCommand::Help(Some(RuntimeOperation::Build))
+        ),
+        Command::Check(CheckCommand::Recovery(RecoveryCommand::Source(_))) => true,
+        _ => false,
+    };
+    if frontend_was_explicit && recovery_frontend_misuse {
+        return Err(CliError::new(
+            "--frontend-dir 只适用于 recovery runtime build，不适用于当前操作",
+        ));
+    }
+    if requires_absolute_frontend && !frontend_dir.is_absolute() {
+        return Err(CliError::new("当前操作的 --frontend-dir 必须是绝对路径"));
     }
     Ok(Cli {
         frontend_dir,

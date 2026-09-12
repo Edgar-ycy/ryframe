@@ -69,6 +69,20 @@ pub(crate) fn validate_external_existing_file(value: &Path) -> Result<PathBuf, S
     Ok(value.to_path_buf())
 }
 
+/// 核验不属于当前后端的显式绝对输入，例如前后端 Git 工作树和其构建收据。
+///
+/// 这里只证明路径形态、文件类型和所有现有路径段不经过链接；具体 Git 身份、
+/// ownership 与收据内容继续由对应领域实现核验。
+pub(crate) fn validate_absolute_path(
+    value: &Path,
+    kind: LocalTestPathKind,
+) -> Result<PathBuf, String> {
+    validate_lexical_path(value)?;
+    validate_absolute_components(value)?;
+    validate_target_kind(value, kind)?;
+    Ok(value.to_path_buf())
+}
+
 fn validate_lexical_path(value: &Path) -> Result<(), String> {
     if !value.is_absolute() {
         return Err("路径必须是绝对路径".to_owned());
@@ -127,6 +141,29 @@ fn validate_existing_components(
             }
             Err(error) => {
                 return Err(format!("无法核验路径 {}：{error}", current.display()));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_absolute_components(value: &Path) -> Result<(), String> {
+    for candidate in value.ancestors() {
+        match fs::symlink_metadata(candidate) {
+            Ok(metadata) => {
+                if is_link_like(&metadata) {
+                    return Err(format!(
+                        "路径不能经过符号链接或 junction：{}",
+                        candidate.display()
+                    ));
+                }
+                if candidate != value && !metadata.is_dir() {
+                    return Err(format!("路径的现有父级必须是目录：{}", candidate.display()));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(format!("无法核验路径 {}：{error}", candidate.display()));
             }
         }
     }

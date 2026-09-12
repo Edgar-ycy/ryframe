@@ -60,28 +60,10 @@ impl Drop for RecoveryArgumentFixture {
 }
 #[test]
 fn parses_recovery_check_groups() {
-    assert_eq!(
-        parse_command(&[
-            "check",
-            "recovery",
-            "runtime",
-            "verify",
-            "--receipt",
-            "runtime.json",
-        ])
-        .unwrap(),
-        Command::Check(CheckCommand::Recovery(RecoveryCommand::Runtime(strings(
-            &["verify", "--receipt", "runtime.json",]
-        ))))
-    );
     for operation in [
-        "build", "register", "start", "status", "stop", "recover", "bind",
+        "build", "register", "start", "status", "stop", "recover", "bind", "verify",
     ] {
-        assert!(matches!(
-            parse_command(&["check", "recovery", "runtime", operation]),
-            Ok(Command::Check(CheckCommand::Recovery(RecoveryCommand::Runtime(arguments))))
-                if arguments == strings(&[operation])
-        ));
+        assert!(parse_command(&["check", "recovery", "runtime", operation]).is_err());
     }
     assert!(parse_command(&["check", "recovery", "runtime", "restart"]).is_err());
     assert!(parse_command(&["check", "recovery", "source", "quiesce"]).is_err());
@@ -108,22 +90,6 @@ fn parses_recovery_check_groups() {
                 write: false,
             })
         )))
-    );
-    assert_eq!(
-        parse_command(&[
-            "check",
-            "recovery",
-            "source",
-            "comparison-verify",
-            "--receipt",
-            "comparison.json",
-        ])
-        .unwrap(),
-        Command::Check(CheckCommand::Recovery(RecoveryCommand::Source(strings(&[
-            "comparison-verify",
-            "--receipt",
-            "comparison.json"
-        ]))))
     );
     for values in [
         ["check", "recovery", "source"].as_slice(),

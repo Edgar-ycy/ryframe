@@ -2,7 +2,7 @@ import json
 import io
 import sys
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -212,30 +212,31 @@ class RestoreRuntimeRegistrationTests(unittest.TestCase):
         control.assert_not_called()
         self.assertFalse(output.exists())
 
-    def test_runtime_cli_requires_write_and_dispatches_registration(self):
-        arguments = [
-            "restore_runtime.py",
-            "register",
-            "--backend-dir",
-            str(ROOT),
-            "--plan",
-            str(self.reference_path),
-            "--target-plan",
-            str(self.target_path),
-            "--output",
-            str(self.output),
-        ]
-        with patch.object(sys, "argv", arguments), redirect_stderr(io.StringIO()), self.assertRaises(
-            SystemExit
-        ) as missing_write:
-            restore_runtime.main()
-        self.assertEqual(missing_write.exception.code, 2)
+    def test_registration_protocol_requires_write_and_dispatches_request(self):
+        protocol = {
+            "backend_dir": str(ROOT),
+            "format_version": 1,
+            "kind": restore_runtime.PROTOCOL_KIND,
+            "operation": "register",
+            "plan": str(self.reference_path),
+            "target_plan": str(self.target_path),
+            "output": str(self.output),
+            "write": False,
+        }
+        with self.assertRaises(restore_runtime.RuntimeProtocolError):
+            restore_runtime.private_protocol_request(
+                [], {restore_runtime.PROTOCOL_KEY: json.dumps(protocol)}
+            )
 
         expected = {"status": "runtime_registered_not_started"}
-        with patch.object(sys, "argv", [*arguments, "--write"]), patch.object(
+        protocol["write"] = True
+        request = restore_runtime.private_protocol_request(
+            [], {restore_runtime.PROTOCOL_KEY: json.dumps(protocol)}
+        )
+        with patch.object(
             registration, "execute", return_value=expected
         ) as execute, redirect_stdout(io.StringIO()) as output:
-            restore_runtime.main()
+            restore_runtime.main(request)
         execute.assert_called_once()
         self.assertEqual(json.loads(output.getvalue()), expected)
 

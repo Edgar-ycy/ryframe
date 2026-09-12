@@ -1,4 +1,3 @@
-import argparse
 import contextlib
 import json
 import os
@@ -275,25 +274,6 @@ class RestoreRuntimeLifecycleTests(unittest.TestCase):
             state = read_json_document(self.runtime / "lifecycle.json").value
             self.assertEqual(state["generations"][0]["status"], "stopped")
             self.assertTrue((self.runtime / "generation-0001").is_dir())
-
-    def test_cli_requires_generation_write_and_registered_sources(self):
-        parser = argparse.ArgumentParser()
-        commands = parser.add_subparsers(dest="command", required=True)
-        for operation in ("start", "status", "stop", "recover"):
-            lifecycle.add_arguments(commands.add_parser(operation), operation)
-        with self.assertRaises(SystemExit) as caught:
-            parser.parse_args(["start"])
-        self.assertEqual(caught.exception.code, 2)
-        status = parser.parse_args(
-            [
-                "status",
-                "--runtime-registration",
-                str(self.base / "registration.json"),
-                "--target-plan",
-                str(self.base / "target.json"),
-            ]
-        )
-        self.assertEqual(status.command, "status")
 
     def test_launch_request_keeps_product_execution_and_frontend_identities_distinct(self):
         self.assertEqual(launch_model.validate_request(self.request), self.request)

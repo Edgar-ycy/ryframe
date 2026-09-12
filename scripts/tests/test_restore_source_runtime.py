@@ -585,32 +585,37 @@ class SourceRuntimeCliTests(unittest.TestCase):
         start = backend / ".local-tests/run/results/start.json"
         output = backend / ".local-tests/run/g0001/verification/source-runtime.json"
         result = {"output": str(output), "status": "source_runtime_verified"}
-        argv = [
-            "restore_source.py",
-            "verify",
-            "--backend-dir",
-            str(backend),
-            "--source-generation",
-            str(start),
-            "--output",
-            str(output),
-            "--write",
-        ]
-        with patch.object(sys, "argv", argv), patch.object(
+        protocol = {
+            "backend_dir": str(backend),
+            "format_version": 1,
+            "kind": source_cli.PROTOCOL_KIND,
+            "operation": "verify",
+            "source_generation": str(start),
+            "output": str(output),
+            "write": True,
+        }
+        request = source_cli.private_protocol_request(
+            [], {source_cli.PROTOCOL_KEY: json.dumps(protocol)}
+        )
+        with patch.object(
             source_cli, "execute_source_verification", return_value=result
         ) as execute, patch("builtins.print") as printed:
-            source_cli.main()
+            source_cli.main(request)
         execute.assert_called_once_with(backend.resolve(), start, output)
-        printed.assert_called_once_with(json.dumps(result))
+        self.assertEqual(json.loads(printed.call_args.args[0]), result)
 
-        for rejected in (
-            argv[:-1],
-            ["restore_source.py", "quiesce", "--backend-dir", str(backend)],
-        ):
-            with self.subTest(rejected=rejected), patch.object(sys, "argv", rejected), \
-                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
-                source_cli.main()
-            self.assertEqual(error.exception.code, 2)
+        protocol["write"] = False
+        with self.assertRaises(source_cli.SourceProtocolError):
+            source_cli.private_protocol_request(
+                [], {source_cli.PROTOCOL_KEY: json.dumps(protocol)}
+            )
+        with self.assertRaises(source_cli.SourceProtocolError):
+            source_cli.private_protocol_request(["verify"], {})
+        protocol["operation"] = "quiesce"
+        with self.assertRaises(source_cli.SourceProtocolError):
+            source_cli.private_protocol_request(
+                [], {source_cli.PROTOCOL_KEY: json.dumps(protocol)}
+            )
 
 
 class SourceProducerStoppedTests(unittest.TestCase):

@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- 正式恢复 Runtime 与 Source 命令改由 Rust 完整解析强类型参数，在启动固定 Python 实现前拒绝重复、未知、缺值、写入授权冲突及不安全路径；私有阶段只接受有版本的单环境 JSON 协议并在业务派发前移除，旧 argv 入口不再可用。
 - Device 夹具 source-pair 签发入口改为强类型请求；新收据路径在启动 Python 前限定为当前后端 `.local-tests` 内已有真实父目录，写入必须显式授权，固定实现只从版本化私有协议重建参数，运行时内部直接函数调用保持不变。
 - Device 隔离夹具的工作树准备入口改为 Rust 强类型请求；输出在启动 Python 前限定为当前后端 `.local-tests` 内尚不存在的真实目录，正式候选提交必须成对提供，固定前端路径与请求只通过版本化私有协议传递，协议不会继承到 Git、Corepack 或 Cargo 后代进程。
 - 正式恢复 monitoring 的 bind、start、observe、close、result、status 已改为 Rust 强类型请求；xtask 在启动固定 Python 实现前核验只读/写入边界、run ID、三端口、`.local-tests` 证据与无链接外部工具，并通过无 argv 的版本化协议传递，staged 内部生命周期及失败收据语义保持不变。
