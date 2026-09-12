@@ -113,6 +113,10 @@ pub(crate) fn recovery_command(
                 ))
             }
         }
+        RecoveryCommand::Monitoring(arguments) => Ok((
+            "scripts/restore_monitoring_delivery.py",
+            with_paths(arguments, &backend, None)?,
+        )),
         RecoveryCommand::DatasetPrepare(arguments) => Ok((
             "scripts/restore_reference_dataset.mjs",
             with_paths(arguments, &backend, None)?,

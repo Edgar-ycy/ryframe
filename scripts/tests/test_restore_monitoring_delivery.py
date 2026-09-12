@@ -1130,6 +1130,25 @@ class MonitoringCredentialAclTests(unittest.TestCase):
 
 
 class MonitoringStagingModelTests(unittest.TestCase):
+    def test_current_runner_forms_a_static_local_import_closure(self):
+        root = Path(__file__).resolve().parents[2]
+        sources = {
+            path.relative_to(root).as_posix(): path.read_bytes()
+            for path in (root / "scripts").glob("*.py")
+        }
+        pending = [staging.RUNNER, staging.ENVIRONMENT_CHECK]
+        modules = set()
+        while pending:
+            relative = pending.pop()
+            if relative in modules:
+                continue
+            modules.add(relative)
+            pending.extend(
+                staging._local_imports(relative, sources[relative], set(sources)) - modules
+            )
+        self.assertIn("scripts/restore_monitoring_runtime.py", modules)
+        self.assertIn("scripts/restore_monitoring_webhook.py", modules)
+
     def test_python_closure_rejects_dynamic_import_and_resolves_local_module(self):
         available = {"scripts/local_module.py"}
         self.assertEqual(

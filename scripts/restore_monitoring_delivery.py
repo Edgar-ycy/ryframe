@@ -8,6 +8,7 @@ sys.dont_write_bytecode = True
 
 import argparse
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -155,7 +156,7 @@ def _dispatch_staged(command: str, backend: Path, binding_path: Path, *, run=sub
             stderr=subprocess.STDOUT,
             timeout=900,
             check=False,
-            creationflags=subprocess.CREATE_NO_WINDOW if __import__("os").name == "nt" else 0,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         if completed.returncode != 0:
             receipt = binding_path.parent / f"{command}-failure.json"
@@ -194,7 +195,7 @@ def _internal_lifecycle(command: str, backend: Path, binding_path: Path) -> dict
     private, credential, environment_document = load_environment(
         backend, binding["authority"], Path(binding["credential"]["path"])
     )
-    if credential != binding["credential"] or dict(__import__("os").environ).get(
+    if credential != binding["credential"] or os.environ.get(
         "APP_MONITOR_METRICS_BEARER_TOKEN"
     ) != private["APP_MONITOR_METRICS_BEARER_TOKEN"]:
         raise ValueError("staged monitoring runner 没有继承绑定凭据")

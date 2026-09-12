@@ -234,6 +234,38 @@ fn source_fixture_and_dataset_stages_fix_the_current_worktree_paths() {
 }
 
 #[test]
+fn monitoring_stage_uses_the_private_lifecycle_and_fixed_backend() {
+    let backend = super::workspace::root_dir().display().to_string();
+    let input = strings(&["status", "--binding", "D:/隔离 监控/binding.json"]);
+    let (script, arguments) = recovery_command(
+        &RecoveryCommand::Monitoring(input.clone()),
+        Path::new("unused"),
+    )
+    .unwrap();
+    assert_eq!(script, "scripts/restore_monitoring_delivery.py");
+    assert_eq!(
+        arguments,
+        input
+            .into_iter()
+            .chain(strings(&["--backend-dir", &backend]))
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        recovery_command(
+            &RecoveryCommand::Monitoring(strings(&[
+                "status",
+                "--binding",
+                "binding.json",
+                "--backend-dir",
+                "other",
+            ])),
+            Path::new("unused"),
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn fixture_environment_plan_uses_only_the_current_backend() {
     let frontend = Path::new("D:/前端 worktree");
     let backend = super::workspace::root_dir().display().to_string();
@@ -501,6 +533,7 @@ fn forwarded_recovery_scripts_exist_in_checkout() {
         RecoveryCommand::Fixture(strings(&["artifact", "snapshot"])),
         RecoveryCommand::Fixture(strings(&["retention", "inspect"])),
         RecoveryCommand::Fixture(strings(&["dataset", "plan"])),
+        RecoveryCommand::Monitoring(strings(&["status", "--binding", "binding.json"])),
         RecoveryCommand::DatasetPrepare(strings(&["--plan", "reference.json"])),
         RecoveryCommand::FreshTarget(strings(&[
             "--operation",

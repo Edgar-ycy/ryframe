@@ -73,14 +73,15 @@ fn help_accepts_only_current_command_families() {
 #[test]
 fn recovery_help_reaches_the_selected_stage_parser() {
     for flag in ["--help", "-h"] {
-        for stage in ["inputs", "runtime", "source", "clone"] {
+        for stage in ["inputs", "runtime", "source", "clone", "monitoring"] {
             let actual = parse_command(&["check", "recovery", stage, flag]).unwrap();
             let arguments = strings(&[flag]);
             let expected = match stage {
                 "inputs" => RecoveryCommand::Inputs(arguments),
                 "runtime" => RecoveryCommand::Runtime(arguments),
                 "source" => RecoveryCommand::Source(arguments),
-                _ => RecoveryCommand::Clone(arguments),
+                "clone" => RecoveryCommand::Clone(arguments),
+                _ => RecoveryCommand::Monitoring(arguments),
             };
             assert_eq!(actual, Command::Check(CheckCommand::Recovery(expected)));
         }
@@ -719,6 +720,103 @@ fn parses_recovery_check_groups() {
                 &[operation, "inspect", "--runtime-dir", "D:/验收/runtime",]
             ))))
         );
+    }
+}
+
+fn monitoring_bind_arguments() -> Vec<String> {
+    strings(&[
+        "bind",
+        "--runtime-receipt",
+        "D:/恢复/runtime.json",
+        "--target-plan",
+        "D:/恢复/target.json",
+        "--output",
+        "D:/恢复/监控/binding.json",
+        "--run-id",
+        "monitor-r1",
+        "--metrics-token-file",
+        "D:/恢复/监控/metrics-token.txt",
+        "--prometheus",
+        "D:/tools/prometheus.exe",
+        "--promtool",
+        "D:/tools/promtool.exe",
+        "--alertmanager",
+        "D:/tools/alertmanager.exe",
+        "--amtool",
+        "D:/tools/amtool.exe",
+        "--prometheus-port",
+        "29090",
+        "--alertmanager-port",
+        "29093",
+        "--webhook-port",
+        "29094",
+        "--write",
+    ])
+}
+
+fn parse_monitoring(arguments: Vec<String>) -> std::result::Result<Command, CliError> {
+    parse(
+        strings(&["check", "recovery", "monitoring"])
+            .into_iter()
+            .chain(arguments)
+            .collect(),
+    )
+    .map(|cli| cli.command)
+}
+
+#[test]
+fn parses_monitoring_read_and_write_operations() {
+    assert_eq!(
+        parse_command(&[
+            "check",
+            "recovery",
+            "monitoring",
+            "status",
+            "--binding",
+            "D:/隔离 监控/binding.json",
+        ])
+        .unwrap(),
+        Command::Check(CheckCommand::Recovery(RecoveryCommand::Monitoring(
+            strings(&["status", "--binding", "D:/隔离 监控/binding.json"])
+        )))
+    );
+    let arguments = monitoring_bind_arguments();
+    assert_eq!(
+        parse_monitoring(arguments.clone()).unwrap(),
+        Command::Check(CheckCommand::Recovery(RecoveryCommand::Monitoring(
+            arguments
+        )))
+    );
+}
+
+#[test]
+fn rejects_invalid_monitoring_operations_before_execution() {
+    let mut duplicate_ports = monitoring_bind_arguments();
+    let alertmanager_port = duplicate_ports
+        .iter()
+        .position(|value| value == "--alertmanager-port")
+        .unwrap()
+        + 1;
+    duplicate_ports[alertmanager_port] = "29090".into();
+    let mut privileged_port = monitoring_bind_arguments();
+    let prometheus_port = privileged_port
+        .iter()
+        .position(|value| value == "--prometheus-port")
+        .unwrap()
+        + 1;
+    privileged_port[prometheus_port] = "80".into();
+    for values in [
+        Vec::new(),
+        strings(&["unknown"]),
+        strings(&["start", "--binding", "one"]),
+        strings(&["status", "--binding", "one", "--write"]),
+        strings(&["status", "--binding", "one", "--binding", "two"]),
+        strings(&["status", "--binding", "one", "--unknown"]),
+        strings(&["bind", "--write"]),
+        duplicate_ports,
+        privileged_port,
+    ] {
+        assert!(parse_monitoring(values.clone()).is_err(), "{values:?}");
     }
 }
 

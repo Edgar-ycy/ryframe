@@ -41,6 +41,7 @@ pub(crate) enum RecoveryCommand {
     Clone(Vec<String>),
     FreshTarget(Vec<String>),
     Fixture(Vec<String>),
+    Monitoring(Vec<String>),
     DatasetPrepare(Vec<String>),
 }
 

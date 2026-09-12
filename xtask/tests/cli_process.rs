@@ -40,6 +40,25 @@ fn invalid_public_arguments_exit_two_before_running_tasks() {
         ["generate", "api", "--commit", "HEAD"].as_slice(),
         ["data", "unknown"].as_slice(),
         ["check", "recovery", "runtime", "restart"].as_slice(),
+        [
+            "check",
+            "recovery",
+            "monitoring",
+            "start",
+            "--binding",
+            "binding.json",
+        ]
+        .as_slice(),
+        [
+            "check",
+            "recovery",
+            "monitoring",
+            "status",
+            "--binding",
+            "binding.json",
+            "--write",
+        ]
+        .as_slice(),
         ["check", "ci", "required"].as_slice(),
         ["check", "ci", "security"].as_slice(),
         ["check", "ci", "security", "source", "extra"].as_slice(),
@@ -298,6 +317,10 @@ fn recovery_help_uses_the_actual_stage_parser_without_creating_requested_output(
         (
             ["check", "recovery", "dataset-prepare", "--help"].as_slice(),
             "--verify-existing PATH",
+        ),
+        (
+            ["check", "recovery", "monitoring", "start", "--help"].as_slice(),
+            "--binding BINDING",
         ),
     ] {
         let result = invoke_with_environment(arguments, &[("PYTHONIOENCODING", "utf-8")]);
