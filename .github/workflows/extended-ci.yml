@@ -75,12 +75,12 @@ jobs:
       - name: 显式验收专属 cgroup 的孙进程峰值与精确清理
         id: cgroup
         working-directory: backend
-        run: python scripts/ci_devex_cgroup.py run --output .local-tests/ci-devex-cgroup
+        run: cargo xtask check perf cgroup run --output .local-tests/ci-devex-cgroup
 
       - name: 复核并清理本 job 的精确 cgroup
         if: ${{ always() && steps.cgroup.outcome != 'skipped' }}
         working-directory: backend
-        run: python scripts/ci_devex_cgroup.py cleanup --output .local-tests/ci-devex-cgroup
+        run: cargo xtask check perf cgroup cleanup --output .local-tests/ci-devex-cgroup
 
       - name: 保存 cgroup 成功与失败证据
         if: ${{ always() }}

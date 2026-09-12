@@ -264,8 +264,11 @@ class CgroupWorkflowTests(unittest.TestCase):
         self.assertNotIn("continue-on-error", job)
         steps = job["steps"]
         run = next(step for step in steps if step.get("id") == "cgroup")
-        self.assertEqual(run["run"], "python scripts/ci_devex_cgroup.py run --output .local-tests/ci-devex-cgroup")
-        cleanup = next(step for step in steps if "cleanup --output" in step.get("run", ""))
+        self.assertEqual(run["run"], "cargo xtask check perf cgroup run --output .local-tests/ci-devex-cgroup")
+        cleanup = next(step for step in steps if "perf cgroup cleanup --output" in step.get("run", ""))
+        self.assertEqual(cleanup["run"], "cargo xtask check perf cgroup cleanup --output .local-tests/ci-devex-cgroup")
+        workflow_source = (REPOSITORY / ".github/workflows/extended-ci.yml").read_text(encoding="utf-8")
+        self.assertNotIn("python scripts/ci_devex_cgroup.py", workflow_source)
         upload = next(step for step in steps if str(step.get("uses", "")).startswith("actions/upload-artifact@"))
         self.assertIn("always()", cleanup["if"])
         self.assertEqual(upload["if"], "${{ always() }}")

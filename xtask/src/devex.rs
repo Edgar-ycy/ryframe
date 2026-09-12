@@ -2,6 +2,8 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::{Result, workspace::root_dir};
 
+#[path = "devex/cgroup.rs"]
+mod cgroup;
 #[path = "devex/run.rs"]
 mod execution;
 #[path = "devex/incremental.rs"]
@@ -25,8 +27,8 @@ mod support;
 
 #[allow(unused_imports)]
 pub(crate) use model::{
-    BaselineContract, CacheState, DevexCommand, DevexPairedOptions, DevexRunOptions, DevexSuite,
-    PairedArm,
+    BaselineContract, CacheState, DevexCgroupOperation, DevexCgroupOptions, DevexCommand,
+    DevexPairedOptions, DevexRunOptions, DevexSuite, PairedArm,
 };
 #[allow(unused_imports)]
 pub(crate) use preflight::parse_frontend_fast_plan;
@@ -55,8 +57,51 @@ pub(crate) fn parse_command(args: &[String]) -> std::result::Result<DevexCommand
             _ => Err(usage().to_owned()),
         },
         "compare" => parse_compare(&args[1..]),
+        "cgroup" => parse_cgroup(&args[1..]),
         _ => Err(usage().to_owned()),
     }
+}
+
+fn parse_cgroup(args: &[String]) -> std::result::Result<DevexCommand, String> {
+    let (operation, arguments) = args
+        .split_first()
+        .ok_or("cgroup 缺少 run 或 cleanup 操作")?;
+    let operation = match operation.as_str() {
+        "run" => DevexCgroupOperation::Run,
+        "cleanup" => DevexCgroupOperation::Cleanup,
+        _ => return Err("cgroup 操作只允许 run 或 cleanup".to_owned()),
+    };
+    let mut output = None;
+    let mut plan = false;
+    let mut index = 0;
+    while index < arguments.len() {
+        match arguments[index].as_str() {
+            "--output" => {
+                if output.is_some() {
+                    return Err("--output 不能重复".to_owned());
+                }
+                let value = arguments
+                    .get(index + 1)
+                    .filter(|value| !value.trim().is_empty() && !value.starts_with('-'))
+                    .ok_or("--output 缺少目录")?;
+                output = Some(PathBuf::from(value));
+                index += 2;
+            }
+            "--plan" if !plan => {
+                plan = true;
+                index += 1;
+            }
+            "--plan" => return Err("--plan 不能重复".to_owned()),
+            unknown => return Err(format!("未知参数：{unknown}")),
+        }
+    }
+    let options = DevexCgroupOptions {
+        operation,
+        output: output.ok_or("cgroup 缺少 --output")?,
+        plan,
+    };
+    cgroup::validate_cli_options(&options)?;
+    Ok(DevexCommand::Cgroup(options))
 }
 
 fn parse_paired(args: &[String]) -> std::result::Result<DevexCommand, String> {
@@ -265,6 +310,7 @@ pub(crate) fn run(command: &DevexCommand, frontend_dir: &Path) -> Result<()> {
             let candidate = resolve_run_reference(&devex_root, candidate)?;
             println!("{}", report::compare(&baseline, &candidate)?);
         }
+        DevexCommand::Cgroup(options) => cgroup::run(options)?,
     }
     Ok(())
 }
@@ -312,6 +358,7 @@ pub(crate) fn usage() -> &'static str {
      cargo xtask check perf paired --base-backend <dir> --candidate-backend <dir> [--base-frontend <dir> --candidate-frontend <dir>] [--baseline-contract legacy-cargo-dev-v1|legacy-cargo-dev-v2|legacy-stable-readiness-b0-v1] --suite <suite> --variant <name> --runs <1..50> --cache <cold|warm>\n\
      cargo xtask check perf summarize <日期/run-id>\n\
      cargo xtask check perf compare --base <日期/run-id> --candidate <日期/run-id>\n\
+     cargo xtask check perf cgroup <run|cleanup> --output <.local-tests 内目录> [--plan]\n\
      Linux 内存测量需要 RYFRAME_DEVEX_CGROUP_ROOT 指向已授权且启用 memory controller 的 cgroup v2 委托目录；缺失时保留不可用原因并阻止完整性能验收。"
 }
 
@@ -323,6 +370,8 @@ fn suite_names() -> String {
         .join("、")
 }
 
+#[allow(unused_imports)]
+pub(crate) use cgroup::{command_at as cgroup_command_at, plan_at as cgroup_plan_at};
 #[allow(unused_imports)]
 pub(crate) use execution::read_resource_gate_decision;
 #[allow(unused_imports)]

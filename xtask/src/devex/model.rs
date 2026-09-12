@@ -388,6 +388,29 @@ pub(crate) enum DevexCommand {
     Paired(DevexPairedOptions),
     Summarize { run: String },
     Compare { baseline: String, candidate: String },
+    Cgroup(DevexCgroupOptions),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DevexCgroupOperation {
+    Run,
+    Cleanup,
+}
+
+impl DevexCgroupOperation {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Run => "run",
+            Self::Cleanup => "cleanup",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DevexCgroupOptions {
+    pub(crate) operation: DevexCgroupOperation,
+    pub(crate) output: PathBuf,
+    pub(crate) plan: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

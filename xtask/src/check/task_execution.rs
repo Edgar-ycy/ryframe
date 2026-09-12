@@ -108,6 +108,9 @@ pub(crate) fn execute_registered_task(
         TaskExecutor::ReleaseSource | TaskExecutor::ReleaseCi => {
             Err("发布专属节点必须由发布适配器执行".into())
         }
+        TaskExecutor::PerfCgroupRun | TaskExecutor::PerfCgroupCleanup => {
+            Err("性能专属节点必须由 DevEx 适配器执行".into())
+        }
     }
 }
 

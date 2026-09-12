@@ -64,6 +64,16 @@ fn invalid_public_arguments_exit_two_before_running_tasks() {
         ["check", "ci", "security", "source", "extra"].as_slice(),
         ["check", "release"].as_slice(),
         ["check", "release", "--tag", "v0.12.1"].as_slice(),
+        ["check", "perf", "cgroup", "run"].as_slice(),
+        [
+            "check",
+            "perf",
+            "cgroup",
+            "cleanup",
+            "--output",
+            "../outside",
+        ]
+        .as_slice(),
         [
             "check",
             "ci",
@@ -548,6 +558,7 @@ fn check_help_lists_every_supported_performance_operation() {
     assert!(output.contains("check release source --tag <tag>"));
     assert!(output.contains("check release ci --backend-repository <owner/repo>"));
     assert!(output.contains("check release ci record-pair --output <绝对文件>"));
+    assert!(output.contains("check perf cgroup <run|cleanup>"));
     assert!(output.contains("check recovery full-stack <prepare|rate-limit|start|collect>"));
 }
 

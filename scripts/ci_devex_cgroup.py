@@ -1,4 +1,4 @@
-"""在 Linux CI 的专属 cgroup 中显式验收 DevEx 内存；Cargo 始终以 runner 身份运行。"""
+"""xtask 私有执行程序：在 Linux CI 专属 cgroup 中验收 DevEx 内存。"""
 
 from __future__ import annotations
 

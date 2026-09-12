@@ -92,6 +92,8 @@ pub(crate) enum TaskExecutor {
     CiDeploymentImage,
     ReleaseSource,
     ReleaseCi,
+    PerfCgroupRun,
+    PerfCgroupCleanup,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,6 +133,8 @@ macro_rules! task_definition {
 
 #[path = "task_registry/ci.rs"]
 mod ci;
+#[path = "task_registry/perf.rs"]
+mod perf;
 #[path = "task_registry/release.rs"]
 mod release;
 
@@ -375,7 +379,8 @@ const CHECK_TASKS: [TaskDefinition; 18] = [
     ),
 ];
 
-const TASK_COUNT: usize = CHECK_TASKS.len() + ci::TASKS.len() + release::TASKS.len();
+const TASK_COUNT: usize =
+    CHECK_TASKS.len() + ci::TASKS.len() + release::TASKS.len() + perf::TASKS.len();
 
 const fn task_registry() -> [TaskDefinition; TASK_COUNT] {
     let mut registry = [CHECK_TASKS[0]; TASK_COUNT];
@@ -395,6 +400,12 @@ const fn task_registry() -> [TaskDefinition; TASK_COUNT] {
         registry[index] = release::TASKS[release_index];
         index += 1;
         release_index += 1;
+    }
+    let mut perf_index = 0;
+    while perf_index < perf::TASKS.len() {
+        registry[index] = perf::TASKS[perf_index];
+        index += 1;
+        perf_index += 1;
     }
     registry
 }
