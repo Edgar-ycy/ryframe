@@ -110,6 +110,22 @@ def source_inputs(
     )
 
 
+def revalidate_formal_sources(
+    backend: Path,
+    frontend: Path,
+    captured: tuple[tuple[dict, bytes], tuple[dict, bytes]],
+    expected_backend_sha: str | None,
+    expected_frontend_sha: str | None,
+) -> None:
+    if expected_backend_sha is None and expected_frontend_sha is None:
+        return
+    current = source_inputs(
+        backend, frontend, expected_backend_sha, expected_frontend_sha
+    )
+    if current != captured:
+        raise ValueError("创建正式夹具前候选源码发生变化")
+
+
 def register_fixture_migration(root: Path, log: Path) -> None:
     options = (
         ["--freeze"]
@@ -141,13 +157,21 @@ def prepare(
     expected_frontend_sha: str | None = None,
 ) -> dict:
     validate_paths(backend, frontend, output)
-    backend_source, frontend_source = source_inputs(
+    sources = source_inputs(
         backend, frontend, expected_backend_sha, expected_frontend_sha
     )
+    backend_source, frontend_source = sources
     backend_receipt, backend_patch = backend_source
     frontend_receipt, frontend_patch = frontend_source
     fixture = backend / "crates/ryframe-generator/tests/fixtures/device.toml"
     fixture_bytes = fixture.read_bytes()
+    revalidate_formal_sources(
+        backend,
+        frontend,
+        sources,
+        expected_backend_sha,
+        expected_frontend_sha,
+    )
     output.mkdir(parents=True, exist_ok=False)
     log = output / "prepare.log"
     roots = {name: output / name for name in ("backend", "frontend")}

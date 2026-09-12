@@ -156,6 +156,34 @@ class FullStackFixtureTests(unittest.TestCase):
             )
         self.assertFalse(output.exists())
 
+    def test_formal_pair_is_rechecked_immediately_before_output_creation(self):
+        definition = self.backend / "crates/ryframe-generator/tests/fixtures/device.toml"
+        definition.parent.mkdir(parents=True)
+        definition.write_text("[resource]\n", encoding="utf-8")
+        sources = (
+            ({"head": "a" * 40, "patch_sha256": "0" * 64, "files": []}, b""),
+            ({"head": "b" * 40, "patch_sha256": "0" * 64, "files": []}, b""),
+        )
+        output = self.backend / ".local-tests/formal-device"
+        with (
+            patch.object(fixture, "validate_paths"),
+            patch.object(
+                fixture,
+                "source_inputs",
+                side_effect=[sources, ValueError("候选源码发生变化")],
+            ) as source_inputs,
+            self.assertRaisesRegex(ValueError, "候选源码发生变化"),
+        ):
+            fixture.prepare(
+                self.backend,
+                self.frontend,
+                output,
+                expected_backend_sha="a" * 40,
+                expected_frontend_sha="b" * 40,
+            )
+        self.assertEqual(source_inputs.call_count, 2)
+        self.assertFalse(output.exists())
+
     def test_formal_pair_requires_both_commits(self):
         with self.assertRaisesRegex(ValueError, "同时指定"):
             fixture.source_inputs(self.backend, self.frontend, "a" * 40, None)
