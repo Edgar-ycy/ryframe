@@ -29,6 +29,7 @@ from reference_fixture_browser_process import (
     failure_process as _failure_process,
     run_frontend_command as _frontend_command,
 )
+from reference_fixture_browser_publish import publish_terminal_success
 from reference_fixture_browser_responses import preview_responses
 from reference_fixture_browser_security import browser_environment, secret_values
 from restore_build import file_digest
@@ -398,6 +399,35 @@ def _failure_evidence(outputs: dict, server: str, scope_id: str,
     return processes, logs
 
 
+def _publish_failure(error: BaseException, stage: str, binding: dict, path: Path,
+                     outputs: dict, server: str, business_started: bool,
+                     processes: dict) -> None:
+    failure = {"format_version": 1, "kind": "reference-fixture-browser-failure",
+               "status": "failed", "stage": stage, "binding": _bound(path),
+               "intent": _bound(outputs["intent"]), "error_type": type(error).__name__,
+               "returncode": getattr(error, "returncode", None),
+               "unknown_business_writes": business_started}
+    if outputs["result"].is_file():
+        try:
+            failure["published_result"] = _bound(outputs["result"])
+        except BaseException as evidence_error:
+            failure["published_result"] = {
+                "status": "unreadable", "error_type": type(evidence_error).__name__}
+    failure["processes"], failure["logs"] = _failure_evidence(
+        outputs, server, binding["scope_id"], processes
+    )
+    if outputs["login_budget"].is_file():
+        failure["login_budget"] = _bound(outputs["login_budget"])
+    if server == "preview" and outputs["response_audit"].is_file():
+        failure["response_audit"] = _bound(outputs["response_audit"])
+    try:
+        _publish_json(outputs["failure"], failure)
+    except Exception as evidence_error:
+        raise RuntimeError(
+            f"Device 浏览器失败且失败证据保存失败：{evidence_error}"
+        ) from error
+
+
 def run_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_path: Path,
                 binding_path: Path) -> dict:
     _, execution, _ = api.bootstrap(backend, environment_path)
@@ -478,32 +508,18 @@ def run_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_p
         for guard in result_guards:
             guard.assert_unchanged()
         stage = "publish"
-        _publish_json(outputs["result"], result)
-        return result
     except BaseException as error:
-        failure = {"format_version": 1, "kind": "reference-fixture-browser-failure",
-                   "status": "failed", "stage": stage, "binding": _bound(path),
-                   "intent": _bound(outputs["intent"]), "error_type": type(error).__name__,
-                   "returncode": getattr(error, "returncode", None),
-                   "unknown_business_writes": business_started}
-        if outputs["result"].is_file():
-            try:
-                failure["published_result"] = _bound(outputs["result"])
-            except BaseException as evidence_error:
-                failure["published_result"] = {"status": "unreadable",
-                                               "error_type": type(evidence_error).__name__}
-        failure["processes"], failure["logs"] = _failure_evidence(
-            outputs, server, binding["scope_id"], processes
+        _publish_failure(
+            error, stage, binding, path, outputs, server, business_started, processes
         )
-        if outputs["login_budget"].is_file():
-            failure["login_budget"] = _bound(outputs["login_budget"])
-        if server == "preview" and outputs["response_audit"].is_file():
-            failure["response_audit"] = _bound(outputs["response_audit"])
-        try:
-            _publish_json(outputs["failure"], failure)
-        except Exception as evidence_error:
-            raise RuntimeError(f"Device 浏览器失败且失败证据保存失败：{evidence_error}") from error
         raise
+    publish_terminal_success(
+        runtime, outputs["result"], result,
+        lambda error: _publish_failure(
+            error, "publish", binding, path, outputs, server, business_started, processes
+        ),
+    )
+    return result
 
 
 def verify_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_path: Path,

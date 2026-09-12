@@ -16,6 +16,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import reference_fixture_browser as browser
 import reference_fixture_browser_process as browser_process
+import reference_fixture_browser_publish as terminal_publish
 import reference_fixture_browser_security as security
 import reference_fixture_environment as fixture_environment
 import reference_fixture_runtime as runtime
@@ -336,7 +337,23 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "没有唯一成功结果"):
             browser.verify_browser_result({}, {"outputs": outputs}, binding)
 
-    def test_uncertain_atomic_success_publication_also_publishes_failure_marker(self):
+    def test_terminal_result_interrupted_before_unlink_is_rejected_as_unknown(self):
+        target = self.output / "browser-r24-terminal-result.json"
+        failure = Mock()
+        with patch.object(terminal_publish, "_unlink_pending", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                terminal_publish.publish_terminal_success(
+                    self.output, target, {"status": "passed"}, failure
+                )
+        self.assertTrue(target.is_file())
+        self.assertEqual(len(list(self.output.glob(target.name + ".pending-*"))), 1)
+        failure.assert_not_called()
+        with self.assertRaisesRegex(ValueError, "未登记"):
+            browser._assert_output_set(
+                self.output, "r24-terminal", {"result": target}, fresh=False
+            )
+
+    def test_terminal_unlink_and_failure_publication_failure_still_blocks_consumer(self):
         def execute(_binding, _frontend, _arguments, _environment, log, process_dir,
                     _timeout, _secrets):
             process_dir.mkdir()
@@ -349,22 +366,77 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         outputs = browser.browser_outputs(self.frontend, self.output, "r24-device-dev", "dev")
         publish = browser._publish_json
 
-        def uncertain(path, value):
+        def failure_unavailable(path, value):
+            if path == outputs["failure"]:
+                raise OSError("failure receipt unavailable")
             publish(path, value)
-            if path == outputs["result"]:
-                raise OSError("post-link read failed")
 
         with self.patches(), patch.object(browser, "_frontend_command", side_effect=execute), \
                 patch.object(browser, "verify_browser_evidence", return_value={}), \
-                patch.object(browser, "_publish_json", side_effect=uncertain):
-            with self.assertRaisesRegex(OSError, "post-link"):
+                patch.object(browser, "_publish_json", side_effect=failure_unavailable), \
+                patch.object(terminal_publish, "_unlink_pending", side_effect=OSError("unlink failed")):
+            with self.assertRaisesRegex(RuntimeError, "失败证据保存失败"):
                 browser.run_browser(self.api, self.backend, self.bootstrap, self.output, binding)
         self.assertTrue(outputs["result"].is_file())
-        failure = read(outputs["failure"])
-        self.assertEqual(failure["stage"], "publish")
-        self.assertEqual(failure["published_result"]["path"], str(outputs["result"]))
-        with self.assertRaisesRegex(ValueError, "没有唯一成功结果"):
-            browser.verify_browser_result({}, {"outputs": outputs}, binding)
+        self.assertFalse(outputs["failure"].exists())
+        self.assertEqual(len(list(self.output.glob(
+            "browser-r24-device-dev-result.json.pending-*"))), 1)
+        with self.patches(), self.assertRaisesRegex(ValueError, "未登记"):
+            browser.verify_browser(
+                self.api, self.backend, self.bootstrap, self.output, binding, closed=False
+            )
+
+    def test_terminal_unlink_completion_is_the_last_commit_point(self):
+        def execute(_binding, _frontend, _arguments, _environment, log, process_dir,
+                    _timeout, _secrets):
+            process_dir.mkdir()
+            log.write_text("ok\n", encoding="utf-8")
+            self.browser_artifacts("dev", "r24-commit")
+            return {"directory": str(process_dir)}
+
+        def committed_then_exit(path):
+            path.unlink()
+            raise SystemExit(99)
+
+        with self.patches(), patch.object(browser, "_frontend_command", side_effect=execute), \
+                patch.object(browser, "verify_browser_evidence", return_value={}), \
+                patch.object(terminal_publish, "_unlink_pending", side_effect=committed_then_exit):
+            binding, _ = self.bind("dev", "r24-commit")
+            with self.assertRaisesRegex(SystemExit, "99"):
+                browser.run_browser(self.api, self.backend, self.bootstrap, self.output, binding)
+        outputs = browser.browser_outputs(
+            self.frontend, self.output, "r24-commit", "dev"
+        )
+        self.assertTrue(outputs["result"].is_file())
+        self.assertFalse(outputs["failure"].exists())
+        self.assertFalse(list(self.output.glob(
+            "browser-r24-commit-result.json.pending-*")))
+        with self.patches(), patch.object(browser, "verify_browser_result", return_value={"status": "passed"}):
+            verified = browser.verify_browser(
+                self.api, self.backend, self.bootstrap, self.output, binding, closed=False
+            )
+        self.assertEqual(verified["status"], "reference_fixture_browser_verified")
+
+    def test_terminal_concurrent_target_creation_keeps_pending_and_fails_closed(self):
+        target = self.output / "browser-r24-concurrent-result.json"
+        failure = Mock()
+
+        def concurrent(_source, destination):
+            Path(destination).write_text("concurrent\n", encoding="utf-8")
+            raise FileExistsError(destination)
+
+        with patch.object(terminal_publish.os, "link", side_effect=concurrent):
+            with self.assertRaisesRegex(ValueError, "并发创建"):
+                terminal_publish.publish_terminal_success(
+                    self.output, target, {"status": "passed"}, failure
+                )
+        failure.assert_called_once()
+        self.assertEqual(target.read_text(encoding="utf-8"), "concurrent\n")
+        self.assertEqual(len(list(self.output.glob(target.name + ".pending-*"))), 1)
+        with self.assertRaisesRegex(ValueError, "未登记"):
+            browser._assert_output_set(
+                self.output, "r24-concurrent", {"result": target}, fresh=False
+            )
 
     def test_verify_and_close_are_read_only_and_require_the_expected_runtime_state(self):
         with self.patches(), patch.object(browser, "verify_browser_result", return_value={}) as verify:
