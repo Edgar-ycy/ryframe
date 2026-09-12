@@ -324,22 +324,18 @@ fn fixture_artifact_and_retention_use_registered_runtime_tools() {
 }
 
 #[test]
-fn fixture_source_pair_uses_the_private_fixture_source_receipt() {
-    let (script, arguments) = recovery_command(
-        &RecoveryCommand::Fixture(strings(&[
-            "source-pair",
-            "--output",
-            "pair.json",
-            "--write",
-        ])),
-        Path::new("unused"),
-    )
-    .unwrap();
-    assert_eq!(script, "scripts/reference_fixture_source_pair.py");
+fn fixture_source_pair_cannot_bypass_the_typed_private_protocol() {
     assert!(
-        arguments
-            .windows(2)
-            .any(|item| item == ["--output", "pair.json"])
+        recovery_command(
+            &RecoveryCommand::Fixture(strings(&[
+                "source-pair",
+                "--output",
+                "pair.json",
+                "--write",
+            ])),
+            Path::new("unused"),
+        )
+        .is_err()
     );
 }
 
@@ -386,6 +382,10 @@ fn forwarded_recovery_scripts_exist_in_checkout() {
             .is_file()
     );
     assert!(root.join("scripts/prepare_full_stack_fixture.py").is_file());
+    assert!(
+        root.join("scripts/reference_fixture_source_pair.py")
+            .is_file()
+    );
     assert!(root.join("scripts/restore_reference.py").is_file());
     assert!(root.join("scripts/restore_input_plan.py").is_file());
 }

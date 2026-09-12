@@ -11,6 +11,7 @@ import reference_fixture_environment as fixture_environment
 import reference_fixture_request as fixture_request
 import reference_fixture_review as fixture_review
 import reference_fixture_services as fixture_services
+import reference_fixture_source_pair as fixture_source_pair
 import reference_fixture_successor as fixture_successor
 from reference_fixture_control_protocol import (
     FixtureControlProtocolError,
@@ -46,7 +47,7 @@ class FixtureControlProtocolTests(unittest.TestCase):
             environment={PROTOCOL_KEY: raw},
         )
 
-    def test_reconstructs_exact_operations_for_all_five_domains(self):
+    def test_reconstructs_exact_operations_for_control_domains(self):
         input_path = str(Path(self.root) / ".local-tests" / "input.json")
         directory = str(Path(self.root) / ".local-tests" / "run")
         environment = self.protocol(
@@ -75,6 +76,18 @@ class FixtureControlProtocolTests(unittest.TestCase):
         self.assertNotIn(
             "publish",
             self.arguments("request", fixture_request.PROTOCOL_SCHEMAS, request, positional=False),
+        )
+        source_pair = self.protocol(
+            "source-pair", "publish", True, output=input_path
+        )
+        self.assertEqual(
+            self.arguments(
+                "source-pair",
+                fixture_source_pair.PROTOCOL_SCHEMAS,
+                source_pair,
+                positional=False,
+            ),
+            ["--backend-dir", self.root, "--output", input_path, "--write"],
         )
         services = self.protocol(
             "services", "status", False, review=input_path, environment=input_path
@@ -149,6 +162,7 @@ class FixtureControlProtocolTests(unittest.TestCase):
             "reference_fixture_request.py",
             "reference_fixture_successor.py",
             "reference_fixture_services.py",
+            "reference_fixture_source_pair.py",
         ]
         environment = dict(os.environ)
         environment.pop(PROTOCOL_KEY, None)

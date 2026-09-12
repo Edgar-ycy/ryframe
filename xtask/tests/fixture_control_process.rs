@@ -129,3 +129,33 @@ fn valid_request_replaces_inherited_protocol_and_hides_paths_from_argv() {
     );
     assert!(!stderr.contains("protocol_error"), "{stderr}");
 }
+
+#[test]
+fn source_pair_request_uses_the_same_private_protocol_without_forwarded_paths() {
+    let fixture = Fixture::new();
+    let output = fixture.directory.join("source-pair.json");
+    let arguments = vec![
+        "check".to_owned(),
+        "recovery".to_owned(),
+        "fixture".to_owned(),
+        "source-pair".to_owned(),
+        "--output".to_owned(),
+        output.to_string_lossy().into_owned(),
+        "--write".to_owned(),
+    ];
+    let result = invoke(&arguments);
+    assert_eq!(result.status.code(), Some(1));
+    let stdout = String::from_utf8(result.stdout).unwrap();
+    let stderr = String::from_utf8(result.stderr).unwrap();
+    assert!(
+        stdout.contains("scripts/reference_fixture_source_pair.py"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("--output"), "{stdout}");
+    assert!(!stdout.contains(output.to_str().unwrap()), "{stdout}");
+    assert!(
+        stderr.contains("reference_fixture_source-pair_failed"),
+        "{stderr}"
+    );
+    assert!(!output.exists());
+}

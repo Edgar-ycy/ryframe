@@ -9,6 +9,12 @@ from pathlib import Path
 from devex_clone_capture import write_json
 from devex_clone_model import local_path
 from full_stack_provenance import reference_fixture_source_pair
+from reference_fixture_control_protocol import run_private
+
+
+PROTOCOL_SCHEMAS = {
+    "publish": (("output",), (), True),
+}
 
 
 def write_pair(backend: Path, output: Path) -> dict:
@@ -25,12 +31,12 @@ def write_pair(backend: Path, output: Path) -> dict:
     return receipt
 
 
-def main() -> None:
+def main(arguments: list[str]) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--write", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(arguments)
     if not args.write:
         parser.error("签发参考夹具来源组合需要显式 --write")
     write_pair(args.backend_dir, args.output)
@@ -38,4 +44,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(
+        run_private("source-pair", PROTOCOL_SCHEMAS, main, positional_operation=False)
+    )

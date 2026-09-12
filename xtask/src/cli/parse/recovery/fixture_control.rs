@@ -17,6 +17,8 @@ mod request;
 mod review;
 #[path = "fixture_control/services.rs"]
 mod services;
+#[path = "fixture_control/source_pair.rs"]
+mod source_pair;
 #[path = "fixture_control/successor.rs"]
 mod successor;
 
@@ -28,6 +30,7 @@ pub(super) fn parse_fixture_control(
         "environment" => environment::parse(args).map(FixtureControlCommand::Environment),
         "review" => review::parse(args).map(FixtureControlCommand::Review),
         "request" => request::parse(args).map(FixtureControlCommand::Request),
+        "source-pair" => source_pair::parse(args).map(FixtureControlCommand::SourcePair),
         "successor" => successor::parse(args).map(FixtureControlCommand::Successor),
         "services" => services::parse(args).map(FixtureControlCommand::Services),
         _ => Err(CliError::new(format!("未知 fixture 控制子域：{domain}"))),
@@ -103,7 +106,7 @@ fn controlled_path(value: &str, kind: LocalTestPathKind, label: &str) -> Result<
         .map_err(|error| CliError::new(format!("{label} 无效：{error}")))
 }
 
-fn output_file(value: &str, label: &str) -> Result<PathBuf, CliError> {
+pub(super) fn output_file(value: &str, label: &str) -> Result<PathBuf, CliError> {
     let path = controlled_path(value, LocalTestPathKind::OutputFile, label)?;
     validate_existing_parent(&path, label)?;
     Ok(path)

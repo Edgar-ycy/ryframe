@@ -17,6 +17,8 @@ mod request;
 mod review;
 #[path = "fixture_control/services.rs"]
 mod services;
+#[path = "fixture_control/source_pair.rs"]
+mod source_pair;
 #[path = "fixture_control/successor.rs"]
 mod successor;
 
@@ -62,6 +64,10 @@ pub(crate) fn private_invocation_at(
         FixtureControlCommand::Request(command) => (
             "scripts/reference_fixture_request.py",
             request::fields(command, root)?,
+        ),
+        FixtureControlCommand::SourcePair(command) => (
+            "scripts/reference_fixture_source_pair.py",
+            source_pair::fields(command, root)?,
         ),
         FixtureControlCommand::Successor(command) => (
             "scripts/reference_fixture_successor.py",

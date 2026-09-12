@@ -12,6 +12,9 @@ pub(crate) use request::*;
 #[path = "fixture_control/services.rs"]
 mod services;
 pub(crate) use services::*;
+#[path = "fixture_control/source_pair.rs"]
+mod source_pair;
+pub(crate) use source_pair::*;
 #[path = "fixture_control/successor.rs"]
 mod successor;
 pub(crate) use successor::*;
@@ -26,6 +29,7 @@ pub(crate) const FIXTURE_CONTROL_USAGE: &str = concat!(
     "  environment bootstrap-secrets --source-fixture <文件> --source-secrets <目录> --fixture <文件> --write\n",
     "  review --template <文件> --fixture <文件> --future-root <新目录> --id <ID> --api-port <端口> --worker-port <端口> --frontend-port <端口> --rustfs-api-port <端口> --rustfs-console-port <端口> --redis-port <端口> --output <新文件> --write\n",
     "  request --environment <文件> --service-run <目录> --id <ID> --side seed|base|candidate --output <新文件> --write\n",
+    "  source-pair --output <新文件> --write\n",
     "  successor relationship --source-result <文件> --predecessor-review <文件> --predecessor-request <文件> --successor-review <文件> --seed-request <文件> --base-request <文件> --candidate-request <文件> --id <ID> --output <新文件> --write\n",
     "  successor generation-request --successor <文件> --source-backend <目录> --expected-head <SHA> --backend-build <文件> --maintenance-build <文件> --source-environment <文件> --id <ID> [--adapter-contract <值>] [--product-backend <目录>] [--output <新文件> --write]\n",
     "  successor arm-request --successor <文件> --source-export-result <文件> --workspace <目录> --id <ID> --side base|candidate --copy-directory <新目录> [--output <新文件> --write]\n",
@@ -40,6 +44,7 @@ pub(crate) enum FixtureControlCommand {
     Environment(FixtureEnvironmentCommand),
     Review(FixtureReviewCommand),
     Request(FixtureRequestCommand),
+    SourcePair(FixtureSourcePairCommand),
     Successor(FixtureSuccessorCommand),
     Services(FixtureServicesCommand),
 }
@@ -50,6 +55,7 @@ impl FixtureControlCommand {
             Self::Environment(_) => "environment",
             Self::Review(_) => "review",
             Self::Request(_) => "request",
+            Self::SourcePair(_) => "source-pair",
             Self::Successor(_) => "successor",
             Self::Services(_) => "services",
         }
@@ -60,6 +66,7 @@ impl FixtureControlCommand {
             Self::Environment(command) => command.operation(),
             Self::Review(command) => command.operation(),
             Self::Request(command) => command.operation(),
+            Self::SourcePair(command) => command.operation(),
             Self::Successor(command) => command.operation(),
             Self::Services(command) => command.operation(),
         }
@@ -70,6 +77,7 @@ impl FixtureControlCommand {
             Self::Environment(command) => command.writes(),
             Self::Review(command) => command.writes(),
             Self::Request(command) => command.writes(),
+            Self::SourcePair(command) => command.writes(),
             Self::Successor(command) => command.writes(),
             Self::Services(command) => command.writes(),
         }
@@ -81,6 +89,7 @@ impl FixtureControlCommand {
             Self::Environment(FixtureEnvironmentCommand::Help)
                 | Self::Review(FixtureReviewCommand::Help)
                 | Self::Request(FixtureRequestCommand::Help)
+                | Self::SourcePair(FixtureSourcePairCommand::Help)
                 | Self::Successor(FixtureSuccessorCommand::Help)
                 | Self::Services(FixtureServicesCommand::Help)
         )

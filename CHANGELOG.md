@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Device 夹具 source-pair 签发入口改为强类型请求；新收据路径在启动 Python 前限定为当前后端 `.local-tests` 内已有真实父目录，写入必须显式授权，固定实现只从版本化私有协议重建参数，运行时内部直接函数调用保持不变。
 - Device 隔离夹具的工作树准备入口改为 Rust 强类型请求；输出在启动 Python 前限定为当前后端 `.local-tests` 内尚不存在的真实目录，正式候选提交必须成对提供，固定前端路径与请求只通过版本化私有协议传递，协议不会继承到 Git、Corepack 或 Cargo 后代进程。
 - 正式恢复 monitoring 的 bind、start、observe、close、result、status 已改为 Rust 强类型请求；xtask 在启动固定 Python 实现前核验只读/写入边界、run ID、三端口、`.local-tests` 证据与无链接外部工具，并通过无 argv 的版本化协议传递，staged 内部生命周期及失败收据语义保持不变。
 - `cargo xtask check recovery dataset-prepare` 现在首层解析准备与已有数据核验的互斥模式、验证侧及显式写入授权，只接受当前后端 `.local-tests` 内的现有证据；固定 Node 实现改用无 argv 的版本化单环境协议，原恢复协调器也通过同一协议调用，登录、对象下载和造数前继续复核计划、预检及 ownership。

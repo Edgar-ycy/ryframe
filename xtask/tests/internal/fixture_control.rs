@@ -10,7 +10,7 @@ use super::{
     cli::{
         CheckCommand, Command, FixtureControlCommand, FixtureEnvironmentCommand,
         FixtureRequestCommand, FixtureReviewCommand, FixtureServicesCommand,
-        FixtureSuccessorCommand, RecoveryCommand, parse,
+        FixtureSourcePairCommand, FixtureSuccessorCommand, RecoveryCommand, parse,
     },
     recovery::fixture_control::private_invocation_at,
     workspace::root_dir,
@@ -368,6 +368,32 @@ fn parses_successor_arm_request() {
         parse_control(command("successor", Some("arm-request"), arm)).unwrap(),
         FixtureControlCommand::Successor(FixtureSuccessorCommand::ArmRequest(_))
     ));
+}
+
+#[test]
+fn source_pair_publish_is_typed_and_uses_the_fixed_private_script() {
+    let fixture = Fixture::new();
+    let output = fixture.path("source-pair.json");
+    let command = parse_control(command(
+        "source-pair",
+        None,
+        vec!["--output".to_owned(), text(&output), "--write".to_owned()],
+    ))
+    .unwrap();
+    assert!(matches!(
+        command,
+        FixtureControlCommand::SourcePair(FixtureSourcePairCommand::Publish(_))
+    ));
+    let invocation = private_invocation_at(&command, &root_dir()).unwrap();
+    assert_eq!(
+        invocation.script,
+        "scripts/reference_fixture_source_pair.py"
+    );
+    let document: Value = serde_json::from_str(&invocation.protocol).unwrap();
+    assert_eq!(document["domain"], "source-pair");
+    assert_eq!(document["operation"], "publish");
+    assert_eq!(document["output"], text(&output));
+    assert_eq!(document["write"], true);
 }
 
 #[test]

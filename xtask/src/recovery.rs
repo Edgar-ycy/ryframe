@@ -116,8 +116,15 @@ pub(crate) fn recovery_command(
         }
         RecoveryCommand::Fixture(arguments) => {
             if arguments.first().is_some_and(|value| {
-                ["environment", "review", "request", "successor", "services"]
-                    .contains(&value.as_str())
+                [
+                    "environment",
+                    "review",
+                    "request",
+                    "source-pair",
+                    "successor",
+                    "services",
+                ]
+                .contains(&value.as_str())
             }) {
                 Err("fixture 控制子域不能通过未解析参数绕过版本化私有协议"
                     .to_owned()
@@ -130,11 +137,6 @@ pub(crate) fn recovery_command(
             } else if arguments.first().map(String::as_str) == Some("retention") {
                 Ok((
                     "scripts/full_stack_migration_history.py",
-                    with_paths(&arguments[1..], &backend, None)?,
-                ))
-            } else if arguments.first().map(String::as_str) == Some("source-pair") {
-                Ok((
-                    "scripts/reference_fixture_source_pair.py",
                     with_paths(&arguments[1..], &backend, None)?,
                 ))
             } else if arguments.first().map(String::as_str) == Some("dataset") {
