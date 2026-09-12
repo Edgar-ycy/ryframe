@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -257,6 +258,17 @@ def bootstrap_secrets(backend: Path, source_fixture_path: Path, source_directory
     if source_execution == target_execution:
         raise ValueError("秘密导入必须在两个不同的 Device 工作树之间进行")
     source = _secret_directory(backend, source_execution, source_directory)
+    source_fixture_binding = bound(source_receipt)
+    target_fixture_binding = bound(target_receipt)
+    source_files, contents = {}, {}
+    for name in SECRET_FILES:
+        path = source / name
+        descriptor = bound(path)
+        content = path.read_bytes()
+        if (bound(path) != descriptor or len(content) != descriptor["bytes"]
+                or hashlib.sha256(content).hexdigest() != descriptor["sha256"]):
+            raise ValueError("秘密导入源在读取期间发生变化")
+        source_files[name], contents[name] = descriptor, content
     destination = target_execution / ".local-tests/reference-fixture/secrets"
     if destination.exists() or linked(destination) or not destination.parent.is_dir():
         raise ValueError("新 Device 默认秘密目录已存在或父目录无效")
@@ -265,17 +277,25 @@ def bootstrap_secrets(backend: Path, source_fixture_path: Path, source_directory
         for name in SECRET_FILES:
             target = destination / name
             with target.open("xb") as stream:
-                stream.write((source / name).read_bytes())
+                stream.write(contents[name])
                 stream.flush()
                 os.fsync(stream.fileno())
+        target_files = {name: bound(destination / name) for name in SECRET_FILES}
+        if (bound(source_receipt) != source_fixture_binding or bound(target_receipt) != target_fixture_binding
+                or any(bound(source / name) != source_files[name] for name in SECRET_FILES)
+                or any((destination / name).read_bytes() != contents[name] for name in SECRET_FILES)
+                or any({key: target_files[name][key] for key in ("bytes", "sha256")}
+                       != {key: source_files[name][key] for key in ("bytes", "sha256")}
+                       for name in SECRET_FILES)):
+            raise ValueError("秘密导入源、Device 收据或目标字节在复制期间发生变化")
         receipt = {
             "format_version": 1,
             "kind": "reference-fixture-secret-bootstrap",
             "status": "imported",
-            "source_fixture": bound(source_receipt),
-            "source_files": {name: bound(source / name) for name in SECRET_FILES},
-            "target_fixture": bound(target_receipt),
-            "target_files": {name: bound(destination / name) for name in SECRET_FILES},
+            "source_fixture": source_fixture_binding,
+            "source_files": source_files,
+            "target_fixture": target_fixture_binding,
+            "target_files": target_files,
             "remote_writes": 0,
             "services_started": False,
         }

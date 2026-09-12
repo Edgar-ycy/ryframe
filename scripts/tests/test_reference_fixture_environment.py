@@ -402,6 +402,38 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual(set(bootstrapped["target_files"]), set(environment.SECRET_FILES))
         self.assertFalse(bootstrapped["services_started"])
         self.assertFalse(bootstrapped["remote_writes"])
+        for name in environment.SECRET_FILES:
+            self.assertEqual(
+                {key: bootstrapped["target_files"][name][key] for key in ("bytes", "sha256")},
+                {key: bootstrapped["source_files"][name][key] for key in ("bytes", "sha256")},
+            )
+
+        drift_execution = self.root / "drift-device-backend"
+        (drift_execution / ".local-tests/reference-fixture").mkdir(parents=True)
+        (drift_execution / "Cargo.toml").write_text("[workspace]", encoding="utf-8")
+        (drift_execution / ".git").write_text("gitdir: fixture", encoding="utf-8")
+        drift_fixture = json.loads(json.dumps(fixture))
+        drift_fixture["paths"]["backend"] = str(drift_execution)
+        drift_fixture_file = self.write("drift-device-fixture.json", drift_fixture)
+        real_fsync = environment.os.fsync
+        changed = False
+
+        def mutate_source(file_descriptor):
+            nonlocal changed
+            real_fsync(file_descriptor)
+            if not changed:
+                changed = True
+                (secret_set / "rustfs-access-key.txt").write_text("changed", encoding="utf-8")
+
+        with (
+            patch.object(environment, "snapshot", return_value=(generated, b"")),
+            patch.object(environment.os, "fsync", side_effect=mutate_source),
+            self.assertRaisesRegex(ValueError, "秘密导入源"),
+        ):
+            environment.bootstrap_secrets(
+                self.backend, fixture_file, secret_set.relative_to(self.backend), drift_fixture_file)
+        self.assertFalse((drift_execution / ".local-tests/reference-fixture/secrets/bootstrap.json").exists())
+        self.assertTrue((drift_execution / ".local-tests/reference-fixture/secrets/failed.json").is_file())
 
         values["RYFRAME_RESET_USER_PASSWORD"] = "weak"
         with self.assertRaisesRegex(ValueError, "RYFRAME_RESET_USER_PASSWORD"):
