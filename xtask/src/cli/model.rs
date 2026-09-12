@@ -20,6 +20,9 @@ pub(crate) use data::*;
 #[path = "model/dataset_prepare.rs"]
 mod dataset_prepare;
 pub(crate) use dataset_prepare::*;
+#[path = "model/monitoring.rs"]
+mod monitoring;
+pub(crate) use monitoring::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Cli {
@@ -63,7 +66,7 @@ pub(crate) enum RecoveryCommand {
     Fixture(Vec<String>),
     FixtureRuntime(FixtureRuntimeCommand),
     FullStack(FullStackCommand),
-    Monitoring(Vec<String>),
+    Monitoring(MonitoringCommand),
     DatasetPrepare(DatasetPrepareCommand),
 }
 

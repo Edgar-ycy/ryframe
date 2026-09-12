@@ -30,6 +30,106 @@ from restore_monitoring_staging import (
 )
 from restore_runtime_evidence import reject_link_or_reparse
 
+PROTOCOL_KEY = "RYFRAME_XTASK_RECOVERY_MONITORING"
+PROTOCOL_PREFIX = "RYFRAME_XTASK_RECOVERY_MONITORING"
+PROTOCOL_KIND = "ryframe-xtask-recovery-monitoring"
+PROTOCOL_FIELDS = {
+    "alertmanager", "alertmanager_port", "amtool", "backend_dir", "binding",
+    "format_version", "kind", "metrics_token_file", "operation", "output",
+    "prometheus", "prometheus_port", "promtool", "run_id", "runtime_receipt",
+    "target_plan", "webhook_port", "write",
+}
+
+
+class MonitoringProtocolError(ValueError):
+    """表示 xtask 与监控投递实现之间的私有协议无效。"""
+
+
+def _strict_protocol_object(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise MonitoringProtocolError(f"monitoring 私有协议字段重复：{key}")
+        value[key] = item
+    return value
+
+
+def _protocol_path(value, name, *, optional=False):
+    if optional and value is None:
+        return None
+    if (not isinstance(value, str) or not value or any(
+            character in value for character in ("\r", "\n", "\0"))):
+        raise MonitoringProtocolError(f"monitoring 私有协议 {name} 必须是有效绝对路径")
+    path = Path(value)
+    if not path.is_absolute():
+        raise MonitoringProtocolError(f"monitoring 私有协议 {name} 必须是绝对路径")
+    return value
+
+
+def decode_private_protocol(source: str, environment=None) -> list[str]:
+    environment = os.environ if environment is None else environment
+    unknown = sorted(name for name in environment
+                     if name.startswith(PROTOCOL_PREFIX) and name != PROTOCOL_KEY)
+    if unknown:
+        raise MonitoringProtocolError("monitoring 私有环境含未知字段")
+    if (not isinstance(source, str) or not source or len(source) > 32 * 1024
+            or any(character in source for character in ("\r", "\n", "\0"))):
+        raise MonitoringProtocolError("monitoring 私有协议缺失、过长或包含换行/NUL")
+    try:
+        value = json.loads(source, object_pairs_hook=_strict_protocol_object)
+    except (json.JSONDecodeError, TypeError) as error:
+        raise MonitoringProtocolError("monitoring 私有协议不是有效 JSON") from error
+    if (not isinstance(value, dict) or set(value) != PROTOCOL_FIELDS
+            or value["format_version"] != 1 or value["kind"] != PROTOCOL_KIND):
+        raise MonitoringProtocolError("monitoring 私有协议字段、版本或类型无效")
+    operation = value["operation"]
+    if (not isinstance(operation, str)
+            or operation not in {"bind", "start", "observe", "close", "result", "status"}):
+        raise MonitoringProtocolError("monitoring 私有协议操作无效")
+    backend = _protocol_path(value["backend_dir"], "backend_dir")
+    bind_fields = {
+        "runtime_receipt", "target_plan", "output", "run_id", "metrics_token_file",
+        "prometheus", "promtool", "alertmanager", "amtool", "prometheus_port",
+        "alertmanager_port", "webhook_port",
+    }
+    if operation == "bind":
+        if value["binding"] is not None or value["write"] is not True:
+            raise MonitoringProtocolError("monitoring bind 私有协议形态无效")
+        paths = [
+            _protocol_path(value[name], name)
+            for name in (
+                "runtime_receipt", "target_plan", "output", "metrics_token_file",
+                "prometheus", "promtool", "alertmanager", "amtool",
+            )
+        ]
+        if (not isinstance(value["run_id"], str)
+                or re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", value["run_id"]) is None
+                or len(value["run_id"]) > 64):
+            raise MonitoringProtocolError("monitoring run-id 无效")
+        ports = [value[name] for name in (
+            "prometheus_port", "alertmanager_port", "webhook_port")]
+        if (any(type(port) is not int or port < 1024 or port > 65535 for port in ports)
+                or len(set(ports)) != len(ports)):
+            raise MonitoringProtocolError("monitoring 端口无效")
+        arguments = ["bind", "--backend-dir", backend]
+        for name, path in zip((
+                "runtime-receipt", "target-plan", "output", "metrics-token-file",
+                "prometheus", "promtool", "alertmanager", "amtool"), paths):
+            arguments.extend(("--" + name, path))
+        arguments.extend(("--run-id", value["run_id"]))
+        for name, port in zip(("prometheus", "alertmanager", "webhook"), ports):
+            arguments.extend((f"--{name}-port", str(port)))
+        arguments.append("--write")
+        return arguments
+    if any(value[name] is not None for name in bind_fields):
+        raise MonitoringProtocolError("monitoring 生命周期私有协议含跨阶段字段")
+    binding = _protocol_path(value["binding"], "binding")
+    expected_write = operation != "status"
+    if value["write"] is not expected_write:
+        raise MonitoringProtocolError("monitoring 生命周期写入授权无效")
+    return [operation, "--backend-dir", backend, "--binding", binding] + (
+        ["--write"] if expected_write else [])
+
 
 def bind(
     backend: Path,
@@ -268,7 +368,20 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(arguments: list[str] | None = None) -> int:
-    arguments = sys.argv[1:] if arguments is None else arguments
+    direct = arguments is None
+    arguments = sys.argv[1:] if direct else arguments
+    protocol = os.environ.pop(PROTOCOL_KEY, None)
+    if protocol is not None:
+        try:
+            if arguments:
+                raise MonitoringProtocolError("monitoring 私有协议不接受 argv")
+            arguments = decode_private_protocol(protocol)
+        except MonitoringProtocolError:
+            print("monitoring_protocol_error：监控投递私有协议无效。", file=sys.stderr)
+            return 2
+    elif direct and (not arguments or not arguments[0].startswith("__")):
+        print("monitoring_protocol_error：监控投递是私有实现，不接受公开 argv。", file=sys.stderr)
+        return 2
     if arguments[:1] == ["__webhook"]:
         from restore_monitoring_webhook import main as webhook_main
 

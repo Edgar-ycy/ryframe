@@ -649,7 +649,7 @@ fn recovery_help_uses_the_actual_stage_parser_without_creating_requested_output(
         ),
         (
             ["check", "recovery", "monitoring", "start", "--help"].as_slice(),
-            "--binding BINDING",
+            "--binding <绝对文件>",
         ),
     ] {
         let result = invoke_with_environment(arguments, &[("PYTHONIOENCODING", "utf-8")]);

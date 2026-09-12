@@ -3,10 +3,10 @@ use std::path::PathBuf;
 use super::cli::{
     ApiGenerateCommand, BackupCommand, BuildOptions, BuildProfile, CheckCommand, CheckOptions,
     CheckScope, CiCommand, CliError, Command, DataCommand, DeploymentOptions, DeploymentPhase,
-    GenerateCommand, MigrationCommand, MigrationOperation, MigrationTarget, RecoveryCommand,
-    RequiredAction, RequiredEvent, RequiredJobResult, ResourceAction, ResourceCommand,
-    ResourceGateReplayOptions, ResourceTarget, SecurityCommand, SecurityReportKind,
-    SecurityReportOptions, parse,
+    GenerateCommand, MigrationCommand, MigrationOperation, MigrationTarget, MonitoringCommand,
+    RecoveryCommand, RequiredAction, RequiredEvent, RequiredJobResult, ResourceAction,
+    ResourceCommand, ResourceGateReplayOptions, ResourceTarget, SecurityCommand,
+    SecurityReportKind, SecurityReportOptions, parse,
 };
 
 fn strings(values: &[&str]) -> Vec<String> {
@@ -74,18 +74,23 @@ fn help_accepts_only_current_command_families() {
 #[test]
 fn recovery_help_reaches_the_selected_stage_parser() {
     for flag in ["--help", "-h"] {
-        for stage in ["inputs", "runtime", "source", "clone", "monitoring"] {
+        for stage in ["inputs", "runtime", "source", "clone"] {
             let actual = parse_command(&["check", "recovery", stage, flag]).unwrap();
             let arguments = strings(&[flag]);
             let expected = match stage {
                 "inputs" => RecoveryCommand::Inputs(arguments),
                 "runtime" => RecoveryCommand::Runtime(arguments),
                 "source" => RecoveryCommand::Source(arguments),
-                "clone" => RecoveryCommand::Clone(arguments),
-                _ => RecoveryCommand::Monitoring(arguments),
+                _ => RecoveryCommand::Clone(arguments),
             };
             assert_eq!(actual, Command::Check(CheckCommand::Recovery(expected)));
         }
+        assert_eq!(
+            parse_command(&["check", "recovery", "monitoring", flag]).unwrap(),
+            Command::Check(CheckCommand::Recovery(RecoveryCommand::Monitoring(
+                MonitoringCommand::Help,
+            )))
+        );
         assert_eq!(
             parse_command(&["check", "recovery", "runtime", "register", flag]).unwrap(),
             Command::Check(CheckCommand::Recovery(RecoveryCommand::Runtime(strings(

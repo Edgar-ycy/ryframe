@@ -1165,5 +1165,109 @@ class MonitoringStagingModelTests(unittest.TestCase):
                 staging._local_imports("scripts/entry.py", source, available)
 
 
+class MonitoringPrivateProtocolTests(unittest.TestCase):
+    def protocol(self, **updates):
+        root = ROOT / ".local-tests/monitoring protocol"
+        value = {
+            "alertmanager": str(root / "alertmanager.exe"),
+            "alertmanager_port": 29091,
+            "amtool": str(root / "amtool.exe"),
+            "backend_dir": str(ROOT),
+            "binding": None,
+            "format_version": 1,
+            "kind": delivery.PROTOCOL_KIND,
+            "metrics_token_file": str(root / "metrics-token.txt"),
+            "operation": "bind",
+            "output": str(root / "binding.json"),
+            "prometheus": str(root / "prometheus.exe"),
+            "prometheus_port": 29090,
+            "promtool": str(root / "promtool.exe"),
+            "run_id": "restore-monitoring-24",
+            "runtime_receipt": str(root / "runtime.json"),
+            "target_plan": str(root / "target.json"),
+            "webhook_port": 29092,
+            "write": True,
+        }
+        value.update(updates)
+        return value
+
+    def test_bind_and_lifecycle_protocols_map_to_internal_arguments(self):
+        value = self.protocol()
+        arguments = delivery.decode_private_protocol(json.dumps(value))
+        self.assertEqual(arguments[0], "bind")
+        self.assertIn("--runtime-receipt", arguments)
+        self.assertIn("--write", arguments)
+        self.assertNotIn(delivery.PROTOCOL_KEY, arguments)
+        empty = {name: None for name in delivery.PROTOCOL_FIELDS}
+        empty.update({
+            "backend_dir": str(ROOT),
+            "format_version": 1,
+            "kind": delivery.PROTOCOL_KIND,
+            "operation": "status",
+            "binding": str(ROOT / ".local-tests/monitoring protocol/binding.json"),
+            "write": False,
+        })
+        self.assertEqual(
+            delivery.decode_private_protocol(json.dumps(empty)),
+            ["status", "--backend-dir", str(ROOT), "--binding", empty["binding"]],
+        )
+        empty.update({"operation": "observe", "write": True})
+        self.assertEqual(delivery.decode_private_protocol(json.dumps(empty))[-1], "--write")
+
+    def test_protocol_rejects_duplicate_unknown_cross_stage_and_invalid_values(self):
+        valid = self.protocol()
+        cases = [
+            {**valid, "unknown": True},
+            {**valid, "operation": []},
+            {**valid, "write": False},
+            {**valid, "binding": str(ROOT / "binding.json")},
+            {**valid, "run_id": "Invalid"},
+            {**valid, "prometheus_port": 80},
+            {**valid, "webhook_port": 29090},
+            {**valid, "prometheus": "relative.exe"},
+        ]
+        for value in cases:
+            with self.subTest(value=value), self.assertRaises(delivery.MonitoringProtocolError):
+                delivery.decode_private_protocol(json.dumps(value))
+        repeated = json.dumps(valid).replace(
+            '"operation": "bind"', '"operation": "bind", "operation": "bind"'
+        )
+        with self.assertRaisesRegex(delivery.MonitoringProtocolError, "重复"):
+            delivery.decode_private_protocol(repeated)
+        with self.assertRaisesRegex(delivery.MonitoringProtocolError, "未知字段"):
+            delivery.decode_private_protocol(
+                json.dumps(valid),
+                {"RYFRAME_XTASK_RECOVERY_MONITORING_EXTRA": "unexpected"},
+            )
+
+    def test_direct_process_rejects_public_argv_and_invalid_protocol(self):
+        script = ROOT / "scripts/restore_monitoring_delivery.py"
+        clean = {key: value for key, value in os.environ.items()
+                 if not key.startswith(delivery.PROTOCOL_PREFIX)}
+        clean["PYTHONIOENCODING"] = "utf-8"
+        direct = subprocess.run(
+            [sys.executable, str(script), "--help"],
+            cwd=ROOT,
+            env=clean,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=10,
+        )
+        self.assertEqual(direct.returncode, 2, direct.stderr)
+        self.assertIn("monitoring_protocol_error", direct.stderr)
+        invalid = subprocess.run(
+            [sys.executable, str(script)],
+            cwd=ROOT,
+            env={**clean, delivery.PROTOCOL_KEY: "{}"},
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=10,
+        )
+        self.assertEqual(invalid.returncode, 2, invalid.stderr)
+        self.assertIn("monitoring_protocol_error", invalid.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

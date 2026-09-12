@@ -116,6 +116,8 @@ mod doctor_tests;
 mod fixture_runtime_tests;
 #[path = "internal/migration.rs"]
 mod migration_tests;
+#[path = "internal/monitoring.rs"]
+mod monitoring_tests;
 #[path = "internal/node_test_discovery.rs"]
 mod node_tests_tests;
 #[path = "internal/performance_identities.rs"]

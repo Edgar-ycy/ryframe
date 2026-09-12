@@ -18,6 +18,8 @@ const SEED_SOURCE_PROTOCOL_ENV: &str = "RYFRAME_XTASK_RECOVERY_SEED_SOURCE";
 pub(crate) mod dataset_prepare;
 #[path = "recovery/fixture_runtime.rs"]
 pub(crate) mod fixture_runtime;
+#[path = "recovery/monitoring.rs"]
+pub(crate) mod monitoring;
 
 pub(crate) fn run(command: &RecoveryCommand, frontend_dir: &Path) -> Result<()> {
     if let RecoveryCommand::FullStack(command) = command {
@@ -34,6 +36,9 @@ pub(crate) fn run(command: &RecoveryCommand, frontend_dir: &Path) -> Result<()> 
     }
     if let RecoveryCommand::DatasetPrepare(command) = command {
         return dataset_prepare::run(command, &root_dir());
+    }
+    if let RecoveryCommand::Monitoring(command) = command {
+        return monitoring::run(command, &root_dir());
     }
     let (program, forwarded) = recovery_command(command, frontend_dir)?;
     let mut command = Vec::with_capacity(forwarded.len() + 1);
@@ -146,10 +151,11 @@ pub(crate) fn recovery_command(
             Ok(("scripts/reference_fixture_runtime.py", Vec::new()))
         }
         RecoveryCommand::FullStack(_) => Ok(("scripts/ci_full_stack.py", Vec::new())),
-        RecoveryCommand::Monitoring(arguments) => Ok((
-            "scripts/restore_monitoring_delivery.py",
-            with_paths(arguments, &backend, None)?,
-        )),
+        RecoveryCommand::Monitoring(_) => {
+            Err("monitoring 必须通过版本化私有协议执行，不能透传 argv"
+                .to_owned()
+                .into())
+        }
         RecoveryCommand::DatasetPrepare(_) => {
             Err("dataset-prepare 必须通过版本化私有协议执行，不能透传 argv"
                 .to_owned()

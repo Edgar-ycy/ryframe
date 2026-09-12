@@ -2,7 +2,7 @@ use std::path::Path;
 
 use super::cli::{
     DatasetPrepareCommand, FreshTargetCommand, FreshTargetOperation, FreshTargetOptions,
-    FullStackCommand, RecoveryCommand,
+    FullStackCommand, MonitoringCommand, RecoveryCommand,
 };
 use super::recovery::{fresh_target_protocol, full_stack_environment, recovery_command};
 
@@ -270,30 +270,9 @@ fn source_fixture_and_dataset_stages_fix_the_current_worktree_paths() {
 
 #[test]
 fn monitoring_stage_uses_the_private_lifecycle_and_fixed_backend() {
-    let backend = super::workspace::root_dir().display().to_string();
-    let input = strings(&["status", "--binding", "D:/隔离 监控/binding.json"]);
-    let (script, arguments) = recovery_command(
-        &RecoveryCommand::Monitoring(input.clone()),
-        Path::new("unused"),
-    )
-    .unwrap();
-    assert_eq!(script, "scripts/restore_monitoring_delivery.py");
-    assert_eq!(
-        arguments,
-        input
-            .into_iter()
-            .chain(strings(&["--backend-dir", &backend]))
-            .collect::<Vec<_>>()
-    );
     assert!(
         recovery_command(
-            &RecoveryCommand::Monitoring(strings(&[
-                "status",
-                "--binding",
-                "binding.json",
-                "--backend-dir",
-                "other",
-            ])),
+            &RecoveryCommand::Monitoring(MonitoringCommand::Help),
             Path::new("unused"),
         )
         .is_err()
@@ -513,7 +492,6 @@ fn forwarded_recovery_scripts_exist_in_checkout() {
         RecoveryCommand::Fixture(strings(&["retention", "inspect"])),
         RecoveryCommand::Fixture(strings(&["dataset", "plan"])),
         RecoveryCommand::FullStack(FullStackCommand::Collect),
-        RecoveryCommand::Monitoring(strings(&["status", "--binding", "binding.json"])),
     ] {
         let (script, _) = recovery_command(&command, Path::new("unused")).unwrap();
         assert!(
@@ -522,4 +500,8 @@ fn forwarded_recovery_scripts_exist_in_checkout() {
         );
     }
     assert!(root.join("scripts/restore_reference_dataset.mjs").is_file());
+    assert!(
+        root.join("scripts/restore_monitoring_delivery.py")
+            .is_file()
+    );
 }

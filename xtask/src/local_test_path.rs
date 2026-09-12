@@ -42,6 +42,33 @@ pub(crate) fn validate_local_test_path(
     Ok(value.to_path_buf())
 }
 
+/// 核验一个登记的外部工具是绝对普通文件，且路径各段不经过链接或 reparse point。
+pub(crate) fn validate_external_existing_file(value: &Path) -> Result<PathBuf, String> {
+    validate_lexical_path(value)?;
+    for (index, current) in value.ancestors().enumerate() {
+        let metadata = fs::symlink_metadata(current)
+            .map_err(|error| format!("无法核验外部工具路径 {}：{error}", current.display()))?;
+        if is_link_like(&metadata) {
+            return Err(format!(
+                "外部工具路径不能经过符号链接或 junction：{}",
+                current.display()
+            ));
+        }
+        if index == 0 && !metadata.is_file() {
+            return Err("外部工具路径必须是现有普通文件".to_owned());
+        }
+        if index > 0 && !metadata.is_dir() {
+            return Err(format!(
+                "外部工具路径的父级必须是普通目录：{}",
+                current.display()
+            ));
+        }
+    }
+    fs::canonicalize(value)
+        .map_err(|error| format!("无法解析外部工具路径 {}：{error}", value.display()))?;
+    Ok(value.to_path_buf())
+}
+
 fn validate_lexical_path(value: &Path) -> Result<(), String> {
     if !value.is_absolute() {
         return Err("路径必须是绝对路径".to_owned());
