@@ -56,7 +56,12 @@ pub(crate) fn run(command: CiCommand, frontend_dir: &Path) -> Result<()> {
         CiCommand::ResourceGateReplay(options) => resource_gate_replay(&options, frontend_dir),
         CiCommand::FrontendSource(options) => {
             let task_plan = frontend_source::plan(&options)?;
-            frontend_source::run(&options, &task_plan)
+            if options.plan {
+                crate::check::render_task_plan(&task_plan);
+                Ok(())
+            } else {
+                frontend_source::run(&options, &task_plan)
+            }
         }
         command => execute_ci_command(&command, frontend_dir),
     }

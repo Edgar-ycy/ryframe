@@ -28,6 +28,7 @@ pub(crate) struct FrontendSourceOptions {
     pub(crate) candidate_openapi: Option<PathBuf>,
     pub(crate) release_ref: Option<String>,
     pub(crate) fallback_main_on_invalid_base: bool,
+    pub(crate) plan: bool,
 }
 
 pub(crate) fn valid_frontend_source_sha(value: &str) -> bool {

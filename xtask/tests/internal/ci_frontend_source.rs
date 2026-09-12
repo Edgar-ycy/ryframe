@@ -36,6 +36,7 @@ fn parses_complete_frontend_source_inputs() {
         candidate.to_str().unwrap(),
         "--release-ref",
         "refs/pull/42/merge",
+        "--plan",
     ])
     .unwrap();
     assert_eq!(
@@ -49,6 +50,7 @@ fn parses_complete_frontend_source_inputs() {
                 candidate_openapi: Some(candidate),
                 release_ref: Some("refs/pull/42/merge".to_owned()),
                 fallback_main_on_invalid_base: false,
+                plan: true,
             }
         )))
     );
@@ -74,6 +76,7 @@ fn preserves_empty_github_base_and_ref_for_non_pull_events() {
     assert_eq!(options.event_name, FrontendSourceEvent::Push);
     assert_eq!(options.base_sha, None);
     assert_eq!(options.release_ref, None);
+    assert!(!options.plan);
 }
 
 #[test]
@@ -223,6 +226,15 @@ fn rejects_duplicate_or_mutually_exclusive_frontend_source_inputs() {
             "--release-ref",
             "refs/heads/main",
         ],
+        vec![
+            "check",
+            "ci",
+            "frontend-source",
+            "--event-name",
+            "push",
+            "--plan",
+            "--plan",
+        ],
     ];
     for arguments in invalid {
         assert!(command(&arguments).is_err(), "参数应被拒绝：{arguments:?}");
@@ -239,6 +251,7 @@ fn candidate_plan_alone_declares_api_compilation() {
         candidate_openapi: None,
         release_ref: Some("refs/heads/main".to_owned()),
         fallback_main_on_invalid_base: false,
+        plan: false,
     };
     let mut non_pull_candidate = normal.clone();
     non_pull_candidate.candidate_openapi = Some(absolute("target/ignored.json"));

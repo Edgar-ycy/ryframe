@@ -271,6 +271,36 @@ fn frontend_source_rejects_a_missing_event_before_python() {
 }
 
 #[test]
+fn frontend_source_plan_uses_the_registered_graph_without_reading_runtime_inputs() {
+    let event = std::env::current_dir()
+        .unwrap()
+        .join("target/不存在的前端来源 event.json")
+        .to_string_lossy()
+        .into_owned();
+    let result = invoke(&[
+        "check",
+        "ci",
+        "frontend-source",
+        "--event-name",
+        "pull_request",
+        "--event",
+        &event,
+        "--base-sha",
+        "0123456789abcdef0123456789abcdef01234567",
+        "--plan",
+    ]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let stdout = String::from_utf8(result.stdout).unwrap();
+    assert!(stdout.contains("ci.frontend-source"), "{stdout}");
+    assert!(!stdout.contains("开始 CI 原子任务"), "{stdout}");
+    assert!(!stdout.contains("→ python"), "{stdout}");
+}
+
+#[test]
 fn invalid_release_values_exit_two_before_running_tasks() {
     let output = std::env::temp_dir().join("release-cli-invalid.json");
     let output = output.to_string_lossy().into_owned();

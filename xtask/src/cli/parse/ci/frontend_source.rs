@@ -55,6 +55,10 @@ pub(super) fn parse_frontend_source(args: &[String]) -> Result<FrontendSourceOpt
                 )?;
                 index += 1;
             }
+            "--plan" => {
+                set_flag(&mut input.plan, "--plan")?;
+                index += 1;
+            }
             unknown => return Err(CliError::new(format!("未知参数：{unknown}"))),
         }
     }
@@ -72,6 +76,7 @@ struct FrontendSourceInput {
     release_ref: Option<String>,
     release_ref_seen: bool,
     fallback_main_on_invalid_base: bool,
+    plan: bool,
 }
 
 fn build_options(input: FrontendSourceInput) -> Result<FrontendSourceOptions, CliError> {
@@ -107,6 +112,7 @@ fn build_options(input: FrontendSourceInput) -> Result<FrontendSourceOptions, Cl
         candidate_openapi: input.candidate_openapi,
         release_ref: input.release_ref,
         fallback_main_on_invalid_base: input.fallback_main_on_invalid_base,
+        plan: input.plan,
     })
 }
 
