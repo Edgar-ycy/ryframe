@@ -147,6 +147,16 @@ def _preflight_binding(review: dict) -> None:
         raise ValueError("夹具审阅计划缺少当前工具预检收据")
 
 
+def validate_current_review_tools(review: dict, run=subprocess.run) -> dict:
+    """重新观察 ready 审阅绑定的七项工具，并拒绝本机工具代次漂移。"""
+    _preflight_binding(review)
+    expected = {name: review["tools"][name] for name in REVIEW_TOOLS}
+    observed = _preflight(review, run)
+    if observed != expected:
+        raise ValueError("夹具审阅计划中的当前工具已经变化")
+    return observed
+
+
 def _review_semantics(review: dict) -> dict:
     """只排除每次预检都会重新核验的七项工具。"""
     result = copy.deepcopy(review)

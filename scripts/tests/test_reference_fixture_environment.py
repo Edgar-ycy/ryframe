@@ -126,6 +126,15 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual(result["preflight"]["status"], "verified")
         self.assertEqual(set(result["preflight"]["tools"]), set(environment.REVIEW_TOOLS))
         environment._preflight_binding(result)
+        with patch.object(environment, "_preflight", return_value=result["preflight"]["tools"]):
+            self.assertEqual(environment.validate_current_review_tools(result), result["preflight"]["tools"])
+        drifted_tools = copy.deepcopy(result["preflight"]["tools"])
+        drifted_tools["rustfs"]["sha256"] = "f" * 64
+        with (
+            patch.object(environment, "_preflight", return_value=drifted_tools),
+            self.assertRaisesRegex(ValueError, "当前工具"),
+        ):
+            environment.validate_current_review_tools(result)
         missing_dump = copy.deepcopy(result)
         del missing_dump["preflight"]["tools"]["mysqldump"]
         with self.assertRaisesRegex(ValueError, "预检"):

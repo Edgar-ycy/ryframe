@@ -21,7 +21,7 @@ from devex_clone_source_proof import require_closed_port
 from devex_clone_storage_process import start as start_rustfs
 from restore_build import file_digest
 from restore_reference_plan import BUCKETS, plan_hash
-from reference_fixture_environment import validate_preflight_successor
+from reference_fixture_environment import validate_current_review_tools, validate_preflight_successor
 from reference_fixture_paths import service_run
 
 
@@ -84,6 +84,26 @@ def _bucket_environment(private: dict) -> dict:
     return {**configured(private), "AWS_ACCESS_KEY_ID": access, "AWS_SECRET_ACCESS_KEY": secret}
 
 
+def _ready_guard(backend: Path, review_file: Path, review: dict, bootstrap_file: Path, bootstrap: dict,
+                 private: dict, credential_files: dict, sources: dict) -> None:
+    current_review_file, current_review = document(backend, review_file)
+    current_bootstrap_file, current_bootstrap = document(backend, bootstrap_file)
+    if (current_review_file != review_file or current_review != review or bound(current_review_file) != sources["review"]
+            or current_bootstrap_file != bootstrap_file or current_bootstrap != bootstrap
+            or bound(current_bootstrap_file) != sources["bootstrap"]):
+        raise ValueError("RustFS 就绪期间审阅或私有环境收据发生变化")
+    environment_file = bootstrap_file.parent / "environment.json"
+    if (bound(environment_file) != sources["environment"]
+            or read_json(environment_file) != {"environment": private}):
+        raise ValueError("RustFS 就绪期间私有环境发生变化")
+    if any(bound(Path(item["path"])) != item for item in credential_files.values()):
+        raise ValueError("RustFS 就绪期间凭据文件发生变化")
+    for name in ("manifest", "request"):
+        if bound(Path(sources[name]["path"])) != sources[name]:
+            raise ValueError(f"RustFS 就绪期间 {name} 发生变化")
+    validate_current_review_tools(review)
+
+
 def buckets(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bool) -> dict:
     """在空 RustFS 首代上一次性建立五个产品桶；失败账本禁止自动接管。"""
     if not write:
@@ -113,6 +133,8 @@ def buckets(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bo
             raise ValueError("对象桶初始化期间审阅或私有环境收据发生变化")
         if bound(manifest) != sources["manifest"]:
             raise ValueError("对象桶初始化期间服务账本清单发生变化")
+        if file_digest(Path(tool["path"]))["sha256"] != sources["aws"]["sha256"]:
+            raise ValueError("对象桶初始化期间 AWS 工具发生变化")
 
     with run_lock(run):
         _initial_services(load_state(run))
@@ -125,9 +147,11 @@ def buckets(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bo
                                stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, check=True, timeout=30,
                                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+                guard()
                 subprocess.run([*base, "head-bucket", "--bucket", bucket], cwd=execution, env=environment_values,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=30,
                                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+                guard()
             guard()
             result = {"status": "fixture_buckets_ready", "buckets": sorted(BUCKETS), "remote_writes": len(BUCKETS)}
             finish(run, number, result=result)
@@ -169,6 +193,7 @@ def rustfs(backend: Path, review_path: Path, bootstrap_path: Path, *, write: boo
     executable = review["tools"]["rustfs"]
     if file_digest(Path(executable["path"]))["sha256"] != executable["sha256"]:
         raise ValueError("RustFS 二进制在启动前已变化")
+    validate_current_review_tools(review)
     run.mkdir(); output.mkdir(); data.parent.mkdir(exist_ok=True); data.mkdir(exist_ok=True)
     manifest = {"format_version": 1, "kind": "reference-fixture-service-run", "review": bound(review_file),
                 "bootstrap": bound(bootstrap_file), "execution_backend": str(execution), "scope_id": service["scope_id"],
@@ -177,15 +202,23 @@ def rustfs(backend: Path, review_path: Path, bootstrap_path: Path, *, write: boo
     request = {"scope_id": service["scope_id"], "executable": {**executable},
                "data_directory": {"path": str(data), "device": data.stat().st_dev, "inode": data.stat().st_ino},
                "api_url": service["api"], "console_url": service["console"], "credential_files": files,
-               "timeout_seconds": 60}
+                "timeout_seconds": 60}
     write_json(output / "request.json", request)
+    sources = {"review": bound(review_file), "bootstrap": bound(bootstrap_file),
+               "environment": bound(bootstrap_file.parent / "environment.json"),
+               "manifest": bound(run / "manifest.json"), "request": bound(output / "request.json")}
+
+    def guard() -> None:
+        _ready_guard(backend, review_file, review, bootstrap_file, bootstrap, private, files, sources)
+
+    guard()
     with run_lock(run) as owner:
         number = begin(run, "storage-target", "initial", {"review": bound(review_file), "bootstrap": bound(bootstrap_file),
                                                          "request": bound(output / "request.json")})
         controller = bind_controller_attempt(run, number, owner)
         try:
             result = start_rustfs(backend, request, configured(private), output, bound(run / "manifest.json"), controller,
-                                  number, lambda: None, supervised=True)
+                                  number, guard, supervised=True)
             finish(run, number, result=result)
         except BaseException as error:
             finish(run, number, error=error)
