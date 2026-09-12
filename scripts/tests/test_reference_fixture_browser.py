@@ -313,6 +313,68 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         self.assertEqual(execute.call_count, 1)
         self.assertFalse((self.output / "browser-r24-device-result.json").exists())
 
+    def test_intent_publication_failure_records_absent_intent_before_any_business_write(self):
+        with self.patches():
+            binding, _ = self.bind("dev", "r24-intent-absent")
+        outputs = browser.browser_outputs(
+            self.frontend, self.output, "r24-intent-absent", "dev"
+        )
+        publish = browser._publish_json
+
+        def fail_intent(path, value):
+            if path == outputs["intent"]:
+                raise OSError("intent was not published")
+            publish(path, value)
+
+        execute = Mock()
+        with self.patches(), patch.object(browser, "_frontend_command", execute), \
+                patch.object(browser, "_publish_json", side_effect=fail_intent):
+            with self.assertRaisesRegex(OSError, "not published"):
+                browser.run_browser(
+                    self.api, self.backend, self.bootstrap, self.output, binding
+                )
+        failure = read(outputs["failure"])
+        self.assertEqual(failure["stage"], "intent")
+        self.assertEqual(failure["intent"], {
+            "path": str(outputs["intent"]), "status": "absent"
+        })
+        self.assertFalse(failure["unknown_business_writes"])
+        execute.assert_not_called()
+        with self.patches(), self.assertRaisesRegex(ValueError, "禁止重放"):
+            browser.run_browser(
+                self.api, self.backend, self.bootstrap, self.output, binding
+            )
+
+    def test_visible_intent_with_late_publication_error_is_bound_in_failure_receipt(self):
+        with self.patches():
+            binding, _ = self.bind("dev", "r24-intent-visible")
+        outputs = browser.browser_outputs(
+            self.frontend, self.output, "r24-intent-visible", "dev"
+        )
+        publish = browser._publish_json
+
+        def publish_then_fail(path, value):
+            publish(path, value)
+            if path == outputs["intent"]:
+                raise OSError("intent directory sync failed")
+
+        execute = Mock()
+        with self.patches(), patch.object(browser, "_frontend_command", execute), \
+                patch.object(browser, "_publish_json", side_effect=publish_then_fail):
+            with self.assertRaisesRegex(OSError, "directory sync failed"):
+                browser.run_browser(
+                    self.api, self.backend, self.bootstrap, self.output, binding
+                )
+        failure = read(outputs["failure"])
+        self.assertEqual(failure["stage"], "intent")
+        self.assertEqual(failure["intent"]["status"], "published")
+        self.assertEqual(failure["intent"]["sha256"], runtime.file_digest(
+            outputs["intent"]
+        )["sha256"])
+        self.assertFalse(failure["unknown_business_writes"])
+        execute.assert_not_called()
+        self.assertFalse(outputs["result"].exists())
+
     def test_late_artifact_failure_precedes_success_publication_and_blocks_restored_result(self):
         def execute(_binding, _frontend, _arguments, _environment, log, process_dir,
                     _timeout, _secrets):

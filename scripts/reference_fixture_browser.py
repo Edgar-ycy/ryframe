@@ -399,12 +399,26 @@ def _failure_evidence(outputs: dict, server: str, scope_id: str,
     return processes, logs
 
 
+def _intent_evidence(path: Path) -> dict:
+    """失败现场允许 intent 尚未发布，也允许发布结果因 I/O 故障无法读取。"""
+    try:
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            return {"path": str(path), "status": "absent"}
+        return {"status": "published", **_bound(path)}
+    except BaseException as error:
+        return {"path": str(path), "status": "unreadable",
+                "error_type": type(error).__name__}
+
+
 def _publish_failure(error: BaseException, stage: str, binding: dict, path: Path,
                      outputs: dict, server: str, business_started: bool,
                      processes: dict) -> None:
     failure = {"format_version": 1, "kind": "reference-fixture-browser-failure",
                "status": "failed", "stage": stage, "binding": _bound(path),
-               "intent": _bound(outputs["intent"]), "error_type": type(error).__name__,
+               "intent": _intent_evidence(outputs["intent"]),
+               "error_type": type(error).__name__,
                "returncode": getattr(error, "returncode", None),
                "unknown_business_writes": business_started}
     if outputs["result"].is_file():
@@ -451,11 +465,13 @@ def run_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_p
               "binding": _bound(path), "commands": binding["commands"],
               "login_budget": {"path": str(outputs["login_budget"]), "existed_before": False},
               "response_audit": binding["response_audit"]}
-    _publish_json(outputs["intent"], intent)
-    stage, business_started = ("build", False) if server == "preview" else ("browser", True)
+    stage, business_started = "intent", False
     processes = {}
     secrets = context["secrets"]
     try:
+        _publish_json(outputs["intent"], intent)
+        stage, business_started = (("build", False) if server == "preview"
+                                   else ("browser", True))
         if server == "preview":
             build, build_guard = _preview_build(binding, context, processes)
         else:
