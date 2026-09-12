@@ -222,8 +222,10 @@ def _posix_permissions(path: Path) -> dict:
 
 
 def _security(path: Path, acl_reader=None) -> dict:
+    if acl_reader is not None:
+        return acl_reader(path)
     if os.name == "nt":
-        return (acl_reader or _windows_acl)(path)
+        return _windows_acl(path)
     return _posix_permissions(path)
 
 

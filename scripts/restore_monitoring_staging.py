@@ -175,7 +175,11 @@ def _ordinary_tool(backend: Path, path: Path, name: str) -> Path:
     reject_link_or_reparse(path)
     resolved = path.resolve(strict=True)
     local = (backend / ".local-tests").resolve(strict=True)
-    if not resolved.is_file() or not resolved.is_relative_to(local):
+    if (
+        not resolved.is_file()
+        or not resolved.is_relative_to(local)
+        or (os.name != "nt" and not os.access(resolved, os.X_OK))
+    ):
         raise ValueError(f"监控工具 {name} 必须位于协调器忽略目录")
     return resolved
 
