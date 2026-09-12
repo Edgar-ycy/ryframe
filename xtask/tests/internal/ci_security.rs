@@ -11,6 +11,12 @@ fn security_source_uses_one_ordered_task_plan_and_fixed_commands() {
     let plan = ci_execution_plan_for(&CiCommand::Security(SecurityCommand::Source)).unwrap();
     let expected = [
         (
+            TaskExecutor::PythonEnvironment,
+            "python.environment",
+            "python",
+            &["scripts/check_python_environment.py"][..],
+        ),
+        (
             TaskExecutor::CiSupplyChainSource,
             "ci.security.supply-chain",
             "python",
