@@ -195,6 +195,8 @@ class CiWorkflowTests(unittest.TestCase):
         )
         self.assertNotIn("APP_OBJECT_STORAGE_LOCAL_BASE_DIR: ${{ runner.temp }}", block)
         self.assertNotIn("RYFRAME_RESET_STATE_DIR: ${{ runner.temp }}", block)
+        self.assertIn("cargo xtask check recovery fixture", block)
+        self.assertNotIn("python backend/scripts/prepare_full_stack_fixture.py", block)
         self.assertIn("python scripts/ci_full_stack.py prepare", block)
         self.assertIn("python scripts/ci_full_stack.py start", block)
         self.assertIn("python scripts/ci_full_stack.py collect", block)

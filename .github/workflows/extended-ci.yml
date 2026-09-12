@@ -279,10 +279,11 @@ jobs:
 
       - name: 在隔离工作树生成 Device 并校验幂等性
         if: ${{ matrix.fixture == 'device' }}
+        working-directory: backend
         run: >-
-          python backend/scripts/prepare_full_stack_fixture.py
-          --backend-dir backend --frontend-dir frontend
-          --output-dir backend/.local-tests/device-fixture --write
+          cargo xtask check recovery fixture
+          --frontend-dir ../frontend
+          --output-dir .local-tests/device-fixture --write
 
       - name: 构建并安全初始化临时全栈环境
         working-directory: ${{ matrix.backend }}
