@@ -11,7 +11,7 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from devex_clone_factory_context import configured
+from process_environment import configured
 from full_stack_process_monitor import completion_binding
 from full_stack_process_tree import terminate_owned_process_tree
 from restore_build import validate_new_output
