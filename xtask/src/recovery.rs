@@ -2,12 +2,18 @@ use std::path::Path;
 
 use crate::{
     Result,
-    cli::{FreshTargetCommand, FreshTargetOptions, FullStackCommand, RecoveryCommand},
-    process::{run_owned, run_owned_with_env},
+    cli::{
+        FreshTargetCommand, FreshTargetOptions, FullStackCommand, RecoveryCommand,
+        SeedSourceOptions,
+    },
+    local_test_path::{LocalTestPathKind, validate_local_test_path},
+    process::{run_owned, run_owned_with_env, run_with_env_removed},
     workspace::root_dir,
 };
 
 const FRESH_TARGET_PROTOCOL_ENV: &str = "RYFRAME_XTASK_RECOVERY_FRESH_TARGET";
+const SEED_SOURCE_PROTOCOL_ENV: &str = "RYFRAME_XTASK_RECOVERY_SEED_SOURCE";
+
 #[path = "recovery/fixture_runtime.rs"]
 pub(crate) mod fixture_runtime;
 
@@ -20,6 +26,9 @@ pub(crate) fn run(command: &RecoveryCommand, frontend_dir: &Path) -> Result<()> 
     }
     if let RecoveryCommand::FixtureRuntime(command) = command {
         return fixture_runtime::run(command, &root_dir());
+    }
+    if let RecoveryCommand::SeedSource(options) = command {
+        return run_seed_source(options);
     }
     let (program, forwarded) = recovery_command(command, frontend_dir)?;
     let mut command = Vec::with_capacity(forwarded.len() + 1);
@@ -65,6 +74,11 @@ pub(crate) fn recovery_command(
             "scripts/devex_clone.py",
             with_paths(arguments, &backend, None)?,
         )),
+        RecoveryCommand::SeedSource(_) => {
+            Err("seed source 必须通过版本化私有协议执行，不能透传 argv"
+                .to_owned()
+                .into())
+        }
         RecoveryCommand::FreshTarget(_) => {
             Err("fresh-target 必须通过版本化私有协议执行，不能透传 argv"
                 .to_owned()
@@ -138,6 +152,43 @@ pub(crate) fn recovery_command(
     }
 }
 
+fn run_seed_source(options: &SeedSourceOptions) -> Result<()> {
+    let root = root_dir();
+    let payload = seed_source_protocol_at(options, &root)?;
+    run_with_env_removed(
+        &root,
+        "python",
+        &["-B", "scripts/devex_clone.py"],
+        &[(SEED_SOURCE_PROTOCOL_ENV, payload.as_str())],
+        &[FRESH_TARGET_PROTOCOL_ENV, SEED_SOURCE_PROTOCOL_ENV],
+    )
+}
+
+pub(crate) fn seed_source_protocol_at(options: &SeedSourceOptions, root: &Path) -> Result<String> {
+    validate_local_test_path(&options.run_dir, root, LocalTestPathKind::ExistingDirectory)?;
+    if let Some(request) = &options.request {
+        validate_local_test_path(request, root, LocalTestPathKind::ExistingFile)?;
+    }
+    let protocol = serde_json::json!({
+        "format_version": 1,
+        "kind": "ryframe-xtask-recovery-seed-source",
+        "request": {
+            "backend_dir": path_argument(root, "后端目录")?,
+            "operation": options.operation.as_str(),
+            "run_dir": path_argument(&options.run_dir, "seed source 运行目录")?,
+            "request": options.request.as_deref()
+                .map(|value| path_argument(value, "seed source 请求"))
+                .transpose()?,
+            "write": options.write,
+        }
+    });
+    let payload = serde_json::to_string(&protocol)?;
+    if payload.contains(['\r', '\n', '\0']) {
+        return Err("seed source 私有协议不能包含换行符或 NUL".into());
+    }
+    Ok(payload)
+}
+
 fn run_fresh_target(command: &FreshTargetCommand) -> Result<()> {
     let FreshTargetCommand::Run(options) = command else {
         println!(
@@ -148,11 +199,12 @@ fn run_fresh_target(command: &FreshTargetCommand) -> Result<()> {
         return Ok(());
     };
     let payload = fresh_target_protocol(options)?;
-    run_owned_with_env(
+    run_with_env_removed(
         &root_dir(),
         "python",
-        &strings(&["-B", "scripts/devex_clone.py"]),
-        &[(FRESH_TARGET_PROTOCOL_ENV, payload)],
+        &["-B", "scripts/devex_clone.py"],
+        &[(FRESH_TARGET_PROTOCOL_ENV, payload.as_str())],
+        &[FRESH_TARGET_PROTOCOL_ENV, SEED_SOURCE_PROTOCOL_ENV],
     )
 }
 

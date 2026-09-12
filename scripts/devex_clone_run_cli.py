@@ -15,10 +15,25 @@ FRESH_TARGET_OPERATIONS = {
     "prepare", "resume-prepare", "initialize", "resume-initialize",
     "reconcile-preflight", "verify", "status",
 }
+SEED_SOURCE_PROTOCOL_ENV = "RYFRAME_XTASK_RECOVERY_SEED_SOURCE"
+SEED_SOURCE_PROTOCOL_KIND = "ryframe-xtask-recovery-seed-source"
+SEED_SOURCE_OPERATIONS = {
+    "source-register", "source-rebind", "source-generation-start",
+    "source-generation-stop", "source-generation-status",
+    "source-generation-recover", "source-export", "source-export-reconcile",
+}
+SEED_SOURCE_REQUEST_OPERATIONS = {
+    "source-rebind", "source-generation-start", "source-generation-stop",
+    "source-generation-recover",
+}
 
 
 class FreshTargetProtocolError(ValueError):
     """表示 xtask 与私有 Python 阶段之间的协议输入无效。"""
+
+
+class SeedSourceProtocolError(ValueError):
+    """表示 xtask 与 seed 来源阶段之间的协议输入无效。"""
 
 
 def _strict_object(pairs):
@@ -81,6 +96,74 @@ def decode_fresh_target_protocol(source: str):
         storage_run=_protocol_path(request["storage_run"], "storage_run", optional=True),
         observation_dir=_protocol_path(
             request["observation_dir"], "observation_dir", optional=True),
+        write=request["write"],
+    )
+    return backend, arguments
+
+
+def _seed_strict_object(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise SeedSourceProtocolError(f"seed source 私有协议字段重复：{key}")
+        value[key] = item
+    return value
+
+
+def _seed_exact_keys(value, expected, label):
+    if not isinstance(value, dict) or set(value) != set(expected):
+        raise SeedSourceProtocolError(f"seed source 私有协议 {label} 字段不匹配")
+
+
+def _seed_protocol_path(value, name, *, optional=False):
+    if optional and value is None:
+        return None
+    if (not isinstance(value, str) or not value.strip()
+            or any(character in value for character in ("\r", "\n", "\0"))):
+        raise SeedSourceProtocolError(f"seed source 私有协议 {name} 必须是有效路径")
+    path = Path(value)
+    if not path.is_absolute():
+        raise SeedSourceProtocolError(f"seed source 私有协议 {name} 必须是绝对路径")
+    return path
+
+
+def decode_seed_source_protocol(source: str):
+    """严格解码正式 seed 来源链请求；路径的最终 ownership 由 dispatch 再核验。"""
+    if (not isinstance(source, str) or not source or len(source) > 32 * 1024
+            or any(character in source for character in ("\r", "\n", "\0"))):
+        raise SeedSourceProtocolError("seed source 私有协议为空、过长或包含换行/NUL")
+    try:
+        value = json.loads(source, object_pairs_hook=_seed_strict_object)
+    except (json.JSONDecodeError, TypeError) as error:
+        raise SeedSourceProtocolError("seed source 私有协议不是有效 JSON") from error
+    _seed_exact_keys(value, {"format_version", "kind", "request"}, "根")
+    if (type(value["format_version"]) is not int or value["format_version"] != 1
+            or value["kind"] != SEED_SOURCE_PROTOCOL_KIND):
+        raise SeedSourceProtocolError("seed source 私有协议版本或类型不受支持")
+    request = value["request"]
+    _seed_exact_keys(
+        request,
+        {"backend_dir", "operation", "run_dir", "request", "write"},
+        "request",
+    )
+    operation = request["operation"]
+    if not isinstance(operation, str) or operation not in SEED_SOURCE_OPERATIONS:
+        raise SeedSourceProtocolError("seed source 私有协议 operation 无效")
+    if not isinstance(request["write"], bool):
+        raise SeedSourceProtocolError("seed source 私有协议 write 必须是布尔值")
+    supplied = request["request"] is not None
+    if supplied != (operation in SEED_SOURCE_REQUEST_OPERATIONS):
+        raise SeedSourceProtocolError("seed source 私有协议 request 与操作不匹配")
+    read_only = operation == "source-generation-status"
+    if request["write"] == read_only:
+        raise SeedSourceProtocolError("seed source 私有协议 write 与操作不匹配")
+    backend = _seed_protocol_path(request["backend_dir"], "backend_dir")
+    arguments = SimpleNamespace(
+        command="seed-runtime",
+        operation=operation,
+        run_dir=_seed_protocol_path(request["run_dir"], "run_dir"),
+        request=_seed_protocol_path(request["request"], "request", optional=True),
+        producer_binding=None,
         write=request["write"],
     )
     return backend, arguments

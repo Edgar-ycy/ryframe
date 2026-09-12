@@ -55,12 +55,59 @@ pub(crate) enum RecoveryCommand {
     Runtime(Vec<String>),
     Source(Vec<String>),
     Clone(Vec<String>),
+    SeedSource(SeedSourceOptions),
     FreshTarget(FreshTargetCommand),
     Fixture(Vec<String>),
     FixtureRuntime(FixtureRuntimeCommand),
     FullStack(FullStackCommand),
     Monitoring(Vec<String>),
     DatasetPrepare(Vec<String>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SeedSourceOperation {
+    Register,
+    Rebind,
+    GenerationStart,
+    GenerationStop,
+    GenerationStatus,
+    GenerationRecover,
+    Export,
+    ExportReconcile,
+}
+
+impl SeedSourceOperation {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Register => "source-register",
+            Self::Rebind => "source-rebind",
+            Self::GenerationStart => "source-generation-start",
+            Self::GenerationStop => "source-generation-stop",
+            Self::GenerationStatus => "source-generation-status",
+            Self::GenerationRecover => "source-generation-recover",
+            Self::Export => "source-export",
+            Self::ExportReconcile => "source-export-reconcile",
+        }
+    }
+
+    pub(crate) const fn requires_request(self) -> bool {
+        matches!(
+            self,
+            Self::Rebind | Self::GenerationStart | Self::GenerationStop | Self::GenerationRecover
+        )
+    }
+
+    pub(crate) const fn is_read_only(self) -> bool {
+        matches!(self, Self::GenerationStatus)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SeedSourceOptions {
+    pub(crate) operation: SeedSourceOperation,
+    pub(crate) run_dir: PathBuf,
+    pub(crate) request: Option<PathBuf>,
+    pub(crate) write: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

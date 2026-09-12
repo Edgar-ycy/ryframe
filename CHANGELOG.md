@@ -51,6 +51,7 @@
 
 ### Changed
 
+- seed 的 source-register、存储重绑定、来源代次启停/状态/回收和唯一导出链改由 xtask 首层严格解析操作、路径与写入策略；运行目录和请求在启动 Python 前限定到当前后端 `.local-tests` 并拒绝链接，私有阶段仅接收不含凭据内容的版本化 JSON 协议，不再接受这些正式操作的直接 argv。
 - fresh target 恢复入口改由 xtask 严格解析阶段、路径和显式写入参数，并通过版本化私有 JSON 协议调用内部状态机；路径在启动 Python 或创建锁前限定于当前后端 `.local-tests`，私有程序不再接收该公开命令的 argv。
 - 后端 Node 回归测试由统一任务图集中递归发现 `scripts/tests/**/*.test.mjs`，完整本地检查与 CI 预检按固定顺序只执行一次同一集合；删除三处分散的 Python 测试桥接，并补入原先未进入门禁的部门复制和已有数据复制测试。
 - CI 的配套前端来源选择收敛到 `cargo xtask check ci frontend-source`；xtask 在启动私有 Python 实现前校验事件、绝对路径、基线 SHA 和 Git ref，PR 候选 OpenAPI 单独声明并执行固定 CI target 的 API 编译，workflow 不再传入可覆盖的后端工作树。

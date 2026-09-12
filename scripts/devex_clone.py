@@ -164,30 +164,60 @@ def verify_plan(backend: Path, filename: str) -> dict:
     return verify_plan_result(backend, filename).plan
 
 
+def _run_private_protocol(protocol, actual_argv, decoder, protocol_error, label, dispatch) -> int:
+    if actual_argv:
+        print(f"{label} 私有协议不接受 argv", file=sys.stderr)
+        return 2
+    try:
+        backend, args = decoder(protocol)
+    except protocol_error as error:
+        print(f"{label} 私有协议无效：{error}", file=sys.stderr)
+        return 2
+    try:
+        backend = backend.resolve(strict=True)
+        print(json.dumps(dispatch(args, backend), ensure_ascii=False))
+        return 0
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        print(f"开发复制未完成：{type(error).__name__}", file=sys.stderr)
+        return 1
+
+
+def _direct_seed_source(arguments, operations) -> bool:
+    if (not arguments or arguments[0] != "seed-runtime"
+            or any(value in {"--help", "-h"} for value in arguments)):
+        return False
+    return any(
+        arguments[index] == "--operation" and arguments[index + 1] in operations
+        for index in range(1, len(arguments) - 1)
+    )
+
+
 def main(argv=None) -> int:
     from devex_clone_run_cli import (
         COMMANDS, FRESH_TARGET_PROTOCOL_ENV, FreshTargetProtocolError,
-        add_commands, decode_fresh_target_protocol, dispatch,
+        SEED_SOURCE_OPERATIONS, SEED_SOURCE_PROTOCOL_ENV, SeedSourceProtocolError,
+        add_commands, decode_fresh_target_protocol, decode_seed_source_protocol, dispatch,
     )
 
-    protocol = os.environ.pop(FRESH_TARGET_PROTOCOL_ENV, None)
+    fresh_protocol = os.environ.pop(FRESH_TARGET_PROTOCOL_ENV, None)
+    seed_protocol = os.environ.pop(SEED_SOURCE_PROTOCOL_ENV, None)
     actual_argv = sys.argv[1:] if argv is None else list(argv)
-    if protocol is not None:
-        if actual_argv:
-            print("fresh-target 私有协议不接受 argv", file=sys.stderr)
-            return 2
-        try:
-            backend, args = decode_fresh_target_protocol(protocol)
-        except FreshTargetProtocolError as error:
-            print(f"fresh-target 私有协议无效：{error}", file=sys.stderr)
-            return 2
-        try:
-            backend = backend.resolve(strict=True)
-            print(json.dumps(dispatch(args, backend), ensure_ascii=False))
-            return 0
-        except (OSError, ValueError, KeyError, TypeError) as error:
-            print(f"开发复制未完成：{type(error).__name__}", file=sys.stderr)
-            return 1
+    if fresh_protocol is not None and seed_protocol is not None:
+        print("开发复制私有协议不能同时指定", file=sys.stderr)
+        return 2
+    if fresh_protocol is not None:
+        return _run_private_protocol(
+            fresh_protocol, actual_argv, decode_fresh_target_protocol,
+            FreshTargetProtocolError, "fresh-target", dispatch,
+        )
+    if seed_protocol is not None:
+        return _run_private_protocol(
+            seed_protocol, actual_argv, decode_seed_source_protocol,
+            SeedSourceProtocolError, "seed source", dispatch,
+        )
+    if argv is None and _direct_seed_source(actual_argv, SEED_SOURCE_OPERATIONS):
+        print("seed source 是私有实现，不接受公开 argv", file=sys.stderr)
+        return 2
 
     parser = argparse.ArgumentParser(description=__doc__, epilog="plan/verify 仅检查离线计划；stage 每次只执行明确阶段，未知写入先 reconcile 后 resume。调度处置未完成时 Worker 必须保持停止；本工具的复制结果不代表正式恢复通过。")
     commands = parser.add_subparsers(dest="command", required=True)

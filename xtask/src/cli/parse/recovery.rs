@@ -6,6 +6,9 @@ use super::super::model::{CliError, FullStackCommand, RecoveryCommand};
 mod fixture_runtime;
 #[path = "recovery/fresh_target.rs"]
 mod fresh_target;
+#[path = "recovery/seed_source.rs"]
+mod seed_source;
+
 use fixture_runtime::parse_fixture_runtime;
 
 pub(super) fn parse_recovery(args: &[String]) -> Result<RecoveryCommand, CliError> {
@@ -31,27 +34,7 @@ pub(super) fn parse_recovery(args: &[String]) -> Result<RecoveryCommand, CliErro
             &["verify", "comparison-capture", "comparison-verify"],
         )
         .map(RecoveryCommand::Source),
-        "clone" => parse_recovery_operation(
-            "clone",
-            rest,
-            &[
-                "plan",
-                "verify",
-                "init",
-                "status",
-                "stage",
-                "runtime",
-                "recover",
-                "recover-copy",
-                "bridge",
-                "post-copy",
-                "seed-runtime",
-                "storage",
-                "cache",
-                "maintenance",
-            ],
-        )
-        .map(RecoveryCommand::Clone),
+        "clone" => parse_clone(rest),
         "fresh-target" => fresh_target::parse(rest).map(RecoveryCommand::FreshTarget),
         "fixture" => parse_fixture(rest),
         "full-stack" => parse_full_stack(rest).map(RecoveryCommand::FullStack),
@@ -59,6 +42,43 @@ pub(super) fn parse_recovery(args: &[String]) -> Result<RecoveryCommand, CliErro
         "dataset-prepare" => Ok(RecoveryCommand::DatasetPrepare(rest.to_vec())),
         _ => Err(CliError::new(format!("未知 recovery 阶段：{stage}"))),
     }
+}
+
+fn parse_clone(args: &[String]) -> Result<RecoveryCommand, CliError> {
+    let Some(operation) = args.first() else {
+        return Err(CliError::new("check recovery clone 缺少明确子操作"));
+    };
+    let seed_help = operation == "seed-runtime"
+        && args[1..]
+            .iter()
+            .any(|value| matches!(value.as_str(), "--help" | "-h"));
+    if operation == "seed-runtime"
+        && !seed_help
+        && seed_source::selects_source_operation(&args[1..])?
+    {
+        return seed_source::parse(&args[1..]).map(RecoveryCommand::SeedSource);
+    }
+    parse_recovery_operation(
+        "clone",
+        args,
+        &[
+            "plan",
+            "verify",
+            "init",
+            "status",
+            "stage",
+            "runtime",
+            "recover",
+            "recover-copy",
+            "bridge",
+            "post-copy",
+            "seed-runtime",
+            "storage",
+            "cache",
+            "maintenance",
+        ],
+    )
+    .map(RecoveryCommand::Clone)
 }
 
 fn parse_full_stack(args: &[String]) -> Result<FullStackCommand, CliError> {

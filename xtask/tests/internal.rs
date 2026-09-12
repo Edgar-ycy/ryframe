@@ -133,6 +133,8 @@ mod resource_gate_tests;
 #[cfg(feature = "resource")]
 #[path = "internal/resource.rs"]
 mod resource_tests;
+#[path = "internal/seed_source.rs"]
+mod seed_source_tests;
 #[path = "internal/watch.rs"]
 mod watch_tests;
 #[path = "internal/workspace.rs"]
