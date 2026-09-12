@@ -213,21 +213,19 @@ class SuccessorArmRequestTests(unittest.TestCase):
         ]
         request = {"kind": "request"}
         with (
-            patch.object(sys, "argv", arguments),
             patch.object(arm, "build", return_value=request) as build,
             patch.object(arm, "summary", return_value={"status": "planned"}),
             redirect_stdout(io.StringIO()) as output,
         ):
-            successor.main()
+            successor.main(arguments[1:])
         build.assert_called_once()
         self.assertEqual(json.loads(output.getvalue()), {"status": "planned"})
 
         with (
-            patch.object(sys, "argv", [*arguments, "--output", str(self.local / "bad.json")]),
             redirect_stderr(io.StringIO()),
             self.assertRaises(SystemExit) as raised,
         ):
-            successor.main()
+            successor.main([*arguments[1:], "--output", str(self.local / "bad.json")])
         self.assertEqual(raised.exception.code, 2)
 
 

@@ -15,6 +15,7 @@ from devex_clone_target_binding import KEYS, validate_review
 from reference_fixture_environment import _fixture
 from restore_build import file_digest
 from source_inventory import snapshot
+from reference_fixture_control_protocol import run_private
 
 
 SIDES = ("seed", "base", "candidate")
@@ -159,7 +160,13 @@ def renew(backend: Path, template_path: Path, fixture_path: Path, future_root: P
     return revised
 
 
-def main() -> None:
+PROTOCOL_SCHEMAS = {
+    "renew": (("template", "fixture", "future_root", "id", "api_port", "worker_port",
+               "frontend_port", "rustfs_api_port", "rustfs_console_port", "redis_port", "output"), (), True),
+}
+
+
+def main(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--template", type=Path, required=True)
@@ -174,7 +181,7 @@ def main() -> None:
     parser.add_argument("--redis-port", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--write", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not args.write:
         parser.error("续签审阅计划需要显式 --write")
     backend = args.backend_dir.resolve()
@@ -190,4 +197,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run_private("review", PROTOCOL_SCHEMAS, main, positional_operation=False))

@@ -4,6 +4,8 @@ use super::super::model::{CliError, FullStackCommand, RecoveryCommand};
 
 #[path = "recovery/dataset_prepare.rs"]
 mod dataset_prepare;
+#[path = "recovery/fixture_control.rs"]
+mod fixture_control;
 #[path = "recovery/fixture_runtime.rs"]
 mod fixture_runtime;
 #[path = "recovery/fresh_target.rs"]
@@ -13,6 +15,7 @@ mod monitoring;
 #[path = "recovery/seed_source.rs"]
 mod seed_source;
 
+use fixture_control::parse_fixture_control;
 use fixture_runtime::parse_fixture_runtime;
 
 pub(super) fn parse_recovery(args: &[String]) -> Result<RecoveryCommand, CliError> {
@@ -143,19 +146,17 @@ fn parse_fixture(args: &[String]) -> Result<RecoveryCommand, CliError> {
         [operation, rest @ ..] if operation == "runtime" => {
             parse_fixture_runtime(rest).map(RecoveryCommand::FixtureRuntime)
         }
+        [operation, rest @ ..]
+            if ["environment", "review", "request", "successor", "services"]
+                .contains(&operation.as_str()) =>
+        {
+            parse_fixture_control(operation, rest)
+                .map(Box::new)
+                .map(RecoveryCommand::FixtureControl)
+        }
         [operation, ..]
-            if [
-                "environment",
-                "review",
-                "request",
-                "successor",
-                "artifact",
-                "retention",
-                "services",
-                "source-pair",
-                "dataset",
-            ]
-            .contains(&operation.as_str()) =>
+            if ["artifact", "retention", "source-pair", "dataset"]
+                .contains(&operation.as_str()) =>
         {
             Ok(RecoveryCommand::Fixture(args.to_vec()))
         }

@@ -107,9 +107,11 @@ fn recovery_help_reaches_the_selected_stage_parser() {
                 flag
             ])
             .unwrap(),
-            Command::Check(CheckCommand::Recovery(RecoveryCommand::Fixture(strings(
-                &["successor", "generation-request", flag,]
-            ))))
+            Command::Check(CheckCommand::Recovery(RecoveryCommand::FixtureControl(
+                Box::new(super::cli::FixtureControlCommand::Successor(
+                    super::cli::FixtureSuccessorCommand::Help,
+                )),
+            )))
         );
         assert_eq!(
             parse_command(&["check", "recovery", flag]).unwrap(),

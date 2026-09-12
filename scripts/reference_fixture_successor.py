@@ -19,6 +19,7 @@ from devex_clone_target_binding import (
 )
 from process_sockets import endpoint
 from reference_fixture_environment import validate_preflight_successor
+from reference_fixture_control_protocol import run_private
 from restore_reference_plan import BUCKETS, plan_hash
 
 
@@ -462,7 +463,18 @@ def publish(
     return result
 
 
-def main() -> None:
+PROTOCOL_SCHEMAS = {
+    "relationship": (("source_result", "predecessor_review", "predecessor_request", "successor_review",
+                      "seed_request", "base_request", "candidate_request", "id", "output"), (), True),
+    "generation-request": (("successor", "source_backend", "expected_head", "backend_build",
+                            "maintenance_build", "source_environment", "id"),
+                           ("adapter_contract", "product_backend", "output"), "output"),
+    "arm-request": (("successor", "source_export_result", "workspace", "id", "side", "copy_directory"),
+                    ("output",), "output"),
+}
+
+
+def main(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     operations = parser.add_subparsers(dest="operation", required=True)
     relationship = operations.add_parser("relationship")
@@ -489,7 +501,7 @@ def main() -> None:
     arm.add_argument("--copy-directory", type=Path, required=True)
     arm.add_argument("--output", type=Path)
     arm.add_argument("--write", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.operation == "generation-request":
         from reference_fixture_successor_generation import execute
 
@@ -541,4 +553,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run_private("successor", PROTOCOL_SCHEMAS, main, positional_operation=True))

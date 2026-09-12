@@ -373,10 +373,9 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
         for missing in ([], ["--side", "base"]):
             with (
                 self.subTest(arguments=missing),
-                patch.object(sys, "argv", [*common, *missing]),
                 self.assertRaises(SystemExit) as raised,
             ):
-                request.main()
+                request.main([*common[1:], *missing])
             self.assertEqual(raised.exception.code, 2)
 
 

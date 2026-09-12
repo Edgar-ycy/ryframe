@@ -23,6 +23,9 @@ pub(crate) use dataset_prepare::*;
 #[path = "model/monitoring.rs"]
 mod monitoring;
 pub(crate) use monitoring::*;
+#[path = "model/fixture_control.rs"]
+mod fixture_control;
+pub(crate) use fixture_control::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Cli {
@@ -64,6 +67,7 @@ pub(crate) enum RecoveryCommand {
     SeedSource(SeedSourceOptions),
     FreshTarget(FreshTargetCommand),
     Fixture(Vec<String>),
+    FixtureControl(Box<FixtureControlCommand>),
     FixtureRuntime(FixtureRuntimeCommand),
     FullStack(FullStackCommand),
     Monitoring(MonitoringCommand),

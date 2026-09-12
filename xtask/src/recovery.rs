@@ -16,6 +16,8 @@ const SEED_SOURCE_PROTOCOL_ENV: &str = "RYFRAME_XTASK_RECOVERY_SEED_SOURCE";
 
 #[path = "recovery/dataset_prepare.rs"]
 pub(crate) mod dataset_prepare;
+#[path = "recovery/fixture_control.rs"]
+pub(crate) mod fixture_control;
 #[path = "recovery/fixture_runtime.rs"]
 pub(crate) mod fixture_runtime;
 #[path = "recovery/monitoring.rs"]
@@ -39,6 +41,9 @@ pub(crate) fn run(command: &RecoveryCommand, frontend_dir: &Path) -> Result<()> 
     }
     if let RecoveryCommand::Monitoring(command) = command {
         return monitoring::run(command, &root_dir());
+    }
+    if let RecoveryCommand::FixtureControl(command) = command {
+        return fixture_control::run(command, &root_dir());
     }
     let (program, forwarded) = recovery_command(command, frontend_dir)?;
     let mut command = Vec::with_capacity(forwarded.len() + 1);
@@ -95,26 +100,13 @@ pub(crate) fn recovery_command(
                 .into())
         }
         RecoveryCommand::Fixture(arguments) => {
-            if arguments.first().map(String::as_str) == Some("environment") {
-                Ok((
-                    "scripts/reference_fixture_environment.py",
-                    with_paths(&arguments[1..], &backend, None)?,
-                ))
-            } else if arguments.first().map(String::as_str) == Some("review") {
-                Ok((
-                    "scripts/reference_fixture_review.py",
-                    with_paths(&arguments[1..], &backend, None)?,
-                ))
-            } else if arguments.first().map(String::as_str) == Some("request") {
-                Ok((
-                    "scripts/reference_fixture_request.py",
-                    with_paths(&arguments[1..], &backend, None)?,
-                ))
-            } else if arguments.first().map(String::as_str) == Some("successor") {
-                Ok((
-                    "scripts/reference_fixture_successor.py",
-                    with_paths(&arguments[1..], &backend, None)?,
-                ))
+            if arguments.first().is_some_and(|value| {
+                ["environment", "review", "request", "successor", "services"]
+                    .contains(&value.as_str())
+            }) {
+                Err("fixture 控制子域不能通过未解析参数绕过版本化私有协议"
+                    .to_owned()
+                    .into())
             } else if arguments.first().map(String::as_str) == Some("artifact") {
                 Ok((
                     "scripts/full_stack_artifacts.py",
@@ -123,11 +115,6 @@ pub(crate) fn recovery_command(
             } else if arguments.first().map(String::as_str) == Some("retention") {
                 Ok((
                     "scripts/full_stack_migration_history.py",
-                    with_paths(&arguments[1..], &backend, None)?,
-                ))
-            } else if arguments.first().map(String::as_str) == Some("services") {
-                Ok((
-                    "scripts/reference_fixture_services.py",
                     with_paths(&arguments[1..], &backend, None)?,
                 ))
             } else if arguments.first().map(String::as_str) == Some("source-pair") {
@@ -146,6 +133,11 @@ pub(crate) fn recovery_command(
                     with_paths(arguments, &backend, Some(frontend.as_str()))?,
                 ))
             }
+        }
+        RecoveryCommand::FixtureControl(_) => {
+            Err("fixture 控制请求必须通过版本化私有协议执行，不能透传 argv"
+                .to_owned()
+                .into())
         }
         RecoveryCommand::FixtureRuntime(_) => {
             Ok(("scripts/reference_fixture_runtime.py", Vec::new()))

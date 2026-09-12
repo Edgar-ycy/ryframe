@@ -345,11 +345,10 @@ class SuccessorTests(unittest.TestCase):
             "missing-output.json",
         ]
         with (
-            patch.object(sys, "argv", arguments),
             redirect_stderr(io.StringIO()),
             self.assertRaises(SystemExit) as raised,
         ):
-            successor.main()
+            successor.main(arguments[1:])
         self.assertEqual(raised.exception.code, 2)
 
     def test_published_source_uses_pending_validator_and_rechecks_relationship(self):

@@ -20,6 +20,7 @@ from devex_clone_target_binding import KEYS, REVIEW_FILE_TOOLS, REVIEW_TOOLS, va
 from devex_clone_tools import verify as verify_tools
 from full_stack_runtime import configuration_digest
 from reference_fixture_paths import service_run
+from reference_fixture_control_protocol import run_private
 from reference_fixture_environment_receipt import load as load_prepared_environment
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
@@ -576,7 +577,16 @@ def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_pa
         raise
 
 
-def main() -> None:
+PROTOCOL_SCHEMAS = {
+    "plan": (("review", "fixture", "maintenance_build", "side"), (), False),
+    "prepare": (("review", "fixture", "maintenance_build", "side", "output"), ("secrets_dir",), True),
+    "review": (("review", "output"), (), True),
+    "rotate-secrets": (("fixture", "output"), (), True),
+    "bootstrap-secrets": (("source_fixture", "source_secrets", "fixture"), (), True),
+}
+
+
+def main(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=("plan", "prepare", "review", "rotate-secrets", "bootstrap-secrets"))
     parser.add_argument("--backend-dir", type=Path, required=True)
@@ -589,7 +599,7 @@ def main() -> None:
     parser.add_argument("--secrets-dir", type=Path)
     parser.add_argument("--side", choices=("seed", "base", "candidate"), default="seed")
     parser.add_argument("--write", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.operation in ("plan", "prepare") and (args.review is None or args.fixture is None or args.maintenance_build is None):
         parser.error(f"{args.operation} 需要 --review、--fixture 与 --maintenance-build")
     if args.operation == "plan":
@@ -621,4 +631,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run_private("environment", PROTOCOL_SCHEMAS, main, positional_operation=True))

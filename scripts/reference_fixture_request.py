@@ -13,6 +13,7 @@ from devex_clone_target_binding import KEYS, request_binding, validate_review
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
 from reference_fixture_paths import service_run as expected_service_run
+from reference_fixture_control_protocol import run_private
 from reference_fixture_service_history import validate_history
 from devex_clone_run_state import load_state
 
@@ -299,7 +300,12 @@ def publish(
     return request
 
 
-def main() -> None:
+PROTOCOL_SCHEMAS = {
+    "publish": (("environment", "service_run", "id", "side", "output"), (), True),
+}
+
+
+def main(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--environment", type=Path, required=True)
@@ -308,7 +314,7 @@ def main() -> None:
     parser.add_argument("--side", choices=SIDES, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--write", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if not args.write:
         parser.error("签发 fresh-target 请求需要显式 --write")
     backend = args.backend_dir.resolve()
@@ -328,4 +334,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run_private("request", PROTOCOL_SCHEMAS, main, positional_operation=False))

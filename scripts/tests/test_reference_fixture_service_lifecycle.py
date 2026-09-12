@@ -463,9 +463,9 @@ class ServiceLifecycleTests(unittest.TestCase):
     def test_cli_rejects_ambiguous_or_write_status_arguments_with_usage_exit(self):
         common = ["--backend-dir", str(self.backend), "--review", str(self.review), "--environment", str(self.bootstrap)]
         for args in (("status", "--write"), ("close",), ("recover", "--write"), ("close", "--write", "--owner-binding", "owner.json")):
-            with self.subTest(args=args), patch.object(sys, "argv", ["services", *args, *common]), \
-                    patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit) as error:
-                cli.main()
+            with self.subTest(args=args), patch("sys.stderr", new_callable=io.StringIO), \
+                    self.assertRaises(SystemExit) as error:
+                cli.main([*args, *common])
             self.assertEqual(error.exception.code, 2)
 
     def test_cli_rejects_duplicate_and_abbreviated_options_before_reading_inputs(self):
@@ -474,10 +474,10 @@ class ServiceLifecycleTests(unittest.TestCase):
         invalid = [("status", "--review", "other"), ("status", "--environment=other"),
                    ("close", "--write", "--write"), ("status", "--rev", "other")]
         for args in invalid:
-            with self.subTest(args=args), patch.object(sys, "argv", ["services", *args, *common]), \
-                    patch("sys.stderr", new_callable=io.StringIO), patch.object(cli, "document") as read, \
+            with self.subTest(args=args), patch("sys.stderr", new_callable=io.StringIO), \
+                    patch.object(cli, "document") as read, \
                     self.assertRaises(SystemExit) as error:
-                cli.main()
+                cli.main([*args, *common])
             self.assertEqual(error.exception.code, 2)
             read.assert_not_called()
             self.assertEqual(before, self.snapshot())

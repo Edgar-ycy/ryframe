@@ -280,116 +280,16 @@ fn monitoring_stage_uses_the_private_lifecycle_and_fixed_backend() {
 }
 
 #[test]
-fn fixture_environment_plan_uses_only_the_current_backend() {
-    let frontend = Path::new("D:/前端 worktree");
-    let backend = super::workspace::root_dir().display().to_string();
-    let (script, arguments) = recovery_command(
-        &RecoveryCommand::Fixture(strings(&["environment", "plan", "--review", "review.json"])),
-        frontend,
-    )
-    .unwrap();
-    assert_eq!(script, "scripts/reference_fixture_environment.py");
-    assert_eq!(
-        arguments,
-        strings(&["plan", "--review", "review.json", "--backend-dir", &backend])
-    );
-}
-
-#[test]
-fn fixture_review_uses_only_the_current_backend() {
-    let frontend = Path::new("D:/前端 worktree");
-    let backend = super::workspace::root_dir().display().to_string();
-    let (script, arguments) = recovery_command(
-        &RecoveryCommand::Fixture(strings(&["review", "--template", "review.json"])),
-        frontend,
-    )
-    .unwrap();
-    assert_eq!(script, "scripts/reference_fixture_review.py");
-    assert_eq!(
-        arguments,
-        strings(&["--template", "review.json", "--backend-dir", &backend])
-    );
-}
-
-#[test]
-fn fixture_request_uses_only_the_current_backend() {
-    let frontend = Path::new("D:/前端 worktree");
-    let backend = super::workspace::root_dir().display().to_string();
-    let (script, arguments) = recovery_command(
-        &RecoveryCommand::Fixture(strings(&["request", "--side", "base", "--id", "fresh-r12"])),
-        frontend,
-    )
-    .unwrap();
-    assert_eq!(script, "scripts/reference_fixture_request.py");
-    assert_eq!(
-        arguments,
-        strings(&[
-            "--side",
-            "base",
-            "--id",
-            "fresh-r12",
-            "--backend-dir",
-            &backend,
-        ])
-    );
-}
-
-#[test]
-fn fixture_successor_uses_only_the_current_backend() {
-    let frontend = Path::new("D:/前端 worktree");
-    let backend = super::workspace::root_dir().display().to_string();
-    let (script, arguments) = recovery_command(
-        &RecoveryCommand::Fixture(strings(&[
-            "successor",
-            "relationship",
-            "--id",
-            "successor-r1",
-        ])),
-        frontend,
-    )
-    .unwrap();
-    assert_eq!(script, "scripts/reference_fixture_successor.py");
-    assert_eq!(
-        arguments,
-        strings(&[
-            "relationship",
-            "--id",
-            "successor-r1",
-            "--backend-dir",
-            &backend,
-        ])
-    );
-}
-
-#[test]
-fn fixture_successor_arm_request_preserves_spaced_paths() {
-    let frontend = Path::new("D:/前端 worktree");
-    let backend = super::workspace::root_dir().display().to_string();
-    let (script, arguments) = recovery_command(
-        &RecoveryCommand::Fixture(strings(&[
-            "successor",
-            "arm-request",
-            "--workspace",
-            "D:/fresh target/base",
-            "--side",
-            "base",
-        ])),
-        frontend,
-    )
-    .unwrap();
-    assert_eq!(script, "scripts/reference_fixture_successor.py");
-    assert_eq!(
-        arguments,
-        strings(&[
-            "arm-request",
-            "--workspace",
-            "D:/fresh target/base",
-            "--side",
-            "base",
-            "--backend-dir",
-            &backend,
-        ])
-    );
+fn fixture_control_domains_cannot_bypass_typed_private_protocol() {
+    for domain in ["environment", "review", "request", "successor", "services"] {
+        assert!(
+            recovery_command(
+                &RecoveryCommand::Fixture(strings(&[domain, "unparsed"])),
+                Path::new("unused"),
+            )
+            .is_err()
+        );
+    }
 }
 
 #[test]
@@ -418,23 +318,6 @@ fn fixture_artifact_and_retention_use_registered_runtime_tools() {
                 .into_iter()
                 .chain(strings(&["--backend-dir", &backend]))
                 .collect::<Vec<_>>()
-        );
-    }
-}
-
-#[test]
-fn fixture_services_use_the_private_service_controller() {
-    for service in ["rustfs", "redis", "buckets", "status", "close", "recover"] {
-        let mut input = strings(&["services", service]);
-        if service != "status" {
-            input.push("--write".to_owned());
-        }
-        let (script, arguments) =
-            recovery_command(&RecoveryCommand::Fixture(input), Path::new("unused")).unwrap();
-        assert_eq!(script, "scripts/reference_fixture_services.py");
-        assert_eq!(
-            arguments.last().map(String::as_str),
-            Some(super::workspace::root_dir().to_str().unwrap())
         );
     }
 }

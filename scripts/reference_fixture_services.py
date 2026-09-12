@@ -23,6 +23,7 @@ from restore_build import file_digest
 from restore_reference_plan import BUCKETS, plan_hash
 from reference_fixture_environment import validate_current_review_tools, validate_preflight_successor
 from reference_fixture_paths import service_run
+from reference_fixture_control_protocol import run_private
 
 
 def bound(path: Path) -> dict:
@@ -300,7 +301,18 @@ def redis(backend: Path, review_path: Path, bootstrap_path: Path, *, write: bool
             "services_started": True, "request_sha256": plan_hash(request)}
 
 
-def main() -> None:
+PROTOCOL_SCHEMAS = {
+    "rustfs": (("review", "environment"), (), True),
+    "redis": (("review", "environment"), (), True),
+    "buckets": (("review", "environment"), (), True),
+    "status": (("review", "environment"), (), False),
+    "close": (("review", "environment"), (), True),
+    "recover": (("review", "environment", "owner_binding"), (), True),
+    "restart": (("review", "environment", "owner_binding"), (), True),
+}
+
+
+def main(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("operation", choices=("rustfs", "redis", "buckets", "status", "close", "recover", "restart"))
     parser.add_argument("--backend-dir", type=Path, required=True)
@@ -309,10 +321,10 @@ def main() -> None:
     parser.add_argument("--write", action="store_true")
     parser.add_argument("--owner-binding", type=Path,
                         help="recover 控制器时传绑定描述文件；核对外部终止时传 status 返回的 state 文件")
-    options = [value.partition("=")[0] for value in sys.argv[1:] if value.startswith("--")]
+    options = [value.partition("=")[0] for value in argv if value.startswith("--")]
     if len(options) != len(set(options)):
         parser.error("服务控制选项不能重复")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.operation == "status" and (args.write or args.owner_binding is not None):
         parser.error("status 只读，不接受 --write 或 --owner-binding")
     if args.operation != "status" and not args.write:
@@ -343,4 +355,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(run_private("services", PROTOCOL_SCHEMAS, main, positional_operation=True))
