@@ -5,7 +5,6 @@ import sys
 sys.dont_write_bytecode = True
 
 import argparse
-import copy
 import json
 import os
 from pathlib import Path
@@ -22,6 +21,7 @@ from devex_clone_source_proof import require_closed_port
 from devex_clone_storage_process import start as start_rustfs
 from restore_build import file_digest
 from restore_reference_plan import BUCKETS, plan_hash
+from reference_fixture_environment import validate_preflight_successor
 from reference_fixture_paths import service_run
 
 
@@ -36,13 +36,6 @@ def document(backend: Path, value: Path) -> tuple[Path, dict]:
     return path, read_json(path)
 
 
-def _semantic_review(value: dict) -> dict:
-    result = copy.deepcopy(value)
-    result.pop("tools", None)
-    result.pop("preflight", None)
-    return result
-
-
 def _continued_review(backend: Path, bootstrap_binding: dict, review_file: Path, review: dict) -> bool:
     preflight = review.get("preflight")
     expected = {key: bootstrap_binding.get(key) for key in ("path", "bytes", "sha256")}
@@ -53,7 +46,11 @@ def _continued_review(backend: Path, bootstrap_binding: dict, review_file: Path,
         parent_file, previous = document(backend, parent)
     except (FileNotFoundError, ValueError):
         return False
-    return bound(parent_file) == expected and _semantic_review(previous) == _semantic_review(review)
+    try:
+        validate_preflight_successor(previous, review)
+    except (KeyError, TypeError, ValueError):
+        return False
+    return bound(parent_file) == expected
 
 
 def environment(backend: Path, review_file: Path, review: dict, bootstrap_path: Path) -> tuple[Path, dict, dict]:

@@ -18,7 +18,7 @@ from devex_clone_target_binding import (
     validate_review,
 )
 from process_sockets import endpoint
-from reference_fixture_environment import _preflight_binding
+from reference_fixture_environment import validate_preflight_successor
 from restore_reference_plan import BUCKETS, plan_hash
 
 
@@ -67,20 +67,10 @@ def _pending_review(backend: Path, path: Path) -> tuple[dict, dict]:
     return review, _review_descriptor(filename, review, descriptor)
 
 
-def _semantic_review(value: dict) -> dict:
-    result = copy.deepcopy(value)
-    result.pop("tools", None)
-    result.pop("preflight", None)
-    result.pop("ready_for_execution", None)
-    return result
-
-
 def _ready_review(
     backend: Path, path: Path, expected_predecessor: dict
 ) -> tuple[dict, dict]:
     filename, review, descriptor = _document(backend, path)
-    validate_review(review)
-    _preflight_binding(review)
     preflight = review.get("preflight")
     predecessor = preflight.get("supersedes") if isinstance(preflight, dict) else None
     if not isinstance(predecessor, dict):
@@ -92,11 +82,10 @@ def _ready_review(
     )
     if prior.get("ready_for_execution") is not False:
         raise ValueError("successor preflight predecessor 必须保持 pending")
-    structural = copy.deepcopy(prior)
-    structural["ready_for_execution"] = True
-    validate_review(structural)
-    if _semantic_review(prior) != _semantic_review(review):
-        raise ValueError("successor review 与其 preflight predecessor 语义不同")
+    try:
+        validate_preflight_successor(prior, review)
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("successor review 与其 preflight predecessor 语义不同") from error
     if binding(prior_path) != predecessor:
         raise ValueError("successor preflight predecessor 在核对期间变化")
     return review, _review_descriptor(filename, review, descriptor)

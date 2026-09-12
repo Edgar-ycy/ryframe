@@ -126,19 +126,56 @@ def _preflight(review: dict, run=subprocess.run) -> dict:
 
 def _preflight_binding(review: dict) -> None:
     value = review.get("preflight")
-    if set(review.get("tools", {})) != set(REVIEW_TOOLS):
+    tools = review.get("tools")
+    if not isinstance(tools, dict) or not set(REVIEW_TOOLS).issubset(tools):
         raise ValueError("夹具审阅计划缺少当前工具预检收据")
-    expected = {name: review["tools"][name] for name in REVIEW_TOOLS}
+    expected = {name: tools[name] for name in REVIEW_TOOLS}
     seed = review["scopes"]["seed"]
     run = service_run(review)
     rustfs = review["services"]["rustfs"]
     expected_scope = "services-" + seed["scope_id"]
-    if (not isinstance(value, dict) or value.get("format_version") != 1
+    if (not isinstance(value, dict)
+            or set(value) != {"format_version", "kind", "status", "supersedes", "tools"}
+            or not isinstance(value.get("supersedes"), dict)
+            or set(value["supersedes"]) != {"path", "bytes", "sha256"}
+            or value.get("format_version") != 1
             or value.get("kind") != "reference-fixture-tool-preflight"
             or value.get("status") != "verified" or value.get("tools") != expected
             or rustfs.get("scope_id") != expected_scope
             or rustfs.get("process_receipt") != str(run / "rustfs/process.json")):
         raise ValueError("夹具审阅计划缺少当前工具预检收据")
+
+
+def _review_semantics(review: dict) -> dict:
+    """只排除每次预检都会重新核验的七项工具。"""
+    result = copy.deepcopy(review)
+    result.pop("ready_for_execution", None)
+    tools = result.get("tools")
+    if not isinstance(tools, dict):
+        raise ValueError("夹具审阅计划工具定义无效")
+    for name in REVIEW_TOOLS:
+        tools.pop(name, None)
+    return result
+
+
+def validate_preflight_successor(previous: dict, review: dict) -> None:
+    """核验 ready 审阅只增加了当前预检允许产生的字段。"""
+    if previous.get("ready_for_execution") is not False or "preflight" in previous:
+        raise ValueError("preflight predecessor 必须是未预检的 pending 审阅")
+    structural = copy.deepcopy(previous)
+    structural["ready_for_execution"] = True
+    validate_review(structural)
+    validate_review(review)
+    _preflight_binding(review)
+
+    expected = _review_semantics(previous)
+    observed = _review_semantics(review)
+    observed.pop("preflight")
+    rustfs = observed["services"]["rustfs"]
+    rustfs.pop("scope_id")
+    rustfs.pop("process_receipt")
+    if observed != expected:
+        raise ValueError("ready 审阅与其 preflight predecessor 语义不同")
 
 
 def revalidate(backend: Path, review_path: Path, output: Path, run=subprocess.run) -> dict:

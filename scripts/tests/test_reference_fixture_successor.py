@@ -135,9 +135,18 @@ class SuccessorTests(unittest.TestCase):
             "preflight": {"supersedes": pending_binding},
         }
         ready_path, _ = self.file("ready.json", ready)
+
+        def validate_preflight(previous, current):
+            if previous["semantic"] != current["semantic"]:
+                raise ValueError("semantic drift")
+
         with (
             patch.object(successor, "validate_review"),
-            patch.object(successor, "_preflight_binding"),
+            patch.object(
+                successor,
+                "validate_preflight_successor",
+                side_effect=validate_preflight,
+            ),
         ):
             observed, descriptor = successor._ready_review(
                 self.backend, ready_path, pending_binding
@@ -150,7 +159,11 @@ class SuccessorTests(unittest.TestCase):
         write_json(ready_path, ready)
         with (
             patch.object(successor, "validate_review"),
-            patch.object(successor, "_preflight_binding"),
+            patch.object(
+                successor,
+                "validate_preflight_successor",
+                side_effect=validate_preflight,
+            ),
             self.assertRaisesRegex(ValueError, "语义不同"),
         ):
             successor._ready_review(self.backend, ready_path, pending_binding)
@@ -159,7 +172,7 @@ class SuccessorTests(unittest.TestCase):
         self.assertNotEqual(other_path, pending_path)
         with (
             patch.object(successor, "validate_review"),
-            patch.object(successor, "_preflight_binding"),
+            patch.object(successor, "validate_preflight_successor"),
             self.assertRaisesRegex(ValueError, "指定 pending predecessor"),
         ):
             successor._ready_review(self.backend, ready_path, other_binding)

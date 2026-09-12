@@ -5,12 +5,14 @@ import copy
 import json
 from pathlib import Path
 import sys
-import tempfile
 import unittest
 from unittest.mock import patch
+from workspace_directory import WorkspaceDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import reference_fixture_environment as environment
+import reference_fixture_services as services
+import reference_fixture_successor as successor
 from reference_fixture_paths import service_run
 from restore_build import file_digest
 
@@ -23,15 +25,15 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
 
     def setUp(self):
         self.backend = Path(__file__).resolve().parents[2]
-        self.temporary = tempfile.TemporaryDirectory(dir=self.backend / ".local-tests")
+        self.temporary = WorkspaceDirectory(dir=self.backend / ".local-tests/python-unit")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.tools = {}
         for name in environment.REVIEW_FILE_TOOLS:
-            tool = self.root / f"{name}.exe"
+            tool = self.root / f"{name}.bin"
             tool.write_bytes(name.encode())
             self.tools[name] = tool
-        self.wsl = self.root / "wsl.exe"; self.wsl.write_bytes(b"wsl")
+        self.wsl = self.root / "wsl.bin"; self.wsl.write_bytes(b"wsl")
         defaults = self.root / "mysql.cnf"; defaults.write_text("[client]", encoding="utf-8")
         self.review = {"kind": "review-only-perf-resource-plan-with-readonly-preflight", "ready_for_execution": True,
                        "reference": {name: {"databases": []} for name in ("source", "protected_target")},
@@ -128,6 +130,83 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
             environment.revalidate(self.backend, review, output)
         which.assert_not_called()
         self.assertFalse(output.exists())
+
+    def test_revalidate_preserves_historical_tools_for_ready_successor(self):
+        self.review["ready_for_execution"] = False
+        self.review["tools"].update({
+            name: {"path": str(self.tools["mysql"]), "sha256": file_digest(self.tools["mysql"])["sha256"]}
+            for name in ("node", "mysqld_exporter")
+        })
+        pending = self.write("historical-pending.json", self.review)
+        output = self.root / "historical-ready.json"
+        observed = {name: copy.deepcopy(self.review["tools"][name]) for name in environment.REVIEW_FILE_TOOLS}
+        observed.update({
+            "redis_server": copy.deepcopy(self.review["tools"]["redis_server"]),
+            "wsl": {"path": str(self.wsl), "sha256": file_digest(self.wsl)["sha256"]},
+            "redis_python": {"distribution": "Ubuntu", "path": "/usr/bin/python3",
+                             "resolved_path": "/usr/bin/python3.12", "sha256": "b" * 64},
+        })
+        with patch.object(environment, "_preflight", return_value=observed):
+            ready = environment.revalidate(self.backend, pending, output)
+        self.assertEqual(set(ready["tools"]), {*environment.REVIEW_TOOLS, "node", "mysqld_exporter"})
+        self.assertEqual(set(ready["preflight"]["tools"]), set(environment.REVIEW_TOOLS))
+        environment._preflight_binding(ready)
+        observed_ready, _ = successor._ready_review(self.backend, output, environment.bound(pending))
+        self.assertEqual(observed_ready, ready)
+        self.assertTrue(
+            services._continued_review(self.backend, environment.bound(pending), output, ready)
+        )
+        expanded_preflight = copy.deepcopy(ready)
+        expanded_preflight["preflight"]["tools"]["node"] = ready["tools"]["node"]
+        with self.assertRaisesRegex(ValueError, "预检"):
+            environment._preflight_binding(expanded_preflight)
+        expanded_receipt = copy.deepcopy(ready)
+        expanded_receipt["preflight"]["unexpected"] = True
+        with self.assertRaisesRegex(ValueError, "预检"):
+            environment._preflight_binding(expanded_receipt)
+
+        for field in ("scope_id", "process_receipt"):
+            with self.subTest(rustfs_field=field):
+                drifted = copy.deepcopy(ready)
+                drifted["services"]["rustfs"][field] += "-changed"
+                drifted_file = self.write(f"rustfs-{field}.json", drifted)
+                with self.assertRaisesRegex(ValueError, "语义不同"):
+                    successor._ready_review(
+                        self.backend, drifted_file, environment.bound(pending)
+                    )
+                self.assertFalse(
+                    services._continued_review(
+                        self.backend, environment.bound(pending), drifted_file, drifted
+                    )
+                )
+
+        for name in ("node", "mysqld_exporter"):
+            for field in ("path", "sha256"):
+                with self.subTest(name=name, field=field):
+                    drifted = copy.deepcopy(ready)
+                    drifted["tools"][name][field] = "f" * 64
+                    drifted_file = self.write(f"{name}-{field}.json", drifted)
+                    with self.assertRaisesRegex(ValueError, "语义不同"):
+                        successor._ready_review(
+                            self.backend, drifted_file, environment.bound(pending)
+                        )
+                    self.assertFalse(
+                        services._continued_review(
+                            self.backend, environment.bound(pending), drifted_file, drifted
+                        )
+                    )
+
+        invalid_previous = copy.deepcopy(self.review)
+        invalid_previous["ready_for_execution"] = True
+        invalid_path = self.write("invalid-previous.json", invalid_previous)
+        invalid_binding = environment.bound(invalid_path)
+        invalid_ready = copy.deepcopy(ready)
+        invalid_ready["preflight"]["supersedes"] = invalid_binding
+        self.assertFalse(
+            services._continued_review(
+                self.backend, invalid_binding, output, invalid_ready
+            )
+        )
 
     def test_review_requires_mysqldump_but_accepts_historical_extra_tools(self):
         for name in (*environment.REVIEW_FILE_TOOLS, "redis_server"):
