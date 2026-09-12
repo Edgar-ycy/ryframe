@@ -304,11 +304,12 @@ jobs:
         run: cargo xtask check recovery full-stack start
 
       - name: 执行真实浏览器全栈流程
-        if: ${{ matrix.fixture == 'core' }}
         working-directory: ${{ matrix.frontend }}
         env:
           RYFRAME_CI_MYSQL_CONTAINER_ID: ${{ job.services.mysql.id }}
-        run: corepack pnpm check --stage browser --real --fixture core --server dev
+        run: >-
+          corepack pnpm check --stage browser --real
+          --fixture "${{ matrix.fixture }}" --server dev
 
       - name: 构建并验收生产前端
         working-directory: ${{ matrix.frontend }}

@@ -128,8 +128,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
         mysql_container = "${{ job.services.mysql.id }}"
         self.assertEqual(
             steps["执行真实浏览器全栈流程"]["run"],
-            "corepack pnpm check --stage browser --real --fixture core --server dev",
+            'corepack pnpm check --stage browser --real --fixture "${{ matrix.fixture }}" --server dev',
         )
+        self.assertNotIn("if", steps["执行真实浏览器全栈流程"])
         self.assertEqual(
             steps["执行真实浏览器全栈流程"]["env"]["RYFRAME_CI_MYSQL_CONTAINER_ID"],
             mysql_container,
