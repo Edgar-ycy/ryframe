@@ -1,12 +1,89 @@
 """统一开发复制入口的参数与编排；真实结果由阶段工具产生。"""
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from devex_clone_capture import read_json
 from devex_clone_model import local_path
 from devex_clone_run import cleanup_inputs, execute, initialize, recover_copy, run_runtime, status
 from devex_clone_run_state import recover_lock
 
-COMMANDS = {"init", "status", "stage", "runtime", "recover", "recover-copy", "bridge", "post-copy", "seed-runtime", "storage", "cache", "maintenance", "fresh-target"}
+COMMANDS = {"init", "status", "stage", "runtime", "recover", "recover-copy", "bridge", "post-copy", "seed-runtime", "storage", "cache", "maintenance"}
+FRESH_TARGET_PROTOCOL_ENV = "RYFRAME_XTASK_RECOVERY_FRESH_TARGET"
+FRESH_TARGET_PROTOCOL_KIND = "ryframe-xtask-recovery-fresh-target"
+FRESH_TARGET_OPERATIONS = {
+    "prepare", "resume-prepare", "initialize", "resume-initialize",
+    "reconcile-preflight", "verify", "status",
+}
+
+
+class FreshTargetProtocolError(ValueError):
+    """表示 xtask 与私有 Python 阶段之间的协议输入无效。"""
+
+
+def _strict_object(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise FreshTargetProtocolError(f"fresh-target 私有协议字段重复：{key}")
+        value[key] = item
+    return value
+
+
+def _exact_keys(value, expected, label):
+    if not isinstance(value, dict) or set(value) != set(expected):
+        raise FreshTargetProtocolError(f"fresh-target 私有协议 {label} 字段不匹配")
+
+
+def _protocol_path(value, name, *, optional=False):
+    if optional and value is None:
+        return None
+    if (not isinstance(value, str) or not value.strip()
+            or any(character in value for character in ("\r", "\n", "\0"))):
+        raise FreshTargetProtocolError(f"fresh-target 私有协议 {name} 必须是有效路径")
+    path = Path(value)
+    if not path.is_absolute():
+        raise FreshTargetProtocolError(f"fresh-target 私有协议 {name} 必须是绝对路径")
+    return path
+
+
+def decode_fresh_target_protocol(source: str):
+    """严格解码由 xtask 生成的单一版本化请求，不接收公开 argv。"""
+    if not isinstance(source, str) or not source or "\0" in source:
+        raise FreshTargetProtocolError("fresh-target 私有协议为空或包含 NUL")
+    try:
+        value = json.loads(source, object_pairs_hook=_strict_object)
+    except (json.JSONDecodeError, TypeError) as error:
+        raise FreshTargetProtocolError("fresh-target 私有协议不是有效 JSON") from error
+    _exact_keys(value, {"format_version", "kind", "request"}, "根")
+    if (type(value["format_version"]) is not int or value["format_version"] != 1
+            or not isinstance(value["kind"], str)
+            or value["kind"] != FRESH_TARGET_PROTOCOL_KIND):
+        raise FreshTargetProtocolError("fresh-target 私有协议版本或类型不受支持")
+    request = value["request"]
+    fields = {
+        "backend_dir", "operation", "workspace", "request", "environment",
+        "storage_run", "observation_dir", "write",
+    }
+    _exact_keys(request, fields, "request")
+    operation = request["operation"]
+    if not isinstance(operation, str) or operation not in FRESH_TARGET_OPERATIONS:
+        raise FreshTargetProtocolError("fresh-target 私有协议 operation 无效")
+    if not isinstance(request["write"], bool):
+        raise FreshTargetProtocolError("fresh-target 私有协议 write 必须是布尔值")
+    backend = _protocol_path(request["backend_dir"], "backend_dir")
+    arguments = SimpleNamespace(
+        command="fresh-target",
+        operation=operation,
+        workspace=_protocol_path(request["workspace"], "workspace"),
+        request=_protocol_path(request["request"], "request", optional=True),
+        environment=_protocol_path(request["environment"], "environment", optional=True),
+        storage_run=_protocol_path(request["storage_run"], "storage_run", optional=True),
+        observation_dir=_protocol_path(
+            request["observation_dir"], "observation_dir", optional=True),
+        write=request["write"],
+    )
+    return backend, arguments
 
 
 def evidence_path(backend: Path, value: Path, *, new: bool = False) -> Path:
@@ -41,14 +118,6 @@ def add_commands(commands) -> None:
     maintenance.add_argument("--output", type=Path, required=True,
                              help="build 使用新的证据目录；verify 使用现有目录或其中的 build.json")
     maintenance.add_argument("--write", action="store_true", help="只有 build 需要显式指定")
-    fresh = commands.add_parser("fresh-target", help="登记并分阶段准备、初始化和复核一个 fresh 目标")
-    fresh.add_argument("--workspace", type=Path, required=True)
-    fresh.add_argument("--operation", choices=("prepare", "resume-prepare", "initialize", "resume-initialize", "reconcile-preflight", "verify", "status"), required=True)
-    fresh.add_argument("--request", type=Path)
-    fresh.add_argument("--environment", type=Path)
-    fresh.add_argument("--storage-run", type=Path)
-    fresh.add_argument("--observation-dir", type=Path)
-    fresh.add_argument("--write", action="store_true")
     recover = commands.add_parser("recover", help="核实死亡控制进程后回收明确的本地锁，不恢复写入")
     recover.add_argument("--owner-binding", type=Path, required=True,
                          help="当前目录锁 owner 或明确 controller-NNNN 阶段持久收据的路径与摘要绑定")
@@ -77,7 +146,7 @@ def add_commands(commands) -> None:
         command.add_argument("--run-dir", type=Path, required=True)
     for command in (register, stage, recover, copy_recover, bridge, post):
         command.add_argument("--write", action="store_true", required=True)
-    for command in (register, check, stage, runtime, recover, copy_recover, bridge, post, seed, storage, cache, maintenance, fresh):
+    for command in (register, check, stage, runtime, recover, copy_recover, bridge, post, seed, storage, cache, maintenance):
         command.add_argument("--backend-dir", type=Path, required=True)
 
 

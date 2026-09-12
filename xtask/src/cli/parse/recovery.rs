@@ -2,6 +2,9 @@ use std::path::{Path, PathBuf};
 
 use super::super::model::{CliError, FullStackCommand, RecoveryCommand};
 
+#[path = "recovery/fresh_target.rs"]
+mod fresh_target;
+
 pub(super) fn parse_recovery(args: &[String]) -> Result<RecoveryCommand, CliError> {
     let Some((stage, rest)) = args.split_first() else {
         return Err(CliError::new("check recovery 缺少明确阶段"));
@@ -46,7 +49,7 @@ pub(super) fn parse_recovery(args: &[String]) -> Result<RecoveryCommand, CliErro
             ],
         )
         .map(RecoveryCommand::Clone),
-        "fresh-target" => Ok(RecoveryCommand::FreshTarget(rest.to_vec())),
+        "fresh-target" => fresh_target::parse(rest).map(RecoveryCommand::FreshTarget),
         "fixture" => parse_fixture(rest).map(RecoveryCommand::Fixture),
         "full-stack" => parse_full_stack(rest).map(RecoveryCommand::FullStack),
         "monitoring" => parse_monitoring(rest).map(RecoveryCommand::Monitoring),

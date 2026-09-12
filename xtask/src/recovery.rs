@@ -2,14 +2,19 @@ use std::path::Path;
 
 use crate::{
     Result,
-    cli::{FullStackCommand, RecoveryCommand},
+    cli::{FreshTargetCommand, FreshTargetOptions, FullStackCommand, RecoveryCommand},
     process::{run_owned, run_owned_with_env},
     workspace::root_dir,
 };
 
+const FRESH_TARGET_PROTOCOL_ENV: &str = "RYFRAME_XTASK_RECOVERY_FRESH_TARGET";
+
 pub(crate) fn run(command: &RecoveryCommand, frontend_dir: &Path) -> Result<()> {
     if let RecoveryCommand::FullStack(command) = command {
         return run_full_stack(command);
+    }
+    if let RecoveryCommand::FreshTarget(command) = command {
+        return run_fresh_target(command);
     }
     let (program, forwarded) = recovery_command(command, frontend_dir)?;
     let mut command = Vec::with_capacity(forwarded.len() + 1);
@@ -55,13 +60,10 @@ pub(crate) fn recovery_command(
             "scripts/devex_clone.py",
             with_paths(arguments, &backend, None)?,
         )),
-        RecoveryCommand::FreshTarget(arguments) => {
-            let mut forwarded = arguments.clone();
-            forwarded.insert(0, "fresh-target".to_owned());
-            Ok((
-                "scripts/devex_clone.py",
-                with_paths(&forwarded, &backend, None)?,
-            ))
+        RecoveryCommand::FreshTarget(_) => {
+            Err("fresh-target 必须通过版本化私有协议执行，不能透传 argv"
+                .to_owned()
+                .into())
         }
         RecoveryCommand::Fixture(arguments) => {
             if arguments.first().map(String::as_str) == Some("environment") {
@@ -131,6 +133,45 @@ pub(crate) fn recovery_command(
             with_paths(arguments, &backend, None)?,
         )),
     }
+}
+
+fn run_fresh_target(command: &FreshTargetCommand) -> Result<()> {
+    let FreshTargetCommand::Run(options) = command else {
+        println!(
+            "cargo xtask check recovery fresh-target --workspace <.local-tests 子目录> \
+             --operation <prepare|resume-prepare|initialize|resume-initialize|reconcile-preflight|verify|status> \
+             [阶段参数] [--write]"
+        );
+        return Ok(());
+    };
+    let payload = fresh_target_protocol(options)?;
+    run_owned_with_env(
+        &root_dir(),
+        "python",
+        &strings(&["-B", "scripts/devex_clone.py"]),
+        &[(FRESH_TARGET_PROTOCOL_ENV, payload)],
+    )
+}
+
+pub(crate) fn fresh_target_protocol(options: &FreshTargetOptions) -> Result<String> {
+    let path = |value: &Path| path_argument(value, "fresh-target 路径");
+    let optional_path = |value: &Option<std::path::PathBuf>| -> Result<Option<String>> {
+        value.as_deref().map(path).transpose()
+    };
+    Ok(serde_json::to_string(&serde_json::json!({
+        "format_version": 1,
+        "kind": "ryframe-xtask-recovery-fresh-target",
+        "request": {
+            "backend_dir": path(&root_dir())?,
+            "operation": options.operation.as_str(),
+            "workspace": path(&options.workspace)?,
+            "request": optional_path(&options.request)?,
+            "environment": optional_path(&options.environment)?,
+            "storage_run": optional_path(&options.storage_run)?,
+            "observation_dir": optional_path(&options.observation_dir)?,
+            "write": options.write,
+        }
+    }))?)
 }
 
 fn run_full_stack(command: &FullStackCommand) -> Result<()> {

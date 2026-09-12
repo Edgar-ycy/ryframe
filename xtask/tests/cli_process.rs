@@ -631,6 +631,101 @@ fn recovery_help_uses_the_actual_stage_parser_without_creating_requested_output(
 }
 
 #[test]
+fn fresh_target_rejects_invalid_public_arguments_before_any_write() {
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join(".local-tests/fresh-target-cli-process-未创建")
+        .to_string_lossy()
+        .into_owned();
+    assert!(!std::path::Path::new(&workspace).exists());
+    let command = |values: &[&str]| values.iter().map(ToString::to_string).collect::<Vec<_>>();
+    let invalid = [
+        command(&[
+            "check",
+            "recovery",
+            "fresh-target",
+            "--workspace",
+            &workspace,
+            "--operation",
+            "status",
+            "--write",
+        ]),
+        command(&[
+            "check",
+            "recovery",
+            "fresh-target",
+            "--workspace",
+            &workspace,
+            "--operation",
+            "prepare",
+            "--write",
+        ]),
+        command(&[
+            "check",
+            "recovery",
+            "fresh-target",
+            "--workspace",
+            &workspace,
+            "--workspace",
+            &workspace,
+            "--operation",
+            "status",
+        ]),
+        command(&[
+            "check",
+            "recovery",
+            "fresh-target",
+            "--workspace",
+            &workspace,
+            "--operation",
+            "status",
+            "--unknown",
+        ]),
+        command(&[
+            "check",
+            "recovery",
+            "fresh-target",
+            "--workspace",
+            &workspace,
+            "--operation",
+        ]),
+    ];
+    for arguments in invalid {
+        let result = xtask_command().args(&arguments).output().unwrap();
+        assert_eq!(result.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&result.stderr).contains("参数错误："));
+        assert!(!std::path::Path::new(&workspace).exists());
+    }
+
+    let status = xtask_command()
+        .env("PYTHONIOENCODING", "utf-8")
+        .args([
+            "check",
+            "recovery",
+            "fresh-target",
+            "--workspace",
+            &workspace,
+            "--operation",
+            "status",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        status.status.success(),
+        "{}",
+        String::from_utf8_lossy(&status.stderr)
+    );
+    let stdout = String::from_utf8(status.stdout).unwrap();
+    assert!(stdout.contains("fresh_target_unregistered"));
+    assert!(
+        !stdout.contains(&workspace),
+        "路径不应作为 argv 出现在进程日志中"
+    );
+    assert!(!std::path::Path::new(&workspace).exists());
+}
+
+#[test]
 fn build_plan_preserves_effective_parameters_without_spawning_or_writing() {
     let missing_frontend = std::env::temp_dir().join(format!(
         "ryframe-build-plan-{}-不存在 空格",

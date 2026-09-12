@@ -1,7 +1,9 @@
 use std::path::Path;
 
-use super::cli::{FullStackCommand, RecoveryCommand};
-use super::recovery::{full_stack_environment, recovery_command};
+use super::cli::{
+    FreshTargetCommand, FreshTargetOperation, FreshTargetOptions, FullStackCommand, RecoveryCommand,
+};
+use super::recovery::{fresh_target_protocol, full_stack_environment, recovery_command};
 
 fn strings(values: &[&str]) -> Vec<String> {
     values.iter().map(ToString::to_string).collect()
@@ -143,35 +145,31 @@ fn restore_input_plans_use_the_private_generator() {
 }
 
 #[test]
-fn fresh_target_uses_the_private_state_machine_with_the_current_backend() {
-    let (script, forwarded) = recovery_command(
-        &RecoveryCommand::FreshTarget(strings(&[
-            "--workspace",
-            "D:/隔离 target",
-            "--operation",
-            "status",
-        ])),
-        Path::new("unused"),
-    )
-    .unwrap();
-    assert_eq!(script, "scripts/devex_clone.py");
+fn fresh_target_uses_a_versioned_private_protocol_without_forwarded_argv() {
+    let root = super::workspace::root_dir();
+    let options = FreshTargetOptions {
+        operation: FreshTargetOperation::Status,
+        workspace: root.join(".local-tests/隔离 target"),
+        request: None,
+        environment: None,
+        storage_run: None,
+        observation_dir: None,
+        write: false,
+    };
+    let document: serde_json::Value =
+        serde_json::from_str(&fresh_target_protocol(&options).unwrap()).unwrap();
+    assert_eq!(document["format_version"], 1);
+    assert_eq!(document["kind"], "ryframe-xtask-recovery-fresh-target");
+    assert_eq!(document["request"]["operation"], "status");
+    assert_eq!(document["request"]["write"], false);
     assert_eq!(
-        forwarded,
-        strings(&[
-            "fresh-target",
-            "--workspace",
-            "D:/隔离 target",
-            "--operation",
-            "status",
-            "--backend-dir",
-        ])
-        .into_iter()
-        .chain([super::workspace::root_dir().display().to_string()])
-        .collect::<Vec<_>>(),
+        document["request"]["workspace"],
+        options.workspace.to_str().unwrap()
     );
+    assert!(document["request"]["request"].is_null());
     assert!(
         recovery_command(
-            &RecoveryCommand::FreshTarget(strings(&["--backend-dir", "other"])),
+            &RecoveryCommand::FreshTarget(FreshTargetCommand::Run(options)),
             Path::new("unused"),
         )
         .is_err()
@@ -581,12 +579,6 @@ fn forwarded_recovery_scripts_exist_in_checkout() {
         RecoveryCommand::FullStack(FullStackCommand::Collect),
         RecoveryCommand::Monitoring(strings(&["status", "--binding", "binding.json"])),
         RecoveryCommand::DatasetPrepare(strings(&["--plan", "reference.json"])),
-        RecoveryCommand::FreshTarget(strings(&[
-            "--operation",
-            "status",
-            "--workspace",
-            "D:/target",
-        ])),
     ] {
         let (script, _) = recovery_command(&command, Path::new("unused")).unwrap();
         assert!(

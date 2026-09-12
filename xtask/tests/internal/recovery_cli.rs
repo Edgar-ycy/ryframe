@@ -1,4 +1,7 @@
-use super::cli::{CheckCommand, CliError, Command, FullStackCommand, RecoveryCommand, parse};
+use super::cli::{
+    CheckCommand, CliError, Command, FreshTargetCommand, FreshTargetOperation, FreshTargetOptions,
+    FullStackCommand, RecoveryCommand, parse,
+};
 
 fn strings(values: &[&str]) -> Vec<String> {
     values.iter().map(ToString::to_string).collect()
@@ -34,24 +37,30 @@ fn parses_recovery_check_groups() {
     }
     assert!(parse_command(&["check", "recovery", "runtime", "restart"]).is_err());
     assert!(parse_command(&["check", "recovery", "source", "quiesce"]).is_err());
-    assert!(matches!(
+    let workspace = super::workspace::root_dir().join(".local-tests/隔离 target");
+    assert_eq!(
         parse_command(&[
             "check",
             "recovery",
             "fresh-target",
             "--workspace",
-            "D:/隔离 target",
+            ".local-tests/隔离 target",
             "--operation",
             "status",
-        ]),
-        Ok(Command::Check(CheckCommand::Recovery(RecoveryCommand::FreshTarget(arguments))))
-            if arguments == strings(&[
-                "--workspace",
-                "D:/隔离 target",
-                "--operation",
-                "status",
-            ])
-    ));
+        ])
+        .unwrap(),
+        Command::Check(CheckCommand::Recovery(RecoveryCommand::FreshTarget(
+            FreshTargetCommand::Run(FreshTargetOptions {
+                operation: FreshTargetOperation::Status,
+                workspace,
+                request: None,
+                environment: None,
+                storage_run: None,
+                observation_dir: None,
+                write: false,
+            })
+        )))
+    );
     assert_eq!(
         parse_command(&[
             "check",
@@ -77,6 +86,90 @@ fn parses_recovery_check_groups() {
         ["check", "recovery", "missing"].as_slice(),
     ] {
         assert!(parse_command(values).is_err());
+    }
+}
+
+#[test]
+fn fresh_target_owns_arguments_and_write_policy_in_the_rust_parser() {
+    let valid = [
+        "check",
+        "recovery",
+        "fresh-target",
+        "--workspace",
+        ".local-tests/fresh target",
+        "--operation",
+        "prepare",
+        "--request",
+        ".local-tests/request.json",
+        "--environment",
+        ".local-tests/environment.json",
+        "--storage-run",
+        ".local-tests/storage run",
+        "--write",
+    ];
+    let parsed = parse_command(&valid).unwrap();
+    let Command::Check(CheckCommand::Recovery(RecoveryCommand::FreshTarget(
+        FreshTargetCommand::Run(options),
+    ))) = parsed
+    else {
+        panic!("fresh-target 应解析为结构化请求");
+    };
+    assert_eq!(options.operation, FreshTargetOperation::Prepare);
+    assert!(options.write);
+    assert!(options.workspace.is_absolute());
+    assert!(options.request.unwrap().is_absolute());
+
+    for invalid in [
+        vec![
+            "--workspace",
+            ".local-tests/a",
+            "--operation",
+            "status",
+            "--write",
+        ],
+        vec![
+            "--workspace",
+            ".local-tests/a",
+            "--operation",
+            "prepare",
+            "--write",
+        ],
+        vec![
+            "--workspace",
+            ".local-tests/a",
+            "--operation",
+            "verify",
+            "--write",
+        ],
+        vec!["--workspace", ".local-tests/a", "--operation", "initialize"],
+        vec!["--workspace", ".local-tests/a", "--operation", "unknown"],
+        vec![
+            "--workspace",
+            ".local-tests/a",
+            "--operation",
+            "status",
+            "--unknown",
+        ],
+        vec![
+            "--workspace",
+            ".local-tests/a",
+            "--workspace",
+            ".local-tests/b",
+            "--operation",
+            "status",
+        ],
+        vec!["--workspace", ".local-tests/a", "--operation"],
+        vec!["--workspace", "outside", "--operation", "status"],
+        vec![
+            "--workspace",
+            ".local-tests/../outside",
+            "--operation",
+            "status",
+        ],
+    ] {
+        let mut command = strings(&["check", "recovery", "fresh-target"]);
+        command.extend(invalid.into_iter().map(ToOwned::to_owned));
+        assert!(parse(command).is_err());
     }
 }
 

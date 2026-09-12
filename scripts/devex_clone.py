@@ -165,7 +165,29 @@ def verify_plan(backend: Path, filename: str) -> dict:
 
 
 def main(argv=None) -> int:
-    from devex_clone_run_cli import COMMANDS, add_commands, dispatch
+    from devex_clone_run_cli import (
+        COMMANDS, FRESH_TARGET_PROTOCOL_ENV, FreshTargetProtocolError,
+        add_commands, decode_fresh_target_protocol, dispatch,
+    )
+
+    protocol = os.environ.pop(FRESH_TARGET_PROTOCOL_ENV, None)
+    actual_argv = sys.argv[1:] if argv is None else list(argv)
+    if protocol is not None:
+        if actual_argv:
+            print("fresh-target 私有协议不接受 argv", file=sys.stderr)
+            return 2
+        try:
+            backend, args = decode_fresh_target_protocol(protocol)
+        except FreshTargetProtocolError as error:
+            print(f"fresh-target 私有协议无效：{error}", file=sys.stderr)
+            return 2
+        try:
+            backend = backend.resolve(strict=True)
+            print(json.dumps(dispatch(args, backend), ensure_ascii=False))
+            return 0
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            print(f"开发复制未完成：{type(error).__name__}", file=sys.stderr)
+            return 1
 
     parser = argparse.ArgumentParser(description=__doc__, epilog="plan/verify 仅检查离线计划；stage 每次只执行明确阶段，未知写入先 reconcile 后 resume。调度处置未完成时 Worker 必须保持停止；本工具的复制结果不代表正式恢复通过。")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -178,7 +200,7 @@ def main(argv=None) -> int:
     for command in (prepare, verify):
         command.add_argument("--backend-dir", required=True, type=Path)
     add_commands(commands)
-    args = parser.parse_args(argv)
+    args = parser.parse_args(actual_argv)
     try:
         backend = args.backend_dir.resolve(strict=True)
         if args.command in COMMANDS:

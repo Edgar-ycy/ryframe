@@ -49,11 +49,53 @@ pub(crate) enum RecoveryCommand {
     Runtime(Vec<String>),
     Source(Vec<String>),
     Clone(Vec<String>),
-    FreshTarget(Vec<String>),
+    FreshTarget(FreshTargetCommand),
     Fixture(Vec<String>),
     FullStack(FullStackCommand),
     Monitoring(Vec<String>),
     DatasetPrepare(Vec<String>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FreshTargetCommand {
+    Help,
+    Run(FreshTargetOptions),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FreshTargetOperation {
+    Prepare,
+    ResumePrepare,
+    Initialize,
+    ResumeInitialize,
+    ReconcilePreflight,
+    Verify,
+    Status,
+}
+
+impl FreshTargetOperation {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Prepare => "prepare",
+            Self::ResumePrepare => "resume-prepare",
+            Self::Initialize => "initialize",
+            Self::ResumeInitialize => "resume-initialize",
+            Self::ReconcilePreflight => "reconcile-preflight",
+            Self::Verify => "verify",
+            Self::Status => "status",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FreshTargetOptions {
+    pub(crate) operation: FreshTargetOperation,
+    pub(crate) workspace: PathBuf,
+    pub(crate) request: Option<PathBuf>,
+    pub(crate) environment: Option<PathBuf>,
+    pub(crate) storage_run: Option<PathBuf>,
+    pub(crate) observation_dir: Option<PathBuf>,
+    pub(crate) write: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
