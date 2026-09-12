@@ -110,6 +110,8 @@ mod process_tests;
 mod recovery_cli_tests;
 #[path = "internal/recovery.rs"]
 mod recovery_tests;
+#[path = "internal/release.rs"]
+mod release_tests;
 #[path = "internal/resource_gate_cargo_surface.rs"]
 mod resource_gate_cargo_surface_tests;
 #[path = "internal/resource_gate.rs"]

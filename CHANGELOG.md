@@ -46,6 +46,7 @@
 
 ### Changed
 
+- 发布来源与远端 CI 证据核验分别收敛到 `cargo xtask check release source|ci` 的统一任务图；参数在启动 Python 或访问 GitHub 前完成严格类型校验，全栈源码组合的记录与复核也不再由 workflow 直接调用私有脚本。
 - CI 部署来源与镜像门禁改由 `cargo xtask check ci security deployment source|image` 的同一任务图执行；部署变更判定失败关闭，静态、Compose、Nginx 与 Prometheus 校验不再被 preflight 或 workflow 重复调用，workflow 只保留固定工具环境和必要的生产镜像构建。
 - CI 供应链来源门禁改由 `cargo xtask check ci security source` 的同一任务图顺序执行策略、RustSec 与依赖来源检查；security job 覆盖 push 及全部 pull request 动作，preflight 不再重复执行同一供应链策略。
 - Required 汇总门禁改由 `cargo xtask check ci required` 复用同一 CI job 与计划输出定义，严格解析 GitHub `needs` 后核对动态门禁结果；删除重复的 Python 规则实现。

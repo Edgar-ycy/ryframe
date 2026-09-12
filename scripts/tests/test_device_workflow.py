@@ -34,12 +34,19 @@ class DeviceWorkflowTests(unittest.TestCase):
         self.assertLess(record, generate)
         self.assertLess(generate, prepare)
         record_command = self.steps["记录本次全栈源码组合"]["run"]
-        self.assertIn("--backend-dir backend", record_command)
-        self.assertIn("--frontend-dir frontend", record_command)
+        self.assertIn("cargo xtask check release ci record-pair", record_command)
+        self.assertIn("--output", record_command)
+        self.assertIn('--frontend-dir "$GITHUB_WORKSPACE/frontend"', record_command)
+        self.assertEqual(
+            self.steps["记录本次全栈源码组合"]["working-directory"], "backend"
+        )
         verify_command = self.steps["复核全栈源码组合未变化"]["run"]
-        self.assertIn("--verify-pair", verify_command)
-        self.assertIn("--backend-dir backend", verify_command)
-        self.assertIn("--frontend-dir frontend", verify_command)
+        self.assertIn("cargo xtask check release ci verify-pair", verify_command)
+        self.assertIn("--input", verify_command)
+        self.assertIn('--frontend-dir "$GITHUB_WORKSPACE/frontend"', verify_command)
+        self.assertEqual(
+            self.steps["复核全栈源码组合未变化"]["working-directory"], "backend"
+        )
         self.assertLess(
             names.index("构建并验收生产前端"),
             names.index("复核全栈源码组合未变化"),

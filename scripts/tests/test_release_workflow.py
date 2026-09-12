@@ -72,8 +72,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
         steps = workflow("release.yml")["jobs"]["validate-release"]["steps"]
         by_name = {step["name"]: step for step in steps}
         command = by_name["Validate release inputs"]["run"]
-        self.assertIn("cargo xtask check release", command)
-        self.assertIn("--frontend-dir frontend", command)
+        self.assertIn("cargo xtask check release source", command)
+        self.assertIn('--frontend-dir "$GITHUB_WORKSPACE/frontend"', command)
         self.assertNotIn("python scripts/validate_release.py", command)
         self.assertEqual(
             by_name["固定发布核验 Python 3.12"]["with"]["python-version"],
@@ -84,6 +84,41 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 "dtolnay/rust-toolchain@"
             )
         )
+        dependency = by_name["安装固定并校验哈希的发布核验 Python 依赖"]["run"]
+        self.assertIn("--require-hashes", dependency)
+        self.assertIn("scripts/requirements-ci.txt", dependency)
+
+    def test_release_ci_and_source_pair_use_typed_xtask_entries(self):
+        workflows = {
+            name: workflow(name) for name in ("release.yml", "extended-ci.yml")
+        }
+        all_runs = "\n".join(
+            str(step.get("run", ""))
+            for document in workflows.values()
+            for job in document["jobs"].values()
+            for step in job.get("steps", [])
+        )
+        self.assertNotRegex(
+            all_runs,
+            r"python\s+(?:backend/)?scripts/(?:validate_release|verify_release_ci)\.py",
+        )
+        self.assertEqual(all_runs.count("cargo xtask check release source"), 1)
+        self.assertEqual(all_runs.count("cargo xtask check release ci"), 4)
+
+        extended = {
+            step["name"]: step
+            for step in workflows["extended-ci.yml"]["jobs"]["full-stack-e2e"]["steps"]
+        }
+        record = extended["记录本次全栈源码组合"]
+        verify = extended["复核全栈源码组合未变化"]
+        self.assertEqual(record["working-directory"], "backend")
+        self.assertEqual(verify["working-directory"], "backend")
+        self.assertIn("cargo xtask check release ci record-pair", record["run"])
+        self.assertIn("--output", record["run"])
+        self.assertIn("cargo xtask check release ci verify-pair", verify["run"])
+        self.assertIn("--input", verify["run"])
+        for step in (record, verify):
+            self.assertIn('--frontend-dir "$GITHUB_WORKSPACE/frontend"', step["run"])
 
     def test_extended_browser_commands_bind_fixture_and_server_explicitly(self):
         steps = {
@@ -131,7 +166,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "Purge custom assets from target release", "Create source-only GitHub release",
         })
         self.assertEqual(ci + 1, writes[0][0])
-        self.assertIn("scripts/verify_release_ci.py", steps[ci]["run"])
+        self.assertIn("cargo xtask check release ci", steps[ci]["run"])
+        self.assertNotIn("scripts/verify_release_ci.py", steps[ci]["run"])
         self.assertNotIn("Confirm tag refs immediately before publishing", names)
         self.assertNotIn("ls-remote", "\n".join(str(step.get("run", "")) for step in steps))
         self.assertEqual(

@@ -2,6 +2,10 @@ use std::{collections::BTreeMap, fmt, path::PathBuf};
 
 use crate::devex;
 
+#[path = "model/release.rs"]
+mod release;
+pub(crate) use release::*;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Cli {
     pub(crate) frontend_dir: PathBuf,
@@ -24,7 +28,7 @@ pub(crate) enum CheckCommand {
     Doctor,
     Ci(CiCommand),
     Perf(devex::DevexCommand),
-    Release(ReleaseOptions),
+    Release(ReleaseCommand),
     Recovery(RecoveryCommand),
 }
 
@@ -277,16 +281,6 @@ impl CheckScope {
             _ => Err(CliError::new("--scope 只允许 all、backend 或 frontend")),
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ReleaseOptions {
-    pub(crate) tag: String,
-    pub(crate) backend_repository: String,
-    pub(crate) backend_commit: String,
-    pub(crate) frontend_repository: String,
-    pub(crate) frontend_commit: String,
-    pub(crate) manifest_path: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

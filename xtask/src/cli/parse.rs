@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, path::PathBuf};
+use std::path::PathBuf;
 
 use crate::{devex, workspace::default_frontend_dir};
 
@@ -8,9 +8,12 @@ use super::model::*;
 mod ci;
 #[path = "parse/recovery.rs"]
 mod recovery;
+#[path = "parse/release.rs"]
+mod release;
 
 use ci::parse_ci;
 use recovery::parse_recovery;
+use release::parse_release;
 
 pub(crate) fn parse(mut args: Vec<String>) -> Result<Cli, CliError> {
     let frontend_dir = take_unique_option(&mut args, "--frontend-dir")?
@@ -54,6 +57,9 @@ pub(crate) fn parse(mut args: Vec<String>) -> Result<Cli, CliError> {
         "data" => Command::Data(parse_data(&args)?),
         _ => return Err(CliError::new(format!("未知命令：{command_name}"))),
     };
+    if matches!(command, Command::Check(CheckCommand::Release(_))) && !frontend_dir.is_absolute() {
+        return Err(CliError::new("发布核验的 --frontend-dir 必须是绝对路径"));
+    }
     Ok(Cli {
         frontend_dir,
         command,
@@ -306,28 +312,6 @@ fn parse_maintenance_args(
     Ok(args.to_vec())
 }
 
-fn parse_release(args: &[String]) -> Result<ReleaseOptions, CliError> {
-    let values = named_options(
-        args,
-        &[
-            "--tag",
-            "--backend-repository",
-            "--backend-commit",
-            "--frontend-repository",
-            "--frontend-commit",
-            "--manifest-path",
-        ],
-    )?;
-    Ok(ReleaseOptions {
-        tag: required_named(&values, "--tag")?,
-        backend_repository: required_named(&values, "--backend-repository")?,
-        backend_commit: required_named(&values, "--backend-commit")?,
-        frontend_repository: required_named(&values, "--frontend-repository")?,
-        frontend_commit: required_named(&values, "--frontend-commit")?,
-        manifest_path: required_named(&values, "--manifest-path")?,
-    })
-}
-
 fn parse_migration(args: &[String]) -> Result<MigrationCommand, CliError> {
     let Some(operation) = args.first() else {
         return Err(CliError::new(migration_usage()));
@@ -445,33 +429,6 @@ fn take_unique_option(args: &mut Vec<String>, option: &str) -> Result<Option<Str
     }
     args.remove(position);
     Ok(Some(args.remove(position)))
-}
-
-fn named_options(args: &[String], allowed: &[&str]) -> Result<BTreeMap<String, String>, CliError> {
-    let mut values = BTreeMap::new();
-    let mut index = 0;
-    while index < args.len() {
-        let option = args[index].as_str();
-        if !allowed.contains(&option) {
-            return Err(CliError::new(format!("未知参数：{option}")));
-        }
-        let value = args
-            .get(index + 1)
-            .filter(|value| !value.trim().is_empty() && !value.starts_with('-'))
-            .ok_or_else(|| CliError::new(format!("{option} 缺少取值")))?;
-        if values.insert(option.to_owned(), value.clone()).is_some() {
-            return Err(CliError::new(format!("{option} 不能重复")));
-        }
-        index += 2;
-    }
-    Ok(values)
-}
-
-fn required_named(values: &BTreeMap<String, String>, option: &str) -> Result<String, CliError> {
-    values
-        .get(option)
-        .cloned()
-        .ok_or_else(|| CliError::new(format!("缺少必需参数 {option}")))
 }
 
 fn require_empty(args: &[String], usage: &str) -> Result<(), CliError> {

@@ -81,6 +81,16 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: 安装固定并校验哈希的发布核验 Python 依赖
+        run: >-
+          python -m pip install
+          --disable-pip-version-check
+          --force-reinstall
+          --no-deps
+          --only-binary=:all:
+          --require-hashes
+          --requirement scripts/requirements-ci.txt
+
       - name: 安装发布核验 Rust 工具链
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
 
@@ -92,9 +102,9 @@ jobs:
           set -euo pipefail
           backend_commit="$(git rev-parse "${RELEASE_TAG}^{commit}")"
           frontend_commit="$(git -C frontend rev-parse "${RELEASE_TAG}^{commit}")"
-          cargo xtask check release \
+          cargo xtask check release source \
             --tag "$RELEASE_TAG" \
-            --frontend-dir frontend \
+            --frontend-dir "$GITHUB_WORKSPACE/frontend" \
             --backend-repository "$BACKEND_REPOSITORY" \
             --backend-commit "$backend_commit" \
             --frontend-repository "$FRONTEND_REPOSITORY" \
@@ -122,7 +132,7 @@ jobs:
           BACKEND_SHA: ${{ steps.release.outputs.backend_commit }}
           FRONTEND_SHA: ${{ steps.release.outputs.frontend_commit }}
         run: >-
-          python scripts/verify_release_ci.py
+          cargo xtask check release ci
           --backend-repository "$GITHUB_REPOSITORY"
           --frontend-repository "$FRONTEND_REPOSITORY"
           --backend-sha "$BACKEND_SHA"
@@ -163,6 +173,24 @@ jobs:
           ref: ${{ needs.validate-release.outputs.frontend_commit }}
           fetch-depth: 0
           path: frontend
+
+      - name: 固定最终发布核验 Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: 安装固定并校验哈希的最终发布核验 Python 依赖
+        run: >-
+          python -m pip install
+          --disable-pip-version-check
+          --force-reinstall
+          --no-deps
+          --only-binary=:all:
+          --require-hashes
+          --requirement scripts/requirements-ci.txt
+
+      - name: 安装最终发布核验 Rust 工具链
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
 
       - name: Revalidate tag objects
         shell: bash
@@ -219,7 +247,7 @@ jobs:
           BACKEND_TAG_OID: ${{ needs.validate-release.outputs.backend_tag_oid }}
           FRONTEND_TAG_OID: ${{ needs.validate-release.outputs.frontend_tag_oid }}
         run: >-
-          python scripts/verify_release_ci.py
+          cargo xtask check release ci
           --backend-repository "$GITHUB_REPOSITORY"
           --frontend-repository "$FRONTEND_REPOSITORY"
           --backend-sha "$BACKEND_SHA"

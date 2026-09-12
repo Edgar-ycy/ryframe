@@ -785,35 +785,6 @@ fn data_groups_migrations_and_explicit_maintenance() {
 }
 
 #[test]
-fn release_values_must_be_nonempty_and_cannot_consume_options() {
-    let arguments = [
-        "check",
-        "release",
-        "--tag",
-        "v0.12.1",
-        "--backend-repository",
-        "owner/backend",
-        "--backend-commit",
-        "HEAD",
-        "--frontend-repository",
-        "owner/frontend",
-        "--frontend-commit",
-        "HEAD",
-        "--manifest-path",
-        "target/evidence.json",
-    ];
-    assert!(matches!(
-        parse_command(&arguments),
-        Ok(Command::Check(CheckCommand::Release(_)))
-    ));
-    for value in ["", " ", "-q", "--unknown"] {
-        let mut invalid = arguments;
-        invalid[3] = value;
-        assert!(parse_command(&invalid).is_err(), "无效值：{value:?}");
-    }
-}
-
-#[test]
 fn global_frontend_dir_can_follow_command_arguments() {
     let cli = parse(strings(&[
         "check",

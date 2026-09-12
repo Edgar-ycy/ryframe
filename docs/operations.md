@@ -221,7 +221,7 @@ scrape_configs:
 
 ## 发布门禁排障
 
-协调版本 tag 同时触发双方日常 CI 和 Extended CI。后端的 core 与 Device 全栈任务均检出配套前端 tag，产物内记录双方精确 SHA、run ID 和 attempt；Device 产物另附从干净源码生成隔离工作树的收据。Release 在校验阶段和实际创建 Release 前分别检查四组最新运行、两套全栈产物及必需 job；缺失、失败、取消、超时、错误 SHA、跳过必需 job 或最新重跑未成功都会阻断发布。
+协调版本 tag 同时触发双方日常 CI 和 Extended CI。后端的 core 与 Device 全栈任务均检出配套前端 tag，产物内记录双方精确 SHA、run ID 和 attempt；Device 产物另附从干净源码生成隔离工作树的收据。Release 通过 `cargo xtask check release source` 核对双端 tag、版本与契约来源，通过 `cargo xtask check release ci` 在校验阶段和实际创建 Release 前分别检查四组最新运行、两套全栈产物及必需 job；缺失、失败、取消、超时、错误 SHA、跳过必需 job 或最新重跑未成功都会阻断发布。两个入口都先核验固定 Python 环境，并支持 `--plan` 只查看实际任务图。
 
 检查 Release 保存的 `release-ci-evidence.json` 与 `release-final-evidence.json`，按其中 run ID 和 attempt 定位失败。默认总等待上限为 5400 秒，GitHub API 分页和单次调用共享截止时间。修复后对同一目标源码重跑相应 CI，再重新运行 Release；不移动已有 tag，也不以其他提交的成功结果替代。发布资产仍为 GitHub 源码归档。
 

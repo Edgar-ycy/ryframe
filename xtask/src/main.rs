@@ -83,7 +83,7 @@ fn dispatch_check(command: CheckCommand, frontend_dir: &std::path::Path) -> Resu
         CheckCommand::Doctor => doctor::run(frontend_dir),
         CheckCommand::Ci(command) => ci::run(command, frontend_dir),
         CheckCommand::Perf(command) => devex::run(&command, frontend_dir),
-        CheckCommand::Release(options) => release::verify(&options, frontend_dir),
+        CheckCommand::Release(command) => release::run(&command, frontend_dir),
         CheckCommand::Recovery(command) => recovery::run(&command, frontend_dir),
     }
 }

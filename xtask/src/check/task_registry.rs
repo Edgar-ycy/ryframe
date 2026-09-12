@@ -90,6 +90,8 @@ pub(crate) enum TaskExecutor {
     CiDeploymentNginx,
     CiDeploymentPrometheus,
     CiDeploymentImage,
+    ReleaseSource,
+    ReleaseCi,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,6 +131,8 @@ macro_rules! task_definition {
 
 #[path = "task_registry/ci.rs"]
 mod ci;
+#[path = "task_registry/release.rs"]
+mod release;
 
 const CHECK_TASKS: [TaskDefinition; 18] = [
     task_definition!(
@@ -371,7 +375,7 @@ const CHECK_TASKS: [TaskDefinition; 18] = [
     ),
 ];
 
-const TASK_COUNT: usize = CHECK_TASKS.len() + ci::TASKS.len();
+const TASK_COUNT: usize = CHECK_TASKS.len() + ci::TASKS.len() + release::TASKS.len();
 
 const fn task_registry() -> [TaskDefinition; TASK_COUNT] {
     let mut registry = [CHECK_TASKS[0]; TASK_COUNT];
@@ -385,6 +389,12 @@ const fn task_registry() -> [TaskDefinition; TASK_COUNT] {
         registry[index] = ci::TASKS[ci_index];
         index += 1;
         ci_index += 1;
+    }
+    let mut release_index = 0;
+    while release_index < release::TASKS.len() {
+        registry[index] = release::TASKS[release_index];
+        index += 1;
+        release_index += 1;
     }
     registry
 }

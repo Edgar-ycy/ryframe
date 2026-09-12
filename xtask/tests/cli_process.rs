@@ -62,6 +62,8 @@ fn invalid_public_arguments_exit_two_before_running_tasks() {
         ["check", "ci", "required"].as_slice(),
         ["check", "ci", "security"].as_slice(),
         ["check", "ci", "security", "source", "extra"].as_slice(),
+        ["check", "release"].as_slice(),
+        ["check", "release", "--tag", "v0.12.1"].as_slice(),
         [
             "check",
             "ci",
@@ -116,6 +118,120 @@ fn invalid_public_arguments_exit_two_before_running_tasks() {
         assert!(String::from_utf8_lossy(&result.stderr).contains("参数错误"));
         assert!(result.stdout.is_empty());
     }
+}
+
+#[test]
+fn invalid_release_values_exit_two_before_running_tasks() {
+    let output = std::env::temp_dir().join("release-cli-invalid.json");
+    let output = output.to_string_lossy().into_owned();
+    let common = [
+        "check",
+        "release",
+        "ci",
+        "--backend-repository",
+        "owner/backend",
+        "--frontend-repository",
+        "owner/frontend",
+        "--backend-sha",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "--frontend-sha",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "--tag",
+        "v0.12.1",
+        "--timeout",
+        "5400",
+        "--output",
+        output.as_str(),
+    ];
+    for (index, invalid) in [
+        (4, "owner/backend/extra"),
+        (4, "_owner/backend"),
+        (8, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+        (8, "0000000000000000000000000000000000000000"),
+        (12, "v01.2.3"),
+        (12, "v1.2.3-rc.1"),
+        (14, "0"),
+        (14, "not-a-timeout"),
+        (14, "14401"),
+        (16, "relative.json"),
+    ] {
+        let mut arguments = common;
+        arguments[index] = invalid;
+        let result = invoke(&arguments);
+        assert_eq!(result.status.code(), Some(2), "参数：{arguments:?}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("参数错误"));
+        assert!(result.stdout.is_empty());
+    }
+    let unpaired_oid = [
+        common.as_slice(),
+        [
+            "--backend-tag-oid",
+            "cccccccccccccccccccccccccccccccccccccccc",
+        ]
+        .as_slice(),
+    ]
+    .concat();
+    let result = invoke(&unpaired_oid);
+    assert_eq!(result.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("参数错误"));
+
+    let relative_frontend = [
+        common.as_slice(),
+        ["--frontend-dir", "relative-frontend"].as_slice(),
+    ]
+    .concat();
+    let result = invoke(&relative_frontend);
+    assert_eq!(result.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&result.stderr).contains("参数错误"));
+}
+
+#[test]
+fn release_plan_uses_registered_tasks_without_spawning_or_writing() {
+    let output = std::env::temp_dir().join(format!(
+        "ryframe-release-plan-{}-不存在/source.json",
+        std::process::id()
+    ));
+    assert!(!output.parent().unwrap().exists());
+    let missing_frontend = std::env::temp_dir().join(format!(
+        "ryframe-release-frontend-{}-不存在",
+        std::process::id()
+    ));
+    let result = xtask_command()
+        .args([
+            "check",
+            "release",
+            "source",
+            "--tag",
+            "v0.12.1",
+            "--backend-repository",
+            "owner/backend",
+            "--backend-commit",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--frontend-repository",
+            "owner/frontend",
+            "--frontend-commit",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "--manifest-path",
+            output.to_str().unwrap(),
+            "--frontend-dir",
+            missing_frontend.to_str().unwrap(),
+            "--plan",
+        ])
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(result.stderr.is_empty());
+    let stdout = String::from_utf8(result.stdout).unwrap();
+    assert!(stdout.contains("发布核验计划：source"), "{stdout}");
+    assert!(stdout.contains("任务 python.environment"), "{stdout}");
+    assert!(stdout.contains("任务 release.source"), "{stdout}");
+    assert!(!output.parent().unwrap().exists());
+    assert!(!missing_frontend.exists());
 }
 
 #[test]
@@ -429,6 +545,9 @@ fn check_help_lists_every_supported_performance_operation() {
     let output = String::from_utf8(result.stdout).unwrap();
     assert!(output.contains("check perf run|paired|summarize|compare"));
     assert!(output.contains("check ci security report <cyclonedx|trivy> --input <绝对文件>"));
+    assert!(output.contains("check release source --tag <tag>"));
+    assert!(output.contains("check release ci --backend-repository <owner/repo>"));
+    assert!(output.contains("check release ci record-pair --output <绝对文件>"));
 }
 
 #[test]

@@ -238,13 +238,6 @@ jobs:
           ref: ${{ steps.frontend-ref.outputs.ref }}
           path: frontend
 
-      - name: 记录本次全栈源码组合
-        run: >-
-          python backend/scripts/verify_release_ci.py
-          --record-pair "$RUNNER_TEMP/ryframe-full-stack/source-pair.json"
-          --backend-dir backend
-          --frontend-dir frontend
-
       - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
 
@@ -259,6 +252,13 @@ jobs:
           restore-keys: |
             v3-rust-${{ runner.os }}-${{ runner.arch }}-full-stack-
             v3-rust-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: 记录本次全栈源码组合
+        working-directory: backend
+        run: >-
+          cargo xtask check release ci record-pair
+          --output "$RUNNER_TEMP/ryframe-full-stack/source-pair.json"
+          --frontend-dir "$GITHUB_WORKSPACE/frontend"
 
       - name: 安装 Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
@@ -317,11 +317,11 @@ jobs:
           corepack pnpm check --stage browser --real --fixture "${{ matrix.fixture }}" --server preview
 
       - name: 复核全栈源码组合未变化
+        working-directory: backend
         run: >-
-          python backend/scripts/verify_release_ci.py
-          --verify-pair "$RUNNER_TEMP/ryframe-full-stack/source-pair.json"
-          --backend-dir backend
-          --frontend-dir frontend
+          cargo xtask check release ci verify-pair
+          --input "$RUNNER_TEMP/ryframe-full-stack/source-pair.json"
+          --frontend-dir "$GITHUB_WORKSPACE/frontend"
 
       - name: 收集进程与基础设施日志
         if: ${{ always() }}

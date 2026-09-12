@@ -117,11 +117,15 @@ pub(crate) fn render_plan(plan: &CheckTaskPlan) {
             print_selection(selection);
         }
     }
-    if plan.task_plan.tasks.is_empty() {
+    render_task_plan(&plan.task_plan);
+}
+
+pub(crate) fn render_task_plan(plan: &TaskPlan) {
+    if plan.tasks.is_empty() {
         println!("任务图为空：当前范围仅有文档变更或没有变更。");
         return;
     }
-    for task in &plan.task_plan.tasks {
+    for task in &plan.tasks {
         let definition = task.definition();
         let dependencies = if task.dependencies.is_empty() {
             "无".to_owned()

@@ -71,8 +71,8 @@ pub(crate) use model::{
 };
 #[allow(unused_imports)]
 pub(crate) use plan::{
-    CheckPlanMode, CheckTaskPlan, build_task_plan, plan, select_check_mode, tasks_for,
-    validate_plan,
+    CheckPlanMode, CheckTaskPlan, build_task_plan, plan, render_task_plan, select_check_mode,
+    tasks_for, validate_plan,
 };
 #[allow(unused_imports)]
 pub(crate) use policy_tasks::{
