@@ -2,10 +2,10 @@ use std::path::{Path, PathBuf};
 
 use super::super::model::{CliError, FullStackCommand, RecoveryCommand};
 
-#[path = "recovery/fresh_target.rs"]
-mod fresh_target;
 #[path = "recovery/fixture_runtime.rs"]
 mod fixture_runtime;
+#[path = "recovery/fresh_target.rs"]
+mod fresh_target;
 use fixture_runtime::parse_fixture_runtime;
 
 pub(super) fn parse_recovery(args: &[String]) -> Result<RecoveryCommand, CliError> {
