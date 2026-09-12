@@ -49,6 +49,7 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
             },
             "tools": {
                 "mysql": tool,
+                "mysqldump": tool,
                 "aws": tool,
                 "rustfs": tool,
                 "redis_server": {

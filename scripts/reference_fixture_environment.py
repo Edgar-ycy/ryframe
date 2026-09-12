@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 from devex_clone_capture import read_json, write_json
 from process_environment import Environments, configured
 from devex_clone_model import linked, local_path
-from devex_clone_target_binding import KEYS, validate_review
+from devex_clone_target_binding import KEYS, REVIEW_FILE_TOOLS, REVIEW_TOOLS, validate_review
 from devex_clone_tools import verify as verify_tools
 from full_stack_runtime import configuration_digest
 from reference_fixture_paths import service_run
@@ -84,7 +84,7 @@ def _preflight(review: dict, run=subprocess.run) -> dict:
     validate_review(structural)
     tools = review["tools"]
     observed = {}
-    for name in ("mysql", "aws", "rustfs"):
+    for name in REVIEW_FILE_TOOLS:
         item = tools[name]
         path = Path(item["path"])
         if not path.is_absolute() or linked(path) or not path.is_file() or file_digest(path)["sha256"] != item["sha256"]:
@@ -126,10 +126,9 @@ def _preflight(review: dict, run=subprocess.run) -> dict:
 
 def _preflight_binding(review: dict) -> None:
     value = review.get("preflight")
-    required = ("mysql", "aws", "rustfs", "redis_server", "wsl", "redis_python")
-    if not all(name in review.get("tools", {}) for name in required):
+    if set(review.get("tools", {})) != set(REVIEW_TOOLS):
         raise ValueError("夹具审阅计划缺少当前工具预检收据")
-    expected = {name: review["tools"][name] for name in required}
+    expected = {name: review["tools"][name] for name in REVIEW_TOOLS}
     seed = review["scopes"]["seed"]
     run = service_run(review)
     rustfs = review["services"]["rustfs"]

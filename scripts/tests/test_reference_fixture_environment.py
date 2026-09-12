@@ -1,6 +1,7 @@
 """隔离参考夹具计划不得回退读取历史复制来源。"""
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 import sys
@@ -25,13 +26,17 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(dir=self.backend / ".local-tests")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        tool = self.root / "tool.exe"; tool.write_bytes(b"tool")
+        self.tools = {}
+        for name in environment.REVIEW_FILE_TOOLS:
+            tool = self.root / f"{name}.exe"
+            tool.write_bytes(name.encode())
+            self.tools[name] = tool
         self.wsl = self.root / "wsl.exe"; self.wsl.write_bytes(b"wsl")
         defaults = self.root / "mysql.cnf"; defaults.write_text("[client]", encoding="utf-8")
         self.review = {"kind": "review-only-perf-resource-plan-with-readonly-preflight", "ready_for_execution": True,
                        "reference": {name: {"databases": []} for name in ("source", "protected_target")},
-                       "tools": {name: {"path": str(tool), "sha256": file_digest(tool)["sha256"]}
-                                 for name in ("mysql", "aws", "rustfs")},
+                       "tools": {name: {"path": str(self.tools[name]), "sha256": file_digest(self.tools[name])["sha256"]}
+                                 for name in environment.REVIEW_FILE_TOOLS},
                        "services": {"rustfs": {"api": "http://127.0.0.1:29200", "console": "http://127.0.0.1:29201", "data_dir": str(self.root / "data")},
                                     "redis": {"directory": str(self.root / "redis")}}, "scopes": {}}
         self.review["tools"]["redis_server"] = {"distribution": "Ubuntu", "resolved_path": "/usr/bin/redis-server", "sha256": "a" * 64}
@@ -52,7 +57,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.fixture = {"format_version": 1, "fixture": "device", "status": "ready", "sources": {"backend": {"head": "a" * 40}, "frontend": {"head": "b" * 40}},
                         "paths": {"backend": str(self.root / "device-backend"), "frontend": str(self.root / "device-frontend")}}
         self.maintenance = {"format_version": 1, "kind": "devex-clone-tool-build", "resources_modified": False, "artifacts":
-                            {key: {"executable": str(tool)} for key in ("reset", "migrate", "tenant-data")}}
+                            {key: {"executable": str(self.tools["mysql"])} for key in ("reset", "migrate", "tenant-data")}}
 
     def test_plan_is_read_only_and_excludes_historical_data(self):
         result = environment.plan(self.backend, self.write("review.json", self.review), self.write("fixture.json", self.fixture), self.write("build.json", self.maintenance))
@@ -107,7 +112,33 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
             str(Path(result["future_root"]) / "service-run/rustfs/process.json"),
         )
         self.assertEqual(result["preflight"]["status"], "verified")
+        self.assertEqual(set(result["preflight"]["tools"]), set(environment.REVIEW_TOOLS))
+        environment._preflight_binding(result)
+        missing_dump = copy.deepcopy(result)
+        del missing_dump["preflight"]["tools"]["mysqldump"]
+        with self.assertRaisesRegex(ValueError, "预检"):
+            environment._preflight_binding(missing_dump)
         self.assertNotIn("preflight", self.review)
+
+    def test_revalidate_rejects_mysqldump_drift_before_publishing(self):
+        review = self.write("drift-review.json", self.review)
+        output = self.root / "drift-ready.json"
+        self.tools["mysqldump"].write_bytes(b"changed")
+        with patch.object(environment.shutil, "which") as which, self.assertRaisesRegex(ValueError, "mysqldump"):
+            environment.revalidate(self.backend, review, output)
+        which.assert_not_called()
+        self.assertFalse(output.exists())
+
+    def test_review_requires_mysqldump_but_accepts_historical_extra_tools(self):
+        for name in (*environment.REVIEW_FILE_TOOLS, "redis_server"):
+            with self.subTest(missing=name):
+                value = copy.deepcopy(self.review)
+                del value["tools"][name]
+                with self.assertRaisesRegex(ValueError, "工具"):
+                    environment.validate_review(value)
+        extra = copy.deepcopy(self.review)
+        extra["tools"]["legacy-wrapper"] = {"path": "unused", "sha256": "f" * 64}
+        environment.validate_review(extra)
 
     def test_revalidate_can_promote_a_structurally_valid_pending_plan(self):
         self.review["ready_for_execution"] = False

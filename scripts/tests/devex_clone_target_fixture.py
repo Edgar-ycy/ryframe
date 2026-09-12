@@ -30,7 +30,7 @@ class Fixture:
         )
         self.scope, self.uuid = "perf-seed-fixture", "67cd8d4a-fe90-11ef-98fd-5847ca786499"
         self.paths = {}
-        for role in ("mysql", "aws", "rustfs", "wsl", "reset", "migrate", "tenant-data"):
+        for role in ("mysql", "mysqldump", "aws", "rustfs", "wsl", "reset", "migrate", "tenant-data"):
             p = self.local / (role + ".exe"); p.write_bytes(role.encode()); self.paths[role] = p
         self.configuration = root / "config"; self.configuration.mkdir()
         (self.configuration / "app.toml").write_text('[app]\nhost="127.0.0.1"\nport=18210\n[database]\nreplicas=[]\nsources=[]\n[database.primary]\nhost="127.0.0.1"\nport=3306\ndatabase="fresh_seed_control"\nusername="root"\npassword="db-secret"\ntls_mode="disabled"\n[object_storage]\nbackend="rustfs"\nendpoint="http://127.0.0.1:29200"\nregion="us-east-1"\naccess_key="access"\nsecret_key="secret"\nuse_ssl=false\n', encoding="utf-8")
@@ -40,7 +40,7 @@ class Fixture:
                        "reference": {role: {"databases": [{"server_uuid": self.uuid, "database": "protected_" + role}]}
                                      for role in ("source", "protected_target")},
                        "tools": {role: {"path": str(self.paths[role]), "sha256": file_digest(self.paths[role])["sha256"]}
-                                 for role in ("mysql", "aws", "rustfs")}}
+                                 for role in binding.REVIEW_FILE_TOOLS}}
         self.review["tools"]["redis_server"] = {"distribution": "Ubuntu-24.04", "resolved_path": "/usr/bin/redis-server", "sha256": "9" * 64}
         for role in ("seed", "base", "candidate"):
             scope = "perf-" + role + "-fixture"

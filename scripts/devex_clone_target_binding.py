@@ -22,6 +22,9 @@ from source_inventory import snapshot
 KEYS = {"shared-control": ("combined", "shared"), "shared": ("tenant", "shared"),
         "dedicated-a": ("tenant", "dedicated"), "dedicated-b": ("tenant", "dedicated")}
 EXCLUSIVE = {"mysql_exclusive", "redis_exclusive", "object_storage_exclusive"}
+REVIEW_FILE_TOOLS = ("mysql", "mysqldump", "aws", "rustfs")
+REVIEW_SUPERVISOR_TOOLS = ("redis_server", "wsl", "redis_python")
+REVIEW_TOOLS = (*REVIEW_FILE_TOOLS, *REVIEW_SUPERVISOR_TOOLS)
 
 
 def validate_review(review: dict) -> None:
@@ -37,7 +40,7 @@ def validate_review(review: dict) -> None:
         raise ValueError("审阅计划必须完整声明三侧资源")
     if not isinstance(tools, dict) or not isinstance(services, dict):
         raise ValueError("审阅计划缺少工具或服务定义")
-    for role in ("mysql", "aws", "rustfs"):
+    for role in REVIEW_FILE_TOOLS:
         tool = tools.get(role)
         if not isinstance(tool, dict) or not isinstance(tool.get("path"), str) or not isinstance(tool.get("sha256"), str):
             raise ValueError("审阅计划工具定义无效")

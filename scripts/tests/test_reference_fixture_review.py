@@ -35,6 +35,7 @@ class ReferenceFixtureReviewTests(unittest.TestCase):
             "reference": {"source": {"databases": []}, "protected_target": {"databases": []}},
             "tools": {
                 "mysql": {"path": "C:/tools/mysql.exe", "sha256": "a" * 64},
+                "mysqldump": {"path": "C:/tools/mysqldump.exe", "sha256": "e" * 64},
                 "aws": {"path": "C:/tools/aws.exe", "sha256": "b" * 64},
                 "rustfs": {"path": "C:/tools/rustfs.exe", "sha256": "c" * 64},
                 "redis_server": {"distribution": "Ubuntu", "resolved_path": "/usr/bin/redis-server", "sha256": "d" * 64},
