@@ -6,22 +6,26 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from full_stack_migration_backup import export_target, register_sql, verify_artifact
-from full_stack_migration_gate import validate_selection
-from full_stack_migration_history_sql import (
-    SHIFT_HOURS,
-    shift_sql,
-    snapshot_sql,
-    validate_snapshot,
-    verify_shift,
-)
-from full_stack_migration_mysql import MysqlSession, bindings, ownership
-from full_stack_runtime import verify_runtime
-from full_stack_worker import worker_identity
+from reference_fixture_control_protocol import run_private
+
+if TYPE_CHECKING:
+    from full_stack_migration_mysql import MysqlSession
 
 
 WRITE_OPERATIONS = frozenset({"historical-expired", "export-backup"})
+PROTOCOL_SCHEMAS = {
+    "inspect": (("runtime_dir", "tenant", "migration"), (), False),
+    "plan-history": (("runtime_dir", "tenant", "migration"), (), False),
+    "historical-expired": (
+        ("runtime_dir", "tenant", "migration", "plan_sha256"),
+        (),
+        True,
+    ),
+    "export-backup": (("runtime_dir", "tenant", "migration"), (), True),
+    "verify-cleaned": (("runtime_dir", "tenant", "migration"), (), False),
+}
 
 
 def validate_write_intent(operation: str, write: bool) -> None:
@@ -67,6 +71,8 @@ def write_evidence(path: Path, value: dict) -> None:
 
 
 def assert_history(directory: Path, contract: dict, row: dict) -> dict:
+    from full_stack_migration_history_sql import verify_shift
+
     history = json.loads(
         (directory / f"device-history-{row['migration_id']}.json").read_text(
             encoding="utf-8"
@@ -82,6 +88,8 @@ def assert_history(directory: Path, contract: dict, row: dict) -> dict:
 
 
 def history_plan(contract: dict, row: dict) -> dict:
+    from full_stack_migration_history_sql import SHIFT_HOURS, validate_snapshot
+
     row = validate_snapshot([row], contract["tenant_id"], contract["migration_id"])
     if not 167 * 3600 <= row["remaining_seconds"] <= 168 * 3600:
         raise ValueError("仅允许本次刚完成、保留期尚未结束的迁移构造历史 fixture")
@@ -107,6 +115,8 @@ def history_plan(contract: dict, row: dict) -> dict:
 
 
 def plan_history(session: MysqlSession, query: str, contract: dict) -> dict:
+    from full_stack_migration_history_sql import validate_snapshot
+
     row = validate_snapshot(
         session.execute(query), contract["tenant_id"], contract["migration_id"]
     )
@@ -121,6 +131,8 @@ def apply_history(
     contract: dict,
     plan_sha256: str,
 ) -> dict:
+    from full_stack_migration_history_sql import shift_sql, validate_snapshot, verify_shift
+
     planned = plan_history(session, query, contract)
     if planned["plan_sha256"] != plan_sha256:
         raise ValueError("历史 fixture plan 与当前精确任务或时间事实不匹配，拒绝写入")
@@ -145,6 +157,9 @@ def backup_history(
     directory: Path,
     contract: dict,
 ) -> dict:
+    from full_stack_migration_backup import export_target, register_sql, verify_artifact
+    from full_stack_migration_history_sql import validate_snapshot
+
     row = validate_snapshot(
         session.execute(query), contract["tenant_id"], contract["migration_id"]
     )
@@ -195,6 +210,9 @@ def backup_history(
 def verify_cleaned(
     session: MysqlSession, query: str, directory: Path, contract: dict
 ) -> dict:
+    from full_stack_migration_backup import verify_artifact
+    from full_stack_migration_history_sql import validate_snapshot
+
     row = validate_snapshot(
         session.execute(query),
         contract["tenant_id"],
@@ -228,6 +246,12 @@ def run(
     migration: str,
     plan_sha256: str | None = None,
 ) -> dict:
+    from full_stack_migration_gate import validate_selection
+    from full_stack_migration_history_sql import snapshot_sql
+    from full_stack_migration_mysql import MysqlSession, bindings, ownership
+    from full_stack_runtime import verify_runtime
+    from full_stack_worker import worker_identity
+
     if operation not in {
         "inspect",
         "verify-cleaned",
@@ -288,8 +312,8 @@ def run(
         raise ValueError("未知历史 fixture 操作")
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+def main(arguments: list[str]) -> None:
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument(
         "operation",
         choices=(
@@ -306,7 +330,7 @@ def main() -> None:
     parser.add_argument("--migration", required=True)
     parser.add_argument("--plan-sha256")
     parser.add_argument("--write", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(arguments)
     try:
         validate_write_intent(args.operation, args.write)
     except ValueError as error:
@@ -327,4 +351,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(
+        run_private("retention", PROTOCOL_SCHEMAS, main, positional_operation=True)
+    )

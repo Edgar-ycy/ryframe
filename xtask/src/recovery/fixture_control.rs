@@ -15,6 +15,8 @@ mod artifact;
 mod environment;
 #[path = "fixture_control/request.rs"]
 mod request;
+#[path = "fixture_control/retention.rs"]
+mod retention;
 #[path = "fixture_control/review.rs"]
 mod review;
 #[path = "fixture_control/services.rs"]
@@ -62,6 +64,10 @@ pub(crate) fn private_invocation_at(
         FixtureControlCommand::Environment(command) => (
             "scripts/reference_fixture_environment.py",
             environment::fields(command, root)?,
+        ),
+        FixtureControlCommand::Retention(command) => (
+            "scripts/full_stack_migration_history.py",
+            retention::fields(command, root)?,
         ),
         FixtureControlCommand::Review(command) => (
             "scripts/reference_fixture_review.py",

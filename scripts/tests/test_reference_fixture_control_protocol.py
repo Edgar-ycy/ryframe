@@ -4,11 +4,13 @@ from pathlib import Path
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import reference_fixture_environment as fixture_environment
 import full_stack_artifacts as fixture_artifact
+import full_stack_migration_history as fixture_retention
 import reference_fixture_request as fixture_request
 import reference_fixture_review as fixture_review
 import reference_fixture_services as fixture_services
@@ -18,6 +20,7 @@ from reference_fixture_control_protocol import (
     FixtureControlProtocolError,
     PROTOCOL_KEY,
     private_arguments,
+    run_private,
 )
 
 
@@ -107,6 +110,19 @@ class FixtureControlProtocolTests(unittest.TestCase):
         self.assertEqual(artifact_args[0], "snapshot")
         self.assertIn("9223372036854775807", artifact_args)
         self.assertIn("--write", artifact_args)
+        retention = self.protocol(
+            "retention", "historical-expired", True,
+            runtime_dir=directory, tenant="tenant-0123abcd", migration="123",
+            plan_sha256="a" * 64,
+        )
+        retention_args = self.arguments(
+            "retention", fixture_retention.PROTOCOL_SCHEMAS, retention,
+            positional=True,
+        )
+        self.assertEqual(retention_args[0], "historical-expired")
+        self.assertIn("123", retention_args)
+        self.assertIn("a" * 64, retention_args)
+        self.assertIn("--write", retention_args)
         successor = self.protocol(
             "successor", "arm-request", False,
             successor=input_path, source_export_result=input_path, workspace=directory,
@@ -206,9 +222,86 @@ class FixtureControlProtocolTests(unittest.TestCase):
                     positional=True,
                 )
 
+    def test_retention_protocol_rejects_invalid_identity_digest_and_write_policy(self):
+        directory = str(Path(self.root) / ".local-tests" / "run")
+        valid = dict(
+            runtime_dir=directory,
+            tenant="tenant-0123abcd",
+            migration="1",
+        )
+        for migration in (0, "0", "01", "9223372036854775808", "invalid"):
+            raw = self.protocol(
+                "retention", "inspect", False, **{**valid, "migration": migration}
+            )
+            with self.subTest(migration=migration), self.assertRaisesRegex(
+                FixtureControlProtocolError, "正 i64"
+            ):
+                self.arguments(
+                    "retention", fixture_retention.PROTOCOL_SCHEMAS, raw,
+                    positional=True,
+                )
+        for tenant in ("tenant-0123ABCD", "tenant-0123abc", "other-0123abcd"):
+            raw = self.protocol(
+                "retention", "inspect", False, **{**valid, "tenant": tenant}
+            )
+            with self.subTest(tenant=tenant), self.assertRaisesRegex(
+                FixtureControlProtocolError, "tenant"
+            ):
+                self.arguments(
+                    "retention", fixture_retention.PROTOCOL_SCHEMAS, raw,
+                    positional=True,
+                )
+        for digest in ("a" * 63, "A" * 64, "g" * 64):
+            raw = self.protocol(
+                "retention", "historical-expired", True,
+                **{**valid, "plan_sha256": digest},
+            )
+            with self.subTest(digest=digest), self.assertRaisesRegex(
+                FixtureControlProtocolError, "小写十六进制"
+            ):
+                self.arguments(
+                    "retention", fixture_retention.PROTOCOL_SCHEMAS, raw,
+                    positional=True,
+                )
+        for operation, write in (("inspect", True), ("export-backup", False)):
+            raw = self.protocol("retention", operation, write, **valid)
+            with self.subTest(operation=operation), self.assertRaisesRegex(
+                FixtureControlProtocolError, "写入授权"
+            ):
+                self.arguments(
+                    "retention", fixture_retention.PROTOCOL_SCHEMAS, raw,
+                    positional=True,
+                )
+        relative = self.protocol(
+            "retention", "inspect", False, **{**valid, "runtime_dir": "relative"}
+        )
+        with self.assertRaisesRegex(FixtureControlProtocolError, "绝对路径"):
+            self.arguments(
+                "retention", fixture_retention.PROTOCOL_SCHEMAS, relative,
+                positional=True,
+            )
+        missing_plan = self.protocol(
+            "retention", "historical-expired", True, **valid
+        )
+        with self.assertRaisesRegex(FixtureControlProtocolError, "字段不完整"):
+            self.arguments(
+                "retention", fixture_retention.PROTOCOL_SCHEMAS, missing_plan,
+                positional=True,
+            )
+        unexpected_plan = self.protocol(
+            "retention", "inspect", False,
+            **{**valid, "plan_sha256": "a" * 64},
+        )
+        with self.assertRaisesRegex(FixtureControlProtocolError, "未知字段"):
+            self.arguments(
+                "retention", fixture_retention.PROTOCOL_SCHEMAS, unexpected_plan,
+                positional=True,
+            )
+
     def test_all_direct_python_programs_reject_argv_before_business_logic(self):
         scripts = [
             "full_stack_artifacts.py",
+            "full_stack_migration_history.py",
             "prepare_full_stack_fixture.py",
             "reference_fixture_environment.py",
             "reference_fixture_review.py",
@@ -232,6 +325,35 @@ class FixtureControlProtocolTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("protocol_error", result.stderr)
+
+    def test_retention_protocol_is_removed_before_business_dispatch(self):
+        directory = str(Path(self.root) / ".local-tests" / "run")
+        raw = self.protocol(
+            "retention", "inspect", False,
+            runtime_dir=directory, tenant="tenant-0123abcd", migration="1",
+        )
+        observed = []
+
+        def fail_after_protocol(*_args):
+            observed.append(PROTOCOL_KEY in os.environ)
+            raise ValueError("expected fixture failure")
+
+        with (
+            mock.patch.object(fixture_retention, "run", side_effect=fail_after_protocol),
+            mock.patch.object(sys, "argv", ["full_stack_migration_history.py"]),
+            mock.patch.dict(os.environ, {PROTOCOL_KEY: raw}),
+        ):
+            self.assertEqual(
+                run_private(
+                    "retention",
+                    fixture_retention.PROTOCOL_SCHEMAS,
+                    fixture_retention.main,
+                    positional_operation=True,
+                ),
+                1,
+            )
+            self.assertIn(PROTOCOL_KEY, os.environ)
+        self.assertEqual(observed, [False])
 
 
 if __name__ == "__main__":

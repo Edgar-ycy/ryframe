@@ -1,8 +1,9 @@
 use super::cli::{
-    CheckCommand, CliError, CloneCommand, Command, ExistingReferenceSide, FixtureExpectedSources,
-    FixturePrepareCommand, FixturePrepareOptions, FreshTargetCommand, FreshTargetOperation,
-    FreshTargetOptions, FullStackCommand, RecoveryCommand, RecoveryInputsCommand,
-    RecoveryReferenceCommand, ReferencePlanAction, RestoreInputSide, parse,
+    CheckCommand, CliError, CloneCommand, Command, ExistingReferenceSide, FixtureControlCommand,
+    FixtureExpectedSources, FixturePrepareCommand, FixturePrepareOptions, FixtureRetentionCommand,
+    FreshTargetCommand, FreshTargetOperation, FreshTargetOptions, FullStackCommand,
+    RecoveryCommand, RecoveryInputsCommand, RecoveryReferenceCommand, ReferencePlanAction,
+    RestoreInputSide, parse,
 };
 
 fn strings(values: &[&str]) -> Vec<String> {
@@ -585,21 +586,27 @@ fn parses_fixture_generation_and_rejects_ambiguous_sources() {
         command.extend(invalid);
         assert!(parse_command(&command).is_err(), "{command:?}");
     }
-    assert_eq!(
-        parse_command(&[
-            "check",
-            "recovery",
-            "fixture",
-            "retention",
-            "inspect",
-            "--runtime-dir",
-            "D:/验收/runtime",
-        ])
-        .unwrap(),
-        Command::Check(CheckCommand::Recovery(RecoveryCommand::Fixture(strings(
-            &["retention", "inspect", "--runtime-dir", "D:/验收/runtime",]
-        ))))
-    );
+    let runtime = fixture.directory.to_string_lossy().into_owned();
+    let parsed = parse_recovery_owned(strings(&[
+        "fixture",
+        "retention",
+        "inspect",
+        "--runtime-dir",
+        &runtime,
+        "--tenant",
+        "tenant-0123abcd",
+        "--migration",
+        "1",
+    ]))
+    .unwrap();
+    assert!(matches!(
+        parsed,
+        RecoveryCommand::FixtureControl(command)
+            if matches!(
+                *command,
+                FixtureControlCommand::Retention(FixtureRetentionCommand::Inspect(_))
+            )
+    ));
 }
 
 #[test]

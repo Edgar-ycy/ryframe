@@ -133,17 +133,13 @@ pub(crate) fn recovery_command(
                     "source-pair",
                     "successor",
                     "services",
+                    "retention",
                 ]
                 .contains(&value.as_str())
             }) {
                 Err("fixture 控制子域不能通过未解析参数绕过版本化私有协议"
                     .to_owned()
                     .into())
-            } else if arguments.first().map(String::as_str) == Some("retention") {
-                Ok((
-                    "scripts/full_stack_migration_history.py",
-                    with_paths(&arguments[1..], &backend, None)?,
-                ))
             } else if arguments.first().map(String::as_str) == Some("dataset") {
                 Ok((
                     "scripts/reference_fixture_dataset.py",

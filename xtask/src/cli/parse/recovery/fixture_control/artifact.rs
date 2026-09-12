@@ -3,7 +3,7 @@ use crate::{
     local_test_path::LocalTestPathKind,
 };
 
-use super::{ParsedOptions, output_file, reject_write};
+use super::{ParsedOptions, output_file, positive_i64, reject_write};
 
 const OPTIONS: &[&str] = &["--runtime-dir", "--job-id", "--receipt"];
 
@@ -39,18 +39,7 @@ fn parse_options(args: &[String], snapshot: bool) -> Result<FixtureArtifactOptio
     };
     Ok(FixtureArtifactOptions {
         runtime_dir: options.path("--runtime-dir", LocalTestPathKind::ExistingDirectory)?,
-        job_id: positive_i64(options.require("--job-id")?)?,
+        job_id: positive_i64(options.require("--job-id")?, "--job-id")?,
         receipt,
     })
-}
-
-fn positive_i64(value: &str) -> Result<i64, CliError> {
-    if value.starts_with('0') || !value.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(CliError::new("--job-id 必须是正 i64 十进制整数"));
-    }
-    value
-        .parse::<i64>()
-        .ok()
-        .filter(|value| *value > 0)
-        .ok_or_else(|| CliError::new("--job-id 必须是正 i64 十进制整数"))
 }

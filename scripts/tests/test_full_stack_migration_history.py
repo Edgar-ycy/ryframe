@@ -13,6 +13,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import full_stack_migration_backup as backup
 import full_stack_migration_history as history
 import full_stack_migration_history_sql as sql
+import full_stack_migration_mysql as migration_mysql
+import full_stack_runtime as runtime
+import full_stack_worker as worker
 
 TENANT, MIGRATION = "tenant-0123abcd", "123456789"
 CONTRACT = {
@@ -247,7 +250,7 @@ class HistoryTests(unittest.TestCase):
             [],
         ]
         with mock.patch.object(
-            history, "export_target", side_effect=ValueError("导出失败")
+            backup, "export_target", side_effect=ValueError("导出失败")
         ):
             with self.assertRaisesRegex(ValueError, "导出失败"):
                 history.backup_history(
@@ -275,7 +278,7 @@ class HistoryTests(unittest.TestCase):
         )
         session = mock.Mock()
         session.execute.side_effect = [[after], [{"count": 0}], []]
-        with mock.patch.object(history, "export_target") as export:
+        with mock.patch.object(backup, "export_target") as export:
             with self.assertRaisesRegex(ValueError, "精确写入 fence"):
                 history.backup_history(
                     session,
@@ -308,7 +311,7 @@ class HistoryTests(unittest.TestCase):
                 "restored": False,
             }
 
-        with mock.patch.object(history, "export_target", side_effect=exported):
+        with mock.patch.object(backup, "export_target", side_effect=exported):
             result = history.backup_history(
                 session,
                 "control_test",
@@ -323,9 +326,9 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(session.execute.call_args.args, ("COMMIT",))
 
     def test_runtime_or_worker_mismatch_never_connects_to_database(self):
-        with mock.patch.object(history, "MysqlSession") as connect:
+        with mock.patch.object(migration_mysql, "MysqlSession") as connect:
             with mock.patch.object(
-                history, "verify_runtime", side_effect=ValueError("APP_ENV=test")
+                runtime, "verify_runtime", side_effect=ValueError("APP_ENV=test")
             ):
                 with self.assertRaisesRegex(ValueError, "APP_ENV=test"):
                     history.run(
@@ -338,10 +341,10 @@ class HistoryTests(unittest.TestCase):
                     )
             with (
                 mock.patch.object(
-                    history, "verify_runtime", return_value={"scope_id": "test"}
+                    runtime, "verify_runtime", return_value={"scope_id": "test"}
                 ),
                 mock.patch.object(
-                    history, "worker_identity", return_value={"pid": 123}
+                    worker, "worker_identity", return_value={"pid": 123}
                 ),
             ):
                 with self.assertRaisesRegex(ValueError, "停止"):

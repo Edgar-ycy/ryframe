@@ -9,9 +9,9 @@ use serde_json::Value;
 use super::{
     cli::{
         CheckCommand, Command, FixtureArtifactCommand, FixtureControlCommand,
-        FixtureEnvironmentCommand, FixtureRequestCommand, FixtureReviewCommand,
-        FixtureServicesCommand, FixtureSourcePairCommand, FixtureSuccessorCommand, RecoveryCommand,
-        parse,
+        FixtureEnvironmentCommand, FixtureRequestCommand, FixtureRetentionCommand,
+        FixtureReviewCommand, FixtureServicesCommand, FixtureSourcePairCommand,
+        FixtureSuccessorCommand, RecoveryCommand, parse,
     },
     recovery::fixture_control::private_invocation_at,
     workspace::root_dir,
@@ -60,6 +60,17 @@ impl Fixture {
             text(&self.input_two),
             "--maintenance-build".to_owned(),
             text(&self.input),
+        ]
+    }
+
+    fn retention_options(&self) -> Vec<String> {
+        vec![
+            "--runtime-dir".to_owned(),
+            text(&self.controlled_dir),
+            "--tenant".to_owned(),
+            "tenant-0123abcd".to_owned(),
+            "--migration".to_owned(),
+            "9223372036854775807".to_owned(),
         ]
     }
 }
@@ -194,6 +205,123 @@ fn rejects_invalid_artifact_identifiers_writes_and_path_contracts() {
         .is_err()
     );
     assert!(parse_control(command("artifact", Some("snapshot"), Vec::new())).is_err());
+}
+
+#[test]
+fn parses_retention_operations_and_serializes_private_values() {
+    let fixture = Fixture::new();
+    for (operation, expected_write) in [
+        ("inspect", false),
+        ("plan-history", false),
+        ("verify-cleaned", false),
+        ("export-backup", true),
+    ] {
+        let mut values = fixture.retention_options();
+        if expected_write {
+            values.push("--write".to_owned());
+        }
+        let command = parse_control(command("retention", Some(operation), values)).unwrap();
+        assert!(matches!(
+            command,
+            FixtureControlCommand::Retention(FixtureRetentionCommand::Inspect(_))
+                | FixtureControlCommand::Retention(FixtureRetentionCommand::PlanHistory(_))
+                | FixtureControlCommand::Retention(FixtureRetentionCommand::VerifyCleaned(_))
+                | FixtureControlCommand::Retention(FixtureRetentionCommand::ExportBackup(_))
+        ));
+        let invocation = private_invocation_at(&command, &root_dir()).unwrap();
+        assert_eq!(invocation.script, "scripts/full_stack_migration_history.py");
+        let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
+        assert_eq!(protocol["domain"], "retention");
+        assert_eq!(protocol["operation"], operation);
+        assert_eq!(protocol["runtime_dir"], text(&fixture.controlled_dir));
+        assert_eq!(protocol["tenant"], "tenant-0123abcd");
+        assert_eq!(protocol["migration"], "9223372036854775807");
+        assert_eq!(protocol["write"], expected_write);
+        assert!(protocol.get("arguments").is_none());
+    }
+
+    let mut historical = fixture.retention_options();
+    historical.extend([
+        "--plan-sha256".to_owned(),
+        "a".repeat(64),
+        "--write".to_owned(),
+    ]);
+    let command =
+        parse_control(command("retention", Some("historical-expired"), historical)).unwrap();
+    assert!(matches!(
+        command,
+        FixtureControlCommand::Retention(FixtureRetentionCommand::HistoricalExpired { .. })
+    ));
+    let invocation = private_invocation_at(&command, &root_dir()).unwrap();
+    let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
+    assert_eq!(protocol["plan_sha256"], "a".repeat(64));
+    assert_eq!(protocol["write"], true);
+}
+
+#[test]
+fn retention_rejects_ambiguous_unsafe_or_incomplete_arguments() {
+    let fixture = Fixture::new();
+    let common = fixture.retention_options();
+    let mut cases = Vec::new();
+    cases.push(command(
+        "retention",
+        Some("historical-expired"),
+        common.clone(),
+    ));
+    cases.push(command("retention", Some("export-backup"), common.clone()));
+    let mut readonly_write = common.clone();
+    readonly_write.push("--write".to_owned());
+    cases.push(command("retention", Some("inspect"), readonly_write));
+    let mut unrelated_sha = common.clone();
+    unrelated_sha.extend(["--plan-sha256".to_owned(), "a".repeat(64)]);
+    cases.push(command("retention", Some("plan-history"), unrelated_sha));
+    for tenant in ["tenant-0123ABCd", "tenant-0123abc", "other-0123abcd"] {
+        let mut values = common.clone();
+        values[3] = tenant.to_owned();
+        cases.push(command("retention", Some("inspect"), values));
+    }
+    for migration in ["0", "01", "-1", "9223372036854775808", "invalid"] {
+        let mut values = common.clone();
+        values[5] = migration.to_owned();
+        cases.push(command("retention", Some("inspect"), values));
+    }
+    for digest in ["a".repeat(63), "A".repeat(64), "g".repeat(64)] {
+        let mut values = common.clone();
+        values.extend(["--plan-sha256".to_owned(), digest, "--write".to_owned()]);
+        cases.push(command("retention", Some("historical-expired"), values));
+    }
+    let mut duplicate = common.clone();
+    duplicate.extend(["--migration".to_owned(), "2".to_owned()]);
+    cases.push(command("retention", Some("inspect"), duplicate));
+    let mut unknown = common.clone();
+    unknown.extend(["--unknown".to_owned(), "value".to_owned()]);
+    cases.push(command("retention", Some("inspect"), unknown));
+    let mut relative = common;
+    relative[1] = "relative-runtime".to_owned();
+    cases.push(command("retention", Some("inspect"), relative));
+    cases.push(command(
+        "retention",
+        Some("destroy"),
+        vec!["--help".to_owned()],
+    ));
+    cases.push(command("retention", Some("inspect"), Vec::new()));
+    for arguments in cases {
+        assert!(parse_control(arguments.clone()).is_err(), "{arguments:?}");
+    }
+
+    assert!(matches!(
+        parse_control(command("retention", Some("--help"), Vec::new())).unwrap(),
+        FixtureControlCommand::Retention(FixtureRetentionCommand::Help)
+    ));
+    assert!(matches!(
+        parse_control(command(
+            "retention",
+            Some("historical-expired"),
+            vec!["--help".to_owned()],
+        ))
+        .unwrap(),
+        FixtureControlCommand::Retention(FixtureRetentionCommand::Help)
+    ));
 }
 
 #[test]
@@ -598,6 +726,19 @@ fn rejects_linked_components_before_private_protocol_creation() {
         ],
     );
     assert!(parse_control(artifact).is_err());
+    let retention = command(
+        "retention",
+        Some("inspect"),
+        vec![
+            "--runtime-dir".to_owned(),
+            text(&linked_directory),
+            "--tenant".to_owned(),
+            "tenant-0123abcd".to_owned(),
+            "--migration".to_owned(),
+            "1".to_owned(),
+        ],
+    );
+    assert!(parse_control(retention).is_err());
     fs::remove_dir(linked_directory).unwrap();
 }
 

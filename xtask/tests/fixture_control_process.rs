@@ -70,6 +70,22 @@ impl Fixture {
                 .into_owned(),
         ]
     }
+
+    fn retention_inspect(&self) -> Vec<String> {
+        vec![
+            "check".to_owned(),
+            "recovery".to_owned(),
+            "fixture".to_owned(),
+            "retention".to_owned(),
+            "inspect".to_owned(),
+            "--runtime-dir".to_owned(),
+            self.directory.to_string_lossy().into_owned(),
+            "--tenant".to_owned(),
+            "tenant-0123abcd".to_owned(),
+            "--migration".to_owned(),
+            "123".to_owned(),
+        ]
+    }
 }
 
 impl Drop for Fixture {
@@ -248,4 +264,66 @@ fn artifact_private_process_rejects_conflicting_fixture_protocol_environment() {
         .unwrap();
     assert_eq!(result.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&result.stderr).contains("protocol_error"));
+}
+
+#[test]
+fn retention_request_uses_private_protocol_without_forwarded_values() {
+    let fixture = Fixture::new();
+    let result = invoke(&fixture.retention_inspect());
+    assert_eq!(result.status.code(), Some(1));
+    let stdout = String::from_utf8(result.stdout).unwrap();
+    let stderr = String::from_utf8(result.stderr).unwrap();
+    assert!(
+        stdout.contains("scripts/full_stack_migration_history.py"),
+        "{stdout}"
+    );
+    for private in [
+        "--runtime-dir",
+        "--tenant",
+        "--migration",
+        "tenant-0123abcd",
+        "123",
+    ] {
+        assert!(!stdout.contains(private), "{stdout}");
+    }
+    assert!(
+        stderr.contains("reference_fixture_retention_failed"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("protocol_error"), "{stderr}");
+}
+
+#[test]
+fn retention_invalid_arguments_exit_two_before_python_starts() {
+    let fixture = Fixture::new();
+    let base = fixture.retention_inspect();
+    let mut cases = Vec::new();
+    let mut public_write = base.clone();
+    public_write.push("--write".to_owned());
+    cases.push(public_write);
+    let mut invalid_tenant = base.clone();
+    invalid_tenant[8] = "tenant-0123ABCD".to_owned();
+    cases.push(invalid_tenant);
+    let mut invalid_id = base.clone();
+    invalid_id[10] = "0".to_owned();
+    cases.push(invalid_id);
+    let mut duplicate = base;
+    duplicate.extend(["--migration".to_owned(), "124".to_owned()]);
+    cases.push(duplicate);
+    cases.push(vec![
+        "check".to_owned(),
+        "recovery".to_owned(),
+        "fixture".to_owned(),
+        "retention".to_owned(),
+        "destroy".to_owned(),
+        "--help".to_owned(),
+    ]);
+    for arguments in cases {
+        let result = invoke(&arguments);
+        assert_eq!(result.status.code(), Some(2), "参数：{arguments:?}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("参数错误"));
+        assert!(
+            !String::from_utf8_lossy(&result.stdout).contains("full_stack_migration_history.py")
+        );
+    }
 }

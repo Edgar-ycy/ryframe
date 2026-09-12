@@ -15,6 +15,8 @@ mod artifact;
 mod environment;
 #[path = "fixture_control/request.rs"]
 mod request;
+#[path = "fixture_control/retention.rs"]
+mod retention;
 #[path = "fixture_control/review.rs"]
 mod review;
 #[path = "fixture_control/services.rs"]
@@ -31,6 +33,7 @@ pub(super) fn parse_fixture_control(
     match domain {
         "artifact" => artifact::parse(args).map(FixtureControlCommand::Artifact),
         "environment" => environment::parse(args).map(FixtureControlCommand::Environment),
+        "retention" => retention::parse(args).map(FixtureControlCommand::Retention),
         "review" => review::parse(args).map(FixtureControlCommand::Review),
         "request" => request::parse(args).map(FixtureControlCommand::Request),
         "source-pair" => source_pair::parse(args).map(FixtureControlCommand::SourcePair),
@@ -146,6 +149,17 @@ fn reject_write(options: &ParsedOptions, operation: &str) -> Result<(), CliError
     } else {
         Ok(())
     }
+}
+
+pub(super) fn positive_i64(value: &str, label: &str) -> Result<i64, CliError> {
+    if value.starts_with('0') || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(CliError::new(format!("{label} 必须是正 i64 十进制整数")));
+    }
+    value
+        .parse::<i64>()
+        .ok()
+        .filter(|value| *value > 0)
+        .ok_or_else(|| CliError::new(format!("{label} 必须是正 i64 十进制整数")))
 }
 
 fn parse_side(value: &str, allow_seed: bool) -> Result<FixtureSide, CliError> {

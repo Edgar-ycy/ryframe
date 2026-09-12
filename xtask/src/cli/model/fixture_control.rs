@@ -6,6 +6,9 @@ pub(crate) use artifact::*;
 #[path = "fixture_control/environment.rs"]
 mod environment;
 pub(crate) use environment::*;
+#[path = "fixture_control/retention.rs"]
+mod retention;
+pub(crate) use retention::*;
 #[path = "fixture_control/review.rs"]
 mod review;
 pub(crate) use review::*;
@@ -27,6 +30,9 @@ pub(crate) const FIXTURE_CONTROL_USAGE: &str = concat!(
     "用法：cargo xtask check recovery fixture <子域> <操作与参数>\n",
     "  artifact snapshot --runtime-dir <目录> --job-id <正 i64> --receipt <新文件>\n",
     "  artifact verify-deleted --runtime-dir <目录> --job-id <正 i64> --receipt <文件>\n",
+    "  retention <inspect|plan-history|verify-cleaned> --runtime-dir <目录> --tenant tenant-xxxxxxxx --migration <正 i64>\n",
+    "  retention historical-expired --runtime-dir <目录> --tenant tenant-xxxxxxxx --migration <正 i64> --plan-sha256 <SHA256> --write\n",
+    "  retention export-backup --runtime-dir <目录> --tenant tenant-xxxxxxxx --migration <正 i64> --write\n",
     "  environment plan --review <文件> --fixture <文件> --maintenance-build <文件> [--side seed|base|candidate]\n",
     "  environment prepare --review <文件> --fixture <文件> --maintenance-build <文件> [--side seed|base|candidate] --output <新目录> [--secrets-dir <目录>] --write\n",
     "  environment review --review <文件> --output <新文件> --write\n",
@@ -48,6 +54,7 @@ pub(crate) const FIXTURE_CONTROL_USAGE: &str = concat!(
 pub(crate) enum FixtureControlCommand {
     Artifact(FixtureArtifactCommand),
     Environment(FixtureEnvironmentCommand),
+    Retention(FixtureRetentionCommand),
     Review(FixtureReviewCommand),
     Request(FixtureRequestCommand),
     SourcePair(FixtureSourcePairCommand),
@@ -60,6 +67,7 @@ impl FixtureControlCommand {
         match self {
             Self::Artifact(_) => "artifact",
             Self::Environment(_) => "environment",
+            Self::Retention(_) => "retention",
             Self::Review(_) => "review",
             Self::Request(_) => "request",
             Self::SourcePair(_) => "source-pair",
@@ -72,6 +80,7 @@ impl FixtureControlCommand {
         match self {
             Self::Artifact(command) => command.operation(),
             Self::Environment(command) => command.operation(),
+            Self::Retention(command) => command.operation(),
             Self::Review(command) => command.operation(),
             Self::Request(command) => command.operation(),
             Self::SourcePair(command) => command.operation(),
@@ -84,6 +93,7 @@ impl FixtureControlCommand {
         match self {
             Self::Artifact(command) => command.writes(),
             Self::Environment(command) => command.writes(),
+            Self::Retention(command) => command.writes(),
             Self::Review(command) => command.writes(),
             Self::Request(command) => command.writes(),
             Self::SourcePair(command) => command.writes(),
@@ -97,6 +107,7 @@ impl FixtureControlCommand {
             self,
             Self::Artifact(FixtureArtifactCommand::Help)
                 | Self::Environment(FixtureEnvironmentCommand::Help)
+                | Self::Retention(FixtureRetentionCommand::Help)
                 | Self::Review(FixtureReviewCommand::Help)
                 | Self::Request(FixtureRequestCommand::Help)
                 | Self::SourcePair(FixtureSourcePairCommand::Help)

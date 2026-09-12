@@ -27,7 +27,9 @@ INTEGER_FIELDS = {
     "api_port", "worker_port", "frontend_port", "rustfs_api_port", "rustfs_console_port",
     "redis_port",
 }
-POSITIVE_I64_TEXT_FIELDS = {"job_id"}
+POSITIVE_I64_TEXT_FIELDS = {"job_id", "migration"}
+TENANT_FIELDS = {"tenant"}
+SHA256_FIELDS = {"plan_sha256"}
 
 
 class FixtureControlProtocolError(ValueError):
@@ -128,6 +130,12 @@ def private_arguments(
                 or int(value) > 2**63 - 1
             ):
                 raise FixtureControlProtocolError(f"{name} 必须是按字符串传输的正 i64")
+        elif name in TENANT_FIELDS:
+            if not isinstance(value, str) or not re.fullmatch(r"tenant-[a-f0-9]{8}", value):
+                raise FixtureControlProtocolError(f"{name} 必须符合 tenant-[a-f0-9]{{8}}")
+        elif name in SHA256_FIELDS:
+            if not isinstance(value, str) or not re.fullmatch(r"[a-f0-9]{64}", value):
+                raise FixtureControlProtocolError(f"{name} 必须是 64 位小写十六进制摘要")
         else:
             value = _text(value, name)
         result.extend(("--" + name.replace("_", "-"), value))

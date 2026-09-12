@@ -207,6 +207,7 @@ fn fixture_control_domains_cannot_bypass_typed_private_protocol() {
         "request",
         "successor",
         "services",
+        "retention",
     ] {
         assert!(
             recovery_command(
@@ -216,25 +217,6 @@ fn fixture_control_domains_cannot_bypass_typed_private_protocol() {
             .is_err()
         );
     }
-}
-
-#[test]
-fn fixture_retention_uses_the_registered_runtime_tool() {
-    let backend = super::workspace::root_dir().display().to_string();
-    let arguments = strings(&["plan-history", "--runtime-dir", "D:/验收/runtime"]);
-    let request = std::iter::once("retention".to_owned())
-        .chain(arguments.clone())
-        .collect();
-    let (actual_script, forwarded) =
-        recovery_command(&RecoveryCommand::Fixture(request), Path::new("unused")).unwrap();
-    assert_eq!(actual_script, "scripts/full_stack_migration_history.py");
-    assert_eq!(
-        forwarded,
-        arguments
-            .into_iter()
-            .chain(strings(&["--backend-dir", &backend]))
-            .collect::<Vec<_>>()
-    );
 }
 
 #[test]
@@ -276,7 +258,6 @@ fn fixture_dataset_uses_the_private_device_dataset_adapter() {
 fn forwarded_recovery_scripts_exist_in_checkout() {
     let root = super::workspace::root_dir();
     for command in [
-        RecoveryCommand::Fixture(strings(&["retention", "inspect"])),
         RecoveryCommand::Fixture(strings(&["dataset", "plan"])),
         RecoveryCommand::FullStack(FullStackCommand::Collect),
     ] {

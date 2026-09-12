@@ -6,6 +6,8 @@ from workspace_directory import WorkspaceDirectory
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import full_stack_migration_mysql as migration_mysql
 from test_full_stack_migration_history import (
     CONTRACT,
     MIGRATION,
@@ -180,7 +182,7 @@ class AttemptHistoryTests(unittest.TestCase):
             self.assertIn(expected, statement)
 
     def test_write_without_read_only_plan_never_connects(self):
-        with mock.patch.object(history, "MysqlSession") as connect:
+        with mock.patch.object(migration_mysql, "MysqlSession") as connect:
             with self.assertRaisesRegex(ValueError, "只读 plan"):
                 history.run(
                     "historical-expired",
