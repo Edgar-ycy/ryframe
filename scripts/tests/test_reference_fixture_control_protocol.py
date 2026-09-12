@@ -143,6 +143,7 @@ class FixtureControlProtocolTests(unittest.TestCase):
 
     def test_all_direct_python_programs_reject_argv_before_business_logic(self):
         scripts = [
+            "prepare_full_stack_fixture.py",
             "reference_fixture_environment.py",
             "reference_fixture_review.py",
             "reference_fixture_request.py",

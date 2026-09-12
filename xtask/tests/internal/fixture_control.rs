@@ -240,7 +240,7 @@ fn parses_review_request_and_all_service_operations() {
 }
 
 #[test]
-fn parses_all_successor_operations_and_preview_write_pairs() {
+fn parses_successor_relationship() {
     let fixture = Fixture::new();
     let mut relationship = Vec::new();
     for name in [
@@ -265,7 +265,11 @@ fn parses_all_successor_operations_and_preview_write_pairs() {
         parse_control(command("successor", Some("relationship"), relationship)).unwrap(),
         FixtureControlCommand::Successor(FixtureSuccessorCommand::Relationship(_))
     ));
+}
 
+#[test]
+fn parses_successor_generation_preview_and_write_pairs() {
+    let fixture = Fixture::new();
     let generation = vec![
         "--successor".to_owned(),
         text(&fixture.input),
@@ -341,7 +345,11 @@ fn parses_all_successor_operations_and_preview_write_pairs() {
         "--write".to_owned(),
     ]);
     assert!(parse_control(command("successor", Some("generation-request"), published)).is_ok());
+}
 
+#[test]
+fn parses_successor_arm_request() {
+    let fixture = Fixture::new();
     let arm = vec![
         "--successor".to_owned(),
         text(&fixture.input),

@@ -114,6 +114,8 @@ mod diff_tests;
 mod doctor_tests;
 #[path = "internal/fixture_control.rs"]
 mod fixture_control_tests;
+#[path = "internal/fixture_prepare.rs"]
+mod fixture_prepare_tests;
 #[path = "internal/fixture_runtime.rs"]
 mod fixture_runtime_tests;
 #[path = "internal/migration.rs"]

@@ -15,9 +15,17 @@ from pathlib import Path
 from full_stack_process import write_receipt
 from release_stage import release_stage
 from source_inventory import git, snapshot
+from reference_fixture_control_protocol import run_private
 
 
 COMMIT_PATTERN = re.compile(r"[a-f0-9]{40}")
+PROTOCOL_SCHEMAS = {
+    "prepare": (
+        ("frontend_dir", "output_dir"),
+        ("expected_backend_sha", "expected_frontend_sha"),
+        True,
+    ),
+}
 
 
 def validate_paths(backend: Path, frontend: Path, output: Path) -> None:
@@ -247,7 +255,7 @@ def prepare(
     return receipt
 
 
-def main() -> None:
+def main(arguments: list[str]) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--frontend-dir", type=Path, required=True)
@@ -255,7 +263,7 @@ def main() -> None:
     parser.add_argument("--expected-backend-sha")
     parser.add_argument("--expected-frontend-sha")
     parser.add_argument("--write", action="store_true", required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(arguments)
     if (args.expected_backend_sha is None) != (args.expected_frontend_sha is None):
         parser.error("正式夹具必须同时指定 --expected-backend-sha 与 --expected-frontend-sha")
     receipt = prepare(
@@ -273,4 +281,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(
+        run_private("prepare", PROTOCOL_SCHEMAS, main, positional_operation=False)
+    )

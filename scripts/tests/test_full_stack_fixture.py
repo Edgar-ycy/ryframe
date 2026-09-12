@@ -1,4 +1,6 @@
 import hashlib
+import json
+import os
 import sys
 import unittest
 from workspace_directory import WorkspaceDirectory
@@ -9,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import prepare_full_stack_fixture as fixture
 import full_stack_process
 import source_inventory
+import reference_fixture_control_protocol as protocol
 
 ROOT = Path(__file__).resolve().parents[2]
 TEMP = ROOT / ".local-tests/python-unit"
@@ -214,6 +217,65 @@ class FullStackFixtureTests(unittest.TestCase):
         self.assertTrue(root.is_dir())
         with self.assertRaisesRegex(ValueError, "已存在"):
             fixture.reference_fixture_root(self.backend)
+
+    def test_private_protocol_reconstructs_prepare_arguments_without_leaking_to_children(self):
+        value = {
+            "backend_dir": str(self.backend),
+            "domain": "prepare",
+            "format_version": 1,
+            "frontend_dir": str(self.frontend),
+            "kind": protocol.PROTOCOL_KIND,
+            "operation": "prepare",
+            "output_dir": str(self.backend / ".local-tests/device"),
+            "expected_backend_sha": "a" * 40,
+            "expected_frontend_sha": "b" * 40,
+            "write": True,
+        }
+        raw = json.dumps(value, separators=(",", ":"))
+        arguments = protocol.private_arguments(
+            "prepare",
+            fixture.PROTOCOL_SCHEMAS,
+            positional_operation=False,
+            argv=[],
+            environment={protocol.PROTOCOL_KEY: raw},
+        )
+        self.assertEqual(
+            arguments,
+            [
+                "--backend-dir",
+                str(self.backend),
+                "--frontend-dir",
+                str(self.frontend),
+                "--output-dir",
+                str(self.backend / ".local-tests/device"),
+                "--expected-backend-sha",
+                "a" * 40,
+                "--expected-frontend-sha",
+                "b" * 40,
+                "--write",
+            ],
+        )
+
+        observed = []
+
+        def main(_arguments):
+            observed.append(protocol.PROTOCOL_KEY in os.environ)
+
+        with (
+            patch.dict(os.environ, {protocol.PROTOCOL_KEY: raw}),
+            patch.object(sys, "argv", ["prepare_full_stack_fixture.py"]),
+        ):
+            self.assertEqual(
+                protocol.run_private(
+                    "prepare",
+                    fixture.PROTOCOL_SCHEMAS,
+                    main,
+                    positional_operation=False,
+                ),
+                0,
+            )
+            self.assertIn(protocol.PROTOCOL_KEY, os.environ)
+        self.assertEqual(observed, [False])
 
 
 if __name__ == "__main__":

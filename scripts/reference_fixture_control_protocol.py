@@ -14,7 +14,7 @@ PROTOCOL_PREFIX = "RYFRAME_REFERENCE_FIXTURE_CONTROL_"
 PROTOCOL_KIND = "ryframe-reference-fixture-control"
 BASE_FIELDS = {"backend_dir", "domain", "format_version", "kind", "operation", "write"}
 PATH_FIELDS = {
-    "backend_dir", "review", "fixture", "maintenance_build", "output", "secrets_dir",
+    "backend_dir", "frontend_dir", "output_dir", "review", "fixture", "maintenance_build", "output", "secrets_dir",
     "source_fixture", "source_secrets", "template", "future_root", "environment",
     "service_run", "source_result", "predecessor_review", "predecessor_request",
     "successor_review", "seed_request", "base_request", "candidate_request", "successor",
@@ -141,12 +141,17 @@ def run_private(
     except FixtureControlProtocolError:
         print("reference_fixture_control_protocol_error：私有控制请求无效。", file=sys.stderr)
         return 2
+    inherited_protocol = os.environ.pop(PROTOCOL_KEY, None)
     try:
-        main(arguments)
-    except Exception:
-        print(
-            f"reference_fixture_{domain}_failed：夹具控制阶段失败，请核对原账本和失败证据；不自动重放。",
-            file=sys.stderr,
-        )
-        return 1
+        try:
+            main(arguments)
+        except Exception:
+            print(
+                f"reference_fixture_{domain}_failed：夹具控制阶段失败，请核对原账本和失败证据；不自动重放。",
+                file=sys.stderr,
+            )
+            return 1
+    finally:
+        if inherited_protocol is not None:
+            os.environ[PROTOCOL_KEY] = inherited_protocol
     return 0

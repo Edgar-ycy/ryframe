@@ -178,7 +178,7 @@ fn fresh_target_uses_a_versioned_private_protocol_without_forwarded_argv() {
 }
 
 #[test]
-fn source_fixture_and_dataset_stages_fix_the_current_worktree_paths() {
+fn source_and_dataset_stages_fix_the_current_worktree_paths() {
     let frontend = Path::new("D:/前端 worktree");
     let backend = super::workspace::root_dir().display().to_string();
     let source_input = strings(&[
@@ -216,24 +216,6 @@ fn source_fixture_and_dataset_stages_fix_the_current_worktree_paths() {
         ])
     );
 
-    let (fixture, fixture_arguments) = recovery_command(
-        &RecoveryCommand::Fixture(strings(&["--output-dir", "fixture"])),
-        frontend,
-    )
-    .unwrap();
-    assert_eq!(fixture, "scripts/prepare_full_stack_fixture.py");
-    assert_eq!(
-        fixture_arguments,
-        strings(&[
-            "--output-dir",
-            "fixture",
-            "--backend-dir",
-            &backend,
-            "--frontend-dir",
-            "D:/前端 worktree",
-        ])
-    );
-
     assert!(
         recovery_command(
             &RecoveryCommand::DatasetPrepare(DatasetPrepareCommand::Help),
@@ -243,14 +225,7 @@ fn source_fixture_and_dataset_stages_fix_the_current_worktree_paths() {
     );
     assert!(
         recovery_command(
-            &RecoveryCommand::Fixture(strings(&["--backend-dir", "other"])),
-            frontend,
-        )
-        .is_err()
-    );
-    assert!(
-        recovery_command(
-            &RecoveryCommand::Fixture(strings(&["--frontend-dir", "other"])),
+            &RecoveryCommand::Fixture(strings(&["--output-dir", "fixture"])),
             frontend,
         )
         .is_err()

@@ -35,13 +35,13 @@ pub(super) fn parse_fixture_control(
 }
 
 #[derive(Debug)]
-struct ParsedOptions {
+pub(super) struct ParsedOptions {
     values: BTreeMap<String, String>,
     write: bool,
 }
 
 impl ParsedOptions {
-    fn parse(args: &[String], allowed: &[&str]) -> Result<Self, CliError> {
+    pub(super) fn parse(args: &[String], allowed: &[&str]) -> Result<Self, CliError> {
         let mut values = BTreeMap::new();
         let mut write = false;
         let mut index = 0;
@@ -70,14 +70,14 @@ impl ParsedOptions {
         Ok(Self { values, write })
     }
 
-    fn require(&self, name: &str) -> Result<&str, CliError> {
+    pub(super) fn require(&self, name: &str) -> Result<&str, CliError> {
         self.values
             .get(name)
             .map(String::as_str)
             .ok_or_else(|| CliError::new(format!("缺少必需参数 {name}")))
     }
 
-    fn optional(&self, name: &str) -> Option<&str> {
+    pub(super) fn optional(&self, name: &str) -> Option<&str> {
         self.values.get(name).map(String::as_str)
     }
 
@@ -109,7 +109,7 @@ fn output_file(value: &str, label: &str) -> Result<PathBuf, CliError> {
     Ok(path)
 }
 
-fn new_directory(value: &str, label: &str) -> Result<PathBuf, CliError> {
+pub(super) fn new_directory(value: &str, label: &str) -> Result<PathBuf, CliError> {
     controlled_path(value, LocalTestPathKind::NewDirectory, label)
 }
 
@@ -122,7 +122,7 @@ fn validate_existing_parent(path: &Path, label: &str) -> Result<(), CliError> {
         .map_err(|error| CliError::new(format!("{label} 的父目录无效：{error}")))
 }
 
-fn require_write(options: &ParsedOptions, operation: &str) -> Result<(), CliError> {
+pub(super) fn require_write(options: &ParsedOptions, operation: &str) -> Result<(), CliError> {
     if options.write {
         Ok(())
     } else {
