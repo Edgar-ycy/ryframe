@@ -9,7 +9,6 @@ import sys
 from pathlib import Path
 
 import restore_runtime
-from prepare_full_stack_fixture import git
 from restore_build import source_snapshot
 from restore_runtime import _bind_control_inputs, _descriptor
 from restore_runtime_evidence import (
@@ -30,6 +29,7 @@ from source_fingerprints import (
     current_execution_source,
     reusable_artifact_source,
 )
+from source_inventory import git
 
 
 class ProvenanceError(ValueError):
