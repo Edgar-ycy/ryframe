@@ -20,6 +20,7 @@ from restore_monitoring_evidence import (
     require_run_members,
     verify_binding_inputs,
 )
+from restore_monitoring_staging import DIRECTORY as STAGING_DIRECTORY, TOKEN_NAME
 from restore_runtime_evidence import reject_link_or_reparse
 
 
@@ -36,6 +37,7 @@ def bind(
     preflight=monitoring_preflight,
     run=subprocess.run,
     port_check=require_closed_port,
+    acl_reader=None,
 ) -> dict:
     backend = repository(backend, "监控验收协调后端")
     for label, path in (
@@ -51,27 +53,33 @@ def bind(
     if output.name != "binding.json":
         raise ValueError("监控绑定输出必须命名为 binding.json")
     run_directory = output.parent
+    if credential != run_directory / TOKEN_NAME:
+        raise ValueError("监控凭据必须位于本次 run 的固定路径")
     try:
-        require_run_members(run_directory, set())
+        require_run_members(run_directory, {TOKEN_NAME})
     except ValueError:
-        raise ValueError("监控绑定要求独立的空 run 目录") from None
+        raise ValueError("监控绑定要求只包含固定凭据的新 run 目录") from None
     authority = preflight(backend, runtime_receipt, target_plan)
     binding = build_binding(
         backend,
         run_id,
         authority,
+        run_directory,
         credential,
         tool_paths,
         ports,
         run=run,
         port_check=port_check,
+        acl_reader=acl_reader,
     )
-    verified, snapshots = verify_binding_inputs(backend, binding, preflight, run)
+    verified, snapshots = verify_binding_inputs(
+        backend, binding, preflight, run, acl_reader=acl_reader
+    )
     if verified != binding:
         raise ValueError("监控绑定发布前无法重建相同权威")
     for snapshot in snapshots:
         snapshot.assert_unchanged()
-    require_run_members(run_directory, set())
+    require_run_members(run_directory, {TOKEN_NAME, STAGING_DIRECTORY})
     write_new(output, binding, backend)
     return binding
 
@@ -85,7 +93,12 @@ def _parser() -> argparse.ArgumentParser:
     child.add_argument("--target-plan", type=Path, required=True)
     child.add_argument("--output", type=Path, required=True)
     child.add_argument("--run-id", required=True)
-    child.add_argument("--metrics-token-file", type=Path, required=True)
+    child.add_argument(
+        "--metrics-token-file",
+        type=Path,
+        required=True,
+        help="必须是 binding.json 同目录内预先收紧权限的 metrics-token.txt",
+    )
     for name in ("prometheus", "promtool", "alertmanager", "amtool"):
         child.add_argument("--" + name, type=Path, required=True)
     for name in ("prometheus", "alertmanager", "webhook"):

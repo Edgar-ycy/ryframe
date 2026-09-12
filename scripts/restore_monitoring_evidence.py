@@ -2,19 +2,26 @@
 
 from __future__ import annotations
 
-import hashlib
 import os
 import re
 import subprocess
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from devex_clone_factory_context import configured
 from devex_clone_source_proof import require_closed_port
 from process_sockets import endpoint
 from restore_build import repository
 from restore_monitoring_rules import bind_rules, expected_paths, verify_rules
+from restore_monitoring_permissions import read_private_token
+from restore_monitoring_staging import (
+    DIRECTORY as STAGING_DIRECTORY,
+    MANIFEST as STAGING_MANIFEST,
+    RUNNER as STAGED_RUNNER,
+    TOKEN_NAME,
+    TOOL_VERSIONS,
+    create_staging,
+    verify_staging,
+)
 from restore_runtime_evidence import (
     HEX_40,
     HEX_64,
@@ -27,12 +34,6 @@ from restore_runtime_evidence import (
 )
 from source_inventory import canonical_digest, capture_inventory
 
-TOOL_VERSIONS = {
-    "prometheus": "prometheus, version 3.5.0",
-    "promtool": "promtool, version 3.5.0",
-    "alertmanager": "alertmanager, version 0.34.0",
-    "amtool": "amtool, version 0.34.0",
-}
 RUN_ID = re.compile(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
 ALLOWED_WRITES = ["alertmanager-data", "configs", "evidence", "processes", "prometheus-data"]
 BINDING_FIELDS = {
@@ -43,6 +44,7 @@ BINDING_FIELDS = {
     "scope_id",
     "authority",
     "coordinator",
+    "staging",
     "python",
     "runner",
     "environment",
@@ -233,39 +235,9 @@ def validate_authority(value: object) -> dict:
     return value
 
 
-def _ordinary_local_file(backend: Path, path: Path, label: str) -> Path:
-    if not path.is_absolute():
-        raise ValueError(f"{label}必须是绝对路径")
-    reject_link_or_reparse(path)
-    path = path.resolve(strict=True)
-    local = (backend / ".local-tests").resolve(strict=True)
-    if not path.is_file() or not path.is_relative_to(local):
-        raise ValueError(f"{label}必须是协调器忽略目录内的普通文件")
-    return path
-
-
-def _read_secret(path: Path) -> tuple[str, int]:
-    before = path.stat()
-    if before.st_size <= 0 or before.st_size > 8192:
-        raise ValueError("监控凭据文件大小无效")
-    with path.open("rb") as stream:
-        opened = os.fstat(stream.fileno())
-        raw = stream.read(8193)
-        after_read = os.fstat(stream.fileno())
-    after = path.stat()
-    state = lambda item: (item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns)
-    if state(before) != state(opened) or state(before) != state(after_read) or state(before) != state(after):
-        raise ValueError("监控凭据在读取期间发生变化")
-    try:
-        value = raw.decode("utf-8", errors="strict").strip()
-    except UnicodeDecodeError as error:
-        raise ValueError("监控凭据不是 UTF-8") from error
-    if not value or "\x00" in value:
-        raise ValueError("监控凭据不能为空")
-    return value, len(raw)
-
-
-def load_environment(backend: Path, authority: dict, credential_path: Path) -> tuple[dict, dict, object]:
+def load_environment(
+    backend: Path, authority: dict, credential_path: Path, *, acl_reader=None
+) -> tuple[dict, dict, object]:
     environment_binding = _receipt_descriptor(authority["environment"], "监控运行环境")
     document = read_json_document(Path(environment_binding["path"]))
     if descriptor(document.path) != environment_binding:
@@ -273,39 +245,14 @@ def load_environment(backend: Path, authority: dict, credential_path: Path) -> t
     if not document.path.is_relative_to((backend / ".local-tests").resolve(strict=True)):
         raise ValueError("监控运行环境必须位于协调器忽略目录")
     value = exact_fields(document.value, {"environment"}, "监控私有环境")["environment"]
-    if not isinstance(value, dict) or any(not isinstance(key, str) or not isinstance(item, str) for key, item in value.items()):
+    if not isinstance(value, dict) or any(
+        not isinstance(key, str) or not isinstance(item, str) for key, item in value.items()
+    ):
         raise ValueError("监控私有环境必须是固定文本映射")
-    credential = _ordinary_local_file(backend, credential_path, "监控指标凭据")
-    secret, byte_count = _read_secret(credential)
+    secret, credential = read_private_token(credential_path, acl_reader=acl_reader)
     if value.get("APP_MONITOR_METRICS_BEARER_TOKEN") != secret:
         raise ValueError("监控指标凭据与正式运行环境不同")
-    return value, {"path": str(credential), "bytes": byte_count}, document
-
-
-def tool_binding(path: Path, name: str, backend: Path, run=subprocess.run) -> tuple[dict, object]:
-    if name not in TOOL_VERSIONS:
-        raise ValueError("未知监控工具")
-    path = _ordinary_local_file(backend, path, f"监控工具 {name}")
-    snapshot = artifact_snapshot(path)
-    completed = run(
-        [str(path), "--version"],
-        cwd=backend,
-        env=configured({"NO_PROXY": "127.0.0.1,localhost,::1"}),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        timeout=30,
-        check=False,
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-    )
-    raw = completed.stdout if isinstance(completed.stdout, bytes) else str(completed.stdout).encode()
-    if completed.returncode != 0 or not raw or len(raw) > 64 * 1024:
-        raise ValueError(f"监控工具 {name} 无法报告固定版本")
-    version = raw.decode("utf-8", errors="strict").splitlines()[0].strip()
-    if len(version) > 512 or not version.isprintable() or not version.startswith(TOOL_VERSIONS[name]):
-        raise ValueError(f"监控工具 {name} 版本不是固定合同")
-    snapshot.assert_unchanged()
-    return {**snapshot.descriptor(), "version": version}, snapshot
+    return value, credential, document
 
 
 def coordinator_binding(backend: Path) -> dict:
@@ -316,45 +263,13 @@ def coordinator_binding(backend: Path) -> dict:
     return {"root": str(backend), "head": snapshot["head"], "inventory_sha256": canonical_digest(inventory)}
 
 
-def python_binding(backend: Path, run=subprocess.run) -> tuple[dict, object]:
-    configured_python = os.environ.get("RYFRAME_PYTHON", "")
-    if not configured_python or not Path(configured_python).is_absolute():
-        raise ValueError("监控验收要求显式非空绝对 RYFRAME_PYTHON")
-    requested = Path(configured_python).resolve(strict=True)
-    current = Path(sys.executable).resolve(strict=True)
-    if requested != current:
-        raise ValueError("监控验收必须由 RYFRAME_PYTHON 指定的解释器执行")
-    snapshot = artifact_snapshot(current)
-    command = [str(current), "-X", "utf8", "-B", str(backend / "scripts/check_python_environment.py")]
-    completed = run(
-        command,
-        cwd=backend,
-        env=configured({"RYFRAME_PYTHON": str(current), "NO_PROXY": "127.0.0.1,localhost,::1"}),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        timeout=60,
-        check=False,
-        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-    )
-    raw = completed.stdout if isinstance(completed.stdout, bytes) else str(completed.stdout).encode("utf-8")
-    if completed.returncode != 0 or not raw or len(raw) > 64 * 1024:
-        raise ValueError("监控验收 Python 环境检查失败")
-    snapshot.assert_unchanged()
-    return {
-        **snapshot.descriptor(),
-        "version": sys.version.split()[0],
-        "environment_check_sha256": hashlib.sha256(raw).hexdigest(),
-    }, snapshot
-
-
 def _python_receipt(value: object) -> dict:
     value = exact_fields(
         value,
-        {"path", "bytes", "sha256", "version", "environment_check_sha256"},
+        {"path", "bytes", "sha256", "device", "inode", "version", "environment_check_sha256"},
         "监控 Python",
     )
-    _receipt_descriptor({key: value[key] for key in ("path", "bytes", "sha256")}, "监控 Python")
+    _staged_receipt({key: value[key] for key in ("path", "bytes", "sha256", "device", "inode")}, "监控 Python")
     if (
         not isinstance(value["version"], str)
         or not value["version"]
@@ -366,10 +281,23 @@ def _python_receipt(value: object) -> dict:
 
 
 def _tool_receipt(value: object, name: str) -> dict:
-    value = exact_fields(value, {"path", "bytes", "sha256", "version"}, f"监控工具 {name}")
-    _receipt_descriptor({key: value[key] for key in ("path", "bytes", "sha256")}, f"监控工具 {name}")
+    value = exact_fields(
+        value, {"path", "bytes", "sha256", "device", "inode", "version"}, f"监控工具 {name}"
+    )
+    _staged_receipt(
+        {key: value[key] for key in ("path", "bytes", "sha256", "device", "inode")},
+        f"监控工具 {name}",
+    )
     if not isinstance(value["version"], str) or not value["version"].startswith(TOOL_VERSIONS[name]):
         raise ValueError(f"监控工具 {name} 版本绑定无效")
+    return value
+
+
+def _staged_receipt(value: object, label: str) -> dict:
+    value = exact_fields(value, {"path", "bytes", "sha256", "device", "inode"}, label)
+    _receipt_descriptor({key: value[key] for key in ("path", "bytes", "sha256")}, label)
+    if type(value["device"]) is not int or type(value["inode"]) is not int:
+        raise ValueError(f"{label}文件身份无效")
     return value
 
 
@@ -391,17 +319,48 @@ def validate_binding(value: object) -> dict:
         or HEX_64.fullmatch(coordinator["inventory_sha256"]) is None
     ):
         raise ValueError("监控协调源码绑定无效")
+    staging = _receipt_descriptor(value["staging"], "监控 staging 清单")
+    staging_path = Path(staging["path"])
+    if staging_path.name != STAGING_MANIFEST or staging_path.parent.name != STAGING_DIRECTORY:
+        raise ValueError("监控 staging 清单路径无效")
+    staging_root = staging_path.parent
+    run_directory = staging_root.parent
+    local = (Path(coordinator["root"]) / ".local-tests").resolve(strict=True)
+    if not run_directory.resolve(strict=True).is_relative_to(local):
+        raise ValueError("监控 staging 必须位于协调器忽略目录")
     _python_receipt(value["python"])
-    _receipt_descriptor(value["runner"], "监控 runner")
+    runner = _staged_receipt(value["runner"], "监控 runner")
+    if Path(runner["path"]) != staging_root / Path(*STAGED_RUNNER.split("/")):
+        raise ValueError("监控 runner 必须来自固定 staging 路径")
     if value["environment"] != authority["environment"]:
         raise ValueError("监控绑定环境与正式运行权威不同")
     _receipt_descriptor(value["environment"], "监控运行环境")
-    credential = exact_fields(value["credential"], {"path", "bytes"}, "监控凭据")
-    if not isinstance(credential["path"], str) or not Path(credential["path"]).is_absolute() or type(credential["bytes"]) is not int or credential["bytes"] <= 0:
+    credential = exact_fields(
+        value["credential"],
+        {"path", "bytes", "sha256", "device", "inode", "security_sha256"},
+        "监控凭据",
+    )
+    if (
+        Path(credential["path"]) != run_directory / TOKEN_NAME
+        or type(credential["bytes"]) is not int
+        or credential["bytes"] <= 0
+        or not isinstance(credential["sha256"], str)
+        or HEX_64.fullmatch(credential["sha256"]) is None
+        or type(credential["device"]) is not int
+        or type(credential["inode"]) is not int
+        or not isinstance(credential["security_sha256"], str)
+        or HEX_64.fullmatch(credential["security_sha256"]) is None
+    ):
         raise ValueError("监控凭据绑定无效")
     tools = exact_fields(value["tools"], set(TOOL_VERSIONS), "监控工具集")
     for name in tools:
         _tool_receipt(tools[name], name)
+        expected_name = name + (".exe" if os.name == "nt" else "")
+        if Path(tools[name]["path"]) != staging_root / "tools" / expected_name:
+            raise ValueError(f"监控工具 {name} 必须来自固定 staging 路径")
+    expected_python = staging_root / "python" / ("python.exe" if os.name == "nt" else "python")
+    if Path(value["python"]["path"]) != expected_python:
+        raise ValueError("监控 Python 必须来自固定 staging 路径")
     rules = exact_fields(value["rules"], {"alerts", "tests"}, "监控规则")
     for name in rules:
         _receipt_descriptor(rules[name], f"监控规则 {name}")
@@ -413,7 +372,9 @@ def validate_binding(value: object) -> dict:
         family, host, port = endpoint(url)
         if family not in (2, 23) or host not in {"127.0.0.1", "::1"} or ports[name] != port:
             raise ValueError("监控投递只能使用绑定的 loopback 端口")
-    if len(set(ports.values())) != 3 or any(type(port) is not int or not 1024 <= port <= 65535 for port in ports.values()):
+    if len(set(ports.values())) != 3 or any(
+        type(port) is not int or not 1024 <= port <= 65535 for port in ports.values()
+    ):
         raise ValueError("监控投递端口必须互异且有效")
     policy = exact_fields(value["contact_policy"], {"loopback_only", "send_resolved", "external_receivers"}, "监控联系人策略")
     if policy != {"loopback_only": True, "send_resolved": True, "external_receivers": []}:
@@ -424,7 +385,14 @@ def validate_binding(value: object) -> dict:
     return value
 
 
-def verify_binding_inputs(backend: Path, binding: dict, preflight, run=subprocess.run) -> tuple[dict, tuple[object, ...]]:
+def verify_binding_inputs(
+    backend: Path,
+    binding: dict,
+    preflight,
+    run=subprocess.run,
+    *,
+    acl_reader=None,
+) -> tuple[dict, tuple[object, ...]]:
     backend = repository(backend, "监控验收协调后端")
     value = validate_binding(binding)
     if coordinator_binding(backend) != value["coordinator"]:
@@ -434,19 +402,18 @@ def verify_binding_inputs(backend: Path, binding: dict, preflight, run=subproces
     )
     if authority != value["authority"]:
         raise ValueError("监控正式运行权威在绑定后发生变化")
-    _private, credential, environment = load_environment(backend, authority, Path(value["credential"]["path"]))
+    _private, credential, environment = load_environment(
+        backend, authority, Path(value["credential"]["path"]), acl_reader=acl_reader
+    )
     if credential != value["credential"]:
         raise ValueError("监控凭据文件在绑定后发生变化")
     snapshots = [environment]
-    python, python_snapshot = python_binding(backend, run)
-    if python != value["python"] or descriptor(Path(__file__).with_name("restore_monitoring_delivery.py")) != value["runner"]:
-        raise ValueError("监控 Python 或 runner 在绑定后发生变化")
-    snapshots.append(python_snapshot)
-    for name, expected in value["tools"].items():
-        actual, snapshot = tool_binding(Path(expected["path"]), name, backend, run)
-        if actual != expected:
-            raise ValueError(f"监控工具 {name} 在绑定后发生变化")
-        snapshots.append(snapshot)
+    run_directory = Path(value["staging"]["path"]).parent.parent
+    staged = verify_staging(
+        run_directory, value["staging"], value["coordinator"], run=run, acl_reader=acl_reader
+    )
+    if any(staged[name] != value[name] for name in ("python", "runner", "tools", "credential")):
+        raise ValueError("监控 staging 执行输入在绑定后发生变化")
     snapshots.extend(verify_rules(backend, value["rules"]))
     return value, tuple(snapshots)
 
@@ -455,35 +422,49 @@ def build_binding(
     backend: Path,
     run_id: str,
     authority: dict,
+    run_directory: Path,
     credential_path: Path,
     tools: dict[str, Path],
     ports: dict[str, int],
     *,
     run=subprocess.run,
     port_check=require_closed_port,
+    acl_reader=None,
 ) -> dict:
     backend = repository(backend, "监控验收协调后端")
     authority = validate_authority(authority)
     run_id = canonical_run_id(run_id)
-    private, credential, environment = load_environment(backend, authority, credential_path)
+    private, credential, environment = load_environment(
+        backend, authority, credential_path, acl_reader=acl_reader
+    )
     if private.get("APP_SCOPE_ID") != authority["restore"]["scope_id"]:
         raise ValueError("监控私有环境与恢复 scope 不一致")
     if set(tools) != set(TOOL_VERSIONS) or set(ports) != {"prometheus", "alertmanager", "webhook"}:
         raise ValueError("监控工具或端口必须完整提供")
     product_ports = {endpoint(url)[2] for url in authority["endpoints"].values()}
-    if len(set(ports.values())) != 3 or any(type(port) is not int or not 1024 <= port <= 65535 for port in ports.values()) or set(ports.values()) & product_ports:
+    if (
+        len(set(ports.values())) != 3
+        or any(type(port) is not int or not 1024 <= port <= 65535 for port in ports.values())
+        or set(ports.values()) & product_ports
+    ):
         raise ValueError("监控端口必须互异且不能占用产品端口")
     endpoints = {name: f"http://127.0.0.1:{ports[name]}" for name in ports}
     for url in endpoints.values():
         port_check(url)
-    python, python_snapshot = python_binding(backend, run)
-    tool_receipts, snapshots = {}, [python_snapshot]
-    for name, path in tools.items():
-        tool_receipts[name], snapshot = tool_binding(path, name, backend, run)
-        snapshots.append(snapshot)
     coordinator = coordinator_binding(backend)
     rules, rule_snapshots = bind_rules(backend)
-    snapshots.extend(rule_snapshots)
+    staging = create_staging(
+        backend,
+        run_directory,
+        coordinator,
+        credential_path,
+        tools,
+        run=run,
+        acl_reader=acl_reader,
+    )
+    staged = verify_staging(
+        run_directory, staging, coordinator, run=run, acl_reader=acl_reader
+    )
     binding = {
         "format_version": 1,
         "kind": "restore-monitoring-binding",
@@ -492,11 +473,12 @@ def build_binding(
         "scope_id": authority["restore"]["scope_id"],
         "authority": authority,
         "coordinator": coordinator,
-        "python": python,
-        "runner": descriptor(Path(__file__).with_name("restore_monitoring_delivery.py")),
+        "staging": staging,
+        "python": staged["python"],
+        "runner": staged["runner"],
         "environment": authority["environment"],
         "credential": credential,
-        "tools": tool_receipts,
+        "tools": staged["tools"],
         "rules": rules,
         "endpoints": endpoints,
         "ports": ports,
@@ -506,7 +488,9 @@ def build_binding(
     }
     validate_binding(binding)
     environment.assert_unchanged()
-    for snapshot in snapshots:
+    if staged["credential"] != credential:
+        raise ValueError("监控 staging 凭据与预检凭据不同")
+    for snapshot in rule_snapshots:
         snapshot.assert_unchanged()
     return binding
 
@@ -515,11 +499,13 @@ def read_binding(backend: Path, path: Path) -> tuple[object, dict]:
     backend = repository(backend, "监控验收协调后端")
     if not path.is_absolute():
         raise ValueError("监控绑定必须使用绝对路径")
-    require_run_members(path.parent, {"binding.json"})
+    require_run_members(path.parent, {"binding.json", TOKEN_NAME, STAGING_DIRECTORY})
     document = read_json_document(path)
-    if document.path.name != "binding.json" or not document.path.parent.is_relative_to((backend / ".local-tests").resolve(strict=True)):
+    if document.path.name != "binding.json" or not document.path.parent.is_relative_to(
+        (backend / ".local-tests").resolve(strict=True)
+    ):
         raise ValueError("监控绑定必须位于协调器忽略目录的独立 run 目录")
     value = validate_binding(document.value)
-    require_run_members(document.path.parent, {"binding.json"})
+    require_run_members(document.path.parent, {"binding.json", TOKEN_NAME, STAGING_DIRECTORY})
     document.assert_unchanged()
     return document, value

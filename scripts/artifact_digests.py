@@ -51,7 +51,25 @@ def _binary_path(path: Path) -> Path:
     return resolved
 
 
-def _bindings(values: list[dict]) -> dict:
+def _regular_path(path: Path) -> Path:
+    if (
+        not path.is_absolute()
+        or not re.fullmatch(r"[a-zA-Z]:", path.drive)
+        or ":" in str(path)[2:]
+        or any(
+            item.is_symlink()
+            or getattr(item.lstat(), "st_file_attributes", 0) & 0x400
+            for item in (path, *path.parents)
+        )
+    ):
+        raise ValueError("阶段保护只接受无链接的本机绝对文件路径")
+    resolved = path.resolve(strict=True)
+    if not resolved.is_file():
+        raise ValueError("阶段保护对象必须是普通文件")
+    return resolved
+
+
+def _bindings(values: list[dict], *, binary: bool) -> dict:
     if not isinstance(values, list) or not values:
         raise ValueError("阶段二进制必须是非空的明确登记集合")
     result = {}
@@ -60,7 +78,7 @@ def _bindings(values: list[dict]) -> dict:
                 or not isinstance(value["path"], str) or not isinstance(value["sha256"], str)
                 or not re.fullmatch(r"[a-f0-9]{64}", value["sha256"])):
             raise ValueError("阶段二进制须绑定明确路径和 SHA-256")
-        path = _binary_path(Path(value["path"]))
+        path = (_binary_path if binary else _regular_path)(Path(value["path"]))
         key = os.path.normcase(str(path))
         if key in result and result[key][1] != value["sha256"]:
             raise ValueError("同一二进制路径登记了不同摘要")
@@ -130,7 +148,8 @@ def _release(files) -> BaseException | None:
 
 
 class _Protected:
-    def __init__(self, path: Path, expected: str):
+    def __init__(self, path: Path, expected: str, *, binary: bool):
+        self.binary = binary
         self.path, self.kernel, self.handle = path, _kernel(), None
         before = _plain_digest(path)
         if before["sha256"] != expected:
@@ -138,20 +157,20 @@ class _Protected:
         self.handle = _open(self.kernel, path)
         try:
             self.identity = _identity(self.kernel, self.handle)
-            with path.open("rb") as stream:
-                # 当前入口仅适用于本机 PE 产物，不能用于 SQL、凭据或业务文件。
-                if stream.read(2) != b"MZ":
-                    raise ValueError("登记文件不是 Windows 二进制")
-                stream.seek(0x3C)
-                header = stream.read(4)
-                if len(header) != 4:
-                    raise ValueError("Windows 二进制头不完整")
-                offset = struct.unpack("<I", header)[0]
-                if not 64 <= offset <= before["bytes"] - 4:
-                    raise ValueError("Windows 二进制头位置无效")
-                stream.seek(offset)
-                if stream.read(4) != b"PE\0\0":
-                    raise ValueError("登记文件缺少真实 PE 标识")
+            if binary:
+                with path.open("rb") as stream:
+                    if stream.read(2) != b"MZ":
+                        raise ValueError("登记文件不是 Windows 二进制")
+                    stream.seek(0x3C)
+                    header = stream.read(4)
+                    if len(header) != 4:
+                        raise ValueError("Windows 二进制头不完整")
+                    offset = struct.unpack("<I", header)[0]
+                    if not 64 <= offset <= before["bytes"] - 4:
+                        raise ValueError("Windows 二进制头位置无效")
+                    stream.seek(offset)
+                    if stream.read(4) != b"PE\0\0":
+                        raise ValueError("登记文件缺少真实 PE 标识")
             self.value = _plain_digest(path)
             if self.value != before:
                 raise ValueError("获取保护句柄期间二进制内容变化")
@@ -163,10 +182,11 @@ class _Protected:
             raise
 
     def check(self) -> None:
-        if self.handle is None or _binary_path(self.path) != self.path:
-            raise ValueError("二进制保护句柄已释放或路径变化")
+        validator = _binary_path if self.binary else _regular_path
+        if self.handle is None or validator(self.path) != self.path:
+            raise ValueError("文件保护句柄已释放或路径变化")
         if _identity(self.kernel, self.handle) != self.identity:
-            raise ValueError("持有二进制句柄的身份变化")
+            raise ValueError("持有文件句柄的身份变化")
         current = _open(self.kernel, self.path)
         try:
             if _identity(self.kernel, current) != self.identity:
@@ -204,17 +224,23 @@ def file_digest(path: Path) -> dict:
 
 
 @contextmanager
-def protect_binaries(bindings: list[dict]):
-    """保护只活在本进程的明确阶段内；嵌套不得扩大集合，Linux 不复用摘要。"""
+def _protect(bindings: list[dict], *, binary: bool):
     global _ACTIVE
     if not _WINDOWS:
         yield
         return
-    values = _bindings(bindings)
+    values = _bindings(bindings, binary=binary)
     with _LOCK:
         if _ACTIVE is not None:
-            if _ACTIVE["thread"] != threading.get_ident() or _ACTIVE["bindings"] != values:
-                raise ValueError("嵌套二进制保护必须属于同一控制器和相同登记集合")
+            contained = all(
+                _ACTIVE["bindings"].get(key) == value for key, value in values.items()
+            )
+            if (
+                _ACTIVE["thread"] != threading.get_ident()
+                or not contained
+                or _ACTIVE["binary"] is not binary
+            ):
+                raise ValueError("嵌套文件保护必须属于同一控制器、模式和登记集合")
             for item in _ACTIVE["files"].values():
                 item.check()
             nested = True
@@ -223,13 +249,18 @@ def protect_binaries(bindings: list[dict]):
             protected = {}
             try:
                 for key, (path, expected) in values.items():
-                    protected[key] = _Protected(path, expected)
+                    protected[key] = _Protected(path, expected, binary=binary)
             except BaseException as error:
                 cleanup = _release(protected.values())
                 if cleanup is not None:
                     error.add_note(f"二进制保护集合收尾同时失败：{type(cleanup).__name__}")
                 raise
-            _ACTIVE = {"thread": threading.get_ident(), "bindings": values, "files": protected}
+            _ACTIVE = {
+                "thread": threading.get_ident(),
+                "bindings": values,
+                "binary": binary,
+                "files": protected,
+            }
     primary = None
     try:
         yield
@@ -254,3 +285,17 @@ def protect_binaries(bindings: list[dict]):
             if primary is None:
                 raise cleanup
             primary.add_note(f"阶段二进制保护收尾同时失败：{type(cleanup).__name__}")
+
+
+@contextmanager
+def protect_binaries(bindings: list[dict]):
+    """保护明确登记的 Windows PE；阶段外和非 Windows 不复用摘要。"""
+    with _protect(bindings, binary=True):
+        yield
+
+
+@contextmanager
+def protect_files(bindings: list[dict]):
+    """在 Windows 上锁住已登记普通文件，阻止阶段中的写入、替换与删除。"""
+    with _protect(bindings, binary=False):
+        yield

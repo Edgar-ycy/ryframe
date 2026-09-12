@@ -210,6 +210,23 @@ class NativeDigestTests(unittest.TestCase):
                 "bytes": len(content), "sha256": hashlib.sha256(content).hexdigest(),
             })
 
+    def test_generic_guard_blocks_a_b_a_and_same_byte_path_replacement(self):
+        payload = self.root / "credential.txt"
+        payload.write_bytes(b"A-private-value")
+        original = payload.read_bytes()
+        binding = {"path": str(payload), "sha256": hashlib.sha256(original).hexdigest()}
+        replacement = self.root / "replacement.txt"
+        replacement.write_bytes(original)
+        with frozen.protect_files([binding]):
+            with self.assertRaises(OSError):
+                payload.write_bytes(b"B-private-value")
+            with self.assertRaises(OSError):
+                os.replace(replacement, payload)
+            self.assertEqual(payload.read_bytes(), original)
+            self.assertEqual(file_digest(payload)["sha256"], binding["sha256"])
+        payload.write_bytes(b"B-private-value")
+        payload.write_bytes(original)
+
 
 if __name__ == "__main__":
     unittest.main()
