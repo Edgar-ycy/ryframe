@@ -8,14 +8,19 @@ import hashlib
 import io
 import json
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import re
-import stat
 import sys
 import xml.etree.ElementTree as ET
 import zipfile
 
-NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+from xlsx_workbook import (
+    SPREADSHEET_NS as NS,
+    cell_text,
+    open_workbook,
+    shared_strings,
+)
+
 HEADERS = ["用户名", "昵称", "邮箱", "手机号", "部门完整路径"]
 MODEL = {
     "version": 1,
@@ -27,7 +32,6 @@ MODEL = {
     "department": "current_template_sheet2_A2",
 }
 MAX_TEMPLATE_BYTES = 16 * 1024 * 1024
-MAX_ARCHIVE_ENTRIES = 1000
 MAX_IMPORT_BYTES = 10 * 1024 * 1024
 LARGE_PAYLOAD_BYTES = 3 * 1024 * 1024
 LARGE_PAYLOAD_NAME = "ryframe-upload-fixture.bin"
@@ -41,27 +45,6 @@ def canonical(value: object) -> bytes:
     return json.dumps(
         value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode()
-
-
-def cell_text(cell: ET.Element, strings: list[str]) -> str:
-    value = cell.find(f"{{{NS}}}v")
-    if cell.get("t") == "s" and value is not None:
-        return strings[int(value.text or "")]
-    return "".join(cell.itertext())
-
-
-def _invalid_member(entry: zipfile.ZipInfo) -> bool:
-    name = entry.filename
-    path = PurePosixPath(name)
-    unix_mode = entry.external_attr >> 16
-    return (
-        not name
-        or "\\" in name
-        or path.is_absolute()
-        or ".." in path.parts
-        or bool(entry.flag_bits & 0x1)
-        or (entry.create_system == 3 and stat.S_ISLNK(unix_mode))
-    )
 
 
 def template_archive(path: Path, expected_sha256: str) -> zipfile.ZipFile:
@@ -79,30 +62,13 @@ def template_archive(path: Path, expected_sha256: str) -> zipfile.ZipFile:
     if len(content) > MAX_TEMPLATE_BYTES or digest(content) != expected_sha256:
         raise ValueError("模板SHA与固定契约不一致")
     try:
-        source = zipfile.ZipFile(io.BytesIO(content))
-    except zipfile.BadZipFile as error:
-        raise ValueError("模板不是有效XLSX ZIP") from error
-    try:
-        entries = source.infolist()
-        names = [entry.filename for entry in entries]
-        if (
-            len(entries) > MAX_ARCHIVE_ENTRIES
-            or len(names) != len(set(names))
-            or sum(entry.file_size for entry in entries) > MAX_TEMPLATE_BYTES
-            or any(_invalid_member(entry) for entry in entries)
-        ):
-            raise ValueError("模板ZIP结构或解压限额不合法")
-        return source
-    except Exception:
-        source.close()
-        raise
+        return open_workbook(content)
+    except ValueError as error:
+        raise ValueError("模板不是有效XLSX ZIP或结构超出限额") from error
 
 
 def read_model(source: zipfile.ZipFile) -> tuple[ET.Element, str]:
-    strings: list[str] = []
-    if "xl/sharedStrings.xml" in source.namelist():
-        root = ET.fromstring(source.read("xl/sharedStrings.xml"))
-        strings = ["".join(item.itertext()) for item in root]
+    strings = shared_strings(source)
     try:
         sheet = ET.fromstring(source.read("xl/worksheets/sheet1.xml"))
         reference = ET.fromstring(source.read("xl/worksheets/sheet2.xml"))

@@ -1,11 +1,8 @@
 """固定 seed 部门计划、逐租户确认和只读发布证据。"""
 import base64
 import hashlib
-import io
-from pathlib import PurePosixPath
 import re
 import xml.etree.ElementTree as ET
-import zipfile
 
 from devex_clone_capture import read_json
 from devex_clone_model import exact, linked, local_path
@@ -13,12 +10,17 @@ from devex_clone_post_model import exact_directory
 from devex_clone_run_state import binding
 from devex_clone_source_proof import bound_file
 from restore_reference_plan import plan_hash
+from xlsx_workbook import (
+    SPREADSHEET_NS as SHEET_NS,
+    cell_text,
+    open_workbook,
+    shared_strings,
+)
 
 MODES = {"departments-plan", "departments-apply", "departments-reconcile", "departments-verify"}
 DEPARTMENT_FIELDS = {"id", "name", "parent_id", "ancestors", "sort", "status", "remark", "created_at"}
 TEMPLATE_FIELDS = {"base64", "bytes", "media_type", "sha256"}
 TEMPLATE_PERMISSION = "system:user-import:add"
-SHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
 
 
 def snowflake(value):
@@ -305,40 +307,21 @@ def directory_image(data):
     return {"total": len(records), "departments": records}
 
 
-def _cell_text(cell, strings):
-    value = cell.find(f"{{{SHEET_NS}}}v")
-    if cell.get("t") == "s" and value is not None:
-        index = int(value.text)
-        if index < 0 or index >= len(strings):
-            raise ValueError("部门模板 shared string 越界")
-        return strings[index]
-    return "".join(cell.itertext())
-
-
 def _workbook_paths(content):
     try:
-        with zipfile.ZipFile(io.BytesIO(content)) as archive:
-            entries = archive.infolist()
-            names = [item.filename for item in entries]
-            if (len(names) != len(set(names)) or len(entries) > 1000
-                    or sum(item.file_size for item in entries) > 16 * 1024 * 1024
-                    or any(PurePosixPath(name).is_absolute() or ".." in PurePosixPath(name).parts
-                           or "\\" in name for name in names)
-                    or "xl/worksheets/sheet2.xml" not in names):
-                raise ValueError("部门模板 ZIP 结构或解压边界无效")
-            strings = []
-            if "xl/sharedStrings.xml" in names:
-                strings = ["".join(item.itertext())
-                           for item in ET.fromstring(archive.read("xl/sharedStrings.xml"))]
+        with open_workbook(
+            content, required_members=frozenset({"xl/worksheets/sheet2.xml"})
+        ) as archive:
+            strings = shared_strings(archive)
             sheet = ET.fromstring(archive.read("xl/worksheets/sheet2.xml"))
             paths = []
             for cell in sheet.findall(f".//{{{SHEET_NS}}}c"):
                 match = re.fullmatch(r"A([1-9][0-9]*)", cell.get("r", ""))
                 if match and int(match.group(1)) >= 2:
-                    path = _cell_text(cell, strings).strip()
+                    path = cell_text(cell, strings).strip()
                     if path:
                         paths.append(path)
-    except (ET.ParseError, KeyError, OSError, ValueError, zipfile.BadZipFile) as error:
+    except (ET.ParseError, KeyError, OSError, ValueError) as error:
         raise ValueError("部门模板不是受限且可解析的当前工作簿") from error
     if len(paths) != len(set(paths)) or paths != sorted(paths):
         raise ValueError("部门模板可用路径重复或未按当前契约排序")

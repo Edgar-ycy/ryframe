@@ -414,6 +414,26 @@ class DepartmentTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             model.page_data(page)
 
+    def test_department_template_reuses_restricted_xlsx_reader(self):
+        sheet = (
+            f'<worksheet xmlns="{model.SHEET_NS}"><sheetData><row r="2">'
+            '<c r="A2" t="s"><v>1</v></c></row></sheetData></worksheet>'
+        )
+        strings = f'<sst xmlns="{model.SHEET_NS}"><si><t>唯一字符串</t></si></sst>'
+        invalid_index = io.BytesIO()
+        with zipfile.ZipFile(invalid_index, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("xl/worksheets/sheet2.xml", sheet)
+            archive.writestr("xl/sharedStrings.xml", strings)
+        with self.assertRaisesRegex(ValueError, "受限且可解析"):
+            model._workbook_paths(invalid_index.getvalue())
+
+        traversal = io.BytesIO()
+        with zipfile.ZipFile(traversal, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("xl/worksheets/sheet2.xml", sheet)
+            archive.writestr("../outside", b"escape")
+        with self.assertRaisesRegex(ValueError, "受限且可解析"):
+            model._workbook_paths(traversal.getvalue())
+
     def test_existing_unrelated_departments_are_preserved_and_fixed_root_is_added(self):
         tenant = self.targets[0]["tenant_id"]
         self.bridge.rows[tenant] = [
