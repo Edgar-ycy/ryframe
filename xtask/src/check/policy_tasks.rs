@@ -110,7 +110,7 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
         script: "scripts/check_supply_chain.py",
         full_order: Some(6),
         smart_order: None,
-        ci_preflight_order: Some(1),
+        ci_preflight_order: None,
         requires_frontend: false,
     },
 ];

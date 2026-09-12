@@ -64,9 +64,11 @@ class CiWorkflowTests(unittest.TestCase):
 
     def test_pull_request_edit_reuses_resource_job_for_contract(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        for job in ("windows-smoke", "security-audit"):
-            block = workflow.split(f"\n  {job}:\n", 1)[1].split("\n  #", 1)[0]
-            self.assertIn("github.event.action != 'edited'", block)
+        windows = workflow.split("\n  windows-smoke:\n", 1)[1].split("\n  #", 1)[0]
+        self.assertIn("github.event.action != 'edited'", windows)
+        security = workflow.split("\n  security-audit:\n", 1)[1].split("\n  #", 1)[0]
+        self.assertNotIn("github.event.action != 'edited'", security)
+        self.assertIn("if: ${{ needs.plan.result == 'success' }}", security)
         resource = workflow.split("  resource-gate:", 1)[1].split("  integration:", 1)[0]
         self.assertIn("needs.plan.outputs.consumer_contract == 'true'", resource)
         self.assertIn("cargo xtask check ci consumer-contract", resource)
@@ -121,8 +123,12 @@ class CiWorkflowTests(unittest.TestCase):
         security = workflow.split("\n  security-audit:\n", 1)[1].split(
             "\n  #", 1
         )[0]
-        self.assertIn("--verify-cargo-graph", security)
-        self.assertEqual(security.count("python scripts/check_supply_chain.py"), 1)
+        self.assertEqual(security.count("cargo xtask check ci security source"), 1)
+        self.assertNotIn("python scripts/check_supply_chain.py", security)
+        self.assertNotIn("cargo audit --deny warnings", security)
+        self.assertNotIn("cargo deny check licenses bans sources", security)
+        self.assertIn("tool: cargo-audit@0.22.2", security)
+        self.assertIn("tool: cargo-deny@0.20.2", security)
         self.assertEqual(security.count("python scripts/check_deployment_assets.py"), 2)
         self.assertIn("$GITHUB_WORKSPACE/backend/deploy/nginx", security)
         self.assertIn("$GITHUB_WORKSPACE/backend/deploy/prometheus", security)

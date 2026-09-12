@@ -6,7 +6,7 @@ use crate::{
         BackendSnapshotProfile, CheckExecutionState, TaskExecutionMode, TaskExecutor, TaskPlan,
         VerifyExecutionContext, VerifySelection, execute_registered_task,
     },
-    cli::CiCommand,
+    cli::{CiCommand, SecurityCommand},
 };
 
 use super::{FULL_CI_EVENTS, INTEGRATION_PACKAGES, WINDOWS_RUST_GATE_PROFILE};
@@ -177,6 +177,9 @@ pub(crate) fn ci_execution_plan_for_profile(
     if matches!(command, CiCommand::Required(_)) {
         return TaskPlan::sequence(REQUIRED_TASKS);
     }
+    if matches!(command, CiCommand::Security(SecurityCommand::Source)) {
+        return TaskPlan::sequence(super::security::SOURCE_TASKS);
+    }
     let job = job_for_command(command)?;
     let tasks = if job == CiJob::RustGate {
         match rust_gate_profile {
@@ -213,6 +216,10 @@ pub(super) fn execute_ci_job(
     if let CiCommand::Required(options) = command {
         println!("开始 CI job：required（cargo xtask check ci required）");
         return execute_required_plan(options, plan);
+    }
+    if matches!(command, CiCommand::Security(SecurityCommand::Source)) {
+        println!("开始 CI job：security source（cargo xtask check ci security source）");
+        return super::security::run_source(plan);
     }
     let job = job_for_command(command)?;
     println!(
@@ -266,9 +273,10 @@ fn job_for_command(command: &CiCommand) -> Result<CiJob> {
         CiCommand::ResourceGate => Ok(CiJob::ResourceGate),
         CiCommand::Integration => Ok(CiJob::Integration),
         CiCommand::ConsumerContract => Ok(CiJob::ConsumerContract),
-        CiCommand::Plan | CiCommand::ResourceGateReplay(_) | CiCommand::Required(_) => {
-            Err("该 CI 子命令不是独立 GitHub job 任务".into())
-        }
+        CiCommand::Plan
+        | CiCommand::ResourceGateReplay(_)
+        | CiCommand::Required(_)
+        | CiCommand::Security(_) => Err("该 CI 子命令不是独立 GitHub job 任务".into()),
     }
 }
 

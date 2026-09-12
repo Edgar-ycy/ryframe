@@ -5,7 +5,7 @@ use super::cli::{
     CiCommand, CliError, Command, DataCommand, GenerateCommand, MigrationCommand,
     MigrationOperation, MigrationTarget, RecoveryCommand, RequiredAction, RequiredEvent,
     RequiredJobResult, ResourceAction, ResourceCommand, ResourceGateReplayOptions, ResourceTarget,
-    parse,
+    SecurityCommand, parse,
 };
 
 fn strings(values: &[&str]) -> Vec<String> {
@@ -209,6 +209,23 @@ fn parses_check_task_graph_and_internal_groups() {
     }
     assert!(parse_command(&["check", "--full", "--full"]).is_err());
     assert!(parse_command(&["check", "--scope", "all", "--scope", "backend"]).is_err());
+}
+
+#[test]
+fn parses_only_the_typed_security_source_command() {
+    assert_eq!(
+        parse_command(&["check", "ci", "security", "source"]).unwrap(),
+        Command::Check(CheckCommand::Ci(CiCommand::Security(
+            SecurityCommand::Source
+        )))
+    );
+    for invalid in [
+        ["check", "ci", "security"].as_slice(),
+        ["check", "ci", "security", "source", "extra"].as_slice(),
+        ["check", "ci", "security", "unknown"].as_slice(),
+    ] {
+        assert!(parse_command(invalid).is_err(), "参数：{invalid:?}");
+    }
 }
 
 #[test]

@@ -93,7 +93,10 @@ pub(crate) fn execute_registered_task(
         | TaskExecutor::CiWindowsSmoke
         | TaskExecutor::CiResourceGate
         | TaskExecutor::CiIntegration
-        | TaskExecutor::CiRequiredJobs => Err("CI 专属节点必须由 CI job 适配器执行".into()),
+        | TaskExecutor::CiRequiredJobs
+        | TaskExecutor::CiSupplyChainSource
+        | TaskExecutor::CiCargoAudit
+        | TaskExecutor::CiCargoDeny => Err("CI 专属节点必须由 CI job 适配器执行".into()),
     }
 }
 

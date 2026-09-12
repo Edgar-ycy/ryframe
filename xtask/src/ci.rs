@@ -23,11 +23,15 @@ use crate::{
 mod required;
 #[path = "ci/resource_gate.rs"]
 pub(crate) mod resource_gate;
+#[path = "ci/security.rs"]
+mod security;
 #[path = "ci/task_plan.rs"]
 mod task_plan;
 
 #[allow(unused_imports)]
 pub(crate) use required::validate_required_jobs;
+#[allow(unused_imports)]
+pub(crate) use security::source_command as security_source_command;
 #[allow(unused_imports)]
 pub(crate) use task_plan::{
     CiJob, ci_execution_plan_for, ci_execution_plan_for_profile, ci_plan_for, plan_outputs,

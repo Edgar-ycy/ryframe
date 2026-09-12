@@ -54,12 +54,22 @@ fn smart_and_ci_profiles_reuse_the_same_policy_task_definitions() {
         scripts(PolicyProfile::CiPreflight),
         [
             "scripts/check_prerelease_dependencies.py",
-            "scripts/check_supply_chain.py",
             "scripts/check_architecture.py",
             "scripts/check_permission_routes.py",
             "scripts/check_removed_identity.py",
             "scripts/check_deployment_assets.py",
         ]
+    );
+    assert_eq!(
+        scripts(PolicyProfile::FullStatic)
+            .iter()
+            .filter(|script| **script == "scripts/check_supply_chain.py")
+            .count(),
+        1
+    );
+    assert!(
+        !scripts(PolicyProfile::CiPreflight).contains(&"scripts/check_supply_chain.py"),
+        "CI preflight 的供应链检查由始终执行的 security source job 覆盖"
     );
 }
 

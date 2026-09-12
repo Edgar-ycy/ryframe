@@ -573,7 +573,7 @@ jobs:
   security-audit:
     name: Security, Supply Chain & Deployment
     needs: plan
-    if: ${{ needs.plan.result == 'success' && github.event.action != 'edited' }}
+    if: ${{ needs.plan.result == 'success' }}
     runs-on: ubuntu-latest
     env:
       DOCKER_BUILDKIT: "1"
@@ -610,20 +610,14 @@ jobs:
           tool: cargo-audit@0.22.2
           fallback: none
 
-      - name: 校验供应链策略和条件依赖例外
-        run: python scripts/check_supply_chain.py --verify-cargo-graph
-
-      - name: Run cargo audit
-        run: cargo audit --deny warnings
-
       - name: Install cargo-deny
         uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
         with:
           tool: cargo-deny@0.20.2
           fallback: none
 
-      - name: Check licenses, bans, and sources
-        run: cargo deny check licenses bans sources
+      - name: 校验供应链来源
+        run: cargo xtask check ci security source
 
       - name: 判断是否需要校验部署资产
         id: deployment-changes

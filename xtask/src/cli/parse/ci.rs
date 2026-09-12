@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use super::super::model::{
     CiCommand, CliError, RequiredAction, RequiredEvent, RequiredJobResult, RequiredNeed,
-    RequiredOptions, ResourceGateReplayOptions,
+    RequiredOptions, ResourceGateReplayOptions, SecurityCommand,
 };
 
 pub(super) fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
@@ -21,8 +21,11 @@ pub(super) fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
         [command, rest @ ..] if command == "required" => {
             parse_required(rest).map(CiCommand::Required)
         }
+        [command, operation] if command == "security" && operation == "source" => {
+            Ok(CiCommand::Security(SecurityCommand::Source))
+        }
         _ => Err(CliError::new(
-            "用法：cargo xtask check ci <plan|preflight|rust-gate|resource-gate|integration|consumer-contract|required>；资源门禁回放使用 resource-gate replay --manifest <文件> --work-dir <目录> --report <文件> [--activation-gate]",
+            "用法：cargo xtask check ci <plan|preflight|rust-gate|resource-gate|integration|consumer-contract|required|security>；安全来源门禁使用 security source；资源门禁回放使用 resource-gate replay --manifest <文件> --work-dir <目录> --report <文件> [--activation-gate]",
         )),
     }
 }

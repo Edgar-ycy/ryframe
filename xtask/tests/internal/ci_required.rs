@@ -41,7 +41,6 @@ fn options_for(
     needs.get_mut("plan").unwrap().outputs = outputs;
     if action == Some(RequiredAction::Edited) {
         needs.get_mut("windows-smoke").unwrap().result = RequiredJobResult::Skipped;
-        needs.get_mut("security-audit").unwrap().result = RequiredJobResult::Skipped;
     }
     RequiredOptions {
         event,
@@ -59,7 +58,7 @@ fn result_for(enabled: bool) -> RequiredJobResult {
 }
 
 #[test]
-fn required_accepts_full_and_edited_plans_from_the_shared_planner() {
+fn required_accepts_push_standard_and_edited_plans_from_the_shared_planner() {
     let full = [
         CiJob::Preflight,
         CiJob::RustGate,
@@ -72,6 +71,17 @@ fn required_accepts_full_and_edited_plans_from_the_shared_planner() {
             .is_empty()
     );
 
+    let pull_request = options_for(
+        RequiredEvent::PullRequest,
+        Some(RequiredAction::Synchronize),
+        &[CiJob::Preflight],
+    );
+    assert_eq!(
+        pull_request.needs["security-audit"].result,
+        RequiredJobResult::Success
+    );
+    assert!(validate_required_jobs(&pull_request).unwrap().is_empty());
+
     let edited = ci_plan_for("pull_request", "edited", &Default::default(), false).unwrap();
     let options = options_for(
         RequiredEvent::PullRequest,
@@ -79,6 +89,10 @@ fn required_accepts_full_and_edited_plans_from_the_shared_planner() {
         &edited,
     );
     assert_eq!(options.needs["plan"].outputs["preflight"], "true");
+    assert_eq!(
+        options.needs["security-audit"].result,
+        RequiredJobResult::Success
+    );
     assert!(validate_required_jobs(&options).unwrap().is_empty());
 }
 

@@ -130,7 +130,6 @@ fn validate_results(
     outputs: &BTreeMap<String, String>,
     errors: &mut Vec<String>,
 ) {
-    let edited = options.action == Some(RequiredAction::Edited);
     let mut expected = required_job_names()
         .into_iter()
         .map(|name| (name, RequiredJobResult::Skipped))
@@ -152,8 +151,8 @@ fn validate_results(
             },
         );
     }
-    if !edited {
-        expected.insert("security-audit", RequiredJobResult::Success);
+    expected.insert("security-audit", RequiredJobResult::Success);
+    if options.action != Some(RequiredAction::Edited) {
         expected.insert("windows-smoke", RequiredJobResult::Success);
     }
     for (name, expected_result) in expected {

@@ -38,6 +38,8 @@ fn invalid_public_arguments_exit_two_before_running_tasks() {
         ["data", "unknown"].as_slice(),
         ["check", "recovery", "runtime", "restart"].as_slice(),
         ["check", "ci", "required"].as_slice(),
+        ["check", "ci", "security"].as_slice(),
+        ["check", "ci", "security", "source", "extra"].as_slice(),
         [
             "check",
             "ci",
@@ -66,6 +68,19 @@ fn invalid_public_arguments_exit_two_before_running_tasks() {
         assert!(String::from_utf8_lossy(&result.stderr).contains("参数错误"));
         assert!(result.stdout.is_empty());
     }
+}
+
+#[test]
+fn security_source_preserves_task_failure_exit_code() {
+    let result = xtask_command()
+        .args(["check", "ci", "security", "source"])
+        .env("RYFRAME_PYTHON", "missing-security-python-executable")
+        .output()
+        .unwrap();
+    assert_eq!(result.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(stdout.contains("开始 CI 原子任务：ci.security.supply-chain"));
+    assert!(!stdout.contains("开始 CI 原子任务：ci.security.audit"));
 }
 
 #[test]

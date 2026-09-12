@@ -79,6 +79,9 @@ pub(crate) enum TaskExecutor {
     CiResourceGate,
     CiIntegration,
     CiRequiredJobs,
+    CiSupplyChainSource,
+    CiCargoAudit,
+    CiCargoDeny,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -432,6 +435,45 @@ pub(crate) const TASK_REGISTRY: &[TaskDefinition] = &[
         &[],
         &[],
         &[]
+    ),
+    task_definition!(
+        CiSupplyChainSource,
+        "ci.security.supply-chain",
+        "verify_supply_chain_source",
+        "核对供应链策略和条件依赖例外",
+        Backend,
+        Static,
+        Backend,
+        Some(&["scripts/check_supply_chain.py", "--verify-cargo-graph"]),
+        &["Cargo feature graph"],
+        &["Cargo registry cache"],
+        &["Cargo registry"]
+    ),
+    task_definition!(
+        CiCargoAudit,
+        "ci.security.audit",
+        "run_cargo_audit",
+        "核对 RustSec 安全公告",
+        Backend,
+        Static,
+        Backend,
+        Some(&["audit", "--deny", "warnings"]),
+        &[],
+        &["RustSec advisory cache"],
+        &["RustSec advisory database"]
+    ),
+    task_definition!(
+        CiCargoDeny,
+        "ci.security.deny",
+        "run_cargo_deny",
+        "核对依赖许可证、禁用项和来源",
+        Backend,
+        Static,
+        Backend,
+        Some(&["deny", "check", "licenses", "bans", "sources"]),
+        &[],
+        &["Cargo registry cache"],
+        &["Cargo registry"]
     ),
 ];
 

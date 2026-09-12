@@ -98,6 +98,12 @@ pub(crate) enum CiCommand {
     Integration,
     ConsumerContract,
     Required(RequiredOptions),
+    Security(SecurityCommand),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SecurityCommand {
+    Source,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
