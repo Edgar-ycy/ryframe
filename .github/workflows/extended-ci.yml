@@ -374,9 +374,9 @@ jobs:
             --all \
             --override-filename ryframe-backend.cdx
           mv crates/ryframe/ryframe-backend.cdx.json "$SBOM_PATH"
-          python scripts/check_supply_chain.py \
-            --cyclonedx "$SBOM_PATH" \
-            --require-reproducible-cyclonedx
+          cargo xtask check ci security report cyclonedx \
+            --input "$SBOM_PATH" \
+            --require-reproducible
 
       - name: 保存 Cargo CycloneDX 清单
         if: ${{ matrix.fixture == 'core' }}
@@ -419,8 +419,8 @@ jobs:
             --format cyclonedx \
             --output "$output_dir/ryframe-image.cdx.json" \
             "ryframe-ci:$GITHUB_SHA"
-          python scripts/check_supply_chain.py \
-            --cyclonedx "$output_dir/ryframe-image.cdx.json"
+          cargo xtask check ci security report cyclonedx \
+            --input "$output_dir/ryframe-image.cdx.json"
 
       - name: 扫描生产镜像高危漏洞
         if: ${{ matrix.fixture == 'core' }}
@@ -441,8 +441,8 @@ jobs:
         if: ${{ matrix.fixture == 'core' }}
         working-directory: backend
         run: >-
-          python scripts/check_supply_chain.py
-          --trivy-report "$RUNNER_TEMP/supply-chain/trivy-report.json"
+          cargo xtask check ci security report trivy
+          --input "$RUNNER_TEMP/supply-chain/trivy-report.json"
 
       - name: 保存镜像清单与漏洞报告
         if: ${{ always() && matrix.fixture == 'core' && (steps.image-sbom.outcome == 'success' || steps.image-scan.outcome == 'success') }}

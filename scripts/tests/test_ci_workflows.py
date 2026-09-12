@@ -208,6 +208,12 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertIn(
             'mv crates/ryframe/ryframe-backend.cdx.json "$SBOM_PATH"', block
         )
+        self.assertEqual(
+            block.count("cargo xtask check ci security report cyclonedx"), 2
+        )
+        self.assertEqual(block.count("cargo xtask check ci security report trivy"), 1)
+        self.assertNotIn("python scripts/check_supply_chain.py", block)
+        self.assertIn("--require-reproducible", block)
         self.assertEqual(block.count("if: ${{ always() }}"), 2)
         self.assertNotIn("sccache-full-stack.json", block)
         self.assertNotIn("name: sccache-full-stack-", block)

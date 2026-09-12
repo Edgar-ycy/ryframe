@@ -5,6 +5,7 @@ use serde::Deserialize;
 use super::super::model::{
     CiCommand, CliError, DeploymentOptions, DeploymentPhase, RequiredAction, RequiredEvent,
     RequiredJobResult, RequiredNeed, RequiredOptions, ResourceGateReplayOptions, SecurityCommand,
+    SecurityReportKind, SecurityReportOptions,
 };
 
 pub(super) fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
@@ -24,6 +25,11 @@ pub(super) fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
         [command, operation] if command == "security" && operation == "source" => {
             Ok(CiCommand::Security(SecurityCommand::Source))
         }
+        [command, operation, kind, rest @ ..] if command == "security" && operation == "report" => {
+            parse_security_report(kind, rest)
+                .map(SecurityCommand::Report)
+                .map(CiCommand::Security)
+        }
         [command, operation, phase, rest @ ..]
             if command == "security" && operation == "deployment" =>
         {
@@ -32,9 +38,55 @@ pub(super) fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
                 .map(CiCommand::Security)
         }
         _ => Err(CliError::new(
-            "用法：cargo xtask check ci <plan|preflight|rust-gate|resource-gate|integration|consumer-contract|required|security>；安全门禁使用 security source 或 security deployment <source|image>；资源门禁回放使用 resource-gate replay --manifest <文件> --work-dir <目录> --report <文件> [--activation-gate]",
+            "用法：cargo xtask check ci <plan|preflight|rust-gate|resource-gate|integration|consumer-contract|required|security>；安全门禁使用 security source、security report <cyclonedx|trivy> 或 security deployment <source|image>；资源门禁回放使用 resource-gate replay --manifest <文件> --work-dir <目录> --report <文件> [--activation-gate]",
         )),
     }
+}
+
+fn parse_security_report(kind: &str, args: &[String]) -> Result<SecurityReportOptions, CliError> {
+    let kind = match kind {
+        "cyclonedx" => SecurityReportKind::CycloneDx,
+        "trivy" => SecurityReportKind::Trivy,
+        _ => return Err(CliError::new("security report 只允许 cyclonedx 或 trivy")),
+    };
+    let mut input = None;
+    let mut require_reproducible = false;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--input" => {
+                let value = required_argument(args.get(index + 1), "--input")?;
+                if input.replace(PathBuf::from(value)).is_some() {
+                    return Err(CliError::new("--input 不能重复"));
+                }
+                index += 2;
+            }
+            "--require-reproducible"
+                if kind == SecurityReportKind::CycloneDx && !require_reproducible =>
+            {
+                require_reproducible = true;
+                index += 1;
+            }
+            "--require-reproducible" if kind == SecurityReportKind::Trivy => {
+                return Err(CliError::new(
+                    "--require-reproducible 只适用于 CycloneDX 报告",
+                ));
+            }
+            "--require-reproducible" => {
+                return Err(CliError::new("--require-reproducible 不能重复"));
+            }
+            unknown => return Err(CliError::new(format!("未知参数：{unknown}"))),
+        }
+    }
+    let input = input.ok_or_else(|| CliError::new("缺少必需参数 --input"))?;
+    if !input.is_absolute() {
+        return Err(CliError::new("--input 必须是绝对路径"));
+    }
+    Ok(SecurityReportOptions {
+        kind,
+        input,
+        require_reproducible,
+    })
 }
 
 fn parse_deployment(phase: &str, args: &[String]) -> Result<DeploymentOptions, CliError> {

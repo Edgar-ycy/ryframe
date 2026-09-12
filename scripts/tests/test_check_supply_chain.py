@@ -11,6 +11,8 @@ import uuid
 from contextlib import contextmanager
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "check_supply_chain.py"
@@ -189,7 +191,9 @@ def workflow_with_service_image(service: str, image: str) -> str:
         """
 - run: cargo cyclonedx --format json
 - run: trivy image --format cyclonedx target
-- run: python scripts/check_supply_chain.py --trivy-report report.json
+- run: cargo xtask check ci security report cyclonedx --input /tmp/cargo.json --require-reproducible
+- run: cargo xtask check ci security report cyclonedx --input /tmp/image.json
+- run: cargo xtask check ci security report trivy --input /tmp/trivy.json
 """
     ).replace(
         "  supply-chain:\n    steps:",
@@ -580,7 +584,9 @@ class SupplyChainPolicyTests(unittest.TestCase):
                     """
 - run: cargo cyclonedx --format json
 - run: trivy image --format cyclonedx target
-- run: python scripts/check_supply_chain.py --trivy-report report.json
+- run: cargo xtask check ci security report cyclonedx --input /tmp/cargo.json --require-reproducible
+- run: cargo xtask check ci security report cyclonedx --input /tmp/image.json
+- run: cargo xtask check ci security report trivy --input /tmp/trivy.json
 """
                 ),
                 encoding="utf-8",
@@ -634,7 +640,9 @@ jobs:
       - run: docker run owner/image@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb check
       - run: cargo cyclonedx --format json
       - run: trivy image --format cyclonedx target
-      - run: python scripts/check_supply_chain.py --trivy-report report.json
+      - run: cargo xtask check ci security report cyclonedx --input /tmp/cargo.json --require-reproducible
+      - run: cargo xtask check ci security report cyclonedx --input /tmp/image.json
+      - run: cargo xtask check ci security report trivy --input /tmp/trivy.json
       - uses: actions/upload-artifact@3333333333333333333333333333333333333333
 """
         with self.temporary_directory() as raw:
@@ -935,7 +943,7 @@ jobs:
         self.assertTrue(
             any("trivy image --format cyclonedx" in error for error in errors)
         )
-        self.assertTrue(any("--trivy-report <报告>" in error for error in errors))
+        self.assertTrue(any("security report trivy" in error for error in errors))
         self.assertTrue(any("docker run 镜像未固定" in error for error in errors))
 
     def test_workflow_command_gates_accept_literal_and_folded_commands(self) -> None:
@@ -946,8 +954,13 @@ jobs:
     cargo cyclonedx \\
       --manifest-path crates/ryframe/Cargo.toml \\
       --format json
-    python scripts/check_supply_chain.py \\
-      --trivy-report report.json
+    cargo xtask check ci security report cyclonedx \\
+      --input /tmp/cargo.json \\
+      --require-reproducible
+    cargo xtask check ci security report cyclonedx \\
+      --input /tmp/image.json
+    cargo xtask check ci security report trivy \\
+      --input /tmp/trivy.json
     docker run --rm \\
       owner/image@sha256:{digest} check
 - run: >-
@@ -963,6 +976,55 @@ jobs:
             workflow_dir = Path(raw)
             (workflow_dir / "ci.yml").write_text(workflow, encoding="utf-8")
             self.assertEqual(MODULE.validate_workflows(workflow_dir, policy()), [])
+
+    def test_workflow_rejects_legacy_report_invocation(self) -> None:
+        workflow = workflow_with_run_steps(
+            """
+- run: cargo cyclonedx --format json
+- run: trivy image --format cyclonedx target
+- run: cargo xtask check ci security report cyclonedx --input /tmp/cargo.json --require-reproducible
+- run: cargo xtask check ci security report cyclonedx --input /tmp/image.json
+- run: cargo xtask check ci security report trivy --input /tmp/trivy.json
+- run: python scripts/check_supply_chain.py --cyclonedx /tmp/legacy.json
+"""
+        )
+        with self.temporary_directory() as raw:
+            workflow_dir = Path(raw)
+            (workflow_dir / "ci.yml").write_text(workflow, encoding="utf-8")
+            errors = MODULE.validate_workflows(workflow_dir, policy())
+        self.assertTrue(any("禁止直接调用" in error for error in errors))
+
+    def test_typed_security_report_parser_rejects_ambiguous_commands(self) -> None:
+        kind, reproducible, errors = MODULE._typed_security_report(
+            [
+                "cargo",
+                "xtask",
+                "check",
+                "ci",
+                "security",
+                "report",
+                "cyclonedx",
+                "--input",
+                "/tmp/report.json",
+                "--require-reproducible",
+            ]
+        )
+        self.assertEqual((kind, reproducible, errors), ("cyclonedx", True, []))
+        _, _, errors = MODULE._typed_security_report(
+            [
+                "cargo",
+                "xtask",
+                "check",
+                "ci",
+                "security",
+                "report",
+                "trivy",
+                "--input",
+                "/tmp/report.json",
+                "--require-reproducible",
+            ]
+        )
+        self.assertTrue(any("不支持" in error for error in errors))
 
     def test_workflow_validation_fails_closed_without_yaml_parser(self) -> None:
         parser = MODULE.yaml
@@ -1159,6 +1221,54 @@ tokio-rustls v0.26.4|aws_lc_rs
             self.assertEqual(MODULE.validate_cyclonedx(path), [])
             errors = MODULE.validate_cyclonedx(path, require_reproducible=True)
         self.assertTrue(any("serialNumber" in error for error in errors))
+
+    def test_report_main_does_not_repeat_source_checks(self) -> None:
+        cyclone = {
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.5",
+            "metadata": {"component": {"name": "ryframe"}},
+            "components": [{"name": "dependency"}],
+        }
+        trivy = {"Results": []}
+        with self.temporary_directory() as raw:
+            root = Path(raw)
+            cyclone_path = self.write_json(root, "cyclone.json", cyclone)
+            trivy_path = self.write_json(root, "trivy.json", trivy)
+            cyclone_args = SimpleNamespace(
+                policy=Path("unused-policy.json"),
+                workflow_dir=Path("unused-workflows"),
+                trivy_report=None,
+                cyclonedx=cyclone_path,
+                require_reproducible_cyclonedx=True,
+                verify_cargo_graph=False,
+            )
+            with (
+                patch.object(MODULE, "parse_args", return_value=cyclone_args),
+                patch.object(MODULE, "load_policy", side_effect=AssertionError),
+                patch.object(
+                    MODULE, "validate_local_patch_licenses", side_effect=AssertionError
+                ),
+                patch.object(MODULE, "validate_workflows", side_effect=AssertionError),
+            ):
+                self.assertEqual(MODULE.main(), 0)
+
+            trivy_args = SimpleNamespace(
+                policy=Path("policy.json"),
+                workflow_dir=Path("unused-workflows"),
+                trivy_report=trivy_path,
+                cyclonedx=None,
+                require_reproducible_cyclonedx=False,
+                verify_cargo_graph=False,
+            )
+            with (
+                patch.object(MODULE, "parse_args", return_value=trivy_args),
+                patch.object(MODULE, "load_policy", return_value=policy()),
+                patch.object(
+                    MODULE, "validate_local_patch_licenses", side_effect=AssertionError
+                ),
+                patch.object(MODULE, "validate_workflows", side_effect=AssertionError),
+            ):
+                self.assertEqual(MODULE.main(), 0)
 
 
 if __name__ == "__main__":

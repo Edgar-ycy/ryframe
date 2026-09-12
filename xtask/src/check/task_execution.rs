@@ -97,6 +97,8 @@ pub(crate) fn execute_registered_task(
         | TaskExecutor::CiSupplyChainSource
         | TaskExecutor::CiCargoAudit
         | TaskExecutor::CiCargoDeny
+        | TaskExecutor::CiCycloneDxReport
+        | TaskExecutor::CiTrivyReport
         | TaskExecutor::CiDeploymentChanges
         | TaskExecutor::CiDeploymentStatic
         | TaskExecutor::CiDeploymentCompose

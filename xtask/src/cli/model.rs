@@ -104,7 +104,30 @@ pub(crate) enum CiCommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SecurityCommand {
     Source,
+    Report(SecurityReportOptions),
     Deployment(DeploymentOptions),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SecurityReportKind {
+    CycloneDx,
+    Trivy,
+}
+
+impl SecurityReportKind {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::CycloneDx => "cyclonedx",
+            Self::Trivy => "trivy",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SecurityReportOptions {
+    pub(crate) kind: SecurityReportKind,
+    pub(crate) input: PathBuf,
+    pub(crate) require_reproducible: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

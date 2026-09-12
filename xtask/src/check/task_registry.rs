@@ -82,6 +82,8 @@ pub(crate) enum TaskExecutor {
     CiSupplyChainSource,
     CiCargoAudit,
     CiCargoDeny,
+    CiCycloneDxReport,
+    CiTrivyReport,
     CiDeploymentChanges,
     CiDeploymentStatic,
     CiDeploymentCompose,

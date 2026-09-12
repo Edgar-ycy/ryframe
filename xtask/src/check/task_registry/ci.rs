@@ -1,6 +1,6 @@
 use super::{TaskDefinition, TaskExecutor, TaskRepository, TaskStage, TaskWorkingDirectory};
 
-pub(super) const TASKS: [TaskDefinition; 15] = [
+pub(super) const TASKS: [TaskDefinition; 17] = [
     task_definition!(
         CiFrontendCheckout,
         "ci.frontend-checkout",
@@ -117,6 +117,32 @@ pub(super) const TASKS: [TaskDefinition; 15] = [
         &[],
         &["Cargo registry cache"],
         &["Cargo registry"]
+    ),
+    task_definition!(
+        CiCycloneDxReport,
+        "ci.security.report.cyclonedx",
+        "verify_cyclonedx_report",
+        "核对单个 CycloneDX 报告",
+        Backend,
+        Static,
+        Backend,
+        None,
+        &[],
+        &[],
+        &[]
+    ),
+    task_definition!(
+        CiTrivyReport,
+        "ci.security.report.trivy",
+        "verify_trivy_report",
+        "核对单个 Trivy 漏洞报告",
+        Backend,
+        Static,
+        Backend,
+        None,
+        &[],
+        &[],
+        &[]
     ),
     task_definition!(
         CiDeploymentChanges,

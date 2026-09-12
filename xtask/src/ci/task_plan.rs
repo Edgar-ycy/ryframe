@@ -219,10 +219,13 @@ pub(super) fn execute_ci_job(
     }
     if let CiCommand::Security(command) = command {
         let name = match command {
-            SecurityCommand::Source => "security source",
+            SecurityCommand::Source => "security source".to_owned(),
+            SecurityCommand::Report(options) => {
+                format!("security report {}", options.kind.as_str())
+            }
             SecurityCommand::Deployment(options) => match options.phase {
-                crate::cli::DeploymentPhase::Source => "security deployment source",
-                crate::cli::DeploymentPhase::Image => "security deployment image",
+                crate::cli::DeploymentPhase::Source => "security deployment source".to_owned(),
+                crate::cli::DeploymentPhase::Image => "security deployment image".to_owned(),
             },
         };
         println!("开始 CI job：{name}（cargo xtask check ci {name}）");

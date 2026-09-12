@@ -5,7 +5,7 @@ use super::cli::{
     CiCommand, CliError, Command, DataCommand, DeploymentOptions, DeploymentPhase, GenerateCommand,
     MigrationCommand, MigrationOperation, MigrationTarget, RecoveryCommand, RequiredAction,
     RequiredEvent, RequiredJobResult, ResourceAction, ResourceCommand, ResourceGateReplayOptions,
-    ResourceTarget, SecurityCommand, parse,
+    ResourceTarget, SecurityCommand, SecurityReportKind, SecurityReportOptions, parse,
 };
 
 fn strings(values: &[&str]) -> Vec<String> {
@@ -225,6 +225,118 @@ fn parses_only_the_typed_security_source_command() {
         ["check", "ci", "security", "unknown"].as_slice(),
     ] {
         assert!(parse_command(invalid).is_err(), "参数：{invalid:?}");
+    }
+}
+
+#[test]
+fn parses_typed_security_report_commands() {
+    let input = std::env::current_dir().unwrap().join("target/report.json");
+    let input_text = input.to_string_lossy().into_owned();
+    assert_eq!(
+        parse_command(&[
+            "check",
+            "ci",
+            "security",
+            "report",
+            "cyclonedx",
+            "--input",
+            &input_text,
+            "--require-reproducible",
+        ])
+        .unwrap(),
+        Command::Check(CheckCommand::Ci(CiCommand::Security(
+            SecurityCommand::Report(SecurityReportOptions {
+                kind: SecurityReportKind::CycloneDx,
+                input: input.clone(),
+                require_reproducible: true,
+            })
+        )))
+    );
+    assert_eq!(
+        parse_command(&[
+            "check",
+            "ci",
+            "security",
+            "report",
+            "trivy",
+            "--input",
+            &input_text,
+        ])
+        .unwrap(),
+        Command::Check(CheckCommand::Ci(CiCommand::Security(
+            SecurityCommand::Report(SecurityReportOptions {
+                kind: SecurityReportKind::Trivy,
+                input,
+                require_reproducible: false,
+            })
+        )))
+    );
+}
+
+#[test]
+fn rejects_incomplete_or_ambiguous_security_report_arguments() {
+    let input = std::env::current_dir()
+        .unwrap()
+        .join("target/report.json")
+        .to_string_lossy()
+        .into_owned();
+    for invalid in [
+        vec!["check", "ci", "security", "report"],
+        vec!["check", "ci", "security", "report", "unknown"],
+        vec!["check", "ci", "security", "report", "cyclonedx"],
+        vec![
+            "check",
+            "ci",
+            "security",
+            "report",
+            "cyclonedx",
+            "--input",
+            "relative.json",
+        ],
+        vec![
+            "check",
+            "ci",
+            "security",
+            "report",
+            "cyclonedx",
+            "--input",
+            &input,
+            "--input",
+            &input,
+        ],
+        vec![
+            "check",
+            "ci",
+            "security",
+            "report",
+            "cyclonedx",
+            "--input",
+            &input,
+            "--require-reproducible",
+            "--require-reproducible",
+        ],
+        vec![
+            "check",
+            "ci",
+            "security",
+            "report",
+            "trivy",
+            "--input",
+            &input,
+            "--require-reproducible",
+        ],
+        vec![
+            "check",
+            "ci",
+            "security",
+            "report",
+            "trivy",
+            "--input",
+            &input,
+            "--unknown",
+        ],
+    ] {
+        assert!(parse_command(&invalid).is_err(), "参数：{invalid:?}");
     }
 }
 

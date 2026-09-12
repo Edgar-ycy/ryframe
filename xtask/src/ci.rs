@@ -31,6 +31,8 @@ mod task_plan;
 #[allow(unused_imports)]
 pub(crate) use required::validate_required_jobs;
 #[allow(unused_imports)]
+pub(crate) use security::report_command as security_report_command;
+#[allow(unused_imports)]
 pub(crate) use security::source_command as security_source_command;
 #[allow(unused_imports)]
 pub(crate) use security::{
