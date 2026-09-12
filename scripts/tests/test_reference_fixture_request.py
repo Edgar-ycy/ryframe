@@ -34,6 +34,10 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
         )
         self.root.mkdir()
         self.addCleanup(shutil.rmtree, self.root)
+        self.require_live_service = request._require_live_service
+        self.live_service = patch.object(request, "_require_live_service")
+        self.live_service_mock = self.live_service.start()
+        self.addCleanup(self.live_service.stop)
         self.execution = self.root / "device-backend"
         (self.execution / ".local-tests/reference-fixture").mkdir(parents=True)
         self.tool = self.root / "tool.exe"
@@ -208,6 +212,7 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
             for side, environment in self.environments.items()
         }
         self.assertEqual(set(requests), set(request.SIDES))
+        self.assertEqual(self.live_service_mock.call_count, len(request.SIDES))
         for side, value in requests.items():
             with self.subTest(side=side):
                 self.assertEqual(value["side"], side)
@@ -228,6 +233,65 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
                         )
                     },
                 )
+
+    def test_live_service_check_rejects_stopped_or_drifted_runtime_evidence(self):
+        process = self.write(self.root / "observed/process.json", {"process": True})
+        launch = self.write(self.root / "observed/launch.json", {"launch": True})
+        runtime = self.write(self.root / "observed/runtime.json", {"runtime": True})
+        storage = {
+            "identity": {"pid": 101},
+            "sha256": self.review["tools"]["rustfs"]["sha256"],
+            "process_receipt": self.bound(process),
+            "launch_receipt": self.bound(launch),
+        }
+        redis = {"port": 16390, "generation": "redis-r1"}
+        service = {
+            "run": {"path": str(self.service_run), "manifest": self.bound(self.service_run / "manifest.json"),
+                    "state": self.bound(self.service_run / "state.json")},
+            "bootstrap": self.bound(self.environments["seed"]),
+            "rustfs": storage,
+            "redis": redis,
+        }
+        value = {
+            "run": self.service_run,
+            "sources": {"manifest": service["run"]["manifest"], "state_before": service["run"]["state"],
+                        "bootstrap": service["bootstrap"]},
+        }
+        registered = {"storage": storage, "runtime": {"redis": redis},
+                      "evidence": {"redis_runtime": self.bound(runtime)}}
+
+        with (
+            patch("reference_fixture_service_context.context", return_value=value),
+            patch("reference_fixture_service_context.registered_services", return_value=registered),
+            patch("reference_fixture_service_context.observe_services",
+                  return_value={"redis": "running", "rustfs": "running", "termination": None}),
+            patch("reference_fixture_service_context.guard") as terminal_guard,
+        ):
+            self.require_live_service(self.backend, self.review_path, service)
+        terminal_guard.assert_called_once_with(value)
+
+        with (
+            patch("reference_fixture_service_context.context", return_value=value),
+            patch("reference_fixture_service_context.registered_services", return_value=registered),
+            patch("reference_fixture_service_context.observe_services",
+                  return_value={"redis": "stopped", "rustfs": "running", "termination": None}),
+            patch("reference_fixture_service_context.guard"),
+            self.assertRaisesRegex(ValueError, "未保持存活"),
+        ):
+            self.require_live_service(self.backend, self.review_path, service)
+
+        def drift(_registered):
+            runtime.write_text(json.dumps({"runtime": "changed"}), encoding="utf-8")
+            return {"redis": "running", "rustfs": "running", "termination": None}
+
+        with (
+            patch("reference_fixture_service_context.context", return_value=value),
+            patch("reference_fixture_service_context.registered_services", return_value=registered),
+            patch("reference_fixture_service_context.observe_services", side_effect=drift),
+            patch("reference_fixture_service_context.guard"),
+            self.assertRaisesRegex(ValueError, "运行收据"),
+        ):
+            self.require_live_service(self.backend, self.review_path, service)
 
     def test_service_run_must_be_bound_to_the_seed_environment_of_the_same_review(self):
         manifest_path = self.service_run / "manifest.json"

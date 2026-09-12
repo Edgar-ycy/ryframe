@@ -138,6 +138,35 @@ def _service(backend: Path, run: Path, review_binding: dict, review: dict) -> di
     return result
 
 
+def _require_live_service(backend: Path, review_file: Path, service: dict) -> None:
+    """终末核验当前服务代次、完整进程树与三份运行收据。"""
+    from reference_fixture_service_context import context, guard, observe_services, registered_services
+
+    seed_bootstrap = Path(service["bootstrap"]["path"])
+    value = context(backend, review_file, seed_bootstrap)
+    registered = registered_services(value)
+    storage = {key: registered["storage"][key]
+               for key in ("identity", "sha256", "process_receipt", "launch_receipt")}
+    if (service["run"]["path"] != str(value["run"])
+            or service["run"]["manifest"] != value["sources"]["manifest"]
+            or service["run"]["state"] != value["sources"]["state_before"]
+            or service["bootstrap"] != value["sources"]["bootstrap"]
+            or service["rustfs"] != storage
+            or service["redis"] != registered["runtime"]["redis"]):
+        raise ValueError("fresh-target 服务投影与当前登记代次不一致")
+    descriptors = (storage["process_receipt"], storage["launch_receipt"],
+                   registered["evidence"]["redis_runtime"])
+    if any(not isinstance(item, dict) for item in descriptors):
+        raise ValueError("fresh-target 服务缺少进程、启动或 Redis 运行绑定")
+    if observe_services(registered) != {"redis": "running", "rustfs": "running", "termination": None}:
+        raise ValueError("fresh-target 请求签发时 RustFS 或 Redis 未保持存活")
+    guard(value)
+    for descriptor in descriptors:
+        path, _ = _read(backend, Path(descriptor["path"]))
+        if _bound(path) != descriptor:
+            raise ValueError("fresh-target 服务运行收据在签发前发生变化")
+
+
 def build(
     backend: Path, environment_path: Path, service_run: Path, request_id: str, side: str
 ) -> dict:
@@ -242,6 +271,7 @@ def build(
         or _bound(environment_file) != environment_binding
     ):
         raise ValueError("fresh-target 私有环境在请求构造期间变化")
+    _require_live_service(backend, review_file, service)
     return request
 
 
