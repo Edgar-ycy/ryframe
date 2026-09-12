@@ -29,6 +29,14 @@ import verify_release_ci as verifier
 TEMP = Path(__file__).resolve().parents[2] / ".local-tests/python-unit"
 
 
+def protocol_environment(mode, **values):
+    return {
+        "RYFRAME_RELEASE_PROTOCOL_VERSION": "1",
+        "RYFRAME_RELEASE_MODE": mode,
+        **{f"RYFRAME_RELEASE_{key}": str(value) for key, value in values.items()},
+    }
+
+
 class ReleaseCollectorTests(unittest.TestCase):
     def test_every_release_workflow_is_bound_to_the_coordinated_tag(self):
         class Args:
@@ -604,29 +612,22 @@ class ReleaseCollectorTests(unittest.TestCase):
         TEMP.mkdir(parents=True, exist_ok=True)
         with WorkspaceDirectory(TEMP, prefix="release-failure-") as temporary:
             output = Path(temporary) / "failure.json"
-            arguments = [
-                "verify_release_ci.py",
-                "--backend-repository",
-                "owner/backend",
-                "--frontend-repository",
-                "owner/frontend",
-                "--backend-sha",
-                "a" * 40,
-                "--frontend-sha",
-                "b" * 40,
-                "--backend-tag-oid",
-                "c" * 40,
-                "--frontend-tag-oid",
-                "d" * 40,
-                "--tag",
-                "v0.13.0",
-                "--timeout",
-                "5",
-                "--output",
-                str(output),
-            ]
+            environment = protocol_environment(
+                "ci-evidence",
+                BACKEND_REPOSITORY="owner/backend",
+                FRONTEND_REPOSITORY="owner/frontend",
+                BACKEND_SHA="a" * 40,
+                FRONTEND_SHA="b" * 40,
+                BACKEND_TAG_OID="c" * 40,
+                FRONTEND_TAG_OID="d" * 40,
+                TAG="v0.13.0",
+                TIMEOUT_SECONDS="5",
+                OUTPUT_PATH=output,
+            )
             try:
-                with patch("sys.argv", arguments), patch(
+                with patch("sys.argv", ["verify_release_ci.py"]), patch.dict(
+                    "os.environ", environment, clear=True
+                ), patch(
                     "verify_release_ci.coordinated_evidence",
                     side_effect=OSError("stream failed"),
                 ), self.assertRaisesRegex(OSError, "stream failed"):
@@ -656,17 +657,18 @@ class ReleaseCollectorTests(unittest.TestCase):
                 "attempt": 2,
                 "sources": {},
             }
-            arguments = [
-                "verify_release_ci.py",
-                "--record-pair",
-                str(output),
-                "--backend-dir",
-                str(backend),
-                "--frontend-dir",
-                str(frontend),
-            ]
-            with patch("sys.argv", arguments), patch.dict(
-                "os.environ", {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2"}
+            environment = protocol_environment(
+                "ci-record-pair",
+                OUTPUT_PATH=output,
+                BACKEND_DIR=backend,
+                FRONTEND_DIR=frontend,
+            )
+            environment.update(
+                GITHUB_RUN_ID="123",
+                GITHUB_RUN_ATTEMPT="2",
+            )
+            with patch("sys.argv", ["verify_release_ci.py"]), patch.dict(
+                "os.environ", environment, clear=True
             ), patch(
                 "verify_release_ci.source_pair_receipt", return_value=receipt
             ) as capture:
@@ -674,8 +676,8 @@ class ReleaseCollectorTests(unittest.TestCase):
             capture.assert_called_once_with(backend, frontend, 123, 2)
             self.assertEqual(json.loads(output.read_text(encoding="utf-8")), receipt)
             original = output.read_bytes()
-            with patch("sys.argv", arguments), patch.dict(
-                "os.environ", {"GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2"}
+            with patch("sys.argv", ["verify_release_ci.py"]), patch.dict(
+                "os.environ", environment, clear=True
             ), patch(
                 "verify_release_ci.source_pair_receipt", return_value=receipt
             ), self.assertRaises(FileExistsError):
@@ -684,18 +686,15 @@ class ReleaseCollectorTests(unittest.TestCase):
 
     def test_verify_pair_is_read_only_and_rechecks_both_roots(self):
         receipt_path = Path("pair.json")
-        arguments = [
-            "verify_release_ci.py",
-            "--verify-pair",
-            str(receipt_path),
-            "--backend-dir",
-            "backend",
-            "--frontend-dir",
-            "frontend",
-        ]
-        with patch("sys.argv", arguments), patch.dict(
-            "os.environ",
-            {"GITHUB_RUN_ID": "12", "GITHUB_RUN_ATTEMPT": "3"},
+        environment = protocol_environment(
+            "ci-verify-pair",
+            INPUT_PATH=receipt_path,
+            BACKEND_DIR="backend",
+            FRONTEND_DIR="frontend",
+        )
+        environment.update(GITHUB_RUN_ID="12", GITHUB_RUN_ATTEMPT="3")
+        with patch("sys.argv", ["verify_release_ci.py"]), patch.dict(
+            "os.environ", environment, clear=True
         ), patch(
             "verify_release_ci.verify_source_pair_receipt"
         ) as verify:
@@ -708,46 +707,50 @@ class ReleaseCollectorTests(unittest.TestCase):
             3,
         )
 
-    def test_cli_rejects_partial_or_malformed_tag_object_identity(self):
+    def test_private_protocol_rejects_partial_tag_object_identity(self):
         TEMP.mkdir(parents=True, exist_ok=True)
         with WorkspaceDirectory(TEMP, prefix="release-args-") as temporary:
-            common = [
-                "verify_release_ci.py",
-                "--backend-repository",
-                "owner/backend",
-                "--frontend-repository",
-                "owner/frontend",
-                "--backend-sha",
-                "a" * 40,
-                "--frontend-sha",
-                "b" * 40,
-                "--tag",
-                "v0.13.0",
-                "--timeout",
-                "5",
-                "--output",
-                str(Path(temporary) / "evidence.json"),
-            ]
-            cases = (
-                ["--backend-tag-oid", "c" * 40],
-                [
-                    "--backend-tag-oid",
-                    "not-an-oid",
-                    "--frontend-tag-oid",
-                    "d" * 40,
-                ],
+            environment = protocol_environment(
+                "ci-evidence",
+                BACKEND_REPOSITORY="owner/backend",
+                FRONTEND_REPOSITORY="owner/frontend",
+                BACKEND_SHA="a" * 40,
+                FRONTEND_SHA="b" * 40,
+                BACKEND_TAG_OID="c" * 40,
+                TAG="v0.13.0",
+                TIMEOUT_SECONDS="5",
+                OUTPUT_PATH=Path(temporary) / "evidence.json",
             )
-            for extra in cases:
-                with self.subTest(extra=extra), patch(
-                    "sys.argv", common + extra
-                ), patch("sys.stderr", io.StringIO()), patch(
-                    "verify_release_ci.coordinated_evidence"
-                ) as collect, self.assertRaises(
-                    SystemExit
-                ) as error:
-                    verifier.main()
-                self.assertEqual(error.exception.code, 2)
-                collect.assert_not_called()
+            with patch("sys.argv", ["verify_release_ci.py"]), patch.dict(
+                "os.environ", environment, clear=True
+            ), patch("sys.stderr", io.StringIO()), patch(
+                "verify_release_ci.coordinated_evidence"
+            ) as collect, self.assertRaises(SystemExit) as error:
+                verifier.main()
+            self.assertEqual(error.exception.code, 2)
+            collect.assert_not_called()
+
+    def test_private_program_rejects_argv_before_collecting_evidence(self):
+        environment = protocol_environment(
+            "ci-evidence",
+            BACKEND_REPOSITORY="owner/backend",
+            FRONTEND_REPOSITORY="owner/frontend",
+            BACKEND_SHA="a" * 40,
+            FRONTEND_SHA="b" * 40,
+            TAG="v0.13.0",
+            TIMEOUT_SECONDS="5",
+            OUTPUT_PATH="D:/evidence.json",
+        )
+        with patch(
+            "sys.argv", ["verify_release_ci.py", "--output", "D:/other.json"]
+        ), patch.dict("os.environ", environment, clear=True), patch(
+            "sys.stderr", io.StringIO()
+        ), patch("verify_release_ci.coordinated_evidence") as collect, self.assertRaises(
+            SystemExit
+        ) as error:
+            verifier.main()
+        self.assertEqual(error.exception.code, 2)
+        collect.assert_not_called()
 
     def test_archive_reader_rejects_oversize_receipt_before_validation(self):
         buffer = io.BytesIO()

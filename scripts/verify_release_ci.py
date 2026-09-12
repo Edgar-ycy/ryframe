@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import argparse
+from dataclasses import dataclass
 from hashlib import sha256
 import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import time
 import zipfile
@@ -28,9 +29,75 @@ from release_evidence import (
     validate_pair,
     validate_run,
 )
+from release_private_protocol import (
+    EVIDENCE_MODE,
+    RECORD_PAIR_MODE,
+    VERIFY_PAIR_MODE,
+    PrivateProtocol,
+    ProtocolError,
+    load_protocol,
+)
 
 API_DEADLINE: float | None = None
 ARTIFACT_ARCHIVE_MAX_BYTES = 256 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class EvidenceRequest:
+    backend_repository: str
+    frontend_repository: str
+    backend_sha: str
+    frontend_sha: str
+    tag: str
+    timeout: int
+    output: Path
+    backend_tag_oid: str | None
+    frontend_tag_oid: str | None
+
+
+@dataclass(frozen=True)
+class SourcePairRequest:
+    mode: str
+    receipt: Path
+    backend_dir: Path
+    frontend_dir: Path
+
+
+def _evidence_request(protocol: PrivateProtocol) -> EvidenceRequest:
+    try:
+        timeout = int(protocol.value("TIMEOUT_SECONDS"))
+    except ValueError as error:
+        raise ProtocolError("RYFRAME_RELEASE_TIMEOUT_SECONDS 必须是整数") from error
+    if not 1 <= timeout <= 14400:
+        raise ProtocolError("RYFRAME_RELEASE_TIMEOUT_SECONDS 必须在 1..14400 之间")
+    backend_tag_oid = protocol.optional("BACKEND_TAG_OID")
+    frontend_tag_oid = protocol.optional("FRONTEND_TAG_OID")
+    if (backend_tag_oid is None) != (frontend_tag_oid is None):
+        raise ProtocolError("双方 tag 对象 OID 必须同时存在或同时省略")
+    return EvidenceRequest(
+        backend_repository=protocol.value("BACKEND_REPOSITORY"),
+        frontend_repository=protocol.value("FRONTEND_REPOSITORY"),
+        backend_sha=protocol.value("BACKEND_SHA"),
+        frontend_sha=protocol.value("FRONTEND_SHA"),
+        tag=protocol.value("TAG"),
+        timeout=timeout,
+        output=Path(protocol.value("OUTPUT_PATH")),
+        backend_tag_oid=backend_tag_oid,
+        frontend_tag_oid=frontend_tag_oid,
+    )
+
+
+def _load_protocol_request() -> EvidenceRequest | SourcePairRequest:
+    protocol = load_protocol({EVIDENCE_MODE, RECORD_PAIR_MODE, VERIFY_PAIR_MODE})
+    if protocol.mode == EVIDENCE_MODE:
+        return _evidence_request(protocol)
+    path_name = "OUTPUT_PATH" if protocol.mode == RECORD_PAIR_MODE else "INPUT_PATH"
+    return SourcePairRequest(
+        mode=protocol.mode,
+        receipt=Path(protocol.value(path_name)),
+        backend_dir=Path(protocol.value("BACKEND_DIR")),
+        frontend_dir=Path(protocol.value("FRONTEND_DIR")),
+    )
 
 
 def _api_timeout() -> float:
@@ -184,21 +251,21 @@ def pair_receipts(
     return result
 
 
-def requirements(args) -> list[Requirement]:
+def requirements(request) -> list[Requirement]:
     return [
-        Requirement(args.backend_repository, "ci.yml", args.backend_sha, (
+        Requirement(request.backend_repository, "ci.yml", request.backend_sha, (
             "Plan & Preflight", "Rust Gate", "Resource & Contract Gate",
             "MySQL 8.4, Redis 7.4 & AWS-LC TLS Integration", "Windows Smoke",
             "Security, Supply Chain & Deployment", "Required",
-        ), args.tag),
-        Requirement(args.frontend_repository, "ci.yml", args.frontend_sha, (
+        ), request.tag),
+        Requirement(request.frontend_repository, "ci.yml", request.frontend_sha, (
             "Static Gate (Node 24)", "Unit Tests (Node 24)", "Production Build (Node 24)",
             "Browser Smoke (Node 24)", "Windows Smoke", "Required",
-        ), args.tag),
-        Requirement(args.backend_repository, "extended-ci.yml", args.backend_sha,
-                    ("Real API MySQL Redis Chrome E2E", "Generated Device Data Migration E2E", "Linux DevEx Cgroup Memory"), args.tag),
-        Requirement(args.frontend_repository, "extended-ci.yml", args.frontend_sha,
-                    ("Node 22 Compatibility & Supply Chain",), args.tag),
+        ), request.tag),
+        Requirement(request.backend_repository, "extended-ci.yml", request.backend_sha,
+                    ("Real API MySQL Redis Chrome E2E", "Generated Device Data Migration E2E", "Linux DevEx Cgroup Memory"), request.tag),
+        Requirement(request.frontend_repository, "extended-ci.yml", request.frontend_sha,
+                    ("Node 22 Compatibility & Supply Chain",), request.tag),
     ]
 
 
@@ -331,61 +398,52 @@ def coordinated_evidence(
         sleep(min(15, remaining))
 
 
-def main() -> None:
-    global API_DEADLINE
-    parser = argparse.ArgumentParser(description=__doc__)
-    source_pair = parser.add_mutually_exclusive_group()
-    source_pair.add_argument("--record-pair", type=Path)
-    source_pair.add_argument("--verify-pair", type=Path)
-    parser.add_argument("--backend-dir", type=Path, default=Path.cwd())
-    parser.add_argument("--frontend-dir", type=Path)
-    parser.add_argument("--backend-repository")
-    parser.add_argument("--frontend-repository")
-    parser.add_argument("--backend-sha")
-    parser.add_argument("--frontend-sha")
-    parser.add_argument("--backend-tag-oid")
-    parser.add_argument("--frontend-tag-oid")
-    parser.add_argument("--tag")
-    parser.add_argument("--timeout", type=int, default=5400)
-    parser.add_argument("--output", type=Path)
-    args = parser.parse_args()
-    if args.record_pair or args.verify_pair:
-        if args.frontend_dir is None:
-            parser.error("记录或复核源码组合需要 --frontend-dir")
-        run_id = int(os.environ["GITHUB_RUN_ID"])
-        attempt = int(os.environ["GITHUB_RUN_ATTEMPT"])
-        if args.verify_pair:
-            verify_source_pair_receipt(
-                args.verify_pair,
-                args.backend_dir,
-                args.frontend_dir,
-                run_id,
-                attempt,
-            )
-            print("全栈源码组合复核通过")
-            return
-        receipt = source_pair_receipt(
-            args.backend_dir, args.frontend_dir, run_id, attempt
+def _run_source_pair(request: SourcePairRequest) -> None:
+    run_id = int(os.environ["GITHUB_RUN_ID"])
+    attempt = int(os.environ["GITHUB_RUN_ATTEMPT"])
+    if request.mode == VERIFY_PAIR_MODE:
+        verify_source_pair_receipt(
+            request.receipt,
+            request.backend_dir,
+            request.frontend_dir,
+            run_id,
+            attempt,
         )
-        args.record_pair.parent.mkdir(parents=True, exist_ok=True)
-        with args.record_pair.open("x", encoding="utf-8", newline="\n") as output:
-            output.write(json.dumps(receipt, indent=2) + "\n")
+        print("全栈源码组合复核通过")
         return
-    for field in ("backend_sha", "frontend_sha"):
-        if not re.fullmatch(r"[0-9a-f]{40}", getattr(args, field) or ""):
-            parser.error(f"{field} 必须是精确 SHA")
-    for field in ("backend_repository", "frontend_repository"):
-        if not re.fullmatch(r"[\w.-]+/[\w.-]+", getattr(args, field) or ""):
-            parser.error(f"{field} 必须是 owner/repo")
-    tag_oids = (args.backend_tag_oid, args.frontend_tag_oid)
-    if any(tag_oids) and not all(
-        re.fullmatch(r"[0-9a-f]{40}", value or "") for value in tag_oids
-    ):
-        parser.error("backend_tag_oid 与 frontend_tag_oid 必须同时提供精确对象 OID")
-    if not args.output or not re.fullmatch(r"v\d+\.\d+\.\d+", args.tag or "") or not 1 <= args.timeout <= 14400:
-        parser.error("需要有效 --output、--tag 和 1..14400 秒超时")
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    API_DEADLINE = time.monotonic() + args.timeout
+    receipt = source_pair_receipt(
+        request.backend_dir, request.frontend_dir, run_id, attempt
+    )
+    request.receipt.parent.mkdir(parents=True, exist_ok=True)
+    with request.receipt.open("x", encoding="utf-8", newline="\n") as output:
+        output.write(json.dumps(receipt, indent=2) + "\n")
+
+
+def _failure_receipt(
+    request: EvidenceRequest,
+    tag_oids: tuple[str | None, str | None],
+    error: Exception,
+) -> dict[str, object]:
+    failure: dict[str, object] = {
+        "status": "failed",
+        "error": str(error),
+        "backend_sha": request.backend_sha,
+        "frontend_sha": request.frontend_sha,
+        "tag": request.tag,
+    }
+    if all(tag_oids):
+        failure.update(
+            backend_tag_oid=tag_oids[0],
+            frontend_tag_oid=tag_oids[1],
+        )
+    return failure
+
+
+def _run_evidence(request: EvidenceRequest) -> None:
+    global API_DEADLINE
+    tag_oids = (request.backend_tag_oid, request.frontend_tag_oid)
+    request.output.parent.mkdir(parents=True, exist_ok=True)
+    API_DEADLINE = time.monotonic() + request.timeout
     try:
         fixture = (
             Path(__file__).resolve().parents[1]
@@ -393,30 +451,39 @@ def main() -> None:
         )
         fixture_sha256 = sha256(fixture.read_bytes()).hexdigest()
         evidence = coordinated_evidence(
-            requirements(args),
-            args.timeout,
+            requirements(request),
+            request.timeout,
             fixture_sha256=fixture_sha256,
             tag_oids=tag_oids if all(tag_oids) else None,
         )
     except (EvidenceError, OSError, subprocess.SubprocessError, ValueError, KeyError, zipfile.BadZipFile) as error:
-        failure = {
-            "status": "failed",
-            "error": str(error),
-            "backend_sha": args.backend_sha,
-            "frontend_sha": args.frontend_sha,
-            "tag": args.tag,
-        }
-        if all(tag_oids):
-            failure.update(
-                backend_tag_oid=tag_oids[0], frontend_tag_oid=tag_oids[1]
+        request.output.write_text(
+            json.dumps(
+                _failure_receipt(request, tag_oids, error),
+                ensure_ascii=False,
+                indent=2,
             )
-        args.output.write_text(
-            json.dumps(failure, ensure_ascii=False, indent=2) + "\n",
+            + "\n",
             encoding="utf-8",
         )
         raise
-    args.output.write_text(json.dumps({"status": "success", **evidence}, indent=2) + "\n", encoding="utf-8")
+    request.output.write_text(
+        json.dumps({"status": "success", **evidence}, indent=2) + "\n",
+        encoding="utf-8",
+    )
     print("双方日常 CI、Extended CI 和精确源码组合验证通过")
+
+
+def main() -> None:
+    try:
+        request = _load_protocol_request()
+    except ProtocolError as error:
+        print(f"发布私有协议错误：{error}", file=sys.stderr)
+        raise SystemExit(2) from error
+    if isinstance(request, SourcePairRequest):
+        _run_source_pair(request)
+    else:
+        _run_evidence(request)
 
 
 if __name__ == "__main__":

@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import re
@@ -12,6 +11,12 @@ import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+
+from release_private_protocol import (
+    ProtocolError,
+    SOURCE_MODE,
+    load_protocol,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +40,17 @@ class RepositoryRef:
     repository: str
     tag_object: str
     commit: str
+
+
+@dataclass(frozen=True)
+class ReleaseSourceRequest:
+    tag: str
+    frontend_dir: Path
+    backend_repository: str
+    backend_commit: str
+    frontend_repository: str
+    frontend_commit: str
+    manifest_path: Path
 
 
 def fail(message: str) -> None:
@@ -288,23 +304,32 @@ def write_manifest(path: Path, manifest: dict[str, object]) -> None:
     path.write_text(serialize_manifest(manifest), encoding="utf-8")
 
 
+def source_request() -> ReleaseSourceRequest:
+    protocol = load_protocol({SOURCE_MODE})
+    return ReleaseSourceRequest(
+        tag=protocol.value("TAG"),
+        frontend_dir=Path(protocol.value("FRONTEND_DIR")),
+        backend_repository=protocol.value("BACKEND_REPOSITORY"),
+        backend_commit=protocol.value("BACKEND_COMMIT"),
+        frontend_repository=protocol.value("FRONTEND_REPOSITORY"),
+        frontend_commit=protocol.value("FRONTEND_COMMIT"),
+        manifest_path=Path(protocol.value("MANIFEST_PATH")),
+    )
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--tag", required=True)
-    parser.add_argument("--frontend-dir", type=Path, required=True)
-    parser.add_argument("--backend-repository", required=True)
-    parser.add_argument("--backend-commit", required=True)
-    parser.add_argument("--frontend-repository", required=True)
-    parser.add_argument("--frontend-commit", required=True)
-    parser.add_argument("--manifest-path", type=Path, required=True)
-    args = parser.parse_args()
+    try:
+        request = source_request()
+    except ProtocolError as error:
+        print(f"发布私有协议错误：{error}", file=sys.stderr)
+        return 2
 
     try:
-        identity = release_identity(args.tag)
-        backend_repository = repository_slug(args.backend_repository, "backend")
-        frontend_repository = repository_slug(args.frontend_repository, "frontend")
-        backend_commit = commit_sha(args.backend_commit, "backend")
-        frontend_commit = commit_sha(args.frontend_commit, "frontend")
+        identity = release_identity(request.tag)
+        backend_repository = repository_slug(request.backend_repository, "backend")
+        frontend_repository = repository_slug(request.frontend_repository, "frontend")
+        backend_commit = commit_sha(request.backend_commit, "backend")
+        frontend_commit = commit_sha(request.frontend_commit, "frontend")
         root_version = workspace_version()
         if root_version != identity.version:
             fail(
@@ -328,7 +353,7 @@ def main() -> int:
         backend_openapi_hash = validate_openapi(
             ROOT / "openapi" / "openapi.json", identity.version, "backend"
         )
-        frontend = args.frontend_dir.resolve()
+        frontend = request.frontend_dir.resolve()
         frontend_ref, frontend_openapi_hash = validate_frontend(
             frontend,
             identity.tag,
@@ -353,7 +378,7 @@ def main() -> int:
             backend_openapi_hash,
             frontend_openapi_hash,
         )
-        write_manifest(args.manifest_path, manifest)
+        write_manifest(request.manifest_path, manifest)
     except subprocess.CalledProcessError as error:
         detail = (error.stderr or error.stdout or "").strip()
         print(f"Release validation command failed: {error.cmd}", file=sys.stderr)
@@ -367,7 +392,7 @@ def main() -> int:
     print(
         f"Release inputs are consistent: {identity.tag}, "
         f"backend/frontend/OpenAPI {identity.version}; "
-        f"manifest {args.manifest_path}"
+        f"manifest {request.manifest_path}"
     )
     return 0
 
