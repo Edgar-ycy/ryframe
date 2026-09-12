@@ -14,6 +14,8 @@ mod feature;
 pub(crate) mod metrics;
 #[path = "check/model.rs"]
 mod model;
+#[path = "check/node_suite.rs"]
+mod node_suite;
 #[path = "check/plan.rs"]
 mod plan;
 #[path = "check/policy_tasks.rs"]
@@ -69,6 +71,8 @@ pub(crate) use feature::{
 pub(crate) use model::{
     BackendSnapshotProfile, ConsumerContractPlan, FrontendProfile, VerifySelection, WorkspaceGraph,
 };
+#[allow(unused_imports)]
+pub(crate) use node_suite::{discover_node_tests, run_node_tests};
 #[allow(unused_imports)]
 pub(crate) use plan::{
     CheckPlanMode, CheckTaskPlan, build_task_plan, plan, render_task_plan, select_check_mode,

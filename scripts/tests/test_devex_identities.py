@@ -1,22 +1,17 @@
 """身份准备工具只使用离线模型和本测试进程内的假后端。"""
 import copy
 import json
-import subprocess
+import sys
 import unittest
-from workspace_directory import WorkspaceDirectory
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from devex_identity_environment import quota_sql, validate_quota, validate_target_bindings
+from workspace_directory import WorkspaceDirectory
 
 
 class IdentityPreparationTests(unittest.TestCase):
-    def test_node_workflows(self):
-        root = Path(__file__).resolve().parents[2]
-        result = subprocess.run(["node", "--test", "scripts/tests/devex-identities.test.mjs",
-                                 "scripts/tests/devex-quota-bridge.test.mjs"],
-                                cwd=root, capture_output=True, text=True, encoding="utf-8", timeout=120)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
     def test_quota_checks_current_non_deleted_users_and_explicit_limit(self):
         sql = quota_sql("fixture_control", "fixture-1")
         self.assertIn("u.del_flag='0'", sql)

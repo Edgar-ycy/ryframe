@@ -64,6 +64,7 @@ pub(crate) enum TaskExecutor {
     PolicyChecks,
     SnapshotPrepare,
     PythonTests,
+    NodeTests,
     MigrationHistory,
     WorkspaceGates,
     SnapshotVerify,
@@ -140,7 +141,7 @@ mod perf;
 #[path = "task_registry/release.rs"]
 mod release;
 
-const CHECK_TASKS: [TaskDefinition; 18] = [
+const CHECK_TASKS: [TaskDefinition; 19] = [
     task_definition!(
         RemovedIdentity,
         "policy.removed-identity",
@@ -256,6 +257,19 @@ const CHECK_TASKS: [TaskDefinition; 18] = [
         None,
         &[],
         &["Python 测试缓存"],
+        &[]
+    ),
+    task_definition!(
+        NodeTests,
+        "node.tests",
+        "run_node_tests",
+        "集中发现并执行仓库 Node 测试",
+        Backend,
+        Test,
+        Backend,
+        None,
+        &[],
+        &[".local-tests 中的测试临时目录"],
         &[]
     ),
     task_definition!(

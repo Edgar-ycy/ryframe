@@ -115,7 +115,7 @@ fn feature_matrix_compiles_and_tests_required_feature_targets() {
 }
 
 #[test]
-fn full_gate_discovers_repository_python_tests() {
+fn full_gate_discovers_repository_python_and_node_tests() {
     assert_eq!(
         PYTHON_ENVIRONMENT_ARGS,
         ["scripts/check_python_environment.py"]

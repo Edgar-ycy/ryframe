@@ -108,6 +108,8 @@ mod diff_tests;
 mod doctor_tests;
 #[path = "internal/migration.rs"]
 mod migration_tests;
+#[path = "internal/node_test_discovery.rs"]
+mod node_tests_tests;
 #[path = "internal/process.rs"]
 mod process_tests;
 #[path = "internal/recovery_cli.rs"]

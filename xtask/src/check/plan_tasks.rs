@@ -31,6 +31,7 @@ fn full_tasks(scope: CheckScope) -> Vec<TaskExecutor> {
         TaskExecutor::PolicyChecks,
         TaskExecutor::SnapshotPrepare,
         TaskExecutor::PythonTests,
+        TaskExecutor::NodeTests,
         TaskExecutor::MigrationHistory,
         TaskExecutor::WorkspaceGates,
         TaskExecutor::SnapshotVerify,
