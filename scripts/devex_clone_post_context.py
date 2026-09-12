@@ -10,7 +10,8 @@ import uuid
 from devex_clone import reuse_plan
 from devex_clone_capture import read_json, write_json
 from devex_clone_export_verify import verify_source_export, verify_export_bindings, observe_source_objects
-from devex_clone_factory_context import Environments, initialization_history
+from devex_clone_factory_context import initialization_history
+from process_environment import Environments
 from devex_clone_inventory import capture_side_inventory
 from devex_clone_ledger import CloneLedger
 from devex_clone_live_object import observe_target_object

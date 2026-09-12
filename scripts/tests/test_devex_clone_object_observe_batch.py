@@ -10,7 +10,7 @@ from unittest.mock import patch
 from devex_clone import verify_plan, write_plan
 from devex_clone_resume import reconcile_steps, resume_steps
 from devex_clone_factory import CloneSession
-from devex_clone_factory_context import Environments
+from process_environment import Environments
 from devex_clone_export_verify import verify_export_bindings, verify_source_export
 from devex_clone_source import export_source
 from devex_clone_source_fixture import SourceFixture

@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 from devex_clone_capture import read_json, write_json
 from devex_clone_cache_process import start as start_redis
-from devex_clone_factory_context import configured
+from process_environment import configured
 from devex_clone_model import linked, local_path
 from devex_clone_run_state import begin, bind_controller_attempt, finish, initialize_state, load_state, run_lock
 from devex_clone_source_proof import require_closed_port

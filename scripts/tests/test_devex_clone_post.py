@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import devex_clone_post as post
 import devex_clone_run as run
 from devex_clone_capture import write_json
-from devex_clone_factory_context import Environments
+from process_environment import Environments
 from devex_clone_post_context import Context
 from devex_clone_post_model import administrator, environment_delta
 from devex_clone_run_state import binding, initialize_state, begin, finish, load_state

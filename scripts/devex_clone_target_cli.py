@@ -9,7 +9,8 @@ from pathlib import Path
 from artifact_digests import filesystem_path
 from devex_clone import read_json
 from devex_clone_capture import read_bound_json, write_json
-from devex_clone_factory_context import Environments, configured, initialization_history
+from devex_clone_factory_context import initialization_history
+from process_environment import Environments, configured
 from devex_clone_model import exact, linked, local_path
 from devex_clone_run_state import binding, controller_observation, historical_state, run_lock
 from devex_clone_source_proof import bound_file

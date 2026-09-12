@@ -7,7 +7,7 @@ import time
 
 from devex_clone_cache_process import start as start_cache, stop as stop_cache
 from devex_clone_capture import read_json, write_json
-from devex_clone_factory_context import configured
+from process_environment import configured
 from devex_clone_model import local_path
 from devex_clone_run_state import (begin, bind_controller_attempt, binding, claim_run_lock,
                                    controller_observation, finish, load_state, recover_run_lock, run_lock)

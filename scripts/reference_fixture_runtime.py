@@ -10,7 +10,7 @@ import subprocess
 
 from ci_full_stack_resources import build_binaries
 from devex_clone_capture import read_json, write_json
-from devex_clone_factory_context import Environments, configured
+from process_environment import Environments, configured
 from devex_clone_model import linked
 from devex_clone_runtime import control, observe
 from full_stack_provenance import verify_build_evidence

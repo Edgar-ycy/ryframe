@@ -13,7 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from devex_clone_capture import read_json, write_json
-from devex_clone_factory_context import configured
+from process_environment import configured
 from devex_clone_run_state import binding
 import devex_clone_run_state as run_state
 import devex_clone_run_cli as cli

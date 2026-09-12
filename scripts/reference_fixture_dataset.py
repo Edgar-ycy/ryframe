@@ -13,7 +13,7 @@ import sys
 from devex_clone_capture import read_json, write_json
 from devex_clone_model import linked, local_path
 from devex_clone_target_binding import KEYS, validate_review
-from devex_clone_factory_context import Environments
+from process_environment import Environments
 from reference_fixture_runtime import _bootstrap, _output, _runtime_environment, verify as verify_runtime
 from restore_build import file_digest
 from restore_reference_io import redact_object_diagnostic

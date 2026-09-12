@@ -8,7 +8,8 @@ from pathlib import Path
 import subprocess
 
 from devex_clone_capture import read_json, write_json
-from devex_clone_factory_context import Environments, initialization_history
+from devex_clone_factory_context import initialization_history
+from process_environment import Environments
 from devex_clone_model import exact, linked, local_path, name
 from devex_clone_post import registration as post_registration
 from devex_clone_post_process import PHASES

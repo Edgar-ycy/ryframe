@@ -530,7 +530,7 @@ class SourceRuntimeTests(unittest.TestCase):
             self.assertFalse(self.process_state["alive"])
 
     def test_failed_and_interrupted_producer_evidence_proves_exit_without_claiming_verification(self):
-        from devex_clone_factory_context import configured
+        from process_environment import configured
 
         directory = self.generation / "verification"
         directory.mkdir()

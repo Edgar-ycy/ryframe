@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from devex_clone_capture import read_json
-from devex_clone_factory_context import configured
+from process_environment import configured
 from devex_clone_model import exact, local_path, name
 from devex_clone_run_state import binding
 from devex_clone_seed_generation_runtime import registered_inputs

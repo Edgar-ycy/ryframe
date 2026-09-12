@@ -4,7 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from devex_clone_capture import read_json, write_json
-from devex_clone_factory_context import Environments
+from process_environment import Environments
 from devex_clone_post import registration as post_registration, target_lock, require_schedule_stage
 from devex_clone_post_actions import verify_confirmations
 from devex_clone_post_context import Context, absent

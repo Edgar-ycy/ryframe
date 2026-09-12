@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 from artifact_digests import protect_binaries, protect_files
-from devex_clone_factory_context import configured
+from process_environment import configured
 from restore_monitoring_permissions import TOKEN_NAME, read_private_token
 from restore_runtime_evidence import (
     HEX_40,

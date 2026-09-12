@@ -8,7 +8,8 @@ from pathlib import Path
 
 from artifact_digests import protect_binaries
 from devex_clone_capture import read_json, write_json
-from devex_clone_factory_context import Environments, initialization_history
+from devex_clone_factory_context import initialization_history
+from process_environment import Environments
 from devex_clone_model import exact, linked, local_path, name
 from devex_clone_run_state import (begin, bind_controller_attempt, binding, claim_run_lock, controller_observation, finish,
                                    historical_state, initialize_state, load_state,

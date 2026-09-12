@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from devex_clone_factory_context import configured
+from process_environment import configured
 from devex_clone_source_proof import verify_api_address_environment
 from process_sockets import endpoint
 from restore_build import repository

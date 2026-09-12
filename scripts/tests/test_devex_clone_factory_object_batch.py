@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 
 import devex_clone_factory as factory
-from devex_clone_factory_context import Environments
+from process_environment import Environments
 from devex_clone_transfer import ObjectObservation
 
 

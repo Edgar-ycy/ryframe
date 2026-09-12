@@ -8,7 +8,7 @@ from devex_clone_capture import read_json
 from devex_clone_export_recovery import (SUMMARY_FIELDS, _intent, _verified_seal, _verify_candidate, complete_summary,
                                          prepare_attempt, record_verified)
 from devex_clone_export_verify import verify_source_export
-from devex_clone_factory_context import Environments
+from process_environment import Environments
 from devex_clone_model import exact
 from devex_clone_run_state import binding, load_state
 from devex_clone_source import export_source

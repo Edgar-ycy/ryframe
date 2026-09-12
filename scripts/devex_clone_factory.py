@@ -14,7 +14,8 @@ from devex_clone import write_plan_result
 from devex_clone_capture import write_json
 from devex_clone_export_verify import (observe_source_object, observe_source_objects, verify_export_bindings,
                                        verify_source_export)
-from devex_clone_factory_context import Environments, database_observation, initialization_history, target_history
+from devex_clone_factory_context import database_observation, initialization_history, target_history
+from process_environment import Environments
 from devex_clone_factory_plan import declaration
 from devex_clone_inventory import capture_side_inventory
 from devex_clone_ledger import CloneLedger

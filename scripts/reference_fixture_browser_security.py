@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
-from devex_clone_factory_context import configured
+from process_environment import configured
 from full_stack_rate_limit_config import login_budget_environment
 
 

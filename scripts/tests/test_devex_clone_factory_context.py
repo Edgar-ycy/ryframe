@@ -1,11 +1,9 @@
-"""复制环境切换与目标初始化历史的离线回归；不访问服务或写业务资源。"""
+"""复制目标初始化历史的离线回归；不访问服务或写业务资源。"""
 import copy
 from dataclasses import asdict, replace
 import json
-import os
 from pathlib import Path
 import sys
-import threading
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -18,98 +16,6 @@ from devex_clone_target_fixture import Fixture
 from devex_clone_target_state import generation_lock
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
-
-
-class EnvironmentTests(unittest.TestCase):
-    def test_nested_sides_restore_outer_then_caller_environment(self):
-        before = dict(os.environ)
-        environments = context.Environments({"APP_SCOPE_ID": "source"}, {"APP_SCOPE_ID": "target"})
-        with environments.use("source"):
-            self.assertEqual(dict(os.environ), {"APP_SCOPE_ID": "source"})
-            with environments.use("target"):
-                self.assertEqual(dict(os.environ), {"APP_SCOPE_ID": "target"})
-            self.assertEqual(dict(os.environ), {"APP_SCOPE_ID": "source"})
-        self.assertEqual(dict(os.environ), before)
-
-    def test_body_exception_restores_environment_without_masking(self):
-        before = dict(os.environ)
-        environments = context.Environments({"APP_SCOPE_ID": "source"}, {})
-        with self.assertRaisesRegex(RuntimeError, "original"):
-            with environments.use("source"):
-                raise RuntimeError("original")
-        self.assertEqual(dict(os.environ), before)
-
-    def test_invalid_os_key_restores_partially_installed_environment(self):
-        before = dict(os.environ)
-        environments = context.Environments({"FIRST": "installed", "BAD=KEY": "invalid"}, {})
-        with self.assertRaises((ValueError, OSError)):
-            with environments.use("source"):
-                self.fail("无效环境不能进入业务")
-        self.assertEqual(dict(os.environ), before)
-
-    def test_environment_drift_is_rejected_after_restoring(self):
-        before = dict(os.environ)
-        environments = context.Environments({"APP_SCOPE_ID": "source"}, {})
-        with self.assertRaises(ValueError):
-            with environments.use("source"):
-                os.environ["APP_SCOPE_ID"] = "drift"
-        self.assertEqual(dict(os.environ), before)
-
-    def test_returned_binding_mutation_rejected_and_restored(self):
-        before = dict(os.environ)
-        environments = context.Environments({"APP_SCOPE_ID": "source"}, {})
-        with self.assertRaises(ValueError):
-            with environments.use("source") as value:
-                value["APP_SCOPE_ID"] = "drift"
-        self.assertEqual(dict(os.environ), before)
-        with self.assertRaises(ValueError):
-            with environments.use("source"):
-                self.fail("变化的绑定不能再次使用")
-
-    def test_caller_maps_are_copied_and_unknown_side_rejected(self):
-        source = {"APP_SCOPE_ID": "source"}
-        environments = context.Environments(source, {})
-        source["APP_SCOPE_ID"] = "later"
-        with environments.use("source"):
-            self.assertEqual(os.environ["APP_SCOPE_ID"], "source")
-        with self.assertRaises(ValueError):
-            with environments.use("unknown"):
-                self.fail("未知侧不能进入")
-
-    def test_same_factory_cross_thread_rejected(self):
-        environments = context.Environments({}, {})
-        errors = []
-        def attempt():
-            try:
-                with environments.use("source"):
-                    errors.append("entered")
-            except ValueError:
-                errors.append("rejected")
-        thread = threading.Thread(target=attempt)
-        thread.start(); thread.join(timeout=5)
-        self.assertFalse(thread.is_alive())
-        self.assertEqual(errors, ["rejected"])
-
-    def test_separate_factories_are_serialized(self):
-        before = dict(os.environ)
-        outer = context.Environments({"SIDE": "first"}, {})
-        ready, entered = threading.Event(), threading.Event()
-        values = []
-        def second():
-            other = context.Environments({"SIDE": "second"}, {})
-            ready.set()
-            with other.use("source"):
-                values.append(dict(os.environ)); entered.set()
-        with outer.use("source"):
-            thread = threading.Thread(target=second)
-            thread.start()
-            self.assertTrue(ready.wait(timeout=5))
-            self.assertFalse(entered.is_set())
-            self.assertEqual(dict(os.environ), {"SIDE": "first"})
-        thread.join(timeout=5)
-        self.assertFalse(thread.is_alive())
-        self.assertEqual(values, [{"SIDE": "second"}])
-        self.assertEqual(dict(os.environ), before)
 
 
 class TargetHistoryTests(unittest.TestCase):

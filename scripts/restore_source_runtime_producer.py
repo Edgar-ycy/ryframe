@@ -509,7 +509,7 @@ def require_source_verifier_stopped(backend: Path, start: dict) -> dict:
     }
     if names - allowed or PROCESS not in names or INTENT not in names:
         raise ValueError("来源验收缺少已登记进程身份或包含未知证据")
-    from devex_clone_factory_context import configured
+    from process_environment import configured
     from restore_reference_io import ExternalTools
 
     environment = configured(facts["environment"]["environment"])

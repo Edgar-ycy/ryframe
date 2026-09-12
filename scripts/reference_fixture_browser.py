@@ -12,7 +12,7 @@ from typing import Callable
 from urllib.parse import urlsplit
 
 from devex_clone_capture import read_json
-from devex_clone_factory_context import configured
+from process_environment import configured
 from devex_clone_model import linked, local_path
 from devex_clone_source_proof import require_closed_port
 from full_stack_provenance import verify_build_evidence

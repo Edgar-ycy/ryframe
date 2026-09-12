@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import devex_clone_post as post
 from devex_clone_post_context import Context
 from devex_clone_capture import write_json
-from devex_clone_factory_context import Environments
+from process_environment import Environments
 from devex_clone_run_state import binding
 from restore_reference_plan import plan_hash
 

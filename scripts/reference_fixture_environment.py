@@ -13,7 +13,7 @@ import subprocess
 from urllib.parse import urlsplit
 
 from devex_clone_capture import read_json, write_json
-from devex_clone_factory_context import Environments, configured
+from process_environment import Environments, configured
 from devex_clone_model import linked, local_path
 from devex_clone_target_binding import KEYS, validate_review
 from devex_clone_tools import verify as verify_tools

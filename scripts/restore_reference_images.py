@@ -7,7 +7,8 @@ import json
 from pathlib import Path
 
 from devex_clone_capture import CaptureReader, write_json
-from devex_clone_factory_context import Environments, configured, inventory_history, target_history
+from devex_clone_factory_context import inventory_history, target_history
+from process_environment import Environments, configured
 from devex_clone_inventory import capture_side_inventory
 from devex_clone_live_object import observe_target_object, read_observation, verify_target_heads
 from devex_clone_model import exact, local_path, schema_fingerprints
