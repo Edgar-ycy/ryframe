@@ -14,6 +14,9 @@ pub(crate) use performance_identities::*;
 #[path = "model/fixture_runtime.rs"]
 mod fixture_runtime;
 pub(crate) use fixture_runtime::*;
+#[path = "model/data.rs"]
+mod data;
+pub(crate) use data::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Cli {
@@ -150,11 +153,11 @@ pub(crate) enum DataCommand {
     Help,
     Migrate(MigrationCommand),
     PerformanceIdentities(PerformanceIdentitiesCommand),
-    Backup(Vec<String>),
-    Restore(Vec<String>),
-    TargetInventory(Vec<String>),
-    File(Vec<String>),
-    Reset(Vec<String>),
+    Backup(BackupCommand),
+    Restore(RestoreCommand),
+    TargetInventory(TargetInventoryOptions),
+    File(FileMaintenanceOptions),
+    Reset(ResetCommand),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

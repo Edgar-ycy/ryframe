@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 
 use super::cli::{
-    ApiGenerateCommand, BuildOptions, BuildProfile, CheckCommand, CheckOptions, CheckScope,
-    CiCommand, CliError, Command, DataCommand, DeploymentOptions, DeploymentPhase, GenerateCommand,
-    MigrationCommand, MigrationOperation, MigrationTarget, RecoveryCommand, RequiredAction,
-    RequiredEvent, RequiredJobResult, ResourceAction, ResourceCommand, ResourceGateReplayOptions,
-    ResourceTarget, SecurityCommand, SecurityReportKind, SecurityReportOptions, parse,
+    ApiGenerateCommand, BackupCommand, BuildOptions, BuildProfile, CheckCommand, CheckOptions,
+    CheckScope, CiCommand, CliError, Command, DataCommand, DeploymentOptions, DeploymentPhase,
+    GenerateCommand, MigrationCommand, MigrationOperation, MigrationTarget, RecoveryCommand,
+    RequiredAction, RequiredEvent, RequiredJobResult, ResourceAction, ResourceCommand,
+    ResourceGateReplayOptions, ResourceTarget, SecurityCommand, SecurityReportKind,
+    SecurityReportOptions, parse,
 };
 
 fn strings(values: &[&str]) -> Vec<String> {
@@ -747,19 +748,12 @@ fn data_groups_migrations_and_explicit_maintenance() {
             target: MigrationTarget::TenantDataAll,
         }))
     );
-    assert!(matches!(
-        parse_command(&["data", "backup", "status"]),
-        Ok(Command::Data(DataCommand::Backup(arguments))) if arguments == ["status"]
-    ));
-    assert!(matches!(
-        parse_command(&["data", "restore", "verify", "--id", "r1"]),
-        Ok(Command::Data(DataCommand::Restore(arguments))) if arguments[0] == "verify"
-    ));
-    assert!(matches!(
-        parse_command(&["data", "target", "inventory", "--target", "tenant-a"]),
-        Ok(Command::Data(DataCommand::TargetInventory(arguments)))
-            if arguments == ["inventory", "--target", "tenant-a"]
-    ));
+    assert_eq!(
+        parse_command(&["data", "backup", "status"]).unwrap(),
+        Command::Data(DataCommand::Backup(BackupCommand::Status))
+    );
+    assert!(parse_command(&["data", "restore", "verify", "--id", "r1"]).is_err());
+    assert!(parse_command(&["data", "target", "inventory", "--target", "tenant-a"]).is_err());
     assert!(parse_command(&["data", "backup"]).is_err());
     assert!(parse_command(&["data", "file", "unknown"]).is_err());
     assert_eq!(

@@ -6,6 +6,8 @@ use super::model::*;
 
 #[path = "parse/ci.rs"]
 mod ci;
+#[path = "parse/data.rs"]
+mod data;
 #[path = "parse/performance_identities.rs"]
 mod performance_identities;
 #[path = "parse/recovery.rs"]
@@ -14,6 +16,7 @@ mod recovery;
 mod release;
 
 use ci::parse_ci;
+use data::parse_maintenance_data;
 use performance_identities::parse_performance_identities;
 use recovery::parse_recovery;
 use release::parse_release;
@@ -45,7 +48,12 @@ pub(crate) fn parse(mut args: Vec<String>) -> Result<Cli, CliError> {
     let recovery_help = command_name == "check"
         && args.first().is_some_and(|arg| arg == "recovery")
         && args.get(1).is_some_and(|arg| !arg.starts_with('-'));
-    if !recovery_help && args.iter().any(|arg| arg == "--help" || arg == "-h") {
+    let help_requested = if command_name == "data" {
+        matches!(args.as_slice(), [flag] if flag == "--help" || flag == "-h")
+    } else {
+        args.iter().any(|arg| arg == "--help" || arg == "-h")
+    };
+    if !recovery_help && help_requested {
         return Ok(Cli {
             frontend_dir,
             command: Command::Help(Some(command_name)),
@@ -278,44 +286,8 @@ fn parse_data(args: &[String]) -> Result<DataCommand, CliError> {
         "performance-identities" => {
             parse_performance_identities(rest).map(DataCommand::PerformanceIdentities)
         }
-        "backup" => parse_maintenance_args("backup", rest, &["inventory", "register", "status"])
-            .map(DataCommand::Backup),
-        "restore" => parse_maintenance_args("restore", rest, &["begin", "verify-data", "verify"])
-            .map(DataCommand::Restore),
-        "target" => {
-            parse_maintenance_args("target", rest, &["inventory"]).map(DataCommand::TargetInventory)
-        }
-        "file" => parse_maintenance_args(
-            "file",
-            rest,
-            &["backfill-sha256", "drain-legacy-reservations"],
-        )
-        .map(DataCommand::File),
-        "reset" => {
-            if rest.is_empty() {
-                Err(CliError::new("data reset 缺少明确子操作"))
-            } else {
-                Ok(DataCommand::Reset(rest.to_vec()))
-            }
-        }
-        _ => Err(CliError::new(format!("未知 data 子任务：{kind}"))),
+        _ => parse_maintenance_data(args),
     }
-}
-
-fn parse_maintenance_args(
-    kind: &str,
-    args: &[String],
-    operations: &[&str],
-) -> Result<Vec<String>, CliError> {
-    let Some(operation) = args.first() else {
-        return Err(CliError::new(format!("data {kind} 缺少明确子操作")));
-    };
-    if !operations.contains(&operation.as_str()) {
-        return Err(CliError::new(format!(
-            "未知 data {kind} 子操作：{operation}"
-        )));
-    }
-    Ok(args.to_vec())
 }
 
 fn parse_migration(args: &[String]) -> Result<MigrationCommand, CliError> {

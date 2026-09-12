@@ -5,39 +5,18 @@ use crate::{
     workspace::root_dir,
 };
 
+#[path = "data/arguments.rs"]
+pub(crate) mod arguments;
 #[path = "data/performance_identities.rs"]
 pub(crate) mod performance_identities;
 
+use arguments::invocation;
+
 pub(crate) fn run(command: &DataCommand) -> Result<()> {
-    let (feature, binary, arguments) = match command {
-        DataCommand::PerformanceIdentities(command) => {
-            return performance_identities::run(command);
-        }
-        DataCommand::Backup(arguments) => (
-            "bin-tenant-data",
-            "ryframe-tenant-data",
-            tenant_data_arguments("backup", arguments)?,
-        ),
-        DataCommand::Restore(arguments) => (
-            "bin-tenant-data",
-            "ryframe-tenant-data",
-            tenant_data_arguments("restore", arguments)?,
-        ),
-        DataCommand::TargetInventory(arguments) => (
-            "bin-tenant-data",
-            "ryframe-tenant-data",
-            target_inventory_arguments(arguments)?,
-        ),
-        DataCommand::File(arguments) => (
-            "bin-file-maintenance",
-            "ryframe-file-maintenance",
-            arguments.clone(),
-        ),
-        DataCommand::Reset(arguments) => ("bin-reset", "ryframe-reset", arguments.clone()),
-        DataCommand::Help | DataCommand::Migrate(_) => {
-            return Err("内部 data 调度收到不适用的命令".into());
-        }
-    };
+    if let DataCommand::PerformanceIdentities(command) = command {
+        return performance_identities::run(command);
+    }
+    let invocation = invocation(command).ok_or("内部 data 调度收到不适用的命令")?;
     let mut cargo_args = [
         "run",
         "--locked",
@@ -47,15 +26,15 @@ pub(crate) fn run(command: &DataCommand) -> Result<()> {
         "ryframe",
         "--no-default-features",
         "--features",
-        feature,
+        invocation.feature,
         "--bin",
-        binary,
+        invocation.binary,
         "--",
     ]
     .into_iter()
     .map(str::to_owned)
     .collect::<Vec<_>>();
-    cargo_args.extend(arguments);
+    cargo_args.extend(invocation.arguments);
     let root = root_dir();
     let source_sha = command_output(&root, "git", &["rev-parse", "--verify", "HEAD^{commit}"])?
         .trim()
@@ -73,28 +52,4 @@ pub(crate) fn run(command: &DataCommand) -> Result<()> {
         &cargo_args,
         &[("RYFRAME_BUILD_COMMIT", source_sha)],
     )
-}
-
-pub(crate) fn tenant_data_arguments(kind: &str, arguments: &[String]) -> Result<Vec<String>> {
-    let (operation, rest) = arguments
-        .split_first()
-        .ok_or("数据维护命令缺少明确子操作")?;
-    let command = format!("{kind}-{operation}");
-    let mut result = Vec::with_capacity(arguments.len());
-    result.push(command);
-    result.extend(rest.iter().cloned());
-    Ok(result)
-}
-
-pub(crate) fn target_inventory_arguments(arguments: &[String]) -> Result<Vec<String>> {
-    let (operation, rest) = arguments
-        .split_first()
-        .ok_or("目标库存命令缺少明确子操作")?;
-    if operation != "inventory" {
-        return Err("目标库存只支持 inventory".into());
-    }
-    let mut result = Vec::with_capacity(arguments.len());
-    result.push("target-inventory".to_owned());
-    result.extend(rest.iter().cloned());
-    Ok(result)
 }

@@ -136,6 +136,39 @@ fn invalid_public_arguments_exit_two_before_running_tasks() {
 }
 
 #[test]
+fn invalid_data_arguments_exit_two_before_starting_cargo() {
+    for arguments in [
+        ["data", "backup", "register", "--manifest", "relative.json"].as_slice(),
+        [
+            "data",
+            "file",
+            "backfill-sha256",
+            "apply",
+            "--database",
+            "ryframe_test",
+            "--confirm-apply",
+            "APPLY-FILE-A-MAINTENANCE",
+        ]
+        .as_slice(),
+        [
+            "data",
+            "reset",
+            "execute",
+            "--plan-hash",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "--confirm-reset",
+            "RESET scope database",
+        ]
+        .as_slice(),
+    ] {
+        let result = invoke(arguments);
+        assert_eq!(result.status.code(), Some(2), "参数：{arguments:?}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("参数错误"));
+        assert!(result.stdout.is_empty());
+    }
+}
+
+#[test]
 fn frontend_source_validates_all_inputs_before_starting_python() {
     let event = std::env::current_dir()
         .unwrap()
@@ -810,6 +843,25 @@ fn dev_help_lists_every_supported_development_option() {
         "{output}"
     );
     assert!(output.contains("DevEx 保存场景"), "{output}");
+}
+
+#[test]
+fn data_help_describes_typed_write_and_path_boundaries() {
+    let result = invoke(&["data", "--help"]);
+    assert!(result.status.success());
+    assert!(result.stderr.is_empty());
+    let output = String::from_utf8(result.stdout).unwrap();
+    for expected in [
+        "data backup inventory --output <绝对新文件>",
+        "data backup register --manifest <绝对文件> --backup-root <绝对目录> --write",
+        "data restore begin --plan <绝对文件>",
+        "data target inventory --target <目标键>",
+        "data file <backfill-sha256|drain-legacy-reservations>",
+        "data reset execute --plan-hash <sha256> --confirm-reset <精确短语> --write",
+        "备份根、隔离配置和 runner 可使用已登记的外部绝对目录",
+    ] {
+        assert!(output.contains(expected), "{expected}\n{output}");
+    }
 }
 
 #[test]

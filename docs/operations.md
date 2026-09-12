@@ -22,7 +22,7 @@ Compose 会先更新控制库与租户库，再启动 Worker 和 API。启动后
 ```powershell
 $env:APP_ENV = "test"
 cargo xtask data reset plan
-cargo xtask data reset execute --plan-hash <sha256> --confirm-reset <精确短语>
+cargo xtask data reset execute --plan-hash <sha256> --confirm-reset <精确短语> --write
 ```
 
 执行顺序固定为对象前缀、Redis namespace、物理数据库、控制 baseline、租户 baseline、验证和锁释放。清单、ledger 和 report 不包含秘密；普通阶段失败且锁释放成功时，只允许使用同一清单和 ledger 续跑。生产环境在读取配置或访问外部资源前永久拒绝。
@@ -99,15 +99,15 @@ cargo xtask data reset execute --plan-hash <sha256> --confirm-reset <精确短�
 
 ```powershell
 cargo xtask data --help
-cargo xtask data backup inventory --output .local-tests/backup/inventory.json --source-sha <精确后端SHA> --quiesced-at <暂停写入的RFC3339时间>
+cargo xtask data backup inventory --output <后端工作区/.local-tests 内绝对新文件> --source-sha <精确后端SHA> --quiesced-at <暂停写入的RFC3339时间>
 ```
 
-输出文件必须事先不存在。随后由外部工具按清单中的精确数据库、表和对象前缀完成复制与校验，再补齐 `id`、`completed_at`、`retention_until` 和 `artifacts`，形成 `BackupManifest`。每个 `db:<逻辑目标键>` 与 `objects:<桶>` 至少对应一个文件产物，登记其 `relative_path`、`bytes`、`sha256`；相对路径不得越出备份根目录。结构定义见 `crates/ryframe-application/src/ports/backup/manifest.rs`。
+`backup inventory` 与 `target inventory` 都是显式选择的只读库存操作，只在当前后端 `.local-tests` 内以 create-new 语义原子创建新证据文件，不修改数据库、对象或登记状态，因此不使用 `--write`；输出文件必须事先不存在。随后由外部工具按清单中的精确数据库、表和对象前缀完成复制与校验，再补齐 `id`、`completed_at`、`retention_until` 和 `artifacts`，形成 `BackupManifest`。每个 `db:<逻辑目标键>` 与 `objects:<桶>` 至少对应一个文件产物，登记其 `relative_path`、`bytes`、`sha256`；相对路径不得越出备份根目录。结构定义见 `crates/ryframe-application/src/ports/backup/manifest.rs`。
 
-需要检查尚未分配租户的目标或初始化前后状态时，使用 `cargo xtask data target inventory --target <已配置目标key> --output <新文件>`。该命令只连接明确配置的数据库，校验 schema 和精确全表目录，并在只读事务中计算完整行摘要；`target.database` 保存业务表与 placement，`target.preserved_tables` 单独保存 ownership、迁移账本和备份恢复登记表。它不访问对象存储、不修改目标，也不把未使用的目标遗漏为“空清单”。控制库与独立目标之间的一致性仍要求外部停止所有生产者；单份目标清单不表示备份或恢复成功。
+需要检查尚未分配租户的目标或初始化前后状态时，使用 `cargo xtask data target inventory --target <已配置目标key> --output <后端工作区/.local-tests 内绝对新文件>`。该命令只连接明确配置的数据库，校验 schema 和精确全表目录，并在只读事务中计算完整行摘要；`target.database` 保存业务表与 placement，`target.preserved_tables` 单独保存 ownership、迁移账本和备份恢复登记表。它不访问对象存储、不修改目标，也不把未使用的目标遗漏为“空清单”。控制库与独立目标之间的一致性仍要求外部停止所有生产者；单份目标清单不表示备份或恢复成功。
 
 ```powershell
-cargo xtask data backup register --manifest .local-tests/backup/manifest.json --backup-root .local-tests/backup/files
+cargo xtask data backup register --manifest <后端工作区/.local-tests 内绝对清单> --backup-root <已登记外部绝对备份目录> --write
 cargo xtask data backup status
 ```
 
@@ -121,7 +121,7 @@ cargo xtask data backup status
 4. 停止目标业务写入，执行 `restore-verify-data`。它重新验证备份文件、当前 schema、完整表内容、租户关系和完整对象集合，缺失、多余、损坏或错误 ownership 都会失败。
 5. 使用全新 Redis 临时状态启动 API、Worker 和前端，完成真实浏览器业务验收，再提交绑定演练 ID、plan hash、源码 SHA、scope 和时间范围的 `RestoreBusinessProof`。`restore-verify` 再检查两项就绪探针，只有数据与业务验证均通过且总计时不超过 60 分钟、备份恢复点距离故障不超过 24 小时才记录成功。
 
-依次运行 `cargo xtask data restore begin --plan <计划> --output <新running.json> --restore-config-dir <目标配置>`、`cargo xtask data restore verify-data --id <演练ID> --backup-root <备份根> --output <新data-verified.json> --restore-config-dir <目标配置>` 和 `cargo xtask data restore verify --id <演练ID> --proof <业务证明> --tests-receipt <测试明细> --runtime-receipt <运行收据> --target-plan <目标计划> --runner-root <干净测试runner工作树> --restore-config-dir <目标配置>`。前两项在连接数据库前核对 `--output`，只接受父目录已存在且目标不存在的路径；业务成功后先在同目录写入并同步临时文件，再以 create-new 语义原子发布并重读规范字节、JSON 和路径。参数错误、业务失败或已有目标不会创建或截断成功记录；若业务写入成功后发布或复核失败，保留登记库状态和任何已发布文件，先运行只读状态核对，不得盲目重放。
+依次运行 `cargo xtask data restore begin --plan <绝对计划> --output <绝对新running.json> --restore-config-dir <绝对目标配置> --write`、`cargo xtask data restore verify-data --id <演练ID> --backup-root <绝对备份根> --output <绝对新data-verified.json> --restore-config-dir <绝对目标配置> --write` 和 `cargo xtask data restore verify --id <演练ID> --proof <绝对业务证明> --tests-receipt <绝对测试明细> --runtime-receipt <绝对运行收据> --target-plan <绝对目标计划> --runner-root <绝对干净测试runner工作树> --restore-config-dir <绝对目标配置> --write`。计划、证明、收据和输出必须位于当前后端 `.local-tests` 子目录；备份根、隔离配置和干净 runner 可以使用已登记的外部绝对目录。所有路径都不能经过符号链接或重解析点；输入文件和目录必须存在，输出父目录必须存在且目标文件必须不存在。这些条件及 `--write` 在启动维护二进制和连接资源前核验。业务成功后先在同目录写入并同步临时文件，再以 create-new 语义原子发布并重读规范字节、JSON 和路径。参数错误、业务失败或已有目标不会创建或截断成功记录；若业务写入成功后发布或复核失败，保留登记库状态和任何已发布文件，先运行只读状态核对，不得盲目重放。
 
 首次向 fresh target 写入数据库或对象前，执行 `cargo xtask check recovery runtime register --plan <参考计划JSON> --target-plan <目标计划JSON> --output <新runtime-registration.json> --write`，登记目标从未启动。登记入口在 ownership 控制锁内，写入前后核验目标运行目录没有 lifecycle、launch、进程树或未知文件，并证明 API、Worker、前端三个精确端口空闲；缺少进程收据本身不能作为停止证明。正式恢复执行器使用同一登记锁包住完整写入过程，并在每次数据库或对象写入前及退出时重新核验。登记文件绑定两个计划的绝对路径、大小和 SHA-256 及零进程观察；恢复收据绑定该登记文件，计划或运行现场变化后必须新建登记，不能覆盖旧文件。
 

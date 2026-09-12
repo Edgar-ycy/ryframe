@@ -76,6 +76,8 @@ mod cli_tests;
 mod contract_source_tests;
 #[path = "internal/contract.rs"]
 mod contract_tests;
+#[path = "internal/data_cli.rs"]
+mod data_cli_tests;
 #[path = "internal/data.rs"]
 mod data_tests;
 #[path = "internal/dev_probe_control.rs"]
