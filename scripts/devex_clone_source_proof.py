@@ -169,7 +169,7 @@ def _counter_creation_time(pid: int, run) -> int:
     script = (
         "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); "
         "$samples=@((Get-Counter '\\Process(*)\\ID Process','\\Process(*)\\Elapsed Time' "
-        "-SampleInterval 1 -MaxSamples 1 -ErrorAction Stop).CounterSamples); "
+        "-SampleInterval 1 -MaxSamples 1 -ErrorAction SilentlyContinue).CounterSamples); "
         f"$ids=@($samples|Where-Object{{$_.Status -eq 0 -and $_.CounterType -eq 65536 -and "
         f"[long]$_.RawValue -eq {pid} -and $_.Path.EndsWith('\\id process',"
         "[StringComparison]::OrdinalIgnoreCase)}); "

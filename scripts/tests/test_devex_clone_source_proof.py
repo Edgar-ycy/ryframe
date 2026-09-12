@@ -124,6 +124,7 @@ class HistoricalProducerTests(unittest.TestCase):
         self.assertEqual(Path(command[0]), self.system_root / "System32/WindowsPowerShell/v1.0/powershell.exe")
         self.assertEqual(command[1:4], ["-NoProfile", "-NonInteractive", "-Command"])
         self.assertIn("Get-Counter '\\Process(*)\\ID Process','\\Process(*)\\Elapsed Time'", script)
+        self.assertIn("-ErrorAction SilentlyContinue", script)
         self.assertIn("$ids.Count -ne 1", script)
         self.assertIn("$elapsed.Count -ne 1", script)
         self.assertIn("[string]::Equals($_.Path,$elapsedPath", script)
