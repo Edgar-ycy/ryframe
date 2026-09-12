@@ -4,6 +4,9 @@ use super::super::model::{CliError, FullStackCommand, RecoveryCommand};
 
 #[path = "recovery/fresh_target.rs"]
 mod fresh_target;
+#[path = "recovery/fixture_runtime.rs"]
+mod fixture_runtime;
+use fixture_runtime::parse_fixture_runtime;
 
 pub(super) fn parse_recovery(args: &[String]) -> Result<RecoveryCommand, CliError> {
     let Some((stage, rest)) = args.split_first() else {
@@ -50,7 +53,7 @@ pub(super) fn parse_recovery(args: &[String]) -> Result<RecoveryCommand, CliErro
         )
         .map(RecoveryCommand::Clone),
         "fresh-target" => fresh_target::parse(rest).map(RecoveryCommand::FreshTarget),
-        "fixture" => parse_fixture(rest).map(RecoveryCommand::Fixture),
+        "fixture" => parse_fixture(rest),
         "full-stack" => parse_full_stack(rest).map(RecoveryCommand::FullStack),
         "monitoring" => parse_monitoring(rest).map(RecoveryCommand::Monitoring),
         "dataset-prepare" => Ok(RecoveryCommand::DatasetPrepare(rest.to_vec())),
@@ -216,12 +219,17 @@ fn validate_monitoring_ports(
     Ok(())
 }
 
-fn parse_fixture(args: &[String]) -> Result<Vec<String>, CliError> {
+fn parse_fixture(args: &[String]) -> Result<RecoveryCommand, CliError> {
     match args {
-        [option] if matches!(option.as_str(), "--help" | "-h") => Ok(args.to_vec()),
+        [option] if matches!(option.as_str(), "--help" | "-h") => {
+            Ok(RecoveryCommand::Fixture(args.to_vec()))
+        }
         [option, ..] if option.starts_with("--") => {
             validate_fixture_prepare(args)?;
-            Ok(args.to_vec())
+            Ok(RecoveryCommand::Fixture(args.to_vec()))
+        }
+        [operation, rest @ ..] if operation == "runtime" => {
+            parse_fixture_runtime(rest).map(RecoveryCommand::FixtureRuntime)
         }
         [operation, ..]
             if [
@@ -233,12 +241,11 @@ fn parse_fixture(args: &[String]) -> Result<Vec<String>, CliError> {
                 "retention",
                 "services",
                 "source-pair",
-                "runtime",
                 "dataset",
             ]
             .contains(&operation.as_str()) =>
         {
-            Ok(args.to_vec())
+            Ok(RecoveryCommand::Fixture(args.to_vec()))
         }
         _ => Err(CliError::new(
             "用法：cargo xtask check recovery fixture --output-dir <目录> --write，或 fixture <environment|review|request|successor|artifact|retention|services|source-pair|runtime|dataset> ...",

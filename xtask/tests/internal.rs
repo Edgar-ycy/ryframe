@@ -108,6 +108,8 @@ mod devex_tests;
 mod diff_tests;
 #[path = "internal/doctor.rs"]
 mod doctor_tests;
+#[path = "internal/fixture_runtime.rs"]
+mod fixture_runtime_tests;
 #[path = "internal/migration.rs"]
 mod migration_tests;
 #[path = "internal/node_test_discovery.rs"]

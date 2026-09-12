@@ -8,6 +8,8 @@ use crate::{
 };
 
 const FRESH_TARGET_PROTOCOL_ENV: &str = "RYFRAME_XTASK_RECOVERY_FRESH_TARGET";
+#[path = "recovery/fixture_runtime.rs"]
+pub(crate) mod fixture_runtime;
 
 pub(crate) fn run(command: &RecoveryCommand, frontend_dir: &Path) -> Result<()> {
     if let RecoveryCommand::FullStack(command) = command {
@@ -15,6 +17,9 @@ pub(crate) fn run(command: &RecoveryCommand, frontend_dir: &Path) -> Result<()> 
     }
     if let RecoveryCommand::FreshTarget(command) = command {
         return run_fresh_target(command);
+    }
+    if let RecoveryCommand::FixtureRuntime(command) = command {
+        return fixture_runtime::run(command, &root_dir());
     }
     let (program, forwarded) = recovery_command(command, frontend_dir)?;
     let mut command = Vec::with_capacity(forwarded.len() + 1);
@@ -106,11 +111,6 @@ pub(crate) fn recovery_command(
                     "scripts/reference_fixture_source_pair.py",
                     with_paths(&arguments[1..], &backend, None)?,
                 ))
-            } else if arguments.first().map(String::as_str) == Some("runtime") {
-                Ok((
-                    "scripts/reference_fixture_runtime.py",
-                    with_paths(&arguments[1..], &backend, None)?,
-                ))
             } else if arguments.first().map(String::as_str) == Some("dataset") {
                 Ok((
                     "scripts/reference_fixture_dataset.py",
@@ -122,6 +122,9 @@ pub(crate) fn recovery_command(
                     with_paths(arguments, &backend, Some(frontend.as_str()))?,
                 ))
             }
+        }
+        RecoveryCommand::FixtureRuntime(_) => {
+            Ok(("scripts/reference_fixture_runtime.py", Vec::new()))
         }
         RecoveryCommand::FullStack(_) => Ok(("scripts/ci_full_stack.py", Vec::new())),
         RecoveryCommand::Monitoring(arguments) => Ok((

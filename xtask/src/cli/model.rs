@@ -11,6 +11,9 @@ pub(crate) use frontend_source::*;
 #[path = "model/performance_identities.rs"]
 mod performance_identities;
 pub(crate) use performance_identities::*;
+#[path = "model/fixture_runtime.rs"]
+mod fixture_runtime;
+pub(crate) use fixture_runtime::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Cli {
@@ -51,6 +54,7 @@ pub(crate) enum RecoveryCommand {
     Clone(Vec<String>),
     FreshTarget(FreshTargetCommand),
     Fixture(Vec<String>),
+    FixtureRuntime(FixtureRuntimeCommand),
     FullStack(FullStackCommand),
     Monitoring(Vec<String>),
     DatasetPrepare(Vec<String>),

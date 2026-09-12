@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-import argparse
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
+import sys
 
 from ci_full_stack_resources import build_binaries
 from devex_clone_capture import read_json, write_json
@@ -148,50 +150,156 @@ def _browser_api() -> RuntimeApi:
     return RuntimeApi(_bootstrap, _output, verify, run, observe_runtime)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=(
-        "build", "verify", "start", "stop", "status", "bind", "browser",
-        "browser-verify", "browser-close",
-    ))
-    parser.add_argument("--backend-dir", type=Path, required=True)
-    parser.add_argument("--environment", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--browser-binding", type=Path)
-    parser.add_argument("--run-id")
-    parser.add_argument("--server", choices=("dev", "preview"))
-    parser.add_argument("--write", action="store_true")
-    args = parser.parse_args()
-    if args.operation in {"build", "start", "stop", "bind", "browser"} and not args.write:
-        parser.error("构建、启动、停止、绑定和执行夹具运行时需要显式 --write")
-    if args.operation in {"verify", "status", "browser-verify", "browser-close"} and args.write:
-        parser.error("夹具运行时只读核验不接受 --write")
-    if args.operation == "bind" and (
-            args.browser_binding is None or args.run_id is None or args.server is None):
-        parser.error("Device 浏览器 bind 需要 --browser-binding、--run-id 与 --server")
-    consumers = {"browser", "browser-verify", "browser-close"}
-    if args.operation in consumers and (
-            args.browser_binding is None or args.run_id is not None or args.server is not None):
-        parser.error("Device 浏览器执行和只读消费只接受 --browser-binding")
-    if args.operation not in {"bind", *consumers} and (
-            args.browser_binding is not None or args.run_id is not None or args.server is not None):
-        parser.error("Device 浏览器参数只用于 bind/browser/browser-verify/browser-close")
-    backend = args.backend_dir.resolve(strict=True)
-    result = (build(backend, args.environment, args.output) if args.operation == "build"
-              else verify(backend, args.environment, args.output) if args.operation == "verify"
-              else bind_browser(_browser_api(), backend, args.environment, args.output,
-                                args.browser_binding, args.run_id, args.server) if args.operation == "bind"
-              else run_browser(_browser_api(), backend, args.environment, args.output,
-                               args.browser_binding) if args.operation == "browser"
-              else verify_browser(_browser_api(), backend, args.environment, args.output,
-                                  args.browser_binding, closed=False)
-              if args.operation == "browser-verify"
-              else verify_browser(_browser_api(), backend, args.environment, args.output,
-                                  args.browser_binding, closed=True)
-              if args.operation == "browser-close"
-              else run(backend, args.environment, args.output, args.operation))
-    print(json.dumps(result, ensure_ascii=False))
+PROTOCOL_KEY = "RYFRAME_REFERENCE_FIXTURE_RUNTIME_PROTOCOL"
+PROTOCOL_PREFIX = "RYFRAME_REFERENCE_FIXTURE_RUNTIME_"
+OPERATIONS = frozenset({
+    "build", "verify", "start", "stop", "status", "bind", "browser",
+    "browser-verify", "browser-close",
+})
+WRITING_OPERATIONS = frozenset({"build", "start", "stop", "bind", "browser"})
+BROWSER_CONSUMERS = frozenset({"browser", "browser-verify", "browser-close"})
+RUN_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
+
+
+class RuntimeProtocolError(ValueError):
+    """私有入口协议错误；调用方应把它视作参数错误。"""
+
+
+@dataclass(frozen=True)
+class RuntimeRequest:
+    operation: str
+    backend_dir: Path
+    environment: Path
+    output: Path
+    write: bool
+    browser_binding: Path | None = None
+    run_id: str | None = None
+    server: str | None = None
+
+
+def _unique_object(pairs: list[tuple[str, object]]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise RuntimeProtocolError(f"私有协议字段重复：{key}")
+        result[key] = value
+    return result
+
+
+def _exact_protocol(value: object, fields: set[str]) -> dict:
+    if not isinstance(value, dict) or set(value) != fields:
+        raise RuntimeProtocolError("私有协议字段不完整或含未知字段")
+    return value
+
+
+def _protocol_path(value: object, label: str) -> Path:
+    if not isinstance(value, str) or not value or not Path(value).is_absolute():
+        raise RuntimeProtocolError(f"{label}必须是非空绝对路径")
+    if any(character in value for character in ("\n", "\r", "\0")):
+        raise RuntimeProtocolError(f"{label}不能包含换行符或 NUL")
+    return Path(value)
+
+
+def private_protocol_request(argv: list[str] | None = None,
+                             environment: dict[str, str] | None = None) -> RuntimeRequest:
+    arguments = sys.argv[1:] if argv is None else argv
+    values = os.environ if environment is None else environment
+    if arguments:
+        raise RuntimeProtocolError("夹具运行时脚本是私有实现，不接受命令行参数")
+    unknown = sorted(name for name in values
+                     if name.startswith(PROTOCOL_PREFIX) and name != PROTOCOL_KEY)
+    if unknown:
+        raise RuntimeProtocolError("夹具运行时私有环境含未知字段")
+    raw = values.get(PROTOCOL_KEY)
+    if not isinstance(raw, str) or not raw or len(raw) > 32768:
+        raise RuntimeProtocolError("夹具运行时私有协议缺失、为空或过长")
+    if any(character in raw for character in ("\n", "\r", "\0")):
+        raise RuntimeProtocolError("夹具运行时私有协议不能包含换行符或 NUL")
+    try:
+        protocol = json.loads(raw, object_pairs_hook=_unique_object)
+    except RuntimeProtocolError:
+        raise
+    except (TypeError, json.JSONDecodeError) as error:
+        raise RuntimeProtocolError("夹具运行时私有协议不是有效 JSON") from error
+    return _request_from_protocol(protocol)
+
+
+def _request_from_protocol(protocol: object) -> RuntimeRequest:
+    if not isinstance(protocol, dict) or type(protocol.get("format_version")) is not int \
+            or protocol.get("format_version") != 1:
+        raise RuntimeProtocolError("夹具运行时私有协议版本无效")
+    operation = protocol.get("operation")
+    if not isinstance(operation, str) or operation not in OPERATIONS:
+        raise RuntimeProtocolError("夹具运行时私有协议操作无效")
+    fields = {"backend_dir", "environment", "format_version", "operation", "output", "write"}
+    if operation == "bind":
+        fields.update({"browser_binding", "run_id", "server"})
+    elif operation in BROWSER_CONSUMERS:
+        fields.add("browser_binding")
+    values = _exact_protocol(protocol, fields)
+    write = values["write"]
+    if type(write) is not bool or write != (operation in WRITING_OPERATIONS):
+        raise RuntimeProtocolError("夹具运行时私有协议的写入授权与操作不一致")
+    request = RuntimeRequest(
+        operation=operation,
+        backend_dir=_protocol_path(values["backend_dir"], "后端目录"),
+        environment=_protocol_path(values["environment"], "环境收据"),
+        output=_protocol_path(values["output"], "运行目录"),
+        write=write,
+        browser_binding=(_protocol_path(values["browser_binding"], "浏览器绑定")
+                         if "browser_binding" in values else None),
+        run_id=values.get("run_id"),
+        server=values.get("server"),
+    )
+    _validate_browser_request(request)
+    return request
+
+
+def _validate_browser_request(request: RuntimeRequest) -> None:
+    if request.browser_binding is not None and request.browser_binding.parent != request.output:
+        raise RuntimeProtocolError("浏览器绑定必须直接位于本次运行目录")
+    if request.operation == "bind":
+        if not isinstance(request.run_id, str) or RUN_ID.fullmatch(request.run_id) is None:
+            raise RuntimeProtocolError("Device 浏览器 run id 无效")
+        if request.server not in {"dev", "preview"}:
+            raise RuntimeProtocolError("Device 浏览器 server 无效")
+        if request.browser_binding.name != f"browser-binding-{request.run_id}.json":
+            raise RuntimeProtocolError("浏览器绑定文件名与 run id 不一致")
+    elif request.run_id is not None or request.server is not None:
+        raise RuntimeProtocolError("非绑定操作不得包含 run id 或 server")
+
+
+def execute(request: RuntimeRequest) -> dict:
+    backend = request.backend_dir.resolve(strict=True)
+    if request.operation == "build":
+        return build(backend, request.environment, request.output)
+    if request.operation == "verify":
+        return verify(backend, request.environment, request.output)
+    if request.operation == "bind":
+        return bind_browser(_browser_api(), backend, request.environment, request.output,
+                            request.browser_binding, request.run_id, request.server)
+    if request.operation == "browser":
+        return run_browser(_browser_api(), backend, request.environment, request.output,
+                           request.browser_binding)
+    if request.operation in {"browser-verify", "browser-close"}:
+        return verify_browser(_browser_api(), backend, request.environment, request.output,
+                              request.browser_binding,
+                              closed=request.operation == "browser-close")
+    return run(backend, request.environment, request.output, request.operation)
+
+
+def main(request: RuntimeRequest) -> None:
+    print(json.dumps(execute(request), ensure_ascii=False))
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main(private_protocol_request())
+    except RuntimeProtocolError:
+        print("reference_fixture_runtime_protocol_error：夹具运行时私有协议无效。",
+              file=sys.stderr)
+        raise SystemExit(2)
+    except BaseException:
+        print("reference_fixture_runtime_failed：夹具运行时失败，请核对已登记证据；不自动重放。",
+              file=sys.stderr)
+        raise SystemExit(1)

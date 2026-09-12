@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Device 夹具运行时九个阶段改由 `cargo xtask check recovery fixture runtime` 解析为结构化请求；Rust 在启动固定 Python 实现前核验显式写入、只读互斥、绝对路径、当前后端 `.local-tests` 边界及链接/reparse point，并通过版本化单环境 JSON 私有协议传递，Python 直接执行不再接受 argv。
 - 性能身份 plan、apply、verify 写入统一归入 cargo xtask data performance-identities；Rust 在启动固定 Node 实现前核验显式写入、绝对路径及 .local-tests 边界，并以版本化单环境 JSON 私有协议传递请求，拒绝 argv、重复或未知字段和继承污染。
 - 恢复构建收据升级为严格的 v2 格式，分别记录 API/Worker 产品输入、验收工具输入和完整源码清单，并绑定 Cargo 命令、profile、target、jobs、实际 cargo/rustc 版本，以及有效环境变量名和取值摘要（不记录取值）；工具源码变化不再误判为产品变化，构建参数或产品输入变化仍拒绝复用。
 - 复制恢复统一入口增加维护工具的显式构建与只读复核阶段；受控运行目录、fresh target 工作目录及其证据参数可使用当前后端 `.local-tests` 下的相对路径，仍拒绝链接和越界路径。

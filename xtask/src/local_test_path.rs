@@ -6,7 +6,9 @@ use std::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LocalTestPathKind {
     ExistingFile,
+    ExistingDirectory,
     OutputFile,
+    NewDirectory,
     StateDirectory,
 }
 
@@ -109,15 +111,34 @@ fn validate_target_kind(value: &Path, kind: LocalTestPathKind) -> Result<(), Str
         Ok(metadata) => match kind {
             LocalTestPathKind::ExistingFile if metadata.is_file() => Ok(()),
             LocalTestPathKind::ExistingFile => Err("输入路径必须是现有普通文件".to_owned()),
+            LocalTestPathKind::ExistingDirectory if metadata.is_dir() => Ok(()),
+            LocalTestPathKind::ExistingDirectory => Err("输入路径必须是现有普通目录".to_owned()),
             LocalTestPathKind::OutputFile => Err("输出文件已存在，拒绝覆盖".to_owned()),
+            LocalTestPathKind::NewDirectory => Err("输出目录已存在，拒绝覆盖".to_owned()),
             LocalTestPathKind::StateDirectory if metadata.is_dir() => Ok(()),
             LocalTestPathKind::StateDirectory => Err("账本路径必须是目录".to_owned()),
         },
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => match kind {
-            LocalTestPathKind::ExistingFile => Err("输入文件不存在".to_owned()),
+            LocalTestPathKind::ExistingFile | LocalTestPathKind::ExistingDirectory => {
+                Err("输入路径不存在".to_owned())
+            }
+            LocalTestPathKind::NewDirectory => validate_new_directory_parent(value),
             LocalTestPathKind::OutputFile | LocalTestPathKind::StateDirectory => Ok(()),
         },
         Err(error) => Err(format!("无法核验目标路径 {}：{error}", value.display())),
+    }
+}
+
+fn validate_new_directory_parent(value: &Path) -> Result<(), String> {
+    let parent = value
+        .parent()
+        .ok_or_else(|| "输出目录缺少父目录".to_owned())?;
+    let metadata = fs::symlink_metadata(parent)
+        .map_err(|error| format!("输出目录的父目录不存在或无法核验：{error}"))?;
+    if metadata.is_dir() && !is_link_like(&metadata) {
+        Ok(())
+    } else {
+        Err("输出目录的父目录必须是现有普通目录".to_owned())
     }
 }
 
