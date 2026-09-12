@@ -178,6 +178,8 @@ class MonitoringBindingTests(unittest.TestCase):
         for name in evidence.TOOL_VERSIONS:
             path = self.backend / ".local-tests/tools" / (name + ".exe")
             path.write_bytes((name + "-binary").encode())
+            if os.name != "nt":
+                path.chmod(0o700)
             self.tools[name] = path
         self.rule_heads = {}
         for relative in rules.RULE_PATHS.values():
