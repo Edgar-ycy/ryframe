@@ -73,6 +73,8 @@ pub(crate) enum TaskExecutor {
     SmartBackendPackages,
     SmartPolicyChecks,
     SmartFrontend,
+    CiFrontendSource,
+    CiFrontendCandidateSource,
     CiFrontendCheckout,
     CiContractSource,
     CiWindowsSmoke,

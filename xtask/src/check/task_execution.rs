@@ -88,7 +88,9 @@ pub(crate) fn execute_registered_task(
         TaskExecutor::SmartBackendPackages
         | TaskExecutor::SmartPolicyChecks
         | TaskExecutor::SmartFrontend => execute_smart_task(executor, mode, context, state),
-        TaskExecutor::CiFrontendCheckout
+        TaskExecutor::CiFrontendSource
+        | TaskExecutor::CiFrontendCandidateSource
+        | TaskExecutor::CiFrontendCheckout
         | TaskExecutor::CiContractSource
         | TaskExecutor::CiWindowsSmoke
         | TaskExecutor::CiResourceGate

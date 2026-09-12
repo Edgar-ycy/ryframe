@@ -8,6 +8,10 @@ use super::super::model::{
     SecurityReportKind, SecurityReportOptions,
 };
 
+#[path = "ci/frontend_source.rs"]
+mod frontend_source;
+use frontend_source::parse_frontend_source;
+
 pub(super) fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
     match args {
         [command] if command == "plan" => Ok(CiCommand::Plan),
@@ -19,6 +23,9 @@ pub(super) fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
         }
         [command] if command == "integration" => Ok(CiCommand::Integration),
         [command] if command == "consumer-contract" => Ok(CiCommand::ConsumerContract),
+        [command, rest @ ..] if command == "frontend-source" => {
+            parse_frontend_source(rest).map(CiCommand::FrontendSource)
+        }
         [command, rest @ ..] if command == "required" => {
             parse_required(rest).map(CiCommand::Required)
         }
@@ -38,7 +45,7 @@ pub(super) fn parse_ci(args: &[String]) -> Result<CiCommand, CliError> {
                 .map(CiCommand::Security)
         }
         _ => Err(CliError::new(
-            "用法：cargo xtask check ci <plan|preflight|rust-gate|resource-gate|integration|consumer-contract|required|security>；安全门禁使用 security source、security report <cyclonedx|trivy> 或 security deployment <source|image>；资源门禁回放使用 resource-gate replay --manifest <文件> --work-dir <目录> --report <文件> [--activation-gate]",
+            "用法：cargo xtask check ci <plan|preflight|rust-gate|resource-gate|integration|consumer-contract|frontend-source|required|security>；前端来源使用 frontend-source --event-name <事件> [--event <绝对文件>] [--base-sha <SHA>] [--prefer-marker] [--candidate-openapi <绝对文件>] [--release-ref <ref>] [--fallback-main-on-invalid-base]；安全门禁使用 security source、security report <cyclonedx|trivy> 或 security deployment <source|image>；资源门禁回放使用 resource-gate replay --manifest <文件> --work-dir <目录> --report <文件> [--activation-gate]",
         )),
     }
 }

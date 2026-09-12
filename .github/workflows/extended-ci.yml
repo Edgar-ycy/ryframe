@@ -205,6 +205,9 @@ jobs:
           fetch-depth: 0
           path: backend
 
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+
       - name: 固定 CI Python 3.12
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
@@ -221,26 +224,6 @@ jobs:
           --require-hashes
           --requirement scripts/requirements-ci.txt
 
-      - name: 选择配套前端引用
-        id: frontend-ref
-        shell: bash
-        run: >-
-          python backend/scripts/select_frontend_commit.py
-          --event-name "$GITHUB_EVENT_NAME"
-          --event "$GITHUB_EVENT_PATH"
-          --backend-worktree backend
-          --release-ref "$GITHUB_REF"
-
-      - name: 检出配套前端
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          repository: ${{ env.FRONTEND_REPOSITORY }}
-          ref: ${{ steps.frontend-ref.outputs.ref }}
-          path: frontend
-
-      - name: 安装 Rust 工具链
-        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
-
       - name: 缓存 Cargo 依赖
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
         with:
@@ -252,6 +235,23 @@ jobs:
           restore-keys: |
             v3-rust-${{ runner.os }}-${{ runner.arch }}-full-stack-
             v3-rust-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: 选择配套前端引用
+        id: frontend-ref
+        shell: bash
+        working-directory: backend
+        run: >-
+          cargo xtask check ci frontend-source
+          --event-name "$GITHUB_EVENT_NAME"
+          --event "$GITHUB_EVENT_PATH"
+          --release-ref "$GITHUB_REF"
+
+      - name: 检出配套前端
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ env.FRONTEND_REPOSITORY }}
+          ref: ${{ steps.frontend-ref.outputs.ref }}
+          path: frontend
 
       - name: 记录本次全栈源码组合
         working-directory: backend

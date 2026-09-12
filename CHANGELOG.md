@@ -46,6 +46,7 @@
 
 ### Changed
 
+- CI 的配套前端来源选择收敛到 `cargo xtask check ci frontend-source`；xtask 在启动私有 Python 实现前校验事件、绝对路径、基线 SHA 和 Git ref，PR 候选 OpenAPI 单独声明并执行固定 CI target 的 API 编译，workflow 不再传入可覆盖的后端工作树。
 - 发布来源与远端 CI 证据核验分别收敛到 `cargo xtask check release source|ci` 的统一任务图；参数在启动 Python 或访问 GitHub 前完成严格类型校验，全栈源码组合的记录与复核也不再由 workflow 直接调用私有脚本。
 - Extended CI 的 cgroup v2 内存验收改由 `cargo xtask check perf cgroup run|cleanup` 的同一登记任务执行；Rust 入口在启动私有跨权限程序前核验参数和证据目录，`--plan` 只展示任务、写入与资源范围。
 - CI 部署来源与镜像门禁改由 `cargo xtask check ci security deployment source|image` 的同一任务图执行；部署变更判定失败关闭，静态、Compose、Nginx 与 Prometheus 校验不再被 preflight 或 workflow 重复调用，workflow 只保留固定工具环境和必要的生产镜像构建。

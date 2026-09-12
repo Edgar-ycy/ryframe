@@ -169,6 +169,8 @@ class SelectFrontendCommitTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with mock.patch.object(
+                MODULE, "commit_exists_in_worktree", return_value=True
+            ), mock.patch.object(
                 MODULE, "contract_changed_from_git", return_value=True
             ) as classify:
                 ref, changed = MODULE.select_ci_frontend_ref(
@@ -247,6 +249,103 @@ class SelectFrontendCommitTests(unittest.TestCase):
             )
 
         self.assertEqual(selected, (frontend_sha, False))
+
+    def test_unresolvable_base_fails_before_candidate_generation(self) -> None:
+        with test_directory() as directory:
+            event = directory / "event.json"
+            event.write_text(
+                json.dumps({"pull_request": {"body": ""}}), encoding="utf-8"
+            )
+            with mock.patch.object(
+                MODULE, "commit_exists_in_worktree", return_value=False
+            ), mock.patch.object(MODULE, "generate_and_classify_candidate") as generate:
+                with self.assertRaisesRegex(ValueError, "基线提交无法解析"):
+                    MODULE.select_ci_frontend_ref(
+                        event_name="pull_request",
+                        event_path=event,
+                        backend_worktree=Path("backend"),
+                        base_sha="6" * 40,
+                        prefer_marker=False,
+                        candidate_path=directory / "candidate.json",
+                        release_ref=None,
+                    )
+            generate.assert_not_called()
+
+    def test_invalid_event_fails_before_candidate_generation(self) -> None:
+        with test_directory() as directory:
+            event = directory / "event.json"
+            event.write_text("not-json", encoding="utf-8")
+            with mock.patch.object(
+                MODULE, "generate_and_classify_candidate"
+            ) as generate:
+                with self.assertRaisesRegex(ValueError, "无法读取 CI 事件"):
+                    MODULE.select_ci_frontend_ref(
+                        event_name="pull_request",
+                        event_path=event,
+                        backend_worktree=Path("backend"),
+                        base_sha="7" * 40,
+                        prefer_marker=False,
+                        candidate_path=directory / "candidate.json",
+                        release_ref=None,
+                    )
+            generate.assert_not_called()
+
+    def test_private_entry_rejects_public_arguments(self) -> None:
+        with mock.patch.object(
+            MODULE.sys, "argv", [str(SCRIPT), "--event-name", "push"]
+        ):
+            with self.assertRaisesRegex(ValueError, "不接受命令行参数"):
+                MODULE._private_request()
+
+    def test_private_request_requires_exact_json_fields(self) -> None:
+        valid = {
+            "event_name": "push",
+            "event": None,
+            "backend_worktree": str(SCRIPT.parents[1]),
+            "base_sha": None,
+            "prefer_marker": False,
+            "candidate_openapi": None,
+            "release_ref": "refs/heads/main",
+            "fallback_main_on_invalid_base": False,
+        }
+        with mock.patch.object(MODULE.sys, "argv", [str(SCRIPT)]), mock.patch.dict(
+            MODULE.os.environ,
+            {MODULE.REQUEST_ENV: json.dumps(valid)},
+            clear=False,
+        ):
+            self.assertEqual(MODULE._private_request(), valid)
+        valid["unknown"] = True
+        with mock.patch.object(MODULE.sys, "argv", [str(SCRIPT)]), mock.patch.dict(
+            MODULE.os.environ,
+            {MODULE.REQUEST_ENV: json.dumps(valid)},
+            clear=False,
+        ):
+            with self.assertRaisesRegex(ValueError, "字段"):
+                MODULE._private_request()
+
+    def test_private_main_preserves_github_output_contract(self) -> None:
+        with test_directory() as directory:
+            output = directory / "github-output.txt"
+            request = {
+                "event_name": "push",
+                "event": None,
+                "backend_worktree": str(SCRIPT.parents[1]),
+                "base_sha": None,
+                "prefer_marker": False,
+                "candidate_openapi": None,
+                "release_ref": "refs/heads/main",
+                "fallback_main_on_invalid_base": False,
+            }
+            with mock.patch.object(MODULE.sys, "argv", [str(SCRIPT)]), mock.patch.dict(
+                MODULE.os.environ,
+                {
+                    MODULE.REQUEST_ENV: json.dumps(request),
+                    "GITHUB_OUTPUT": str(output),
+                },
+                clear=False,
+            ), mock.patch("builtins.print"):
+                MODULE.main()
+            self.assertEqual(output.read_text(encoding="utf-8"), "ref=main\nchanged=false\n")
 
 
 if __name__ == "__main__":

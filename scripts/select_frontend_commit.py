@@ -3,11 +3,11 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -19,6 +19,17 @@ MARKER_PATTERN = re.compile(
 )
 MARKER_MENTION_PATTERN = re.compile(r"Frontend-Commit", re.IGNORECASE)
 OPENAPI_PATH = Path("openapi/openapi.json")
+REQUEST_ENV = "RYFRAME_CI_FRONTEND_SOURCE_REQUEST"
+REQUEST_FIELDS = {
+    "event_name",
+    "event",
+    "backend_worktree",
+    "base_sha",
+    "prefer_marker",
+    "candidate_openapi",
+    "release_ref",
+    "fallback_main_on_invalid_base",
+}
 
 
 class FrontendSelectionError(ValueError):
@@ -183,30 +194,27 @@ def select_ci_frontend_ref(
 
     if event_path is None:
         raise FrontendSelectionError("pull_request 选择缺少事件文件或基线提交")
-    if base_sha is None or (
-        fallback_main_on_invalid_base
-        and not commit_exists_in_worktree(backend_worktree, base_sha)
-    ):
+    body = _pull_request_body(event_path)
+    if base_sha is None:
         if fallback_main_on_invalid_base:
             return (
-                select_frontend_ref(
-                    _pull_request_body(event_path),
-                    False,
-                    prefer_marker=prefer_marker,
-                ),
+                select_frontend_ref(body, False, prefer_marker=prefer_marker),
                 False,
             )
         raise FrontendSelectionError("pull_request 选择缺少事件文件或基线提交")
+    if not commit_exists_in_worktree(backend_worktree, base_sha):
+        if fallback_main_on_invalid_base:
+            return (
+                select_frontend_ref(body, False, prefer_marker=prefer_marker),
+                False,
+            )
+        raise FrontendSelectionError("pull_request 后端基线提交无法解析")
     changed = (
         generate_and_classify_candidate(backend_worktree, base_sha, candidate_path)
         if candidate_path is not None
         else contract_changed_from_git(backend_worktree, base_sha)
     )
-    ref = select_frontend_ref(
-        _pull_request_body(event_path),
-        changed,
-        prefer_marker=prefer_marker,
-    )
+    ref = select_frontend_ref(body, changed, prefer_marker=prefer_marker)
     return ref, changed
 
 
@@ -219,30 +227,66 @@ def _write_outputs(ref: str, changed: bool) -> None:
     print(text, end="")
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--event-name", required=True)
-    parser.add_argument("--event", type=Path)
-    parser.add_argument("--backend-worktree", type=Path, required=True)
-    parser.add_argument("--base-sha")
-    parser.add_argument("--prefer-marker", action="store_true")
-    parser.add_argument("--candidate-openapi", type=Path)
-    parser.add_argument("--release-ref")
-    parser.add_argument("--fallback-main-on-invalid-base", action="store_true")
-    return parser.parse_args()
+def _private_request() -> dict[str, object]:
+    if len(sys.argv) != 1:
+        raise FrontendSelectionError("此脚本是 xtask 私有实现，不接受命令行参数")
+    encoded = os.environ.get(REQUEST_ENV)
+    if encoded is None:
+        raise FrontendSelectionError(f"缺少 xtask 私有请求环境 {REQUEST_ENV}")
+    try:
+        request = json.loads(encoded)
+    except json.JSONDecodeError as error:
+        raise FrontendSelectionError("xtask 私有请求不是有效 JSON") from error
+    if not isinstance(request, dict) or set(request) != REQUEST_FIELDS:
+        raise FrontendSelectionError("xtask 私有请求字段不完整或包含未知字段")
+    return request
+
+
+def _optional_path(request: dict[str, object], name: str) -> Path | None:
+    value = request[name]
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise FrontendSelectionError(f"xtask 私有请求 {name} 必须是非空路径")
+    return Path(value)
+
+
+def _optional_text(request: dict[str, object], name: str) -> str | None:
+    value = request[name]
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise FrontendSelectionError(f"xtask 私有请求 {name} 必须是非空字符串")
+    return value
+
+
+def _required_text(request: dict[str, object], name: str) -> str:
+    value = _optional_text(request, name)
+    if value is None:
+        raise FrontendSelectionError(f"xtask 私有请求缺少 {name}")
+    return value
+
+
+def _boolean(request: dict[str, object], name: str) -> bool:
+    value = request[name]
+    if not isinstance(value, bool):
+        raise FrontendSelectionError(f"xtask 私有请求 {name} 必须是布尔值")
+    return value
 
 
 def main() -> None:
-    args = parse_args()
+    request = _private_request()
     ref, changed = select_ci_frontend_ref(
-        event_name=args.event_name,
-        event_path=args.event,
-        backend_worktree=args.backend_worktree.resolve(),
-        base_sha=args.base_sha,
-        prefer_marker=args.prefer_marker,
-        candidate_path=args.candidate_openapi,
-        release_ref=args.release_ref,
-        fallback_main_on_invalid_base=args.fallback_main_on_invalid_base,
+        event_name=_required_text(request, "event_name"),
+        event_path=_optional_path(request, "event"),
+        backend_worktree=Path(_required_text(request, "backend_worktree")),
+        base_sha=_optional_text(request, "base_sha"),
+        prefer_marker=_boolean(request, "prefer_marker"),
+        candidate_path=_optional_path(request, "candidate_openapi"),
+        release_ref=_optional_text(request, "release_ref"),
+        fallback_main_on_invalid_base=_boolean(
+            request, "fallback_main_on_invalid_base"
+        ),
     )
     _write_outputs(ref, changed)
 

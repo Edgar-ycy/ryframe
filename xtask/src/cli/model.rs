@@ -5,6 +5,9 @@ use crate::devex;
 #[path = "model/release.rs"]
 mod release;
 pub(crate) use release::*;
+#[path = "model/frontend_source.rs"]
+mod frontend_source;
+pub(crate) use frontend_source::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Cli {
@@ -113,6 +116,7 @@ pub(crate) enum CiCommand {
     ResourceGateReplay(ResourceGateReplayOptions),
     Integration,
     ConsumerContract,
+    FrontendSource(FrontendSourceOptions),
     Required(RequiredOptions),
     Security(SecurityCommand),
 }

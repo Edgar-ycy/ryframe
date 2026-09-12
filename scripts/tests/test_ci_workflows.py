@@ -8,6 +8,28 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class CiWorkflowTests(unittest.TestCase):
+    def test_frontend_source_selection_uses_only_the_typed_entry(self) -> None:
+        daily = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        extended = (ROOT / ".github/workflows/extended-ci.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual(daily.count("cargo xtask check ci frontend-source"), 5)
+        self.assertEqual(extended.count("cargo xtask check ci frontend-source"), 1)
+        self.assertNotIn("scripts/select_frontend_commit.py", daily + extended)
+        self.assertNotIn("--backend-worktree", daily + extended)
+        for job in ("plan", "rust-gate", "resource-gate", "windows-smoke"):
+            block = daily.split(f"\n  {job}:\n", 1)[1].split("\n  #", 1)[0]
+            self.assertLess(
+                block.index("安装 Rust 工具链"),
+                block.index("cargo xtask check ci frontend-source"),
+                job,
+            )
+        full_stack = extended.split("\n  full-stack-e2e:\n", 1)[1]
+        self.assertLess(
+            full_stack.index("安装 Rust 工具链"),
+            full_stack.index("cargo xtask check ci frontend-source"),
+        )
+
     def test_resource_gate_owns_its_git_range_and_frontend_checkout(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         block = workflow.split("\n  resource-gate:\n", 1)[1].split("\n  #", 1)[0]
@@ -22,7 +44,7 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertIn(
             "ref: ${{ github.event.pull_request.head.sha || github.sha }}", block
         )
-        self.assertIn("scripts/select_frontend_commit.py", block)
+        self.assertIn("cargo xtask check ci frontend-source", block)
         self.assertIn("--prefer-marker", block)
         self.assertIn("--fallback-main-on-invalid-base", block)
         self.assertIn("path: frontend", block)
@@ -238,7 +260,7 @@ class CiWorkflowTests(unittest.TestCase):
         rust_gate = workflow.split("\n  rust-gate:\n", 1)[1].split(
             "\n  integration:\n", 1
         )[0]
-        self.assertIn("scripts/select_frontend_commit.py", rust_gate)
+        self.assertIn("cargo xtask check ci frontend-source", rust_gate)
         self.assertIn("corepack pnpm install --frozen-lockfile", rust_gate)
         self.assertIn("cargo xtask check ci rust-gate --frontend-dir ../frontend", rust_gate)
         integration = workflow.split("\n  integration:\n", 1)[1].split(
@@ -256,7 +278,7 @@ class CiWorkflowTests(unittest.TestCase):
         windows = workflow.split("  windows-smoke:", 1)[1].split(
             "  security-audit:", 1
         )[0]
-        self.assertIn("scripts/select_frontend_commit.py", windows)
+        self.assertIn("cargo xtask check ci frontend-source", windows)
         self.assertIn("--prefer-marker", windows)
         self.assertIn("--candidate-openapi", windows)
         self.assertIn("ref: ${{ steps.windows-frontend-ref.outputs.ref }}", windows)
@@ -274,7 +296,7 @@ class CiWorkflowTests(unittest.TestCase):
         consumer = workflow.split("  resource-gate:", 1)[1].split(
             "  integration:", 1
         )[0]
-        self.assertIn("scripts/select_frontend_commit.py", consumer)
+        self.assertIn("cargo xtask check ci frontend-source", consumer)
         self.assertIn("--candidate-openapi", consumer)
         self.assertIn("RYFRAME_CI_BACKEND_HEAD", consumer)
         self.assertIn("RYFRAME_CI_CANDIDATE_OPENAPI", consumer)
@@ -308,7 +330,7 @@ class CiWorkflowTests(unittest.TestCase):
         preflight = workflow.split("\n  plan:\n", 1)[1].split(
             "\n  rust-gate:\n", 1
         )[0]
-        self.assertIn("scripts/select_frontend_commit.py", preflight)
+        self.assertIn("cargo xtask check ci frontend-source", preflight)
         self.assertIn("--prefer-marker", preflight)
         self.assertIn(
             "ref: ${{ steps.preflight-frontend-ref.outputs.ref }}", preflight

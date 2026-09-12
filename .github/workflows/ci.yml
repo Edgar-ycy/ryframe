@@ -72,10 +72,9 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: >-
-          python scripts/select_frontend_commit.py
+          cargo xtask check ci frontend-source
           --event-name "$EVENT_NAME"
           --event "$GITHUB_EVENT_PATH"
-          --backend-worktree .
           --base-sha "$BASE_SHA"
           --prefer-marker
           --release-ref "$GITHUB_REF"
@@ -144,29 +143,6 @@ jobs:
           path: backend
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: 选择匹配的前端提交
-        id: frontend-ref
-        working-directory: backend
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: >-
-          python scripts/select_frontend_commit.py
-          --event-name "$EVENT_NAME"
-          --event "$GITHUB_EVENT_PATH"
-          --backend-worktree .
-          --base-sha "$BASE_SHA"
-          --prefer-marker
-          --release-ref "$GITHUB_REF"
-
-      - name: 检出前端资源 Workspace
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          repository: ${{ env.FRONTEND_REPOSITORY }}
-          ref: ${{ steps.frontend-ref.outputs.ref }}
-          path: frontend
-
       - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
         with:
@@ -195,6 +171,28 @@ jobs:
           restore-keys: |
             v3-rust-${{ runner.os }}-${{ runner.arch }}-rust-gate-
             v3-rust-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: 选择匹配的前端提交
+        id: frontend-ref
+        working-directory: backend
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: >-
+          cargo xtask check ci frontend-source
+          --event-name "$EVENT_NAME"
+          --event "$GITHUB_EVENT_PATH"
+          --base-sha "$BASE_SHA"
+          --prefer-marker
+          --release-ref "$GITHUB_REF"
+
+      - name: 检出前端资源 Workspace
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ env.FRONTEND_REPOSITORY }}
+          ref: ${{ steps.frontend-ref.outputs.ref }}
+          path: frontend
 
       - name: 安装 Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
@@ -313,10 +311,9 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: >-
-          python scripts/select_frontend_commit.py
+          cargo xtask check ci frontend-source
           --event-name "$EVENT_NAME"
           --event "$GITHUB_EVENT_PATH"
-          --backend-worktree .
           --base-sha "$BASE_SHA"
           --prefer-marker
           --fallback-main-on-invalid-base
@@ -330,10 +327,9 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: >-
-          python scripts/select_frontend_commit.py
+          cargo xtask check ci frontend-source
           --event-name pull_request
           --event "$GITHUB_EVENT_PATH"
-          --backend-worktree .
           --base-sha "$BASE_SHA"
           --candidate-openapi "$RUNNER_TEMP/candidate-openapi.json"
 
@@ -509,10 +505,9 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: >-
-          python scripts/select_frontend_commit.py
+          cargo xtask check ci frontend-source
           --event-name "$EVENT_NAME"
           --event "$GITHUB_EVENT_PATH"
-          --backend-worktree .
           --base-sha "$BASE_SHA"
           --prefer-marker
           --candidate-openapi "$RUNNER_TEMP/windows-candidate-openapi.json"

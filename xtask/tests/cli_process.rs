@@ -16,13 +16,18 @@ fn xtask_command() -> Command {
 }
 
 fn invoke(arguments: &[&str]) -> Output {
-    xtask_command().args(arguments).output().unwrap()
+    xtask_command()
+        .args(arguments)
+        .env_remove("GITHUB_OUTPUT")
+        .output()
+        .unwrap()
 }
 
 fn invoke_with_environment(arguments: &[&str], environment: &[(&str, &str)]) -> Output {
     xtask_command()
         .args(arguments)
         .envs(environment.iter().copied())
+        .env_remove("GITHUB_OUTPUT")
         .env_remove("RYFRAME_CI_FRONTEND_REF")
         .output()
         .unwrap()
@@ -128,6 +133,141 @@ fn invalid_public_arguments_exit_two_before_running_tasks() {
         assert!(String::from_utf8_lossy(&result.stderr).contains("参数错误"));
         assert!(result.stdout.is_empty());
     }
+}
+
+#[test]
+fn frontend_source_validates_all_inputs_before_starting_python() {
+    let event = std::env::current_dir()
+        .unwrap()
+        .join("target/CI event.json")
+        .to_string_lossy()
+        .into_owned();
+    let candidate = std::env::current_dir()
+        .unwrap()
+        .join("target/candidate OpenAPI.json")
+        .to_string_lossy()
+        .into_owned();
+    let invalid = [
+        vec!["check", "ci", "frontend-source"],
+        vec![
+            "check",
+            "ci",
+            "frontend-source",
+            "--event-name",
+            "push",
+            "--release-ref",
+        ],
+        vec![
+            "check",
+            "ci",
+            "frontend-source",
+            "--event-name",
+            "push",
+            "--event-name",
+            "push",
+        ],
+        vec![
+            "check",
+            "ci",
+            "frontend-source",
+            "--event-name",
+            "push",
+            "--backend-worktree",
+            ".",
+        ],
+        vec![
+            "check",
+            "ci",
+            "frontend-source",
+            "--event-name",
+            "pull_request",
+            "--event",
+            event.as_str(),
+            "--base-sha",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        ],
+        vec![
+            "check",
+            "ci",
+            "frontend-source",
+            "--event-name",
+            "push",
+            "--release-ref",
+            "refs/heads/main\nunsafe",
+        ],
+        vec![
+            "check",
+            "ci",
+            "frontend-source",
+            "--event-name",
+            "pull_request",
+            "--event",
+            event.as_str(),
+            "--base-sha",
+            "0123456789abcdef0123456789abcdef01234567",
+            "--candidate-openapi",
+            candidate.as_str(),
+            "--fallback-main-on-invalid-base",
+        ],
+    ];
+    for arguments in invalid {
+        let result = invoke(&arguments);
+        assert_eq!(result.status.code(), Some(2), "参数：{arguments:?}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("参数错误"));
+        assert!(result.stdout.is_empty());
+    }
+}
+
+#[test]
+fn frontend_source_push_runs_the_private_implementation() {
+    let result = invoke(&[
+        "check",
+        "ci",
+        "frontend-source",
+        "--event-name",
+        "push",
+        "--base-sha",
+        "",
+        "--release-ref",
+        "refs/heads/main",
+    ]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let stdout = String::from_utf8(result.stdout).unwrap();
+    assert!(
+        stdout.contains("开始 CI 原子任务：ci.frontend-source"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("ref=main"), "{stdout}");
+    assert!(stdout.contains("changed=false"), "{stdout}");
+}
+
+#[test]
+fn frontend_source_rejects_a_missing_event_before_python() {
+    let event = std::env::current_dir()
+        .unwrap()
+        .join("target/missing frontend event.json")
+        .to_string_lossy()
+        .into_owned();
+    let result = invoke(&[
+        "check",
+        "ci",
+        "frontend-source",
+        "--event-name",
+        "pull_request",
+        "--event",
+        &event,
+        "--base-sha",
+        "0123456789abcdef0123456789abcdef01234567",
+    ]);
+    assert_eq!(result.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(!stdout.contains("→ python"), "{stdout}");
+    assert!(stderr.contains("无法读取前端来源事件文件"), "{stderr}");
 }
 
 #[test]
@@ -554,6 +694,7 @@ fn check_help_lists_every_supported_performance_operation() {
     assert!(result.stderr.is_empty());
     let output = String::from_utf8(result.stdout).unwrap();
     assert!(output.contains("check perf run|paired|summarize|compare"));
+    assert!(output.contains("check ci frontend-source --event-name <事件>"));
     assert!(output.contains("check ci security report <cyclonedx|trivy> --input <绝对文件>"));
     assert!(output.contains("check release source --tag <tag>"));
     assert!(output.contains("check release ci --backend-repository <owner/repo>"));

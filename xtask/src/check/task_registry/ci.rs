@@ -1,6 +1,36 @@
 use super::{TaskDefinition, TaskExecutor, TaskRepository, TaskStage, TaskWorkingDirectory};
 
-pub(super) const TASKS: [TaskDefinition; 17] = [
+pub(super) const TASKS: [TaskDefinition; 19] = [
+    task_definition!(
+        CiFrontendSource,
+        "ci.frontend-source",
+        "select_frontend_source",
+        "从已校验的 CI 事件选择配套前端引用",
+        CrossRepository,
+        Prerequisite,
+        Backend,
+        None,
+        &[],
+        &["GitHub job output"],
+        &[]
+    ),
+    task_definition!(
+        CiFrontendCandidateSource,
+        "ci.frontend-source-candidate",
+        "select_frontend_source_with_candidate",
+        "生成候选 OpenAPI 并选择精确配套前端引用",
+        CrossRepository,
+        Contract,
+        Backend,
+        None,
+        &["ryframe-api export_openapi（独立 Cargo 编译，不声明复用）"],
+        &[
+            "Cargo target/ci/backend",
+            "候选 OpenAPI",
+            "GitHub job output"
+        ],
+        &[]
+    ),
     task_definition!(
         CiFrontendCheckout,
         "ci.frontend-checkout",

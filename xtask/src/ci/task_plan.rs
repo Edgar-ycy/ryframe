@@ -177,6 +177,9 @@ pub(crate) fn ci_execution_plan_for_profile(
     if matches!(command, CiCommand::Required(_)) {
         return TaskPlan::sequence(REQUIRED_TASKS);
     }
+    if let CiCommand::FrontendSource(options) = command {
+        return super::frontend_source::plan(options);
+    }
     if let CiCommand::Security(command) = command {
         return super::security::plan(command);
     }
@@ -285,6 +288,7 @@ fn job_for_command(command: &CiCommand) -> Result<CiJob> {
         CiCommand::ConsumerContract => Ok(CiJob::ConsumerContract),
         CiCommand::Plan
         | CiCommand::ResourceGateReplay(_)
+        | CiCommand::FrontendSource(_)
         | CiCommand::Required(_)
         | CiCommand::Security(_) => Err("该 CI 子命令不是独立 GitHub job 任务".into()),
     }
