@@ -29,9 +29,9 @@ fn generate_help() -> &'static str {
 }
 
 fn data_help() -> &'static str {
-    "cargo xtask data migrate ...\n  cargo xtask data backup <inventory|register|status> ...\n  cargo xtask data restore <begin|verify-data|verify> ...\n  cargo xtask data target inventory ...\n  cargo xtask data file <backfill-sha256|drain-legacy-reservations> ...\n  cargo xtask data reset <plan|execute> ...\n\n所有数据写入都必须继续满足底层命令的显式确认、计划和 ownership 要求。"
+    "cargo xtask data migrate ...\n  cargo xtask data performance-identities plan --environment <绝对环境清单> --output <绝对计划> --write\n  cargo xtask data performance-identities <apply|verify> --plan <绝对计划> --state-dir <绝对账本目录> --write\n  cargo xtask data backup <inventory|register|status> ...\n  cargo xtask data restore <begin|verify-data|verify> ...\n  cargo xtask data target inventory ...\n  cargo xtask data file <backfill-sha256|drain-legacy-reservations> ...\n  cargo xtask data reset <plan|execute> ...\n\n所有数据写入都必须继续满足底层命令的显式确认、计划和 ownership 要求。性能身份路径必须是当前后端 .local-tests 内的绝对路径。"
 }
 
 fn general_help() -> &'static str {
-    "RyFrame 开发命令\n\n  cargo xtask dev\n  cargo xtask check [--full]\n  cargo xtask build\n  cargo xtask generate <resource|api> ...\n  cargo xtask data <migrate|backup|restore|target|file|reset> ...\n\n运行 `cargo xtask <命令> --help` 查看参数。"
+    "RyFrame 开发命令\n\n  cargo xtask dev\n  cargo xtask check [--full]\n  cargo xtask build\n  cargo xtask generate <resource|api> ...\n  cargo xtask data <migrate|performance-identities|backup|restore|target|file|reset> ...\n\n运行 `cargo xtask <命令> --help` 查看参数。"
 }

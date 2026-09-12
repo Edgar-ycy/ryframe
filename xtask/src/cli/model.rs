@@ -8,6 +8,9 @@ pub(crate) use release::*;
 #[path = "model/frontend_source.rs"]
 mod frontend_source;
 pub(crate) use frontend_source::*;
+#[path = "model/performance_identities.rs"]
+mod performance_identities;
+pub(crate) use performance_identities::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Cli {
@@ -100,6 +103,7 @@ pub(crate) struct ApiGenerateCommand {
 pub(crate) enum DataCommand {
     Help,
     Migrate(MigrationCommand),
+    PerformanceIdentities(PerformanceIdentitiesCommand),
     Backup(Vec<String>),
     Restore(Vec<String>),
     TargetInventory(Vec<String>),

@@ -6,12 +6,15 @@ use super::model::*;
 
 #[path = "parse/ci.rs"]
 mod ci;
+#[path = "parse/performance_identities.rs"]
+mod performance_identities;
 #[path = "parse/recovery.rs"]
 mod recovery;
 #[path = "parse/release.rs"]
 mod release;
 
 use ci::parse_ci;
+use performance_identities::parse_performance_identities;
 use recovery::parse_recovery;
 use release::parse_release;
 
@@ -272,6 +275,9 @@ fn parse_data(args: &[String]) -> Result<DataCommand, CliError> {
     };
     match kind.as_str() {
         "migrate" => Ok(DataCommand::Migrate(parse_migration(rest)?)),
+        "performance-identities" => {
+            parse_performance_identities(rest).map(DataCommand::PerformanceIdentities)
+        }
         "backup" => parse_maintenance_args("backup", rest, &["inventory", "register", "status"])
             .map(DataCommand::Backup),
         "restore" => parse_maintenance_args("restore", rest, &["begin", "verify-data", "verify"])

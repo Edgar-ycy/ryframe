@@ -5,8 +5,14 @@ use crate::{
     workspace::root_dir,
 };
 
+#[path = "data/performance_identities.rs"]
+pub(crate) mod performance_identities;
+
 pub(crate) fn run(command: &DataCommand) -> Result<()> {
     let (feature, binary, arguments) = match command {
+        DataCommand::PerformanceIdentities(command) => {
+            return performance_identities::run(command);
+        }
         DataCommand::Backup(arguments) => (
             "bin-tenant-data",
             "ryframe-tenant-data",

@@ -2,8 +2,14 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { cp, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import path from 'node:path'
-import { executeIdentityPlan, main } from '../devex_prepare_identities.mjs'
+import {
+  executeIdentityPlan,
+  main,
+  privateProtocolArguments,
+} from '../devex_prepare_identities.mjs'
 import { createIdentityPlan, validateEnvironment, localPath } from '../devex/identity-plan.mjs'
 import { activationSecret } from '../devex/identity-apply.mjs'
 import { ordinaryContext, permissionIds } from '../devex/identity-verify.mjs'
@@ -174,6 +180,12 @@ test('plan写入需要显式授权，拒绝时目录前后像不变', async (t) 
   await main(['plan', '--environment', manifest, '--output', output, '--write'])
   const plan = JSON.parse(await readFile(output, 'utf8'))
   assert.equal(plan.plan_sha256, (await createIdentityPlan(environment)).plan_sha256)
+  const original = await readFile(output)
+  await assert.rejects(
+    main(['plan', '--environment', manifest, '--output', output, '--write']),
+    /EEXIST/,
+  )
+  assert.deepEqual(await readFile(output), original)
 })
 
 test('等待证据保存失败时不将账本宣布verified，也不重复执行close', async (t) => {
@@ -378,4 +390,152 @@ test('计划外receipt在apply和verify重进前均失败关闭且不被覆盖',
   assert.equal(backend.events.length, before)
   assert.equal(await readFile(orphan, 'utf8'), '{"unknown":true}\n')
   assert.equal(JSON.parse(await readFile(path.join(state, 'ledger.json'))).status, 'prepared')
+})
+
+function privateEnvironment(value, extra = {}) {
+  return {
+    RYFRAME_PERFORMANCE_IDENTITIES_PROTOCOL:
+      typeof value === 'string' ? value : JSON.stringify(value),
+    ...extra,
+  }
+}
+
+test('私有协议把三种写操作映射为内部参数并保留中文空格路径', () => {
+  const root = path.resolve('.local-tests', '身份 协议')
+  const plan = {
+    format_version: 1,
+    operation: 'plan',
+    environment: path.join(root, '环境 清单.json'),
+    output: path.join(root, '身份 计划.json'),
+    write: true,
+  }
+  assert.deepEqual(privateProtocolArguments([], privateEnvironment(plan)), [
+    'plan', '--environment', plan.environment, '--output', plan.output, '--write',
+  ])
+  for (const operation of ['apply', 'verify']) {
+    const request = {
+      format_version: 1,
+      operation,
+      plan: path.join(root, '身份 计划.json'),
+      state_dir: path.join(root, '身份 账本'),
+      write: true,
+    }
+    assert.deepEqual(privateProtocolArguments([], privateEnvironment(request)), [
+      operation, '--plan', request.plan, '--state-dir', request.state_dir, '--write',
+    ])
+  }
+})
+
+test('私有协议拒绝公开argv、未知字段、错误类型和跨阶段字段', () => {
+  const root = path.resolve('.local-tests', 'identity-protocol')
+  const valid = {
+    format_version: 1,
+    operation: 'plan',
+    environment: path.join(root, 'environment.json'),
+    output: path.join(root, 'plan.json'),
+    write: true,
+  }
+  assert.throws(() => privateProtocolArguments(['plan'], privateEnvironment(valid)), /不接受命令行参数/)
+  for (const request of [
+    { ...valid, unknown: true },
+    {
+      environment: valid.environment,
+      'format_version,operation': '1,plan',
+      output: valid.output,
+      write: true,
+    },
+    { ...valid, format_version: '1' },
+    { ...valid, write: false },
+    { ...valid, operation: 'apply' },
+    { ...valid, output: '' },
+    { ...valid, output: `${valid.output}\nother` },
+    { ...valid, output: `${valid.output}\0other` },
+  ]) assert.throws(() => privateProtocolArguments([], privateEnvironment(request)))
+  assert.throws(() => privateProtocolArguments([], privateEnvironment(valid, {
+    RYFRAME_PERFORMANCE_IDENTITIES_EXTRA: 'unexpected',
+  })), /未知字段/)
+})
+
+test('私有协议在JSON解析前拒绝普通及转义后的重复字段', () => {
+  const root = path.resolve('.local-tests', 'identity-protocol').replaceAll('\\', '\\\\')
+  const suffix = `"environment":"${root}\\\\environment.json",` +
+    `"output":"${root}\\\\plan.json","write":true}`
+  for (const repeated of [
+    `{"format_version":1,"operation":"plan","operation":"plan",${suffix}`,
+    `{"format_version":1,"operation":"plan","oper\\u0061tion":"plan",${suffix}`,
+  ]) assert.throws(() => privateProtocolArguments([], privateEnvironment(repeated)), /字段重复/)
+})
+
+test('私有协议拒绝空值、原始或转义后的换行和NUL', () => {
+  const root = path.resolve('.local-tests', 'identity-protocol')
+  const valid = {
+    format_version: 1,
+    operation: 'plan',
+    environment: path.join(root, 'environment.json'),
+    output: path.join(root, 'plan.json'),
+    write: true,
+  }
+  for (const raw of ['', `${JSON.stringify(valid)}\n`, `${JSON.stringify(valid)}\0`])
+    assert.throws(() => privateProtocolArguments([], privateEnvironment(raw)))
+  for (const output of [`${valid.output}\nother`, `${valid.output}\0other`])
+    assert.throws(() => privateProtocolArguments([], privateEnvironment({ ...valid, output })))
+})
+
+test('身份准备私有进程以退出码2拒绝argv、缺失、重复和未知协议', () => {
+  const script = fileURLToPath(new URL('../devex_prepare_identities.mjs', import.meta.url))
+  const root = path.resolve('.local-tests', 'identity-private-process')
+  const valid = {
+    format_version: 1,
+    operation: 'plan',
+    environment: path.join(root, 'missing-environment.json'),
+    output: path.join(root, 'plan.json'),
+    write: true,
+  }
+  const run = (argv, protocol, extra = {}) => {
+    const environment = { ...process.env }
+    for (const name of Object.keys(environment))
+      if (name.startsWith('RYFRAME_PERFORMANCE_IDENTITIES_')) delete environment[name]
+    if (protocol !== undefined)
+      environment.RYFRAME_PERFORMANCE_IDENTITIES_PROTOCOL =
+        typeof protocol === 'string' ? protocol : JSON.stringify(protocol)
+    Object.assign(environment, extra)
+    return spawnSync(process.execPath, [script, ...argv], { encoding: 'utf8', env: environment })
+  }
+  const repeated = JSON.stringify(valid).replace(
+    '"operation":"plan"',
+    '"operation":"plan","operation":"plan"',
+  )
+  for (const result of [
+    run(['plan'], valid),
+    run([], undefined),
+    run([], repeated),
+    run([], { ...valid, unknown: true }),
+    run([], valid, { RYFRAME_PERFORMANCE_IDENTITIES_EXTRA: 'unexpected' }),
+  ]) {
+    assert.equal(result.status, 2, result.stderr)
+    assert.match(result.stderr, /identity_preparation_protocol_error/)
+  }
+})
+
+test('身份准备私有进程接受三阶段单环境JSON后才进入原有执行边界', () => {
+  const script = fileURLToPath(new URL('../devex_prepare_identities.mjs', import.meta.url))
+  const root = path.resolve('.local-tests', 'identity-private-valid')
+  for (const operation of ['plan', 'apply', 'verify']) {
+    const common = { format_version: 1, operation, write: true }
+    const request = operation === 'plan'
+      ? { ...common, environment: path.join(root, 'missing-environment.json'),
+          output: path.join(root, 'plan.json') }
+      : { ...common, plan: path.join(root, 'missing-plan.json'),
+          state_dir: path.join(root, operation + '-state') }
+    const result = spawnSync(process.execPath, [script], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        RYFRAME_PERFORMANCE_IDENTITIES_PROTOCOL: JSON.stringify(request),
+      },
+    })
+    assert.equal(result.status, 1, operation + ': ' + result.stderr)
+    assert.match(result.stderr, /identity_preparation_failed/)
+    assert.doesNotMatch(result.stderr, /identity_preparation_protocol_error/)
+  }
 })

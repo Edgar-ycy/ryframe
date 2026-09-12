@@ -14,6 +14,7 @@ mod devex;
 #[cfg(feature = "resource")]
 mod diff;
 mod doctor;
+mod local_test_path;
 mod migration;
 mod process;
 mod recovery;

@@ -18,6 +18,8 @@ mod devex;
 mod diff;
 #[path = "../src/doctor.rs"]
 mod doctor;
+#[path = "../src/local_test_path.rs"]
+mod local_test_path;
 #[path = "../src/migration.rs"]
 mod migration;
 #[path = "../src/process.rs"]
@@ -110,6 +112,8 @@ mod doctor_tests;
 mod migration_tests;
 #[path = "internal/node_test_discovery.rs"]
 mod node_tests_tests;
+#[path = "internal/performance_identities.rs"]
+mod performance_identities_tests;
 #[path = "internal/process.rs"]
 mod process_tests;
 #[path = "internal/recovery_cli.rs"]
