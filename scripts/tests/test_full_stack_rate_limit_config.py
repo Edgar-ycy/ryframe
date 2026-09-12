@@ -188,6 +188,26 @@ class LoginRateLimitConfigTests(unittest.TestCase):
             json.loads(result.stdout), rate_limit_authority(self.root, self.env)
         )
 
+        rejected = subprocess.run(
+            [
+                sys.executable,
+                "-X",
+                "utf8",
+                str(ROOT / "scripts/full_stack_rate_limit_config.py"),
+                "--environment-file",
+                str(self.root / "github-environment"),
+            ],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=10,
+        )
+        self.assertEqual(rejected.returncode, 2)
+        self.assertIn("--authority", rejected.stderr)
+        self.assertFalse((self.root / "github-environment").exists())
+
     def test_ci_shares_ledger_and_exports_real_config_before_start(self):
         workflow = yaml.safe_load(
             (ROOT / ".github/workflows/extended-ci.yml").read_text(encoding="utf-8")
@@ -212,9 +232,11 @@ class LoginRateLimitConfigTests(unittest.TestCase):
         self.assertEqual(exporter["working-directory"], "${{ matrix.backend }}")
         self.assertNotIn("if", exporter)
         self.assertIn(
-            'full_stack_rate_limit_config.py --environment-file "$GITHUB_ENV"',
+            "cargo xtask check recovery full-stack rate-limit",
             exporter["run"],
         )
+        self.assertIn('--environment-file "$GITHUB_ENV"', exporter["run"])
+        self.assertNotIn("full_stack_rate_limit_config.py", exporter["run"])
 
     def test_rust_configuration_and_login_guard_policy_cannot_drift_silently(self):
         config = (ROOT / "crates/ryframe-config/src/rate_limit_config.rs").read_text(

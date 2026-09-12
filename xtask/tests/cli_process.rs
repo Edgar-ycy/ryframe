@@ -548,6 +548,7 @@ fn check_help_lists_every_supported_performance_operation() {
     assert!(output.contains("check release source --tag <tag>"));
     assert!(output.contains("check release ci --backend-repository <owner/repo>"));
     assert!(output.contains("check release ci record-pair --output <绝对文件>"));
+    assert!(output.contains("check recovery full-stack <prepare|rate-limit|start|collect>"));
 }
 
 #[test]

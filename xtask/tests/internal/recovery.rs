@@ -1,7 +1,7 @@
 use std::path::Path;
 
-use super::cli::RecoveryCommand;
-use super::recovery::recovery_command;
+use super::cli::{FullStackCommand, RecoveryCommand};
+use super::recovery::{full_stack_environment, recovery_command};
 
 fn strings(values: &[&str]) -> Vec<String> {
     values.iter().map(ToString::to_string).collect()
@@ -75,6 +75,51 @@ fn reference_stages_keep_their_existing_arguments() {
             .into_iter()
             .chain([super::workspace::root_dir().display().to_string()])
             .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn full_stack_stages_use_one_private_program_and_typed_environment() {
+    for (command, operation) in [
+        (FullStackCommand::Prepare, "prepare"),
+        (FullStackCommand::Start, "start"),
+        (FullStackCommand::Collect, "collect"),
+    ] {
+        let (script, arguments) = recovery_command(
+            &RecoveryCommand::FullStack(command.clone()),
+            Path::new("unused"),
+        )
+        .unwrap();
+        assert_eq!(script, "scripts/ci_full_stack.py");
+        assert!(arguments.is_empty());
+        assert_eq!(
+            full_stack_environment(&command, "D:/当前 后端").unwrap(),
+            vec![
+                ("RYFRAME_XTASK_FULL_STACK_OPERATION", operation.to_owned()),
+                ("RYFRAME_XTASK_BACKEND_ROOT", "D:/当前 后端".to_owned()),
+            ]
+        );
+    }
+    let environment_file = Path::new("D:/临时/github-environment");
+    assert_eq!(
+        full_stack_environment(
+            &FullStackCommand::RateLimit {
+                environment_file: environment_file.to_path_buf(),
+            },
+            "D:/当前 后端",
+        )
+        .unwrap(),
+        vec![
+            (
+                "RYFRAME_XTASK_FULL_STACK_OPERATION",
+                "rate-limit".to_owned()
+            ),
+            ("RYFRAME_XTASK_BACKEND_ROOT", "D:/当前 后端".to_owned()),
+            (
+                "RYFRAME_XTASK_FULL_STACK_ENVIRONMENT_FILE",
+                "D:/临时/github-environment".to_owned(),
+            ),
+        ]
     );
 }
 
@@ -533,6 +578,7 @@ fn forwarded_recovery_scripts_exist_in_checkout() {
         RecoveryCommand::Fixture(strings(&["artifact", "snapshot"])),
         RecoveryCommand::Fixture(strings(&["retention", "inspect"])),
         RecoveryCommand::Fixture(strings(&["dataset", "plan"])),
+        RecoveryCommand::FullStack(FullStackCommand::Collect),
         RecoveryCommand::Monitoring(strings(&["status", "--binding", "binding.json"])),
         RecoveryCommand::DatasetPrepare(strings(&["--plan", "reference.json"])),
         RecoveryCommand::FreshTarget(strings(&[

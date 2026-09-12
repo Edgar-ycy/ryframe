@@ -119,23 +119,9 @@ def login_budget_environment(backend: Path, environment: Mapping[str, str], stat
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    output = parser.add_mutually_exclusive_group()
-    output.add_argument("--environment-file", type=Path)
-    output.add_argument("--authority", action="store_true")
-    args = parser.parse_args()
-    if args.authority:
-        print(json.dumps(rate_limit_authority(Path.cwd(), os.environ)))
-        return
-    if args.environment_file is None:
-        print(json.dumps(login_rate_limit(Path.cwd(), os.environ)))
-        return
-    raw = os.environ.get("RYFRAME_E2E_LOGIN_BUDGET_STATE", "")
-    if not raw:
-        raise ValueError("必须显式设置 RYFRAME_E2E_LOGIN_BUDGET_STATE")
-    values = login_budget_environment(Path.cwd(), os.environ, Path(raw))
-    with args.environment_file.open("a", encoding="utf-8", newline="\n") as output:
-        output.writelines(f"{key}={value}\n" for key, value in values.items())
-    print("已从当前配置导出登录预算容量与窗口")
+    parser.add_argument("--authority", action="store_true", required=True)
+    parser.parse_args()
+    print(json.dumps(rate_limit_authority(Path.cwd(), os.environ)))
 
 
 if __name__ == "__main__":

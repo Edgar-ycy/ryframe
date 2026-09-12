@@ -1,8 +1,16 @@
 use std::path::Path;
 
-use crate::{Result, cli::RecoveryCommand, process::run_owned, workspace::root_dir};
+use crate::{
+    Result,
+    cli::{FullStackCommand, RecoveryCommand},
+    process::{run_owned, run_owned_with_env},
+    workspace::root_dir,
+};
 
 pub(crate) fn run(command: &RecoveryCommand, frontend_dir: &Path) -> Result<()> {
+    if let RecoveryCommand::FullStack(command) = command {
+        return run_full_stack(command);
+    }
     let (program, forwarded) = recovery_command(command, frontend_dir)?;
     let mut command = Vec::with_capacity(forwarded.len() + 1);
     command.push(program.to_owned());
@@ -113,6 +121,7 @@ pub(crate) fn recovery_command(
                 ))
             }
         }
+        RecoveryCommand::FullStack(_) => Ok(("scripts/ci_full_stack.py", Vec::new())),
         RecoveryCommand::Monitoring(arguments) => Ok((
             "scripts/restore_monitoring_delivery.py",
             with_paths(arguments, &backend, None)?,
@@ -122,6 +131,60 @@ pub(crate) fn recovery_command(
             with_paths(arguments, &backend, None)?,
         )),
     }
+}
+
+fn run_full_stack(command: &FullStackCommand) -> Result<()> {
+    match command {
+        FullStackCommand::Help => {
+            println!("cargo xtask check recovery full-stack <prepare|rate-limit|start|collect>");
+            return Ok(());
+        }
+        FullStackCommand::RateLimitHelp => {
+            println!(
+                "cargo xtask check recovery full-stack rate-limit --environment-file <绝对文件>"
+            );
+            return Ok(());
+        }
+        _ => {}
+    }
+    let backend = path_argument(&root_dir(), "后端目录")?;
+    let environment = full_stack_environment(command, &backend)?;
+    run_owned_with_env(
+        &root_dir(),
+        "python",
+        &strings(&["-B", "scripts/ci_full_stack.py"]),
+        &environment,
+    )
+}
+
+pub(crate) fn full_stack_environment(
+    command: &FullStackCommand,
+    backend: &str,
+) -> Result<Vec<(&'static str, String)>> {
+    let operation = match command {
+        FullStackCommand::Prepare => "prepare",
+        FullStackCommand::Start => "start",
+        FullStackCommand::Collect => "collect",
+        FullStackCommand::RateLimit { .. } => "rate-limit",
+        FullStackCommand::Help | FullStackCommand::RateLimitHelp => {
+            return Err("full-stack 帮助不启动私有阶段程序".into());
+        }
+    };
+    let mut environment = vec![
+        ("RYFRAME_XTASK_FULL_STACK_OPERATION", operation.to_owned()),
+        ("RYFRAME_XTASK_BACKEND_ROOT", backend.to_owned()),
+    ];
+    if let FullStackCommand::RateLimit { environment_file } = command {
+        environment.push((
+            "RYFRAME_XTASK_FULL_STACK_ENVIRONMENT_FILE",
+            path_argument(environment_file, "环境文件")?,
+        ));
+    }
+    Ok(environment)
+}
+
+fn strings(values: &[&str]) -> Vec<String> {
+    values.iter().map(ToString::to_string).collect()
 }
 
 fn path_argument(path: &Path, label: &str) -> Result<String> {

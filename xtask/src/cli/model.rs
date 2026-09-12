@@ -45,8 +45,19 @@ pub(crate) enum RecoveryCommand {
     Clone(Vec<String>),
     FreshTarget(Vec<String>),
     Fixture(Vec<String>),
+    FullStack(FullStackCommand),
     Monitoring(Vec<String>),
     DatasetPrepare(Vec<String>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FullStackCommand {
+    Prepare,
+    RateLimit { environment_file: PathBuf },
+    Start,
+    Collect,
+    Help,
+    RateLimitHelp,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -291,15 +291,17 @@ jobs:
           RYFRAME_CI_REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
           RYFRAME_CI_S3_CONTAINER_ID: ${{ job.services.rustfs.id }}
           RYFRAME_CI_MYSQL_CONTAINER_ID: ${{ job.services.mysql.id }}
-        run: python scripts/ci_full_stack.py prepare
+        run: cargo xtask check recovery full-stack prepare
 
       - name: 从当前隔离配置导出登录预算
         working-directory: ${{ matrix.backend }}
-        run: python scripts/full_stack_rate_limit_config.py --environment-file "$GITHUB_ENV"
+        run: >-
+          cargo xtask check recovery full-stack rate-limit
+          --environment-file "$GITHUB_ENV"
 
       - name: 启动真实 API、Worker 并等待就绪
         working-directory: ${{ matrix.backend }}
-        run: python scripts/ci_full_stack.py start
+        run: cargo xtask check recovery full-stack start
 
       - name: 执行真实浏览器全栈流程
         if: ${{ matrix.fixture == 'core' }}
@@ -330,7 +332,7 @@ jobs:
           RYFRAME_CI_MYSQL_CONTAINER_ID: ${{ job.services.mysql.id }}
           RYFRAME_CI_REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
           RYFRAME_CI_S3_CONTAINER_ID: ${{ job.services.rustfs.id }}
-        run: python scripts/ci_full_stack.py collect
+        run: cargo xtask check recovery full-stack collect
 
       - name: 保存全栈诊断产物
         if: ${{ always() }}

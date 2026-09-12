@@ -1,4 +1,6 @@
-use super::super::model::{CliError, RecoveryCommand};
+use std::path::{Path, PathBuf};
+
+use super::super::model::{CliError, FullStackCommand, RecoveryCommand};
 
 pub(super) fn parse_recovery(args: &[String]) -> Result<RecoveryCommand, CliError> {
     let Some((stage, rest)) = args.split_first() else {
@@ -46,10 +48,57 @@ pub(super) fn parse_recovery(args: &[String]) -> Result<RecoveryCommand, CliErro
         .map(RecoveryCommand::Clone),
         "fresh-target" => Ok(RecoveryCommand::FreshTarget(rest.to_vec())),
         "fixture" => parse_fixture(rest).map(RecoveryCommand::Fixture),
+        "full-stack" => parse_full_stack(rest).map(RecoveryCommand::FullStack),
         "monitoring" => parse_monitoring(rest).map(RecoveryCommand::Monitoring),
         "dataset-prepare" => Ok(RecoveryCommand::DatasetPrepare(rest.to_vec())),
         _ => Err(CliError::new(format!("未知 recovery 阶段：{stage}"))),
     }
+}
+
+fn parse_full_stack(args: &[String]) -> Result<FullStackCommand, CliError> {
+    match args {
+        [help] if matches!(help.as_str(), "--help" | "-h") => Ok(FullStackCommand::Help),
+        [operation] if operation == "prepare" => Ok(FullStackCommand::Prepare),
+        [operation] if operation == "start" => Ok(FullStackCommand::Start),
+        [operation] if operation == "collect" => Ok(FullStackCommand::Collect),
+        [operation, help]
+            if matches!(operation.as_str(), "prepare" | "start" | "collect")
+                && matches!(help.as_str(), "--help" | "-h") =>
+        {
+            Ok(FullStackCommand::Help)
+        }
+        [operation, help]
+            if operation == "rate-limit" && matches!(help.as_str(), "--help" | "-h") =>
+        {
+            Ok(FullStackCommand::RateLimitHelp)
+        }
+        [operation, option, value]
+            if operation == "rate-limit" && option == "--environment-file" =>
+        {
+            validate_environment_file(value)
+                .map(|environment_file| FullStackCommand::RateLimit { environment_file })
+        }
+        [] => Err(CliError::new("check recovery full-stack 缺少明确子操作")),
+        [operation, ..]
+            if ["prepare", "start", "collect", "rate-limit"].contains(&operation.as_str()) =>
+        {
+            Err(CliError::new(format!("full-stack {operation} 参数无效")))
+        }
+        [operation, ..] => Err(CliError::new(format!(
+            "未知 recovery full-stack 子操作：{operation}"
+        ))),
+    }
+}
+
+fn validate_environment_file(value: &str) -> Result<PathBuf, CliError> {
+    if value.trim().is_empty() || value.contains(['\r', '\n']) {
+        return Err(CliError::new("--environment-file 必须是无换行的绝对路径"));
+    }
+    let path = Path::new(value);
+    if !path.is_absolute() {
+        return Err(CliError::new("--environment-file 必须是无换行的绝对路径"));
+    }
+    Ok(path.to_path_buf())
 }
 
 fn parse_monitoring(args: &[String]) -> Result<Vec<String>, CliError> {

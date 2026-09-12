@@ -197,9 +197,18 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertNotIn("RYFRAME_RESET_STATE_DIR: ${{ runner.temp }}", block)
         self.assertIn("cargo xtask check recovery fixture", block)
         self.assertNotIn("python backend/scripts/prepare_full_stack_fixture.py", block)
-        self.assertIn("python scripts/ci_full_stack.py prepare", block)
-        self.assertIn("python scripts/ci_full_stack.py start", block)
-        self.assertIn("python scripts/ci_full_stack.py collect", block)
+        for operation in ("prepare", "start", "collect"):
+            self.assertIn(
+                f"cargo xtask check recovery full-stack {operation}", block
+            )
+        self.assertIn("cargo xtask check recovery full-stack rate-limit", block)
+        self.assertIn('--environment-file "$GITHUB_ENV"', block)
+        self.assertNotIn("python scripts/ci_full_stack.py", block)
+        self.assertNotIn("python scripts/full_stack_rate_limit_config.py", block)
+        collect = block.split("- name: 收集进程与基础设施日志", 1)[1].split(
+            "- name: 保存全栈诊断产物", 1
+        )[0]
+        self.assertIn("if: ${{ always() }}", collect)
         self.assertNotIn("cargo build --locked", block)
         self.assertNotIn("ryframe-reset plan", block)
         self.assertNotIn("nohup", block)

@@ -3,10 +3,10 @@
 
 from __future__ import annotations
 
-import argparse
 import os
 import re
 import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -23,6 +23,7 @@ from full_stack_process_tree import (
     read_process_tree,
     terminate_owned_process_tree,
 )
+from full_stack_rate_limit_config import login_budget_environment
 from full_stack_runtime import register_runtime
 from full_stack_worker import control as control_worker
 from full_stack_worker import ensure_port_free, wait_for_port_free
@@ -351,21 +352,42 @@ def collect(backend_root: Path | None = None) -> None:
         raise FullStackError(f"全栈进程未安全回收：\n{details}")
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("prepare", "start", "collect"))
-    parser.add_argument("--backend-root", type=Path, default=Path.cwd())
-    return parser.parse_args()
+def export_rate_limit(backend_root: Path, environment_file: Path) -> None:
+    """从当前隔离配置导出浏览器登录预算。"""
+
+    raw = _required_environment("RYFRAME_E2E_LOGIN_BUDGET_STATE")
+    values = login_budget_environment(backend_root, os.environ, Path(raw))
+    with environment_file.open("a", encoding="utf-8", newline="\n") as output:
+        output.writelines(f"{key}={value}\n" for key, value in values.items())
+    print("已从当前配置导出登录预算容量与窗口")
+
+
+def _internal_path(name: str) -> Path:
+    raw = _required_environment(name)
+    path = Path(raw)
+    if not path.is_absolute() or any(char in raw for char in "\r\n"):
+        raise FullStackError(f"{name} 必须是无换行的绝对路径")
+    return path
 
 
 def main() -> None:
-    args = parse_args()
-    if args.operation == "prepare":
-        prepare(args.backend_root.resolve())
-    elif args.operation == "start":
-        start(args.backend_root.resolve())
+    if len(sys.argv) != 1:
+        raise FullStackError("私有全栈阶段程序不接受命令行参数")
+    operation = _required_environment("RYFRAME_XTASK_FULL_STACK_OPERATION")
+    backend_root = _internal_path("RYFRAME_XTASK_BACKEND_ROOT").resolve()
+    if operation == "prepare":
+        prepare(backend_root)
+    elif operation == "rate-limit":
+        export_rate_limit(
+            backend_root,
+            _internal_path("RYFRAME_XTASK_FULL_STACK_ENVIRONMENT_FILE"),
+        )
+    elif operation == "start":
+        start(backend_root)
+    elif operation == "collect":
+        collect(backend_root)
     else:
-        collect(args.backend_root.resolve())
+        raise FullStackError("RYFRAME_XTASK_FULL_STACK_OPERATION 不是已登记阶段")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-use super::cli::{CheckCommand, CliError, Command, RecoveryCommand, parse};
+use super::cli::{CheckCommand, CliError, Command, FullStackCommand, RecoveryCommand, parse};
 
 fn strings(values: &[&str]) -> Vec<String> {
     values.iter().map(ToString::to_string).collect()
@@ -149,6 +149,68 @@ fn parses_fixture_generation_and_rejects_ambiguous_sources() {
                 &[operation, "inspect", "--runtime-dir", "D:/验收/runtime",]
             ))))
         );
+    }
+}
+
+#[test]
+fn parses_typed_full_stack_operations_and_rejects_ambiguous_arguments() {
+    for (operation, expected) in [
+        ("prepare", FullStackCommand::Prepare),
+        ("start", FullStackCommand::Start),
+        ("collect", FullStackCommand::Collect),
+    ] {
+        assert_eq!(
+            parse_command(&["check", "recovery", "full-stack", operation]).unwrap(),
+            Command::Check(CheckCommand::Recovery(RecoveryCommand::FullStack(expected)))
+        );
+    }
+    #[cfg(windows)]
+    let environment_file = "D:/运行 目录/github-environment";
+    #[cfg(not(windows))]
+    let environment_file = "/tmp/运行 目录/github-environment";
+    assert_eq!(
+        parse_command(&[
+            "check",
+            "recovery",
+            "full-stack",
+            "rate-limit",
+            "--environment-file",
+            environment_file,
+        ])
+        .unwrap(),
+        Command::Check(CheckCommand::Recovery(RecoveryCommand::FullStack(
+            FullStackCommand::RateLimit {
+                environment_file: environment_file.into(),
+            }
+        )))
+    );
+    for values in [
+        ["check", "recovery", "full-stack"].as_slice(),
+        ["check", "recovery", "full-stack", "unknown"].as_slice(),
+        ["check", "recovery", "full-stack", "prepare", "extra"].as_slice(),
+        ["check", "recovery", "full-stack", "rate-limit"].as_slice(),
+        [
+            "check",
+            "recovery",
+            "full-stack",
+            "rate-limit",
+            "--environment-file",
+            "relative.env",
+        ]
+        .as_slice(),
+        [
+            "check",
+            "recovery",
+            "full-stack",
+            "rate-limit",
+            "--environment-file",
+            environment_file,
+            "--environment-file",
+            environment_file,
+        ]
+        .as_slice(),
+    ] {
+        assert!(parse_command(values).is_err(), "{values:?}");
     }
 }
 

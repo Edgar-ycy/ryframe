@@ -375,6 +375,58 @@ class FullStackCiTests(unittest.TestCase):
                 "scope", (output / "cleanup-errors.log").read_text(encoding="utf-8")
             )
 
+    def test_rate_limit_export_uses_the_bound_backend_and_explicit_file(self) -> None:
+        with test_directory() as root:
+            output = root / "github-environment"
+            environment = {
+                "RYFRAME_E2E_LOGIN_BUDGET_STATE": str(root / "budget.json")
+            }
+            values = {
+                "RYFRAME_E2E_LOGIN_BUDGET_STATE": str(root / "budget.json"),
+                "RYFRAME_E2E_LOGIN_RATE_LIMIT_CAPACITY": "5",
+                "RYFRAME_E2E_LOGIN_RATE_LIMIT_WINDOW_SECS": "60",
+            }
+            with (
+                mock.patch.dict(os.environ, environment, clear=True),
+                mock.patch.object(
+                    MODULE, "login_budget_environment", return_value=values
+                ) as export,
+            ):
+                MODULE.export_rate_limit(root, output)
+                self.assertEqual(export.call_count, 1)
+                self.assertEqual(export.call_args.args[0], root)
+                self.assertEqual(dict(export.call_args.args[1]), environment)
+                self.assertEqual(export.call_args.args[2], root / "budget.json")
+            self.assertEqual(
+                output.read_text(encoding="utf-8").splitlines(),
+                [f"{key}={value}" for key, value in values.items()],
+            )
+
+    def test_private_dispatch_uses_only_xtask_environment(self) -> None:
+        with test_directory() as root:
+            environment = {
+                "RYFRAME_XTASK_FULL_STACK_OPERATION": "start",
+                "RYFRAME_XTASK_BACKEND_ROOT": str(root),
+            }
+            with (
+                mock.patch.dict(os.environ, environment, clear=True),
+                mock.patch.object(sys, "argv", [str(SCRIPT)]),
+                mock.patch.object(MODULE, "start") as start,
+            ):
+                MODULE.main()
+            start.assert_called_once_with(root.resolve())
+
+            with (
+                mock.patch.dict(os.environ, environment, clear=True),
+                mock.patch.object(sys, "argv", [str(SCRIPT), "start"]),
+                mock.patch.object(MODULE, "start") as rejected,
+            ):
+                with self.assertRaisesRegex(
+                    MODULE.FullStackError, "不接受命令行参数"
+                ):
+                    MODULE.main()
+            rejected.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
