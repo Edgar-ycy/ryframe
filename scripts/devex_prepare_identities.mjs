@@ -171,8 +171,11 @@ export async function main(argv, dependencies = {}) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  try { await main(privateProtocolArguments()) }
-  catch (error) {
+  try {
+    const arguments_ = privateProtocolArguments()
+    delete process.env[protocolKey]
+    await main(arguments_)
+  } catch (error) {
     if (error instanceof IdentityProtocolError) {
       process.stderr.write('identity_preparation_protocol_error：身份准备私有协议无效。\n')
       process.exitCode = 2

@@ -294,7 +294,9 @@ def main(request: RuntimeRequest) -> None:
 
 if __name__ == "__main__":
     try:
-        main(private_protocol_request())
+        request = private_protocol_request()
+        os.environ.pop(PROTOCOL_KEY, None)
+        main(request)
     except RuntimeProtocolError:
         print("reference_fixture_runtime_protocol_error：夹具运行时私有协议无效。",
               file=sys.stderr)
