@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import argparse
 import copy
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import os
@@ -313,46 +313,135 @@ def _publish(backend: Path, output: Path, build, arguments: tuple) -> dict:
     return value
 
 
-def _add_output(parser) -> None:
-    parser.add_argument("--output", type=Path)
-    parser.add_argument("--write", action="store_true")
+PROTOCOL_KEY = "RYFRAME_XTASK_RECOVERY_INPUTS"
+PROTOCOL_PREFIX = "RYFRAME_XTASK_RECOVERY_"
+OPERATIONS = frozenset(("reference", "product", "bindings"))
 
 
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
-    commands = parser.add_subparsers(dest="operation", required=True)
-    reference = commands.add_parser("reference", allow_abbrev=False)
-    reference.add_argument("--backend-dir", type=Path, required=True)
-    reference.add_argument("--arm-input", type=Path, required=True)
-    reference.add_argument("--fresh-target-verify", type=Path, required=True)
-    reference.add_argument("--side", choices=("base", "candidate"), required=True)
-    reference.add_argument("--id", required=True)
-    reference.add_argument("--work-dir", type=Path, required=True)
-    _add_output(reference)
-    product = commands.add_parser("product", allow_abbrev=False)
-    product.add_argument("--backend-dir", type=Path, required=True)
-    for field in ("reference-plan", "backup-receipt", "comparison-sources", "arm-input", "fresh-target-verify"):
-        product.add_argument("--" + field, type=Path, required=True)
-    product.add_argument("--side", choices=("base", "candidate"), required=True)
-    product.add_argument("--id", required=True)
-    product.add_argument("--fault-at", required=True)
-    _add_output(product)
-    bindings = commands.add_parser("bindings", allow_abbrev=False)
-    bindings.add_argument("--backend-dir", type=Path, required=True)
-    for field in ("reference-plan", "target-plan", "backup-receipt", "record"):
-        bindings.add_argument("--" + field, type=Path, required=True)
-    _add_output(bindings)
-    return parser
+class RestoreInputsProtocolError(ValueError):
+    """Rust 与恢复输入私有实现之间的参数协议无效。"""
 
 
-def main() -> None:
-    parser = _parser()
-    options = [value.partition("=")[0] for value in sys.argv[1:] if value.startswith("--")]
-    if len(options) != len(set(options)):
-        parser.error("正式恢复输入选项不能重复")
-    args = parser.parse_args()
-    if args.write != (args.output is not None):
-        parser.error("预览不落盘；发布必须同时指定 --output 与 --write")
+@dataclass(frozen=True)
+class RestoreInputsRequest:
+    operation: str
+    backend_dir: Path
+    write: bool
+    output: Path | None = None
+    arm_input: Path | None = None
+    fresh_target_verify: Path | None = None
+    side: str | None = None
+    id: str | None = None
+    work_dir: Path | None = None
+    reference_plan: Path | None = None
+    backup_receipt: Path | None = None
+    comparison_sources: Path | None = None
+    fault_at: str | None = None
+    target_plan: Path | None = None
+    record: Path | None = None
+
+
+def _unique_protocol_object(pairs: list[tuple[str, object]]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise RestoreInputsProtocolError(f"恢复输入私有协议字段重复：{key}")
+        result[key] = value
+    return result
+
+
+def _exact_protocol(value: object, fields: set[str], label: str) -> dict:
+    if not isinstance(value, dict) or set(value) != fields:
+        raise RestoreInputsProtocolError(f"{label}字段不完整或含未知字段")
+    return value
+
+
+def _protocol_path(value: object, label: str) -> Path:
+    path = Path(value) if isinstance(value, str) else None
+    if (not isinstance(value, str) or not value or path is None or not path.is_absolute()
+            or ".." in path.parts
+            or any(character in value for character in ("\n", "\r", "\0"))):
+        raise RestoreInputsProtocolError(f"{label}必须是无父目录跳转和控制字符的非空绝对路径")
+    return path
+
+
+def _request_fields(operation: str, write: bool) -> set[str]:
+    common = {"backend_dir", "format_version", "operation", "write"}
+    fields = {
+        "reference": {"arm_input", "fresh_target_verify", "side", "id", "work_dir"},
+        "product": {"reference_plan", "backup_receipt", "comparison_sources", "arm_input",
+                    "fresh_target_verify", "side", "id", "fault_at"},
+        "bindings": {"reference_plan", "target_plan", "backup_receipt", "record"},
+    }[operation]
+    return common | fields | ({"output"} if write else set())
+
+
+def private_protocol_request(argv: list[str] | None = None,
+                             environment: dict[str, str] | None = None) -> RestoreInputsRequest:
+    arguments = sys.argv[1:] if argv is None else argv
+    values = os.environ if environment is None else environment
+    raw = values.pop(PROTOCOL_KEY, None)
+    if arguments:
+        raise RestoreInputsProtocolError("恢复输入私有脚本不接受命令行参数")
+    if any(name.startswith(PROTOCOL_PREFIX) for name in values):
+        raise RestoreInputsProtocolError("恢复输入私有环境含未知或串线协议")
+    if (not isinstance(raw, str) or not raw or len(raw) > 65_536
+            or any(character in raw for character in ("\n", "\r", "\0"))):
+        raise RestoreInputsProtocolError("恢复输入私有协议缺失、为空、过长或含控制字符")
+    try:
+        protocol = json.loads(raw, object_pairs_hook=_unique_protocol_object)
+    except RestoreInputsProtocolError:
+        raise
+    except (TypeError, json.JSONDecodeError) as error:
+        raise RestoreInputsProtocolError("恢复输入私有协议不是有效 JSON") from error
+    return _request_from_protocol(protocol)
+
+
+def _request_from_protocol(protocol: object) -> RestoreInputsRequest:
+    outer = _exact_protocol(protocol, {"format_version", "kind", "request"}, "恢复输入私有协议")
+    if (type(outer["format_version"]) is not int or outer["format_version"] != 1
+            or outer["kind"] != "ryframe-xtask-recovery-inputs"):
+        raise RestoreInputsProtocolError("恢复输入私有协议版本或类型无效")
+    request = outer["request"]
+    if not isinstance(request, dict):
+        raise RestoreInputsProtocolError("恢复输入私有请求必须是对象")
+    operation, write = request.get("operation"), request.get("write")
+    if not isinstance(operation, str) or operation not in OPERATIONS:
+        raise RestoreInputsProtocolError("恢复输入私有协议操作无效")
+    if type(write) is not bool:
+        raise RestoreInputsProtocolError("恢复输入私有协议写入授权必须是布尔值")
+    values = _exact_protocol(request, _request_fields(operation, write),
+                             f"恢复输入 {operation} 私有请求")
+    if type(values["format_version"]) is not int or values["format_version"] != 1:
+        raise RestoreInputsProtocolError("恢复输入私有请求版本无效")
+    return _restore_inputs_request(values, operation, write)
+
+
+def _restore_inputs_request(values: dict, operation: str, write: bool) -> RestoreInputsRequest:
+    paths = {field: _protocol_path(values[field], field) for field in (
+        "backend_dir", "output", "arm_input", "fresh_target_verify", "work_dir",
+        "reference_plan", "backup_receipt", "comparison_sources", "target_plan", "record"
+    ) if field in values}
+    side = values.get("side")
+    if side is not None and (not isinstance(side, str) or side not in {"base", "candidate"}):
+        raise RestoreInputsProtocolError("恢复输入 side 无效")
+    plan_id = values.get("id")
+    if plan_id is not None:
+        try:
+            identifier(plan_id)
+        except (TypeError, ValueError) as error:
+            raise RestoreInputsProtocolError("恢复输入 id 无效") from error
+    fault_at = values.get("fault_at")
+    if fault_at is not None:
+        try:
+            timestamp(fault_at, "恢复故障时间")
+        except (TypeError, ValueError) as error:
+            raise RestoreInputsProtocolError("恢复输入 fault_at 无效") from error
+    return RestoreInputsRequest(operation=operation, write=write, side=side, id=plan_id,
+                                fault_at=fault_at, **paths)
+
+
+def main(args: RestoreInputsRequest) -> None:
     backend = args.backend_dir.resolve(strict=True)
     if args.operation == "reference":
         build, arguments = build_reference, (
@@ -376,4 +465,12 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main(private_protocol_request())
+    except RestoreInputsProtocolError:
+        print("restore_inputs_protocol_error：私有参数协议无效。", file=sys.stderr)
+        raise SystemExit(2)
+    except Exception:
+        print("restore_inputs_failed：输入推导失败，请核对绑定来源；不自动覆盖或重放。",
+              file=sys.stderr)
+        raise SystemExit(1)

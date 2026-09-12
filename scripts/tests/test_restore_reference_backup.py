@@ -1,9 +1,7 @@
 """正式备份的共享导出绑定；所有来源与外部命令均使用离线替身。"""
 
-import contextlib
 import copy
 from datetime import datetime, timedelta
-import io
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -96,11 +94,15 @@ class BackupBindingTests(unittest.TestCase):
 
     def test_backup_requires_export_argument_before_any_resource_access(self):
         path = self.write("plan.json", self.plan)
-        argv = ["restore_reference", "backup", "--plan", str(path), "--backend-dir", str(self.backend),
-                "--inventory", "unused", "--source-generation", "unused", "--write"]
-        with patch.object(sys, "argv", argv), patch.object(reference, "work_directory") as work, \
-                contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-            reference.main()
+        protocol = {"format_version": 1, "kind": "ryframe-xtask-recovery-reference",
+                    "request": {"format_version": 1, "operation": "backup",
+                                "backend_dir": str(self.backend), "plan": str(path),
+                                "inventory": str(self.work / "unused.json"),
+                                "source_generation": str(self.work / "generation.json"),
+                                "write": True}}
+        with patch.object(reference, "work_directory") as work, \
+                self.assertRaises(reference.ReferenceProtocolError):
+            reference._request_from_protocol(protocol)
         work.assert_not_called()
 
     def test_execution_consumes_original_export_inventory_without_editing_it(self):

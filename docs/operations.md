@@ -144,9 +144,11 @@ cargo xtask data backup status
 
 数据准备计划的 `dataset.request_interval_ms` 必须为 1000 至 5000 毫秒，限制每个固定客户端的实际 HTTP 请求启动频率；十一个租户可并发准备，每个租户使用自己的身份与地址。`dataset.timeout_seconds` 显式设置整阶段时限（1 至 604800 秒），例如参考规模预留 21600 秒；其他外部命令仍使用 1800 秒超时。收到 429 时保留失败，不通过重试或更换地址绕过限流。数据准备发生在备份与恢复开始之前，其耗时不计入恢复时间。
 
-所有命令从对应干净后端工作树执行；`cargo xtask check recovery` 固定当前 `--backend-dir`，各阶段共用 `--plan <计划JSON>`。先用 `inputs reference --arm-input <本侧arm结果> --fresh-target-verify <本侧观察目录/verify.json> --side base|candidate --id <备份ID> --work-dir <本侧新目录>` 预览参考计划，再追加 `--output <本侧参考计划.json> --write` 发布。
+所有命令从对应干净后端工作树执行；`cargo xtask check recovery` 固定当前 `--backend-dir`，各阶段共用 `--plan <计划JSON>`。公开入口在连接资源前完成严格参数解析：未知、重复、缺失或跨阶段参数均以参数错误拒绝。计划、输入、备份目录、工作目录和输出都必须位于当前后端 `.local-tests`，不得包含 `..`、经过链接或重解析点，也不能覆盖已有输出。外部数据库、对象存储和工具路径只从已经绑定的参考计划及收据读取，不能另传路径绕过 ownership。先用 `inputs reference --arm-input <本侧arm结果> --fresh-target-verify <本侧观察目录/verify.json> --side base|candidate --id <备份ID> --work-dir <本侧新目录>` 预览参考计划，再追加 `--output <本侧参考计划.json> --write` 发布。
 
 随后用 `inputs product --reference-plan <本侧参考计划> --backup-receipt <同一backup.json> --comparison-sources <双版本来源清单> --arm-input <本侧arm结果> --fresh-target-verify <本侧观察目录/verify.json> --side base|candidate --id <恢复ID> --fault-at <UTC时间>` 预览产品计划，追加 `--output <本侧产品计划.json> --write` 发布。该入口从同一备份、比较来源、arm、fresh 目标和对应侧产品 SHA 推导原生 `RestorePlan`，并校验 `fault_at` 位于备份实际采集后 24 小时内；`--output` 与 `--write` 必须同时出现。参考计划的源侧只记录备份所需 API，目标侧另记录 API、Worker 和前端三个端点。
+
+`plan` 的摘要、目标计划复核和完整输入预览，以及 `check-dataset`、`check-existing` 均为只读操作，不接受 `--write`。`inputs reference|product|bindings` 默认只在标准输出预览，只有同时给出新的 `--output` 和 `--write` 才发布证据。`dataset`、`backup`、`restore`、`copy`、`damage` 会创建会话、阶段证据或修改明确登记的隔离资源，必须显式传入 `--write`；该授权不放宽账本、前后像、ownership、幂等和未知结果核验。
 
 | 阶段 | 操作与输出 |
 | --- | --- |

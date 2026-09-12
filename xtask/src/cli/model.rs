@@ -29,6 +29,12 @@ pub(crate) use fixture_control::*;
 #[path = "model/fixture_prepare.rs"]
 mod fixture_prepare;
 pub(crate) use fixture_prepare::*;
+#[path = "model/recovery_inputs.rs"]
+mod recovery_inputs;
+pub(crate) use recovery_inputs::*;
+#[path = "model/recovery_reference.rs"]
+mod recovery_reference;
+pub(crate) use recovery_reference::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Cli {
@@ -62,8 +68,8 @@ pub(crate) enum CheckCommand {
 /// 私有脚本作为用户入口。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RecoveryCommand {
-    Reference(Vec<String>),
-    Inputs(Vec<String>),
+    Reference(RecoveryReferenceCommand),
+    Inputs(RecoveryInputsCommand),
     Runtime(Vec<String>),
     Source(Vec<String>),
     Clone(Vec<String>),

@@ -47,8 +47,10 @@ class DatasetCliTests(unittest.TestCase):
         scripts = self.root / "scripts"
         scripts.mkdir()
         (scripts / "restore_reference.py").write_text(
-            "import json, sys\n"
-            "side = sys.argv[sys.argv.index('--side') + 1]\n"
+            "import json, os, sys\n"
+            "assert sys.argv[1:] == []\n"
+            "request = json.loads(os.environ.pop('RYFRAME_XTASK_RECOVERY_REFERENCE'))['request']\n"
+            "side = request['side']\n"
             f"print(json.dumps({{'plan_sha256': {hashlib.sha256(encoded).hexdigest()!r}, "
             "'side': side, 'scope_id': side}))\n", encoding="utf-8",
         )

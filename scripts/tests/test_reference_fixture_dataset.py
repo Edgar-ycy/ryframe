@@ -4,19 +4,22 @@ import io
 import json
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+BACKEND = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(BACKEND / "scripts"))
+
 import reference_fixture_dataset as dataset
+from workspace_directory import WorkspaceDirectory
 
 
 class ReferenceFixtureDatasetTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = WorkspaceDirectory(BACKEND / ".local-tests/t", prefix="rfd-")
         self.addCleanup(self.temp.cleanup)
-        self.backend = Path(self.temp.name) / "backend"
+        self.backend = self.temp.path / "backend"
         self.execution = self.backend / ".local-tests/device/backend"
         self.runtime = self.execution / ".local-tests/reference-fixture/source-runtime-r1"
         self.runtime.mkdir(parents=True)

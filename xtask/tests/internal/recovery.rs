@@ -1,10 +1,13 @@
 use std::path::Path;
 
 use super::cli::{
-    DatasetPrepareCommand, FreshTargetCommand, FreshTargetOperation, FreshTargetOptions,
-    FullStackCommand, MonitoringCommand, RecoveryCommand,
+    BindingsInputOptions, DatasetPrepareCommand, ExistingReferenceSide, FreshTargetCommand,
+    FreshTargetOperation, FreshTargetOptions, FullStackCommand, MonitoringCommand, RecoveryCommand,
+    RecoveryInputsCommand, RecoveryReferenceCommand,
 };
-use super::recovery::{fresh_target_protocol, full_stack_environment, recovery_command};
+use super::recovery::{
+    fresh_target_protocol, full_stack_environment, inputs, recovery_command, reference,
+};
 
 fn strings(values: &[&str]) -> Vec<String> {
     values.iter().map(ToString::to_string).collect()
@@ -67,18 +70,29 @@ fn runtime_stage_uses_private_verifier_and_only_build_forwards_the_tool_frontend
 }
 
 #[test]
-fn reference_stages_keep_their_existing_arguments() {
-    let arguments = strings(&["plan", "--id", "r1"]);
-    let (script, forwarded) =
-        recovery_command(&RecoveryCommand::Reference(arguments), Path::new("unused")).unwrap();
-    assert_eq!(script, "scripts/restore_reference.py");
-    assert_eq!(
-        forwarded,
-        strings(&["plan", "--id", "r1", "--backend-dir"])
-            .into_iter()
-            .chain([super::workspace::root_dir().display().to_string()])
-            .collect::<Vec<_>>()
-    );
+fn reference_stages_use_a_versioned_private_protocol_without_forwarded_argv() {
+    let root = super::workspace::root_dir();
+    let directory = root.join(format!(
+        ".local-tests/reference-protocol-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let plan = directory.join("计划.json");
+    std::fs::write(&plan, "{}").unwrap();
+    let command = RecoveryReferenceCommand::CheckExisting {
+        plan: plan.clone(),
+        side: ExistingReferenceSide::Source,
+    };
+    let document: serde_json::Value =
+        serde_json::from_str(&reference::protocol_at(&command, &root).unwrap()).unwrap();
+    assert_eq!(document["format_version"], 1);
+    assert_eq!(document["kind"], "ryframe-xtask-recovery-reference");
+    assert_eq!(document["request"]["operation"], "check-existing");
+    assert_eq!(document["request"]["side"], "source");
+    assert_eq!(document["request"]["write"], false);
+    assert_eq!(document["request"]["plan"], plan.to_str().unwrap());
+    assert!(recovery_command(&RecoveryCommand::Reference(command), Path::new("unused")).is_err());
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
@@ -127,22 +141,34 @@ fn full_stack_stages_use_one_private_program_and_typed_environment() {
 }
 
 #[test]
-fn restore_input_plans_use_the_private_generator() {
-    let arguments = strings(&["reference", "--side", "base", "--work-dir", "D:/恢复 work"]);
-    let (script, forwarded) = recovery_command(
-        &RecoveryCommand::Inputs(arguments.clone()),
-        Path::new("unused"),
-    )
-    .unwrap();
-    assert_eq!(script, "scripts/restore_input_plan.py");
-    assert_eq!(
-        forwarded,
-        arguments
-            .into_iter()
-            .chain(strings(&["--backend-dir"]))
-            .chain([super::workspace::root_dir().display().to_string()])
-            .collect::<Vec<_>>()
-    );
+fn restore_input_plans_use_a_versioned_private_protocol_without_forwarded_argv() {
+    let root = super::workspace::root_dir();
+    let directory = root.join(format!(
+        ".local-tests/inputs-protocol-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    let file = |name: &str| {
+        let path = directory.join(name);
+        std::fs::write(&path, "{}").unwrap();
+        path
+    };
+    let command = RecoveryInputsCommand::Bindings(BindingsInputOptions {
+        reference_plan: file("reference.json"),
+        target_plan: file("target.json"),
+        backup_receipt: file("backup.json"),
+        record: file("record.json"),
+        publication: None,
+    });
+    let document: serde_json::Value =
+        serde_json::from_str(&inputs::protocol_at(&command, &root).unwrap()).unwrap();
+    assert_eq!(document["format_version"], 1);
+    assert_eq!(document["kind"], "ryframe-xtask-recovery-inputs");
+    assert_eq!(document["request"]["operation"], "bindings");
+    assert_eq!(document["request"]["write"], false);
+    assert!(document["request"].get("output").is_none());
+    assert!(recovery_command(&RecoveryCommand::Inputs(command), Path::new("unused")).is_err());
+    std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
@@ -340,12 +366,9 @@ fn fixture_dataset_uses_the_private_device_dataset_adapter() {
 fn forwarded_recovery_scripts_exist_in_checkout() {
     let root = super::workspace::root_dir();
     for command in [
-        RecoveryCommand::Reference(strings(&["plan"])),
-        RecoveryCommand::Inputs(strings(&["reference"])),
         RecoveryCommand::Runtime(strings(&["verify"])),
         RecoveryCommand::Source(strings(&["verify"])),
         RecoveryCommand::Clone(strings(&["status"])),
-        RecoveryCommand::Fixture(strings(&["--output-dir", "fixture"])),
         RecoveryCommand::Fixture(strings(&["artifact", "snapshot"])),
         RecoveryCommand::Fixture(strings(&["retention", "inspect"])),
         RecoveryCommand::Fixture(strings(&["dataset", "plan"])),
@@ -362,4 +385,7 @@ fn forwarded_recovery_scripts_exist_in_checkout() {
         root.join("scripts/restore_monitoring_delivery.py")
             .is_file()
     );
+    assert!(root.join("scripts/prepare_full_stack_fixture.py").is_file());
+    assert!(root.join("scripts/restore_reference.py").is_file());
+    assert!(root.join("scripts/restore_input_plan.py").is_file());
 }

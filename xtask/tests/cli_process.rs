@@ -759,6 +759,70 @@ fn fresh_target_rejects_invalid_public_arguments_before_any_write() {
 }
 
 #[test]
+fn reference_and_restore_inputs_reject_public_argument_errors_with_exit_two() {
+    for arguments in [
+        ["check", "recovery", "dataset", "--plan", "outside.json"].as_slice(),
+        [
+            "check",
+            "recovery",
+            "check-existing",
+            "--plan",
+            ".local-tests/missing.json",
+            "--write",
+        ]
+        .as_slice(),
+        [
+            "check",
+            "recovery",
+            "damage",
+            "--plan",
+            ".local-tests/missing.json",
+            "--backup-root",
+            ".local-tests",
+            "--artifact",
+            "../control.sql",
+            "--write",
+        ]
+        .as_slice(),
+        ["check", "recovery", "inputs", "reference", "--side", "base"].as_slice(),
+        [
+            "check",
+            "recovery",
+            "inputs",
+            "bindings",
+            "--reference-plan",
+            ".local-tests/missing.json",
+            "--reference-plan",
+            ".local-tests/other.json",
+        ]
+        .as_slice(),
+    ] {
+        let result = invoke(arguments);
+        assert_eq!(result.status.code(), Some(2), "参数：{arguments:?}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("参数错误："));
+    }
+
+    for (arguments, expected) in [
+        (
+            ["check", "recovery", "plan", "--help"].as_slice(),
+            "check recovery restore",
+        ),
+        (
+            ["check", "recovery", "inputs", "product", "--help"].as_slice(),
+            "inputs product",
+        ),
+    ] {
+        let result = invoke_with_environment(arguments, &[("PATH", "")]);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(String::from_utf8_lossy(&result.stdout).contains(expected));
+    }
+}
+
+#[test]
 fn build_plan_preserves_effective_parameters_without_spawning_or_writing() {
     let missing_frontend = std::env::temp_dir().join(format!(
         "ryframe-build-plan-{}-不存在 空格",

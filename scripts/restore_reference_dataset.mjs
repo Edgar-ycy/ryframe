@@ -437,6 +437,21 @@ export async function main(argv = process.argv.slice(2)) {
   if (originalPreflight) {
     verifyDatasetPreflight(plan, JSON.parse(originalPreflight.toString('utf8')))
   } else {
+    const protocolEnvironment = Object.fromEntries(
+      Object.entries(process.env).filter(([name]) => !name.startsWith('RYFRAME_XTASK_RECOVERY_')),
+    )
+    protocolEnvironment.RYFRAME_XTASK_RECOVERY_REFERENCE = JSON.stringify({
+      format_version: 1,
+      kind: 'ryframe-xtask-recovery-reference',
+      request: {
+        backend_dir: backend,
+        format_version: 1,
+        operation: 'check-existing',
+        plan: path.resolve(args.get('--plan')),
+        side,
+        write: false,
+      },
+    })
     const verified = JSON.parse(
       execFileSync(
         process.env.RYFRAME_PYTHON || 'python',
@@ -444,15 +459,13 @@ export async function main(argv = process.argv.slice(2)) {
           '-X',
           'utf8',
           path.join(backend, 'scripts/restore_reference.py'),
-          'check-existing',
-          '--backend-dir',
-          backend,
-          '--plan',
-          path.resolve(args.get('--plan')),
-          '--side',
-          side,
         ],
-        { encoding: 'utf8', windowsHide: true, timeout: 60_000 },
+        {
+          encoding: 'utf8',
+          env: protocolEnvironment,
+          windowsHide: true,
+          timeout: 60_000,
+        },
       ),
     )
     if (

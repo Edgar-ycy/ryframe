@@ -6,7 +6,7 @@ import sys
 
 sys.dont_write_bytecode = True
 
-import argparse
+from dataclasses import dataclass
 import datetime as dt
 import hashlib
 import json
@@ -28,7 +28,7 @@ from restore_reference_plan import (dataset_timeout_seconds, identifier, plan_ha
 from restore_runtime import read_json
 from restore_runtime_evidence import read_json_document
 from restore_runtime_registration import registered_stopped_runtime
-from restore_reference_target_cli import add_arguments, execute_plan, validate_arguments
+from restore_reference_target_cli import execute_plan
 
 DATASET_PROTOCOL_ENV = "RYFRAME_XTASK_RECOVERY_DATASET_PREPARE"
 DATASET_PROTOCOL_KIND = "ryframe-xtask-recovery-dataset-prepare"
@@ -264,34 +264,166 @@ def damage(work: Path, root: Path, manifest: dict, relative: str, missing: bool)
     return {"backup_id": manifest["id"], "artifact": relative, "injected": "missing" if missing else "corrupt"}
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
-    parser.add_argument("command", choices=("plan", "check-dataset", "check-existing", "dataset", "backup", "restore", "copy", "damage"))
-    parser.add_argument("--plan", type=Path, required=True)
-    parser.add_argument("--backend-dir", type=Path, required=True)
-    parser.add_argument("--inventory", type=Path)
-    parser.add_argument("--source-generation", type=Path, help="backup 必须绑定同代 START、source verify 与完整停止后像的最终 STOP 发布结果")
-    parser.add_argument("--source-export-result", type=Path, help="backup 必须绑定已发布的同一共享 source-export 结果")
-    parser.add_argument("--backup-root", type=Path)
-    parser.add_argument("--record", type=Path)
-    parser.add_argument("--runtime-registration", type=Path, help="restore 必须绑定同一 target plan 的三端停止登记")
-    parser.add_argument("--copy-id")
-    parser.add_argument("--artifact")
-    parser.add_argument("--missing", action="store_true")
-    parser.add_argument("--side", choices=("source", "target"),
-                        help="仅 check-existing 可指定检查侧，默认 target；不改变数据准备或恢复目标")
-    parser.add_argument("--write", action="store_true")
-    add_arguments(parser)
-    options = [value.partition("=")[0] for value in sys.argv[1:] if value.startswith("--")]
-    if len(options) != len(set(options)):
-        parser.error("恢复验收选项不能重复")
-    args = parser.parse_args()
-    validate_arguments(parser, args)
-    if args.side is not None and args.command != "check-existing":
-        parser.error("--side 仅用于 check-existing；数据准备固定 source，恢复固定 target")
-    if any(value is not None for value in (args.source_generation, args.source_export_result)) and args.command != "backup":
-        parser.error("--source-generation 与 --source-export-result 仅用于 backup")
-    backend, plan = args.backend_dir.resolve(), read_json(args.plan)
+PROTOCOL_KEY = "RYFRAME_XTASK_RECOVERY_REFERENCE"
+PROTOCOL_PREFIX = "RYFRAME_XTASK_RECOVERY_"
+OPERATIONS = frozenset(("plan", "check-dataset", "check-existing", "dataset", "backup",
+                        "restore", "copy", "damage"))
+WRITING_OPERATIONS = frozenset(("dataset", "backup", "restore", "copy", "damage"))
+
+
+class ReferenceProtocolError(ValueError):
+    """Rust 与私有阶段之间的参数协议无效。"""
+
+
+@dataclass
+class ReferenceRequest:
+    command: str
+    backend_dir: Path
+    plan: Path
+    write: bool
+    inventory: Path | None = None
+    source_generation: Path | None = None
+    source_export_result: Path | None = None
+    backup_root: Path | None = None
+    record: Path | None = None
+    runtime_registration: Path | None = None
+    copy_id: str | None = None
+    artifact: str | None = None
+    side: str | None = None
+    backup_receipt: Path | None = None
+    comparison_sources: Path | None = None
+    arm_input: Path | None = None
+    fresh_target_verify: Path | None = None
+    product_plan: Path | None = None
+    target_plan: Path | None = None
+    output: Path | None = None
+    missing: bool = False
+    restore_inputs: object | None = None
+
+
+def _unique_protocol_object(pairs: list[tuple[str, object]]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ReferenceProtocolError(f"reference 私有协议字段重复：{key}")
+        result[key] = value
+    return result
+
+
+def _exact_protocol(value: object, fields: set[str], label: str) -> dict:
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ReferenceProtocolError(f"{label}字段不完整或含未知字段")
+    return value
+
+
+def _protocol_path(value: object, label: str) -> Path:
+    path = Path(value) if isinstance(value, str) else None
+    if (not isinstance(value, str) or not value or path is None or not path.is_absolute()
+            or ".." in path.parts
+            or any(character in value for character in ("\n", "\r", "\0"))):
+        raise ReferenceProtocolError(f"{label}必须是无父目录跳转和控制字符的非空绝对路径")
+    return path
+
+
+def _plan_protocol_fields(request: dict) -> set[str]:
+    base = {"backend_dir", "format_version", "operation", "plan", "write"}
+    target_inputs = {"backup_receipt", "comparison_sources", "arm_input",
+                     "fresh_target_verify", "product_plan"}
+    extras = set(request) - base
+    if extras == set() or extras == {"target_plan"} or extras == target_inputs:
+        return base | extras
+    if extras == target_inputs | {"output"}:
+        return base | extras
+    raise ReferenceProtocolError("reference plan 私有协议的模式或输入组合无效")
+
+
+def _operation_fields(request: dict, operation: str) -> set[str]:
+    base = {"backend_dir", "format_version", "operation", "plan", "write"}
+    additions = {
+        "check-dataset": set(),
+        "check-existing": {"side"},
+        "dataset": set(),
+        "backup": {"inventory", "source_generation", "source_export_result"},
+        "restore": {"backup_root", "record", "target_plan", "runtime_registration"},
+        "copy": {"backup_root", "copy_id"},
+        "damage": {"backup_root", "artifact", "missing"},
+    }
+    return base | additions[operation]
+
+
+def private_protocol_request(argv: list[str] | None = None,
+                             environment: dict[str, str] | None = None) -> ReferenceRequest:
+    arguments = sys.argv[1:] if argv is None else argv
+    values = os.environ if environment is None else environment
+    raw = values.pop(PROTOCOL_KEY, None)
+    if arguments:
+        raise ReferenceProtocolError("reference 私有脚本不接受命令行参数")
+    if any(name.startswith(PROTOCOL_PREFIX) for name in values):
+        raise ReferenceProtocolError("reference 私有环境含未知或串线协议")
+    if (not isinstance(raw, str) or not raw or len(raw) > 65_536
+            or any(character in raw for character in ("\n", "\r", "\0"))):
+        raise ReferenceProtocolError("reference 私有协议缺失、为空、过长或含控制字符")
+    try:
+        protocol = json.loads(raw, object_pairs_hook=_unique_protocol_object)
+    except ReferenceProtocolError:
+        raise
+    except (TypeError, json.JSONDecodeError) as error:
+        raise ReferenceProtocolError("reference 私有协议不是有效 JSON") from error
+    return _request_from_protocol(protocol)
+
+
+def _request_from_protocol(protocol: object) -> ReferenceRequest:
+    outer = _exact_protocol(protocol, {"format_version", "kind", "request"}, "reference 私有协议")
+    if (type(outer["format_version"]) is not int or outer["format_version"] != 1
+            or outer["kind"] != "ryframe-xtask-recovery-reference"):
+        raise ReferenceProtocolError("reference 私有协议版本或类型无效")
+    request = outer["request"]
+    if not isinstance(request, dict):
+        raise ReferenceProtocolError("reference 私有请求必须是对象")
+    operation = request.get("operation")
+    if not isinstance(operation, str) or operation not in OPERATIONS:
+        raise ReferenceProtocolError("reference 私有协议操作无效")
+    fields = _plan_protocol_fields(request) if operation == "plan" else _operation_fields(request, operation)
+    values = _exact_protocol(request, fields, f"reference {operation} 私有请求")
+    write = values["write"]
+    expected_write = operation in WRITING_OPERATIONS or operation == "plan" and "output" in values
+    if type(write) is not bool or write != expected_write:
+        raise ReferenceProtocolError("reference 私有协议写入授权与操作不一致")
+    if type(values["format_version"]) is not int or values["format_version"] != 1:
+        raise ReferenceProtocolError("reference 私有请求版本无效")
+    return _reference_request(values, operation, write)
+
+
+def _reference_request(values: dict, operation: str, write: bool) -> ReferenceRequest:
+    paths = {field: _protocol_path(values[field], field) for field in (
+        "backend_dir", "plan", "inventory", "source_generation", "source_export_result",
+        "backup_root", "record", "runtime_registration", "backup_receipt",
+        "comparison_sources", "arm_input", "fresh_target_verify", "product_plan",
+        "target_plan", "output") if field in values}
+    side = values.get("side")
+    if side is not None and (not isinstance(side, str) or side not in {"source", "target"}):
+        raise ReferenceProtocolError("check-existing side 无效")
+    copy_id = values.get("copy_id")
+    if copy_id is not None:
+        try:
+            identifier(copy_id)
+        except (TypeError, ValueError) as error:
+            raise ReferenceProtocolError("copy id 无效") from error
+    artifact = values.get("artifact")
+    if artifact is not None and (not isinstance(artifact, str) or not artifact
+            or "\\" in artifact or ":" in artifact
+            or any(part in {"", ".", ".."} for part in artifact.split("/"))
+            or any(ord(character) < 32 for character in artifact)):
+        raise ReferenceProtocolError("damage artifact 不是安全相对路径")
+    missing = values.get("missing", False)
+    if type(missing) is not bool:
+        raise ReferenceProtocolError("damage missing 必须是布尔值")
+    return ReferenceRequest(command=operation, write=write, copy_id=copy_id,
+                            artifact=artifact, side=side, missing=missing, **paths)
+
+
+def main(args: ReferenceRequest) -> None:
+    backend, plan = args.backend_dir.resolve(strict=True), read_json(args.plan)
     validate_plan(plan, backend)
     if args.command == "plan":
         result = execute_plan(args, backend, plan)
@@ -311,13 +443,13 @@ def main() -> None:
                           "scope_id": plan[side]["scope_id"]}))
         return
     if not args.write:
-        parser.error("所有执行阶段必须显式传入 --write")
+        raise ReferenceProtocolError("所有执行阶段必须显式授权写入")
     required = {"backup": ("inventory", "source_generation", "source_export_result"),
                 "restore": ("backup_root", "record", "target_plan", "runtime_registration"),
                 "copy": ("backup_root", "copy_id"), "damage": ("backup_root", "artifact")}
     for name in required.get(args.command, ()):
         if getattr(args, name) is None:
-            parser.error(f"当前阶段必须提供 --{name.replace('_', '-')}")
+            raise ReferenceProtocolError(f"当前阶段缺少 {name}")
     if args.command == "restore":
         args.restore_inputs = restore_inputs(backend, plan, args.target_plan, args.backup_root, args.record,
                                              args.runtime_registration, read_only=True)
@@ -423,4 +555,12 @@ def require_empty_source(plan: dict, tools: ExternalTools) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main(private_protocol_request())
+    except ReferenceProtocolError:
+        print("restore_reference_protocol_error：私有参数协议无效。", file=sys.stderr)
+        raise SystemExit(2)
+    except Exception:
+        print("restore_reference_failed：阶段失败，请核对账本、前后像和未知结果；不自动重放。",
+              file=sys.stderr)
+        raise SystemExit(1)

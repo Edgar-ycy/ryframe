@@ -1,9 +1,7 @@
 """正式恢复输入只能从已发布来源和 fresh ownership 只读推导。"""
 
-import contextlib
 import copy
 from datetime import datetime, timezone
-import io
 import json
 from pathlib import Path
 import sys
@@ -223,33 +221,39 @@ class RestoreInputPlanTests(unittest.TestCase):
         self.assertEqual(output.read_bytes(), b"unrelated partial writer")
         self.assertEqual(list(self.work.glob(f".{output.name}.*.pending")), [])
 
-    def test_cli_requires_explicit_write_pair_and_accepts_injected_backend_last(self):
-        arguments = [
-            "reference",
-            "--arm-input",
-            str(self.paths["arm_input"]),
-            "--fresh-target-verify",
-            str(self.paths["fresh_target_verify"]),
-            "--side",
-            "base",
-            "--id",
-            self.plan["id"],
-            "--work-dir",
-            str(self.work / "preview"),
-            "--backend-dir",
-            str(self.backend),
-        ]
-        parsed = inputs._parser().parse_args(arguments)
+    def test_private_protocol_requires_explicit_write_pair_and_rejects_duplicates(self):
+        request = {
+            "backend_dir": str(self.backend),
+            "format_version": 1,
+            "operation": "reference",
+            "arm_input": str(self.paths["arm_input"]),
+            "fresh_target_verify": str(self.paths["fresh_target_verify"]),
+            "side": "base",
+            "id": self.plan["id"],
+            "work_dir": str(self.work / "preview"),
+            "write": False,
+        }
+        protocol = {"format_version": 1, "kind": "ryframe-xtask-recovery-inputs",
+                    "request": request}
+        parsed = inputs._request_from_protocol(protocol)
         self.assertEqual(parsed.backend_dir, self.backend)
-        with patch.object(sys, "argv", ["restore_input_plan", *arguments, "--write"]), \
-                contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
-            inputs.main()
-        self.assertEqual(error.exception.code, 2)
-        duplicate = ["restore_input_plan", *arguments, "--side", "base"]
-        with patch.object(sys, "argv", duplicate), contextlib.redirect_stderr(io.StringIO()), \
-                self.assertRaises(SystemExit) as error:
-            inputs.main()
-        self.assertEqual(error.exception.code, 2)
+        invalid = copy.deepcopy(protocol)
+        invalid["request"]["write"] = True
+        with self.assertRaises(inputs.RestoreInputsProtocolError):
+            inputs._request_from_protocol(invalid)
+        parent_jump = copy.deepcopy(protocol)
+        parent_jump["request"]["work_dir"] = str(self.backend / "evidence" / ".." / "work")
+        with self.assertRaises(inputs.RestoreInputsProtocolError):
+            inputs._request_from_protocol(parent_jump)
+        raw = json.dumps(protocol).replace('"side": "base"',
+                                           '"side": "base", "side": "candidate"')
+        environment = {inputs.PROTOCOL_KEY: raw}
+        with self.assertRaises(inputs.RestoreInputsProtocolError):
+            inputs.private_protocol_request(argv=[], environment=environment)
+        self.assertNotIn(inputs.PROTOCOL_KEY, environment)
+        with self.assertRaises(inputs.RestoreInputsProtocolError):
+            inputs.private_protocol_request(argv=["reference"],
+                                            environment={inputs.PROTOCOL_KEY: json.dumps(protocol)})
 
 
 if __name__ == "__main__":

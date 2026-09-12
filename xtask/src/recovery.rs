@@ -22,8 +22,12 @@ pub(crate) mod fixture_control;
 pub(crate) mod fixture_prepare;
 #[path = "recovery/fixture_runtime.rs"]
 pub(crate) mod fixture_runtime;
+#[path = "recovery/inputs.rs"]
+pub(crate) mod inputs;
 #[path = "recovery/monitoring.rs"]
 pub(crate) mod monitoring;
+#[path = "recovery/reference.rs"]
+pub(crate) mod reference;
 
 pub(crate) fn run(command: &RecoveryCommand, frontend_dir: &Path) -> Result<()> {
     if let RecoveryCommand::FullStack(command) = command {
@@ -50,6 +54,12 @@ pub(crate) fn run(command: &RecoveryCommand, frontend_dir: &Path) -> Result<()> 
     if let RecoveryCommand::FixturePrepare(command) = command {
         return fixture_prepare::run(command, &root_dir(), frontend_dir);
     }
+    if let RecoveryCommand::Reference(command) = command {
+        return reference::run(command, &root_dir());
+    }
+    if let RecoveryCommand::Inputs(command) = command {
+        return inputs::run(command, &root_dir());
+    }
     let (program, forwarded) = recovery_command(command, frontend_dir)?;
     let mut command = Vec::with_capacity(forwarded.len() + 1);
     command.push(program.to_owned());
@@ -70,14 +80,14 @@ pub(crate) fn recovery_command(
     let backend = path_argument(&root_dir(), "后端目录")?;
     let frontend = path_argument(frontend_dir, "前端目录")?;
     match command {
-        RecoveryCommand::Reference(arguments) => Ok((
-            "scripts/restore_reference.py",
-            with_paths(arguments, &backend, None)?,
-        )),
-        RecoveryCommand::Inputs(arguments) => Ok((
-            "scripts/restore_input_plan.py",
-            with_paths(arguments, &backend, None)?,
-        )),
+        RecoveryCommand::Reference(_) => Err("reference 必须通过版本化私有协议执行，不能透传 argv"
+            .to_owned()
+            .into()),
+        RecoveryCommand::Inputs(_) => {
+            Err("restore inputs 必须通过版本化私有协议执行，不能透传 argv"
+                .to_owned()
+                .into())
+        }
         RecoveryCommand::Runtime(arguments) => {
             let frontend = matches!(arguments.first().map(String::as_str), Some("build"))
                 .then_some(frontend.as_str());

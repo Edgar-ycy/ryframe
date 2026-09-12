@@ -6,6 +6,7 @@
 - 正式恢复 monitoring 的 bind、start、observe、close、result、status 已改为 Rust 强类型请求；xtask 在启动固定 Python 实现前核验只读/写入边界、run ID、三端口、`.local-tests` 证据与无链接外部工具，并通过无 argv 的版本化协议传递，staged 内部生命周期及失败收据语义保持不变。
 - `cargo xtask check recovery dataset-prepare` 现在首层解析准备与已有数据核验的互斥模式、验证侧及显式写入授权，只接受当前后端 `.local-tests` 内的现有证据；固定 Node 实现改用无 argv 的版本化单环境协议，原恢复协调器也通过同一协议调用，登录、对象下载和造数前继续复核计划、预检及 ownership。
 - R24 夹具的环境、审阅、fresh-target 请求、successor 和服务控制入口改为分域强类型请求；Rust 在固定 Python 实现启动前拒绝未知、重复、缺失、互斥写入及越界/链接路径，并只通过单一版本化 JSON 私有协议传递，五个 Python 实现不再接受直接 argv。
+- 正式恢复的参考计划、数据核验、备份、恢复、副本损坏及三类输入派生统一由 `cargo xtask check recovery` 解析为结构化请求；未知、重复、缺失和跨阶段参数在启动私有实现前以参数错误拒绝。证据路径限定在当前后端 `.local-tests`，拒绝跳转、链接及覆盖；只读预览不接受 `--write`，证据发布或资源操作必须显式授权。固定 Python 实现改用版本化单环境 JSON 私有协议并拒绝直接 argv，原账本、ownership、完整前后像和未知结果核验保持不变。
 - Device 夹具运行时九个阶段改由 `cargo xtask check recovery fixture runtime` 解析为结构化请求；Rust 在启动固定 Python 实现前核验显式写入、只读互斥、绝对路径、当前后端 `.local-tests` 边界及链接/reparse point，并通过版本化单环境 JSON 私有协议传递，Python 直接执行不再接受 argv。
 - 性能身份 plan、apply、verify 写入统一归入 cargo xtask data performance-identities；Rust 在启动固定 Node 实现前核验显式写入、绝对路径及 .local-tests 边界，并以版本化单环境 JSON 私有协议传递请求，拒绝 argv、重复或未知字段和继承污染。
 - `cargo xtask data` 的 backup、restore、target、file 与 reset 在首层解析为结构化请求；未知、重复、缺失或互斥参数在启动维护二进制前以参数错误拒绝。证据输入与输出限定为当前后端 `.local-tests` 内的绝对真实路径，已登记的备份根、隔离配置和 runner 保留外部绝对目录能力，所有路径都拒绝链接；记录发布和业务写入新增显式 `--write`，底层 ownership、计划、确认及资源核验保持不变。

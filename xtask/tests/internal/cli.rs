@@ -4,8 +4,8 @@ use super::cli::{
     ApiGenerateCommand, BackupCommand, BuildOptions, BuildProfile, CheckCommand, CheckOptions,
     CheckScope, CiCommand, CliError, Command, DataCommand, DeploymentOptions, DeploymentPhase,
     GenerateCommand, MigrationCommand, MigrationOperation, MigrationTarget, MonitoringCommand,
-    RecoveryCommand, RequiredAction, RequiredEvent, RequiredJobResult, ResourceAction,
-    ResourceCommand, ResourceGateReplayOptions, ResourceTarget, SecurityCommand,
+    RecoveryCommand, RecoveryInputsCommand, RequiredAction, RequiredEvent, RequiredJobResult,
+    ResourceAction, ResourceCommand, ResourceGateReplayOptions, ResourceTarget, SecurityCommand,
     SecurityReportKind, SecurityReportOptions, parse,
 };
 
@@ -78,7 +78,7 @@ fn recovery_help_reaches_the_selected_stage_parser() {
             let actual = parse_command(&["check", "recovery", stage, flag]).unwrap();
             let arguments = strings(&[flag]);
             let expected = match stage {
-                "inputs" => RecoveryCommand::Inputs(arguments),
+                "inputs" => RecoveryCommand::Inputs(RecoveryInputsCommand::Help),
                 "runtime" => RecoveryCommand::Runtime(arguments),
                 "source" => RecoveryCommand::Source(arguments),
                 _ => RecoveryCommand::Clone(arguments),
@@ -152,13 +152,8 @@ fn parses_check_task_graph_and_internal_groups() {
     }
     assert!(parse_command(&["check", "ci"]).is_err());
     assert!(parse_command(&["check", "ci", "rust-gate", "extra"]).is_err());
-    assert_eq!(
-        parse_command(&["check", "recovery", "inputs", "reference", "--side", "base",]).unwrap(),
-        Command::Check(CheckCommand::Recovery(RecoveryCommand::Inputs(strings(&[
-            "reference",
-            "--side",
-            "base",
-        ]))))
+    assert!(
+        parse_command(&["check", "recovery", "inputs", "reference", "--side", "base",]).is_err()
     );
     assert_eq!(
         parse_command(&[

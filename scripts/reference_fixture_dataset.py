@@ -200,12 +200,19 @@ def prepare(backend: Path, environment_path: Path, runtime_path: Path, plan_path
     reports.mkdir()
     node_options = " ".join(item for item in (os.environ.get("NODE_OPTIONS", ""), "--report-on-fatalerror",
                                                  f'--report-directory="{reports}"') if item)
-    command = [sys.executable, "-X", "utf8", str(execution / "scripts/restore_reference.py"), "dataset",
-               "--plan", str(plan_file), "--backend-dir", str(execution), "--write"]
+    command = [sys.executable, "-X", "utf8", str(execution / "scripts/restore_reference.py")]
+    protocol = json.dumps({"format_version": 1, "kind": "ryframe-xtask-recovery-reference",
+                           "request": {"backend_dir": str(execution), "format_version": 1,
+                                       "operation": "dataset", "plan": str(plan_file),
+                                       "write": True}}, separators=(",", ":"))
     try:
-        with Environments({**values, "NODE_OPTIONS": node_options}, {**values, "NODE_OPTIONS": node_options}).use("source"):
+        stage_environment = {**values, "NODE_OPTIONS": node_options}
+        with Environments(stage_environment, stage_environment).use("source"):
+            child_environment = {key: value for key, value in os.environ.items()
+                                 if not key.startswith("RYFRAME_XTASK_RECOVERY_")}
+            child_environment["RYFRAME_XTASK_RECOVERY_REFERENCE"] = protocol
             subprocess.run(command, cwd=execution, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                           text=True, encoding="utf-8", check=True,
+                           text=True, encoding="utf-8", check=True, env=child_environment,
                            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0)
     except subprocess.CalledProcessError as error:
         diagnostic = _write_prepare_failure(runtime, plan_file, error, values, reports)

@@ -1,9 +1,7 @@
 """正式恢复必须先通过严格目标计划与原生产品运行记录；外部资源使用离线替身。"""
 
-import contextlib
 import copy
 import hashlib
-import io
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -52,22 +50,28 @@ class RestoreExecutionTests(unittest.TestCase):
 
     def test_cli_requires_target_plan_before_work_directory_or_external_calls(self):
         path = self.write("reference-plan.json", self.plan)
-        argv = ["restore_reference", "restore", "--plan", str(path), "--backend-dir", str(self.backend),
-                "--backup-root", str(self.root), "--record", str(self.record_path), "--write"]
-        with patch.object(sys, "argv", argv), patch.object(reference, "work_directory") as work, \
-                patch.object(reference, "ExternalTools") as tools, contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-            reference.main()
+        protocol = {"format_version": 1, "kind": "ryframe-xtask-recovery-reference",
+                    "request": {"format_version": 1, "operation": "restore",
+                                "backend_dir": str(self.backend), "plan": str(path),
+                                "backup_root": str(self.root), "record": str(self.record_path),
+                                "runtime_registration": str(self.registration_path), "write": True}}
+        with patch.object(reference, "work_directory") as work, \
+                patch.object(reference, "ExternalTools") as tools, \
+                self.assertRaises(reference.ReferenceProtocolError):
+            reference._request_from_protocol(protocol)
         work.assert_not_called()
         tools.assert_not_called()
 
-    def test_duplicate_abbreviated_or_other_stage_arguments_are_rejected_before_reading(self):
+    def test_direct_legacy_arguments_are_rejected_before_reading(self):
         for extra in (["--target-plan", "one", "--target-plan=two"], ["--target-p", "unused"],
                       ["--copy-id", "other"], ["--artifact", "other"], ["--missing"]):
-            argv = ["restore_reference", "restore", "--plan", "unused", "--backend-dir", str(self.backend), *extra]
-            with patch.object(sys, "argv", argv), patch.object(reference, "read_json") as read, \
-                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-                reference.main()
+            argv = ["restore", "--plan", "unused", "--backend-dir", str(self.backend), *extra]
+            environment = {reference.PROTOCOL_KEY: "{}"}
+            with patch.object(reference, "read_json") as read, \
+                    self.assertRaises(reference.ReferenceProtocolError):
+                reference.private_protocol_request(argv=argv, environment=environment)
             read.assert_not_called()
+            self.assertNotIn(reference.PROTOCOL_KEY, environment)
 
     def test_record_plan_must_match_every_embedded_field_even_when_hash_is_updated(self):
         changes = [lambda value: value.update(id="other"), lambda value: value.update(frontend_sha="e" * 40),

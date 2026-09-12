@@ -113,10 +113,11 @@ class ReferenceTests(unittest.TestCase):
     def test_reference_work_requires_same_plan_owner_and_explicit_write(self):
         path = self.backend / "plan.json"
         path.write_text(json.dumps(self.plan))
-        with patch.object(sys, "argv", ["restore_reference", "dataset", "--plan", str(path), "--backend-dir", str(self.backend)]):
-            with self.assertRaises(SystemExit) as error:
-                reference.main()
-        self.assertEqual(error.exception.code, 2)
+        protocol = {"format_version": 1, "kind": "ryframe-xtask-recovery-reference",
+                    "request": {"format_version": 1, "operation": "dataset",
+                                "backend_dir": str(self.backend), "plan": str(path), "write": False}}
+        with self.assertRaises(reference.ReferenceProtocolError):
+            reference._request_from_protocol(protocol)
         self.assertFalse(Path(self.plan["work_dir"]).exists())
         reference.work_directory(self.plan)
         changed = copy.deepcopy(self.plan)
@@ -211,12 +212,12 @@ class ReferenceTests(unittest.TestCase):
         for options, side in (([], "target"), (["--side", "source"], "source"),
                               (["--side", "target"], "target")):
             output = io.StringIO()
-            argv = ["restore_reference", "check-existing", "--plan", str(path),
-                    "--backend-dir", str(self.backend), *options]
-            with patch.object(sys, "argv", argv), contextlib.redirect_stdout(output), \
+            request = reference.ReferenceRequest(command="check-existing", backend_dir=self.backend,
+                                                 plan=path, write=False, side=side)
+            with contextlib.redirect_stdout(output), \
                     patch.object(reference, "ExternalTools"), patch.object(reference, "check_api") as check, \
                     patch.object(reference, "require_empty_source") as empty:
-                reference.main()
+                reference.main(request)
             self.assertEqual(check.call_args.args[2], side)
             empty.assert_not_called()
             self.assertEqual(json.loads(output.getvalue()), {"plan_sha256": reference.plan_hash(self.plan),
@@ -227,25 +228,55 @@ class ReferenceTests(unittest.TestCase):
         for command, side in (("check-existing", "other"), ("check-dataset", "source"),
                               ("dataset", "source"), ("restore", "source"), ("plan", "target"),
                               ("backup", "source"), ("copy", "target"), ("damage", "target")):
-            argv = ["restore_reference", command, "--plan", "unused.json", "--backend-dir", str(self.backend),
-                    "--side", side]
-            with patch.object(sys, "argv", argv), patch.object(reference, "read_json") as read, \
-                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
-                reference.main()
-            self.assertEqual(error.exception.code, 2)
+            request = {"format_version": 1, "operation": command, "backend_dir": str(self.backend),
+                       "plan": str(self.backend / "unused.json"), "side": side,
+                       "write": command in reference.WRITING_OPERATIONS}
+            protocol = {"format_version": 1, "kind": "ryframe-xtask-recovery-reference",
+                        "request": request}
+            with patch.object(reference, "read_json") as read, \
+                    self.assertRaises(reference.ReferenceProtocolError):
+                reference._request_from_protocol(protocol)
             read.assert_not_called()
 
     def test_dataset_check_stays_source_and_requires_empty_source(self):
         reference.work_directory(self.plan)
         path = self.backend / "plan.json"
         path.write_text(json.dumps(self.plan))
-        argv = ["restore_reference", "check-dataset", "--plan", str(path), "--backend-dir", str(self.backend)]
-        with patch.object(sys, "argv", argv), contextlib.redirect_stdout(io.StringIO()), \
+        request = reference.ReferenceRequest(command="check-dataset", backend_dir=self.backend,
+                                             plan=path, write=False)
+        with contextlib.redirect_stdout(io.StringIO()), \
                 patch.object(reference, "ExternalTools"), patch.object(reference, "check_api") as check, \
                 patch.object(reference, "require_empty_source") as empty:
-            reference.main()
+            reference.main(request)
         self.assertEqual(check.call_args.args[2], "source")
         empty.assert_called_once()
+
+    def test_private_protocol_rejects_duplicate_unknown_and_cross_family_fields(self):
+        request = {"backend_dir": str(self.backend), "format_version": 1,
+                   "operation": "check-existing", "plan": str(self.backend / "plan.json"),
+                   "side": "target", "write": False}
+        protocol = {"format_version": 1, "kind": "ryframe-xtask-recovery-reference",
+                    "request": request}
+        self.assertEqual(reference._request_from_protocol(protocol).side, "target")
+        unknown = copy.deepcopy(protocol)
+        unknown["request"]["other"] = True
+        with self.assertRaises(reference.ReferenceProtocolError):
+            reference._request_from_protocol(unknown)
+        parent_jump = copy.deepcopy(protocol)
+        parent_jump["request"]["plan"] = str(self.backend / "evidence" / ".." / "plan.json")
+        with self.assertRaises(reference.ReferenceProtocolError):
+            reference._request_from_protocol(parent_jump)
+        raw = json.dumps(protocol).replace('"side": "target"',
+                                           '"side": "target", "side": "source"')
+        environment = {reference.PROTOCOL_KEY: raw}
+        with self.assertRaises(reference.ReferenceProtocolError):
+            reference.private_protocol_request(argv=[], environment=environment)
+        self.assertNotIn(reference.PROTOCOL_KEY, environment)
+        environment = {reference.PROTOCOL_KEY: json.dumps(protocol),
+                       "RYFRAME_XTASK_RECOVERY_INPUTS": "unexpected"}
+        with self.assertRaises(reference.ReferenceProtocolError):
+            reference.private_protocol_request(argv=[], environment=environment)
+        self.assertNotIn(reference.PROTOCOL_KEY, environment)
 
     def test_dataset_requires_explicit_bounded_stage_timeout(self):
         self.plan["dataset"] = {"timeout_seconds": 21600}

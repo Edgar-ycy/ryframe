@@ -12,8 +12,12 @@ mod fixture_prepare;
 mod fixture_runtime;
 #[path = "recovery/fresh_target.rs"]
 mod fresh_target;
+#[path = "recovery/inputs.rs"]
+mod inputs;
 #[path = "recovery/monitoring.rs"]
 mod monitoring;
+#[path = "recovery/reference.rs"]
+mod reference;
 #[path = "recovery/seed_source.rs"]
 mod seed_source;
 
@@ -26,9 +30,8 @@ pub(super) fn parse_recovery(args: &[String]) -> Result<RecoveryCommand, CliErro
     };
     match stage.as_str() {
         "plan" | "check-dataset" | "check-existing" | "dataset" | "backup" | "restore" | "copy"
-        | "damage" => Ok(RecoveryCommand::Reference(args.to_vec())),
-        "inputs" => parse_recovery_operation("inputs", rest, &["reference", "product", "bindings"])
-            .map(RecoveryCommand::Inputs),
+        | "damage" => reference::parse(args).map(RecoveryCommand::Reference),
+        "inputs" => inputs::parse(rest).map(RecoveryCommand::Inputs),
         "runtime" => parse_recovery_operation(
             "runtime",
             rest,

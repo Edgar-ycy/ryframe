@@ -12,31 +12,6 @@ from restore_runtime_evidence import read_json_document
 INPUTS = ("backup_receipt", "comparison_sources", "arm_input", "fresh_target_verify", "product_plan")
 
 
-def add_arguments(parser) -> None:
-    for field in (*INPUTS, "target_plan", "output"):
-        parser.add_argument("--" + field.replace("_", "-"), type=Path)
-
-
-def validate_arguments(parser, args) -> None:
-    stages = {"inventory": {"backup"}, "backup_root": {"restore", "copy", "damage"},
-              "record": {"restore"}, "runtime_registration": {"restore"},
-              "copy_id": {"copy"}, "artifact": {"damage"}, "missing": {"damage"}}
-    for field, commands in stages.items():
-        if getattr(args, field) not in (None, False) and args.command not in commands:
-            parser.error(f"--{field.replace('_', '-')} 不属于当前阶段")
-    creating = any(getattr(args, field) is not None for field in INPUTS)
-    if (creating or args.output is not None) and args.command != "plan":
-        parser.error("目标计划创建输入及 --output 仅用于 plan")
-    if args.target_plan is not None and args.command not in {"plan", "restore"}:
-        parser.error("--target-plan 仅用于 plan 复核或 restore 执行")
-    if args.command != "plan":
-        return
-    if creating and (args.target_plan is not None or any(getattr(args, field) is None for field in INPUTS)):
-        parser.error("目标计划必须完整提供五份输入，且不能同时指定 --target-plan")
-    if (args.output is not None) != args.write or args.write and not creating:
-        parser.error("仅完整目标计划可通过 --output 与 --write 显式发布")
-
-
 def execute_plan(args, backend: Path, plan: dict) -> dict | None:
     reference = read_json_document(args.plan)
     if reference.value != plan:

@@ -236,40 +236,48 @@ class TargetPlanTests(unittest.TestCase):
 
     def test_plan_preview_is_read_only_and_publication_is_explicit_and_exclusive(self):
         path = self.write("reference-plan.json", self.plan)
-        argv = ["restore_reference", "plan", "--backend-dir", str(self.backend), "--plan", str(path)]
-        for key, value in self.paths.items():
-            argv += ["--" + key.replace("_", "-"), str(value)]
+        request = reference.ReferenceRequest(command="plan", backend_dir=self.backend, plan=path,
+                                             write=False, **self.paths)
         before = {str(item): item.read_bytes() for item in self.work.rglob("*") if item.is_file()}
-        with patch.object(sys, "argv", argv), contextlib.redirect_stdout(io.StringIO()) as output:
-            reference.main()
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            reference.main(request)
         self.assertEqual(json.loads(output.getvalue())["comparison_arm"], "b0")
         self.assertEqual(before, {str(item): item.read_bytes() for item in self.work.rglob("*") if item.is_file()})
         destination = self.work / "published-target-plan.json"
-        with patch.object(sys, "argv", [*argv, "--output", str(destination), "--write"]), contextlib.redirect_stdout(io.StringIO()):
-            reference.main()
+        published = reference.ReferenceRequest(command="plan", backend_dir=self.backend, plan=path,
+                                               write=True, output=destination, **self.paths)
+        with contextlib.redirect_stdout(io.StringIO()):
+            reference.main(published)
         self.assertTrue(destination.is_file())
-        with patch.object(sys, "argv", [*argv, "--output", str(destination), "--write"]), \
-                patch.object(cli, "capture_target_plan") as capture, self.assertRaises(ValueError):
-            reference.main()
+        with patch.object(cli, "capture_target_plan") as capture, self.assertRaises(ValueError):
+            reference.main(published)
         capture.assert_not_called()
 
-    def test_partial_or_mixed_plan_arguments_fail_before_reading_input(self):
+    def test_direct_legacy_arguments_fail_before_reading_input(self):
         for command, extra in (("plan", ["--arm-input", "unused"]), ("plan", ["--write"]),
                                ("plan", ["--output", "unused"]), ("dataset", ["--target-plan", "unused"]),
                                ("restore", ["--arm-input", "unused"])):
-            argv = ["restore_reference", command, "--backend-dir", str(self.backend), "--plan", "unused", *extra]
-            with patch.object(sys, "argv", argv), patch.object(reference, "read_json") as read, \
-                    contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-                reference.main()
+            argv = [command, "--backend-dir", str(self.backend), "--plan", "unused", *extra]
+            environment = {reference.PROTOCOL_KEY: "{}"}
+            with patch.object(reference, "read_json") as read, \
+                    self.assertRaises(reference.ReferenceProtocolError):
+                reference.private_protocol_request(argv=argv, environment=environment)
             read.assert_not_called()
+            self.assertNotIn(reference.PROTOCOL_KEY, environment)
 
     def test_plan_cli_with_cold_bytecode_prefix_does_not_create_any_file(self):
         plan = self.write("reference-plan.json", self.plan)
         cache = self.work / "cold-bytecode"
         before = {str(path): (path.stat().st_size, path.stat().st_mtime_ns) for path in self.backend.rglob("*")}
-        result = subprocess.run([sys.executable, "-B", str(Path(reference.__file__).absolute()), "plan",
-            "--backend-dir", str(self.backend), "--plan", str(plan)], cwd=self.backend,
-            env={**os.environ, "PYTHONPYCACHEPREFIX": str(cache)}, capture_output=True, check=True)
+        protocol = json.dumps({"format_version": 1, "kind": "ryframe-xtask-recovery-reference",
+                               "request": {"format_version": 1, "operation": "plan",
+                                           "backend_dir": str(self.backend), "plan": str(plan),
+                                           "write": False}})
+        environment = {key: value for key, value in os.environ.items()
+                       if not key.startswith(reference.PROTOCOL_PREFIX)}
+        environment.update({reference.PROTOCOL_KEY: protocol, "PYTHONPYCACHEPREFIX": str(cache)})
+        result = subprocess.run([sys.executable, "-B", str(Path(reference.__file__).absolute())],
+                                cwd=self.backend, env=environment, capture_output=True, check=True)
         self.assertEqual(json.loads(result.stdout)["id"], self.plan["id"])
         self.assertFalse(cache.exists())
         self.assertEqual(before, {str(path): (path.stat().st_size, path.stat().st_mtime_ns) for path in self.backend.rglob("*")})
