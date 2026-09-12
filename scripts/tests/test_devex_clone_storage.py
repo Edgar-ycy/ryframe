@@ -1,8 +1,11 @@
 """存储代次的固定输入、外层发布与失败关闭，不连接真实服务。"""
 from contextlib import ExitStack, nullcontext
 import copy
+import json
 import os
 from pathlib import Path
+import subprocess
+from types import SimpleNamespace
 import unittest
 from workspace_directory import WorkspaceDirectory
 from unittest.mock import Mock, patch
@@ -92,6 +95,14 @@ class StorageTests(unittest.TestCase):
             stack.enter_context(patch.object(module, "process_identity", side_effect=self.identity))
             stack.enter_context(patch.object(module, "require_closed_port"))
         stack.enter_context(patch.object(storage, "producers_stopped"))
+        def require_stopped(expected, *, run, counter_run):
+            self.assertIs(run, subprocess.run)
+            self.assertIs(counter_run, subprocess.run)
+            current = self.identity(expected["pid"])
+            if current is not None and int(current["started"]) <= int(expected["started"]):
+                raise ValueError("登记存储代次仍在运行")
+        stack.enter_context(patch.object(storage, "require_recorded_producer_stopped",
+                                         side_effect=require_stopped))
         stack.enter_context(patch.object(storage, "protect_binaries", side_effect=lambda *_: nullcontext()))
         stack.enter_context(patch.object(process, "actual_arguments"))
         stack.enter_context(patch.object(process, "verify_listener"))
@@ -99,6 +110,12 @@ class StorageTests(unittest.TestCase):
         stack.enter_context(patch.object(process, "terminate_owned_process", side_effect=self.terminate))
         stack.enter_context(patch.object(process.subprocess, "Popen", side_effect=self.popen))
         return stack
+
+    @staticmethod
+    def denied():
+        error = PermissionError("fixture access denied")
+        error.winerror = 5
+        return error
 
     def execute(self, mode, *, failure=None, request=None):
         with run_lock(self.directory) as owner:
@@ -115,6 +132,60 @@ class StorageTests(unittest.TestCase):
 
     def test_source_request_binds_original_ready_and_data_directory(self):
         self.assertEqual(model.validate_request(self.backend, self.directory, self.value, self.request, "source"), self.private)
+
+    def test_restart_preflight_is_readonly_before_registration(self):
+        before = {str(path.relative_to(self.root)): path.read_bytes()
+                  for path in self.root.rglob("*") if path.is_file()}
+        with self.patches():
+            storage.preflight_restart(self.backend, self.directory, self.value, "source", self.request_file)
+        self.assertFalse((self.directory / "storage-source").exists())
+        self.assertEqual(before, {str(path.relative_to(self.root)): path.read_bytes()
+                                  for path in self.root.rglob("*") if path.is_file()})
+
+    def test_previous_generations_use_readonly_reuse_aware_proof(self):
+        recorded = {**self.old, "pid": self.old["pid"] + 1, "started": "150"}
+        previous = [(Mock(), {"state": "recorded", "identity": recorded})]
+        with patch.object(storage, "previous_attempts", return_value=previous), \
+                patch.object(storage, "require_recorded_producer_stopped") as stopped, \
+                patch.object(storage, "require_closed_port"), \
+                patch("full_stack_process.terminate_owned_process") as terminate:
+            storage.require_previous_stopped(self.backend, self.directory, self.request,
+                                             binding(self.request_file), None)
+        self.assertEqual([call.args[0] for call in stopped.call_args_list], [self.old, recorded])
+        self.assertTrue(all(call.kwargs == {"run": subprocess.run, "counter_run": subprocess.run}
+                            for call in stopped.call_args_list))
+        terminate.assert_not_called()
+
+    def test_protected_reused_pid_is_proven_by_cim_without_termination(self):
+        system_root = self.root / "windows"
+        powershell = system_root / "System32/WindowsPowerShell/v1.0/powershell.exe"
+        powershell.parent.mkdir(parents=True)
+        powershell.write_bytes(b"fixture")
+        observed = {"count": 1, "pid": self.old["pid"], "kind": "Utc", "started": "120",
+                    "precision_ticks": 10}
+        response = subprocess.CompletedProcess([], 0, json.dumps(observed).encode(), b"")
+        import devex_clone_source_proof as source_proof
+        with patch.object(storage, "previous_attempts", return_value=[]), \
+                patch.object(storage, "require_closed_port"), \
+                patch.object(source_proof, "process_identity", side_effect=self.denied()), \
+                patch.object(source_proof, "os", SimpleNamespace(name="nt", environ={"SystemRoot": str(system_root)})), \
+                patch.object(storage.subprocess, "run", return_value=response) as query, \
+                patch("full_stack_process.terminate_owned_process") as terminate:
+            storage.require_previous_stopped(self.backend, self.directory, self.request,
+                                             binding(self.request_file), None)
+        query.assert_called_once()
+        terminate.assert_not_called()
+
+    def test_live_original_generation_rejects_restart_without_termination(self):
+        import devex_clone_source_proof as source_proof
+        with patch.object(storage, "previous_attempts", return_value=[]), \
+                patch.object(storage, "require_closed_port"), \
+                patch.object(source_proof, "process_identity", return_value=self.old), \
+                patch("full_stack_process.terminate_owned_process") as terminate, \
+                self.assertRaises(ValueError):
+            storage.require_previous_stopped(self.backend, self.directory, self.request,
+                                             binding(self.request_file), None)
+        terminate.assert_not_called()
 
     def test_missing_source_ready_cannot_infer_from_unready_process(self):
         request = copy.deepcopy(self.request)

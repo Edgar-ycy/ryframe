@@ -162,7 +162,48 @@ def _cim_creation_time(pid: int, run) -> int:
     return int(value["started"])
 
 
-def require_recorded_producer_stopped(expected: dict, *, run=None) -> None:
+def _counter_creation_time(pid: int, run) -> int:
+    executable = Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
+    if not executable.is_absolute() or not executable.is_file():
+        raise ValueError("历史 producer 查询必须使用本机系统 PowerShell")
+    script = (
+        "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); "
+        "$samples=@((Get-Counter '\\Process(*)\\ID Process','\\Process(*)\\Elapsed Time' "
+        "-SampleInterval 1 -MaxSamples 1 -ErrorAction Stop).CounterSamples); "
+        f"$ids=@($samples|Where-Object{{$_.Status -eq 0 -and $_.CounterType -eq 65536 -and "
+        f"[long]$_.RawValue -eq {pid} -and $_.Path.EndsWith('\\id process',"
+        "[StringComparison]::OrdinalIgnoreCase)}); "
+        "if($ids.Count -ne 1){throw 'producer counter identity is not unique'}; "
+        "$elapsedPath=$ids[0].Path.Substring(0,$ids[0].Path.Length-'id process'.Length)+'elapsed time'; "
+        "$elapsed=@($samples|Where-Object{$_.Status -eq 0 -and $_.CounterType -eq 807666944 -and "
+        "[string]::Equals($_.Path,$elapsedPath,[StringComparison]::OrdinalIgnoreCase)}); "
+        "if($elapsed.Count -ne 1){throw 'producer elapsed counter is not unique'}; "
+        "$started=[long]$elapsed[0].RawValue; $seconds=[double]$elapsed[0].CookedValue; "
+        "$now=[DateTime]::UtcNow.ToFileTimeUtc(); "
+        "if($started -le 0 -or $started -gt $now -or $seconds -lt 0 -or "
+        "[Math]::Abs((($now-$started)/10000000.0)-$seconds) -gt 5)"
+        "{throw 'producer elapsed counter timebase is invalid'}; "
+        f"[ordered]@{{count=$ids.Count;elapsed_count=$elapsed.Count;pid=[long]{pid};"
+        "started=$started.ToString([Globalization.CultureInfo]::InvariantCulture);precision_ticks=1}"
+        "|ConvertTo-Json -Compress"
+    )
+    result = run([str(executable), "-NoProfile", "-NonInteractive", "-Command", script],
+                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                 check=True, timeout=15, creationflags=subprocess.CREATE_NO_WINDOW)
+    if result.returncode != 0:
+        raise ValueError("历史 producer 性能计数器查询失败")
+    value = json.loads(result.stdout.decode("utf-8-sig"))
+    exact(value, {"count", "elapsed_count", "pid", "started", "precision_ticks"})
+    if (value["count"] != 1 or type(value["count"]) is not int
+            or value["elapsed_count"] != 1 or type(value["elapsed_count"]) is not int
+            or value["pid"] != pid or type(value["pid"]) is not int
+            or not isinstance(value["started"], str) or not re.fullmatch(r"[1-9][0-9]{0,17}", value["started"])
+            or value["precision_ticks"] != 1 or type(value["precision_ticks"]) is not int):
+        raise ValueError("历史 producer 性能计数器创建时间无效")
+    return int(value["started"])
+
+
+def require_recorded_producer_stopped(expected: dict, *, run=None, counter_run=None) -> None:
     """只证明登记的旧创建代次结束；不授权向当前占用 PID 的进程发送信号。"""
     exact(expected, {"pid", "started", "executable"})
     if (type(expected["pid"]) is not int or expected["pid"] <= 1
@@ -175,9 +216,15 @@ def require_recorded_producer_stopped(expected: dict, *, run=None) -> None:
     except PermissionError as error:
         if os.name != "nt" or getattr(error, "winerror", None) != 5 or run is None:
             raise
-        # CIM 只有微秒精度；同一或相邻量化边界不构成旧代已结束的证明。
-        if _cim_creation_time(expected["pid"], run) <= original + 10:
-            raise ValueError("历史 producer 的 CIM 创建时间不能证明为后续代次") from error
+        # CIM 只有微秒精度；性能计数器也保留各自精度边界，邻接代次不能当作停止证明。
+        try:
+            created, precision = _cim_creation_time(expected["pid"], run), 10
+        except subprocess.CalledProcessError:
+            if counter_run is None:
+                raise
+            created, precision = _counter_creation_time(expected["pid"], counter_run), 1
+        if created <= original + precision:
+            raise ValueError("历史 producer 查询的创建时间不能证明为后续代次") from error
         return
     if current is None:
         return

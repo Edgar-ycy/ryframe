@@ -627,6 +627,10 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
         environment = environments(backend, value)
     source_context = (nullcontext() if cleanup or evidence_handoff else
                       artifact_sources(backend, value["build_bridges"], inherited_build_bridges(backend, value)))
+    if stage in {"storage-source", "storage-target"} and mode == "restart":
+        from devex_clone_storage import preflight_restart
+
+        preflight_restart(backend, directory, value, stage.removeprefix("storage-"), storage_request)
     number, result = None, None
     with process_guard(directory, "run-control.guard"):
         try:

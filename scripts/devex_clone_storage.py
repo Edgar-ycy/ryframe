@@ -4,12 +4,13 @@ from __future__ import annotations
 import copy
 import os
 from pathlib import Path
+import subprocess
 
 from artifact_digests import protect_binaries
 from devex_clone_capture import read_json, write_json
 from devex_clone_model import exact, local_path
 from devex_clone_run_state import binding, load_state
-from devex_clone_source_proof import bound_file, require_closed_port
+from devex_clone_source_proof import bound_file, require_closed_port, require_recorded_producer_stopped
 from devex_clone_storage_request import (arguments, directory_identity, producers_stopped, validate_request)
 from devex_clone_storage_process import inspect_attempt, running, start, stop_record
 from full_stack_process import process_identity
@@ -103,14 +104,34 @@ def previous_attempts(backend: Path, directory: Path, side: str, descriptor: dic
     return result
 
 
-def require_previous_stopped(backend: Path, directory: Path, request: dict, descriptor: dict, number: int) -> None:
-    if process_identity(request["previous"]["identity"]["pid"]) is not None:
-        raise ValueError("原始存储进程仍存在或 PID 被复用，不能重启")
-    for _, observed in previous_attempts(backend, directory, request["side"], descriptor, before=number):
-        if observed["state"] == "recorded" and process_identity(observed["identity"]["pid"]) is not None:
-            raise ValueError("已有存储代次仍存在或 PID 被复用，须显式回收")
+def require_previous_stopped(backend: Path, directory: Path, request: dict, descriptor: dict,
+                             before: int | None) -> None:
+    require_recorded_producer_stopped(request["previous"]["identity"], run=subprocess.run,
+                                      counter_run=subprocess.run)
+    for _, observed in previous_attempts(backend, directory, request["side"], descriptor, before=before):
+        if observed["state"] == "recorded":
+            require_recorded_producer_stopped(observed["identity"], run=subprocess.run,
+                                              counter_run=subprocess.run)
     for key in ("api_url", "console_url"):
         require_closed_port(request[key])
+
+
+def preflight_restart(backend: Path, directory: Path, value: dict, side: str,
+                      request_file: Path | None) -> None:
+    """在创建 attempt 前只读证明固定请求和所有历史存储代次均可安全重启。"""
+    root = local_path(backend, str(directory / stage(side)))
+    if (root / "registration.json").exists():
+        request, descriptor = registration(backend, directory, side)
+        if request_file is not None and read_json(local_path(backend, str(request_file))) != request:
+            raise ValueError("不能替换同一存储运行的固定请求")
+    else:
+        if request_file is None:
+            raise ValueError("首次存储重启必须显式提供请求")
+        path = local_path(backend, str(request_file))
+        descriptor = binding(path)
+        request = read_json(bound_file(backend, descriptor))
+    validate_request(backend, directory, value, request, side)
+    require_previous_stopped(backend, directory, request, descriptor, None)
 
 
 def registered_storage_binding(backend: Path, directory: Path, side: str) -> dict | None:

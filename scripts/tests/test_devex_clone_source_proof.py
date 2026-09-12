@@ -1,5 +1,6 @@
 """历史 producer 的只读停止证明；不启动、终止进程或访问业务服务。"""
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -106,6 +107,57 @@ class HistoricalProducerTests(unittest.TestCase):
                         self.check_cim(value)
                 else:
                     self.check_cim(value)
+
+    def test_access_denied_cim_can_use_same_snapshot_process_counters(self):
+        self.run.side_effect = subprocess.CalledProcessError(1, "cim")
+        counter = Mock(return_value=self.response({"count": 1, "elapsed_count": 1,
+            "pid": self.expected["pid"], "started": str(int(self.expected["started"]) + 2),
+            "precision_ticks": 1}))
+        with patch.object(proof, "process_identity", side_effect=self.denied()), \
+                patch.object(proof, "os", SimpleNamespace(name="nt", environ={"SystemRoot": str(self.system_root)})), \
+                patch.object(proof.Path, "is_file", return_value=True):
+            proof.require_recorded_producer_stopped(self.expected, run=self.run, counter_run=counter)
+        self.run.assert_called_once()
+        counter.assert_called_once()
+        command = counter.call_args.args[0]
+        script = command[4]
+        self.assertEqual(Path(command[0]), self.system_root / "System32/WindowsPowerShell/v1.0/powershell.exe")
+        self.assertEqual(command[1:4], ["-NoProfile", "-NonInteractive", "-Command"])
+        self.assertIn("Get-Counter '\\Process(*)\\ID Process','\\Process(*)\\Elapsed Time'", script)
+        self.assertIn("$ids.Count -ne 1", script)
+        self.assertIn("$elapsed.Count -ne 1", script)
+        self.assertIn("[string]::Equals($_.Path,$elapsedPath", script)
+        self.assertIn("$now=[DateTime]::UtcNow.ToFileTimeUtc()", script)
+        for forbidden in ("CommandLine", "ExecutablePath", "Terminate", "Stop-Process", "Invoke-CimMethod"):
+            self.assertNotIn(forbidden, script)
+        self.assertEqual(counter.call_args.kwargs, {
+            "stdin": subprocess.DEVNULL, "stdout": subprocess.PIPE, "stderr": subprocess.PIPE,
+            "check": True, "timeout": 15, "creationflags": subprocess.CREATE_NO_WINDOW,
+        })
+
+    def test_counter_fallback_keeps_one_tick_boundary_conservative(self):
+        self.run.side_effect = subprocess.CalledProcessError(1, "cim")
+        with patch.object(proof, "process_identity", side_effect=self.denied()), \
+                patch.object(proof, "os", SimpleNamespace(name="nt", environ={"SystemRoot": str(self.system_root)})), \
+                patch.object(proof.Path, "is_file", return_value=True):
+            for delta in (0, 1, 2):
+                counter = Mock(return_value=self.response({"count": 1, "elapsed_count": 1,
+                    "pid": self.expected["pid"], "started": str(int(self.expected["started"]) + delta),
+                    "precision_ticks": 1}))
+                if delta <= 1:
+                    with self.subTest(delta=delta), self.assertRaises(ValueError):
+                        proof.require_recorded_producer_stopped(self.expected, run=self.run,
+                                                                counter_run=counter)
+                else:
+                    proof.require_recorded_producer_stopped(self.expected, run=self.run,
+                                                            counter_run=counter)
+
+    @unittest.skipUnless(os.name == "nt", "Windows 性能计数器创建代次测试")
+    def test_windows_counter_query_matches_current_kernel_creation_time(self):
+        expected = process.process_identity(os.getpid())
+        self.assertIsNotNone(expected)
+        self.assertEqual(proof._counter_creation_time(os.getpid(), subprocess.run),
+                         int(expected["started"]))
 
     def test_cim_rejects_nonunique_wrong_pid_unknown_timezone_or_precision(self):
         for change in ({"count": 0}, {"count": 2}, {"count": True}, {"pid": 45941}, {"pid": True},

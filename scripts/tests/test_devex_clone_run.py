@@ -126,6 +126,23 @@ class RunTests(unittest.TestCase):
         operation.assert_not_called()
         self.assertEqual(state.load_state(self.directory)["attempts"], [])
 
+    def test_storage_restart_preflight_failure_does_not_create_attempt_or_lock(self):
+        request = self.local / "storage-request.json"
+        before = {str(path.relative_to(self.directory)): path.read_bytes()
+                  for path in self.directory.rglob("*") if path.is_file()}
+        with patch("devex_clone_storage.preflight_restart", side_effect=PermissionError("protected successor")) as preflight, \
+                patch("devex_clone_storage.execute_storage") as execute, \
+                self.assertRaisesRegex(PermissionError, "protected successor"):
+            run.execute(self.backend, self.directory, "storage-target", "restart",
+                        storage_request=request)
+        preflight.assert_called_once_with(self.backend, self.directory, self.value, "target", request)
+        execute.assert_not_called()
+        self.assertEqual(state.load_state(self.directory)["attempts"], [])
+        self.assertFalse((self.directory / "run.lock").exists())
+        self.assertFalse(any(self.directory.glob("controller-*.json")))
+        self.assertEqual(before, {str(path.relative_to(self.directory)): path.read_bytes()
+                                  for path in self.directory.rglob("*") if path.is_file()})
+
     def test_existing_copy_never_restarts_factory(self):
         output = Path(self.value["copy_directory"])
         output.mkdir()
