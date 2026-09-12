@@ -33,6 +33,10 @@ pub(crate) use required::validate_required_jobs;
 #[allow(unused_imports)]
 pub(crate) use security::source_command as security_source_command;
 #[allow(unused_imports)]
+pub(crate) use security::{
+    deployment_commands, deployment_required_at, plan_at, plan_for_required, run_at,
+};
+#[allow(unused_imports)]
 pub(crate) use task_plan::{
     CiJob, ci_execution_plan_for, ci_execution_plan_for_profile, ci_plan_for, plan_outputs,
     required_ci_jobs,

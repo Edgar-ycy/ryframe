@@ -57,7 +57,6 @@ fn smart_and_ci_profiles_reuse_the_same_policy_task_definitions() {
             "scripts/check_architecture.py",
             "scripts/check_permission_routes.py",
             "scripts/check_removed_identity.py",
-            "scripts/check_deployment_assets.py",
         ]
     );
     assert_eq!(
@@ -70,6 +69,10 @@ fn smart_and_ci_profiles_reuse_the_same_policy_task_definitions() {
     assert!(
         !scripts(PolicyProfile::CiPreflight).contains(&"scripts/check_supply_chain.py"),
         "CI preflight 的供应链检查由始终执行的 security source job 覆盖"
+    );
+    assert!(
+        !scripts(PolicyProfile::CiPreflight).contains(&"scripts/check_deployment_assets.py"),
+        "CI preflight 的部署静态检查由始终执行的 security deployment source 覆盖"
     );
 }
 

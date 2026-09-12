@@ -2,10 +2,10 @@ use std::path::PathBuf;
 
 use super::cli::{
     ApiGenerateCommand, BuildOptions, BuildProfile, CheckCommand, CheckOptions, CheckScope,
-    CiCommand, CliError, Command, DataCommand, GenerateCommand, MigrationCommand,
-    MigrationOperation, MigrationTarget, RecoveryCommand, RequiredAction, RequiredEvent,
-    RequiredJobResult, ResourceAction, ResourceCommand, ResourceGateReplayOptions, ResourceTarget,
-    SecurityCommand, parse,
+    CiCommand, CliError, Command, DataCommand, DeploymentOptions, DeploymentPhase, GenerateCommand,
+    MigrationCommand, MigrationOperation, MigrationTarget, RecoveryCommand, RequiredAction,
+    RequiredEvent, RequiredJobResult, ResourceAction, ResourceCommand, ResourceGateReplayOptions,
+    ResourceTarget, SecurityCommand, parse,
 };
 
 fn strings(values: &[&str]) -> Vec<String> {
@@ -225,6 +225,196 @@ fn parses_only_the_typed_security_source_command() {
         ["check", "ci", "security", "unknown"].as_slice(),
     ] {
         assert!(parse_command(invalid).is_err(), "参数：{invalid:?}");
+    }
+}
+
+#[test]
+fn parses_typed_deployment_source_command() {
+    let head = "0123456789abcdef0123456789abcdef01234567";
+    let output = std::env::current_dir()
+        .unwrap()
+        .join("target/deployment-output")
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(
+        parse_command(&[
+            "check",
+            "ci",
+            "security",
+            "deployment",
+            "source",
+            "--base",
+            "",
+            "--head",
+            head,
+            "--github-output",
+            &output,
+        ])
+        .unwrap(),
+        Command::Check(CheckCommand::Ci(CiCommand::Security(
+            SecurityCommand::Deployment(DeploymentOptions {
+                phase: DeploymentPhase::Source,
+                base: String::new(),
+                head: head.to_owned(),
+                github_output: Some(output.into()),
+                image: None,
+                expected_commit: None,
+            })
+        )))
+    );
+}
+
+#[test]
+fn parses_typed_deployment_image_command() {
+    let head = "0123456789abcdef0123456789abcdef01234567";
+    assert_eq!(
+        parse_command(&[
+            "check",
+            "ci",
+            "security",
+            "deployment",
+            "image",
+            "--base",
+            "",
+            "--head",
+            "",
+            "--image",
+            "registry.example/ryframe:test",
+            "--expected-commit",
+            head,
+        ])
+        .unwrap(),
+        Command::Check(CheckCommand::Ci(CiCommand::Security(
+            SecurityCommand::Deployment(DeploymentOptions {
+                phase: DeploymentPhase::Image,
+                base: String::new(),
+                head: String::new(),
+                github_output: None,
+                image: Some("registry.example/ryframe:test".to_owned()),
+                expected_commit: Some(head.to_owned()),
+            })
+        )))
+    );
+}
+
+#[test]
+fn rejects_incomplete_or_ambiguous_deployment_source_arguments() {
+    let head = "0123456789abcdef0123456789abcdef01234567";
+    for invalid in [
+        vec!["check", "ci", "security", "deployment"],
+        vec!["check", "ci", "security", "deployment", "unknown"],
+        vec![
+            "check",
+            "ci",
+            "security",
+            "deployment",
+            "source",
+            "--base",
+            head,
+            "--head",
+            head,
+        ],
+        vec![
+            "check",
+            "ci",
+            "security",
+            "deployment",
+            "source",
+            "--base",
+            head,
+            "--head",
+            head,
+            "--github-output",
+            "relative-output",
+        ],
+        vec![
+            "check",
+            "ci",
+            "security",
+            "deployment",
+            "source",
+            "--base",
+            head,
+            "--base",
+            head,
+            "--head",
+            head,
+            "--github-output",
+            "/tmp/output",
+        ],
+    ] {
+        assert!(parse_command(&invalid).is_err(), "参数：{invalid:?}");
+    }
+}
+
+#[test]
+fn rejects_unsafe_or_mismatched_deployment_image_arguments() {
+    let head = "0123456789abcdef0123456789abcdef01234567";
+    for invalid in [
+        vec![
+            "check",
+            "ci",
+            "security",
+            "deployment",
+            "image",
+            "--base",
+            head,
+            "--head",
+            head,
+            "--image",
+            "ryframe:$(bad)",
+            "--expected-commit",
+            head,
+        ],
+        vec![
+            "check",
+            "ci",
+            "security",
+            "deployment",
+            "image",
+            "--base",
+            head,
+            "--head",
+            head,
+            "--image",
+            "ryframe:test",
+            "--expected-commit",
+            "0000000000000000000000000000000000000000",
+        ],
+        vec![
+            "check",
+            "ci",
+            "security",
+            "deployment",
+            "image",
+            "--base",
+            head,
+            "--head",
+            head,
+            "--image",
+            "ryframe:test",
+            "--expected-commit",
+            "1123456789abcdef0123456789abcdef01234567",
+        ],
+        vec![
+            "check",
+            "ci",
+            "security",
+            "deployment",
+            "image",
+            "--base",
+            head,
+            "--head",
+            head,
+            "--image",
+            "ryframe:test",
+            "--expected-commit",
+            head,
+            "--github-output",
+            "/tmp/output",
+        ],
+    ] {
+        assert!(parse_command(&invalid).is_err(), "参数：{invalid:?}");
     }
 }
 

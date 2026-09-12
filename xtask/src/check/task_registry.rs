@@ -82,6 +82,12 @@ pub(crate) enum TaskExecutor {
     CiSupplyChainSource,
     CiCargoAudit,
     CiCargoDeny,
+    CiDeploymentChanges,
+    CiDeploymentStatic,
+    CiDeploymentCompose,
+    CiDeploymentNginx,
+    CiDeploymentPrometheus,
+    CiDeploymentImage,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -474,6 +480,84 @@ pub(crate) const TASK_REGISTRY: &[TaskDefinition] = &[
         &[],
         &["Cargo registry cache"],
         &["Cargo registry"]
+    ),
+    task_definition!(
+        CiDeploymentChanges,
+        "ci.security.deployment.changes",
+        "detect_deployment_changes",
+        "按精确 base/head 保守判定部署资产变化",
+        Backend,
+        Static,
+        Backend,
+        None,
+        &[],
+        &["GitHub job output"],
+        &[]
+    ),
+    task_definition!(
+        CiDeploymentStatic,
+        "ci.security.deployment.static",
+        "verify_deployment_source",
+        "核对部署资产静态边界",
+        Backend,
+        Static,
+        Backend,
+        Some(&["scripts/check_deployment_assets.py"]),
+        &[],
+        &[],
+        &[]
+    ),
+    task_definition!(
+        CiDeploymentCompose,
+        "ci.security.deployment.compose",
+        "verify_deployment_compose",
+        "核对生产 Compose 展开结果",
+        Backend,
+        Static,
+        Backend,
+        None,
+        &[],
+        &["Docker state"],
+        &["Docker daemon"]
+    ),
+    task_definition!(
+        CiDeploymentNginx,
+        "ci.security.deployment.nginx",
+        "verify_deployment_nginx",
+        "核对生产 Nginx 配置",
+        Backend,
+        Static,
+        Backend,
+        None,
+        &[],
+        &["Runner temporary certificate", "Docker state"],
+        &["Docker daemon"]
+    ),
+    task_definition!(
+        CiDeploymentPrometheus,
+        "ci.security.deployment.prometheus",
+        "verify_deployment_prometheus",
+        "核对 Prometheus 规则和测试",
+        Backend,
+        Static,
+        Backend,
+        None,
+        &[],
+        &["Docker state"],
+        &["Docker daemon"]
+    ),
+    task_definition!(
+        CiDeploymentImage,
+        "ci.security.deployment.image",
+        "verify_deployment_image",
+        "核对生产镜像内容与提交身份",
+        Backend,
+        Build,
+        Backend,
+        None,
+        &[],
+        &["target/image-inspection", "Docker state"],
+        &["Docker daemon"]
     ),
 ];
 

@@ -129,10 +129,31 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertNotIn("cargo deny check licenses bans sources", security)
         self.assertIn("tool: cargo-audit@0.22.2", security)
         self.assertIn("tool: cargo-deny@0.20.2", security)
-        self.assertEqual(security.count("python scripts/check_deployment_assets.py"), 2)
-        self.assertIn("$GITHUB_WORKSPACE/backend/deploy/nginx", security)
-        self.assertIn("$GITHUB_WORKSPACE/backend/deploy/prometheus", security)
-        self.assertNotIn("$GITHUB_WORKSPACE/deploy/", security)
+        self.assertEqual(
+            security.count("cargo xtask check ci security deployment source"), 1
+        )
+        self.assertEqual(
+            security.count("cargo xtask check ci security deployment image"), 1
+        )
+        self.assertNotIn("python scripts/check_deployment_assets.py", security)
+        self.assertNotIn("git diff --quiet", security)
+        self.assertNotIn("docker compose", security)
+        self.assertNotIn("docker run", security)
+        self.assertEqual(security.count("docker build"), 1)
+        self.assertEqual(
+            security.count("steps.deployment.outputs.required == 'true'"), 2
+        )
+        source = security.index("cargo xtask check ci security source")
+        deployment_source = security.index(
+            "cargo xtask check ci security deployment source"
+        )
+        image_build = security.index("docker build")
+        deployment_image = security.index(
+            "cargo xtask check ci security deployment image"
+        )
+        self.assertLess(source, deployment_source)
+        self.assertLess(deployment_source, image_build)
+        self.assertLess(image_build, deployment_image)
 
     def test_completed_aws_lc_canary_is_not_retained(self) -> None:
         workflows = "".join(

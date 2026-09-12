@@ -45,6 +45,7 @@
 
 ### Changed
 
+- CI 部署来源与镜像门禁改由 `cargo xtask check ci security deployment source|image` 的同一任务图执行；部署变更判定失败关闭，静态、Compose、Nginx 与 Prometheus 校验不再被 preflight 或 workflow 重复调用，workflow 只保留固定工具环境和必要的生产镜像构建。
 - CI 供应链来源门禁改由 `cargo xtask check ci security source` 的同一任务图顺序执行策略、RustSec 与依赖来源检查；security job 覆盖 push 及全部 pull request 动作，preflight 不再重复执行同一供应链策略。
 - Required 汇总门禁改由 `cargo xtask check ci required` 复用同一 CI job 与计划输出定义，严格解析 GitHub `needs` 后核对动态门禁结果；删除重复的 Python 规则实现。
 - 资源门禁回放、导出物理对象及 168 小时保留期 fixture 统一进入 `cargo xtask check` 的 CI 或 recovery 分组；xtask 固定两仓来源，保留期写操作要求显式 `--write`，导出收据限制在当前后端 `.local-tests`。

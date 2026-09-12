@@ -1,8 +1,17 @@
 use crate::{
     Result,
     check::{PYTHON_ENVIRONMENT_ARGS, TaskExecutor, TaskPlan},
-    process::run,
+    cli::SecurityCommand,
+    process::run as run_process,
     workspace::root_dir,
+};
+
+#[path = "security/deployment.rs"]
+mod deployment;
+
+#[allow(unused_imports)]
+pub(crate) use deployment::{
+    deployment_commands, deployment_required_at, plan_at, plan_for_required, run_at,
 };
 
 pub(super) const SOURCE_TASKS: &[TaskExecutor] = &[
@@ -12,7 +21,21 @@ pub(super) const SOURCE_TASKS: &[TaskExecutor] = &[
     TaskExecutor::CiCargoDeny,
 ];
 
-pub(super) fn run_source(plan: &TaskPlan) -> Result<()> {
+pub(super) fn plan(command: &SecurityCommand) -> Result<TaskPlan> {
+    match command {
+        SecurityCommand::Source => TaskPlan::sequence(SOURCE_TASKS),
+        SecurityCommand::Deployment(options) => deployment::plan(options),
+    }
+}
+
+pub(super) fn run(command: &SecurityCommand, plan: &TaskPlan) -> Result<()> {
+    match command {
+        SecurityCommand::Source => run_source(plan),
+        SecurityCommand::Deployment(options) => deployment::run(options, plan),
+    }
+}
+
+fn run_source(plan: &TaskPlan) -> Result<()> {
     let expected = TaskPlan::sequence(SOURCE_TASKS)?;
     if plan != &expected {
         return Err("Security source 计划与登记的原子任务不一致".into());
@@ -21,7 +44,7 @@ pub(super) fn run_source(plan: &TaskPlan) -> Result<()> {
     for task in &plan.tasks {
         println!("开始 CI 原子任务：{}", task.id);
         let (program, arguments) = source_command(task.executor)?;
-        run(&root, program, arguments)?;
+        run_process(&root, program, arguments)?;
     }
     Ok(())
 }

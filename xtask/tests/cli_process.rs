@@ -43,6 +43,32 @@ fn invalid_public_arguments_exit_two_before_running_tasks() {
         [
             "check",
             "ci",
+            "security",
+            "deployment",
+            "source",
+            "--base",
+            "base",
+        ]
+        .as_slice(),
+        [
+            "check",
+            "ci",
+            "security",
+            "deployment",
+            "image",
+            "--base",
+            "",
+            "--head",
+            "",
+            "--image",
+            "invalid image",
+            "--expected-commit",
+            "0123456789abcdef0123456789abcdef01234567",
+        ]
+        .as_slice(),
+        [
+            "check",
+            "ci",
             "required",
             "--event",
             "push",

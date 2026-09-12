@@ -177,8 +177,8 @@ pub(crate) fn ci_execution_plan_for_profile(
     if matches!(command, CiCommand::Required(_)) {
         return TaskPlan::sequence(REQUIRED_TASKS);
     }
-    if matches!(command, CiCommand::Security(SecurityCommand::Source)) {
-        return TaskPlan::sequence(super::security::SOURCE_TASKS);
+    if let CiCommand::Security(command) = command {
+        return super::security::plan(command);
     }
     let job = job_for_command(command)?;
     let tasks = if job == CiJob::RustGate {
@@ -217,9 +217,16 @@ pub(super) fn execute_ci_job(
         println!("开始 CI job：required（cargo xtask check ci required）");
         return execute_required_plan(options, plan);
     }
-    if matches!(command, CiCommand::Security(SecurityCommand::Source)) {
-        println!("开始 CI job：security source（cargo xtask check ci security source）");
-        return super::security::run_source(plan);
+    if let CiCommand::Security(command) = command {
+        let name = match command {
+            SecurityCommand::Source => "security source",
+            SecurityCommand::Deployment(options) => match options.phase {
+                crate::cli::DeploymentPhase::Source => "security deployment source",
+                crate::cli::DeploymentPhase::Image => "security deployment image",
+            },
+        };
+        println!("开始 CI job：{name}（cargo xtask check ci {name}）");
+        return super::security::run(command, plan);
     }
     let job = job_for_command(command)?;
     println!(

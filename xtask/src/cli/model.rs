@@ -101,9 +101,26 @@ pub(crate) enum CiCommand {
     Security(SecurityCommand),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SecurityCommand {
     Source,
+    Deployment(DeploymentOptions),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DeploymentPhase {
+    Source,
+    Image,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DeploymentOptions {
+    pub(crate) phase: DeploymentPhase,
+    pub(crate) base: String,
+    pub(crate) head: String,
+    pub(crate) github_output: Option<PathBuf>,
+    pub(crate) image: Option<String>,
+    pub(crate) expected_commit: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

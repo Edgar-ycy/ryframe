@@ -70,7 +70,7 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
         script: "scripts/check_deployment_assets.py",
         full_order: Some(1),
         smart_order: None,
-        ci_preflight_order: Some(5),
+        ci_preflight_order: None,
         requires_frontend: false,
     },
     PythonPolicyTask {

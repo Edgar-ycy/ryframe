@@ -96,7 +96,13 @@ pub(crate) fn execute_registered_task(
         | TaskExecutor::CiRequiredJobs
         | TaskExecutor::CiSupplyChainSource
         | TaskExecutor::CiCargoAudit
-        | TaskExecutor::CiCargoDeny => Err("CI 专属节点必须由 CI job 适配器执行".into()),
+        | TaskExecutor::CiCargoDeny
+        | TaskExecutor::CiDeploymentChanges
+        | TaskExecutor::CiDeploymentStatic
+        | TaskExecutor::CiDeploymentCompose
+        | TaskExecutor::CiDeploymentNginx
+        | TaskExecutor::CiDeploymentPrometheus
+        | TaskExecutor::CiDeploymentImage => Err("CI 专属节点必须由 CI job 适配器执行".into()),
     }
 }
 

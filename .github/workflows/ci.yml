@@ -619,92 +619,18 @@ jobs:
       - name: 校验供应链来源
         run: cargo xtask check ci security source
 
-      - name: 判断是否需要校验部署资产
-        id: deployment-changes
-        shell: bash
+      - name: 校验部署来源
+        id: deployment
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: |
-          set -euo pipefail
-          required=false
-          if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] \
-            || [[ "$BASE_SHA" == "0000000000000000000000000000000000000000" ]]; then
-            required=true
-          else
-            set +e
-            git diff --quiet "$BASE_SHA" "$GITHUB_SHA" -- \
-              .github/workflows/ci.yml \
-              .cargo \
-              .dockerignore \
-              Cargo.lock \
-              Cargo.toml \
-              build.rs \
-              rust-toolchain.toml \
-              architecture \
-              catalog \
-              config \
-              crates \
-              deploy \
-              locales \
-              scripts/check_deployment_assets.py \
-              scripts/fixtures/deploy.env \
-              vendor \
-              xtask
-            diff_status=$?
-            set -e
-            case "$diff_status" in
-              0) required=false ;;
-              1) required=true ;;
-              *) echo "部署资产变更检测失败" >&2; exit "$diff_status" ;;
-            esac
-          fi
-          echo "required=$required" >> "$GITHUB_OUTPUT"
-
-      - name: 校验部署资产静态边界
-        if: steps.deployment-changes.outputs.required == 'true'
-        run: python scripts/check_deployment_assets.py
-
-      - name: 校验 Compose 展开结果
-        if: steps.deployment-changes.outputs.required == 'true'
+          DEPLOYMENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: >-
-          docker compose
-          --project-directory "$GITHUB_WORKSPACE/backend"
-          --env-file scripts/fixtures/deploy.env
-          --file deploy/compose.prod.yml
-          config --quiet
-
-      - name: 校验 Nginx 配置
-        if: steps.deployment-changes.outputs.required == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          certificate_dir="$RUNNER_TEMP/nginx-cert"
-          mkdir --parents "$certificate_dir"
-          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
-            -subj "/CN=example.com" \
-            -keyout "$certificate_dir/privkey.pem" \
-            -out "$certificate_dir/fullchain.pem" >/dev/null 2>&1
-          docker run --rm --entrypoint nginx \
-            --volume "$GITHUB_WORKSPACE/backend/deploy/nginx/ryframe.conf:/etc/nginx/conf.d/default.conf:ro" \
-            --volume "$certificate_dir:/etc/letsencrypt/live/example.com:ro" \
-            nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10 \
-            -t
-
-      - name: 校验 Prometheus 告警规则与触发边界
-        if: steps.deployment-changes.outputs.required == 'true'
-        run: |
-          promtool() {
-            docker run --rm --entrypoint /bin/promtool \
-              --volume "$GITHUB_WORKSPACE/backend/deploy/prometheus:/rules:ro" \
-              --workdir /rules \
-              prom/prometheus@sha256:8672a850efe2f9874702406c8318704edb363587f8c2ca88586b4c8fdb5cea24 \
-              "$@"
-          }
-          promtool check rules /rules/ryframe-alerts.yml
-          promtool test rules /rules/ryframe-alerts.test.yml
+          cargo xtask check ci security deployment source
+          --base "$DEPLOYMENT_BASE_SHA"
+          --head "$GITHUB_SHA"
+          --github-output "$GITHUB_OUTPUT"
 
       - name: 构建生产镜像
-        if: steps.deployment-changes.outputs.required == 'true'
+        if: steps.deployment.outputs.required == 'true'
         run: >-
           docker build
           --file deploy/Dockerfile
@@ -713,9 +639,13 @@ jobs:
           .
 
       - name: 校验生产镜像内容
-        if: steps.deployment-changes.outputs.required == 'true'
+        if: steps.deployment.outputs.required == 'true'
+        env:
+          DEPLOYMENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: >-
-          python scripts/check_deployment_assets.py
+          cargo xtask check ci security deployment image
+          --base "$DEPLOYMENT_BASE_SHA"
+          --head "$GITHUB_SHA"
           --image "ryframe-ci:$GITHUB_SHA"
           --expected-commit "$GITHUB_SHA"
 
