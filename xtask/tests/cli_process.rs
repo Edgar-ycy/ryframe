@@ -71,7 +71,7 @@ fn invalid_public_arguments_exit_two_before_running_tasks() {
 }
 
 #[test]
-fn security_source_preserves_task_failure_exit_code() {
+fn security_source_preserves_prerequisite_failure_exit_code() {
     let result = xtask_command()
         .args(["check", "ci", "security", "source"])
         .env("RYFRAME_PYTHON", "missing-security-python-executable")
@@ -79,7 +79,8 @@ fn security_source_preserves_task_failure_exit_code() {
         .unwrap();
     assert_eq!(result.status.code(), Some(1));
     let stdout = String::from_utf8_lossy(&result.stdout);
-    assert!(stdout.contains("开始 CI 原子任务：ci.security.supply-chain"));
+    assert!(stdout.contains("开始 CI 原子任务：python.environment"));
+    assert!(!stdout.contains("开始 CI 原子任务：ci.security.supply-chain"));
     assert!(!stdout.contains("开始 CI 原子任务：ci.security.audit"));
 }
 
