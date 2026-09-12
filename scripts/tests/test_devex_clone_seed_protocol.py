@@ -102,21 +102,15 @@ class SeedSourceProtocolTests(unittest.TestCase):
                 redirect_stderr(StringIO()):
             self.assertEqual(devex_clone.main([]), 1)
 
-    def test_explicit_main_argv_remains_available_to_internal_tests(self):
-        outer = {
-            "status": "stage_finished",
-            "stage": "seed-runtime",
-            "mode": "source-register",
-            "attempt": 52,
-            "restore_qualified": False,
-        }
+    def test_explicit_main_argv_is_rejected(self):
         arguments = [
             "seed-runtime", "--backend-dir", str(self.backend), "--run-dir", str(self.run_dir),
             "--operation", "source-register", "--write",
         ]
-        with patch.dict(os.environ, {}, clear=True), patch.object(cli, "execute", return_value=outer), \
-                redirect_stdout(StringIO()):
-            self.assertEqual(devex_clone.main(arguments), 0)
+        with patch.dict(os.environ, {}, clear=True), patch.object(cli, "execute") as execute, \
+                redirect_stderr(StringIO()):
+            self.assertEqual(devex_clone.main(arguments), 2)
+        execute.assert_not_called()
 
     def test_direct_process_uses_only_the_private_protocol_and_stable_exit_codes(self):
         script = Path(devex_clone.__file__).resolve()

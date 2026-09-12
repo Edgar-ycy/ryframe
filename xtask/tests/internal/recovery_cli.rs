@@ -1,5 +1,5 @@
 use super::cli::{
-    CheckCommand, CliError, Command, ExistingReferenceSide, FixtureExpectedSources,
+    CheckCommand, CliError, CloneCommand, Command, ExistingReferenceSide, FixtureExpectedSources,
     FixturePrepareCommand, FixturePrepareOptions, FreshTargetCommand, FreshTargetOperation,
     FreshTargetOptions, FullStackCommand, RecoveryCommand, RecoveryInputsCommand,
     RecoveryReferenceCommand, ReferencePlanAction, RestoreInputSide, parse,
@@ -678,15 +678,21 @@ fn parses_recovery_dataset_and_clone_groups() {
         ])
         .is_err()
     );
+    let fixture = RecoveryArgumentFixture::new("clone");
+    let run_dir = fixture.directory.clone();
     assert_eq!(
-        parse_command(&["check", "recovery", "clone", "status", "--run-dir", "run"]).unwrap(),
-        Command::Check(CheckCommand::Recovery(RecoveryCommand::Clone(strings(&[
-            "status",
-            "--run-dir",
-            "run",
-        ]))))
+        parse_recovery_owned(vec![
+            "clone".to_owned(),
+            "status".to_owned(),
+            "--run-dir".to_owned(),
+            run_dir.to_string_lossy().into_owned(),
+        ])
+        .unwrap(),
+        RecoveryCommand::Clone(CloneCommand::Status {
+            run_dir: run_dir.clone(),
+        })
     );
-    assert_eq!(
+    assert!(
         parse_command(&[
             "check",
             "recovery",
@@ -697,13 +703,6 @@ fn parses_recovery_dataset_and_clone_groups() {
             "--output",
             "build.json",
         ])
-        .unwrap(),
-        Command::Check(CheckCommand::Recovery(RecoveryCommand::Clone(strings(&[
-            "maintenance",
-            "--operation",
-            "verify",
-            "--output",
-            "build.json",
-        ]))))
+        .is_err()
     );
 }

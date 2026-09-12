@@ -1,10 +1,21 @@
 """开发复制统一入口；plan/verify/status 只读，资源操作使用显式阶段与 --write。"""
 from __future__ import annotations
 
-import argparse
+import os
+
+_PROTOCOL_NAMES = (
+    "RYFRAME_XTASK_RECOVERY_FRESH_TARGET",
+    "RYFRAME_XTASK_RECOVERY_SEED_SOURCE",
+    "RYFRAME_XTASK_RECOVERY_CLONE",
+)
+# 真实脚本进程在加载任何复制业务模块前移除协议，派生进程不能继承该请求。
+_STARTUP_PROTOCOLS = (
+    {name: os.environ.pop(name, None) for name in _PROTOCOL_NAMES}
+    if __name__ == "__main__" else None
+)
+
 from dataclasses import dataclass
 import json
-import os
 from pathlib import Path
 import sys
 from weakref import WeakKeyDictionary
@@ -182,27 +193,24 @@ def _run_private_protocol(protocol, actual_argv, decoder, protocol_error, label,
         return 1
 
 
-def _direct_seed_source(arguments, operations) -> bool:
-    if (not arguments or arguments[0] != "seed-runtime"
-            or any(value in {"--help", "-h"} for value in arguments)):
-        return False
-    return any(
-        arguments[index] == "--operation" and arguments[index + 1] in operations
-        for index in range(1, len(arguments) - 1)
-    )
-
-
 def main(argv=None) -> int:
-    from devex_clone_run_cli import (
-        COMMANDS, FRESH_TARGET_PROTOCOL_ENV, FreshTargetProtocolError,
-        SEED_SOURCE_OPERATIONS, SEED_SOURCE_PROTOCOL_ENV, SeedSourceProtocolError,
-        add_commands, decode_fresh_target_protocol, decode_seed_source_protocol, dispatch,
+    protocols = (
+        _STARTUP_PROTOCOLS
+        if argv is None and _STARTUP_PROTOCOLS is not None
+        else {name: os.environ.pop(name, None) for name in _PROTOCOL_NAMES}
     )
+    from devex_clone_run_cli import (
+        FRESH_TARGET_PROTOCOL_ENV, FreshTargetProtocolError,
+        SEED_SOURCE_PROTOCOL_ENV, SeedSourceProtocolError,
+        decode_fresh_target_protocol, decode_seed_source_protocol, dispatch,
+    )
+    from devex_clone_protocol import CloneProtocolError, PROTOCOL_ENV, decode as decode_clone_protocol
 
-    fresh_protocol = os.environ.pop(FRESH_TARGET_PROTOCOL_ENV, None)
-    seed_protocol = os.environ.pop(SEED_SOURCE_PROTOCOL_ENV, None)
+    fresh_protocol = protocols[FRESH_TARGET_PROTOCOL_ENV]
+    seed_protocol = protocols[SEED_SOURCE_PROTOCOL_ENV]
+    clone_protocol = protocols[PROTOCOL_ENV]
     actual_argv = sys.argv[1:] if argv is None else list(argv)
-    if fresh_protocol is not None and seed_protocol is not None:
+    if sum(value is not None for value in protocols.values()) > 1:
         print("开发复制私有协议不能同时指定", file=sys.stderr)
         return 2
     if fresh_protocol is not None:
@@ -215,38 +223,24 @@ def main(argv=None) -> int:
             seed_protocol, actual_argv, decode_seed_source_protocol,
             SeedSourceProtocolError, "seed source", dispatch,
         )
-    if argv is None and _direct_seed_source(actual_argv, SEED_SOURCE_OPERATIONS):
-        print("seed source 是私有实现，不接受公开 argv", file=sys.stderr)
+    if clone_protocol is None:
+        print("开发复制脚本是私有实现，不接受公开 argv", file=sys.stderr)
         return 2
-
-    parser = argparse.ArgumentParser(description=__doc__, epilog="plan/verify 仅检查离线计划；stage 每次只执行明确阶段，未知写入先 reconcile 后 resume。调度处置未完成时 Worker 必须保持停止；本工具的复制结果不代表正式恢复通过。")
-    commands = parser.add_subparsers(dest="command", required=True)
-    prepare = commands.add_parser("plan", help="离线核对全部导出证据并显式写入新计划")
-    prepare.add_argument("--input", required=True, help="当前后端忽略目录中的完整源/目标、导出证据及调度处置清单")
-    prepare.add_argument("--output", required=True)
-    prepare.add_argument("--write", required=True, action="store_true")
-    verify = commands.add_parser("verify", help="只读重新核对已写计划与全部输入证据")
-    verify.add_argument("--plan", required=True)
-    for command in (prepare, verify):
-        command.add_argument("--backend-dir", required=True, type=Path)
-    add_commands(commands)
-    args = parser.parse_args(actual_argv)
-    try:
-        backend = args.backend_dir.resolve(strict=True)
-        if args.command in COMMANDS:
-            print(json.dumps(dispatch(args, backend), ensure_ascii=False))
-            return 0
-        result = (write_plan(backend, args.input, args.output) if args.command == "plan"
-                  else verify_plan(backend, args.plan))
-        print(json.dumps({"status": result["status"], "plan_sha256": result["plan_sha256"],
-                          "pending_target_actions": len(result["pending_target_actions"]), "target_ready": False,
-                          "worker_must_remain_stopped": True,
-                          "execution_authorized": False, "resources_modified": False}, ensure_ascii=False))
-        return 0
-    except (OSError, ValueError, KeyError, TypeError) as error:
-        # 私有环境与外部工具错误留在隔离证据中，不把连接信息输出到调用端。
-        print(f"开发复制未完成：{type(error).__name__}", file=sys.stderr)
-        return 1
+    def clone_dispatch(args, backend):
+        if args.command == "plan":
+            result = write_plan(backend, args.input, args.output)
+        elif args.command == "verify":
+            result = verify_plan(backend, args.plan)
+        else:
+            return dispatch(args, backend)
+        return {"status": result["status"], "plan_sha256": result["plan_sha256"],
+                "pending_target_actions": len(result["pending_target_actions"]), "target_ready": False,
+                "worker_must_remain_stopped": True, "execution_authorized": False,
+                "resources_modified": False}
+    return _run_private_protocol(
+        clone_protocol, actual_argv, decode_clone_protocol, CloneProtocolError,
+        "clone", clone_dispatch,
+    )
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ use std::path::Path;
 use crate::{
     Result,
     cli::{
-        FreshTargetCommand, FreshTargetOptions, FullStackCommand, RecoveryCommand,
+        CloneCommand, FreshTargetCommand, FreshTargetOptions, FullStackCommand, RecoveryCommand,
         SeedSourceOptions,
     },
     local_test_path::{LocalTestPathKind, validate_local_test_path},
@@ -15,6 +15,10 @@ const FRESH_TARGET_PROTOCOL_ENV: &str = "RYFRAME_XTASK_RECOVERY_FRESH_TARGET";
 const SEED_SOURCE_PROTOCOL_ENV: &str = "RYFRAME_XTASK_RECOVERY_SEED_SOURCE";
 const RUNTIME_PROTOCOL_ENV: &str = "RYFRAME_RESTORE_RUNTIME_PROTOCOL";
 const SOURCE_PROTOCOL_ENV: &str = "RYFRAME_RESTORE_SOURCE_PROTOCOL";
+const CLONE_PROTOCOL_ENV: &str = "RYFRAME_XTASK_RECOVERY_CLONE";
+
+#[path = "recovery/clone.rs"]
+pub(crate) mod clone;
 
 #[path = "recovery/dataset_prepare.rs"]
 pub(crate) mod dataset_prepare;
@@ -47,6 +51,9 @@ pub(crate) fn run(command: &RecoveryCommand, frontend_dir: &Path) -> Result<()> 
     }
     if let RecoveryCommand::SeedSource(options) = command {
         return run_seed_source(options);
+    }
+    if let RecoveryCommand::Clone(command) = command {
+        return run_clone(command);
     }
     if let RecoveryCommand::DatasetPrepare(command) = command {
         return dataset_prepare::run(command, &root_dir());
@@ -105,10 +112,7 @@ pub(crate) fn recovery_command(
         RecoveryCommand::Source(_) => {
             Err("source 必须通过版本化私有协议执行，不能透传 argv".into())
         }
-        RecoveryCommand::Clone(arguments) => Ok((
-            "scripts/devex_clone.py",
-            with_paths(arguments, &backend, None)?,
-        )),
+        RecoveryCommand::Clone(_) => Err("clone 必须通过版本化私有协议执行，不能透传 argv".into()),
         RecoveryCommand::SeedSource(_) => {
             Err("seed source 必须通过版本化私有协议执行，不能透传 argv"
                 .to_owned()
@@ -190,7 +194,31 @@ fn run_seed_source(options: &SeedSourceOptions) -> Result<()> {
         "python",
         &["-B", "scripts/devex_clone.py"],
         &[(SEED_SOURCE_PROTOCOL_ENV, payload.as_str())],
-        &[FRESH_TARGET_PROTOCOL_ENV, SEED_SOURCE_PROTOCOL_ENV],
+        &[
+            FRESH_TARGET_PROTOCOL_ENV,
+            SEED_SOURCE_PROTOCOL_ENV,
+            CLONE_PROTOCOL_ENV,
+        ],
+    )
+}
+
+fn run_clone(command: &CloneCommand) -> Result<()> {
+    if matches!(command, CloneCommand::Help) {
+        println!("{}", crate::cli::CLONE_USAGE);
+        return Ok(());
+    }
+    let root = root_dir();
+    let payload = clone::protocol(command, &root)?;
+    run_with_env_removed(
+        &root,
+        "python",
+        &["-B", "scripts/devex_clone.py"],
+        &[(CLONE_PROTOCOL_ENV, payload.as_str())],
+        &[
+            FRESH_TARGET_PROTOCOL_ENV,
+            SEED_SOURCE_PROTOCOL_ENV,
+            CLONE_PROTOCOL_ENV,
+        ],
     )
 }
 
@@ -234,7 +262,11 @@ fn run_fresh_target(command: &FreshTargetCommand) -> Result<()> {
         "python",
         &["-B", "scripts/devex_clone.py"],
         &[(FRESH_TARGET_PROTOCOL_ENV, payload.as_str())],
-        &[FRESH_TARGET_PROTOCOL_ENV, SEED_SOURCE_PROTOCOL_ENV],
+        &[
+            FRESH_TARGET_PROTOCOL_ENV,
+            SEED_SOURCE_PROTOCOL_ENV,
+            CLONE_PROTOCOL_ENV,
+        ],
     )
 }
 

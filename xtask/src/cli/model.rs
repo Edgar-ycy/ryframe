@@ -20,6 +20,9 @@ pub(crate) use data::*;
 #[path = "model/dataset_prepare.rs"]
 mod dataset_prepare;
 pub(crate) use dataset_prepare::*;
+#[path = "model/clone.rs"]
+mod clone;
+pub(crate) use clone::*;
 #[path = "model/monitoring.rs"]
 mod monitoring;
 pub(crate) use monitoring::*;
@@ -78,7 +81,7 @@ pub(crate) enum RecoveryCommand {
     Inputs(RecoveryInputsCommand),
     Runtime(RuntimeCommand),
     Source(SourceCommand),
-    Clone(Vec<String>),
+    Clone(CloneCommand),
     SeedSource(SeedSourceOptions),
     FreshTarget(FreshTargetCommand),
     Fixture(Vec<String>),

@@ -1,8 +1,8 @@
 """发布源重绑定的历史、存储身份和零写入边界。"""
 from contextlib import ExitStack
-import argparse
 import copy
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -227,19 +227,19 @@ class SeedRebindTests(unittest.TestCase):
         import devex_clone_run_cli as cli
         import devex_clone_seed_runtime as runtime
 
-        parser = argparse.ArgumentParser()
-        cli.add_commands(parser.add_subparsers(dest="command", required=True))
-        args = ["seed-runtime", "--backend-dir", str(self.backend), "--run-dir", str(self.directory),
-                "--operation", "source-rebind"]
+        def args(*, request=None, write=False):
+            return SimpleNamespace(command="seed-runtime", run_dir=self.directory,
+                                   operation="source-rebind", request=request,
+                                   producer_binding=None, write=write)
         with patch.object(cli, "execute") as execute:
-            for extra in ([], ["--write"], ["--request", self.successor["path"]]):
-                with self.subTest(extra=extra), self.assertRaises(ValueError):
-                    cli.dispatch(parser.parse_args(args + extra), self.backend)
+            for request, write in ((None, False), (None, True), (Path(self.successor["path"]), False)):
+                with self.subTest(request=request, write=write), self.assertRaises(ValueError):
+                    cli.dispatch(args(request=request, write=write), self.backend)
             execute.assert_not_called()
         completed = {"status": "stage_finished", "stage": "seed-runtime", "mode": "source-rebind",
                      "attempt": 54, "restore_qualified": False}
         with patch.object(cli, "execute", return_value=completed) as execute:
-            observed = cli.dispatch(parser.parse_args(args + ["--request", self.successor["path"], "--write"]), self.backend)
+            observed = cli.dispatch(args(request=Path(self.successor["path"]), write=True), self.backend)
         self.assertEqual(observed, completed)
         self.assertEqual(execute.call_args.kwargs["seed_request"], Path(self.successor["path"]))
         with patch.object(runtime, "require_quiet"), patch.object(rebind, "register_rebind", return_value=self.value()) as register:

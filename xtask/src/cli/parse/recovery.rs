@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 use super::super::model::{CliError, FullStackCommand, RecoveryCommand};
 
+#[path = "recovery/clone.rs"]
+mod clone;
 #[path = "recovery/dataset_prepare.rs"]
 mod dataset_prepare;
 #[path = "recovery/fixture_control.rs"]
@@ -64,27 +66,7 @@ fn parse_clone(args: &[String]) -> Result<RecoveryCommand, CliError> {
     {
         return seed_source::parse(&args[1..]).map(RecoveryCommand::SeedSource);
     }
-    parse_recovery_operation(
-        "clone",
-        args,
-        &[
-            "plan",
-            "verify",
-            "init",
-            "status",
-            "stage",
-            "runtime",
-            "recover",
-            "recover-copy",
-            "bridge",
-            "post-copy",
-            "seed-runtime",
-            "storage",
-            "cache",
-            "maintenance",
-        ],
-    )
-    .map(RecoveryCommand::Clone)
+    clone::parse(args).map(RecoveryCommand::Clone)
 }
 
 fn parse_full_stack(args: &[String]) -> Result<FullStackCommand, CliError> {
@@ -171,25 +153,4 @@ fn valid_commit_sha(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-}
-
-fn parse_recovery_operation(
-    stage: &str,
-    args: &[String],
-    operations: &[&str],
-) -> Result<Vec<String>, CliError> {
-    let Some(operation) = args.first() else {
-        return Err(CliError::new(format!(
-            "check recovery {stage} 缺少明确子操作"
-        )));
-    };
-    if args.len() == 1 && matches!(operation.as_str(), "--help" | "-h") {
-        return Ok(args.to_vec());
-    }
-    if !operations.contains(&operation.as_str()) {
-        return Err(CliError::new(format!(
-            "未知 recovery {stage} 子操作：{operation}"
-        )));
-    }
-    Ok(args.to_vec())
 }

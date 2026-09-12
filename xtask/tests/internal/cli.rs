@@ -2,12 +2,12 @@ use std::path::PathBuf;
 
 use super::cli::{
     ApiGenerateCommand, BackupCommand, BuildOptions, BuildProfile, CheckCommand, CheckOptions,
-    CheckScope, CiCommand, CliError, Command, DataCommand, DeploymentOptions, DeploymentPhase,
-    GenerateCommand, MigrationCommand, MigrationOperation, MigrationTarget, MonitoringCommand,
-    RecoveryCommand, RecoveryInputsCommand, RequiredAction, RequiredEvent, RequiredJobResult,
-    ResourceAction, ResourceCommand, ResourceGateReplayOptions, ResourceTarget, RuntimeCommand,
-    RuntimeOperation, SecurityCommand, SecurityReportKind, SecurityReportOptions, SourceCommand,
-    parse,
+    CheckScope, CiCommand, CliError, CloneCommand, Command, DataCommand, DeploymentOptions,
+    DeploymentPhase, GenerateCommand, MigrationCommand, MigrationOperation, MigrationTarget,
+    MonitoringCommand, RecoveryCommand, RecoveryInputsCommand, RequiredAction, RequiredEvent,
+    RequiredJobResult, ResourceAction, ResourceCommand, ResourceGateReplayOptions, ResourceTarget,
+    RuntimeCommand, RuntimeOperation, SecurityCommand, SecurityReportKind, SecurityReportOptions,
+    SourceCommand, parse,
 };
 
 fn strings(values: &[&str]) -> Vec<String> {
@@ -77,12 +77,11 @@ fn recovery_help_reaches_the_selected_stage_parser() {
     for flag in ["--help", "-h"] {
         for stage in ["inputs", "runtime", "source", "clone"] {
             let actual = parse_command(&["check", "recovery", stage, flag]).unwrap();
-            let arguments = strings(&[flag]);
             let expected = match stage {
                 "inputs" => RecoveryCommand::Inputs(RecoveryInputsCommand::Help),
                 "runtime" => RecoveryCommand::Runtime(RuntimeCommand::Help(None)),
                 "source" => RecoveryCommand::Source(SourceCommand::Help(None)),
-                "clone" => RecoveryCommand::Clone(arguments),
+                "clone" => RecoveryCommand::Clone(CloneCommand::Help),
                 _ => unreachable!(),
             };
             assert_eq!(actual, Command::Check(CheckCommand::Recovery(expected)));

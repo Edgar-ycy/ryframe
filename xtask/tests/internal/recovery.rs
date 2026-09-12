@@ -1,9 +1,10 @@
 use std::path::Path;
 
 use super::cli::{
-    BindingsInputOptions, DatasetPrepareCommand, ExistingReferenceSide, FreshTargetCommand,
-    FreshTargetOperation, FreshTargetOptions, FullStackCommand, MonitoringCommand, RecoveryCommand,
-    RecoveryInputsCommand, RecoveryReferenceCommand, RuntimeCommand, SourceCommand,
+    BindingsInputOptions, CloneCommand, DatasetPrepareCommand, ExistingReferenceSide,
+    FreshTargetCommand, FreshTargetOperation, FreshTargetOptions, FullStackCommand,
+    MonitoringCommand, RecoveryCommand, RecoveryInputsCommand, RecoveryReferenceCommand,
+    RuntimeCommand, SourceCommand,
 };
 use super::recovery::{
     fresh_target_protocol, full_stack_environment, inputs, recovery_command, reference,
@@ -168,7 +169,6 @@ fn fresh_target_uses_a_versioned_private_protocol_without_forwarded_argv() {
 #[test]
 fn dataset_stage_and_clone_keep_current_boundaries() {
     let frontend = Path::new("D:/前端 worktree");
-    let backend = super::workspace::root_dir().display().to_string();
     assert!(
         recovery_command(
             &RecoveryCommand::DatasetPrepare(DatasetPrepareCommand::Help),
@@ -184,16 +184,7 @@ fn dataset_stage_and_clone_keep_current_boundaries() {
         .is_err()
     );
 
-    let (clone, clone_arguments) = recovery_command(
-        &RecoveryCommand::Clone(strings(&["status", "--run-dir", "run"])),
-        frontend,
-    )
-    .unwrap();
-    assert_eq!(clone, "scripts/devex_clone.py");
-    assert_eq!(
-        clone_arguments,
-        strings(&["status", "--run-dir", "run", "--backend-dir", &backend])
-    );
+    assert!(recovery_command(&RecoveryCommand::Clone(CloneCommand::Help), frontend).is_err());
 }
 
 #[test]
@@ -289,7 +280,6 @@ fn fixture_dataset_uses_the_private_device_dataset_adapter() {
 fn forwarded_recovery_scripts_exist_in_checkout() {
     let root = super::workspace::root_dir();
     for command in [
-        RecoveryCommand::Clone(strings(&["status"])),
         RecoveryCommand::Fixture(strings(&["artifact", "snapshot"])),
         RecoveryCommand::Fixture(strings(&["retention", "inspect"])),
         RecoveryCommand::Fixture(strings(&["dataset", "plan"])),
@@ -301,6 +291,7 @@ fn forwarded_recovery_scripts_exist_in_checkout() {
             "恢复入口转发的脚本不在当前检出中：{script}"
         );
     }
+    assert!(root.join("scripts/devex_clone.py").is_file());
     assert!(root.join("scripts/restore_runtime.py").is_file());
     assert!(root.join("scripts/restore_source.py").is_file());
     assert!(root.join("scripts/restore_reference_dataset.mjs").is_file());

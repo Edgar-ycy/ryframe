@@ -1,10 +1,10 @@
 """seed source-register 的不可变证据链与失败关闭。"""
-import argparse
 from contextlib import nullcontext
 import copy
 import json
 from pathlib import Path
 import shutil
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import uuid
@@ -302,20 +302,19 @@ class SeedSourceTests(unittest.TestCase):
 
 class SourceRegisterDispatchTests(unittest.TestCase):
     def test_cli_requires_write_and_routes_without_request(self):
-        parser = argparse.ArgumentParser()
-        cli.add_commands(parser.add_subparsers(dest="command", required=True))
         backend = Path.cwd().resolve()
         directory = backend / ".local-tests/seed-source-cli"
-        base = ["seed-runtime", "--backend-dir", str(backend), "--run-dir", str(directory),
-                "--operation", "source-register"]
-        args = parser.parse_args(base)
+        args = SimpleNamespace(command="seed-runtime", run_dir=directory,
+                               operation="source-register", request=None,
+                               producer_binding=None, write=False)
         with patch.object(cli, "execute") as execute, self.assertRaisesRegex(ValueError, "显式 --write"):
             cli.dispatch(args, backend)
         execute.assert_not_called()
         outer = {"status": "stage_finished", "stage": "seed-runtime", "mode": "source-register",
                  "attempt": 9, "restore_qualified": False}
         with patch.object(cli, "execute", return_value=outer) as execute:
-            self.assertEqual(cli.dispatch(parser.parse_args([*base, "--write"]), backend), outer)
+            args.write = True
+            self.assertEqual(cli.dispatch(args, backend), outer)
         execute.assert_called_once_with(backend, directory, "seed-runtime", "source-register",
                                         seed_request=None, producer_binding=None)
 

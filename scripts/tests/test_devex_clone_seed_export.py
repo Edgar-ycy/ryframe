@@ -1,8 +1,8 @@
 """seed 单次导出、明确失败采用及双侧共享发布的离线回归。"""
 from contextlib import ExitStack, nullcontext
-import argparse
 import copy
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -235,19 +235,20 @@ class SeedExportTests(unittest.TestCase):
         import devex_clone_run_cli as cli
         import devex_clone_seed_runtime as runtime
 
-        parser = argparse.ArgumentParser()
-        cli.add_commands(parser.add_subparsers(dest="command", required=True))
         for mode in sorted(export.MODES):
-            args = ["seed-runtime", "--backend-dir", str(self.backend), "--run-dir", str(self.directory), "--operation", mode]
+            def args(*, request=None, write=False):
+                return SimpleNamespace(command="seed-runtime", run_dir=self.directory,
+                                       operation=mode, request=request,
+                                       producer_binding=None, write=write)
             with patch.object(cli, "execute") as execute:
-                for extra in ([], ["--request", self.successor["path"], "--write"]):
-                    with self.subTest(mode=mode, extra=extra), self.assertRaises(ValueError):
-                        cli.dispatch(parser.parse_args(args + extra), self.backend)
+                for request, write in ((None, False), (Path(self.successor["path"]), True)):
+                    with self.subTest(mode=mode, request=request), self.assertRaises(ValueError):
+                        cli.dispatch(args(request=request, write=write), self.backend)
                 execute.assert_not_called()
             completed = {"status": "stage_finished", "stage": "seed-runtime", "mode": mode,
                          "attempt": 3, "restore_qualified": False}
             with patch.object(cli, "execute", return_value=completed) as execute:
-                self.assertEqual(cli.dispatch(parser.parse_args(args + ["--write"]), self.backend), completed)
+                self.assertEqual(cli.dispatch(args(write=True), self.backend), completed)
             self.assertIsNone(execute.call_args.kwargs["seed_request"])
             with patch.object(runtime, "require_quiet"), patch.object(export, "execute_export", return_value=completed) as stage:
                 self.assertEqual(runtime.execute_seed(self.backend, self.directory, {}, mode, 3), completed)

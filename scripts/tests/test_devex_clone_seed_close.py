@@ -1,5 +1,4 @@
 """seed runtime 分阶段关闭、稳定排空与可续作收据。"""
-import argparse
 from contextlib import nullcontext
 import json
 from pathlib import Path
@@ -517,17 +516,15 @@ class ProcessHistoryTests(unittest.TestCase):
 
 class CliTests(unittest.TestCase):
     def test_close_requires_write_and_routes_exact_operation(self):
-        parser = argparse.ArgumentParser()
-        cli.add_commands(parser.add_subparsers(dest="command", required=True))
         backend = Path.cwd().resolve()
         run_directory = backend / ".local-tests/seed-close-cli"
-        base = ["seed-runtime", "--backend-dir", str(backend), "--run-dir", str(run_directory),
-                "--operation", "close"]
-        args = parser.parse_args(base)
+        args = SimpleNamespace(command="seed-runtime", run_dir=run_directory,
+                               operation="close", request=None,
+                               producer_binding=None, write=False)
         with patch.object(cli, "execute") as execute, self.assertRaisesRegex(ValueError, "显式 --write"):
             cli.dispatch(args, backend)
         execute.assert_not_called()
-        args = parser.parse_args([*base, "--write"])
+        args.write = True
         outer = {"status": "stage_finished", "stage": "seed-runtime", "mode": "close", "attempt": 3,
                  "restore_qualified": False}
         with patch.object(cli, "execute", return_value=outer) as execute:

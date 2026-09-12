@@ -96,10 +96,8 @@ class FreshTargetProtocolTests(unittest.TestCase):
         dispatch.assert_not_called()
 
     def test_old_fresh_target_argv_is_not_a_private_program_entry(self):
-        with patch.dict(os.environ, {}, clear=True), redirect_stderr(StringIO()), \
-                self.assertRaises(SystemExit) as raised:
-            devex_clone.main(["fresh-target", "--workspace", "ignored"])
-        self.assertEqual(raised.exception.code, 2)
+        with patch.dict(os.environ, {}, clear=True), redirect_stderr(StringIO()):
+            self.assertEqual(devex_clone.main(["fresh-target", "--workspace", "ignored"]), 2)
 
 
 if __name__ == "__main__":

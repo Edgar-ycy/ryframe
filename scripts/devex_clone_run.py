@@ -514,7 +514,7 @@ def run_copy(backend: Path, directory: Path, value: dict, environment: Environme
 
 def run_runtime(backend: Path, value: dict, environment: Environments, side: str, operation: str, roles: tuple,
                 *, run_directory: Path | None = None) -> dict:
-    from devex_clone_runtime import control, reconcile_lock
+    from devex_clone_runtime import control, observe, reconcile_lock
 
     if side == "target" and run_directory is not None and (run_directory / "post-copy.json").exists():
         from devex_clone_post import registration, runtime_inputs, target_lock
@@ -545,6 +545,8 @@ def run_runtime(backend: Path, value: dict, environment: Environments, side: str
         with environment.use("target"):
             if operation == "recover":
                 return reconcile_lock(Path(runtime["runtime_dir"]))
+            if operation == "status":
+                return observe(backend, Path(runtime["runtime_dir"]), roles, runtime["api_url"])
             return control(backend, Path(runtime["runtime_dir"]), operation, roles, runtime["api_url"])
 
     if side == "source":
@@ -562,6 +564,8 @@ def run_runtime(backend: Path, value: dict, environment: Environments, side: str
     with environment.use(side):
         if operation == "recover":
             return reconcile_lock(Path(runtime["runtime_dir"]))
+        if operation == "status":
+            return observe(backend, Path(runtime["runtime_dir"]), roles, runtime["api_url"])
         return control(backend, Path(runtime["runtime_dir"]), operation, roles, runtime["api_url"])
 
 
@@ -609,6 +613,9 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
             seed_request: Path | None = None, storage_request: Path | None = None,
             cache_request: Path | None = None) -> dict:
     from source_fingerprints import artifact_sources, current_execution_source
+
+    if stage == "target-verify" and mode != "run":
+        raise ValueError("target-verify 只支持首次 run，不得创建 reconcile 或 resume 阶段")
 
     # 停止只依据已登记运行产物及内核身份，不能被后来源码变化阻挡。
     session_cleanup = stage in {"post-copy", "seed-runtime"} and mode == "recover-session"

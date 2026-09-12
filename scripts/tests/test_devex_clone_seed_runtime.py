@@ -250,21 +250,19 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(execute.call_args.args[3], "stop")
 
     def test_cli_requires_exact_operation_inputs_and_status_is_readonly(self):
-        import argparse
         import devex_clone_run_cli as cli
 
-        parser = argparse.ArgumentParser()
-        cli.add_commands(parser.add_subparsers(dest="command", required=True))
-        def args(mode, *extra):
-            return parser.parse_args(["seed-runtime", "--backend-dir", str(self.backend),
-                "--run-dir", str(self.directory), "--operation", mode, *extra])
+        def args(mode, *, request=None, producer_binding=None, write=False):
+            return SimpleNamespace(command="seed-runtime", run_dir=self.directory,
+                                   operation=mode, request=request,
+                                   producer_binding=producer_binding, write=write)
         for mode in ("register", "arm-input", "source-rebind", "recover-session", "start", "identities-apply", "quotas-plan", "quotas-apply",
                      "quotas-reconcile", "departments-plan", "departments-apply", "departments-reconcile",
                      "departments-verify"):
             with self.subTest(mode=mode), self.assertRaises(ValueError):
                 cli.dispatch(args(mode), self.backend)
         with self.assertRaises(ValueError):
-            cli.dispatch(args("start", "--request", str(self.directory / "unused"), "--write"), self.backend)
+            cli.dispatch(args("start", request=self.directory / "unused", write=True), self.backend)
         with patch.object(runtime, "execute_seed", return_value={"status": "observed"}) as observe:
             self.assertEqual(cli.dispatch(args("status"), self.backend), {"status": "observed"})
             self.assertEqual(observe.call_args.args[2:], (None, "status", None))
@@ -274,9 +272,28 @@ class RuntimeTests(unittest.TestCase):
         completed = {"status": "stage_finished", "stage": "seed-runtime", "mode": "arm-input",
                      "attempt": 53, "restore_qualified": False}
         with patch.object(cli, "execute", return_value=completed) as execute:
-            self.assertEqual(cli.dispatch(args("arm-input", "--request", str(request), "--write"),
+            self.assertEqual(cli.dispatch(args("arm-input", request=request, write=True),
                                           self.backend), completed)
         self.assertEqual(execute.call_args.kwargs["seed_request"], request)
+
+    def test_status_uses_zero_write_runtime_observation(self):
+        runtime_dir = self.directory / "seed-runtime/runtime"
+        handoff = {"api_url": "http://127.0.0.1:18210"}
+        expected = {"kind": "devex-clone-runtime-observation", "operation": "status"}
+        with patch.object(runtime, "runtime_inputs", return_value=(runtime_dir, handoff, {})), \
+                patch("devex_clone_runtime.observe", return_value=expected) as observe, \
+                patch("devex_clone_runtime.control", side_effect=AssertionError("status 不能取得控制锁")):
+            result = runtime.execute_seed(
+                self.backend, self.directory, None, "status", None,
+            )
+        self.assertEqual(result, {
+            "status": "seed_runtime_status",
+            "runtime": expected,
+            "restore_qualified": False,
+        })
+        observe.assert_called_once_with(
+            self.backend, runtime_dir, ("api", "worker"), handoff["api_url"],
+        )
 
     def test_arm_input_dispatches_evidence_only_publisher_without_target_lock(self):
         request = self.directory / "arm-request.json"

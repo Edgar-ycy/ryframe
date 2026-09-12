@@ -1,7 +1,9 @@
 import copy
+from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from decimal import Decimal
 import hashlib
+from io import StringIO
 import json
 import os
 from pathlib import Path
@@ -14,6 +16,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from devex_clone import read_json, verify_plan, write_plan
+import devex_clone
+import devex_clone_protocol
 from artifact_digests import filesystem_path
 from devex_clone_model import create_plan, local_path, object_plan
 from devex_clone_rows import EXCLUDED, literals, parse_row, reject_physical, schema_catalog, validate_state
@@ -350,15 +354,35 @@ TenantDataTableDescriptor { table: \"biz_device\", tenant_column: \"tenant_id\",
         denied = subprocess.run([*command, *arguments], capture_output=True, text=True, encoding="utf-8", timeout=15)
         self.assertEqual(denied.returncode, 2)
         self.assertFalse(output.exists())
-        prepared = subprocess.run([*command, *arguments, "--write"], capture_output=True, text=True, encoding="utf-8", timeout=15)
-        self.assertEqual(prepared.returncode, 0, prepared.stderr)
-        self.assertFalse(json.loads(prepared.stdout)["execution_authorized"])
+        def environment(name, options, write):
+            value = dict(os.environ)
+            value["RYFRAME_XTASK_RECOVERY_CLONE"] = json.dumps({
+                "format_version": 1,
+                "kind": "ryframe-xtask-recovery-clone",
+                "request": {"backend_dir": str(self.backend), "command": name,
+                            "effect": devex_clone_protocol.effect(name, options),
+                            "options": options, "write": write},
+            })
+            return value
+        protocol_file = self.backend / "scripts/devex_clone_protocol.py"
+        prepared_output = StringIO()
+        with patch.dict(os.environ, environment(
+                "plan", {"input": str(filename), "output": str(output)}, True), clear=True), \
+                patch.object(devex_clone_protocol, "__file__", str(protocol_file)), \
+                redirect_stdout(prepared_output):
+            self.assertEqual(devex_clone.main([]), 0)
+        prepared = json.loads(prepared_output.getvalue())
+        self.assertFalse(prepared["execution_authorized"])
         before = {path: file_digest(path) for path in self.backend.rglob("*") if path.is_file()}
-        verified = subprocess.run([*command, "verify", "--backend-dir", str(self.backend), "--plan", str(output)],
-                                  capture_output=True, text=True, encoding="utf-8", timeout=15)
-        self.assertEqual(verified.returncode, 0, verified.stderr)
+        verified_output = StringIO()
+        with patch.dict(os.environ, environment(
+                "verify", {"plan": str(output)}, False), clear=True), \
+                patch.object(devex_clone_protocol, "__file__", str(protocol_file)), \
+                redirect_stdout(verified_output):
+            self.assertEqual(devex_clone.main([]), 0)
+        verified = json.loads(verified_output.getvalue())
         self.assertEqual(before, {path: file_digest(path) for path in self.backend.rglob("*") if path.is_file()})
-        self.assertEqual(json.loads(prepared.stdout), json.loads(verified.stdout))
+        self.assertEqual(prepared, verified)
 
     def schedule(self):
         row = self.add("shared-control", "sys_job_schedule", id=3, tenant_id="system", name="数据保留清理",

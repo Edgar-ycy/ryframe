@@ -308,7 +308,7 @@ def restart_after_stop(backend, directory, runtime, handoff, failed, number):
 
 
 def execute_seed(backend, directory, value, mode, number, request_file=None, producer_binding=None):
-    from devex_clone_runtime import control, reconcile_lock
+    from devex_clone_runtime import control, observe, reconcile_lock
 
     if mode == "recover-session":
         if producer_binding is None:
@@ -318,6 +318,8 @@ def execute_seed(backend, directory, value, mode, number, request_file=None, pro
         runtime, handoff, private = runtime_inputs(backend, directory)
         with Environments(private, private).use("target"):
             result = (reconcile_lock(runtime) if mode == "recover"
+                      else observe(backend, runtime, ("api", "worker"), handoff["api_url"])
+                      if mode == "status"
                       else control(backend, runtime, mode, ("api", "worker"), handoff["api_url"]))
         observed = {"status": "seed_runtime_" + mode, "runtime": result, "restore_qualified": False}
         if mode == "stop":

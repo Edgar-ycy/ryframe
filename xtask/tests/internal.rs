@@ -72,6 +72,8 @@ mod ci_security_tests;
 mod ci_tests;
 #[path = "internal/cli.rs"]
 mod cli_tests;
+#[path = "internal/clone_cli.rs"]
+mod clone_cli_tests;
 #[path = "internal/contract_source.rs"]
 mod contract_source_tests;
 #[path = "internal/contract.rs"]

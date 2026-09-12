@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- `cargo xtask check recovery clone` 的离线计划、账本阶段、运行服务、复制后处理与非来源 seed 操作改为强类型 Rust 请求；首层统一核验 `.local-tests` 绝对路径、角色、枚举及只读、证据写入、业务写入合同，再以无 argv 的版本化私有 JSON 调用原状态机。Python 在加载复制业务模块前移除协议环境，不再维护第二套 argparse 清单，直接脚本 argv 被拒绝；运行状态改用零落盘观察，无效 target verify 续作在创建账本前拒绝，原 ownership、前后像和未知结果核验保持不变。
 - 正式恢复 Runtime 与 Source 命令改由 Rust 完整解析强类型参数，在启动固定 Python 实现前拒绝重复、未知、缺值、写入授权冲突及不安全路径；私有阶段只接受有版本的单环境 JSON 协议并在业务派发前移除，旧 argv 入口不再可用。
 - Device 夹具 source-pair 签发入口改为强类型请求；新收据路径在启动 Python 前限定为当前后端 `.local-tests` 内已有真实父目录，写入必须显式授权，固定实现只从版本化私有协议重建参数，运行时内部直接函数调用保持不变。
 - Device 隔离夹具的工作树准备入口改为 Rust 强类型请求；输出在启动 Python 前限定为当前后端 `.local-tests` 内尚不存在的真实目录，正式候选提交必须成对提供，固定前端路径与请求只通过版本化私有协议传递，协议不会继承到 Git、Corepack 或 Cargo 后代进程。

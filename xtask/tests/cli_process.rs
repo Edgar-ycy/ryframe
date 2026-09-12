@@ -640,6 +640,10 @@ fn recovery_help_uses_the_actual_stage_parser_without_creating_requested_output(
             "--workspace",
         ),
         (
+            ["check", "recovery", "clone", "-h"].as_slice(),
+            "cargo xtask check recovery clone",
+        ),
+        (
             ["check", "recovery", "source", "comparison-verify", "--help"].as_slice(),
             "--receipt",
         ),
