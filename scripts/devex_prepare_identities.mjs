@@ -6,60 +6,12 @@ import { identityLedger } from './devex/identity-ledger.mjs'
 import { preparationContext } from './devex/identity-client.mjs'
 import { applyIdentities } from './devex/identity-apply.mjs'
 import { verifyPrepared } from './devex/identity-verify.mjs'
+import { strictScalarJsonObject } from './private_json_protocol.mjs'
 
 const protocolKey = 'RYFRAME_PERFORMANCE_IDENTITIES_PROTOCOL'
 const protocolPrefix = 'RYFRAME_PERFORMANCE_IDENTITIES_'
 
 export class IdentityProtocolError extends Error {}
-
-function skipWhitespace(value, index) {
-  while (index < value.length && /\s/u.test(value[index])) index++
-  return index
-}
-
-function readJsonString(value, start) {
-  if (value[start] !== '"') throw new IdentityProtocolError('私有协议字段名必须是JSON字符串')
-  let escaped = false
-  for (let index = start + 1; index < value.length; index++) {
-    if (escaped) { escaped = false; continue }
-    if (value[index] === '\\') { escaped = true; continue }
-    if (value[index] !== '"') continue
-    try { return { value: JSON.parse(value.slice(start, index + 1)), end: index + 1 } }
-    catch { throw new IdentityProtocolError('私有协议包含无效JSON字符串') }
-  }
-  throw new IdentityProtocolError('私有协议包含未结束的JSON字符串')
-}
-
-function skipPrimitive(value, start) {
-  if (value[start] === '"') return readJsonString(value, start).end
-  const match = /^(?:true|false|null|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/u
-    .exec(value.slice(start))
-  if (!match) throw new IdentityProtocolError('私有协议字段只允许JSON标量')
-  return start + match[0].length
-}
-
-function rejectRepeatedFields(value) {
-  let index = skipWhitespace(value, 0)
-  if (value[index++] !== '{') throw new IdentityProtocolError('私有协议必须是JSON对象')
-  const fields = new Set()
-  index = skipWhitespace(value, index)
-  if (value[index] === '}') index++
-  else {
-    while (index < value.length) {
-      const field = readJsonString(value, index)
-      if (fields.has(field.value)) throw new IdentityProtocolError(`私有协议字段重复：${field.value}`)
-      fields.add(field.value)
-      index = skipWhitespace(value, field.end)
-      if (value[index++] !== ':') throw new IdentityProtocolError('私有协议字段缺少冒号')
-      index = skipWhitespace(value, index)
-      index = skipWhitespace(value, skipPrimitive(value, index))
-      if (value[index] === '}') { index++; break }
-      if (value[index++] !== ',') throw new IdentityProtocolError('私有协议字段缺少分隔符')
-      index = skipWhitespace(value, index)
-    }
-  }
-  if (skipWhitespace(value, index) !== value.length) throw new IdentityProtocolError('私有协议包含多余内容')
-}
 
 function exactProtocol(value, fields) {
   if (!value || typeof value !== 'object' || Array.isArray(value) ||
@@ -79,15 +31,11 @@ export function privateProtocolArguments(argv = process.argv.slice(2), environme
   const unknown = Object.keys(environment)
     .filter((name) => name.startsWith(protocolPrefix) && name !== protocolKey)
   if (unknown.length) throw new IdentityProtocolError(`身份准备私有环境含未知字段：${unknown.sort().join(',')}`)
-  const raw = environment[protocolKey]
-  if (typeof raw !== 'string' || !raw || raw.length > 32768)
-    throw new IdentityProtocolError('身份准备私有协议缺失、为空或过长')
-  if (/[\n\r\0]/u.test(raw))
-    throw new IdentityProtocolError('身份准备私有协议不能包含换行符或NUL')
-  rejectRepeatedFields(raw)
-  let protocol
-  try { protocol = JSON.parse(raw) }
-  catch { throw new IdentityProtocolError('身份准备私有协议不是有效JSON') }
+  const protocol = strictScalarJsonObject(
+    environment[protocolKey],
+    IdentityProtocolError,
+    '身份准备私有协议',
+  )
   if (protocol?.format_version !== 1 || typeof protocol.operation !== 'string')
     throw new IdentityProtocolError('身份准备私有协议版本或操作无效')
   if (protocol.operation === 'plan') {
