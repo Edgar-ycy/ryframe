@@ -65,7 +65,7 @@ cargo xtask generate resource post --explain
 2. 使用 `--write` 更新后端、OpenAPI 和前端派生文件，再以 `cargo xtask generate resource --all --check` 确认零差异。
 3. 补充前端业务交互，执行 `cargo xtask check`，用浏览器验证新增、查询、编辑和删除。
 
-租户资源生成同时更新建表迁移和复制目录；路由键须与菜单键一致。需要验证完整 Device 链路时，在隔离后端工作树执行 `cargo xtask check recovery fixture --output-dir <后端根目录>/.local-tests/device-fixture --write`。该入口固定当前后端与 `--frontend-dir` 选择的前端工作树，在新建隔离工作树生成资源并验证只读幂等性，不启动外部服务；随后给隔离工作树显式配置全栈测试资源，并以 `RYFRAME_E2E_FIXTURE=device` 运行真实浏览器验收。工作树收据记录源代码与生成内容指纹，失败证据保留在输出目录。
+租户资源生成同时更新建表迁移和复制目录；路由键须与菜单键一致。需要验证完整 Device 链路时，在隔离后端工作树执行 `cargo xtask check recovery fixture --output-dir <后端根目录>/.local-tests/device-fixture --write`。该入口固定当前后端与 `--frontend-dir` 选择的前端工作树，在新建隔离工作树生成资源并验证只读幂等性，不启动外部服务。正式候选验收还必须同时传入 `--expected-backend-sha <SHA>` 和 `--expected-frontend-sha <SHA>`；入口会在创建输出目录前拒绝提交不匹配、已修改或存在未跟踪文件的来源。随后给隔离工作树显式配置全栈测试资源，并以 `RYFRAME_E2E_FIXTURE=device` 运行真实浏览器验收。工作树收据记录源代码与生成内容指纹，失败证据保留在输出目录。
 ## 开发自定义业务
 
 不能由标准资源表达的流程按以下顺序实现：

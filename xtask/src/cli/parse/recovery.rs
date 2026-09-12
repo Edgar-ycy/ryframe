@@ -166,7 +166,11 @@ fn validate_monitoring_ports(
 
 fn parse_fixture(args: &[String]) -> Result<Vec<String>, CliError> {
     match args {
-        [option, ..] if option.starts_with("--") => Ok(args.to_vec()),
+        [option] if matches!(option.as_str(), "--help" | "-h") => Ok(args.to_vec()),
+        [option, ..] if option.starts_with("--") => {
+            validate_fixture_prepare(args)?;
+            Ok(args.to_vec())
+        }
         [operation, ..]
             if [
                 "environment",
@@ -188,6 +192,71 @@ fn parse_fixture(args: &[String]) -> Result<Vec<String>, CliError> {
             "用法：cargo xtask check recovery fixture --output-dir <目录> --write，或 fixture <environment|review|request|successor|artifact|retention|services|source-pair|runtime|dataset> ...",
         )),
     }
+}
+
+fn validate_fixture_prepare(args: &[String]) -> Result<(), CliError> {
+    let mut values = std::collections::BTreeMap::new();
+    let mut write = false;
+    let mut index = 0;
+    while index < args.len() {
+        let option = args[index].as_str();
+        if option == "--write" {
+            if write {
+                return Err(CliError::new("--write 不能重复"));
+            }
+            write = true;
+            index += 1;
+            continue;
+        }
+        if ![
+            "--output-dir",
+            "--expected-backend-sha",
+            "--expected-frontend-sha",
+        ]
+        .contains(&option)
+        {
+            return Err(CliError::new(format!("未知 fixture 参数：{option}")));
+        }
+        let value = args
+            .get(index + 1)
+            .filter(|value| !value.trim().is_empty() && !value.starts_with('-'))
+            .ok_or_else(|| CliError::new(format!("{option} 缺少取值")))?;
+        if values.insert(option, value).is_some() {
+            return Err(CliError::new(format!("{option} 不能重复")));
+        }
+        index += 2;
+    }
+    if !values.contains_key("--output-dir") {
+        return Err(CliError::new("fixture 缺少必需参数 --output-dir"));
+    }
+    if !write {
+        return Err(CliError::new("生成 Device 夹具必须显式传入 --write"));
+    }
+    let backend = values.get("--expected-backend-sha");
+    let frontend = values.get("--expected-frontend-sha");
+    if backend.is_some() != frontend.is_some() {
+        return Err(CliError::new(
+            "正式夹具必须同时指定 --expected-backend-sha 与 --expected-frontend-sha",
+        ));
+    }
+    if [backend, frontend]
+        .into_iter()
+        .flatten()
+        .any(|value| !valid_commit_sha(value))
+    {
+        return Err(CliError::new(
+            "正式夹具提交必须是非零的 40 位小写十六进制 SHA",
+        ));
+    }
+    Ok(())
+}
+
+fn valid_commit_sha(value: &str) -> bool {
+    value.len() == 40
+        && !value.bytes().all(|byte| byte == b'0')
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
 fn parse_recovery_operation(

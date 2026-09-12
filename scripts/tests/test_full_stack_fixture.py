@@ -105,6 +105,61 @@ class FullStackFixtureTests(unittest.TestCase):
             run.call_args_list[1].args[0], ["git", "apply", "--check", "--binary", "-"]
         )
 
+    def test_formal_source_requires_exact_clean_head(self):
+        expected = "a" * 40
+        clean = {
+            "head": expected,
+            "patch_sha256": hashlib.sha256(b"").hexdigest(),
+            "files": [],
+        }
+        with (
+            patch.object(fixture, "snapshot", return_value=(clean, b"")),
+            patch.object(fixture, "git", return_value=b""),
+        ):
+            self.assertEqual(
+                fixture.exact_clean_snapshot(self.backend, expected), (clean, b"")
+            )
+
+        cases = (
+            ({**clean, "head": "b" * 40}, b"", b""),
+            (clean, b"patch", b" M tracked.rs"),
+            ({**clean, "files": [{"path": "new.rs", "sha256": "c" * 64}]}, b"", b"?? new.rs"),
+        )
+        for receipt, diff, status in cases:
+            with (
+                self.subTest(receipt=receipt, diff=diff, status=status),
+                patch.object(fixture, "snapshot", return_value=(receipt, diff)),
+                patch.object(fixture, "git", return_value=status),
+                self.assertRaisesRegex(ValueError, "精确、干净"),
+            ):
+                fixture.exact_clean_snapshot(self.backend, expected)
+        with self.assertRaisesRegex(ValueError, "SHA 无效"):
+            fixture.exact_clean_snapshot(self.backend, "main")
+
+    def test_formal_pair_is_validated_before_output_creation(self):
+        output = self.backend / ".local-tests/formal-device"
+        with (
+            patch.object(fixture, "validate_paths"),
+            patch.object(
+                fixture,
+                "source_inputs",
+                side_effect=ValueError("正式夹具必须使用精确、干净的候选提交"),
+            ),
+            self.assertRaisesRegex(ValueError, "精确、干净"),
+        ):
+            fixture.prepare(
+                self.backend,
+                self.frontend,
+                output,
+                expected_backend_sha="a" * 40,
+                expected_frontend_sha="b" * 40,
+            )
+        self.assertFalse(output.exists())
+
+    def test_formal_pair_requires_both_commits(self):
+        with self.assertRaisesRegex(ValueError, "同时指定"):
+            fixture.source_inputs(self.backend, self.frontend, "a" * 40, None)
+
     def test_fixture_migration_respects_shared_release_stage(self):
         for stable, options in (
             (False, ["--refresh-baseline", "--write"]),

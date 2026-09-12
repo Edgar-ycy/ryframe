@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,9 @@ from pathlib import Path
 from full_stack_process import write_receipt
 from release_stage import release_stage
 from source_inventory import git, snapshot
+
+
+COMMIT_PATTERN = re.compile(r"[a-f0-9]{40}")
 
 
 def validate_paths(backend: Path, frontend: Path, output: Path) -> None:
@@ -74,6 +78,38 @@ def copy_snapshot(
         raise ValueError("工作树复制期间源码发生变化，拒绝使用混合快照")
 
 
+def exact_clean_snapshot(root: Path, expected_sha: str) -> tuple[dict, bytes]:
+    """在创建正式夹具目录前绑定精确、干净的候选提交。"""
+    if COMMIT_PATTERN.fullmatch(expected_sha) is None:
+        raise ValueError("正式夹具的预期提交 SHA 无效")
+    receipt, patch = snapshot(root)
+    status = git(root, "status", "--porcelain=v1", "--untracked-files=all")
+    if (
+        receipt["head"] != expected_sha
+        or patch
+        or receipt["files"]
+        or status.strip()
+    ):
+        raise ValueError("正式夹具必须使用精确、干净的候选提交")
+    return receipt, patch
+
+
+def source_inputs(
+    backend: Path,
+    frontend: Path,
+    expected_backend_sha: str | None,
+    expected_frontend_sha: str | None,
+) -> tuple[tuple[dict, bytes], tuple[dict, bytes]]:
+    if (expected_backend_sha is None) != (expected_frontend_sha is None):
+        raise ValueError("正式夹具必须同时指定前后端预期提交")
+    if expected_backend_sha is None or expected_frontend_sha is None:
+        return snapshot(backend), snapshot(frontend)
+    return (
+        exact_clean_snapshot(backend, expected_backend_sha),
+        exact_clean_snapshot(frontend, expected_frontend_sha),
+    )
+
+
 def register_fixture_migration(root: Path, log: Path) -> None:
     options = (
         ["--freeze"]
@@ -96,10 +132,20 @@ def reference_fixture_root(backend: Path) -> Path:
     return root
 
 
-def prepare(backend: Path, frontend: Path, output: Path) -> dict:
+def prepare(
+    backend: Path,
+    frontend: Path,
+    output: Path,
+    *,
+    expected_backend_sha: str | None = None,
+    expected_frontend_sha: str | None = None,
+) -> dict:
     validate_paths(backend, frontend, output)
-    backend_receipt, backend_patch = snapshot(backend)
-    frontend_receipt, frontend_patch = snapshot(frontend)
+    backend_source, frontend_source = source_inputs(
+        backend, frontend, expected_backend_sha, expected_frontend_sha
+    )
+    backend_receipt, backend_patch = backend_source
+    frontend_receipt, frontend_patch = frontend_source
     fixture = backend / "crates/ryframe-generator/tests/fixtures/device.toml"
     fixture_bytes = fixture.read_bytes()
     output.mkdir(parents=True, exist_ok=False)
@@ -182,12 +228,18 @@ def main() -> None:
     parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--frontend-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--expected-backend-sha")
+    parser.add_argument("--expected-frontend-sha")
     parser.add_argument("--write", action="store_true", required=True)
     args = parser.parse_args()
+    if (args.expected_backend_sha is None) != (args.expected_frontend_sha is None):
+        parser.error("正式夹具必须同时指定 --expected-backend-sha 与 --expected-frontend-sha")
     receipt = prepare(
         args.backend_dir.resolve(),
         args.frontend_dir.resolve(),
         args.output_dir.resolve(),
+        expected_backend_sha=args.expected_backend_sha,
+        expected_frontend_sha=args.expected_frontend_sha,
     )
     print(
         json.dumps(

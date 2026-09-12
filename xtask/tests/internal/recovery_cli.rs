@@ -1,0 +1,295 @@
+use super::cli::{CheckCommand, CliError, Command, RecoveryCommand, parse};
+
+fn strings(values: &[&str]) -> Vec<String> {
+    values.iter().map(ToString::to_string).collect()
+}
+
+fn parse_command(values: &[&str]) -> std::result::Result<Command, CliError> {
+    parse(strings(values)).map(|cli| cli.command)
+}
+#[test]
+fn parses_recovery_check_groups() {
+    assert_eq!(
+        parse_command(&[
+            "check",
+            "recovery",
+            "runtime",
+            "verify",
+            "--receipt",
+            "runtime.json",
+        ])
+        .unwrap(),
+        Command::Check(CheckCommand::Recovery(RecoveryCommand::Runtime(strings(
+            &["verify", "--receipt", "runtime.json",]
+        ))))
+    );
+    for operation in [
+        "build", "register", "start", "status", "stop", "recover", "bind",
+    ] {
+        assert!(matches!(
+            parse_command(&["check", "recovery", "runtime", operation]),
+            Ok(Command::Check(CheckCommand::Recovery(RecoveryCommand::Runtime(arguments))))
+                if arguments == strings(&[operation])
+        ));
+    }
+    assert!(parse_command(&["check", "recovery", "runtime", "restart"]).is_err());
+    assert!(parse_command(&["check", "recovery", "source", "quiesce"]).is_err());
+    assert!(matches!(
+        parse_command(&[
+            "check",
+            "recovery",
+            "fresh-target",
+            "--workspace",
+            "D:/隔离 target",
+            "--operation",
+            "status",
+        ]),
+        Ok(Command::Check(CheckCommand::Recovery(RecoveryCommand::FreshTarget(arguments))))
+            if arguments == strings(&[
+                "--workspace",
+                "D:/隔离 target",
+                "--operation",
+                "status",
+            ])
+    ));
+    assert_eq!(
+        parse_command(&[
+            "check",
+            "recovery",
+            "source",
+            "comparison-verify",
+            "--receipt",
+            "comparison.json",
+        ])
+        .unwrap(),
+        Command::Check(CheckCommand::Recovery(RecoveryCommand::Source(strings(&[
+            "comparison-verify",
+            "--receipt",
+            "comparison.json"
+        ]))))
+    );
+    for values in [
+        ["check", "recovery", "source"].as_slice(),
+        ["check", "recovery", "inputs"].as_slice(),
+        ["check", "recovery", "inputs", "unknown"].as_slice(),
+        ["check", "recovery", "source", "unknown"].as_slice(),
+        ["check", "recovery", "runtime", "unknown"].as_slice(),
+        ["check", "recovery", "missing"].as_slice(),
+    ] {
+        assert!(parse_command(values).is_err());
+    }
+}
+
+#[test]
+fn parses_fixture_generation_and_rejects_ambiguous_sources() {
+    assert_eq!(
+        parse_command(&[
+            "check",
+            "recovery",
+            "fixture",
+            "--output-dir",
+            "fixture",
+            "--expected-backend-sha",
+            "a123456789012345678901234567890123456789",
+            "--expected-frontend-sha",
+            "b123456789012345678901234567890123456789",
+            "--write",
+        ])
+        .unwrap(),
+        Command::Check(CheckCommand::Recovery(RecoveryCommand::Fixture(strings(
+            &[
+                "--output-dir",
+                "fixture",
+                "--expected-backend-sha",
+                "a123456789012345678901234567890123456789",
+                "--expected-frontend-sha",
+                "b123456789012345678901234567890123456789",
+                "--write",
+            ]
+        ))))
+    );
+    for invalid in [
+        vec!["--output-dir", "fixture"],
+        vec!["--output-dir", "fixture", "--write", "--write"],
+        vec!["--output-dir", "fixture", "--unknown", "value", "--write"],
+        vec![
+            "--output-dir",
+            "fixture",
+            "--expected-backend-sha",
+            "a123456789012345678901234567890123456789",
+            "--write",
+        ],
+        vec![
+            "--output-dir",
+            "fixture",
+            "--expected-backend-sha",
+            "main",
+            "--expected-frontend-sha",
+            "b123456789012345678901234567890123456789",
+            "--write",
+        ],
+    ] {
+        let mut command = vec!["check", "recovery", "fixture"];
+        command.extend(invalid);
+        assert!(parse_command(&command).is_err(), "{command:?}");
+    }
+    for operation in ["artifact", "retention"] {
+        assert_eq!(
+            parse_command(&[
+                "check",
+                "recovery",
+                "fixture",
+                operation,
+                "inspect",
+                "--runtime-dir",
+                "D:/验收/runtime",
+            ])
+            .unwrap(),
+            Command::Check(CheckCommand::Recovery(RecoveryCommand::Fixture(strings(
+                &[operation, "inspect", "--runtime-dir", "D:/验收/runtime",]
+            ))))
+        );
+    }
+}
+
+fn monitoring_bind_arguments() -> Vec<String> {
+    strings(&[
+        "bind",
+        "--runtime-receipt",
+        "D:/恢复/runtime.json",
+        "--target-plan",
+        "D:/恢复/target.json",
+        "--output",
+        "D:/恢复/监控/binding.json",
+        "--run-id",
+        "monitor-r1",
+        "--metrics-token-file",
+        "D:/恢复/监控/metrics-token.txt",
+        "--prometheus",
+        "D:/tools/prometheus.exe",
+        "--promtool",
+        "D:/tools/promtool.exe",
+        "--alertmanager",
+        "D:/tools/alertmanager.exe",
+        "--amtool",
+        "D:/tools/amtool.exe",
+        "--prometheus-port",
+        "29090",
+        "--alertmanager-port",
+        "29093",
+        "--webhook-port",
+        "29094",
+        "--write",
+    ])
+}
+
+fn parse_monitoring(arguments: Vec<String>) -> std::result::Result<Command, CliError> {
+    parse(
+        strings(&["check", "recovery", "monitoring"])
+            .into_iter()
+            .chain(arguments)
+            .collect(),
+    )
+    .map(|cli| cli.command)
+}
+
+#[test]
+fn parses_monitoring_read_and_write_operations() {
+    assert_eq!(
+        parse_command(&[
+            "check",
+            "recovery",
+            "monitoring",
+            "status",
+            "--binding",
+            "D:/隔离 监控/binding.json",
+        ])
+        .unwrap(),
+        Command::Check(CheckCommand::Recovery(RecoveryCommand::Monitoring(
+            strings(&["status", "--binding", "D:/隔离 监控/binding.json"])
+        )))
+    );
+    let arguments = monitoring_bind_arguments();
+    assert_eq!(
+        parse_monitoring(arguments.clone()).unwrap(),
+        Command::Check(CheckCommand::Recovery(RecoveryCommand::Monitoring(
+            arguments
+        )))
+    );
+}
+
+#[test]
+fn rejects_invalid_monitoring_operations_before_execution() {
+    let mut duplicate_ports = monitoring_bind_arguments();
+    let alertmanager_port = duplicate_ports
+        .iter()
+        .position(|value| value == "--alertmanager-port")
+        .unwrap()
+        + 1;
+    duplicate_ports[alertmanager_port] = "29090".into();
+    let mut privileged_port = monitoring_bind_arguments();
+    let prometheus_port = privileged_port
+        .iter()
+        .position(|value| value == "--prometheus-port")
+        .unwrap()
+        + 1;
+    privileged_port[prometheus_port] = "80".into();
+    for values in [
+        Vec::new(),
+        strings(&["unknown"]),
+        strings(&["start", "--binding", "one"]),
+        strings(&["status", "--binding", "one", "--write"]),
+        strings(&["status", "--binding", "one", "--binding", "two"]),
+        strings(&["status", "--binding", "one", "--unknown"]),
+        strings(&["bind", "--write"]),
+        duplicate_ports,
+        privileged_port,
+    ] {
+        assert!(parse_monitoring(values.clone()).is_err(), "{values:?}");
+    }
+}
+
+#[test]
+fn parses_recovery_dataset_and_clone_groups() {
+    assert_eq!(
+        parse_command(&[
+            "check",
+            "recovery",
+            "dataset-prepare",
+            "--plan",
+            "reference.json",
+        ])
+        .unwrap(),
+        Command::Check(CheckCommand::Recovery(RecoveryCommand::DatasetPrepare(
+            strings(&["--plan", "reference.json"],)
+        )))
+    );
+    assert_eq!(
+        parse_command(&["check", "recovery", "clone", "status", "--run-dir", "run"]).unwrap(),
+        Command::Check(CheckCommand::Recovery(RecoveryCommand::Clone(strings(&[
+            "status",
+            "--run-dir",
+            "run",
+        ]))))
+    );
+    assert_eq!(
+        parse_command(&[
+            "check",
+            "recovery",
+            "clone",
+            "maintenance",
+            "--operation",
+            "verify",
+            "--output",
+            "build.json",
+        ])
+        .unwrap(),
+        Command::Check(CheckCommand::Recovery(RecoveryCommand::Clone(strings(&[
+            "maintenance",
+            "--operation",
+            "verify",
+            "--output",
+            "build.json",
+        ]))))
+    );
+}
