@@ -20,6 +20,8 @@ import restore_monitoring_authority as authority_module
 import restore_monitoring_delivery as delivery
 import restore_monitoring_evidence as evidence
 import restore_monitoring_permissions as permissions
+import restore_monitoring_processes as monitoring_processes
+import restore_monitoring_runtime as monitoring_runtime
 import restore_monitoring_staging as staging
 import restore_monitoring_rules as rules
 from workspace_directory import WorkspaceDirectory
@@ -192,6 +194,7 @@ class MonitoringBindingTests(unittest.TestCase):
             (staging.ENVIRONMENT_CHECK, b"# environment check\n"),
             (staging.REQUIREMENTS, b"fixture==1\n"),
             (staging.RUNNER, b"# monitoring runner\n"),
+            *((relative, self.rule_heads[relative]) for relative in staging.RESOURCES),
         )
         self.acl = {
             "platform": "windows" if os.name == "nt" else "posix",
@@ -499,6 +502,18 @@ class MonitoringBindingTests(unittest.TestCase):
                 acl_reader=lambda _path: self.acl,
             )
         unknown.unlink()
+        staged_rules = staging_root / staging.RESOURCES[0]
+        rules_content = staged_rules.read_bytes()
+        staged_rules.write_bytes(b"X" + rules_content[1:])
+        with self.assertRaisesRegex(ValueError, "执行字节"):
+            staging.verify_staging(
+                self.run_directory,
+                binding["staging"],
+                binding["coordinator"],
+                run=self._run,
+                acl_reader=lambda _path: self.acl,
+            )
+        staged_rules.write_bytes(rules_content)
         runner = Path(binding["runner"]["path"])
         content = runner.read_bytes()
         original = self.backend / ".local-tests/original-runner.py"
@@ -636,6 +651,434 @@ class MonitoringBindingTests(unittest.TestCase):
             ValueError, "指定的解释器"
         ):
             staging._source_python()
+
+    def test_public_lifecycle_dispatch_uses_verified_staged_execution(self):
+        output, binding = self._bind()
+        document = evidence.read_json_document(output)
+        source = FakeDocument(self.files["runtime"], {}, "f" * 64)
+        environment_document = FakeDocument(self.environment, {}, "e" * 64)
+        execution = {
+            "root": Path(binding["staging"]["path"]).parent,
+            "runner_command": [binding["python"]["path"], binding["runner"]["path"]],
+            "environment": {"SAFE_FIXTURE": "1"},
+        }
+        returned = {
+            "status": "running",
+            "run_id": binding["run_id"],
+            "scope_id": binding["scope_id"],
+        }
+
+        def staged_run(command, **kwargs):
+            self.assertEqual(command[:2], execution["runner_command"])
+            self.assertEqual(command[2], "__start")
+            self.assertEqual(kwargs["cwd"], execution["root"])
+            self.assertEqual(kwargs["env"], execution["environment"])
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=json.dumps(returned, separators=(",", ":")).encode(),
+            )
+
+        with (
+            patch.object(monitoring_runtime, "read_binding", return_value=(document, binding)),
+            patch.object(delivery, "verify_binding_inputs", return_value=(binding, [source])),
+            patch.object(
+                delivery,
+                "load_environment",
+                return_value=(
+                    {"APP_MONITOR_METRICS_BEARER_TOKEN": self.token},
+                    binding["credential"],
+                    environment_document,
+                ),
+            ),
+            patch.object(
+                delivery,
+                "verified_staging_execution",
+                return_value=nullcontext(execution),
+            ),
+        ):
+            self.assertEqual(delivery._dispatch_staged("start", self.backend, output, run=staged_run), returned)
+        self.assertEqual(source.unchanged, 1)
+        self.assertEqual(environment_document.unchanged, 1)
+
+    def test_public_lifecycle_failure_reports_stage_and_safe_type_without_output_secret(self):
+        output, binding = self._bind()
+        document = evidence.read_json_document(output)
+        environment_document = FakeDocument(self.environment, {}, "e" * 64)
+        execution = {
+            "root": Path(binding["staging"]["path"]).parent,
+            "runner_command": [binding["python"]["path"], binding["runner"]["path"]],
+            "environment": {"SAFE_FIXTURE": "1"},
+        }
+        (output.parent / "start-failure.json").write_text("{}", encoding="utf-8")
+        completed = subprocess.CompletedProcess(
+            execution["runner_command"],
+            17,
+            stdout=json.dumps(
+                {"status": "failed", "error_type": "RuntimeError", "detail": self.token}
+            ).encode(),
+        )
+        with (
+            patch.object(monitoring_runtime, "read_binding", return_value=(document, binding)),
+            patch.object(delivery, "verify_binding_inputs", return_value=(binding, [])),
+            patch.object(
+                delivery,
+                "load_environment",
+                return_value=(
+                    {"APP_MONITOR_METRICS_BEARER_TOKEN": self.token},
+                    binding["credential"],
+                    environment_document,
+                ),
+            ),
+            patch.object(delivery, "verified_staging_execution", return_value=nullcontext(execution)),
+            self.assertRaisesRegex(ValueError, "阶段 start.*RuntimeError.*start-failure.json") as caught,
+        ):
+            delivery._dispatch_staged("start", self.backend, output, run=Mock(return_value=completed))
+        self.assertNotIn(self.token, str(caught.exception))
+
+    def _start_components(self):
+        output, binding = self._bind()
+        document = evidence.read_json_document(output)
+        execution = {
+            "root": Path(binding["staging"]["path"]).parent,
+            "tools": {name: Path(item["path"]) for name, item in binding["tools"].items()},
+            "runner_command": [binding["python"]["path"], binding["runner"]["path"]],
+        }
+        launched = {}
+
+        class Process:
+            def __init__(self, tree):
+                self.tree = tree
+                self.pid = tree["process"]["pid"]
+                self.released = False
+
+            def poll(self):
+                return None
+
+            def release_controller_handle(self):
+                self.released = True
+
+        def launcher(directory, role, scope, command, _cwd, _environment, _output, operation_id):
+            number = 41000 + len(launched) * 10
+
+            def identity(pid):
+                return {
+                    "pid": pid,
+                    "started": str(pid * 100),
+                    "executable": str(Path(command[0]).resolve()),
+                }
+            tree = {
+                "format_version": 2,
+                "kind": "full-stack-process-tree",
+                "runtime_directory": str(directory.resolve()),
+                "role": role,
+                "scope_id": scope,
+                "operation_id": operation_id,
+                "supervisor": identity(number),
+                "process": identity(number + 1),
+                "monitor": identity(number + 2),
+                "group_id": number,
+            }
+            (directory / f"{role}-tree.json").write_text(json.dumps(tree), encoding="utf-8")
+            launched[role] = {"command": command, "process": Process(tree)}
+            return launched[role]["process"]
+
+        return output, document, binding, execution, launched, launcher
+
+    def _start_fixture(self):
+        output, document, binding, execution, launched, launcher = self._start_components()
+        patches = (
+            patch.object(monitoring_runtime, "repository", side_effect=lambda path, _label: path),
+            patch.object(monitoring_runtime, "write_new", side_effect=self._write),
+            patch.object(monitoring_processes, "validate_new_output", side_effect=lambda path, _root: path),
+        )
+        with patches[0], patches[1], patches[2]:
+            start = monitoring_runtime.start_runtime(
+                self.backend,
+                document,
+                binding,
+                execution,
+                run=self._run,
+                launcher=launcher,
+                ready=lambda _url: None,
+                listener=lambda _pid, _url: None,
+            )
+        return output, document, binding, execution, launched, start
+
+    def test_start_receipt_publication_failure_reaps_released_trees_and_ports(self):
+        output, document, binding, execution, launched, launcher = self._start_components()
+        stopped, closed_ports = [], []
+
+        def write(path, value, root):
+            if path.name == "start.json":
+                raise OSError("fixture start publication failure")
+            self._write(path, value, root)
+
+        def stop(processes, *, crash):
+            self.assertTrue(crash)
+            self.assertEqual(set(processes), set(monitoring_processes.ROLES))
+            self.assertTrue(all(item.released for item in processes.values()))
+            stopped.extend(reversed(monitoring_processes.ROLES))
+            return {role: {"status": "stopped"} for role in processes}
+
+        with (
+            patch.object(monitoring_runtime, "repository", side_effect=lambda path, _label: path),
+            patch.object(monitoring_runtime, "write_new", side_effect=write),
+            patch.object(monitoring_processes, "validate_new_output", side_effect=lambda path, _root: path),
+            patch.object(monitoring_runtime, "stop_processes", side_effect=stop),
+            self.assertRaisesRegex(OSError, "start publication"),
+        ):
+            monitoring_runtime.start_runtime(
+                self.backend,
+                document,
+                binding,
+                execution,
+                run=self._run,
+                launcher=launcher,
+                ready=lambda _url: None,
+                listener=lambda _pid, _url: None,
+                port_check=closed_ports.append,
+            )
+        self.assertEqual(stopped, ["prometheus", "alertmanager", "webhook"])
+        self.assertEqual(closed_ports, list(binding["endpoints"].values()))
+        self.assertFalse((output.parent / "start.json").exists())
+        failure = json.loads((output.parent / "start-failure.json").read_text(encoding="utf-8"))
+        self.assertEqual(failure["error_type"], "OSError")
+
+    def _fetch(self, binding, events):
+        calls = {"alerts": 0, "starts_at": None}
+
+        def response(status, body=b"", content_type="application/json"):
+            return {"status": status, "content_type": content_type, "body": body}
+
+        def fetch(url, *, headers=None, body=None, timeout=5):
+            del timeout
+            if url in {
+                binding["authority"]["endpoints"]["api_metrics"],
+                binding["authority"]["endpoints"]["worker_metrics"],
+            }:
+                authorization = (headers or {}).get("Authorization")
+                if authorization != "Bearer " + self.token:
+                    return response(401)
+                raw = b"# HELP ryframe_fixture fixture\n# TYPE ryframe_fixture gauge\nryframe_fixture 1\n"
+                return response(200, raw, "text/plain; version=0.0.4")
+            if url.endswith("/api/v1/targets"):
+                targets = [
+                    {
+                        "labels": {"job": job},
+                        "health": "up",
+                        "scrapeUrl": binding["authority"]["endpoints"][endpoint],
+                        "lastError": "",
+                    }
+                    for job, endpoint in (("ryframe-api", "api_metrics"), ("ryframe-worker", "worker_metrics"))
+                ]
+                return response(200, json.dumps({"status": "success", "data": {"activeTargets": targets}}).encode())
+            if "/api/v1/rules" in url:
+                loaded = [{"name": name} for name in sorted(rules.ALERTS)]
+                return response(200, json.dumps({"status": "success", "data": {"groups": [{"rules": loaded}]}}).encode())
+            if url.endswith("/api/v2/alerts") and body is not None:
+                calls["alerts"] += 1
+                alert = json.loads(body)[0]
+                if calls["starts_at"] is None:
+                    calls["starts_at"] = alert["startsAt"]
+                else:
+                    self.assertEqual(alert["startsAt"], calls["starts_at"])
+                status = "firing" if calls["alerts"] == 1 else "resolved"
+                delivered = {**alert, "status": status}
+                event = {
+                    "received_at": "2026-09-12T00:00:00.000000Z",
+                    "remote": "127.0.0.1",
+                    "payload": {
+                        "receiver": "ryframe-local-webhook",
+                        "status": status,
+                        "alerts": [delivered],
+                    },
+                }
+                with events.open("ab") as stream:
+                    stream.write(json.dumps(event, separators=(",", ":")).encode() + b"\n")
+                return response(200)
+            raise AssertionError("未登记监控 HTTP 请求：" + url)
+
+        return fetch
+
+    def test_full_lifecycle_uses_staged_commands_and_publishes_result_last(self):
+        output, document, binding, execution, launched, start = self._start_fixture()
+        self.assertEqual(set(launched), set(monitoring_processes.ROLES))
+        staging_root = execution["root"].resolve()
+        for role, item in launched.items():
+            self.assertTrue(Path(item["command"][0]).resolve().is_relative_to(staging_root))
+            self.assertTrue(item["process"].released)
+        self.assertEqual(launched["webhook"]["command"][:2], execution["runner_command"])
+        self.assertEqual(
+            Path(start["configs"]["rules"]["path"]),
+            output.parent / "configs/ryframe-alerts.yml",
+        )
+
+        identities = {
+            item["process"].tree["process"]["pid"]: item["process"].tree["process"]
+            for item in launched.values()
+        }
+        with patch.object(
+            monitoring_runtime, "process_identity", side_effect=lambda pid: identities.get(pid)
+        ):
+            running = monitoring_runtime.status(document, binding)
+        self.assertEqual((running["status"], running["next_action"]), ("running", "observe"))
+        self.assertTrue(all(running["processes_alive"].values()))
+        fetch = self._fetch(binding, output.parent / "evidence/webhook-events.jsonl")
+        patches = (
+            patch.object(monitoring_runtime, "repository", side_effect=lambda path, _label: path),
+            patch.object(monitoring_runtime, "write_new", side_effect=self._write),
+            patch.object(monitoring_runtime, "process_identity", side_effect=lambda pid: identities.get(pid)),
+            patch.object(monitoring_processes, "validate_new_output", side_effect=lambda path, _root: path),
+            patch("restore_monitoring_observation.validate_new_output", side_effect=lambda path, _root: path),
+        )
+        with patches[0], patches[1], patches[2], patches[3], patches[4]:
+            observation = monitoring_runtime.observe_runtime(
+                self.backend,
+                document,
+                binding,
+                execution,
+                self.token,
+                run=self._run,
+                fetch=fetch,
+                listener=lambda _pid, _url: None,
+            )
+        self.assertTrue(observation["delivery"]["firing"])
+        self.assertTrue(observation["delivery"]["resolved"])
+        self.assertEqual(observation["boundaries"]["cases"], ["23h", "23h30s", "24h30s"])
+
+        stopped = []
+
+        def terminate(tree, *, crash):
+            self.assertFalse(crash)
+            stopped.append(tree["role"])
+
+        def completion(tree):
+            path = output.parent / "processes" / f"{tree['role']}-members-{tree['operation_id']}-stopped.json"
+            path.write_text(json.dumps({"status": "stopped"}), encoding="utf-8")
+            return evidence.descriptor(path)
+
+        with (
+            patch.object(monitoring_runtime, "repository", side_effect=lambda path, _label: path),
+            patch.object(monitoring_runtime, "write_new", side_effect=self._write),
+        ):
+            close = monitoring_runtime.close_runtime(
+                self.backend,
+                document,
+                binding,
+                terminate=terminate,
+                completion=completion,
+                port_check=lambda _url: None,
+            )
+        self.assertEqual(stopped, ["prometheus", "alertmanager", "webhook"])
+        self.assertEqual(close["status"], "closed")
+
+        with (
+            patch.object(monitoring_runtime, "repository", side_effect=lambda path, _label: path),
+            patch.object(monitoring_runtime, "write_new", side_effect=self._write),
+            patch.object(monitoring_runtime, "process_identity", return_value=None),
+        ):
+            closed = monitoring_runtime.status(document, binding)
+            self.assertEqual((closed["status"], closed["next_action"]), ("closed", "result"))
+            candidate = monitoring_runtime.prepare_result(document, binding, port_check=lambda _url: None)
+            monitoring_runtime.publish_result(self.backend, document, binding, candidate)
+            passed = monitoring_runtime.status(document, binding)
+            self.assertEqual((passed["status"], passed["next_action"]), ("passed", None))
+            before = (output.parent / "result.json").read_bytes()
+            with self.assertRaisesRegex(ValueError, "精确状态"):
+                monitoring_runtime.publish_result(self.backend, document, binding, candidate)
+            self.assertEqual((output.parent / "result.json").read_bytes(), before)
+        self.assertEqual(candidate["status"], "passed")
+
+    def test_start_failure_reaps_started_tree_and_never_overwrites_evidence(self):
+        output, binding = self._bind()
+        document = evidence.read_json_document(output)
+        execution = {
+            "root": Path(binding["staging"]["path"]).parent,
+            "tools": {name: Path(item["path"]) for name, item in binding["tools"].items()},
+            "runner_command": [binding["python"]["path"], binding["runner"]["path"]],
+        }
+        started = type("StartedProcess", (), {"pid": 41999})()
+        launches = 0
+
+        def launcher(*_args, **_kwargs):
+            nonlocal launches
+            launches += 1
+            if launches == 1:
+                return started
+            raise RuntimeError("fixture launch failure")
+
+        with (
+            patch.object(monitoring_runtime, "repository", side_effect=lambda path, _label: path),
+            patch.object(monitoring_runtime, "write_new", side_effect=self._write),
+            patch.object(monitoring_processes, "validate_new_output", side_effect=lambda path, _root: path),
+            patch.object(monitoring_runtime, "stop_processes", return_value={"webhook": {}}) as stopped,
+            self.assertRaisesRegex(RuntimeError, "fixture launch failure"),
+        ):
+            monitoring_runtime.start_runtime(
+                self.backend, document, binding, execution, run=self._run, launcher=launcher,
+                ready=lambda _url: None, listener=lambda _pid, _url: None,
+            )
+        stopped.assert_called_once()
+        failure = output.parent / "start-failure.json"
+        original = failure.read_bytes()
+        with (
+            patch.object(monitoring_runtime, "repository", side_effect=lambda path, _label: path),
+            self.assertRaisesRegex(ValueError, "精确状态"),
+        ):
+            monitoring_runtime.start_runtime(self.backend, document, binding, execution)
+        self.assertEqual(failure.read_bytes(), original)
+        with (
+            patch.object(monitoring_runtime, "repository", side_effect=lambda path, _label: path),
+            patch.object(monitoring_runtime, "write_new", side_effect=self._write),
+        ):
+            closed = monitoring_runtime.close_runtime(
+                self.backend, document, binding, port_check=lambda _url: None
+            )
+        self.assertEqual(closed["completions"], {})
+        status = monitoring_runtime.status(document, binding)
+        self.assertEqual((status["status"], status["next_action"]), ("closed", None))
+        with self.assertRaisesRegex(ValueError, "精确状态"):
+            monitoring_runtime.prepare_result(document, binding, port_check=lambda _url: None)
+
+    def test_observation_failure_reaps_all_registered_process_trees(self):
+        output, document, binding, execution, launched, _start = self._start_fixture()
+        identities = {
+            item["process"].tree["process"]["pid"]: item["process"].tree["process"]
+            for item in launched.values()
+        }
+        completions = {role: {"status": "stopped"} for role in monitoring_processes.ROLES}
+        closed_ports = []
+        with (
+            patch.object(monitoring_runtime, "repository", side_effect=lambda path, _label: path),
+            patch.object(monitoring_runtime, "write_new", side_effect=self._write),
+            patch.object(monitoring_runtime, "process_identity", side_effect=lambda pid: identities.get(pid)),
+            patch.object(monitoring_runtime, "stop_processes", return_value=completions) as stopped,
+            self.assertRaisesRegex(RuntimeError, "fixture observation failure"),
+        ):
+            monitoring_runtime.observe_runtime(
+                self.backend,
+                document,
+                binding,
+                execution,
+                self.token,
+                fetch=Mock(side_effect=RuntimeError("fixture observation failure")),
+                listener=lambda _pid, _url: None,
+                port_check=closed_ports.append,
+            )
+        stopped.assert_called_once()
+        self.assertEqual(closed_ports, list(binding["endpoints"].values()))
+        failure = json.loads((output.parent / "observation-failure.json").read_text(encoding="utf-8"))
+        self.assertEqual(failure["completions"], completions)
+
+    def test_lifecycle_rejects_unknown_root_member(self):
+        output, _binding = self._bind()
+        (output.parent / "unknown.txt").write_text("unknown", encoding="utf-8")
+        with (
+            patch.object(monitoring_runtime, "repository", side_effect=lambda path, _label: path),
+            self.assertRaisesRegex(ValueError, "未知写入"),
+        ):
+            monitoring_runtime.read_binding(self.backend, output)
 
 
 @unittest.skipUnless(os.name == "nt", "Windows ACL 合同")

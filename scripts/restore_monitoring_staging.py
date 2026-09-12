@@ -30,6 +30,10 @@ MANIFEST = "manifest.json"
 RUNNER = "scripts/restore_monitoring_delivery.py"
 ENVIRONMENT_CHECK = "scripts/check_python_environment.py"
 REQUIREMENTS = "scripts/requirements-ci.txt"
+RESOURCES = (
+    "deploy/prometheus/ryframe-alerts.yml",
+    "deploy/prometheus/ryframe-alerts.test.yml",
+)
 TOOL_VERSIONS = {
     "prometheus": "prometheus, version 3.5.0",
     "promtool": "promtool, version 3.5.0",
@@ -127,7 +131,10 @@ def _committed_files(root_name: str, revision: str) -> tuple[tuple[str, bytes], 
         modules.add(relative)
         pending.extend(_local_imports(relative, content, set(sources)) - modules)
     selected = modules | {REQUIREMENTS}
-    return tuple((path, sources[path]) for path in sorted(selected))
+    rows = [(path, sources[path]) for path in sorted(selected)]
+    for path in RESOURCES:
+        rows.append((path, _git(root, "cat-file", "blob", f"{revision}:{path}")))
+    return tuple(sorted(rows))
 
 
 def _relative(value: object, label: str) -> str:
@@ -431,7 +438,12 @@ def _inspect(
     if files != sorted(files, key=lambda item: item["path"]) or len(files) != len({item["path"] for item in files}):
         raise ValueError("监控 staging 文件清单必须有序且唯一")
     expected_modules = sorted(item["path"] for item in files if item["path"].endswith(".py"))
-    if manifest["modules"] != expected_modules or REQUIREMENTS not in {item["path"] for item in files}:
+    paths = {item["path"] for item in files}
+    if (
+        manifest["modules"] != expected_modules
+        or REQUIREMENTS not in paths
+        or not set(RESOURCES).issubset(paths)
+    ):
         raise ValueError("监控 staging Python 闭包或依赖清单不完整")
     _verify_members(root, files)
     for row in files:
