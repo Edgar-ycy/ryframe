@@ -95,6 +95,35 @@ class ReferenceFixtureReviewTests(unittest.TestCase):
                              self.execution / ".local-tests/reference-fixture/recovery-r11",
                              "r11-current", 18230, 18230, 4200, 29210, 29211, 16391)
 
+    def test_renewal_rechecks_template_and_fixture_descriptors(self):
+        original_scope = review._scope
+        for kind in ("template", "fixture"):
+            with self.subTest(kind=kind):
+                template = self.write(f"{kind}-template.json", self.template)
+                fixture = self.write(f"{kind}-fixture.json", self.fixture)
+                target = template if kind == "template" else fixture
+                changed = False
+
+                def derive(*args, **kwargs):
+                    nonlocal changed
+                    if not changed:
+                        changed = True
+                        value = json.loads(target.read_text(encoding="utf-8"))
+                        value["descriptor_drift"] = True
+                        target.write_text(json.dumps(value), encoding="utf-8")
+                    return original_scope(*args, **kwargs)
+
+                with (
+                    patch.object(review, "snapshot", return_value=(self.generated, b"")),
+                    patch.object(review, "_scope", side_effect=derive),
+                    self.assertRaisesRegex(ValueError, "模板、Device 收据"),
+                ):
+                    review.renew(
+                        self.backend, template, fixture,
+                        self.execution / f".local-tests/reference-fixture/recovery-{kind}",
+                        f"r11-{kind}", 18230, 19230, 4200, 29210, 29211, 16391,
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -182,19 +182,26 @@ def revalidate(backend: Path, review_path: Path, output: Path, run=subprocess.ru
     """为旧的只读计划创建一份新的、经本机工具复核的不可变审阅收据。"""
     backend = backend.resolve(strict=True)
     review_file, review = _read(backend, review_path)
+    predecessor = bound(review_file)
     observed = _preflight(review, run)
     output = local_path(backend, str(output if output.is_absolute() else backend / output), new=True)
     if not output.parent.is_dir():
         raise ValueError("新审阅收据的父目录不存在")
+    current_file, current_review = _read(backend, review_file)
+    if current_file != review_file or current_review != review or bound(current_file) != predecessor:
+        raise ValueError("审阅 predecessor 在工具预检期间发生变化")
     revised = copy.deepcopy(review)
     revised["ready_for_execution"] = True
     revised["tools"] = {**review["tools"], **observed}
     seed = revised["scopes"]["seed"]
-    run = service_run(revised)
+    service_directory = service_run(revised)
     revised["services"]["rustfs"].update(
-        scope_id="services-" + seed["scope_id"], process_receipt=str(run / "rustfs/process.json"))
+        scope_id="services-" + seed["scope_id"], process_receipt=str(service_directory / "rustfs/process.json"))
     revised["preflight"] = {"format_version": 1, "kind": "reference-fixture-tool-preflight", "status": "verified",
-                            "supersedes": bound(review_file), "tools": copy.deepcopy(observed)}
+                            "supersedes": predecessor, "tools": copy.deepcopy(observed)}
+    terminal = _preflight(current_review, run)
+    if terminal != observed or bound(review_file) != predecessor or read_json(review_file) != review:
+        raise ValueError("审阅 predecessor 或当前工具在 ready 签发前发生变化")
     write_json(output, revised)
     return revised
 
@@ -478,6 +485,29 @@ def plan(backend: Path, review_path: Path, fixture_path: Path, maintenance_path:
     return {**result, "sha256": plan_hash(result)}
 
 
+def _planned_document(backend: Path, descriptor: dict, label: str, *, canonical: bool = False) -> tuple[Path, dict]:
+    keys = {"path", "bytes", "sha256"}
+    if canonical:
+        keys.add("canonical_sha256")
+    if not isinstance(descriptor, dict) or set(descriptor) != keys:
+        raise ValueError(f"夹具环境计划中的 {label} 描述无效")
+    path, value = _read(backend, Path(descriptor["path"]))
+    expected = {key: descriptor[key] for key in ("path", "bytes", "sha256")}
+    if bound(path) != expected or canonical and plan_hash(value) != descriptor["canonical_sha256"]:
+        raise ValueError(f"夹具环境计划中的 {label} 已变化")
+    return path, value
+
+
+def _planned_inputs(backend: Path, result: dict) -> tuple[Path, dict, Path, dict, Path, dict]:
+    review_file, review = _planned_document(backend, result["review"], "审阅收据", canonical=True)
+    fixture_file, fixture = _planned_document(backend, result["fixture"], "Device 收据")
+    maintenance_file, maintenance = _planned_document(backend, result["maintenance_build"], "维护构建收据")
+    _preflight_binding(review)
+    _fixture(fixture)
+    _maintenance(maintenance)
+    return review_file, review, fixture_file, fixture, maintenance_file, maintenance
+
+
 def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_path: Path, output: Path,
             side: str = "seed", secret_directory: Path | None = None) -> dict:
     """显式准备冻结环境；只写本地私有环境和收据，绝不创建服务或业务资源。"""
@@ -486,10 +516,8 @@ def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_pa
     output = local_path(backend, str(output if output.is_absolute() else backend / output), new=True)
     if not output.parent.is_dir():
         raise ValueError("夹具环境输出父目录不存在")
-    review = read_json(Path(result["review"]["path"]))
-    _preflight_binding(review)
-    fixture = read_json(Path(result["fixture"]["path"]))
-    maintenance_path = Path(result["maintenance_build"]["path"])
+    inputs = _planned_inputs(backend, result)
+    _, review, _, fixture, maintenance_file, _ = inputs
     execution = Path(fixture["paths"]["backend"])
     environment, secrets = _environment(backend, review, fixture, output, side, secret_directory)
     output.mkdir()
@@ -499,12 +527,14 @@ def prepare(backend: Path, review_path: Path, fixture_path: Path, maintenance_pa
         runtime_environment = configured(environment)
         with Environments(runtime_environment, runtime_environment).use("target"):
             configuration = configuration_digest(execution)
-            maintenance = verify_tools(execution, maintenance_path)
+            maintenance = verify_tools(execution, maintenance_file)
+        if _planned_inputs(backend, result) != inputs:
+            raise ValueError("夹具环境计划输入在准备期间发生变化")
         # fresh-target 只接受这一层私有环境；版本和生命周期信息属于相邻 bootstrap 收据。
         write_json(output / "environment.json", {"environment": environment})
         receipt = {"format_version": 1, "kind": "reference-fixture-environment", "status": "prepared",
                    "plan": result, "execution_backend": str(execution), "configuration_sha256": configuration,
-                   "maintenance": bound(maintenance_path), "maintenance_source": maintenance["source"],
+                   "maintenance": bound(maintenance_file), "maintenance_source": maintenance["source"],
                    "secret_files": secrets, "environment_sha256": plan_hash(environment),
                    "services_started": False, "remote_writes": 0, "historical_data_used": False}
         write_json(output / "bootstrap.json", receipt)

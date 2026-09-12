@@ -23,6 +23,16 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         path.write_text(json.dumps(value), encoding="utf-8")
         return path
 
+    def observed_tools(self) -> dict:
+        observed = {name: copy.deepcopy(self.review["tools"][name]) for name in environment.REVIEW_FILE_TOOLS}
+        observed.update({
+            "redis_server": {**self.review["tools"]["redis_server"], "version": "Redis server v=7.0.15"},
+            "wsl": {"path": str(self.wsl.resolve()), "sha256": file_digest(self.wsl)["sha256"]},
+            "redis_python": {"distribution": "Ubuntu", "path": "/usr/bin/python3",
+                             "resolved_path": "/usr/bin/python3.12", "sha256": "d" * 64},
+        })
+        return observed
+
     def setUp(self):
         self.backend = Path(__file__).resolve().parents[2]
         self.temporary = WorkspaceDirectory(dir=self.backend / ".local-tests/python-unit")
@@ -130,6 +140,41 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
             environment.revalidate(self.backend, review, output)
         which.assert_not_called()
         self.assertFalse(output.exists())
+
+    def test_revalidate_rejects_predecessor_or_terminal_tool_drift(self):
+        self.review["ready_for_execution"] = False
+        observed = self.observed_tools()
+        predecessor = self.write("mutable-pending.json", self.review)
+        predecessor_output = self.root / "mutable-ready.json"
+
+        calls = 0
+
+        def run(arguments, **_):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                changed = copy.deepcopy(self.review)
+                changed["future_root"] += "-changed"
+                predecessor.write_text(json.dumps(changed), encoding="utf-8")
+            return type("Completed", (), {"stdout": b"unused"})()
+
+        with (
+            patch.object(environment, "_preflight", side_effect=lambda review, _run: (run([], stdout=None), observed)[1]),
+            self.assertRaisesRegex(ValueError, "predecessor"),
+        ):
+            environment.revalidate(self.backend, predecessor, predecessor_output, run)
+        self.assertFalse(predecessor_output.exists())
+
+        stable = self.write("stable-pending.json", self.review)
+        terminal_output = self.root / "terminal-ready.json"
+        drifted = copy.deepcopy(observed)
+        drifted["aws"]["sha256"] = "f" * 64
+        with (
+            patch.object(environment, "_preflight", side_effect=[observed, drifted]),
+            self.assertRaisesRegex(ValueError, "当前工具"),
+        ):
+            environment.revalidate(self.backend, stable, terminal_output)
+        self.assertFalse(terminal_output.exists())
 
     def test_revalidate_preserves_historical_tools_for_ready_successor(self):
         self.review["ready_for_execution"] = False
@@ -243,6 +288,33 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
     def test_preflight_binding_rejects_the_unreviewed_plan(self):
         with self.assertRaisesRegex(ValueError, "预检"):
             environment._preflight_binding(self.review)
+
+    def test_prepare_rechecks_all_documents_from_the_original_plan(self):
+        self.review["ready_for_execution"] = False
+        pending = self.write("prepare-pending.json", self.review)
+        ready = self.root / "prepare-ready.json"
+        observed = self.observed_tools()
+        with patch.object(environment, "_preflight", return_value=observed):
+            environment.revalidate(self.backend, pending, ready)
+        fixture = self.write("prepare-fixture.json", self.fixture)
+        maintenance = self.write("prepare-build.json", self.maintenance)
+        output = self.root / "prepared"
+
+        def configuration(_execution):
+            changed = copy.deepcopy(self.fixture)
+            changed["status"] = "changed"
+            fixture.write_text(json.dumps(changed), encoding="utf-8")
+            return "c" * 64
+
+        with (
+            patch.object(environment, "_environment", return_value=({"APP_SCOPE_ID": "fixture-seed"}, {})),
+            patch.object(environment, "configuration_digest", side_effect=configuration),
+            patch.object(environment, "verify_tools", return_value={"source": {}}),
+            self.assertRaisesRegex(ValueError, "Device 收据"),
+        ):
+            environment.prepare(self.backend, ready, fixture, maintenance, output)
+        self.assertTrue((output / "failed.json").is_file())
+        self.assertFalse((output / "bootstrap.json").exists())
 
     def test_service_run_rejects_roots_outside_the_device_fixture(self):
         self.assertEqual(

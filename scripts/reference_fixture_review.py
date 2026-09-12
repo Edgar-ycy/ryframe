@@ -106,6 +106,7 @@ def renew(backend: Path, template_path: Path, fixture_path: Path, future_root: P
     """派生未预检的新审阅计划；调用方必须显式保存并重新预检。"""
     backend = backend.resolve(strict=True)
     template_file, template = _read(backend, template_path)
+    template_descriptor = {"path": str(template_file), **file_digest(template_file)}
     validate_review(template)
     if any(template["reference"][role]["databases"] for role in ("source", "protected_target")):
         raise ValueError("续签模板不得复用历史来源或受保护目标数据库")
@@ -118,6 +119,7 @@ def renew(backend: Path, template_path: Path, fixture_path: Path, future_root: P
     if len(set(all_ports)) != len(all_ports):
         raise ValueError("三侧 API、Worker 与前端端口不能重叠")
     fixture_file, fixture, execution = _fixture_execution(backend, fixture_path)
+    fixture_descriptor = {"path": str(fixture_file), **file_digest(fixture_file)}
     root = _future_root(backend, execution, future_root)
     revised = copy.deepcopy(template)
     revised.update({
@@ -148,6 +150,12 @@ def renew(backend: Path, template_path: Path, fixture_path: Path, future_root: P
     structural = copy.deepcopy(revised)
     structural["ready_for_execution"] = True
     validate_review(structural)
+    if ({"path": str(template_file), **file_digest(template_file)} != template_descriptor
+            or read_json(template_file) != template
+            or {"path": str(fixture_file), **file_digest(fixture_file)} != fixture_descriptor
+            or read_json(fixture_file) != fixture
+            or snapshot(execution)[0] != fixture["generated"]["backend"]):
+        raise ValueError("审阅续签期间模板、Device 收据或生成工作树发生变化")
     return revised
 
 
