@@ -22,18 +22,19 @@ class DatasetCliTests(unittest.TestCase):
         self.root = temporary.path
         self.environment = {**os.environ, "RYFRAME_PYTHON": sys.executable}
 
-    def invoke(self, *arguments):
+    def invoke(self, *arguments, environment=None):
         return subprocess.run(
-            ["node", str(SCRIPT), *arguments], cwd=self.root, env=self.environment,
+            ["node", str(SCRIPT), *arguments], cwd=self.root,
+            env=environment or self.environment,
             capture_output=True, text=True, encoding="utf-8", timeout=30,
         )
 
-    def test_help_never_reads_missing_inputs_or_creates_files(self):
+    def test_direct_cli_rejects_arguments_without_reading_or_writing(self):
         for flag in ("--help", "-h"):
             result = self.invoke("--plan", "missing.json", "--backend-dir", "missing", flag)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn("--verify-existing PATH", result.stdout)
-            self.assertEqual(result.stderr, "")
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn("dataset_prepare_protocol_error", result.stderr)
+            self.assertEqual(result.stdout, "")
             self.assertEqual(list(self.root.iterdir()), [])
 
     def test_existing_side_reaches_dataset_validation_after_exact_ownership_check(self):
@@ -53,11 +54,21 @@ class DatasetCliTests(unittest.TestCase):
         )
         for side in (None, "source", "target"):
             with self.subTest(side=side):
-                arguments = ["--plan", str(plan_path), "--backend-dir", str(self.root),
-                             "--verify-existing", str(dataset), "--write"]
-                if side is not None:
-                    arguments.extend(("--side", side))
-                result = self.invoke(*arguments)
+                protocol = {
+                    "backend_dir": str(self.root),
+                    "format_version": 1,
+                    "kind": "ryframe-xtask-recovery-dataset-prepare",
+                    "plan": str(plan_path),
+                    "preflight": None,
+                    "side": side or "target",
+                    "verify_existing": str(dataset),
+                    "write": True,
+                }
+                environment = {
+                    **self.environment,
+                    "RYFRAME_XTASK_RECOVERY_DATASET_PREPARE": json.dumps(protocol),
+                }
+                result = self.invoke(environment=environment)
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("旧数据收据没有绑定本次参考环境计划", result.stderr)
                 self.assertNotIn("ReferenceError", result.stderr)

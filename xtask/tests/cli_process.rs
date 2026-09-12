@@ -645,7 +645,7 @@ fn recovery_help_uses_the_actual_stage_parser_without_creating_requested_output(
         ),
         (
             ["check", "recovery", "dataset-prepare", "--help"].as_slice(),
-            "--verify-existing PATH",
+            "--verify-existing <绝对文件>",
         ),
         (
             ["check", "recovery", "monitoring", "start", "--help"].as_slice(),

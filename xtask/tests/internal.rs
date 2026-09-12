@@ -80,6 +80,8 @@ mod contract_tests;
 mod data_cli_tests;
 #[path = "internal/data.rs"]
 mod data_tests;
+#[path = "internal/dataset_prepare.rs"]
+mod dataset_prepare_tests;
 #[path = "internal/dev_probe_control.rs"]
 mod dev_probe_control_tests;
 #[path = "internal/dev_process_control.rs"]

@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use super::cli::{
-    FreshTargetCommand, FreshTargetOperation, FreshTargetOptions, FullStackCommand, RecoveryCommand,
+    DatasetPrepareCommand, FreshTargetCommand, FreshTargetOperation, FreshTargetOptions,
+    FullStackCommand, RecoveryCommand,
 };
 use super::recovery::{fresh_target_protocol, full_stack_environment, recovery_command};
 
@@ -233,21 +234,12 @@ fn source_fixture_and_dataset_stages_fix_the_current_worktree_paths() {
         ])
     );
 
-    let (dataset, dataset_arguments) = recovery_command(
-        &RecoveryCommand::DatasetPrepare(strings(&["--plan", "reference.json", "--write"])),
-        frontend,
-    )
-    .unwrap();
-    assert_eq!(dataset, "scripts/restore_reference_dataset.mjs");
-    assert_eq!(
-        dataset_arguments,
-        strings(&[
-            "--plan",
-            "reference.json",
-            "--write",
-            "--backend-dir",
-            &backend,
-        ])
+    assert!(
+        recovery_command(
+            &RecoveryCommand::DatasetPrepare(DatasetPrepareCommand::Help),
+            frontend,
+        )
+        .is_err()
     );
     assert!(
         recovery_command(
@@ -522,7 +514,6 @@ fn forwarded_recovery_scripts_exist_in_checkout() {
         RecoveryCommand::Fixture(strings(&["dataset", "plan"])),
         RecoveryCommand::FullStack(FullStackCommand::Collect),
         RecoveryCommand::Monitoring(strings(&["status", "--binding", "binding.json"])),
-        RecoveryCommand::DatasetPrepare(strings(&["--plan", "reference.json"])),
     ] {
         let (script, _) = recovery_command(&command, Path::new("unused")).unwrap();
         assert!(
@@ -530,4 +521,5 @@ fn forwarded_recovery_scripts_exist_in_checkout() {
             "恢复入口转发的脚本不在当前检出中：{script}"
         );
     }
+    assert!(root.join("scripts/restore_reference_dataset.mjs").is_file());
 }

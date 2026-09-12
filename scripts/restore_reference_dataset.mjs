@@ -12,8 +12,74 @@ import {
   referenceClient,
   verifyExisting,
 } from './restore_reference_existing.mjs'
+import { strictScalarJsonObject } from './private_json_protocol.mjs'
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
+const protocolKey = 'RYFRAME_XTASK_RECOVERY_DATASET_PREPARE'
+const protocolPrefix = 'RYFRAME_XTASK_RECOVERY_DATASET_PREPARE'
+const protocolKind = 'ryframe-xtask-recovery-dataset-prepare'
+
+export class DatasetPrepareProtocolError extends Error {}
+
+function exactProtocol(value, fields) {
+  if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(fields.slice().sort()))
+    throw new DatasetPrepareProtocolError('dataset-prepare 私有协议字段不完整或含未知字段')
+}
+
+function protocolPath(value, label, optional = false) {
+  if (optional && value === null) return null
+  if (typeof value !== 'string' || !value || !path.isAbsolute(value) || /[\n\r\0]/u.test(value))
+    throw new DatasetPrepareProtocolError(`${label}必须是无换行和 NUL 的非空绝对路径`)
+  return value
+}
+
+export function privateDatasetArguments(argv = process.argv.slice(2), environment = process.env) {
+  if (argv.length)
+    throw new DatasetPrepareProtocolError('dataset-prepare 是私有实现，不接受命令行参数')
+  const unknown = Object.keys(environment).filter(
+    (name) => name.startsWith(protocolPrefix) && name !== protocolKey,
+  )
+  if (unknown.length)
+    throw new DatasetPrepareProtocolError(
+      `dataset-prepare 私有环境含未知字段：${unknown.sort().join(',')}`,
+    )
+  const protocol = strictScalarJsonObject(
+    environment[protocolKey],
+    DatasetPrepareProtocolError,
+    'dataset-prepare 私有协议',
+  )
+  exactProtocol(protocol, [
+    'backend_dir',
+    'format_version',
+    'kind',
+    'plan',
+    'preflight',
+    'side',
+    'verify_existing',
+    'write',
+  ])
+  if (
+    protocol.format_version !== 1 ||
+    protocol.kind !== protocolKind ||
+    protocol.write !== true
+  )
+    throw new DatasetPrepareProtocolError('dataset-prepare 私有协议版本、类型或写入授权无效')
+  const backend = protocolPath(protocol.backend_dir, 'backend_dir')
+  const plan = protocolPath(protocol.plan, 'plan')
+  const preflight = protocolPath(protocol.preflight, 'preflight', true)
+  const existing = protocolPath(protocol.verify_existing, 'verify_existing', true)
+  if ((preflight === null) === (existing === null))
+    throw new DatasetPrepareProtocolError('dataset-prepare 私有协议必须选择唯一执行模式')
+  if (preflight !== null && protocol.side !== 'source')
+    throw new DatasetPrepareProtocolError('数据准备必须固定 source 侧')
+  if (existing !== null && !['source', 'target'].includes(protocol.side))
+    throw new DatasetPrepareProtocolError('已有数据核验侧无效')
+  const arguments_ = ['--plan', plan, '--backend-dir', backend]
+  if (preflight !== null) arguments_.push('--preflight', preflight)
+  else arguments_.push('--verify-existing', existing, '--side', protocol.side)
+  arguments_.push('--write')
+  return arguments_
+}
 
 export function verifyDatasetPreflight(plan, preflight) {
   if (
@@ -356,8 +422,8 @@ export async function prepareDataset(plan, backend, planPath) {
   return result
 }
 
-async function main() {
-  const args = datasetArguments(process.argv.slice(2))
+export async function main(argv = process.argv.slice(2)) {
+  const args = datasetArguments(argv)
   if (args.has('--help')) {
     process.stdout.write(datasetHelp())
     return
@@ -416,5 +482,17 @@ async function main() {
   process.stdout.write(JSON.stringify(result) + '\n')
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url))
-  await main()
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const privateEnvironment = { ...process.env }
+  delete process.env[protocolKey]
+  try {
+    await main(privateDatasetArguments(process.argv.slice(2), privateEnvironment))
+  } catch (error) {
+    if (error instanceof DatasetPrepareProtocolError) {
+      process.stderr.write('dataset_prepare_protocol_error：数据准备私有协议无效。\n')
+      process.exitCode = 2
+    } else {
+      throw error
+    }
+  }
+}

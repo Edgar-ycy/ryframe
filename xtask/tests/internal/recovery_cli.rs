@@ -406,7 +406,7 @@ fn rejects_invalid_monitoring_operations_before_execution() {
 
 #[test]
 fn parses_recovery_dataset_and_clone_groups() {
-    assert_eq!(
+    assert!(
         parse_command(&[
             "check",
             "recovery",
@@ -414,10 +414,7 @@ fn parses_recovery_dataset_and_clone_groups() {
             "--plan",
             "reference.json",
         ])
-        .unwrap(),
-        Command::Check(CheckCommand::Recovery(RecoveryCommand::DatasetPrepare(
-            strings(&["--plan", "reference.json"],)
-        )))
+        .is_err()
     );
     assert_eq!(
         parse_command(&["check", "recovery", "clone", "status", "--run-dir", "run"]).unwrap(),

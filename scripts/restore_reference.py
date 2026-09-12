@@ -30,6 +30,9 @@ from restore_runtime_evidence import read_json_document
 from restore_runtime_registration import registered_stopped_runtime
 from restore_reference_target_cli import add_arguments, execute_plan, validate_arguments
 
+DATASET_PROTOCOL_ENV = "RYFRAME_XTASK_RECOVERY_DATASET_PREPARE"
+DATASET_PROTOCOL_KIND = "ryframe-xtask-recovery-dataset-prepare"
+
 
 def now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat()
@@ -39,6 +42,23 @@ def write_json(path: Path, value: dict, *, new=True) -> None:
     with path.open("x" if new else "w", encoding="utf-8", newline="\n") as stream:
         json.dump(value, stream, ensure_ascii=False, indent=2)
         stream.write("\n")
+
+
+def dataset_protocol(backend: Path, plan: Path, preflight: Path) -> str:
+    value = {
+        "backend_dir": str(backend),
+        "format_version": 1,
+        "kind": DATASET_PROTOCOL_KIND,
+        "plan": str(plan),
+        "preflight": str(preflight),
+        "side": "source",
+        "verify_existing": None,
+        "write": True,
+    }
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if len(encoded) > 32 * 1024 or any(character in encoded for character in ("\r", "\n", "\0")):
+        raise ValueError("数据准备私有协议过长或包含换行/NUL")
+    return encoded
 
 
 def failure_diagnostic(error: BaseException) -> dict:
@@ -343,9 +363,15 @@ def execute(args, plan: dict, backend: Path, tools: ExternalTools, work: Path) -
             }
             preflight_path = work / "dataset-preflight.json"
             write_json(preflight_path, preflight)
-            tools.execute([*tools.command("node"), str(backend / "scripts/restore_reference_dataset.mjs"),
-                           "--plan", str(args.plan.resolve()), "--backend-dir", str(backend),
-                           "--preflight", str(preflight_path), "--write"], timeout=timeout)
+            environment = {key: value for key, value in os.environ.items()
+                           if key != DATASET_PROTOCOL_ENV}
+            environment[DATASET_PROTOCOL_ENV] = dataset_protocol(
+                backend, args.plan.resolve(), preflight_path.resolve())
+            tools.execute(
+                [*tools.command("node"), str(backend / "scripts/restore_reference_dataset.mjs")],
+                env=environment,
+                timeout=timeout,
+            )
             result = read_json(work / "dataset/result.json")
             if read_json(preflight_path) != preflight:
                 raise ValueError("数据准备预检收据在执行期间发生变化")

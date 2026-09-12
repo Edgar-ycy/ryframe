@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 use super::super::model::{CliError, FullStackCommand, RecoveryCommand};
 
+#[path = "recovery/dataset_prepare.rs"]
+mod dataset_prepare;
 #[path = "recovery/fixture_runtime.rs"]
 mod fixture_runtime;
 #[path = "recovery/fresh_target.rs"]
@@ -39,7 +41,7 @@ pub(super) fn parse_recovery(args: &[String]) -> Result<RecoveryCommand, CliErro
         "fixture" => parse_fixture(rest),
         "full-stack" => parse_full_stack(rest).map(RecoveryCommand::FullStack),
         "monitoring" => parse_monitoring(rest).map(RecoveryCommand::Monitoring),
-        "dataset-prepare" => Ok(RecoveryCommand::DatasetPrepare(rest.to_vec())),
+        "dataset-prepare" => dataset_prepare::parse(rest).map(RecoveryCommand::DatasetPrepare),
         _ => Err(CliError::new(format!("未知 recovery 阶段：{stage}"))),
     }
 }

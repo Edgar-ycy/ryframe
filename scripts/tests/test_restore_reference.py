@@ -268,8 +268,15 @@ class ReferenceTests(unittest.TestCase):
                 reference.execute(args, self.plan, self.backend, tools, work)
         self.assertEqual(tools.execute.call_args.kwargs["timeout"], 21600)
         command = tools.execute.call_args.args[0]
-        self.assertIn("--preflight", command)
-        preflight = reference.read_json(Path(command[command.index("--preflight") + 1]))
+        self.assertEqual(len(command), 2)
+        protocol = json.loads(
+            tools.execute.call_args.kwargs["env"][reference.DATASET_PROTOCOL_ENV]
+        )
+        self.assertEqual(protocol["kind"], reference.DATASET_PROTOCOL_KIND)
+        self.assertTrue(protocol["write"])
+        self.assertEqual(protocol["side"], "source")
+        self.assertIsNone(protocol["verify_existing"])
+        preflight = reference.read_json(Path(protocol["preflight"]))
         self.assertEqual(preflight["plan_sha256"], reference.plan_hash(self.plan))
         self.assertEqual(preflight["scope_id"], self.plan["source"]["scope_id"])
         self.assertEqual(reference.read_json(work / "dataset.json")["status"], "failed")

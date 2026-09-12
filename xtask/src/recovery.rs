@@ -14,6 +14,8 @@ use crate::{
 const FRESH_TARGET_PROTOCOL_ENV: &str = "RYFRAME_XTASK_RECOVERY_FRESH_TARGET";
 const SEED_SOURCE_PROTOCOL_ENV: &str = "RYFRAME_XTASK_RECOVERY_SEED_SOURCE";
 
+#[path = "recovery/dataset_prepare.rs"]
+pub(crate) mod dataset_prepare;
 #[path = "recovery/fixture_runtime.rs"]
 pub(crate) mod fixture_runtime;
 
@@ -29,6 +31,9 @@ pub(crate) fn run(command: &RecoveryCommand, frontend_dir: &Path) -> Result<()> 
     }
     if let RecoveryCommand::SeedSource(options) = command {
         return run_seed_source(options);
+    }
+    if let RecoveryCommand::DatasetPrepare(command) = command {
+        return dataset_prepare::run(command, &root_dir());
     }
     let (program, forwarded) = recovery_command(command, frontend_dir)?;
     let mut command = Vec::with_capacity(forwarded.len() + 1);
@@ -145,10 +150,11 @@ pub(crate) fn recovery_command(
             "scripts/restore_monitoring_delivery.py",
             with_paths(arguments, &backend, None)?,
         )),
-        RecoveryCommand::DatasetPrepare(arguments) => Ok((
-            "scripts/restore_reference_dataset.mjs",
-            with_paths(arguments, &backend, None)?,
-        )),
+        RecoveryCommand::DatasetPrepare(_) => {
+            Err("dataset-prepare 必须通过版本化私有协议执行，不能透传 argv"
+                .to_owned()
+                .into())
+        }
     }
 }
 

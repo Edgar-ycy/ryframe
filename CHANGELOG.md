@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- `cargo xtask check recovery dataset-prepare` 现在首层解析准备与已有数据核验的互斥模式、验证侧及显式写入授权，只接受当前后端 `.local-tests` 内的现有证据；固定 Node 实现改用无 argv 的版本化单环境协议，原恢复协调器也通过同一协议调用，登录、对象下载和造数前继续复核计划、预检及 ownership。
 - Device 夹具运行时九个阶段改由 `cargo xtask check recovery fixture runtime` 解析为结构化请求；Rust 在启动固定 Python 实现前核验显式写入、只读互斥、绝对路径、当前后端 `.local-tests` 边界及链接/reparse point，并通过版本化单环境 JSON 私有协议传递，Python 直接执行不再接受 argv。
 - 性能身份 plan、apply、verify 写入统一归入 cargo xtask data performance-identities；Rust 在启动固定 Node 实现前核验显式写入、绝对路径及 .local-tests 边界，并以版本化单环境 JSON 私有协议传递请求，拒绝 argv、重复或未知字段和继承污染。
 - `cargo xtask data` 的 backup、restore、target、file 与 reset 在首层解析为结构化请求；未知、重复、缺失或互斥参数在启动维护二进制前以参数错误拒绝。证据输入与输出限定为当前后端 `.local-tests` 内的绝对真实路径，已登记的备份根、隔离配置和 runner 保留外部绝对目录能力，所有路径都拒绝链接；记录发布和业务写入新增显式 `--write`，底层 ownership、计划、确认及资源核验保持不变。

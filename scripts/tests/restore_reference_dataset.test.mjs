@@ -1,8 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 import {
   datasetSpecification,
+  privateDatasetArguments,
   postBatchRows,
   postBatchSamples,
   sampleContent,
@@ -12,6 +14,14 @@ import {
 import { Session } from '../devex/request.mjs'
 import { hash } from '../devex/config.mjs'
 import { requestPacer } from '../restore_reference_pacing.mjs'
+
+function protocolEnvironment(value, extra = {}) {
+  return {
+    RYFRAME_XTASK_RECOVERY_DATASET_PREPARE:
+      typeof value === 'string' ? value : JSON.stringify(value),
+    ...extra,
+  }
+}
 
 function plan() {
   return {
@@ -315,4 +325,72 @@ test('参考创建每100条刷新且非法节奏不允许启动', async () => {
   )
   assert.equal(calls.filter((value) => value === 'post_auth_refresh').length, 1)
   assert.equal(calls[100], 'post_auth_refresh')
+})
+
+test('dataset-prepare 私有协议只接受唯一模式和绝对路径', () => {
+  const root = path.resolve('.local-tests', 'dataset 私有协议')
+  const base = {
+    backend_dir: path.resolve('.'),
+    format_version: 1,
+    kind: 'ryframe-xtask-recovery-dataset-prepare',
+    plan: path.join(root, '计划.json'),
+    preflight: path.join(root, '预检.json'),
+    side: 'source',
+    verify_existing: null,
+    write: true,
+  }
+  assert.deepEqual(privateDatasetArguments([], protocolEnvironment(base)), [
+    '--plan',
+    base.plan,
+    '--backend-dir',
+    base.backend_dir,
+    '--preflight',
+    base.preflight,
+    '--write',
+  ])
+  const existing = {
+    ...base,
+    preflight: null,
+    side: 'target',
+    verify_existing: path.join(root, '数据.json'),
+  }
+  assert.deepEqual(privateDatasetArguments([], protocolEnvironment(existing)), [
+    '--plan',
+    existing.plan,
+    '--backend-dir',
+    existing.backend_dir,
+    '--verify-existing',
+    existing.verify_existing,
+    '--side',
+    'target',
+    '--write',
+  ])
+  for (const candidate of [
+    { ...base, unknown: true },
+    { ...base, write: false },
+    { ...base, side: 'target' },
+    { ...base, verify_existing: existing.verify_existing },
+    { ...base, preflight: null },
+    { ...existing, side: 'unknown' },
+    { ...base, plan: 'relative.json' },
+  ]) assert.throws(() => privateDatasetArguments([], protocolEnvironment(candidate)))
+  assert.throws(() => privateDatasetArguments(['--help'], protocolEnvironment(base)), /不接受/)
+  assert.throws(
+    () => privateDatasetArguments([], protocolEnvironment(base, {
+      RYFRAME_XTASK_RECOVERY_DATASET_PREPARE_EXTRA: 'unexpected',
+    })),
+    /未知字段/,
+  )
+})
+
+test('dataset-prepare 私有协议在 JSON 解析前拒绝重复字段', () => {
+  const root = path.resolve('.local-tests', 'dataset-protocol').replaceAll('\\', '\\\\')
+  const suffix = `"backend_dir":"${path.resolve('.').replaceAll('\\', '\\\\')}",` +
+    `"kind":"ryframe-xtask-recovery-dataset-prepare","plan":"${root}\\\\plan.json",` +
+    `"preflight":"${root}\\\\preflight.json","side":"source",` +
+    '"verify_existing":null,"write":true}'
+  for (const repeated of [
+    `{"format_version":1,"format_version":1,${suffix}`,
+    `{"format_version":1,"format\\u005fversion":1,${suffix}`,
+  ]) assert.throws(() => privateDatasetArguments([], protocolEnvironment(repeated)), /字段重复/)
 })

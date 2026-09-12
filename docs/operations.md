@@ -160,7 +160,7 @@ cargo xtask data backup status
 
 正式双侧恢复分别使用 `target_side: base` 与 `target_side: candidate` 的参考计划和独立工作目录。通过 `cargo xtask check recovery plan --plan <本侧参考计划> --backup-receipt <同一backup.json> --comparison-sources <双版本来源清单> --arm-input <本侧已发布arm结果> --fresh-target-verify <本侧观察目录/verify.json> --product-plan <产品RestorePlan文件>` 推导完整目标计划；加 `--output <新目标计划文件> --write` 才发布。它把 base 固定映射到 b0、candidate 固定映射到 b1，并绑定同一共享导出、原备份摘要、本侧初始化与完整 ownership、探针、前端 SHA 和产品恢复计划。目标计划分别记录维护初始化的 `maintenance_execution` 与比较产品的 `product_execution`；双侧可共享候选维护工具，B0 产品运行仍必须使用已登记适配源码和对应构建。产品计划的 `fault_at` 必须使用 UTC `Z` 格式，小数位按实际精度保留 0、3 或 6 位，保证经过产品序列化后仍逐字段一致。`plan --plan <本侧参考计划> --target-plan <已发布目标计划>` 重新核对全部绑定；未知字段、侧别混用、证据漂移或输出覆盖都会失败。
 
-已有数据可以在原计划不变的前提下复验。先用 `cargo xtask check recovery check-existing --plan <原计划JSON> --side source` 核对源侧数据库 ownership 和已登记 API；随后运行 `cargo xtask check recovery dataset-prepare --plan <原计划JSON> --verify-existing <原dataset/result.json> --side source --write`，读取原岗位样本并下载校验全部登记对象，将标准输出保存到新的独立证据文件。`--write` 表示登录、注销会产生会话及审计副作用，业务记录和对象始终只读。省略 `--side` 时已有数据验证仍固定为 `target`；数据准备仍固定为 `source`，其他阶段不接受该选项。
+已有数据可以在原计划不变的前提下复验。先用 `cargo xtask check recovery check-existing --plan <原计划JSON> --side source` 核对源侧数据库 ownership 和已登记 API；随后运行 `cargo xtask check recovery dataset-prepare --plan <原计划JSON> --verify-existing <原dataset/result.json> --side source --write`，读取原岗位样本并下载校验全部登记对象，将标准输出保存到新的独立证据文件。计划、预检和原数据收据必须是当前后端 `.local-tests` 内的绝对现有文件，入口拒绝链接、越界和隐式覆盖。`--write` 表示登录、注销会产生会话及审计副作用，业务记录和对象始终只读。省略 `--side` 时已有数据验证仍固定为 `target`；数据准备仍固定为 `source`，其他阶段不接受该选项。
 
 验证结果记录实际侧、scope、原计划及数据收据摘要和只读动作范围，状态为 `existing_data_verified`，不表示恢复成功，也不单独证明源码干净。源侧复验结果不能用于目标恢复证明。
 
