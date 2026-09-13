@@ -739,6 +739,24 @@ fn rejects_linked_components_before_private_protocol_creation() {
         ],
     );
     assert!(parse_control(retention).is_err());
+    let dataset = command(
+        "dataset",
+        Some("plan"),
+        vec![
+            "--environment".to_owned(),
+            text(&fixture.input),
+            "--runtime".to_owned(),
+            text(&linked_directory),
+            "--work-dir".to_owned(),
+            text(&fixture.path("new dataset")),
+            "--output".to_owned(),
+            text(&fixture.path("dataset plan.json")),
+            "--side".to_owned(),
+            "base".to_owned(),
+            "--write".to_owned(),
+        ],
+    );
+    assert!(parse_control(dataset).is_err());
     fs::remove_dir(linked_directory).unwrap();
 }
 

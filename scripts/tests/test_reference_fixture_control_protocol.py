@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import reference_fixture_environment as fixture_environment
 import full_stack_artifacts as fixture_artifact
 import full_stack_migration_history as fixture_retention
+import reference_fixture_dataset as fixture_dataset
 import reference_fixture_request as fixture_request
 import reference_fixture_review as fixture_review
 import reference_fixture_services as fixture_services
@@ -110,6 +111,33 @@ class FixtureControlProtocolTests(unittest.TestCase):
         self.assertEqual(artifact_args[0], "snapshot")
         self.assertIn("9223372036854775807", artifact_args)
         self.assertIn("--write", artifact_args)
+        dataset_plan = self.protocol(
+            "dataset", "plan", True,
+            environment=input_path, runtime=directory,
+            work_dir=str(Path(directory) / "dataset work"), output=input_path,
+            side="base",
+        )
+        dataset_plan_args = self.arguments(
+            "dataset", fixture_dataset.PROTOCOL_SCHEMAS, dataset_plan,
+            positional=True,
+        )
+        self.assertEqual(dataset_plan_args[0], "plan")
+        self.assertIn("--work-dir", dataset_plan_args)
+        self.assertIn("--output", dataset_plan_args)
+        self.assertIn("--write", dataset_plan_args)
+        dataset_prepare = self.protocol(
+            "dataset", "prepare", True,
+            environment=input_path, runtime=directory, plan=input_path,
+            side="candidate",
+        )
+        dataset_prepare_args = self.arguments(
+            "dataset", fixture_dataset.PROTOCOL_SCHEMAS, dataset_prepare,
+            positional=True,
+        )
+        self.assertEqual(dataset_prepare_args[0], "prepare")
+        self.assertIn("--plan", dataset_prepare_args)
+        self.assertNotIn("--work-dir", dataset_prepare_args)
+        self.assertIn("--write", dataset_prepare_args)
         retention = self.protocol(
             "retention", "historical-expired", True,
             runtime_dir=directory, tenant="tenant-0123abcd", migration="123",
@@ -298,11 +326,66 @@ class FixtureControlProtocolTests(unittest.TestCase):
                 positional=True,
             )
 
+    def test_dataset_protocol_requires_exact_paths_fields_and_write_policy(self):
+        path = str(Path(self.root) / ".local-tests" / "input.json")
+        directory = str(Path(self.root) / ".local-tests" / "run")
+        plan = dict(
+            environment=path,
+            runtime=directory,
+            work_dir=str(Path(directory) / "dataset"),
+            output=str(Path(directory) / "dataset-plan.json"),
+            side="base",
+        )
+        prepare = dict(
+            environment=path,
+            runtime=directory,
+            plan=str(Path(directory) / "dataset-plan.json"),
+            side="candidate",
+        )
+        for operation, values in (("plan", plan), ("prepare", prepare)):
+            raw = self.protocol("dataset", operation, False, **values)
+            with self.subTest(operation=operation), self.assertRaisesRegex(
+                FixtureControlProtocolError, "写入授权"
+            ):
+                self.arguments(
+                    "dataset", fixture_dataset.PROTOCOL_SCHEMAS, raw,
+                    positional=True,
+                )
+        unexpected_plan = self.protocol(
+            "dataset", "plan", True, **{**plan, "plan": path}
+        )
+        with self.assertRaisesRegex(FixtureControlProtocolError, "未知字段"):
+            self.arguments(
+                "dataset", fixture_dataset.PROTOCOL_SCHEMAS, unexpected_plan,
+                positional=True,
+            )
+        missing_plan = self.protocol(
+            "dataset", "prepare", True,
+            **{name: value for name, value in prepare.items() if name != "plan"},
+        )
+        with self.assertRaisesRegex(FixtureControlProtocolError, "字段不完整"):
+            self.arguments(
+                "dataset", fixture_dataset.PROTOCOL_SCHEMAS, missing_plan,
+                positional=True,
+            )
+        for field in ("environment", "runtime", "work_dir", "output"):
+            relative = self.protocol(
+                "dataset", "plan", True, **{**plan, field: "relative/path"}
+            )
+            with self.subTest(field=field), self.assertRaisesRegex(
+                FixtureControlProtocolError, "绝对路径"
+            ):
+                self.arguments(
+                    "dataset", fixture_dataset.PROTOCOL_SCHEMAS, relative,
+                    positional=True,
+                )
+
     def test_all_direct_python_programs_reject_argv_before_business_logic(self):
         scripts = [
             "full_stack_artifacts.py",
             "full_stack_migration_history.py",
             "prepare_full_stack_fixture.py",
+            "reference_fixture_dataset.py",
             "reference_fixture_environment.py",
             "reference_fixture_review.py",
             "reference_fixture_request.py",
@@ -316,10 +399,11 @@ class FixtureControlProtocolTests(unittest.TestCase):
             script = Path(__file__).resolve().parents[1] / name
             with self.subTest(script=name):
                 result = subprocess.run(
-                    [sys.executable, "-B", str(script), "untrusted-argv"],
+                    [sys.executable, "-X", "utf8", "-B", str(script), "untrusted-argv"],
                     cwd=script.parent.parent,
                     env=environment,
                     text=True,
+                    encoding="utf-8",
                     capture_output=True,
                     check=False,
                 )

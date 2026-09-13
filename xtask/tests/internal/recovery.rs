@@ -10,10 +10,6 @@ use super::recovery::{
     fresh_target_protocol, full_stack_environment, inputs, recovery_command, reference,
 };
 
-fn strings(values: &[&str]) -> Vec<String> {
-    values.iter().map(ToString::to_string).collect()
-}
-
 #[test]
 fn runtime_and_source_are_not_available_through_the_argv_forwarder() {
     assert!(
@@ -176,14 +172,6 @@ fn dataset_stage_and_clone_keep_current_boundaries() {
         )
         .is_err()
     );
-    assert!(
-        recovery_command(
-            &RecoveryCommand::Fixture(strings(&["--output-dir", "fixture"])),
-            frontend,
-        )
-        .is_err()
-    );
-
     assert!(recovery_command(&RecoveryCommand::Clone(CloneCommand::Help), frontend).is_err());
 }
 
@@ -199,74 +187,17 @@ fn monitoring_stage_uses_the_private_lifecycle_and_fixed_backend() {
 }
 
 #[test]
-fn fixture_control_domains_cannot_bypass_typed_private_protocol() {
-    for domain in [
-        "artifact",
-        "environment",
-        "review",
-        "request",
-        "successor",
-        "services",
-        "retention",
-    ] {
-        assert!(
-            recovery_command(
-                &RecoveryCommand::Fixture(strings(&[domain, "unparsed"])),
-                Path::new("unused"),
-            )
-            .is_err()
-        );
-    }
-}
-
-#[test]
-fn fixture_source_pair_cannot_bypass_the_typed_private_protocol() {
-    assert!(
-        recovery_command(
-            &RecoveryCommand::Fixture(strings(&[
-                "source-pair",
-                "--output",
-                "pair.json",
-                "--write",
-            ])),
-            Path::new("unused"),
-        )
-        .is_err()
-    );
-}
-
-#[test]
-fn fixture_dataset_uses_the_private_device_dataset_adapter() {
-    let (script, arguments) = recovery_command(
-        &RecoveryCommand::Fixture(strings(&["dataset", "plan", "--runtime", "runtime-r1"])),
+fn forwarded_recovery_scripts_exist_in_checkout() {
+    let root = super::workspace::root_dir();
+    let (script, _) = recovery_command(
+        &RecoveryCommand::FullStack(FullStackCommand::Collect),
         Path::new("unused"),
     )
     .unwrap();
-    assert_eq!(script, "scripts/reference_fixture_dataset.py");
     assert!(
-        arguments
-            .windows(2)
-            .any(|item| item == ["--runtime", "runtime-r1"])
+        root.join(script).is_file(),
+        "恢复入口转发的脚本不在当前检出中：{script}"
     );
-    assert_eq!(
-        arguments.last().map(String::as_str),
-        Some(super::workspace::root_dir().to_str().unwrap())
-    );
-}
-
-#[test]
-fn forwarded_recovery_scripts_exist_in_checkout() {
-    let root = super::workspace::root_dir();
-    for command in [
-        RecoveryCommand::Fixture(strings(&["dataset", "plan"])),
-        RecoveryCommand::FullStack(FullStackCommand::Collect),
-    ] {
-        let (script, _) = recovery_command(&command, Path::new("unused")).unwrap();
-        assert!(
-            root.join(script).is_file(),
-            "恢复入口转发的脚本不在当前检出中：{script}"
-        );
-    }
     assert!(root.join("scripts/full_stack_artifacts.py").is_file());
     assert!(root.join("scripts/devex_clone.py").is_file());
     assert!(root.join("scripts/restore_runtime.py").is_file());

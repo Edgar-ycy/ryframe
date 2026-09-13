@@ -96,7 +96,6 @@ pub(crate) fn recovery_command(
     command: &RecoveryCommand,
     _frontend_dir: &Path,
 ) -> Result<(&'static str, Vec<String>)> {
-    let backend = path_argument(&root_dir(), "后端目录")?;
     match command {
         RecoveryCommand::Reference(_) => Err("reference 必须通过版本化私有协议执行，不能透传 argv"
             .to_owned()
@@ -122,34 +121,6 @@ pub(crate) fn recovery_command(
             Err("fresh-target 必须通过版本化私有协议执行，不能透传 argv"
                 .to_owned()
                 .into())
-        }
-        RecoveryCommand::Fixture(arguments) => {
-            if arguments.first().is_some_and(|value| {
-                [
-                    "artifact",
-                    "environment",
-                    "review",
-                    "request",
-                    "source-pair",
-                    "successor",
-                    "services",
-                    "retention",
-                ]
-                .contains(&value.as_str())
-            }) {
-                Err("fixture 控制子域不能通过未解析参数绕过版本化私有协议"
-                    .to_owned()
-                    .into())
-            } else if arguments.first().map(String::as_str) == Some("dataset") {
-                Ok((
-                    "scripts/reference_fixture_dataset.py",
-                    with_paths(&arguments[1..], &backend, None)?,
-                ))
-            } else {
-                Err("fixture prepare 必须通过版本化私有协议执行，不能透传 argv"
-                    .to_owned()
-                    .into())
-            }
         }
         RecoveryCommand::FixturePrepare(_) => {
             Err("fixture prepare 必须通过版本化私有协议执行，不能透传 argv"
@@ -341,22 +312,4 @@ fn path_argument(path: &Path, label: &str) -> Result<String> {
     path.to_str()
         .map(ToOwned::to_owned)
         .ok_or_else(|| format!("{label}必须能表示为 UTF-8 命令参数").into())
-}
-
-fn with_paths(arguments: &[String], backend: &str, frontend: Option<&str>) -> Result<Vec<String>> {
-    if arguments.iter().any(|value| value == "--backend-dir") {
-        return Err("恢复验收由 cargo xtask 固定当前后端目录，不接受 --backend-dir".into());
-    }
-    if frontend.is_some() && arguments.iter().any(|value| value == "--frontend-dir") {
-        return Err("恢复验收由 cargo xtask 固定当前前端目录，不接受 --frontend-dir".into());
-    }
-    let mut forwarded = Vec::with_capacity(arguments.len() + 4);
-    forwarded.extend(arguments.iter().cloned());
-    forwarded.push("--backend-dir".to_owned());
-    forwarded.push(backend.to_owned());
-    if let Some(frontend) = frontend {
-        forwarded.push("--frontend-dir".to_owned());
-        forwarded.push(frontend.to_owned());
-    }
-    Ok(forwarded)
 }

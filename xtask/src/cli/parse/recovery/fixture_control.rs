@@ -11,6 +11,8 @@ use crate::{
 
 #[path = "fixture_control/artifact.rs"]
 mod artifact;
+#[path = "fixture_control/dataset.rs"]
+mod dataset;
 #[path = "fixture_control/environment.rs"]
 mod environment;
 #[path = "fixture_control/request.rs"]
@@ -32,6 +34,7 @@ pub(super) fn parse_fixture_control(
 ) -> Result<FixtureControlCommand, CliError> {
     match domain {
         "artifact" => artifact::parse(args).map(FixtureControlCommand::Artifact),
+        "dataset" => dataset::parse(args).map(FixtureControlCommand::Dataset),
         "environment" => environment::parse(args).map(FixtureControlCommand::Environment),
         "retention" => retention::parse(args).map(FixtureControlCommand::Retention),
         "review" => review::parse(args).map(FixtureControlCommand::Review),

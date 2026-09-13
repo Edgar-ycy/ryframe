@@ -1,9 +1,9 @@
 use super::cli::{
     CheckCommand, CliError, CloneCommand, Command, ExistingReferenceSide, FixtureControlCommand,
-    FixtureExpectedSources, FixturePrepareCommand, FixturePrepareOptions, FixtureRetentionCommand,
-    FreshTargetCommand, FreshTargetOperation, FreshTargetOptions, FullStackCommand,
-    RecoveryCommand, RecoveryInputsCommand, RecoveryReferenceCommand, ReferencePlanAction,
-    RestoreInputSide, parse,
+    FixtureDatasetCommand, FixtureExpectedSources, FixturePrepareCommand, FixturePrepareOptions,
+    FixtureRetentionCommand, FreshTargetCommand, FreshTargetOperation, FreshTargetOptions,
+    FullStackCommand, RecoveryCommand, RecoveryInputsCommand, RecoveryReferenceCommand,
+    ReferencePlanAction, RestoreInputSide, parse,
 };
 
 fn strings(values: &[&str]) -> Vec<String> {
@@ -606,6 +606,32 @@ fn parses_fixture_generation_and_rejects_ambiguous_sources() {
                 *command,
                 FixtureControlCommand::Retention(FixtureRetentionCommand::Inspect(_))
             )
+    ));
+
+    let environment = fixture.file("bootstrap.json");
+    let work_dir = fixture.new_path("dataset work");
+    let plan = fixture.new_path("dataset plan.json");
+    let parsed = parse_recovery_owned(vec![
+        "fixture".to_owned(),
+        "dataset".to_owned(),
+        "plan".to_owned(),
+        "--environment".to_owned(),
+        environment,
+        "--runtime".to_owned(),
+        runtime,
+        "--work-dir".to_owned(),
+        work_dir,
+        "--output".to_owned(),
+        plan,
+        "--side".to_owned(),
+        "base".to_owned(),
+        "--write".to_owned(),
+    ])
+    .unwrap();
+    assert!(matches!(
+        parsed,
+        RecoveryCommand::FixtureControl(command)
+            if matches!(*command, FixtureControlCommand::Dataset(FixtureDatasetCommand::Plan { .. }))
     ));
 }
 

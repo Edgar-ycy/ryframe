@@ -3,6 +3,9 @@ use std::path::PathBuf;
 #[path = "fixture_control/artifact.rs"]
 mod artifact;
 pub(crate) use artifact::*;
+#[path = "fixture_control/dataset.rs"]
+mod dataset;
+pub(crate) use dataset::*;
 #[path = "fixture_control/environment.rs"]
 mod environment;
 pub(crate) use environment::*;
@@ -30,6 +33,8 @@ pub(crate) const FIXTURE_CONTROL_USAGE: &str = concat!(
     "用法：cargo xtask check recovery fixture <子域> <操作与参数>\n",
     "  artifact snapshot --runtime-dir <目录> --job-id <正 i64> --receipt <新文件>\n",
     "  artifact verify-deleted --runtime-dir <目录> --job-id <正 i64> --receipt <文件>\n",
+    "  dataset plan --environment <文件> --runtime <目录> --work-dir <新目录> --output <新文件> --side base|candidate --write\n",
+    "  dataset prepare --environment <文件> --runtime <目录> --plan <文件> --side base|candidate --write\n",
     "  retention <inspect|plan-history|verify-cleaned> --runtime-dir <目录> --tenant tenant-xxxxxxxx --migration <正 i64>\n",
     "  retention historical-expired --runtime-dir <目录> --tenant tenant-xxxxxxxx --migration <正 i64> --plan-sha256 <SHA256> --write\n",
     "  retention export-backup --runtime-dir <目录> --tenant tenant-xxxxxxxx --migration <正 i64> --write\n",
@@ -47,12 +52,13 @@ pub(crate) const FIXTURE_CONTROL_USAGE: &str = concat!(
     "  services <rustfs|redis|buckets|close> --review <文件> --environment <文件> --write\n",
     "  services status --review <文件> --environment <文件>\n",
     "  services <recover|restart> --review <文件> --environment <文件> --owner-binding <文件> --write\n",
-    "路径必须是当前后端 .local-tests 内无链接的绝对路径；plan/status 拒绝 --write，发布和生命周期操作要求 --write。",
+    "路径必须是当前后端 .local-tests 内无链接的绝对路径；只读 plan/status 拒绝 --write，dataset plan、发布和生命周期操作要求 --write。",
 );
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FixtureControlCommand {
     Artifact(FixtureArtifactCommand),
+    Dataset(FixtureDatasetCommand),
     Environment(FixtureEnvironmentCommand),
     Retention(FixtureRetentionCommand),
     Review(FixtureReviewCommand),
@@ -66,6 +72,7 @@ impl FixtureControlCommand {
     pub(crate) const fn domain(&self) -> &'static str {
         match self {
             Self::Artifact(_) => "artifact",
+            Self::Dataset(_) => "dataset",
             Self::Environment(_) => "environment",
             Self::Retention(_) => "retention",
             Self::Review(_) => "review",
@@ -79,6 +86,7 @@ impl FixtureControlCommand {
     pub(crate) const fn operation(&self) -> &'static str {
         match self {
             Self::Artifact(command) => command.operation(),
+            Self::Dataset(command) => command.operation(),
             Self::Environment(command) => command.operation(),
             Self::Retention(command) => command.operation(),
             Self::Review(command) => command.operation(),
@@ -92,6 +100,7 @@ impl FixtureControlCommand {
     pub(crate) const fn writes(&self) -> bool {
         match self {
             Self::Artifact(command) => command.writes(),
+            Self::Dataset(command) => command.writes(),
             Self::Environment(command) => command.writes(),
             Self::Retention(command) => command.writes(),
             Self::Review(command) => command.writes(),
@@ -106,6 +115,7 @@ impl FixtureControlCommand {
         matches!(
             self,
             Self::Artifact(FixtureArtifactCommand::Help)
+                | Self::Dataset(FixtureDatasetCommand::Help)
                 | Self::Environment(FixtureEnvironmentCommand::Help)
                 | Self::Retention(FixtureRetentionCommand::Help)
                 | Self::Review(FixtureReviewCommand::Help)

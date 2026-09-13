@@ -21,7 +21,7 @@ PATH_FIELDS = {
     "successor_review", "seed_request", "base_request", "candidate_request", "successor",
     "source_backend", "backend_build", "source_environment", "product_backend",
     "source_export_result", "workspace", "copy_directory", "owner_binding", "runtime_dir",
-    "receipt",
+    "receipt", "runtime", "work_dir", "plan",
 }
 INTEGER_FIELDS = {
     "api_port", "worker_port", "frontend_port", "rustfs_api_port", "rustfs_console_port",

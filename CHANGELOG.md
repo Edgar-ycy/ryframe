@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Device 参考数据的 `plan` 与 `prepare` 改为 Rust 强类型请求；环境、运行时、工作目录、计划文件和 base/candidate 目标侧在启动固定 Python 实现前完成核验，两个写入阶段都要求显式授权，并通过无 argv 的统一夹具控制私有协议传递。Python 在协议校验并移除环境字段后才加载运行时和恢复业务依赖，原十万记录、1 GiB 对象、来源绑定及未知写入失败收据语义保持不变。
 - 168 小时保留期夹具的五个操作改为 Rust 强类型请求；运行目录、租户、迁移 ID、计划摘要和只读/资源写入边界在启动固定 Python 实现前完成核验，再通过无 argv 的统一夹具控制私有协议传递。Python 仅在协议校验并移除环境字段后加载 MySQL、运行时和导出依赖，原历史平移、备份登记、ownership 及完整前后像语义保持不变。
 - 全栈导出物理对象的 `snapshot` 与 `verify-deleted` 验收入口改为 Rust 强类型请求；运行目录、任务 ID、收据路径和只读/收据写入边界在启动固定 Python 实现前完成核验，再通过无 argv 的统一夹具控制私有协议传递，原数据库、对象存储及 ownership 核验保持不变。
 - `cargo xtask check recovery clone` 的离线计划、账本阶段、运行服务、复制后处理与非来源 seed 操作改为强类型 Rust 请求；首层统一核验 `.local-tests` 绝对路径、角色、枚举及只读、证据写入、业务写入合同，再以无 argv 的版本化私有 JSON 调用原状态机。Python 在加载复制业务模块前移除协议环境，不再维护第二套 argparse 清单，直接脚本 argv 被拒绝；运行状态改用零落盘观察，无效 target verify 续作在创建账本前拒绝，原 ownership、前后像和未知结果核验保持不变。

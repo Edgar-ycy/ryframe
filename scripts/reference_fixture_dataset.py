@@ -10,14 +10,38 @@ import shutil
 import subprocess
 import sys
 
-from devex_clone_capture import read_json, write_json
-from devex_clone_model import linked, local_path
-from devex_clone_target_binding import KEYS, validate_review
-from process_environment import Environments
-from reference_fixture_runtime import _bootstrap, _output, _runtime_environment, verify as verify_runtime
-from restore_build import file_digest
-from restore_reference_io import redact_object_diagnostic
-from restore_reference_plan import plan_hash, validate_plan
+from reference_fixture_control_protocol import run_private
+
+
+PROTOCOL_SCHEMAS = {
+    "plan": (("environment", "runtime", "work_dir", "output", "side"), (), True),
+    "prepare": (("environment", "runtime", "plan", "side"), (), True),
+}
+
+
+def _load_business_dependencies() -> None:
+    """直接执行时只在私有协议被移除后加载会读取运行环境的业务模块。"""
+    global Environments, KEYS, _bootstrap, _output, _runtime_environment
+    global file_digest, linked, local_path, plan_hash, read_json
+    global redact_object_diagnostic, validate_plan, validate_review, verify_runtime, write_json
+
+    from devex_clone_capture import read_json, write_json
+    from devex_clone_model import linked, local_path
+    from devex_clone_target_binding import KEYS, validate_review
+    from process_environment import Environments
+    from reference_fixture_runtime import (
+        _bootstrap,
+        _output,
+        _runtime_environment,
+        verify as verify_runtime,
+    )
+    from restore_build import file_digest
+    from restore_reference_io import redact_object_diagnostic
+    from restore_reference_plan import plan_hash, validate_plan
+
+
+if __name__ != "__main__":
+    _load_business_dependencies()
 
 
 def _bound(path: Path) -> dict:
@@ -176,6 +200,8 @@ def write_plan(backend: Path, environment_path: Path, runtime_path: Path, work_d
     _, execution, _ = _bootstrap(backend, environment_path)
     runtime = _output(execution, runtime_path, new=False)
     target = _plan_file(execution, runtime, output, new=True)
+    if work_dir.resolve() == target:
+        raise ValueError("参考数据工作目录与计划输出必须不同")
     plan = build_plan(backend, environment_path, runtime_path, work_dir, side)
     write_json(target, plan)
     return plan
@@ -222,8 +248,8 @@ def prepare(backend: Path, environment_path: Path, runtime_path: Path, plan_path
             "remote_writes": {"business_data": True, "objects": True}}
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+def main(arguments: list[str]) -> None:
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     parser.add_argument("operation", choices=("plan", "prepare"))
     parser.add_argument("--backend-dir", type=Path, required=True)
     parser.add_argument("--environment", type=Path, required=True)
@@ -233,7 +259,7 @@ def main() -> None:
     parser.add_argument("--plan", type=Path)
     parser.add_argument("--side", choices=("base", "candidate"), required=True)
     parser.add_argument("--write", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(arguments)
     if args.operation == "plan":
         if not args.write or args.work_dir is None or args.output is None or args.plan is not None:
             parser.error("plan 需要 --work-dir、--output 与显式 --write，且不接受 --plan")
@@ -247,5 +273,12 @@ def main() -> None:
                              args.side), ensure_ascii=False))
 
 
+def _private_main(arguments: list[str]) -> None:
+    _load_business_dependencies()
+    main(arguments)
+
+
 if __name__ == "__main__":
-    main()
+    raise SystemExit(
+        run_private("dataset", PROTOCOL_SCHEMAS, _private_main, positional_operation=True)
+    )

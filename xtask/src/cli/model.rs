@@ -84,7 +84,6 @@ pub(crate) enum RecoveryCommand {
     Clone(CloneCommand),
     SeedSource(SeedSourceOptions),
     FreshTarget(FreshTargetCommand),
-    Fixture(Vec<String>),
     FixturePrepare(FixturePrepareCommand),
     FixtureControl(Box<FixtureControlCommand>),
     FixtureRuntime(FixtureRuntimeCommand),

@@ -2,6 +2,7 @@ import contextlib
 import copy
 import io
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -12,6 +13,7 @@ BACKEND = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(BACKEND / "scripts"))
 
 import reference_fixture_dataset as dataset
+from reference_fixture_control_protocol import PROTOCOL_KEY, run_private
 from workspace_directory import WorkspaceDirectory
 
 
@@ -99,16 +101,68 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
 
     def test_cli_requires_side_before_planning_or_writing(self):
         arguments = [
-            "reference_fixture_dataset", "plan", "--backend-dir", str(self.backend),
+            "plan", "--backend-dir", str(self.backend),
             "--environment", str(self.bootstrap), "--runtime", str(self.runtime),
             "--work-dir", str(self.work), "--output", str(self.runtime / "plan.json"),
             "--write",
         ]
-        with patch.object(sys, "argv", arguments), contextlib.redirect_stderr(io.StringIO()), \
+        with contextlib.redirect_stderr(io.StringIO()), \
                 patch.object(dataset, "write_plan") as write, self.assertRaises(SystemExit) as error:
-            dataset.main()
+            dataset.main(arguments)
         self.assertEqual(error.exception.code, 2)
         write.assert_not_called()
+
+    def test_write_plan_rejects_shared_work_and_output_path(self):
+        with patch.object(dataset, "write_json") as write, self.assertRaisesRegex(
+            ValueError, "必须不同"
+        ):
+            dataset.write_plan(
+                self.backend,
+                self.bootstrap,
+                self.runtime,
+                self.work,
+                self.work,
+                "base",
+            )
+        write.assert_not_called()
+
+    def test_private_protocol_is_removed_before_business_dependencies_load(self):
+        raw = json.dumps({
+            "backend_dir": str(self.backend),
+            "domain": "dataset",
+            "environment": str(self.bootstrap),
+            "format_version": 1,
+            "kind": "ryframe-reference-fixture-control",
+            "operation": "plan",
+            "output": str(self.runtime / "dataset-plan.json"),
+            "runtime": str(self.runtime),
+            "side": "base",
+            "work_dir": str(self.work),
+            "write": True,
+        }, separators=(",", ":"))
+        observed = []
+
+        def load_dependencies():
+            observed.append(PROTOCOL_KEY in os.environ)
+
+        with (
+            patch.dict(os.environ, {PROTOCOL_KEY: raw}),
+            patch.object(sys, "argv", ["reference_fixture_dataset.py"]),
+            patch.object(dataset, "_load_business_dependencies", side_effect=load_dependencies),
+            patch.object(dataset, "main") as main,
+        ):
+            self.assertEqual(
+                run_private(
+                    "dataset",
+                    dataset.PROTOCOL_SCHEMAS,
+                    dataset._private_main,
+                    positional_operation=True,
+                ),
+                0,
+            )
+            self.assertIn(PROTOCOL_KEY, os.environ)
+        self.assertEqual(observed, [False])
+        main.assert_called_once()
 
     def test_prepare_rejects_side_different_from_saved_plan_before_execution(self):
         plan = dataset.build_plan(

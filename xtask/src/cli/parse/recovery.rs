@@ -132,6 +132,7 @@ fn parse_fixture(args: &[String]) -> Result<RecoveryCommand, CliError> {
                 "successor",
                 "services",
                 "artifact",
+                "dataset",
                 "retention",
             ]
             .contains(&operation.as_str()) =>
@@ -140,7 +141,6 @@ fn parse_fixture(args: &[String]) -> Result<RecoveryCommand, CliError> {
                 .map(Box::new)
                 .map(RecoveryCommand::FixtureControl)
         }
-        [operation, ..] if operation == "dataset" => Ok(RecoveryCommand::Fixture(args.to_vec())),
         _ => Err(CliError::new(
             "用法：cargo xtask check recovery fixture --output-dir <目录> --write，或 fixture <environment|review|request|successor|artifact|retention|services|source-pair|runtime|dataset> ...",
         )),

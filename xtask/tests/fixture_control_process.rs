@@ -86,6 +86,54 @@ impl Fixture {
             "123".to_owned(),
         ]
     }
+
+    fn dataset_plan(&self) -> Vec<String> {
+        vec![
+            "check".to_owned(),
+            "recovery".to_owned(),
+            "fixture".to_owned(),
+            "dataset".to_owned(),
+            "plan".to_owned(),
+            "--environment".to_owned(),
+            self.environment.to_string_lossy().into_owned(),
+            "--runtime".to_owned(),
+            self.directory.to_string_lossy().into_owned(),
+            "--work-dir".to_owned(),
+            self.directory
+                .join("数据 work")
+                .to_string_lossy()
+                .into_owned(),
+            "--output".to_owned(),
+            self.directory
+                .join("dataset plan.json")
+                .to_string_lossy()
+                .into_owned(),
+            "--side".to_owned(),
+            "base".to_owned(),
+            "--write".to_owned(),
+        ]
+    }
+
+    fn dataset_prepare(&self) -> Vec<String> {
+        let plan = self.directory.join("dataset plan.json");
+        fs::write(&plan, b"{}\n").unwrap();
+        vec![
+            "check".to_owned(),
+            "recovery".to_owned(),
+            "fixture".to_owned(),
+            "dataset".to_owned(),
+            "prepare".to_owned(),
+            "--environment".to_owned(),
+            self.environment.to_string_lossy().into_owned(),
+            "--runtime".to_owned(),
+            self.directory.to_string_lossy().into_owned(),
+            "--plan".to_owned(),
+            plan.to_string_lossy().into_owned(),
+            "--side".to_owned(),
+            "candidate".to_owned(),
+            "--write".to_owned(),
+        ]
+    }
 }
 
 impl Drop for Fixture {
@@ -103,7 +151,8 @@ fn invoke(arguments: &[String]) -> std::process::Output {
             "RYFRAME_REFERENCE_FIXTURE_CONTROL_PROTOCOL",
             "untrusted inherited value",
         )
-        .env("PYTHONUTF8", "1")
+        .env("PYTHONUTF8", "0")
+        .env("PYTHONIOENCODING", "ascii:strict")
         .output()
         .unwrap()
 }
@@ -325,5 +374,104 @@ fn retention_invalid_arguments_exit_two_before_python_starts() {
         assert!(
             !String::from_utf8_lossy(&result.stdout).contains("full_stack_migration_history.py")
         );
+    }
+}
+
+#[test]
+fn dataset_plan_uses_private_protocol_without_forwarded_values() {
+    let fixture = Fixture::new();
+    let result = invoke(&fixture.dataset_plan());
+    assert_eq!(result.status.code(), Some(1));
+    let stdout = String::from_utf8(result.stdout).unwrap();
+    let stderr = String::from_utf8(result.stderr).unwrap();
+    assert!(
+        stdout.contains("scripts/reference_fixture_dataset.py"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("-X utf8 -B scripts/reference_fixture_dataset.py"),
+        "{stdout}"
+    );
+    for private in [
+        "--environment",
+        "--runtime",
+        "--work-dir",
+        "--output",
+        "--side",
+        "数据 work",
+        "base",
+    ] {
+        assert!(!stdout.contains(private), "{stdout}");
+    }
+    assert!(
+        stderr.contains("reference_fixture_dataset_failed"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("protocol_error"), "{stderr}");
+}
+
+#[test]
+fn dataset_prepare_uses_private_protocol_without_forwarded_values() {
+    let fixture = Fixture::new();
+    let result = invoke(&fixture.dataset_prepare());
+    assert_eq!(result.status.code(), Some(1));
+    let stdout = String::from_utf8(result.stdout).unwrap();
+    let stderr = String::from_utf8(result.stderr).unwrap();
+    assert!(
+        stdout.contains("scripts/reference_fixture_dataset.py"),
+        "{stdout}"
+    );
+    for private in [
+        "--environment",
+        "--runtime",
+        "--plan",
+        "--side",
+        "dataset plan.json",
+        "candidate",
+    ] {
+        assert!(!stdout.contains(private), "{stdout}");
+    }
+    assert!(
+        stderr.contains("reference_fixture_dataset_failed"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("protocol_error"), "{stderr}");
+}
+
+#[test]
+fn dataset_invalid_arguments_exit_two_before_python_starts() {
+    let fixture = Fixture::new();
+    let base = fixture.dataset_plan();
+    let mut cases = Vec::new();
+    let mut missing_write = base.clone();
+    missing_write.pop();
+    cases.push(missing_write);
+    let mut seed = base.clone();
+    seed[14] = "seed".to_owned();
+    cases.push(seed);
+    let mut relative_runtime = base.clone();
+    relative_runtime[8] = "relative runtime".to_owned();
+    cases.push(relative_runtime);
+    let mut same_work_and_output = base.clone();
+    same_work_and_output[12] = same_work_and_output[10].clone();
+    cases.push(same_work_and_output);
+    let mut duplicate = base.clone();
+    duplicate.extend(["--side".to_owned(), "candidate".to_owned()]);
+    cases.push(duplicate);
+    let mut public_backend = base;
+    public_backend.extend([
+        "--backend-dir".to_owned(),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
+    ]);
+    cases.push(public_backend);
+    for arguments in cases {
+        let result = invoke(&arguments);
+        assert_eq!(result.status.code(), Some(2), "参数：{arguments:?}");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("参数错误"));
+        assert!(!String::from_utf8_lossy(&result.stdout).contains("reference_fixture_dataset.py"));
     }
 }

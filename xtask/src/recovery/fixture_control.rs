@@ -11,6 +11,8 @@ use crate::{
 
 #[path = "fixture_control/artifact.rs"]
 mod artifact;
+#[path = "fixture_control/dataset.rs"]
+mod dataset;
 #[path = "fixture_control/environment.rs"]
 mod environment;
 #[path = "fixture_control/request.rs"]
@@ -43,9 +45,13 @@ pub(super) fn run(command: &FixtureControlCommand, root: &Path) -> Result<()> {
     run_with_env_removed(
         root,
         "python",
-        &["-B", invocation.script],
-        &[(PROTOCOL_KEY, invocation.protocol.as_str())],
-        &[PROTOCOL_KEY],
+        &["-X", "utf8", "-B", invocation.script],
+        &[
+            (PROTOCOL_KEY, invocation.protocol.as_str()),
+            ("PYTHONUTF8", "1"),
+            ("PYTHONIOENCODING", "utf-8"),
+        ],
+        &[PROTOCOL_KEY, "PYTHONUTF8", "PYTHONIOENCODING"],
     )
 }
 
@@ -60,6 +66,10 @@ pub(crate) fn private_invocation_at(
         FixtureControlCommand::Artifact(command) => (
             "scripts/full_stack_artifacts.py",
             artifact::fields(command, root)?,
+        ),
+        FixtureControlCommand::Dataset(command) => (
+            "scripts/reference_fixture_dataset.py",
+            dataset::fields(command, root)?,
         ),
         FixtureControlCommand::Environment(command) => (
             "scripts/reference_fixture_environment.py",
