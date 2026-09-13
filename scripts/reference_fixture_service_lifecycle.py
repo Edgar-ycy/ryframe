@@ -38,7 +38,13 @@ def _closed_services(services: dict) -> dict:
     while True:
         pending = False
         for expected in (services["tree"]["supervisor"], services["tree"]["process"]):
-            actual = process_identity(expected["pid"])
+            try:
+                actual = process_identity(expected["pid"])
+            except PermissionError:
+                # Windows 正在退出的进程可能短暂拒绝查询镜像路径。只把它当作
+                # 尚未完成的观察继续等待，绝不据此签发已关闭证明。
+                pending = True
+                continue
             if actual is not None and actual != expected:
                 raise ValueError("关闭等待期间 RustFS 进程 PID 已复用")
             pending |= actual is not None

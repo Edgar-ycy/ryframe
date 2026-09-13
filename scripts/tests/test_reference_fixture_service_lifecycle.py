@@ -406,6 +406,28 @@ class ServiceLifecycleTests(unittest.TestCase):
             lifecycle._closed_services(services)
         sleep.assert_not_called()
 
+    def test_close_wait_retries_transient_windows_identity_denial(self):
+        supervisor = {"pid": 12345, "started": "1", "executable": "supervisor"}
+        process = {"pid": 12346, "started": "2", "executable": "rustfs"}
+        services = {"tree": {"supervisor": supervisor, "process": process}}
+        stopped = {"redis": "stopped", "rustfs": "stopped", "termination": None}
+        with patch.object(lifecycle, "process_identity",
+                          side_effect=[PermissionError(), None, None, None]), \
+                patch.object(lifecycle, "observe_services", return_value=stopped), \
+                patch.object(lifecycle.time, "sleep") as sleep:
+            self.assertEqual(lifecycle._closed_services(services), stopped)
+        sleep.assert_called_once_with(0.05)
+
+    def test_close_wait_does_not_turn_persistent_identity_denial_into_success(self):
+        expected = {"pid": 12345, "started": "1", "executable": "original"}
+        services = {"tree": {"supervisor": expected, "process": expected}}
+        with patch.object(lifecycle, "process_identity", side_effect=PermissionError), \
+                patch.object(lifecycle.time, "monotonic", side_effect=[0, 6]), \
+                patch.object(lifecycle.time, "sleep") as sleep, \
+                self.assertRaisesRegex(TimeoutError, "仍存活"):
+            lifecycle._closed_services(services)
+        sleep.assert_not_called()
+
     def test_unknown_recovery_intent_blocks_close_before_service_operations(self):
         write_json(self.run / "recovery-unknown.intent.json", {"unknown": True})
         with self.mocks(), self.assertRaisesRegex(ValueError, "未知控制恢复"):
