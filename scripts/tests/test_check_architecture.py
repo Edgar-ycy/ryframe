@@ -7,6 +7,7 @@ import sys
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "check_architecture.py"
@@ -20,9 +21,64 @@ TEST_ROOT.mkdir(parents=True, exist_ok=True)
 
 
 class DocumentationPolicyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = TEST_ROOT / f"documentation-{uuid.uuid4().hex}"
+        self.root.mkdir()
+        for relative in set(MODULE.DOCUMENT_LIMITS) | MODULE.HISTORICAL_DOCUMENTS:
+            path = self.root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("当前文档\n", encoding="utf-8")
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.root)
+
     def test_changelog_is_allowed_without_a_history_size_limit(self) -> None:
         self.assertEqual(MODULE.HISTORICAL_DOCUMENTS, {"CHANGELOG.md"})
         self.assertNotIn("CHANGELOG.md", MODULE.DOCUMENT_LIMITS)
+
+    def test_standard_tool_cache_documents_are_not_project_documents(self) -> None:
+        cache_documents = (
+            self.root / ".pytest_cache/README.md",
+            self.root / "crates/example/__pycache__/notes.md",
+            self.root / ".ruff_cache/nested/report.md",
+        )
+        for path in cache_documents:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("工具缓存\n", encoding="utf-8")
+
+        errors: list[str] = []
+        MODULE.validate_documentation(self.root, errors)
+
+        self.assertEqual(errors, [])
+
+    def test_cache_directory_is_pruned_before_walker_descends(self) -> None:
+        def guarded_walk(root: Path, *, topdown: bool, onerror: object):
+            self.assertEqual(root, self.root)
+            self.assertTrue(topdown)
+            self.assertIsNotNone(onerror)
+            directory_names = [".pytest_cache", "docs"]
+            yield str(root), directory_names, []
+            if ".pytest_cache" in directory_names:
+                raise PermissionError("缓存目录不应被遍历")
+
+        errors: list[str] = []
+        with patch.object(MODULE.os, "walk", side_effect=guarded_walk):
+            paths = MODULE.documentation_paths(self.root, errors)
+
+        self.assertEqual(paths, set())
+        self.assertEqual(errors, [])
+
+    def test_document_outside_exact_cache_directories_is_still_rejected(self) -> None:
+        document = self.root / "docs/.pytest_cache-notes/design.md"
+        document.parent.mkdir(parents=True)
+        document.write_text("设计说明\n", encoding="utf-8")
+
+        errors: list[str] = []
+        MODULE.validate_documentation(self.root, errors)
+
+        self.assertTrue(
+            any(document.relative_to(self.root).as_posix() in error for error in errors)
+        )
 
 
 class RustSourceDiscoveryTests(unittest.TestCase):

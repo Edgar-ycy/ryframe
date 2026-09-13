@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -58,6 +59,21 @@ DOCUMENT_LIMITS = {
     "docs/operations.md": 240,
 }
 HISTORICAL_DOCUMENTS = {"CHANGELOG.md"}
+DOCUMENTATION_EXCLUDED_DIRECTORIES = frozenset(
+    {
+        ".cache",
+        ".git",
+        ".github",
+        ".local-tests",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        "__pycache__",
+        "node_modules",
+        "target",
+        "vendor",
+    }
+)
 TEST_FILE_NAME = re.compile(r"(?:^tests?\.rs$|_tests?\.rs$)", re.IGNORECASE)
 TEST_ATTRIBUTE = re.compile(
     r"#\s*\[\s*(?:cfg\s*\(\s*test\s*\)|(?:[A-Za-z_][A-Za-z0-9_]*::)?test)\s*\]"
@@ -88,14 +104,35 @@ def validate_system_domain_surface(root: Path, errors: list[str]) -> None:
         errors.append("system 根模块不得保留兼容 re-export")
 
 
-def validate_documentation(errors: list[str]) -> None:
-    actual = {
-        path.relative_to(ROOT).as_posix()
-        for path in ROOT.rglob("*.md")
-        if not set(path.relative_to(ROOT).parts).intersection(
-            {".github", ".local-tests", "target", "vendor"}
+def documentation_paths(root: Path, errors: list[str]) -> set[str]:
+    """列出项目人工文档，并在进入工具缓存前剪枝。"""
+
+    actual: set[str] = set()
+
+    def record_walk_error(error: OSError) -> None:
+        errors.append(f"无法枚举文档目录: {error}")
+
+    for directory, directory_names, file_names in os.walk(
+        root,
+        topdown=True,
+        onerror=record_walk_error,
+    ):
+        directory_names[:] = [
+            name
+            for name in directory_names
+            if name.casefold() not in DOCUMENTATION_EXCLUDED_DIRECTORIES
+        ]
+        directory_path = Path(directory)
+        actual.update(
+            (directory_path / name).relative_to(root).as_posix()
+            for name in file_names
+            if name.casefold().endswith(".md")
         )
-    }
+    return actual
+
+
+def validate_documentation(root: Path, errors: list[str]) -> None:
+    actual = documentation_paths(root, errors)
     expected = set(DOCUMENT_LIMITS) | HISTORICAL_DOCUMENTS
     if actual != expected:
         missing = expected - actual
@@ -105,7 +142,7 @@ def validate_documentation(errors: list[str]) -> None:
         if unexpected:
             errors.append(f"后端存在额外人工文档: {', '.join(sorted(unexpected))}")
     for relative, limit in DOCUMENT_LIMITS.items():
-        path = ROOT / relative
+        path = root / relative
         if not path.is_file():
             continue
         lines = len(path.read_text(encoding="utf-8").splitlines())
@@ -942,7 +979,7 @@ def validate_async_port_traits(
 def main() -> int:
     errors: list[str] = []
     warnings: list[str] = []
-    validate_documentation(errors)
+    validate_documentation(ROOT, errors)
     validate_system_domain_surface(ROOT, errors)
     active_profile, profiles, source_size, test_layout, function_size = load_policy(errors)
     metadata = cargo_metadata(errors)
