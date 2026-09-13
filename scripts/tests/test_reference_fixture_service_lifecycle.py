@@ -34,7 +34,8 @@ class ServiceLifecycleTests(unittest.TestCase):
         tree = {"format_version": 2, "runtime_directory": str(self.run / "rustfs"), "role": "rustfs",
                 "scope_id": "fixture-service-test", "operation_id": "b" * 32, "supervisor": identity,
                 "monitor": {**identity, "pid": 2147481001}, "process": {**identity, "pid": 2147481002}}
-        self.services = {"requests": {"redis": {}}, "runtime": {}, "tree": tree}
+        self.services = {"requests": {"redis": {}},
+                         "runtime": read_json(self.run / "redis/runtime.json"), "tree": tree}
 
     def snapshot(self):
         return {str(path.relative_to(self.root)): path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
@@ -48,7 +49,8 @@ class ServiceLifecycleTests(unittest.TestCase):
             self.events.append("redis")
             if failure:
                 raise RuntimeError("Redis 关闭结果未知")
-            value = {"status": "redis_process_stopped", "alive": False, "resources_deleted": False}
+            value = {"status": "redis_process_stopped", "alive": False, "resources_deleted": False,
+                     "runtime": self.services["runtime"]}
             write_json(output / "stopped.json", value)
             return value
         stack.enter_context(patch.object(lifecycle, "stop_cache", side_effect=redis_stop))
@@ -65,6 +67,31 @@ class ServiceLifecycleTests(unittest.TestCase):
             return binding(path)
         stack.enter_context(patch.object(lifecycle, "completion_binding", side_effect=completed))
         self.events = []
+        return stack
+
+    def failed_close(self):
+        with self.mocks(), patch.object(lifecycle, "_closed_services", side_effect=PermissionError), \
+                self.assertRaises(PermissionError):
+            lifecycle.close(self.backend, self.review, self.bootstrap, write=True)
+        tree_path = self.run / "rustfs/rustfs-tree.json"
+        write_json(tree_path, self.services["tree"])
+        from full_stack_process_monitor import receipt_path
+        members = receipt_path(self.run / "rustfs", "rustfs", self.services["tree"]["operation_id"], "stopped")
+        write_json(members, {"format_version": 1,
+                             "directory": self.services["tree"]["runtime_directory"], "status": "stopped",
+                             "error_type": None, "members": [self.services["tree"]["supervisor"]],
+                             **{key: self.services["tree"][key]
+                                for key in ("operation_id", "role", "scope_id", "monitor", "supervisor")}})
+        self.services["evidence"] = {"rustfs_tree": binding(tree_path)}
+        return members
+
+    def reconcile_mocks(self, members, *, observed=None):
+        stack = ExitStack()
+        stack.enter_context(patch.object(lifecycle, "controller_observation", return_value=None))
+        stack.enter_context(patch.object(lifecycle, "registered_services", return_value=self.services))
+        stack.enter_context(patch.object(lifecycle, "completion_binding", return_value=binding(members)))
+        stack.enter_context(patch.object(lifecycle, "observe_services", return_value=observed or {
+            "redis": "stopped", "rustfs": "stopped", "termination": None}))
         return stack
 
     def external_observation(self):
@@ -145,6 +172,27 @@ class ServiceLifecycleTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "部分存活"):
             context.observe_services({**self.services, "requests": {"redis": {}, "rustfs": {}}, "evidence": {}})
 
+    def test_identity_observation_retries_transient_permission_denial_but_not_persistent_denial(self):
+        with patch.object(context, "process_identity",
+                          side_effect=[PermissionError(), None, None, None]), \
+                patch.object(context.time, "sleep") as sleep:
+            self.assertEqual(context._identity_observations(self.services["tree"]), {
+                role: "missing" for role in ("supervisor", "monitor", "process")})
+        sleep.assert_called_once_with(0.05)
+        with patch.object(context, "process_identity", side_effect=PermissionError), \
+                patch.object(context.time, "monotonic", side_effect=[0, 6]), \
+                patch.object(context.time, "sleep") as sleep, self.assertRaises(PermissionError):
+            context._identity_observations(self.services["tree"])
+        sleep.assert_not_called()
+
+    def test_identity_observation_permission_retry_uses_one_shared_deadline(self):
+        with patch.object(context, "process_identity",
+                          side_effect=[PermissionError(), None, PermissionError()]), \
+                patch.object(context.time, "monotonic", side_effect=[0, 1, 6]), \
+                patch.object(context.time, "sleep") as sleep, self.assertRaises(PermissionError):
+            context._identity_observations(self.services["tree"])
+        sleep.assert_called_once_with(0.05)
+
     def test_close_orders_services_and_preserves_registered_history_prefix(self):
         descriptor = {"path": str(self.run), "manifest": binding(self.run / "manifest.json"), "state": binding(self.run / "state.json")}
         original = copy.deepcopy(load_state(self.run)["attempts"])
@@ -179,6 +227,187 @@ class ServiceLifecycleTests(unittest.TestCase):
         state["attempts"][3]["mode"] = "replace"
         with self.assertRaisesRegex(ValueError, "仅允许"):
             validate_history(self.run, state)
+
+    def test_failed_close_reconcile_appends_proof_without_service_operations(self):
+        members = self.failed_close()
+        with patch.object(context, "registered_services", return_value=self.services):
+            before = context.status(self.backend, self.review, self.bootstrap)
+        self.assertEqual(before["unsettled"], [4])
+        self.assertEqual(before["next_operation"], "reconcile")
+        with self.reconcile_mocks(members), patch.object(lifecycle, "stop_cache") as stop, \
+                patch.object(lifecycle, "terminate_owned_process_tree") as terminate, \
+                patch.object(lifecycle, "start_cache") as start:
+            result = lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                         self.run / "state.json", write=True)
+        stop.assert_not_called()
+        terminate.assert_not_called()
+        start.assert_not_called()
+        self.assertEqual(result["status"], "failed_close_reconciled")
+        history = validate_history(self.run, load_state(self.run))
+        self.assertTrue(history["closed"])
+        self.assertEqual(history["unsettled"], [])
+        with patch.object(context, "registered_services", return_value=self.services), \
+                patch.object(context, "observe_services", return_value={
+                    "redis": "stopped", "rustfs": "stopped", "termination": None}):
+            self.assertEqual(context.status(self.backend, self.review, self.bootstrap)["next_operation"], "none")
+        snapshot = self.snapshot()
+        with self.assertRaisesRegex(ValueError, "唯一未结算"):
+            lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                self.run / "state.json", write=True)
+        self.assertEqual(snapshot, self.snapshot())
+
+    def test_failed_close_reconcile_requires_explicit_write_before_reading_context(self):
+        with patch.object(lifecycle, "context") as read_context, \
+                self.assertRaisesRegex(ValueError, "--write"):
+            lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                self.run / "state.json", write=False)
+        read_context.assert_not_called()
+
+    def test_failed_close_reconcile_rejects_old_state_and_tampered_evidence_without_writes(self):
+        members = self.failed_close()
+        old = self.root / "old-state.json"
+        write_json(old, read_json(self.run / "state.json"))
+        before = self.snapshot()
+        with self.assertRaisesRegex(ValueError, "当前 state"):
+            lifecycle.reconcile(self.backend, self.review, self.bootstrap, old, write=True)
+        self.assertEqual(before, self.snapshot())
+        stopped = self.run / "lifecycle-0004/stopped.json"
+        value = read_json(stopped)
+        value["alive"] = True
+        stopped.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        before = self.snapshot()
+        self.assertEqual(context.status(self.backend, self.review, self.bootstrap)["next_operation"],
+                         "reconcile-evidence")
+        self.assertEqual(before, self.snapshot())
+        with self.reconcile_mocks(members), self.assertRaisesRegex(ValueError, "Redis"):
+            lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                self.run / "state.json", write=True)
+        self.assertEqual(before, self.snapshot())
+
+    def test_failed_close_reconcile_rejects_tampered_failed_controller_without_writes(self):
+        members = self.failed_close()
+        controller = self.run / "controller-0004.json"
+        value = read_json(controller)
+        value["attempt_sha256"] = "0" * 64
+        controller.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        before = self.snapshot()
+        self.assertEqual(context.status(self.backend, self.review, self.bootstrap)["next_operation"],
+                         "reconcile-evidence")
+        self.assertEqual(before, self.snapshot())
+        with self.reconcile_mocks(members), self.assertRaisesRegex(ValueError, "控制器"):
+            lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                self.run / "state.json", write=True)
+        self.assertEqual(before, self.snapshot())
+
+    def test_failed_close_reconcile_rejects_attempt_and_controller_group_tampering(self):
+        members = self.failed_close()
+        state_file = self.run / "state.json"
+        state = read_json(state_file)
+        failed = state["attempts"][-1]
+        failed["sources"]["invented"] = binding(self.run / "manifest.json")
+        state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        from restore_reference_plan import plan_hash
+
+        controller_file = self.run / "controller-0004.json"
+        controller = read_json(controller_file)
+        running = {**failed, "finished_at": None, "status": "running", "result": None,
+                   "error_type": None}
+        controller["attempt_sha256"] = plan_hash(running)
+        controller_file.write_text(json.dumps(controller, ensure_ascii=False, indent=2) + "\n",
+                                   encoding="utf-8")
+        before = self.snapshot()
+        self.assertEqual(context.status(self.backend, self.review, self.bootstrap)["next_operation"],
+                         "reconcile-evidence")
+        self.assertEqual(before, self.snapshot())
+        with self.reconcile_mocks(members), self.assertRaisesRegex(ValueError, "当前夹具输入"):
+            lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                self.run / "state.json", write=True)
+        self.assertEqual(before, self.snapshot())
+
+    def test_failed_close_reconcile_consumes_complete_unpublished_rustfs_wrapper(self):
+        members = self.failed_close()
+        write_json(self.run / "lifecycle-0004/rustfs-stopped.json", {
+            "tree": self.services["tree"], "terminated": True, "state": "stopped",
+            "completion": binding(members)})
+        with self.reconcile_mocks(members):
+            result = lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                         self.run / "state.json", write=True)
+        self.assertEqual(result["status"], "failed_close_reconciled")
+        proof = read_json(self.run / "lifecycle-0005/reconciliation.json")
+        self.assertEqual(proof["evidence"]["rustfs_close"],
+                         binding(self.run / "lifecycle-0004/rustfs-stopped.json"))
+        self.assertTrue(validate_history(self.run, load_state(self.run))["closed"])
+
+    def test_failed_close_reconcile_rejects_tampered_rustfs_members_without_writes(self):
+        members = self.failed_close()
+        proof = read_json(members)
+        proof["error_type"] = "unexpected"
+        members.write_text(json.dumps(proof, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        before = self.snapshot()
+        stopped = {"redis": "stopped", "rustfs": "stopped", "termination": None}
+        with patch.object(lifecycle, "controller_observation", return_value=None), \
+                patch.object(lifecycle, "registered_services", return_value=self.services), \
+                patch.object(lifecycle, "observe_services", return_value=stopped), \
+                patch("full_stack_process_monitor.process_identity", return_value=None), \
+                self.assertRaisesRegex(ValueError, "完整成员"):
+            lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                self.run / "state.json", write=True)
+        self.assertEqual(before, self.snapshot())
+
+    def test_reconciliation_history_rejects_rebound_failed_controller_metadata(self):
+        members = self.failed_close()
+        with self.reconcile_mocks(members):
+            lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                self.run / "state.json", write=True)
+        proof_file = self.run / "lifecycle-0005/reconciliation.json"
+        proof = read_json(proof_file)
+        proof["failed_controller"] = binding(self.run / "controller-0005.json")
+        proof_file.write_text(json.dumps(proof, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        result_file = self.run / "results/0005.json"
+        result = read_json(result_file)
+        result["reconciliation"] = binding(proof_file)
+        result_file.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        state_file = self.run / "state.json"
+        state = read_json(state_file)
+        state["attempts"][-1]["result"] = binding(result_file)
+        state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "和解证据"):
+            validate_history(self.run, load_state(self.run))
+
+    def test_reconciliation_history_rejects_result_owner_not_bound_to_sources(self):
+        members = self.failed_close()
+        with self.reconcile_mocks(members):
+            lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                self.run / "state.json", write=True)
+        result_file = self.run / "results/0005.json"
+        result = read_json(result_file)
+        result["owner"] = result["controller"]
+        result_file.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        state_file = self.run / "state.json"
+        state = read_json(state_file)
+        state["attempts"][-1]["result"] = binding(result_file)
+        state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "和解结果"):
+            validate_history(self.run, load_state(self.run))
+
+    def test_failed_close_reconcile_rejects_running_service_and_extra_failure(self):
+        members = self.failed_close()
+        running = {"redis": "stopped", "rustfs": "running", "termination": None}
+        before = self.snapshot()
+        with self.reconcile_mocks(members, observed=running), self.assertRaisesRegex(ValueError, "尚未完整停止"):
+            lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                self.run / "state.json", write=True)
+        self.assertEqual(before, self.snapshot())
+        value = context.context(self.backend, self.review, self.bootstrap)
+        number = begin(self.run, "fixture-services", "recover", value["sources"])
+        finish(self.run, number, error=RuntimeError("second failure"))
+        self.assertEqual(context.status(self.backend, self.review, self.bootstrap)["next_operation"],
+                         "reconcile-evidence")
+        before = self.snapshot()
+        with self.assertRaisesRegex(ValueError, "唯一未结算"):
+            lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                self.run / "state.json", write=True)
+        self.assertEqual(before, self.snapshot())
 
     def test_new_requests_reject_closed_service_generations(self):
         with self.mocks():
@@ -428,6 +657,16 @@ class ServiceLifecycleTests(unittest.TestCase):
             lifecycle._closed_services(services)
         sleep.assert_not_called()
 
+    def test_close_wait_does_not_hide_non_identity_permission_denial(self):
+        expected = {"pid": 12345, "started": "1", "executable": "original"}
+        services = {"tree": {"supervisor": expected, "process": expected}}
+        with patch.object(lifecycle, "process_identity", return_value=None), \
+                patch.object(lifecycle, "observe_services", side_effect=PermissionError), \
+                patch.object(lifecycle.time, "sleep") as sleep, \
+                self.assertRaises(PermissionError):
+            lifecycle._closed_services(services)
+        sleep.assert_not_called()
+
     def test_unknown_recovery_intent_blocks_close_before_service_operations(self):
         write_json(self.run / "recovery-unknown.intent.json", {"unknown": True})
         with self.mocks(), self.assertRaisesRegex(ValueError, "未知控制恢复"):
@@ -484,11 +723,24 @@ class ServiceLifecycleTests(unittest.TestCase):
 
     def test_cli_rejects_ambiguous_or_write_status_arguments_with_usage_exit(self):
         common = ["--backend-dir", str(self.backend), "--review", str(self.review), "--environment", str(self.bootstrap)]
-        for args in (("status", "--write"), ("close",), ("recover", "--write"), ("close", "--write", "--owner-binding", "owner.json")):
+        for args in (("status", "--write"), ("close",), ("reconcile", "--write"),
+                     ("recover", "--write"), ("close", "--write", "--owner-binding", "owner.json")):
             with self.subTest(args=args), patch("sys.stderr", new_callable=io.StringIO), \
                     self.assertRaises(SystemExit) as error:
                 cli.main([*args, *common])
             self.assertEqual(error.exception.code, 2)
+
+    def test_cli_dispatches_reconcile_with_explicit_owner_binding(self):
+        expected = {"status": "failed_close_reconciled", "remote_writes": 0}
+        arguments = ["reconcile", "--backend-dir", str(self.backend),
+                     "--review", str(self.review), "--environment", str(self.bootstrap),
+                     "--owner-binding", str(self.run / "state.json"), "--write"]
+        with patch.object(lifecycle, "reconcile", return_value=expected) as reconcile, \
+                patch("builtins.print") as output:
+            cli.main(arguments)
+        reconcile.assert_called_once_with(self.backend.resolve(), self.review, self.bootstrap,
+                                          self.run / "state.json", write=True)
+        output.assert_called_once_with(json.dumps(expected, ensure_ascii=False))
 
     def test_cli_rejects_duplicate_and_abbreviated_options_before_reading_inputs(self):
         common = ["--backend-dir", str(self.backend), "--review", str(self.review), "--environment", str(self.bootstrap)]

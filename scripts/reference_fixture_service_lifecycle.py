@@ -10,14 +10,16 @@ from devex_clone_capture import read_json, write_json
 from process_environment import configured
 from devex_clone_model import local_path
 from devex_clone_run_state import (begin, bind_controller_attempt, binding, claim_run_lock,
-                                   controller_observation, finish, load_state, recover_run_lock, run_lock)
+                                   controller_observation, finish, load_state,
+                                   recover_run_lock, run_lock)
 from full_stack_process_tree import terminate_owned_process_tree
 from full_stack_process_monitor import completion_binding
 from full_stack_process import process_identity
 from process_guard import process_guard
 from reference_fixture_service_context import (context, guard, observe_services, registered_services,
                                                unknown_recoveries)
-from reference_fixture_service_history import LIFECYCLE_STAGE, validate_history
+from reference_fixture_service_history import (LIFECYCLE_STAGE, close_reconciliation_evidence,
+                                               reconcilable_failed_close, validate_history)
 
 
 def _result(run: Path, operation: str, status: str, **details) -> dict:
@@ -99,6 +101,68 @@ def close(backend: Path, review: Path, bootstrap: Path, *, write: bool) -> dict:
                              evidence={"redis": binding(output / "stopped.json"), "rustfs": binding(storage_file)})
             if cache.get("status") != "redis_process_stopped":
                 raise ValueError("Redis 关闭未返回明确结果")
+            finish(run, number, result=result)
+        except BaseException as error:
+            finish(run, number, error=error)
+            raise
+    return result
+
+
+def _reconciliation_evidence(value: dict, failed: dict, services: dict) -> tuple[dict, dict]:
+    evidence, failed_controller = close_reconciliation_evidence(
+        value["run"], failed, value["history"]["active_generation"], value["sources"], services)
+    completion = completion_binding(services["tree"])
+    if completion != evidence["rustfs_members"]:
+        raise ValueError("RustFS 完整成员关闭证明在进程核对期间变化")
+    observations = observe_services(services)
+    if observations != {"redis": "stopped", "rustfs": "stopped", "termination": None}:
+        raise ValueError("失败 close 和解时服务或端口尚未完整停止")
+    return observations, {"evidence": evidence, "failed_controller": failed_controller}
+
+
+def reconcile(backend: Path, review: Path, bootstrap: Path, owner_file: Path, *, write: bool) -> dict:
+    if not write:
+        raise ValueError("和解夹具关闭证据必须显式指定 --write")
+    value = context(backend, review, bootstrap)
+    run = value["run"]
+    owner_path = local_path(backend, str(owner_file if owner_file.is_absolute() else backend / owner_file))
+    if owner_path != run / "state.json" or binding(owner_path) != value["sources"]["state_before"]:
+        raise ValueError("夹具关闭和解必须精确绑定 status 返回的当前 state 文件")
+    failed = reconcilable_failed_close(value["state"], value["history"])
+    if failed is None or unknown_recoveries(run) or controller_observation(run) is not None:
+        raise ValueError("只允许和解唯一未结算的失败 close，且不能有控制器或未知恢复")
+    services = registered_services(value, settled=False)
+    observations, proof_sources = _reconciliation_evidence(value, failed, services)
+    with run_lock(run) as owner:
+        guard(value)
+        if unknown_recoveries(run):
+            raise ValueError("发布和解前出现未知恢复")
+        number = begin(run, LIFECYCLE_STAGE, "reconcile", value["sources"])
+        controller = bind_controller_attempt(run, number, owner)
+        running_state = binding(run / "state.json")
+        try:
+            output = local_path(backend, str(run / f"lifecycle-{number:04d}"), new=True)
+            output.mkdir()
+            current_observations, current_sources = _reconciliation_evidence(value, failed, services)
+            if current_observations != observations or current_sources != proof_sources:
+                raise ValueError("发布和解前关闭证据或服务状态发生变化")
+            proof_file = output / "reconciliation.json"
+            proof = {"format_version": 1, "kind": "reference-fixture-failed-close-reconciliation",
+                     "run": str(run), "attempt": number, "owner": value["sources"]["state_before"],
+                     "failed_attempt": failed["number"], "failed_error_type": failed["error_type"],
+                     "failed_sources": failed["sources"],
+                     "failed_controller": proof_sources["failed_controller"],
+                     "services": {key: observations[key] for key in ("redis", "rustfs")},
+                     "evidence": proof_sources["evidence"],
+                     "remote_writes": 0, "resources_deleted": False}
+            write_json(proof_file, proof)
+            guard(value, running_state)
+            final_observations, final_sources = _reconciliation_evidence(value, failed, services)
+            if final_observations != observations or final_sources != proof_sources:
+                raise ValueError("和解证据写入后关闭现场发生变化")
+            result = _result(run, "reconcile", "failed_close_reconciled", controller=controller,
+                             owner=value["sources"]["state_before"], failed_attempt=failed["number"],
+                             services=proof["services"], reconciliation=binding(proof_file))
             finish(run, number, result=result)
         except BaseException as error:
             finish(run, number, error=error)

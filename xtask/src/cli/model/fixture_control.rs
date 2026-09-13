@@ -51,7 +51,7 @@ pub(crate) const FIXTURE_CONTROL_USAGE: &str = concat!(
     "  successor arm-request --successor <文件> --source-export-result <文件> --workspace <目录> --id <ID> --side base|candidate --copy-directory <新目录> [--output <新文件> --write]\n",
     "  services <rustfs|redis|buckets|close> --review <文件> --environment <文件> --write\n",
     "  services status --review <文件> --environment <文件>\n",
-    "  services <recover|restart> --review <文件> --environment <文件> --owner-binding <文件> --write\n",
+    "  services <reconcile|recover|restart> --review <文件> --environment <文件> --owner-binding <文件> --write\n",
     "路径必须是当前后端 .local-tests 内无链接的绝对路径；只读 plan/status 拒绝 --write，dataset plan、发布和生命周期操作要求 --write。",
 );
 

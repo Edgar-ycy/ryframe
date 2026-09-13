@@ -5,7 +5,7 @@ from pathlib import Path
 
 from devex_clone_capture import read_json
 from devex_clone_model import exact, linked
-from devex_clone_run_state import binding, historical_state
+from devex_clone_run_state import binding, controller_record, historical_state
 
 INITIAL = (("storage-target", "initial"), ("cache-target", "initial"), ("fixture-buckets", "prepare"))
 LIFECYCLE_STAGE = "fixture-services"
@@ -32,14 +32,14 @@ def validate_history(run: Path, state: dict, *, ready: bool = True, settled: boo
         raise ValueError("夹具首代服务尚未完整就绪")
     closed = False
     external_recovery = None
+    unsettled = []
     active_generation = {"kind": "initial", "rustfs": attempts[0]["result"] if len(attempts) > 0 else None,
                          "redis": attempts[1]["result"] if len(attempts) > 1 else None}
     for index, item in enumerate(attempts[boundary:], boundary):
-        if item["stage"] != LIFECYCLE_STAGE or item["mode"] not in {"close", "recover", "restart"}:
-            raise ValueError("夹具服务仅允许明确 close/recover/restart 生命周期追加")
-        if settled and item["status"] != "passed":
-            raise ValueError("夹具服务存在未成功收尾的生命周期阶段")
+        if item["stage"] != LIFECYCLE_STAGE or item["mode"] not in {"close", "recover", "reconcile", "restart"}:
+            raise ValueError("夹具服务仅允许明确 close/recover/reconcile/restart 生命周期追加")
         if item["status"] != "passed":
+            unsettled.append(item["number"])
             continue
         sources = item["sources"]
         if sources.get("manifest") != state["manifest"]:
@@ -53,6 +53,8 @@ def validate_history(run: Path, state: dict, *, ready: bool = True, settled: boo
                 or result.get("remote_writes") != 0 or result.get("resources_deleted") is not False):
             raise ValueError("夹具生命周期结果未证明原运行目录及零资源删除")
         if item["mode"] == "close":
+            if unsettled:
+                raise ValueError("夹具服务未和解失败阶段后不能再次关闭")
             if external_recovery is not None:
                 raise ValueError("夹具外部终止核对后必须重启，不能补造正常关闭")
             if closed or result.get("status") != "services_closed" or result.get("services") != {"redis": "stopped", "rustfs": "stopped"}:
@@ -91,7 +93,34 @@ def validate_history(run: Path, state: dict, *, ready: bool = True, settled: boo
                     or linked(path) or binding(path) != receipt
                     or read_json(path).get("status") != "controller_recovered"):
                 raise ValueError("夹具控制器恢复结果不完整")
+        elif item["mode"] == "reconcile":
+            if closed or external_recovery is not None or len(unsettled) != 1:
+                raise ValueError("夹具关闭和解必须对应唯一未结算失败")
+            failed_number = unsettled[0]
+            failed = attempts[failed_number - 1]
+            if (failed["stage"], failed["mode"], failed["status"]) != (LIFECYCLE_STAGE, "close", "failed"):
+                raise ValueError("夹具关闭和解仅能消费失败的 close 阶段")
+            reconciliation = result.get("reconciliation", {})
+            path = Path(reconciliation.get("path", ""))
+            controller = _attempt_controller_binding(run, item)
+            exact(result, {"format_version", "kind", "operation", "status", "run", "remote_writes",
+                           "resources_deleted", "controller", "owner", "failed_attempt", "services",
+                           "reconciliation"})
+            if (result.get("status") != "failed_close_reconciled"
+                    or result.get("failed_attempt") != failed_number
+                    or result.get("owner") != sources.get("state_before")
+                    or result.get("controller") != controller
+                    or result.get("services") != {"redis": "stopped", "rustfs": "stopped"}
+                    or path != run / f"lifecycle-{index + 1:04d}/reconciliation.json"
+                    or linked(path) or binding(path) != reconciliation):
+                raise ValueError("夹具关闭和解结果不完整")
+            _validate_close_reconciliation(read_json(path), run, index + 1,
+                                           sources, failed, active_generation)
+            unsettled.clear()
+            closed = True
         else:
+            if unsettled:
+                raise ValueError("夹具服务未和解失败阶段后不能重启")
             if closed or external_recovery is None:
                 raise ValueError("夹具服务重启必须紧接明确的外部终止核对")
             if result.get("status") != "services_restarted" or result.get("services") != {
@@ -107,11 +136,80 @@ def validate_history(run: Path, state: dict, *, ready: bool = True, settled: boo
             active_generation = item["result"]
             external_recovery = None
             closed = False
+    if settled and unsettled:
+        raise ValueError("夹具服务存在未成功收尾的生命周期阶段")
     return {"closed": closed, "external_recovery": external_recovery,
             "active_generation": active_generation,
             "initial_complete": len(initial) == len(INITIAL)
             and all(item["status"] == "passed" for item in initial),
-            "unsettled": [item["number"] for item in attempts if item["status"] != "passed"]}
+            "unsettled": unsettled}
+
+
+def reconcilable_failed_close(state: dict, history: dict) -> dict | None:
+    if history["closed"] or history["external_recovery"] is not None or len(history["unsettled"]) != 1:
+        return None
+    number = history["unsettled"][0]
+    attempts = state["attempts"]
+    if number < 1 or number > len(attempts):
+        return None
+    failed = attempts[number - 1]
+    if (failed["stage"], failed["mode"], failed["status"]) != (LIFECYCLE_STAGE, "close", "failed"):
+        return None
+    later = attempts[number:]
+    if any((item["stage"], item["mode"], item["status"]) != (LIFECYCLE_STAGE, "recover", "passed")
+           for item in later):
+        return None
+    return failed
+
+
+def _attempt_controller_binding(run: Path, attempt: dict) -> dict:
+    running = {**attempt, "finished_at": None, "status": "running", "result": None,
+               "error_type": None}
+    return controller_record(run, attempt["number"], running)[0]
+
+
+def close_reconciliation_evidence(run: Path, failed: dict, generation: dict,
+                                  sources: dict, services: dict) -> tuple[dict, dict]:
+    stable_sources = {key: descriptor for key, descriptor in sources.items()
+                      if key != "state_before"}
+    if (set(failed["sources"]) != set(sources)
+            or any(failed["sources"].get(key) != descriptor
+                   for key, descriptor in stable_sources.items())
+            or historical_state(run, failed["sources"].get("state_before"))["historical_attempts"]
+            != failed["number"] - 1):
+        raise ValueError("失败 close 未绑定当前夹具输入及完整账本前像")
+    failed_root = run / f"lifecycle-{failed['number']:04d}"
+    children = list(failed_root.iterdir()) if failed_root.is_dir() and not linked(failed_root) else []
+    names = {path.name for path in children}
+    if (names not in ({"stopped.json"}, {"stopped.json", "rustfs-stopped.json"})
+            or any(not path.is_file() or linked(path) for path in children)):
+        raise ValueError("失败 close 现场包含缺失或未知证据")
+    redis_path = failed_root / "stopped.json"
+    redis = read_json(redis_path)
+    if (redis.get("status") != "redis_process_stopped" or redis.get("alive") is not False
+            or redis.get("resources_deleted") is not False or redis.get("runtime") != services["runtime"]):
+        raise ValueError("Redis 失败 close 证据与原服务代次不一致")
+    rustfs_root, _ = _generation_paths(run, generation)
+    tree_path = rustfs_root / "rustfs-tree.json"
+    tree = read_json(tree_path)
+    if services["tree"] != tree or services["evidence"].get("rustfs_tree") != binding(tree_path):
+        raise ValueError("RustFS 失败 close 进程树与原服务代次不一致")
+    from full_stack_process_monitor import receipt_path
+
+    members_path = receipt_path(rustfs_root, "rustfs", tree["operation_id"], "stopped")
+    members = binding(members_path)
+    _validate_members({"state": "stopped", "tree": tree, "completion": members}, run)
+    evidence = {"redis": binding(redis_path), "rustfs_tree": binding(tree_path),
+                "rustfs_members": members}
+    wrapped = failed_root / "rustfs-stopped.json"
+    if wrapped.is_file():
+        document = read_json(wrapped)
+        if (set(document) != {"tree", "terminated", "state", "completion"}
+                or document["tree"] != tree or not isinstance(document["terminated"], bool)
+                or document["state"] != "stopped" or document["completion"] != members):
+            raise ValueError("RustFS 失败 close 封装证据不完整")
+        evidence["rustfs_close"] = binding(wrapped)
+    return evidence, _attempt_controller_binding(run, failed)
 
 
 def _generation_paths(run: Path, generation: dict) -> tuple[Path, Path]:
@@ -209,3 +307,28 @@ def _validate_members(proof: dict, run: Path) -> None:
             or members.get("directory") != tree.get("runtime_directory")
             or not isinstance(members.get("members"), list) or tree.get("supervisor") not in members["members"]):
         raise ValueError("RustFS 完整成员关闭证明不属于原进程树或未收尾")
+
+
+def _validate_close_reconciliation(proof: dict, run: Path, number: int,
+                                   sources: dict, failed: dict, generation: dict) -> None:
+    exact(proof, {"format_version", "kind", "run", "attempt", "owner", "failed_attempt",
+                  "failed_error_type", "failed_sources", "failed_controller", "services", "evidence",
+                  "remote_writes", "resources_deleted"})
+    rustfs_root, redis_root = _generation_paths(run, generation)
+    tree_path = rustfs_root / "rustfs-tree.json"
+    tree = read_json(tree_path)
+    services = {"tree": tree, "runtime": read_json(redis_root / "runtime.json"),
+                "evidence": {"rustfs_tree": binding(tree_path)}}
+    evidence, failed_controller = close_reconciliation_evidence(
+        run, failed, generation, sources, services)
+    if (proof["format_version"] != 1 or proof["kind"] != "reference-fixture-failed-close-reconciliation"
+            or proof["run"] != str(run) or proof["attempt"] != number
+            or proof["owner"] != sources["state_before"]
+            or proof["failed_attempt"] != failed["number"]
+            or proof["failed_error_type"] != failed["error_type"]
+            or proof["failed_sources"] != failed["sources"]
+            or proof["failed_controller"] != failed_controller
+            or proof["services"] != {"redis": "stopped", "rustfs": "stopped"}
+            or proof["remote_writes"] != 0 or proof["resources_deleted"] is not False
+            or proof["evidence"] != evidence):
+        raise ValueError("夹具关闭和解证据未精确绑定失败阶段与原进程树")

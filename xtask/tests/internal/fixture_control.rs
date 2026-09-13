@@ -8,10 +8,10 @@ use serde_json::Value;
 
 use super::{
     cli::{
-        CheckCommand, Command, FixtureArtifactCommand, FixtureControlCommand,
-        FixtureEnvironmentCommand, FixtureRequestCommand, FixtureRetentionCommand,
-        FixtureReviewCommand, FixtureServicesCommand, FixtureSourcePairCommand,
-        FixtureSuccessorCommand, RecoveryCommand, parse,
+        CheckCommand, Command, FIXTURE_CONTROL_USAGE, FixtureArtifactCommand,
+        FixtureControlCommand, FixtureEnvironmentCommand, FixtureRequestCommand,
+        FixtureRetentionCommand, FixtureReviewCommand, FixtureServicesCommand,
+        FixtureSourcePairCommand, FixtureSuccessorCommand, RecoveryCommand, parse,
     },
     recovery::fixture_control::private_invocation_at,
     workspace::root_dir,
@@ -445,7 +445,14 @@ fn parses_review_request_and_all_service_operations() {
     ));
 
     for operation in [
-        "rustfs", "redis", "buckets", "status", "close", "recover", "restart",
+        "rustfs",
+        "redis",
+        "buckets",
+        "status",
+        "close",
+        "reconcile",
+        "recover",
+        "restart",
     ] {
         let mut values = vec![
             "--review".to_owned(),
@@ -453,7 +460,7 @@ fn parses_review_request_and_all_service_operations() {
             "--environment".to_owned(),
             text(&fixture.input_two),
         ];
-        if matches!(operation, "recover" | "restart") {
+        if matches!(operation, "reconcile" | "recover" | "restart") {
             values.extend(["--owner-binding".to_owned(), text(&fixture.input)]);
         }
         if operation != "status" {
@@ -464,6 +471,11 @@ fn parses_review_request_and_all_service_operations() {
             FixtureControlCommand::Services(FixtureServicesCommand::Run(_))
         ));
     }
+}
+
+#[test]
+fn fixture_help_documents_explicit_service_reconciliation() {
+    assert!(FIXTURE_CONTROL_USAGE.contains("services <reconcile|recover|restart>"));
 }
 
 #[test]

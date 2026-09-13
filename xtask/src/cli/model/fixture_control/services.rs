@@ -7,6 +7,7 @@ pub(crate) enum FixtureServiceOperation {
     Buckets,
     Status,
     Close,
+    Reconcile,
     Recover,
     Restart,
 }
@@ -19,6 +20,7 @@ impl FixtureServiceOperation {
             Self::Buckets => "buckets",
             Self::Status => "status",
             Self::Close => "close",
+            Self::Reconcile => "reconcile",
             Self::Recover => "recover",
             Self::Restart => "restart",
         }

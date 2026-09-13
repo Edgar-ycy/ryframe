@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 
 from devex_clone_capture import read_json
 from devex_clone_model import local_path
@@ -12,7 +13,9 @@ from devex_clone_storage_request import arguments, directory_identity
 from full_stack_process import process_identity
 from full_stack_process_tree import read_process_tree
 from reference_fixture_paths import service_run
-from reference_fixture_service_history import validate_history, validate_manifest
+from reference_fixture_service_history import (close_reconciliation_evidence,
+                                               reconcilable_failed_close, validate_history,
+                                               validate_manifest)
 
 
 def context(backend: Path, review_path: Path, bootstrap_path: Path) -> dict:
@@ -62,7 +65,7 @@ def unknown_recoveries(run: Path) -> list[str]:
                if not (run / ("recovered-" + path.name[len("recovery-"):-len(".intent.json")] + ".json")).is_file()}
     unknown.update(path.name for path in run.glob("recovered-*.json") if str(path) not in consumed)
     expected = {f"lifecycle-{item['number']:04d}" for item in state["attempts"]
-                if item["stage"] == "fixture-services" and item["mode"] in {"close", "restart"}}
+                if item["stage"] == "fixture-services" and item["mode"] in {"close", "reconcile", "restart"}}
     for item in state["attempts"]:
         if (item["stage"], item["mode"], item["status"]) != ("fixture-services", "recover", "passed"):
             continue
@@ -73,9 +76,9 @@ def unknown_recoveries(run: Path) -> list[str]:
     return sorted(unknown)
 
 
-def registered_services(value: dict) -> dict:
+def registered_services(value: dict, *, settled: bool = True) -> dict:
     run, backend, state = value["run"], value["backend"], value["state"]
-    history = validate_history(run, state)
+    history = validate_history(run, state, settled=settled)
     first, second = state["attempts"][:2]
     requests = {}
     for role, attempt in (("rustfs", first), ("redis", second)):
@@ -138,9 +141,17 @@ def registered_services(value: dict) -> dict:
 
 def _identity_observations(tree: dict) -> dict:
     observations = {}
+    deadline = time.monotonic() + 5
     for role in ("supervisor", "monitor", "process"):
         expected = tree[role]
-        actual = process_identity(expected["pid"])
+        while True:
+            try:
+                actual = process_identity(expected["pid"])
+                break
+            except PermissionError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.05)
         if actual is not None and actual != expected:
             raise ValueError(f"RustFS {role} PID 已复用")
         observations[role] = "running" if actual is not None else "missing"
@@ -239,7 +250,16 @@ def status(backend: Path, review: Path, bootstrap: Path) -> dict:
             raise ValueError("控制器 PID 已复用，不能等待或恢复无关进程")
         next_operation = "recover" if controller["process_missing"] else "wait-controller"
     elif unsettled:
-        next_operation = "reconcile-evidence"
+        failed = reconcilable_failed_close(value["state"], value["history"])
+        if failed is not None:
+            try:
+                services = registered_services(value, settled=False)
+                close_reconciliation_evidence(value["run"], failed,
+                                              value["history"]["active_generation"],
+                                              value["sources"], services)
+            except (FileNotFoundError, IsADirectoryError, KeyError, OSError, TypeError, ValueError):
+                failed = None
+        next_operation = "reconcile" if failed is not None else "reconcile-evidence"
     elif not value["history"]["initial_complete"]:
         attempts = value["state"]["attempts"]
         count = next((index for index, item in enumerate(attempts) if item["stage"] == "fixture-services"), len(attempts))
