@@ -68,7 +68,8 @@ fn invoke(arguments: &[String]) -> std::process::Output {
             "RYFRAME_REFERENCE_FIXTURE_RUNTIME_PROTOCOL",
             "untrusted inherited value",
         )
-        .env("PYTHONUTF8", "1")
+        .env("pythonUtf8", "0")
+        .env("pythonIoEncoding", "ascii:strict")
         .output()
         .unwrap()
 }
@@ -109,7 +110,7 @@ fn valid_request_replaces_inherited_protocol_and_keeps_paths_out_of_argv() {
     let stdout = String::from_utf8(result.stdout).unwrap();
     let stderr = String::from_utf8(result.stderr).unwrap();
     assert!(
-        stdout.contains("scripts/reference_fixture_runtime.py"),
+        stdout.contains("-X utf8 -B scripts/reference_fixture_runtime.py"),
         "{stdout}"
     );
     assert!(!stdout.contains("--environment"), "{stdout}");

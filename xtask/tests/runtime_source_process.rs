@@ -45,6 +45,8 @@ if capture:
     Path(capture).write_text(json.dumps({
         "dont_write_bytecode": sys.flags.dont_write_bytecode,
         "foreign_protocol": os.environ.get("RYFRAME_RESTORE_SOURCE_PROTOCOL"),
+        "python_encoding_keys": sorted(name for name in os.environ
+                                        if name.upper() in {"PYTHONUTF8", "PYTHONIOENCODING"}),
         "python_io_encoding": os.environ.get("PYTHONIOENCODING"),
         "python_utf8": os.environ.get("PYTHONUTF8"),
         "target_plan": protocol.get("target_plan"),
@@ -108,8 +110,8 @@ fn invoke_runtime_with_conflicting_python_environment(
             "RYFRAME_RESTORE_SOURCE_PROTOCOL",
             "untrusted inherited source value",
         )
-        .env("PYTHONUTF8", "0")
-        .env("PYTHONIOENCODING", "ascii:strict")
+        .env("pythonUtf8", "0")
+        .env("PythonIoEncoding", "ascii:strict")
         .env("PYTHONPATH", &fixture.directory)
         .env("RYFRAME_RUNTIME_TEST_CAPTURE", &fixture.capture)
         .output()
@@ -156,6 +158,10 @@ fn runtime_status_replaces_inherited_protocol_and_hides_evidence_paths_from_argv
     assert_eq!(capture["dont_write_bytecode"], 1);
     assert_eq!(capture["python_utf8"], "1");
     assert_eq!(capture["python_io_encoding"], "utf-8");
+    assert_eq!(
+        capture["python_encoding_keys"],
+        serde_json::json!(["PYTHONIOENCODING", "PYTHONUTF8"])
+    );
     assert_eq!(capture["foreign_protocol"], Value::Null);
     assert_eq!(
         capture["target_plan"],

@@ -4,7 +4,8 @@ use std::{
 };
 
 use super::process::{
-    ChildGroup, command_output, configure_pnpm_environment, failure_exit_code, process_is_running,
+    ChildGroup, command_output, command_output_with_env, configure_pnpm_environment,
+    failure_exit_code, process_is_running, python_arguments, python_environment,
     resolved_executable, run, with_process_log,
 };
 
@@ -26,6 +27,64 @@ fn python_runner_honors_the_explicit_isolated_interpreter() {
         "cargo"
     );
     assert_eq!(resolved_executable("python", None), "python");
+}
+
+#[test]
+fn python_runner_owns_utf8_arguments_and_environment() {
+    assert_eq!(
+        python_arguments(
+            "python",
+            &[
+                "-B",
+                "-W",
+                "error",
+                "-Xutf8=0",
+                "-X",
+                "UTF8=1",
+                "script.py",
+                "-X",
+                "utf8",
+            ],
+        ),
+        ["-X", "utf8", "-B", "-W", "error", "script.py", "-X", "utf8",]
+    );
+    assert_eq!(python_arguments("node", &["script.mjs"]), ["script.mjs"]);
+    assert_eq!(
+        python_environment(
+            "python",
+            &[
+                ("pythonutf8", "0"),
+                ("PythonIoEncoding", "ascii:strict"),
+                ("RYFRAME_INPUT", "kept"),
+            ],
+        ),
+        [
+            ("RYFRAME_INPUT", "kept"),
+            ("PYTHONUTF8", "1"),
+            ("PYTHONIOENCODING", "utf-8"),
+        ]
+    );
+}
+
+#[test]
+fn python_output_runner_applies_the_same_utf8_policy() {
+    let output = command_output_with_env(
+        std::path::Path::new("."),
+        "python",
+        &[
+            "-c",
+            "import json, os, sys; print(json.dumps([sys.flags.utf8_mode, os.environ.get('PYTHONUTF8'), os.environ.get('PYTHONIOENCODING')]))",
+        ],
+        &[
+            ("pythonUtf8", "0"),
+            ("pythonIoEncoding", "ascii:strict"),
+        ],
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(output.trim()).unwrap(),
+        serde_json::json!([1, "1", "utf-8"])
+    );
 }
 
 #[test]

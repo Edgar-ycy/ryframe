@@ -41,6 +41,11 @@ mod logging;
 #[allow(unused_imports)]
 pub(crate) use logging::with_process_log;
 use logging::{configure_output, process_log_active};
+#[path = "process/python.rs"]
+mod python;
+use python::configure_environment;
+#[allow(unused_imports)]
+pub(crate) use python::{python_arguments, python_environment};
 
 type StepObserver = fn(String, f64, bool);
 static STEP_OBSERVER: OnceLock<StepObserver> = OnceLock::new();
@@ -102,19 +107,15 @@ pub(crate) fn run_with_env_removed(
     let logged = process_log_active();
     let command_executable = resolved_executable(executable, env::var_os("RYFRAME_PYTHON"));
     let command_label = command_executable.to_string_lossy();
+    let args = python_arguments(executable, args);
     if !logged {
         println!("→ {command_label} {}", args.join(" "));
     }
     let mut command = child_command(&command_executable);
     configure_cargo_cache(executable, &mut command);
-    command.args(args);
-    for key in removed_environment {
-        command.env_remove(key);
-    }
-    command
-        .envs(environment.iter().copied())
-        .current_dir(dir)
-        .stdin(Stdio::inherit());
+    command.args(&args);
+    configure_environment(&mut command, executable, environment, removed_environment);
+    command.current_dir(dir).stdin(Stdio::inherit());
     configure_output(&mut command)?;
     let status = command_status(command);
     let elapsed = started.elapsed().as_secs_f64();
@@ -210,14 +211,15 @@ pub(crate) fn command_output_with_env(
     let logged = process_log_active();
     let command_executable = resolved_executable(executable, env::var_os("RYFRAME_PYTHON"));
     let command_label = command_executable.to_string_lossy();
+    let args = python_arguments(executable, args);
     if !logged {
         println!("→ {command_label} {}", args.join(" "));
     }
     let mut command = child_command(&command_executable);
     configure_cargo_cache(executable, &mut command);
+    configure_environment(&mut command, executable, environment, &[]);
     command
-        .args(args)
-        .envs(environment.iter().copied())
+        .args(&args)
         .current_dir(dir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

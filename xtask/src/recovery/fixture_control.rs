@@ -45,13 +45,9 @@ pub(super) fn run(command: &FixtureControlCommand, root: &Path) -> Result<()> {
     run_with_env_removed(
         root,
         "python",
-        &["-X", "utf8", "-B", invocation.script],
-        &[
-            (PROTOCOL_KEY, invocation.protocol.as_str()),
-            ("PYTHONUTF8", "1"),
-            ("PYTHONIOENCODING", "utf-8"),
-        ],
-        &[PROTOCOL_KEY, "PYTHONUTF8", "PYTHONIOENCODING"],
+        &["-B", invocation.script],
+        &[(PROTOCOL_KEY, invocation.protocol.as_str())],
+        &[PROTOCOL_KEY],
     )
 }
 
