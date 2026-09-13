@@ -68,16 +68,12 @@ def _pending_review(backend: Path, path: Path) -> tuple[dict, dict]:
     return review, _review_descriptor(filename, review, descriptor)
 
 
-def _ready_review(
-    backend: Path, path: Path, expected_predecessor: dict
-) -> tuple[dict, dict]:
+def _ready_review(backend: Path, path: Path) -> tuple[dict, dict]:
     filename, review, descriptor = _document(backend, path)
     preflight = review.get("preflight")
     predecessor = preflight.get("supersedes") if isinstance(preflight, dict) else None
     if not isinstance(predecessor, dict):
         raise ValueError("successor review 缺少 preflight predecessor")
-    if predecessor != expected_predecessor:
-        raise ValueError("successor review 未 supersede 指定 pending predecessor")
     prior_path, prior, _ = _document(
         backend, Path(predecessor.get("path", "")), predecessor
     )
@@ -381,9 +377,7 @@ def build(
     }
     if binding(predecessor_path) != historical_binding:
         raise ValueError("successor predecessor 请求在核对期间变化")
-    successor, successor_binding = _ready_review(
-        backend, successor_review, predecessor_binding
-    )
+    successor, successor_binding = _ready_review(backend, successor_review)
     request_bindings = {}
     storage_generations = set()
     request_ids = set()

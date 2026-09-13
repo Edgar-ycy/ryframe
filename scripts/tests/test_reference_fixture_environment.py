@@ -205,7 +205,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual(set(ready["tools"]), {*environment.REVIEW_TOOLS, "node", "mysqld_exporter"})
         self.assertEqual(set(ready["preflight"]["tools"]), set(environment.REVIEW_TOOLS))
         environment._preflight_binding(ready)
-        observed_ready, _ = successor._ready_review(self.backend, output, environment.bound(pending))
+        observed_ready, _ = successor._ready_review(self.backend, output)
         self.assertEqual(observed_ready, ready)
         self.assertTrue(
             services._continued_review(self.backend, environment.bound(pending), output, ready)
@@ -225,9 +225,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
                 drifted["services"]["rustfs"][field] += "-changed"
                 drifted_file = self.write(f"rustfs-{field}.json", drifted)
                 with self.assertRaisesRegex(ValueError, "语义不同"):
-                    successor._ready_review(
-                        self.backend, drifted_file, environment.bound(pending)
-                    )
+                    successor._ready_review(self.backend, drifted_file)
                 self.assertFalse(
                     services._continued_review(
                         self.backend, environment.bound(pending), drifted_file, drifted
@@ -241,9 +239,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
                     drifted["tools"][name][field] = "f" * 64
                     drifted_file = self.write(f"{name}-{field}.json", drifted)
                     with self.assertRaisesRegex(ValueError, "语义不同"):
-                        successor._ready_review(
-                            self.backend, drifted_file, environment.bound(pending)
-                        )
+                        successor._ready_review(self.backend, drifted_file)
                     self.assertFalse(
                         services._continued_review(
                             self.backend, environment.bound(pending), drifted_file, drifted

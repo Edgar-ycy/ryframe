@@ -148,9 +148,7 @@ class SuccessorTests(unittest.TestCase):
                 side_effect=validate_preflight,
             ),
         ):
-            observed, descriptor = successor._ready_review(
-                self.backend, ready_path, pending_binding
-            )
+            observed, descriptor = successor._ready_review(self.backend, ready_path)
         self.assertEqual(observed, ready)
         self.assertEqual(descriptor["canonical_sha256"], plan_hash(ready))
 
@@ -166,16 +164,20 @@ class SuccessorTests(unittest.TestCase):
             ),
             self.assertRaisesRegex(ValueError, "语义不同"),
         ):
-            successor._ready_review(self.backend, ready_path, pending_binding)
+            successor._ready_review(self.backend, ready_path)
 
-        other_path, other_binding = self.file("other-pending.json", pending)
-        self.assertNotEqual(other_path, pending_path)
+        ready["semantic"] = "same"
+        ready_path.unlink()
+        write_json(ready_path, ready)
+        pending["binding_drift"] = True
+        pending_path.unlink()
+        write_json(pending_path, pending)
         with (
             patch.object(successor, "validate_review"),
             patch.object(successor, "validate_preflight_successor"),
-            self.assertRaisesRegex(ValueError, "指定 pending predecessor"),
+            self.assertRaisesRegex(ValueError, "输入绑定已变化"),
         ):
-            successor._ready_review(self.backend, ready_path, other_binding)
+            successor._ready_review(self.backend, ready_path)
 
     def test_pending_request_has_a_dedicated_non_executable_validator(self):
         base = Path(__file__).resolve().parents[2] / ".local-tests/python-unit"
@@ -201,9 +203,7 @@ class SuccessorTests(unittest.TestCase):
                 {**fixture.request["review"], "sha256": "f" * 64},
             )
 
-    def test_build_binds_three_requests_one_service_generation_and_recomputable_hash(
-        self,
-    ):
+    def test_build_bridges_distinct_historical_and_current_reviews(self):
         _, inner_registration = self.file(
             "source-registration.json",
             {"kind": "devex-clone-seed-source-registration"},
@@ -219,7 +219,19 @@ class SuccessorTests(unittest.TestCase):
             },
         )
         predecessor = self.review("old", 11000)
-        successor_review = self.review("new", 12000)
+        successor_pending = {
+            **self.review("new", 12000),
+            "ready_for_execution": False,
+            "semantic": "same",
+        }
+        _, successor_pending_file = self.file(
+            "successor-pending.json", successor_pending
+        )
+        successor_review = {
+            **successor_pending,
+            "ready_for_execution": True,
+            "preflight": {"supersedes": successor_pending_file},
+        }
         predecessor_path, predecessor_file = self.file("predecessor.json", predecessor)
         successor_path, successor_file = self.file("successor.json", successor_review)
         predecessor_descriptor = {
@@ -249,11 +261,7 @@ class SuccessorTests(unittest.TestCase):
                 "_pending_review",
                 return_value=(predecessor, predecessor_descriptor),
             ),
-            patch.object(
-                successor,
-                "_ready_review",
-                return_value=(successor_review, successor_descriptor),
-            ),
+            patch.object(successor, "validate_preflight_successor"),
             patch.object(successor, "request_binding"),
             patch.object(successor, "pending_request_binding") as pending,
         ):
@@ -267,6 +275,13 @@ class SuccessorTests(unittest.TestCase):
                 "successor-r1",
             )
         pending.assert_called_once()
+        self.assertNotEqual(predecessor_file, successor_pending_file)
+        self.assertEqual(result["predecessor_review"], predecessor_descriptor)
+        self.assertEqual(result["successor_review"], successor_descriptor)
+        self.assertNotEqual(
+            result["predecessor_review"]["path"],
+            successor_review["preflight"]["supersedes"]["path"],
+        )
         self.assertEqual(result["source_result"], source_result_binding)
         self.assertEqual(result["source_registration"], inner_registration)
         self.assertEqual(
@@ -300,11 +315,7 @@ class SuccessorTests(unittest.TestCase):
                 "_pending_review",
                 return_value=(predecessor, predecessor_descriptor),
             ),
-            patch.object(
-                successor,
-                "_ready_review",
-                return_value=(successor_review, successor_descriptor),
-            ),
+            patch.object(successor, "validate_preflight_successor"),
             patch.object(successor, "request_binding"),
             patch.object(successor, "pending_request_binding"),
             self.assertRaisesRegex(ValueError, "服务代次"),
