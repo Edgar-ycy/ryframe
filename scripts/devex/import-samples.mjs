@@ -4,6 +4,7 @@ import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { hash } from './config.mjs'
+import { pythonInvocation } from '../python_process.mjs'
 
 export const importSampleModel = Object.freeze({ version: 1, rows_per_file: 1,
   username: 'dv{namespace}{worker:02x}{cycle:04x}', nickname: '性能导入',
@@ -25,8 +26,9 @@ export function importSpecification(config) {
 
 function python(executable, request) {
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, ['-X', 'utf8', producer, 'performance'], {
-      env: process.env, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'],
+    const invocation = pythonInvocation({ script: producer, arguments: ['performance'] })
+    const child = spawn(executable, invocation.argv, {
+      env: invocation.env, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'],
     })
     const chunks = []
     let bytes = 0

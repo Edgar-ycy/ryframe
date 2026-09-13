@@ -13,6 +13,7 @@ import {
   verifyExisting,
 } from './restore_reference_existing.mjs'
 import { strictScalarJsonObject } from './private_json_protocol.mjs'
+import { pythonInvocation } from './python_process.mjs'
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 const protocolKey = 'RYFRAME_XTASK_RECOVERY_DATASET_PREPARE'
@@ -203,22 +204,22 @@ export function postBatchSamples(samples, result) {
 
 function preparePostBatch(plan, backend, planPath, input) {
   const python = process.env.RYFRAME_PYTHON?.trim() || 'python'
+  const invocation = pythonInvocation({
+    script: path.join(backend, 'scripts/restore_reference_post_batch.py'),
+    arguments: ['--backend-dir', backend, '--plan', planPath, '--input', input],
+  })
   let output
   try {
     output = execFileSync(
       python,
-      [
-        '-X',
-        'utf8',
-        path.join(backend, 'scripts/restore_reference_post_batch.py'),
-        '--backend-dir',
-        backend,
-        '--plan',
-        planPath,
-        '--input',
-        input,
-      ],
-      { encoding: 'utf8', windowsHide: true, timeout: 900_000, maxBuffer: 1024 * 1024 },
+      invocation.argv,
+      {
+        encoding: 'utf8',
+        env: invocation.env,
+        windowsHide: true,
+        timeout: 900_000,
+        maxBuffer: 1024 * 1024,
+      },
     )
   } catch (error) {
     throw new Error('岗位批次准备失败；当前阶段含有未知写入，禁止重放', { cause: error })
@@ -452,17 +453,17 @@ export async function main(argv = process.argv.slice(2)) {
         write: false,
       },
     })
+    const invocation = pythonInvocation({
+      script: path.join(backend, 'scripts/restore_reference.py'),
+      environment: protocolEnvironment,
+    })
     const verified = JSON.parse(
       execFileSync(
         process.env.RYFRAME_PYTHON || 'python',
-        [
-          '-X',
-          'utf8',
-          path.join(backend, 'scripts/restore_reference.py'),
-        ],
+        invocation.argv,
         {
           encoding: 'utf8',
-          env: protocolEnvironment,
+          env: invocation.env,
           windowsHide: true,
           timeout: 60_000,
         },

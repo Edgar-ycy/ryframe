@@ -3,6 +3,7 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { hash } from './config.mjs'
+import { pythonInvocation } from '../python_process.mjs'
 
 const verifier = fileURLToPath(new URL('../devex_provenance.py', import.meta.url))
 
@@ -46,8 +47,9 @@ function requestFor(config, values) {
 
 function python(executable, request) {
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, ['-B', '-X', 'utf8', verifier], {
-      env: process.env, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'],
+    const invocation = pythonInvocation({ script: verifier, noBytecode: true })
+    const child = spawn(executable, invocation.argv, {
+      env: invocation.env, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'],
     })
     const chunks = []
     let bytes = 0, failure

@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 import { expand } from './config.mjs'
+import { pythonInvocation } from '../python_process.mjs'
 
 const collector = fileURLToPath(new URL('../devex_job_timings.py', import.meta.url))
 
@@ -26,10 +27,11 @@ export function jobSelection(workflow, variables) {
 function python(binding, request, timeout) {
   if (!binding || !path.isAbsolute(binding.python)) throw new Error('缺少显式 Python 采集器路径')
   return new Promise((resolve, reject) => {
-    const child = spawn(binding.python, ['-X', 'utf8', collector], {
+    const invocation = pythonInvocation({ script: collector })
+    const child = spawn(binding.python, invocation.argv, {
       stdio: ['pipe', 'pipe', 'ignore'],
       windowsHide: true,
-      env: process.env,
+      env: invocation.env,
     })
     const chunks = []
     let bytes = 0

@@ -5,11 +5,17 @@ import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { Session, operationCatalog } from './request.mjs'
 import { digest } from './identity-plan.mjs'
+import { pythonInvocation } from '../python_process.mjs'
 
 const inspector = fileURLToPath(new URL('../devex_identity_environment.py', import.meta.url))
 export function pythonIdentity(executable, request) {
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, ['-X', 'utf8', inspector], { windowsHide: true, env: process.env, stdio: ['pipe', 'pipe', 'ignore'] })
+    const invocation = pythonInvocation({ script: inspector })
+    const child = spawn(executable, invocation.argv, {
+      windowsHide: true,
+      env: invocation.env,
+      stdio: ['pipe', 'pipe', 'ignore'],
+    })
     const chunks = []
     let size = 0, failed = false
     const timer = setTimeout(() => { failed = true; child.kill() }, 60000)

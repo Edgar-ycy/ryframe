@@ -7,13 +7,16 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { hash } from './config.mjs'
 import { operationCatalog } from './request.mjs'
 import { fixedPacer, validatePacingAuthority } from './pacing-model.mjs'
+import { pythonInvocation } from '../python_process.mjs'
 
 const authorityScript = fileURLToPath(new URL('../full_stack_rate_limit_config.py', import.meta.url))
 
 async function readAuthority(python, backend) {
   try {
-    const result = await promisify(execFile)(python, ['-X', 'utf8', authorityScript, '--authority'], {
-      cwd: backend, env: process.env, windowsHide: true, timeout: 10000, maxBuffer: 64 * 1024, encoding: 'utf8',
+    const invocation = pythonInvocation({ script: authorityScript, arguments: ['--authority'] })
+    const result = await promisify(execFile)(python, invocation.argv, {
+      cwd: backend, env: invocation.env, windowsHide: true, timeout: 10000,
+      maxBuffer: 64 * 1024, encoding: 'utf8',
     })
     return JSON.parse(result.stdout)
   } catch { throw new Error('无法从实际 APP 配置取得限流 authority') }
