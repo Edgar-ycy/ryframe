@@ -28,7 +28,7 @@ from restore_reference_plan import (dataset_timeout_seconds, identifier, plan_ha
 from restore_runtime import read_json
 from restore_runtime_evidence import read_json_document
 from restore_runtime_registration import registered_stopped_runtime
-from restore_reference_target_cli import execute_plan
+from restore_reference_target import execute_plan
 
 DATASET_PROTOCOL_ENV = "RYFRAME_XTASK_RECOVERY_DATASET_PREPARE"
 DATASET_PROTOCOL_KIND = "ryframe-xtask-recovery-dataset-prepare"

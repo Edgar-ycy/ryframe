@@ -6,6 +6,7 @@ import hashlib
 from datetime import datetime
 from pathlib import Path
 
+from devex_clone_capture import write_json
 from devex_clone_factory_context import inventory_history, unfailed
 from devex_clone_inventory import expected_owners
 from devex_clone_model import digest, exact, local_path
@@ -26,6 +27,7 @@ FRESH_FIELDS = {"verify", "initialized", "registration", "initialized_files", "e
 PRODUCT_FIELDS = {"id", "backup_id", "scope_id", "fault_at", "databases", "object_endpoint",
                   "object_prefix", "api_ready_url", "worker_ready_url", "frontend_sha"}
 EXECUTION_FIELDS = {"roots", "backend_product_sha", "backend_execution_sha", "frontend_sha", "builds", "adapter"}
+INPUTS = ("backup_receipt", "comparison_sources", "arm_input", "fresh_target_verify", "product_plan")
 
 
 def _product_execution(arm: dict) -> dict:
@@ -270,3 +272,26 @@ def plan_output(backend: Path, path: Path, value: dict) -> Path:
     if any(output.is_relative_to(directory) for directory in protected):
         raise ValueError("目标计划输出不得混入备份或 fresh-target 初始化证据")
     return output
+
+
+def execute_plan(args, backend: Path, plan: dict) -> dict | None:
+    reference = read_json_document(args.plan)
+    if reference.value != plan:
+        raise ValueError("参考计划在目标核对前发生变化")
+    if args.target_plan is not None:
+        value = verify_target_plan(backend, plan, args.target_plan)
+        reference.assert_unchanged()
+        return {"status": "target_plan_verified", "target_side": value["target_side"],
+                "target_plan_sha256": plan_hash(value), "restore_success": False}
+    if args.backup_receipt is None:
+        return None
+    if args.output is not None:
+        local_path(backend, str(args.output.absolute()), new=True)
+    value = capture_target_plan(backend, plan, **{field: getattr(args, field) for field in INPUTS})
+    reference.assert_unchanged()
+    if args.output is None:
+        return value
+    output = plan_output(backend, args.output, value)
+    write_json(output, value)
+    return {"status": "target_plan_published", "output": str(output), "target_side": value["target_side"],
+            "target_plan_sha256": plan_hash(value), "restore_success": False}

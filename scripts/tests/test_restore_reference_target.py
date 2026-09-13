@@ -14,7 +14,6 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import restore_reference as reference
 import restore_reference_target as target
-import restore_reference_target_cli as cli
 from restore_reference_target_fixture import setup
 
 
@@ -249,7 +248,7 @@ class TargetPlanTests(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             reference.main(published)
         self.assertTrue(destination.is_file())
-        with patch.object(cli, "capture_target_plan") as capture, self.assertRaises(ValueError):
+        with patch.object(target, "capture_target_plan") as capture, self.assertRaises(ValueError):
             reference.main(published)
         capture.assert_not_called()
 
