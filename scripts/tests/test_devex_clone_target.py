@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -20,6 +19,7 @@ from devex_clone_target_fixture import Fixture
 from devex_clone_inventory import InventoryCaptureError
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
+from workspace_directory import WorkspaceDirectory
 
 
 class StorageTransitionTests(unittest.TestCase):
@@ -51,7 +51,10 @@ class StorageTransitionTests(unittest.TestCase):
 
 class TargetTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="devex-fresh-")
+        temporary = WorkspaceDirectory(
+            Path(__file__).resolve().parents[2] / ".local-tests/python-unit",
+            prefix="devex-fresh-",
+        )
         self.addCleanup(temporary.cleanup)
         self.f = Fixture(Path(temporary.name), self)
 
@@ -115,6 +118,38 @@ class TargetTests(unittest.TestCase):
                 else: value["target"]["databases"].pop()
                 with self.assertRaises(ValueError): binding.request_binding(self.f.root, value)
         self.assertFalse(self.f.calls)
+
+    def test_execution_binary_bindings_cover_all_native_fresh_dependencies(self):
+        f = self.f
+        f.review["tools"]["wsl"] = {
+            "path": str(f.paths["wsl"]),
+            "sha256": file_digest(f.paths["wsl"])["sha256"],
+        }
+        f.request["review"] = {
+            **f.bound(f.local / "review.json", f.review),
+            "canonical_sha256": plan_hash(f.review),
+        }
+        f.save_request()
+
+        actual = binding.execution_binary_bindings(f.root, f.request)
+
+        self.assertEqual(
+            {Path(item["path"]).name for item in actual},
+            {"mysql.exe", "aws.exe", "reset.exe", "migrate.exe", "tenant-data.exe", "rustfs.exe", "wsl.exe"},
+        )
+        self.assertTrue(all(set(item) == {"path", "sha256"} for item in actual))
+
+    def test_execution_binary_bindings_reject_storage_tool_drift(self):
+        self.f.review["tools"]["wsl"] = dict(self.f.request["storage"]["redis"]["wsl"])
+        self.f.request["storage"]["redis"]["wsl"]["sha256"] = "0" * 64
+        self.f.request["review"] = {
+            **self.f.bound(self.f.local / "review.json", self.f.review),
+            "canonical_sha256": plan_hash(self.f.review),
+        }
+        self.f.save_request()
+
+        with self.assertRaisesRegex(ValueError, "不属于审阅版本"):
+            binding.execution_binary_bindings(self.f.root, self.f.request)
 
     def test_unready_review_prevents_prepare(self):
         f = self.f

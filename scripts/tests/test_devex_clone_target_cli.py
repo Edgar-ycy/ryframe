@@ -1,6 +1,7 @@
 """fresh-target 统一入口的离线参数、绑定和环境隔离测试。"""
 from __future__ import annotations
 
+from contextlib import contextmanager, nullcontext
 import json
 import os
 from pathlib import Path
@@ -45,6 +46,12 @@ class TargetCliTests(unittest.TestCase):
         validator = patch.object(target_cli, "_validate_registered_request", return_value=None)
         self.request_validator = validator.start()
         self.addCleanup(validator.stop)
+        bindings = patch("devex_clone_target_binding.execution_binary_bindings", return_value=[])
+        bindings.start()
+        self.addCleanup(bindings.stop)
+        protector = patch.object(target_cli, "protect_binaries", return_value=nullcontext())
+        protector.start()
+        self.addCleanup(protector.stop)
 
     def args(self, operation, *, request=None, environment=None, storage_run=None,
              observation=None, write=True):
@@ -178,6 +185,45 @@ class TargetCliTests(unittest.TestCase):
                 target_cli.initialize(self.backend, self.workspace)
             repeat.assert_not_called()
         self.assertTrue(initialized.is_file())
+
+    def test_initialize_holds_binary_protection_around_registered_operation(self):
+        self.prepare()
+        active = []
+
+        @contextmanager
+        def protect(bindings):
+            self.assertEqual(bindings, [{"path": "fixture.exe", "sha256": "a" * 64}])
+            active.append(True)
+            try:
+                yield
+            finally:
+                active.pop()
+
+        def initialize(_backend, target, *, storage_run):
+            self.assertEqual(active, [True])
+            self.assertTrue((storage_run / "run.lock").is_dir())
+            write_json(target / "initialized.json", {"status": "fresh_target_initialized"})
+            return {"status": "fresh_target_initialized"}
+
+        with patch("devex_clone_target_binding.execution_binary_bindings",
+                   return_value=[{"path": "fixture.exe", "sha256": "a" * 64}]) as collect, \
+                patch.object(target_cli, "protect_binaries", side_effect=protect), \
+                patch("devex_clone_target.initialize_target", side_effect=initialize):
+            result = target_cli.initialize(self.backend, self.workspace)
+        self.assertEqual(result["status"], "fresh_target_initialized")
+        collect.assert_called_once_with(self.backend, {"kind": "offline-request"})
+
+    def test_binary_protection_failure_prevents_registered_operation_and_run_lock(self):
+        self.prepare()
+        with patch("devex_clone_target_binding.execution_binary_bindings",
+                   return_value=[{"path": "fixture.exe", "sha256": "a" * 64}]), \
+                patch.object(target_cli, "protect_binaries", side_effect=PermissionError("busy")), \
+                patch("devex_clone_target.initialize_target") as initialize, \
+                self.assertRaisesRegex(PermissionError, "busy"):
+            target_cli.initialize(self.backend, self.workspace)
+        initialize.assert_not_called()
+        self.assertFalse((self.storage_run / "run.lock").exists())
+        self.assertFalse((self.workspace / "target/initialize.started.json").exists())
 
     def test_binding_drift_fails_after_stage_without_copying_environment(self):
         self.prepare()

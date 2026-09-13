@@ -56,7 +56,8 @@ class Fixture:
         databases = [{"key": db["key"], "kind": binding.KEYS[db["key"]][0], "mode": binding.KEYS[db["key"]][1],
                       "database": db["database"], "server_uuid": self.uuid, "defaults_file": str(defaults),
                       "defaults_sha256": file_digest(defaults)["sha256"]} for db in selected["databases"]]
-        self.maintenance = {"backend_root": str(root), "source": {"snapshot": {"head": "1" * 40}, "worktree_fingerprint": "sha256:" + "2" * 64},
+        self.maintenance = {"kind": "devex-clone-tool-build", "backend_root": str(root),
+                            "source": {"snapshot": {"head": "1" * 40}, "worktree_fingerprint": "sha256:" + "2" * 64},
                             "artifacts": {role: {"executable": str(self.paths[role]), **file_digest(self.paths[role])}
                                           for role in ("reset", "migrate", "tenant-data")}}
         self.identity = {"pid": 100, "started": "12345", "executable": str(self.paths["rustfs"])}

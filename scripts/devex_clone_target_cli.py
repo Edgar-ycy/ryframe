@@ -6,7 +6,7 @@ from contextlib import contextmanager
 import os
 from pathlib import Path
 
-from artifact_digests import filesystem_path
+from artifact_digests import filesystem_path, protect_binaries
 from devex_clone import read_json
 from devex_clone_capture import read_bound_json, write_json
 from devex_clone_factory_context import initialization_history
@@ -300,8 +300,12 @@ def _run_registered(backend: Path, workspace: Path, operation, *args) -> dict:
             raise ValueError("夹具服务外部终止已核对但尚未重启，不能继续 fresh 目标操作")
         if history["active_generation"].get("kind") == "initial":
             active_storage_run = None
+    from devex_clone_target_binding import execution_binary_bindings
+
+    _, request = _bound_json(backend, value["request"])
+    binaries = execution_binary_bindings(backend, request)
     environment = configured(private)
-    with run_lock(storage_run):
+    with protect_binaries(binaries), run_lock(storage_run):
         if (_registration(backend, workspace)[1] != value
                 or _storage_run(backend, storage_binding) != storage_run
                 or binding(storage_run / "state.json") != storage_state):

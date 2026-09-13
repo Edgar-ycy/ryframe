@@ -136,6 +136,27 @@ def request_binding(backend: Path, request: dict) -> tuple[dict, dict]:
     return _request_binding(backend, request, validate_review)
 
 
+def execution_binary_bindings(backend: Path, request: dict) -> list[dict]:
+    """收集 fresh 阶段会执行或持续核验的本机二进制。"""
+    review, _ = request_binding(backend, request)
+    build = read_json(bound_file(backend, request["maintenance_build"]))
+    artifacts = build.get("artifacts")
+    if build.get("kind") != "devex-clone-tool-build" or not isinstance(artifacts, dict) \
+            or set(artifacts) != {"reset", "migrate", "tenant-data"}:
+        raise ValueError("fresh 目标维护构建缺少完整二进制")
+    bindings = [dict(value) for value in request["tools"].values()]
+    for artifact in artifacts.values():
+        if not isinstance(artifact, dict) or any(key not in artifact for key in ("executable", "sha256")):
+            raise ValueError("fresh 目标维护构建二进制绑定无效")
+        bindings.append({"path": artifact["executable"], "sha256": artifact["sha256"]})
+    rustfs, redis = request["storage"]["rustfs"], request["storage"]["redis"]
+    rustfs_binding = {"path": rustfs.get("identity", {}).get("executable"), "sha256": rustfs.get("sha256")}
+    if rustfs_binding != review["tools"]["rustfs"] or redis.get("wsl") != review["tools"]["wsl"]:
+        raise ValueError("fresh 目标存储二进制不属于审阅版本")
+    bindings.extend((rustfs_binding, dict(redis["wsl"])))
+    return bindings
+
+
 def pending_request_binding(backend: Path, request: dict, predecessor: dict) -> tuple[dict, dict]:
     """仅供 review successor 核对历史 seed；不授予该请求执行权限。"""
     expected = copy.deepcopy(predecessor)
