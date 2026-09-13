@@ -75,8 +75,8 @@ fn parses_three_explicit_write_operations_with_absolute_local_paths() {
         command,
         Command::Data(DataCommand::PerformanceIdentities(
             PerformanceIdentitiesCommand::Plan {
-                environment: environment.clone(),
-                output: output.clone(),
+                environment,
+                output,
             }
         ))
     );
@@ -135,7 +135,7 @@ fn rejects_ambiguous_options_and_every_non_local_path_before_dispatch() {
         case[6] = invalid_output.to_string_lossy().into_owned();
         cases.push(case.to_vec());
     }
-    let mut cross_operation = valid.clone();
+    let mut cross_operation = valid;
     cross_operation[2] = "apply".to_owned();
     cases.push(cross_operation.to_vec());
     for case in cases {

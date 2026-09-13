@@ -82,7 +82,7 @@ fn malformed_or_unsafe_requests_exit_two_before_starting_python() {
     relative[5] = ".local-tests/relative".to_owned();
     let mut duplicate = valid.clone();
     duplicate.extend(["--operation".to_owned(), "source-export".to_owned()]);
-    let mut write = valid.clone();
+    let mut write = valid;
     write.push("--write".to_owned());
     for arguments in [outside, relative, duplicate, write] {
         let result = invoke(&arguments);

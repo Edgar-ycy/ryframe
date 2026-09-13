@@ -91,7 +91,7 @@ fn invalid_public_arguments_exit_two_without_starting_python() {
     let mut unknown = base.clone();
     unknown.extend(["--unknown".to_owned(), "value".to_owned()]);
     cases.push(unknown);
-    let mut relative = base.clone();
+    let mut relative = base;
     relative[6] = "bootstrap.json".to_owned();
     cases.push(relative);
     for arguments in cases {

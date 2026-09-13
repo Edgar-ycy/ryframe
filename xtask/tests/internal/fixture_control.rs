@@ -194,7 +194,7 @@ fn rejects_invalid_artifact_identifiers_writes_and_path_contracts() {
     let mut missing_receipt = base.clone();
     missing_receipt[5] = text(&fixture.path("missing receipt.json"));
     assert!(parse_control(command("artifact", Some("verify-deleted"), missing_receipt,)).is_err());
-    let mut existing_snapshot_receipt = base.clone();
+    let mut existing_snapshot_receipt = base;
     existing_snapshot_receipt[5] = text(&fixture.input);
     assert!(
         parse_control(command(

@@ -77,7 +77,7 @@ fn invalid_paths_and_missing_write_exit_two_without_starting_node() {
     let mut outside = base.clone();
     outside[6] = root.join("outside.json").to_string_lossy().into_owned();
     cases.push(outside.to_vec());
-    let mut relative = base.clone();
+    let mut relative = base;
     relative[4] = "relative.json".to_owned();
     cases.push(relative.to_vec());
     for arguments in cases {

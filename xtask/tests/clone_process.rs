@@ -86,7 +86,7 @@ fn malformed_requests_exit_two_before_starting_python() {
     write.push("--write".to_owned());
     let mut relative = valid.clone();
     relative[5] = ".local-tests/relative".to_owned();
-    let mut unknown = valid.clone();
+    let mut unknown = valid;
     unknown.push("--unknown".to_owned());
     let missing = status_arguments(&fixture.directory.join("missing"));
     for arguments in [outside, duplicate, write, relative, unknown, missing] {
