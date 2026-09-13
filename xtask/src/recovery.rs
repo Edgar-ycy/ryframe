@@ -7,7 +7,7 @@ use crate::{
         SeedSourceOptions,
     },
     local_test_path::{LocalTestPathKind, validate_local_test_path},
-    process::{run_owned, run_owned_with_env, run_with_env_removed},
+    process::{run_owned_with_env, run_with_env_removed},
     workspace::root_dir,
 };
 
@@ -40,112 +40,22 @@ pub(crate) mod runtime;
 pub(crate) mod source;
 
 pub(crate) fn run(command: &RecoveryCommand, frontend_dir: &Path) -> Result<()> {
-    if let RecoveryCommand::FullStack(command) = command {
-        return run_full_stack(command);
-    }
-    if let RecoveryCommand::FreshTarget(command) = command {
-        return run_fresh_target(command);
-    }
-    if let RecoveryCommand::FixtureRuntime(command) = command {
-        return fixture_runtime::run(command, &root_dir());
-    }
-    if let RecoveryCommand::SeedSource(options) = command {
-        return run_seed_source(options);
-    }
-    if let RecoveryCommand::Clone(command) = command {
-        return run_clone(command);
-    }
-    if let RecoveryCommand::DatasetPrepare(command) = command {
-        return dataset_prepare::run(command, &root_dir());
-    }
-    if let RecoveryCommand::Monitoring(command) = command {
-        return monitoring::run(command, &root_dir());
-    }
-    if let RecoveryCommand::FixtureControl(command) = command {
-        return fixture_control::run(command, &root_dir());
-    }
-    if let RecoveryCommand::FixturePrepare(command) = command {
-        return fixture_prepare::run(command, &root_dir(), frontend_dir);
-    }
-    if let RecoveryCommand::Reference(command) = command {
-        return reference::run(command, &root_dir());
-    }
-    if let RecoveryCommand::Inputs(command) = command {
-        return inputs::run(command, &root_dir());
-    }
-    if let RecoveryCommand::Runtime(command) = command {
-        return runtime::run(command, &root_dir(), frontend_dir);
-    }
-    if let RecoveryCommand::Source(command) = command {
-        return source::run(command, &root_dir());
-    }
-    let (program, forwarded) = recovery_command(command, frontend_dir)?;
-    let mut command = Vec::with_capacity(forwarded.len() + 1);
-    command.push(program.to_owned());
-    command.extend(forwarded);
-    let executable = if program.ends_with(".mjs") {
-        "node"
-    } else {
-        command.insert(0, "-B".to_owned());
-        "python"
-    };
-    run_owned(&root_dir(), executable, &command)
-}
-
-pub(crate) fn recovery_command(
-    command: &RecoveryCommand,
-    _frontend_dir: &Path,
-) -> Result<(&'static str, Vec<String>)> {
     match command {
-        RecoveryCommand::Reference(_) => Err("reference 必须通过版本化私有协议执行，不能透传 argv"
-            .to_owned()
-            .into()),
-        RecoveryCommand::Inputs(_) => {
-            Err("restore inputs 必须通过版本化私有协议执行，不能透传 argv"
-                .to_owned()
-                .into())
+        RecoveryCommand::Reference(command) => reference::run(command, &root_dir()),
+        RecoveryCommand::Inputs(command) => inputs::run(command, &root_dir()),
+        RecoveryCommand::Runtime(command) => runtime::run(command, &root_dir(), frontend_dir),
+        RecoveryCommand::Source(command) => source::run(command, &root_dir()),
+        RecoveryCommand::Clone(command) => run_clone(command),
+        RecoveryCommand::SeedSource(options) => run_seed_source(options),
+        RecoveryCommand::FreshTarget(command) => run_fresh_target(command),
+        RecoveryCommand::FixturePrepare(command) => {
+            fixture_prepare::run(command, &root_dir(), frontend_dir)
         }
-        RecoveryCommand::Runtime(_) => {
-            Err("runtime 必须通过版本化私有协议执行，不能透传 argv".into())
-        }
-        RecoveryCommand::Source(_) => {
-            Err("source 必须通过版本化私有协议执行，不能透传 argv".into())
-        }
-        RecoveryCommand::Clone(_) => Err("clone 必须通过版本化私有协议执行，不能透传 argv".into()),
-        RecoveryCommand::SeedSource(_) => {
-            Err("seed source 必须通过版本化私有协议执行，不能透传 argv"
-                .to_owned()
-                .into())
-        }
-        RecoveryCommand::FreshTarget(_) => {
-            Err("fresh-target 必须通过版本化私有协议执行，不能透传 argv"
-                .to_owned()
-                .into())
-        }
-        RecoveryCommand::FixturePrepare(_) => {
-            Err("fixture prepare 必须通过版本化私有协议执行，不能透传 argv"
-                .to_owned()
-                .into())
-        }
-        RecoveryCommand::FixtureControl(_) => {
-            Err("fixture 控制请求必须通过版本化私有协议执行，不能透传 argv"
-                .to_owned()
-                .into())
-        }
-        RecoveryCommand::FixtureRuntime(_) => {
-            Ok(("scripts/reference_fixture_runtime.py", Vec::new()))
-        }
-        RecoveryCommand::FullStack(_) => Ok(("scripts/ci_full_stack.py", Vec::new())),
-        RecoveryCommand::Monitoring(_) => {
-            Err("monitoring 必须通过版本化私有协议执行，不能透传 argv"
-                .to_owned()
-                .into())
-        }
-        RecoveryCommand::DatasetPrepare(_) => {
-            Err("dataset-prepare 必须通过版本化私有协议执行，不能透传 argv"
-                .to_owned()
-                .into())
-        }
+        RecoveryCommand::FixtureControl(command) => fixture_control::run(command, &root_dir()),
+        RecoveryCommand::FixtureRuntime(command) => fixture_runtime::run(command, &root_dir()),
+        RecoveryCommand::FullStack(command) => run_full_stack(command),
+        RecoveryCommand::Monitoring(command) => monitoring::run(command, &root_dir()),
+        RecoveryCommand::DatasetPrepare(command) => dataset_prepare::run(command, &root_dir()),
     }
 }
 

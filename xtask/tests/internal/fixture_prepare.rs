@@ -11,7 +11,7 @@ use super::{
         CheckCommand, Command, FixtureExpectedSources, FixturePrepareCommand,
         FixturePrepareOptions, RecoveryCommand, parse,
     },
-    recovery::{fixture_prepare::private_invocation_at, recovery_command},
+    recovery::fixture_prepare::private_invocation_at,
     workspace::{default_frontend_dir, root_dir},
 };
 
@@ -140,11 +140,4 @@ fn private_protocol_fixes_paths_and_hides_the_public_request_from_argv() {
     assert_eq!(document["expected_backend_sha"], "a".repeat(40));
     assert_eq!(document["expected_frontend_sha"], "b".repeat(40));
     assert!(document["write"].as_bool().unwrap());
-    assert!(
-        recovery_command(
-            &RecoveryCommand::FixturePrepare(FixturePrepareCommand::Run(options)),
-            &default_frontend_dir(),
-        )
-        .is_err()
-    );
 }

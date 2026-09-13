@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use super::{
     cli::{CheckCommand, Command, RecoveryCommand, SeedSourceOperation, SeedSourceOptions, parse},
-    recovery::{recovery_command, seed_source_protocol_at},
+    recovery::seed_source_protocol_at,
     workspace::root_dir,
 };
 
@@ -210,13 +210,6 @@ fn private_protocol_has_exact_fields_paths_only_and_rechecks_inputs() {
     );
     assert_eq!(value["request"]["write"], true);
     assert_eq!(value["request"].as_object().unwrap().len(), 5);
-    assert!(
-        recovery_command(
-            &RecoveryCommand::SeedSource(options.clone()),
-            Path::new("unused")
-        )
-        .is_err()
-    );
 
     fs::remove_file(&fixture.request).unwrap();
     assert!(seed_source_protocol_at(&options, &root_dir()).is_err());

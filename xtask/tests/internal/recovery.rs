@@ -1,32 +1,10 @@
 use std::path::Path;
 
 use super::cli::{
-    BindingsInputOptions, CloneCommand, DatasetPrepareCommand, ExistingReferenceSide,
-    FreshTargetCommand, FreshTargetOperation, FreshTargetOptions, FullStackCommand,
-    MonitoringCommand, RecoveryCommand, RecoveryInputsCommand, RecoveryReferenceCommand,
-    RuntimeCommand, SourceCommand,
+    BindingsInputOptions, ExistingReferenceSide, FreshTargetOperation, FreshTargetOptions,
+    FullStackCommand, RecoveryInputsCommand, RecoveryReferenceCommand,
 };
-use super::recovery::{
-    fresh_target_protocol, full_stack_environment, inputs, recovery_command, reference,
-};
-
-#[test]
-fn runtime_and_source_are_not_available_through_the_argv_forwarder() {
-    assert!(
-        recovery_command(
-            &RecoveryCommand::Runtime(RuntimeCommand::Help(None)),
-            Path::new("unused"),
-        )
-        .is_err()
-    );
-    assert!(
-        recovery_command(
-            &RecoveryCommand::Source(SourceCommand::Help(None)),
-            Path::new("unused"),
-        )
-        .is_err()
-    );
-}
+use super::recovery::{fresh_target_protocol, full_stack_environment, inputs, reference};
 
 #[test]
 fn reference_stages_use_a_versioned_private_protocol_without_forwarded_argv() {
@@ -50,24 +28,16 @@ fn reference_stages_use_a_versioned_private_protocol_without_forwarded_argv() {
     assert_eq!(document["request"]["side"], "source");
     assert_eq!(document["request"]["write"], false);
     assert_eq!(document["request"]["plan"], plan.to_str().unwrap());
-    assert!(recovery_command(&RecoveryCommand::Reference(command), Path::new("unused")).is_err());
     std::fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
-fn full_stack_stages_use_one_private_program_and_typed_environment() {
+fn full_stack_stages_use_typed_environment() {
     for (command, operation) in [
         (FullStackCommand::Prepare, "prepare"),
         (FullStackCommand::Start, "start"),
         (FullStackCommand::Collect, "collect"),
     ] {
-        let (script, arguments) = recovery_command(
-            &RecoveryCommand::FullStack(command.clone()),
-            Path::new("unused"),
-        )
-        .unwrap();
-        assert_eq!(script, "scripts/ci_full_stack.py");
-        assert!(arguments.is_empty());
         assert_eq!(
             full_stack_environment(&command, "D:/当前 后端").unwrap(),
             vec![
@@ -126,7 +96,6 @@ fn restore_input_plans_use_a_versioned_private_protocol_without_forwarded_argv()
     assert_eq!(document["request"]["operation"], "bindings");
     assert_eq!(document["request"]["write"], false);
     assert!(document["request"].get("output").is_none());
-    assert!(recovery_command(&RecoveryCommand::Inputs(command), Path::new("unused")).is_err());
     std::fs::remove_dir_all(directory).unwrap();
 }
 
@@ -153,50 +122,14 @@ fn fresh_target_uses_a_versioned_private_protocol_without_forwarded_argv() {
         options.workspace.to_str().unwrap()
     );
     assert!(document["request"]["request"].is_null());
-    assert!(
-        recovery_command(
-            &RecoveryCommand::FreshTarget(FreshTargetCommand::Run(options)),
-            Path::new("unused"),
-        )
-        .is_err()
-    );
 }
 
 #[test]
-fn dataset_stage_and_clone_keep_current_boundaries() {
-    let frontend = Path::new("D:/前端 worktree");
-    assert!(
-        recovery_command(
-            &RecoveryCommand::DatasetPrepare(DatasetPrepareCommand::Help),
-            frontend,
-        )
-        .is_err()
-    );
-    assert!(recovery_command(&RecoveryCommand::Clone(CloneCommand::Help), frontend).is_err());
-}
-
-#[test]
-fn monitoring_stage_uses_the_private_lifecycle_and_fixed_backend() {
-    assert!(
-        recovery_command(
-            &RecoveryCommand::Monitoring(MonitoringCommand::Help),
-            Path::new("unused"),
-        )
-        .is_err()
-    );
-}
-
-#[test]
-fn forwarded_recovery_scripts_exist_in_checkout() {
+fn private_recovery_scripts_exist_in_checkout() {
     let root = super::workspace::root_dir();
-    let (script, _) = recovery_command(
-        &RecoveryCommand::FullStack(FullStackCommand::Collect),
-        Path::new("unused"),
-    )
-    .unwrap();
     assert!(
-        root.join(script).is_file(),
-        "恢复入口转发的脚本不在当前检出中：{script}"
+        root.join("scripts/ci_full_stack.py").is_file(),
+        "全栈恢复私有脚本不在当前检出中"
     );
     assert!(root.join("scripts/full_stack_artifacts.py").is_file());
     assert!(root.join("scripts/devex_clone.py").is_file());
