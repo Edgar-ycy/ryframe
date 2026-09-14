@@ -1,6 +1,7 @@
 """验证本机内核互斥的输入边界、跨进程隔离和退出释放，不操作业务进程。"""
 import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
 import unittest
@@ -91,14 +92,98 @@ class ProcessGuardTests(unittest.TestCase):
             self.assertTrue((self.directory / "test.guard").exists())
         self.assertEqual((self.directory / "test.guard").read_bytes(), b"\0")
 
-    def test_existing_guard_contents_are_preserved_across_repeated_acquisitions(self):
+    def test_invalid_existing_guard_is_rejected_without_rewriting_it(self):
         path = self.directory / "test.guard"
-        contents = b"existing ownership evidence"
-        path.write_bytes(contents)
-        for _ in range(2):
-            with process_guard(self.directory, "test.guard"):
-                self.assertEqual(path.stat().st_size, len(contents))
-            self.assertEqual(path.read_bytes(), contents)
+        for contents in (b"", b"x", b"existing ownership evidence"):
+            with self.subTest(contents=contents):
+                path.write_bytes(contents)
+                with self.assertRaisesRegex(ValueError, "控制互斥文件"), process_guard(
+                        self.directory, "test.guard"):
+                    self.fail("非 NUL guard 不能伪装成已持有的合法互斥")
+                self.assertEqual(path.read_bytes(), contents)
+
+    def test_new_guard_is_a_single_link_regular_file(self):
+        path = self.directory / "test.guard"
+        with process_guard(self.directory, "test.guard") as lease:
+            metadata = path.lstat()
+            self.assertTrue(stat.S_ISREG(metadata.st_mode))
+            self.assertEqual(metadata.st_nlink, 1)
+            lease.check()
+        self.assertEqual(path.read_bytes(), b"\0")
+
+    def test_existing_hard_link_is_rejected_without_modifying_source(self):
+        source = self.directory / "source"
+        path = self.directory / "test.guard"
+        source.write_bytes(b"\0")
+        try:
+            os.link(source, path)
+        except OSError as error:
+            self.skipTest(f"当前文件系统不支持硬链接：{error}")
+        with self.assertRaisesRegex(ValueError, "控制互斥文件"), process_guard(
+                self.directory, "test.guard"):
+            self.fail("硬链接不能作为控制互斥")
+        self.assertEqual(source.read_bytes(), b"\0")
+        self.assertEqual(path.read_bytes(), b"\0")
+
+    def test_lease_rejects_hard_link_added_after_acquisition(self):
+        path = self.directory / "test.guard"
+        alias = self.directory / "alias.guard"
+        with process_guard(self.directory, "test.guard") as lease:
+            try:
+                os.link(path, alias)
+            except OSError as error:
+                self.skipTest(f"当前文件系统不支持硬链接：{error}")
+            with self.assertRaisesRegex(ValueError, "控制互斥文件"):
+                lease.check()
+            alias.unlink()
+            lease.check()
+
+    @unittest.skipIf(os.name == "nt", "Windows 不允许替换已打开的 guard")
+    def test_lease_rejects_guard_path_replacement(self):
+        path = self.directory / "test.guard"
+        moved = self.directory / "moved.guard"
+        with process_guard(self.directory, "test.guard") as lease:
+            path.rename(moved)
+            path.write_bytes(b"\0")
+            try:
+                with self.assertRaisesRegex(ValueError, "控制互斥文件"):
+                    lease.check()
+            finally:
+                path.unlink()
+                moved.rename(path)
+            lease.check()
+
+    def test_existing_directory_is_rejected_without_modification(self):
+        path = self.directory / "test.guard"
+        path.mkdir()
+        with self.assertRaisesRegex(ValueError, "控制互斥文件"), process_guard(
+                self.directory, "test.guard"):
+            self.fail("目录不能作为控制互斥")
+        self.assertTrue(path.is_dir())
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "当前平台不支持 FIFO")
+    def test_existing_fifo_is_rejected_without_opening_or_modification(self):
+        path = self.directory / "test.guard"
+        os.mkfifo(path)
+        with self.assertRaisesRegex(ValueError, "控制互斥文件"), process_guard(
+                self.directory, "test.guard"):
+            self.fail("FIFO 不能作为控制互斥")
+        self.assertTrue(stat.S_ISFIFO(path.lstat().st_mode))
+
+    @unittest.skipIf(os.name == "nt", "Windows 不允许重命名包含已打开 guard 的目录")
+    def test_lease_rejects_parent_directory_replacement(self):
+        original = self.directory
+        moved = original.with_name(original.name + "-moved")
+        with process_guard(original, "test.guard") as lease:
+            original.rename(moved)
+            original.mkdir()
+            try:
+                with self.assertRaisesRegex(ValueError, "父目录"):
+                    lease.check()
+            finally:
+                original.rmdir()
+                moved.rename(original)
+            lease.check()
 
 
 if __name__ == "__main__":
