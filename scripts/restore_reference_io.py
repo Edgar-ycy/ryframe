@@ -237,8 +237,11 @@ def verification_stdout(output, fallback):
 
 
 class ExternalTools:
-    def __init__(self, plan: dict, work: Path, run=subprocess.run):
+    def __init__(self, plan: dict, work: Path, run=subprocess.run, *, evidence_sink=None,
+                 before_execute=None):
         self.plan, self.work, self.run = plan, work, run
+        self.evidence_sink = evidence_sink
+        self.before_execute = before_execute
 
     def command(self, name: str) -> list[str]:
         tool = self.plan["tools"][name]
@@ -251,6 +254,8 @@ class ExternalTools:
         if closed_stdin and data is not None:
             raise ValueError("关闭 stdin 的固定查询不能同时提供输入数据")
         input_stream = {"stdin": subprocess.DEVNULL} if closed_stdin else {}
+        if self.before_execute is not None:
+            self.before_execute()
         return self.run(command, input=data, stdout=output or subprocess.PIPE, stderr=subprocess.PIPE,
                         env=env, timeout=timeout, check=True,
                         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0, **input_stream)
@@ -298,6 +303,8 @@ class ExternalTools:
                                        expected_rows: int, command: list[str], environment: dict,
                                        receipts: list[dict]) -> tuple[str, bytes, bytes | None]:
         with VerificationStdout(self.work, check, database["key"]) as output:
+            if self.evidence_sink is not None:
+                self.evidence_sink(output.path)
             code, stderr = None, None
             try:
                 result = self.execute([*command, "--execute", statement], output=output,
@@ -312,12 +319,17 @@ class ExternalTools:
                 receipt = output.receipt(getattr(error, "returncode", code), error, stderr)
                 if receipt is not None:
                     receipts.append(receipt)
+                    if self.evidence_sink is not None:
+                        self.evidence_sink(Path(receipt["path"]))
                 if isinstance(error, subprocess.CalledProcessError) and output.failure is None:
                     raw, _ = output.snapshot()
                     raise DatabaseVerificationError(check, database["key"], expected_rows,
                                                     raw, returncode=error.returncode) from None
                 raise
-            receipts.append(output.receipt(code, stderr=stderr))
+            receipt = output.receipt(code, stderr=stderr)
+            receipts.append(receipt)
+            if self.evidence_sink is not None:
+                self.evidence_sink(Path(receipt["path"]))
             return response, raw, stderr
 
     def _write_database_retry(self, database: dict, check: str, receipts: list[dict], error=None) -> None:
@@ -334,6 +346,8 @@ class ExternalTools:
                 stream.write("\n")
                 stream.flush()
                 os.fsync(stream.fileno())
+            if self.evidence_sink is not None:
+                self.evidence_sink(path)
         except Exception as failure:
             if error is None:
                 raise

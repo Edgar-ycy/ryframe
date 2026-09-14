@@ -12,6 +12,7 @@ from workspace_directory import WorkspaceDirectory
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import devex_clone_factory_context as context
 import devex_clone_target as target
+import devex_clone_target_binding as target_binding
 from devex_clone_target_fixture import Fixture
 from devex_clone_target_state import generation_lock
 from restore_build import file_digest
@@ -25,7 +26,10 @@ class TargetHistoryTests(unittest.TestCase):
         self.f = Fixture(Path(temporary.name), self)
         self.f.mocks[-1].side_effect = self.inventory_fixture
         target.prepare_target(self.f.root, self.f.path, self.f.output, self.f.run)
-        self.initialized = target.initialize_target(self.f.root, self.f.output, self.f.run)
+        self.f.publish_prepared_files()
+        self.initialized = target.initialize_target(
+            self.f.root, self.f.output, self.f.run,
+            publish_files=self.f.publish_initialized_files)
         self.binding = self.bind(self.f.output / "initialized.json")
         self.counter = 0
 
@@ -51,6 +55,7 @@ class TargetHistoryTests(unittest.TestCase):
         self.write(output / "inventory.json", receipt_value)
         value.observations = tuple(observations)
         value.receipt_file = self.bind(output / "inventory.json")
+        value.evidence_files = tuple(target_binding.target_files(output))
         return value
 
     @staticmethod
@@ -75,6 +80,7 @@ class TargetHistoryTests(unittest.TestCase):
         result["inventory"]["receipt"] = self.bind(path)
         for name in ("initialized.json", "initialized-candidate.json"):
             self.write(self.f.output / name, result)
+        self.f.publish_initialized_files()
         self.binding = self.bind(self.f.output / "initialized.json")
 
     def test_history_is_valid_after_copy_without_rechecking_initial_database_image(self):
@@ -187,8 +193,9 @@ class TargetHistoryTests(unittest.TestCase):
     def test_owned_lock_disappearing_during_context_is_rejected(self):
         lock = self.f.output / "initialize.lock"; lock.mkdir()
         identity = lock.stat().st_ino
-        def observe(*args, storage_run=None, owned_lock_identity=None):
+        def observe(*args, storage_run=None, owned_lock_identity=None, lock_output=None):
             self.assertIsNone(storage_run)
+            self.assertEqual(lock_output, self.f.output)
             lock.rmdir()
             return copy.deepcopy(self.initialized["generation"]), SimpleNamespace(storage_runtime_binding=None, cache_runtime_binding=None)
         with patch.object(context, "context", side_effect=observe):

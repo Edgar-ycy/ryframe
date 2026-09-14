@@ -8,7 +8,8 @@ from devex_clone_capture import read_json, regular_file
 from devex_clone_inventory import KEYS
 from devex_clone_model import linked, local_path
 from devex_clone_source_proof import bound_file
-from devex_clone_target import context, history, reset_completed
+from devex_clone_target import context, history
+from devex_clone_target_reset_evidence import reset_completed
 from devex_clone_target_storage import verify_storage_generation
 from devex_clone_transfer import DatabaseObservation
 from restore_build import file_digest
@@ -71,7 +72,10 @@ def inventory_history(backend: Path, root: Path, initial: dict, request: dict, *
 def initialization_history(backend: Path, filename: Path, owned_lock_identity: int | None = None) -> tuple[dict, dict]:
     root = local_path(backend, str(filename.parent))
     from devex_clone_target import unresolved_failure
+    from devex_clone_target_binding import initialized_target_files
 
+    tree = initialized_target_files(
+        backend, root, locked_guard=owned_lock_identity is not None)
     resumed = (root / "failure.json").exists() and not unresolved_failure(backend, root)
     unfailed(root, owned_lock_identity, allow_resolved_failure=resumed)
     result = read_json(filename)
@@ -88,6 +92,9 @@ def initialization_history(backend: Path, filename: Path, owned_lock_identity: i
     reset = read_json(regular_file(root / "reset-plan.json"))
     if reset_completed(root, reset["manifest"], reset["plan_hash"]) != result["reset"]:
         raise ValueError("目标 reset 未取得本代次完整完成及释放证明")
+    if initialized_target_files(
+            backend, root, locked_guard=owned_lock_identity is not None) != tree:
+        raise ValueError("目标初始化完整文件树在历史核验期间变化")
     return result, request
 
 
@@ -99,8 +106,11 @@ def target_history(backend: Path, binding: dict, output: Path, run, *,
     if filename.name != "initialized.json":
         raise ValueError("目标必须绑定显式初始化入口的最终收据")
     result, request = initialization_history(backend, filename, owned_lock_identity)
-    observed, resources = context(backend, request, output, run, storage_run=storage_run,
-                                  owned_lock_identity=owned_lock_identity)
+    context_options = {"storage_run": storage_run,
+                       "owned_lock_identity": owned_lock_identity}
+    if owned_lock_identity is not None:
+        context_options["lock_output"] = filename.parent
+    observed, resources = context(backend, request, output, run, **context_options)
     verify_storage_generation(result["generation"], observed, resources.storage_runtime_binding, resources.cache_runtime_binding)
     bound_file(backend, expected_binding)
     if binding != expected_binding or initialization_history(backend, filename, owned_lock_identity) != (result, request):

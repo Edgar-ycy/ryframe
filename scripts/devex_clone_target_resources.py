@@ -25,24 +25,34 @@ from restore_source_binding import defaults_connection
 class Resources:
     def __init__(self, backend: Path, request: dict, output: Path, selected: dict, review: dict, run,
                  *, execution_backend: Path | None = None, storage_run: Path | None = None,
-                 owned_lock_identity: int | None = None):
+                 owned_lock_identity: int | None = None, lock_output: Path | None = None):
         self.backend, self.request, self.output = backend, request, output
         self.execution_backend = execution_backend or backend
         self.selected, self.review, self.runner = selected, review, run
         self.storage_run, self.storage_runtime_binding = storage_run, None
         self.cache_runtime_binding = None
         self.owned_lock_identity = owned_lock_identity
+        self.lock_output = lock_output or output
         self.environment = dict(os.environ)
         self.redaction = dict(self.environment)
         for db in request["target"]["databases"]:
             self.redaction["DB_PASSWORD_" + db["key"]] = defaults_connection(backend, db)["password"]
         for field in ("access_key", "secret_key"):
             self.redaction[field.upper()] = self.environment.get(request["target"]["s3"][field + "_env"], "")
-        self.tools = ExternalTools({"target": request["target"], "tools": request["tools"]}, output, run)
+        self.tools = ExternalTools({"target": request["target"], "tools": request["tools"]}, output, run,
+                                   before_execute=self.checkpoint)
+
+    def checkpoint(self) -> None:
+        """资源访问前复核当前调用方持有的初始化锁与目标 guard。"""
+        if self.owned_lock_identity is not None:
+            from devex_clone_target_state import generation_checkpoint
+
+            generation_checkpoint(self.lock_output, self.owned_lock_identity)
 
     def command(self, stage: str, args: list[str], *, data=None, env=None, timeout=30):
         if dict(os.environ) != self.environment:
             raise ValueError("初始化进程环境在执行期间变化")
+        self.checkpoint()
         path = self.output / f"{stage}-{uuid.uuid4().hex}.command.json"
         stdout, stderr, code, error_type = b"", b"", None, None
         try:
@@ -176,10 +186,12 @@ class Resources:
         raise ValueError("未知 Redis 响应")
 
     def _redis(self, parts: list[str]):
+        self.checkpoint()
         with socket.create_connection(("127.0.0.1", self.request["storage"]["redis"]["port"]), timeout=5) as connection:
             with connection.makefile("rb") as stream:
                 def send(values):
                     encoded = [value.encode() for value in values]
+                    self.checkpoint()
                     connection.sendall(f"*{len(encoded)}\r\n".encode() + b"".join(f"${len(v)}\r\n".encode() + v + b"\r\n" for v in encoded))
                     return self._response(stream)
                 password = self.environment.get("APP_REDIS_PASSWORD")
@@ -235,6 +247,7 @@ class Resources:
         return self.owned_lock_identity if original == self.request else None
 
     def storage_identity(self) -> dict:
+        self.checkpoint()
         rustfs = self.request["storage"]["rustfs"]
         fixture = False
         if self.storage_run is not None:
@@ -263,11 +276,13 @@ class Resources:
                 rustfs = self.storage_runtime_binding["storage"]
         exact(rustfs, {"identity", "sha256", "process_receipt", "launch_receipt"})
         exact(rustfs["identity"], {"pid", "started", "executable"})
+        self.checkpoint()
         if (rustfs["identity"]["executable"] != self.review["tools"]["rustfs"]["path"]
                 or rustfs["sha256"] != self.review["tools"]["rustfs"]["sha256"]
                 or file_digest(Path(rustfs["identity"]["executable"]))["sha256"] != digest(rustfs["sha256"])
                 or process_identity(rustfs["identity"]["pid"]) != rustfs["identity"]):
             raise ValueError("RustFS 实际二进制或内核进程代次变化")
+        self.checkpoint()
         verify_listener(rustfs["identity"]["pid"], self.request["target"]["s3"]["endpoint"])
         rustfs_layout(self, rustfs, runtime=self.storage_runtime_binding)
         redis = self.request["storage"]["redis"]
@@ -319,6 +334,7 @@ class Resources:
                 or values.get("process_id") != str(redis["pid"])):
             raise ValueError("Redis 端点或内核进程已重启/变化")
         redis_layout(self, redis, values, observe)
+        self.checkpoint()
         if process_identity(rustfs["identity"]["pid"]) != rustfs["identity"]:
             raise ValueError("存储观察结束时 RustFS 进程身份变化")
         return {"rustfs": rustfs, "redis": redis}

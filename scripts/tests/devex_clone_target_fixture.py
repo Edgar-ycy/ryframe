@@ -13,9 +13,12 @@ from unittest.mock import patch
 
 import devex_clone_target as target
 import devex_clone_target_binding as binding
+from devex_clone_target_reset_evidence import PHASES
+from artifact_digests import filesystem_path
 import devex_clone_target_resources as resources
 import devex_clone_target_storage as storage
 from devex_clone_transfer import DatabaseObservation
+from devex_clone_run_state import binding as receipt_binding
 from full_stack_runtime import configuration_digest
 from restore_build import file_digest
 from restore_reference_plan import BUCKETS, plan_hash
@@ -42,6 +45,10 @@ class Fixture:
                        "tools": {role: {"path": str(self.paths[role]), "sha256": file_digest(self.paths[role])["sha256"]}
                                  for role in binding.REVIEW_FILE_TOOLS}}
         self.review["tools"]["redis_server"] = {"distribution": "Ubuntu-24.04", "resolved_path": "/usr/bin/redis-server", "sha256": "9" * 64}
+        self.review["tools"]["wsl"] = {
+            "path": str(self.paths["wsl"]),
+            "sha256": file_digest(self.paths["wsl"])["sha256"],
+        }
         for role in ("seed", "base", "candidate"):
             scope = "perf-" + role + "-fixture"
             self.review["scopes"][role] = {"scope_id": scope, "runtime_dir": str(self.local / (role + "-runtime")),
@@ -123,14 +130,46 @@ class Fixture:
         self.databases, self.redis_values, self.extra_objects, self.calls = set(), {}, {}, []
         self.initialized = False; self.unknown_create = False; self.reset_status = "completed"
         self.plan_changed = False; self.plan_count = 0; self.storage_restarted = False
+        self.prepared_files = None
 
     @staticmethod
     def bound(path, value):
-        path.write_text(json.dumps(value), encoding="utf-8")
+        with open(filesystem_path(path), "w", encoding="utf-8") as stream:
+            json.dump(value, stream)
         return {"path": str(path), **file_digest(path)}
 
     def save_request(self):
         self.path.write_text(json.dumps(self.request), encoding="utf-8")
+
+    def publish_prepared_files(self, request_descriptor: dict | None = None) -> dict:
+        """发布与真实 CLI 同形的完整 prepare 文件快照。"""
+        descriptor = request_descriptor or {"path": str(self.path), **file_digest(self.path)}
+        registration = self.local / "registration.json"
+        registration.write_text(json.dumps({
+            "format_version": 1, "kind": "devex-clone-fresh-target-registration",
+            "request": descriptor, "environment": {}, "storage_run": {},
+            "target_directory": str(self.output),
+        }), encoding="utf-8")
+        registered = receipt_binding(registration)
+        snapshot = self.local / "prepared-files.json"
+        snapshot.write_text(json.dumps({
+            "format_version": 1, "kind": "devex-clone-fresh-target-prepared-files",
+            "registration": registered, "predecessor": None,
+            "files": binding.target_files(self.output),
+        }), encoding="utf-8")
+        self.prepared_files = {"descriptor": receipt_binding(snapshot),
+                               "registration": registered, "predecessor": None}
+        return self.prepared_files
+
+    def publish_initialized_files(self, files=None) -> dict:
+        snapshot = self.local / "initialized-files.json"
+        snapshot.write_text(json.dumps({
+            "format_version": 1, "kind": "devex-clone-fresh-target-initialized-files",
+            "registration": receipt_binding(self.local / "registration.json"),
+            "predecessor": receipt_binding(self.local / "prepared-files.json"),
+            "files": binding.target_files(self.output) if files is None else files,
+        }), encoding="utf-8")
+        return receipt_binding(snapshot)
 
     def redis(self, args):
         if args[:2] == ["INFO", "server"]:
@@ -169,7 +208,8 @@ class Fixture:
             sql = mysql_input(command, kwargs)
             if sql.startswith("SELECT @@"):
                 name = sql.split("SCHEMA_NAME = '")[1].split("'")[0]
-                raw = (self.uuid + ("\n" + name if name in self.databases else "")).encode()
+                rows = [self.uuid, *([name] if name in self.databases else [])]
+                raw = ("\r\n".join(rows) + "\r\n").encode()
             elif sql.startswith("CREATE DATABASE"):
                 name = sql.split('`')[1]
                 if name in self.databases: raise AssertionError("duplicate CREATE")
@@ -200,15 +240,34 @@ class Fixture:
                 self.initialized = True
                 redis = self.review["scopes"]["seed"]["redis"]; self.redis_values[redis["ownership_key"]] = redis["ownership_value"]
                 sha = command[command.index("--plan-hash") + 1]; directory = Path(kwargs["env"]["RYFRAME_RESET_STATE_DIR"])
-                phases = {phase: {"status": "complete", "completed_at": "2026-09-04T00:00:00Z"} for phase in target.PHASES}
+                phases = {phase: {"status": "complete", "completed_at": "2026-09-04T00:00:00Z"}
+                          for phase in PHASES}
                 common = {**{key: manifest[key] for key in ("environment", "scope_id", "code_sha", "config_sha", "credential_version")},
-                          "plan_hash": sha, "phases": phases, "resources": {"resource": {"status": "complete"}}}
-                self.bound(directory / f"test-{self.scope}-{sha}.ledger.json", {**common, "ledger_version": 4})
-                self.bound(directory / f"test-{self.scope}-{sha}.report.json", {**common, "report_version": 2, "status": self.reset_status,
+                          "plan_hash": sha, "phases": phases, "resources": {"resource": {"status": "complete"}},
+                          "updated_at": "2026-09-04T00:00:01Z"}
+                ledger = directory / f"test-{self.scope}-{sha}.ledger.json"
+                final = {**common, "ledger_version": 4}
+                previous = copy.deepcopy(final)
+                previous["updated_at"] = "2026-09-04T00:00:00Z"
+                previous["phases"]["release"] = {"status": "running", "completed_at": None}
+                self.bound(directory / ("." + ledger.name + ".previous"), previous)
+                self.bound(ledger, final)
+                report = directory / f"test-{self.scope}-{sha}.report.json"
+                self.bound(report, {**common, "report_version": 2, "status": self.reset_status,
                     "failed_phase": None, "completed_at": phases["release"]["completed_at"],
                     "databases": [f"127.0.0.1:3306/{db['database']}" for db in self.request["target"]["databases"]],
                     "redis_namespace": redis["namespace"], "object_prefixes": [bucket + ":" + self.scope + "/" for bucket in BUCKETS]})
-        elif role != "migrate": raise AssertionError(command)
+                raw = (f"reset_status={self.reset_status}\n"
+                       f"reset_completed_at={phases['release']['completed_at']}\n"
+                       f"reset_report={report}\n").encode()
+        elif role == "migrate":
+            scope, operation = command[1:3]
+            target_name = command[4] if len(command) == 5 and command[3] == "--target" else None
+            text = f"scope={scope} " + (f"target={target_name} " if target_name else "")
+            text += "migration=completed schema=verified\n" if operation == "up" \
+                else "migration_ledger=current schema=verified\n"
+            raw = text.encode()
+        else: raise AssertionError(command)
         return subprocess.CompletedProcess(command, 0, raw, b"")
 
     def inventory(self, backend, side, tools, receipt, output, *, environment):
@@ -218,4 +277,8 @@ class Fixture:
             tables = {"biz_tenant_fence": {"rows": 0, "sha256": "a" * 64}, "biz_tenant_target_slot": {"rows": 1, "sha256": "b" * 64}}
             observations.append(DatabaseObservation({"database": db["database"]}, "7" * 64, tables, {}, tuple(tables), ()))
         value = {"status": "offline_fixture_only", "inventories": {}}
-        return SimpleNamespace(observations=tuple(observations), receipt_file=self.bound(output / "inventory.json", value))
+        receipt = self.bound(output / "inventory.json", value)
+        return SimpleNamespace(
+            observations=tuple(observations), receipt_file=receipt,
+            evidence_files=tuple(binding.target_files(output)),
+        )

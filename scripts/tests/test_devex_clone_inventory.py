@@ -157,6 +157,10 @@ class InventoryTests(unittest.TestCase):
         self.assertFalse(result.receipt["producer_stopped_proven"])
         self.assertFalse(result.receipt["fresh_target_proven"])
         self.assertFalse(result.receipt["target_ready"])
+        self.assertEqual(
+            {item["path"] for item in result.evidence_files},
+            {path.name for path in self.output.iterdir()},
+        )
         self.assertFalse(result.binding["source"]["snapshot"]["clean"])
         first = result.observations[0]
         self.assertIsInstance(first, DatabaseObservation)
@@ -287,6 +291,20 @@ class InventoryTests(unittest.TestCase):
         self.effect = effect
         self.assert_failed()
         self.assertEqual(self.cli_count, 8)
+
+    def test_unknown_file_is_preserved_and_blocks_success_publication(self):
+        unknown = self.output / "unknown.json"
+
+        def effect(count, _):
+            if count == 8:
+                unknown.write_text("{}", encoding="utf-8")
+
+        self.effect = effect
+        failure = self.assert_failed()
+
+        self.assertEqual(failure["stage"], "publish")
+        self.assertTrue(unknown.is_file())
+        self.assertFalse((self.output / "inventory.json").exists())
 
     def test_missing_malformed_and_duplicate_json_keep_failure(self):
         for index, content in enumerate(("missing", "[", '{"scope_id":"x","scope_id":"y"}')):

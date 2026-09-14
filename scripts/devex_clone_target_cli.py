@@ -3,10 +3,9 @@ from __future__ import annotations
 
 import copy
 from contextlib import contextmanager
-import os
 from pathlib import Path
 
-from artifact_digests import filesystem_path, protect_binaries
+from artifact_digests import protect_binaries
 from devex_clone import read_json
 from devex_clone_capture import read_bound_json, write_json
 from devex_clone_factory_context import initialization_history
@@ -14,6 +13,8 @@ from process_environment import Environments, configured
 from devex_clone_model import exact, linked, local_path
 from devex_clone_run_state import binding, controller_observation, historical_state, run_lock
 from devex_clone_source_proof import bound_file
+import devex_clone_target_cli_fixture as fixture_context
+import devex_clone_target_cli_snapshot as snapshot_evidence
 from process_guard import process_guard
 
 FIELDS = {"format_version", "kind", "request", "environment", "storage_run", "target_directory"}
@@ -81,7 +82,7 @@ def _storage_run(backend: Path, descriptor: dict) -> Path:
     if manifest_path != directory / "manifest.json":
         raise ValueError("fresh 目标 storage manifest 不属于固定统一目录")
     historical = historical_state(directory, descriptor["state"])
-    if _fixture_service_run(manifest, historical["state"]):
+    if fixture_context.fixture_service_run(manifest, historical["state"]):
         from reference_fixture_service_history import validate_history
 
         validate_history(directory, historical["state"])
@@ -109,50 +110,11 @@ def _storage_run(backend: Path, descriptor: dict) -> Path:
     return directory
 
 
-def _fixture_service_run(manifest: dict, state: dict) -> bool:
-    """识别只提供首代服务的参考夹具，不能把它伪装成复制重启。"""
-    if manifest.get("kind") != "reference-fixture-service-run":
-        return False
-    from reference_fixture_service_history import INITIAL, LIFECYCLE_STAGE, validate_manifest
-
-    validate_manifest(manifest)
-    initial = state["attempts"][:len(INITIAL)]
-    actual = tuple((item["stage"], item["mode"]) for item in initial)
-    if (actual != INITIAL or any(item["status"] != "passed" for item in initial)
-            or any(item["stage"] != LIFECYCLE_STAGE or item["mode"] not in {"close", "recover", "restart"}
-                   or item["status"] != "passed" for item in state["attempts"][len(INITIAL):])):
-        raise ValueError("夹具服务账本必须完整包含 RustFS、Redis 与对象桶初始化")
-    return True
-
-
 def _disjoint(*paths: Path) -> None:
     for index, path in enumerate(paths):
         for other in paths[index + 1:]:
             if path == other or path.is_relative_to(other) or other.is_relative_to(path):
                 raise ValueError("fresh 目标 workspace、storage run 与观察目录必须互不包含")
-
-
-def _target_files(target: Path) -> list[dict]:
-    if linked(target) or not target.is_dir():
-        raise ValueError("fresh 目标根目录缺失或经过链接")
-    entries = []
-    for path in sorted(target.rglob("*")):
-        if linked(path):
-            raise ValueError("fresh 目标阶段文件经过链接")
-        item = {"path": path.relative_to(target).as_posix()}
-        native = filesystem_path(path)
-        if os.path.isdir(native):
-            entries.append({**item, "type": "directory"})
-        elif os.path.isfile(native):
-            digest = binding(path)
-            entries.append({**item, "type": "file", "bytes": digest["bytes"], "sha256": digest["sha256"]})
-        else:
-            raise ValueError("fresh 目标阶段包含未知文件类型")
-    return entries
-
-
-def _digest_binding(path: Path) -> dict:
-    return {key: value for key, value in binding(path).items() if key != "path"}
 
 
 def _preflight_reconciliation(target: Path) -> dict:
@@ -163,8 +125,8 @@ def _preflight_reconciliation(target: Path) -> dict:
     exact(value, {"status", "before", "after", "failure", "reset_report", "automatic_retry", "restore_qualified"})
     if (value["status"] != "preflight_failure_reconciled" or value["automatic_retry"] is not False
             or value["restore_qualified"] is not False or len(reports) != 1
-            or value["failure"] != _digest_binding(target / "failure.json")
-            or value["reset_report"] != _digest_binding(reports[0])):
+            or value["failure"] != snapshot_evidence.digest_binding(target / "failure.json")
+            or value["reset_report"] != snapshot_evidence.digest_binding(reports[0])):
         raise ValueError("fresh 目标预检失败收尾收据无效")
     for name, exists in (("before", True), ("after", False)):
         state = value[name]
@@ -174,46 +136,13 @@ def _preflight_reconciliation(target: Path) -> dict:
     return binding(completed)
 
 
-def _write_snapshot(workspace: Path, value: dict, stage: str) -> dict:
-    target = Path(value["target_directory"])
-    first = _target_files(target)
-    if _target_files(target) != first:
-        raise ValueError("fresh 目标目录在阶段快照期间变化")
-    predecessor = binding(workspace / "prepared-files.json") if stage == "initialized" else None
-    result = {"format_version": 1, "kind": f"devex-clone-fresh-target-{stage}-files",
-              "registration": binding(workspace / "registration.json"),
-              "predecessor": predecessor, "files": first}
-    path = workspace / f"{stage}-files.json"
-    write_json(path, result)
-    descriptor = binding(path)
-    if _snapshot(workspace, value, stage) != descriptor:
-        raise ValueError("fresh 目标目录快照发布期间变化")
-    return descriptor
-
-
-def _snapshot(workspace: Path, value: dict, stage: str) -> dict:
-    path = workspace / f"{stage}-files.json"
-    before = binding(path)
-    snapshot = read_bound_json(path, before)
-    exact(snapshot, {"format_version", "kind", "registration", "predecessor", "files"})
-    predecessor = binding(workspace / "prepared-files.json") if stage == "initialized" else None
-    if (snapshot["format_version"] != 1
-            or snapshot["kind"] != f"devex-clone-fresh-target-{stage}-files"
-            or snapshot["registration"] != binding(workspace / "registration.json")
-            or snapshot["predecessor"] != predecessor
-            or snapshot["files"] != _target_files(Path(value["target_directory"]))
-            or binding(path) != before):
-        raise ValueError("fresh 目标阶段文件集合、内容或登记发生变化")
-    return before
-
-
 def _prepared(backend: Path, workspace: Path, value: dict) -> dict:
     path = Path(value["target_directory"]) / "prepare.json"
     descriptor = binding(path)
     prepared = read_bound_json(path, descriptor)
     if prepared.get("request") != value["request"]:
         raise ValueError("fresh 目标 prepare 请求不属于固定 registration")
-    proof = _snapshot(workspace, value, "prepared")
+    proof = snapshot_evidence.snapshot(workspace, value, "prepared")
     if binding(path) != descriptor:
         raise ValueError("fresh 目标 prepare 证据在快照核对期间变化")
     bound_file(backend, value["request"])
@@ -233,7 +162,7 @@ def _initialized(backend: Path, workspace: Path, value: dict) -> tuple[dict, dic
     prepare_path = Path(value["target_directory"]) / "prepare.json"
     prepare_binding = _prepare_binding(backend, value)
     prepared = binding(workspace / "prepared-files.json")
-    proof = _snapshot(workspace, value, "initialized")
+    proof = snapshot_evidence.snapshot(workspace, value, "initialized")
     if binding(workspace / "prepared-files.json") != prepared or binding(prepare_path) != prepare_binding:
         raise ValueError("fresh 目标 prepare 文件快照发生变化")
     initialized, _ = initialization_history(backend, Path(value["target_directory"]) / "initialized.json")
@@ -286,19 +215,12 @@ def _run_registered(backend: Path, workspace: Path, operation, *args) -> dict:
     storage_run = _storage_run(backend, value["storage_run"])
     storage_binding = copy.deepcopy(value["storage_run"])
     storage_state = binding(storage_run / "state.json")
-    fixture_services = _fixture_service_run(read_bound_json(storage_run / "manifest.json", storage_binding["manifest"]),
-                                            historical_state(storage_run, storage_binding["state"])["state"])
+    fixture_services = fixture_context.fixture_service_generation(storage_run, storage_binding)
     active_storage_run = storage_run
-    if fixture_services:
-        from reference_fixture_service_history import validate_history
-        from devex_clone_run_state import load_state
-
-        history = validate_history(storage_run, load_state(storage_run))
-        if history["closed"]:
-            raise ValueError("夹具服务已经关闭，不能继续 fresh 目标操作")
-        if history["external_recovery"] is not None:
-            raise ValueError("夹具服务外部终止已核对但尚未重启，不能继续 fresh 目标操作")
-        if history["active_generation"].get("kind") == "initial":
+    if fixture_services is not None:
+        if not fixture_services["available"]:
+            raise ValueError(fixture_services["reason"])
+        if fixture_services["active_generation"].get("kind") == "initial":
             active_storage_run = None
     from devex_clone_target_binding import execution_binary_bindings
 
@@ -360,7 +282,8 @@ def prepare(backend: Path, workspace: Path, request_file: Path, environment_file
             return prepare_target(root, request, target, storage_run=storage_run,
                                   request_descriptor=request_binding)
         result = _run_registered(backend, workspace, invoke)
-        snapshot = _write_snapshot(workspace, registration, "prepared")
+        snapshot = snapshot_evidence.write_snapshot(
+            backend, workspace, registration, "prepared", expected_document=result)
         return {"status": result["status"], "registration": binding(workspace / "registration.json"),
                 "target": binding(workspace / "target/prepare.json"), "files": snapshot,
                 "restore_qualified": False}
@@ -393,7 +316,8 @@ def resume_prepare(backend: Path, workspace: Path) -> dict:
                                          request_descriptor=value["request"])
 
         result = _run_registered(backend, workspace, invoke)
-        snapshot = _write_snapshot(workspace, value, "prepared")
+        snapshot = snapshot_evidence.write_snapshot(
+            backend, workspace, value, "prepared", expected_document=result)
         return {"status": result["status"], "registration": binding(workspace / "registration.json"),
                 "target": binding(workspace / "target/prepare.json"), "files": snapshot,
                 "resumed": True, "restore_qualified": False}
@@ -407,34 +331,56 @@ def initialize(backend: Path, workspace: Path) -> dict:
     with _workspace_control(workspace):
         _, value, _ = _registration(backend, workspace)
         prepared = _prepared(backend, workspace, value)
-        result = _run_registered(backend, workspace, initialize_target)
+        published = []
+
+        def invoke(root, target, *, storage_run):
+            return initialize_target(
+                root, target, storage_run=storage_run,
+                publish_files=lambda files: published.append(
+                    snapshot_evidence.write_snapshot(
+                        backend, workspace, value, "initialized", files, locked_guard=True))
+            )
+
+        result = _run_registered(backend, workspace, invoke)
         if binding(workspace / "prepared-files.json") != prepared:
             raise ValueError("fresh 目标 initialize 期间 prepare 文件快照变化")
-        snapshot = _write_snapshot(workspace, value, "initialized")
+        if (len(published) != 1
+                or snapshot_evidence.snapshot(workspace, value, "initialized") != published[0]):
+            raise ValueError("fresh 目标 initialize 未在目标控制锁内发布唯一文件快照")
         return {"status": result["status"], "registration": binding(workspace / "registration.json"),
-                "target": binding(workspace / "target/initialized.json"), "files": snapshot,
+                "target": binding(workspace / "target/initialized.json"), "files": published[0],
                 "restore_qualified": False}
 
 
 def resume_initialize(backend: Path, workspace: Path) -> dict:
-    from devex_clone_target import inventory_resume_state, resume_inventory_target
+    from devex_clone_target_resume import initialize_resume_state, resume_initialize_target
 
     backend, workspace = backend.resolve(strict=True), local_path(backend, str(workspace))
     with _workspace_control(workspace):
         _, value, _ = _registration(backend, workspace)
         _prepare_binding(backend, value)
-        state = inventory_resume_state(backend, Path(value["target_directory"]), value["request"])
+        prepared_files = snapshot_evidence.resume_prepared_files(workspace, value)
+        state = initialize_resume_state(backend, Path(value["target_directory"]), value["request"],
+                                        prepared_files)
         if not state["resumable"]:
-            raise ValueError("fresh 目标 inventory 不能续作：" + state["reason"])
+            raise ValueError("fresh 目标 initialize 不能续作：" + state["reason"])
+        published = []
 
         def invoke(root, target, *, storage_run):
-            return resume_inventory_target(root, target, storage_run=storage_run,
-                                           request_descriptor=value["request"])
+            return resume_initialize_target(root, target, storage_run=storage_run,
+                                            request_descriptor=value["request"],
+                                            prepared_files=prepared_files,
+                                            publish_files=lambda files: published.append(
+                                                snapshot_evidence.write_snapshot(
+                                                    backend, workspace, value, "initialized", files,
+                                                    locked_guard=True)))
 
         result = _run_registered(backend, workspace, invoke)
-        snapshot = _write_snapshot(workspace, value, "initialized")
+        if (len(published) != 1
+                or snapshot_evidence.snapshot(workspace, value, "initialized") != published[0]):
+            raise ValueError("fresh 目标续作未在目标控制锁内发布唯一文件快照")
         return {"status": result["status"], "registration": binding(workspace / "registration.json"),
-                "target": binding(workspace / "target/initialized.json"), "files": snapshot,
+                "target": binding(workspace / "target/initialized.json"), "files": published[0],
                 "resumed": True, "restore_qualified": False}
 
 
@@ -463,7 +409,7 @@ def verify(backend: Path, workspace: Path, observation_dir: Path) -> dict:
             _disjoint(observation, existing)
         initialized, _ = _initialized(backend, workspace, value)
         result = _run_registered(backend, workspace, verify_target, observation)
-        if _snapshot(workspace, value, "initialized") != initialized:
+        if snapshot_evidence.snapshot(workspace, value, "initialized") != initialized:
             raise ValueError("fresh 目标 verify 期间初始化文件快照变化")
         return {"status": result["status"], "registration": binding(workspace / "registration.json"),
                 "observation": binding(observation / "verify.json"), "restore_qualified": False}
@@ -502,15 +448,22 @@ def status(backend: Path, workspace: Path) -> dict:
     registration = binding(path)
     storage = _storage_run(backend, value["storage_run"])
     storage_state = binding(storage / "state.json")
+    try:
+        fixture_services = fixture_context.fixture_service_generation(storage, value["storage_run"])
+    except (OSError, TypeError, ValueError):
+        _unchanged(backend, path, value, private, storage_state)
+        return report("fresh_target_needs_reconciliation", "registered", "reconciliation", None,
+                      valid=False, reason="夹具服务账本或当前代次无效", registration=registration)
     target = Path(value["target_directory"])
     target_existed = target.exists()
     try:
-        target_files = _target_files(target) if target_existed else None
+        target_files = snapshot_evidence.target_files(target) if target_existed else None
     except (OSError, ValueError):
         _unchanged(backend, path, value, private, storage_state)
         return report("fresh_target_needs_reconciliation", "registered", "reconciliation", None,
                       valid=False, reason="fresh 目标目录结构无效", registration=registration)
-    from devex_clone_target import inventory_resume_state, prepare_resume_state, unresolved_failure
+    from devex_clone_target import prepare_resume_state, unresolved_failure
+    from devex_clone_target_resume import initialize_resume_state
 
     try:
         if (target / "reconciliation-completed.json").is_file():
@@ -529,10 +482,24 @@ def status(backend: Path, workspace: Path) -> dict:
                 result = report("fresh_target_initialized", "initialized", "verification", "verify",
                                 valid=True, reason=None, registration=registration)
         elif ((target / "initialize.lock").exists() or (target / "initialize.started.json").exists()):
-            resume = inventory_resume_state(backend, target, value["request"])
+            resume = initialize_resume_state(backend, target, value["request"],
+                                             snapshot_evidence.resume_prepared_files(workspace, value))
             if resume["resumable"]:
-                result = report("fresh_target_inventory_resume_pending", "reset", "inventory_resume",
-                                "resume-initialize", valid=True, reason=None, registration=registration)
+                if resume["mode"] == "migration":
+                    completed = resume["completed"]
+                    operation = resume["operations"][resume["next_index"]]
+                    result = report("fresh_target_migration_resume_pending",
+                                    "migration:" + completed[-1]["id"], "migration_resume",
+                                    "resume-initialize", valid=True, reason=None,
+                                    registration=registration)
+                    result["resume"] = {"mode": "migration",
+                                        "completed_operations": [item["id"] for item in completed],
+                                        "next_operation": operation["id"],
+                                        "next_operation_is_read_only": not operation["write"]}
+                else:
+                    result = report("fresh_target_inventory_resume_pending", "reset", "inventory_resume",
+                                    "resume-initialize", valid=True, reason=None,
+                                    registration=registration)
             else:
                 result = report("fresh_target_needs_reconciliation", "prepared" if
                                 (workspace / "prepared-files.json").exists() else "registered",
@@ -563,6 +530,10 @@ def status(backend: Path, workspace: Path) -> dict:
     except (OSError, TypeError, ValueError):
         result = report("fresh_target_needs_reconciliation", "registered", "reconciliation", None,
                         valid=False, reason="fresh 目标本地阶段证据无效", registration=registration)
+    if (result["next_action"] == "resume-initialize" and fixture_services is not None
+            and not fixture_services["available"]):
+        result.update(evidence_valid=False, pending_stage="service_restart", next_action=None,
+                      blocking_reason=fixture_services["reason"])
     try:
         controller = controller_observation(storage)
         if controller is not None:
@@ -576,7 +547,8 @@ def status(backend: Path, workspace: Path) -> dict:
     except (OSError, TypeError, ValueError):
         result.update(evidence_valid=False, pending_stage="reconciliation", next_action=None,
                       blocking_reason="控制器收据或进程身份无法核实")
-    if target.exists() != target_existed or target_existed and _target_files(target) != target_files:
+    if (target.exists() != target_existed
+            or target_existed and snapshot_evidence.target_files(target) != target_files):
         raise ValueError("fresh 目标文件在 status 只读观察期间变化")
     _unchanged(backend, path, value, private, storage_state)
     return result

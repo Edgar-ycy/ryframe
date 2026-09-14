@@ -637,7 +637,7 @@ fn recovery_help_uses_the_actual_stage_parser_without_creating_requested_output(
         ),
         (
             ["check", "recovery", "fresh-target", "-h"].as_slice(),
-            "--workspace",
+            "首个缺失操作为只读 verify",
         ),
         (
             ["check", "recovery", "clone", "-h"].as_slice(),

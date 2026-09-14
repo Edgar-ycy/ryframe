@@ -154,6 +154,7 @@ class VerificationStdoutTests(unittest.TestCase):
         capture = object.__new__(_Capture)
         capture.output, capture.environment = self.work, self.environment
         capture.redaction, capture.original = {}, SimpleNamespace(run=session.command)
+        capture.evidence_names = set()
         self.tools.run = capture.run
         return session
 

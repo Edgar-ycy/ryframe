@@ -4,6 +4,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import unittest
@@ -12,8 +13,15 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import devex_clone_target as target
 import devex_clone_target_binding as binding
+import devex_clone_target_initialization_claim as initialization_claim
+import devex_clone_target_resume as target_resume
+import devex_clone_target_resume_evidence as target_evidence
+import devex_clone_target_runtime_evidence as runtime_evidence
+from devex_clone_capture import read_json, write_json
+from devex_clone_run_state import binding as receipt_binding
 from devex_clone_target_resources import Resources
-from devex_clone_target_state import generation_lock
+from devex_clone_target_state import (generation_checkpoint, generation_guard_checkpoint,
+                                      generation_lock)
 from devex_clone_target_storage import verify_storage_generation
 from devex_clone_target_fixture import Fixture
 from devex_clone_inventory import InventoryCaptureError
@@ -48,23 +56,45 @@ class StorageTransitionTests(unittest.TestCase):
                 verify_storage_generation(before, observed, files, memory)
         self.assertEqual(before["storage"], {"rustfs": "old-files", "redis": "old-cache"})
 
+    def test_started_generation_rejects_jointly_forged_fixture_runtime(self):
+        expected = {"configuration": "fixed", "storage": {"rustfs": "old-files",
+                                                              "redis": "old-cache"}}
+        generation = {"path": "generation", "bytes": 1, "sha256": "a" * 64}
+        trusted_storage = {"storage": "new-files", "data_directory": "directory",
+                           "api_url": "api", "console_url": "console", "generation": generation}
+        trusted_cache = {"redis": "new-cache", "generation": generation}
+        forged_storage = {**trusted_storage, "storage": "forged-files"}
+        forged_cache = {**trusted_cache, "redis": "forged-cache"}
+        actual_storage = {"rustfs": forged_storage["storage"], "redis": forged_cache["redis"]}
+        started = {"storage": actual_storage, "storage_runtime": forged_storage,
+                   "cache_runtime": forged_cache,
+                   "current_generation_sha256": plan_hash({**expected, "storage": actual_storage})}
+        with patch.object(runtime_evidence, "_fixture_runtime_evidence",
+                          return_value=(trusted_storage, trusted_cache)), self.assertRaisesRegex(
+                ValueError, "不同于可信发布证据"):
+            runtime_evidence.validate_started_generation(Path.cwd(), expected, started)
+
 
 class TargetTests(unittest.TestCase):
     def setUp(self):
         temporary = WorkspaceDirectory(
             Path(__file__).resolve().parents[2] / ".local-tests/python-unit",
-            prefix="devex-fresh-",
+            prefix="fresh-",
         )
         self.addCleanup(temporary.cleanup)
         self.f = Fixture(Path(temporary.name), self)
 
     def prepare(self):
         f = self.f
-        return target.prepare_target(f.root, f.path, f.output, f.run)
+        result = target.prepare_target(f.root, f.path, f.output, f.run)
+        f.publish_prepared_files()
+        return result
 
     def initialize(self):
         f = self.f
-        return target.initialize_target(f.root, f.output, f.run)
+        publisher = f.publish_initialized_files if (f.local / "prepared-files.json").is_file() else None
+        result = target.initialize_target(f.root, f.output, f.run, publish_files=publisher)
+        return result
 
     def test_device_fixture_execution_root_is_bound_to_its_generated_snapshot(self):
         f = self.f
@@ -105,6 +135,7 @@ class TargetTests(unittest.TestCase):
         commands = [command for command in f.calls if Path(command[0]).stem in ("reset", "migrate")]
         self.assertEqual([c[1] for c in commands[:3]], ["plan", "plan", "execute"])
         self.assertEqual(len([c for c in commands if Path(c[0]).stem == "migrate"]), 10)
+        self.assertFalse(any(name.startswith("migrate-") for name in result["history"]))
         self.assertNotIn("--all", [part for command in commands for part in command])
         verified = target.verify_target(f.root, f.output, f.local / "verify", f.run)
         self.assertEqual(verified["remote_writes"], 0)
@@ -274,53 +305,6 @@ class TargetTests(unittest.TestCase):
         self.assertFalse((self.f.output / "initialized.json").exists())
         self.assertTrue((self.f.output / "reset.intent.json").exists())
 
-    def test_inventory_failure_resumes_without_replaying_reset(self):
-        f = self.f
-        self.prepare()
-        original_inventory = target.inventory
-        with patch.object(target, "inventory", side_effect=InventoryCaptureError(f.output)):
-            with self.assertRaises(InventoryCaptureError): self.initialize()
-        completed = len([command for command in f.calls if Path(command[0]).stem == "reset" and command[1] == "execute"])
-        self.assertEqual(completed, 1)
-        descriptor = {"path": str(f.path), **file_digest(f.path)}
-        self.assertTrue(target.inventory_resume_state(f.root, f.output, descriptor)["resumable"])
-
-        with patch.object(target, "inventory", side_effect=original_inventory):
-            result = target.resume_inventory_target(f.root, f.output, f.run, request_descriptor=descriptor)
-
-        self.assertEqual(result["status"], "fresh_target_initialized")
-        self.assertEqual(completed, len([command for command in f.calls
-                                         if Path(command[0]).stem == "reset" and command[1] == "execute"]))
-        self.assertTrue((f.output / "initialized.json").is_file())
-        self.assertFalse(target.unresolved_failure(f.root, f.output))
-        self.assertEqual(target.verify_target(f.root, f.output, f.local / "verify-resumed", f.run)["remote_writes"], 0)
-
-    def test_inventory_resume_rejects_other_initialization_failures(self):
-        self.prepare()
-        self.f.plan_changed = True
-        with self.assertRaises(ValueError): self.initialize()
-        descriptor = {"path": str(self.f.path), **file_digest(self.f.path)}
-        state = target.inventory_resume_state(self.f.root, self.f.output, descriptor)
-        self.assertFalse(state["resumable"])
-        with self.assertRaises(ValueError): target.resume_inventory_target(
-            self.f.root, self.f.output, self.f.run, request_descriptor=descriptor
-        )
-
-    def test_inventory_resume_history_keeps_prior_readonly_failure(self):
-        f = self.f
-        self.prepare()
-        with patch.object(target, "inventory", side_effect=InventoryCaptureError(f.output)):
-            with self.assertRaises(InventoryCaptureError): self.initialize()
-        descriptor = {"path": str(f.path), **file_digest(f.path)}
-        with patch.object(target, "inventory", side_effect=InventoryCaptureError(f.output)):
-            with self.assertRaises(InventoryCaptureError): target.resume_inventory_target(
-                f.root, f.output, f.run, request_descriptor=descriptor
-            )
-        failed = next(f.output.glob("resume-initialize-*.failure.json"))
-        with patch.object(target, "inventory", wraps=target.inventory):
-            result = target.resume_inventory_target(f.root, f.output, f.run, request_descriptor=descriptor)
-        self.assertEqual(result["history"][failed.name], file_digest(failed))
-
     def test_storage_restart_after_prepare_refuses_create(self):
         self.prepare(); self.f.storage_restarted = True
         with self.assertRaises(ValueError): self.initialize()
@@ -462,6 +446,45 @@ class TargetTests(unittest.TestCase):
         self.assertFalse(target.unresolved_failure(f.root, f.output))
         self.assertEqual(self.initialize()["status"], "fresh_target_initialized")
 
+    def test_prepare_resume_rejects_invalid_timestamp(self):
+        f = self.f
+        descriptor = {"path": str(f.path), **file_digest(f.path)}
+        with patch.object(target, "context", side_effect=OSError("fixture interrupted")), \
+                self.assertRaises(OSError):
+            target.prepare_target(f.root, f.path, f.output, f.run)
+        target.resume_prepare_target(
+            f.root, f.output, f.run, storage_run=None, request_descriptor=descriptor
+        )
+        intent = next(f.output.glob("resume-prepare-*.intent.json"))
+        value = read_json(intent)
+        value["at"] = "fixture"
+        intent.write_text(json.dumps(value), encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "intent 无效"):
+            target.prepare_resume_state(f.root, f.output, descriptor)
+
+    def test_prepare_resume_rejects_result_before_intent(self):
+        f = self.f
+        descriptor = {"path": str(f.path), **file_digest(f.path)}
+        with patch.object(target, "context", side_effect=OSError("fixture interrupted")), \
+                self.assertRaises(OSError):
+            target.prepare_target(f.root, f.path, f.output, f.run)
+        target.resume_prepare_target(
+            f.root, f.output, f.run, storage_run=None, request_descriptor=descriptor
+        )
+        intent = next(f.output.glob("resume-prepare-*.intent.json"))
+        confirmed = next(f.output.glob("resume-prepare-*.confirmed.json"))
+        intent_value = read_json(intent)
+        intent_value["at"] = "2030-01-02T00:00:00+00:00"
+        intent.write_text(json.dumps(intent_value), encoding="utf-8")
+        confirmed_value = read_json(confirmed)
+        confirmed_value["at"] = "2030-01-01T00:00:00+00:00"
+        confirmed_value["intent"] = receipt_binding(intent)
+        confirmed.write_text(json.dumps(confirmed_value), encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "不属于原 intent"):
+            target.prepare_resume_state(f.root, f.output, descriptor)
+
     def test_prepare_resume_rejects_any_resource_write_intent(self):
         f = self.f
         descriptor = {"path": str(f.path), **file_digest(f.path)}
@@ -493,9 +516,91 @@ class TargetTests(unittest.TestCase):
         self.prepare()
         with patch.object(Path, "rmdir", side_effect=OSError("busy")):
             with self.assertRaises(OSError): self.initialize()
-        self.assertFalse((self.f.output / "initialized.json").exists())
+        self.assertTrue((self.f.output / "initialized.json").exists())
         self.assertTrue((self.f.output / "initialized-candidate.json").exists())
         self.assertTrue((self.f.output / "initialize.lock").exists())
+        self.assertFalse((self.f.local / "initialized-files.json").exists())
+        self.assertTrue(target.unresolved_failure(self.f.root, self.f.output))
+
+    def test_publication_runs_after_initialize_unlock_while_target_guard_is_held(self):
+        self.prepare()
+        observations = []
+
+        def publish(files):
+            self.assertFalse((self.f.output / "initialize.lock").exists())
+            observations.append(generation_guard_checkpoint(self.f.output))
+            with self.assertRaisesRegex(ValueError, "初始化锁身份变化"):
+                generation_checkpoint(self.f.output)
+            self.f.publish_initialized_files(files)
+
+        result = target.initialize_target(
+            self.f.root, self.f.output, self.f.run, publish_files=publish
+        )
+
+        self.assertEqual(result["status"], "fresh_target_initialized")
+        self.assertEqual(len(observations), 1)
+        self.assertTrue((self.f.local / "initialized-files.json").is_file())
+
+    def test_locked_target_scan_checks_guard_before_and_after_walk(self):
+        self.prepare()
+        with generation_lock(self.f.output):
+            with patch("devex_clone_target_state.generation_checkpoint") as checkpoint:
+                files = binding.target_files(
+                    self.f.output, ignored={"initialize.lock"}, locked_guard=True
+                )
+
+        self.assertTrue(files)
+        self.assertEqual(checkpoint.call_count, 2)
+
+    def test_resource_command_rejects_lost_generation_before_runner(self):
+        f = self.f
+        selected = f.review["scopes"]["seed"]
+        resource = Resources(
+            f.root, f.request, f.output, selected, f.review, f.run,
+            owned_lock_identity=123, lock_output=f.output
+        )
+        calls = len(f.calls)
+
+        with patch("devex_clone_target_state.generation_checkpoint",
+                   side_effect=ValueError("lost")), self.assertRaisesRegex(ValueError, "lost"):
+            resource.command("guard-check", [str(f.paths["mysql"])])
+
+        self.assertEqual(len(f.calls), calls)
+
+    def test_prepare_tamper_after_baseline_is_rejected_before_resource_writes(self):
+        f = self.f
+        self.prepare()
+        original_context = target.context
+
+        def tamper(*args, **kwargs):
+            result = original_context(*args, **kwargs)
+            prepared = read_json(f.output / "prepare.json")
+            prepared["controlled_generation_only"] = False
+            (f.output / "prepare.json").write_text(
+                json.dumps(prepared, ensure_ascii=False), encoding="utf-8")
+            return result
+
+        with patch.object(target, "context", side_effect=tamper), \
+                self.assertRaisesRegex(ValueError, "prepare"):
+            self.initialize()
+        self.assertFalse(f.databases)
+        self.assertFalse((f.output / "initialize.started.json").exists())
+        self.assertFalse((f.local / "initialized-files.json").exists())
+
+    def test_unknown_file_before_final_tree_snapshot_prevents_publication(self):
+        f = self.f
+        self.prepare()
+        original_validate = initialization_claim.validate_complete
+
+        def inject(*args, **kwargs):
+            (f.output / "unknown-before-final.txt").write_text("unknown", encoding="utf-8")
+            return original_validate(*args, **kwargs)
+
+        with patch.object(initialization_claim, "validate_complete", side_effect=inject), \
+                self.assertRaisesRegex(ValueError, "未登记"):
+            self.initialize()
+        self.assertTrue((f.output / "initialized.json").exists())
+        self.assertFalse((f.local / "initialized-files.json").exists())
 
     def test_failed_publication_candidate_is_not_verified(self):
         self.prepare(); self.initialize()

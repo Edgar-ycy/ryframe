@@ -38,6 +38,17 @@ class SideInventory:
     observations: tuple[DatabaseObservation, ...]
     receipt: dict
     receipt_file: dict
+    evidence_files: tuple[dict, ...]
+
+
+def _evidence_files(output: Path, names: set[str]) -> tuple[dict, ...]:
+    """绑定生产者实际声明的平面证据集，拒绝并发或特殊文件注入。"""
+    paths = list(output.iterdir())
+    if ({path.name for path in paths} != names or len(paths) != len(names)
+            or any(linked(path) or not path.is_file() for path in paths)):
+        raise ValueError("库存目录包含生产者未声明的文件或目录")
+    return tuple({"path": path.name, "type": "file", **file_digest(regular_file(path))}
+                 for path in sorted(paths, key=lambda item: item.name))
 
 
 def expected_owners(scope: str, combined: bool) -> tuple[dict, ...]:
@@ -136,6 +147,7 @@ def capture_side_inventory(backend: Path, side: str, tools: ExternalTools, maint
         raise ValueError("库存输出须使用已有父目录中的新目录")
     output.mkdir()
     stage = "inputs"
+    published = None
     try:
         capture = _Capture(backend, side, tools, maintenance_receipt, output, environment, evidence_root=evidence_root)
         stage = "binding_before"
@@ -162,9 +174,21 @@ def capture_side_inventory(backend: Path, side: str, tools: ExternalTools, maint
                    "remote_writes": 0, "producer_stopped_proven": False, "fresh_target_proven": False,
                    "target_ready": False, "clone_verified": False, "restore_qualified": False}
         stage = "publish"
-        write_json(output / "inventory.json", receipt)
-        return SideInventory(side, before, second[1], receipt, {"path": str(output / "inventory.json"), **file_digest(output / "inventory.json")})
+        fixed = {"binding-before.json", "binding-after.json"}
+        _evidence_files(output, fixed | capture.evidence_names)
+        inventory_path = output / "inventory.json"
+        write_json(inventory_path, receipt)
+        published = file_digest(inventory_path)
+        evidence = _evidence_files(
+            output, fixed | {"inventory.json"} | capture.evidence_names
+        )
+        return SideInventory(side, before, second[1], receipt,
+                             {"path": str(inventory_path), **published}, evidence)
     except Exception as error:
+        inventory_path = output / "inventory.json"
+        if (published is not None and inventory_path.is_file() and not linked(inventory_path)
+                and file_digest(inventory_path) == published):
+            inventory_path.unlink()
         failure = {"format_version": 1, "status": "side_inventory_failed", "stage": stage,
                    "error_type": type(error).__name__, "remote_writes": 0, "target_ready": False, "clone_verified": False}
         if isinstance(error, DatabaseVerificationError):
@@ -240,8 +264,14 @@ class _Capture:
             self.redaction["DATABASE_PASSWORD_" + key] = defaults_connection(self.evidence_root, item)["password"]
         for field in ("access_key", "secret_key"):
             self.redaction[field.upper()] = self.environment.get(self.selected["s3"][field + "_env"], "")
-        self.tools = ExternalTools(self.plan, output, self.run)
+        self.evidence_names = set()
+        self.tools = ExternalTools(self.plan, output, self.run, evidence_sink=self._track)
         self.artifacts = {}
+
+    def _track(self, path: Path) -> None:
+        if path.parent != self.output or Path(path.name).name != path.name:
+            raise ValueError("库存生产者证据文件越出固定采集目录")
+        self.evidence_names.add(path.name)
 
     def run(self, command: list[str], **kwargs):
         # 外部 MySQL helper 仅提供禁止隐式 login-path 的值；其他环境均取本次显式快照。
@@ -254,6 +284,7 @@ class _Capture:
         input_digest = {"bytes": len(input_data), "sha256": hashlib.sha256(input_data).hexdigest()} if isinstance(input_data, bytes) else None
         stdout, stderr, code, error_type = b"", b"", None, None
         filename = self.output / ("command-" + uuid.uuid4().hex + ".json")
+        self._track(filename)
         with filename.open("x", encoding="utf-8", newline="\n") as stream:
             try:
                 result = self.original.run(command, env=environment, **kwargs)
@@ -265,6 +296,8 @@ class _Capture:
                 raise
             finally:
                 stdout, output_evidence = verification_stdout(kwargs.get("stdout"), stdout)
+                if "stdout_file" in output_evidence:
+                    self._track(Path(output_evidence["stdout_file"]["path"]))
                 json.dump({"command": command, "returncode": code, "error_type": error_type,
                            "stdin": input_digest,
                            "stdout": None if "stdout_capture_error" in output_evidence else redact_object_diagnostic(stdout, self.redaction),
@@ -317,5 +350,6 @@ class _Capture:
             raw[key] = value
             observations.append(observed)
             self.artifacts[path.name] = file_digest(regular_file(path))
+            self._track(path)
         self.tools.verify_databases(self.side)
         return raw, tuple(observations)

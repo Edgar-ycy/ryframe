@@ -59,6 +59,29 @@ class ReferenceIoTests(unittest.TestCase):
         self.assertNotIn("ownership", sql)
         self.assertNotIn("DROP", sql)
 
+    def test_external_command_checks_generation_immediately_before_runner(self):
+        events = []
+
+        def run(command, **_kwargs):
+            events.append(("run", command))
+            return subprocess.CompletedProcess(command, 0, stdout=b"")
+
+        tools = ExternalTools(
+            self.plan, self.work, run,
+            before_execute=lambda: events.append(("checkpoint", None))
+        )
+        tools.execute(["fixture"])
+        self.assertEqual(events, [("checkpoint", None), ("run", ["fixture"])])
+
+        runner = Mock()
+        blocked = ExternalTools(
+            self.plan, self.work, runner,
+            before_execute=Mock(side_effect=ValueError("lost generation"))
+        )
+        with self.assertRaisesRegex(ValueError, "lost generation"):
+            blocked.execute(["fixture"])
+        runner.assert_not_called()
+
     def test_mysql_ownership_and_config_injection_fail_closed(self):
         tools = ExternalTools(self.plan, self.work)
         responses = iter((b"uuid-1\tsource_control", b"control\tother\twrong"))

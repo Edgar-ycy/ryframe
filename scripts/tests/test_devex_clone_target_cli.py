@@ -19,6 +19,16 @@ from devex_clone_run_state import binding
 import devex_clone_run_state as run_state
 import devex_clone_run_cli as cli
 import devex_clone_target_cli as target_cli
+from devex_clone_target_binding import target_files
+from devex_clone_target_state import generation_lock
+
+
+def publish_initialized(target: Path, publish_files) -> None:
+    after_unlock = []
+    with generation_lock(target, after_initialize_unlock=after_unlock):
+        write_json(target / "initialized.json", {"status": "fresh_target_initialized"})
+        files = target_files(target, ignored={"initialize.lock"}, locked_guard=True)
+        after_unlock.append(lambda: publish_files(files))
 
 
 class TargetCliTests(unittest.TestCase):
@@ -52,6 +62,11 @@ class TargetCliTests(unittest.TestCase):
         protector = patch.object(target_cli, "protect_binaries", return_value=nullcontext())
         protector.start()
         self.addCleanup(protector.stop)
+        prepared_validator = patch.object(
+            target_cli.snapshot_evidence, "validate_prepared_tree", return_value=None
+        )
+        prepared_validator.start()
+        self.addCleanup(prepared_validator.stop)
 
     def args(self, operation, *, request=None, environment=None, storage_run=None,
              observation=None, write=True):
@@ -66,8 +81,9 @@ class TargetCliTests(unittest.TestCase):
         if request_descriptor != binding(request):
             raise AssertionError("request descriptor missing")
         target.mkdir()
-        write_json(target / "prepare.json", {"request": binding(request)})
-        return {"status": "fresh_creation_prepared"}
+        result = {"status": "fresh_creation_prepared", "request": binding(request)}
+        write_json(target / "prepare.json", result)
+        return result
 
     def prepare(self):
         with patch("devex_clone_target.prepare_target", side_effect=self._prepare_stub):
@@ -145,15 +161,79 @@ class TargetCliTests(unittest.TestCase):
         self.assertIsNone(observed["storage_run"])
         self.assertEqual(target_cli._storage_run(self.backend, read_json(self.workspace / "registration.json")["storage_run"]), fixture)
 
+    def test_fixture_service_generation_reads_appended_closed_state(self):
+        fixture = self.local / "fixture-services-closed"
+        fixture.mkdir()
+        write_json(fixture / "manifest.json", {
+            "format_version": 1, "kind": "reference-fixture-service-run",
+            "review": {"path": "review", "bytes": 1, "sha256": "0" * 64},
+            "bootstrap": {"path": "bootstrap", "bytes": 1, "sha256": "1" * 64},
+            "execution_backend": str(self.backend), "scope_id": "fixture-services",
+            "data_directory_was_empty": True,
+        })
+        run_state.initialize_state(fixture)
+        for stage, mode in (("storage-target", "initial"), ("cache-target", "initial"),
+                            ("fixture-buckets", "prepare")):
+            number = run_state.begin(fixture, stage, mode, {"fixture": True})
+            run_state.finish(fixture, number, result={"status": stage + "-initial"})
+        descriptor = {"path": str(fixture), "manifest": binding(fixture / "manifest.json"),
+                      "state": binding(fixture / "state.json")}
+        number = run_state.begin(fixture, "fixture-services", "close", {"fixture": True})
+        run_state.finish(fixture, number, result={"status": "services_closed"})
+
+        def closed(_directory, state):
+            self.assertEqual(len(state["attempts"]), 4)
+            return {"closed": True, "external_recovery": None,
+                    "active_generation": {"kind": "initial"}}
+
+        with patch("reference_fixture_service_history.validate_history", side_effect=closed):
+            result = target_cli.fixture_context.fixture_service_generation(fixture, descriptor)
+        self.assertFalse(result["available"])
+        self.assertIn("没有可执行重启", result["reason"])
+
+    def test_fixture_service_generation_delegates_failed_close_reconcile_history(self):
+        fixture = self.local / "fixture-services-reconciled"
+        fixture.mkdir()
+        write_json(fixture / "manifest.json", {
+            "format_version": 1, "kind": "reference-fixture-service-run",
+            "review": {"path": "review", "bytes": 1, "sha256": "0" * 64},
+            "bootstrap": {"path": "bootstrap", "bytes": 1, "sha256": "1" * 64},
+            "execution_backend": str(self.backend), "scope_id": "fixture-services",
+            "data_directory_was_empty": True,
+        })
+        run_state.initialize_state(fixture)
+        for stage, mode in (("storage-target", "initial"), ("cache-target", "initial"),
+                            ("fixture-buckets", "prepare")):
+            number = run_state.begin(fixture, stage, mode, {"fixture": True})
+            run_state.finish(fixture, number, result={"status": stage + "-initial"})
+        descriptor = {"path": str(fixture), "manifest": binding(fixture / "manifest.json"),
+                      "state": binding(fixture / "state.json")}
+        number = run_state.begin(fixture, "fixture-services", "close", {"fixture": True})
+        run_state.finish(fixture, number, error=OSError("fixture close interrupted"))
+        number = run_state.begin(fixture, "fixture-services", "reconcile", {"fixture": True})
+        run_state.finish(fixture, number, result={"status": "failed_close_reconciled"})
+
+        def reconciled(_directory, state):
+            attempts = state["attempts"]
+            self.assertEqual([(item["mode"], item["status"]) for item in attempts[3:]],
+                             [("close", "failed"), ("reconcile", "passed")])
+            return {"closed": True, "external_recovery": None,
+                    "active_generation": {"kind": "initial"}}
+
+        with patch("reference_fixture_service_history.validate_history", side_effect=reconciled):
+            result = target_cli.fixture_context.fixture_service_generation(fixture, descriptor)
+        self.assertFalse(result["available"])
+        self.assertIn("没有可执行重启", result["reason"])
+
     def test_initialize_and_verify_reopen_registration_and_never_replay(self):
         self.prepare()
         initialized = self.workspace / "target/initialized.json"
 
-        def initialize(backend, target, *, storage_run):
+        def initialize(backend, target, *, storage_run, publish_files):
             self.assertEqual(storage_run, self.storage_run)
             self.assertTrue((storage_run / "run.lock").is_dir())
             self.assertEqual(os.environ["APP_SCOPE_ID"], "fresh-fixture")
-            write_json(initialized, {"status": "fresh_target_initialized"})
+            publish_initialized(target, publish_files)
             return {"status": "fresh_target_initialized"}
 
         with patch("devex_clone_target.initialize_target", side_effect=initialize):
@@ -199,10 +279,10 @@ class TargetCliTests(unittest.TestCase):
             finally:
                 active.pop()
 
-        def initialize(_backend, target, *, storage_run):
+        def initialize(_backend, target, *, storage_run, publish_files):
             self.assertEqual(active, [True])
             self.assertTrue((storage_run / "run.lock").is_dir())
-            write_json(target / "initialized.json", {"status": "fresh_target_initialized"})
+            publish_initialized(target, publish_files)
             return {"status": "fresh_target_initialized"}
 
         with patch("devex_clone_target_binding.execution_binary_bindings",
@@ -225,10 +305,90 @@ class TargetCliTests(unittest.TestCase):
         self.assertFalse((self.storage_run / "run.lock").exists())
         self.assertFalse((self.workspace / "target/initialize.started.json").exists())
 
+    def test_resume_initialize_routes_strict_migration_state_through_registered_guards(self):
+        self.prepare()
+        target = self.workspace / "target"
+        write_json(target / "initialize.started.json", {"at": "fixture", "generation_sha256": "a" * 64})
+        write_json(target / "failure.json", {"status": "needs_reconciliation"})
+        state = {"resumable": True, "reason": None, "mode": "migration",
+                 "completed": [{"id": "control-up"}], "next_index": 1,
+                 "operations": [{"id": "control-up", "write": True},
+                                {"id": "control-verify", "write": False}]}
+        protected = []
+
+        @contextmanager
+        def protect(_bindings):
+            protected.append(True)
+            try:
+                yield
+            finally:
+                protected.pop()
+
+        def resume(_backend, output, *, storage_run, request_descriptor,
+                   prepared_files, publish_files):
+            self.assertEqual(output, target)
+            self.assertEqual(storage_run, self.storage_run)
+            self.assertEqual(request_descriptor, binding(self.request))
+            self.assertEqual(prepared_files["descriptor"], binding(
+                self.workspace / "prepared-files.json"))
+            self.assertTrue((self.storage_run / "run.lock").is_dir())
+            self.assertEqual(protected, [True])
+            publish_initialized(output, publish_files)
+            return {"status": "fresh_target_initialized"}
+
+        with patch.object(target_cli, "protect_binaries", side_effect=protect), \
+                patch("devex_clone_target_resume.initialize_resume_state", return_value=state), \
+                patch("devex_clone_target_resume.resume_initialize_target", side_effect=resume) as operation:
+            blocked = {"available": False, "active_generation": {"kind": "initial"},
+                       "reason": "夹具服务已经关闭"}
+            with patch.object(target_cli.fixture_context, "fixture_service_generation", return_value=blocked), \
+                    self.assertRaisesRegex(ValueError, "已经关闭"):
+                target_cli.resume_initialize(self.backend, self.workspace)
+            operation.assert_not_called()
+            result = target_cli.resume_initialize(self.backend, self.workspace)
+        self.assertEqual(result["status"], "fresh_target_initialized")
+        self.assertTrue(result["resumed"])
+        operation.assert_called_once()
+
+    def test_status_reports_exact_migration_prefix_and_readonly_next_operation(self):
+        self.prepare()
+        target = self.workspace / "target"
+        write_json(target / "initialize.started.json", {"at": "fixture", "generation_sha256": "a" * 64})
+        state = {"resumable": True, "reason": None, "mode": "migration",
+                 "completed": [{"id": "control-up"}, {"id": "control-verify"},
+                               {"id": "tenant-data-dedicated-a-up"}],
+                 "next_index": 3,
+                 "operations": [{"id": "control-up", "write": True},
+                                {"id": "control-verify", "write": False},
+                                {"id": "tenant-data-dedicated-a-up", "write": True},
+                                {"id": "tenant-data-dedicated-a-verify", "write": False}]}
+        before = self.local_files()
+        with patch("devex_clone_target_resume.initialize_resume_state", return_value=state):
+            result = target_cli.status(self.backend, self.workspace)
+        self.assertEqual(result["status"], "fresh_target_migration_resume_pending")
+        self.assertEqual(result["last_successful_stage"],
+                         "migration:tenant-data-dedicated-a-up")
+        self.assertEqual(result["next_action"], "resume-initialize")
+        self.assertEqual(result["resume"]["next_operation"],
+                         "tenant-data-dedicated-a-verify")
+        self.assertTrue(result["resume"]["next_operation_is_read_only"])
+        blocked_services = {"available": False, "active_generation": {"kind": "initial"},
+                            "reason": "夹具服务已正常关闭，当前生命周期没有可执行重启"}
+        with patch("devex_clone_target_resume.initialize_resume_state", return_value=state), \
+                patch.object(target_cli.fixture_context, "fixture_service_generation", return_value=blocked_services):
+            blocked = target_cli.status(self.backend, self.workspace)
+        self.assertEqual(blocked["status"], "fresh_target_migration_resume_pending")
+        self.assertEqual(blocked["pending_stage"], "service_restart")
+        self.assertIsNone(blocked["next_action"])
+        self.assertFalse(blocked["evidence_valid"])
+        self.assertEqual(blocked["resume"], result["resume"])
+        self.assertIn("没有可执行重启", blocked["blocking_reason"])
+        self.assertEqual(self.local_files(), before)
+
     def test_binding_drift_fails_after_stage_without_copying_environment(self):
         self.prepare()
 
-        def drift(_backend, _target, *, storage_run):
+        def drift(_backend, _target, *, storage_run, publish_files):
             write_json(self.workspace / "target/initialized.json", {"status": "fresh_target_initialized"})
             self.environment.write_text('{"environment":{"APP_SCOPE_ID":"changed"}}', encoding="utf-8")
             return {"status": "fresh_target_initialized"}
@@ -299,9 +459,9 @@ class TargetCliTests(unittest.TestCase):
                 patch("devex_clone_target.prepare_target", side_effect=prepare):
             target_cli.prepare(self.backend, self.workspace, self.request, self.environment, self.storage_run)
 
-        def initialize(_backend, target, *, storage_run):
+        def initialize(_backend, target, *, storage_run, publish_files):
             self.assertEqual(active, [(self.workspace, target_cli.WORKSPACE_GUARD)])
-            write_json(target / "initialized.json", {"status": "fresh_target_initialized"})
+            publish_initialized(target, publish_files)
             return {"status": "fresh_target_initialized"}
 
         with patch.object(target_cli, "process_guard", side_effect=guarded), \
@@ -420,8 +580,9 @@ class TargetCliTests(unittest.TestCase):
         def resumed(_backend, target, *, storage_run, request_descriptor):
             target.mkdir()
             write_json(target / "request.json", read_json(self.request))
-            write_json(target / "prepare.json", {"request": request_descriptor})
-            return {"status": "fresh_creation_prepared"}
+            result = {"status": "fresh_creation_prepared", "request": request_descriptor}
+            write_json(target / "prepare.json", result)
+            return result
 
         with patch("devex_clone_target.resume_prepare_target", side_effect=resumed):
             result = target_cli.resume_prepare(self.backend, self.workspace)
@@ -491,8 +652,9 @@ class TargetCliTests(unittest.TestCase):
 
         def resumed(_backend, target, *, storage_run, request_descriptor):
             target.mkdir()
-            write_json(target / "prepare.json", {"request": request_descriptor})
-            return {"status": "fresh_creation_prepared"}
+            result = {"status": "fresh_creation_prepared", "request": request_descriptor}
+            write_json(target / "prepare.json", result)
+            return result
 
         with patch("devex_clone_target.resume_prepare_target", side_effect=resumed):
             self.assertTrue(target_cli.resume_prepare(self.backend, self.workspace)["resumed"])
@@ -568,7 +730,7 @@ class TargetCliTests(unittest.TestCase):
     def test_storage_run_binding_drift_is_rejected_after_stage(self):
         self.prepare()
 
-        def drift(_backend, _target, *, storage_run):
+        def drift(_backend, _target, *, storage_run, publish_files):
             write_json(self.workspace / "target/initialized.json", {"status": "fresh_target_initialized"})
             (storage_run / "state.json").write_text('{"attempts":[{"status":"changed"}]}', encoding="utf-8")
             return {"status": "fresh_target_initialized"}
@@ -579,7 +741,7 @@ class TargetCliTests(unittest.TestCase):
     def test_even_valid_storage_append_during_stage_is_rejected(self):
         self.prepare()
 
-        def drift(_backend, _target, *, storage_run):
+        def drift(_backend, _target, *, storage_run, publish_files):
             number = run_state.begin(storage_run, "storage-target", "restart", {"fixture": True})
             run_state.finish(storage_run, number, result={"status": "storage_restarted"})
             return {"status": "fresh_target_initialized"}

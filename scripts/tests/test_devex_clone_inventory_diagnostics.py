@@ -190,6 +190,7 @@ class InventoryDiagnosticTests(unittest.TestCase):
         capture.output.mkdir()
         capture.redaction = self.fixture.environment
         capture.original = Mock(run=Mock(return_value=subprocess.CompletedProcess([], 0, b"", b"")))
+        capture.evidence_names = set()
         return capture
 
 

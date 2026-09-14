@@ -22,15 +22,17 @@ from devex_clone_inventory import capture_side_inventory
 from devex_clone_model import exact, local_path
 from devex_clone_run_state import binding
 from devex_clone_source_proof import bound_file
-from devex_clone_target_binding import KEYS, execution_backend, generation, request_binding, validate_reset_manifest
+from devex_clone_target_binding import (KEYS, execution_backend, generation, request_binding,
+                                         target_files, validate_reset_manifest)
 from devex_clone_target_resources import Resources
 from devex_clone_target_state import confirmed, failure, generation_lock, intent, now
 from devex_clone_target_storage import verify_storage_generation
+from devex_clone_target_time import ordered, timestamp
+import devex_clone_target_reset_evidence as reset_evidence
 from restore_build import file_digest
 from restore_reference_io import ExternalTools, redact_object_diagnostic
 from restore_reference_plan import plan_hash
 
-PHASES = {"preflight", "object_storage", "redis", "databases", "control_baseline", "tenant_baselines", "verification", "release"}
 PREPARE_STAGES = {"request", "prepare_binding", "prepare_absence"}
 PREPARE_FIELDS = {"format_version", "status", "prepared_at", "request", "request_sha256",
                   "generation", "absence", "fresh_target_initialized", "controlled_generation_only",
@@ -41,6 +43,15 @@ FAILURE_FIELDS = {"status", "stage", "at", "error_type", "reason", "automatic_re
 RESUME_FIELDS = {"format_version", "kind", "attempt", "at", "request", "files_before"}
 
 
+def target_evidence_hooks():
+    """为叶子证据模块绑定当前目标实现，不形成反向导入。"""
+    from devex_clone_target_resume_evidence import TargetEvidenceHooks
+
+    return TargetEvidenceHooks(resume_records=_resume_records, prepare_artifact=_prepare_artifact,
+                               reset_completed=reset_evidence.reset_completed, history=history,
+                               verify_initial_inventory=verify_initial_inventory)
+
+
 def _prepare_failure(output: Path) -> dict | None:
     path = output / "failure.json"
     if not path.exists():
@@ -49,6 +60,9 @@ def _prepare_failure(output: Path) -> dict | None:
     exact(value, FAILURE_FIELDS)
     if (value["status"] != "needs_reconciliation" or not isinstance(value["stage"], str)
             or value["stage"] not in PREPARE_STAGES
+            or not timestamp(value["at"])
+            or not isinstance(value["error_type"], str) or not value["error_type"]
+            or not isinstance(value["reason"], str) or not value["reason"]
             or value["automatic_retry"] is not False or value["automatic_resource_cleanup"] is not False
             or value["fresh_target_initialized"] is not False or value["clone_verified"] is not False
             or value["restore_qualified"] is not False):
@@ -69,7 +83,7 @@ def _prepare_artifact(name: str) -> bool:
 
 
 def _resume_records(backend: Path, output: Path, request_descriptor: dict) -> dict:
-    intents, terminals = {}, {}
+    intents, intent_values, terminals = {}, {}, {}
     for path in sorted(output.glob("resume-prepare-*.json")):
         parsed = _resume_name(path.name)
         if parsed is None:
@@ -80,30 +94,87 @@ def _resume_records(backend: Path, output: Path, request_descriptor: dict) -> di
             exact(value, RESUME_FIELDS)
             if (value["format_version"] != 1 or value["kind"] != "devex-clone-prepare-resume-intent"
                     or value["attempt"] != attempt or value["request"] != request_descriptor
+                    or not timestamp(value["at"])
                     or not isinstance(value["files_before"], dict)):
                 raise ValueError("fresh 目标 prepare 续作 intent 无效")
             for name, descriptor in value["files_before"].items():
                 if not isinstance(name, str) or Path(name).name != name \
                         or binding(output / name) != descriptor:
                     raise ValueError("fresh 目标 prepare 续作前像变化")
-            intents[attempt] = binding(path)
+            intents[attempt], intent_values[attempt] = binding(path), value
             continue
         expected = {"format_version", "kind", "attempt", "at", "intent", "remote_writes"}
         expected |= ({"prepare", "request"} if kind == "confirmed" else {"error_type", "reason"})
         exact(value, expected)
         if (value["format_version"] != 1 or value["kind"] != f"devex-clone-prepare-resume-{kind}"
-                or value["attempt"] != attempt or value["remote_writes"] != 0):
+                or value["attempt"] != attempt or not timestamp(value["at"])
+                or value["remote_writes"] != 0):
             raise ValueError("fresh 目标 prepare 续作结果无效")
         if attempt in terminals:
             raise ValueError("fresh 目标同一 prepare 续作同时存在多个结果")
         terminals[attempt] = (kind, value, binding(path))
     if set(terminals) - set(intents):
         raise ValueError("fresh 目标 prepare 续作结果缺少原 intent")
+    causal_failure = None
+    if intents and (output / "failure.json").exists():
+        causal_failure = read_json(output / "failure.json")
+        exact(causal_failure, FAILURE_FIELDS)
+        if not timestamp(causal_failure["at"]):
+            raise ValueError("fresh 目标既有失败时间无效")
+    started_path = output / "initialize.started.json"
+    started_at = None
+    if intents and started_path.exists():
+        started = read_json(started_path)
+        exact(started, {"at", "generation_sha256"})
+        if not timestamp(started["at"]):
+            raise ValueError("fresh 初始化开始时间无效")
+        started_at = started["at"]
     for attempt, (_, value, _) in terminals.items():
-        if value["intent"] != intents[attempt]:
+        intent_value = intent_values[attempt]
+        if (value["intent"] != intents[attempt]
+                or not ordered(intent_value["at"], value["at"])):
             raise ValueError("fresh 目标 prepare 续作结果不属于原 intent")
+    for value in intent_values.values():
+        if (causal_failure is not None and not ordered(causal_failure["at"], value["at"])
+                or started_at is not None and not ordered(value["at"], started_at)):
+            raise ValueError("fresh 目标 prepare 续作时间不属于初始化前因果链")
+    if started_at is not None and any(
+            not ordered(value[1]["at"], started_at) for value in terminals.values()):
+        raise ValueError("fresh 目标 prepare 续作结果晚于初始化开始")
     return {"intents": intents, "terminals": terminals,
             "pending": sorted(set(intents) - set(terminals))}
+
+
+def _prepare_failure_resolved(backend: Path, output: Path,
+                              request_descriptor: dict) -> bool:
+    """确认根 failure 是已由显式只读续作收尾的 prepare 失败。"""
+    try:
+        if _prepare_failure(output) is None or not (output / "prepare.json").is_file():
+            return False
+        records = _resume_records(backend, output, request_descriptor)
+        prepared = binding(output / "prepare.json")
+        return not records["pending"] and any(
+            value[0] == "confirmed" and value[1]["prepare"] == prepared
+            and value[1]["request"] == binding(output / "request.json")
+            for value in records["terminals"].values())
+    except (AttributeError, IndexError, KeyError, OSError, TypeError, ValueError):
+        return False
+
+
+def initialization_failure_path(backend: Path, output: Path,
+                                request_descriptor: dict) -> Path:
+    """返回唯一初始化失败；允许其前面存在已收尾的 prepare 失败。"""
+    root = output / "failure.json"
+    secondary = sorted(path for path in output.glob("failure-*.json")
+                       if re.fullmatch(r"failure-[a-f0-9]{32}\.json", path.name))
+    all_secondary = sorted(output.glob("failure-*.json"))
+    if not root.is_file() or secondary != all_secondary or len(secondary) > 1:
+        raise ValueError("fresh 目标没有唯一可归属的初始化失败")
+    if not secondary:
+        return root
+    if not _prepare_failure_resolved(backend, output, request_descriptor):
+        raise ValueError("初始化失败之前的 prepare 失败尚未显式收尾")
+    return secondary[0]
 
 
 def prepare_resume_state(backend: Path, output: Path, request_descriptor: dict) -> dict:
@@ -227,67 +298,34 @@ def resume_prepare_target(backend: Path, output: Path, run=subprocess.run, *, st
 
 
 def unresolved_failure(backend: Path, output: Path) -> bool:
-    """成功续作只解除旧 prepare 失败；任何初始化失败仍保持 fail closed。"""
+    """仅显式确认的 prepare、inventory 或迁移前缀续作解除对应旧失败。"""
     failures = sorted(output.glob("failure*.json"))
     if not failures:
         return False
-    if any(path.name != "failure.json" for path in failures):
-        return True
     try:
-        if (output / "initialized.json").is_file() and _inventory_resume_confirmed(output, read_json(output / "initialized.json")):
-            value = read_json(output / "failure.json")
-            return not (value.get("stage") == "inventory" and value.get("error_type") == "InventoryCaptureError")
-        if _prepare_failure(output) is None or not (output / "prepare.json").is_file():
+        prepared = read_json(output / "prepare.json")
+        exact(prepared, PREPARE_FIELDS)
+        request_descriptor = prepared["request"]
+        active = initialization_failure_path(backend, output, request_descriptor)
+        if (output / "initialized.json").is_file():
+            from devex_clone_target_inventory_resume import inventory_resume_confirmed
+
+            initialized = read_json(output / "initialized.json")
+            inventory = inventory_resume_confirmed(backend, output, initialized)
+            from devex_clone_target_resume_evidence import migration_resume_confirmed
+
+            migration = (migration_resume_confirmed(
+                         backend, output, initialized, target_evidence_hooks()))
+            if inventory or migration:
+                return False
+            return not (active == output / "failure.json"
+                        and _prepare_failure_resolved(
+                            backend, output, request_descriptor))
+        if active != output / "failure.json":
             return True
-        prepared_value = read_json(output / "prepare.json")
-        exact(prepared_value, PREPARE_FIELDS)
-        prepared = binding(output / "prepare.json")
-        records = _resume_records(backend, output, prepared_value["request"])
-        return not any(value[0] == "confirmed" and value[1]["prepare"] == prepared
-                       and value[1]["request"] == binding(output / "request.json")
-                       for value in records["terminals"].values())
-    except (OSError, TypeError, ValueError):
+        return not _prepare_failure_resolved(backend, output, request_descriptor)
+    except (AttributeError, IndexError, KeyError, OSError, TypeError, ValueError):
         return True
-
-
-def _inventory_resume_confirmed(output: Path, initialized: dict) -> bool:
-    """仅接受绑定原 inventory 失败和最终初始化收据的显式恢复确认。"""
-    failure_digest = binding(output / "failure.json")
-    for path in output.glob("resume-initialize-*.confirmed.json"):
-        value = read_json(path)
-        exact(value, {"format_version", "kind", "attempt", "at", "intent", "failure", "initialized", "remote_writes"})
-        if (value["format_version"] == 1 and value["kind"] == "devex-clone-initialize-resume-confirmed"
-                and value["failure"] == failure_digest and value["initialized"] == binding(output / "initialized.json")
-                and value["remote_writes"] == 0):
-            return True
-    return False
-
-
-def inventory_resume_state(backend: Path, output: Path, request_descriptor: dict) -> dict:
-    """只读判定已完成 reset 的 inventory 失败能否显式继续。"""
-    backend, output = backend.resolve(strict=True), local_path(backend, str(output))
-    failure_path = output / "failure.json"
-    if ((output / "initialized.json").exists() or (output / "initialize.lock").exists()
-            or not (output / "initialize.started.json").is_file() or not failure_path.is_file()):
-        return {"resumable": False, "reason": "缺少唯一的已释放 inventory 失败现场"}
-    failed = read_json(failure_path)
-    exact(failed, FAILURE_FIELDS)
-    if (failed["stage"] != "inventory" or failed["error_type"] != "InventoryCaptureError"
-            or failed["automatic_retry"] is not False):
-        return {"resumable": False, "reason": "失败不是可继续的 inventory 采集失败"}
-    prepared = read_json(output / "prepare.json")
-    exact(prepared, PREPARE_FIELDS)
-    request = read_bound_json(local_path(backend, request_descriptor["path"]), request_descriptor)
-    if (prepared["status"] != "fresh_creation_prepared" or prepared["request"] != request_descriptor
-            or prepared["request_sha256"] != plan_hash(request)):
-        return {"resumable": False, "reason": "prepare 请求不属于固定 registration"}
-    reset_confirmation = read_json(output / "reset.confirmed.json")
-    exact(reset_confirmation, {"at", "stage", "observed"})
-    if reset_confirmation["stage"] != "reset" or not isinstance(reset_confirmation["observed"], dict):
-        return {"resumable": False, "reason": "reset 完成确认无效"}
-    if request != read_json(output / "request.json"):
-        return {"resumable": False, "reason": "固定请求文件已变化"}
-    return {"resumable": True, "reason": None}
 
 
 def history_files() -> set[str]:
@@ -298,11 +336,12 @@ def history_files() -> set[str]:
 
 def history(output: Path) -> dict:
     names = history_files()
-    if (output / "failure.json").exists():
-        names.add("failure.json")
+    names.update(path.name for path in output.glob("failure*.json"))
     names.update(path.name for path in output.glob("resume-prepare-*.json"))
     names.update(path.name for path in output.glob("resume-initialize-*.intent.json"))
+    names.update(path.name for path in output.glob("resume-initialize-*.started.json"))
     names.update(path.name for path in output.glob("resume-initialize-*.failure.json"))
+    names.update(path.name for path in output.glob("resume-migrate-*.json"))
     if (output / "resume-reset-plan.json").exists():
         names.add("resume-reset-plan.json")
     names.update(path.name for path in output.glob("resume-reset-plan-*.json"))
@@ -323,12 +362,18 @@ def verify_initial_inventory(backend: Path, output: Path, receipt: dict, *, resu
 
 
 def context(backend: Path, request: dict, output: Path, run, *, storage_run: Path | None = None,
-            owned_lock_identity: int | None = None) -> tuple[dict, Resources]:
+            owned_lock_identity: int | None = None,
+            lock_output: Path | None = None) -> tuple[dict, Resources]:
+    if owned_lock_identity is not None:
+        from devex_clone_target_state import generation_checkpoint
+
+        generation_checkpoint(lock_output or output, owned_lock_identity)
     original = generation(backend, request, run)
     review, selected = request_binding(backend, request)
     execution_root, _ = execution_backend(backend, request)
     resources = Resources(backend, request, output, selected, review, run, storage_run=storage_run,
-                          execution_backend=execution_root, owned_lock_identity=owned_lock_identity)
+                          execution_backend=execution_root, owned_lock_identity=owned_lock_identity,
+                          lock_output=lock_output)
     original["storage"] = resources.storage_identity()
     return original, resources
 
@@ -395,36 +440,6 @@ def reset_plan(resources: Resources, maintenance: dict, request: dict, original:
     return manifest, match[2]
 
 
-def reset_completed(output: Path, manifest: dict, sha: str) -> dict:
-    stem = f"test-{manifest['scope_id']}-{sha}"
-    directory = output / "reset-state"
-    report_path, ledger_path = directory / (stem + ".report.json"), directory / (stem + ".ledger.json")
-    file_digest(report_path)
-    file_digest(ledger_path)
-    report, ledger = read_json(report_path), read_json(ledger_path)
-    identity = {key: manifest[key] for key in ("environment", "scope_id", "code_sha", "config_sha", "credential_version")}
-    for value in (report, ledger):
-        if value.get("plan_hash") != sha or any(value.get(key) != item for key, item in identity.items()):
-            raise ValueError("reset 报告或账本不属于当前精确 plan")
-        if set(value["phases"]) != PHASES or any(item["status"] != "complete" or not item["completed_at"] for item in value["phases"].values()):
-            raise ValueError("reset 有未完成阶段或锁释放证据缺失")
-        if not value["resources"] or any(item["status"] != "complete" for item in value["resources"].values()):
-            raise ValueError("reset 存在未确认资源")
-    if (report.get("report_version") != 2 or ledger.get("ledger_version") != 4
-            or report.get("status") != "completed" or report.get("failed_phase") is not None
-            or report.get("completed_at") != ledger["phases"]["release"]["completed_at"]
-            or report["phases"] != ledger["phases"] or report["resources"] != ledger["resources"]):
-        raise ValueError("fresh 初始化必须本次 completed；reused、失败或释放中断均拒绝")
-    if set(report["databases"]) != {f"{db['host']}:{db['port']}/{db['database']}" for db in manifest["databases"]}:
-        raise ValueError("reset 完成报告数据库集合不符")
-    if (report["redis_namespace"] != manifest["redis"]["namespace"]
-            or set(report["object_prefixes"]) != {item["bucket"] + ":" + item["prefix"] for item in manifest["object_storage"]["prefixes"]}):
-        raise ValueError("reset 完成报告 Redis 或对象集合不符")
-    return {"report": {"file": str(report_path.relative_to(output)), **file_digest(report_path)},
-            "ledger": {"file": str(ledger_path.relative_to(output)), **file_digest(ledger_path)},
-            "completed_at": report["completed_at"], "status": "completed"}
-
-
 def initialize_databases(backend: Path, request: dict, original: dict, resources: Resources, run) -> dict:
     for db in sorted(request["target"]["databases"], key=lambda item: item["key"]):
         unchanged(backend, request, original, resources, run)
@@ -459,13 +474,13 @@ def initialize_databases(backend: Path, request: dict, original: dict, resources
     intent(resources.output, "reset", {"plan_hash": sha})
     resources.command("reset-execute", [cli_executable(maintenance, "reset"), "execute", "--plan-hash", sha,
                       "--confirm-reset", manifest["confirmation_phrase"]], env=env, timeout=1800)
-    completed = reset_completed(resources.output, manifest, sha)
+    completed = reset_evidence.reset_completed(resources.output, manifest, sha)
     confirmed(resources.output, "reset", completed)
-    for args in (["control"], *(["tenant-data", "--target", key] for key in sorted(KEYS))):
-        for operation in ("up", "verify"):
-            unchanged(backend, request, original, resources, run)
-            command = [cli_executable(maintenance, "migrate"), args[0], operation, *args[1:]]
-            resources.command("migrate-" + "-".join(args) + "-" + operation, command, timeout=1800)
+    from devex_clone_target_resume_evidence import migration_operations
+
+    for operation in migration_operations(maintenance):
+        unchanged(backend, request, original, resources, run)
+        resources.command(operation["stage"], operation["command"], timeout=1800)
     return completed
 
 
@@ -491,13 +506,16 @@ def reconcile_preflight_failure(backend: Path, output: Path, run=subprocess.run,
                    if name not in {"preflight", "release"})
             or report["phases"].get("release", {}).get("status") != "complete"):
         raise ValueError("reset 已进入资源写入或报告不属于可收尾的 preflight 失败")
-    with generation_lock(output):
+    with generation_lock(output) as lock_identity:
         prepared = read_json(output / "prepare.json")
         expected = prepared["request"] if request_descriptor is None else request_descriptor
         if prepared["request"] != expected:
             raise ValueError("收尾请求不同于固定 registration")
         request = read_bound_json(local_path(backend, expected["path"]), expected)
-        original, resources = context(backend, request, output, run, storage_run=storage_run)
+        original, resources = context(
+            backend, request, output, run, storage_run=storage_run,
+            owned_lock_identity=lock_identity
+        )
         if original != prepared["generation"]:
             raise ValueError("收尾前来源、工具或服务代次发生变化")
         for db in request["target"]["databases"]:
@@ -523,9 +541,11 @@ def reconcile_preflight_failure(backend: Path, output: Path, run=subprocess.run,
         return result
 
 
-def inventory(backend: Path, request: dict, resources: Resources, output: Path) -> dict:
+def inventory(backend: Path, request: dict, resources: Resources,
+              output: Path) -> tuple[dict, tuple[dict, ...]]:
     side = {**request["target"], "runtime_dir": resources.selected["runtime_dir"], "api_url": resources.selected["api_url"]}
-    tools = ExternalTools({"target": side, "tools": request["tools"]}, resources.output, resources.runner)
+    tools = ExternalTools({"target": side, "tools": request["tools"]}, resources.output,
+                          resources.runner, before_execute=resources.checkpoint)
     arguments = {"environment": resources.environment}
     if resources.execution_backend != backend:
         arguments["evidence_root"] = backend
@@ -539,19 +559,20 @@ def inventory(backend: Path, request: dict, resources: Resources, output: Path) 
                 raise ValueError("fresh 目标已出现业务数据")
         if db["kind"] != "combined" and (image["tables"]["biz_tenant_fence"]["rows"] != 0 or image["tables"]["biz_tenant_target_slot"]["rows"] != 1):
             raise ValueError("外部新租户库 fence 或空槽行不符")
-    return {"receipt": captured.receipt_file, "observations": images}
+    return {"receipt": captured.receipt_file, "observations": images}, captured.evidence_files
 
 
 def initialize_target(backend: Path, output: Path, run=subprocess.run, *, storage_run: Path | None = None,
-                      request_descriptor: dict | None = None) -> dict:
+                      request_descriptor: dict | None = None, publish_files=None) -> dict:
     """仅首次调用可写；中断、失败、已初始化均不自动重放。"""
     backend = backend.resolve(strict=True)
     output = local_path(backend, str(output))
     if unresolved_failure(backend, output) or (output / "initialize.started.json").exists():
         raise ValueError("初始化已有尝试；只能只读核对，禁止重放或自动清理")
     stage, claimed = "initialize_binding", False
+    after_unlock = [] if publish_files is not None else None
     try:
-        with generation_lock(output):
+        with generation_lock(output, after_initialize_unlock=after_unlock) as lock_identity:
             if unresolved_failure(backend, output) or (output / "initialize.started.json").exists():
                 raise ValueError("本代次已有执行记录，不能重复初始化")
             claimed = True
@@ -563,14 +584,22 @@ def initialize_target(backend: Path, output: Path, run=subprocess.run, *, storag
             request = read_bound_json(local_path(backend, expected_request["path"]), expected_request)
             if request != read_json(output / "request.json") or plan_hash(request) != prepared["request_sha256"]:
                 raise ValueError("prepare 请求文件已变化")
-            original, resources = context(backend, request, output, run, storage_run=storage_run)
+            from devex_clone_target_initialization_claim import prepared_baseline, validate_complete
+            baseline = prepared_baseline(backend, output, expected_request, request)
+            original, resources = context(
+                backend, request, output, run, storage_run=storage_run,
+                owned_lock_identity=lock_identity
+            )
+            from devex_clone_target_prepared_files import validate_prepared_tree
+            validate_prepared_tree(
+                backend, output, baseline, expected_request, request, locked_guard=True)
             if prepared["generation"] != original or prepared["absence"] != empty_resources(resources):
                 raise ValueError("准备后来源或目标缺失状态变化")
             write_json(output / "initialize.started.json", {"at": now(), "generation_sha256": plan_hash(original)})
             stage = "create_and_reset"
             reset = initialize_databases(backend, request, original, resources, run)
             stage = "inventory"
-            initial = inventory(backend, request, resources, output / "inventory-initial")
+            initial, inventory_files = inventory(backend, request, resources, output / "inventory-initial")
             objects = resources.objects(initialized=True)
             redis = resources.redis_state(initialized=True, sentinel=True)
             unchanged(backend, request, original, resources, run)
@@ -584,71 +613,15 @@ def initialize_target(backend: Path, output: Path, run=subprocess.run, *, storag
                       "controlled_generation_never_started": True, "external_writers_discovered": False,
                       "target_ready": False, "clone_verified": False, "restore_qualified": False}
             write_json(output / "initialized-candidate.json", result)
-        stage = "publish_after_lock_release"
-        write_json(output / "initialized.json", result)
+            write_json(output / "initialized.json", result)
+            files = validate_complete(backend, output, baseline, request, original, initial,
+                                      inventory_files, result)
+            if after_unlock is not None:
+                after_unlock.append(lambda: publish_files(files))
         return result
     except BaseException as error:
         if claimed:
             failure(output, stage, error)
-        raise
-
-
-def resume_inventory_target(backend: Path, output: Path, run=subprocess.run, *, storage_run: Path | None = None,
-                            request_descriptor: dict | None = None) -> dict:
-    """只恢复 reset 已完成后的库存采集与发布，绝不重放任何资源写入。"""
-    backend, output = backend.resolve(strict=True), local_path(backend, str(output))
-    failure_path = output / "failure.json"
-    prepared = read_json(output / "prepare.json")
-    exact(prepared, PREPARE_FIELDS)
-    expected = prepared["request"] if request_descriptor is None else request_descriptor
-    state = inventory_resume_state(backend, output, expected)
-    if not state["resumable"]:
-        raise ValueError("库存恢复不可继续：" + state["reason"])
-    attempt = uuid.uuid4().hex
-    resume_intent = output / f"resume-initialize-{attempt}.intent.json"
-    write_json(resume_intent, {"format_version": 1, "kind": "devex-clone-initialize-resume-intent", "attempt": attempt,
-                               "at": now(), "failure": binding(failure_path), "remote_writes": 0})
-    stage = "resume_binding"
-    try:
-        with generation_lock(output):
-            prepared = read_json(output / "prepare.json")
-            exact(prepared, PREPARE_FIELDS)
-            expected = prepared["request"] if request_descriptor is None else request_descriptor
-            if prepared["request"] != expected:
-                raise ValueError("库存恢复请求不同于固定 registration")
-            request = read_bound_json(local_path(backend, expected["path"]), expected)
-            if request != read_json(output / "request.json"):
-                raise ValueError("库存恢复请求文件已变化")
-            original, resources = context(backend, request, output, run, storage_run=storage_run)
-            if original != prepared["generation"]:
-                raise ValueError("库存恢复前来源、工具或服务代次变化")
-            stage = "resume_reset_proof"
-            manifest, sha = reset_plan(resources, original["maintenance"], request, original,
-                                       f"resume-reset-plan-{attempt}")
-            reset = reset_completed(output, manifest, sha)
-            if read_json(output / "reset.confirmed.json").get("observed") != reset:
-                raise ValueError("库存恢复 reset 完成收据不同于当前受控计划")
-            stage = "resume_inventory"
-            initial = inventory(backend, request, resources, output / f"inventory-resume-{attempt}")
-            objects, redis = resources.objects(initialized=True), resources.redis_state(initialized=True, sentinel=True)
-            unchanged(backend, request, original, resources, run)
-            result = {"format_version": 1, "status": "fresh_target_initialized", "id": request["id"],
-                      "scope_id": request["target"]["scope_id"], "completed_at": now(), "generation": original,
-                      "prepare_sha256": file_digest(output / "prepare.json")["sha256"], "reset": reset,
-                      "inventory": initial, "objects": objects, "redis": redis, "history": history(output),
-                      "controlled_generation_never_started": True, "external_writers_discovered": False,
-                      "target_ready": False, "clone_verified": False, "restore_qualified": False}
-            write_json(output / "initialized-candidate.json", result)
-        write_json(output / "initialized.json", result)
-        write_json(output / f"resume-initialize-{attempt}.confirmed.json", {
-            "format_version": 1, "kind": "devex-clone-initialize-resume-confirmed", "attempt": attempt, "at": now(),
-            "intent": binding(resume_intent), "failure": binding(failure_path), "initialized": binding(output / "initialized.json"),
-            "remote_writes": 0})
-        return result
-    except BaseException as error:
-        write_json(output / f"resume-initialize-{attempt}.failure.json", {
-            "format_version": 1, "kind": "devex-clone-initialize-resume-failure", "attempt": attempt, "at": now(),
-            "intent": binding(resume_intent), "error_type": type(error).__name__, "remote_writes": 0})
         raise
 
 
@@ -677,13 +650,15 @@ def verify_target(backend: Path, output: Path, observation_dir: Path, run=subpro
                 raise ValueError("初始化发布或请求证据变化")
             verify_initial_inventory(backend, output, original_result["inventory"]["receipt"],
                                      resumed=(output / "failure.json").is_file())
-            original, resources = context(backend, request, observation_dir, run, storage_run=storage_run,
-                                          owned_lock_identity=lock_identity)
+            original, resources = context(
+                backend, request, observation_dir, run, storage_run=storage_run,
+                owned_lock_identity=lock_identity, lock_output=output
+            )
             verify_storage_generation(original_result["generation"], original, resources.storage_runtime_binding, resources.cache_runtime_binding)
             reset = read_json(output / "reset-plan.json")
-            if reset_completed(output, reset["manifest"], reset["plan_hash"]) != original_result["reset"]:
+            if reset_evidence.reset_completed(output, reset["manifest"], reset["plan_hash"]) != original_result["reset"]:
                 raise ValueError("原 reset 完成证据已变化")
-            observed = inventory(backend, request, resources, observation_dir / "inventory")
+            observed, _ = inventory(backend, request, resources, observation_dir / "inventory")
             if (observed["observations"] != original_result["inventory"]["observations"]
                     or resources.objects(initialized=True) != original_result["objects"]
                     or resources.redis_state(initialized=True, sentinel=True) != original_result["redis"]):

@@ -125,7 +125,7 @@ fn run_fresh_target(command: &FreshTargetCommand) -> Result<()> {
         println!(
             "cargo xtask check recovery fresh-target --workspace <.local-tests 子目录> \
              --operation <prepare|resume-prepare|initialize|resume-initialize|reconcile-preflight|verify|status> \
-             [阶段参数] [--write]"
+             [阶段参数] [--write]\n  resume-initialize 仅续作已证明的库存失败，或首个缺失操作为只读 verify 的完整迁移前缀"
         );
         return Ok(());
     };
