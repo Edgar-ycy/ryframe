@@ -175,6 +175,16 @@ class Fixture:
         if args[:2] == ["INFO", "server"]:
             return "process_id:200\r\nrun_id:" + ("4" * 40 if self.storage_restarted else "3" * 40) + "\r\nconfig_file:/fixture/redis.conf"
         if args[:2] == ["CONFIG", "GET"]: return [args[2], self.redis_config[args[2]]]
+        if args[0] == "EVAL":
+            if (len(args) != 8 or args[2] != "2"
+                    or args[5] != self.review["scopes"]["seed"]["redis"]["namespace"] + "*"):
+                raise AssertionError(args)
+            owner_key, sentinel_key = args[3:5]
+            if (any(key.startswith(args[5][:-1]) for key in self.redis_values)
+                    or sentinel_key in self.redis_values):
+                raise ValueError("fixture Redis 原子重绑前像不是空状态")
+            self.redis_values[owner_key], self.redis_values[sentinel_key] = args[6:8]
+            return 2
         if args[0] == "GET": return self.redis_values.get(args[1])
         if args[0] == "SET":
             if args[1] in self.redis_values: return None

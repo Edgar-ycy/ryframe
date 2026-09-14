@@ -31,7 +31,7 @@ def fixture_service_generation(directory: Path, descriptor: dict) -> dict | None
     history = validate_history(directory, state)
     if history["closed"]:
         return {"available": False, "active_generation": history["active_generation"],
-                "reason": "夹具服务已正常关闭，当前生命周期没有可执行重启；须先扩展生命周期或登记新目标"}
+                "reason": "夹具服务已正常关闭；须先执行 fixture services restart 再续作 fresh target"}
     if history["external_recovery"] is not None:
         return {"available": False, "active_generation": history["active_generation"],
                 "reason": "夹具服务外部终止已核对但尚未重启"}

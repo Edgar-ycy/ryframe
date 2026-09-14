@@ -84,9 +84,9 @@ def resume_inventory_target(backend, output, run, *, request_descriptor):
     return result
 
 
-def resume_initialize_target(backend, output, run, *, request_descriptor):
+def resume_initialize_target(backend, output, run, *, request_descriptor, storage_run=None):
     result = target_resume.resume_initialize_target(
-        backend, output, run, request_descriptor=request_descriptor,
+        backend, output, run, request_descriptor=request_descriptor, storage_run=storage_run,
         prepared_files=prepared_files(output),
         publish_files=lambda files: publish_initialized_files(output, files))
     return result
@@ -135,6 +135,27 @@ class TargetResumeTests(unittest.TestCase):
         with patch.object(Resources, "command", new=command), self.assertRaises(FileNotFoundError):
             self.initialize()
         return {"path": str(self.f.path), **file_digest(self.f.path)}
+
+    def fixture_restart(self):
+        f = self.f
+        run, results = f.local / "service-run", f.local / "service-run/results"
+        results.mkdir(parents=True)
+        (run / "manifest.json").write_text(
+            json.dumps({"kind": "reference-fixture-service-run"}), encoding="utf-8"
+        )
+        generation = f.bound(results / "restart.json", {"generation": "restart"})
+        directory = Path(f.review["services"]["rustfs"]["data_dir"])
+        storage_runtime = {
+            "storage": copy.deepcopy(f.request["storage"]["rustfs"]),
+            "data_directory": {"path": str(directory), "device": directory.stat().st_dev,
+                               "inode": directory.stat().st_ino},
+            "api_url": "http://127.0.0.1:29200", "console_url": "http://127.0.0.1:29201",
+            "generation": generation,
+        }
+        redis = copy.deepcopy(f.request["storage"]["redis"]); redis["run_id"] = "4" * 40
+        f.storage_restarted = True; f.redis_values.clear()
+        return run, storage_runtime, {"redis": redis, "generation": generation}
+
     def test_inventory_failure_resumes_without_replaying_reset(self):
         f = self.f
         self.prepare()
@@ -292,6 +313,88 @@ class TargetResumeTests(unittest.TestCase):
         confirmation["remote_write_operations"] = 2
         replace_json(confirmation_path, confirmation)
         self.assertTrue(target.unresolved_failure(f.root, f.output))
+
+    def test_fixture_restart_rebinds_only_redis_markers_before_resume(self):
+        f = self.f
+        descriptor = self.interrupt_migration_prefix(3)
+        migrations_before = [call for call in f.calls if Path(call[0]).stem == "migrate"]
+        run, storage_runtime, cache_runtime = self.fixture_restart()
+        transition = (storage_runtime, cache_runtime)
+        with patch("reference_fixture_service_context.runtime_transition",
+                   return_value=transition), \
+                patch.object(target_evidence, "validate_started_generation"):
+            result = resume_initialize_target(
+                f.root, f.output, f.run, request_descriptor=descriptor, storage_run=run
+            )
+            self.assertFalse(target.unresolved_failure(f.root, f.output))
+        redis = f.review["scopes"]["seed"]["redis"]
+        self.assertEqual(f.redis_values, {
+            redis["ownership_key"]: redis["ownership_value"],
+            f.request["reset"]["sentinel_key"]: f.request["reset"]["sentinel_value"],
+        })
+        marker = read_json(next(f.output.glob("resume-redis-markers-*.confirmed.json")))
+        confirmation = read_json(next(f.output.glob("resume-initialize-*.confirmed.json")))
+        self.assertEqual(marker["atomic_result"], 2)
+        self.assertEqual(confirmation["redis_marker_rebind"], receipt_binding(next(
+            f.output.glob("resume-redis-markers-*.confirmed.json"))))
+        self.assertEqual(confirmation["remote_write_operations"], 4)
+        migrations_after = [call for call in f.calls if Path(call[0]).stem == "migrate"]
+        self.assertEqual(len(migrations_after), 10)
+        self.assertTrue(all(migrations_after.count(call) == 1 for call in migrations_before))
+        self.assertEqual(result["redis"], marker["after"])
+
+    def test_fixture_restart_rejects_existing_sentinel_before_marker_intent(self):
+        f = self.f
+        descriptor = self.interrupt_migration_prefix(3)
+        migrations = len([call for call in f.calls if Path(call[0]).stem == "migrate"])
+        run, storage_runtime, cache_runtime = self.fixture_restart()
+        f.redis_values[f.request["reset"]["sentinel_key"]] = "unexpected"
+        with patch("reference_fixture_service_context.runtime_transition",
+                   return_value=(storage_runtime, cache_runtime)), \
+                self.assertRaisesRegex(ValueError, "Redis"):
+            resume_initialize_target(
+                f.root, f.output, f.run, request_descriptor=descriptor, storage_run=run
+            )
+        self.assertFalse(any(f.output.glob("resume-redis-markers-*.intent.json")))
+        self.assertEqual(migrations, len(
+            [call for call in f.calls if Path(call[0]).stem == "migrate"]
+        ))
+
+    def test_fixture_restart_marker_command_failure_is_unknown_and_not_retried(self):
+        f = self.f
+        descriptor = self.interrupt_migration_prefix(3)
+        migrations = len([call for call in f.calls if Path(call[0]).stem == "migrate"])
+        run, storage_runtime, cache_runtime = self.fixture_restart()
+        eval_calls = []
+
+        def redis(args):
+            if args[0] == "EVAL":
+                eval_calls.append(args)
+                f.redis(args)
+                raise TimeoutError("fixture reply lost after atomic write")
+            return f.redis(args)
+
+        with patch("reference_fixture_service_context.runtime_transition",
+                   return_value=(storage_runtime, cache_runtime)), \
+                patch.object(Resources, "_redis", side_effect=redis), \
+                self.assertRaises(TimeoutError):
+            resume_initialize_target(
+                f.root, f.output, f.run, request_descriptor=descriptor, storage_run=run
+            )
+        marker_failure = read_json(next(f.output.glob("resume-redis-markers-*.failure.json")))
+        failed = read_json(next(f.output.glob("resume-initialize-*.failure.json")))
+        self.assertTrue(marker_failure["unknown_result"])
+        self.assertEqual(failed["unknown_write_operation"], "redis-marker-rebind")
+        self.assertEqual(failed["active_operation"]["failure"], receipt_binding(next(
+            f.output.glob("resume-redis-markers-*.failure.json"))))
+        self.assertEqual(len(eval_calls), 1)
+        self.assertEqual(migrations, len(
+            [call for call in f.calls if Path(call[0]).stem == "migrate"]
+        ))
+        calls = len(f.calls)
+        with self.assertRaises(ValueError):
+            resume_initialize_target(f.root, f.output, f.run, request_descriptor=descriptor)
+        self.assertEqual(len(f.calls), calls)
 
     def test_inventory_resume_does_not_repeat_after_success_confirmation(self):
         f = self.f

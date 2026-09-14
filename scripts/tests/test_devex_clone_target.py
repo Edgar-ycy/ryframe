@@ -31,6 +31,19 @@ from workspace_directory import WorkspaceDirectory
 
 
 class StorageTransitionTests(unittest.TestCase):
+    def test_fixture_restart_generation_requires_exact_joint_binding(self):
+        generation = {"path": "generation", "bytes": 1, "sha256": "a" * 64}
+        storage = {"storage": "new-files", "data_directory": "directory",
+                   "api_url": "api", "console_url": "console", "generation": generation}
+        cache = {"redis": "new-cache", "generation": generation}
+        self.assertEqual(runtime_evidence.fixture_restart_generation(storage, cache), generation)
+        cases = ((storage, None),
+                 (storage, {**cache, "generation": {**generation, "bytes": 2}}),
+                 ({**storage, "unexpected": True}, cache))
+        for files, memory in cases:
+            with self.subTest(files=files, memory=memory), self.assertRaises(ValueError):
+                runtime_evidence.fixture_restart_generation(files, memory)
+
     def test_only_registered_rustfs_identity_may_change(self):
         before = {"configuration": "fixed", "storage": {"rustfs": {"identity": "old"}, "redis": "fixed"}}
         runtime = {"storage": {"identity": "new"}}

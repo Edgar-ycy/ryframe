@@ -189,7 +189,7 @@ class TargetCliTests(unittest.TestCase):
         with patch("reference_fixture_service_history.validate_history", side_effect=closed):
             result = target_cli.fixture_context.fixture_service_generation(fixture, descriptor)
         self.assertFalse(result["available"])
-        self.assertIn("没有可执行重启", result["reason"])
+        self.assertIn("fixture services restart", result["reason"])
 
     def test_fixture_service_generation_delegates_failed_close_reconcile_history(self):
         fixture = self.local / "fixture-services-reconciled"
@@ -223,7 +223,7 @@ class TargetCliTests(unittest.TestCase):
         with patch("reference_fixture_service_history.validate_history", side_effect=reconciled):
             result = target_cli.fixture_context.fixture_service_generation(fixture, descriptor)
         self.assertFalse(result["available"])
-        self.assertIn("没有可执行重启", result["reason"])
+        self.assertIn("fixture services restart", result["reason"])
 
     def test_initialize_and_verify_reopen_registration_and_never_replay(self):
         self.prepare()

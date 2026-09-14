@@ -22,6 +22,27 @@ from restore_reference_plan import BUCKETS, identifier
 from restore_source_binding import defaults_connection
 
 
+REDIS_MARKER_REBIND_SCRIPT = """local cursor = '0'
+local rounds = 0
+repeat
+  local page = redis.call('SCAN', cursor, 'MATCH', ARGV[1], 'COUNT', '1000')
+  cursor = page[1]
+  if #page[2] ~= 0 then
+    return redis.error_reply('scope namespace is not empty')
+  end
+  rounds = rounds + 1
+  if rounds > 10000 then
+    return redis.error_reply('scope scan exceeded limit')
+  end
+until cursor == '0'
+if redis.call('EXISTS', KEYS[2]) ~= 0 then
+  return redis.error_reply('sentinel exists')
+end
+redis.call('SET', KEYS[1], ARGV[2])
+redis.call('SET', KEYS[2], ARGV[3])
+return 2"""
+
+
 class Resources:
     def __init__(self, backend: Path, request: dict, output: Path, selected: dict, review: dict, run,
                  *, execution_backend: Path | None = None, storage_run: Path | None = None,
@@ -232,6 +253,18 @@ class Resources:
         if self._redis(["SET", reset["sentinel_key"], reset["sentinel_value"], "NX"]) != "OK":
             raise ValueError("Redis sentinel NX 未确认创建，禁止覆盖或重放")
 
+    def rebind_restart_redis_markers(self) -> int:
+        """在单条 Redis 脚本内复核空前像并同时恢复 owner 与 sentinel。"""
+        redis, reset = self.selected["redis"], self.request["reset"]
+        result = self._redis([
+            "EVAL", REDIS_MARKER_REBIND_SCRIPT, "2",
+            redis["ownership_key"], reset["sentinel_key"], redis["namespace"] + "*",
+            redis["ownership_value"], reset["sentinel_value"],
+        ])
+        if result != 2:
+            raise ValueError("Redis owner 与 sentinel 原子重绑结果未确认")
+        return result
+
     def remove_sentinel(self) -> None:
         reset = self.request["reset"]
         if self.redis_state(initialized=False, sentinel=True)["sentinel"] != reset["sentinel_value"]:
@@ -296,11 +329,18 @@ class Resources:
             self.cache_runtime_binding = registered_cache_binding(self.backend, self.storage_run,
                                                                  owned_lock_identity=cache_lock_identity)
         if self.cache_runtime_binding is not None:
-            cache_request = json.loads(bound_file(
-                self.backend, self.cache_runtime_binding["request"]
-            ).read_text(encoding="utf-8"))
-            if cache_request["previous"] != redis:
-                raise ValueError("缓存恢复证明未绑定本目标的原始 Redis")
+            if fixture:
+                from devex_clone_target_runtime_evidence import fixture_restart_generation
+
+                fixture_restart_generation(
+                    self.storage_runtime_binding, self.cache_runtime_binding
+                )
+            else:
+                cache_request = json.loads(bound_file(
+                    self.backend, self.cache_runtime_binding["request"]
+                ).read_text(encoding="utf-8"))
+                if cache_request["previous"] != redis:
+                    raise ValueError("缓存恢复证明未绑定本目标的原始 Redis")
             resumed = self.cache_runtime_binding["redis"]
             allowed = {**redis, **{key: resumed[key] for key in ("pid", "started", "run_id")}}
             if resumed != allowed:

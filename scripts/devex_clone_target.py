@@ -341,7 +341,8 @@ def history(output: Path) -> dict:
     names.update(path.name for path in output.glob("resume-initialize-*.intent.json"))
     names.update(path.name for path in output.glob("resume-initialize-*.started.json"))
     names.update(path.name for path in output.glob("resume-initialize-*.failure.json"))
-    names.update(path.name for path in output.glob("resume-migrate-*.json"))
+    names.update(path.name for pattern in ("resume-redis-markers-*.json", "resume-migrate-*.json")
+                 for path in output.glob(pattern))
     if (output / "resume-reset-plan.json").exists():
         names.add("resume-reset-plan.json")
     names.update(path.name for path in output.glob("resume-reset-plan-*.json"))

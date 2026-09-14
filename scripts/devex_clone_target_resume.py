@@ -15,6 +15,7 @@ from devex_clone_target_resume_evidence import (migration_prefix, migration_resu
                                                  _operation_record)
 from devex_clone_target_state import generation_lock, now
 from devex_clone_target_storage import verify_storage_generation
+from devex_clone_target_runtime_evidence import fixture_restart_generation
 import devex_clone_target_tree_claim as tree_claim
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
@@ -37,11 +38,61 @@ def initialize_resume_state(backend: Path, output: Path, request_descriptor: dic
             "reason": f"inventory: {inventory['reason']}；migration: {migration['reason']}"}
 
 
-def _resource_preimage(resources, request: dict) -> dict:
+def _resource_preimage(resources, request: dict, *, redis_markers: bool) -> dict:
     return {"databases": [resources.database_state(db, exists=True)
                           for db in request["target"]["databases"]],
             "objects": resources.objects(initialized=True),
-            "redis": resources.redis_state(initialized=True, sentinel=True)}
+            "redis": resources.redis_state(initialized=redis_markers,
+                                           sentinel=redis_markers)}
+
+
+def _redis_marker_spec(resources) -> dict:
+    redis, reset = resources.selected["redis"], resources.request["reset"]
+    return {"namespace": redis["namespace"], "ownership_key": redis["ownership_key"],
+            "ownership_value": redis["ownership_value"],
+            "sentinel_key": reset["sentinel_key"], "sentinel_value": reset["sentinel_value"]}
+
+
+def _rebind_restart_redis_markers(output: Path, resources, attempt: str,
+                                  resume_intent: Path, started_path: Path,
+                                  generation: dict, before: dict,
+                                  active: dict, trusted: list[dict]) -> tuple[dict, list[dict]]:
+    """为无持久化夹具 Redis 追加一次原子标记恢复及不可重放证据。"""
+    intent_path = output / f"resume-redis-markers-{attempt}.intent.json"
+    intent = {"format_version": 1, "kind": "devex-clone-redis-marker-rebind-intent",
+              "attempt": attempt, "at": now(), "resume": binding(resume_intent),
+              "started": binding(started_path), "restart_generation": generation,
+              "markers": _redis_marker_spec(resources), "before": before}
+    tree_claim.unchanged(output, trusted)
+    write_json(intent_path, intent)
+    trusted = tree_claim.claim_one(output, trusted, intent_path, intent)
+    active.update({"id": "redis-marker-rebind", "intent": binding(intent_path),
+                   "restart_generation": generation, "confirmation": None,
+                   "failure": None, "write_started": True, "unknown_result": True})
+    try:
+        result = resources.rebind_restart_redis_markers()
+        after = resources.redis_state(initialized=True, sentinel=True)
+    except BaseException as error:
+        failure_path = output / f"resume-redis-markers-{attempt}.failure.json"
+        failure = {"format_version": 1, "kind": "devex-clone-redis-marker-rebind-failure",
+                   "attempt": attempt, "at": now(), "intent": binding(intent_path),
+                   "restart_generation": generation, "error_type": type(error).__name__,
+                   "remote_write_operations_confirmed": 0, "unknown_result": True}
+        try:
+            write_json(failure_path, failure)
+            active["failure"] = binding(failure_path)
+        except BaseException as diagnostic_error:
+            error.add_note(f"Redis 标记重绑失败证据保存失败：{type(diagnostic_error).__name__}")
+        raise
+    confirmed_path = output / f"resume-redis-markers-{attempt}.confirmed.json"
+    confirmed = {"format_version": 1, "kind": "devex-clone-redis-marker-rebind-confirmed",
+                 "attempt": attempt, "at": now(), "intent": binding(intent_path),
+                 "restart_generation": generation, "after": after, "atomic_result": result,
+                 "remote_write_operations": 1, "unknown_result": False}
+    write_json(confirmed_path, confirmed)
+    trusted = tree_claim.claim_one(output, trusted, confirmed_path, confirmed)
+    active.update({"confirmation": binding(confirmed_path), "unknown_result": False})
+    return binding(confirmed_path), trusted
 
 
 def _operation_receipts(output: Path, operation: dict) -> list[dict]:
@@ -136,11 +187,20 @@ def resume_migration_target(backend: Path, output: Path, run=subprocess.run, *,
                 backend, state["request"], output, run, storage_run=storage_run,
                 owned_lock_identity=lock_identity
             )
-            trusted = tree_claim.claim_runtime(output, trusted, state["baseline_files"])
+            trusted = tree_claim.claim_runtime(
+                output, trusted, state["baseline_files"],
+                storage_runtime=resources.storage_runtime_binding,
+                cache_runtime=resources.cache_runtime_binding
+            )
             verify_storage_generation(state["prepared"]["generation"], current,
                                       resources.storage_runtime_binding, resources.cache_runtime_binding)
             tree_claim.unchanged(output, trusted)
-            before = _resource_preimage(resources, state["request"])
+            restart_generation = fixture_restart_generation(
+                resources.storage_runtime_binding, resources.cache_runtime_binding
+            )
+            before = _resource_preimage(
+                resources, state["request"], redis_markers=restart_generation is None
+            )
             started = {
                 "format_version": 1, "kind": "devex-clone-migration-resume-started",
                 "attempt": attempt, "at": now(), "intent": binding(intent_path),
@@ -152,6 +212,21 @@ def resume_migration_target(backend: Path, output: Path, run=subprocess.run, *,
             trusted = tree_claim.claim_preimage(
                 output, trusted, state["baseline_files"], state["request"], started_path, started
             )
+            marker_confirmation = None
+            if restart_generation is not None:
+                active_write, active_operation = None, {}
+                marker_confirmation, trusted = _rebind_restart_redis_markers(
+                    output, resources, attempt, intent_path, started_path,
+                    restart_generation, before["redis"], active_operation, trusted
+                )
+                confirmed_writes += 1
+                active_write, active_operation = None, None
+                unchanged(backend, state["request"], current, resources, run)
+                trusted = tree_claim.claim_runtime(
+                    output, trusted, state["baseline_files"],
+                    storage_runtime=resources.storage_runtime_binding,
+                    cache_runtime=resources.cache_runtime_binding
+                )
             for index, operation in enumerate(state["operations"][state["next_index"]:],
                                               state["next_index"]):
                 active_write = operation["id"] if operation["write"] else None
@@ -165,7 +240,9 @@ def resume_migration_target(backend: Path, output: Path, run=subprocess.run, *,
                 active_write, active_operation = None, None
                 unchanged(backend, state["request"], current, resources, run)
                 trusted = tree_claim.claim_runtime(
-                    output, trusted, state["baseline_files"]
+                    output, trusted, state["baseline_files"],
+                    storage_runtime=resources.storage_runtime_binding,
+                    cache_runtime=resources.cache_runtime_binding
                 )
             migration_prefix(output, state["operations"], complete=True)
             inventory_directory = output / f"inventory-resume-{attempt}"
@@ -185,7 +262,11 @@ def resume_migration_target(backend: Path, output: Path, run=subprocess.run, *,
             redis = resources.redis_state(initialized=True, sentinel=True)
             tree_claim.unchanged(output, trusted)
             unchanged(backend, state["request"], current, resources, run)
-            trusted = tree_claim.claim_runtime(output, trusted, state["baseline_files"])
+            trusted = tree_claim.claim_runtime(
+                output, trusted, state["baseline_files"],
+                storage_runtime=resources.storage_runtime_binding,
+                cache_runtime=resources.cache_runtime_binding
+            )
             bound_file(backend, expected)
             result = _initialized_result(output, state["request"], state["prepared"]["generation"],
                                          state["reset"]["completed"], initial, objects, redis)
@@ -204,6 +285,7 @@ def resume_migration_target(backend: Path, output: Path, run=subprocess.run, *,
                 "initialized": binding(initialized_path),
                 "prepared_files": state["prepared_files"],
                 "original_prefix": state["completed"], "resumed_operations": completed,
+                "redis_marker_rebind": marker_confirmation,
                 "remote_write_operations": confirmed_writes, "restore_qualified": False,
             }
             write_json(confirmation_path, confirmation)
@@ -225,7 +307,9 @@ def resume_migration_target(backend: Path, output: Path, run=subprocess.run, *,
                     "started": binding(started_path) if started_path.is_file() else None,
                     "error_type": type(error).__name__, "confirmed_operations": completed,
                     "remote_write_operations_confirmed": confirmed_writes,
-                    "unknown_write_operation": active_write,
+                    "unknown_write_operation": (active_write or (
+                        "redis-marker-rebind" if active_operation is not None
+                        and active_operation.get("write_started") else None)),
                     "active_operation": active_operation,
                 })
             except BaseException as diagnostic_error:

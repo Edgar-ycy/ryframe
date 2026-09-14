@@ -16,7 +16,8 @@ from devex_clone_source_proof import bound_file
 from devex_clone_target_binding import (KEYS, execution_binary_bindings, prepared_target_files,
                                         request_binding, target_files, validate_initialization_delta,
                                         validate_reset_manifest)
-from devex_clone_target_runtime_evidence import validate_started_generation
+from devex_clone_target_runtime_evidence import (validate_redis_marker_rebind,
+                                                  validate_started_generation)
 from devex_clone_target_reset_evidence import validate_plan_receipt
 from devex_clone_target_time import ordered, timestamp as _timestamp
 from restore_build import file_digest
@@ -242,6 +243,7 @@ def _reset_evidence(hooks: TargetEvidenceHooks, output: Path, request: dict, ori
 
 def _no_prior_resume(output: Path) -> None:
     if (any(output.glob("resume-initialize-*.json"))
+            or any(output.glob("resume-redis-markers-*.json"))
             or any(output.glob("resume-migrate-*.json"))):
         raise ValueError("迁移初始化已经存在续作记录，禁止重复或自动重放")
 
@@ -333,7 +335,8 @@ def migration_resume_state(backend: Path, output: Path, request_descriptor: dict
             "files": files_before}
 
 
-def _validate_owned_resources(backend: Path, request: dict, value: dict) -> None:
+def _validate_owned_resources(backend: Path, request: dict, value: dict, *,
+                              redis_markers: bool = True) -> None:
     """验证迁移后的 fresh 资源前像仍只包含本代次 owner。"""
     exact(value, {"databases", "objects", "redis"})
     databases = [{"server_uuid": item["server_uuid"], "database": item["database"],
@@ -355,8 +358,9 @@ def _validate_owned_resources(backend: Path, request: dict, value: dict) -> None
     _, selected = request_binding(backend, request)
     redis = selected["redis"]
     reset = request["reset"]
-    expected_redis = {"keys": [redis["ownership_key"]], "owner": redis["ownership_value"],
-                      "sentinel": reset["sentinel_value"]}
+    expected_redis = ({"keys": [redis["ownership_key"]], "owner": redis["ownership_value"],
+                       "sentinel": reset["sentinel_value"]} if redis_markers else
+                      {"keys": [], "owner": None, "sentinel": None})
     if value["redis"] != expected_redis:
         raise ValueError("迁移续作的 Redis owner 前像无效")
 
@@ -383,8 +387,8 @@ def _migration_resume_confirmed(backend: Path, output: Path, initialized: dict,
     path, value = confirmations[0]
     exact(value, {"format_version", "kind", "attempt", "at", "intent", "started", "failure",
                   "prepared_files",
-                  "initialized", "original_prefix", "resumed_operations", "remote_write_operations",
-                  "restore_qualified"})
+                  "initialized", "original_prefix", "resumed_operations", "redis_marker_rebind",
+                  "remote_write_operations", "restore_qualified"})
     attempt = value["attempt"]
     if (not isinstance(attempt, str) or re.fullmatch(r"[a-f0-9]{32}", attempt) is None
             or path != output / f"resume-initialize-{attempt}.confirmed.json"
@@ -431,23 +435,30 @@ def _migration_resume_confirmed(backend: Path, output: Path, initialized: dict,
         return False
     hooks.verify_initial_inventory(backend, output, initialized["inventory"]["receipt"],
                                    resumed=True)
-    _validate_owned_resources(backend, request, started_value["resources_before"])
+    validate_started_generation(backend, initialized["generation"], started_value)
+    marker_confirmation, marker_files, marker_at = validate_redis_marker_rebind(
+        backend, output, request, attempt, intent_path, started_path, started_value
+    )
+    _validate_owned_resources(
+        backend, request, started_value["resources_before"],
+        redis_markers=marker_confirmation is None
+    )
     _validate_owned_resources(backend, request, {
         "databases": started_value["resources_before"]["databases"],
         "objects": initialized["objects"],
         "redis": initialized["redis"],
     })
-    validate_started_generation(backend, initialized["generation"], started_value)
     operations = migration_operations(initialized["generation"]["maintenance"])
     prefix = migration_prefix(output, operations, complete=True)["completed"]
     resumed_ids = [item.get("id") for item in value["resumed_operations"]]
     split = len(value["original_prefix"])
     if not 0 < split < len(operations) or operations[split]["write"]:
         return False
-    expected_writes = sum(item["write"] for item in operations[split:])
+    expected_writes = sum(item["write"] for item in operations[split:]) \
+        + int(marker_confirmation is not None)
     expected_resumed = []
-    expected_resume_files = {intent_path.name, started_path.name, path.name}
-    previous_at = started_value["at"]
+    expected_resume_files = {intent_path.name, started_path.name, path.name, *marker_files}
+    previous_at = marker_at
     for index, operation in enumerate(operations[split:], split):
         intent = output / f"resume-migrate-{attempt}-{index:02d}.intent.json"
         confirmed = output / f"resume-migrate-{attempt}-{index:02d}.confirmed.json"
@@ -478,6 +489,7 @@ def _migration_resume_confirmed(backend: Path, output: Path, initialized: dict,
         expected_resumed.append({"id": operation["id"], "receipt": receipt,
                                  "confirmation": binding(confirmed)})
     actual_resume_files = ({item.name for item in output.glob("resume-initialize-*.json")} |
+                           {item.name for item in output.glob("resume-redis-markers-*.json")} |
                            {item.name for item in output.glob("resume-migrate-*.json")})
     expected_stage_files = (_initial_stage_names(request) | prepare_resume_names |
                             {name for name in expected_resume_files
@@ -493,6 +505,7 @@ def _migration_resume_confirmed(backend: Path, output: Path, initialized: dict,
             or value["prepared_files"] != intent_value["prepared_files"]
             or value["original_prefix"] != prefix[:split]
             or value["resumed_operations"] != expected_resumed
+            or value["redis_marker_rebind"] != marker_confirmation
             or resumed_ids != [item["id"] for item in operations[split:]]
             or value["remote_write_operations"] != expected_writes
             or value["restore_qualified"] is not False or intent_value["attempt"] != attempt

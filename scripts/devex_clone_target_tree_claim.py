@@ -93,7 +93,48 @@ def _process_identity(value: str) -> tuple[str, str]:
     return head + marker, parts[19]
 
 
-def claim_runtime(output: Path, before: list[dict], prepared: list[dict]) -> list[dict]:
+def _fixture_redis_observations(baseline: list[dict], observed: list[dict], cache: dict) -> bool:
+    redis, expected = cache["redis"], {}
+    for item in baseline:
+        command = list(item["command"])
+        match = re.fullmatch(r"/proc/(\d+)/(stat|exe)", command[-1])
+        kind = match.group(2) if match else None
+        if match:
+            command[-1] = f"/proc/{redis['pid']}/{kind}"
+        expected[tuple(command)] = (item, kind)
+    if len(expected) != 5 or {tuple(item["command"]) for item in observed} != set(expected):
+        return False
+    for item in observed:
+        baseline_item, kind = expected[tuple(item["command"])]
+        if kind == "stat":
+            old_head, _ = _process_identity(baseline_item["stdout"])
+            _, separator, comm = old_head.partition(" ")
+            if not separator or _process_identity(item["stdout"]) \
+                    != (f"{redis['pid']} {comm}", redis["started"]):
+                return False
+        elif item["stdout"] != baseline_item["stdout"]:
+            return False
+    return True
+
+
+def _fixture_storage_layout(output: Path, prepared: list[dict], observed: str,
+                            runtime: dict | None) -> bool:
+    layouts = [read_json(output / item["path"]) for item in prepared
+               if re.fullmatch(rf"storage-layout-{_UUID}\.json", item["path"])]
+    if len(layouts) != 2 or layouts[0] != layouts[1]:
+        return False
+    expected = layouts[0]
+    if runtime is not None:
+        expected = {**expected,
+                    "process_receipt": runtime["storage"]["process_receipt"],
+                    "launch_receipt": runtime["storage"]["launch_receipt"],
+                    "runtime_transition": runtime}
+    return read_json(output / observed) == expected
+
+
+def claim_runtime(output: Path, before: list[dict], prepared: list[dict], *,
+                  storage_runtime: dict | None = None,
+                  cache_runtime: dict | None = None) -> list[dict]:
     """声明 context/unchanged 各自唯一的一轮存储与 Redis 内核观察。"""
     current, additions = _delta(output, before)
     redis_paths = _stage(additions, "redis-kernel", 5)
@@ -104,23 +145,27 @@ def claim_runtime(output: Path, before: list[dict], prepared: list[dict]) -> lis
     baseline = _baseline_stage(output, prepared, "redis-kernel")
     commands = {tuple(item["command"]): item["stdout"] for item in baseline}
     observed = [_receipt(output, path) for path in redis_paths]
-    if (len(baseline) != 10 or len(commands) != 5
-            or Counter(tuple(item["command"]) for item in baseline)
-            != Counter({command: 2 for command in commands})
-            or Counter(tuple(item["command"]) for item in observed)
-            != Counter({command: 1 for command in commands})):
+    from devex_clone_target_runtime_evidence import fixture_restart_generation
+
+    fixture = fixture_restart_generation(storage_runtime, cache_runtime)
+    exact_baseline = (len(baseline) == 10 and len(commands) == 5
+                      and Counter(tuple(item["command"]) for item in baseline)
+                      == Counter({command: 2 for command in commands}))
+    exact_observed = (fixture is not None and _fixture_redis_observations(
+        baseline, observed, cache_runtime
+    ) or fixture is None and Counter(tuple(item["command"]) for item in observed)
+        == Counter({command: 1 for command in commands}))
+    if not exact_baseline or not exact_observed:
         raise ValueError("迁移续作 Redis 内核观察不是唯一完整轮次")
-    for item in observed:
+    for item in (() if fixture is not None else observed):
         expected = commands[tuple(item["command"])]
         if "/proc/" in item["command"][-1] and item["command"][-1].endswith("/stat"):
             if _process_identity(item["stdout"]) != _process_identity(expected):
                 raise ValueError("迁移续作 Redis 进程创建身份变化")
         elif item["stdout"] != expected:
             raise ValueError("迁移续作 Redis 工具、配置或路径观察变化")
-    layouts = [read_json(output / item["path"]) for item in prepared
-               if re.fullmatch(rf"storage-layout-{_UUID}\.json", item["path"])]
-    if len(layouts) != 2 or layouts[0] != layouts[1] \
-            or read_json(output / layout_paths[0]) != layouts[0]:
+    if not _fixture_storage_layout(
+            output, prepared, layout_paths[0], storage_runtime if fixture is not None else None):
         raise ValueError("迁移续作存储目录观察不属于 prepare 固定代次")
     return current
 
