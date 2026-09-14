@@ -1,5 +1,4 @@
 """fresh prepare 快照的精确只读产物集合与观察语义。"""
-from collections import Counter
 import json
 from pathlib import Path
 import re
@@ -58,6 +57,41 @@ def _stage(names: set[str], stage: str, count: int) -> list[str]:
     if len(found) != count:
         raise ValueError(f"fresh prepare {stage} 观察数量无效")
     return found
+
+
+def _proc_stat_identity(stdout: str, expected_pid: int) -> tuple[str, str, str]:
+    """只绑定 /proc stat 中稳定的进程身份；调度态和累计计数允许变化。"""
+    line = stdout[:-1] if stdout.endswith("\n") else stdout
+    if not line or "\n" in line:
+        raise ValueError("fresh prepare Redis /proc stat 输出不是单行")
+    pid, separator, remainder = line.partition(" (")
+    comm, separator_after, fields_text = remainder.rpartition(") ")
+    fields = fields_text.split(" ")
+    if (separator != " (" or separator_after != ") " or pid != str(expected_pid)
+            or not comm or any(not field for field in fields) or len(fields) < 20
+            or not fields[19].isdigit()):
+        raise ValueError("fresh prepare Redis /proc stat 身份字段无效")
+    return pid, comm, fields[19]
+
+
+def _validate_redis_observations(receipts: list[dict], expected_pid: int) -> None:
+    groups = {}
+    for receipt in receipts:
+        groups.setdefault(tuple(receipt["command"]), []).append(receipt)
+    if len(groups) != 5 or {len(group) for group in groups.values()} != {2}:
+        raise ValueError("fresh prepare Redis 内核观察不是五项两轮")
+    expected_stat = ("/usr/bin/cat", f"/proc/{expected_pid}/stat")
+    stat_groups = [group for command, group in groups.items()
+                   if command[-2:] == expected_stat]
+    if len(stat_groups) != 1:
+        raise ValueError("fresh prepare Redis /proc stat 观察不属于固定进程")
+    for command, group in groups.items():
+        if command[-2:] == expected_stat:
+            identities = {_proc_stat_identity(item["stdout"], expected_pid) for item in group}
+            if len(identities) != 1:
+                raise ValueError("fresh prepare Redis /proc stat 稳定身份发生变化")
+        elif len({item["stdout"] for item in group}) != 1:
+            raise ValueError("fresh prepare Redis 内核观察结果发生变化")
 
 
 def _objects(target: Path, names: set[str], request: dict) -> set[str]:
@@ -152,9 +186,7 @@ def validate_prepared_tree(backend: Path, target: Path, files: list[dict],
         consumed.update(paths)
     redis_paths = _stage(names, "redis-kernel", 10)
     redis = [_receipt(target, name) for name in redis_paths]
-    signatures = Counter((tuple(item["command"]), item["stdout"]) for item in redis)
-    if len(signatures) != 5 or set(signatures.values()) != {2}:
-        raise ValueError("fresh prepare Redis 内核观察不是五项两轮")
+    _validate_redis_observations(redis, request["storage"]["redis"]["pid"])
     consumed.update(redis_paths)
     layout_pattern = re.compile(rf"storage-layout-{_UUID}\.json")
     layouts = sorted(name for name in names if layout_pattern.fullmatch(name))

@@ -320,8 +320,13 @@ def _redis_observations(target: Path, remaining: set[str], prepared: dict,
     baseline = [_successful_receipt(target, path) for path in baseline_paths]
     current = [_successful_receipt(target, path) for path in current_paths]
     commands = {tuple(value["command"]): value["stdout"] for value in baseline}
-    baseline_signatures = Counter((tuple(value["command"]), value["stdout"])
-                                  for value in baseline)
+    def signature(value):
+        stdout = (_process_stat_identity(value["stdout"])
+                  if "/proc/" in value["command"][-1]
+                  and value["command"][-1].endswith("/stat") else value["stdout"])
+        return tuple(value["command"]), stdout
+
+    baseline_signatures = Counter(signature(value) for value in baseline)
     if (len(baseline) != 10 or len(commands) != 5
             or set(baseline_signatures.values()) != {2}
             or Counter(tuple(value["command"]) for value in current) \

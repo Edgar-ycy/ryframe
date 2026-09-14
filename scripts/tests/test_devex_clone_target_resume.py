@@ -436,6 +436,62 @@ class TargetResumeTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "MySQL"):
                     self.validate_current_prepare_tree(descriptor)
 
+    def test_prepared_tree_compares_stable_redis_proc_identity(self):
+        f = self.f
+        descriptor = {"path": str(f.path), **file_digest(f.path)}
+        target.prepare_target(f.root, f.path, f.output, f.run)
+        receipts = []
+        for path in f.output.glob("redis-kernel-*.command.json"):
+            value = read_json(path)
+            if value["command"][-2:] == ["/usr/bin/cat", "/proc/200/stat"]:
+                receipts.append(path)
+        self.assertEqual(len(receipts), 2)
+        changed = read_json(receipts[1])
+        fields = changed["stdout"].removesuffix("\n").rpartition(") ")[2].split(" ")
+        fields[0], fields[11], fields[12] = "R", "41", "73"
+        changed["stdout"] = "200 (redis-server) " + " ".join(fields) + "\r\n"
+        replace_json(receipts[1], changed)
+        self.validate_current_prepare_tree(descriptor)
+
+        stable = changed["stdout"]
+        for stdout in (stable.replace("200 (", "201 (", 1),
+                       stable.replace("(redis-server)", "(other)"),
+                       stable.rsplit("67890", 1)[0] + "67891\r\n"):
+            with self.subTest(stdout=stdout):
+                changed["stdout"] = stdout
+                replace_json(receipts[1], changed)
+                with self.assertRaisesRegex(ValueError, "Redis"):
+                    self.validate_current_prepare_tree(descriptor)
+
+    def test_migration_resume_allows_only_volatile_proc_stat_changes(self):
+        f = self.f
+        descriptor = self.interrupt_migration_prefix(3)
+        prepared = {item["path"] for item in read_json(
+            f.output.parent / "prepared-files.json")["files"]}
+        receipts = []
+        for path in f.output.glob("redis-kernel-*.command.json"):
+            value = read_json(path)
+            if (path.name not in prepared
+                    and value["command"][-2:] == ["/usr/bin/cat", "/proc/200/stat"]):
+                receipts.append(path)
+        self.assertEqual(len(receipts), 15)
+        changed = read_json(receipts[-1])
+        fields = changed["stdout"].removesuffix("\n").rpartition(") ")[2].split(" ")
+        fields[0], fields[11], fields[12] = "R", "41", "73"
+        volatile = "200 (redis-server) " + " ".join(fields) + "\n"
+        changed["stdout"] = volatile
+        replace_json(receipts[-1], changed)
+        self.assertTrue(migration_resume_state(f.root, f.output, descriptor)["resumable"])
+
+        for stdout in (volatile.replace("200 (", "201 (", 1),
+                       volatile.replace("(redis-server)", "(other)"),
+                       volatile.rsplit("67890", 1)[0] + "67891\n"):
+            with self.subTest(stdout=stdout):
+                changed["stdout"] = stdout
+                replace_json(receipts[-1], changed)
+                with self.assertRaisesRegex(ValueError, "Redis"):
+                    migration_resume_state(f.root, f.output, descriptor)
+
     def test_prepared_tree_rejects_unclaimed_prepare_history_files(self):
         f = self.f
         descriptor = {"path": str(f.path), **file_digest(f.path)}
