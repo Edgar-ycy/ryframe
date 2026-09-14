@@ -109,6 +109,71 @@ class ServiceLifecycleTests(unittest.TestCase):
                              "redis_runtime": binding(self.run / "redis/runtime.json"),
                              "rustfs_monitor_ready": binding(ready_path)}}
 
+    def restart_services(self, evidence=None):
+        old_tree = self.services["tree"]
+        old_rustfs = {"scope_id": old_tree["scope_id"],
+                      "executable": {"path": str(self.fixture.tool), "sha256": "1" * 64},
+                      "data_directory": {"path": str(self.run / "rustfs"),
+                                         "device": (self.run / "rustfs").stat().st_dev,
+                                         "inode": (self.run / "rustfs").stat().st_ino},
+                      "api_url": "http://127.0.0.1:29200", "console_url": "http://127.0.0.1:29201",
+                      "credential_files": {}, "timeout_seconds": 60}
+        old_redis = {"previous_identity": None, "previous_boot_id": None, "previous_run_id": None,
+                     "configuration": {"path": str(self.run / "redis/redis.conf")}, "port": 16390}
+        write_json(self.run / "rustfs/request.json", old_rustfs)
+        write_json(self.run / "redis/request.json", old_redis)
+        old_runtime = {"linux_identity": {"pid": 201, "started": "11",
+                                          "executable": "/usr/bin/redis-server",
+                                          "boot_id": "1b3389bf-ef50-48a5-94d4-4cc51ad55a42"},
+                       "redis": {"run_id": "1" * 40}, "output": str(self.run / "redis")}
+        return {"requests": {"rustfs": old_rustfs, "redis": old_redis}, "tree": old_tree,
+                "runtime": old_runtime, "storage": {}, "origin": {"storage": {}, "redis": {}},
+                "evidence": evidence or {}}
+
+    def restart_generation(self, old_services, stopped):
+        prior_state = binding(self.run / "state.json")
+        prior_generation = validate_history(self.run, load_state(self.run))["active_generation"]
+        number = len(load_state(self.run)["attempts"]) + 1
+        old_tree = old_services["tree"]
+        new_tree = {**old_tree, "operation_id": "c" * 32,
+                    "runtime_directory": str(self.run / f"lifecycle-{number:04d}/rustfs"),
+                    "supervisor": {**old_tree["supervisor"], "pid": 2147481100},
+                    "monitor": {**old_tree["monitor"], "pid": 2147481101},
+                    "process": {**old_tree["process"], "pid": 2147481102}, "group_id": 2147481100}
+
+        def start_storage(_backend, request, _environment, output, _manifest, _controller,
+                          _number, guard, **_options):
+            guard()
+            write_json(output / "process.json", {"process": True})
+            write_json(output / "launch.json", {"launch": True})
+            write_json(output / "rustfs-tree.json", new_tree)
+            return {"identity": new_tree["process"], "sha256": request["executable"]["sha256"],
+                    "process_receipt": binding(output / "process.json"),
+                    "launch_receipt": binding(output / "launch.json"),
+                    "tree": binding(output / "rustfs-tree.json")}
+
+        def start_redis(_request, _environment, output, guard):
+            guard()
+            runtime = {"linux_identity": {"pid": 301, "started": "22",
+                                           "executable": "/usr/bin/redis-server",
+                                           "boot_id": "2b3389bf-ef50-48a5-94d4-4cc51ad55a42"},
+                       "redis": {"run_id": "2" * 40}, "output": str(output)}
+            write_json(output / "runtime.json", runtime)
+            return runtime
+
+        def observe(value):
+            return ({"redis": "running", "rustfs": "running", "termination": None}
+                    if value["tree"]["operation_id"] == new_tree["operation_id"] else stopped)
+
+        with patch.object(lifecycle, "registered_services", return_value=old_services), \
+                patch.object(lifecycle, "observe_services", side_effect=observe), \
+                patch("devex_clone_storage_process.start", side_effect=start_storage), \
+                patch.object(lifecycle, "start_cache", side_effect=start_redis), \
+                patch("full_stack_process_tree.read_process_tree", return_value=new_tree):
+            result = lifecycle.restart(self.backend, self.review, self.bootstrap,
+                                       self.run / "state.json", write=True)
+        return result, prior_state, prior_generation
+
     def test_status_has_no_writes_and_reports_unique_next_operation(self):
         before = self.snapshot()
         with patch.object(context, "registered_services", return_value=self.services), \
@@ -208,6 +273,18 @@ class ServiceLifecycleTests(unittest.TestCase):
         self.assertEqual(again["status"], "services_already_closed")
         self.assertEqual(self.events, [])
 
+    def test_closed_status_reports_explicit_restart_without_writes(self):
+        with self.mocks():
+            lifecycle.close(self.backend, self.review, self.bootstrap, write=True)
+        before = self.snapshot()
+        stopped = {"redis": "stopped", "rustfs": "stopped", "termination": None}
+        with patch.object(context, "registered_services", return_value=self.services), \
+                patch.object(context, "observe_services", return_value=stopped):
+            result = context.status(self.backend, self.review, self.bootstrap)
+        self.assertEqual(result["next_operation"], "restart")
+        self.assertEqual(result["state"], binding(self.run / "state.json"))
+        self.assertEqual(before, self.snapshot())
+
     def test_unknown_close_result_is_not_replayed_and_rustfs_is_not_stopped(self):
         with self.mocks(failure=True), self.assertRaisesRegex(RuntimeError, "未知"):
             lifecycle.close(self.backend, self.review, self.bootstrap, write=True)
@@ -249,7 +326,7 @@ class ServiceLifecycleTests(unittest.TestCase):
         with patch.object(context, "registered_services", return_value=self.services), \
                 patch.object(context, "observe_services", return_value={
                     "redis": "stopped", "rustfs": "stopped", "termination": None}):
-            self.assertEqual(context.status(self.backend, self.review, self.bootstrap)["next_operation"], "none")
+            self.assertEqual(context.status(self.backend, self.review, self.bootstrap)["next_operation"], "restart")
         snapshot = self.snapshot()
         with self.assertRaisesRegex(ValueError, "唯一未结算"):
             lifecycle.reconcile(self.backend, self.review, self.bootstrap,
@@ -507,68 +584,15 @@ class ServiceLifecycleTests(unittest.TestCase):
             validate_history(self.run, load_state(self.run))
 
     def test_restart_appends_a_new_generation_with_previous_lineage(self):
-        old_tree = self.services["tree"]
         termination = self.external_observation()
         stopped = {"redis": "stopped", "rustfs": "external-termination-unreconciled",
                    "termination": termination}
-        old_rustfs = {"scope_id": old_tree["scope_id"],
-                      "executable": {"path": str(self.fixture.tool), "sha256": "1" * 64},
-                      "data_directory": {"path": str(self.run / "rustfs"),
-                                         "device": (self.run / "rustfs").stat().st_dev,
-                                         "inode": (self.run / "rustfs").stat().st_ino},
-                      "api_url": "http://127.0.0.1:29200", "console_url": "http://127.0.0.1:29201",
-                      "credential_files": {}, "timeout_seconds": 60}
-        old_redis = {"previous_identity": None, "previous_boot_id": None, "previous_run_id": None,
-                     "configuration": {"path": str(self.run / "redis/redis.conf")}, "port": 16390}
-        write_json(self.run / "rustfs/request.json", old_rustfs)
-        write_json(self.run / "redis/request.json", old_redis)
-        old_runtime = {"linux_identity": {"pid": 201, "started": "11", "executable": "/usr/bin/redis-server",
-                                           "boot_id": "1b3389bf-ef50-48a5-94d4-4cc51ad55a42"},
-                       "redis": {"run_id": "1" * 40}, "output": str(self.run / "redis")}
-        old_services = {"requests": {"rustfs": old_rustfs, "redis": old_redis}, "tree": old_tree,
-                        "runtime": old_runtime, "storage": {}, "origin": {"storage": {}, "redis": {}},
-                        "evidence": termination["evidence"]}
+        old_services = self.restart_services(termination["evidence"])
         with patch.object(lifecycle, "registered_services", return_value=old_services), \
                 patch.object(lifecycle, "observe_services", return_value=stopped):
             lifecycle.recover(self.backend, self.review, self.bootstrap,
                               self.run / "state.json", write=True)
-        prior_state = binding(self.run / "state.json")
-        prior_generation = validate_history(self.run, load_state(self.run))["active_generation"]
-        new_tree = {**old_tree, "operation_id": "c" * 32,
-                    "runtime_directory": str(self.run / "lifecycle-0005/rustfs"),
-                    "supervisor": {**old_tree["supervisor"], "pid": 2147481100},
-                    "monitor": {**old_tree["monitor"], "pid": 2147481101},
-                    "process": {**old_tree["process"], "pid": 2147481102}, "group_id": 2147481100}
-
-        def start_storage(_backend, request, _environment, output, _manifest, _controller, _number, guard, **_options):
-            guard()
-            process = binding(output / "request.json")
-            write_json(output / "process.json", {"process": True})
-            write_json(output / "launch.json", {"launch": True})
-            write_json(output / "rustfs-tree.json", new_tree)
-            return {"identity": new_tree["process"], "sha256": request["executable"]["sha256"],
-                    "process_receipt": binding(output / "process.json"),
-                    "launch_receipt": binding(output / "launch.json"), "tree": binding(output / "rustfs-tree.json")}
-
-        def start_redis(request, _environment, output, guard):
-            guard()
-            runtime = {"linux_identity": {"pid": 301, "started": "22", "executable": "/usr/bin/redis-server",
-                                           "boot_id": "2b3389bf-ef50-48a5-94d4-4cc51ad55a42"},
-                       "redis": {"run_id": "2" * 40}, "output": str(output)}
-            write_json(output / "runtime.json", runtime)
-            return runtime
-
-        def observe(value):
-            return ({"redis": "running", "rustfs": "running", "termination": None}
-                    if value["tree"]["operation_id"] == new_tree["operation_id"] else stopped)
-
-        with patch.object(lifecycle, "registered_services", return_value=old_services), \
-                patch.object(lifecycle, "observe_services", side_effect=observe), \
-                patch("devex_clone_storage_process.start", side_effect=start_storage), \
-                patch.object(lifecycle, "start_cache", side_effect=start_redis), \
-                patch("full_stack_process_tree.read_process_tree", return_value=new_tree):
-            result = lifecycle.restart(self.backend, self.review, self.bootstrap,
-                                       self.run / "state.json", write=True)
+        result, prior_state, prior_generation = self.restart_generation(old_services, stopped)
         self.assertEqual(result["status"], "services_restarted")
         self.assertEqual(result["previous_generation"], prior_generation)
         self.assertNotEqual(binding(self.run / "state.json"), prior_state)
@@ -578,7 +602,48 @@ class ServiceLifecycleTests(unittest.TestCase):
         self.assertEqual(Path(generation["rustfs"]["request"]["path"]).parent.name, "rustfs")
         history = validate_history(self.run, load_state(self.run))
         self.assertIsNone(history["external_recovery"])
+        self.assertIsNone(history["restart_predecessor"])
         self.assertEqual(history["active_generation"], load_state(self.run)["attempts"][-1]["result"])
+
+    def test_restart_accepts_the_current_successful_normal_close_only(self):
+        with self.mocks():
+            lifecycle.close(self.backend, self.review, self.bootstrap, write=True)
+        close_result = load_state(self.run)["attempts"][-1]["result"]
+        old_services = self.restart_services()
+        stopped = {"redis": "stopped", "rustfs": "stopped", "termination": None}
+        result, _, _ = self.restart_generation(old_services, stopped)
+        generation = read_json(Path(result["generation"]["path"]))
+        self.assertEqual(generation["predecessor"], close_result)
+        history = validate_history(self.run, load_state(self.run))
+        self.assertFalse(history["closed"])
+        self.assertIsNone(history["restart_predecessor"])
+        tampered = load_state(self.run)
+        tampered["attempts"][-1]["sources"]["restart_predecessor"] = {"path": "other"}
+        with self.assertRaisesRegex(ValueError, "关闭前驱"):
+            validate_history(self.run, tampered)
+
+    def test_restart_rejects_missing_predecessor_or_stale_owner_without_writes(self):
+        before = self.snapshot()
+        with self.assertRaisesRegex(ValueError, "正常关闭或外部终止"):
+            lifecycle.restart(self.backend, self.review, self.bootstrap,
+                              self.run / "state.json", write=True)
+        self.assertEqual(before, self.snapshot())
+
+        with self.mocks():
+            lifecycle.close(self.backend, self.review, self.bootstrap, write=True)
+        stale = self.root / "stale-state.json"
+        write_json(stale, read_json(self.run / "state.json"))
+        before = self.snapshot()
+        with self.assertRaisesRegex(ValueError, "当前 state"):
+            lifecycle.restart(self.backend, self.review, self.bootstrap, stale, write=True)
+        self.assertEqual(before, self.snapshot())
+
+    def test_restart_requires_write_before_reading_context(self):
+        with patch.object(lifecycle, "context") as read_context, \
+                self.assertRaisesRegex(ValueError, "--write"):
+            lifecycle.restart(self.backend, self.review, self.bootstrap,
+                              self.run / "state.json", write=False)
+        read_context.assert_not_called()
 
     def test_recover_rejects_live_or_reused_controller_without_writes(self):
         owner_file = self.dead_lock()

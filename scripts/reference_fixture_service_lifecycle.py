@@ -308,18 +308,21 @@ def restart(backend: Path, review: Path, bootstrap: Path, owner_file: Path, *, w
     history = validate_history(run, value["state"])
     if (owner_path != run / "state.json" or binding(owner_path) != value["sources"]["state_before"]):
         raise ValueError("服务重启必须明确绑定 status 返回的当前 state 文件")
-    if (history["closed"] or history["external_recovery"] is None or history["unsettled"]
+    if (history["restart_predecessor"] is None or history["unsettled"]
             or unknown_recoveries(run) or controller_observation(run) is not None):
-        raise ValueError("服务重启必须紧接已完成且唯一的外部终止核对")
+        raise ValueError("服务重启必须紧接已完成且唯一的正常关闭或外部终止核对")
     previous = registered_services(value)
     stopped = observe_services(previous)
-    if stopped["termination"] is None:
+    if history["closed"]:
+        if stopped != {"redis": "stopped", "rustfs": "stopped", "termination": None}:
+            raise ValueError("重启前正常关闭的原服务代次状态变化")
+    elif stopped["termination"] is None:
         raise ValueError("重启前原服务代次不是已核对的外部终止状态")
     with run_lock(run) as owner:
         guard(value)
         if observe_services(previous) != stopped:
             raise ValueError("重启前原服务状态变化")
-        sources = {**value["sources"], "external_recovery": history["external_recovery"]}
+        sources = {**value["sources"], "restart_predecessor": history["restart_predecessor"]}
         output = local_path(backend, str(run / f"lifecycle-{len(value['state']['attempts']) + 1:04d}"), new=True)
         number = begin(run, LIFECYCLE_STAGE, "restart", sources)
         if output != run / f"lifecycle-{number:04d}":
@@ -354,7 +357,7 @@ def restart(backend: Path, review: Path, bootstrap: Path, owner_file: Path, *, w
             generation_file = output / "restart.json"
             generation = {"format_version": 1, "kind": "reference-fixture-service-generation",
                           "run": str(run), "attempt": number, "owner": value["sources"]["state_before"],
-                          "predecessor": history["external_recovery"],
+                          "predecessor": history["restart_predecessor"],
                           "previous_generation": history["active_generation"], "controller": controller,
                           "services": {"redis": "running", "rustfs": "running"},
                           "rustfs": {"request": binding(output / "rustfs/request.json"), "storage": storage},

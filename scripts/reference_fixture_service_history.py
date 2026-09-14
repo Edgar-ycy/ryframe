@@ -32,6 +32,7 @@ def validate_history(run: Path, state: dict, *, ready: bool = True, settled: boo
         raise ValueError("夹具首代服务尚未完整就绪")
     closed = False
     external_recovery = None
+    restart_predecessor = None
     unsettled = []
     active_generation = {"kind": "initial", "rustfs": attempts[0]["result"] if len(attempts) > 0 else None,
                          "redis": attempts[1]["result"] if len(attempts) > 1 else None}
@@ -73,6 +74,7 @@ def validate_history(run: Path, state: dict, *, ready: bool = True, settled: boo
                 if role == "rustfs":
                     _validate_members(proof, run)
             closed = True
+            restart_predecessor = item["result"]
         elif item["mode"] == "recover":
             receipt = result.get("recovery", {})
             path = Path(receipt.get("path", ""))
@@ -87,6 +89,7 @@ def validate_history(run: Path, state: dict, *, ready: bool = True, settled: boo
                     raise ValueError("夹具外部终止核对未绑定完整先行账本及独立证据")
                 _validate_external_termination(read_json(evidence_path), run, sources["state_before"], active_generation)
                 external_recovery = item["result"]
+                restart_predecessor = item["result"]
                 continue
             if (result.get("status") != "controller_recovered" or path.parent != run
                     or not path.name.startswith("recovered-") or not path.name.endswith(".json")
@@ -118,11 +121,14 @@ def validate_history(run: Path, state: dict, *, ready: bool = True, settled: boo
                                            sources, failed, active_generation)
             unsettled.clear()
             closed = True
+            restart_predecessor = item["result"]
         else:
             if unsettled:
                 raise ValueError("夹具服务未和解失败阶段后不能重启")
-            if closed or external_recovery is None:
-                raise ValueError("夹具服务重启必须紧接明确的外部终止核对")
+            if restart_predecessor is None:
+                raise ValueError("夹具服务重启必须紧接明确的正常关闭或外部终止核对")
+            if sources.get("restart_predecessor") != restart_predecessor:
+                raise ValueError("夹具服务重启未绑定当前关闭前驱")
             if result.get("status") != "services_restarted" or result.get("services") != {
                     "redis": "running", "rustfs": "running"}:
                 raise ValueError("夹具服务重启未证明两项服务的新运行代次")
@@ -132,13 +138,15 @@ def validate_history(run: Path, state: dict, *, ready: bool = True, settled: boo
                     or linked(path) or binding(path) != generation):
                 raise ValueError("夹具服务重启代次收据缺失或变化")
             _validate_restart(read_json(path), run, index + 1, sources["state_before"],
-                              external_recovery, active_generation, result.get("controller"))
+                              restart_predecessor, active_generation, result.get("controller"))
             active_generation = item["result"]
             external_recovery = None
+            restart_predecessor = None
             closed = False
     if settled and unsettled:
         raise ValueError("夹具服务存在未成功收尾的生命周期阶段")
     return {"closed": closed, "external_recovery": external_recovery,
+            "restart_predecessor": restart_predecessor,
             "active_generation": active_generation,
             "initial_complete": len(initial) == len(INITIAL)
             and all(item["status"] == "passed" for item in initial),

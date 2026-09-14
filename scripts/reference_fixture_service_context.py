@@ -280,7 +280,7 @@ def status(backend: Path, review: Path, bootstrap: Path) -> dict:
         if value["history"]["closed"]:
             if observations != {"redis": "stopped", "rustfs": "stopped", "termination": None}:
                 raise ValueError("已关闭夹具服务又出现存活进程")
-            next_operation = "none"
+            next_operation = "restart"
     if (not isinstance(observations, str)
             or observations not in {"external-termination-unreconciled", "external-termination-reconciled"}):
         reconciliation = None
