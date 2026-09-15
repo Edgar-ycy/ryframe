@@ -12,6 +12,7 @@ import re
 import stat
 import subprocess
 
+from artifact_digests import filesystem_path
 from restore_build import file_digest
 from restore_reference_io import COPY_METADATA_FIELDS, ExternalTools, copy_object_metadata, redact_object_diagnostic
 from restore_reference_plan import BUCKETS, plan_hash
@@ -38,7 +39,7 @@ class ObjectCaptureError(RuntimeError):
 
 
 def write_json(path: Path, value: dict) -> None:
-    with path.open("x", encoding="utf-8", newline="\n") as stream:
+    with open(filesystem_path(path), "x", encoding="utf-8", newline="\n") as stream:
         json.dump(value, stream, ensure_ascii=False, sort_keys=True, indent=2)
         stream.write("\n")
         stream.flush()

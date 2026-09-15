@@ -1,6 +1,8 @@
 import copy
 import json
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from types import SimpleNamespace
@@ -10,6 +12,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import devex_clone_capture as capture_module
 from devex_clone_capture import CaptureReader, ObjectCaptureError, capture_object, verify_capture
+from devex_clone_run_state import binding
 from restore_build import file_digest
 from restore_reference import work_directory
 from restore_reference_fixture import environment
@@ -78,6 +81,36 @@ class CaptureTests(unittest.TestCase):
         path.write_text('{"value":1}\n', encoding="utf-8")
         descriptor = {"path": str(path), **file_digest(path)}
         self.assertEqual(capture_module.read_bound_json(path, descriptor), {"value": 1})
+
+    @unittest.skipUnless(os.name == "nt", "需要 Windows 扩展路径语义")
+    def test_write_json_preserves_long_chinese_space_path_and_existing_receipt(self):
+        root = self.work / "长路径 空格"
+        directory = root
+        for _ in range(5):
+            directory /= "证据目录 " + "x" * 40
+        os.makedirs(capture_module.filesystem_path(directory))
+        self.addCleanup(shutil.rmtree, capture_module.filesystem_path(root))
+        path = directory / "收据 文件.json"
+        self.assertGreater(len(str(path)), 260)
+        value = {"状态": "已核验", "stage": "tenant-data-dedicated-a-verify"}
+
+        capture_module.write_json(path, value)
+
+        with open(capture_module.filesystem_path(path), "rb") as stream:
+            content = stream.read()
+        self.assertEqual(json.loads(content), value)
+        self.assertTrue(content.endswith(b"\n"))
+        self.assertNotIn(b"\r\n", content)
+        descriptor = binding(path)
+        self.assertEqual(descriptor["path"], str(path))
+        self.assertFalse(descriptor["path"].startswith("\\\\?\\"))
+        self.assertEqual(descriptor["bytes"], len(content))
+
+        with self.assertRaises(FileExistsError):
+            capture_module.write_json(path, {"状态": "不可覆盖"})
+        self.assertEqual(binding(path), descriptor)
+        with open(capture_module.filesystem_path(path), "rb") as stream:
+            self.assertEqual(stream.read(), content)
 
     def test_read_bound_json_rejects_duplicate_keys(self):
         path = self.work / "bound-duplicate.json"
