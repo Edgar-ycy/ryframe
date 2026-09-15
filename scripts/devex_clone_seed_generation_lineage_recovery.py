@@ -151,26 +151,38 @@ def _source(backend: Path, directory: Path, attempts: list, request: dict, tail:
     return result
 
 
-def _request(backend: Path, output: Path, request_path: Path | None) -> tuple[dict, dict, dict]:
+def _request(backend: Path, output: Path, request_path: Path | None) -> tuple[dict, dict, dict, dict]:
     from devex_clone_seed_generation import REQUEST_FIELDS
 
-    internal = read_json(output / "request.json")
+    internal_path = output / "request.json"
+    internal_descriptor = binding(internal_path)
+    internal = read_json(bound_file(backend, internal_descriptor))
+    if binding(internal_path) != internal_descriptor:
+        raise ValueError("C68 内部请求在读取期间变化")
     exact(internal, REQUEST_FIELDS)
     name(internal["id"])
-    internal_path = output / "request.json"
     selected = internal_path if request_path is None else local_path(backend, str(request_path))
     if request_path is not None and selected == internal_path:
         raise ValueError("C69 必须绑定当前重新登记的外部正式请求，不能复用 C68 内部副本")
     descriptor = binding(selected)
     request = read_json(bound_file(backend, descriptor))
+    if binding(selected) != descriptor:
+        raise ValueError("C69 当前请求在读取期间变化")
     exact(request, REQUEST_FIELDS)
-    if (request != internal or type(request["format_version"]) is not int or request["format_version"] != 1
+    if (type(request["format_version"]) is not int or request["format_version"] != 1
             or request["kind"] != "devex-clone-seed-source-generation"):
         raise ValueError("C68 谱系恢复请求与失败代次不同")
     for field in ("source_registration", "source_rebind", "review_successor", "backend_build", "source_environment"):
         bound_file(backend, request[field])
     bound_file(Path(request["execution_backend"]), request["maintenance_build"])
-    return request, descriptor, binding(output / "request.json")
+    changes = {key for key in request if request[key] != internal[key]}
+    if changes:
+        if changes != {"backend_build", "maintenance_build"}:
+            raise ValueError("C69 当前请求只能成对重新登记 API/Worker 与维护构建收据")
+        from devex_clone_seed_generation import _reregistered_builds
+
+        _reregistered_builds(backend, internal, request)
+    return request, descriptor, internal_descriptor, internal
 
 
 def _verify_request(backend: Path, request: dict, source: dict) -> None:
@@ -289,7 +301,9 @@ def lineage_failure(backend: Path, directory: Path, attempts: list, *, request_p
             or any(not isinstance(value, str) or len(value) != 32 for value in operations.values())
             or len(set(operations.values())) != 2):
         raise ValueError("C68 启动意图与固定请求、目录或双角色 operation 不同")
-    request, request_descriptor, internal_request = _request(backend, output, request_path)
+    request, request_descriptor, internal_request, historical_request = _request(
+        backend, output, request_path
+    )
     source = _source(backend, directory, attempts, request, tail)
     _verify_request(backend, request, source)
     runtime, contract = _runtime(
@@ -309,7 +323,8 @@ def lineage_failure(backend: Path, directory: Path, attempts: list, *, request_p
             or binding(output / "before/image.json") != before
             or git(backend, "rev-parse", FAILED_HEAD + "^{tree}").decode().strip() != FAILED_TREE):
         raise ValueError("C68 失败、源码、目录或完整前像在核验期间变化")
-    return {"proof": proof, "failed": failed, "request": request, "request_descriptor": request_descriptor,
+    return {"proof": proof, "failed": failed, "request": request,
+            "historical_request": historical_request, "request_descriptor": request_descriptor,
             "source": source, "runtime": runtime, "contract": contract, "selected": runtime.selected,
             "before": before, "image": image["image"], "records": tail}
 
@@ -345,7 +360,23 @@ def authorize(backend: Path, directory: Path, request_path: Path, number: int, p
     binaries = {"ryframe": runtime.build["artifacts"]["api"]["executable"],
                 "ryframe-worker": runtime.build["artifacts"]["worker"]["executable"],
                 **{"ryframe-" + role: maintenance["artifacts"][role]["executable"] for role in ("reset", "migrate")}}
-    if binaries != read_json(Path(facts["proof"]["runtime"]["path"]).parent / "binaries.json"):
+    historical_binaries = binaries
+    if facts["historical_request"] != facts["request"]:
+        historical_request = facts["historical_request"]
+        historical_execution = local_path(backend, historical_request["execution_backend"])
+        historical_build = read_json(bound_file(backend, historical_request["backend_build"]))
+        historical_maintenance = read_json(
+            bound_file(historical_execution, historical_request["maintenance_build"])
+        )
+        historical_binaries = {
+            "ryframe": historical_build["artifacts"]["api"]["executable"],
+            "ryframe-worker": historical_build["artifacts"]["worker"]["executable"],
+            **{
+                "ryframe-" + role: historical_maintenance["artifacts"][role]["executable"]
+                for role in ("reset", "migrate")
+            },
+        }
+    if historical_binaries != read_json(Path(facts["proof"]["runtime"]["path"]).parent / "binaries.json"):
         raise ValueError("C69 观察运行使用的产品或维护二进制与 C68 不同")
     write_json(runtime.runtime / "binaries.json", binaries)
     with runtime.environment() as environment:

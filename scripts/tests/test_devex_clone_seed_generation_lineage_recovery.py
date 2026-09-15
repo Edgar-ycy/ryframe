@@ -168,6 +168,7 @@ class LineageRecoveryTests(unittest.TestCase):
                         self.request,
                         binding(self.output / "request.json"),
                         binding(self.output / "request.json"),
+                        self.request,
                     ),
                 )
             )
@@ -257,6 +258,70 @@ class LineageRecoveryTests(unittest.TestCase):
         write_json(request_path, request)
         with patch.object(generation, "REQUEST_FIELDS", set(request)), \
                 self.assertRaisesRegex(ValueError, "外部正式请求"):
+            recovery._request(self.backend, self.output, request_path)
+
+    def test_external_request_only_allows_paired_equivalent_build_receipts(self):
+        internal = {
+            "format_version": 1,
+            "kind": "devex-clone-seed-source-generation",
+            "id": "fixed-request",
+            "source_registration": {"path": "registration"},
+            "source_rebind": {"path": "rebind"},
+            "review_successor": {"path": "successor"},
+            "current_storage": {"attempt": 65},
+            "execution_backend": str(self.backend),
+            "expected_backend_sha": "a" * 40,
+            "adapter_contract": None,
+            "product_backend": None,
+            "backend_build": {"path": "old-runtime"},
+            "maintenance_build": {"path": "old-maintenance"},
+            "source_environment": {"path": "environment"},
+        }
+        request_path = self.directory / "external-request.json"
+        (self.output / "request.json").unlink()
+        write_json(self.output / "request.json", internal)
+        current = copy.deepcopy(internal)
+        current["backend_build"] = {"path": "current-runtime"}
+        current["maintenance_build"] = {"path": "current-maintenance"}
+        write_json(request_path, current)
+
+        with patch.object(generation, "REQUEST_FIELDS", set(internal)), patch.object(
+            recovery, "bound_file", side_effect=lambda _root, descriptor: Path(descriptor["path"])
+        ), patch.object(generation, "_reregistered_builds") as equivalent:
+            request, descriptor, historical, historical_value = recovery._request(
+                self.backend, self.output, request_path
+            )
+        self.assertEqual(request, current)
+        self.assertEqual(descriptor, binding(request_path))
+        self.assertEqual(historical, binding(self.output / "request.json"))
+        self.assertEqual(historical_value, internal)
+        equivalent.assert_called_once_with(self.backend, internal, current)
+
+        for field in ("backend_build", "maintenance_build", "id"):
+            changed = copy.deepcopy(internal)
+            changed[field] = (
+                {"path": "current-runtime"}
+                if field == "backend_build"
+                else {"path": "current-maintenance"}
+                if field == "maintenance_build"
+                else "other"
+            )
+            request_path.unlink()
+            write_json(request_path, changed)
+            with self.subTest(field=field), patch.object(
+                generation, "REQUEST_FIELDS", set(internal)
+            ), patch.object(
+                recovery, "bound_file", side_effect=lambda _root, value: Path(value["path"])
+            ), self.assertRaisesRegex(ValueError, "只能成对"):
+                recovery._request(self.backend, self.output, request_path)
+
+        request_path.unlink()
+        write_json(request_path, current)
+        with patch.object(generation, "REQUEST_FIELDS", set(internal)), patch.object(
+            recovery, "bound_file", side_effect=lambda _root, value: Path(value["path"])
+        ), patch.object(
+            generation, "_reregistered_builds", side_effect=ValueError("构建收据不等价")
+        ), self.assertRaisesRegex(ValueError, "构建收据不等价"):
             recovery._request(self.backend, self.output, request_path)
 
     def test_request_recalculation_uses_verified_source_without_published_history(self):
@@ -391,6 +456,7 @@ class AuthorizationTests(unittest.TestCase):
             },
             "failed": self.failed,
             "request": self.request,
+            "historical_request": self.request,
             "request_descriptor": binding(self.request_path),
             "source": self.source,
             "contract": self.contract,
@@ -407,7 +473,7 @@ class AuthorizationTests(unittest.TestCase):
 
     def runtime_factory(self, _backend, _directory, output, request, source, _run):
         runtime = SimpleNamespace(
-            execution=self.backend,
+            execution=Path(request.get("execution_backend", self.backend)),
             selected={"api_url": "http://127.0.0.1:5"},
             build={
                 "artifacts": {
@@ -510,6 +576,80 @@ class AuthorizationTests(unittest.TestCase):
         for method in (runtime.prepare, runtime.start, runtime.stop, runtime.retain, runtime.finish):
             method.assert_not_called()
         self.assertFalse((self.directory / "results/0069.json").exists())
+
+    def test_authorize_preserves_c68_binary_proof_after_equivalent_reregistration(self):
+        execution = self.directory / "execution"
+        maintenance_directory = execution / ".local-tests/maintenance"
+        maintenance_directory.mkdir(parents=True)
+        current_maintenance_path = maintenance_directory / "current.json"
+        write_json(
+            current_maintenance_path,
+            {
+                "artifacts": {
+                    "reset": {"executable": "reset.exe"},
+                    "migrate": {"executable": "migrate.exe"},
+                }
+            },
+        )
+        current_build = self.file("current-build.json", {"current": True})
+        historical_build = self.file(
+            "historical-build.json",
+            {
+                "artifacts": {
+                    "api": {"executable": "historical-api.exe"},
+                    "worker": {"executable": "historical-worker.exe"},
+                }
+            },
+        )
+        historical_maintenance_path = maintenance_directory / "historical.json"
+        write_json(
+            historical_maintenance_path,
+            {
+                "artifacts": {
+                    "reset": {"executable": "historical-reset.exe"},
+                    "migrate": {"executable": "historical-migrate.exe"},
+                }
+            },
+        )
+        historical_maintenance = binding(historical_maintenance_path)
+        current_request = {
+            **self.request,
+            "execution_backend": str(execution),
+            "backend_build": current_build,
+            "maintenance_build": binding(current_maintenance_path),
+        }
+        historical_request = {
+            **current_request,
+            "backend_build": historical_build,
+            "maintenance_build": historical_maintenance,
+        }
+        self.request_path.unlink()
+        write_json(self.request_path, current_request)
+        self.facts["request"] = current_request
+        self.facts["request_descriptor"] = binding(self.request_path)
+        self.facts["historical_request"] = historical_request
+        write_json(
+            self.c68_runtime / "binaries.json.tmp",
+            {
+                "ryframe": "historical-api.exe",
+                "ryframe-worker": "historical-worker.exe",
+                "ryframe-reset": "historical-reset.exe",
+                "ryframe-migrate": "historical-migrate.exe",
+            },
+        )
+        (self.c68_runtime / "binaries.json").unlink()
+        (self.c68_runtime / "binaries.json.tmp").replace(
+            self.c68_runtime / "binaries.json"
+        )
+
+        with self.authorization_patches():
+            recovery.authorize(
+                self.backend, self.directory, self.request_path, 69, self.prefix
+            )
+        self.assertEqual(
+            read_json(self.directory / "seed-runtime/attempt-0069/runtime/binaries.json"),
+            self.binaries,
+        )
 
     def build_authority(self):
         output = self.directory / "seed-runtime/attempt-0069"
