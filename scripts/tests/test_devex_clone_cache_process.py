@@ -59,6 +59,11 @@ class CacheProcessTests(unittest.TestCase):
         return {"process_id": "300", "run_id": "b" * 40, "config_file": process.linux_path(self.request["configuration"]["path"]),
                 "configuration_sha256": process.canonical(process.configuration(self.request))}
 
+    def successor(self):
+        Path(self.request["wsl"]["path"]).write_bytes(b"reviewed successor WSL")
+        return {**self.request, "wsl": {**self.request["wsl"], "sha256": process.bound(self.request["wsl"]["path"])["sha256"]},
+                "python": {**self.request["python"], "sha256": "c" * 64}}
+
     def test_original_files_directory_and_exact_fields(self):
         process.validate(self.request)
         for update in ({"port": True}, {"previous_boot_id": "unknown"}, {"extra": True}):
@@ -142,6 +147,123 @@ class CacheProcessTests(unittest.TestCase):
         (self.output / "helpers/cache.py").write_bytes(b"changed")
         with self.assertRaises(ValueError):
             process.inspect_start(self.request, self.output)
+
+    def test_historical_inspection_survives_tool_upgrade_but_regular_calls_reject_it(self):
+        runtime = self.recorded()
+        Path(self.request["wsl"]["path"]).write_bytes(b"reviewed successor WSL")
+        before = {path: path.read_bytes() for path in self.output.rglob("*") if path.is_file()}
+        with patch.object(process.subprocess, "run", side_effect=AssertionError("历史检查不能调用工具")):
+            self.assertEqual(process.inspect_start(self.request, self.output), runtime)
+            for operation in (lambda: process.status(self.request, runtime),
+                              lambda: process.linux_call(self.request, runtime, "observe"),
+                              lambda: process.stop(self.request, {}, runtime, self.output),
+                              lambda: process.observe(self.request, {}, runtime)):
+                with self.subTest(operation=operation), self.assertRaisesRegex(ValueError, "WSL"):
+                    operation()
+        self.assertEqual(before, {path: path.read_bytes() for path in self.output.rglob("*") if path.is_file()})
+
+    def test_predecessor_uses_current_tools_without_rewriting_old_evidence(self):
+        runtime = self.recorded()
+        effective = self.successor()
+        before = {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
+        stopped = {"identity": self.identity, "alive": False, "boot_id": BOOT, "terminated": False}
+        with patch.object(process, "windows_identity", return_value=False), \
+                patch.object(process.subprocess, "run", return_value=Mock(returncode=0, stdout=json.dumps(stopped).encode())) as run, \
+                patch("devex_clone_source_proof.require_closed_port") as port, \
+                patch.object(process, "linux_stop", side_effect=AssertionError("禁止停止旧进程")):
+            result = process.predecessor_status(self.request, runtime, effective)
+        self.assertEqual(result, {"state": "stopped", "launcher_alive": False, "linux": stopped,
+                                 "tools_sha256": process.canonical({key: effective[key] for key in ("wsl", "python")})})
+        args = run.call_args.args[0]
+        self.assertEqual(args[:6], [effective["wsl"]["path"], "--distribution", effective["distribution"], "--exec", "/usr/bin/python3", "-B"])
+        self.assertEqual(args[6], process.linux_path(str(Path(process.__file__).resolve())))
+        envelope = json.loads(run.call_args.kwargs["input"])
+        self.assertEqual(envelope["runtime"], runtime)
+        self.assertEqual(envelope["effective"], effective)
+        self.assertNotIn("stop", args)
+        port.assert_called_once_with("http://127.0.0.1:16390")
+        self.assertEqual(before, {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()})
+
+    def test_predecessor_refuses_resource_change_live_or_reused_launcher(self):
+        runtime = self.recorded()
+        effective = self.successor()
+        changes = ({"port": 16391}, {"scope_id": "different-scope"},
+                   {"wsl": {**effective["wsl"], "path": str(self.root / "another.exe")}},
+                   {"python": {**effective["python"], "executable": "/usr/bin/python3.13"}})
+        with patch.object(process.subprocess, "run", side_effect=AssertionError("拒绝前不能调用 WSL")):
+            for update in changes:
+                with self.subTest(update=tuple(update)), self.assertRaises(ValueError):
+                    process.predecessor_status(self.request, runtime, {**effective, **update})
+            with patch.object(process, "windows_identity", return_value=True), self.assertRaises(ValueError):
+                process.predecessor_status(self.request, runtime, effective)
+            with patch("full_stack_process.process_identity", return_value={**runtime["launcher"], "started": "999"}), self.assertRaises(ValueError):
+                process.predecessor_status(self.request, runtime, effective)
+
+    def test_predecessor_refuses_unproven_response_busy_port_and_tool_change(self):
+        runtime = self.recorded()
+        effective = self.successor()
+        stopped = {"identity": self.identity, "alive": False, "boot_id": BOOT, "terminated": False}
+        for update in ({"alive": True}, {"terminated": True}, {"identity": {**self.identity, "pid": 999}},
+                       {"boot_id": "unknown"}, {"extra": True}):
+            with self.subTest(update=tuple(update)), patch.object(process, "windows_identity", return_value=False), \
+                    patch.object(process.subprocess, "run", return_value=Mock(returncode=0, stdout=json.dumps({**stopped, **update}).encode())), \
+                    self.assertRaises(ValueError):
+                process.predecessor_status(self.request, runtime, effective)
+        with patch.object(process, "windows_identity", return_value=False), \
+                patch.object(process.subprocess, "run", return_value=Mock(returncode=0, stdout=json.dumps(stopped).encode())), \
+                patch("devex_clone_source_proof.require_closed_port", side_effect=ValueError("端口仍占用")), self.assertRaisesRegex(ValueError, "端口"):
+            process.predecessor_status(self.request, runtime, effective)
+        def changed(*_args, **_kwargs):
+            Path(effective["wsl"]["path"]).write_bytes(b"unreviewed replacement")
+            return Mock(returncode=0, stdout=json.dumps(stopped).encode())
+        with patch.object(process, "windows_identity", return_value=False), patch.object(process.subprocess, "run", side_effect=changed), \
+                self.assertRaisesRegex(ValueError, "WSL"):
+            process.predecessor_status(self.request, runtime, effective)
+
+    def test_predecessor_accepts_only_complete_partial_exit_and_keeps_unknown_launch_blocked(self):
+        self.intent()
+        process.write(self.output / "partial.json", {"state": "not_started", "request_sha256": process.canonical(self.request),
+                      "intent": process.bound(self.output / "intent.json"), "launcher_pid": 400, "launcher_returncode": 1,
+                      "authorization_sent": False, "linux_cleanup": None})
+        runtime = process.inspect_start(self.request, self.output)
+        effective = self.successor()
+        with patch("full_stack_process.process_identity", return_value=None), \
+                patch.object(process.subprocess, "run", return_value=Mock(returncode=0, stdout=b'{"state":"stopped","partial":"not_started"}')), \
+                patch("devex_clone_source_proof.require_closed_port"):
+            self.assertEqual(process.predecessor_status(self.request, runtime, effective)["partial"], "not_started")
+        (self.output / "partial.json").unlink()
+        with patch.object(process.subprocess, "run", side_effect=AssertionError("未知创建不得继续")), self.assertRaises(ValueError):
+            process.predecessor_status(self.request, runtime, effective)
+
+    def test_linux_predecessor_checks_original_identity_with_current_python_and_never_signals(self):
+        runtime = self.recorded()
+        effective = self.successor()
+        payload = process.read(self.output / "launch-request.json")
+        envelope = {"effective": effective, "runtime": runtime, "helpers": payload["helpers"]}
+        original_bound = process.bound
+        def linux_bound(path):
+            result = original_bound(path)
+            return {**result, "path": process.linux_path(str(path))} if Path(path).name == "linux-intent.json" else result
+        next_boot = "11111111-2222-3333-4444-555555555555"
+        for boot, identity, succeeds in ((next_boot, {"pid": 300, "started": "999", "executable": "/new/process"}, True),
+                                          (BOOT, None, True), (BOOT, {**self.identity, "started": "999"}, False),
+                                          (BOOT, {key: self.identity[key] for key in ("pid", "started", "executable")}, False)):
+            kernel = Mock()
+            kernel.process_identity.return_value = identity
+            with self.subTest(boot=boot, identity=identity), patch.object(process, "file_bound"), \
+                    patch.object(process, "linux_inputs", return_value=(self.output, kernel)) as inputs, \
+                    patch.object(process, "bound", side_effect=linux_bound), patch.object(process, "boot_id", return_value=boot), \
+                    patch.object(process.socket, "socket") as sockets, patch.object(process, "linux_stop", side_effect=AssertionError("禁止发送信号")):
+                if succeeds:
+                    result = process.predecessor_check(payload, envelope)
+                    self.assertFalse(result["alive"])
+                    self.assertFalse(result["terminated"])
+                    sockets.return_value.__enter__.return_value.bind.assert_called_once_with(("127.0.0.1", 16390))
+                else:
+                    with self.assertRaises(ValueError):
+                        process.predecessor_check(payload, envelope)
+                self.assertEqual(inputs.call_args.args[0]["request"], effective)
+                kernel.terminate_owned_process.assert_not_called()
 
     def test_other_request_or_launcher_identity_is_rejected(self):
         self.recorded()

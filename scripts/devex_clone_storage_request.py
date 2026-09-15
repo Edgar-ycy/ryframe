@@ -144,6 +144,11 @@ def producers_stopped(backend: Path, directory: Path, value: dict) -> None:
         if not attempts:
             raise ValueError("已发布 seed 存储重启缺少当前持锁阶段")
         attempt = attempts[-1]
+        if attempt["stage"] == "cache-target" and attempt["status"] == "running":
+            from devex_clone_cache import published_restart_guard as cache_guard
+
+            cache_guard(backend, directory, attempt["number"])
+            return
         if (attempt["stage"], attempt["mode"], attempt["status"]) != ("storage-target", "restart", "running"):
             raise ValueError("已发布 seed 仅允许当前持锁的 target 存储重启")
         published_restart_guard(backend, directory, attempt["number"])

@@ -352,6 +352,15 @@ class Resources:
                     raise ValueError("缓存恢复证明未绑定本目标的原始 Redis")
             resumed = self.cache_runtime_binding["redis"]
             allowed = {**redis, **{key: resumed[key] for key in ("pid", "started", "run_id")}}
+            if not fixture and self.cache_runtime_binding.get("tools") is not None:
+                from devex_clone_cache import generation_request
+
+                output = bound_file(self.backend, self.cache_runtime_binding["tools"]).parent
+                process, tools = generation_request(self.backend, self.storage_run, cache_request, output,
+                                                    owned_lock_identity=self.owned_lock_identity)
+                if tools != self.cache_runtime_binding["tools"]:
+                    raise ValueError("缓存工具后继与已发布代次不符")
+                allowed["wsl"] = process["wsl"]
             if resumed != allowed:
                 raise ValueError("缓存恢复不能改变原 WSL、配置、产物、端口或发行版")
             redis = resumed

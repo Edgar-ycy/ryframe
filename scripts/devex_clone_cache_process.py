@@ -247,6 +247,10 @@ def linux_inputs(payload, *, startup):
 
 def linux_check(payload, expected, *, stop=False):
     output, kernel = linux_inputs(payload, startup=False)
+    return linux_process_check(payload, expected, output, kernel, stop=stop)
+
+
+def linux_process_check(payload, expected, output, kernel, *, stop=False):
     receipt = read(output / "linux-process.json")
     intent = read(output / "linux-intent.json")
     if (receipt != {"request_sha256": payload["request_sha256"], "identity": expected, "intent": bound(output / "linux-intent.json")}
@@ -370,8 +374,6 @@ def frozen_payload(request, output):
         local = output / "helpers" / Path(item["path"]).name
         if linux_path(str(local)) != item["path"] or bound(plain(local)) != {**item, "path": str(local)}:
             raise ValueError("Redis 冻结辅助代码变化")
-    if bound(plain(request["wsl"]["path"]))["sha256"] != request["wsl"]["sha256"]:
-        raise ValueError("调用 WSL 的实际二进制变化")
     return payload
 
 
@@ -447,6 +449,7 @@ def recorded_start(request, output):
 
 
 def linux_call(request, runtime, action):
+    validate(request)
     output = Path(runtime["output"])
     observed = inspect_start(request, output)
     if observed is None or observed != {key: runtime[key] for key in observed}:
@@ -478,6 +481,93 @@ def windows_identity(request, runtime, *, required):
     return True
 
 
+def successor_tools(original, effective):
+    """资源和启动合同固定，仅允许已登记的工具字节换代。"""
+    if (set(original) != FIELDS or set(effective) != FIELDS
+            or {key: value for key, value in original.items() if key not in {"wsl", "python"}}
+            != {key: value for key, value in effective.items() if key not in {"wsl", "python"}}
+            or PureWindowsPath(original["wsl"]["path"]) != PureWindowsPath(effective["wsl"]["path"])
+            or original["python"]["path"] != effective["python"]["path"]
+            or original["python"]["executable"] != effective["python"]["executable"]):
+        raise ValueError("缓存工具换代不得替换原资源、端点或工具路径")
+    return canonical({key: effective[key] for key in ("wsl", "python")})
+
+
+def predecessor_check(payload, envelope):
+    """当前工具只读观察旧代次；不能发送停止信号或创建进程收据。"""
+    if set(envelope) != {"effective", "runtime", "helpers"} or set(envelope["helpers"]) != {"cache", "process"}:
+        raise ValueError("缓存前代观察参数不完整")
+    effective, runtime = envelope["effective"], envelope["runtime"]
+    successor_tools(payload["request"], effective)
+    if (payload["request_sha256"] != canonical(payload["request"])
+            or runtime["request_sha256"] != payload["request_sha256"] or runtime["output"] != payload["windows_output"]):
+        raise ValueError("缓存前代观察未绑定原冻结请求")
+    for helper in payload["helpers"].values():
+        file_bound(helper)
+    observation = {**payload, "request": effective, "request_sha256": canonical(effective), "helpers": envelope["helpers"]}
+    output, kernel = linux_inputs(observation, startup=False)
+    if "partial_receipt" in runtime:
+        if bound(output / "partial.json") != {**runtime["partial_receipt"], "path": str(output / "partial.json")}:
+            raise ValueError("缓存前代部分退出收据变化")
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.bind(("127.0.0.1", effective["port"]))
+        return {"state": "stopped", "partial": runtime["state"]}
+    before = boot_id()
+    result = linux_process_check(payload, runtime["linux_identity"], output, kernel)
+    if result["alive"] or result["terminated"] or result["boot_id"] != before or boot_id() != before:
+        raise ValueError("缓存原代次未停止或观察期间 WSL 代次变化")
+    return result
+
+
+def predecessor_status(original, runtime, effective):
+    """保留旧收据，用已登记当前工具证明旧进程和端口均已退出。"""
+    import full_stack_process
+    from devex_clone_source_proof import require_closed_port
+    tools_sha256 = successor_tools(original, effective)
+    validate(effective)
+    output = Path(runtime["output"])
+    observed = inspect_start(original, output)
+    if observed is None or observed != {key: runtime[key] for key in observed}:
+        raise ValueError("缓存前代运行证据与原创建身份不同")
+    def launcher_stopped():
+        if "partial_receipt" in runtime:
+            proof = read(output / "partial.json")
+            alive = full_stack_process.process_identity(proof["launcher_pid"]) is not None
+        else:
+            alive = windows_identity(original, runtime, required=False)
+        if alive:
+            raise ValueError("缓存前代 WSL launcher 仍存活或 PID 被复用")
+    launcher_stopped()
+    sources = {key: bound(plain(Path(source).resolve())) for key, source in
+               (("cache", __file__), ("process", full_stack_process.__file__))}
+    helpers = {key: {**value, "path": linux_path(value["path"])} for key, value in sources.items()}
+    args = [effective["wsl"]["path"], "--distribution", effective["distribution"], "--exec", effective["python"]["path"],
+            "-B", helpers["cache"]["path"], "predecessor", "--request", linux_path(str(output / "launch-request.json")),
+            "--sha256", observed["launch"]["sha256"]]
+    result = subprocess.run(args, input=json.dumps({"effective": effective, "runtime": observed, "helpers": helpers}).encode(),
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20,
+                            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+    if result.returncode != 0:
+        raise RuntimeError("当前 WSL 工具未能只读核验缓存前代")
+    value = json.loads(result.stdout)
+    if "partial_receipt" in runtime:
+        if value != {"state": "stopped", "partial": runtime["state"]}:
+            raise ValueError("缓存前代部分退出观察不同")
+        proof = {"partial": runtime["state"]}
+    else:
+        if (set(value) != {"identity", "alive", "boot_id", "terminated"} or value["identity"] != runtime["linux_identity"]
+                or value["alive"] is not False or value["terminated"] is not False or not isinstance(value["boot_id"], str)
+                or not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", value["boot_id"])):
+            raise ValueError("缓存前代未由当前工具证明精确停止")
+        proof = {"linux": value}
+    validate(effective)
+    if inspect_start(original, output) != observed or any(bound(plain(value["path"])) != value for value in sources.values()):
+        raise ValueError("缓存前代观察期间证据或当前工具变化")
+    launcher_stopped()
+    require_closed_port(f"http://127.0.0.1:{original['port']}")
+    return {"state": "stopped", "launcher_alive": False, **proof, "tools_sha256": tools_sha256}
+
+
 def observe(request, environment, runtime, output=None):
     validate(request)
     windows_identity(request, runtime, required=True)
@@ -499,6 +589,7 @@ def observe(request, environment, runtime, output=None):
 def status(request, runtime):
     """只读精确状态；未知身份或仍被占用的端口不能作为已停止证明。"""
     from devex_clone_source_proof import require_closed_port
+    validate(request)
     if "partial_receipt" in runtime:
         from full_stack_process import process_identity
         if inspect_start(request, runtime["output"]) != runtime:
@@ -529,6 +620,7 @@ def status(request, runtime):
 def stop(request, environment, runtime, output):
     from devex_clone_source_proof import require_closed_port
     from full_stack_process import process_identity
+    validate(request)
     if "partial_receipt" in runtime:
         result = {**status(request, runtime), "status": "redis_process_stopped", "runtime": runtime, "resources_deleted": False}
         write(Path(output) / "stopped.json", result)
@@ -630,7 +722,7 @@ def start(request, environment, output, guard):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("serve", "observe", "stop", "partial"))
+    parser.add_argument("action", choices=("serve", "observe", "stop", "partial", "predecessor"))
     parser.add_argument("--request", type=Path, required=True)
     parser.add_argument("--sha256", required=True)
     args = parser.parse_args()
@@ -639,6 +731,8 @@ def main():
     payload = read(args.request)
     if args.action == "serve":
         linux_serve(payload)
+    elif args.action == "predecessor":
+        print(json.dumps(predecessor_check(payload, json.loads(sys.stdin.readline(262144)))))
     elif args.action == "partial":
         output, _ = linux_inputs(payload, startup=False)
         expected = json.loads(sys.stdin.readline(16384))

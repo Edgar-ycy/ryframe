@@ -626,6 +626,18 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
         "arm-input", "source-rebind", "source-generation-start", "source-generation-stop", "source-generation-recover",
         "source-export", "source-export-reconcile",
     }
+    cache_handoff = None
+    if stage == "cache-target" and not cleanup:
+        from devex_clone_cache import preflight_successor
+
+        cache_handoff = preflight_successor(backend, directory, registered_manifest(backend, directory), cache_request, mode=mode)
+        evidence_handoff = cache_handoff is not None
+    published_storage = stage == "storage-target" and mode == "restart" and (directory / "seed-runtime.json").exists()
+    if published_storage:
+        from devex_clone_seed_rebind import published_restart_guard
+
+        published_restart_guard(backend, directory, None)
+        evidence_handoff = True
     if session_cleanup or seed_cleanup or storage_cleanup or evidence_handoff:
         value, environment = registered_manifest(backend, directory), None
     elif cleanup:
@@ -643,6 +655,11 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
     with process_guard(directory, "run-control.guard"):
         try:
             with claim_run_lock(directory) as owner, source_context:
+                if cache_handoff is not None:
+                    if preflight_successor(backend, directory, value, cache_request, mode=mode) != cache_handoff:
+                        raise ValueError("缓存工具后继在登记阶段前变化")
+                if published_storage:
+                    published_restart_guard(backend, directory, None)
                 if stage == "seed-runtime" and mode == "source-generation-start":
                     from devex_clone_seed_generation import preflight as generation_preflight
 

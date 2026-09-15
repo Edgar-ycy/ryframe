@@ -84,6 +84,17 @@ class SeedRebindTests(unittest.TestCase):
         self.assertEqual(owned.call_count, 2)
         self.assertEqual(original, {path: path.read_bytes() for path in self.directory.rglob("*.json")})
 
+    def test_rebind_rejects_other_cache_successor_before_observing_current_storage(self):
+        cache = self.record(54, "cache-target", "restart", self.successor)
+        state = {"attempts": self.prefix + [cache, self.record(55, "seed-runtime", "source-rebind", status="running")]}
+        with self.patches(), patch("reference_fixture_successor._source_with_loader", return_value=self.source), \
+                patch.object(rebind, "load_state", return_value=state), \
+                patch.object(rebind, "history", return_value=[cache]), \
+                patch("devex_clone_cache.seed_history_proof", return_value={"other": "successor"}), \
+                patch.object(rebind, "current_storage_binding") as current, self.assertRaisesRegex(ValueError, "同一缓存工具 successor"):
+            rebind.register_rebind(self.backend, self.directory, Path(self.successor["path"]), 55)
+        current.assert_not_called()
+
     def test_default_resolution_never_probes_current_listeners_or_writes(self):
         receipt, state = self.published_rebind()
         before = {path: path.read_bytes() for path in self.directory.rglob("*.json")}

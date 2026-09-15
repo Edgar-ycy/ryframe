@@ -27,7 +27,8 @@ BEFORE_REBIND = READ_ONLY_AFTER - {("seed-runtime", "source-export"), ("seed-run
 }
 
 
-def history(directory: Path, state: dict, descriptor: dict, *, current: int | None = None) -> list[dict]:
+def history(directory: Path, state: dict, descriptor: dict, *, current: int | None = None,
+            backend: Path | None = None, cache_recovery: bool = False) -> list[dict]:
     attempts = state["attempts"]
     published = [item for item in attempts if item["stage"] == "seed-runtime"
                  and item["mode"] == "source-register" and item["result"] == descriptor
@@ -36,8 +37,33 @@ def history(directory: Path, state: dict, descriptor: dict, *, current: int | No
         raise ValueError("重绑定必须继承唯一已发布 seed 源")
     later = [item for item in attempts if item["number"] > published[0]["number"]]
     rebound, started, generated, recovered, exported, export_origin = False, False, False, False, False, None
+    cache_successor = None
     for item in later:
         operation = (item["stage"], item["mode"])
+        if item["stage"] == "cache-target":
+            if rebound or backend is None or item["mode"] not in {"restart", "resume", "reconcile", "stop", "recover"}:
+                raise ValueError("seed 重绑定后或未经验证的缓存操作不可消费")
+            from devex_clone_cache import seed_history_proof
+
+            successor = seed_history_proof(backend, directory, item, descriptor)
+            if cache_successor is not None and cache_successor != successor:
+                raise ValueError("seed 缓存历史混入不同 successor")
+            cache_successor = successor
+            if item["number"] == current:
+                from devex_clone_run import _require_owned_run
+
+                if item != attempts[-1] or item["status"] != "running":
+                    raise ValueError("缓存工具后继不是当前唯一持锁阶段")
+                _require_owned_run(directory)
+            elif item["status"] != "passed":
+                recovery = [row for row in later if row["number"] > item["number"] and row["stage"] == "cache-target"]
+                if not cache_recovery and (not recovery or not (recovery[-1]["number"] == current or recovery[-1]["status"] == "passed")):
+                    raise ValueError("seed 缓存仍有未核对的失败阶段")
+            continue
+        if operation == ("seed-runtime", "source-rebind") and cache_successor is not None:
+            from devex_clone_cache import registered_cache_binding
+
+            registered_cache_binding(backend, directory)
         if operation == ("seed-runtime", "source-generation-start"):
             if not rebound or started or exported:
                 raise ValueError("source-generation-start 只能在唯一重绑定后执行一次")
@@ -71,6 +97,11 @@ def history(directory: Path, state: dict, descriptor: dict, *, current: int | No
             if rebound or item["status"] != "passed":
                 raise ValueError("seed 源存在重复、冲突或未收尾重绑定")
             rebound = True
+            if cache_successor is not None:
+                from devex_clone_cache import registered_cache_binding
+
+                if read_json(bound_file(backend, item["result"])).get("review_successor") != cache_successor:
+                    raise ValueError("source-rebind 没有消费同一缓存工具 successor")
         elif operation not in (READ_ONLY_AFTER if rebound else BEFORE_REBIND):
             raise ValueError("seed 发布后出现未知写入或重绑定后存储再次换代")
         if item["status"] != "passed":
@@ -131,7 +162,7 @@ def _active_read(state: dict, directory: Path) -> int | None:
 def resolve_storage(backend: Path, descriptor: dict, source: dict, state: dict, *,
                     live_storage: bool, current_storage=current_storage_binding) -> dict:
     directory = source["directory"]
-    later = history(directory, state, descriptor, current=_active_read(state, directory))
+    later = history(directory, state, descriptor, current=_active_read(state, directory), backend=backend)
     records = [item for item in later if (item["stage"], item["mode"]) == ("seed-runtime", "source-rebind")]
     original = source["storage"]["storage"]
     effective, receipt = original, None
@@ -179,9 +210,15 @@ def register_rebind(backend: Path, directory: Path, request_file: Path, number: 
                 or (state["attempts"][-1]["stage"], state["attempts"][-1]["mode"], state["attempts"][-1]["status"])
                 != ("seed-runtime", "source-rebind", "running")):
             raise ValueError("source-rebind 必须由同一登记阶段执行")
-        later = history(directory, state, source["review_successor"]["source_result"], current=number)
+        later = history(directory, state, source["review_successor"]["source_result"], current=number, backend=backend)
         if any(item["mode"] in {"source-rebind", "arm-input"} and item["number"] != number for item in later):
             raise ValueError("已重绑定或发布 arm 的来源不能再次重绑定")
+        cache_records = [item for item in later if item["stage"] == "cache-target"]
+        if cache_records:
+            from devex_clone_cache import seed_history_proof
+
+            if seed_history_proof(backend, directory, cache_records[-1], source["review_successor"]["source_result"]) != request:
+                raise ValueError("source-rebind 必须消费同一缓存工具 successor")
         quiet_producers(backend, source)
         current = current_storage_binding(backend, directory, "target")
         transition(backend, source["storage"]["storage"], current)
@@ -200,12 +237,12 @@ def register_rebind(backend: Path, directory: Path, request_file: Path, number: 
     return result
 
 
-def published_restart_guard(backend: Path, directory: Path, number: int) -> None:
+def published_restart_guard(backend: Path, directory: Path, number: int | None) -> None:
     from devex_clone_seed_source import _registered_source
     from devex_clone_target_binding import pending_request_binding, request_binding
 
     state = load_state(directory)
-    if (not state["attempts"] or state["attempts"][-1]["number"] != number
+    if number is not None and (not state["attempts"] or state["attempts"][-1]["number"] != number
             or (state["attempts"][-1]["stage"], state["attempts"][-1]["mode"], state["attempts"][-1]["status"])
             != ("storage-target", "restart", "running")):
         raise ValueError("发布源存储重启不是当前登记阶段")
@@ -214,7 +251,7 @@ def published_restart_guard(backend: Path, directory: Path, number: int) -> None
     if not records or records[-1]["status"] != "passed":
         raise ValueError("seed 存储重启需要完整发布源")
     descriptor = records[-1]["result"]
-    later = history(directory, state, descriptor, current=number)
+    later = history(directory, state, descriptor, current=number, backend=backend)
     if any(item["mode"] in {"source-rebind", "arm-input"} for item in later):
         raise ValueError("已交接来源禁止再次重启")
 

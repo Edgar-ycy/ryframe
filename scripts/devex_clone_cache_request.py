@@ -12,7 +12,7 @@ from devex_clone_model import exact, local_path
 from devex_clone_run_state import binding
 from devex_clone_source_proof import bound_file
 from devex_clone_storage_request import directory_identity
-from devex_clone_target_binding import external_file, request_binding
+from devex_clone_target_binding import external_file, pending_request_binding, request_binding
 
 FIELDS = {"format_version", "kind", "side", "manifest", "initialized", "target_environment",
           "previous", "process_receipt", "process", "markers"}
@@ -32,11 +32,13 @@ def environment(backend, request):
     return copy.deepcopy(value)
 
 
-def process_binding(backend, request, review, private):
+def process_binding(backend, request, review, private, *, effective=None):
     from devex_clone_cache_process import validate
 
     previous, process = request["previous"], request["process"]
-    validate(process)
+    validate(process, files=effective is None)
+    if effective is not None:
+        validate(effective)
     receipt = read_json(bound_file(backend, request["process_receipt"]))
     old_identity = {key: previous[key] for key in ("pid", "started", "executable")}
     if (receipt.get("format_version") != 1 or receipt.get("role") != "redis"
@@ -53,7 +55,8 @@ def process_binding(backend, request, review, private):
     config = bound_file(backend, previous["configuration"])
     if config != directory / "redis.conf":
         raise ValueError("缓存恢复配置不属于原目录")
-    external_file(previous["wsl"])
+    if effective is None:
+        external_file(previous["wsl"])
     expected = {key: previous[key] for key in ("wsl", "distribution", "executable", "sha256", "configuration", "port")}
     expected.update(scope_id=receipt["scope_id"], launcher=review["tools"]["redis_server"]["path"],
                     previous_identity=old_identity, previous_boot_id=old_linux["boot_id"],
@@ -66,7 +69,7 @@ def process_binding(backend, request, review, private):
         raise ValueError("原 Redis 配置认证与固定目标环境不同")
 
 
-def validate_request(backend: Path, directory: Path, value: dict, request: dict, *, owned_lock_identity=None) -> dict:
+def _validate_request(backend, directory, value, request, bind_request, *, owned_lock_identity=None, effective=None):
     exact(request, FIELDS)
     if (request["format_version"] != 1 or request["kind"] != "devex-clone-cache-restart"
             or request["side"] != "target" or request["manifest"] != binding(directory / "manifest.json")
@@ -74,7 +77,7 @@ def validate_request(backend: Path, directory: Path, value: dict, request: dict,
         raise ValueError("缓存恢复必须属于固定运行的原目标和明确环境")
     exact(request["previous"], REDIS_FIELDS)
     initial, original = initialization_history(backend, bound_file(backend, request["initialized"]), owned_lock_identity)
-    review, selected = request_binding(backend, original)
+    review, selected = bind_request(backend, original)
     if request["previous"] != original["storage"]["redis"] or request["previous"] != initial["generation"]["storage"]["redis"]:
         raise ValueError("缓存恢复原代次与完整初始化历史不符")
     markers = {key: selected["redis"][key] for key in ("namespace", "ownership_key", "ownership_value")}
@@ -89,5 +92,43 @@ def validate_request(backend: Path, directory: Path, value: dict, request: dict,
             or selected["redis"]["url"] != f"redis://127.0.0.1:{request['previous']['port']}/0"):
         raise ValueError("只能原子恢复原初始化明确记录的两个验收标记")
     private = environment(backend, request)
-    process_binding(backend, request, review, private)
+    process_binding(backend, request, review, private, effective=effective)
     return private
+
+
+def validate_request(backend: Path, directory: Path, value: dict, request: dict, *, owned_lock_identity=None) -> dict:
+    return _validate_request(backend, directory, value, request, request_binding,
+                             owned_lock_identity=owned_lock_identity)
+
+
+def successor_process(backend, directory, value, request, successor, *, owned_lock_identity=None):
+    """只从已发布 seed 的正式 successor 推导 WSL/Python；原资源与登记始终不变。"""
+    from devex_clone_seed_source import _registered_source
+    from reference_fixture_environment import validate_current_review_tools
+    from reference_fixture_successor import _source_with_loader
+
+    source = _source_with_loader(backend, successor, live_storage=False, loader=_registered_source)
+    if source["directory"] != directory or source["manifest"] != value:
+        raise ValueError("缓存工具后继必须属于当前已发布 seed 的原 run")
+    relationship = source["review_successor"]
+    review = read_json(bound_file(backend, {key: item for key, item in relationship["successor_review"].items()
+                                          if key != "canonical_sha256"}))
+    tools = validate_current_review_tools(review)
+    original = request["process"]
+    redis, python = tools["redis_server"], tools["redis_python"]
+    if (redis["distribution"] != original["distribution"] or redis["resolved_path"] != original["executable"]
+            or redis["sha256"] != original["sha256"] or python["distribution"] != original["distribution"]
+            or Path(tools["wsl"]["path"]).resolve() != Path(original["wsl"]["path"]).resolve()
+            or python["path"] != original["python"]["path"] or python["resolved_path"] != original["python"]["executable"]):
+        raise ValueError("缓存工具后继不得改变 Redis、发行版或解释器入口")
+    effective = {**copy.deepcopy(original), "wsl": copy.deepcopy(tools["wsl"]),
+                 "python": {"path": python["path"], "executable": python["resolved_path"], "sha256": python["sha256"]}}
+    if effective == original:
+        raise ValueError("缓存工具没有变化，无需登记 successor")
+    def bind_pending(root, target):
+        if target != source["seed_target"]:
+            raise ValueError("缓存初始化不是 successor 冻结的原 seed")
+        return pending_request_binding(root, target, relationship["predecessor_review"])
+    private = _validate_request(backend, directory, value, request, bind_pending,
+                                 owned_lock_identity=owned_lock_identity, effective=effective)
+    return effective, private, source

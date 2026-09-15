@@ -53,11 +53,13 @@ RustFS、Redis 与 API/Worker 的重启分别使用同一运行目录下的 `sto
 
 fresh target 的准备、续作、初始化、复核和只读状态统一从 `cargo xtask check recovery fresh-target ...` 进入。受控工作目录和证据路径可以使用当前后端 `.local-tests` 下的相对路径，入口会先规范化并拒绝链接或越界路径。xtask 固定当前后端目录，不接受调用方传入其他 `--backend-dir`；`status` 不接受 `--write`，其他阶段仍由私有状态机要求显式 `--write` 并核对登记、前后像与控制器身份。
 
-`resume-initialize` 只接受两类可证明边界：reset 已完成后的只读库存采集失败，或 `create_and_reset` 中由 `FileNotFoundError` 中断的唯一迁移命令前缀。迁移前缀必须绑定完整八阶段 reset 报告、原请求和初始化前像，已有命令按固定顺序各有一份成功收据，首个缺失操作必须是只读 `verify`。续作先执行该 `verify`，随后才按同一固定序列运行剩余操作；每条后续操作保存独立 intent、命令收据和 confirmed，原 reset、已有 `up` 与已有 `verify` 均不重放。任何重复收据、越过缺口的收据、首缺写操作、旧续作记录、来源或存储代次漂移都会失败关闭。若登记的参考夹具服务已经正常关闭，`status` 会保留迁移前缀诊断但不提供续作动作；当前生命周期没有从正常关闭直接重启的操作，须先单独扩展生命周期或登记新目标。
+`resume-initialize` 只接受两类可证明边界：reset 已完成后的只读库存采集失败，或 `create_and_reset` 中由 `FileNotFoundError` 中断的唯一迁移命令前缀。迁移前缀必须绑定完整八阶段 reset 报告、原请求和初始化前像，已有命令按固定顺序各有一份成功收据，首个缺失操作必须是只读 `verify`。续作先执行该 `verify`，随后才按同一固定序列运行剩余操作；每条后续操作保存独立 intent、命令收据和 confirmed，原 reset、已有 `up` 与已有 `verify` 均不重放。若首次续作已经确认重启后的 Redis 标记，但首个只读命令因 Windows 长路径未能发布收据，只允许在同一服务代次、相同二进制及完整资源前像下追加一次后继；已确认标记不重复写入，后继再次失败后禁止第三次尝试。重复或越过缺口的收据、首缺写操作、未知写入、来源或未经登记的存储代次变化均失败关闭。服务已停止时先按服务 `status` 给出的合法生命周期操作恢复，再重新读取 fresh target 状态；不能直接重放初始化。
 
 复制成功后，`post-copy` 依次登记数据集、准备目标、停用调度并复验实际记录和对象。性能 seed 在同一账本中核对十一个明确租户的配额，创建固定身份并再次验证权限；身份开始后不再调整配额。API 与 Worker 的启动和停止使用登记收据，任务处理完成且全部生产者停止后才生成新的 seed 导出。任何阶段成功都不能替代最终业务、数据或正式恢复验证。
 
 已发布 seed 的对象存储退出后，先通过同一运行的 `cargo xtask check recovery clone storage --run-dir <运行目录> --side target --operation restart --write` 恢复已登记的固定请求，再执行 `cargo xtask check recovery clone seed-runtime --run-dir <运行目录> --operation source-rebind --request <successor关系文件> --write`。重绑定只追加本地结果，保留原发布与内层登记的字节；新结果绑定原存储、当前成功重启收据和完整阶段历史。数据目录的路径及文件身份、端点、二进制、凭据和请求均须相同，原进程必须已退出，全部业务生产者仍须停止。失败或未收尾阶段先核对，不能重复重绑定或用重绑定掩盖未知写入。
+
+若系统更新改变了 WSL 或其 Python，先通过参考夹具的审阅预检登记当前工具，生成与原 seed 发布结果关联的 successor 关系，再在 `source-rebind` 前执行 `cargo xtask check recovery clone cache --run-dir <原运行目录> --operation restart --request <successor关系文件> --write`。此操作保留原缓存登记，从已验证关系中取得当前启动工具，并用当前工具证明旧进程已退出；Redis 本体、发行版、端口、配置、目录、凭据和命名空间必须保持原值。新的工具与进程证明只追加到原账本，本次仍只重建原登记的两个验收标记。原进程存活、端口占用、工具再次变化或未知写入均阻断启动；`source-rebind` 后不再允许工具换代。
 
 重绑定后，使用最终干净源码的已登记 v2 API/Worker 构建、同源维护构建及原物理源环境发布新运行请求。请求由唯一生产者从旧发布结果、successor 关系与当前 storage rebind 重算，不手写 JSON，也不修改原发布收据。以下命令从协调后端根目录执行；尖括号参数替换为已登记的绝对路径，构建 SHA 使用完整 40 位值。预览不传 `--output` 或 `--write`，不会创建文件、锁、Git index 或对象；实际发布必须同时传入二者，并使用已有父目录中的新路径。
 
