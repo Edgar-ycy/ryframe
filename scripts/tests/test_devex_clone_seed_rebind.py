@@ -242,6 +242,25 @@ class SeedRebindTests(unittest.TestCase):
         with patch.object(rebind, "load_state", return_value=changed), self.assertRaises(ValueError):
             rebind.published_restart_guard(self.backend, self.directory, 53)
 
+    def test_published_restart_guard_accepts_only_verified_retryable_boundary(self):
+        state = {"attempts": [self.prefix[0],
+                              self.record(53, "seed-runtime", "source-rebind", self.successor)]}
+        archive = {"closed": True}
+        later = [{"mode": "source-rebind"}]
+        with self.patches(), patch.object(rebind, "load_state", return_value=state), \
+                patch.object(rebind, "history", return_value=later), \
+                patch("devex_clone_seed_generation_prelaunch.closed", return_value=archive), \
+                patch.object(rebind, "segmented_resume", return_value={"phase": "storage-retryable"}), \
+                patch("devex_clone_seed_source._registered_source", return_value=self.source), \
+                patch.object(rebind, "directory_identity"), patch.object(rebind, "bound_file"):
+            rebind.published_restart_guard(self.backend, self.directory, None)
+        with self.patches(), patch.object(rebind, "load_state", return_value=state), \
+                patch.object(rebind, "history", return_value=later), \
+                patch("devex_clone_seed_generation_prelaunch.closed", return_value=archive), \
+                patch.object(rebind, "segmented_resume", return_value={"phase": "storage-ready"}), \
+                self.assertRaises(ValueError):
+            rebind.published_restart_guard(self.backend, self.directory, None)
+
     def test_rebind_cli_requires_request_and_explicit_write_and_dispatches_same_path(self):
         import devex_clone_run_cli as cli
         import devex_clone_seed_runtime as runtime
@@ -413,6 +432,54 @@ class SegmentedSourceResumeTests(unittest.TestCase):
         live_proof.assert_called_once_with(
             self.backend, self.directory, cache, self.descriptor,
             frozen_successor=None)
+
+    def test_fully_closed_failed_storage_restart_allows_only_one_adjacent_retry(self):
+        base = [self.recovery, self.cache_stop, self.failed_stop, self.storage_stop]
+        failed = self.record(8, "storage-target", "restart", "failed",
+                             error="CalledProcessError")
+        running = self.record(9, "storage-target", "restart", "running")
+        passed = self.record(9, "storage-target", "restart", "passed", {"retry": True})
+        retried_storage = {**self.new_storage, "attempt": 9, "restart_result": {"retry": True}}
+        evidence = (self.failure, self.controller)
+        with self.patches(), patch.object(
+                segment, "_verify_failed_storage_restart", return_value=evidence) as verified:
+            retryable = segment.segmented_resume(
+                self.backend, self.directory, base + [failed], self.archive, self.descriptor)
+            self.assertEqual(retryable["phase"], "storage-retryable")
+            self.assertEqual([row["number"] for row in retryable["records"]], [5, 6, 7, 8])
+            verified.assert_called_once_with(
+                self.backend, self.directory, failed, {"storage": True}, require_idle=True)
+
+        with self.patches(), patch.object(
+                segment, "_verify_failed_storage_restart", return_value=evidence), \
+                patch("devex_clone_run._require_owned_run") as owned:
+            active = segment.segmented_resume(
+                self.backend, self.directory, base + [failed, running], self.archive,
+                self.descriptor, current=9)
+        self.assertEqual(active["phase"], "storage-running")
+        owned.assert_called_once_with(self.directory)
+
+        with self.patches(), patch.object(
+                segment, "_verify_failed_storage_restart", return_value=evidence), \
+                patch.object(segment, "registered_storage_binding", return_value=retried_storage):
+            complete = segment.segmented_resume(
+                self.backend, self.directory, base + [failed, passed], self.archive,
+                self.descriptor)
+        self.assertEqual(complete["phase"], "storage-ready")
+        self.assertEqual(complete["storage"], retried_storage)
+
+        invalid = [
+            base + [failed, self.record(9, "cache-target", "restart", "passed")],
+            base + [failed, self.record(9, "storage-target", "restart", "failed",
+                                        error="CalledProcessError")],
+            base + [failed, {**running, "number": 10}],
+        ]
+        with self.patches(), patch.object(
+                segment, "_verify_failed_storage_restart", return_value=evidence):
+            for attempts in invalid:
+                with self.subTest(attempts=attempts[-1]), self.assertRaises(ValueError):
+                    segment.segmented_resume(
+                        self.backend, self.directory, attempts, self.archive, self.descriptor)
 
     def test_incomplete_reordered_repeated_or_early_generation_is_rejected(self):
         base = [self.recovery, self.cache_stop, self.failed_stop, self.storage_stop]

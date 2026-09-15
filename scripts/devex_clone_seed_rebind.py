@@ -300,9 +300,9 @@ def published_restart_guard(backend: Path, directory: Path, number: int | None) 
     segment = (segmented_resume(backend, directory, state["attempts"], archive, descriptor,
                                 current=number) if archive is not None else None)
     rebound = any(item["mode"] == "source-rebind" for item in later)
-    expected_phase = "storage-running" if number is not None else "stopped"
+    expected_phases = {"storage-running"} if number is not None else {"stopped", "storage-retryable"}
     if (any(item["mode"] == "arm-input" for item in later)
-            or rebound and (segment is None or segment["phase"] != expected_phase)):
+            or rebound and (segment is None or segment["phase"] not in expected_phases)):
         raise ValueError("已交接来源只能从封存停机边界执行唯一存储重启")
 
     def validate_history(root: Path, target: dict) -> tuple[dict, dict]:

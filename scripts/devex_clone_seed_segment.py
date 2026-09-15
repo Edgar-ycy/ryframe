@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+import subprocess
 
 from devex_clone_capture import read_json
 from devex_clone_model import exact, linked, local_path
 from devex_clone_run_state import binding
-from devex_clone_source_proof import bound_file, require_recorded_producer_stopped
+from devex_clone_source_proof import bound_file, require_closed_port, require_recorded_producer_stopped
 from devex_clone_storage import registered_storage_binding
-from devex_clone_storage_request import directory_identity
+from devex_clone_storage_request import directory_identity, identity, validate_request
 from restore_reference_plan import plan_hash
 
 
@@ -25,6 +26,17 @@ _FAILED_STOP_CALLS = (
     ("scripts/devex_clone_source_proof.py", "require_closed_port"),
     ("scripts/process_sockets.py", "verify_windows_port_idle"),
 )
+_FAILED_RESTART_CALLS = (
+    ("scripts/devex_clone_run.py", "execute"),
+    ("scripts/devex_clone_storage.py", "execute_storage"),
+    ("scripts/devex_clone_storage_process.py", "start"),
+    ("scripts/devex_clone_storage_process.py", "actual_arguments"),
+    ("scripts/devex_clone_target_storage.py", "actual_windows_argv"),
+)
+_FAILED_RESTART_FILES = {
+    "intent.json", "spawned.json", "process.json", "launch.json",
+    "failure-cleanup.json", "stdout.log", "stderr.log",
+}
 
 
 def _attempt_result(backend: Path, directory: Path, attempt: dict) -> dict:
@@ -175,6 +187,79 @@ def _verify_failed_storage_stop(backend: Path, directory: Path, attempt: dict,
     return failure_descriptor, controller
 
 
+def _verify_failed_storage_restart(backend: Path, directory: Path, attempt: dict,
+                                   expected_request: dict, *, require_idle: bool) -> tuple[dict, dict]:
+    """只接受创建身份完整、已精确回收且没有额外输出的单个启动失败。"""
+    from devex_clone_storage import controller_binding, registration
+    from devex_clone_storage_process import inspect_attempt
+
+    if (attempt["status"] != "failed" or attempt["result"] is not None
+            or attempt["error_type"] != "CalledProcessError"):
+        raise ValueError("分段续作只接受已精确回收的存储身份查询失败")
+    controller = controller_binding(backend, directory, attempt)
+    failure_path = local_path(backend, str(directory / f"failure-{attempt['number']:04d}.json"))
+    failure_descriptor = binding(failure_path)
+    failure = read_json(bound_file(backend, failure_descriptor))
+    exact(failure, {"format_version", "kind", "attempt", "stage", "mode", "error_type", "frames", "controller"})
+    calls = tuple((frame.get("file"), frame.get("function")) for frame in failure["frames"])
+    if (failure["format_version"] != 1 or failure["kind"] != "devex-stage-failure"
+            or failure["attempt"] != attempt["number"] or failure["stage"] != "storage-target"
+            or failure["mode"] != "restart" or failure["error_type"] != attempt["error_type"]
+            or calls != _FAILED_RESTART_CALLS
+            or any(set(frame) != {"file", "function", "line"} or type(frame["line"]) is not int
+                   or frame["line"] <= 0 for frame in failure["frames"])
+            or failure["controller"] != controller):
+        raise ValueError("存储重启失败不是固定的启动后身份查询调用链")
+    controller_value = read_json(bound_file(backend, controller))
+    owner = controller_value["owner"]
+    exact(owner, {"format_version", "identity", "directory", "manifest_sha256"})
+    if (owner["format_version"] != 1 or owner["directory"] != str(directory)
+            or owner["manifest_sha256"] != binding(directory / "manifest.json")["sha256"]):
+        raise ValueError("失败存储重启的控制器不属于固定运行")
+    owner_identity = identity(owner["identity"])
+    request, descriptor = registration(backend, directory, "target")
+    if descriptor != expected_request:
+        raise ValueError("失败存储重启没有消费相同固定请求")
+    private = validate_request(backend, directory, read_json(directory / "manifest.json"), request, "target")
+    data_path = directory_identity(backend, request["data_directory"])
+    output = local_path(backend, str(directory / "storage-target" / f"a{attempt['number']:04d}"))
+    children = list(output.iterdir()) if output.is_dir() and not linked(output) else []
+    if ({path.name for path in children} != _FAILED_RESTART_FILES
+            or any(linked(path) or not path.is_file() for path in children)):
+        raise ValueError("失败存储重启留下未知输出或缺少完整启动收据")
+    frozen = {path.name: binding(path) for path in children}
+    observed = inspect_attempt(backend, output, descriptor, controller, attempt["number"])
+    if (observed is None or observed["state"] != "recorded"
+            or observed["process_receipt"] != binding(output / "process.json")
+            or observed["launch_receipt"] != binding(output / "launch.json")):
+        raise ValueError("失败存储重启缺少完整创建身份和启动参数")
+    spawned = read_json(output / "spawned.json")
+    cleanup = read_json(output / "failure-cleanup.json")
+    exact(spawned, {"pid", "identity_pending"})
+    exact(cleanup, {"intent", "identity", "pid", "returncode"})
+    process = identity(observed["identity"])
+    if (spawned != {"pid": process["pid"], "identity_pending": True}
+            or cleanup != {"intent": observed["intent"], "identity": process,
+                           "pid": process["pid"], "returncode": 0}):
+        raise ValueError("失败存储重启的创建、回收与退出身份不一致")
+    require_recorded_producer_stopped(owner_identity, run=subprocess.run, counter_run=subprocess.run)
+    require_recorded_producer_stopped(process, run=subprocess.run, counter_run=subprocess.run)
+    if require_idle:
+        for key in ("api_url", "console_url"):
+            require_closed_port(request[key])
+    current_children = list(output.iterdir()) if output.is_dir() and not linked(output) else []
+    if ({path.name for path in current_children} != _FAILED_RESTART_FILES
+            or any(linked(path) or not path.is_file() for path in current_children)
+            or frozen != {path.name: binding(path) for path in current_children}
+            or binding(failure_path) != failure_descriptor
+            or binding(Path(controller["path"])) != controller
+            or registration(backend, directory, "target") != (request, descriptor)
+            or validate_request(backend, directory, read_json(directory / "manifest.json"), request, "target") != private
+            or directory_identity(backend, request["data_directory"]) != data_path):
+        raise ValueError("失败存储重启证据、请求或数据目录在核验期间变化")
+    return failure_descriptor, controller
+
+
 def _owned_segment_attempt(directory: Path, attempts: list, attempt: dict, current: int | None) -> None:
     if (current != attempt["number"] or attempt != attempts[-1] or attempt["status"] != "running"
             or attempt["result"] is not None or attempt["error_type"] is not None):
@@ -298,17 +383,29 @@ def segmented_resume(backend: Path, directory: Path, attempts: list, archive: di
     if cache["request"] == storage["request"]:
         raise ValueError("缓存与对象存储登记意外共享请求")
     phase, current_storage, current_cache = "stopped", None, None
+    restart_failure, retry_offset = None, 0
     rest = suffix[3:]
-    if rest:
-        restart = rest[0]
+    if rest and tuple(rest[0].get(key) for key in ("stage", "mode", "status")) == (
+            "storage-target", "restart", "failed"):
+        failed_restart = rest[0]
+        _same_product_source(reference, failed_restart)
+        _require_clean_source(failed_restart["sources"])
+        if failed_restart["number"] != suffix[2]["number"] + 1:
+            raise ValueError("失败对象存储重启不是停机后的相邻阶段")
+        restart_failure = _verify_failed_storage_restart(
+            backend, directory, failed_restart, storage["request"],
+            require_idle=len(rest) == 1 and current is None)
+        phase, retry_offset = "storage-retryable", 1
+    if len(rest) > retry_offset:
+        restart = rest[retry_offset]
         _same_product_source(reference, restart)
         _require_clean_source(restart["sources"])
-        if (restart["number"] != suffix[2]["number"] + 1
+        if (restart["number"] != suffix[2]["number"] + retry_offset + 1
                 or (restart["stage"], restart["mode"]) != ("storage-target", "restart")):
             raise ValueError("分段停机后必须先执行唯一对象存储重启")
         if restart["status"] == "running":
             _owned_segment_attempt(directory, attempts, restart, current)
-            if len(rest) != 1:
+            if len(rest) != retry_offset + 1:
                 raise ValueError("未完成对象存储重启后出现其他阶段")
             phase = "storage-running"
         elif restart["status"] == "passed" and restart["error_type"] is None:
@@ -323,11 +420,12 @@ def segmented_resume(backend: Path, directory: Path, attempts: list, archive: di
             phase = "storage-ready"
         else:
             raise ValueError("分段对象存储重启失败或未收尾")
-    if len(rest) > 1:
-        cache_restart = rest[1]
+    cache_index = retry_offset + 1
+    if len(rest) > cache_index:
+        cache_restart = rest[cache_index]
         _same_product_source(reference, cache_restart)
         _require_clean_source(cache_restart["sources"])
-        if (phase != "storage-ready" or cache_restart["number"] != rest[0]["number"] + 1
+        if (phase != "storage-ready" or cache_restart["number"] != rest[cache_index - 1]["number"] + 1
                 or (cache_restart["stage"], cache_restart["mode"]) != ("cache-target", "restart")):
             raise ValueError("对象存储后必须执行唯一缓存重启")
         from devex_clone_cache import registered_cache_binding, seed_history_proof
@@ -343,7 +441,7 @@ def segmented_resume(backend: Path, directory: Path, attempts: list, archive: di
             raise ValueError("缓存重启没有继承封存请求的同一 successor")
         if cache_restart["status"] == "running":
             _owned_segment_attempt(directory, attempts, cache_restart, current)
-            if len(rest) != 2:
+            if len(rest) != cache_index + 1:
                 raise ValueError("未完成缓存重启后出现其他阶段")
             phase = "cache-running"
         else:
@@ -355,7 +453,7 @@ def segmented_resume(backend: Path, directory: Path, attempts: list, archive: di
                     or current_cache["request"] != cache["request"]):
                 raise ValueError("分段缓存重启没有绑定同一成功阶段和固定请求")
             phase = "ready"
-    tail = rest[2:]
+    tail = rest[cache_index + 1:]
     if tail and phase != "ready":
         raise ValueError("分段资源恢复完成前不能执行生成、发布或其他控制动作")
     cleanup_at = next((index for index, row in enumerate(tail)
@@ -365,14 +463,16 @@ def segmented_resume(backend: Path, directory: Path, attempts: list, archive: di
         _same_product_source(reference, row)
         _require_clean_source(row["sources"])
     exported = _verify_generation_tail(
-        lifecycle, rest[1]["number"] if len(rest) > 1 else suffix[2]["number"])
+        lifecycle, rest[cache_index]["number"] if len(rest) > cache_index else suffix[2]["number"])
     cleanup_records = ()
     if cleanup:
         phase = _verify_cleanup(
             backend, directory, attempts, cleanup, exported, reference, descriptor,
             archive["receipt"]["review_successor"], cache["request"], storage["request"], current)
         cleanup_records = tuple(cleanup)
-    if binding(Path(failure[0]["path"])) != failure[0] or binding(Path(failure[1]["path"])) != failure[1]:
+    evidence = failure + (() if restart_failure is None else restart_failure)
+    if any(binding(Path(item["path"])) != item for item in evidence):
         raise ValueError("分段续作核验期间失败或控制器证据变化")
-    return {"phase": phase, "records": tuple(suffix[:3 + min(len(rest), 2)]) + cleanup_records,
+    resource_count = min(len(rest), cache_index + 1)
+    return {"phase": phase, "records": tuple(suffix[:3 + resource_count]) + cleanup_records,
             "storage": current_storage, "cache": current_cache}
