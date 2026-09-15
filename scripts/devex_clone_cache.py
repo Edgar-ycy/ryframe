@@ -121,6 +121,8 @@ def preflight_successor(backend, directory, value, filename=None, *, mode="resta
     if filename is not None:
         supplied = read_json(local_path(backend, str(filename)))
         if supplied == request:
+            if any((directory / STAGE).glob("a*/tool-successor.json")):
+                raise ValueError("缓存工具已换代，不能重新使用原工具请求")
             return None
         if supplied.get("kind") != "devex-clone-seed-review-successor":
             raise ValueError("缓存请求只接受原登记或正式 seed successor")

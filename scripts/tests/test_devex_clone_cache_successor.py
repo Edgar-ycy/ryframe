@@ -173,6 +173,9 @@ class SuccessorLifecycleTests(CacheFixture):
                 with self.assertRaisesRegex(ValueError, "同一 successor"):
                     cache.preflight_successor(self.backend, self.directory, self.value, Path(other["path"]))
                 self.assertEqual(before, {path: path.read_bytes() for path in self.directory.rglob("*") if path.is_file()})
+                original = self.directory / cache.STAGE / "request.json"
+                with self.assertRaises(ValueError):
+                    cache.preflight_successor(self.backend, self.directory, self.value, original)
 
     def test_failure_before_start_can_recover_with_registered_current_tools(self):
         with self.patches():
