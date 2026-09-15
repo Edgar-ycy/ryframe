@@ -403,24 +403,35 @@ def run_export(backend: Path, directory: Path, value: dict, environment: Environ
     from devex_clone_export_verify import verify_source_export
     from devex_clone_source import export_source
 
+    controller = Environments(dict(os.environ), {})
+
+    def control_environment():
+        if dict(os.environ) not in (controller.values["source"], environment.values["source"]):
+            raise ValueError("导出控制或服务环境在检查前变化")
+        return controller.use("source")
+
     if mode == "reconcile":
         if value["source_export"] is not None:
             raise ValueError("固定清单已有外部 export，无需采用 attempt 候选")
-        return reconcile(backend, directory, value, environment, number, sources)
+        return reconcile(backend, directory, value, environment, number, sources,
+                         control_environment=control_environment)
     if mode == "resume":
         if value["source_export"] is not None:
             raise ValueError("固定清单已有外部 export，无需恢复 attempt 候选")
-        return resume(backend, directory, value, environment, number, sources)
+        return resume(backend, directory, value, environment, number, sources,
+                      control_environment=control_environment)
     if mode != "run":
         raise ValueError("源导出模式无效")
-    with environment.use("source"):
+    with control_environment(), environment.use("source"):
         if value["source_export"] is None:
             reject_reexport(backend, directory, number)
-        storage = source_storage_binding(backend, directory, value)
+        with control_environment():
+            storage = source_storage_binding(backend, directory, value)
         if value["source_export"] is None:
             # 失败仅留下本地证据；新尝试保存独立短目录，固定主清单不换代。
             output = prepare_attempt(backend, directory, value, number, sources, storage)
-            export_source(backend, bound_file(backend, value["source_request"]), output)
+            export_source(backend, bound_file(backend, value["source_request"]), output,
+                          control_environment=control_environment)
             exported = binding(output / "export.json")
         else:
             exported = value["source_export"]
@@ -428,8 +439,9 @@ def run_export(backend: Path, directory: Path, value: dict, environment: Environ
         if value["source_export"] is None:
             intent = read_json(directory / f"export-{number:04d}.intent.json")
             record_verified(directory, number, intent, exported, verified)
-        if source_storage_binding(backend, directory, value) != storage:
-            raise ValueError("源 storage provenance 在导出前后发生变化")
+        with control_environment():
+            if source_storage_binding(backend, directory, value) != storage:
+                raise ValueError("源 storage provenance 在导出前后发生变化")
     return {"status": "export_verified", "export": exported,
             "logical_inventory_sha256": verified["export"]["logical_inventory_sha256"],
             "remote_writes": 0, "restore_qualified": False}

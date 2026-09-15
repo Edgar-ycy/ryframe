@@ -23,8 +23,8 @@ def now() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
 
-def unchanged_generation(backend: Path, request: dict, original: dict, run) -> dict:
-    actual = verify_generation(backend, request, run)
+def unchanged_generation(backend: Path, request: dict, original: dict, run, *, control_environment=None) -> dict:
+    actual = verify_generation(backend, request, run, control_environment=control_environment)
     if actual != original:
         raise ValueError("源导出期间源码、构建、配置、producer 或工具代次变化")
     return actual
@@ -39,7 +39,7 @@ def unchanged_exports(output: Path, dumps: list, objects: list) -> None:
             raise ValueError("源导出本地文件在完整验证前变化")
 
 
-def export_source(backend: Path, request_path: Path, output: Path, run=subprocess.run) -> dict:
+def export_source(backend: Path, request_path: Path, output: Path, run=subprocess.run, *, control_environment=None) -> dict:
     output = local_path(backend, str(output), new=True)
     request_path = local_path(backend, str(request_path))
     if not output.parent.is_dir() or output == request_path:
@@ -51,7 +51,7 @@ def export_source(backend: Path, request_path: Path, output: Path, run=subproces
         request = read_json(request_path)
         write_json(output / "request.json", request)
         stage = "source_generation_before"
-        before = verify_generation(backend, request, run)
+        before = verify_generation(backend, request, run, control_environment=control_environment)
         execution = execution_backend(backend, request)
         write_json(output / "generation-before.json", before)
         tools = ExternalTools({"source": request["source"], "tools": request["tools"]}, output, run)
@@ -62,12 +62,12 @@ def export_source(backend: Path, request_path: Path, output: Path, run=subproces
         verify_migrations(tools, execution, before["maintenance"], "migrate-before")
         schema_before = schema_snapshot(tools, models, "before")
         write_json(output / "schema-before.json", {"databases": schema_before})
-        unchanged_generation(backend, request, before, run)
+        unchanged_generation(backend, request, before, run, control_environment=control_environment)
         stage, quiesced = "inventory_before", now()
         inventory_before = capture_inventory(tools, execution, request, before, models, "before", quiesced)
         stage = "dump_databases"
         dumps = dump_databases(tools, inventory_before, models)
-        unchanged_generation(backend, request, before, run)
+        unchanged_generation(backend, request, before, run, control_environment=control_environment)
         stage = "source_row_state_before_objects"
         schedules_before = validate_dump_state(tools, models, dumps, inventory_object_index(inventory_before))
         stage = "capture_objects"
@@ -77,7 +77,7 @@ def export_source(backend: Path, request_path: Path, output: Path, run=subproces
         if schedules != schedules_before:
             raise ValueError("源调度行在对象抓取前后变化，拒绝不同 SQL 快照")
         stage = "inventory_after"
-        unchanged_generation(backend, request, before, run)
+        unchanged_generation(backend, request, before, run, control_environment=control_environment)
         inventory_after = capture_inventory(tools, execution, request, before, models, "after", quiesced)
         if logical_inventory(inventory_before) != logical_inventory(inventory_after):
             raise ValueError("源前后逻辑表摘要、placement 或对象清单变化，拒绝拼接不同快照")
@@ -89,7 +89,7 @@ def export_source(backend: Path, request_path: Path, output: Path, run=subproces
         write_json(output / "schema-after.json", {"databases": schema_after})
         if schema_before != schema_after:
             raise ValueError("源 schema 在导出期间变化")
-        after = unchanged_generation(backend, request, before, run)
+        after = unchanged_generation(backend, request, before, run, control_environment=control_environment)
         write_json(output / "generation-after.json", after)
         unchanged_exports(output, dumps, objects)
         if file_digest(request_path) != request_digest:

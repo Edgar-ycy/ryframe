@@ -12,6 +12,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import devex_clone_inventory as inventory
+import devex_clone_tools
+from process_environment import Environments
 from devex_clone_transfer import DatabaseObservation
 from devex_clone_export import schema_models
 from devex_clone_model import plan_hash
@@ -214,6 +216,34 @@ class InventoryTests(unittest.TestCase):
     def test_ambient_environment_is_not_forwarded_to_explicit_cli_or_mysql(self):
         with patch.dict(os.environ, {"APP_SCOPE_ID": "other-scope", "MYSQL_PWD": "implicit-password"}):
             self.capture()
+        self.assertEqual(self.cli_count, 8)
+
+    def test_maintenance_versions_use_control_environment_and_resources_keep_service_environment(self):
+        controller = {**os.environ, "CARGO_BUILD_JOBS": "4", "CARGO_TARGET_DIR": "D:/fixture-target",
+                      "CARGO_HOME": "D:/fixture-cargo", "RUSTUP_HOME": "D:/fixture-rustup"}
+        environments = Environments(self.environment, controller)
+        versions = {"cargo": "cargo fixture", "rustc": "rustc fixture"}
+        self.maintenance["toolchain"] = versions
+        version_calls = []
+
+        def run(command, **kwargs):
+            if command[0] in versions:
+                self.assertNotIn("env", kwargs)
+                self.assertEqual(dict(os.environ), controller)
+                version_calls.append(command)
+                return subprocess.CompletedProcess(command, 0, versions[command[0]].encode(), b"")
+            self.assertFalse(any(name.startswith(("CARGO_", "RUSTUP_")) for name in kwargs["env"]))
+            return self.run_external(command, **kwargs)
+
+        self.tools.run = run
+        with patch.object(inventory, "verify_tools", wraps=devex_clone_tools.verify), \
+                patch.object(devex_clone_tools, "verify_evidence", return_value=self.maintenance), \
+                patch.object(devex_clone_tools, "source_binding", return_value=self.maintenance["source"]), \
+                patch.object(devex_clone_tools, "reusable_artifact_source", return_value=None), environments.use("source"):
+            inventory.capture_side_inventory(self.backend, "source", self.tools, self.maintenance_file, self.output,
+                environment=self.environment, control_environment=lambda: environments.use("target"))
+            self.assertEqual(dict(os.environ), self.environment)
+        self.assertGreaterEqual(len(version_calls), 4)
         self.assertEqual(self.cli_count, 8)
 
     def test_linked_config_is_rejected_before_external_calls(self):

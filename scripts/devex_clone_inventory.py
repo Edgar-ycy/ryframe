@@ -139,7 +139,8 @@ def configuration(backend: Path, environment: Mapping[str, str], selected: dict,
 
 
 def capture_side_inventory(backend: Path, side: str, tools: ExternalTools, maintenance_receipt: Path,
-                           output: Path, *, environment: Mapping[str, str], evidence_root: Path | None = None) -> SideInventory:
+                           output: Path, *, environment: Mapping[str, str], evidence_root: Path | None = None,
+                           control_environment=None) -> SideInventory:
     """完整采集单侧四目标两次；成功只表示本次只读稳定，不证明停止历史或 fresh 资格。"""
     backend = backend.resolve(strict=True)
     output = local_path(evidence_root or backend, str(output), new=True)
@@ -149,7 +150,8 @@ def capture_side_inventory(backend: Path, side: str, tools: ExternalTools, maint
     stage = "inputs"
     published = None
     try:
-        capture = _Capture(backend, side, tools, maintenance_receipt, output, environment, evidence_root=evidence_root)
+        capture = _Capture(backend, side, tools, maintenance_receipt, output, environment,
+                           evidence_root=evidence_root, control_environment=control_environment)
         stage = "binding_before"
         before, maintenance = capture.binding()
         write_json(output / "binding-before.json", before)
@@ -239,8 +241,10 @@ def verify_side_inventory(backend: Path, descriptor: dict, selected: dict, execu
 
 class _Capture:
     def __init__(self, backend: Path, side: str, tools: ExternalTools, maintenance: Path,
-                 output: Path, environment: Mapping[str, str], *, evidence_root: Path | None = None):
+                 output: Path, environment: Mapping[str, str], *, evidence_root: Path | None = None,
+                 control_environment=None):
         self.backend, self.side, self.output, self.original = backend, side, output, tools
+        self.control_environment = control_environment
         self.evidence_root = evidence_root or backend
         self.original_environment, self.environment = environment, dict(environment)
         if any(not isinstance(key, str) or not isinstance(value, str) for key, value in self.environment.items()):
@@ -315,7 +319,11 @@ class _Capture:
         validate_source(self.evidence_root, self.selected)
         physical = source_binding(self.backend, {"source": self.selected}, self.environment, evidence_root=self.evidence_root)
         config = configuration(self.backend, self.environment, self.selected, evidence_root=self.evidence_root)
-        maintenance = verify_tools(self.backend, self.maintenance, self.run)
+        if self.control_environment is None:
+            maintenance = verify_tools(self.backend, self.maintenance, self.run)
+        else:
+            with self.control_environment():
+                maintenance = verify_tools(self.backend, self.maintenance, self.original.run)
         self.tools.command("mysql")
         return {"side": self.side, "tools_plan_sha256": plan_hash(self.plan), "configuration": config,
                 "physical": physical, "maintenance": self.maintenance_digest,

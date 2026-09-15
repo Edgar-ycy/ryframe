@@ -1,9 +1,9 @@
 """源导出发布中断恢复的离线状态机回归；不连接真实服务。"""
 from __future__ import annotations
 
-from contextlib import contextmanager
 import copy
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -17,14 +17,7 @@ import devex_clone_run as run
 import devex_clone_run_state as state
 from devex_clone_capture import read_json, write_json
 from restore_reference_plan import plan_hash
-
-
-class Environment:
-    @contextmanager
-    def use(self, side):
-        if side != "source":
-            raise AssertionError(side)
-        yield
+from process_environment import Environments
 
 
 class ExportRecoveryTests(unittest.TestCase):
@@ -49,7 +42,7 @@ class ExportRecoveryTests(unittest.TestCase):
         self.sources = {"fingerprints": {"product": self.product}, "tools": "fixture"}
         self.storage = {"kind": "fixture-storage", "sha256": "b" * 64}
         self.generation = {"source": "fixture-generation"}
-        self.environment = Environment()
+        self.environment = Environments(dict(os.environ), dict(os.environ))
         self.export_value = {"request": self.request,
                              "logical_inventory_sha256": "c" * 64,
                              "databases": [{"key": "control"}],
@@ -104,10 +97,46 @@ class ExportRecoveryTests(unittest.TestCase):
     def fail_current(self, number, result=None):
         state.finish(self.directory, number, result=result, error=RuntimeError("outer failure"))
 
+    def test_reconcile_and_resume_forward_control_environment_without_exposing_it_to_resources(self):
+        self.prepare_origin()
+        controller = {**dict(os.environ), "CARGO_BUILD_JOBS": "4"}
+        service = {"APP_ENV": "fixture-service"}
+        environment = Environments(service, controller)
+        def control_environment():
+            if dict(os.environ) not in (controller, service):
+                raise ValueError("fixture ambient changed")
+            return environment.use("target")
+        def generation(*_args, control_environment):
+            self.assertEqual(dict(os.environ), service)
+            with control_environment():
+                self.assertEqual(dict(os.environ), controller)
+            self.assertEqual(dict(os.environ), service)
+            return self.generation
+        def storage(*_args):
+            self.assertEqual(dict(os.environ), service)
+            return self.storage
+        def verify(_backend, exported):
+            self.assertEqual(dict(os.environ), service)
+            return self.verified(exported)
+        with patch.dict(os.environ, controller, clear=True), \
+                patch("devex_clone_export_verify.verify_source_export", side_effect=verify), \
+                patch("devex_clone_storage.current_storage_binding", side_effect=storage), \
+                patch.object(recovery, "verify_generation", side_effect=generation):
+            for mode, operation in (("reconcile", recovery.reconcile), ("resume", recovery.resume)):
+                number = self.start(mode)
+                with patch.dict(os.environ, {"CARGO_BUILD_JOBS": "unregistered"}), \
+                        self.assertRaisesRegex(ValueError, "fixture ambient changed"):
+                    operation(self.backend, self.directory, self.value, environment, number,
+                              self.sources, control_environment=control_environment)
+                result = operation(self.backend, self.directory, self.value, environment, number,
+                                   self.sources, control_environment=control_environment)
+                self.assertEqual(dict(os.environ), controller)
+                state.finish(self.directory, number, result=result)
+
     def test_complete_export_followed_by_outer_failure_forbids_reexport(self):
         number = self.start("run")
 
-        def export_source(_backend, _request, output):
+        def export_source(_backend, _request, output, *, control_environment=None):
             output.mkdir()
             write_json(output / "export.json", self.export_value)
 

@@ -198,7 +198,7 @@ class GenerationControlTests(unittest.TestCase):
         self.assertEqual(result["remote_writes"], 0)
 
     def test_known_tree_recovery_still_stops_when_before_image_capture_fails(self):
-        def capture(*args):
+        def capture(*args, **kwargs):
             if args[-2].name == "recover-before":
                 raise TimeoutError("full image unavailable")
             return self.f.capture(*args)

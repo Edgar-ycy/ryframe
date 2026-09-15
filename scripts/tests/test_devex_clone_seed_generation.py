@@ -57,6 +57,7 @@ class GenerationTests(unittest.TestCase):
         self.output = self.directory / "g0054"
         self.runtime = Mock(execution=self.backend, selected=self.source["request"]["source"], runtime=self.output / "runtime")
         self.runtime.environment.return_value = nullcontext({})
+        self.runtime.control_environment.side_effect = lambda: nullcontext({})
         self.runtime.prepare.side_effect = self.prepare_runtime
         self.runtime.finish.side_effect = lambda: write_json(self.output / "runtime-evidence.json", self.source["generation"])
         self.runtime.running_evidence.side_effect = lambda: write_json(self.output / "running-evidence.json", self.source["generation"])
@@ -81,7 +82,7 @@ class GenerationTests(unittest.TestCase):
             write_json(self.runtime.runtime / f"{role}.json", {"identity": {"role": role}})
         write_json(self.output / "producers.json", {"processes": [{"name": "ancestor", "identity": {"old": True}}]})
 
-    def generation_evidence(self, _backend, request, _run):
+    def generation_evidence(self, _backend, request, _run, **_kwargs):
         return {"source": read_json(Path(self.build["path"]))["sources"]["full"]["source"]["snapshot"],
                 "worktree_fingerprint": request["worktree_fingerprint"], "request_sha256": plan_hash(request),
                 "runtime": read_json(Path(request["runtime"]["path"])),
@@ -91,7 +92,7 @@ class GenerationTests(unittest.TestCase):
                 "physical_binding": self.source["generation"]["physical_binding"],
                 "external_writers_discovered": False, "clone_verified": False, "restore_qualified": False}
 
-    def capture(self, *_args):
+    def capture(self, *_args, **_kwargs):
         output = _args[-2]
         output.mkdir()
         image = copy.deepcopy(self.image)
@@ -259,6 +260,9 @@ class GenerationTests(unittest.TestCase):
                 generation.verify_running_source(self.backend, descriptor, live=False)
 
     def test_registered_checkpoint_holds_one_run_lock_and_expires_after_exit(self):
+        import os
+        from process_environment import Environments, configured
+
         @contextmanager
         def lock(directory):
             path = directory / "run.lock"
@@ -268,13 +272,23 @@ class GenerationTests(unittest.TestCase):
             finally:
                 path.rmdir()
 
-        facts = {"directory": self.directory, "same": "generation"}
-        with patch.object(generation, "verify_running_source", return_value=facts), \
+        facts = {"directory": self.directory, "same": "generation", "environment": {"environment": {}}}
+        controller = {**os.environ, "CARGO_BUILD_JOBS": "4", "RUSTUP_HOME": "D:/fixture-rustup"}
+
+        def verified(*_args, **_kwargs):
+            self.assertEqual(dict(os.environ), controller)
+            return facts
+
+        with patch.dict(os.environ, controller, clear=True), patch.object(generation, "verify_running_source", side_effect=verified), \
                 patch("devex_clone_run_state.run_lock", side_effect=lock) as acquire, \
                 patch("devex_clone_run._require_owned_run") as owner:
             with generation.registered_running_source(self.backend, self.registration) as checkpoint:
                 self.assertTrue((self.directory / "run.lock").is_dir())
                 self.assertEqual(checkpoint(), facts)
+                service = configured({})
+                with Environments(service, {}).use("source"):
+                    self.assertEqual(checkpoint(), facts)
+                    self.assertEqual(dict(os.environ), service)
             acquire.assert_called_once_with(self.directory)
             self.assertGreaterEqual(owner.call_count, 3)
             with self.assertRaisesRegex(ValueError, "离开控制区间"):

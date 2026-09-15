@@ -2,6 +2,7 @@
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+import os
 import sys
 import unittest
 from unittest.mock import patch
@@ -14,9 +15,51 @@ import devex_clone_seed_generation_control as control
 import test_devex_clone_seed_generation as fixtures
 from devex_clone_capture import read_json, write_json
 from devex_clone_run_state import binding
+import restore_build
+import source_fingerprints
+from test_source_fingerprints import build_receipt, inventory
 
 
 class GenerationRuntimeTests(unittest.TestCase):
+    def test_checkpoint_verifies_real_build_context_in_control_environment(self):
+        frozen = inventory()
+        build = build_receipt(frozen)
+        observed = []
+        controller = {"PATH": os.environ["PATH"], "CARGO_BUILD_JOBS": "4", "CARGO_TARGET_DIR": "D:/fixture-target",
+                      "CARGO_HOME": "D:/fixture-cargo", "RUSTUP_HOME": "D:/fixture-rustup", "RUSTUP_TOOLCHAIN": "stable"}
+
+        def version(_root, _run, command):
+            observed.append(dict(os.environ))
+            return "rustc fixture\nhost: x86_64-pc-windows-msvc" if command[0] == "rustc" else "cargo fixture"
+
+        with patch.dict(os.environ, controller, clear=True), patch.object(restore_build, "_version", side_effect=version), \
+                patch.object(source_fingerprints, "capture_inventory", return_value=frozen), \
+                patch("devex_clone_run._require_owned_run"), patch.object(runtime, "verify_build_artifacts"), \
+                patch.object(runtime, "verify_tools", return_value={"source": frozen["source"]}), \
+                patch.object(runtime, "current_storage_binding", return_value=self.f.request["current_storage"]), \
+                patch.object(runtime, "source_binding", return_value=self.f.source["generation"]["physical_binding"]), \
+                patch.object(runtime, "verify_api_address"):
+            build["build"] = restore_build.build_context(self.f.backend)
+            path = Path(self.f.build["path"])
+            path.write_text(__import__("json").dumps(build), encoding="utf-8")
+            self.f.request["backend_build"] = binding(path)
+            self.f.source["request"]["source"]["api_url"] = "http://127.0.0.1:18210"
+            instance = runtime.GenerationRuntime(self.f.backend, self.f.directory, self.output, self.f.request, self.f.source, None)
+            observed.clear()
+            with instance.environment():
+                self.assertNotIn("CARGO_BUILD_JOBS", os.environ)
+                instance.checkpoint()
+                self.assertNotIn("CARGO_BUILD_JOBS", os.environ)
+                instance.build["build"]["environment"]["sha256"] = "0" * 64
+                with self.assertRaisesRegex(ValueError, "有效环境"):
+                    instance.checkpoint()
+            self.assertEqual(dict(os.environ), controller)
+            self.assertTrue(observed)
+            self.assertTrue(all(value == controller for value in observed))
+            with patch.dict(os.environ, {"CARGO_BUILD_JOBS": "8"}), self.assertRaisesRegex(ValueError, "切换前变化"):
+                with instance.environment():
+                    self.fail("不能先安装服务环境再掩盖控制环境漂移")
+
     def setUp(self):
         self.f = fixtures.GenerationTests()
         self.f.setUp()

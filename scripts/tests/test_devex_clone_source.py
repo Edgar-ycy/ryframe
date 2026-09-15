@@ -2,6 +2,7 @@
 import copy
 import errno
 import json
+import os
 from pathlib import Path
 import re
 import socket
@@ -12,11 +13,14 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import devex_clone_source as source
 import devex_clone_source_proof as proof
+import devex_provenance
+import restore_build
 from devex_clone_export import schema_snapshot
 from devex_clone_model import schema_fingerprints
 from devex_clone_source_fixture import SourceFixture
 from devex_clone_jobs_fixture import add_cleanup
 from restore_reference_io import ExternalTools
+from process_environment import Environments, configured
 
 
 class SourceExportTests(unittest.TestCase):
@@ -27,6 +31,49 @@ class SourceExportTests(unittest.TestCase):
         item = self.fixture
         item.inventory_count = 0
         return source.export_source(item.backend, item.request_path, item.output, item)
+
+    def test_generation_keeps_real_build_context_in_control_and_resources_in_service(self):
+        item = self.fixture
+        controller = {**dict(os.environ), "CARGO_BUILD_JOBS": "4", "CARGO_TARGET_DIR": str(item.local / "target")}
+        service = configured(item.environment, controller)
+        self.assertFalse(any(name.startswith("CARGO_") for name in service))
+        environments = Environments(service, controller)
+        phases = []
+        def version(_root, _run, command):
+            return "rustc fixture\nhost: fixture-target" if command[0] == "rustc" else "cargo fixture"
+        def maintenance(*_args):
+            self.assertEqual(dict(os.environ), controller)
+            phases.append("tools")
+            return copy.deepcopy(item.maintenance)
+        def runtime(*_args):
+            self.assertEqual(dict(os.environ), service)
+            phases.append("runtime")
+            return copy.deepcopy(item.runtime)
+        def resource_run(command, **kwargs):
+            self.assertEqual(dict(os.environ), service)
+            self.assertFalse(any(name.startswith("CARGO_") for name in kwargs.get("env", {})))
+            return item(command, **kwargs)
+        with patch.object(restore_build, "_version", side_effect=version):
+            item.build["build"] = restore_build.build_context(item.backend, environment=controller)
+            item.request["backend_build"] = item.bind(Path(item.request["backend_build"]["path"]), item.build)
+            item.save_request()
+            with patch.object(proof, "verify_source", devex_provenance.verify_source), \
+                    patch("source_fingerprints.capture_inventory", return_value=item.build["sources"]["full"]), \
+                    patch.object(proof, "verify_tools", side_effect=maintenance), \
+                    patch.object(proof, "verify_runtime", side_effect=runtime), environments.use("source"):
+                with self.assertRaisesRegex(ValueError, "构建命令、工具链或有效环境"):
+                    proof.verify_generation(item.backend, item.request, item)
+                value = proof.verify_generation(item.backend, item.request, item,
+                                                 control_environment=lambda: environments.use("target"))
+                self.assertEqual(dict(os.environ), service)
+                self.assertEqual(value["source"], item.snapshot)
+                exported = source.export_source(item.backend, item.request_path, item.output, resource_run,
+                                                control_environment=lambda: environments.use("target"))
+                self.assertEqual(dict(os.environ), service)
+                self.assertEqual(exported["status"], "source_export_captured")
+                self.assertEqual(exported["remote_writes"], 0)
+        self.assertEqual(phases[::2], ["tools"] * (len(phases) // 2))
+        self.assertEqual(phases[1::2], ["runtime"] * (len(phases) // 2))
 
     def failed(self, stage=None):
         with self.assertRaises(Exception):

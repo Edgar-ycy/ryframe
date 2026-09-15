@@ -1,6 +1,7 @@
 """从统一运行的固定 export attempt 中只读核对并显式发布完整源导出。"""
 from __future__ import annotations
 
+from contextlib import nullcontext
 import copy
 from pathlib import Path
 import subprocess
@@ -179,20 +180,21 @@ def _adoptions(backend: Path, directory: Path, *, before: int) -> list[tuple[dic
 
 
 def _verify_candidate(backend: Path, directory: Path, value: dict, number: int,
-                      sources: dict, environment, *, seed: bool = False) -> tuple[dict, dict, dict, dict, dict]:
+                      sources: dict, environment, *, seed: bool = False,
+                      control_environment=None) -> tuple[dict, dict, dict, dict, dict]:
     from devex_clone_export_verify import verify_source_export
     from devex_clone_storage import current_storage_binding
 
     attempt, intent, intent_binding, exported = _only_candidate(backend, directory, value, number, seed=seed)
     if _product(intent["execution_source"]) != _product(sources):
         raise ValueError("原 export attempt 与当前恢复执行的产品源码指纹不同")
-    with environment.use("source"):
+    with (control_environment() if control_environment is not None else nullcontext()), environment.use("source"):
         storage_before = current_storage_binding(backend, directory, "target" if seed else "source")
         if storage_before != intent["source_storage"]:
             raise ValueError("源 storage provenance 与原 export attempt 不同")
         verified = verify_source_export(backend, exported)
         request = read_json(bound_file(backend, value["source_request"]))
-        current_generation = verify_generation(backend, request, subprocess.run)
+        current_generation = verify_generation(backend, request, subprocess.run, control_environment=control_environment)
         storage_after = current_storage_binding(backend, directory, "target" if seed else "source")
     if (verified["binding"] != exported or verified["request"] != request
             or verified["export"]["request"] != value["source_request"]
@@ -207,9 +209,9 @@ def _verify_candidate(backend: Path, directory: Path, value: dict, number: int,
 
 
 def reconcile(backend: Path, directory: Path, value: dict, environment, number: int,
-              sources: dict) -> dict:
+              sources: dict, *, control_environment=None) -> dict:
     attempt, intent, intent_binding, exported, summary = _verify_candidate(
-        backend, directory, value, number, sources, environment)
+        backend, directory, value, number, sources, environment, control_environment=control_environment)
     result = {"status": "export_reconciled", "origin_attempt": attempt["number"],
               "origin_controller": intent["controller"], "origin_intent": intent_binding,
               "export": exported, "source_request": value["source_request"],
@@ -223,14 +225,14 @@ def reconcile(backend: Path, directory: Path, value: dict, environment, number: 
 
 
 def resume(backend: Path, directory: Path, value: dict, environment, number: int,
-           sources: dict) -> dict:
+           sources: dict, *, control_environment=None) -> dict:
     adoptions = [(attempt, result) for attempt, result in _adoptions(backend, directory, before=number)
                  if attempt["status"] == "passed" and attempt["mode"] == "reconcile"]
     if not adoptions:
         raise ValueError("export resume 前必须先完成显式只读 reconcile")
     adopted_attempt, adopted = adoptions[-1]
     attempt, intent, intent_binding, exported, summary = _verify_candidate(
-        backend, directory, value, number, sources, environment)
+        backend, directory, value, number, sources, environment, control_environment=control_environment)
     expected = {"status": "export_reconciled", "origin_attempt": attempt["number"],
                 "origin_controller": intent["controller"], "origin_intent": intent_binding,
                 "export": exported, "source_request": value["source_request"],

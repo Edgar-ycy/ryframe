@@ -1,6 +1,7 @@
 """seed 单次导出、明确失败采用及双侧共享发布的离线回归。"""
 from contextlib import ExitStack, nullcontext
 import copy
+import os
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -59,7 +60,7 @@ class SeedExportTests(unittest.TestCase):
         return {"export": read_json(Path(descriptor["path"])), "binding": descriptor,
                 "request": self.source["request"], "generation": self.generation, "proof_files": {}}
 
-    def capture(self, backend, request, output):
+    def capture(self, backend, request, output, *, control_environment=None):
         self.assertEqual(backend, self.backend)
         self.assertEqual(request, Path(self.request["path"]))
         output.mkdir()
@@ -91,6 +92,69 @@ class SeedExportTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             export.preflight(self.directory, "source-export")
         self.assertEqual(before, state.load_state(self.directory))
+
+    def test_export_separates_service_environment_and_final_source_review(self):
+        number = self.start("source-export")
+        controller = {**dict(os.environ), "CARGO_BUILD_JOBS": "4", "APP_ENV": "controller"}
+        self.source["environment"]["environment"] = {"APP_ENV": "fixture-service"}
+        phases = []
+        def registered(*_args, **_kwargs):
+            self.assertEqual(dict(os.environ), controller)
+            phases.append("registered")
+            return copy.deepcopy(self.source)
+        def capture(backend, request, output, *, control_environment):
+            self.assertEqual(os.environ["APP_ENV"], "fixture-service")
+            self.assertFalse(any(key.startswith("CARGO_") for key in os.environ))
+            service = dict(os.environ)
+            with control_environment():
+                self.assertEqual(dict(os.environ), controller)
+            self.assertEqual(dict(os.environ), service)
+            os.environ["CARGO_BUILD_JOBS"] = "unexpected"
+            try:
+                with self.assertRaisesRegex(ValueError, "未登记的环境变化"):
+                    with control_environment():
+                        self.fail("未登记环境不得被控制环境替换掩盖")
+            finally:
+                del os.environ["CARGO_BUILD_JOBS"]
+            phases.append("capture")
+            self.capture(backend, request, output)
+        def verified(_backend, descriptor):
+            self.assertEqual(os.environ["APP_ENV"], "fixture-service")
+            self.assertNotIn("CARGO_BUILD_JOBS", os.environ)
+            phases.append("verified")
+            return self.verified(descriptor)
+        with patch.dict(os.environ, controller, clear=True), self.context(), \
+                patch.object(export, "_source", side_effect=registered), \
+                patch.object(export, "export_source", side_effect=capture), \
+                patch.object(export, "verify_source_export", side_effect=verified):
+            result = export.execute_export(self.backend, self.directory, number)
+            self.assertEqual(dict(os.environ), controller)
+        self.assertEqual(phases, ["registered", "capture", "verified", "registered"])
+        state.finish(self.directory, number, result=result)
+
+    def test_failed_reconcile_restores_controller_after_resource_verification(self):
+        self.complete(failed=True)
+        number = self.start("source-export-reconcile")
+        controller = {**dict(os.environ), "CARGO_BUILD_JOBS": "4", "APP_ENV": "controller"}
+        self.source["environment"]["environment"] = {"APP_ENV": "fixture-service"}
+        def generation(*_args, control_environment):
+            self.assertEqual(os.environ["APP_ENV"], "fixture-service")
+            self.assertNotIn("CARGO_BUILD_JOBS", os.environ)
+            service = dict(os.environ)
+            with control_environment():
+                self.assertEqual(dict(os.environ), controller)
+            self.assertEqual(dict(os.environ), service)
+            raise ValueError("fixture generation changed")
+        with patch.dict(os.environ, controller, clear=True), self.context(), \
+                patch.object(export, "export_source") as capture, \
+                patch("devex_clone_export_verify.verify_source_export", side_effect=lambda _, item: self.verified(item)), \
+                patch("devex_clone_storage.current_storage_binding", return_value=self.storage), \
+                patch.object(recovery, "verify_generation", side_effect=generation):
+            with self.assertRaisesRegex(ValueError, "fixture generation changed"):
+                export.execute_export(self.backend, self.directory, number, reconcile=True)
+            self.assertEqual(dict(os.environ), controller)
+        capture.assert_not_called()
+        state.finish(self.directory, number, error=RuntimeError("fixture generation changed"))
 
     def test_both_arms_bind_one_export_and_each_export_stage_only_verifies(self):
         _, result, descriptor = self.complete()

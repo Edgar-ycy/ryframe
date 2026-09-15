@@ -161,12 +161,19 @@ class GenerationRuntime:
         self.build = read_json(bound_file(backend, request["backend_build"]))
         self.private = read_json(bound_file(backend, request["source_environment"]))
         exact(self.private, {"environment"})
-        self.environments = Environments(configured(self.private["environment"]), {})
+        self.environments = Environments(configured(self.private["environment"]), dict(os.environ))
         self.operations = {role: uuid.uuid4().hex for role in ROLES}
         self.started, self.ready, self.contract = {}, {}, None
 
     def environment(self):
+        if dict(os.environ) not in self.environments.values.values():
+            raise ValueError("源代次的控制或服务环境在切换前变化")
         return self.environments.use("source")
+
+    def control_environment(self):
+        if dict(os.environ) not in self.environments.values.values():
+            raise ValueError("源代次的控制或服务环境在检查前变化")
+        return self.environments.use("target")
 
     def preflight(self):
         registered_inputs(self.backend, self.request, reconstruct=True)
@@ -188,21 +195,23 @@ class GenerationRuntime:
         _require_owned_run(self.directory)
         for field in ("backend_build", "source_environment"):
             bound_file(self.backend, self.request[field])
-        fingerprint = self.build["sources"]["full"]["source"]["worktree_fingerprint"]
-        verify_source(self.execution, self.build, fingerprint)
-        verify_build_artifacts(self.build)
-        maintenance = verify_tools(self.execution, bound_file(self.execution, self.request["maintenance_build"]), self.run)
-        if maintenance["source"] != self.build["sources"]["full"]["source"]:
-            raise ValueError("源后继维护工具与 v2 产品构建必须绑定同一完整执行来源")
-        if (current_storage_binding(self.backend, self.directory, "target") != self.request["current_storage"]
-                or source_binding(self.execution, {"source": self.selected}, evidence_root=self.backend) != self.source["generation"]["physical_binding"]):
-            raise ValueError("源后继运行期间存储代次或物理配置发生变化")
-        verify_api_address(self.execution, self.selected["api_url"])
-        if self.contract is not None:
-            generation_directory(self.output)
-            if verify_runtime(self.execution, self.runtime) != self.contract:
-                raise ValueError("源后继运行配置发生变化")
-            validate_process_tree_directory(self.runtime, self.operations, extra_files=EXTRA_FILES)
+        with self.control_environment():
+            fingerprint = self.build["sources"]["full"]["source"]["worktree_fingerprint"]
+            verify_source(self.execution, self.build, fingerprint)
+            verify_build_artifacts(self.build)
+            maintenance = verify_tools(self.execution, bound_file(self.execution, self.request["maintenance_build"]), self.run)
+            if maintenance["source"] != self.build["sources"]["full"]["source"]:
+                raise ValueError("源后继维护工具与 v2 产品构建必须绑定同一完整执行来源")
+        with self.environment():
+            if (current_storage_binding(self.backend, self.directory, "target") != self.request["current_storage"]
+                    or source_binding(self.execution, {"source": self.selected}, evidence_root=self.backend) != self.source["generation"]["physical_binding"]):
+                raise ValueError("源后继运行期间存储代次或物理配置发生变化")
+            verify_api_address(self.execution, self.selected["api_url"])
+            if self.contract is not None:
+                generation_directory(self.output)
+                if verify_runtime(self.execution, self.runtime) != self.contract:
+                    raise ValueError("源后继运行配置发生变化")
+                validate_process_tree_directory(self.runtime, self.operations, extra_files=EXTRA_FILES)
 
     def prepare(self):
         self.runtime.mkdir()

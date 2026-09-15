@@ -323,6 +323,12 @@ def execute_source_verification(
 
     start = binding(start_path)
     initial = verify_running_source(backend, start, live=True)
+    control_environments = Environments(dict(os.environ), configured(initial["environment"]["environment"]))
+
+    def control_environment():
+        if dict(os.environ) not in control_environments.values.values():
+            raise ValueError("源验证的控制或服务环境在检查前变化")
+        return control_environments.use("source")
     expected_directory = initial["output"] / "verification"
     if output.parent != expected_directory or expected_directory.exists():
         raise ValueError("来源验收必须使用尚不存在的同代 verification 目录")
@@ -334,6 +340,8 @@ def execute_source_verification(
                 raise ValueError("取得控制锁后 source generation 代次变化")
             expected_directory.mkdir()
             (expected_directory / "audit").mkdir()
+            if dict(os.environ) != control_environments.values["source"]:
+                raise ValueError("源验证控制环境在安装服务配置前变化")
             environment = configured(facts["environment"]["environment"])
             with Environments(environment, {}).use("source"):
                 resources = _resources(backend, facts, expected_directory / "audit", run)
@@ -345,6 +353,7 @@ def execute_source_verification(
                 before = capture_image(
                     backend, facts["execution"], facts["selected"], facts["request"],
                     facts["source"], environment, expected_directory / "before", run,
+                    control_environment=control_environment,
                 )
                 before_value = verify_image(
                     backend, before, facts["selected"], facts["source"]["request"],
@@ -380,6 +389,7 @@ def execute_source_verification(
                 after = capture_image(
                     backend, facts["execution"], facts["selected"], facts["request"],
                     facts["source"], environment, expected_directory / "after", run,
+                    control_environment=control_environment,
                 )
                 after_value = verify_image(
                     backend, after, facts["selected"], facts["source"]["request"],

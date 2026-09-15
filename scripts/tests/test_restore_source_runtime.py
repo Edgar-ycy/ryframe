@@ -325,7 +325,7 @@ class SourceRuntimeTests(unittest.TestCase):
             return self.process_identity
         return None
 
-    def capture(self, _backend, _execution, _selected, _request, _source, _environment, output, _run):
+    def capture(self, _backend, _execution, _selected, _request, _source, _environment, output, _run, **_kwargs):
         output.mkdir()
         image = self.before_image if output.name == "before" else self.after_image
         write_json(output / "image.json", {"image": image})

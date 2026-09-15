@@ -1,6 +1,7 @@
 """开发复制源的显式配置、构建、进程代次与停止状态证明。"""
 from __future__ import annotations
 
+from contextlib import nullcontext
 import errno
 import json
 import os
@@ -263,13 +264,14 @@ def producer_identities(request: dict, registry: dict, processes: dict, *, run) 
     return sorted(registry["processes"], key=lambda item: item["name"])
 
 
-def verify_generation(backend: Path, request: dict, run) -> dict:
+def verify_generation(backend: Path, request: dict, run, *, control_environment=None) -> dict:
     validate_request(backend, request)
     execution = execution_backend(backend, request)
     build = read_json(bound_file(backend, request["backend_build"]))
-    snapshot = verify_source(execution, build, request["worktree_fingerprint"])
-    verify_build_artifacts(build)
-    maintenance = verify_tools(execution, bound_file(execution, request["maintenance_build"]), run)
+    with control_environment() if control_environment is not None else nullcontext():
+        snapshot = verify_source(execution, build, request["worktree_fingerprint"])
+        verify_build_artifacts(build)
+        maintenance = verify_tools(execution, bound_file(execution, request["maintenance_build"]), run)
     if (maintenance["source"]["snapshot"] != snapshot
             or maintenance["source"]["worktree_fingerprint"] != request["worktree_fingerprint"]):
         raise ValueError("维护工具与源实际后端构建不属于同一完整源码")

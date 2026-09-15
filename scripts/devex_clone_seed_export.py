@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import copy
+import os
 from pathlib import Path
 
 from devex_clone_capture import read_json
 from devex_clone_export_recovery import (SUMMARY_FIELDS, _intent, _verified_seal, _verify_candidate, complete_summary,
                                          prepare_attempt, record_verified)
 from devex_clone_export_verify import verify_source_export
-from process_environment import Environments
+from process_environment import Environments, configured
 from devex_clone_model import exact
 from devex_clone_run_state import binding, load_state
 from devex_clone_source import export_source
@@ -77,19 +78,28 @@ def execute_export(backend: Path, directory: Path, number: int, *, reconcile: bo
     source = _source(backend, directory, live=True)
     if source.get("source_generation") is None:
         raise ValueError("seed export 必须消费已发布 source-generation，不得拼接旧 C52 与独立构建")
-    environment = Environments(source["environment"]["environment"], source["environment"]["environment"])
+    # source 只供服务读源；target 保留入口控制环境用于源码、工具和最终来源复核。
+    controller = dict(os.environ)
+    service = configured(source["environment"]["environment"], controller)
+    environment = Environments(service, controller)
+    def control_environment():
+        if dict(os.environ) not in (controller, service):
+            raise ValueError("seed 导出控制环境切换前发现未登记的环境变化")
+        return environment.use("target")
     value = {"source_request": source["source_request"]}
     storage = source["storage"]["storage"]
-    with environment.use("source"):
+    with control_environment(), environment.use("source"):
         if reconcile:
             origin, intent, intent_binding, exported, summary = _verify_candidate(
-                backend, directory, value, number, current["sources"], environment, seed=True)
+                backend, directory, value, number, current["sources"], environment, seed=True,
+                control_environment=control_environment)
             if intent["source_storage"] != storage:
                 raise ValueError("原 seed export 候选不属于同一冻结存储")
             origin_number = origin["number"]
         else:
             output = prepare_attempt(backend, directory, value, number, current["sources"], storage, seed=True)
-            export_source(backend, bound_file(backend, value["source_request"]), output)
+            export_source(backend, bound_file(backend, value["source_request"]), output,
+                          control_environment=control_environment)
             exported = binding(output / "export.json")
             verified = verify_source_export(backend, exported)
             if verified["request"] != source["request"] or verified["export"]["request"] != value["source_request"]:
@@ -98,6 +108,7 @@ def execute_export(backend: Path, directory: Path, number: int, *, reconcile: bo
             record_verified(directory, number, intent, exported, verified)
             summary = complete_summary(verified)
             origin_number, intent_binding = number, binding(directory / f"export-{number:04d}.intent.json")
+    with control_environment():
         if _source(backend, directory, live=True) != source or _active(directory, number, mode)[0] != current:
             raise ValueError("seed 导出期间发布来源、存储、生产者或执行阶段变化")
     result = {"status": "seed_source_export_published", "origin_attempt": origin_number,

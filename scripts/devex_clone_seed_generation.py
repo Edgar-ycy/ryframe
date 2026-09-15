@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 from contextlib import contextmanager
+import os
 from pathlib import Path
 import subprocess
 
@@ -166,8 +167,10 @@ def verify_running_source(backend: Path, start_descriptor: dict, *, live: bool) 
 def registered_running_source(backend: Path, start_descriptor: dict):
     from devex_clone_run import _require_owned_run
     from devex_clone_run_state import run_lock
+    from process_environment import Environments, configured
 
     initial = verify_running_source(backend, start_descriptor, live=True)
+    environments = Environments(dict(os.environ), configured(initial["environment"]["environment"]))
     directory = initial["directory"]
     active = True
     with run_lock(directory):
@@ -180,7 +183,10 @@ def registered_running_source(backend: Path, start_descriptor: dict):
             if not active or linked(lock) or (lock.stat().st_dev, lock.stat().st_ino) != identity:
                 raise ValueError("源验证控制锁身份变化或 checkpoint 已离开控制区间")
             _require_owned_run(directory)
-            current = verify_running_source(backend, start_descriptor, live=True)
+            if dict(os.environ) not in environments.values.values():
+                raise ValueError("源验证控制或服务环境发生变化")
+            with environments.use("source"):
+                current = verify_running_source(backend, start_descriptor, live=True)
             if current != initial:
                 raise ValueError("源验证期间运行代次、来源或前像绑定变化")
             return current
@@ -213,9 +219,10 @@ def execute_generation(backend: Path, directory: Path, request_path: Path, numbe
     runtime = GenerationRuntime(backend, directory, output, request, source, run)
 
     def checkpoint():
-        require_current_execution_source(backend, coordinator_source)
-        if inputs(backend, directory, request_path, number) != original or binding(request_path) != descriptor:
-            raise ValueError("source-generation 执行期间来源、请求或账本前缀发生变化")
+        with runtime.control_environment():
+            require_current_execution_source(backend, coordinator_source)
+            if inputs(backend, directory, request_path, number) != original or binding(request_path) != descriptor:
+                raise ValueError("source-generation 执行期间来源、请求或账本前缀发生变化")
         runtime.checkpoint()
 
     runtime.preflight()
@@ -225,7 +232,7 @@ def execute_generation(backend: Path, directory: Path, request_path: Path, numbe
         runtime.prepare()
         checkpoint()
         before = capture_image(backend, runtime.execution, runtime.selected, request, source,
-                               environment, output / "before", run)
+                               environment, output / "before", run, control_environment=runtime.control_environment)
         lineage = derive_dataset_lineage(backend, source, before,
             verify_image(backend, before, runtime.selected, source["request"], source_registration=request["source_registration"]))
         write_json(output / "dataset-lineage.json", lineage)
@@ -234,7 +241,7 @@ def execute_generation(backend: Path, directory: Path, request_path: Path, numbe
             runtime.start(checkpoint)
             checkpoint()
             running = capture_image(backend, runtime.execution, runtime.selected, request, source,
-                                    environment, output / "running", run)
+                                    environment, output / "running", run, control_environment=runtime.control_environment)
             if read_json(Path(before["path"]))["image"] != read_json(Path(running["path"]))["image"]:
                 raise ValueError("源启动完整数据库、保留表、placement、对象或 Redis 前后像变化；禁止发布或重放")
             runtime.running_evidence()
@@ -245,7 +252,7 @@ def execute_generation(backend: Path, directory: Path, request_path: Path, numbe
                 runtime.stop()
                 checkpoint()
                 after = capture_image(backend, runtime.execution, runtime.selected, request, source,
-                                      environment, output / "after", run)
+                                      environment, output / "after", run, control_environment=runtime.control_environment)
                 if read_json(Path(before["path"]))["image"] != read_json(Path(after["path"]))["image"]:
                     failure.add_note("失败启动完整后像发生变化，禁止重放")
             except BaseException as error:

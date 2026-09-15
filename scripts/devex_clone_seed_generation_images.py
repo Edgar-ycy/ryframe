@@ -1,6 +1,7 @@
 """复用四目标、正式库存和对象采集器，保留源运行前后完整只读像。"""
 from __future__ import annotations
 
+from contextlib import nullcontext
 from pathlib import Path
 import datetime as dt
 import hashlib
@@ -21,7 +22,7 @@ from restore_reference_plan import BUCKETS, plan_hash
 
 
 def capture_image(backend: Path, execution: Path, selected: dict, request: dict, source: dict,
-                  environment: dict, output: Path, run) -> dict:
+                  environment: dict, output: Path, run, *, control_environment=None) -> dict:
     output.mkdir()
     predecessor = source["request"]
     target = source["seed_target"]
@@ -34,7 +35,8 @@ def capture_image(backend: Path, execution: Path, selected: dict, request: dict,
     redis = resources.redis_state(initialized=True, sentinel=True)
     tools = ExternalTools({"source": selected, "tools": predecessor["tools"]}, output, run)
     maintenance_path = bound_file(execution, request["maintenance_build"])
-    maintenance = verify_tools(execution, maintenance_path, run)
+    with control_environment() if control_environment else nullcontext():
+        maintenance = verify_tools(execution, maintenance_path, run)
     build = read_json(bound_file(backend, request["backend_build"]))
     generation = {"source": build["sources"]["full"]["source"]["snapshot"], "maintenance": maintenance}
     export_request = {**predecessor, "source": selected}
@@ -43,7 +45,7 @@ def capture_image(backend: Path, execution: Path, selected: dict, request: dict,
     verify_migrations(tools, execution, maintenance, "migrations")
     schema = schema_snapshot(tools, models, "before")
     captured = capture_side_inventory(execution, "source", tools, maintenance_path, output / "databases",
-                                      environment=environment, evidence_root=backend)
+                                      environment=environment, evidence_root=backend, control_environment=control_environment)
     inventories = {key: read_json(output / f"databases/after-target-{key}.json") for key in KEYS}
     owners = CaptureReader(tools, "source", output).owners("owners-before")
     inventory = capture_inventory(tools, execution, export_request, generation, models, "before", observed_at, observed=True)

@@ -75,19 +75,20 @@ def execute_stop(backend: Path, directory: Path, receipt_path: Path, number: int
         try:
             checkpoint()
             stop_before = capture_image(backend, runtime.execution, runtime.selected, request, source,
-                                        environment, output / "stop-before", run)
+                                        environment, output / "stop-before", run, control_environment=runtime.control_environment)
             if read_json(Path(stop_before["path"]))["image"] != verified["after"]["image"]:
                 raise ValueError("source verify 后出现未披露写入；停止并保留现场，禁止发布或重放")
             checkpoint()
-            if verify_source_runtime(backend, source_runtime, live=True) != verified:
-                raise ValueError("停止前 source-runtime 验证事实变化")
+            with runtime.control_environment():
+                if verify_source_runtime(backend, source_runtime, live=True) != verified:
+                    raise ValueError("停止前 source-runtime 验证事实变化")
         except BaseException as error:
             failure = error
         try:
             runtime.stop()
             checkpoint()
             after = capture_image(backend, runtime.execution, runtime.selected, request, source,
-                                  environment, output / "after", run)
+                                  environment, output / "after", run, control_environment=runtime.control_environment)
             if stop_before is None or read_json(Path(stop_before["path"]))["image"] != read_json(Path(after["path"]))["image"]:
                 raise ValueError("停止前后完整数据库、对象或 Redis 像变化，禁止发布或重放")
         except BaseException as error:
@@ -97,13 +98,15 @@ def execute_stop(backend: Path, directory: Path, receipt_path: Path, number: int
             raise
         if failure is not None:
             raise failure
-        verified_after = verify_source_runtime(backend, source_runtime, live=False)
+        with runtime.control_environment():
+            verified_after = verify_source_runtime(backend, source_runtime, live=False)
         if verified_after != verified:
             raise ValueError("停止后 source-runtime 静态证明与停止前不同")
         runtime.finish()
         effective = source_request(source, request, runtime.runtime)
         write_json(output / "source-request.json", effective)
-        write_json(output / "generation-verified.json", verify_generation(backend, effective, run))
+        write_json(output / "generation-verified.json", verify_generation(
+            backend, effective, run, control_environment=runtime.control_environment))
         checkpoint()
     return {"status": "seed_source_generation_published", "request": facts["receipt"]["request"],
             **{key: request[key] for key in ("source_registration", "source_rebind", "review_successor", "current_storage")},
@@ -205,20 +208,22 @@ def execute_recover(backend: Path, directory: Path, request_path: Path, number: 
         failure, before, baseline = None, None, None
         try:
             before = capture_image(backend, runtime.execution, runtime.selected, request, source,
-                                   environment, output / "recover-before", run)
-            baseline, original = _recovery_baseline(backend, output, prefix, verifier, source, runtime.selected)
+                                   environment, output / "recover-before", run, control_environment=runtime.control_environment)
+            with runtime.control_environment():
+                baseline, original = _recovery_baseline(backend, output, prefix, verifier, source, runtime.selected)
             if read_json(Path(before["path"]))["image"] != original["image"]:
                 raise ValueError("START 运行像或已验证会话后像之后存在未知写入；仅回收树，禁止声明零漂移或重放")
         except BaseException as error:
             failure = error
         if _active(directory, number, RECOVER) != prefix or binding(request_path) != request_descriptor:
             raise ValueError("回收前控制阶段或请求发生变化")
-        if _verifier_stopped(backend, directory, prefix) != verifier:
-            raise ValueError("回收前来源验收生产者退出事实变化")
+        with runtime.control_environment():
+            if _verifier_stopped(backend, directory, prefix) != verifier:
+                raise ValueError("回收前来源验收生产者退出事实变化")
         try:
             runtime.stop()
             after = capture_image(backend, runtime.execution, runtime.selected, request, source,
-                                  environment, output / "recover-after", run)
+                                  environment, output / "recover-after", run, control_environment=runtime.control_environment)
             if before is None or read_json(Path(before["path"]))["image"] != read_json(Path(after["path"]))["image"]:
                 raise ValueError("源回收前后完整像变化，保留现场并禁止发布或重放")
         except BaseException as error:
@@ -231,8 +236,9 @@ def execute_recover(backend: Path, directory: Path, request_path: Path, number: 
         stopped = status(backend, directory)
         if any(row["state"] != "stopped" for row in stopped["roles"].values()):
             raise ValueError("源回收后缺少完整双角色退出证明")
-        if _verifier_stopped(backend, directory, prefix) != verifier:
-            raise ValueError("回收后来源验收生产者退出事实变化")
+        with runtime.control_environment():
+            if _verifier_stopped(backend, directory, prefix) != verifier:
+                raise ValueError("回收后来源验收生产者退出事实变化")
         bound_file(backend, baseline)
     return {"status": "seed_source_generation_abandoned", "request": request_descriptor, "intent": observed["intent"],
             "baseline": baseline, "source_verifier": verifier,
