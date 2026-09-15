@@ -8,10 +8,10 @@ use crate::{
         FixtureSuccessorArm, FixtureSuccessorCommand, FixtureSuccessorGeneration,
         FixtureSuccessorRelationship,
     },
-    local_test_path::LocalTestPathKind,
+    local_test_path::{LocalTestPathKind, validate_absolute_path},
 };
 
-use super::{insert_optional_path, insert_path, output_value, path_value};
+use super::{insert_path, output_value, path_text, path_value};
 
 pub(super) fn fields(command: &FixtureSuccessorCommand, root: &Path) -> Result<Map<String, Value>> {
     match command {
@@ -65,13 +65,18 @@ fn generation(options: &FixtureSuccessorGeneration, root: &Path) -> Result<Map<S
             LocalTestPathKind::ExistingFile,
         )?;
     }
-    insert_path(
-        &mut fields,
-        "source_backend",
-        &options.source_backend,
-        root,
-        LocalTestPathKind::ExistingDirectory,
-    )?;
+    for (name, value) in [
+        ("source_backend", Some(&options.source_backend)),
+        ("product_backend", options.product_backend.as_ref()),
+    ] {
+        if let Some(value) = value {
+            validate_absolute_path(value, LocalTestPathKind::ExistingDirectory)?;
+            fields.insert(
+                name.to_owned(),
+                Value::String(path_text(value, name)?.to_owned()),
+            );
+        }
+    }
     fields.insert(
         "expected_head".to_owned(),
         Value::String(options.expected_head.clone()),
@@ -80,13 +85,6 @@ fn generation(options: &FixtureSuccessorGeneration, root: &Path) -> Result<Map<S
     if let Some(value) = &options.adapter_contract {
         fields.insert("adapter_contract".to_owned(), Value::String(value.clone()));
     }
-    insert_optional_path(
-        &mut fields,
-        "product_backend",
-        options.product_backend.as_ref(),
-        root,
-        LocalTestPathKind::ExistingDirectory,
-    )?;
     if let Some(output) = &options.output {
         fields.insert(
             "output".to_owned(),

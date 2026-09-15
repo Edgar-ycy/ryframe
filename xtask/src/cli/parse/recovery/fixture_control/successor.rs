@@ -6,6 +6,7 @@ use crate::{
     local_test_path::LocalTestPathKind,
 };
 
+use super::super::runtime_values::external_directory;
 use super::{
     ParsedOptions, new_directory, output_file, parse_side, reject_write, require_write,
     valid_copy_name,
@@ -98,16 +99,19 @@ fn generation(args: &[String]) -> Result<FixtureSuccessorCommand, CliError> {
     Ok(FixtureSuccessorCommand::GenerationRequest(
         FixtureSuccessorGeneration {
             successor: input(&options, "--successor")?,
-            source_backend: options
-                .path("--source-backend", LocalTestPathKind::ExistingDirectory)?,
+            source_backend: external_directory(
+                options.require("--source-backend")?,
+                "--source-backend",
+            )?,
             expected_head: expected_head.to_ascii_lowercase(),
             backend_build: input(&options, "--backend-build")?,
             maintenance_build: input(&options, "--maintenance-build")?,
             source_environment: input(&options, "--source-environment")?,
             id: valid_copy_name(options.require("--id")?, "--id")?,
             adapter_contract: adapter_contract.map(ToOwned::to_owned),
-            product_backend: options
-                .optional_path("--product-backend", LocalTestPathKind::ExistingDirectory)?,
+            product_backend: product_backend
+                .map(|value| external_directory(value, "--product-backend"))
+                .transpose()?,
             output,
         },
     ))

@@ -52,6 +52,20 @@ class FixtureControlProtocolTests(unittest.TestCase):
             environment={PROTOCOL_KEY: raw},
         )
 
+    def test_generation_preview_preserves_explicit_source_roots(self):
+        receipt = str(Path(self.root) / ".local-tests" / "input.json")
+        raw = self.protocol(
+            "successor", "generation-request", False, successor=receipt,
+            source_backend=self.root, expected_head="a" * 40, backend_build=receipt,
+            maintenance_build=receipt, source_environment=receipt, id="source-current",
+            adapter_contract="legacy-stable-readiness-b0-v1", product_backend=self.root,
+        )
+        arguments = self.arguments("successor", fixture_successor.PROTOCOL_SCHEMAS, raw, positional=True)
+        self.assertEqual(arguments[arguments.index("--source-backend") + 1], self.root)
+        self.assertEqual(arguments[arguments.index("--product-backend") + 1], self.root)
+        self.assertNotIn("--write", arguments)
+        self.assertNotIn("--output", arguments)
+
     def test_reconstructs_exact_operations_for_control_domains(self):
         input_path = str(Path(self.root) / ".local-tests" / "input.json")
         directory = str(Path(self.root) / ".local-tests" / "run")

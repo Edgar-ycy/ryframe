@@ -73,6 +73,25 @@ impl Fixture {
             "9223372036854775807".to_owned(),
         ]
     }
+
+    fn generation_options(&self) -> Vec<String> {
+        vec![
+            "--successor".to_owned(),
+            text(&self.input),
+            "--source-backend".to_owned(),
+            text(&root_dir()),
+            "--expected-head".to_owned(),
+            "a".repeat(40),
+            "--backend-build".to_owned(),
+            text(&self.input),
+            "--maintenance-build".to_owned(),
+            text(&self.input_two),
+            "--source-environment".to_owned(),
+            text(&self.input),
+            "--id".to_owned(),
+            "source-r24".to_owned(),
+        ]
+    }
 }
 
 impl Drop for Fixture {
@@ -509,22 +528,7 @@ fn parses_successor_relationship() {
 #[test]
 fn parses_successor_generation_preview_and_write_pairs() {
     let fixture = Fixture::new();
-    let generation = vec![
-        "--successor".to_owned(),
-        text(&fixture.input),
-        "--source-backend".to_owned(),
-        text(&fixture.controlled_dir),
-        "--expected-head".to_owned(),
-        "a".repeat(40),
-        "--backend-build".to_owned(),
-        text(&fixture.input),
-        "--maintenance-build".to_owned(),
-        text(&fixture.input_two),
-        "--source-environment".to_owned(),
-        text(&fixture.input),
-        "--id".to_owned(),
-        "source-r24".to_owned(),
-    ];
+    let generation = fixture.generation_options();
     let planned = parse_control(command(
         "successor",
         Some("generation-request"),
@@ -536,6 +540,21 @@ fn parses_successor_generation_preview_and_write_pairs() {
         FixtureControlCommand::Successor(FixtureSuccessorCommand::GenerationRequest(ref value))
             if value.output.is_none()
     ));
+    let invocation = private_invocation_at(&planned, &root_dir()).unwrap();
+    let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
+    assert_eq!(protocol["source_backend"], text(&root_dir()));
+    assert_eq!(protocol["write"], false);
+    let mut adapter = generation.clone();
+    adapter.extend(words(&[
+        "--adapter-contract",
+        "legacy-stable-readiness-b0-v1",
+        "--product-backend",
+    ]));
+    adapter.push(text(&root_dir()));
+    let adapter = parse_control(command("successor", Some("generation-request"), adapter)).unwrap();
+    let invocation = private_invocation_at(&adapter, &root_dir()).unwrap();
+    let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
+    assert_eq!(protocol["product_backend"], text(&root_dir()));
     let mut invalid_name = generation.clone();
     *invalid_name
         .iter_mut()
@@ -584,6 +603,75 @@ fn parses_successor_generation_preview_and_write_pairs() {
         "--write".to_owned(),
     ]);
     assert!(parse_control(command("successor", Some("generation-request"), published)).is_ok());
+}
+
+#[test]
+fn successor_generation_keeps_source_and_evidence_path_boundaries() {
+    let fixture = Fixture::new();
+    let source = fixture.path("源码 directory");
+    fs::create_dir(&source).unwrap();
+    let link = fixture.path("linked source");
+    create_directory_link(&source, &link);
+    let mut valid = fixture.generation_options();
+    valid[3] = text(&source);
+    let parsed = parse_control(command(
+        "successor",
+        Some("generation-request"),
+        valid.clone(),
+    ))
+    .unwrap();
+    assert!(private_invocation_at(&parsed, &root_dir()).is_ok());
+    for invalid in [
+        PathBuf::from("relative"),
+        fixture.input.clone(),
+        fixture.path("missing"),
+        link.clone(),
+    ] {
+        let mut arguments = valid.clone();
+        arguments[3] = text(&invalid);
+        assert!(
+            parse_control(command("successor", Some("generation-request"), arguments)).is_err()
+        );
+        for product in [false, true] {
+            let mut request = parsed.clone();
+            let FixtureControlCommand::Successor(FixtureSuccessorCommand::GenerationRequest(
+                options,
+            )) = &mut request
+            else {
+                unreachable!();
+            };
+            if product {
+                options.product_backend = Some(invalid.clone());
+                options.adapter_contract = Some("legacy-stable-readiness-b0-v1".to_owned());
+            } else {
+                options.source_backend = invalid.clone();
+            }
+            assert!(private_invocation_at(&request, &root_dir()).is_err());
+        }
+    }
+    fs::remove_dir(&link).unwrap();
+    for index in [1, 7, 9, 11] {
+        let mut arguments = valid.clone();
+        arguments[index] = text(&root_dir().join("Cargo.toml"));
+        assert!(
+            parse_control(command("successor", Some("generation-request"), arguments)).is_err()
+        );
+    }
+    let mut outside_output = valid;
+    outside_output.extend([
+        "--output".to_owned(),
+        text(&root_dir().join("forbidden-generation.json")),
+        "--write".to_owned(),
+    ]);
+    assert!(
+        parse_control(command(
+            "successor",
+            Some("generation-request"),
+            outside_output
+        ))
+        .is_err()
+    );
+    assert!(!root_dir().join("forbidden-generation.json").exists());
 }
 
 #[test]
