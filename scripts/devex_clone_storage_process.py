@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from devex_clone_capture import read_json, write_json
 from devex_clone_model import exact
 from devex_clone_run_state import binding
-from devex_clone_source_proof import bound_file, require_closed_port
+from devex_clone_source_proof import bound_file
 from devex_clone_storage_request import arguments, configuration, identity
 from devex_clone_target_storage import actual_windows_argv
 from full_stack_process import process_identity, terminate_owned_process
@@ -100,8 +100,6 @@ def stop_record(request: dict, observed: dict, output: Path) -> dict:
     terminated = terminate_owned_process(expected) if alive else False
     if process_identity(expected["pid"]) is not None:
         raise ValueError("存储回收后仍存在进程或 PID 已被复用")
-    for url in urls:
-        require_closed_port(url)
     result = {"state": "stopped", "identity": expected, "terminated": terminated,
               "process_receipt": observed["process_receipt"]}
     write_json(output / "stopped.json", result)

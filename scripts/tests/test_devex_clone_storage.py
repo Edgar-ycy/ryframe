@@ -93,7 +93,7 @@ class StorageTests(unittest.TestCase):
         stack = ExitStack()
         for module in (storage, process):
             stack.enter_context(patch.object(module, "process_identity", side_effect=self.identity))
-            stack.enter_context(patch.object(module, "require_closed_port"))
+        stack.enter_context(patch.object(storage, "require_closed_port"))
         stack.enter_context(patch.object(storage, "producers_stopped"))
         def require_stopped(expected, *, run, counter_run):
             self.assertIs(run, subprocess.run)
@@ -271,6 +271,68 @@ class StorageTests(unittest.TestCase):
             result = self.execute("stop")
         self.assertFalse(self.alive)
         self.assertEqual(result["status"], "storage_stopped")
+
+    def test_cleanup_checks_shared_ports_after_all_recorded_generations(self):
+        for mode in ("stop", "recover"):
+            with self.subTest(mode=mode), self.patches():
+                self.alive = False
+                self.execute("restart")
+                self.alive = False
+                self.execute("restart")
+                current = copy.deepcopy(self.new)
+                original = {str(path): binding(path) for path in self.directory.rglob("*") if path.is_file()}
+                ports = []
+                def closed(url):
+                    ports.append(url)
+                    if self.alive:
+                        raise ValueError("已登记的后继代次仍占用同一端口")
+                with patch.object(storage, "require_closed_port", side_effect=closed), \
+                        patch.object(process, "terminate_owned_process", side_effect=self.terminate) as terminate:
+                    result = self.execute(mode)
+                terminate.assert_called_once_with(current)
+                self.assertEqual(ports, [self.request["api_url"], self.request["console_url"]])
+                self.assertTrue(all(row["state"] == "stopped" for row in result["processes"]))
+                self.assertEqual(sum(row.get("terminated", False) for row in result["processes"]), 1)
+                self.assertFalse(self.alive)
+                for path, descriptor in original.items():
+                    if Path(path).name != "state.json":
+                        self.assertEqual(binding(Path(path)), descriptor)
+
+    def test_cleanup_rejects_foreign_listener_after_reaping_owned_generation(self):
+        with self.patches():
+            self.execute("restart")
+            self.alive = False
+            self.execute("restart")
+            current = copy.deepcopy(self.new)
+            with patch.object(storage, "require_closed_port", side_effect=ValueError("外来监听")) as ports, \
+                    patch.object(process, "terminate_owned_process", side_effect=self.terminate) as terminate:
+                with self.assertRaisesRegex(ValueError, "外来监听"):
+                    self.execute("stop")
+            terminate.assert_called_once_with(current)
+            self.assertFalse(self.alive)
+            ports.assert_called_once_with(self.request["api_url"])
+            attempt = read_json(self.directory / "state.json")["attempts"][-1]
+            self.assertEqual(attempt["status"], "failed")
+            self.assertIsNone(attempt["result"])
+            for number in (1, 2):
+                self.assertEqual(read_json(self.directory / f"storage-source/a0003/p{number:04d}/stopped.json")["state"], "stopped")
+
+    def test_cleanup_rejects_reused_historical_pid_before_any_termination(self):
+        with self.patches():
+            self.execute("restart")
+            historical = copy.deepcopy(self.new)
+            self.alive = False
+            self.execute("restart")
+            def observed(pid):
+                return {**historical, "started": "foreign"} if pid == historical["pid"] else self.identity(pid)
+            with patch.object(process, "process_identity", side_effect=observed), \
+                    patch.object(process, "terminate_owned_process") as terminate, \
+                    patch.object(storage, "require_closed_port") as ports:
+                with self.assertRaisesRegex(ValueError, "PID"):
+                    self.execute("recover")
+            terminate.assert_not_called()
+            ports.assert_not_called()
+            self.assertTrue(self.alive)
 
     def test_pid_reuse_or_wrong_actual_arguments_never_terminates(self):
         with self.patches():

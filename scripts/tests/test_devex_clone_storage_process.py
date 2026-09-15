@@ -102,9 +102,8 @@ class NativeProcessTests(unittest.TestCase):
             observed = process.inspect_attempt(self.backend, self.output, self.registration, self.controller, 1)
             recovery = self.root / "recovery"
             recovery.mkdir()
-            # 参数仍由本机真实 CIM 核验；测试仅隔离未使用的端口观察。
-            with patch.object(process, "require_closed_port"):
-                result = process.stop_record(self.request, observed, recovery)
+            # 参数仍由本机真实 CIM 核验；全局端口由外层完成所有代次回收后统一检查。
+            result = process.stop_record(self.request, observed, recovery)
         self.assertTrue(result["terminated"])
         self.assertIsNone(process_identity(expected["pid"]))
 

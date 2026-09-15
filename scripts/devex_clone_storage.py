@@ -217,6 +217,10 @@ def observe_or_stop(backend: Path, directory: Path, request: dict, descriptor: d
             result = {"state": "running" if alive else "stopped", "identity": observed["identity"],
                       "process_receipt": observed["process_receipt"]}
         results.append({"attempt": attempt["number"], **result})
+    if mode in {"stop", "recover"}:
+        # 历史代次复用登记端口；先回收所有已证明归属的进程，再拒绝任何残留监听。
+        for key in ("api_url", "console_url"):
+            require_closed_port(request[key])
     return {"status": "storage_status" if mode == "status" else "storage_recovered" if mode == "recover" else "storage_stopped",
             "side": request["side"], "request": descriptor, "processes": results,
             "reconciliation_required": True, "object_api_calls": 0, "database_calls": 0, "resources_deleted": False}
