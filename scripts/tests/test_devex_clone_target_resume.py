@@ -3,6 +3,7 @@ import copy
 import json
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import unittest
@@ -15,6 +16,8 @@ import devex_clone_target_inventory_resume as inventory_resume
 import devex_clone_target_prepared_files as prepared_evidence
 import devex_clone_target_resume as target_resume
 import devex_clone_target_resume_evidence as target_evidence
+import devex_clone_target_resources as target_resources
+from artifact_digests import filesystem_path
 from devex_clone_capture import read_json, write_json
 from devex_clone_run_state import binding as receipt_binding
 from devex_clone_target_resources import Resources
@@ -62,6 +65,12 @@ def replace_json(path, value):
     path.write_text(
         json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+
+
+def fail_readonly_receipt(path, value):
+    if path.name.startswith("migrate-tenant-data---target-dedicated-a-verify-"):
+        raise FileNotFoundError(2, "fixture long path", str(path))
+    return write_json(path, value)
 
 
 def migration_resume_state(backend, output, descriptor):
@@ -155,6 +164,22 @@ class TargetResumeTests(unittest.TestCase):
         redis = copy.deepcopy(f.request["storage"]["redis"]); redis["run_id"] = "4" * 40
         f.storage_restarted = True; f.redis_values.clear()
         return run, storage_runtime, {"redis": redis, "generation": generation}
+
+    def use_long_path_fixture(self):
+        temporary = WorkspaceDirectory(
+            Path(__file__).resolve().parents[2] / ".local-tests/python-unit",
+            prefix="resume-long-",
+        )
+        self.addCleanup(temporary.cleanup)
+        base = Path(temporary.name)
+        self.addCleanup(shutil.rmtree, filesystem_path(base), True)
+        suffix = len(str(Path(".local-tests") / "new-generation")) + 1
+        label = "中文 空格-"
+        padding = 167 - len(str(base)) - suffix - 1 - len(label)
+        root = base / (label + "x" * padding)
+        root.mkdir()
+        self.f = Fixture(root, self)
+        self.assertEqual(len(str(self.f.output)), 167)
 
     def test_inventory_failure_resumes_without_replaying_reset(self):
         f = self.f
@@ -958,6 +983,135 @@ class TargetResumeTests(unittest.TestCase):
                 f.root, f.output, f.run, request_descriptor=descriptor
             )
         self.assertEqual(len(f.calls), calls)
+
+    def test_receipt_publish_failure_allows_one_readonly_successor(self):
+        self.use_long_path_fixture()
+        f = self.f
+        descriptor = self.interrupt_migration_prefix(3)
+        receipt = f.output / ("migrate-tenant-data---target-dedicated-a-verify-"
+                              + "0" * 32 + ".command.json")
+        self.assertGreater(len(str(receipt)), 260)
+        self.assertIn("中文 空格", str(receipt))
+        run, storage_runtime, cache_runtime = self.fixture_restart()
+        with patch("reference_fixture_service_context.runtime_transition",
+                   return_value=(storage_runtime, cache_runtime)), \
+                patch.object(target_evidence, "validate_started_generation"), \
+                patch.object(Resources, "_redis", side_effect=f.redis) as redis:
+            with patch.object(target_resources, "write_json", new=fail_readonly_receipt), \
+                    self.assertRaises(FileNotFoundError):
+                resume_initialize_target(
+                    f.root, f.output, f.run, request_descriptor=descriptor, storage_run=run
+                )
+            failed = read_json(next(f.output.glob("resume-initialize-*.failure.json")))
+            self.assertEqual(failed["phase"], "command-receipt-publish")
+            self.assertEqual(failed["os_error"]["filename_role"], "command_receipt")
+            failure_path = next(f.output.glob("resume-initialize-*.failure.json"))
+            self.assertEqual(migration_resume_state(f.root, f.output, descriptor)["mode"],
+                             "migration-successor")
+            corruptions = [
+                ("unknown write", {"unknown_write_operation": "redis-marker-rebind"}),
+                ("already confirmed", {"confirmed_operations": [{"id": "unexpected"}]}),
+                ("wrong errno", {"os_error": {**failed["os_error"], "errno": 13}}),
+                ("wrong filename", {"os_error": {
+                    **failed["os_error"], "filename_role": "other"}}),
+                ("wrong length", {"os_error": {
+                    **failed["os_error"], "filename_length": len(str(receipt)) + 4}}),
+                ("earlier phase", {"phase": "command-running"}),
+                ("wrong operation", {"active_operation": {
+                    **failed["active_operation"], "index": 4}}),
+                ("existing receipt", {"active_operation": {
+                    **failed["active_operation"], "command_receipts": [descriptor]}}),
+            ]
+            before_calls = len(f.calls)
+            for label, changed in corruptions:
+                with self.subTest(predecessor=label):
+                    replace_json(failure_path, {**failed, **changed})
+                    with self.assertRaises(ValueError):
+                        migration_resume_state(f.root, f.output, descriptor)
+                    replace_json(failure_path, failed)
+            self.assertEqual(len(f.calls), before_calls)
+            failed.pop("phase")
+            failed.pop("os_error")
+            for field in ("phase", "receipt_path_length", "receipt_path_limit_risk"):
+                failed["active_operation"].pop(field)
+            replace_json(failure_path, failed)
+            state = migration_resume_state(f.root, f.output, descriptor)
+            self.assertEqual(state["mode"], "migration-successor")
+            result = resume_initialize_target(
+                f.root, f.output, f.run, request_descriptor=descriptor, storage_run=run
+            )
+            self.assertEqual(sum(call.args[0][0] == "EVAL" for call in redis.call_args_list), 1)
+
+        calls = [call[1:] for call in f.calls if Path(call[0]).stem == "migrate"]
+        self.assertEqual(calls.count(["tenant-data", "verify", "--target", "dedicated-a"]), 2)
+        for operation in target_evidence.migration_operations(f.maintenance)[0:3]:
+            self.assertEqual(calls.count(operation["command"][1:]), 1)
+        successor = next(read_json(path) for path in f.output.glob(
+            "resume-initialize-*.intent.json") if "predecessor" in read_json(path))
+        self.assertEqual(successor["remote_write_operations_before_resume"], 1)
+        self.assertEqual(successor["predecessor"], receipt_binding(next(
+            f.output.glob("resume-initialize-*.failure.json"))))
+        self.assertEqual(result["status"], "fresh_target_initialized")
+        with patch.object(target_evidence, "validate_started_generation"), \
+                patch("reference_fixture_service_context.runtime_transition",
+                      return_value=(storage_runtime, cache_runtime)):
+            self.assertTrue(target_evidence._migration_resume_confirmed(
+                f.root, f.output, result, target.target_evidence_hooks()
+            ))
+            self.assertFalse(target.unresolved_failure(f.root, f.output))
+            confirmation_path = next(f.output.glob("resume-initialize-*.confirmed.json"))
+            confirmation = read_json(confirmation_path)
+            started_path = Path(confirmation["started"]["path"])
+            started = read_json(started_path)
+            runtime = copy.deepcopy(started)
+            runtime["storage_runtime"]["generation"]["sha256"] = "0" * 64
+            runtime["cache_runtime"]["generation"]["sha256"] = "0" * 64
+            preimage = copy.deepcopy(started)
+            preimage["resources_before"]["redis"]["owner"] = "changed-owner"
+            for label, changed in (("generation", runtime), ("preimage", preimage)):
+                with self.subTest(consumer=label):
+                    replace_json(started_path, changed)
+                    replace_json(confirmation_path, {**confirmation,
+                                 "started": receipt_binding(started_path)})
+                    self.assertFalse(target_evidence.migration_resume_confirmed(
+                        f.root, f.output, result, target.target_evidence_hooks()))
+                    replace_json(started_path, started)
+                    replace_json(confirmation_path, confirmation)
+            replace_json(confirmation_path, {**confirmation, "predecessor": descriptor})
+            self.assertFalse(target_evidence.migration_resume_confirmed(
+                f.root, f.output, result, target.target_evidence_hooks()))
+            replace_json(confirmation_path, confirmation)
+        with self.assertRaises(ValueError):
+            resume_initialize_target(f.root, f.output, f.run, request_descriptor=descriptor)
+
+    def test_second_receipt_failure_rejects_third_attempt_without_rebinding(self):
+        self.use_long_path_fixture()
+        f = self.f
+        descriptor = self.interrupt_migration_prefix(3)
+        run, storage_runtime, cache_runtime = self.fixture_restart()
+        with patch("reference_fixture_service_context.runtime_transition",
+                   return_value=(storage_runtime, cache_runtime)), \
+                patch.object(target_evidence, "validate_started_generation"), \
+                patch.object(target_resources, "write_json", new=fail_readonly_receipt), \
+                patch.object(Resources, "_redis", side_effect=f.redis) as redis:
+            for _ in range(2):
+                with self.assertRaises(FileNotFoundError):
+                    resume_initialize_target(
+                        f.root, f.output, f.run, request_descriptor=descriptor, storage_run=run)
+            self.assertEqual(len(list(f.output.glob("resume-initialize-*.failure.json"))), 2)
+            calls = len(f.calls)
+            with self.assertRaises(ValueError):
+                resume_initialize_target(
+                    f.root, f.output, f.run, request_descriptor=descriptor, storage_run=run)
+            self.assertEqual(len(f.calls), calls)
+            self.assertEqual(sum(call.args[0][0] == "EVAL" for call in redis.call_args_list), 1)
+
+    def test_receipt_diagnostic_normalizes_windows_extended_path(self):
+        filename = r"D:\中文 空格\receipt.json"
+        error = FileNotFoundError(2, "fixture", "\\\\?\\" + filename)
+        diagnostic = target_resume._safe_os_error(error, {"_receipt_path": filename})
+        self.assertEqual(diagnostic["filename_role"], "command_receipt")
+        self.assertEqual(diagnostic["filename_length"], len(filename))
 
     def test_command_success_before_confirmation_failure_is_bound_and_not_retried(self):
         f = self.f

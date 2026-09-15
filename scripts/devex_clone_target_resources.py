@@ -70,11 +70,18 @@ class Resources:
 
             generation_checkpoint(self.lock_output, self.owned_lock_identity)
 
-    def command(self, stage: str, args: list[str], *, data=None, env=None, timeout=30):
+    def command(self, stage: str, args: list[str], *, data=None, env=None, timeout=30,
+                diagnostic: dict | None = None):
         if dict(os.environ) != self.environment:
             raise ValueError("初始化进程环境在执行期间变化")
+        if diagnostic is not None:
+            diagnostic["phase"] = "pre-command-checkpoint"
         self.checkpoint()
         path = self.output / f"{stage}-{uuid.uuid4().hex}.command.json"
+        if diagnostic is not None:
+            diagnostic.update({"phase": "command-running", "_receipt_path": str(path),
+                               "receipt_path_length": len(str(path)),
+                               "receipt_path_limit_risk": os.name == "nt" and len(str(path)) >= 260})
         stdout, stderr, code, error_type = b"", b"", None, None
         try:
             result = self.runner(args, cwd=self.execution_backend, input=data, env=env or self.environment,
@@ -87,6 +94,8 @@ class Resources:
             code, error_type = getattr(error, "returncode", None), type(error).__name__
             raise
         finally:
+            if diagnostic is not None:
+                diagnostic["phase"] = "command-receipt-publish"
             write_json(path, {"command": args, "returncode": code, "error_type": error_type,
                              "stdout": redact_object_diagnostic(stdout, self.redaction),
                              "stderr": redact_object_diagnostic(stderr, self.redaction)})

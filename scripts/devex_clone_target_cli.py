@@ -485,14 +485,14 @@ def status(backend: Path, workspace: Path) -> dict:
             resume = initialize_resume_state(backend, target, value["request"],
                                              snapshot_evidence.resume_prepared_files(workspace, value))
             if resume["resumable"]:
-                if resume["mode"] == "migration":
+                if resume["mode"] in {"migration", "migration-successor"}:
                     completed = resume["completed"]
                     operation = resume["operations"][resume["next_index"]]
                     result = report("fresh_target_migration_resume_pending",
                                     "migration:" + completed[-1]["id"], "migration_resume",
                                     "resume-initialize", valid=True, reason=None,
                                     registration=registration)
-                    result["resume"] = {"mode": "migration",
+                    result["resume"] = {"mode": resume["mode"],
                                         "completed_operations": [item["id"] for item in completed],
                                         "next_operation": operation["id"],
                                         "next_operation_is_read_only": not operation["write"]}

@@ -104,7 +104,7 @@ def _run_operation(output: Path, resources, operation: dict, index: int,
                     active: dict, trusted: list[dict]) -> tuple[dict, list[dict]]:
     operation_intent = output / f"resume-migrate-{attempt}-{index:02d}.intent.json"
     active.update({"id": operation["id"], "index": index, "intent": None,
-                   "command_receipts": []})
+                   "command_receipts": [], "phase": "operation-intent-checkpoint"})
     body = {"format_version": 1, "kind": "devex-clone-migration-operation-intent",
             "attempt": attempt, "index": index, "at": now(), "resume": binding(resume_intent),
             "failure": original_failure, "operation": {key: operation[key]
@@ -113,11 +113,14 @@ def _run_operation(output: Path, resources, operation: dict, index: int,
     write_json(operation_intent, body)
     trusted = tree_claim.claim_one(output, trusted, operation_intent, body)
     active["intent"] = binding(operation_intent)
+    active["phase"] = "pre-command-tree-check"
     tree_claim.unchanged(output, trusted)
     try:
-        resources.command(operation["stage"], operation["command"], timeout=1800)
+        resources.command(operation["stage"], operation["command"], timeout=1800,
+                          diagnostic=active)
     finally:
         active["command_receipts"] = _operation_receipts(output, operation)
+    active["phase"] = "command-receipt-verify"
     receipt = _operation_record(output, operation)
     trusted = tree_claim.claim_one(output, trusted, Path(receipt["path"]))
     confirmed_path = output / f"resume-migrate-{attempt}-{index:02d}.confirmed.json"
@@ -126,10 +129,28 @@ def _run_operation(output: Path, resources, operation: dict, index: int,
         "attempt": attempt, "index": index, "at": now(), "intent": binding(operation_intent),
         "receipt": receipt, "write": operation["write"],
     }
+    active["phase"] = "operation-confirmation-publish"
     write_json(confirmed_path, confirmation)
     trusted = tree_claim.claim_one(output, trusted, confirmed_path, confirmation)
     return ({"id": operation["id"], "receipt": receipt,
              "confirmation": binding(confirmed_path)}, trusted)
+
+
+def _safe_os_error(error: BaseException, active: dict | None) -> dict | None:
+    """只记录定位文件阶段所需的非敏感 OSError 结构。"""
+    if not isinstance(error, OSError):
+        return None
+    filename = getattr(error, "filename", None)
+    expected = active.get("_receipt_path") if active is not None else None
+    normalized = filename
+    if isinstance(filename, str) and filename.startswith("\\\\?\\UNC\\"):
+        normalized = "\\\\" + filename[8:]
+    elif isinstance(filename, str) and filename.startswith("\\\\?\\"):
+        normalized = filename[4:]
+    return {"errno": error.errno, "winerror": getattr(error, "winerror", None),
+            "filename_role": "command_receipt" if expected is not None
+            and normalized == expected else "other" if filename is not None else None,
+            "filename_length": len(str(normalized)) if normalized is not None else None}
 
 
 def _initialized_result(output: Path, request: dict, original: dict, reset: dict,
@@ -160,7 +181,10 @@ def resume_migration_target(backend: Path, output: Path, run=subprocess.run, *,
         raise ValueError("迁移初始化不可续作：" + state["reason"])
     attempt = uuid.uuid4().hex
     intent_path = output / f"resume-initialize-{attempt}.intent.json"
-    completed, confirmed_writes, active_write, active_operation = [], 0, None, None
+    successor = state["mode"] == "migration-successor"
+    completed = []
+    confirmed_writes = 1 if successor else 0
+    active_write, active_operation = None, None
     started_path = output / f"resume-initialize-{attempt}.started.json"
     after_unlock = [] if publish_files is not None else None
     try:
@@ -169,6 +193,8 @@ def resume_migration_target(backend: Path, output: Path, run=subprocess.run, *,
                                       owned_lock_identity=lock_identity) != state:
                 raise ValueError("取得初始化锁前迁移前缀或固定前像发生变化")
             binaries = execution_binary_bindings(backend, state["request"])
+            if successor and binaries != state["protected_binaries"]:
+                raise ValueError("迁移后继的受保护二进制不同于首次失败续作")
             next_operation = state["operations"][state["next_index"]]
             resume_intent = {
                 "format_version": 1, "kind": "devex-clone-migration-resume-intent",
@@ -180,6 +206,9 @@ def resume_migration_target(backend: Path, output: Path, run=subprocess.run, *,
                 "next_operation": next_operation["id"],
                 "protected_binaries": binaries, "remote_write_operations_before_resume": 0,
             }
+            if successor:
+                resume_intent["predecessor"] = state["predecessor"]
+                resume_intent["remote_write_operations_before_resume"] = 1
             write_json(intent_path, resume_intent)
             trusted = tree_claim.claim_one(output, state["files"], intent_path, resume_intent)
             tree_claim.unchanged(output, trusted)
@@ -198,9 +227,14 @@ def resume_migration_target(backend: Path, output: Path, run=subprocess.run, *,
             restart_generation = fixture_restart_generation(
                 resources.storage_runtime_binding, resources.cache_runtime_binding
             )
+            if successor and restart_generation != state["restart_generation"]:
+                raise ValueError("迁移后继的夹具服务代次不同于首次失败续作")
             before = _resource_preimage(
-                resources, state["request"], redis_markers=restart_generation is None
+                resources, state["request"],
+                redis_markers=successor or restart_generation is None
             )
+            if successor and before != state["expected_resources"]:
+                raise ValueError("迁移后继的资源前像不同于首次失败后的已确认状态")
             started = {
                 "format_version": 1, "kind": "devex-clone-migration-resume-started",
                 "attempt": attempt, "at": now(), "intent": binding(intent_path),
@@ -212,8 +246,8 @@ def resume_migration_target(backend: Path, output: Path, run=subprocess.run, *,
             trusted = tree_claim.claim_preimage(
                 output, trusted, state["baseline_files"], state["request"], started_path, started
             )
-            marker_confirmation = None
-            if restart_generation is not None:
+            marker_confirmation = state["prior_marker_confirmation"] if successor else None
+            if restart_generation is not None and not successor:
                 active_write, active_operation = None, {}
                 marker_confirmation, trusted = _rebind_restart_redis_markers(
                     output, resources, attempt, intent_path, started_path,
@@ -288,6 +322,8 @@ def resume_migration_target(backend: Path, output: Path, run=subprocess.run, *,
                 "redis_marker_rebind": marker_confirmation,
                 "remote_write_operations": confirmed_writes, "restore_qualified": False,
             }
+            if successor:
+                confirmation["predecessor"] = state["predecessor"]
             write_json(confirmation_path, confirmation)
             trusted = tree_claim.claim_one(
                 output, trusted, confirmation_path, confirmation
@@ -300,7 +336,11 @@ def resume_migration_target(backend: Path, output: Path, run=subprocess.run, *,
         if intent_path.exists():
             failure_path = output / f"resume-initialize-{attempt}.failure.json"
             try:
-                write_json(failure_path, {
+                os_error = _safe_os_error(error, active_operation)
+                safe_active = ({key: value for key, value in active_operation.items()
+                                if not key.startswith("_")}
+                               if active_operation is not None else None)
+                failure = {
                     "format_version": 1, "kind": "devex-clone-migration-resume-failure",
                     "attempt": attempt, "at": now(), "intent": binding(intent_path),
                     "source_failure": state["failure"], "prepared_files": state["prepared_files"],
@@ -310,8 +350,13 @@ def resume_migration_target(backend: Path, output: Path, run=subprocess.run, *,
                     "unknown_write_operation": (active_write or (
                         "redis-marker-rebind" if active_operation is not None
                         and active_operation.get("write_started") else None)),
-                    "active_operation": active_operation,
-                })
+                    "active_operation": safe_active,
+                    "phase": safe_active.get("phase") if safe_active is not None else None,
+                    "os_error": os_error,
+                }
+                if successor:
+                    failure["predecessor"] = state["predecessor"]
+                write_json(failure_path, failure)
             except BaseException as diagnostic_error:
                 error.add_note(f"迁移续作失败证据保存失败：{type(diagnostic_error).__name__}")
         raise

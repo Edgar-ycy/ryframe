@@ -16,7 +16,8 @@ from devex_clone_source_proof import bound_file
 from devex_clone_target_binding import (KEYS, execution_binary_bindings, prepared_target_files,
                                         request_binding, target_files, validate_initialization_delta,
                                         validate_reset_manifest)
-from devex_clone_target_runtime_evidence import (validate_redis_marker_rebind,
+from devex_clone_target_runtime_evidence import (fixture_restart_generation,
+                                                  validate_redis_marker_rebind,
                                                   validate_started_generation)
 from devex_clone_target_reset_evidence import validate_plan_receipt
 from devex_clone_target_time import ordered, timestamp as _timestamp
@@ -241,13 +242,6 @@ def _reset_evidence(hooks: TargetEvidenceHooks, output: Path, request: dict, ori
             "completed": completed}
 
 
-def _no_prior_resume(output: Path) -> None:
-    if (any(output.glob("resume-initialize-*.json"))
-            or any(output.glob("resume-redis-markers-*.json"))
-            or any(output.glob("resume-migrate-*.json"))):
-        raise ValueError("迁移初始化已经存在续作记录，禁止重复或自动重放")
-
-
 def _initialization_paths(output: Path, creation: dict, reset: dict, prefix: list[dict]) -> set[str]:
     paths = {"copy-target.guard", "failure.json", "initialize.started.json", "reset-state"}
     descriptors = [item for stage in creation.values() for item in stage.values()]
@@ -260,6 +254,232 @@ def _initialization_paths(output: Path, creation: dict, reset: dict, prefix: lis
     previous = ledger.parent / ("." + ledger.name + ".previous")
     paths.add(previous.as_posix())
     return paths
+
+
+_RESUME_FAILURE_FIELDS = {
+    "format_version", "kind", "attempt", "at", "intent", "source_failure",
+    "prepared_files", "started", "error_type", "confirmed_operations",
+    "remote_write_operations_confirmed", "unknown_write_operation", "active_operation",
+}
+
+
+def _successful_receipt(path: Path) -> dict:
+    value = read_json(path)
+    exact(value, COMMAND_FIELDS)
+    if (not isinstance(value["command"], list) or not value["command"]
+            or value["returncode"] != 0 or type(value["returncode"]) is not int
+            or value["error_type"] is not None or not isinstance(value["stdout"], str)
+            or value["stderr"] != ""):
+        raise ValueError("迁移后继只读观察命令收据无效")
+    value["stdout"] = value["stdout"].replace("\r\n", "\n")
+    return value
+
+
+def _prior_resume_observation_names(output: Path, current: list[dict], prepared: list[dict],
+                                    request: dict, started: dict) -> set[str]:
+    """从首次失败续作聚合证据中扣除两轮重启观察与一次数据库前像。"""
+    import devex_clone_target_tree_claim as tree_claim
+
+    prepared_names = {item["path"] for item in prepared}
+    additions = {item["path"] for item in current if item["path"] not in prepared_names}
+    layout_pattern = re.compile(r"storage-layout-[a-f0-9]{32}\.json")
+    layouts = [name for name in additions if layout_pattern.fullmatch(name)
+               and tree_claim._fixture_storage_layout(
+                   output, prepared, name, started["storage_runtime"])]
+    if len(layouts) != 2:
+        raise ValueError("迁移后继缺少首次续作的两轮存储代次观察")
+
+    redis_pattern = re.compile(r"redis-kernel-[a-f0-9]{32}\.command\.json")
+    baseline = [_successful_receipt(output / item["path"]) for item in prepared
+                if redis_pattern.fullmatch(item["path"])]
+    commands = {}
+    pid = str(started["cache_runtime"]["redis"]["pid"])
+    for item in baseline:
+        command = list(item["command"])
+        match = re.fullmatch(r"/proc/(\d+)/(stat|exe)", command[-1])
+        if match:
+            command[-1] = f"/proc/{pid}/{match.group(2)}"
+        commands[tuple(command)] = None
+    if len(baseline) != 10 or len(commands) != 5:
+        raise ValueError("迁移后继的 Redis prepare 基线无效")
+    candidates = {}
+    for name in sorted(item for item in additions if redis_pattern.fullmatch(item)):
+        receipt = _successful_receipt(output / name)
+        candidates.setdefault(tuple(receipt["command"]), []).append((name, receipt))
+    selected = []
+    for command in commands:
+        matches = candidates.get(command, [])
+        if len(matches) < 2:
+            raise ValueError("迁移后继缺少首次续作的两轮 Redis 代次观察")
+        selected.append(matches[:2])
+    for round_index in range(2):
+        observed = [matches[round_index][1] for matches in selected]
+        if not tree_claim._fixture_redis_observations(
+                baseline, observed, started["cache_runtime"]):
+            raise ValueError("迁移后继的 Redis 重启观察与固定代次不符")
+
+    mysql_names = set()
+    for database in request["target"]["databases"]:
+        pattern = re.compile(re.escape("mysql-" + database["key"])
+                             + r"-[a-f0-9]{32}\.command\.json")
+        baseline_paths = [item["path"] for item in prepared if pattern.fullmatch(item["path"])]
+        if len(baseline_paths) != 1:
+            raise ValueError("迁移后继的 MySQL prepare 基线无效")
+        baseline_receipt = _successful_receipt(output / baseline_paths[0])
+        expected_stdout = database["server_uuid"] + "\n" + database["database"] + "\n"
+        matches = [name for name in sorted(additions) if pattern.fullmatch(name)
+                   and _successful_receipt(output / name)["command"]
+                   == baseline_receipt["command"]
+                   and _successful_receipt(output / name)["stdout"] == expected_stdout]
+        if not matches:
+            raise ValueError("迁移后继缺少首次续作的数据库前像观察")
+        mysql_names.add(matches[0])
+    return {*layouts, *mysql_names,
+            *(pair[0] for matches in selected for pair in matches)}
+
+
+def _failed_readonly_resume_records(backend: Path, output: Path, request: dict,
+                                    request_descriptor: dict,
+                                    failure: dict, prepared_files: dict,
+                                    initialize_started: dict, creation: dict, reset: dict,
+                                    operations: list[dict], prefix: list[dict], *,
+                                    predecessor: dict | None = None,
+                                    finalized: bool = False) -> dict | None:
+    """只接受 marker 已确认后首个缺失 verify 收据发布失败的一次前驱。"""
+    intent_paths = list(output.glob("resume-initialize-*.intent.json"))
+    started_paths = list(output.glob("resume-initialize-*.started.json"))
+    failure_paths = list(output.glob("resume-initialize-*.failure.json"))
+    confirmed_paths = list(output.glob("resume-initialize-*.confirmed.json"))
+    marker_paths = list(output.glob("resume-redis-markers-*.json"))
+    operation_paths = list(output.glob("resume-migrate-*.json"))
+    if predecessor is None and not any((intent_paths, started_paths, failure_paths,
+                                        confirmed_paths, marker_paths, operation_paths)):
+        return None
+    if len(prefix) >= len(operations) or operations[len(prefix)]["write"]:
+        raise ValueError("迁移初始化只允许一个未确认只读操作的首次续作前驱")
+    if predecessor is None:
+        if (len(intent_paths) != 1 or len(started_paths) != 1 or len(failure_paths) != 1
+                or confirmed_paths):
+            raise ValueError("迁移初始化只允许一个未确认只读操作的首次续作前驱")
+        failure_path = failure_paths[0]
+    else:
+        failure_path = Path(predecessor["path"])
+        if failure_path.parent != output:
+            raise ValueError("迁移后继的前驱失败路径无效")
+    match = re.fullmatch(r"resume-initialize-([a-f0-9]{32})\.failure\.json",
+                         failure_path.name)
+    if match is None:
+        raise ValueError("迁移后继的前驱 attempt 命名无效")
+    attempt = match.group(1)
+    intent_path = output / f"resume-initialize-{attempt}.intent.json"
+    started_path = output / f"resume-initialize-{attempt}.started.json"
+    intent, started = read_json(intent_path), read_json(started_path)
+    failed = (read_json(failure_path) if predecessor is None
+              else read_bound_json(failure_path, predecessor))
+    intent_fields = {"format_version", "kind", "attempt", "at", "request", "failure",
+                     "prepare", "initialize_started", "reset", "creation", "migration_prefix",
+                     "prepared_files", "next_operation", "protected_binaries",
+                     "remote_write_operations_before_resume"}
+    started_fields = {"format_version", "kind", "attempt", "at", "intent",
+                      "current_generation_sha256", "storage", "storage_runtime",
+                      "cache_runtime", "resources_before"}
+    exact(intent, intent_fields)
+    exact(started, started_fields)
+    diagnostic = set(failed) == _RESUME_FAILURE_FIELDS | {"phase", "os_error"}
+    if not diagnostic:
+        exact(failed, _RESUME_FAILURE_FIELDS)
+    active = failed["active_operation"]
+    base_active = {"id", "index", "intent", "command_receipts"}
+    if not isinstance(active, dict):
+        raise ValueError("迁移后继的前驱活动操作缺失")
+    if diagnostic:
+        exact(active, base_active | {"phase", "receipt_path_length",
+                                     "receipt_path_limit_risk"})
+        exact(failed["os_error"], {"errno", "winerror", "filename_role", "filename_length"})
+    else:
+        exact(active, base_active)
+    index, operation = len(prefix), operations[len(prefix)]
+    receipt_length = len(str(output / (operation["stage"] + "-" + "0" * 32
+                                        + ".command.json")))
+    legacy_path_failure = (not diagnostic and receipt_length >= 260)
+    diagnosed_path_failure = (diagnostic
+        and receipt_length >= 260
+        and failed["phase"] == active["phase"] == "command-receipt-publish"
+        and active["receipt_path_length"] == receipt_length
+        and active["receipt_path_limit_risk"] is True
+        and failed["os_error"]["filename_role"] == "command_receipt"
+        and failed["os_error"]["errno"] == 2
+        and type(failed["os_error"]["errno"]) is int
+        and (failed["os_error"]["winerror"] is None
+             or type(failed["os_error"]["winerror"]) is int
+             and failed["os_error"]["winerror"] in (2, 3, 206))
+        and failed["os_error"]["filename_length"] == receipt_length)
+    operation_intent = output / f"resume-migrate-{attempt}-{index:02d}.intent.json"
+    if not operation_intent.is_file():
+        raise ValueError("迁移后继的首个缺失只读操作 intent 不存在")
+    operation_value = read_json(operation_intent)
+    exact(operation_value, {"format_version", "kind", "attempt", "index", "at", "resume",
+                            "failure", "operation"})
+    validate_started_generation(backend, read_json(output / "prepare.json")["generation"], started)
+    marker, marker_files, marker_at = validate_redis_marker_rebind(
+        backend, output, request, attempt, intent_path, started_path, started
+    )
+    _validate_owned_resources(backend, request, started["resources_before"], redis_markers=False)
+    expected_files = {intent_path.name, started_path.name, failure_path.name,
+                      operation_intent.name, *marker_files}
+    actual_files = {path.name for path in (*intent_paths, *started_paths, *failure_paths,
+                                           *marker_paths, *operation_paths)}
+    if (not (legacy_path_failure or diagnosed_path_failure)
+            or intent["format_version"] != 1
+            or intent["kind"] != "devex-clone-migration-resume-intent"
+            or intent["attempt"] != attempt or intent["request"] != request_descriptor
+            or intent["failure"] != failure or intent["prepare"] != binding(output / "prepare.json")
+            or intent["initialize_started"] != initialize_started or intent["reset"] != reset
+            or intent["creation"] != creation or intent["migration_prefix"] != prefix
+            or intent["prepared_files"] != prepared_files
+            or intent["next_operation"] != operation["id"]
+            or intent["protected_binaries"] != execution_binary_bindings(backend, request)
+            or intent["remote_write_operations_before_resume"] != 0
+            or started["format_version"] != 1
+            or started["kind"] != "devex-clone-migration-resume-started"
+            or started["attempt"] != attempt or started["intent"] != binding(intent_path)
+            or failed["format_version"] != 1
+            or failed["kind"] != "devex-clone-migration-resume-failure"
+            or failed["attempt"] != attempt or failed["intent"] != binding(intent_path)
+            or failed["source_failure"] != failure or failed["prepared_files"] != prepared_files
+            or failed["started"] != binding(started_path)
+            or failed["error_type"] != "FileNotFoundError"
+            or failed["confirmed_operations"] != []
+            or failed["remote_write_operations_confirmed"] != 1
+            or failed["unknown_write_operation"] is not None
+            or active["id"] != operation["id"] or active["index"] != index
+            or active["intent"] != binding(operation_intent)
+            or active["command_receipts"] != []
+            or operation_value["format_version"] != 1
+            or operation_value["kind"] != "devex-clone-migration-operation-intent"
+            or operation_value["attempt"] != attempt or operation_value["index"] != index
+            or operation_value["resume"] != binding(intent_path)
+            or operation_value["failure"] != failure
+            or operation_value["operation"] != {key: operation[key]
+                for key in ("id", "command", "write")}
+            or marker is None or not finalized and actual_files != expected_files
+            or not _timestamp(intent["at"]) or not _timestamp(started["at"])
+            or not _timestamp(failed["at"]) or not _timestamp(operation_value["at"])
+            or not ordered(read_json(output / "failure.json")["at"], intent["at"], started["at"])
+            or not ordered(marker_at, operation_value["at"], failed["at"])
+            or not finalized and list(output.glob(operation["stage"] + "-*.command.json"))):
+        raise ValueError("迁移后继的前驱失败、只读操作或证据闭集无效")
+    expected_resources = {"databases": started["resources_before"]["databases"],
+                          "objects": started["resources_before"]["objects"],
+                          "redis": read_json(Path(marker["path"]))["after"]}
+    _validate_owned_resources(backend, request, expected_resources)
+    return {"attempt": attempt, "intent": binding(intent_path), "started": binding(started_path),
+            "failure": binding(failure_path), "marker_confirmation": marker,
+            "restart_generation": fixture_restart_generation(
+                started["storage_runtime"], started["cache_runtime"]),
+            "protected_binaries": intent["protected_binaries"],
+            "expected_resources": expected_resources, "record_files": expected_files,
+            "started_value": started, "failure_at": failed["at"]}
 
 
 def migration_resume_state(backend: Path, output: Path, request_descriptor: dict,
@@ -289,7 +509,6 @@ def migration_resume_state(backend: Path, output: Path, request_descriptor: dict
             or failed["fresh_target_initialized"] is not False or failed["clone_verified"] is not False
             or failed["restore_qualified"] is not False):
         return {"resumable": False, "reason": "失败不是可证明前缀的迁移文件访问中断"}
-    _no_prior_resume(output)
     prepared = read_json(output / "prepare.json")
     exact(prepared, PREPARE_FIELDS)
     request = read_bound_json(local_path(backend, request_descriptor["path"]), request_descriptor)
@@ -311,28 +530,53 @@ def migration_resume_state(backend: Path, output: Path, request_descriptor: dict
         raise ValueError("迁移续作的初始化前像摘要无效")
     creation = _creation_evidence(output, request)
     prepare_resume_names = _prepare_resume_stage_names(hooks, backend, output, request_descriptor)
-    _validate_stage_names(output, _initial_stage_names(request) | prepare_resume_names)
     reset = _reset_evidence(hooks, output, request, prepared["generation"])
     operations = migration_operations(prepared["generation"]["maintenance"])
     prefix = migration_prefix(output, operations)
+    prior = _failed_readonly_resume_records(
+        backend, output, request, request_descriptor, binding(failure_path), prepared_files,
+        binding(output / "initialize.started.json"), creation, reset, operations,
+        prefix["completed"]
+    )
+    prior_stage_names = (set() if prior is None else
+                         {name for name in prior["record_files"]
+                          if name.endswith((".intent.json", ".confirmed.json"))})
+    _validate_stage_names(
+        output, _initial_stage_names(request) | prepare_resume_names | prior_stage_names
+    )
     required = _initialization_paths(output, creation, reset, prefix["completed"])
     required.add(failure_path.name)
     required.update(prepare_resume_names)
+    current_for_initial = files_before
+    initialized_objects = None
+    if prior is not None:
+        required.update(prior["record_files"])
+        excluded = _prior_resume_observation_names(
+            output, files_before, baseline, request, prior["started_value"]
+        )
+        current_for_initial = [item for item in files_before if item["path"] not in excluded]
+        initialized_objects = prior["started_value"]["resources_before"]["objects"]
     validate_initialization_delta(
-        output, files_before, baseline, request,
+        output, current_for_initial, baseline, request,
         required,
         observation_rounds=12 + len(prefix["completed"]),
+        initialized_objects=initialized_objects,
     )
     if target_files(output, ignored={"initialize.lock"},
                     locked_guard=owned_lock_identity is not None) != files_before:
         raise ValueError("迁移续作判定期间目标证据树发生变化")
-    return {"resumable": True, "reason": None, "mode": "migration",
+    return {"resumable": True, "reason": None,
+            "mode": "migration" if prior is None else "migration-successor",
             "prepared": prepared, "request": request, "failure": binding(failure_path),
             "initialize_started": binding(output / "initialize.started.json"),
             "creation": creation, "reset": reset, "operations": operations,
             "completed": prefix["completed"], "next_index": prefix["next_index"],
             "prepared_files": prepared_files, "baseline_files": baseline,
-            "files": files_before}
+            "files": files_before, "predecessor": None if prior is None else prior["failure"],
+            "prior_marker_confirmation": None if prior is None else prior["marker_confirmation"],
+            "restart_generation": None if prior is None else prior["restart_generation"],
+            "protected_binaries": None if prior is None else prior["protected_binaries"],
+            "expected_resources": None if prior is None else prior["expected_resources"]}
 
 
 def _validate_owned_resources(backend: Path, request: dict, value: dict, *,
@@ -381,14 +625,16 @@ def _migration_resume_confirmed(backend: Path, output: Path, initialized: dict,
         value = read_json(path)
         if value.get("kind") == "devex-clone-migration-resume-confirmed":
             confirmations.append((path, value))
-    if (len(confirmations) != 1 or len(all_confirmations) != 1
-            or any(output.glob("resume-initialize-*.failure.json"))):
+    resume_failures = list(output.glob("resume-initialize-*.failure.json"))
+    if len(confirmations) != 1 or len(all_confirmations) != 1 or len(resume_failures) > 1:
         return False
     path, value = confirmations[0]
-    exact(value, {"format_version", "kind", "attempt", "at", "intent", "started", "failure",
-                  "prepared_files",
-                  "initialized", "original_prefix", "resumed_operations", "redis_marker_rebind",
-                  "remote_write_operations", "restore_qualified"})
+    successor = len(resume_failures) == 1
+    confirmation_fields = {"format_version", "kind", "attempt", "at", "intent", "started",
+                           "failure", "prepared_files", "initialized", "original_prefix",
+                           "resumed_operations", "redis_marker_rebind",
+                           "remote_write_operations", "restore_qualified"}
+    exact(value, confirmation_fields | ({"predecessor"} if successor else set()))
     attempt = value["attempt"]
     if (not isinstance(attempt, str) or re.fullmatch(r"[a-f0-9]{32}", attempt) is None
             or path != output / f"resume-initialize-{attempt}.confirmed.json"
@@ -406,10 +652,11 @@ def _migration_resume_confirmed(backend: Path, output: Path, initialized: dict,
     failed = read_json(failure_path)
     exact(failed, FAILURE_FIELDS)
     exact(initialized, INITIALIZED_FIELDS)
-    exact(intent_value, {"format_version", "kind", "attempt", "at", "request", "failure", "prepare",
-                         "prepared_files",
-                         "initialize_started", "reset", "creation", "migration_prefix", "next_operation",
-                         "protected_binaries", "remote_write_operations_before_resume"})
+    intent_fields = {"format_version", "kind", "attempt", "at", "request", "failure", "prepare",
+                     "prepared_files", "initialize_started", "reset", "creation",
+                     "migration_prefix", "next_operation", "protected_binaries",
+                     "remote_write_operations_before_resume"}
+    exact(intent_value, intent_fields | ({"predecessor"} if successor else set()))
     exact(started_value, {"format_version", "kind", "attempt", "at", "intent",
                           "current_generation_sha256", "storage", "storage_runtime",
                           "cache_runtime", "resources_before"})
@@ -435,29 +682,53 @@ def _migration_resume_confirmed(backend: Path, output: Path, initialized: dict,
         return False
     hooks.verify_initial_inventory(backend, output, initialized["inventory"]["receipt"],
                                    resumed=True)
-    validate_started_generation(backend, initialized["generation"], started_value)
-    marker_confirmation, marker_files, marker_at = validate_redis_marker_rebind(
-        backend, output, request, attempt, intent_path, started_path, started_value
-    )
-    _validate_owned_resources(
-        backend, request, started_value["resources_before"],
-        redis_markers=marker_confirmation is None
-    )
-    _validate_owned_resources(backend, request, {
-        "databases": started_value["resources_before"]["databases"],
-        "objects": initialized["objects"],
-        "redis": initialized["redis"],
-    })
     operations = migration_operations(initialized["generation"]["maintenance"])
     prefix = migration_prefix(output, operations, complete=True)["completed"]
     resumed_ids = [item.get("id") for item in value["resumed_operations"]]
     split = len(value["original_prefix"])
     if not 0 < split < len(operations) or operations[split]["write"]:
         return False
+    validate_started_generation(backend, initialized["generation"], started_value)
+    prior_files = set()
+    predecessor = None
+    if successor:
+        predecessor = _failed_readonly_resume_records(
+            backend, output, request, prepared["request"], binding(failure_path),
+            value["prepared_files"], binding(output / "initialize.started.json"),
+            creation, reset, operations, prefix[:split],
+            predecessor=value["predecessor"], finalized=True
+        )
+        if predecessor["failure"] != value["predecessor"]:
+            return False
+        marker_confirmation = predecessor["marker_confirmation"]
+        marker_files = {name for name in predecessor["record_files"]
+                        if name.startswith("resume-redis-markers-")}
+        prior_files = predecessor["record_files"]
+        marker_at = started_value["at"]
+        _validate_owned_resources(backend, request, started_value["resources_before"])
+        if (fixture_restart_generation(started_value["storage_runtime"],
+                                       started_value["cache_runtime"])
+                != predecessor["restart_generation"]
+                or started_value["resources_before"] != predecessor["expected_resources"]):
+            return False
+    else:
+        marker_confirmation, marker_files, marker_at = validate_redis_marker_rebind(
+            backend, output, request, attempt, intent_path, started_path, started_value
+        )
+        _validate_owned_resources(
+            backend, request, started_value["resources_before"],
+            redis_markers=marker_confirmation is None
+        )
+    _validate_owned_resources(backend, request, {
+        "databases": started_value["resources_before"]["databases"],
+        "objects": initialized["objects"],
+        "redis": initialized["redis"],
+    })
     expected_writes = sum(item["write"] for item in operations[split:]) \
         + int(marker_confirmation is not None)
     expected_resumed = []
-    expected_resume_files = {intent_path.name, started_path.name, path.name, *marker_files}
+    expected_resume_files = {intent_path.name, started_path.name, path.name,
+                             *marker_files, *prior_files}
     previous_at = marker_at
     for index, operation in enumerate(operations[split:], split):
         intent = output / f"resume-migrate-{attempt}-{index:02d}.intent.json"
@@ -522,11 +793,14 @@ def _migration_resume_confirmed(backend: Path, output: Path, initialized: dict,
             or intent_value["protected_binaries"] != execution_binary_bindings(backend, request)
             or intent_value["migration_prefix"] != value["original_prefix"]
             or intent_value["next_operation"] != operations[split]["id"]
-            or intent_value["remote_write_operations_before_resume"] != 0
+            or intent_value["remote_write_operations_before_resume"] != int(successor)
+            or successor and (intent_value["predecessor"] != value["predecessor"]
+                              or value["predecessor"] != binding(resume_failures[0]))
             or started_value["format_version"] != 1
             or started_value["kind"] != "devex-clone-migration-resume-started"
             or not _timestamp(intent_value["at"]) or not _timestamp(started_value["at"])
-            or not ordered(failed["at"], intent_value["at"], started_value["at"])
+            or not ordered(predecessor["failure_at"] if successor else failed["at"],
+                           intent_value["at"], started_value["at"])
             or not ordered(previous_at, initialized["completed_at"], value["at"])
             or started_value["attempt"] != attempt or started_value["intent"] != binding(intent_path)
             or actual_stage_files != expected_stage_files
