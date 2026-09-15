@@ -1,10 +1,11 @@
 """缓存恢复的请求、原子标记及外层发布；全部使用文件和协议替身。"""
 from contextlib import ExitStack
 import copy
+from io import BytesIO
 from pathlib import Path
 import unittest
 from workspace_directory import WorkspaceDirectory
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import devex_clone_cache as cache
 import devex_clone_cache_owner as markers
@@ -141,6 +142,32 @@ class CacheFixture(unittest.TestCase):
 
 
 class CacheTests(CacheFixture):
+    def test_restart_uses_real_redis_transport_for_marker_protocol(self):
+        bulk = lambda value: f"${len(value.encode())}\r\n{value}\r\n".encode()
+        replies = [b"*2\r\n$1\r\n0\r\n*0\r\n", b"$-1\r\n", b"$-1\r\n", b":1\r\n",
+                   b"*2\r\n$1\r\n0\r\n*1\r\n" + bulk(self.marker["ownership_key"]),
+                   bulk(self.marker["ownership_value"]), bulk(self.marker["sentinel_value"])]
+        connections = []
+        for reply in replies:
+            connection = MagicMock()
+            connection.__enter__.return_value = connection
+            connection.makefile.return_value.__enter__.return_value = BytesIO(b"+OK\r\n+OK\r\n" + reply)
+            connections.append(connection)
+        with self.patches(), patch.object(cache, "transport", wraps=markers.transport), \
+                patch("devex_clone_target_resources.socket.create_connection", side_effect=connections) as connect:
+            self.assertEqual(self.execute("restart")["status"], "cache_ready")
+        commands = []
+        for connection in connections:
+            sent = [markers.Resources._response(BytesIO(call.args[0])) for call in connection.sendall.call_args_list]
+            self.assertEqual(sent[:2], [["AUTH", self.private["APP_REDIS_PASSWORD"]], ["SELECT", "0"]])
+            self.assertEqual(len(sent), 3)
+            commands.append(sent[2])
+        self.assertEqual([command[0] for command in commands], ["SCAN", "GET", "GET", "MSETNX", "SCAN", "GET", "GET"])
+        self.assertEqual(commands[3], ["MSETNX", self.marker["ownership_key"], self.marker["ownership_value"],
+                                       self.marker["sentinel_key"], self.marker["sentinel_value"]])
+        self.assertEqual(connect.call_count, 7)
+        connect.assert_called_with(("127.0.0.1", self.previous["port"]), timeout=5)
+
     def test_restart_preserves_original_inputs_and_requires_outer_publication(self):
         originals = {path: binding(path) for path in self.root.iterdir() if path.is_file()}
         with self.patches():
@@ -152,6 +179,21 @@ class CacheTests(CacheFixture):
                 proof = cache.registered_cache_binding(self.backend, self.directory)
         self.assertEqual(proof["attempt"], 2)
         self.assertEqual(originals, {path: binding(path) for path in originals})
+        self.assertEqual(sum(command[0] == "MSETNX" for command in self.commands), 1)
+
+    def test_resume_before_first_scan_keeps_empty_owner_and_same_runtime(self):
+        with self.patches():
+            with patch.object(markers, "capture", side_effect=ValueError("before first SCAN")), self.assertRaises(ValueError):
+                self.execute("restart")
+            original_owner = self.directory / cache.STAGE / "a0001/owner"
+            self.assertEqual(list(original_owner.iterdir()), [])
+            self.assertEqual(self.commands, [])
+            runtime = binding(self.directory / cache.STAGE / "a0001/runtime.json")
+            self.assertEqual(self.execute("resume")["status"], "cache_ready")
+        self.assertEqual(self.counter, 1)
+        self.assertEqual(list(original_owner.iterdir()), [])
+        intent = read_json(self.directory / cache.STAGE / "a0002/owner/intent.json")
+        self.assertEqual(intent["runtime"], runtime)
         self.assertEqual(sum(command[0] == "MSETNX" for command in self.commands), 1)
 
     def test_unknown_after_response_only_reconciles_without_replay(self):
@@ -259,6 +301,23 @@ class CacheTests(CacheFixture):
                 self.execute("resume")
             self.execute("restart")
             self.assertEqual(cache.registered_cache_binding(self.backend, self.directory)["attempt"], 3)
+
+
+class TransportTests(unittest.TestCase):
+    def test_checkpoint_failure_blocks_connection_or_next_protocol_send(self):
+        for rejected in range(1, 5):
+            connection = MagicMock()
+            connection.__enter__.return_value = connection
+            connection.makefile.return_value.__enter__.return_value = BytesIO(b"+OK\r\n+OK\r\n:1\r\n")
+            checkpoint = MagicMock(side_effect=[None] * (rejected - 1) + [ValueError("guard changed")])
+            call = markers.transport({"previous": {"port": 16390}}, {"APP_REDIS_PASSWORD": "fixture-secret"}, checkpoint)
+            with self.subTest(rejected=rejected), \
+                    patch("devex_clone_target_resources.socket.create_connection", return_value=connection) as connect, \
+                    self.assertRaisesRegex(ValueError, "guard changed"):
+                call(["MSETNX", "owner", "owned", "sentinel", "expected"])
+            self.assertEqual(connect.call_count, 0 if rejected == 1 else 1)
+            sent = [markers.Resources._response(BytesIO(item.args[0])) for item in connection.sendall.call_args_list]
+            self.assertEqual(sent, [["AUTH", "fixture-secret"], ["SELECT", "0"]][:max(0, rejected - 2)])
 
 
 class RequestTests(CacheFixture):

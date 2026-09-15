@@ -371,7 +371,7 @@ def cache_status(backend: Path, directory: Path):
 
 
 def restore_markers(backend, directory, request, descriptor, output, runtime, runtime_binding, mode, number, guard):
-    call = transport(request, environment(backend, request))
+    call = transport(request, environment(backend, request), guard)
     owner_request = {**request, "binding": descriptor}
     previous = owner_paths(backend, directory, request, descriptor, runtime_binding)
     if previous and (previous[-1] / "confirmed.json").exists():

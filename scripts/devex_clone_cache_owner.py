@@ -9,8 +9,9 @@ from devex_clone_source_proof import bound_file
 from devex_clone_target_resources import Resources
 
 
-def transport(request, environment):
-    resource = SimpleNamespace(request={"storage": {"redis": request["previous"]}}, environment=environment)
+def transport(request, environment, checkpoint):
+    resource = SimpleNamespace(request={"storage": {"redis": request["previous"]}},
+                               environment=environment, checkpoint=checkpoint)
     resource._response = Resources._response
     return lambda parts: Resources._redis(resource, parts)
 
