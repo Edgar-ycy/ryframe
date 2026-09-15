@@ -173,5 +173,137 @@ class CollectionFailureTests(unittest.TestCase):
             path.write_bytes(raw)
 
 
+class ObservationFailureTests(unittest.TestCase):
+    def setUp(self):
+        self.c = CollectionFailureTests()
+        self.c.setUp()
+        self.addCleanup(self.c.doCleanups)
+        self.backend, self.directory = self.c.backend, self.c.directory
+        self.failed = copy.deepcopy(self.c.failed)
+        self.failed["number"] = 59
+        self.failed["sources"]["snapshot"]["head"] = "a387e3669f18499b8428906262557b307ce630c4"
+        self.owner = copy.deepcopy(self.c.owner)
+        self.owner["identity"]["pid"] += 1
+        self.controller, self.failure = self.directory / "controller-0059.json", self.directory / "failure-0059.json"
+        running = {**self.failed, "status": "running", "finished_at": None, "error_type": None}
+        write_json(self.controller, {"format_version": 1, "kind": "devex-stage-controller", "owner": self.owner,
+                                    "attempt": 59, "attempt_sha256": plan_hash(running)})
+        write_json(self.failure, {"format_version": 1, "kind": "devex-stage-failure", "attempt": 59,
+            "stage": "seed-runtime", "mode": prelaunch.RECOVER, "error_type": "CalledProcessError",
+            "frames": copy.deepcopy(prelaunch.OBSERVATION_FRAMES), "controller": binding(self.controller)})
+        self.output = self.directory / "seed-runtime/attempt-0059"
+        for folder in ("before/databases", "runtime"):
+            (self.output / folder).mkdir(parents=True)
+        for name in ("runtime/binaries.json", "runtime/runtime.json", "before/schema-before.json", "before/databases/inventory.json"):
+            write_json(self.output / name, {"previous_read_only_capture": name})
+        self.binary = self.directory / "old-maintenance/ryframe-tenant-data.exe"
+        self.binary.parent.mkdir()
+        self.binary.write_bytes(b"audited parser before configuration or database access")
+        self.maintenance = self.binary.parent / "build.json"
+        source = copy.deepcopy(self.c.failed["sources"])
+        source["snapshot"]["head"] = "358a4f579cbcecb2fbcc0425b0ab07250bd156f2"
+        write_json(self.maintenance, {"source": {key: source[key] for key in ("snapshot", "worktree_fingerprint")},
+            "backend_root": str(self.backend), "artifacts": {"tenant-data": {"executable": str(self.binary),
+                **{key: binding(self.binary)[key] for key in ("bytes", "sha256")}}}})
+        self.command = self.output / "before/inventory-before.command.json"
+        write_json(self.command, {"command": [str(self.binary), "backup-inventory", "--output",
+            str(self.output / "before/inventory-before.json"), "--source-sha", source["snapshot"]["head"],
+            "--observed-at", "2026-09-15T08:55:13.454483+00:00"], "cwd": str(self.backend), "remote_operations": "read_only"})
+        self.diagnostic = self.output / "before/inventory-before.diagnostic.json"
+        write_json(self.diagnostic, {"returncode": 1, "error_type": "CalledProcessError", "stdout": "",
+                                    "stderr": 'Error: Validation("缺少 --quiesced-at\\nusage")'})
+        self.files_sha = plan_hash(_manifest(self.output))
+        self.maintenance_sha = binding(self.maintenance)["sha256"]
+
+    def context(self):
+        stack = self.c.context()
+        def tree(_backend, _operation, revision):
+            trees = {fixtures.AUDITED_HEAD: fixtures.AUDITED_TREE,
+                     "d781c20fdf5d836a49e0b899eced58634fe2bd4d": prelaunch.COLLECTION_TREE,
+                     "a387e3669f18499b8428906262557b307ce630c4": prelaunch.OBSERVATION_TREE,
+                     "358a4f579cbcecb2fbcc0425b0ab07250bd156f2": prelaunch.OBSERVATION_PRODUCT_TREE}
+            return trees[revision.removesuffix("^{tree}")].encode()
+        stack.enter_context(patch.object(prelaunch, "git", side_effect=tree))
+        stack.enter_context(patch.object(prelaunch, "OBSERVATION_FILES", self.files_sha))
+        stack.enter_context(patch.object(prelaunch, "OBSERVATION_MAINTENANCE", self.maintenance_sha))
+        return stack
+
+    def prove(self):
+        return prelaunch.collection_failure(self.backend, self.directory, self.c.p.start, self.failed, previous=self.c.failed)
+
+    def test_parser_failure_binds_both_collections_and_separate_product_source(self):
+        before = self.c.p.files()
+        with self.context():
+            result = self.prove()
+        self.assertEqual(result["tree"], prelaunch.OBSERVATION_TREE)
+        self.assertEqual(result["previous"]["tree"], prelaunch.COLLECTION_TREE)
+        self.assertEqual(result["tenant-data"], binding(self.binary))
+        self.assertEqual(result["files"], _manifest(self.output))
+        self.assertEqual(before, self.c.p.files())
+
+    def test_prior_or_current_files_binary_and_controller_changes_reject(self):
+        for path in (self.c.output / "runtime/runtime.json", self.output / "before/databases/inventory.json",
+                     self.diagnostic, self.controller, self.maintenance, self.binary):
+            with self.subTest(path=path):
+                raw = path.read_bytes()
+                path.write_bytes(raw + b" ")
+                with self.context(), self.assertRaises(ValueError):
+                    self.prove()
+                path.write_bytes(raw)
+        write_json(self.output / "before/inventory-before.json", {"unexpected_complete_inventory": True})
+        with self.context(), self.assertRaises(ValueError):
+            self.prove()
+
+    def test_live_controller_or_generation_directory_does_not_count_as_parser_only_failure(self):
+        with self.context(), patch.object(prelaunch, "process_identity", side_effect=lambda pid:
+                self.owner["identity"] if pid == self.owner["identity"]["pid"] else None), self.assertRaises(ValueError):
+            self.prove()
+        (self.directory / "g0059").mkdir()
+        with self.context(), self.assertRaises(ValueError):
+            self.prove()
+
+    def test_later_stack_frame_cannot_claim_failure_before_database_access(self):
+        value = read_json(self.failure)
+        value["frames"].append({"file": "scripts/writer.py", "function": "execute", "line": 1})
+        write_json(self.failure, value)
+        with self.context(), self.assertRaises(ValueError):
+            self.prove()
+
+    def test_changed_arguments_or_nonempty_output_reject_even_with_local_manifest_recomputed(self):
+        original = read_json(self.command)
+        for index, changed in ((1, "backup-register"), (3, str(self.output / "other.json")),
+                               (5, "a" * 40), (6, "--quiesced-at")):
+            value = copy.deepcopy(original)
+            value["command"][index] = changed
+            write_json(self.command, value)
+            self.files_sha = plan_hash(_manifest(self.output))
+            with self.context(), self.assertRaises(ValueError):
+                self.prove()
+        write_json(self.command, original)
+        diagnostic = read_json(self.diagnostic)
+        for changed in ({"stdout": "inventory produced"}, {"returncode": 0}, {"stderr": "failed after write"}):
+            write_json(self.diagnostic, {**diagnostic, **changed})
+            self.files_sha = plan_hash(_manifest(self.output))
+            with self.context(), self.assertRaises(ValueError):
+                self.prove()
+
+    def test_more_failed_recoveries_or_wrong_predecessor_cannot_extend_the_exception(self):
+        with self.context():
+            for change in ({"number": 60}, {"mode": prelaunch.START}, {"status": "passed"}, {"error_type": "ValueError"}):
+                with self.subTest(change=change), self.assertRaises(ValueError):
+                    prelaunch.collection_failure(self.backend, self.directory, self.c.p.start, {**self.failed, **change}, previous=self.c.failed)
+            with self.assertRaises(ValueError):
+                prelaunch.collection_failure(self.backend, self.directory, self.c.p.start, self.failed, previous=self.failed)
+
+    def test_coordinator_and_parser_product_must_both_match_their_audited_trees(self):
+        for head in ("a387e3669f18499b8428906262557b307ce630c4", "358a4f579cbcecb2fbcc0425b0ab07250bd156f2"):
+            with self.subTest(head=head), self.context():
+                original = prelaunch.git
+                def changed(root, operation, revision):
+                    return b"a" * 40 if revision.startswith(head) else original(root, operation, revision)
+                with patch.object(prelaunch, "git", side_effect=changed), self.assertRaises(ValueError):
+                    self.prove()
+
+
 if __name__ == "__main__":
     unittest.main()

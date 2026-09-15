@@ -310,6 +310,40 @@ class PrelaunchFlowTests(unittest.TestCase):
                         rebind.history(self.directory, self.state, self.request["source_registration"], backend=self.backend)
         self.assertFalse(self.output.exists())
 
+    def test_second_audited_parser_failure_can_be_sealed_without_losing_either_collection(self):
+        first = self.failed_collection()
+        second = {**self.recovery, "status": "failed", "error_type": "CalledProcessError"}
+        self.prefix.append(second)
+        self.recovery = {**self.recovery, "number": 60}
+        self.state["attempts"] = self.prefix
+        self.output = self.directory / "seed-runtime/attempt-0060"
+        self.runtime.output, self.runtime.runtime = self.output, self.output / "runtime"
+        self.runtime.selected = {**self.source_request["source"], "runtime_dir": str(self.runtime.runtime)}
+        with self.contexts(), patch.object(prelaunch, "collection_failure", return_value={"original": [58, 59]}):
+            self.state["attempts"] = [*self.prefix, {**second, "number": 60}]
+            with self.assertRaises(ValueError):
+                control.preflight(self.directory, generation.RECOVER, backend=self.backend, request_path=self.request_path)
+            with self.assertRaises(ValueError):
+                rebind.history(self.directory, self.state, self.request["source_registration"], backend=self.backend)
+            self.state["attempts"] = self.prefix
+            control.preflight(self.directory, generation.RECOVER, backend=self.backend, request_path=self.request_path)
+            rebind.history(self.directory, self.state, self.request["source_registration"], backend=self.backend)
+            with self.assertRaises(ValueError):
+                generation.preflight(self.directory, backend=self.backend)
+            self.state["attempts"] = [*self.prefix, self.recovery]
+            rebind.history(self.directory, self.state, self.request["source_registration"], current=60, backend=self.backend)
+            value = self.publish()
+            archive = prelaunch.closed(self.backend, self.directory, self.state["attempts"])
+            self.assertEqual(archive["records"], (self.p.start, first, second, self.recovery))
+            self.assertEqual(value["collection_failure"], {"original": [58, 59]})
+            generation.preflight(self.directory, backend=self.backend)
+            rebind.history(self.directory, self.state, self.request["source_registration"], backend=self.backend)
+            self.state["attempts"].append(self.record(61, generation.START, status="running"))
+            rebind.history(self.directory, self.state, self.request["source_registration"], current=61, backend=self.backend)
+            with self.assertRaises(ValueError):
+                generation.preflight(self.directory, backend=self.backend)
+        self.runtime.start.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

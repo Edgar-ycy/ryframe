@@ -47,14 +47,14 @@ def history(directory: Path, state: dict, descriptor: dict, *, current: int | No
     if (archive is None and prefix and tuple(prefix[-1][key] for key in ("stage", "mode", "status"))
             == ("seed-runtime", "source-generation-recover", "failed")):
         start, _ = origin(root, directory, prefix)
-        pending = (start, prefix[-1])
+        pending = tuple(prefix[prefix.index(start):])
     rebound, started, generated, recovered, exported, export_origin = False, False, False, False, False, None
     cache_successor = None
     for item in later:
         operation = (item["stage"], item["mode"])
         if archive is not None and item in archive["records"]:
             continue
-        if pending and item == pending[1]:
+        if pending and item in pending[1:]:
             continue
         if item["stage"] == "cache-target":
             if rebound or backend is None or item["mode"] not in {"restart", "resume", "reconcile", "stop", "recover"}:

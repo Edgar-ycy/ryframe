@@ -61,6 +61,21 @@ COLLECTION_FILES = {
     "runtime/runtime.json": "b292edafceefad1924651fb526026aa63b4d8ee776a3df714963f1cb1db00567",
 }
 COLLECTION_MAINTENANCE = "86fb5ff5fca2a83a4588f5f52bdf53a2986d7725900f453936ffadeccb401556"
+OBSERVATION_TREE = "277a6d8db15e5db1fc4c58645e7885d841dd9080"
+OBSERVATION_PRODUCT_TREE = "dad947d8d622264c975aca8fea5fe58e6ae05190"
+OBSERVATION_FILES = "68df30b793b0953bbb3bedd4c42df3b8653ed3c73065f5ead29de2892f37e9ed"
+OBSERVATION_MAINTENANCE = "f7c39f0e2939bc130a542485066b624362441b3324336dfe7f5197a449f40a5d"
+# 后续唯一失败在已登记历史二进制的参数解析中，配置加载、连接和库存输出均未执行。
+OBSERVATION_FRAMES = [
+    {"file": "scripts/" + file + ".py", "function": function, "line": line}
+    for file, function, line in (
+        ("devex_clone_run", "execute", 717), ("devex_clone_seed_runtime", "execute_seed", 341),
+        ("devex_clone_seed_generation_control", "execute_recover", 209),
+        ("devex_clone_seed_generation_prelaunch", "execute", 321),
+        ("devex_clone_seed_generation_images", "capture_image", 51),
+        ("devex_clone_export", "capture_inventory", 146), ("devex_clone_export", "run_cli", 55),
+    )
+]
 
 
 def proof(backend: Path, directory: Path, start: dict) -> dict:
@@ -107,12 +122,16 @@ def proof(backend: Path, directory: Path, start: dict) -> dict:
             "source": sources, "tree": tree}
 
 
-def collection_failure(backend: Path, directory: Path, start: dict, failed: dict) -> dict:
+def collection_failure(backend: Path, directory: Path, start: dict, failed: dict,
+                       previous: dict | None = None) -> dict:
     from restore_source_runtime import _manifest
     from restore_build import file_digest
 
     original = proof(backend, directory, start)
-    if (failed["number"] != start["number"] + 1
+    prior = None if previous is None else collection_failure(backend, directory, start, previous)
+    observed = prior is not None
+    tree, frames = (OBSERVATION_TREE, OBSERVATION_FRAMES) if observed else (COLLECTION_TREE, COLLECTION_FRAMES)
+    if (failed["number"] != start["number"] + (2 if observed else 1)
             or tuple(failed.get(key) for key in ("stage", "mode", "status", "result", "error_type"))
             != ("seed-runtime", RECOVER, "failed", None, "CalledProcessError")):
         raise ValueError("只允许原未启动失败后的唯一已审计采集失败")
@@ -121,7 +140,7 @@ def collection_failure(backend: Path, directory: Path, start: dict, failed: dict
     snapshot = sources["snapshot"]
     if (not snapshot["clean"] or snapshot["files"]
             or snapshot["patch_sha256"] != hashlib.sha256(b"").hexdigest()
-            or git(backend, "rev-parse", snapshot["head"] + "^{tree}").decode().strip() != COLLECTION_TREE):
+            or git(backend, "rev-parse", snapshot["head"] + "^{tree}").decode().strip() != tree):
         raise ValueError("原采集失败没有精确干净的已审计源码")
     number = failed["number"]
     local_path(backend, str(directory / f"g{number:04d}"), new=True)
@@ -140,37 +159,62 @@ def collection_failure(backend: Path, directory: Path, start: dict, failed: dict
     failure, value = binding(path), read_json(path)
     if (value != {"format_version": 1, "kind": "devex-stage-failure", "attempt": number,
                   "stage": "seed-runtime", "mode": RECOVER, "error_type": "CalledProcessError",
-                  "frames": COLLECTION_FRAMES, "controller": controller}
+                  "frames": frames, "controller": controller}
             or type(value["format_version"]) is not int):
-        raise ValueError("原采集失败栈不属于 control verify 的零写入边界")
+        raise ValueError("原采集失败栈不属于已审计只读边界")
     output = local_path(backend, str(directory / "seed-runtime" / f"attempt-{number:04d}"))
     files = _manifest(output)
-    if {item["path"]: item["sha256"] for item in files} != COLLECTION_FILES:
+    files_match = (plan_hash(files) == OBSERVATION_FILES if observed
+                   else {item["path"]: item["sha256"] for item in files} == COLLECTION_FILES)
+    if not files_match:
         raise ValueError("原采集局部目录不是完整的已审计文件集合")
-    binaries = read_json(output / "runtime/binaries.json")
-    migrate = local_path(backend, binaries["ryframe-migrate"])
-    maintenance_path = local_path(backend, str(migrate.parent / "build.json"))
-    maintenance = binding(maintenance_path)
-    receipt = read_json(maintenance_path)
-    artifact = receipt["artifacts"]["migrate"]
-    if (maintenance["sha256"] != COLLECTION_MAINTENANCE
-            or receipt["source"] != {key: sources[key] for key in ("snapshot", "worktree_fingerprint")}
-            or artifact["executable"] != str(migrate)
-            or file_digest(migrate) != {key: artifact[key] for key in ("bytes", "sha256")}
-            or read_json(output / "before/migrations-control.command.json") != {
-                "command": [str(migrate), "control", "verify"], "cwd": str(backend), "remote_operations": "read_only"}):
-        raise ValueError("原采集命令没有绑定同源只读维护二进制")
+    maintenance, artifact = _collection_binary(backend, output, sources, observed)
+    binary = Path(artifact["executable"])
     if process_identity(owner["identity"]["pid"]) is not None:
         raise ValueError("原采集控制器仍存活或 PID 已复用")
     if (binding(path) != failure or controller_record(directory, number, running) != (controller, owner)
-            or _manifest(output) != files or binding(maintenance_path) != maintenance
-            or file_digest(migrate) != {key: artifact[key] for key in ("bytes", "sha256")}
-            or proof(backend, directory, start) != original):
+            or _manifest(output) != files or binding(Path(maintenance["path"])) != maintenance
+            or file_digest(binary) != {key: artifact[key] for key in ("bytes", "sha256")}
+            or proof(backend, directory, start) != original
+            or observed and collection_failure(backend, directory, start, previous) != prior):
         raise ValueError("原采集失败证明在核验期间变化")
     local_path(backend, str(directory / f"g{number:04d}"), new=True)
     return {"attempt": plan_hash(failed), "original_start": original, "failure": failure,
-            "controller": controller, "source": sources, "tree": COLLECTION_TREE,
-            "files": files, "maintenance": maintenance, "migrate": binding(migrate)}
+            "controller": controller, "source": sources, "tree": tree, "previous": prior,
+            "files": files, "maintenance": maintenance, "tenant-data" if observed else "migrate": binding(binary)}
+
+
+def _collection_binary(backend: Path, output: Path, sources: dict, observed: bool) -> tuple[dict, dict]:
+    from restore_build import file_digest
+
+    binaries = read_json(output / "runtime/binaries.json")
+    command = read_json(output / ("before/inventory-before.command.json" if observed
+                                 else "before/migrations-control.command.json"))
+    binary = local_path(backend, command["command"][0] if observed else binaries["ryframe-migrate"])
+    maintenance_path = local_path(backend, str(binary.parent / "build.json"))
+    maintenance = binding(maintenance_path)
+    receipt = read_json(maintenance_path)
+    artifact = receipt["artifacts"]["tenant-data" if observed else "migrate"]
+    expected_sha = OBSERVATION_MAINTENANCE if observed else COLLECTION_MAINTENANCE
+    if (maintenance["sha256"] != expected_sha or artifact["executable"] != str(binary)
+            or file_digest(binary) != {key: artifact[key] for key in ("bytes", "sha256")}):
+        raise ValueError("原采集命令没有绑定同源只读维护二进制")
+    if not observed:
+        if (receipt["source"] != {key: sources[key] for key in ("snapshot", "worktree_fingerprint")}
+                or command != {"command": [str(binary), "control", "verify"], "cwd": str(backend), "remote_operations": "read_only"}):
+            raise ValueError("原 control verify 不属于同一来源和命令")
+    else:
+        snapshot = receipt["source"]["snapshot"]
+        diagnostic = read_json(output / "before/inventory-before.diagnostic.json")
+        if (not snapshot["clean"] or snapshot["files"] or snapshot["patch_sha256"] != hashlib.sha256(b"").hexdigest()
+                or git(backend, "rev-parse", snapshot["head"] + "^{tree}").decode().strip() != OBSERVATION_PRODUCT_TREE
+                or command != {"command": [str(binary), "backup-inventory", "--output", str(output / "before/inventory-before.json"),
+                    "--source-sha", snapshot["head"], "--observed-at", command["command"][-1]],
+                    "cwd": receipt["backend_root"], "remote_operations": "read_only"}
+                or diagnostic["error_type"] != "CalledProcessError" or diagnostic["returncode"] != 1
+                or diagnostic["stdout"] != "" or not diagnostic["stderr"].startswith('Error: Validation("缺少 --quiesced-at\\n')):
+            raise ValueError("原库存失败没有证明停止于已审计二进制的参数解析")
+    return maintenance, artifact
 
 
 def origin(backend: Path, directory: Path, prefix: list) -> tuple[dict, dict | None]:
@@ -182,8 +226,15 @@ def origin(backend: Path, directory: Path, prefix: list) -> tuple[dict, dict | N
     if suffix == [start]:
         proof(backend, directory, start)
         return start, None
+    if any(row.get("number") != start["number"] + index
+           or tuple(row.get(key) for key in ("stage", "mode", "status", "result", "error_type"))
+           != ("seed-runtime", RECOVER, "failed", None, "CalledProcessError")
+           for index, row in enumerate(suffix[1:], 1)):
+        raise ValueError("未启动恢复历史包含其他阶段或不明失败")
     if len(suffix) == 2:
         return start, collection_failure(backend, directory, start, suffix[1])
+    if len(suffix) == 3:
+        return start, collection_failure(backend, directory, start, suffix[2], previous=suffix[1])
     raise ValueError("未启动恢复历史包含其他阶段或重复采集")
 
 
@@ -244,7 +295,7 @@ def closed(backend: Path, directory: Path, attempts: list) -> dict | None:
                                      source_registration=value["source_registration"])
     if images["before"]["image"] != images["after"]["image"]:
         raise ValueError("未启动恢复采集期间完整当前像变化")
-    records = (start, record) if collection is None else (start, prefix[-1], record)
+    records = (*prefix[prefix.index(start):], record)
     return {"start": start, "recovery": record, "records": records, "receipt": value, "image": images["after"]["image"]}
 
 
