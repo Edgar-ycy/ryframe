@@ -8,7 +8,8 @@ import subprocess
 from devex_clone_capture import read_json, write_json
 from devex_clone_model import exact, local_path
 from devex_clone_run_state import binding, controller_record
-from devex_clone_source_proof import bound_file
+from devex_clone_source_proof import bound_file, require_recorded_producer_stopped
+from devex_clone_storage_request import identity
 from full_stack_process import process_identity
 from restore_reference_plan import plan_hash
 from source_fingerprints import verify_execution_source, require_current_execution_source
@@ -76,6 +77,69 @@ OBSERVATION_FRAMES = [
         ("devex_clone_export", "capture_inventory", 146), ("devex_clone_export", "run_cli", 55),
     )
 ]
+
+# bd5b5f31 上已审计的构建收据严格比较失败：尚未创建 generation、结果或恢复目录。
+REREGISTRATION_TREE = "57636e10d241ba8a3ee9917de8a0fb800660479c"
+REREGISTRATION_FRAMES = [
+    {"file": "scripts/devex_clone_run.py", "function": "execute", "line": 717},
+    {"file": "scripts/devex_clone_seed_runtime.py", "function": "execute_seed", "line": 341},
+    {"file": "scripts/devex_clone_seed_generation.py", "function": "execute_generation", "line": 255},
+    {"file": "scripts/devex_clone_seed_generation.py", "function": "_archived_request", "line": 223},
+]
+
+
+def receipt_reregistration_failure(
+    backend: Path, directory: Path, attempt: dict, previous: dict,
+) -> tuple[dict, dict]:
+    """只接受相邻资源恢复后、创建任何 generation 输出前的固定收据比较失败。"""
+    if (type(attempt.get("number")) is not int or type(previous.get("number")) is not int
+            or attempt["number"] != previous["number"] + 1
+            or tuple(previous.get(key) for key in ("stage", "mode", "status", "error_type"))
+            != ("cache-target", "restart", "passed", None)
+            or previous.get("result") is None or attempt.get("sources") != previous.get("sources")
+            or tuple(attempt.get(key) for key in ("stage", "mode", "status", "result", "error_type"))
+            != ("seed-runtime", START, "failed", None, "ValueError")):
+        raise ValueError("生成重试只接受同源相邻且零输出的收据重登记失败")
+    verify_execution_source(attempt["sources"], "构建收据重登记控制器")
+    snapshot = attempt["sources"]["snapshot"]
+    if (not snapshot["clean"] or snapshot["files"]
+            or snapshot["patch_sha256"] != hashlib.sha256(b"").hexdigest()):
+        raise ValueError("生成重试没有使用精确干净的已审计源码")
+    tree = git(backend, "rev-parse", snapshot["head"] + "^{tree}").decode().strip()
+    if tree != REREGISTRATION_TREE:
+        raise ValueError("生成重试不属于已审计的严格收据比较源码")
+
+    running = {**attempt, "status": "running", "finished_at": None, "error_type": None}
+    controller, owner = controller_record(directory, attempt["number"], running)
+    exact(owner, {"format_version", "identity", "directory", "manifest_sha256"})
+    owner_identity = identity(owner["identity"])
+    if (type(owner["format_version"]) is not int or owner["format_version"] != 1
+            or owner["directory"] != str(directory)
+            or owner["manifest_sha256"] != binding(directory / "manifest.json")["sha256"]):
+        raise ValueError("生成失败控制器不属于固定运行")
+
+    number = attempt["number"]
+    failure_path = local_path(backend, str(directory / f"failure-{number:04d}.json"))
+    failure_descriptor = binding(failure_path)
+    failure = read_json(bound_file(backend, failure_descriptor))
+    expected = {"format_version": 1, "kind": "devex-stage-failure", "attempt": number,
+                "stage": "seed-runtime", "mode": "source-generation-start", "error_type": "ValueError",
+                "frames": REREGISTRATION_FRAMES, "controller": controller}
+    if failure != expected or type(failure["format_version"]) is not int:
+        raise ValueError("生成失败不是收据重登记的固定零输出调用链")
+
+    outputs = (directory / f"g{number:04d}", directory / "results" / f"{number:04d}.json",
+               directory / "seed-runtime" / f"attempt-{number:04d}")
+    for output in outputs:
+        local_path(backend, str(output), new=True)
+    require_recorded_producer_stopped(owner_identity)
+    if (binding(failure_path) != failure_descriptor
+            or controller_record(directory, number, running) != (controller, owner)
+            or git(backend, "rev-parse", snapshot["head"] + "^{tree}").decode().strip() != tree):
+        raise ValueError("生成失败证据或已审计源码在核验期间变化")
+    for output in outputs:
+        local_path(backend, str(output), new=True)
+    return failure_descriptor, controller
 
 
 def proof(backend: Path, directory: Path, start: dict) -> dict:
@@ -301,8 +365,17 @@ def closed(backend: Path, directory: Path, attempts: list) -> dict | None:
 
 def starts(backend: Path, directory: Path, attempts: list) -> list:
     archive = closed(backend, directory, attempts)
-    return [row for row in attempts if (row["stage"], row["mode"]) == ("seed-runtime", START)
-            and (archive is None or row != archive["start"])]
+    records = [row for row in attempts if (row["stage"], row["mode"]) == ("seed-runtime", START)
+               and (archive is None or row != archive["start"])]
+    if archive is not None and records and tuple(
+            records[0].get(key) for key in ("status", "result", "error_type")) == (
+            "failed", None, "ValueError"):
+        index = attempts.index(records[0])
+        if index == 0:
+            raise ValueError("生成重试缺少相邻前序阶段")
+        receipt_reregistration_failure(backend, directory, records[0], attempts[index - 1])
+        records = records[1:]
+    return records
 
 
 def prepare(backend: Path, directory: Path, start: dict, request_path: Path, number: int, *, run=subprocess.run):

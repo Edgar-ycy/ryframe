@@ -34,12 +34,31 @@ START_FIELDS = {"status", "request", "source_registration", "source_rebind", "re
 def preflight(directory: Path, *, backend: Path | None = None) -> None:
     from devex_clone_seed_generation_prelaunch import closed
 
+    backend = backend or Path(__file__).resolve().parents[1]
     attempts = load_state(directory)["attempts"]
-    archived = closed(backend or Path(__file__).resolve().parents[1], directory, attempts)
+    archived = closed(backend, directory, attempts)
     ignored = () if archived is None else archived["records"]
-    if any(item["stage"] == "seed-runtime" and item["mode"] in {START, STOP, RECOVER, "source-export", "arm-input"}
-           and item not in ignored for item in attempts):
-        raise ValueError("source-generation 只执行一次；失败必须核对完整前后像，不能重放启动")
+    remaining = [item for item in attempts
+                 if item["stage"] == "seed-runtime"
+                 and item["mode"] in {START, STOP, RECOVER, "source-export", "arm-input"}
+                 and item not in ignored]
+    if remaining:
+        retryable = (archived is not None and len(remaining) == 1
+                     and (remaining[0]["mode"], remaining[0]["status"]) == (START, "failed"))
+        if not retryable:
+            raise ValueError("source-generation 只执行一次；失败必须核对完整前后像，不能重放启动")
+        from devex_clone_seed_segment import segmented_resume
+
+        segment = segmented_resume(
+            backend, directory, attempts, archived, archived["receipt"]["source_registration"])
+        failures = [] if segment is None else [
+            row for row in segment["records"]
+            if (row["stage"], row["mode"], row["status"])
+            == ("seed-runtime", START, "failed")
+        ]
+        if (segment is None or segment["phase"] != "ready" or segment["storage"] is None
+                or segment["cache"] is None or failures != remaining):
+            raise ValueError("source-generation 失败未形成资源完整、零输出且唯一相邻的续作边界")
     rebound = [item for item in attempts if (item["stage"], item["mode"]) == ("seed-runtime", "source-rebind")]
     if len(rebound) != 1 or rebound[0]["status"] != "passed":
         raise ValueError("source-generation 必须继承唯一已发布 storage rebind")
@@ -219,8 +238,80 @@ def _archived_request(backend: Path, archive: dict, request: dict, segment: dict
         if segment["phase"] != "ready" or segment["storage"] is None or segment["cache"] is None:
             raise ValueError("分段资源尚未全部恢复，不能执行实际 START")
         expected["current_storage"] = segment["storage"]
+        changed = tuple(request[field] != previous[field]
+                        for field in ("backend_build", "maintenance_build"))
+        if changed[0] != changed[1]:
+            raise ValueError("运行与维护构建收据必须成对重新登记")
+        if changed[0]:
+            _reregistered_builds(backend, previous, request)
+            expected.update(backend_build=request["backend_build"],
+                            maintenance_build=request["maintenance_build"])
     if request != expected:
-        raise ValueError("后续实际启动只允许更新同一请求的当前存储代次")
+        raise ValueError("后续实际启动只允许更新当前存储及等价的成对构建收据")
+
+
+def _reregistered_builds(backend: Path, previous: dict, request: dict) -> None:
+    from restore_build import validate_build_context, verify_build_artifacts
+    from source_inventory import validate_build_source_domains
+
+    old_runtime_path = bound_file(backend, previous["backend_build"])
+    new_runtime_path = bound_file(backend, request["backend_build"])
+    old_runtime, new_runtime = (copy.deepcopy(read_json(path))
+                                for path in (old_runtime_path, new_runtime_path))
+    for value in (old_runtime, new_runtime):
+        sources = validate_build_source_domains(value.get("sources"), "backend")
+        snapshot = sources["full"]["source"]["snapshot"]
+        if (snapshot.get("head") != request["expected_backend_sha"]
+                or snapshot.get("clean") is not True or snapshot.get("files")):
+            raise ValueError("重新登记的 API/Worker 构建不是同一干净后端来源")
+        validate_build_context(value.get("build"))
+        verify_build_artifacts(value)
+        environment = value["build"]["environment"]
+        exact(environment, {"variables", "sha256"})
+        environment["sha256"] = "<current-environment>"
+    if old_runtime != new_runtime:
+        raise ValueError("重新登记的 API/Worker 构建改变了源码、命令、工具链或产物")
+    if (binding(old_runtime_path) != previous["backend_build"]
+            or binding(new_runtime_path) != request["backend_build"]):
+        raise ValueError("重新登记的 API/Worker 构建收据在核验期间变化")
+
+    execution = local_path(backend, request["execution_backend"])
+    old_maintenance_path = bound_file(execution, previous["maintenance_build"])
+    new_maintenance_path = bound_file(execution, request["maintenance_build"])
+    from devex_clone_tools import verify_evidence
+
+    old_maintenance = _stable_maintenance(
+        verify_evidence(execution, old_maintenance_path), old_maintenance_path)
+    new_maintenance = _stable_maintenance(
+        verify_evidence(execution, new_maintenance_path), new_maintenance_path)
+    for value in (old_maintenance, new_maintenance):
+        snapshot = value["source"]["snapshot"]
+        if (value.get("backend_root") != str(execution)
+                or value.get("source_inventory") != old_runtime["sources"]["full"]
+                or value.get("source") != old_runtime["sources"]["full"]["source"]
+                or snapshot.get("head") != request["expected_backend_sha"]
+                or snapshot.get("clean") is not True or snapshot.get("files")):
+            raise ValueError("重新登记的维护构建不是同一干净后端来源")
+    if old_maintenance != new_maintenance:
+        raise ValueError("重新登记的维护构建改变了源码、命令、工具链或产物")
+    if (binding(old_maintenance_path) != previous["maintenance_build"]
+            or binding(new_maintenance_path) != request["maintenance_build"]):
+        raise ValueError("重新登记的维护构建收据在核验期间变化")
+
+
+def _stable_maintenance(value: dict, receipt: Path) -> dict:
+    stable = copy.deepcopy(value)
+    exact(stable["artifacts"], {"reset", "migrate", "tenant-data"})
+    for artifact in stable["artifacts"].values():
+        executable = Path(artifact["executable"])
+        if executable.parent != receipt.parent:
+            raise ValueError("维护构建产物不属于自身收据目录")
+        artifact["executable"] = executable.name
+        for field in ("cargo_output", "cargo_log"):
+            evidence = artifact[field]
+            exact(evidence, {"file", "bytes", "sha256"})
+            artifact[field] = {"file": evidence["file"]}
+    return stable
 
 
 def _archived_image(archive: dict, current: dict, segment: dict | None) -> None:

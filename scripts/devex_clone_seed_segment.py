@@ -462,8 +462,17 @@ def segmented_resume(backend: Path, directory: Path, attempts: list, archive: di
     for row in lifecycle:
         _same_product_source(reference, row)
         _require_clean_source(row["sources"])
-    exported = _verify_generation_tail(
-        lifecycle, rest[cache_index]["number"] if len(rest) > cache_index else suffix[2]["number"])
+    previous_generation = rest[cache_index]["number"] if len(rest) > cache_index else suffix[2]["number"]
+    generation_failures = ()
+    if (lifecycle and tuple(lifecycle[0].get(key) for key in ("stage", "mode", "status"))
+            == ("seed-runtime", "source-generation-start", "failed")
+            and not (directory / f"g{lifecycle[0]['number']:04d}").exists()):
+        from devex_clone_seed_generation_prelaunch import receipt_reregistration_failure
+
+        receipt_reregistration_failure(backend, directory, lifecycle[0], rest[cache_index])
+        generation_failures = (lifecycle[0],)
+        previous_generation, lifecycle = lifecycle[0]["number"], lifecycle[1:]
+    exported = _verify_generation_tail(lifecycle, previous_generation)
     cleanup_records = ()
     if cleanup:
         phase = _verify_cleanup(
@@ -474,5 +483,5 @@ def segmented_resume(backend: Path, directory: Path, attempts: list, archive: di
     if any(binding(Path(item["path"])) != item for item in evidence):
         raise ValueError("分段续作核验期间失败或控制器证据变化")
     resource_count = min(len(rest), cache_index + 1)
-    return {"phase": phase, "records": tuple(suffix[:3 + resource_count]) + cleanup_records,
+    return {"phase": phase, "records": tuple(suffix[:3 + resource_count]) + generation_failures + cleanup_records,
             "storage": current_storage, "cache": current_cache}

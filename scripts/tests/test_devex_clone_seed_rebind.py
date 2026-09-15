@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 from workspace_directory import WorkspaceDirectory
 import devex_clone_seed_rebind as rebind
 import devex_clone_seed_segment as segment
+import devex_clone_seed_generation_prelaunch as prelaunch
 from devex_clone_capture import read_json, write_json
 from devex_clone_run_state import binding
 from restore_reference_plan import plan_hash
@@ -501,6 +502,71 @@ class SegmentedSourceResumeTests(unittest.TestCase):
                 with self.subTest(attempts=attempts), self.assertRaises(ValueError):
                     segment.segmented_resume(self.backend, self.directory, attempts, self.archive, self.descriptor)
 
+    def test_generation_retry_proof_requires_exact_failed_tree_controller_and_zero_output(self):
+        write_json(self.directory / "manifest.json", {"fixed": True})
+        previous = self.record(9, "cache-target", "restart", "passed", {"cache": True})
+        failed = self.record(10, "seed-runtime", "source-generation-start", "failed", error="ValueError")
+        failed["sources"] = {"snapshot": {"clean": True, "files": [], "head": "a" * 40,
+                                                "patch_sha256": hashlib.sha256(b"").hexdigest()}}
+        previous["sources"] = failed["sources"]
+        running = {**failed, "status": "running", "finished_at": None, "error_type": None}
+        owner = {"format_version": 1, "identity": {"pid": 610010, "started": "100",
+                 "executable": str(self.directory / "python.exe")}, "directory": str(self.directory),
+                 "manifest_sha256": binding(self.directory / "manifest.json")["sha256"]}
+        controller_path = self.directory / "controller-0010.json"
+        write_json(controller_path, {"format_version": 1, "kind": "devex-stage-controller", "owner": owner,
+                                     "attempt": 10, "attempt_sha256": plan_hash(running)})
+        failure_path = self.directory / "failure-0010.json"
+        write_json(failure_path, {"format_version": 1, "kind": "devex-stage-failure", "attempt": 10,
+                                  "stage": "seed-runtime", "mode": "source-generation-start",
+                                  "error_type": "ValueError", "frames": prelaunch.REREGISTRATION_FRAMES,
+                                  "controller": binding(controller_path)})
+        with patch.object(prelaunch, "verify_execution_source"), \
+                patch.object(prelaunch, "require_recorded_producer_stopped") as stopped, \
+                patch.object(prelaunch, "git", return_value=(prelaunch.REREGISTRATION_TREE + "\n").encode()):
+            result = prelaunch.receipt_reregistration_failure(
+                self.backend, self.directory, failed, previous)
+        self.assertEqual(result, (binding(failure_path), binding(controller_path)))
+        stopped.assert_called_once_with(owner["identity"])
+        with self.assertRaisesRegex(ValueError, "同源相邻"):
+            prelaunch.receipt_reregistration_failure(
+                self.backend, self.directory, failed, {**previous, "mode": "stop"})
+
+        (self.directory / "g0010").mkdir()
+        with patch.object(prelaunch, "verify_execution_source"), \
+                patch.object(prelaunch, "require_recorded_producer_stopped"), \
+                patch.object(prelaunch, "git", return_value=(prelaunch.REREGISTRATION_TREE + "\n").encode()), \
+                self.assertRaises(ValueError):
+            prelaunch.receipt_reregistration_failure(
+                self.backend, self.directory, failed, previous)
+        (self.directory / "g0010").rmdir()
+
+        for relative in ("results/0010.json", "seed-runtime/attempt-0010"):
+            path = self.directory / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.mkdir() if path.suffix == "" else write_json(path, {"unexpected": True})
+            with patch.object(prelaunch, "verify_execution_source"), \
+                    patch.object(prelaunch, "require_recorded_producer_stopped"), \
+                    patch.object(prelaunch, "git", return_value=(prelaunch.REREGISTRATION_TREE + "\n").encode()), \
+                    self.assertRaises(ValueError):
+                prelaunch.receipt_reregistration_failure(
+                    self.backend, self.directory, failed, previous)
+            if path.is_dir():
+                path.rmdir()
+            else:
+                path.unlink()
+
+    def test_starts_excludes_only_the_proven_receipt_failure(self):
+        archived = self.record(7, "seed-runtime", "source-generation-start", "failed", error="ValueError")
+        previous = self.record(9, "cache-target", "restart", "passed", {"cache": True})
+        failed = self.record(10, "seed-runtime", "source-generation-start", "failed", error="ValueError")
+        passed = self.record(11, "seed-runtime", "source-generation-start", "passed", {"start": True})
+        attempts = [archived, previous, failed, passed]
+        with patch.object(prelaunch, "closed", return_value={"start": archived}), \
+                patch.object(prelaunch, "receipt_reregistration_failure") as verified:
+            self.assertEqual(prelaunch.starts(self.backend, self.directory, attempts), [passed])
+        verified.assert_called_once_with(self.backend, self.directory, failed, previous)
+
     def test_full_sources_of_first_two_stops_must_equal_the_closed_receipt(self):
         base = [self.recovery, self.cache_stop, self.failed_stop, self.storage_stop]
         with self.patches():
@@ -536,6 +602,37 @@ class SegmentedSourceResumeTests(unittest.TestCase):
                 with self.subTest(invalid=attempts[-1]), self.assertRaises(ValueError):
                     segment.segmented_resume(self.backend, self.directory, attempts,
                                              self.archive, self.descriptor)
+
+    def test_zero_output_receipt_failure_allows_only_one_adjacent_generation_retry(self):
+        storage = self.record(8, "storage-target", "restart", "passed", self.new_storage["restart_result"])
+        cache = self.record(9, "cache-target", "restart", "passed", self.cache_binding["restart_result"])
+        failed = self.record(10, "seed-runtime", "source-generation-start", "failed", error="ValueError")
+        running = self.record(11, "seed-runtime", "source-generation-start", "running")
+        passed = self.record(11, "seed-runtime", "source-generation-start", "passed", {"start": True})
+        stop = self.record(12, "seed-runtime", "source-generation-stop", "passed", {"stop": True})
+        export = self.record(13, "seed-runtime", "source-export", "passed", {"export": True})
+        base = [self.recovery, self.cache_stop, self.failed_stop, self.storage_stop, storage, cache]
+        valid = [base + [failed], base + [failed, running], base + [failed, passed],
+                 base + [failed, passed, stop], base + [failed, passed, stop, export]]
+        with self.patches(), patch.object(prelaunch, "receipt_reregistration_failure") as verified:
+            for attempts in valid:
+                with self.subTest(last=attempts[-1]):
+                    result = segment.segmented_resume(
+                        self.backend, self.directory, attempts, self.archive, self.descriptor,
+                        current=11 if attempts[-1]["status"] == "running" else None)
+                    self.assertEqual(result["phase"], "ready")
+                    self.assertIn(failed, result["records"])
+            self.assertEqual(verified.call_count, len(valid))
+            verified.assert_any_call(self.backend, self.directory, failed, cache)
+
+        invalid = [base + [failed, {**running, "number": 12}],
+                   base + [failed, passed, {**passed, "number": 12}],
+                   base + [failed, self.record(11, "seed-runtime", "source-generation-stop", "running")]]
+        with self.patches(), patch.object(prelaunch, "receipt_reregistration_failure"):
+            for attempts in invalid:
+                with self.subTest(last=attempts[-1]), self.assertRaises(ValueError):
+                    segment.segmented_resume(
+                        self.backend, self.directory, attempts, self.archive, self.descriptor)
 
     def test_generation_lifecycle_rechecks_clean_product_source_for_every_stage(self):
         storage = self.record(8, "storage-target", "restart", "passed", self.new_storage["restart_result"])

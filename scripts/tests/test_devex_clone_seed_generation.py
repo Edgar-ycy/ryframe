@@ -127,22 +127,107 @@ class GenerationTests(unittest.TestCase):
         self.assertFalse((self.output / "source-request.json").exists())
         self.assertEqual(read_json(Path(value["before"]["path"]))["image"], read_json(Path(value["running"]["path"]))["image"])
 
-    def test_segmented_start_keeps_request_identity_and_all_fields_except_current_storage(self):
+    def test_segmented_start_allows_only_current_storage_and_paired_equivalent_build_receipts(self):
         previous = copy.deepcopy(self.request)
         previous["current_storage"] = {"attempt": 53}
+        previous["backend_build"] = self.file("archived-build.json", {"old": "runtime"})
+        previous["maintenance_build"] = self.file("archived-maintenance.json", {"old": "maintenance"})
         archive = {"receipt": {"request": self.file("archived-request.json", previous)}}
         storage = {"attempt": 64, "storage": {"identity": {"pid": 6400}}}
         cache = {"redis": {"pid": 6500}}
         segment = {"phase": "ready", "storage": storage, "cache": cache}
-        current = {**copy.deepcopy(previous), "current_storage": storage}
-        generation._archived_request(self.backend, archive, current, segment)
-        for field in ("id", "review_successor", "source_rebind", "source_environment"):
+        current = {**copy.deepcopy(previous), "current_storage": storage,
+                   "backend_build": self.request["backend_build"],
+                   "maintenance_build": self.request["maintenance_build"]}
+        with patch.object(generation, "_reregistered_builds") as registered:
+            generation._archived_request(self.backend, archive, current, segment)
+        registered.assert_called_once_with(self.backend, previous, current)
+        for field in set(current) - {"current_storage", "backend_build", "maintenance_build"}:
             changed = copy.deepcopy(current)
             changed[field] = "changed"
             with self.subTest(field=field), self.assertRaises(ValueError):
+                with patch.object(generation, "_reregistered_builds"):
+                    generation._archived_request(self.backend, archive, changed, segment)
+        for field in ("backend_build", "maintenance_build"):
+            changed = copy.deepcopy(previous)
+            changed["current_storage"] = storage
+            changed[field] = current[field]
+            with self.subTest(unpaired=field), self.assertRaisesRegex(ValueError, "成对"):
                 generation._archived_request(self.backend, archive, changed, segment)
         with self.assertRaisesRegex(ValueError, "尚未全部恢复"):
             generation._archived_request(self.backend, archive, current, {**segment, "phase": "storage-ready"})
+
+    def test_reregistered_builds_allow_only_environment_and_build_log_evidence_changes(self):
+        source = {"snapshot": {"head": "a" * 40, "clean": True, "files": []}}
+        sources = {"full": {"source": source}}
+        runtime = {"format_version": 2, "kind": "runtime-build", "sources": sources,
+                   "build": {"commands": {"api": ["cargo", "api"], "worker": ["cargo", "worker"]},
+                             "profile": "dev", "target": "windows", "jobs": "4",
+                             "toolchain": {"cargo": "fixed", "rustc": "fixed"},
+                             "environment": {"variables": ["PATH"], "sha256": "a" * 64}},
+                   "artifacts": {"api": {"bytes": 10, "sha256": "b" * 64},
+                                 "worker": {"bytes": 20, "sha256": "c" * 64}}}
+        old_runtime = self.file("runtime-old.json", runtime)
+        runtime["build"]["environment"]["sha256"] = "d" * 64
+        new_runtime = self.file("runtime-new.json", runtime)
+
+        def maintenance(directory, log_sha):
+            artifacts = {}
+            for role in ("reset", "migrate", "tenant-data"):
+                artifacts[role] = {"executable": str(directory / ("ryframe-" + role + ".exe")),
+                                   "cargo_executable": str(self.directory / (role + "-cargo.exe")),
+                                   "command": ["cargo", "build", role], "bytes": 30,
+                                   "sha256": "e" * 64,
+                                   "cargo_output": {"file": role + ".jsonl", "bytes": 40,
+                                                    "sha256": log_sha},
+                                   "cargo_log": {"file": role + ".log", "bytes": 50,
+                                                 "sha256": log_sha}}
+            return {"format_version": 1, "kind": "maintenance-build", "backend_root": str(execution),
+                    "source": source, "source_inventory": sources["full"],
+                    "toolchain": {"same": True}, "target_directory": str(self.directory / "target"),
+                    "artifacts": artifacts, "restore_qualified": False, "resources_modified": False}
+
+        execution = self.directory / "execution"
+        (execution / ".local-tests").mkdir(parents=True)
+        old_dir = execution / ".local-tests/maintenance-old"
+        new_dir = execution / ".local-tests/maintenance-new"
+        old_dir.mkdir()
+        new_dir.mkdir()
+        write_json(old_dir / "build.json", maintenance(old_dir, "f" * 64))
+        write_json(new_dir / "build.json", maintenance(new_dir, "1" * 64))
+        old_maintenance = binding(old_dir / "build.json")
+        new_maintenance = binding(new_dir / "build.json")
+        previous = {**self.request, "execution_backend": str(execution),
+                    "backend_build": old_runtime, "maintenance_build": old_maintenance}
+        current = {**self.request, "execution_backend": str(execution),
+                   "backend_build": new_runtime, "maintenance_build": new_maintenance}
+        validators = (patch("source_inventory.validate_build_source_domains", side_effect=lambda value, _repo: value),
+                      patch("restore_build.validate_build_context", side_effect=lambda value: value),
+                      patch("restore_build.verify_build_artifacts"),
+                      patch("devex_clone_tools.verify_evidence", side_effect=lambda _root, path: read_json(path)))
+        with validators[0], validators[1], validators[2], validators[3]:
+            generation._reregistered_builds(self.backend, previous, current)
+
+        changed_runtime = read_json(Path(new_runtime["path"]))
+        changed_runtime["artifacts"]["api"]["bytes"] += 1
+        changed = self.file("runtime-changed.json", changed_runtime)
+        with validators[0], validators[1], validators[2], validators[3], \
+                self.assertRaisesRegex(ValueError, "API/Worker"):
+            generation._reregistered_builds(
+                self.backend, previous, {**current, "backend_build": changed})
+
+        changed_maintenance = read_json(Path(new_maintenance["path"]))
+        changed_maintenance["artifacts"]["reset"]["sha256"] = "2" * 64
+        changed_dir = execution / ".local-tests/maintenance-changed"
+        changed_dir.mkdir()
+        for artifact in changed_maintenance["artifacts"].values():
+            artifact["executable"] = str(changed_dir / Path(artifact["executable"]).name)
+        write_json(changed_dir / "build.json", changed_maintenance)
+        changed = binding(changed_dir / "build.json")
+        with validators[0], validators[1], validators[2], validators[3], \
+                self.assertRaisesRegex(ValueError, "维护构建"):
+            generation._reregistered_builds(
+                self.backend, previous, {**current, "maintenance_build": changed})
 
     def test_segmented_start_changes_only_registered_process_generations_in_c60_image(self):
         old_redis = {"configuration": {"sha256": "c" * 64}, "distribution": "Ubuntu-24.04",
@@ -208,6 +293,36 @@ class GenerationTests(unittest.TestCase):
             with self.subTest(status=status), patch.object(generation, "load_state", return_value=state), self.assertRaisesRegex(ValueError, "只执行一次"):
                 generation.preflight(self.directory)
         self.assertFalse(self.output.exists())
+
+    def test_preflight_allows_one_audited_receipt_failure_after_closed_archive(self):
+        failed = self.record(54, generation.START, status="failed")
+        failed["error_type"] = "ValueError"
+        state = {"attempts": self.prefix + [failed]}
+        archive = {"records": [], "receipt": {"source_registration": self.registration}}
+        segment = {"phase": "ready", "storage": {"attempt": 64}, "cache": {"attempt": 65},
+                   "records": [failed]}
+        with patch.object(generation, "load_state", return_value=state), \
+                patch("devex_clone_seed_generation_prelaunch.closed", return_value=archive), \
+                patch("devex_clone_seed_segment.segmented_resume", return_value=segment) as verified:
+            generation.preflight(self.directory, backend=self.backend)
+        verified.assert_called_once_with(
+            self.backend, self.directory, state["attempts"], archive, self.registration)
+
+        for invalid in ({**segment, "phase": "storage-ready"},
+                        {**segment, "storage": None}, {**segment, "cache": None},
+                        {**segment, "records": []}):
+            with patch.object(generation, "load_state", return_value=state), \
+                    patch("devex_clone_seed_generation_prelaunch.closed", return_value=archive), \
+                    patch("devex_clone_seed_segment.segmented_resume", return_value=invalid), \
+                    self.subTest(segment=invalid), self.assertRaisesRegex(ValueError, "续作边界"):
+                generation.preflight(self.directory, backend=self.backend)
+
+        for extra in (self.record(55, generation.START, status="failed"),
+                      self.record(55, generation.STOP, status="running")):
+            with patch.object(generation, "load_state", return_value={"attempts": [*state["attempts"], extra]}), \
+                    patch("devex_clone_seed_generation_prelaunch.closed", return_value=archive), \
+                    self.assertRaisesRegex(ValueError, "只执行一次"):
+                generation.preflight(self.directory, backend=self.backend)
 
     def test_history_allows_only_owned_single_generation_after_rebind_before_export(self):
         with patch("devex_clone_run._require_owned_run") as owned:
