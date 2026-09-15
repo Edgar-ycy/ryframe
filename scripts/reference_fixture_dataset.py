@@ -163,7 +163,10 @@ def build_plan(backend: Path, environment_path: Path, runtime_path: Path, work_d
     if _bound(review_file) != {key: review_binding.get(key) for key in ("path", "bytes", "sha256")}:
         raise ValueError("夹具审阅计划摘要已变化")
     validate_review(review)
-    source, target = _side(review["scopes"]["seed"]), _side(review["scopes"][side])
+    source = _side(review["scopes"]["seed"])
+    target_scope = review["scopes"][side]
+    target = _side(target_scope)
+    target["worker_ready_url"] = target_scope["worker_ready_url"]
     source["runtime_dir"] = str(runtime)
     if source["scope_id"] != verified["scope_id"]:
         raise ValueError("夹具源运行时与审阅计划不属于同一代次")

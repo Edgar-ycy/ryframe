@@ -44,7 +44,6 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
             patch.object(dataset, "verify_runtime", return_value={"scope_id": "fixture-seed-r1", "runtime": dataset._bound(self.runtime / "source-pair.json")}),
             patch.object(dataset, "_runtime_environment", return_value={"APP_ENV": "test"}),
             patch.object(dataset, "validate_review"),
-            patch.object(dataset, "validate_plan"),
             patch.object(dataset, "_node", return_value={"path": str(self.tool), "sha256": dataset.file_digest(self.tool)["sha256"]}),
         ]
         for value in self.patches:
@@ -56,6 +55,7 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
             "scope_id": f"fixture-{side}-r1",
             "runtime_dir": str(self.execution / ".local-tests/reference-fixture" / f"runtime-{side}"),
             "api_url": "http://127.0.0.1:18080",
+            "worker_ready_url": "http://127.0.0.1:18081/readyz",
             "frontend_url": "http://127.0.0.1:4300",
             "objects": {"endpoint": "http://127.0.0.1:29000", "region": "us-east-1"},
             "databases": [
@@ -76,11 +76,26 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
         self.assertEqual(value["source"]["runtime_dir"], str(self.runtime))
         self.assertEqual(value["source"]["scope_id"], "fixture-seed-r1")
         self.assertEqual(value["target"]["scope_id"], "fixture-base-r1")
+        self.assertEqual(value["target"]["worker_ready_url"], "http://127.0.0.1:18081/readyz")
         self.assertEqual(value["target_side"], "base")
         self.assertEqual(value["dataset"]["records"], 100_000)
         self.assertEqual(value["dataset"]["object_count"] * value["dataset"]["object_bytes"], 1024**3)
         self.assertEqual(value["dataset"]["tenant_targets"].count("shared"), 8)
         self.assertEqual(set(value["tools"]), {"mysql", "mysqldump", "aws", "node"})
+
+    def test_build_plan_rejects_overlapping_api_and_worker_probe(self):
+        review = self._review()
+        review["scopes"]["base"]["worker_ready_url"] = "http://127.0.0.1:18080/readyz"
+        self.review.write_text(json.dumps(review), encoding="utf-8")
+        self.bootstrap.write_text(
+            json.dumps({"plan": {"review": dataset._bound(self.review)}}),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(ValueError, "API 和 Worker 探针不得重叠"):
+            dataset.build_plan(
+                self.backend, self.bootstrap, self.runtime, self.work, "base"
+            )
 
     def test_build_plan_rejects_runtime_scope_mismatch(self):
         with patch.object(dataset, "verify_runtime", return_value={"scope_id": "other", "runtime": {}}):
