@@ -36,17 +36,25 @@ def history(directory: Path, state: dict, descriptor: dict, *, current: int | No
     if len(published) != 1:
         raise ValueError("重绑定必须继承唯一已发布 seed 源")
     later = [item for item in attempts if item["number"] > published[0]["number"]]
-    from devex_clone_seed_generation_prelaunch import closed, proof
+    from devex_clone_seed_generation_prelaunch import closed, proof, origin
 
     root = backend or Path(__file__).resolve().parents[1]
     archive = closed(root, directory, attempts)
     if archive is not None and archive["receipt"]["source_registration"] != descriptor:
         raise ValueError("未启动恢复没有绑定当前已发布 seed 源")
+    pending = ()
+    prefix = attempts[:-1] if current == attempts[-1]["number"] else attempts
+    if (archive is None and prefix and tuple(prefix[-1][key] for key in ("stage", "mode", "status"))
+            == ("seed-runtime", "source-generation-recover", "failed")):
+        start, _ = origin(root, directory, prefix)
+        pending = (start, prefix[-1])
     rebound, started, generated, recovered, exported, export_origin = False, False, False, False, False, None
     cache_successor = None
     for item in later:
         operation = (item["stage"], item["mode"])
-        if archive is not None and item in (archive["start"], archive["recovery"]):
+        if archive is not None and item in archive["records"]:
+            continue
+        if pending and item == pending[1]:
             continue
         if item["stage"] == "cache-target":
             if rebound or backend is None or item["mode"] not in {"restart", "resume", "reconcile", "stop", "recover"}:
@@ -113,6 +121,8 @@ def history(directory: Path, state: dict, descriptor: dict, *, current: int | No
         elif operation not in (READ_ONLY_AFTER if rebound else BEFORE_REBIND):
             raise ValueError("seed 发布后出现未知写入或重绑定后存储再次换代")
         if item["status"] != "passed":
+            if pending and item == pending[0]:
+                continue
             if (operation == ("seed-runtime", "source-generation-start") and item == attempts[-1]
                     and not (directory / f"g{item['number']:04d}").exists()):
                 # 只读请求可消费已证明零写入的未启动失败；START 本身仍必须先成功 recover。

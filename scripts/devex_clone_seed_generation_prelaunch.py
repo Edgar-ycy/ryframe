@@ -32,7 +32,35 @@ START, RECOVER = "source-generation-start", "source-generation-recover"
 STATUS = "seed_source_prelaunch_closed"
 FIELDS = {"status", "request", "failed_start", "failure_proof", "history_length", "history_sha256",
           "source_registration", "source_rebind", "review_successor", "current_storage", "coordinator_source",
-          "runtime", "before", "after", "historical_image_compared", "remote_writes", "restore_qualified"}
+          "runtime", "before", "after", "historical_image_compared", "remote_writes", "restore_qualified",
+          "collection_failure"}
+
+# 已审计 d781c20f 的唯一采集失败：control verify 返回后即退出，尚未采集完整像。
+# 原文件摘要是这段历史的必要证据；不接受其他失败、改写的局部树或历史代码执行。
+COLLECTION_TREE = "f6312c497c5863c64d53eadfb30ed6d30e0119db"
+COLLECTION_FRAMES = [
+    {"file": "scripts/" + file + ".py", "function": function, "line": line}
+    for file, function, line in (
+        ("devex_clone_run", "execute", 717), ("devex_clone_seed_runtime", "execute_seed", 341),
+        ("devex_clone_seed_generation_control", "execute_recover", 208),
+        ("devex_clone_seed_generation_prelaunch", "execute", 207),
+        ("devex_clone_seed_generation_images", "capture_image", 45),
+        ("devex_clone_export", "verify_migrations", 70), ("devex_clone_export", "run_cli", 55),
+    )
+]
+COLLECTION_FILES = {
+    "before/migrations-control.command.json": "a301844382215c36cf56ae0e6c1359780b2d7e2996f0bd4493152c7d7584f193",
+    "before/migrations-control.diagnostic.json": "57b26e9f805c0d4868b088f722e7082b7ca139ec2b2e8c206054e0803edd45b1",
+    "before/redis-kernel-092424efb7a3421b9b1bfe1b65fd6263.command.json": "6eafe6904d152d0f4f3f2a386195e2fcd8570ad21c0d54998cd19fb916fefa77",
+    "before/redis-kernel-5487f322f1ae4bcfa15b3b5763f4a671.command.json": "5f8e7d6fcc981566200de0ec1cb6f7b8633b347850cbd18671ced250eb4c2740",
+    "before/redis-kernel-6e408b07957047fc8654dfc90055e857.command.json": "b940b84cb4b520c8c527cc8a5a5af6b80c58932e080b0a6f3a7ff96a1a7ce3db",
+    "before/redis-kernel-f3894f4f3eb94497938d9c85b1393cbd.command.json": "a53d6a73166255c487eb107ef4d5eaf4e39d01c137329fba126b94c2d86575e8",
+    "before/redis-kernel-f4a244167c2949d2b189b4091dafee9f.command.json": "ccbd72c2212d39cf1c3efb1ecbba5d101ac5b85661a6e4e6945b54cfc4dab6bb",
+    "before/storage-layout-4478cbf34ce04c4ca0eeed96443b42bd.json": "b43d520f943aef98b56ea749f2ae343c0040defd0c4d11edaf19995641ba2a74",
+    "runtime/binaries.json": "86fea2999e3c4323569b672c1b7af6310af0aa09d9a83e7c5dafa753de091d3c",
+    "runtime/runtime.json": "b292edafceefad1924651fb526026aa63b4d8ee776a3df714963f1cb1db00567",
+}
+COLLECTION_MAINTENANCE = "86fb5ff5fca2a83a4588f5f52bdf53a2986d7725900f453936ffadeccb401556"
 
 
 def proof(backend: Path, directory: Path, start: dict) -> dict:
@@ -79,6 +107,86 @@ def proof(backend: Path, directory: Path, start: dict) -> dict:
             "source": sources, "tree": tree}
 
 
+def collection_failure(backend: Path, directory: Path, start: dict, failed: dict) -> dict:
+    from restore_source_runtime import _manifest
+    from restore_build import file_digest
+
+    original = proof(backend, directory, start)
+    if (failed["number"] != start["number"] + 1
+            or tuple(failed.get(key) for key in ("stage", "mode", "status", "result", "error_type"))
+            != ("seed-runtime", RECOVER, "failed", None, "CalledProcessError")):
+        raise ValueError("只允许原未启动失败后的唯一已审计采集失败")
+    sources = failed["sources"]
+    verify_execution_source(sources, "原采集控制器")
+    snapshot = sources["snapshot"]
+    if (not snapshot["clean"] or snapshot["files"]
+            or snapshot["patch_sha256"] != hashlib.sha256(b"").hexdigest()
+            or git(backend, "rev-parse", snapshot["head"] + "^{tree}").decode().strip() != COLLECTION_TREE):
+        raise ValueError("原采集失败没有精确干净的已审计源码")
+    number = failed["number"]
+    local_path(backend, str(directory / f"g{number:04d}"), new=True)
+    running = {**failed, "status": "running", "finished_at": None, "error_type": None}
+    controller, owner = controller_record(directory, number, running)
+    exact(owner, {"format_version", "identity", "directory", "manifest_sha256"})
+    exact(owner["identity"], {"pid", "started", "executable"})
+    if (type(owner["format_version"]) is not int or owner["format_version"] != 1
+            or owner["directory"] != str(directory) or owner["manifest_sha256"] != binding(directory / "manifest.json")["sha256"]
+            or type(owner["identity"]["pid"]) is not int or owner["identity"]["pid"] <= 1
+            or not isinstance(owner["identity"]["started"], str) or not owner["identity"]["started"]
+            or not isinstance(owner["identity"]["executable"], str) or not owner["identity"]["executable"]
+            or type(read_json(bound_file(backend, controller))["format_version"]) is not int):
+        raise ValueError("原采集控制器归属不完整")
+    path = local_path(backend, str(directory / f"failure-{number:04d}.json"))
+    failure, value = binding(path), read_json(path)
+    if (value != {"format_version": 1, "kind": "devex-stage-failure", "attempt": number,
+                  "stage": "seed-runtime", "mode": RECOVER, "error_type": "CalledProcessError",
+                  "frames": COLLECTION_FRAMES, "controller": controller}
+            or type(value["format_version"]) is not int):
+        raise ValueError("原采集失败栈不属于 control verify 的零写入边界")
+    output = local_path(backend, str(directory / "seed-runtime" / f"attempt-{number:04d}"))
+    files = _manifest(output)
+    if {item["path"]: item["sha256"] for item in files} != COLLECTION_FILES:
+        raise ValueError("原采集局部目录不是完整的已审计文件集合")
+    binaries = read_json(output / "runtime/binaries.json")
+    migrate = local_path(backend, binaries["ryframe-migrate"])
+    maintenance_path = local_path(backend, str(migrate.parent / "build.json"))
+    maintenance = binding(maintenance_path)
+    receipt = read_json(maintenance_path)
+    artifact = receipt["artifacts"]["migrate"]
+    if (maintenance["sha256"] != COLLECTION_MAINTENANCE
+            or receipt["source"] != {key: sources[key] for key in ("snapshot", "worktree_fingerprint")}
+            or artifact["executable"] != str(migrate)
+            or file_digest(migrate) != {key: artifact[key] for key in ("bytes", "sha256")}
+            or read_json(output / "before/migrations-control.command.json") != {
+                "command": [str(migrate), "control", "verify"], "cwd": str(backend), "remote_operations": "read_only"}):
+        raise ValueError("原采集命令没有绑定同源只读维护二进制")
+    if process_identity(owner["identity"]["pid"]) is not None:
+        raise ValueError("原采集控制器仍存活或 PID 已复用")
+    if (binding(path) != failure or controller_record(directory, number, running) != (controller, owner)
+            or _manifest(output) != files or binding(maintenance_path) != maintenance
+            or file_digest(migrate) != {key: artifact[key] for key in ("bytes", "sha256")}
+            or proof(backend, directory, start) != original):
+        raise ValueError("原采集失败证明在核验期间变化")
+    local_path(backend, str(directory / f"g{number:04d}"), new=True)
+    return {"attempt": plan_hash(failed), "original_start": original, "failure": failure,
+            "controller": controller, "source": sources, "tree": COLLECTION_TREE,
+            "files": files, "maintenance": maintenance, "migrate": binding(migrate)}
+
+
+def origin(backend: Path, directory: Path, prefix: list) -> tuple[dict, dict | None]:
+    records = [row for row in prefix if (row["stage"], row["mode"]) == ("seed-runtime", START)]
+    if len(records) != 1:
+        raise ValueError("未启动恢复必须继承唯一原 START")
+    start = records[0]
+    suffix = prefix[prefix.index(start):]
+    if suffix == [start]:
+        proof(backend, directory, start)
+        return start, None
+    if len(suffix) == 2:
+        return start, collection_failure(backend, directory, start, suffix[1])
+    raise ValueError("未启动恢复历史包含其他阶段或重复采集")
+
+
 def closed(backend: Path, directory: Path, attempts: list) -> dict | None:
     """只排除由唯一成功恢复收据封存的未启动尝试；不丢弃或重写完整账本。"""
     records = [row for row in attempts if (row["stage"], row["mode"], row["status"])
@@ -95,10 +203,9 @@ def closed(backend: Path, directory: Path, attempts: list) -> dict | None:
     record, value = matches[0]
     exact(value, FIELDS)
     prefix = [row for row in attempts if row["number"] < record["number"]]
-    starts = [row for row in prefix if (row["stage"], row["mode"]) == ("seed-runtime", START)]
-    if (len(starts) != 1 or not prefix or starts[0] != prefix[-1]
-            or record["number"] != starts[0]["number"] + 1
-            or value["failed_start"] != starts[0]["number"] or value["failure_proof"] != proof(backend, directory, starts[0])
+    start, collection = origin(backend, directory, prefix)
+    if (record["number"] != prefix[-1]["number"] + 1 or value["collection_failure"] != collection
+            or value["failed_start"] != start["number"] or value["failure_proof"] != proof(backend, directory, start)
             or value["history_length"] != len(prefix) or value["history_sha256"] != plan_hash(prefix)
             or value["coordinator_source"] != record["sources"] or value["historical_image_compared"] is not False
             or type(value["remote_writes"]) is not int or value["remote_writes"] != 0
@@ -137,7 +244,8 @@ def closed(backend: Path, directory: Path, attempts: list) -> dict | None:
                                      source_registration=value["source_registration"])
     if images["before"]["image"] != images["after"]["image"]:
         raise ValueError("未启动恢复采集期间完整当前像变化")
-    return {"start": starts[0], "recovery": record, "receipt": value, "image": images["after"]["image"]}
+    records = (start, record) if collection is None else (start, prefix[-1], record)
+    return {"start": start, "recovery": record, "records": records, "receipt": value, "image": images["after"]["image"]}
 
 
 def starts(backend: Path, directory: Path, attempts: list) -> list:
@@ -156,7 +264,13 @@ def prepare(backend: Path, directory: Path, start: dict, request_path: Path, num
     descriptor = binding(local_path(backend, str(request_path)))
     request = read_json(request_path)
     exact(request, REQUEST_FIELDS)
-    source = predecessor(backend, directory, load_state(directory))
+    state = load_state(directory)
+    prefix = state["attempts"]
+    if prefix[-1]["number"] == number and prefix[-1]["status"] == "running":
+        prefix = prefix[:-1]
+    if origin(backend, directory, prefix)[0] != start or number != prefix[-1]["number"] + 1:
+        raise ValueError("未启动恢复没有绑定原失败和唯一当前采集阶段")
+    source = predecessor(backend, directory, state)
     expected = {"source_registration": source["review_successor"]["source_result"],
                 "review_successor": source["review_successor_binding"], "source_rebind": source["source_rebind"],
                 "current_storage": source["storage"]["storage"]}
@@ -177,7 +291,7 @@ def execute(backend: Path, directory: Path, request_path: Path, number: int, pre
     from devex_clone_seed_rebind import quiet_producers
     from full_stack_runtime import register_runtime, verify_runtime
 
-    start = prefix[-1]
+    start, collection = origin(backend, directory, prefix)
     evidence, descriptor, request, source, runtime = prepare(backend, directory, start, request_path, number, run=run)
     coordinator = require_current_execution_source(backend, load_state(directory)["attempts"][-1]["sources"])
 
@@ -185,7 +299,7 @@ def execute(backend: Path, directory: Path, request_path: Path, number: int, pre
         with runtime.control_environment():
             require_current_execution_source(backend, coordinator)
             if (_active(directory, number, RECOVER) != prefix or proof(backend, directory, start) != evidence
-                    or binding(request_path) != descriptor):
+                    or binding(request_path) != descriptor or origin(backend, directory, prefix)[1] != collection):
                 raise ValueError("未启动恢复期间控制阶段、原失败或当前请求变化")
         runtime.checkpoint()
         with runtime.environment():
@@ -213,6 +327,7 @@ def execute(backend: Path, directory: Path, request_path: Path, number: int, pre
             raise ValueError("未启动恢复采集期间完整当前像变化，不允许后续启动")
         checkpoint()
     return {"status": STATUS, "request": descriptor, "failed_start": start["number"], "failure_proof": evidence,
+            "collection_failure": collection,
             "history_length": len(prefix), "history_sha256": plan_hash(prefix), "coordinator_source": coordinator,
             **{key: request[key] for key in ("source_registration", "source_rebind", "review_successor", "current_storage")},
             "runtime": binding(runtime.runtime / "runtime.json"), **images, "historical_image_compared": False,

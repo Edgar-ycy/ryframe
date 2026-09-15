@@ -36,7 +36,7 @@ def preflight(directory: Path, *, backend: Path | None = None) -> None:
 
     attempts = load_state(directory)["attempts"]
     archived = closed(backend or Path(__file__).resolve().parents[1], directory, attempts)
-    ignored = () if archived is None else (archived["start"], archived["recovery"])
+    ignored = () if archived is None else archived["records"]
     if any(item["stage"] == "seed-runtime" and item["mode"] in {START, STOP, RECOVER, "source-export", "arm-input"}
            and item not in ignored for item in attempts):
         raise ValueError("source-generation 只执行一次；失败必须核对完整前后像，不能重放启动")

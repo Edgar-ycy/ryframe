@@ -103,11 +103,11 @@ class PrelaunchFlowTests(unittest.TestCase):
         return read_json(Path(descriptor["path"]))
 
     def execute(self):
-        return prelaunch.execute(self.backend, self.directory, self.request_path, 58, self.prefix)
+        return prelaunch.execute(self.backend, self.directory, self.request_path, self.recovery["number"], self.prefix)
 
     def publish(self):
         value = self.execute()
-        self.recovery.update(status="passed", result=self.file("results/0058.json", value))
+        self.recovery.update(status="passed", result=self.file(f"results/{self.recovery['number']:04d}.json", value))
         return value
 
     def test_recover_preserves_failure_and_captures_current_baseline_without_start_or_intent(self):
@@ -236,6 +236,79 @@ class PrelaunchFlowTests(unittest.TestCase):
             self.state["attempts"].append({"number": 59, "stage": "storage-target", "mode": "restart", "status": "passed"})
             with self.assertRaisesRegex(ValueError, "未知写入"):
                 rebind.history(self.directory, self.state, self.request["source_registration"], backend=self.backend)
+
+    def failed_collection(self):
+        failed = {**self.recovery, "status": "failed", "error_type": "CalledProcessError"}
+        self.prefix.append(failed)
+        self.recovery = {**self.recovery, "number": 59}
+        self.state["attempts"] = [*self.prefix, self.recovery]
+        self.output = self.directory / "seed-runtime/attempt-0059"
+        self.runtime.output = self.output
+        self.runtime.runtime = self.output / "runtime"
+        self.runtime.selected = {**self.source_request["source"], "runtime_dir": str(self.runtime.runtime)}
+        return failed
+
+    def test_audited_failed_collection_can_prepare_again_without_replaying_start(self):
+        failed = self.failed_collection()
+        self.state["attempts"] = self.prefix
+        with self.contexts(), patch.object(prelaunch, "collection_failure", return_value={"original": 58}):
+            control.preflight(self.directory, generation.RECOVER, backend=self.backend, request_path=self.request_path)
+            rebind.history(self.directory, self.state, self.request["source_registration"], backend=self.backend)
+            with self.assertRaisesRegex(ValueError, "只执行一次"):
+                generation.preflight(self.directory, backend=self.backend)
+        self.assertIn(failed, self.state["attempts"])
+        self.assertFalse(self.output.exists())
+        self.runtime.start.assert_not_called()
+
+    def test_failed_collection_is_preserved_and_bound_in_successful_second_collection(self):
+        failed = self.failed_collection()
+        old = self.directory / "seed-runtime/attempt-0058"
+        old.mkdir()
+        write_json(old / "diagnostic.json", {"status": "original failure"})
+        before = self.p.files()
+        with self.contexts(), patch.object(prelaunch, "collection_failure", return_value={"original": 58}) as proof:
+            rebind.history(self.directory, self.state, self.request["source_registration"], current=59, backend=self.backend)
+            value = self.publish()
+            self.assertEqual(value["collection_failure"], {"original": 58})
+            self.assertEqual(value["history_sha256"], plan_hash(self.prefix))
+            archive = prelaunch.closed(self.backend, self.directory, self.state["attempts"])
+            self.assertEqual(archive["records"], (self.p.start, failed, self.recovery))
+            generation.preflight(self.directory, backend=self.backend)
+            rebind.history(self.directory, self.state, self.request["source_registration"], backend=self.backend)
+            actual = self.record(60, generation.START, status="running")
+            self.state["attempts"].append(actual)
+            rebind.history(self.directory, self.state, self.request["source_registration"], current=60, backend=self.backend)
+            with self.assertRaisesRegex(ValueError, "只执行一次"):
+                generation.preflight(self.directory, backend=self.backend)
+            self.assertEqual(prelaunch.starts(self.backend, self.directory, self.state["attempts"]), [actual])
+            proof.return_value = {"original": "changed after seal"}
+            with self.assertRaises(ValueError):
+                prelaunch.closed(self.backend, self.directory, self.state["attempts"])
+        for path, raw in before.items():
+            self.assertEqual((self.directory / path).read_bytes(), raw)
+        self.runtime.start.assert_not_called()
+        self.assertFalse(value["historical_image_compared"])
+
+    def test_unverified_failed_collection_or_extra_history_never_allows_recovery(self):
+        self.failed_collection()
+        self.state["attempts"] = self.prefix
+        with self.contexts(), patch.object(prelaunch, "collection_failure", side_effect=ValueError("unverified collection")):
+            for action in (
+                lambda: control.preflight(self.directory, generation.RECOVER, backend=self.backend, request_path=self.request_path),
+                lambda: rebind.history(self.directory, self.state, self.request["source_registration"], backend=self.backend),
+            ):
+                with self.assertRaisesRegex(ValueError, "unverified collection"):
+                    action()
+        with self.contexts(), patch.object(prelaunch, "collection_failure", return_value={"original": 58}):
+            for mode in (generation.RECOVER, generation.STOP, generation.START, "unknown-write"):
+                with self.subTest(mode=mode):
+                    extra = self.record(59, mode, status="failed")
+                    self.state["attempts"] = [*self.prefix, extra]
+                    with self.assertRaises(ValueError):
+                        control.preflight(self.directory, generation.RECOVER, backend=self.backend, request_path=self.request_path)
+                    with self.assertRaises(ValueError):
+                        rebind.history(self.directory, self.state, self.request["source_registration"], backend=self.backend)
+        self.assertFalse(self.output.exists())
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ from restore_reference_plan import plan_hash
 
 
 def preflight(directory: Path, mode: str, *, backend: Path | None = None, request_path: Path | None = None) -> None:
-    from devex_clone_seed_generation_prelaunch import starts, prepare
+    from devex_clone_seed_generation_prelaunch import starts, prepare, origin
 
     state = load_state(directory)
     backend = backend or Path(__file__).resolve().parents[1]
@@ -29,12 +29,13 @@ def preflight(directory: Path, mode: str, *, backend: Path | None = None, reques
              and row["stage"] == "seed-runtime" and row["mode"] in {STOP, RECOVER}]
     if mode == STOP and (records[0]["status"] != "passed" or prior):
         raise ValueError("源代次 stop 只能执行一次；失败只能精确回收，禁止重放")
-    if mode == RECOVER and any(row["mode"] == RECOVER or row["status"] == "passed" for row in prior):
-        raise ValueError("源代次已停止或执行回收，不能重放")
     if mode == RECOVER and not (directory / f"g{records[0]['number']:04d}").exists():
-        if request_path is None or state["attempts"][-1] != records[0]:
+        if request_path is None:
             raise ValueError("未启动恢复必须显式绑定当前请求及最后失败阶段")
-        prepare(backend, directory, records[0], request_path, records[0]["number"] + 1)
+        start, _ = origin(backend, directory, state["attempts"])
+        prepare(backend, directory, start, request_path, state["attempts"][-1]["number"] + 1)
+    elif mode == RECOVER and any(row["mode"] == RECOVER or row["status"] == "passed" for row in prior):
+        raise ValueError("源代次已停止或执行回收，不能重放")
 
 
 def _active(directory: Path, number: int, mode: str) -> list:
