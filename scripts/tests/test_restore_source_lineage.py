@@ -32,7 +32,7 @@ class SourceDatasetLineageTests(unittest.TestCase):
         self.current = "perf-seed-unit"
         self._build_evidence()
         self.addCleanup(patch.stopall)
-        patch.object(lineage, "validate_plan").start()
+        self.validate_plan = patch.object(lineage, "validate_plan").start()
         patch(
             "devex_clone_post_registration.resolve_post_registration",
             return_value=self.post,
@@ -105,6 +105,7 @@ class SourceDatasetLineageTests(unittest.TestCase):
         targets = ["shared"] * 4 + ["shared-control"] * 4 + ["dedicated-a", "dedicated-b"]
         self.reference_plan = {
             "format_version": 1,
+            "target_side": "base",
             "source": {"scope_id": self.origin},
             "dataset": {"tenant_targets": targets},
         }
@@ -375,6 +376,61 @@ class SourceDatasetLineageTests(unittest.TestCase):
             ),
             result,
         )
+
+    def test_current_plan_validation_preserves_explicit_target_side(self):
+        descriptor = {"bytes": 1, "sha256": "0" * 64}
+        plan = {"format_version": 1, "target_side": "candidate"}
+
+        lineage._validate_dataset_plan(self.backend, descriptor, plan)
+
+        self.validate_plan.assert_called_with(plan, self.backend)
+
+    def test_only_exact_c52_plan_may_omit_target_side_without_mutation(self):
+        descriptor = {
+            "path": "ignored",
+            "bytes": lineage.HISTORICAL_C52_REFERENCE_PLAN["bytes"],
+            "sha256": lineage.HISTORICAL_C52_REFERENCE_PLAN["sha256"],
+        }
+        plan = {"format_version": 1, "id": "historical"}
+        original = copy.deepcopy(plan)
+
+        with patch.object(
+            lineage,
+            "plan_hash",
+            return_value=lineage.HISTORICAL_C52_REFERENCE_PLAN["plan_sha256"],
+        ):
+            lineage._validate_dataset_plan(self.backend, descriptor, plan)
+
+        self.assertEqual(plan, original)
+        self.validate_plan.assert_not_called()
+
+    def test_other_plan_without_target_side_fails_closed(self):
+        descriptor = {
+            "path": "ignored",
+            "bytes": lineage.HISTORICAL_C52_REFERENCE_PLAN["bytes"],
+            "sha256": "f" * 64,
+        }
+
+        with self.assertRaisesRegex(ValueError, "不是已审计的 C52"):
+            lineage._validate_dataset_plan(
+                self.backend, descriptor, {"format_version": 1}
+            )
+
+        self.validate_plan.assert_not_called()
+
+    def test_exact_file_digest_with_other_plan_content_fails_closed(self):
+        descriptor = {
+            "path": "ignored",
+            "bytes": lineage.HISTORICAL_C52_REFERENCE_PLAN["bytes"],
+            "sha256": lineage.HISTORICAL_C52_REFERENCE_PLAN["sha256"],
+        }
+
+        with self.assertRaisesRegex(ValueError, "不是已审计的 C52"):
+            lineage._validate_dataset_plan(
+                self.backend, descriptor, {"format_version": 1, "id": "changed"}
+            )
+
+        self.validate_plan.assert_not_called()
 
     def test_sample_count_is_not_mistaken_for_total_records(self):
         changed = copy.deepcopy(self.dataset)

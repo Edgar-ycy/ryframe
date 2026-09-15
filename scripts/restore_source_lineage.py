@@ -13,6 +13,12 @@ from devex_clone_source_proof import bound_file
 from restore_reference_plan import BUCKETS, plan_hash, validate_plan
 
 
+HISTORICAL_C52_REFERENCE_PLAN = {
+    "bytes": 7_222,
+    "sha256": "7edf1f7fdff1aaa22dbe32ab524f42ad4425ddc7ad430dda833362a44ca719d5",
+    "plan_sha256": "e2cd57cf6666cdef6ec40938e5d54d70e2168180783a718633e7b7639bb6ca75",
+}
+
 LINEAGE_FIELDS = {
     "format_version", "kind", "status", "source_registration", "seed_registration",
     "post_copy", "post_verify", "post_verify_evidence", "post_verify_target",
@@ -101,10 +107,24 @@ def _source_chain(backend: Path, source: dict) -> tuple[dict, object]:
     return {"outer": descriptor, "registration": registration_descriptor, "value": registration}, post
 
 
+def _validate_dataset_plan(backend: Path, descriptor: dict, plan: dict) -> None:
+    """校验当前计划，或只读接纳 C52 已绑定的唯一历史计划。"""
+    if "target_side" in plan:
+        validate_plan(plan, backend)
+        return
+    observed = {
+        "bytes": descriptor.get("bytes"),
+        "sha256": descriptor.get("sha256"),
+        "plan_sha256": plan_hash(plan),
+    }
+    if observed != HISTORICAL_C52_REFERENCE_PLAN:
+        raise ValueError("缺少恢复目标侧的参考计划不是已审计的 C52 历史证据")
+
+
 def _dataset_facts(backend: Path, post) -> dict:
     plan_path, plan = _descriptor(backend, post.request["reference_plan"], "原参考计划")
     dataset_path, dataset = _descriptor(backend, post.request["dataset"], "原数据集")
-    validate_plan(plan, backend)
+    _validate_dataset_plan(backend, post.request["reference_plan"], plan)
     exact(dataset, DATASET_FIELDS)
     origin = plan.get("source", {}).get("scope_id")
     if not isinstance(origin, str):
