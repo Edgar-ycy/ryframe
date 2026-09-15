@@ -22,17 +22,42 @@ def build(backend: Path, successor: Path, execution: Path, expected_head: str, b
     name(request_id)
     relationship, build_path, environment_path = [local_path(backend, str(path)) for path in (successor, backend_build, environment)]
     maintenance_path = local_path(execution, str(maintenance_build))
-    source = published_source(backend, binding(relationship), live_storage=False)
-    if source.get("source_rebind") is None or source.get("source_generation") is not None:
-        raise ValueError("generation-request 必须在重绑定后、首个 source-generation 前构造")
-    value = {"format_version": 1, "kind": "devex-clone-seed-source-generation", "id": request_id,
-             "source_registration": source["review_successor"]["source_result"],
-             "review_successor": binding(relationship), "source_rebind": source["source_rebind"],
-             "current_storage": source["storage"]["storage"], "execution_backend": str(execution),
-             "expected_backend_sha": expected_head, "adapter_contract": adapter_contract,
-             "product_backend": None if product_backend is None else str(product_backend),
-             "backend_build": binding(build_path), "maintenance_build": binding(maintenance_path),
-             "source_environment": binding(environment_path)}
+    recovery = None
+    try:
+        source = published_source(backend, binding(relationship), live_storage=False)
+    except ValueError as ordinary_error:
+        try:
+            from devex_clone_seed_source import _registered_source
+            from reference_fixture_successor import _source_with_loader
+
+            registered = _source_with_loader(
+                backend, binding(relationship), live_storage=False, loader=_registered_source
+            )
+        except ValueError:
+            raise ordinary_error
+        from devex_clone_seed_generation_lineage_recovery import pending_lineage_request
+
+        recovery = (
+            backend, registered["directory"], binding(relationship), execution,
+            expected_head, build_path, maintenance_path, environment_path, request_id,
+        )
+        recovered = pending_lineage_request(
+            *recovery, adapter_contract=adapter_contract, product_backend=product_backend
+        )
+        if recovered is None:
+            raise ordinary_error
+        value, source = recovered
+    else:
+        if source.get("source_rebind") is None or source.get("source_generation") is not None:
+            raise ValueError("generation-request 必须在重绑定后、首个 source-generation 前构造")
+        value = {"format_version": 1, "kind": "devex-clone-seed-source-generation", "id": request_id,
+                 "source_registration": source["review_successor"]["source_result"],
+                 "review_successor": binding(relationship), "source_rebind": source["source_rebind"],
+                 "current_storage": source["storage"]["storage"], "execution_backend": str(execution),
+                 "expected_backend_sha": expected_head, "adapter_contract": adapter_contract,
+                 "product_backend": None if product_backend is None else str(product_backend),
+                 "backend_build": binding(build_path), "maintenance_build": binding(maintenance_path),
+                 "source_environment": binding(environment_path)}
     root, receipt = registered_inputs(backend, value, reconstruct=False)
     maintenance = verify_evidence(root, maintenance_path)
     private = read_json(environment_path)
@@ -41,8 +66,13 @@ def build(backend: Path, successor: Path, execution: Path, expected_head: str, b
             or source_binding(root, {"source": source["request"]["source"]}, configured(private["environment"]), evidence_root=backend)
             != source["generation"]["physical_binding"]):
         raise ValueError("后继请求维护构建或环境没有绑定同一源码与 C52 完整物理来源")
-    if published_source(backend, binding(relationship), live_storage=False) != source:
-        raise ValueError("generation-request 来源在只读构造期间变化")
+    if recovery is None:
+        if published_source(backend, binding(relationship), live_storage=False) != source:
+            raise ValueError("generation-request 来源在只读构造期间变化")
+    elif pending_lineage_request(
+        *recovery, adapter_contract=adapter_contract, product_backend=product_backend
+    ) != (value, source):
+        raise ValueError("C69 generation-request 来源在只读构造期间变化")
     for field in ("review_successor", "backend_build", "source_environment"):
         bound_file(backend, value[field])
     bound_file(root, value["maintenance_build"])
@@ -62,6 +92,10 @@ def publish(backend: Path, output: Path, *args, **kwargs) -> dict:
     if not target.parent.is_dir():
         raise ValueError("generation-request 输出必须使用已有父目录中的新路径")
     first = build(backend, *args, **kwargs)
+    registration = bound_file(backend, first["source_registration"])
+    if (registration.parent.name == "results" and registration.stem.isdigit()
+            and target.is_relative_to(registration.parent.parent)):
+        raise ValueError("generation-request 外部收据不得写入来源复制账本目录")
     if build(backend, *args, **kwargs) != first:
         raise ValueError("generation-request 发布前输入发生变化")
     _publish_json(target, first)

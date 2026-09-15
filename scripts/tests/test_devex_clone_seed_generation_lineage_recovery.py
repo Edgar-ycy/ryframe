@@ -312,8 +312,15 @@ class LineageRecoveryTests(unittest.TestCase):
                 generation, "REQUEST_FIELDS", set(internal)
             ), patch.object(
                 recovery, "bound_file", side_effect=lambda _root, value: Path(value["path"])
-            ), self.assertRaisesRegex(ValueError, "只能成对"):
+            ), self.assertRaisesRegex(ValueError, "成对"):
                 recovery._request(self.backend, self.output, request_path)
+
+        request_path.unlink()
+        write_json(request_path, internal)
+        with patch.object(generation, "REQUEST_FIELDS", set(internal)), patch.object(
+            recovery, "bound_file", side_effect=lambda _root, value: Path(value["path"])
+        ), self.assertRaisesRegex(ValueError, "必须成对"):
+            recovery._request(self.backend, self.output, request_path)
 
         request_path.unlink()
         write_json(request_path, current)

@@ -176,13 +176,89 @@ def _request(backend: Path, output: Path, request_path: Path | None) -> tuple[di
         bound_file(backend, request[field])
     bound_file(Path(request["execution_backend"]), request["maintenance_build"])
     changes = {key for key in request if request[key] != internal[key]}
-    if changes:
+    if request_path is not None:
         if changes != {"backend_build", "maintenance_build"}:
-            raise ValueError("C69 当前请求只能成对重新登记 API/Worker 与维护构建收据")
+            raise ValueError("C69 当前请求必须成对重新登记 API/Worker 与维护构建收据")
         from devex_clone_seed_generation import _reregistered_builds
 
         _reregistered_builds(backend, internal, request)
+    elif changes:
+        raise ValueError("C68 内部请求在读取期间变化")
     return request, descriptor, internal_descriptor, internal
+
+
+def pending_lineage_request(
+    backend: Path,
+    directory: Path,
+    successor: dict,
+    execution: Path,
+    expected_head: str,
+    backend_build: Path,
+    maintenance_build: Path,
+    environment: Path,
+    request_id: str,
+    *,
+    adapter_contract=None,
+    product_backend=None,
+) -> tuple[dict, dict] | None:
+    """为固定 C68 失败重登等价构建；不放宽普通 published-source。"""
+    backend = backend.resolve(strict=True)
+    directory = local_path(backend, str(directory))
+    execution = local_path(backend, str(execution))
+    state_path = directory / "state.json"
+    state_descriptor = binding(state_path)
+    state = load_state(directory)
+    if binding(state_path) != state_descriptor:
+        raise ValueError("C69 请求构造期间账本发生变化")
+    if not pending(state["attempts"]):
+        return None
+    _, tail = _history(backend, directory, state["attempts"])
+    output = local_path(backend, str(directory / "g0068"))
+    previous, _, previous_descriptor, previous_value = _request(backend, output, None)
+    if previous != previous_value:
+        raise ValueError("C68 内部请求读取结果不一致")
+
+    runtime_path = local_path(backend, str(backend_build))
+    maintenance_path = local_path(execution, str(maintenance_build))
+    environment_path = local_path(backend, str(environment))
+    unchanged = {
+        "id": request_id,
+        "review_successor": successor,
+        "execution_backend": str(execution),
+        "expected_backend_sha": expected_head,
+        "adapter_contract": adapter_contract,
+        "product_backend": None if product_backend is None else str(product_backend),
+        "source_environment": binding(environment_path),
+    }
+    if any(previous[field] != value for field, value in unchanged.items()):
+        raise ValueError("C69 重新登记请求改变了构建收据以外的字段")
+    request = copy.deepcopy(previous)
+    request.update(
+        backend_build=binding(runtime_path),
+        maintenance_build=binding(maintenance_path),
+    )
+    if (request["backend_build"] == previous["backend_build"]
+            or request["maintenance_build"] == previous["maintenance_build"]):
+        raise ValueError("C69 必须成对重新登记新的 API/Worker 与维护构建收据")
+    from devex_clone_seed_generation import _reregistered_builds
+
+    _reregistered_builds(backend, previous, request)
+    source = _source(backend, directory, state["attempts"], request, tail)
+    _verify_request(backend, request, source)
+    current_bindings = (
+        binding(runtime_path),
+        binding(maintenance_path),
+        binding(environment_path),
+        binding(Path(successor["path"])),
+    )
+    if (current_bindings != (
+            request["backend_build"], request["maintenance_build"],
+            request["source_environment"], request["review_successor"])
+            or binding(output / "request.json") != previous_descriptor
+            or binding(state_path) != state_descriptor
+            or load_state(directory) != state):
+        raise ValueError("C69 重新登记请求的账本或输入在核验期间变化")
+    return request, source
 
 
 def _verify_request(backend: Path, request: dict, source: dict) -> None:
