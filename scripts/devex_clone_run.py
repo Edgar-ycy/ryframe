@@ -675,7 +675,9 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
                 if stage == "seed-runtime" and mode == "source-generation-start":
                     from devex_clone_seed_generation import preflight as generation_preflight
 
-                    generation_preflight(directory, backend=backend)
+                    generation_preflight(
+                        directory, backend=backend, request_path=seed_request
+                    )
                 if stage == "seed-runtime" and mode in {"source-generation-stop", "source-generation-recover"}:
                     from devex_clone_seed_generation_control import preflight as generation_control_preflight
 

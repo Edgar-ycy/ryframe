@@ -324,6 +324,86 @@ class GenerationTests(unittest.TestCase):
                     self.assertRaisesRegex(ValueError, "只执行一次"):
                 generation.preflight(self.directory, backend=self.backend)
 
+    def test_preflight_binds_forensic_replay_request_before_new_attempt(self):
+        failed = self.record(54, generation.START, status="failed")
+        failed["error_type"] = "ValueError"
+        state = {"attempts": self.prefix + [failed]}
+        archive = {"records": [], "receipt": {"source_registration": self.registration}}
+        segment = {
+            "phase": "ready",
+            "storage": {"attempt": 64},
+            "cache": {"attempt": 65},
+            "records": [failed],
+            "replay": {"request": binding(self.request_path)},
+        }
+        with patch.object(generation, "load_state", return_value=state), \
+                patch("devex_clone_seed_generation_prelaunch.closed", return_value=archive), \
+                patch("devex_clone_seed_segment.segmented_resume", return_value=segment):
+            generation.preflight(
+                self.directory, backend=self.backend, request_path=self.request_path
+            )
+            with self.assertRaisesRegex(ValueError, "C70"):
+                generation.preflight(self.directory, backend=self.backend)
+            changed = self.directory / "changed-request.json"
+            write_json(changed, {**self.request, "id": "changed"})
+            with self.assertRaisesRegex(ValueError, "C70"):
+                generation.preflight(
+                    self.directory, backend=self.backend, request_path=changed
+                )
+
+            swapped = self.directory / "swapped-request.json"
+            write_json(swapped, {**self.request, "id": "wrong-before-forensic-check"})
+
+            def replace_with_authorized(*_args):
+                swapped.unlink()
+                write_json(swapped, self.request)
+                return segment
+
+            with patch("devex_clone_seed_segment.segmented_resume",
+                       side_effect=replace_with_authorized), \
+                    self.assertRaisesRegex(ValueError, "C70"):
+                generation.preflight(
+                    self.directory, backend=self.backend, request_path=swapped
+                )
+
+    def test_forensic_replay_image_drift_blocks_runtime_start(self):
+        old_rustfs = {"endpoint": "same", "pid": 6100}
+        new_rustfs = {"endpoint": "same", "pid": 6500}
+        old_redis = {"endpoint": "same", "pid": 6200}
+        new_redis = {"endpoint": "same", "pid": 6600}
+        old_storage = {"attempt": 62, "storage": old_rustfs}
+        new_storage = {"attempt": 65, "storage": new_rustfs}
+        previous = copy.deepcopy(self.request)
+        previous["current_storage"] = old_storage
+        previous_path = self.directory / "previous-request.json"
+        write_json(previous_path, previous)
+        self.request["current_storage"] = new_storage
+        self.source["storage"]["storage"] = new_storage
+        self.request_path.unlink()
+        write_json(self.request_path, self.request)
+        self.image["storage"] = {"rustfs": new_rustfs, "redis": new_redis}
+        archive = {
+            "receipt": {"request": binding(previous_path)},
+            "image": {
+                **copy.deepcopy(self.image),
+                "storage": {"rustfs": old_rustfs, "redis": old_redis},
+            },
+        }
+        replay_image = copy.deepcopy(self.image)
+        replay_image["database"]["business"] = "changed-after-c69"
+        segment = {
+            "phase": "ready",
+            "storage": new_storage,
+            "cache": {"redis": new_redis},
+            "records": [],
+            "replay": {"request": binding(self.request_path), "image": replay_image},
+        }
+        with patch("devex_clone_seed_generation_prelaunch.closed", return_value=archive), \
+                patch("devex_clone_seed_segment.segmented_resume", return_value=segment), \
+                self.assertRaisesRegex(ValueError, "C69 授权后完整逻辑像发生变化"):
+            self.execute()
+        self.runtime.start.assert_not_called()
+
     def test_history_allows_only_owned_single_generation_after_rebind_before_export(self):
         with patch("devex_clone_run._require_owned_run") as owned:
             rebind.history(self.directory, self.state, self.registration, current=54)

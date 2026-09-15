@@ -143,6 +143,32 @@ class RunTests(unittest.TestCase):
         self.assertEqual(before, {str(path.relative_to(self.directory)): path.read_bytes()
                                   for path in self.directory.rglob("*") if path.is_file()})
 
+    def test_generation_request_is_rejected_before_attempt_or_controller_is_created(self):
+        request = self.local / "generation-request.json"
+        write_json(request, {"kind": "wrong-generation-request"})
+        before = state.binding(self.directory / "state.json")
+        with patch("devex_clone_seed_generation.preflight",
+                   side_effect=ValueError("request binding changed")) as preflight, \
+                patch("devex_clone_seed_runtime.execute_seed") as execute, \
+                self.assertRaisesRegex(ValueError, "request binding changed"):
+            run.execute(
+                self.backend,
+                self.directory,
+                "seed-runtime",
+                "source-generation-start",
+                seed_request=request,
+            )
+        preflight.assert_called_once_with(
+            self.directory, backend=self.backend, request_path=request
+        )
+        execute.assert_not_called()
+        self.assertEqual(state.load_state(self.directory)["attempts"], [])
+        self.assertFalse((self.directory / "run.lock").exists())
+        self.assertFalse(any(self.directory.glob("controller-*.json")))
+        self.assertFalse(any(self.directory.glob("failure-*.json")))
+        self.assertFalse(any(self.directory.glob("g[0-9][0-9][0-9][0-9]")))
+        self.assertEqual(before, state.binding(self.directory / "state.json"))
+
     def test_existing_copy_never_restarts_factory(self):
         output = Path(self.value["copy_directory"])
         output.mkdir()

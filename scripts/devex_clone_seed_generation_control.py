@@ -24,10 +24,13 @@ def preflight(directory: Path, mode: str, *, backend: Path | None = None, reques
     backend = backend or Path(__file__).resolve().parents[1]
     if mode == RECOVER and request_path is not None:
         from devex_clone_seed_generation_lineage_recovery import lineage_failure, pending
+        from devex_clone_seed_generation_lineage_retry import pending as retry_forbidden
 
         if pending(state["attempts"]):
             lineage_failure(backend, directory, state["attempts"], request_path=request_path)
             return
+        if retry_forbidden(state["attempts"]):
+            raise ValueError("C69 已形成固定只读授权证据；下一阶段只能执行 C70 START")
     records = starts(backend, directory, state["attempts"])
     if len(records) != 1 or mode not in {STOP, RECOVER}:
         raise ValueError("源代次停止或回收必须继承唯一已登记 start")
@@ -215,9 +218,12 @@ def _status_result(directory: Path, initial: dict, start: dict, intent: dict | N
 def execute_recover(backend: Path, directory: Path, request_path: Path, number: int, *, run=subprocess.run) -> dict:
     prefix = _active(directory, number, RECOVER)
     from devex_clone_seed_generation_lineage_recovery import authorize, pending
+    from devex_clone_seed_generation_lineage_retry import pending as retry_forbidden
 
     if pending(prefix):
         return authorize(backend, directory, request_path, number, prefix, run=run)
+    if retry_forbidden(prefix):
+        raise ValueError("C69 已形成固定只读授权证据；禁止重复采集，下一阶段只能执行 C70 START")
     observed = status(backend, directory)
     if "attempt" in observed and not (directory / f"g{observed['attempt']:04d}").exists():
         from devex_clone_seed_generation_prelaunch import execute

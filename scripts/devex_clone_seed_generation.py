@@ -31,10 +31,17 @@ START_FIELDS = {"status", "request", "source_registration", "source_rebind", "re
                 "dataset_lineage", "coordinator_source", "remote_writes", "restore_qualified"}
 
 
-def preflight(directory: Path, *, backend: Path | None = None) -> None:
+def preflight(
+    directory: Path, *, backend: Path | None = None, request_path: Path | None = None
+) -> None:
     from devex_clone_seed_generation_prelaunch import closed
 
     backend = backend or Path(__file__).resolve().parents[1]
+    request_descriptor = (
+        None
+        if request_path is None
+        else binding(local_path(backend, str(request_path)))
+    )
     attempts = load_state(directory)["attempts"]
     archived = closed(backend, directory, attempts)
     ignored = () if archived is None else tuple(archived["records"])
@@ -54,6 +61,13 @@ def preflight(directory: Path, *, backend: Path | None = None) -> None:
         if (segment is None or segment["phase"] != "ready"
                 or segment["storage"] is None or segment["cache"] is None):
             raise ValueError("source-generation 失败未形成资源完整、零输出且唯一相邻的续作边界")
+        replay = segment.get("replay")
+        if replay is not None and (
+            request_descriptor is None
+            or request_descriptor != replay["request"]
+            or binding(local_path(backend, str(request_path))) != request_descriptor
+        ):
+            raise ValueError("C70 必须在登记阶段前绑定 C69 授权的同一正式请求")
         ignored += tuple(segment["records"])
         remaining = [item for item in remaining if item not in segment["records"]]
     if remaining:
@@ -349,7 +363,7 @@ def execute_generation(backend: Path, directory: Path, request_path: Path, numbe
         segment = segmented_resume(backend, directory, prefix, archive, request["source_registration"])
         _archived_request(backend, archive, request, segment)
         if segment is not None and segment.get("replay") is not None:
-            if binding(request_path) != segment["replay"]["receipt"]["request"]:
+            if binding(request_path) != segment["replay"]["request"]:
                 raise ValueError("C70 必须使用 C69 授权时绑定的同一正式请求文件")
     coordinator_source = require_current_execution_source(backend, load_state(directory)["attempts"][-1]["sources"])
     descriptor = binding(request_path)

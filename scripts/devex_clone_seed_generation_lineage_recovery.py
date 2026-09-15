@@ -472,9 +472,9 @@ def authorize(backend: Path, directory: Path, request_path: Path, number: int, p
         if verified["image"] != facts["image"]:
             raise ValueError("C69 当前完整像与 C68 启动前像不同，禁止重试")
         checkpoint()
-        repeated = lineage_failure(backend, directory, prefix, request_path=request_path, run=run)
-        if repeated["proof"] != facts["proof"] or repeated["image"] != facts["image"]:
-            raise ValueError("C69 观察期间 C68 失败或完整前像变化")
+    repeated = lineage_failure(backend, directory, prefix, request_path=request_path, run=run)
+    if repeated["proof"] != facts["proof"] or repeated["image"] != facts["image"]:
+        raise ValueError("C69 观察期间 C68 失败或完整前像变化")
     if ({item.name for item in output.iterdir()} != {"runtime", "after"}
             or tuple(sorted(item.name for item in runtime.runtime.iterdir())) != ("binaries.json", "runtime.json")):
         raise ValueError("C69 恢复目录包含启动意图、进程证据或未知文件")
@@ -512,7 +512,14 @@ def replay_authority(backend: Path, directory: Path, attempts: list, *, run=subp
     if record.get("status") == "running":
         return None
     if record.get("status") != "passed" or record.get("error_type") is not None or record.get("result") is None:
-        raise ValueError("C69 谱系恢复失败或未发布，不能授权重试")
+        from devex_clone_seed_generation_lineage_retry import authority, completed
+
+        recovered = completed(backend, directory, attempts)
+        if recovered is None:
+            recovered = authority(backend, directory, attempts, run=run)
+        if recovered is None:
+            raise ValueError("C69 谱系恢复失败或未发布，不能授权重试")
+        return recovered
     path = bound_file(backend, record["result"])
     if path != directory / "results/0069.json":
         raise ValueError("C69 谱系恢复结果不属于固定相邻阶段")
@@ -572,4 +579,4 @@ def replay_authority(backend: Path, directory: Path, attempts: list, *, run=subp
     if after["image"] != facts["image"] or binding(path) != record["result"]:
         raise ValueError("C69 完整后像与 C68 启动前像或外层收据不同")
     return {"record": record, "failed": facts["failed"], "records": (facts["failed"], record),
-            "receipt": receipt, "image": after["image"], "failure": facts}
+            "request": receipt["request"], "receipt": receipt, "image": after["image"], "failure": facts}
