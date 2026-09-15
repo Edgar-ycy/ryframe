@@ -22,6 +22,12 @@ def preflight(directory: Path, mode: str, *, backend: Path | None = None, reques
 
     state = load_state(directory)
     backend = backend or Path(__file__).resolve().parents[1]
+    if mode == RECOVER and request_path is not None:
+        from devex_clone_seed_generation_lineage_recovery import lineage_failure, pending
+
+        if pending(state["attempts"]):
+            lineage_failure(backend, directory, state["attempts"], request_path=request_path)
+            return
     records = starts(backend, directory, state["attempts"])
     if len(records) != 1 or mode not in {STOP, RECOVER}:
         raise ValueError("源代次停止或回收必须继承唯一已登记 start")
@@ -140,6 +146,12 @@ def status(backend: Path, directory: Path) -> dict:
 
     records = starts(backend, directory, state["attempts"])
     if not records:
+        from devex_clone_seed_generation_lineage_recovery import replay_authority
+
+        replay = replay_authority(backend, directory, state["attempts"])
+        if replay is not None:
+            roles = dict.fromkeys(ROLES, {"state": "replay_authorized", "tree": None, "completion": None})
+            return _status_result(directory, initial, replay["failed"], replay["failure"]["proof"]["intent"], roles)
         archive = closed(backend, directory, state["attempts"])
         if archive is not None:
             roles = dict.fromkeys(ROLES, {"state": "not_started", "tree": None, "completion": None})
@@ -202,6 +214,10 @@ def _status_result(directory: Path, initial: dict, start: dict, intent: dict | N
 
 def execute_recover(backend: Path, directory: Path, request_path: Path, number: int, *, run=subprocess.run) -> dict:
     prefix = _active(directory, number, RECOVER)
+    from devex_clone_seed_generation_lineage_recovery import authorize, pending
+
+    if pending(prefix):
+        return authorize(backend, directory, request_path, number, prefix, run=run)
     observed = status(backend, directory)
     if "attempt" in observed and not (directory / f"g{observed['attempt']:04d}").exists():
         from devex_clone_seed_generation_prelaunch import execute

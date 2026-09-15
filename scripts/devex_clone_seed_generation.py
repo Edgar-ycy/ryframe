@@ -37,28 +37,30 @@ def preflight(directory: Path, *, backend: Path | None = None) -> None:
     backend = backend or Path(__file__).resolve().parents[1]
     attempts = load_state(directory)["attempts"]
     archived = closed(backend, directory, attempts)
-    ignored = () if archived is None else archived["records"]
+    ignored = () if archived is None else tuple(archived["records"])
     remaining = [item for item in attempts
                  if item["stage"] == "seed-runtime"
                  and item["mode"] in {START, STOP, RECOVER, "source-export", "arm-input"}
                  and item not in ignored]
-    if remaining:
-        retryable = (archived is not None and len(remaining) == 1
-                     and (remaining[0]["mode"], remaining[0]["status"]) == (START, "failed"))
-        if not retryable:
+    segment = None
+    if archived is not None and remaining:
+        retry_prefix = tuple(remaining[0].get(key) for key in ("mode", "status")) == (START, "failed")
+        if not retry_prefix or len(remaining) > 1 and "recovery" not in archived:
             raise ValueError("source-generation 只执行一次；失败必须核对完整前后像，不能重放启动")
         from devex_clone_seed_segment import segmented_resume
 
         segment = segmented_resume(
             backend, directory, attempts, archived, archived["receipt"]["source_registration"])
-        failures = [] if segment is None else [
-            row for row in segment["records"]
-            if (row["stage"], row["mode"], row["status"])
-            == ("seed-runtime", START, "failed")
-        ]
-        if (segment is None or segment["phase"] != "ready" or segment["storage"] is None
-                or segment["cache"] is None or failures != remaining):
+        if (segment is None or segment["phase"] != "ready"
+                or segment["storage"] is None or segment["cache"] is None):
             raise ValueError("source-generation 失败未形成资源完整、零输出且唯一相邻的续作边界")
+        ignored += tuple(segment["records"])
+        remaining = [item for item in remaining if item not in segment["records"]]
+    if remaining:
+        message = ("source-generation 失败未形成资源完整、零输出且唯一相邻的续作边界"
+                   if segment is not None and len(remaining) == 1 and remaining[0]["status"] == "failed" else
+                   "source-generation 只执行一次；失败必须核对完整前后像，不能重放启动")
+        raise ValueError(message)
     rebound = [item for item in attempts if (item["stage"], item["mode"]) == ("seed-runtime", "source-rebind")]
     if len(rebound) != 1 or rebound[0]["status"] != "passed":
         raise ValueError("source-generation 必须继承唯一已发布 storage rebind")
@@ -327,6 +329,8 @@ def _archived_image(archive: dict, current: dict, segment: dict | None) -> None:
         expected["storage"] = {"rustfs": copy.deepcopy(rustfs), "redis": copy.deepcopy(redis)}
     if current != expected:
         raise ValueError("未启动恢复的新完整逻辑基线之后存在未知写入；禁止启动")
+    if segment is not None and segment.get("replay") is not None and current != segment["replay"]["image"]:
+        raise ValueError("C69 授权后完整逻辑像发生变化；禁止执行 C70 启动")
 
 
 def execute_generation(backend: Path, directory: Path, request_path: Path, number: int, *, run=subprocess.run) -> dict:
@@ -344,6 +348,9 @@ def execute_generation(backend: Path, directory: Path, request_path: Path, numbe
 
         segment = segmented_resume(backend, directory, prefix, archive, request["source_registration"])
         _archived_request(backend, archive, request, segment)
+        if segment is not None and segment.get("replay") is not None:
+            if binding(request_path) != segment["replay"]["receipt"]["request"]:
+                raise ValueError("C70 必须使用 C69 授权时绑定的同一正式请求文件")
     coordinator_source = require_current_execution_source(backend, load_state(directory)["attempts"][-1]["sources"])
     descriptor = binding(request_path)
     output = local_path(backend, str(directory / f"g{number:04d}"), new=True)

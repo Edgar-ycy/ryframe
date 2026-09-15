@@ -375,6 +375,11 @@ def starts(backend: Path, directory: Path, attempts: list) -> list:
             raise ValueError("生成重试缺少相邻前序阶段")
         receipt_reregistration_failure(backend, directory, records[0], attempts[index - 1])
         records = records[1:]
+    from devex_clone_seed_generation_lineage_recovery import replay_authority
+
+    replay = replay_authority(backend, directory, attempts)
+    if replay is not None:
+        records = [row for row in records if row != replay["failed"]]
     return records
 
 

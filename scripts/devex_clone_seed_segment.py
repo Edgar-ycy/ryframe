@@ -472,7 +472,28 @@ def segmented_resume(backend: Path, directory: Path, attempts: list, archive: di
         receipt_reregistration_failure(backend, directory, lifecycle[0], rest[cache_index])
         generation_failures = (lifecycle[0],)
         previous_generation, lifecycle = lifecycle[0]["number"], lifecycle[1:]
-    exported = _verify_generation_tail(lifecycle, previous_generation)
+    replay, replay_records, pending_replay = None, (), False
+    if lifecycle:
+        from devex_clone_seed_generation_lineage_recovery import failed_tail, replay_authority
+
+        if failed_tail(lifecycle[0], previous_generation):
+            if len(lifecycle) == 1:
+                pending_replay = True
+            elif (len(lifecycle) == 2 and lifecycle[1].get("number") == lifecycle[0]["number"] + 1
+                    and tuple(lifecycle[1].get(key) for key in ("stage", "mode", "status", "result", "error_type"))
+                    == ("seed-runtime", "source-generation-recover", "running", None, None)
+                    and current == lifecycle[1]["number"] and lifecycle[1] == attempts[-1]):
+                _owned_segment_attempt(directory, attempts, lifecycle[1], current)
+                pending_replay = True
+            else:
+                replay = replay_authority(backend, directory, attempts)
+                if replay is None or tuple(lifecycle[:2]) != replay["records"]:
+                    raise ValueError("C68 失败后缺少唯一相邻且完整的 C69 重试授权")
+                replay_records = replay["records"]
+                previous_generation, lifecycle = replay["record"]["number"], lifecycle[2:]
+    exported = None if pending_replay else _verify_generation_tail(lifecycle, previous_generation)
+    if pending_replay and cleanup:
+        raise ValueError("C69 重试授权完成前不能清理资源")
     cleanup_records = ()
     if cleanup:
         phase = _verify_cleanup(
@@ -483,5 +504,6 @@ def segmented_resume(backend: Path, directory: Path, attempts: list, archive: di
     if any(binding(Path(item["path"])) != item for item in evidence):
         raise ValueError("分段续作核验期间失败或控制器证据变化")
     resource_count = min(len(rest), cache_index + 1)
-    return {"phase": phase, "records": tuple(suffix[:3 + resource_count]) + generation_failures + cleanup_records,
-            "storage": current_storage, "cache": current_cache}
+    return {"phase": phase,
+            "records": tuple(suffix[:3 + resource_count]) + generation_failures + replay_records + cleanup_records,
+            "storage": current_storage, "cache": current_cache, "replay": replay}
