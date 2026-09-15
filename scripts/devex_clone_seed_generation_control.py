@@ -17,16 +17,24 @@ from full_stack_process_tree import read_process_tree, validate_process_tree_dir
 from restore_reference_plan import plan_hash
 
 
-def preflight(directory: Path, mode: str) -> None:
+def preflight(directory: Path, mode: str, *, backend: Path | None = None, request_path: Path | None = None) -> None:
+    from devex_clone_seed_generation_prelaunch import starts, prepare
+
     state = load_state(directory)
-    starts = [row for row in state["attempts"] if (row["stage"], row["mode"]) == ("seed-runtime", START)]
-    prior = [row for row in state["attempts"] if row["stage"] == "seed-runtime" and row["mode"] in {STOP, RECOVER}]
-    if len(starts) != 1 or mode not in {STOP, RECOVER}:
+    backend = backend or Path(__file__).resolve().parents[1]
+    records = starts(backend, directory, state["attempts"])
+    if len(records) != 1 or mode not in {STOP, RECOVER}:
         raise ValueError("源代次停止或回收必须继承唯一已登记 start")
-    if mode == STOP and (starts[0]["status"] != "passed" or prior):
+    prior = [row for row in state["attempts"] if row["number"] > records[0]["number"]
+             and row["stage"] == "seed-runtime" and row["mode"] in {STOP, RECOVER}]
+    if mode == STOP and (records[0]["status"] != "passed" or prior):
         raise ValueError("源代次 stop 只能执行一次；失败只能精确回收，禁止重放")
     if mode == RECOVER and any(row["mode"] == RECOVER or row["status"] == "passed" for row in prior):
         raise ValueError("源代次已停止或执行回收，不能重放")
+    if mode == RECOVER and not (directory / f"g{records[0]['number']:04d}").exists():
+        if request_path is None or state["attempts"][-1] != records[0]:
+            raise ValueError("未启动恢复必须显式绑定当前请求及最后失败阶段")
+        prepare(backend, directory, records[0], request_path, records[0]["number"] + 1)
 
 
 def _active(directory: Path, number: int, mode: str) -> list:
@@ -127,10 +135,17 @@ def status(backend: Path, directory: Path) -> dict:
 
     initial = binding(directory / "state.json")
     state = load_state(directory)
-    starts = [row for row in state["attempts"] if (row["stage"], row["mode"]) == ("seed-runtime", START)]
-    if len(starts) != 1:
+    from devex_clone_seed_generation_prelaunch import starts, closed
+
+    records = starts(backend, directory, state["attempts"])
+    if not records:
+        archive = closed(backend, directory, state["attempts"])
+        if archive is not None:
+            roles = dict.fromkeys(ROLES, {"state": "not_started", "tree": None, "completion": None})
+            return _status_result(directory, initial, archive["start"], None, roles)
+    if len(records) != 1:
         raise ValueError("source-generation status 需要唯一 start 记录")
-    start = starts[0]
+    start = records[0]
     output = directory / f"g{start['number']:04d}"
     unknown = dict.fromkeys(ROLES, {"state": "unknown", "tree": None, "completion": None})
     if not output.exists():
@@ -187,6 +202,10 @@ def _status_result(directory: Path, initial: dict, start: dict, intent: dict | N
 def execute_recover(backend: Path, directory: Path, request_path: Path, number: int, *, run=subprocess.run) -> dict:
     prefix = _active(directory, number, RECOVER)
     observed = status(backend, directory)
+    if "attempt" in observed and not (directory / f"g{observed['attempt']:04d}").exists():
+        from devex_clone_seed_generation_prelaunch import execute
+
+        return execute(backend, directory, request_path, number, prefix, run=run)
     if any(row["state"] == "unknown" for row in observed["roles"].values()):
         raise ValueError("启动在完整树发布前中断，缺少完整归属，不能推断停止或自动回收；禁止重放")
     verifier = _verifier_stopped(backend, directory, prefix)
@@ -248,7 +267,12 @@ def execute_recover(backend: Path, directory: Path, request_path: Path, number: 
 
 def _recovery_baseline(backend: Path, output: Path, prefix: list, verifier: dict, source: dict, selected: dict):
     """已完成的独立会话验收才允许替代 START 运行像；失败会话不获得写入白名单。"""
-    start = next(row for row in prefix if (row["stage"], row["mode"]) == ("seed-runtime", START))
+    from devex_clone_seed_generation_prelaunch import starts
+
+    records = starts(backend, output.parent, prefix)
+    if len(records) != 1:
+        raise ValueError("回收必须绑定唯一实际启动")
+    start = records[0]
     if start["status"] != "passed":
         raise ValueError("未发布 START 的失败代次缺少不可变运行前像；只回收树，不能声明零漂移")
     receipt = read_json(bound_file(backend, start["result"]))
@@ -269,10 +293,12 @@ def _verifier_stopped(backend: Path, directory: Path, prefix: list[dict]) -> dic
     """来源登录生产者由唯一 validator 证明已退出；失败启动没有合法验收入口。"""
     from restore_source_runtime_producer import require_source_verifier_stopped
 
-    starts = [row for row in prefix if (row["stage"], row["mode"]) == ("seed-runtime", START)]
-    if len(starts) != 1:
+    from devex_clone_seed_generation_prelaunch import starts
+
+    records = starts(backend, directory, prefix)
+    if len(records) != 1:
         raise ValueError("回收必须绑定唯一来源启动")
-    start = starts[0]
+    start = records[0]
     if start["status"] == "passed":
         return require_source_verifier_stopped(backend, start["result"])
     output = directory / f"g{start['number']:04d}"

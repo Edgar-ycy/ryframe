@@ -31,10 +31,14 @@ START_FIELDS = {"status", "request", "source_registration", "source_rebind", "re
                 "dataset_lineage", "coordinator_source", "remote_writes", "restore_qualified"}
 
 
-def preflight(directory: Path) -> None:
+def preflight(directory: Path, *, backend: Path | None = None) -> None:
+    from devex_clone_seed_generation_prelaunch import closed
+
     attempts = load_state(directory)["attempts"]
+    archived = closed(backend or Path(__file__).resolve().parents[1], directory, attempts)
+    ignored = () if archived is None else (archived["start"], archived["recovery"])
     if any(item["stage"] == "seed-runtime" and item["mode"] in {START, STOP, RECOVER, "source-export", "arm-input"}
-           for item in attempts):
+           and item not in ignored for item in attempts):
         raise ValueError("source-generation 只执行一次；失败必须核对完整前后像，不能重放启动")
     rebound = [item for item in attempts if (item["stage"], item["mode"]) == ("seed-runtime", "source-rebind")]
     if len(rebound) != 1 or rebound[0]["status"] != "passed":
@@ -108,12 +112,14 @@ def verify_running_source(backend: Path, start_descriptor: dict, *, live: bool) 
     directory = path.parent.parent
     state_binding = binding(directory / "state.json")
     state = load_state(directory)
-    records = [row for row in state["attempts"] if (row["stage"], row["mode"]) == ("seed-runtime", START)]
+    from devex_clone_seed_generation_prelaunch import starts
+
+    records = starts(backend, directory, state["attempts"])
     if (len(records) != 1 or records[0]["status"] != "passed" or records[0]["result"] != start_descriptor
             or path != directory / "results" / f"{records[0]['number']:04d}.json"):
         raise ValueError("source verify 必须绑定同一账本唯一成功 start 的外层收据")
     coordinator_source = require_current_execution_source(backend, records[0]["sources"])
-    if live and any(row["stage"] == "seed-runtime" and row["mode"] in {STOP, RECOVER}
+    if live and any(row["number"] > records[0]["number"] and row["stage"] == "seed-runtime" and row["mode"] in {STOP, RECOVER}
                     and row["status"] != "running" for row in state["attempts"]):
         raise ValueError("源运行代次已执行停止或恢复，不能再次验证或重放")
     value = read_json(path)
@@ -210,9 +216,13 @@ def execute_generation(backend: Path, directory: Path, request_path: Path, numbe
     from devex_clone_seed_generation_runtime import GenerationRuntime
     from devex_clone_seed_generation_images import capture_image, verify_image
     from restore_source_lineage import derive_dataset_lineage
+    from devex_clone_seed_generation_prelaunch import closed
 
     original = inputs(backend, directory, request_path, number)
     request, source, prefix = original
+    archive = closed(backend, directory, prefix)
+    if archive is not None and read_json(bound_file(backend, archive["receipt"]["request"])) != request:
+        raise ValueError("后续实际启动必须使用未启动恢复所核验的同一当前请求")
     coordinator_source = require_current_execution_source(backend, load_state(directory)["attempts"][-1]["sources"])
     descriptor = binding(request_path)
     output = local_path(backend, str(directory / f"g{number:04d}"), new=True)
@@ -233,6 +243,8 @@ def execute_generation(backend: Path, directory: Path, request_path: Path, numbe
         checkpoint()
         before = capture_image(backend, runtime.execution, runtime.selected, request, source,
                                environment, output / "before", run, control_environment=runtime.control_environment)
+        if archive is not None and read_json(Path(before["path"]))["image"] != archive["image"]:
+            raise ValueError("未启动恢复的新完整基线之后存在未知写入；禁止启动")
         lineage = derive_dataset_lineage(backend, source, before,
             verify_image(backend, before, runtime.selected, source["request"], source_registration=request["source_registration"]))
         write_json(output / "dataset-lineage.json", lineage)

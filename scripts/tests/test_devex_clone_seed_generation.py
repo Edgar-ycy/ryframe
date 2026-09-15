@@ -247,6 +247,26 @@ class GenerationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 generation.verify_running_source(self.backend, changed, live=False)
 
+    def test_live_verification_ignores_only_control_of_sealed_unstarted_ancestor(self):
+        import json
+
+        with self.running_fixture() as (descriptor, state, _verifier, _storage):
+            failed = self.record(50, generation.START, status="failed")
+            recovered = self.record(51, generation.RECOVER, self.rebound)
+            state["attempts"][:0] = [failed, recovered]
+            path = Path(descriptor["path"])
+            value = read_json(path)
+            prefix = state["attempts"][:-1]
+            value.update(history_length=len(prefix), history_sha256=plan_hash(prefix))
+            path.write_text(json.dumps(value), encoding="utf-8")
+            descriptor = binding(path)
+            state["attempts"][-1]["result"] = descriptor
+            with patch("devex_clone_seed_generation_prelaunch.closed", return_value={"start": failed, "recovery": recovered}):
+                generation.verify_running_source(self.backend, descriptor, live=True)
+                state["attempts"].append(self.record(55, generation.RECOVER, self.rebound))
+                with self.assertRaisesRegex(ValueError, "停止或恢复"):
+                    generation.verify_running_source(self.backend, descriptor, live=True)
+
     def test_registered_start_tools_cannot_be_rebound_or_change_during_validation(self):
         with self.running_fixture() as (descriptor, state, _verifier, _storage):
             changed = copy.deepcopy(self.coordinator_source)
