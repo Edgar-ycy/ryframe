@@ -134,11 +134,12 @@ def preflight_restart(backend: Path, directory: Path, value: dict, side: str,
     require_previous_stopped(backend, directory, request, descriptor, None)
 
 
-def registered_storage_binding(backend: Path, directory: Path, side: str) -> dict | None:
+def registered_storage_binding(backend: Path, directory: Path, side: str, *, before: int | None = None) -> dict | None:
     """仅验证已发布代次及本地输入；调用方继续独立执行原有实时进程/参数/端口核验。"""
     local_path(backend, str(directory))
     root = local_path(backend, str(directory / stage(side)))
-    selected = records(directory, side)
+    selected = [item for item in records(directory, side)
+                if before is None or item["number"] < before]
     if not root.exists() and not selected:
         return None
     request, descriptor = registration(backend, directory, side)

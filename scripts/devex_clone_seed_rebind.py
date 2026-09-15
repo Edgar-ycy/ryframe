@@ -7,10 +7,10 @@ from pathlib import Path
 from devex_clone_capture import read_json
 from devex_clone_model import exact, local_path
 from devex_clone_run_state import binding, load_state
+from devex_clone_seed_segment import segmented_resume
 from devex_clone_source_proof import bound_file, require_closed_port, require_recorded_producer_stopped
 from devex_clone_storage import current_storage_binding, registered_storage_binding
 from devex_clone_storage_request import directory_identity
-from full_stack_process import process_identity
 from restore_reference_plan import plan_hash
 
 FIELDS = {"status", "source_registration", "review_successor", "original_storage", "current_storage",
@@ -25,8 +25,6 @@ BEFORE_REBIND = READ_ONLY_AFTER - {("seed-runtime", "source-export"), ("seed-run
     ("storage-target", "restart"), ("storage-target", "stop"), ("storage-target", "recover"),
     ("seed-runtime", "stop"), ("seed-runtime", "recover"),
 }
-
-
 def history(directory: Path, state: dict, descriptor: dict, *, current: int | None = None,
             backend: Path | None = None, cache_recovery: bool = False) -> list[dict]:
     attempts = state["attempts"]
@@ -42,6 +40,10 @@ def history(directory: Path, state: dict, descriptor: dict, *, current: int | No
     archive = closed(root, directory, attempts)
     if archive is not None and archive["receipt"]["source_registration"] != descriptor:
         raise ValueError("未启动恢复没有绑定当前已发布 seed 源")
+    segment = (segmented_resume(root, directory, attempts, archive, descriptor, current=current)
+               if archive is not None else None)
+    segment_numbers = {row["number"] for row in segment["records"]} if segment is not None else set()
+    frozen_successor = archive["receipt"]["review_successor"] if archive is not None else None
     pending = ()
     prefix = attempts[:-1] if current == attempts[-1]["number"] else attempts
     if (archive is None and prefix and tuple(prefix[-1][key] for key in ("stage", "mode", "status"))
@@ -54,6 +56,8 @@ def history(directory: Path, state: dict, descriptor: dict, *, current: int | No
         operation = (item["stage"], item["mode"])
         if archive is not None and item in archive["records"]:
             continue
+        if item["number"] in segment_numbers:
+            continue
         if pending and item in pending[1:]:
             continue
         if item["stage"] == "cache-target":
@@ -61,7 +65,8 @@ def history(directory: Path, state: dict, descriptor: dict, *, current: int | No
                 raise ValueError("seed 重绑定后或未经验证的缓存操作不可消费")
             from devex_clone_cache import seed_history_proof
 
-            successor = seed_history_proof(backend, directory, item, descriptor)
+            successor = seed_history_proof(
+                backend, directory, item, descriptor, frozen_successor=frozen_successor)
             if cache_successor is not None and cache_successor != successor:
                 raise ValueError("seed 缓存历史混入不同 successor")
             cache_successor = successor
@@ -79,7 +84,10 @@ def history(directory: Path, state: dict, descriptor: dict, *, current: int | No
         if operation == ("seed-runtime", "source-rebind") and cache_successor is not None:
             from devex_clone_cache import registered_cache_binding
 
-            registered_cache_binding(backend, directory)
+            registered_cache_binding(
+                backend, directory,
+                before=archive["recovery"]["number"] if archive is not None else None,
+                frozen=(descriptor, frozen_successor) if frozen_successor is not None else None)
         if operation == ("seed-runtime", "source-generation-start"):
             if not rebound or started or exported:
                 raise ValueError("source-generation-start 只能在唯一重绑定后执行一次")
@@ -166,8 +174,7 @@ def transition(backend: Path, original: dict, current: dict | None) -> None:
             or current["storage"]["identity"]["executable"] != original["storage"]["identity"]["executable"]
             or current["attempt"] <= original["attempt"]):
         raise ValueError("重绑定不是同一二进制的后续代次")
-    if process_identity(original["storage"]["identity"]["pid"]) is not None:
-        raise ValueError("冻结存储旧进程仍存在或 PID 被复用")
+    require_recorded_producer_stopped(original["storage"]["identity"])
     bound_file(backend, original["request"])
     bound_file(backend, original["restart_result"])
     bound_file(backend, current["restart_result"])
@@ -186,6 +193,11 @@ def resolve_storage(backend: Path, descriptor: dict, source: dict, state: dict, 
                     live_storage: bool, current_storage=current_storage_binding) -> dict:
     directory = source["directory"]
     later = history(directory, state, descriptor, current=_active_read(state, directory), backend=backend)
+    from devex_clone_seed_generation_prelaunch import closed
+
+    archive = closed(backend, directory, state["attempts"])
+    segment = (segmented_resume(backend, directory, state["attempts"], archive, descriptor,
+                                current=_active_read(state, directory)) if archive is not None else None)
     records = [item for item in later if (item["stage"], item["mode"]) == ("seed-runtime", "source-rebind")]
     original = source["storage"]["storage"]
     effective, receipt = original, None
@@ -203,11 +215,18 @@ def resolve_storage(backend: Path, descriptor: dict, source: dict, state: dict, 
                 or value["restore_qualified"] is not False):
             raise ValueError("重绑定没有精确冻结来源及完整历史前缀")
         bound_file(backend, value["review_successor"])
-        effective = registered_storage_binding(backend, directory, "target")
-        if effective != value["current_storage"]:
-            raise ValueError("重绑定后存储代次变化")
+        effective = value["current_storage"]
         transition(backend, original, effective)
+        if segment is None:
+            if registered_storage_binding(backend, directory, "target") != effective:
+                raise ValueError("重绑定后存储代次变化")
+        else:
+            if segment["storage"] is None:
+                raise ValueError("封存来源已停机，必须先完成同请求资源重启")
+            effective = segment["storage"]
     if live_storage:
+        if segment is not None and segment["phase"] != "ready":
+            raise ValueError("封存来源的 Redis 尚未完成同请求重启")
         if current_storage(backend, directory, "target") != effective:
             raise ValueError("seed 源 RustFS 已停止、重启或缺少显式重绑定")
         quiet_producers(backend, source)
@@ -275,8 +294,16 @@ def published_restart_guard(backend: Path, directory: Path, number: int | None) 
         raise ValueError("seed 存储重启需要完整发布源")
     descriptor = records[-1]["result"]
     later = history(directory, state, descriptor, current=number, backend=backend)
-    if any(item["mode"] in {"source-rebind", "arm-input"} for item in later):
-        raise ValueError("已交接来源禁止再次重启")
+    from devex_clone_seed_generation_prelaunch import closed
+
+    archive = closed(backend, directory, state["attempts"])
+    segment = (segmented_resume(backend, directory, state["attempts"], archive, descriptor,
+                                current=number) if archive is not None else None)
+    rebound = any(item["mode"] == "source-rebind" for item in later)
+    expected_phase = "storage-running" if number is not None else "stopped"
+    if (any(item["mode"] == "arm-input" for item in later)
+            or rebound and (segment is None or segment["phase"] != expected_phase)):
+        raise ValueError("已交接来源只能从封存停机边界执行唯一存储重启")
 
     def validate_history(root: Path, target: dict) -> tuple[dict, dict]:
         review = read_json(bound_file(root, {key: value for key, value in target["review"].items()
@@ -289,5 +316,4 @@ def published_restart_guard(backend: Path, directory: Path, number: int | None) 
     original = source["storage"]["storage"]
     directory_identity(backend, original["data_directory"])
     bound_file(backend, original["request"])
-    if process_identity(original["storage"]["identity"]["pid"]) is not None:
-        raise ValueError("已发布存储旧进程仍存在或 PID 被复用")
+    require_recorded_producer_stopped(original["storage"]["identity"])

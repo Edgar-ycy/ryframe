@@ -212,6 +212,32 @@ def registered_running_source(backend: Path, start_descriptor: dict):
             active = False
 
 
+def _archived_request(backend: Path, archive: dict, request: dict, segment: dict | None) -> None:
+    previous = read_json(bound_file(backend, archive["receipt"]["request"]))
+    expected = copy.deepcopy(previous)
+    if segment is not None:
+        if segment["phase"] != "ready" or segment["storage"] is None or segment["cache"] is None:
+            raise ValueError("分段资源尚未全部恢复，不能执行实际 START")
+        expected["current_storage"] = segment["storage"]
+    if request != expected:
+        raise ValueError("后续实际启动只允许更新同一请求的当前存储代次")
+
+
+def _archived_image(archive: dict, current: dict, segment: dict | None) -> None:
+    expected = copy.deepcopy(archive["image"])
+    if segment is not None:
+        rustfs = segment["storage"]["storage"]
+        redis = segment["cache"]["redis"]
+        old_redis = expected["storage"]["redis"]
+        mutable = {"pid", "started", "run_id"}
+        if (set(redis) != set(old_redis) or any(redis[key] != value for key, value in old_redis.items()
+                                               if key not in mutable)):
+            raise ValueError("分段缓存重启改变了配置、端点、二进制或物理目标")
+        expected["storage"] = {"rustfs": copy.deepcopy(rustfs), "redis": copy.deepcopy(redis)}
+    if current != expected:
+        raise ValueError("未启动恢复的新完整逻辑基线之后存在未知写入；禁止启动")
+
+
 def execute_generation(backend: Path, directory: Path, request_path: Path, number: int, *, run=subprocess.run) -> dict:
     from devex_clone_seed_generation_runtime import GenerationRuntime
     from devex_clone_seed_generation_images import capture_image, verify_image
@@ -221,8 +247,12 @@ def execute_generation(backend: Path, directory: Path, request_path: Path, numbe
     original = inputs(backend, directory, request_path, number)
     request, source, prefix = original
     archive = closed(backend, directory, prefix)
-    if archive is not None and read_json(bound_file(backend, archive["receipt"]["request"])) != request:
-        raise ValueError("后续实际启动必须使用未启动恢复所核验的同一当前请求")
+    segment = None
+    if archive is not None:
+        from devex_clone_seed_segment import segmented_resume
+
+        segment = segmented_resume(backend, directory, prefix, archive, request["source_registration"])
+        _archived_request(backend, archive, request, segment)
     coordinator_source = require_current_execution_source(backend, load_state(directory)["attempts"][-1]["sources"])
     descriptor = binding(request_path)
     output = local_path(backend, str(directory / f"g{number:04d}"), new=True)
@@ -243,8 +273,8 @@ def execute_generation(backend: Path, directory: Path, request_path: Path, numbe
         checkpoint()
         before = capture_image(backend, runtime.execution, runtime.selected, request, source,
                                environment, output / "before", run, control_environment=runtime.control_environment)
-        if archive is not None and read_json(Path(before["path"]))["image"] != archive["image"]:
-            raise ValueError("未启动恢复的新完整基线之后存在未知写入；禁止启动")
+        if archive is not None:
+            _archived_image(archive, read_json(Path(before["path"]))["image"], segment)
         lineage = derive_dataset_lineage(backend, source, before,
             verify_image(backend, before, runtime.selected, source["request"], source_registration=request["source_registration"]))
         write_json(output / "dataset-lineage.json", lineage)

@@ -32,13 +32,13 @@ def environment(backend, request):
     return copy.deepcopy(value)
 
 
-def process_binding(backend, request, review, private, *, effective=None):
+def process_binding(backend, request, review, private, *, effective=None, observe_effective_files=True):
     from devex_clone_cache_process import validate
 
     previous, process = request["previous"], request["process"]
     validate(process, files=effective is None)
     if effective is not None:
-        validate(effective)
+        validate(effective, files=observe_effective_files)
     receipt = read_json(bound_file(backend, request["process_receipt"]))
     old_identity = {key: previous[key] for key in ("pid", "started", "executable")}
     if (receipt.get("format_version") != 1 or receipt.get("role") != "redis"
@@ -70,7 +70,7 @@ def process_binding(backend, request, review, private, *, effective=None):
 
 
 def _validate_request(backend, directory, value, request, bind_request, *, owned_lock_identity=None,
-                      effective=None, initialization=None):
+                      effective=None, initialization=None, observe_effective_files=True):
     exact(request, FIELDS)
     if (request["format_version"] != 1 or request["kind"] != "devex-clone-cache-restart"
             or request["side"] != "target" or request["manifest"] != binding(directory / "manifest.json")
@@ -95,7 +95,8 @@ def _validate_request(backend, directory, value, request, bind_request, *, owned
             or selected["redis"]["url"] != f"redis://127.0.0.1:{request['previous']['port']}/0"):
         raise ValueError("只能原子恢复原初始化明确记录的两个验收标记")
     private = environment(backend, request)
-    process_binding(backend, request, review, private, effective=effective)
+    process_binding(backend, request, review, private, effective=effective,
+                    observe_effective_files=observe_effective_files)
     return private
 
 
@@ -104,10 +105,11 @@ def validate_request(backend: Path, directory: Path, value: dict, request: dict,
                              owned_lock_identity=owned_lock_identity)
 
 
-def successor_process(backend, directory, value, request, successor, *, owned_lock_identity=None):
-    """只从已发布 seed 的正式 successor 推导 WSL/Python；原资源与登记始终不变。"""
+def successor_process(backend, directory, value, request, successor, *, owned_lock_identity=None,
+                      observe_current_tools=True):
+    """从正式 successor 推导工具；历史核验可只消费其已发布预检收据。"""
     from devex_clone_seed_source import _registered_source
-    from reference_fixture_environment import validate_current_review_tools
+    from reference_fixture_environment import validate_current_review_tools, validated_recorded_review_tools
     from reference_fixture_successor import _source_with_loader
 
     source = _source_with_loader(backend, successor, live_storage=False, loader=_registered_source)
@@ -116,7 +118,8 @@ def successor_process(backend, directory, value, request, successor, *, owned_lo
     relationship = source["review_successor"]
     review = read_json(bound_file(backend, {key: item for key, item in relationship["successor_review"].items()
                                           if key != "canonical_sha256"}))
-    tools = validate_current_review_tools(review)
+    tools = (validate_current_review_tools(review) if observe_current_tools
+             else validated_recorded_review_tools(review))
     original = request["process"]
     redis, python = tools["redis_server"], tools["redis_python"]
     if (redis["distribution"] != original["distribution"] or redis["resolved_path"] != original["executable"]
@@ -134,5 +137,6 @@ def successor_process(backend, directory, value, request, successor, *, owned_lo
         return pending_request_binding(root, target, relationship["predecessor_review"])
     private = _validate_request(backend, directory, value, request, bind_pending,
                                  owned_lock_identity=owned_lock_identity, effective=effective,
-                                 initialization=(source["initialization"], source["seed_target"]))
+                                 initialization=(source["initialization"], source["seed_target"]),
+                                 observe_effective_files=observe_current_tools)
     return effective, private, source

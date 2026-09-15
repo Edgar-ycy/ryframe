@@ -68,10 +68,12 @@ def register(backend, directory, value, filename):
     return request, descriptor
 
 
-def successor_plan(backend, directory, value, successor, *, owned_lock_identity=None):
+def successor_plan(backend, directory, value, successor, *, owned_lock_identity=None,
+                   observe_current_tools=True):
     request, descriptor = registration(backend, directory)
     effective, private, source = successor_process(backend, directory, value, request, successor,
-                                                  owned_lock_identity=owned_lock_identity)
+                                                  owned_lock_identity=owned_lock_identity,
+                                                  observe_current_tools=observe_current_tools)
     published = [item for item in load_state(directory)["attempts"]
                  if item["result"] == source["review_successor"]["source_result"] and item["status"] == "passed"]
     if len(published) != 1:
@@ -101,16 +103,29 @@ def successor_plan(backend, directory, value, successor, *, owned_lock_identity=
     return proof, private, source
 
 
-def generation_request(backend, directory, request, output, *, owned_lock_identity=None):
+def generation_request(backend, directory, request, output, *, owned_lock_identity=None,
+                       observe_current_tools=True):
     path = output / "tool-successor.json"
     if not path.exists():
         return request["process"], None
     saved = read_json(path)
     expected, _, _ = successor_plan(backend, directory, read_json(directory / "manifest.json"), saved["successor"],
-                                    owned_lock_identity=owned_lock_identity)
+                                    owned_lock_identity=owned_lock_identity,
+                                    observe_current_tools=observe_current_tools)
     if saved != expected:
         raise ValueError("缓存工具后继收据与原请求、来源或当前工具不符")
     return expected["process"], binding(path)
+
+
+def frozen_generation_request(backend, directory, request, descriptor, output, source_result, successor):
+    """核验历史 tool-successor 及完整缓存代次，不观察当前 WSL/Python。"""
+    process, tools = generation_request(backend, directory, request, output, observe_current_tools=False)
+    if tools is not None:
+        saved = read_json(bound_file(backend, tools))
+        if (saved["request"] != descriptor or saved["source_result"] != source_result
+                or saved["successor"] != successor):
+            raise ValueError("冻结缓存工具后继不属于同一发布来源和请求")
+    return process, tools
 
 
 def preflight_successor(backend, directory, value, filename=None, *, mode="restart"):
@@ -133,35 +148,47 @@ def preflight_successor(backend, directory, value, filename=None, *, mode="resta
             return None
         selected = read_json(paths[-1])["successor"]
     proof, _, source = successor_plan(backend, directory, value, selected)
+    from devex_clone_seed_generation_prelaunch import closed
     from devex_clone_seed_rebind import history, quiet_producers
+    from devex_clone_seed_segment import segmented_resume
 
     state = load_state(directory)
-    history(directory, state, proof["source_result"], backend=backend,
-            cache_recovery=mode in {"resume", "reconcile", "stop", "recover"})
+    later = history(directory, state, proof["source_result"], backend=backend,
+                    cache_recovery=mode in {"resume", "reconcile", "stop", "recover"})
     for item in state["attempts"]:
         if item["stage"] == STAGE and (directory / STAGE / f"a{item['number']:04d}" / "tool-successor.json").exists():
             if seed_history_proof(backend, directory, item, proof["source_result"]) != selected:
                 raise ValueError("缓存恢复必须继续已经登记的同一 successor")
     published = next(row["number"] for row in state["attempts"] if row["result"] == proof["source_result"])
-    if any(item["stage"] == "seed-runtime" and item["mode"] in {"source-rebind", "arm-input"}
-           and item["number"] > published for item in state["attempts"]):
-        raise ValueError("已交接 seed 来源禁止再次改变缓存")
+    handed_off = any(item["stage"] == "seed-runtime" and item["mode"] in {"source-rebind", "arm-input"}
+                     and item["number"] > published for item in state["attempts"])
+    archive = closed(backend, directory, state["attempts"])
+    segment = (segmented_resume(backend, directory, state["attempts"], archive,
+                                proof["source_result"]) if archive is not None else None)
+    if (handed_off and (mode != "restart" or segment is None or segment["phase"] != "storage-ready")
+            or any(item["mode"] == "arm-input" for item in later)):
+        raise ValueError("已交接 seed 来源只能从封存存储后执行唯一缓存重启")
     quiet_producers(backend, source)
     return proof
 
 
-def seed_history_proof(backend, directory, attempt, source_result):
+def seed_history_proof(backend, directory, attempt, source_result, *, frozen_successor=None):
     """只识别本次 successor 的缓存阶段，不放行其他发布后缓存操作。"""
     output = directory / STAGE / f"a{attempt['number']:04d}"
-    request, _ = registration(backend, directory)
-    _, tools = generation_request(backend, directory, request, output)
+    request, descriptor = registration(backend, directory)
+    _, tools = (generation_request(backend, directory, request, output)
+                if frozen_successor is None else frozen_generation_request(
+                    backend, directory, request, descriptor, output,
+                    source_result, frozen_successor))
     if tools is None or read_json(bound_file(backend, tools))["source_result"] != source_result:
         raise ValueError("seed 发布后缓存操作缺少同一来源的工具后继证明")
     return read_json(bound_file(backend, tools))["successor"]
 
 
 def published_restart_guard(backend, directory, number):
+    from devex_clone_seed_generation_prelaunch import closed
     from devex_clone_seed_rebind import history, quiet_producers
+    from devex_clone_seed_segment import segmented_resume
 
     attempt = load_state(directory)["attempts"][-1]
     if attempt["number"] != number or attempt["stage"] != STAGE or attempt["status"] != "running":
@@ -171,11 +198,19 @@ def published_restart_guard(backend, directory, number):
     proof, _, source = successor_plan(backend, directory, read_json(directory / "manifest.json"), saved["successor"])
     if proof != saved:
         raise ValueError("当前缓存工具后继登记变化")
-    history(directory, load_state(directory), proof["source_result"], current=number, backend=backend)
+    state = load_state(directory)
+    history(directory, state, proof["source_result"], current=number, backend=backend)
+    archive = closed(backend, directory, state["attempts"])
+    segment = (segmented_resume(backend, directory, state["attempts"], archive,
+                                proof["source_result"], current=number) if archive is not None else None)
+    handed_off = any(item["stage"] == "seed-runtime" and item["mode"] == "source-rebind"
+                     for item in state["attempts"])
+    if handed_off and (segment is None or segment["phase"] != "cache-running"):
+        raise ValueError("缓存重启不属于封存来源的唯一分段续作")
     quiet_producers(backend, source)
 
 
-def starts(backend, directory, request, descriptor, *, before=None):
+def starts(backend, directory, request, descriptor, *, before=None, frozen=None):
     from devex_clone_cache_process import inspect_start
 
     result = []
@@ -188,7 +223,8 @@ def starts(backend, directory, request, descriptor, *, before=None):
             if (output / "process").exists():
                 raise ValueError("缓存进程目录缺少持久控制阶段绑定")
             continue
-        process, tools = generation_request(backend, directory, request, output)
+        process, tools = (generation_request(backend, directory, request, output) if frozen is None else
+                          frozen_generation_request(backend, directory, request, descriptor, output, *frozen))
         expected = {"request": descriptor, "controller": controller_binding(backend, directory, attempt),
                     "attempt": attempt["number"], "process_request_sha256": plan_hash(process),
                     "output": str(output / "process")}
@@ -198,7 +234,9 @@ def starts(backend, directory, request, descriptor, *, before=None):
             for earlier, earlier_output, earlier_runtime in result:
                 proof_path = output / f"predecessor-{earlier['number']:04d}.json"
                 proof = read_json(proof_path)
-                old_process = generation_request(backend, directory, request, earlier_output)[0]
+                old_process = (generation_request(backend, directory, request, earlier_output)[0]
+                               if frozen is None else frozen_generation_request(
+                                   backend, directory, request, descriptor, earlier_output, *frozen)[0])
                 if (set(proof) != {"process_sha256", "runtime_sha256", "observation"}
                         or proof["process_sha256"] != plan_hash(old_process) or proof["runtime_sha256"] != plan_hash(earlier_runtime)
                         or proof["observation"].get("state") != "stopped"
@@ -264,9 +302,10 @@ def publish(backend, output, request, descriptor, runtime, runtime_binding, owne
             "resources_deleted": False, "restore_qualified": False}
 
 
-def registered_cache_binding(backend: Path, directory: Path, *, owned_lock_identity=None):
+def registered_cache_binding(backend: Path, directory: Path, *, owned_lock_identity=None,
+                             before=None, frozen=None):
     directory = local_path(backend, str(directory))
-    selected = records(directory)
+    selected = [item for item in records(directory) if before is None or item["number"] < before]
     if not (directory / STAGE).exists() and not selected:
         return None
     request, descriptor = registration(backend, directory)
@@ -277,17 +316,23 @@ def registered_cache_binding(backend: Path, directory: Path, *, owned_lock_ident
     if result.get("status") != "cache_ready":
         raise ValueError("缓存最新成功阶段尚未确认可用后像，必须显式继续")
     output = directory / STAGE / f"a{attempt['number']:04d}"
-    process, tools = generation_request(backend, directory, request, output, owned_lock_identity=owned_lock_identity)
+    process, tools = (generation_request(backend, directory, request, output,
+                                         owned_lock_identity=owned_lock_identity) if frozen is None else
+                      frozen_generation_request(backend, directory, request, descriptor, output, *frozen))
     if tools is None:
         validate_request(backend, directory, read_json(directory / "manifest.json"), request,
                          owned_lock_identity=owned_lock_identity)
     ready = read_json(output / "ready.json")
     exact(ready, {"request", "runtime", "redis", "owner", "controller", "attempt"} | ({"tools", "start"} if tools else set()))
-    generation = starts(backend, directory, request, descriptor, before=attempt["number"] + 1)
+    generation = starts(backend, directory, request, descriptor, before=attempt["number"] + 1,
+                        frozen=frozen)
     if not generation:
         raise ValueError("可用缓存缺少实际创建记录")
     _, process_output, base = generation[-1]
-    if generation_request(backend, directory, request, process_output)[0] != process:
+    actual_process = (generation_request(backend, directory, request, process_output)[0]
+                      if frozen is None else frozen_generation_request(
+                          backend, directory, request, descriptor, process_output, *frozen)[0])
+    if actual_process != process:
         raise ValueError("缓存发布的工具与实际启动代次不同")
     if "state" in base:
         raise ValueError("未完成启动或已清理的 Redis 不能作为可用缓存")

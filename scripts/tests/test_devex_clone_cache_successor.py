@@ -56,6 +56,30 @@ class SuccessorRequestTests(CacheFixture):
         self.assertEqual(self.request, original)
         self.assertEqual(files, {path: path.read_bytes() for path in self.root.rglob("*.json")})
 
+    def test_frozen_successor_validates_structure_without_observing_current_tool_files(self):
+        successor = self.successor()
+        with (self.successor_patches(),
+              patch("reference_fixture_environment.validated_recorded_review_tools", return_value=self.tools),
+              patch("devex_clone_cache_process.validate") as validate):
+            model.successor_process(
+                self.backend, self.directory, self.value, self.request, successor,
+                observe_current_tools=False)
+        self.assertEqual(validate.call_count, 2)
+        self.assertEqual([call.kwargs for call in validate.call_args_list],
+                         [{"files": False}, {"files": False}])
+
+    def test_frozen_successor_survives_later_launcher_change_but_live_path_rejects_it(self):
+        successor = self.successor()
+        with (self.successor_patches(),
+              patch("reference_fixture_environment.validated_recorded_review_tools", return_value=self.tools)):
+            Path(self.request["process"]["wsl"]["path"]).write_bytes(b"later-wsl-generation")
+            model.successor_process(
+                self.backend, self.directory, self.value, self.request, successor,
+                observe_current_tools=False)
+            with self.assertRaises(ValueError):
+                model.successor_process(
+                    self.backend, self.directory, self.value, self.request, successor)
+
     def test_successor_rejects_other_run_resource_tool_or_environment(self):
         successor = self.successor()
         changes = [("distribution", "other"), ("resolved_path", "/usr/bin/other"), ("sha256", "f" * 64)]

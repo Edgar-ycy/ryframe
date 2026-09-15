@@ -127,6 +127,50 @@ class GenerationTests(unittest.TestCase):
         self.assertFalse((self.output / "source-request.json").exists())
         self.assertEqual(read_json(Path(value["before"]["path"]))["image"], read_json(Path(value["running"]["path"]))["image"])
 
+    def test_segmented_start_keeps_request_identity_and_all_fields_except_current_storage(self):
+        previous = copy.deepcopy(self.request)
+        previous["current_storage"] = {"attempt": 53}
+        archive = {"receipt": {"request": self.file("archived-request.json", previous)}}
+        storage = {"attempt": 64, "storage": {"identity": {"pid": 6400}}}
+        cache = {"redis": {"pid": 6500}}
+        segment = {"phase": "ready", "storage": storage, "cache": cache}
+        current = {**copy.deepcopy(previous), "current_storage": storage}
+        generation._archived_request(self.backend, archive, current, segment)
+        for field in ("id", "review_successor", "source_rebind", "source_environment"):
+            changed = copy.deepcopy(current)
+            changed[field] = "changed"
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                generation._archived_request(self.backend, archive, changed, segment)
+        with self.assertRaisesRegex(ValueError, "尚未全部恢复"):
+            generation._archived_request(self.backend, archive, current, {**segment, "phase": "storage-ready"})
+
+    def test_segmented_start_changes_only_registered_process_generations_in_c60_image(self):
+        old_redis = {"configuration": {"sha256": "c" * 64}, "distribution": "Ubuntu-24.04",
+                     "executable": "/usr/bin/redis-server", "pid": 54, "port": 16390, "run_id": "a" * 40,
+                     "sha256": "d" * 64, "started": "old", "wsl": {"sha256": "e" * 64}}
+        archive = {"image": {"databases": {"rows": 100044}, "schema": {"all": True},
+                              "objects": {"count": 257}, "owners": {"all": True},
+                              "redis": {"keys": ["owner", "sentinel"]},
+                              "storage": {"rustfs": {"identity": {"pid": 53}, "sha256": "f" * 64},
+                                          "redis": old_redis}}}
+        rustfs = {"identity": {"pid": 64}, "sha256": "f" * 64,
+                  "process_receipt": {"sha256": "1" * 64}, "launch_receipt": {"sha256": "2" * 64}}
+        redis = {**copy.deepcopy(old_redis), "pid": 65, "started": "new", "run_id": "b" * 40}
+        segment = {"phase": "ready", "storage": {"storage": rustfs}, "cache": {"redis": redis}}
+        current = copy.deepcopy(archive["image"])
+        current["storage"] = {"rustfs": rustfs, "redis": redis}
+        generation._archived_image(archive, current, segment)
+        for domain in ("databases", "schema", "objects", "owners", "redis"):
+            changed = copy.deepcopy(current)
+            changed[domain] = {"changed": True}
+            with self.subTest(domain=domain), self.assertRaises(ValueError):
+                generation._archived_image(archive, changed, segment)
+        for field in set(old_redis) - {"pid", "started", "run_id"}:
+            changed_segment = copy.deepcopy(segment)
+            changed_segment["cache"]["redis"][field] = "changed"
+            with self.subTest(redis_field=field), self.assertRaisesRegex(ValueError, "缓存重启改变"):
+                generation._archived_image(archive, current, changed_segment)
+
     def test_full_table_placement_object_metadata_and_owner_drift_never_publish(self):
         for category, fields in self.image.items():
             for field in fields:

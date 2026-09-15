@@ -127,23 +127,16 @@ def _preflight(review: dict, run=subprocess.run) -> dict:
 
 
 def _preflight_binding(review: dict) -> None:
-    value = review.get("preflight")
-    tools = review.get("tools")
+    value, tools = review.get("preflight"), review.get("tools")
     if not isinstance(tools, dict) or not set(REVIEW_TOOLS).issubset(tools):
         raise ValueError("夹具审阅计划缺少当前工具预检收据")
     expected = {name: tools[name] for name in REVIEW_TOOLS}
-    seed = review["scopes"]["seed"]
-    run = service_run(review)
-    rustfs = review["services"]["rustfs"]
-    expected_scope = "services-" + seed["scope_id"]
-    if (not isinstance(value, dict)
-            or set(value) != {"format_version", "kind", "status", "supersedes", "tools"}
-            or not isinstance(value.get("supersedes"), dict)
-            or set(value["supersedes"]) != {"path", "bytes", "sha256"}
-            or value.get("format_version") != 1
-            or value.get("kind") != "reference-fixture-tool-preflight"
+    seed, run, rustfs = review["scopes"]["seed"], service_run(review), review["services"]["rustfs"]
+    if (not isinstance(value, dict) or set(value) != {"format_version", "kind", "status", "supersedes", "tools"}
+            or not isinstance(value.get("supersedes"), dict) or set(value["supersedes"]) != {"path", "bytes", "sha256"}
+            or value.get("format_version") != 1 or value.get("kind") != "reference-fixture-tool-preflight"
             or value.get("status") != "verified" or value.get("tools") != expected
-            or rustfs.get("scope_id") != expected_scope
+            or rustfs.get("scope_id") != "services-" + seed["scope_id"]
             or rustfs.get("process_receipt") != str(run / "rustfs/process.json")):
         raise ValueError("夹具审阅计划缺少当前工具预检收据")
 
@@ -156,6 +149,12 @@ def validate_current_review_tools(review: dict, run=subprocess.run) -> dict:
     if observed != expected:
         raise ValueError("夹具审阅计划中的当前工具已经变化")
     return observed
+
+
+def validated_recorded_review_tools(review: dict) -> dict:
+    """只验证已发布预检收据的冻结工具，不声称当前本机工具仍可用。"""
+    _preflight_binding(review)
+    return copy.deepcopy({name: review["tools"][name] for name in REVIEW_TOOLS})
 
 
 def _review_semantics(review: dict) -> dict:

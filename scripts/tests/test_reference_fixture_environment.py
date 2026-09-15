@@ -128,6 +128,8 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         environment._preflight_binding(result)
         with patch.object(environment, "_preflight", return_value=result["preflight"]["tools"]):
             self.assertEqual(environment.validate_current_review_tools(result), result["preflight"]["tools"])
+        with patch.object(environment, "_preflight", side_effect=AssertionError("不得观察当前工具")):
+            self.assertEqual(environment.validated_recorded_review_tools(result), result["preflight"]["tools"])
         drifted_tools = copy.deepcopy(result["preflight"]["tools"])
         drifted_tools["rustfs"]["sha256"] = "f" * 64
         with (
