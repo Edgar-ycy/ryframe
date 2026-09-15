@@ -395,6 +395,37 @@ class TargetTests(unittest.TestCase):
         self.f.redis_config["dir"] = "/other"
         with self.assertRaises(ValueError): self.prepare()
 
+    def test_published_initialization_keeps_content_checks_without_fresh_workspace(self):
+        import devex_clone_factory_context as factory_context
+        from devex_clone_factory_context import initialization_history
+        from devex_clone_seed_source import _published_initialization
+
+        f = self.f
+        self.prepare()
+        initial = self.initialize()
+        descriptor = receipt_binding(f.output / "initialized.json")
+        for name in ("registration.json", "prepared-files.json", "initialized-files.json"):
+            (f.local / name).unlink()
+        before = binding.target_files(f.output)
+        # 本文件的库存替身只覆盖目标协议；完整库存内容有独立回归，仍核对调用未被跳过。
+        with patch.object(factory_context, "inventory_history") as inventory:
+            observed, request = _published_initialization(f.root, {"initialized": descriptor})
+        inventory.assert_called_once_with(f.root, f.output, initial["inventory"], f.request, resumed=False)
+        self.assertEqual((observed, request), (initial, f.request))
+        self.assertEqual(before, binding.target_files(f.output))
+        with self.assertRaises((FileNotFoundError, ValueError)):
+            initialization_history(f.root, f.output / "initialized.json")
+        for name in ("initialized-candidate.json", "sentinel.confirmed.json"):
+            path = f.output / name
+            original = path.read_bytes()
+            path.write_text("{}", encoding="utf-8")
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                _published_initialization(f.root, {"initialized": descriptor})
+            path.write_bytes(original)
+        with patch.object(factory_context, "inventory_history", side_effect=ValueError("inventory changed")), \
+                self.assertRaisesRegex(ValueError, "inventory changed"):
+            _published_initialization(f.root, {"initialized": descriptor})
+
     def test_explicit_exclusive_must_match_actual_configuration(self):
         with patch.dict(os.environ, {"APP_RESET_LEGACY_MYSQL_EXCLUSIVE": "false"}):
             with self.assertRaises(ValueError): self.prepare()

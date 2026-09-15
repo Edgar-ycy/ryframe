@@ -30,6 +30,7 @@ class SuccessorRequestTests(CacheFixture):
         }
         self.ready = self.json("ready-review.json", {"tools": self.tools})
         self.source = {"directory": self.directory, "manifest": self.value, "seed_target": self.original,
+                       "initialization": self.initial,
                        "review_successor": {"successor_review": self.ready, "predecessor_review": self.ready}}
         return successor
 

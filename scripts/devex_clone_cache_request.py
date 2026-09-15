@@ -69,14 +69,17 @@ def process_binding(backend, request, review, private, *, effective=None):
         raise ValueError("原 Redis 配置认证与固定目标环境不同")
 
 
-def _validate_request(backend, directory, value, request, bind_request, *, owned_lock_identity=None, effective=None):
+def _validate_request(backend, directory, value, request, bind_request, *, owned_lock_identity=None,
+                      effective=None, initialization=None):
     exact(request, FIELDS)
     if (request["format_version"] != 1 or request["kind"] != "devex-clone-cache-restart"
             or request["side"] != "target" or request["manifest"] != binding(directory / "manifest.json")
             or request["initialized"] != value["initialized"] or request["target_environment"] != value["target_environment"]):
         raise ValueError("缓存恢复必须属于固定运行的原目标和明确环境")
     exact(request["previous"], REDIS_FIELDS)
-    initial, original = initialization_history(backend, bound_file(backend, request["initialized"]), owned_lock_identity)
+    filename = bound_file(backend, request["initialized"])
+    initial, original = (initialization_history(backend, filename, owned_lock_identity)
+                         if initialization is None else initialization)
     review, selected = bind_request(backend, original)
     if request["previous"] != original["storage"]["redis"] or request["previous"] != initial["generation"]["storage"]["redis"]:
         raise ValueError("缓存恢复原代次与完整初始化历史不符")
@@ -130,5 +133,6 @@ def successor_process(backend, directory, value, request, successor, *, owned_lo
             raise ValueError("缓存初始化不是 successor 冻结的原 seed")
         return pending_request_binding(root, target, relationship["predecessor_review"])
     private = _validate_request(backend, directory, value, request, bind_pending,
-                                 owned_lock_identity=owned_lock_identity, effective=effective)
+                                 owned_lock_identity=owned_lock_identity, effective=effective,
+                                 initialization=(source["initialization"], source["seed_target"]))
     return effective, private, source

@@ -83,6 +83,20 @@ def _validate_evidence_bindings(backend: Path, value) -> None:
             _validate_evidence_bindings(backend, item)
 
 
+def _published_initialization(backend: Path, manifest: dict) -> tuple[dict, dict]:
+    """发布源只消费已锚定的阶段证据；当前扫描用于防漂移，不补称历史全树封存。"""
+    from devex_clone_factory_context import _initialization_evidence
+    from devex_clone_target_binding import target_files
+
+    descriptor = manifest["initialized"]
+    filename = bound_file(backend, descriptor)
+    tree = target_files(filename.parent)
+    result = _initialization_evidence(backend, filename)
+    if bound_file(backend, descriptor) != filename or target_files(filename.parent) != tree:
+        raise ValueError("已发布 seed 的初始化内容或当前文件树在核验期间变化")
+    return result
+
+
 def _registered_source(backend: Path, descriptor: dict, *, live_storage: bool,
                       validate_seed_target: Callable[[Path, dict], tuple[dict, dict]]) -> dict:
     """恢复发布源，并由调用方选择 seed 初始化请求的执行资格规则。"""
@@ -139,8 +153,7 @@ def _registered_source(backend: Path, descriptor: dict, *, live_storage: bool,
     original_manifest = read_json(bound_file(backend, registration["run_manifest"]))
     if original_manifest.get("copy_stage") != "source_to_seed":
         raise ValueError("seed 源只能继承完整 source_to_seed 运行")
-    _, seed_target = initialization_history(
-        backend, bound_file(backend, original_manifest["initialized"]))
+    initialization, seed_target = _published_initialization(backend, original_manifest)
     validate_seed_target(backend, seed_target)
     handoff = read_json(bound_file(backend, registration["seed_handoff"]))
     expected_source = {**copy.deepcopy(seed_target["target"]),
@@ -160,7 +173,7 @@ def _registered_source(backend: Path, descriptor: dict, *, live_storage: bool,
     return {"directory": directory, "result": result, "registration": registration,
             "request": request, "storage": storage, "generation": generation,
             "manifest": original_manifest, "seed_target": seed_target,
-            "environment": environment}
+            "initialization": initialization, "environment": environment}
 
 
 def _published_source(backend: Path, descriptor: dict, *, live_storage: bool,

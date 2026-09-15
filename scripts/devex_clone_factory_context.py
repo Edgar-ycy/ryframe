@@ -69,13 +69,11 @@ def inventory_history(backend: Path, root: Path, initial: dict, request: dict, *
         raise ValueError("目标初始库存与原实际采集收据不同")
 
 
-def initialization_history(backend: Path, filename: Path, owned_lock_identity: int | None = None) -> tuple[dict, dict]:
+def _initialization_evidence(backend: Path, filename: Path, owned_lock_identity: int | None = None) -> tuple[dict, dict]:
+    """核验同一初始化内容、阶段及资源前后像；调用方负责其发布资格与文件树边界。"""
     root = local_path(backend, str(filename.parent))
     from devex_clone_target import unresolved_failure
-    from devex_clone_target_binding import initialized_target_files
 
-    tree = initialized_target_files(
-        backend, root, locked_guard=owned_lock_identity is not None)
     resumed = (root / "failure.json").exists() and not unresolved_failure(backend, root)
     unfailed(root, owned_lock_identity, allow_resolved_failure=resumed)
     result = read_json(filename)
@@ -92,6 +90,16 @@ def initialization_history(backend: Path, filename: Path, owned_lock_identity: i
     reset = read_json(regular_file(root / "reset-plan.json"))
     if reset_completed(root, reset["manifest"], reset["plan_hash"]) != result["reset"]:
         raise ValueError("目标 reset 未取得本代次完整完成及释放证明")
+    return result, request
+
+
+def initialization_history(backend: Path, filename: Path, owned_lock_identity: int | None = None) -> tuple[dict, dict]:
+    """当前 fresh 目标始终要求 CLI 发布的完整树与工作区谱系，不按文件缺失降级。"""
+    from devex_clone_target_binding import initialized_target_files
+
+    root = local_path(backend, str(filename.parent))
+    tree = initialized_target_files(backend, root, locked_guard=owned_lock_identity is not None)
+    result, request = _initialization_evidence(backend, filename, owned_lock_identity)
     if initialized_target_files(
             backend, root, locked_guard=owned_lock_identity is not None) != tree:
         raise ValueError("目标初始化完整文件树在历史核验期间变化")

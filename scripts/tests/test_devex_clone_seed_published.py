@@ -1,4 +1,5 @@
 """已发布 seed 源的严格来源恢复与当前存储核验。"""
+import json
 from pathlib import Path
 import sys
 import unittest
@@ -133,7 +134,7 @@ class PublishedSeedTests(unittest.TestCase):
                                "status": "passed", "result": descriptor}]}
         with patch.object(source, "load_state", return_value=state), \
                 patch.object(source, "validate_request"), \
-                patch.object(source, "initialization_history", return_value=({}, seed_target)), \
+                patch.object(source, "_published_initialization", return_value=({}, seed_target)), \
                 patch.object(source, "request_binding") as ready, \
                 patch.object(source, "current_storage_binding", return_value=storage), \
                 patch("devex_clone_seed_rebind.quiet_producers"):
@@ -145,7 +146,7 @@ class PublishedSeedTests(unittest.TestCase):
 
         with patch.object(source, "load_state", return_value=state), \
                 patch.object(source, "validate_request"), \
-                patch.object(source, "initialization_history", return_value=({}, seed_target)), \
+                patch.object(source, "_published_initialization", return_value=({}, seed_target)), \
                 patch.object(source, "request_binding"), \
                 patch.object(source, "current_storage_binding", return_value={"generation": "restarted"}), \
                 self.assertRaises(ValueError):
@@ -157,11 +158,103 @@ class PublishedSeedTests(unittest.TestCase):
                                "status": "passed", "result": descriptor}]}
         with patch.object(source, "load_state", return_value=state), \
                 patch.object(source, "validate_request"), \
-                patch.object(source, "initialization_history", return_value=({}, seed_target)), \
+                patch.object(source, "_published_initialization", return_value=({}, seed_target)), \
                 patch.object(source, "request_binding"), \
                 patch.object(source, "current_storage_binding", return_value=storage), \
                 self.assertRaises(ValueError):
             source.published_source(self.backend, descriptor, live_storage=True)
+
+    def test_published_source_does_not_require_current_fresh_wrapper(self):
+        descriptor, seed_target, _ = self.published_fixture()
+        state = {"attempts": [{"number": 1, "stage": "seed-runtime", "mode": "source-register",
+                               "status": "passed", "result": descriptor}]}
+        initial = {"initialized": True}
+        before = {path: path.read_bytes() for path in self.local.rglob("*") if path.is_file()}
+        with patch.object(source, "load_state", return_value=state), patch.object(source, "validate_request"), \
+                patch.object(source, "initialization_history", side_effect=ValueError("缺少当前 fresh wrapper")) as fresh, \
+                patch("devex_clone_factory_context._initialization_evidence",
+                      return_value=(initial, seed_target)) as core:
+            observed = source._registered_source(self.backend, descriptor, live_storage=False,
+                                                 validate_seed_target=lambda *_args: ({}, {}))
+        fresh.assert_not_called()
+        core.assert_called_once_with(self.backend, self.local / "initialized.json")
+        self.assertEqual(set(observed), {"directory", "result", "registration", "request", "storage", "generation",
+                                        "manifest", "seed_target", "initialization", "environment"})
+        self.assertEqual(observed["initialization"], initial)
+        self.assertEqual(observed["seed_target"], seed_target)
+        self.assertEqual(before, {path: path.read_bytes() for path in self.local.rglob("*") if path.is_file()})
+
+    def test_unpublished_or_wrong_result_is_rejected_before_initialization_core(self):
+        descriptor, _, _ = self.published_fixture()
+        passed = {"number": 1, "stage": "seed-runtime", "mode": "source-register",
+                  "status": "passed", "result": descriptor}
+        records = ([], [{**passed, "status": "failed"}],
+                   [{**passed, "result": {**descriptor, "sha256": "0" * 64}}])
+        for attempts in records:
+            with self.subTest(attempts=attempts), patch.object(source, "load_state", return_value={"attempts": attempts}), \
+                    patch.object(source, "_published_initialization") as core, self.assertRaises(ValueError):
+                source._registered_source(self.backend, descriptor, live_storage=False,
+                                          validate_seed_target=lambda *_args: ({}, {}))
+            core.assert_not_called()
+
+    def test_result_content_and_manifest_chain_are_rejected_before_initialization_core(self):
+        descriptor, _, _ = self.published_fixture()
+        result_path = Path(descriptor["path"])
+        result = source.read_json(result_path)
+        for update in ({"status": "not_published"}, {"outbox_drained": False}):
+            result_path.write_text(json.dumps({**result, **update}), encoding="utf-8")
+            changed = binding(result_path)
+            state = {"attempts": [{"number": 1, "stage": "seed-runtime", "mode": "source-register",
+                                   "status": "passed", "result": changed}]}
+            with self.subTest(update=update), patch.object(source, "load_state", return_value=state), \
+                    patch.object(source, "_published_initialization") as core, self.assertRaises(ValueError):
+                source._registered_source(self.backend, changed, live_storage=False,
+                                          validate_seed_target=lambda *_args: ({}, {}))
+            core.assert_not_called()
+        result_path.write_text(json.dumps(result), encoding="utf-8")
+        changed = binding(result_path)
+        state["attempts"][0]["result"] = changed
+        (self.directory / "manifest.json").write_text('{"copy_stage":"other"}', encoding="utf-8")
+        with patch.object(source, "load_state", return_value=state), \
+                patch.object(source, "_published_initialization") as core, self.assertRaises(ValueError):
+            source._registered_source(self.backend, changed, live_storage=False,
+                                      validate_seed_target=lambda *_args: ({}, {}))
+        core.assert_not_called()
+
+    def test_published_initialization_checks_bound_result_before_core(self):
+        filename = self.local / "initialized.json"
+        descriptor = self.file(filename, {"initialized": True})
+        filename.write_text('{"initialized":false}', encoding="utf-8")
+        with patch("devex_clone_factory_context._initialization_evidence") as core, self.assertRaises(ValueError):
+            source._published_initialization(self.backend, {"initialized": descriptor})
+        core.assert_not_called()
+
+    def test_published_initialization_rejects_result_or_tree_change_during_core(self):
+        filename = self.local / "initialized.json"
+        descriptor = self.file(filename, {"initialized": True})
+        phase = self.local / "phase.json"
+        self.file(phase, {"phase": "before"})
+        initial_bytes, phase_bytes = filename.read_bytes(), phase.read_bytes()
+        for target in (filename, phase):
+            def mutate(*_args):
+                target.write_text('{"changed":true}', encoding="utf-8")
+                return {"initialized": True}, {"side": "seed"}
+            with self.subTest(target=target.name), \
+                    patch("devex_clone_factory_context._initialization_evidence", side_effect=mutate) as core, \
+                    self.assertRaises(ValueError):
+                source._published_initialization(self.backend, {"initialized": descriptor})
+            core.assert_called_once_with(self.backend, filename)
+            filename.write_bytes(initial_bytes)
+            phase.write_bytes(phase_bytes)
+
+    def test_published_initialization_does_not_fallback_after_core_rejects_evidence(self):
+        filename = self.local / "initialized.json"
+        descriptor = self.file(filename, {"initialized": True})
+        with patch("devex_clone_factory_context._initialization_evidence", side_effect=ValueError("原初始化内容或阶段不符")), \
+                patch.object(source, "initialization_history", side_effect=AssertionError("不得回退其他初始化路径")) as fresh, \
+                self.assertRaisesRegex(ValueError, "原初始化内容或阶段"):
+            source._published_initialization(self.backend, {"initialized": descriptor})
+        fresh.assert_not_called()
 
 
 if __name__ == "__main__":
