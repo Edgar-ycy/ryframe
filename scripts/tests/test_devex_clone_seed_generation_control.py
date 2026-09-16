@@ -34,6 +34,7 @@ class GenerationControlTests(unittest.TestCase):
         self.source_runtime = self.f.file("source-runtime.json", self.verified["receipt"])
         self.facts = {"directory": self.f.directory, "output": self.f.output, "request": self.f.request,
                       "source": self.f.source, "runtime": {}, "receipt": self.start, "execution": self.f.backend}
+        self.verified["facts"] = self.facts
         self.prefix = self.f.prefix + [self.f.record(54, generation.START, self.descriptor)]
 
     @contextmanager
@@ -42,7 +43,7 @@ class GenerationControlTests(unittest.TestCase):
             verify = Mock(return_value=self.verified)
             stack.enter_context(patch.dict("sys.modules", {"restore_source_runtime": SimpleNamespace(verify_source_runtime=verify)}))
             stack.enter_context(patch.object(control, "_active", return_value=self.prefix))
-            stack.enter_context(patch.object(control, "verify_running_source", return_value=self.facts))
+            stack.enter_context(patch.object(control, "current_execution_source", return_value=self.f.coordinator_source))
             stack.enter_context(patch.object(control, "existing_runtime", return_value=self.f.runtime))
             stack.enter_context(patch.object(control, "capture_image", side_effect=self.f.capture))
             stack.enter_context(patch("devex_clone_source_proof.verify_generation", side_effect=self.f.generation_evidence))
@@ -73,7 +74,7 @@ class GenerationControlTests(unittest.TestCase):
             descriptor = binding(stop_path)
             state = {"attempts": self.prefix + [self.f.record(55, generation.STOP, descriptor)]}
             before = {str(path): path.read_bytes() for path in self.f.directory.rglob("*") if path.is_file()}
-            with patch.object(generation, "verify_running_source", return_value=self.facts), \
+            with patch.object(generation, "verify_running_source", side_effect=AssertionError("不得绕过收据选择事实")), \
                     patch.object(generation, "validate_request"), \
                     patch("devex_clone_seed_generation_images.verify_image",
                           side_effect=lambda _b, document, *_a, **_kw: read_json(Path(document["path"]))), \
@@ -96,6 +97,17 @@ class GenerationControlTests(unittest.TestCase):
         self.f.runtime.stop.assert_called_once()
         self.f.runtime.finish.assert_not_called()
         self.assertTrue((self.f.output / "after/image.json").is_file())
+        self.assertFalse((self.f.output / "source-request.json").exists())
+
+    def test_stop_checks_current_successor_again_after_process_shutdown(self):
+        with self.execution(), patch.object(
+            control, "require_current_execution_source",
+            side_effect=[self.f.coordinator_source, self.f.coordinator_source, ValueError("恢复工具发生变化")],
+        ) as current, self.assertRaisesRegex(ValueError, "恢复工具发生变化"):
+            self.stop()
+        self.assertEqual(current.call_count, 3)
+        self.f.runtime.stop.assert_called_once()
+        self.f.runtime.finish.assert_not_called()
         self.assertFalse((self.f.output / "source-request.json").exists())
 
     def test_shutdown_drift_preserves_full_before_after_and_rejects_publication(self):

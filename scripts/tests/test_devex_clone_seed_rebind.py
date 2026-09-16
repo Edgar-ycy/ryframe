@@ -907,7 +907,7 @@ class SegmentedSourceResumeTests(unittest.TestCase):
                              "before": images["before"], "running": images["running"]}}
         verified_runtime = {"receipt": {"source_generation": start_result,
                                         "dataset_lineage": dataset_lineage},
-                            "after": image}
+                            "after": image, "facts": facts}
 
         with (self.patches(), patch("devex_clone_seed_generation_prelaunch.closed", return_value=archive),
               patch.object(seed_source, "_registered_source", side_effect=load_registered),
@@ -915,7 +915,7 @@ class SegmentedSourceResumeTests(unittest.TestCase):
               patch.object(seed_source, "_validate_evidence_bindings"),
               patch.object(generation, "resolve_generation",
                            wraps=generation.resolve_generation) as resolved,
-              patch.object(generation, "verify_running_source", return_value=facts),
+              patch.object(generation, "verify_running_source", side_effect=AssertionError("必须使用收据验证事实")),
               patch.object(generation, "validate_request"),
               patch.object(generation, "source_request", return_value=effective_request),
               patch("devex_clone_seed_generation_images.verify_image",

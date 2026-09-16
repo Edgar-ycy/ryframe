@@ -1,10 +1,11 @@
 use std::path::{Path, PathBuf};
 
-pub(crate) const SOURCE_USAGE: &str = "用法：cargo xtask check recovery source verify --source-generation <同代启动收据> --output <新验证收据> --write\n  cargo xtask check recovery source comparison-capture --b0-backend <绝对目录> --b0-adapter-backend <绝对目录> --b0-frontend <绝对目录> --b0-backend-build <收据> --b0-frontend-build <收据> --b1-backend <绝对目录> --b1-frontend <绝对目录> --b1-backend-build <收据> --b1-frontend-build <收据> --source-export-result <导出结果> --output <新来源清单> --write\n  cargo xtask check recovery source comparison-verify --receipt <来源清单>";
+pub(crate) const SOURCE_USAGE: &str = "用法：cargo xtask check recovery source verify --source-generation <同代启动收据> --output <新验证收据> --write\n  cargo xtask check recovery source verify-recover --source-generation <同代启动收据> --output <失败现场内待新建的 source-runtime.json> --write\n  cargo xtask check recovery source comparison-capture --b0-backend <绝对目录> --b0-adapter-backend <绝对目录> --b0-frontend <绝对目录> --b0-backend-build <收据> --b0-frontend-build <收据> --b1-backend <绝对目录> --b1-frontend <绝对目录> --b1-backend-build <收据> --b1-frontend-build <收据> --source-export-result <导出结果> --output <新来源清单> --write\n  cargo xtask check recovery source comparison-verify --receipt <来源清单>";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SourceOperation {
     Verify,
+    VerifyRecover,
     ComparisonCapture,
     ComparisonVerify,
 }
@@ -13,6 +14,7 @@ impl SourceOperation {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Verify => "verify",
+            Self::VerifyRecover => "verify-recover",
             Self::ComparisonCapture => "comparison-capture",
             Self::ComparisonVerify => "comparison-verify",
         }
@@ -54,6 +56,7 @@ pub(crate) struct SourceComparisonCaptureOptions {
 pub(crate) enum SourceCommand {
     Help(Option<SourceOperation>),
     Verify(SourceVerifyOptions),
+    VerifyRecover(SourceVerifyOptions),
     ComparisonCapture(Box<SourceComparisonCaptureOptions>),
     ComparisonVerify { receipt: PathBuf },
 }
@@ -63,6 +66,7 @@ impl SourceCommand {
         match self {
             Self::Help(operation) => *operation,
             Self::Verify(_) => Some(SourceOperation::Verify),
+            Self::VerifyRecover(_) => Some(SourceOperation::VerifyRecover),
             Self::ComparisonCapture(_) => Some(SourceOperation::ComparisonCapture),
             Self::ComparisonVerify { .. } => Some(SourceOperation::ComparisonVerify),
         }
@@ -71,7 +75,11 @@ impl SourceCommand {
     pub(crate) const fn writes(&self) -> bool {
         matches!(
             Self::operation(self),
-            Some(SourceOperation::Verify | SourceOperation::ComparisonCapture)
+            Some(
+                SourceOperation::Verify
+                    | SourceOperation::VerifyRecover
+                    | SourceOperation::ComparisonCapture
+            )
         )
     }
 }

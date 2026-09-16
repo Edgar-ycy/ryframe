@@ -12,7 +12,11 @@ from devex_clone_model import exact, local_path, name
 from devex_clone_run_state import binding, load_state
 from devex_clone_source_proof import bound_file, validate_request
 from restore_reference_plan import plan_hash
-from source_fingerprints import require_current_execution_source
+from source_fingerprints import (
+    current_execution_source,
+    require_current_execution_source,
+    verify_execution_source,
+)
 
 START = "source-generation-start"
 STOP = "source-generation-stop"
@@ -138,7 +142,9 @@ def predecessor(backend: Path, directory: Path, state: dict) -> dict:
     return resolve_storage(backend, rebound["source_registration"], source, state, live_storage=False)
 
 
-def verify_running_source(backend: Path, start_descriptor: dict, *, live: bool) -> dict:
+def _verify_running_source(
+    backend: Path, start_descriptor: dict, *, live: bool, historical_coordinator: bool
+) -> dict:
     from devex_clone_seed_generation_images import verify_image
     from devex_clone_seed_generation_runtime import verify_running_evidence
     from restore_source_lineage import verify_dataset_lineage
@@ -153,7 +159,13 @@ def verify_running_source(backend: Path, start_descriptor: dict, *, live: bool) 
     if (len(records) != 1 or records[0]["status"] != "passed" or records[0]["result"] != start_descriptor
             or path != directory / "results" / f"{records[0]['number']:04d}.json"):
         raise ValueError("source verify 必须绑定同一账本唯一成功 start 的外层收据")
-    coordinator_source = require_current_execution_source(backend, records[0]["sources"])
+    coordinator_source = copy.deepcopy(records[0]["sources"])
+    if historical_coordinator:
+        verify_execution_source(coordinator_source, "历史 source generation 协调器")
+        if coordinator_source["snapshot"]["clean"] is not True:
+            raise ValueError("历史 source generation 协调器不是已登记干净来源")
+    else:
+        coordinator_source = require_current_execution_source(backend, coordinator_source)
     if live and any(row["number"] > records[0]["number"] and row["stage"] == "seed-runtime" and row["mode"] in {STOP, RECOVER}
                     and row["status"] != "running" for row in state["attempts"]):
         raise ValueError("源运行代次已执行停止或恢复，不能再次验证或重放")
@@ -197,11 +209,28 @@ def verify_running_source(backend: Path, start_descriptor: dict, *, live: bool) 
             raise ValueError("源运行中的存储代次变化")
     if binding(path) != start_descriptor or binding(directory / "state.json") != state_binding:
         raise ValueError("源运行收据或账本在复核期间变化")
-    require_current_execution_source(backend, coordinator_source)
+    if historical_coordinator:
+        verify_execution_source(coordinator_source, "历史 source generation 协调器")
+    else:
+        require_current_execution_source(backend, coordinator_source)
     return {"receipt": value, "start_descriptor": start_descriptor, "directory": directory, "output": output,
             "request": request, "source": source, "execution": Path(request["execution_backend"]), "selected": selected,
             "runtime": runtime, **images, "lineage": lineage, "coordinator_source": coordinator_source,
             "environment": read_json(bound_file(backend, request["source_environment"]))}
+
+
+def verify_running_source(backend: Path, start_descriptor: dict, *, live: bool) -> dict:
+    """普通路径始终要求当前 checkout 等于 START 登记的干净协调器。"""
+    return _verify_running_source(
+        backend, start_descriptor, live=live, historical_coordinator=False
+    )
+
+
+def verify_historical_running_source(backend: Path, start_descriptor: dict, *, live: bool) -> dict:
+    """恢复专用：核验 START 的历史来源，不把它冒充当前 checkout。"""
+    return _verify_running_source(
+        backend, start_descriptor, live=live, historical_coordinator=True
+    )
 
 
 @contextmanager
@@ -240,6 +269,55 @@ def registered_running_source(backend: Path, start_descriptor: dict):
                 checkpoint()
             except BaseException as failed:
                 error.add_note("源验证异常后的代次复核失败：" + type(failed).__name__)
+            raise
+        else:
+            checkpoint()
+        finally:
+            active = False
+
+
+@contextmanager
+def registered_historical_running_source(backend: Path, start_descriptor: dict):
+    """恢复专用锁；历史 START 与当前恢复工具分别固定，普通验证不使用此路径。"""
+    from devex_clone_run import _require_owned_run
+    from devex_clone_run_state import run_lock
+    from process_environment import Environments, configured
+
+    initial = verify_historical_running_source(backend, start_descriptor, live=True)
+    recovery_tools = current_execution_source(backend)
+    if recovery_tools["snapshot"]["clean"] is not True:
+        raise ValueError("来源验收恢复工具必须先提交为干净来源")
+    require_current_execution_source(backend, recovery_tools)
+    environments = Environments(dict(os.environ), configured(initial["environment"]["environment"]))
+    directory = initial["directory"]
+    active = True
+    with run_lock(directory):
+        lock = directory / "run.lock"
+        identity = (lock.stat().st_dev, lock.stat().st_ino)
+
+        def checkpoint():
+            from devex_clone_model import linked
+
+            if not active or linked(lock) or (lock.stat().st_dev, lock.stat().st_ino) != identity:
+                raise ValueError("源验证恢复控制锁身份变化或 checkpoint 已离开控制区间")
+            _require_owned_run(directory)
+            if dict(os.environ) not in environments.values.values():
+                raise ValueError("源验证恢复控制或服务环境发生变化")
+            require_current_execution_source(backend, recovery_tools)
+            with environments.use("source"):
+                current = verify_historical_running_source(backend, start_descriptor, live=True)
+            if current != initial:
+                raise ValueError("源验证恢复期间历史运行代次、来源或前像绑定变化")
+            return current
+
+        try:
+            checkpoint()
+            yield checkpoint, copy.deepcopy(recovery_tools)
+        except BaseException as error:
+            try:
+                checkpoint()
+            except BaseException as failed:
+                error.add_note("源验证恢复异常后的代次复核失败：" + type(failed).__name__)
             raise
         else:
             checkpoint()
@@ -445,7 +523,10 @@ def resolve_generation(backend: Path, descriptor: dict, source: dict, state: dic
     value = read_json(path)
     exact(value, RESULT_FIELDS)
     _validate_evidence_bindings(backend, value)
-    facts = verify_running_source(backend, value["start"], live=False)
+    from restore_source_runtime import verify_source_runtime
+
+    verified = verify_source_runtime(backend, value["source_runtime"], live=False)
+    facts = verified["facts"]
     request = facts["request"]
     if (value["request"] != facts["receipt"]["request"] or any(facts["source"].get(key) != item for key, item in source.items())
             or value["dataset_lineage"] != facts["receipt"]["dataset_lineage"]):
@@ -473,9 +554,6 @@ def resolve_generation(backend: Path, descriptor: dict, source: dict, state: dic
         raise ValueError("后继 source request 改变了同一物理 seed 来源或构建绑定")
     from devex_clone_seed_generation_images import verify_image
 
-    from restore_source_runtime import verify_source_runtime
-
-    verified = verify_source_runtime(backend, value["source_runtime"], live=False)
     if (verified["receipt"]["source_generation"] != value["start"]
             or verified["receipt"]["dataset_lineage"] != value["dataset_lineage"]
             or value["before"] != facts["receipt"]["before"] or value["running"] != facts["receipt"]["running"]):

@@ -278,6 +278,25 @@ fn parses_source_operations_and_emits_the_fixed_private_protocol() {
     assert_eq!(protocol["operation"], "verify");
     assert_eq!(protocol["write"], true);
 
+    fs::create_dir_all(source_output.parent().unwrap()).unwrap();
+    let mut recover = strings(&["check", "recovery", "source", "verify-recover"]);
+    recover.extend(vec![
+        "--source-generation".into(),
+        text(&fixture.files.generation),
+        "--output".into(),
+        text(&source_output),
+        "--write".into(),
+    ]);
+    let RecoveryCommand::Source(command @ SourceCommand::VerifyRecover(_)) =
+        parsed_recovery(recover)
+    else {
+        panic!("source verify-recover 没有解析为结构化请求")
+    };
+    let invocation = source::private_invocation_at(&command, &root_dir()).unwrap();
+    let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
+    assert_eq!(protocol["operation"], "verify-recover");
+    assert_eq!(protocol["write"], true);
+
     let comparison = comparison_arguments(&fixture);
     assert!(matches!(
         parsed_recovery(comparison),
@@ -392,6 +411,21 @@ fn rejects_ambiguous_or_unsafe_runtime_and_source_arguments() {
         "--write",
     ]);
     assert!(parse(wrong_source_output).is_err());
+    let missing_recovery_output = fixture
+        .directory
+        .join("missing/verification/source-runtime.json");
+    let missing_recovery = strings(&[
+        "check",
+        "recovery",
+        "source",
+        "verify-recover",
+        "--source-generation",
+        fixture.files.generation.to_str().unwrap(),
+        "--output",
+        missing_recovery_output.to_str().unwrap(),
+        "--write",
+    ]);
+    assert!(parse(missing_recovery).is_err());
 
     let build_output = fixture.directory.join("relative-frontend-build.json");
     let mut relative_frontend = fixture.runtime_prefix("build");

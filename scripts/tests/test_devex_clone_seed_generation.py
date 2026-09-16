@@ -553,6 +553,53 @@ class GenerationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "离开控制区间"):
                 checkpoint()
 
+    def test_historical_generation_does_not_relax_ordinary_current_source_check(self):
+        with self.running_fixture() as (descriptor, _state, _verifier, _storage):
+            changed = copy.deepcopy(self.coordinator_source)
+            changed["snapshot"]["head"] = "e" * 40
+            with patch.object(source_fingerprints, "current_execution_source", return_value=changed):
+                with self.assertRaisesRegex(ValueError, "test_tools"):
+                    generation.verify_running_source(self.backend, descriptor, live=False)
+                facts = generation.verify_historical_running_source(self.backend, descriptor, live=False)
+            self.assertEqual(facts["coordinator_source"], self.coordinator_source)
+
+    def test_historical_recovery_rejects_dirty_successor_before_lock(self):
+        dirty = copy.deepcopy(self.coordinator_source)
+        dirty["snapshot"]["clean"] = False
+        with patch.object(generation, "verify_historical_running_source", return_value={}), \
+                patch.object(generation, "current_execution_source", return_value=dirty), \
+                patch("devex_clone_run_state.run_lock") as lock:
+            with self.assertRaisesRegex(ValueError, "先提交为干净来源"):
+                with generation.registered_historical_running_source(self.backend, self.registration):
+                    self.fail("未提交恢复工具不能进入控制区间")
+        lock.assert_not_called()
+
+    def test_historical_recovery_pins_successor_until_lock_release(self):
+        @contextmanager
+        def lock(directory):
+            path = directory / "run.lock"
+            path.mkdir()
+            try:
+                yield
+            finally:
+                path.rmdir()
+
+        facts = {"directory": self.directory, "environment": {"environment": {}}}
+        with patch.object(generation, "verify_historical_running_source", return_value=facts), \
+                patch.object(generation, "current_execution_source", return_value=self.coordinator_source), \
+                patch("devex_clone_run_state.run_lock", side_effect=lock), \
+                patch("devex_clone_run._require_owned_run"):
+            with generation.registered_historical_running_source(self.backend, self.registration) as (checkpoint, tools):
+                self.assertEqual(tools, self.coordinator_source)
+                self.assertEqual(checkpoint(), facts)
+                changed = copy.deepcopy(self.coordinator_source)
+                changed["fingerprints"]["test_tools"]["sha256"] = "e" * 64
+                with patch.object(source_fingerprints, "current_execution_source", return_value=changed), \
+                        self.assertRaisesRegex(ValueError, "test_tools"):
+                    checkpoint()
+            with self.assertRaisesRegex(ValueError, "离开控制区间"):
+                checkpoint()
+
 
 if __name__ == "__main__":
     unittest.main()

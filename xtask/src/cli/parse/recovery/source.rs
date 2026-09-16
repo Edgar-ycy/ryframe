@@ -112,6 +112,7 @@ fn parse_options(args: &[String]) -> Result<ParsedOptions<'_>, CliError> {
 fn parse_operation(value: &str) -> Result<SourceOperation, CliError> {
     match value {
         "verify" => Ok(SourceOperation::Verify),
+        "verify-recover" => Ok(SourceOperation::VerifyRecover),
         "comparison-capture" => Ok(SourceOperation::ComparisonCapture),
         "comparison-verify" => Ok(SourceOperation::ComparisonVerify),
         _ => Err(CliError::new(format!(
@@ -142,26 +143,39 @@ fn build_command(
 ) -> Result<SourceCommand, CliError> {
     match operation {
         SourceOperation::Verify => verify(values),
+        SourceOperation::VerifyRecover => verify_recover(values),
         SourceOperation::ComparisonCapture => comparison_capture(values),
         SourceOperation::ComparisonVerify => comparison_verify(values),
     }
 }
 
 fn verify(values: &BTreeMap<&str, &str>) -> Result<SourceCommand, CliError> {
-    ensure_only(values, &["--source-generation", "--output"], "verify")?;
+    Ok(SourceCommand::Verify(verify_options(
+        values,
+        "verify",
+        "来源验证收据",
+    )?))
+}
+
+fn verify_options(
+    values: &BTreeMap<&str, &str>,
+    operation: &str,
+    output_label: &str,
+) -> Result<SourceVerifyOptions, CliError> {
+    ensure_only(values, &["--source-generation", "--output"], operation)?;
     let root = root_dir();
     let output = local_path(
         required(values, "--output")?,
         &root,
         LocalTestPathKind::OutputFile,
-        "来源验证收据",
+        output_label,
     )?;
     if !is_source_runtime_output(&output) {
-        return Err(CliError::new(
-            "来源验证收据必须使用同代 verification/source-runtime.json",
-        ));
+        return Err(CliError::new(format!(
+            "{output_label}必须使用同代 verification/source-runtime.json"
+        )));
     }
-    Ok(SourceCommand::Verify(SourceVerifyOptions {
+    Ok(SourceVerifyOptions {
         source_generation: local_path(
             required(values, "--source-generation")?,
             &root,
@@ -169,7 +183,18 @@ fn verify(values: &BTreeMap<&str, &str>) -> Result<SourceCommand, CliError> {
             "来源 generation 收据",
         )?,
         output,
-    }))
+    })
+}
+
+fn verify_recover(values: &BTreeMap<&str, &str>) -> Result<SourceCommand, CliError> {
+    let options = verify_options(values, "verify-recover", "来源恢复收据")?;
+    let parent = options
+        .output
+        .parent()
+        .ok_or_else(|| CliError::new("来源恢复收据缺少 verification 父目录"))?;
+    validate_local_test_path(parent, &root_dir(), LocalTestPathKind::ExistingDirectory)
+        .map_err(|error| CliError::new(format!("来源恢复现场无效：{error}")))?;
+    Ok(SourceCommand::VerifyRecover(options))
 }
 
 fn comparison_capture(values: &BTreeMap<&str, &str>) -> Result<SourceCommand, CliError> {

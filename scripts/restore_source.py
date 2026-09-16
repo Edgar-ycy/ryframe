@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from restore_build import validate_new_output, write_new
 from restore_comparison_source import capture_comparison_sources, verify_comparison_sources
 from restore_runtime_evidence import read_json_document
-from restore_source_runtime import execute_source_verification
+from restore_source_runtime import execute_source_verification, execute_source_verification_recovery
 
 
 def _comparison_result_binding(path: Path) -> tuple[dict, object]:
@@ -65,11 +65,12 @@ PROTOCOL_PREFIX = "RYFRAME_RESTORE_SOURCE_"
 FOREIGN_PROTOCOL_KEY = "RYFRAME_RESTORE_RUNTIME_PROTOCOL"
 PROTOCOL_KIND = "ryframe-xtask-restore-source"
 PROTOCOL_MAX_BYTES = 16 * 1024
-OPERATIONS = frozenset({"verify", "comparison-capture", "comparison-verify"})
-WRITING_OPERATIONS = frozenset({"verify", "comparison-capture"})
+OPERATIONS = frozenset({"verify", "verify-recover", "comparison-capture", "comparison-verify"})
+WRITING_OPERATIONS = frozenset({"verify", "verify-recover", "comparison-capture"})
 BASE_FIELDS = {"backend_dir", "format_version", "kind", "operation", "write"}
 OPERATION_FIELDS = {
     "verify": {"source_generation", "output"},
+    "verify-recover": {"source_generation", "output"},
     "comparison-capture": {
         "b0_backend", "b0_adapter_backend", "b0_frontend", "b0_backend_build",
         "b0_frontend_build", "b1_backend", "b1_frontend", "b1_backend_build",
@@ -179,6 +180,10 @@ def execute(request: SourceRequest) -> dict:
         return _capture_comparison(args, backend)
     if args.command == "comparison-verify":
         return _verify_comparison(args, backend)
+    if args.command == "verify-recover":
+        return execute_source_verification_recovery(
+            backend, args.source_generation, args.output
+        )
     return execute_source_verification(
         backend, args.source_generation, args.output
     )

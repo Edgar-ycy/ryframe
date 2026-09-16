@@ -190,7 +190,7 @@ def _verified_target(backend: Path, path: Path, runtime: dict) -> tuple[object, 
 def _dataset_authority(backend: Path, backup: dict) -> dict:
     """从已完整核验的目标备份链提取唯一数据来源，不接受浏览器指定的独立血缘。"""
     from devex_clone_seed_generation import RESULT_FIELDS, START_FIELDS
-    from restore_source_runtime import RECEIPT_FIELDS
+    from restore_source_runtime import RECEIPT_FIELDS, RECOVERED_RECEIPT_FIELDS
 
     stop = bound_document(backend, backup["source_generation"])
     value = exact_fields(stop.value, RESULT_FIELDS, "备份来源停止代次")
@@ -198,7 +198,12 @@ def _dataset_authority(backend: Path, backup: dict) -> dict:
     runtime = bound_document(backend, value["source_runtime"])
     lineage = bound_document(backend, value["dataset_lineage"])
     running = exact_fields(start.value, START_FIELDS, "备份来源启动代次")
-    verified = exact_fields(runtime.value, RECEIPT_FIELDS, "备份来源运行验收")
+    runtime_fields = set(runtime.value) if isinstance(runtime.value, dict) else set()
+    expected_fields = (RECOVERED_RECEIPT_FIELDS
+                       if runtime_fields == RECOVERED_RECEIPT_FIELDS else RECEIPT_FIELDS)
+    verified = exact_fields(runtime.value, expected_fields, "备份来源运行验收")
+    if expected_fields == RECOVERED_RECEIPT_FIELDS:
+        _receipt_descriptor(verified["recovery"], "备份来源运行验收恢复绑定")
     if (
         backup["source_export"]["source_generation"] != _descriptor(stop)
         or value["status"] != "seed_source_generation_published"

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from collections import Counter
 import datetime as dt
+import hashlib
 import json
 import os
 from pathlib import Path
 import queue
+import re
 import subprocess
 import threading
 
@@ -20,7 +23,7 @@ from restore_source_runtime_staging import (
     create_tool_staging,
     verify_tool_staging,
 )
-from source_fingerprints import require_current_execution_source
+from source_fingerprints import require_current_execution_source, verify_execution_source
 from restore_runtime_evidence import (
     artifact_snapshot,
     decode_object,
@@ -76,7 +79,7 @@ def _validate_operation(value: object) -> str:
 
 
 def _evidence_files(directory: Path) -> list[dict]:
-    from restore_source_runtime import _manifest
+    from restore_source_runtime import RECOVERY_AUDIT, _manifest
     from devex_clone_model import linked
 
     rows = []
@@ -84,7 +87,7 @@ def _evidence_files(directory: Path) -> list[dict]:
         if linked(path):
             raise ValueError("来源验收中间证据包含链接或重解析点")
         if path.is_dir():
-            if path.name not in {"before", "after", "audit", STAGING_DIRECTORY}:
+            if path.name not in {"before", "after", "audit", STAGING_DIRECTORY, RECOVERY_AUDIT}:
                 raise ValueError("来源验收中间证据包含未知目录")
             # 采集器可能在创建阶段目录后中断；内部未知或空嵌套目录仍由唯一 manifest 拒绝。
             if any(path.iterdir()):
@@ -93,6 +96,169 @@ def _evidence_files(directory: Path) -> list[dict]:
             snapshot = artifact_snapshot(path)
             rows.append({"path": path.name, "bytes": snapshot.bytes, "sha256": snapshot.sha256})
     return sorted(rows, key=lambda row: row["path"])
+
+
+def _query_audit_paths(directory: Path, inputs: list[dict], observed: list[dict]) -> set[str]:
+    """后续与恢复审计只复核同一控制库；不接受任意新增文件。"""
+    from restore_source_runtime import RECOVERY_AUDIT, RECOVERY_INTENT
+
+    if (directory / RECOVERY_AUDIT).exists() and not (directory / RECOVERY_INTENT).is_file():
+        raise ValueError("恢复登录审计必须继承明确恢复 intent")
+    pattern = r"mysql-shared-control-[a-f0-9]{32}\.command\.json"
+    candidates = [row for row in observed if re.fullmatch("audit/" + pattern, row["path"])
+                  or row["path"].startswith(RECOVERY_AUDIT + "/")]
+    if not candidates:
+        return set()
+    originals = [row for row in inputs if re.fullmatch("audit/" + pattern, row["path"])]
+    commands = [decode_object((directory / row["path"]).read_bytes(), "原控制库查询记录")["command"]
+                for row in originals]
+    if not commands or any(command != commands[0] for command in commands):
+        raise ValueError("恢复登录审计缺少原同一控制库查询命令")
+    allowed = set()
+    for row in candidates:
+        if re.fullmatch("(?:audit|" + RECOVERY_AUDIT + ")/" + pattern, row["path"]) is None:
+            raise ValueError("恢复登录审计包含未知文件或子目录")
+        value = decode_object((directory / row["path"]).read_bytes(), "恢复控制库查询记录")
+        exact_fields(value, {"command", "returncode", "error_type", "stdout", "stderr"}, "恢复控制库查询记录")
+        if (value["command"] != commands[0]
+                or not isinstance(value["stdout"], str) or not isinstance(value["stderr"], str)
+                or value["returncode"] is not None and type(value["returncode"]) is not int
+                or value["error_type"] is not None and not isinstance(value["error_type"], str)):
+            raise ValueError("恢复登录审计改变了原查询命令或记录格式")
+        allowed.add(row["path"])
+    return allowed
+
+
+def _capture_receipt_identity(path: Path, category: str) -> str:
+    value = decode_object(path.read_bytes(), "完整像存储采集记录")
+    if category == "storage-layout":
+        fields = {"process_receipt", "launch_receipt", "actual_arguments_sha256", "data_dir", "environment_proof"}
+        if "runtime_transition" in value:
+            fields.add("runtime_transition")
+        exact_fields(value, fields, "完整像存储布局记录")
+    else:
+        exact_fields(value, {"command", "returncode", "error_type", "stdout", "stderr"}, "完整像缓存身份命令")
+        command = value["command"]
+        if (not isinstance(command, list) or len(command) < 2
+                or any(not isinstance(part, str) or not part for part in command)
+                or type(value["returncode"]) is not int or value["returncode"] != 0
+                or value["error_type"] is not None or value["stderr"] != ""
+                or not isinstance(value["stdout"], str)):
+            raise ValueError("完整像缓存身份采集命令未成功或字段无效")
+        if command[-2] == "/usr/bin/cat" and re.fullmatch(r"/proc/[1-9][0-9]*/stat", command[-1]):
+            process, closing, suffix = value["stdout"].strip().rpartition(")")
+            fields = suffix.split()
+            if (not closing or len(fields) < 20 or not fields[19].isdigit()
+                    or not process.startswith(command[-1].split("/")[2] + " (")):
+                raise ValueError("完整像缓存内核身份输出不完整")
+            # CPU 等运行计数自然变化，进程号、名称及创建时刻必须保持。
+            value["stdout"] = {"process": process + closing, "started": fields[19]}
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _image_capture_paths(directory: Path, inputs: list[dict], observed: list[dict]) -> set[str]:
+    """采集器每次使用新 UUID；按原类别、命令与次数核验同一像的有限动态记录。"""
+    patterns = {"redis-kernel": r"redis-kernel-[a-f0-9]{32}\.command\.json",
+                "storage-layout": r"storage-layout-[a-f0-9]{32}\.json"}
+    allowed = set()
+    complete = any(row["path"] == "after/image.json" for row in observed)
+    for category, pattern in patterns.items():
+        original = [row for row in inputs if re.fullmatch("before/" + pattern, row["path"])]
+        current = [row for row in observed if re.fullmatch("after/" + pattern, row["path"])]
+        if not original and not current:
+            continue
+        if len(original) != {"redis-kernel": 10, "storage-layout": 2}[category]:
+            raise ValueError("完整像动态采集记录缺少原始完整类别与数量")
+        expected = Counter(_capture_receipt_identity(directory / row["path"], category) for row in original)
+        actual = Counter(_capture_receipt_identity(directory / row["path"], category) for row in current)
+        if actual - expected or complete and actual != expected:
+            raise ValueError("完整像动态采集记录改变了原类别、命令、身份或数量")
+        allowed.update(row["path"] for row in current)
+    return allowed
+
+
+def _database_capture_identity(path: Path, category: str) -> tuple[str, str | None]:
+    value = decode_object(path.read_bytes(), "完整像数据库采集记录")
+    stdout = value.get("stdout_file")
+    stdout_path = None
+    if stdout is not None:
+        exact_fields(stdout, {"path", "bytes", "sha256"}, "完整像数据库标准输出")
+        stdout_path = Path(stdout["path"])
+        match = re.fullmatch(r"mysql-(identity|ownership)-[a-f0-9]{32}\.stdout", stdout_path.name)
+        if (stdout_path.parent != path.parent or match is None
+                or artifact_snapshot(stdout_path).descriptor() != stdout):
+            raise ValueError("完整像数据库标准输出未绑定同目录明确采集文件")
+        value["stdout_file"] = {**stdout, "path": "mysql-" + match[1] + "-UUID.stdout"}
+    if category == "command":
+        fields = {"command", "returncode", "error_type", "stdin", "stdout", "stderr"}
+        if stdout is not None:
+            fields.add("stdout_file")
+        exact_fields(value, fields, "完整像数据库命令")
+        command = value["command"]
+        if (not isinstance(command, list) or not command
+                or any(not isinstance(part, str) or not part for part in command)
+                or not isinstance(value["stdout"], str) or value["stderr"] != ""):
+            raise ValueError("完整像数据库命令格式无效")
+        if "--output" in command:
+            index = command.index("--output") + 1
+            output = Path(command[index]) if index < len(command) else Path()
+            if (output.parent != path.parent or re.fullmatch(
+                    r"(?:before|after)-target-(?:shared-control|shared|dedicated-a|dedicated-b)\.json", output.name) is None):
+                raise ValueError("完整像数据库命令输出越出明确目标目录")
+            command[index] = "<databases>/" + output.name
+    else:
+        exact_fields(value, {"format_version", "kind", "check", "target_key", "returncode",
+                            "error_type", "stderr_bytes", "stderr_sha256", "stdout_file"}, "完整像数据库验证输出")
+        if (type(value["format_version"]) is not int or value["format_version"] != 1
+                or value["kind"] != "mysql-verification-output" or value["check"] != category
+                or value["target_key"] not in {"shared-control", "shared", "dedicated-a", "dedicated-b"}
+                or type(value["stderr_bytes"]) is not int or value["stderr_bytes"] != 0
+                or value["stderr_sha256"] != hashlib.sha256(b"").hexdigest()
+                or stdout_path != path.with_suffix(".stdout")):
+            raise ValueError("完整像数据库验证输出类别、目标或错误状态无效")
+    if type(value["returncode"]) is not int or value["returncode"] != 0 or value["error_type"] is not None:
+        raise ValueError("完整像数据库采集未成功")
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")), None if stdout_path is None else stdout_path.name
+
+
+def _database_capture_paths(directory: Path, inputs: list[dict], observed: list[dict]) -> set[str]:
+    patterns = {"command": (r"command-[a-f0-9]{32}\.json", 48),
+                "identity": (r"mysql-identity-[a-f0-9]{32}\.json", 16),
+                "ownership": (r"mysql-ownership-[a-f0-9]{32}\.json", 24)}
+    complete = any(row["path"] == "after/image.json" for row in observed)
+    allowed = set()
+    references = {}
+    for category, (pattern, count) in patterns.items():
+        original = [row for row in inputs if re.fullmatch("before/databases/" + pattern, row["path"])]
+        current = [row for row in observed if re.fullmatch("after/databases/" + pattern, row["path"])]
+        if not original and not current:
+            continue
+        if len(original) != count:
+            raise ValueError("完整像数据库动态采集缺少原始完整类别与数量")
+        expected = Counter(_database_capture_identity(directory / row["path"], category)[0] for row in original)
+        actual = Counter()
+        references[category] = Counter()
+        for row in current:
+            identity, stdout = _database_capture_identity(directory / row["path"], category)
+            actual[identity] += 1
+            allowed.add(row["path"])
+            if stdout is not None:
+                allowed.add("after/databases/" + stdout)
+                references[category][stdout] += 1
+        if actual - expected or complete and actual != expected:
+            raise ValueError("完整像数据库动态采集改变了原命令、响应或数量")
+    commands = references.get("command", Counter())
+    diagnostics = references.get("identity", Counter()) + references.get("ownership", Counter())
+    if (any(count != 1 for count in commands.values()) or any(count != 1 for count in diagnostics.values())
+            or complete and commands != diagnostics):
+        raise ValueError("完整像数据库命令与诊断未一一绑定同一标准输出文件")
+    for category, count in (("identity", 16), ("ownership", 24)):
+        pattern = "after/databases/mysql-" + category + r"-[a-f0-9]{32}\.stdout"
+        current = {row["path"] for row in observed if re.fullmatch(pattern, row["path"])}
+        referenced = {path for path in allowed if re.fullmatch(pattern, path)}
+        if current != referenced or complete and current and len(current) != count:
+            raise ValueError("完整像数据库动态标准输出集合或数量不完整")
+    return allowed
 
 
 def _verify_inputs(directory: Path, inputs: object) -> list[dict]:
@@ -112,8 +278,12 @@ def _verify_inputs(directory: Path, inputs: object) -> list[dict]:
         raise ValueError("来源生产者授权前完整证据已变化")
     allowed = {row["path"] for row in inputs} | PRODUCER_FILES | {
         "failed.json", "cache-cleanup.json", "source-runtime.json",
+        "source-verification-recovery-intent.json", "source-verification-recovery.json",
         "audit/login-after-old.tsv", "audit/login-after-new.tsv", "audit/login-audit.json"}
     allowed.update("after/" + row["path"].removeprefix("before/") for row in inputs if row["path"].startswith("before/"))
+    allowed.update(_query_audit_paths(directory, inputs, observed))
+    allowed.update(_image_capture_paths(directory, inputs, observed))
+    allowed.update(_database_capture_paths(directory, inputs, observed))
     if set(by_path) - allowed:
         raise ValueError("来源验收中间证据包含未登记文件")
     return observed
@@ -370,10 +540,16 @@ def verify_registered_source_producer(
     *,
     coordinator_source: dict,
     execution_sha: str,
+    historical_coordinator: bool = False,
 ) -> tuple[dict, dict]:
     """只读复核已登记生产者与同一 start、血缘、源码和环境的绑定。"""
     intent = _read_bound(backend, binding(directory / INTENT), directory / INTENT)
-    require_current_execution_source(backend, coordinator_source)
+    if historical_coordinator:
+        verify_execution_source(coordinator_source, "历史来源验收协调器")
+        if coordinator_source["snapshot"]["clean"] is not True:
+            raise ValueError("历史来源验收协调器不是已登记干净来源")
+    else:
+        require_current_execution_source(backend, coordinator_source)
     exact_fields(intent, INTENT_FIELDS, "来源验收生产者 intent")
     staging = verify_tool_staging(
         backend, execution, directory, intent["staging"], coordinator_source, execution_sha
@@ -423,7 +599,10 @@ def verify_registered_source_producer(
         != intent["started_at"]
     ):
         raise ValueError("来源验收生产者登记与当前输入不同")
-    require_current_execution_source(backend, coordinator_source)
+    if historical_coordinator:
+        verify_execution_source(coordinator_source, "历史来源验收协调器")
+    else:
+        require_current_execution_source(backend, coordinator_source)
     verify_tool_staging(
         backend, execution, directory, intent["staging"], coordinator_source, execution_sha
     )
@@ -461,11 +640,13 @@ def verify_source_producer(
     *,
     coordinator_source: dict,
     execution_sha: str,
+    historical_coordinator: bool = False,
 ) -> tuple[dict, dict]:
     """只读复核生产者身份、实际参数、stdout/stderr 和自然退出。"""
     intent, producer = verify_registered_source_producer(
         backend, execution, directory, start, lineage, environment, node,
         coordinator_source=coordinator_source, execution_sha=execution_sha,
+        historical_coordinator=historical_coordinator,
     )
     staging = verify_tool_staging(
         backend, execution, directory, intent["staging"], coordinator_source, execution_sha
@@ -487,9 +668,10 @@ def verify_source_producer(
 
 def require_source_verifier_stopped(backend: Path, start: dict) -> dict:
     """供 generation recover 只读使用；不猜测、扫描或跨职责终止进程。"""
-    from devex_clone_seed_generation import verify_running_source
+    from devex_clone_seed_generation import verify_historical_running_source
+    from restore_source_runtime import RECOVERY_AUDIT
 
-    facts = verify_running_source(backend, start, live=False)
+    facts = verify_historical_running_source(backend, start, live=False)
     directory = facts["output"] / "verification"
     from devex_clone_model import linked
 
@@ -505,7 +687,8 @@ def require_source_verifier_stopped(backend: Path, start: dict) -> dict:
     names = {entry.name for entry in entries}
     allowed = PRODUCER_FILES | {
         "before", "after", "audit", STAGING_DIRECTORY, "cache-cleanup.json",
-        "source-runtime.json", "failed.json",
+        "source-runtime.json", "failed.json", "source-verification-recovery-intent.json",
+        "source-verification-recovery.json", RECOVERY_AUDIT,
     }
     if names - allowed or PROCESS not in names or INTENT not in names:
         raise ValueError("来源验收缺少已登记进程身份或包含未知证据")
@@ -526,6 +709,7 @@ def require_source_verifier_stopped(backend: Path, start: dict) -> dict:
         node,
         coordinator_source=facts["coordinator_source"],
         execution_sha=facts["request"]["expected_backend_sha"],
+        historical_coordinator=True,
     )
     if READY in names:
         staging = verify_tool_staging(
@@ -539,7 +723,7 @@ def require_source_verifier_stopped(backend: Path, start: dict) -> dict:
     identity = producer["process"]
     if process_identity(identity["pid"]) == identity:
         raise ValueError("来源验收 Node 仍在运行，generation recover 必须失败关闭")
-    if "source-runtime.json" in names and "failed.json" not in names:
+    if "source-runtime.json" in names:
         from restore_source_runtime import verify_source_runtime
 
         verified = verify_source_runtime(backend, binding(directory / "source-runtime.json"), live=False)

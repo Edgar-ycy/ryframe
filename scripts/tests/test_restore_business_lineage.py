@@ -56,6 +56,16 @@ class BusinessLineageTests(unittest.TestCase):
         self.assertEqual(proof._dataset_authority(self.backend, backup), expected)
         self.assertEqual(before, {str(path): path.read_bytes() for path in self.root.rglob("*") if path.is_file()})
 
+    def test_recovered_authority_keeps_the_exact_runtime_schema_and_binding(self):
+        recovery = self.write("recovery.json", {"immutable": "verified recovery chain"})
+        backup, expected = self.chain(runtime_change=lambda value: value.update(recovery=recovery))
+        self.assertEqual(proof._dataset_authority(self.backend, backup), expected)
+        for recovery_value in (None, {}, {**recovery, "extra": True}):
+            with self.subTest(recovery=recovery_value):
+                backup, _ = self.chain(runtime_change=lambda value: value.update(recovery=recovery_value))
+                with self.assertRaises(ValueError):
+                    proof._dataset_authority(self.backend, backup)
+
     def test_cross_generation_lineage_unknown_fields_and_changed_bytes_fail_closed(self):
         for name, change in (
             ("stop_change", lambda value: value.update(status="seed_source_generation_running")),

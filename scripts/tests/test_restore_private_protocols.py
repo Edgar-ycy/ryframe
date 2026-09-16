@@ -94,6 +94,10 @@ def source_protocol(operation: str) -> dict:
             "source_generation": str(ROOT / ".local-tests/start.json"),
             "output": str(ROOT / ".local-tests/source-runtime.json"),
         },
+        "verify-recover": {
+            "source_generation": str(ROOT / ".local-tests/start.json"),
+            "output": str(ROOT / ".local-tests/source-runtime.json"),
+        },
         "comparison-capture": {
             "b0_backend": root,
             "b0_adapter_backend": root,
@@ -191,6 +195,15 @@ class RestorePrivateProtocolTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 restore_runtime.private_protocol_request(
                     [], {restore_runtime.PROTOCOL_KEY: json.dumps(payload)}
+                )
+
+    def test_source_recovery_requires_explicit_write_and_exact_bound_paths(self):
+        payload = source_protocol("verify-recover")
+        for changes in ({"write": False}, {"write": 1}, {"output": "relative.json"},
+                        {"source_generation": ""}, {"resume": True}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                restore_source.private_protocol_request(
+                    [], {restore_source.PROTOCOL_KEY: json.dumps({**payload, **changes})}
                 )
 
     def test_protocol_is_removed_before_business_dispatch(self):

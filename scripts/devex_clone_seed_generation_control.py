@@ -7,7 +7,7 @@ import subprocess
 from devex_clone_capture import read_json, write_json
 from devex_clone_model import exact, local_path, name
 from devex_clone_run_state import binding, load_state
-from devex_clone_seed_generation import START, STOP, RECOVER, REQUEST_FIELDS, predecessor, source_request, verify_running_source
+from devex_clone_seed_generation import START, STOP, RECOVER, REQUEST_FIELDS, predecessor, source_request
 from devex_clone_seed_generation_images import capture_image, verify_image
 from devex_clone_seed_generation_runtime import GenerationRuntime, generation_directory, ROLES, EXTRA_FILES
 from devex_clone_source_proof import bound_file
@@ -15,6 +15,7 @@ from full_stack_process import process_identity
 from full_stack_process_monitor import completion_binding
 from full_stack_process_tree import read_process_tree, validate_process_tree_directory
 from restore_reference_plan import plan_hash
+from source_fingerprints import current_execution_source, require_current_execution_source
 
 
 def preflight(directory: Path, mode: str, *, backend: Path | None = None, request_path: Path | None = None) -> None:
@@ -77,15 +78,18 @@ def execute_stop(backend: Path, directory: Path, receipt_path: Path, number: int
     source_runtime = binding(local_path(backend, str(receipt_path)))
     verified = verify_source_runtime(backend, source_runtime, live=True)
     receipt = verified["receipt"]
-    facts = verify_running_source(backend, receipt["source_generation"], live=True)
+    facts = verified["facts"]
     if facts["directory"] != directory:
         raise ValueError("source-runtime 不属于当前账本与同一代次")
     output, request, source = facts["output"], facts["request"], facts["source"]
     runtime = existing_runtime(backend, facts, run)
+    control_source = current_execution_source(backend)
 
     def checkpoint():
-        if _active(directory, number, STOP) != prefix or binding(receipt_path) != source_runtime:
-            raise ValueError("源停止期间账本或 source-runtime 发生变化")
+        with runtime.control_environment():
+            require_current_execution_source(backend, control_source)
+            if _active(directory, number, STOP) != prefix or binding(receipt_path) != source_runtime:
+                raise ValueError("源停止期间账本或 source-runtime 发生变化")
         runtime.checkpoint()
 
     with runtime.environment() as environment:

@@ -58,6 +58,14 @@ pub(crate) fn private_invocation_at(
             )?;
             insert_path(&mut protocol, "output", &options.output)?;
         }
+        SourceCommand::VerifyRecover(options) => {
+            insert_path(
+                &mut protocol,
+                "source_generation",
+                &options.source_generation,
+            )?;
+            insert_path(&mut protocol, "output", &options.output)?;
+        }
         SourceCommand::ComparisonCapture(options) => capture_protocol(&mut protocol, options)?,
         SourceCommand::ComparisonVerify { receipt } => {
             insert_path(&mut protocol, "receipt", receipt)?;
@@ -121,6 +129,27 @@ fn validate_command(command: &SourceCommand, root: &Path) -> Result<()> {
                 Ok(())
             } else {
                 Err("来源验证收据必须使用同代 verification/source-runtime.json".into())
+            }
+        }
+        SourceCommand::VerifyRecover(options) => {
+            local(
+                &options.source_generation,
+                root,
+                LocalTestPathKind::ExistingFile,
+            )?;
+            local(&options.output, root, LocalTestPathKind::OutputFile)?;
+            local(
+                options
+                    .output
+                    .parent()
+                    .ok_or("来源恢复收据缺少 verification 父目录")?,
+                root,
+                LocalTestPathKind::ExistingDirectory,
+            )?;
+            if is_source_runtime_output(&options.output) {
+                Ok(())
+            } else {
+                Err("来源恢复收据必须使用同代 verification/source-runtime.json".into())
             }
         }
         SourceCommand::ComparisonCapture(options) => validate_capture(options, root),

@@ -131,9 +131,25 @@ class FakeResources:
 
     def _redis(self, parts):
         command, *arguments = parts
-        if command == "UNLINK":
+        if command == "EVAL":
+            script, count, *values = arguments
+            assert script == runtime.AUTHORIZATION_CACHE_CLEANUP_SCRIPT and count == "33"
+            keys, comparisons = values[:33], values[33:]
+            assert len(comparisons) == 55
+            expired = []
+            for index in range(11):
+                tenant, user, snapshot = keys[index * 3:index * 3 + 3]
+                expected = comparisons[index * 5:index * 5 + 5]
+                assert self._redis(["GET", tenant]) == expected[0]
+                assert self._redis(["GET", user]) == expected[1]
+                assert self._redis(["TYPE", snapshot]) == expected[2]
+                if expected[2] == "none":
+                    expired.append(snapshot)
+                else:
+                    assert self._redis(["HKEYS", snapshot]) == [expected[3]]
+                    assert self._redis(["HGET", snapshot, expected[3]]) == expected[4]
             self.deleted = True
-            return len(arguments)
+            return [33 - len(expired), expired]
         key = arguments[0]
         if command == "TYPE":
             if self.deleted:
@@ -232,6 +248,7 @@ class SourceRuntimeTests(unittest.TestCase):
             "lineage_file_sha256": self.lineage["sha256"],
         }
         self.facts = {
+            "start_descriptor": self.start,
             "coordinator_source": self.coordinator_source,
             "receipt": {
                 "source_registration": self.source_registration,
@@ -343,6 +360,7 @@ class SourceRuntimeTests(unittest.TestCase):
     def modules(self):
         generation = SimpleNamespace(
             verify_running_source=lambda _backend, descriptor, live: self.facts,
+            verify_historical_running_source=lambda _backend, descriptor, live: self.facts,
             registered_running_source=self.registered,
         )
         images = SimpleNamespace(capture_image=self.capture, verify_image=self.verify_image)
@@ -378,7 +396,8 @@ class SourceRuntimeTests(unittest.TestCase):
             )
             self.assertEqual(result["status"], "source_runtime_verified")
             receipt = read_json(output)
-            self.assertEqual(receipt["remote_writes"], 23)
+            self.assertEqual(receipt["remote_writes"]["confirmed_total_commands"], 23)
+            self.assertEqual(receipt["remote_writes"]["authorization_cache"]["deleted_keys"], 33)
             self.assertEqual(receipt["write_effects"]["database_rows"]["sys_login_info"], 11)
             first = runtime.verify_source_runtime(self.backend, binding(output), live=True)
             second = runtime.verify_source_runtime(self.backend, binding(output), live=False)
@@ -632,7 +651,8 @@ class SourceProducerStoppedTests(unittest.TestCase):
 
     def facts_module(self):
         return SimpleNamespace(
-            verify_running_source=lambda _backend, _start, live: {"output": self.output}
+            verify_running_source=lambda _backend, _start, live: {"output": self.output},
+            verify_historical_running_source=lambda _backend, _start, live: {"output": self.output},
         )
 
     def test_no_verification_is_not_started_but_unregistered_or_unknown_is_rejected(self):
