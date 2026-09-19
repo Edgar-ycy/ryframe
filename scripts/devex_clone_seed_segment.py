@@ -456,6 +456,14 @@ def segmented_resume(backend: Path, directory: Path, attempts: list, archive: di
     tail = rest[cache_index + 1:]
     if tail and phase != "ready":
         raise ValueError("分段资源恢复完成前不能执行生成、发布或其他控制动作")
+    if tail:
+        from devex_clone_seed_generation_reboot import restart_tail
+
+        reboot = restart_tail(backend, directory, attempts, tail, archive, descriptor, current)
+        if reboot is not None:
+            return {"phase": "ready", "records": tuple(suffix[:3 + resource_count]) + reboot["records"],
+                    "storage": reboot["storage"], "cache": reboot["cache"], "replay": None,
+                    "reboot": reboot}
     cleanup_at = next((index for index, row in enumerate(tail)
                        if row["stage"] in {"cache-target", "storage-target"}), len(tail))
     lifecycle, cleanup = tail[:cleanup_at], tail[cleanup_at:]

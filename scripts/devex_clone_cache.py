@@ -162,6 +162,14 @@ def preflight_successor(backend, directory, value, filename=None, *, mode="resta
     published = next(row["number"] for row in state["attempts"] if row["result"] == proof["source_result"])
     handed_off = any(item["stage"] == "seed-runtime" and item["mode"] in {"source-rebind", "arm-input"}
                      and item["number"] > published for item in state["attempts"])
+    if mode == "restart" and any(
+            (row["stage"], row["mode"]) == ("seed-runtime", "source-generation-reboot-close")
+            for row in state["attempts"]):
+        from devex_clone_seed_generation_reboot import restart_authorization
+
+        restart_authorization(backend, directory)
+        quiet_producers(backend, source)
+        return proof
     archive = closed(backend, directory, state["attempts"])
     segment = (segmented_resume(backend, directory, state["attempts"], archive,
                                 proof["source_result"]) if archive is not None else None)
@@ -193,6 +201,12 @@ def published_restart_guard(backend, directory, number):
     attempt = load_state(directory)["attempts"][-1]
     if attempt["number"] != number or attempt["stage"] != STAGE or attempt["status"] != "running":
         raise ValueError("seed 缓存恢复必须处于当前唯一持锁阶段")
+    if any((row["stage"], row["mode"]) == ("seed-runtime", "source-generation-reboot-close")
+           for row in load_state(directory)["attempts"]):
+        from devex_clone_seed_generation_reboot import restart_authorization
+
+        restart_authorization(backend, directory, allow_attempt="cache-target:restart")
+        return
     output = directory / STAGE / f"a{number:04d}"
     saved = read_json(output / "tool-successor.json")
     proof, _, source = successor_plan(backend, directory, read_json(directory / "manifest.json"), saved["successor"])

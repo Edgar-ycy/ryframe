@@ -40,7 +40,8 @@ def start_record(backend: Path, directory: Path) -> dict:
     start = authority["completed_successor"]
     if start["status"] != "passed":
         raise ValueError("主机重启观察只接受最高源代次已经成功启动")
-    later = [row for row in attempts if row["number"] > start["number"]]
+    later = [row for row in attempts
+             if row["number"] > start["number"] and not (row["stage"] == "seed-runtime" and row["mode"] == CLOSE)]
     if any(row["stage"] == "seed-runtime" for row in later):
         raise ValueError("源代次之后存在停止、恢复或其他源阶段，不能按重启中断观察")
     return {"start": start, "later": later}
@@ -249,6 +250,8 @@ def preflight(backend: Path, directory: Path, request_path: Path | None) -> dict
     """收尾前只读前置：要求已核实重启事实，且请求仍是 C70 冻结的同一正式请求。"""
     if request_path is None:
         raise ValueError("重启收尾必须显式提供 C70 冻结的正式请求")
+    if closure_record(directory) is not None:
+        raise ValueError("主机重启收尾已经发布，不能重复收尾")
     observation = _observation(backend, directory)
     if not observation["reboot_verified"]:
         raise ValueError("主机重启事实尚未完整核实：" + "；".join(observation["reboot_blockers"]))
@@ -258,6 +261,106 @@ def preflight(backend: Path, directory: Path, request_path: Path | None) -> dict
     if binding(request_path) != receipt["request"]:
         raise ValueError("重启收尾必须绑定 C70 冻结的同一正式请求")
     return observation
+
+
+def closure_record(directory: Path) -> dict | None:
+    """唯一已发布的重启收尾记录；不存在返回 None，重复或未收尾即拒绝。"""
+    records = [row for row in load_state(directory)["attempts"]
+               if (row["stage"], row["mode"]) == ("seed-runtime", CLOSE)]
+    if not records:
+        return None
+    if len(records) != 1 or records[0]["status"] != "passed" or records[0]["result"] is None:
+        raise ValueError("主机重启收尾不能重复、失败或未收尾")
+    return records[0]
+
+
+def closure_receipt(backend: Path, directory: Path) -> dict:
+    """复核已发布收尾收据并返回它的绑定与内容。"""
+    record = closure_record(directory)
+    if record is None:
+        raise ValueError("缺少唯一主机重启收尾收据，不能登记新的服务代次")
+    path = bound_file(backend, record["result"])
+    closure = read_json(path)
+    exact(closure, CLOSURE_FIELDS)
+    if (type(closure["format_version"]) is not int or closure["format_version"] != 1
+            or closure["kind"] != "seed-source-generation-reboot-closure"
+            or closure["status"] != "seed_source_generation_reboot_closed"
+            or closure["verification_qualified"] is not False
+            or closure["replay_allowed"] is not False
+            or type(closure["remote_writes"]) is not int or closure["remote_writes"] != 0
+            or closure["restore_qualified"] is not False
+            or closure["declared_deltas"] != {"sys_login_info": 11, "sys_oper_log": 0,
+                                              "sys_outbox_event": 0}):
+        raise ValueError("主机重启收尾收据的状态、计数或声明增量无效")
+    return {"record": record, "binding": binding(path), "receipt": closure}
+
+
+def restart_authorization(backend: Path, directory: Path, *, allow_attempt: str | None = None) -> dict:
+    """登记新服务代次的唯一授权：收据绑定加实时重启事实复核。"""
+    issued = closure_receipt(backend, directory)
+    observation = _observation(backend, directory)
+    if not observation["reboot_verified"]:
+        raise ValueError("主机重启事实未通过复核：" + "；".join(observation["reboot_blockers"]))
+    if (issued["receipt"]["start"] != observation["start"]["result"]
+            or issued["receipt"]["request"] != observation["facts"]["receipt"]["request"]):
+        raise ValueError("重启收尾收据没有绑定当前源代次或冻结请求")
+    later = [row for row in load_state(directory)["attempts"] if row["number"] > issued["record"]["number"]]
+    allowed = {("storage-target", "restart"), ("cache-target", "restart")}
+    for row in later:
+        if (row["stage"], row["mode"]) not in allowed or row["status"] not in {"passed", "running"}:
+            raise ValueError("重启收尾之后存在其他阶段或未收尾的服务登记")
+        if row["status"] == "running" and f"{row['stage']}:{row['mode']}" != allow_attempt:
+            raise ValueError("当前持锁服务阶段与授权请求不一致")
+    return {"closure": issued, "observation": observation, "later": later}
+
+
+def restart_tail(backend: Path, directory: Path, attempts: list, tail: list, archive: dict,
+                 descriptor: dict, current: int | None) -> dict | None:
+    """识别收尾后唯一的目标存储与缓存重启；不匹配返回 None，不完整即拒绝。"""
+    from devex_clone_seed_generation_lineage_retry import completed
+
+    closures = [row for row in attempts if (row["stage"], row["mode"]) == ("seed-runtime", CLOSE)]
+    if not closures:
+        return None
+    if len(closures) != 1 or closures[0]["status"] != "passed" or closures[0]["result"] is None:
+        raise ValueError("主机重启收尾不能重复、失败或未收尾")
+    authority = completed(backend, directory, attempts)
+    if authority is None:
+        raise ValueError("存在重启收尾收据但缺少已收尾的 C70 源代次")
+    start = authority["completed_successor"]
+    rows = [row for row in tail if row["number"] > start["number"]]
+    if not rows:
+        return None
+    shapes = (("seed-runtime", CLOSE, "passed"), ("storage-target", "restart", "passed"),
+              ("cache-target", "restart", "passed"))
+    if len(rows) != len(shapes) or any(
+            row["number"] != start["number"] + offset
+            or tuple(row.get(key) for key in ("stage", "mode", "status")) != shape
+            for offset, (row, shape) in enumerate(zip(rows, shapes), 1)):
+        raise ValueError("主机重启收尾后的目标存储与缓存重启不完整或不相邻")
+    observation = _observation(backend, directory)
+    if not observation["reboot_verified"]:
+        raise ValueError("重启段现场未通过复核：" + "；".join(observation["reboot_blockers"]))
+    issued = closure_receipt(backend, directory)
+    if issued["record"]["number"] != rows[0]["number"]:
+        raise ValueError("重启段没有采用当前唯一收尾收据")
+    from devex_clone_cache import registered_cache_binding
+    from devex_clone_storage import registered_storage_binding
+
+    storage_row, cache_row = rows[1], rows[2]
+    storage = registered_storage_binding(backend, directory, "target", before=cache_row["number"] + 1)
+    if (storage is None or storage["attempt"] != storage_row["number"]
+            or storage["restart_result"] != storage_row["result"]):
+        raise ValueError("收尾后的对象存储重启没有绑定同一登记代次")
+    cache = registered_cache_binding(
+        backend, directory, before=cache_row["number"] + 1,
+        frozen=(descriptor, archive["receipt"]["review_successor"]))
+    if (cache is None or cache["attempt"] != cache_row["number"]
+            or cache["restart_result"] != cache_row["result"]):
+        raise ValueError("收尾后的缓存重启没有绑定同一登记代次")
+    return {"records": tuple(rows), "storage": storage, "cache": cache,
+            "closure": issued["binding"], "baseline": issued["receipt"]["baseline"],
+            "deltas": issued["receipt"]["declared_deltas"]}
 
 
 def execute_close(backend: Path, directory: Path, request_path: Path, number: int) -> dict:

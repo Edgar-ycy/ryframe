@@ -409,6 +409,9 @@ def _stable_maintenance(value: dict, receipt: Path) -> dict:
 
 
 def _archived_image(archive: dict, current: dict, segment: dict | None) -> None:
+    if segment is not None and segment.get("reboot") is not None:
+        _reboot_image(archive, current, segment)
+        return
     expected = copy.deepcopy(archive["image"])
     if segment is not None:
         rustfs = segment["storage"]["storage"]
@@ -423,6 +426,16 @@ def _archived_image(archive: dict, current: dict, segment: dict | None) -> None:
         raise ValueError("未启动恢复的新完整逻辑基线之后存在未知写入；禁止启动")
     if segment is not None and segment.get("replay") is not None and current != segment["replay"]["image"]:
         raise ValueError("C69 授权后完整逻辑像发生变化；禁止执行 C70 启动")
+
+
+def _reboot_image(archive: dict, current: dict, segment: dict) -> None:
+    """主机重启后的新代次：只允许声明的会话写入，缓存身份按新代次归一化。"""
+    from restore_source_runtime_model import image_write_effects
+
+    expected = copy.deepcopy(archive["image"])
+    expected["storage"] = {"rustfs": copy.deepcopy(segment["storage"]["storage"]),
+                           "redis": copy.deepcopy(segment["cache"]["redis"])}
+    image_write_effects(expected, current)
 
 
 def execute_generation(backend: Path, directory: Path, request_path: Path, number: int, *, run=subprocess.run) -> dict:

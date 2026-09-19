@@ -288,6 +288,13 @@ def published_restart_guard(backend: Path, directory: Path, number: int | None) 
             or (state["attempts"][-1]["stage"], state["attempts"][-1]["mode"], state["attempts"][-1]["status"])
             != ("storage-target", "restart", "running")):
         raise ValueError("发布源存储重启不是当前登记阶段")
+    if any((row["stage"], row["mode"]) == ("seed-runtime", "source-generation-reboot-close")
+           for row in state["attempts"]):
+        from devex_clone_seed_generation_reboot import restart_authorization
+
+        restart_authorization(backend, directory,
+                              allow_attempt=None if number is None else "storage-target:restart")
+        return
     records = [item for item in state["attempts"] if item["stage"] == "seed-runtime"
                and item["mode"] == "source-register"]
     if not records or records[-1]["status"] != "passed":
