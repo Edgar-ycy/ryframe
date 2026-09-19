@@ -20,11 +20,12 @@ SEED_SOURCE_OPERATIONS = {
     "source-register", "source-rebind", "source-generation-start",
     "source-generation-stop", "source-generation-status",
     "source-generation-reboot-status",
+    "source-generation-reboot-close",
     "source-generation-recover", "source-export", "source-export-reconcile",
 }
 SEED_SOURCE_REQUEST_OPERATIONS = {
     "source-rebind", "source-generation-start", "source-generation-stop",
-    "source-generation-recover",
+    "source-generation-recover", "source-generation-reboot-close",
 }
 
 
@@ -268,7 +269,7 @@ def dispatch(args, backend: Path) -> dict:
         result = execute(backend, directory, "cache-target", args.operation, cache_request=args.request)
         return {key: result[key] for key in ("status", "stage", "mode", "attempt", "restore_qualified")}
     if args.command == "seed-runtime":
-        request_operations = {"register", "arm-input", "source-rebind", "source-generation-start", "source-generation-stop", "source-generation-recover"}
+        request_operations = {"register", "arm-input", "source-rebind", "source-generation-start", "source-generation-stop", "source-generation-recover", "source-generation-reboot-close"}
         if (args.operation in request_operations) != (args.request is not None):
             raise ValueError("当前 seed 操作的 --request 缺失或不适用")
         if (args.operation == "recover-session") != (args.producer_binding is not None):

@@ -110,6 +110,12 @@ fn parses_all_formal_source_operations_with_exact_shapes() {
             false,
         ),
         (
+            "source-generation-reboot-close",
+            SeedSourceOperation::GenerationRebootClose,
+            true,
+            true,
+        ),
+        (
             "source-generation-recover",
             SeedSourceOperation::GenerationRecover,
             true,
@@ -141,6 +147,8 @@ fn rejects_unknown_duplicate_cross_operation_and_invalid_write_arguments() {
         ("source-generation-status", false, true),
         ("source-generation-reboot-status", true, false),
         ("source-generation-reboot-status", false, true),
+        ("source-generation-reboot-close", false, true),
+        ("source-generation-reboot-close", true, false),
     ] {
         assert!(parse_source(&fixture, operation, request, write).is_err());
     }

@@ -339,6 +339,12 @@ def execute_seed(backend, directory, value, mode, number, request_file=None, pro
         operation = {"source-generation-start": execute_generation, "source-generation-stop": execute_stop,
                      "source-generation-recover": execute_recover}[mode]
         return operation(backend, directory, request_file, number)
+    if mode == "source-generation-reboot-close":
+        if request_file is None:
+            raise ValueError("主机重启收尾需要明确 --request")
+        from devex_clone_seed_generation_reboot import execute_close
+
+        return execute_close(backend, directory, request_file, number)
     require_quiet(backend, directory, number)
     if mode in {"source-export", "source-export-reconcile"}:
         from devex_clone_seed_export import execute_export

@@ -682,6 +682,10 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
                     from devex_clone_seed_generation_control import preflight as generation_control_preflight
 
                     generation_control_preflight(directory, mode, backend=backend, request_path=seed_request)
+                if stage == "seed-runtime" and mode == "source-generation-reboot-close":
+                    from devex_clone_seed_generation_reboot import preflight as reboot_preflight
+
+                    reboot_preflight(backend, directory, seed_request)
                 if stage == "seed-runtime" and mode in {"source-export", "source-export-reconcile"}:
                     from devex_clone_seed_export import preflight
 

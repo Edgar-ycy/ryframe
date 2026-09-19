@@ -17,9 +17,14 @@ from host_boot import host_boot_proof, provably_exited, verify_host_boot_proof
 from restore_reference_plan import plan_hash
 
 START = "source-generation-start"
+CLOSE = "source-generation-reboot-close"
 ROLES = ("api", "worker")
 MEMBER_KEYS = ("process", "supervisor", "monitor")
 PROOF_MAX_AGE_SECONDS = 1800
+CLOSURE_DIRECTORY = "reboot-close"
+CLOSURE_FIELDS = {"format_version", "kind", "status", "start", "request", "failed_prefix",
+                  "reboot", "roles", "storage", "cache", "baseline", "running", "declared_deltas",
+                  "verification_qualified", "replay_allowed", "remote_writes", "restore_qualified"}
 
 
 def start_record(backend: Path, directory: Path) -> dict:
@@ -206,6 +211,11 @@ def build_context_state(backend: Path, facts: dict) -> dict:
 
 def observe(backend: Path, directory: Path) -> dict:
     """完整只读观察：绑定重启中断现场并列出继续收口前的阻塞项。"""
+    return _observation(backend, directory)["value"]
+
+
+def _observation(backend: Path, directory: Path) -> dict:
+    """观察实现；返回完整结果与只依据重启事实的授权判定。"""
     directory = directory.resolve()
     tail = start_record(backend, directory)
     facts = generation(backend, directory, tail["start"])
@@ -216,16 +226,75 @@ def observe(backend: Path, directory: Path) -> dict:
     storage, storage_blockers = storage_generation(facts, proof)
     cache, cache_blockers = cache_generations(backend, directory)
     blockers += storage_blockers + cache_blockers
+    reboot_blockers = list(blockers)
     build = build_context_state(backend, facts)
     if not all(row["matches"] for row in build.values()):
         blockers.append("构建环境与登记收据不一致，收口前必须成对重新登记构建收据")
     history = [row for row in load_state(directory)["attempts"] if row["number"] < tail["start"]["number"]]
-    return {"status": "source_generation_reboot_observed", "attempt": tail["start"]["number"],
-            "start": tail["start"]["result"], "history_length": len(history),
-            "history_sha256": plan_hash(history),
-            "service_attempts": [row["number"] for row in tail["later"]],
-            "verification": prefix, "reboot": proof, "roles": role_facts,
-            "storage": storage, "cache": cache,
-            "build_context": build,
-            "blockers": blockers, "closure_ready": not blockers,
+    value = {"status": "source_generation_reboot_observed", "attempt": tail["start"]["number"],
+             "start": tail["start"]["result"], "history_length": len(history),
+             "history_sha256": plan_hash(history),
+             "service_attempts": [row["number"] for row in tail["later"]],
+             "verification": prefix, "reboot": proof, "roles": role_facts,
+             "storage": storage, "cache": cache,
+             "build_context": build,
+             "blockers": blockers, "closure_ready": not blockers,
+             "remote_writes": 0, "restore_qualified": False}
+    return {"value": value, "facts": facts, "prefix": prefix, "proof": proof,
+            "reboot_blockers": reboot_blockers, "reboot_verified": not reboot_blockers,
+            "start": tail["start"]}
+
+
+def preflight(backend: Path, directory: Path, request_path: Path | None) -> dict:
+    """收尾前只读前置：要求已核实重启事实，且请求仍是 C70 冻结的同一正式请求。"""
+    if request_path is None:
+        raise ValueError("重启收尾必须显式提供 C70 冻结的正式请求")
+    observation = _observation(backend, directory)
+    if not observation["reboot_verified"]:
+        raise ValueError("主机重启事实尚未完整核实：" + "；".join(observation["reboot_blockers"]))
+    if observation["value"]["service_attempts"]:
+        raise ValueError("重启收尾只能在登记新服务代次之前执行")
+    receipt = observation["facts"]["receipt"]
+    if binding(request_path) != receipt["request"]:
+        raise ValueError("重启收尾必须绑定 C70 冻结的同一正式请求")
+    return observation
+
+
+def execute_close(backend: Path, directory: Path, request_path: Path, number: int) -> dict:
+    """发布一次重启收尾收据；不重启服务、不采集新像、不重放任何源阶段。"""
+    from devex_clone_run import _require_owned_run
+    from devex_clone_run_state import load_state as _load
+    from restore_source_runtime import _producer_bindings
+
+    observation = preflight(backend, directory, request_path, number)
+    state = _load(directory)
+    if (not state["attempts"] or state["attempts"][-1]["number"] != number
+            or tuple(state["attempts"][-1][key] for key in ("stage", "mode", "status"))
+            != ("seed-runtime", CLOSE, "running")):
+        raise ValueError("重启收尾不属于当前唯一持锁阶段")
+    _require_owned_run(directory)
+    facts = observation["facts"]
+    output = facts["output"] / CLOSURE_DIRECTORY
+    if output.exists():
+        raise ValueError("重启收尾目录已存在，不能覆盖或重放")
+    output.mkdir()
+    closure = {"format_version": 1, "kind": "seed-source-generation-reboot-closure",
+               "status": "seed_source_generation_reboot_closed",
+               "start": observation["start"]["result"], "request": facts["receipt"]["request"],
+               "failed_prefix": observation["prefix"], "reboot": observation["proof"],
+               "roles": observation["value"]["roles"], "storage": observation["value"]["storage"],
+               "cache": observation["value"]["cache"], "baseline": facts["receipt"]["before"],
+               "running": facts["receipt"]["running"],
+               "declared_deltas": {"sys_login_info": 11, "sys_oper_log": 0, "sys_outbox_event": 0},
+               "verification_qualified": False, "replay_allowed": False,
+               "remote_writes": 0, "restore_qualified": False}
+    from devex_clone_capture import write_json
+
+    write_json(output / "closure.json", closure)
+    return {"status": closure["status"], "start": closure["start"], "request": closure["request"],
+            "closure": binding(output / "closure.json"), "baseline": closure["baseline"],
+            "reboot": closure["reboot"], "failed_prefix": closure["failed_prefix"],
+            "declared_deltas": closure["declared_deltas"], "producer": _producer_bindings(
+                facts["output"] / "verification"),
+            "verification_qualified": False, "replay_allowed": False,
             "remote_writes": 0, "restore_qualified": False}

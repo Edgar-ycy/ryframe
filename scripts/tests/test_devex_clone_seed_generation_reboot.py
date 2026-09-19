@@ -2,7 +2,6 @@
 from pathlib import Path
 import shutil
 import sys
-import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -26,7 +25,10 @@ def identity(started, pid=4242):
 
 class RebootObservationTests(unittest.TestCase):
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp(prefix="ryframe-reboot-"))
+        parent = Path(__file__).resolve().parents[2] / ".local-tests/python-temp"
+        parent.mkdir(parents=True, exist_ok=True)
+        self.root = Path(parent / f"reboot-observation-{id(self)}")
+        self.root.mkdir()
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         self.verification = self.root / "verification"
         for name in ("before", "audit", runtime.STAGING_DIRECTORY):
@@ -107,6 +109,37 @@ class RebootObservationTests(unittest.TestCase):
                           return_value={"attempts": [{"status": "running", "number": 71}]}):
             with self.assertRaises(ValueError):
                 reboot.start_record(Path("."), self.root)
+
+    def test_closure_preflight_requires_verified_reboot_and_same_request(self):
+        request = self.root / "generation-request.json"
+        request.write_text("{}", encoding="utf-8")
+        descriptor = reboot.binding(request)
+        facts = {"receipt": {"request": descriptor}}
+        verified = {"reboot_verified": True, "reboot_blockers": [], "value": {"service_attempts": []},
+                    "facts": facts}
+        with patch.object(reboot, "_observation", return_value=verified):
+            self.assertEqual(reboot.preflight(Path("."), self.root, request), verified)
+        blocked = dict(verified, reboot_verified=False, reboot_blockers=["角色仍在世"])
+        with patch.object(reboot, "_observation", return_value=blocked):
+            with self.assertRaises(ValueError):
+                reboot.preflight(Path("."), self.root, request)
+        other = self.root / "other-request.json"
+        other.write_text("{}", encoding="utf-8")
+        with patch.object(reboot, "_observation", return_value=verified):
+            with self.assertRaises(ValueError):
+                reboot.preflight(Path("."), self.root, other)
+        with self.assertRaises(ValueError):
+            reboot.preflight(Path("."), self.root, None)
+
+    def test_closure_preflight_rejects_service_generations(self):
+        request = self.root / "generation-request.json"
+        request.write_text("{}", encoding="utf-8")
+        value = {"reboot_verified": True, "reboot_blockers": [],
+                 "value": {"service_attempts": [71]},
+                 "facts": {"receipt": {"request": reboot.binding(request)}}}
+        with patch.object(reboot, "_observation", return_value=value):
+            with self.assertRaises(ValueError):
+                reboot.preflight(Path("."), self.root, request)
 
 
 if __name__ == "__main__":

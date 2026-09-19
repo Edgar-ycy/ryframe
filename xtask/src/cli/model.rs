@@ -100,6 +100,7 @@ pub(crate) enum SeedSourceOperation {
     GenerationStop,
     GenerationStatus,
     GenerationRebootStatus,
+    GenerationRebootClose,
     GenerationRecover,
     Export,
     ExportReconcile,
@@ -114,6 +115,7 @@ impl SeedSourceOperation {
             Self::GenerationStop => "source-generation-stop",
             Self::GenerationStatus => "source-generation-status",
             Self::GenerationRebootStatus => "source-generation-reboot-status",
+            Self::GenerationRebootClose => "source-generation-reboot-close",
             Self::GenerationRecover => "source-generation-recover",
             Self::Export => "source-export",
             Self::ExportReconcile => "source-export-reconcile",
@@ -123,7 +125,11 @@ impl SeedSourceOperation {
     pub(crate) const fn requires_request(self) -> bool {
         matches!(
             self,
-            Self::Rebind | Self::GenerationStart | Self::GenerationStop | Self::GenerationRecover
+            Self::Rebind
+                | Self::GenerationStart
+                | Self::GenerationStop
+                | Self::GenerationRecover
+                | Self::GenerationRebootClose
         )
     }
 

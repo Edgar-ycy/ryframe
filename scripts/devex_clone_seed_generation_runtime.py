@@ -43,7 +43,8 @@ def process_record(runtime: Path, role: str, scope: str) -> dict:
 def generation_directory(output: Path) -> None:
     files = {"request.json", "intent.json", "producers.json", "source-request.json",
              "generation-verified.json", "runtime-evidence.json", "running-evidence.json", "dataset-lineage.json"}
-    directories = {"runtime", "before", "running", "after", "stop-before", "verification", "recover-before", "recover-after"}
+    directories = {"runtime", "before", "running", "after", "stop-before", "verification",
+                   "recover-before", "recover-after", "reboot-close"}
     if linked(output) or not output.is_dir():
         raise ValueError("source-generation 必须是普通代次目录")
     for item in output.iterdir():
