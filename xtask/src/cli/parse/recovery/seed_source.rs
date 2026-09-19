@@ -7,12 +7,13 @@ use crate::{
 
 use super::super::super::model::{CliError, SeedSourceOperation, SeedSourceOptions};
 
-const OPERATIONS: [&str; 8] = [
+const OPERATIONS: [&str; 9] = [
     "source-register",
     "source-rebind",
     "source-generation-start",
     "source-generation-stop",
     "source-generation-status",
+    "source-generation-reboot-status",
     "source-generation-recover",
     "source-export",
     "source-export-reconcile",
@@ -121,6 +122,7 @@ fn parse_operation(value: &str) -> Result<SeedSourceOperation, CliError> {
         "source-generation-start" => Ok(SeedSourceOperation::GenerationStart),
         "source-generation-stop" => Ok(SeedSourceOperation::GenerationStop),
         "source-generation-status" => Ok(SeedSourceOperation::GenerationStatus),
+        "source-generation-reboot-status" => Ok(SeedSourceOperation::GenerationRebootStatus),
         "source-generation-recover" => Ok(SeedSourceOperation::GenerationRecover),
         "source-export" => Ok(SeedSourceOperation::Export),
         "source-export-reconcile" => Ok(SeedSourceOperation::ExportReconcile),

@@ -16,6 +16,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import devex_clone
 import devex_clone_run_cli as cli
 
+READ_ONLY_OPERATIONS = {"source-generation-status", "source-generation-reboot-status"}
+
 
 class SeedSourceProtocolTests(unittest.TestCase):
     def setUp(self):
@@ -32,7 +34,7 @@ class SeedSourceProtocolTests(unittest.TestCase):
                 "operation": operation,
                 "run_dir": str(self.run_dir),
                 "request": str(self.request) if operation in cli.SEED_SOURCE_REQUEST_OPERATIONS else None,
-                "write": operation != "source-generation-status",
+                "write": operation not in READ_ONLY_OPERATIONS,
             },
         }
 
@@ -47,7 +49,7 @@ class SeedSourceProtocolTests(unittest.TestCase):
                 self.assertEqual(request.command, "seed-runtime")
                 self.assertEqual(request.operation, operation)
                 self.assertEqual(request.run_dir, self.run_dir)
-                self.assertEqual(request.write, operation != "source-generation-status")
+                self.assertEqual(request.write, operation not in READ_ONLY_OPERATIONS)
                 self.assertEqual(
                     request.request,
                     self.request if operation in cli.SEED_SOURCE_REQUEST_OPERATIONS else None,

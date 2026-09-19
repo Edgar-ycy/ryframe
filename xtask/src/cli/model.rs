@@ -99,6 +99,7 @@ pub(crate) enum SeedSourceOperation {
     GenerationStart,
     GenerationStop,
     GenerationStatus,
+    GenerationRebootStatus,
     GenerationRecover,
     Export,
     ExportReconcile,
@@ -112,6 +113,7 @@ impl SeedSourceOperation {
             Self::GenerationStart => "source-generation-start",
             Self::GenerationStop => "source-generation-stop",
             Self::GenerationStatus => "source-generation-status",
+            Self::GenerationRebootStatus => "source-generation-reboot-status",
             Self::GenerationRecover => "source-generation-recover",
             Self::Export => "source-export",
             Self::ExportReconcile => "source-export-reconcile",
@@ -126,7 +128,7 @@ impl SeedSourceOperation {
     }
 
     pub(crate) const fn is_read_only(self) -> bool {
-        matches!(self, Self::GenerationStatus)
+        matches!(self, Self::GenerationStatus | Self::GenerationRebootStatus)
     }
 }
 

@@ -19,6 +19,7 @@ SEED_SOURCE_PROTOCOL_KIND = "ryframe-xtask-recovery-seed-source"
 SEED_SOURCE_OPERATIONS = {
     "source-register", "source-rebind", "source-generation-start",
     "source-generation-stop", "source-generation-status",
+    "source-generation-reboot-status",
     "source-generation-recover", "source-export", "source-export-reconcile",
 }
 SEED_SOURCE_REQUEST_OPERATIONS = {
@@ -153,7 +154,7 @@ def decode_seed_source_protocol(source: str):
     supplied = request["request"] is not None
     if supplied != (operation in SEED_SOURCE_REQUEST_OPERATIONS):
         raise SeedSourceProtocolError("seed source 私有协议 request 与操作不匹配")
-    read_only = operation == "source-generation-status"
+    read_only = operation in {"source-generation-status", "source-generation-reboot-status"}
     if request["write"] == read_only:
         raise SeedSourceProtocolError("seed source 私有协议 write 与操作不匹配")
     backend = _seed_protocol_path(request["backend_dir"], "backend_dir")
@@ -284,6 +285,12 @@ def dispatch(args, backend: Path) -> dict:
             if args.write:
                 raise ValueError("source-generation-status 是只读操作，不接受 --write")
             return generation_status(backend, directory)
+        if args.operation == "source-generation-reboot-status":
+            from devex_clone_seed_generation_reboot import observe as generation_reboot_observe
+
+            if args.write:
+                raise ValueError("source-generation-reboot-status 是只读操作，不接受 --write")
+            return generation_reboot_observe(backend, directory)
         if not args.write:
             raise ValueError("seed 操作需要显式 --write")
         producer = read_json(local_path(backend, str(args.producer_binding))) if args.producer_binding else None
