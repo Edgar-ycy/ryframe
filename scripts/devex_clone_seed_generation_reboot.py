@@ -254,10 +254,11 @@ def preflight(backend: Path, directory: Path, request_path: Path | None) -> dict
     request_path = request_path.resolve()
     if closure_record(directory) is not None:
         raise ValueError("主机重启收尾已经发布，不能重复收尾")
-    failed = [row for row in load_state(directory)["attempts"]
-              if (row["stage"], row["mode"]) == ("seed-runtime", CLOSE) and row["status"] == "failed"]
-    if failed and (len(failed) > 1 or (directory / "g0070" / CLOSURE_DIRECTORY).exists()):
-        raise ValueError("主机重启收尾已失败并留下输出，不能直接重放")
+    settled = [row for row in load_state(directory)["attempts"]
+               if (row["stage"], row["mode"]) == ("seed-runtime", CLOSE) and row["status"] != "running"]
+    if settled and any(row["result"] is not None for row in settled) \
+            or (directory / "g0070" / CLOSURE_DIRECTORY).exists():
+        raise ValueError("主机重启收尾已发布或留下输出，不能直接重放")
     observation = _observation(backend, directory)
     if not observation["reboot_verified"]:
         raise ValueError("主机重启事实尚未完整核实：" + "；".join(observation["reboot_blockers"]))
@@ -274,8 +275,9 @@ def closure_record(directory: Path) -> dict | None:
     directory = directory.resolve()
     records = [row for row in load_state(directory)["attempts"]
                if (row["stage"], row["mode"]) == ("seed-runtime", CLOSE)]
-    published = [row for row in records if row["status"] == "passed"]
-    if len(records) > 1 and len(published) != 1:
+    settled = [row for row in records if row["status"] != "running"]
+    published = [row for row in settled if row["status"] == "passed"]
+    if len(published) > 1 or any(row["status"] != "failed" for row in settled if row not in published):
         raise ValueError("主机重启收尾不能重复、失败或未收尾")
     records = published
     if not records:
