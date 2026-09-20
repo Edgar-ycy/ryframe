@@ -117,17 +117,20 @@ class RebootObservationTests(unittest.TestCase):
         facts = {"receipt": {"request": descriptor}}
         verified = {"reboot_verified": True, "reboot_blockers": [], "value": {"service_attempts": []},
                     "facts": facts}
-        with patch.object(reboot, "closure_record", return_value=None), \
+        with patch.object(reboot, "load_state", return_value={"attempts": []}), \
+                patch.object(reboot, "closure_record", return_value=None), \
                 patch.object(reboot, "_observation", return_value=verified):
             self.assertEqual(reboot.preflight(Path("."), self.root, request), verified)
         blocked = dict(verified, reboot_verified=False, reboot_blockers=["角色仍在世"])
-        with patch.object(reboot, "closure_record", return_value=None), \
+        with patch.object(reboot, "load_state", return_value={"attempts": []}), \
+                patch.object(reboot, "closure_record", return_value=None), \
                 patch.object(reboot, "_observation", return_value=blocked):
             with self.assertRaises(ValueError):
                 reboot.preflight(Path("."), self.root, request)
         other = self.root / "other-request.json"
         other.write_text("{}", encoding="utf-8")
-        with patch.object(reboot, "closure_record", return_value=None), \
+        with patch.object(reboot, "load_state", return_value={"attempts": []}), \
+                patch.object(reboot, "closure_record", return_value=None), \
                 patch.object(reboot, "_observation", return_value=verified):
             with self.assertRaises(ValueError):
                 reboot.preflight(Path("."), self.root, other)
@@ -140,7 +143,8 @@ class RebootObservationTests(unittest.TestCase):
         value = {"reboot_verified": True, "reboot_blockers": [],
                  "value": {"service_attempts": [71]},
                  "facts": {"receipt": {"request": reboot.binding(request)}}}
-        with patch.object(reboot, "closure_record", return_value=None), \
+        with patch.object(reboot, "load_state", return_value={"attempts": []}), \
+                patch.object(reboot, "closure_record", return_value=None), \
                 patch.object(reboot, "_observation", return_value=value):
             with self.assertRaises(ValueError):
                 reboot.preflight(Path("."), self.root, request)

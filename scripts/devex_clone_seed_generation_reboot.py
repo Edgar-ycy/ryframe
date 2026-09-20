@@ -248,10 +248,16 @@ def _observation(backend: Path, directory: Path) -> dict:
 
 def preflight(backend: Path, directory: Path, request_path: Path | None) -> dict:
     """收尾前只读前置：要求已核实重启事实，且请求仍是 C70 冻结的同一正式请求。"""
+    directory = directory.resolve()
     if request_path is None:
         raise ValueError("重启收尾必须显式提供 C70 冻结的正式请求")
+    request_path = request_path.resolve()
     if closure_record(directory) is not None:
         raise ValueError("主机重启收尾已经发布，不能重复收尾")
+    failed = [row for row in load_state(directory)["attempts"]
+              if (row["stage"], row["mode"]) == ("seed-runtime", CLOSE) and row["status"] == "failed"]
+    if failed and (len(failed) > 1 or (directory / "g0070" / CLOSURE_DIRECTORY).exists()):
+        raise ValueError("主机重启收尾已失败并留下输出，不能直接重放")
     observation = _observation(backend, directory)
     if not observation["reboot_verified"]:
         raise ValueError("主机重启事实尚未完整核实：" + "；".join(observation["reboot_blockers"]))
@@ -265,11 +271,16 @@ def preflight(backend: Path, directory: Path, request_path: Path | None) -> dict
 
 def closure_record(directory: Path) -> dict | None:
     """唯一已发布的重启收尾记录；不存在返回 None，重复或未收尾即拒绝。"""
+    directory = directory.resolve()
     records = [row for row in load_state(directory)["attempts"]
                if (row["stage"], row["mode"]) == ("seed-runtime", CLOSE)]
+    published = [row for row in records if row["status"] == "passed"]
+    if len(records) > 1 and len(published) != 1:
+        raise ValueError("主机重启收尾不能重复、失败或未收尾")
+    records = published
     if not records:
         return None
-    if len(records) != 1 or records[0]["status"] != "passed" or records[0]["result"] is None:
+    if len(records) != 1 or records[0]["result"] is None:
         raise ValueError("主机重启收尾不能重复、失败或未收尾")
     return records[0]
 
@@ -322,8 +333,10 @@ def restart_tail(backend: Path, directory: Path, attempts: list, tail: list, arc
     closures = [row for row in attempts if (row["stage"], row["mode"]) == ("seed-runtime", CLOSE)]
     if not closures:
         return None
-    if len(closures) != 1 or closures[0]["status"] != "passed" or closures[0]["result"] is None:
+    published = [row for row in closures if row["status"] == "passed" and row["result"] is not None]
+    if len(published) != 1 or any(row["status"] != "failed" for row in closures if row not in published):
         raise ValueError("主机重启收尾不能重复、失败或未收尾")
+    closures = published
     authority = completed(backend, directory, attempts)
     if authority is None:
         raise ValueError("存在重启收尾收据但缺少已收尾的 C70 源代次")
@@ -369,7 +382,7 @@ def execute_close(backend: Path, directory: Path, request_path: Path, number: in
     from devex_clone_run_state import load_state as _load
     from restore_source_runtime import _producer_bindings
 
-    observation = preflight(backend, directory, request_path, number)
+    observation = preflight(backend, directory, request_path)
     state = _load(directory)
     if (not state["attempts"] or state["attempts"][-1]["number"] != number
             or tuple(state["attempts"][-1][key] for key in ("stage", "mode", "status"))

@@ -636,6 +636,7 @@ def execute(backend: Path, directory: Path, stage: str, mode: str, roles: tuple 
     cleanup = session_cleanup or seed_cleanup or storage_cleanup or (stage.startswith("runtime-") and mode in {"stop", "recover"})
     evidence_handoff = stage == "seed-runtime" and mode in {
         "arm-input", "source-rebind", "source-generation-start", "source-generation-stop", "source-generation-recover",
+        "source-generation-reboot-close",
         "source-export", "source-export-reconcile",
     }
     cache_handoff = None
