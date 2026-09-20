@@ -167,7 +167,7 @@ def preflight_successor(backend, directory, value, filename=None, *, mode="resta
             for row in state["attempts"]):
         from devex_clone_seed_generation_reboot import restart_authorization
 
-        restart_authorization(backend, directory)
+        restart_authorization(backend, directory, live_cache=False)
         quiet_producers(backend, source)
         return proof
     archive = closed(backend, directory, state["attempts"])
@@ -205,7 +205,7 @@ def published_restart_guard(backend, directory, number):
            for row in load_state(directory)["attempts"]):
         from devex_clone_seed_generation_reboot import restart_authorization
 
-        restart_authorization(backend, directory, allow_attempt="cache-target:restart")
+        restart_authorization(backend, directory, allow_attempt="cache-target:restart", live_cache=False)
         return
     output = directory / STAGE / f"a{number:04d}"
     saved = read_json(output / "tool-successor.json")
@@ -414,11 +414,14 @@ def observe_or_stop(backend, directory, request, descriptor, output, mode, numbe
             "remote_writes": 0, "resources_deleted": False}
 
 
-def cache_status(backend: Path, directory: Path):
+def cache_status(backend: Path, directory: Path, *, allow_close_attempt: bool = False):
     directory = local_path(backend, str(directory))
     initial = binding(directory / "state.json")
     state = load_state(directory, verify_results=False)
-    if any(item["status"] == "running" for item in state["attempts"]):
+    running = [item for item in state["attempts"] if item["status"] == "running"]
+    if running and not (allow_close_attempt and len(running) == 1
+                        and (running[0]["stage"], running[0]["mode"])
+                        == ("seed-runtime", "source-generation-reboot-close")):
         raise ValueError("统一运行中还有未完成阶段，不能形成稳定观察")
     if not records(directory, cleanup=True) and not (directory / STAGE).exists():
         return {"status": "cache_unregistered", "copy_usable": False, "processes": []}

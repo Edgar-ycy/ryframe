@@ -106,7 +106,8 @@ class RebootObservationTests(unittest.TestCase):
 
     def test_start_record_rejects_running_stage(self):
         with patch.object(reboot, "load_state",
-                          return_value={"attempts": [{"status": "running", "number": 71}]}):
+                          return_value={"attempts": [{"status": "running", "number": 71,
+                                                      "stage": "storage-target", "mode": "restart"}]}):
             with self.assertRaises(ValueError):
                 reboot.start_record(Path("."), self.root)
 

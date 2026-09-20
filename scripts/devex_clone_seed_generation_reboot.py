@@ -32,7 +32,8 @@ def start_record(backend: Path, directory: Path) -> dict:
     from devex_clone_seed_generation_lineage_retry import completed
 
     attempts = load_state(directory)["attempts"]
-    if any(row["status"] == "running" for row in attempts):
+    running = [row for row in attempts if row["status"] == "running"]
+    if len(running) > 1 or any((row["stage"], row["mode"]) != ("seed-runtime", CLOSE) for row in running):
         raise ValueError("统一运行仍有未收尾阶段，必须先核对实际控制器")
     authority = completed(backend, directory, attempts)
     if authority is None:
@@ -165,12 +166,14 @@ def storage_generation(facts: dict, proof: dict) -> tuple[dict, list[str]]:
             "request": storage["request"], "ports": ports}, blockers
 
 
-def cache_generations(backend: Path, directory: Path) -> tuple[dict, list[str]]:
+def cache_generations(backend: Path, directory: Path, *, live: bool = True) -> tuple[dict, list[str]]:
     """复用只读缓存状态；内核启动标识变化才证明重启前代次已经退出。"""
+    if not live:
+        return {"status": "frozen_by_closure"}, []
     from devex_clone_cache import cache_status
 
     try:
-        status = cache_status(backend, directory)
+        status = cache_status(backend, directory, allow_close_attempt=True)
     except ValueError as error:
         return {"status": "error", "error_type": type(error).__name__}, ["缓存代次无法完成只读观察"]
     observed, blockers = [], []
@@ -215,7 +218,7 @@ def observe(backend: Path, directory: Path) -> dict:
     return _observation(backend, directory)["value"]
 
 
-def _observation(backend: Path, directory: Path) -> dict:
+def _observation(backend: Path, directory: Path, *, live_cache: bool = True) -> dict:
     """观察实现；返回完整结果与只依据重启事实的授权判定。"""
     directory = directory.resolve()
     tail = start_record(backend, directory)
@@ -225,7 +228,7 @@ def _observation(backend: Path, directory: Path) -> dict:
     verify_host_boot_proof(proof, max_age_seconds=PROOF_MAX_AGE_SECONDS)
     role_facts, blockers = roles(backend, facts, proof)
     storage, storage_blockers = storage_generation(facts, proof)
-    cache, cache_blockers = cache_generations(backend, directory)
+    cache, cache_blockers = cache_generations(backend, directory, live=live_cache)
     blockers += storage_blockers + cache_blockers
     reboot_blockers = list(blockers)
     build = build_context_state(backend, facts)
@@ -305,13 +308,17 @@ def closure_receipt(backend: Path, directory: Path) -> dict:
             or closure["declared_deltas"] != {"sys_login_info": 11, "sys_oper_log": 0,
                                               "sys_outbox_event": 0}):
         raise ValueError("主机重启收尾收据的状态、计数或声明增量无效")
+    generations = closure["cache"].get("generations") if isinstance(closure["cache"], dict) else None
+    if not generations or any(row.get("state") != "stopped" for row in generations):
+        raise ValueError("主机重启收尾收据没有记录已完成退出的缓存代次")
     return {"record": record, "binding": binding(path), "receipt": closure}
 
 
-def restart_authorization(backend: Path, directory: Path, *, allow_attempt: str | None = None) -> dict:
+def restart_authorization(backend: Path, directory: Path, *, allow_attempt: str | None = None,
+                          live_cache: bool = True) -> dict:
     """登记新服务代次的唯一授权：收据绑定加实时重启事实复核。"""
     issued = closure_receipt(backend, directory)
-    observation = _observation(backend, directory)
+    observation = _observation(backend, directory, live_cache=live_cache)
     if not observation["reboot_verified"]:
         raise ValueError("主机重启事实未通过复核：" + "；".join(observation["reboot_blockers"]))
     if (issued["receipt"]["start"] != observation["start"]["result"]
@@ -353,7 +360,7 @@ def restart_tail(backend: Path, directory: Path, attempts: list, tail: list, arc
             or tuple(row.get(key) for key in ("stage", "mode", "status")) != shape
             for offset, (row, shape) in enumerate(zip(rows, shapes), 1)):
         raise ValueError("主机重启收尾后的目标存储与缓存重启不完整或不相邻")
-    observation = _observation(backend, directory)
+    observation = _observation(backend, directory, live_cache=False)
     if not observation["reboot_verified"]:
         raise ValueError("重启段现场未通过复核：" + "；".join(observation["reboot_blockers"]))
     issued = closure_receipt(backend, directory)
