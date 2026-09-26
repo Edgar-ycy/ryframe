@@ -25,6 +25,9 @@ CLOSURE_DIRECTORY = "reboot-close"
 CLOSURE_FIELDS = {"format_version", "kind", "status", "start", "request", "failed_prefix",
                   "reboot", "roles", "storage", "cache", "baseline", "running", "declared_deltas",
                   "verification_qualified", "replay_allowed", "remote_writes", "restore_qualified"}
+CLOSE_RESULT_FIELDS = {"status", "start", "request", "closure", "baseline", "reboot", "failed_prefix",
+                       "declared_deltas", "producer", "verification_qualified", "replay_allowed",
+                       "remote_writes", "restore_qualified"}
 
 
 def start_record(backend: Path, directory: Path) -> dict:
@@ -295,7 +298,14 @@ def closure_receipt(backend: Path, directory: Path) -> dict:
     record = closure_record(directory)
     if record is None:
         raise ValueError("缺少唯一主机重启收尾收据，不能登记新的服务代次")
-    path = bound_file(backend, record["result"])
+    result_path = bound_file(backend, record["result"])
+    result = read_json(result_path)
+    exact(result, CLOSE_RESULT_FIELDS)
+    if result["status"] != "seed_source_generation_reboot_closed":
+        raise ValueError("主机重启收尾阶段结果状态无效")
+    path = bound_file(backend, result["closure"])
+    if path != directory / "g0070" / CLOSURE_DIRECTORY / "closure.json":
+        raise ValueError("主机重启收尾收据不属于固定代次目录")
     closure = read_json(path)
     exact(closure, CLOSURE_FIELDS)
     if (type(closure["format_version"]) is not int or closure["format_version"] != 1
@@ -311,7 +321,7 @@ def closure_receipt(backend: Path, directory: Path) -> dict:
     generations = closure["cache"].get("generations") if isinstance(closure["cache"], dict) else None
     if not generations or any(row.get("state") != "stopped" for row in generations):
         raise ValueError("主机重启收尾收据没有记录已完成退出的缓存代次")
-    return {"record": record, "binding": binding(path), "receipt": closure}
+    return {"record": record, "binding": binding(path), "result": binding(result_path), "receipt": closure}
 
 
 def restart_authorization(backend: Path, directory: Path, *, allow_attempt: str | None = None,
