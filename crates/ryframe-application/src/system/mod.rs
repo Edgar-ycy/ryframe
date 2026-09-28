@@ -1,4 +1,5 @@
 mod authorization_diagnostic;
+mod backup;
 mod captcha;
 mod config;
 mod data_retention;
@@ -20,7 +21,6 @@ mod product;
 mod product_capability_catalog;
 mod profile;
 mod role;
-mod service_account;
 mod tenant;
 mod user;
 mod user_import;

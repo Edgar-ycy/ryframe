@@ -173,175 +173,7 @@ pub(super) fn handler(resource: &ResourceIr, header: &str) -> String {
     let path = &resource.api.path;
     let tag = &resource.menu.labels.zh_cn;
     format!(
-        r#"{header}use std::sync::Arc;
-
-use axum::{{
-    Json, Router,
-    extract::{{Path, Query, State}},
-}};
-use ryframe_application::generated::{name}::{pascal}Service;
-use ryframe_kernel::{{AppError, PaginationPolicy}};
-use ryframe_macro::{{delete, get, post, put, route}};
-use validator::Validate;
-
-use crate::RequestPrincipal;
-use crate::handler_utils::parse_id;
-use crate::http::{{ApiPageResponse, ApiResponse, HttpAppError, HttpResult}};
-
-use super::dto::{{Create{pascal}Dto, {pascal}ListQuery, {pascal}Vo{detail_import}, Update{pascal}Dto}};
-
-#[derive(Clone)]
-pub struct {pascal}HttpState {{
-    service: Arc<{pascal}Service>,
-    pagination: PaginationPolicy,
-}}
-
-pub fn router(service: Arc<{pascal}Service>, pagination: PaginationPolicy) -> Router {{
-    Router::new()
-        .merge(route!(list))
-        .merge(route!(detail))
-        .merge(route!(create))
-        .merge(route!(update))
-        .merge(route!(remove))
-        .with_state({pascal}HttpState {{ service, pagination }})
-}}
-
-#[get("/")]
-#[perm({list_permission:?})]
-#[utoipa::path(
-    get,
-    path = {path:?},
-    operation_id = {list_operation:?},
-    tag = {tag:?},
-    params({pascal}ListQuery),
-    responses((status = 200, description = "列表", body = ApiPageResponse<{pascal}Vo>)),
-    security(("bearer" = []))
-)]
-pub async fn list(
-    State(state): State<{pascal}HttpState>,
-    current_user: RequestPrincipal,
-    Query(query): Query<{pascal}ListQuery>,
-) -> HttpResult<Json<ApiPageResponse<{pascal}Vo>>> {{
-    let page = state
-        .service
-        .find_by_page(&current_user, query.into_service_params(state.pagination)?)
-        .await
-        .map_err(HttpAppError::from)?;
-    Ok(Json(ApiPageResponse::page(
-        page.records.into_iter().map({pascal}Vo::from).collect(),
-        page.total,
-        page.page,
-        page.page_size,
-        state.pagination.max_page_size(),
-    )))
-}}
-
-#[get("/{{id}}")]
-#[perm({read_permission:?})]
-#[utoipa::path(
-    get,
-    path = {detail_path:?},
-    operation_id = {read_operation:?},
-    tag = {tag:?},
-    params(("id" = String, Path)),
-    responses((status = 200, description = "详情", body = ApiResponse<{detail_vo}>)),
-    security(("bearer" = []))
-)]
-pub async fn detail(
-    State(state): State<{pascal}HttpState>,
-    current_user: RequestPrincipal,
-    Path(id): Path<String>,
-) -> HttpResult<Json<ApiResponse<{detail_vo}>>> {{
-    let value = state
-        .service
-        .find_by_id(&current_user, parse_id(&id, "id 必须是 i64 字符串")?)
-        .await
-        .map_err(HttpAppError::from)?
-        .ok_or_else(|| HttpAppError::from(AppError::NotFound({not_found:?}.into())))?;
-    Ok(Json(ApiResponse::success(value.into())))
-}}
-
-#[post("/")]
-#[perm({create_permission:?})]
-#[utoipa::path(
-    post,
-    path = {path:?},
-    operation_id = {create_operation:?},
-    tag = {tag:?},
-    request_body = Create{pascal}Dto,
-    responses((status = 200, description = "创建成功", body = ApiResponse<{pascal}Vo>)),
-    security(("bearer" = []))
-)]
-pub async fn create(
-    State(state): State<{pascal}HttpState>,
-    current_user: RequestPrincipal,
-    Json(dto): Json<Create{pascal}Dto>,
-) -> HttpResult<Json<ApiResponse<{pascal}Vo>>> {{
-    dto.validate()?;
-    let value = state
-        .service
-        .create(&current_user, dto.into())
-        .await
-        .map_err(HttpAppError::from)?;
-    Ok(Json(ApiResponse::success(value.into())))
-}}
-
-#[put("/{{id}}")]
-#[perm({update_permission:?})]
-#[utoipa::path(
-    put,
-    path = {detail_path:?},
-    operation_id = {update_operation:?},
-    tag = {tag:?},
-    params(("id" = String, Path)),
-    request_body = Update{pascal}Dto,
-    responses((status = 200, description = "更新成功", body = ApiResponse<{pascal}Vo>)),
-    security(("bearer" = []))
-)]
-pub async fn update(
-    State(state): State<{pascal}HttpState>,
-    current_user: RequestPrincipal,
-    Path(id): Path<String>,
-    Json(dto): Json<Update{pascal}Dto>,
-) -> HttpResult<Json<ApiResponse<{pascal}Vo>>> {{
-    dto.validate()?;
-    let value = state
-        .service
-        .update(
-            &current_user,
-            parse_id(&id, "id 必须是 i64 字符串")?,
-            dto.into(),
-        )
-        .await
-        .map_err(HttpAppError::from)?;
-    Ok(Json(ApiResponse::success(value.into())))
-}}
-
-#[delete("/{{id}}")]
-#[perm({delete_permission:?})]
-#[utoipa::path(
-    delete,
-    path = {detail_path:?},
-    operation_id = {delete_operation:?},
-    tag = {tag:?},
-    params(("id" = String, Path)),
-    responses((status = 200, description = "删除成功", body = crate::http::ApiEmptyResponse)),
-    security(("bearer" = []))
-)]
-pub async fn remove(
-    State(state): State<{pascal}HttpState>,
-    current_user: RequestPrincipal,
-    Path(id): Path<String>,
-) -> HttpResult<Json<ApiResponse<()>>> {{
-    state
-        .service
-        .delete(&current_user, parse_id(&id, "id 必须是 i64 字符串")?)
-        .await
-        .map_err(HttpAppError::from)?;
-    Ok(Json(ApiResponse::success_no_data()))
-}}
-
-"#,
+        include_str!("handler.rs.tpl"),
         name = resource.name,
         list_permission = permissions.list,
         read_permission = permissions.read,
@@ -355,6 +187,12 @@ pub async fn remove(
         delete_operation = operations.delete,
         detail_path = format!("{path}/{{id}}"),
         not_found = format!("{}不存在", resource.labels.zh_cn),
+        header = header,
+        pascal = pascal,
+        detail_import = detail_import,
+        path = path,
+        tag = tag,
+        detail_vo = detail_vo,
     )
 }
 
@@ -365,9 +203,7 @@ pub(super) fn openapi(resource: &ResourceIr, header: &str) -> String {
     } else {
         format!("        super::dto::{pascal}DetailVo,\n")
     };
-    let metadata = super::super::catalog::crud_resource_metadata(resource);
-    let metadata =
-        serde_json::to_string_pretty(&metadata).expect("资源元数据只包含可序列化的稳定值");
+    let (metadata, field_calls, field_functions) = metadata_parts(resource);
     format!(
         r#"{header}use utoipa::OpenApi;
 
@@ -392,8 +228,12 @@ pub struct {pascal}OpenApi;
 
 /// OpenAPI 中 `x-ryframe-crud-resources` 使用的安全 UI 元数据。
 pub fn crud_resource_metadata() -> serde_json::Value {{
-    serde_json::json!({metadata})
+    let mut metadata = serde_json::json!({metadata});
+    metadata["fields"] = serde_json::json!([{field_calls}]);
+    metadata
 }}
+
+{field_functions}
 "#
     )
 }
@@ -455,4 +295,28 @@ fn view_conversion(field: &FieldIr) -> String {
     } else {
         format!("value.{}", field.name)
     }
+}
+
+fn metadata_parts(resource: &ResourceIr) -> (String, String, String) {
+    let mut metadata = super::super::catalog::crud_resource_metadata(resource);
+    let fields = metadata
+        .as_object_mut()
+        .expect("资源元数据必须是对象")
+        .remove("fields")
+        .expect("资源元数据必须包含字段");
+    let mut calls = Vec::new();
+    let mut functions = Vec::new();
+    for field in fields.as_array().expect("字段元数据必须是数组") {
+        let name = field["name"].as_str().expect("字段名称已校验");
+        let value = serde_json::to_string_pretty(field).expect("字段元数据可序列化");
+        calls.push(format!("field_{name}()"));
+        functions.push(format!(
+            "fn field_{name}() -> serde_json::Value {{\n    serde_json::json!({value})\n}}\n"
+        ));
+    }
+    (
+        serde_json::to_string_pretty(&metadata).expect("资源元数据可序列化"),
+        calls.join(", "),
+        functions.join("\n"),
+    )
 }

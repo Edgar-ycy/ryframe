@@ -6,7 +6,6 @@ version = 1
 [[resources]]
 name = "notice"
 module = "system"
-capability = "system.notice"
 [resources.labels]
 zh_cn = "通知公告"
 en = "Notice"
@@ -31,7 +30,6 @@ delete = "system:notice:remove"
 [[resources]]
 name = "post"
 module = "system"
-capability = "system.post"
 [resources.labels]
 zh_cn = "岗位"
 en = "Post"

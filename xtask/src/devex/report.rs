@@ -10,7 +10,9 @@ use crate::{Result, dev::ReadyKind};
 
 use super::{
     metadata::{RunMetadata, SourceFingerprints},
-    model::{CacheState, DevexSuite, PairedArm, PairingMetadata},
+    model::{
+        BaselineContract, BaselineProvenance, CacheState, DevexSuite, PairedArm, PairingMetadata,
+    },
 };
 
 #[path = "report/acceptance.rs"]
@@ -24,6 +26,8 @@ mod sccache;
 #[path = "report/validation.rs"]
 mod validation;
 
+#[allow(unused_imports)]
+pub(crate) use acceptance::checks as comparison_checks;
 pub(crate) use acceptance::duration_acceptance;
 use validation::{validate_execution_contract, validate_samples};
 
@@ -66,6 +70,9 @@ impl ResourceGateDecisionEvidence {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub(super) struct SampleRecord {
+    pub(super) memory: super::memory::MemoryEvidence,
+    #[serde(default)]
+    pub(super) runtime: Option<super::runtime::RuntimeEvidence>,
     pub(super) schema_version: u8,
     pub(super) run_id: String,
     pub(super) sequence: usize,
@@ -94,6 +101,9 @@ pub(super) struct SampleRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub(crate) struct RunSummary {
+    pub(crate) memory: Option<super::memory::MemorySummary>,
+    #[serde(default)]
+    pub(crate) runtime: Option<super::runtime::RuntimeSummary>,
     pub(crate) schema_version: u8,
     pub(crate) run_id: String,
     pub(crate) suite: DevexSuite,
@@ -122,6 +132,7 @@ pub(crate) struct Distribution {
     pub(crate) min: f64,
     pub(crate) p50: f64,
     pub(crate) p95: f64,
+    pub(crate) p99: f64,
     pub(crate) max: f64,
     pub(crate) mean: f64,
 }
@@ -156,8 +167,12 @@ struct ComparisonReport<'a> {
     candidate_input_fingerprint: &'a str,
     baseline_duration_ms: &'a Distribution,
     candidate_duration_ms: &'a Distribution,
+    baseline_memory: &'a Option<super::memory::MemorySummary>,
+    candidate_memory: &'a Option<super::memory::MemorySummary>,
     baseline_resource_gate_targeted_decisions: usize,
     candidate_resource_gate_targeted_decisions: usize,
+    baseline_contract: Option<BaselineContract>,
+    baseline_provenance: Option<&'a BaselineProvenance>,
     checks: &'a [acceptance::ComparisonCheck],
     passed: bool,
 }
@@ -178,6 +193,7 @@ pub(super) fn append_sample(run_dir: &Path, sample: &SampleRecord) -> Result<()>
 pub(crate) fn summarize(run_dir: &Path) -> Result<RunSummary> {
     let metadata = read_metadata(run_dir)?;
     validate_execution_contract(&metadata)?;
+    baseline_contract::validate_source_binding(&metadata)?;
     let records = read_samples(run_dir)?;
     validate_samples(&metadata, &records)?;
     let measurements = records
@@ -197,6 +213,8 @@ pub(crate) fn summarize(run_dir: &Path) -> Result<RunSummary> {
     let source_fingerprints = metadata.source_fingerprints();
     let pairing = metadata.pairing.clone();
     let summary = RunSummary {
+        memory: super::memory::summarize(&measurements)?,
+        runtime: super::runtime::summarize(&measurements)?,
         schema_version: 1,
         run_id: metadata.run_id,
         suite: metadata.suite,
@@ -264,14 +282,13 @@ pub(crate) fn compare(baseline_dir: &Path, candidate_dir: &Path) -> Result<Strin
     if !passed {
         document.push_str(&format!("\n## 未通过项\n\n{}\n", violations.join("\n")));
     }
-    let comparison_id = &baseline
+    let pairing = baseline
         .pairing
         .as_ref()
-        .expect("ensure_comparable 已校验 pairing")
-        .comparison_id;
+        .expect("ensure_comparable 已校验 pairing");
     let report = ComparisonReport {
         schema_version: 1,
-        comparison_id,
+        comparison_id: &pairing.comparison_id,
         suite: baseline.suite,
         variant: &baseline.variant,
         cache_state: baseline.cache_state,
@@ -282,8 +299,12 @@ pub(crate) fn compare(baseline_dir: &Path, candidate_dir: &Path) -> Result<Strin
         candidate_input_fingerprint: &candidate.input_fingerprint,
         baseline_duration_ms: baseline_duration,
         candidate_duration_ms: candidate_duration,
+        baseline_memory: &baseline.memory,
+        candidate_memory: &candidate.memory,
         baseline_resource_gate_targeted_decisions: baseline.resource_gate_targeted_decisions,
         candidate_resource_gate_targeted_decisions: candidate.resource_gate_targeted_decisions,
+        baseline_contract: pairing.baseline_contract,
+        baseline_provenance: pairing.baseline_provenance.as_ref(),
         checks: &checks,
         passed,
     };
@@ -307,6 +328,7 @@ pub(crate) fn distribution(values: &[f64]) -> Option<Distribution> {
         min: sorted[0],
         p50: nearest_rank(&sorted, 0.50),
         p95: nearest_rank(&sorted, 0.95),
+        p99: nearest_rank(&sorted, 0.99),
         max: sorted[sorted.len() - 1],
         mean: sum / sorted.len() as f64,
     })
@@ -362,6 +384,7 @@ fn ensure_comparable(
 ) -> Result<()> {
     ensure_complete("基线", baseline)?;
     ensure_complete("候选", candidate)?;
+    super::memory::ensure_comparable(baseline.memory.as_ref(), candidate.memory.as_ref())?;
     if baseline.suite != candidate.suite {
         return Err("DevEx 对比要求 suite 相同".into());
     }
@@ -446,6 +469,12 @@ fn validate_source_fingerprints(summary: &RunSummary) -> Result<()> {
             && summary
                 .source_fingerprints
                 .frontend
+                .as_deref()
+                .is_none_or(|fingerprint| fingerprint.trim().is_empty()))
+        || (summary.suite.is_runtime()
+            && summary
+                .source_fingerprints
+                .runner_frontend
                 .as_deref()
                 .is_none_or(|fingerprint| fingerprint.trim().is_empty()))
     {

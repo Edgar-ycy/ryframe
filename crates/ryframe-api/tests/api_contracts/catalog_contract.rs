@@ -254,7 +254,7 @@ mod openapi {
             .iter()
             .filter_map(Value::as_str)
             .collect::<Vec<_>>();
-        assert_eq!(values, ["user_assignment", "service_account_assignment"]);
+        assert_eq!(values, ["user_assignment"]);
     }
 
     #[test]

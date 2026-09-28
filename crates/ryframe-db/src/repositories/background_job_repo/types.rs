@@ -36,6 +36,7 @@ pub struct EnqueueBackgroundJobResult {
 pub struct ExpiredLeaseRecovery {
     pub requeued: u64,
     pub dead: u64,
+    pub completed: u64,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -74,6 +75,8 @@ pub enum JobFailureDisposition {
     Retried { available_at: DateTime<Utc> },
     /// 已耗尽最大领取次数。
     Dead,
+    /// 关联业务已经权威终结，后台任务已按成功完成收口。
+    Completed,
     /// 其他 Worker 持有该租约，或该租约已过期并被重新领取。
     LeaseLost,
 }
@@ -81,10 +84,21 @@ pub enum JobFailureDisposition {
 /// 当前租约内一次失败转换所需的完整输入。
 pub struct FailBackgroundJob<'a> {
     pub job_id: i64,
+    pub claim_sequence: i64,
     pub worker_id: &'a str,
     pub retry_at: DateTime<Utc>,
     pub error_message: &'a str,
     pub force_dead: bool,
+    pub now: DateTime<Utc>,
+}
+
+/// 当前租约内一次可重试冲突延后的完整输入。
+pub struct DeferBackgroundJob<'a> {
+    pub job_id: i64,
+    pub claim_sequence: i64,
+    pub worker_id: &'a str,
+    pub available_at: DateTime<Utc>,
+    pub error_message: &'a str,
     pub now: DateTime<Utc>,
 }
 

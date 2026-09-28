@@ -8,12 +8,14 @@ use crate::{
 
 use super::{
     candidate::{
-        artifact_paths_from_inputs, contract_managed_paths, desired_frontend_snapshots,
-        prepare_staging_frontend, snapshot_managed_files, snapshot_staging_inputs,
-        validate_candidate_contract, verify_input_snapshots,
+        artifact_paths_from_inputs, desired_frontend_snapshots, prepare_staging_frontend,
+        snapshot_managed_files, snapshot_staging_inputs, validate_candidate_contract,
+        verify_input_snapshots,
     },
     model::{CANDIDATE_MARKER, ContractLock, sha256_hex},
-    transaction::{install_snapshots, reject_contract_recovery_artifacts},
+    ownership::contract_managed_paths,
+    recovery::reject_contract_recovery_artifacts,
+    transaction::install_snapshots,
 };
 
 pub(crate) const FORMAL_SYNC_ARGS: &[&[&str]] = &[
@@ -43,7 +45,7 @@ pub(super) fn sync_commit(reference: &str, frontend_dir: &Path) -> Result<()> {
     let _lock = ContractLock::acquire(frontend_dir)?;
     let inputs = snapshot_staging_inputs(frontend_dir)?;
     let artifact_paths = artifact_paths_from_inputs(&inputs, frontend_dir)?;
-    let managed_paths = contract_managed_paths(frontend_dir, &artifact_paths);
+    let managed_paths = contract_managed_paths(frontend_dir, &artifact_paths)?;
     reject_contract_recovery_artifacts(&managed_paths)?;
     let before = snapshot_managed_files(&managed_paths)?;
     let staging = prepare_staging_frontend(frontend_dir, &before, &inputs)?;

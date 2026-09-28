@@ -91,19 +91,28 @@ export const pageManifest = definePageManifest({{
 }
 
 fn render_fields(resource: &ResourceIr) -> String {
-    let pascal = &resource.pascal_name;
     let form_fields = resource
         .fields
         .iter()
         .filter(|field| field.usage.create || field.usage.update)
         .collect::<Vec<_>>();
     let mut output = slash_header(resource);
+    render_presentation(resource, &form_fields, &mut output);
+    render_query_fields(resource, &mut output);
+    render_columns(resource, &mut output);
+    render_form_fields(resource, &form_fields, &mut output);
+    render_crud_resource(resource, &form_fields, &mut output);
+    output
+}
+
+fn render_presentation(resource: &ResourceIr, form_fields: &[&FieldIr], output: &mut String) {
+    let pascal = &resource.pascal_name;
     output.push_str("import {\n  defineFlatCrudResource,\n  type FlatCrudColumn,\n  type FlatCrudFormField,\n  type FlatCrudLabels,\n  type FlatCrudPermissions,\n  type FlatCrudQueryField,\n} from '@/components/business/flat-crud'\n");
     output.push_str(&format!(
         "import {{\n  create{pascal},\n  delete{pascal},\n  get{pascal},\n  list{pascal},\n  update{pascal},\n  type {pascal}CreateInput,\n  type {pascal}Query,\n  type {pascal}Record,\n  type {pascal}UpdateInput,\n}} from './api'\nimport {{ emptyPageResponse }} from '@/shared/http/types'\n\n"
     ));
     output.push_str(&format!("export interface {pascal}Form {{\n"));
-    for field in &form_fields {
+    for field in form_fields {
         output.push_str(&format!("  {}: {}\n", field.name, field.typescript_type));
     }
     output.push_str("}\n\n");
@@ -119,7 +128,7 @@ fn render_fields(resource: &ResourceIr) -> String {
         output.push_str(&format!("  const {}Options = [\n", field.name));
         for (value, labels) in &field.enum_values {
             push_typescript_object(
-                &mut output,
+                output,
                 &[
                     format!("label: translate({:?}, {:?})", labels.zh_cn, labels.en),
                     format!("value: {}", ts_enum_value(value, field.value_type)),
@@ -139,6 +148,10 @@ fn render_fields(resource: &ResourceIr) -> String {
         "  const labels = {{\n    title: translate({:?}, {:?}),\n    add: translate(\"新增\", \"Add\"),\n    edit: translate(\"编辑\", \"Edit\"),\n    remove: translate(\"删除\", \"Delete\"),\n    actions: translate(\"操作\", \"Actions\"),\n    search: translate(\"搜索\", \"Search\"),\n    reset: translate(\"重置\", \"Reset\"),\n    confirm: translate(\"确定\", \"Confirm\"),\n    cancel: translate(\"取消\", \"Cancel\"),\n  }}\n\n",
         resource.labels.zh_cn, resource.labels.en
     ));
+}
+
+fn render_query_fields(resource: &ResourceIr, output: &mut String) {
+    let pascal = &resource.pascal_name;
     output.push_str("  const queryFields = [\n");
     for field in resource
         .fields
@@ -166,11 +179,15 @@ fn render_fields(resource: &ResourceIr) -> String {
         if !field.enum_values.is_empty() {
             properties.push(format!("options: {}Options", field.name));
         }
-        push_typescript_object(&mut output, &properties);
+        push_typescript_object(output, &properties);
     }
     output.push_str(&format!(
         "  ] as const satisfies readonly FlatCrudQueryField<{pascal}Query>[]\n\n"
     ));
+}
+
+fn render_columns(resource: &ResourceIr, output: &mut String) {
+    let pascal = &resource.pascal_name;
     output.push_str("  const columns = [\n");
     for field in resource.fields.iter().filter(|field| field.usage.list) {
         let mut properties = vec![
@@ -192,13 +209,17 @@ fn render_fields(resource: &ResourceIr) -> String {
             properties.push("display: 'datetime'".into());
             properties.push("format: formatDate".into());
         }
-        push_typescript_object(&mut output, &properties);
+        push_typescript_object(output, &properties);
     }
     output.push_str(&format!(
         "  ] as const satisfies readonly FlatCrudColumn<{pascal}Record>[]\n\n"
     ));
+}
+
+fn render_form_fields(resource: &ResourceIr, form_fields: &[&FieldIr], output: &mut String) {
+    let pascal = &resource.pascal_name;
     output.push_str("  const formFields = [\n");
-    for field in &form_fields {
+    for field in form_fields {
         let mut properties = vec![
             format!("key: {:?}", field.name),
             format!("kind: {:?}", form_widget(field)),
@@ -238,13 +259,16 @@ fn render_fields(resource: &ResourceIr) -> String {
         if field.usage.update && !field.usage.create {
             properties.push("editOnly: true".into());
         }
-        push_typescript_object(&mut output, &properties);
+        push_typescript_object(output, &properties);
     }
     output.push_str(&format!(
         "  ] as const satisfies readonly FlatCrudFormField<{pascal}Form>[]\n\n  return {{\n    columns,\n    formFields,\n    labels,\n    permissions,\n    queryFields,\n    resource: {name}Resource(translate),\n  }}\n}}\n\n",
         name = resource.name
     ));
+}
 
+fn render_crud_resource(resource: &ResourceIr, form_fields: &[&FieldIr], output: &mut String) {
+    let pascal = &resource.pascal_name;
     let query_defaults = resource
         .fields
         .iter()
@@ -305,63 +329,19 @@ fn render_fields(resource: &ResourceIr) -> String {
         .map(|field| field.name.as_str())
         .unwrap_or(record_id);
     output.push_str(&format!(
-        r#"function {name}Resource(translate: Translate) {{
-  return defineFlatCrudResource<
-    {pascal}Record,
-    {pascal}Query,
-    {pascal}Form,
-    {pascal}CreateInput,
-    {pascal}UpdateInput
-  >({{
-    key: {name:?},
-    initialQuery: (): {pascal}Query => ({{
-      page: 1,
-      page_size: 10,
-{query_defaults}    }}),
-    emptyForm: (): {pascal}Form => ({{
-{empty_form}    }}),
-    editForm: record => ({{
-{edit_form}    }}),
-    createInput: form => ({{
-{create_input}    }}),
-    updateInput: form => ({{
-{update_input}    }}),
-    recordId: record => String(record.{record_id}),
-    messages: {{
-      addSuccess: translate("新增成功", "Created"),
-      addTitle: translate("新增{zh}", "Add {en}"),
-      deleteConfirm: record => translate(
-        `确定删除 ${{String(record.{record_label})}} 吗？`,
-        `Delete ${{String(record.{record_label})}}?`,
-      ),
-      deleteSuccess: translate("删除成功", "Deleted"),
-      detailMissing: translate("资源不存在", "Resource not found"),
-      editTitle: translate("编辑{zh}", "Edit {en}"),
-      updateSuccess: translate("更新成功", "Updated"),
-      warningTitle: translate("提示", "Warning"),
-    }},
-    adapter: {{
-      async list(query, signal) {{
-        const response = await list{pascal}({{ ...query }}, signal)
-        return response.data ?? emptyPageResponse<{pascal}Record>(query)
-      }},
-      async detail(id, signal) {{
-        const response = await get{pascal}(id, signal)
-        if (!response.data) throw new Error(translate("资源不存在", "Resource not found"))
-        return response.data
-      }},
-      async create(input) {{ await create{pascal}(input) }},
-      async update(id, input) {{ await update{pascal}(id, input) }},
-      async remove(id) {{ await delete{pascal}(id) }},
-    }},
-  }})
-}}
-"#,
+        include_str!("resource.ts.tpl"),
         name = resource.name,
         zh = resource.labels.zh_cn,
         en = resource.labels.en,
+        pascal = pascal,
+        query_defaults = query_defaults,
+        empty_form = empty_form,
+        edit_form = edit_form,
+        create_input = create_input,
+        update_input = update_input,
+        record_id = record_id,
+        record_label = record_label,
     ));
-    output
 }
 
 fn render_page(resource: &ResourceIr) -> String {

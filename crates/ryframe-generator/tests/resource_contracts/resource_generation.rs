@@ -58,37 +58,6 @@ fn assert_control_database_repository_gates(generated: &GeneratedCatalog) {
     );
 }
 
-fn assert_tenant_bootstrap_migration_gates(generated: &GeneratedCatalog) {
-    let aggregate = generated
-        .assets
-        .iter()
-        .find(|asset| asset.path == "crates/ryframe-tenant-db/src/generated/mod.rs")
-        .expect("tenant generated 聚合应存在");
-    assert!(
-        aggregate
-            .content
-            .contains("Box::new(device::migration::Migration)")
-    );
-    assert!(
-        aggregate
-            .content
-            .contains("pub const MIGRATION_NAMES: &[&str] = &[\"m_resource_initial_device\"];")
-    );
-    assert!(aggregate.content.contains(
-        "#[cfg(any(feature = \"repositories\", feature = \"migration\"))]\npub mod device;"
-    ));
-    let database_slice = generated
-        .assets
-        .iter()
-        .find(|asset| asset.path == "crates/ryframe-tenant-db/src/generated/device/mod.rs")
-        .expect("应生成 tenant 数据库模块");
-    assert!(
-        database_slice
-            .content
-            .contains("#[cfg(feature = \"migration\")]\npub mod migration;")
-    );
-}
-
 fn device() -> ryframe_generator::ResourceIr {
     load_resource(device_path()).expect("Device 资源清单应有效")
 }
@@ -106,6 +75,7 @@ fn post_manifest_preserves_the_existing_public_contract_and_extensions() {
     assert_eq!(post.api.path, "/api/v1/system/posts");
     assert_eq!(post.api.operations.list, "get_system_posts");
     assert_eq!(post.api.operations.create, "post_system_posts");
+    assert_eq!(post.access.capability, None);
     let id = post
         .fields
         .iter()
@@ -139,15 +109,7 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
             .content
             .as_str()
     };
-    let service = content("post/service.rs");
-    assert!(service.contains("transaction.lock_configuration(tenant_id).await?"));
-    assert!(service.contains("find_by_code_for_update"));
-    assert!(service.contains("岗位编码已存在"));
-    assert!(service.contains("increment_configuration_version(tenant_id)"));
-    assert!(service.contains("TransactionAuditMode::CurrentRequest"));
-    assert!(service.contains("command.sort.unwrap_or(0_i32)"));
-    assert!(service.contains("AppError::NotFound(\"岗位不存在\".into())"));
-    assert!(!service.contains("AppError::NotFound(format!"));
+    assert_post_service(content("post/service.rs"));
     let repository = content("post/repository.rs");
     assert!(repository.contains("lock_tenant_configuration_in_txn"));
     assert!(repository.contains("increment_configuration_version_in_txn"));
@@ -176,27 +138,7 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
     assert!(entity.contains("pub const SOFT_DELETE_DELETED: &str = \"2\";"));
     assert_control_database_repository_gates(&generated);
     let fake = content("post/fake.rs");
-    assert!(fake.contains("LockConfiguration"));
-    assert!(fake.contains("FindByCode"));
-    assert!(fake.contains("IncrementConfigurationVersion"));
-    assert!(fake.contains("view: Mutex<BTreeMap<i64, PostRecord>>"));
-    assert!(fake.contains("self.lock_view().insert"));
-    assert!(fake.contains("self.original.keys().filter"));
-    assert!(fake.contains("self.original.get(&id) != Some(&record)"));
-    assert!(!fake.contains("state.records.retain"));
-    assert!(fake.contains("!record.name.contains(value)"));
-    assert!(fake.contains("record.status != value"));
-    assert!(fake.contains("filter.status.filter(|value| !value.is_empty())"));
-    assert!(fake.contains(".filter(|((owner, _), _)| owner == tenant_id)"));
-    assert!(fake.contains(".filter(|record| record.del_flag == \"0\")"));
-    assert!(fake.contains("record.del_flag != \"0\""));
-    assert!(fake.contains("left.sort"));
-    assert!(fake.contains(".cmp(&right.sort)"));
-    assert!(fake.contains(".then_with(|| left.id.cmp(&right.id))"));
-    assert!(fake.contains("self.ensure_tenant(tenant_id)?"));
-    assert!(fake.contains("self.ensure_tenant(&record.tenant_id)?"));
-    assert!(fake.contains("AppError::Authorization(\"岗位事务租户不匹配\".into())"));
-    assert!(!fake.contains(".filter_map(|((owner, id), record)|"));
+    assert_post_fake(fake);
     let page = content("post/page.vue");
     assert!(page.contains("name=\"actions\""));
     assert!(page.contains(":last-successful-query=\"lastSuccessfulQuery ?? null\""));
@@ -243,6 +185,10 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
     assert!(!handler.contains("tag = \"岗位\","));
     assert!(handler.contains("use crate::handler_utils::parse_id;"));
     assert!(!handler.contains("fn parse_id(value: &str)"));
+    let router = content("ryframe-api/src/generated/router.rs");
+    assert!(router.contains("super::post::handler::router"));
+    assert!(!router.contains("CapabilityGuardState"));
+    assert!(!router.contains("system.post"));
     assert!(
         generated
             .assets
@@ -613,7 +559,11 @@ fn filtered_string_enum_rejects_empty_sentinel_key() {
 fn safe_writer_is_idempotent_and_detects_manual_edits() {
     let backend = tempfile::tempdir().expect("应创建后端临时工作区");
     let frontend = tempfile::tempdir().expect("应创建前端临时工作区");
-    fs::write(backend.path().join("Cargo.toml"), "[workspace]\n").expect("应创建工作区标识");
+    fs::write(
+        backend.path().join("Cargo.toml"),
+        "[workspace.package]\nversion = \"1.0.0\"\n",
+    )
+    .expect("应创建工作区标识");
     let catalog = render_resources(&[device()]).expect("生成应成功");
     let workspace = ResourceWorkspace {
         backend_root: backend.path(),
@@ -653,7 +603,11 @@ fn safe_writer_is_idempotent_and_detects_manual_edits() {
 fn writer_rejects_paths_outside_generated_boundaries_before_writing() {
     let backend = tempfile::tempdir().expect("应创建后端临时工作区");
     let frontend = tempfile::tempdir().expect("应创建前端临时工作区");
-    fs::write(backend.path().join("Cargo.toml"), "[workspace]\n").expect("应创建工作区标识");
+    fs::write(
+        backend.path().join("Cargo.toml"),
+        "[workspace.package]\nversion = \"1.0.0\"\n",
+    )
+    .expect("应创建工作区标识");
     let mut catalog = render_resources(&[device()]).expect("生成应成功");
     catalog.assets[0].root = AssetRoot::Backend;
     catalog.assets[0].path = "README.md".into();
@@ -675,7 +629,11 @@ fn writer_rejects_paths_outside_generated_boundaries_before_writing() {
 fn named_write_matches_preview_and_preserves_other_managed_resources() {
     let backend = tempfile::tempdir().expect("应创建后端临时工作区");
     let frontend = tempfile::tempdir().expect("应创建前端临时工作区");
-    fs::write(backend.path().join("Cargo.toml"), "[workspace]\n").expect("应创建工作区标识");
+    fs::write(
+        backend.path().join("Cargo.toml"),
+        "[workspace.package]\nversion = \"1.0.0\"\n",
+    )
+    .expect("应创建工作区标识");
     let catalog = render_resources(&[
         device(),
         load_resource(post_path()).expect("Post 资源清单应有效"),
@@ -736,7 +694,11 @@ fn named_write_matches_preview_and_preserves_other_managed_resources() {
 fn change_plan_reports_obsolete_assets_as_deletions() {
     let backend = tempfile::tempdir().expect("应创建后端临时工作区");
     let frontend = tempfile::tempdir().expect("应创建前端临时工作区");
-    fs::write(backend.path().join("Cargo.toml"), "[workspace]\n").expect("应创建工作区标识");
+    fs::write(
+        backend.path().join("Cargo.toml"),
+        "[workspace.package]\nversion = \"1.0.0\"\n",
+    )
+    .expect("应创建工作区标识");
     let post = load_resource(post_path()).expect("Post 资源清单应有效");
     let mut installed = render_resources(std::slice::from_ref(&post)).expect("Post 应生成");
     installed.assets.push(GeneratedAsset {
@@ -775,7 +737,11 @@ fn change_plan_reports_obsolete_assets_as_deletions() {
 fn missing_manifest_is_not_silently_treated_as_resource_removal() {
     let backend = tempfile::tempdir().expect("应创建后端临时工作区");
     let frontend = tempfile::tempdir().expect("应创建前端临时工作区");
-    fs::write(backend.path().join("Cargo.toml"), "[workspace]\n").expect("应创建工作区标识");
+    fs::write(
+        backend.path().join("Cargo.toml"),
+        "[workspace.package]\nversion = \"1.0.0\"\n",
+    )
+    .expect("应创建工作区标识");
     let post = load_resource(post_path()).expect("Post 资源清单应有效");
     let workspace = ResourceWorkspace {
         backend_root: backend.path(),
@@ -804,7 +770,11 @@ fn missing_manifest_is_not_silently_treated_as_resource_removal() {
 fn named_write_rejects_pending_changes_in_other_managed_resources() {
     let backend = tempfile::tempdir().expect("应创建后端临时工作区");
     let frontend = tempfile::tempdir().expect("应创建前端临时工作区");
-    fs::write(backend.path().join("Cargo.toml"), "[workspace]\n").expect("应创建工作区标识");
+    fs::write(
+        backend.path().join("Cargo.toml"),
+        "[workspace.package]\nversion = \"1.0.0\"\n",
+    )
+    .expect("应创建工作区标识");
     let post = load_resource(post_path()).expect("Post 资源清单应有效");
     let original_device = device();
     let initial = render_resources(&[original_device.clone(), post.clone()]).expect("清单应生成");
@@ -829,7 +799,7 @@ fn named_write_rejects_pending_changes_in_other_managed_resources() {
 
     assert!(error.contains("资源 device"));
     assert!(error.contains("待生成变化"));
-    assert!(error.contains("cargo resource device --write"));
+    assert!(error.contains("cargo xtask generate resource device --write"));
     assert_eq!(fs::read_to_string(device_file).unwrap(), device_before);
     assert_eq!(
         fs::read_to_string(ownership_path).unwrap(),
@@ -843,125 +813,37 @@ fn named_write_rejects_pending_changes_in_other_managed_resources() {
     );
 }
 
-#[test]
-fn initial_migration_is_immutable_and_schema_evolution_requires_new_revision() {
-    let backend = tempfile::tempdir().expect("应创建后端临时工作区");
-    let frontend = tempfile::tempdir().expect("应创建前端临时工作区");
-    fs::write(backend.path().join("Cargo.toml"), "[workspace]\n").expect("应创建工作区标识");
-    let workspace = ResourceWorkspace {
-        backend_root: backend.path(),
-        frontend_root: Some(frontend.path()),
-    };
-    let original = device();
-    let rendered = render_resources(std::slice::from_ref(&original)).expect("Device 应生成");
-    assert_tenant_bootstrap_migration_gates(&rendered);
-    write_resource(&rendered, "device", workspace).expect("首次写入应成功");
-    let migration_path = backend
-        .path()
-        .join("crates/ryframe-tenant-db/src/generated/device/migration.rs");
-    let initial_migration = fs::read_to_string(&migration_path).expect("初始迁移应存在");
+fn assert_post_service(service: &str) {
+    assert!(service.contains("transaction.lock_configuration(tenant_id).await?"));
+    assert!(service.contains("find_by_code_for_update"));
+    assert!(service.contains("岗位编码已存在"));
+    assert!(service.contains("increment_configuration_version(tenant_id)"));
+    assert!(service.contains("TransactionAuditMode::CurrentRequest"));
+    assert!(service.contains("command.sort.unwrap_or(0_i32)"));
+    assert!(service.contains("AppError::NotFound(\"岗位不存在\".into())"));
+    assert!(!service.contains("AppError::NotFound(format!"));
+}
 
-    let mut label_only = original;
-    label_only.source_hash = "a".repeat(64);
-    label_only.labels.zh_cn = "终端设备".into();
-    write_resource(
-        &render_resources(&[label_only]).expect("标签变更应生成"),
-        "device",
-        workspace,
-    )
-    .expect("非 schema 变更应保留初始迁移");
-    assert_eq!(
-        fs::read_to_string(&migration_path).unwrap(),
-        initial_migration
-    );
-
-    let unversioned_source = fs::read_to_string(device_path())
-        .expect("应读取 Device fixture")
-        .replacen("max_length = 100", "max_length = 110", 1);
-    let unversioned = normalize_resource(
-        ResourceSpec::parse(&unversioned_source, "catalog/resources/device.toml").unwrap(),
-        "catalog/resources/device.toml",
-        "schema-without-revision",
-    )
-    .expect("缺少 revision 不影响清单语法校验");
-    let error = write_resource(
-        &render_resources(&[unversioned]).expect("未声明 revision 的 schema 仍应可预览"),
-        "device",
-        workspace,
-    )
-    .expect_err("已受管 schema 变化必须声明新 revision")
-    .to_string();
-    assert!(error.contains("没有声明新的 schema_revision"));
-    assert!(error.contains("cargo migrate new tenant-data"));
-
-    let revision = "m20260823_123456_expand_device_name";
-    let changed_source = fs::read_to_string(device_path())
-        .expect("应读取 Device fixture")
-        .replacen(
-            "bootstrap_migration = true",
-            &format!("bootstrap_migration = true\nschema_revision = {revision:?}"),
-            1,
-        )
-        .replacen("max_length = 100", "max_length = 120", 1);
-    let spec = ResourceSpec::parse(&changed_source, "catalog/resources/device.toml")
-        .expect("schema 变更 TOML 应有效");
-    let changed = normalize_resource(spec, "catalog/resources/device.toml", "schema-v2")
-        .expect("schema v2 应通过 IR");
-    let revision_path = backend
-        .path()
-        .join("crates/ryframe-tenant-db/src/migration")
-        .join(format!("{revision}.rs"));
-    fs::create_dir_all(revision_path.parent().unwrap()).expect("应创建追加迁移目录");
-    fs::write(&revision_path, "// 待冻结的追加 roll-forward 迁移\n").expect("应写入追加迁移");
-    write_resource(
-        &render_resources(&[changed]).expect("schema v2 应生成"),
-        "device",
-        workspace,
-    )
-    .expect("新 revision 与未提交迁移应允许 schema 演进");
-    assert_eq!(
-        fs::read_to_string(&migration_path).unwrap(),
-        initial_migration
-    );
-    let ownership = fs::read_to_string(backend.path().join("catalog/resources/.ownership.toml"))
-        .expect("ownership 应存在");
-    assert!(ownership.contains("schema_hash ="));
-    assert!(ownership.contains(&format!("schema_revision = {revision:?}")));
-
-    let reused_source = changed_source.replacen("max_length = 120", "max_length = 130", 1);
-    let reused = normalize_resource(
-        ResourceSpec::parse(&reused_source, "catalog/resources/device.toml").unwrap(),
-        "catalog/resources/device.toml",
-        "schema-v3",
-    )
-    .expect("schema v3 IR 本身应有效");
-    let error = write_resource(
-        &render_resources(&[reused]).expect("schema v3 应生成预览"),
-        "device",
-        workspace,
-    )
-    .expect_err("同 revision 不得承载第二次 schema 变化")
-    .to_string();
-    assert!(error.contains("已用于上一版 schema"));
-    assert!(error.contains("cargo migrate new tenant-data"));
-
-    let removed_source = changed_source.replacen(
-        "bootstrap_migration = true",
-        "bootstrap_migration = false",
-        1,
-    );
-    let removed = normalize_resource(
-        ResourceSpec::parse(&removed_source, "catalog/resources/device.toml").unwrap(),
-        "catalog/resources/device.toml",
-        "schema-v2-without-initial",
-    )
-    .expect("移除初始迁移标记仍是有效 IR");
-    let error = write_resource(
-        &render_resources(&[removed]).expect("无初始迁移资产的预览应可构造"),
-        "device",
-        workspace,
-    )
-    .expect_err("已落盘初始迁移不得被清单删除")
-    .to_string();
-    assert!(error.contains("初始迁移不可删除或改名"));
+fn assert_post_fake(fake: &str) {
+    assert!(fake.contains("LockConfiguration"));
+    assert!(fake.contains("FindByCode"));
+    assert!(fake.contains("IncrementConfigurationVersion"));
+    assert!(fake.contains("view: Mutex<BTreeMap<i64, PostRecord>>"));
+    assert!(fake.contains("self.lock_view().insert"));
+    assert!(fake.contains("self.original.keys().filter"));
+    assert!(fake.contains("self.original.get(&id) != Some(&record)"));
+    assert!(!fake.contains("state.records.retain"));
+    assert!(fake.contains("!record.name.contains(value)"));
+    assert!(fake.contains("record.status != value"));
+    assert!(fake.contains("filter.status.filter(|value| !value.is_empty())"));
+    assert!(fake.contains(".filter(|((owner, _), _)| owner == tenant_id)"));
+    assert!(fake.contains(".filter(|record| record.del_flag == \"0\")"));
+    assert!(fake.contains("record.del_flag != \"0\""));
+    assert!(fake.contains("left.sort"));
+    assert!(fake.contains(".cmp(&right.sort)"));
+    assert!(fake.contains(".then_with(|| left.id.cmp(&right.id))"));
+    assert!(fake.contains("self.ensure_tenant(tenant_id)?"));
+    assert!(fake.contains("self.ensure_tenant(&record.tenant_id)?"));
+    assert!(fake.contains("AppError::Authorization(\"岗位事务租户不匹配\".into())"));
+    assert!(!fake.contains(".filter_map(|((owner, id), record)|"));
 }

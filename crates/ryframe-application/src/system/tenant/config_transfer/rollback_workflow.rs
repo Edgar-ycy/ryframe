@@ -24,26 +24,7 @@ impl TenantConfigTransferService {
                 TRANSFER_ROLLBACK_PERMISSION,
             )
             .await?;
-        let now = self.persistence.database_now().await?;
-        if transfer
-            .rollback_expires_at
-            .is_none_or(|expires_at| expires_at <= now)
-        {
-            return Err(AppError::Conflict("配置回滚窗口已过期".into()));
-        }
-        let snapshot_file_id = transfer
-            .snapshot_file_id
-            .ok_or_else(|| AppError::Conflict("配置回滚快照不存在".into()))?;
-        let snapshot_file = self
-            .file
-            .download_config_package_internal(tenant_id, snapshot_file_id)
-            .await?;
-        let snapshot = parse_tenant_config_package(
-            Arc::clone(&self.archive),
-            snapshot_file.data,
-            self.package_limits(),
-        )
-        .await?;
+        let snapshot = self.load_rollback_snapshot(tenant_id, &transfer).await?;
         let mut lease = self
             .acquire_operation_lease(
                 tenant_id,
@@ -87,18 +68,7 @@ impl TenantConfigTransferService {
                 .lock_transfer(tenant_id, transfer_id)
                 .await?
                 .ok_or_else(|| AppError::NotFound("配置迁移不存在".into()))?;
-            if current.rollback_background_job_id != Some(job.id)
-                || current.status != TenantConfigTransferRecord::STATUS_ROLLING_BACK
-            {
-                return Err(AppError::Conflict("配置回滚任务已被替换".into()));
-            }
-            if Some(fence.configuration_version) != current.applied_configuration_version
-                || Some(fence.authorization_epoch) != current.applied_authorization_epoch
-            {
-                return Err(AppError::Conflict(
-                    "应用完成后配置已被修改，不能自动回滚".into(),
-                ));
-            }
+            validate_rollback_target(&current, job.id, &fence)?;
             let rollback_time = transaction.database_now().await?;
             transaction
                 .ensure_requester_snapshot(
@@ -177,4 +147,51 @@ impl TenantConfigTransferService {
             }
         }
     }
+
+    async fn load_rollback_snapshot(
+        &self,
+        tenant_id: &str,
+        transfer: &TenantConfigTransferRecord,
+    ) -> AppResult<ParsedTenantConfigPackage> {
+        let now = self.persistence.database_now().await?;
+        if transfer
+            .rollback_expires_at
+            .is_none_or(|expires_at| expires_at <= now)
+        {
+            return Err(AppError::Conflict("配置回滚窗口已过期".into()));
+        }
+        let snapshot_file_id = transfer
+            .snapshot_file_id
+            .ok_or_else(|| AppError::Conflict("配置回滚快照不存在".into()))?;
+        let snapshot_file = self
+            .file
+            .download_config_package_internal(tenant_id, snapshot_file_id)
+            .await?;
+        parse_tenant_config_package(
+            Arc::clone(&self.archive),
+            snapshot_file.data,
+            self.package_limits(),
+        )
+        .await
+    }
+}
+
+fn validate_rollback_target(
+    current: &TenantConfigTransferRecord,
+    job_id: i64,
+    fence: &TenantConfigurationFenceRecord,
+) -> AppResult<()> {
+    if current.rollback_background_job_id != Some(job_id)
+        || current.status != TenantConfigTransferRecord::STATUS_ROLLING_BACK
+    {
+        return Err(AppError::Conflict("配置回滚任务已被替换".into()));
+    }
+    if Some(fence.configuration_version) != current.applied_configuration_version
+        || Some(fence.authorization_epoch) != current.applied_authorization_epoch
+    {
+        return Err(AppError::Conflict(
+            "应用完成后配置已被修改，不能自动回滚".into(),
+        ));
+    }
+    Ok(())
 }

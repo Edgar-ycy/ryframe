@@ -1,11 +1,17 @@
 use sea_orm::DbErr;
 
+mod clauses;
+
 use super::{
     normalize::{
-        expected_extra, extract_column_type, normalize_action, normalize_column_type,
-        normalize_default, normalize_generation_expression, normalize_identifier,
+        expected_extra, extract_column_type, normalize_action, normalize_check_clause,
+        normalize_column_type, normalize_default, normalize_generation_expression,
+        normalize_identifier,
     },
-    types::{ExpectedColumn, ExpectedForeignKey, ExpectedIndex, ExpectedSchema, ExpectedTable},
+    types::{
+        ExpectedCheck, ExpectedColumn, ExpectedForeignKey, ExpectedIndex, ExpectedSchema,
+        ExpectedTable,
+    },
 };
 use crate::migration::baseline_contract::ddl_statements;
 
@@ -45,11 +51,7 @@ fn add_table_parts(
     table_character_set: &str,
     table_collation: &str,
 ) -> Result<(), DbErr> {
-    let lines = statement.lines().collect::<Vec<_>>();
-    let mut pending_constraint = None;
-    let mut index = 0;
-    while index < lines.len() {
-        let line = lines[index].trim().trim_end_matches(',');
+    for line in clauses::table_clauses(statement)? {
         let upper = line.to_ascii_uppercase();
         if line.starts_with('`') {
             add_column(
@@ -70,17 +72,44 @@ fn add_table_parts(
             );
         } else if upper.starts_with("UNIQUE KEY") || upper.starts_with("KEY ") {
             add_named_index(schema, table, line, &upper);
-        } else if upper.starts_with("CONSTRAINT ") {
-            pending_constraint = backtick_identifiers(line).into_iter().next();
-        } else if upper.starts_with("FOREIGN KEY") {
-            let (name, clause, next_index) =
-                foreign_key_clause(table, pending_constraint.take(), line, &lines, index)?;
-            add_foreign_key(schema, table, name, &clause)?;
-            index = next_index;
         }
-        index += 1;
+        if upper.starts_with("CONSTRAINT ") {
+            let (name, definition) = split_named_constraint(table, line)?;
+            let definition_upper = definition.to_ascii_uppercase();
+            if definition_upper.starts_with("FOREIGN KEY") {
+                add_foreign_key(schema, table, name, definition)?;
+            } else if definition_upper.starts_with("CHECK") {
+                add_check(schema, table, name, definition)?;
+            } else {
+                return Err(DbErr::Custom(format!(
+                    "constraint {table}.{name} has an unsupported definition"
+                )));
+            }
+        } else if upper.starts_with("FOREIGN KEY") || upper.starts_with("CHECK") {
+            return Err(DbErr::Custom(format!(
+                "constraint in {table} is missing a constraint name"
+            )));
+        }
     }
     Ok(())
+}
+
+fn split_named_constraint<'a>(table: &str, line: &'a str) -> Result<(String, &'a str), DbErr> {
+    let name_start = line
+        .find('`')
+        .ok_or_else(|| DbErr::Custom(format!("constraint in {table} is missing a quoted name")))?;
+    let name_end = line[name_start + 1..]
+        .find('`')
+        .map(|offset| name_start + 1 + offset)
+        .ok_or_else(|| DbErr::Custom(format!("constraint in {table} has an unclosed name")))?;
+    let name = &line[name_start + 1..name_end];
+    let definition = line[name_end + 1..].trim_start();
+    if name.is_empty() || definition.is_empty() {
+        return Err(DbErr::Custom(format!(
+            "constraint in {table} has an incomplete definition"
+        )));
+    }
+    Ok((name.to_owned(), definition))
 }
 
 fn add_column(
@@ -135,36 +164,6 @@ fn add_named_index(schema: &mut ExpectedSchema, table: &str, line: &str, upper: 
     }
 }
 
-fn foreign_key_clause(
-    table: &str,
-    name: Option<String>,
-    line: &str,
-    lines: &[&str],
-    mut index: usize,
-) -> Result<(String, String, usize), DbErr> {
-    let name = name.ok_or_else(|| {
-        DbErr::Custom(format!(
-            "foreign key in {table} is missing a constraint name"
-        ))
-    })?;
-    let mut clause = line.to_owned();
-    while index + 1 < lines.len() {
-        let next = lines[index + 1].trim().trim_end_matches(',');
-        if next.is_empty() {
-            index += 1;
-            continue;
-        }
-        let next_upper = next.to_ascii_uppercase();
-        if !next_upper.starts_with("REFERENCES") && !next_upper.starts_with("ON ") {
-            break;
-        }
-        index += 1;
-        clause.push(' ');
-        clause.push_str(next);
-    }
-    Ok((name, clause, index))
-}
-
 fn add_foreign_key(
     schema: &mut ExpectedSchema,
     table: &str,
@@ -190,6 +189,49 @@ fn add_foreign_key(
             delete_rule: extract_action(clause, "ON DELETE").unwrap_or_else(|| "restrict".into()),
         },
     );
+    Ok(())
+}
+
+fn add_check(
+    schema: &mut ExpectedSchema,
+    table: &str,
+    name: String,
+    definition: &str,
+) -> Result<(), DbErr> {
+    let clause_with_enforcement = definition["CHECK".len()..].trim();
+    let upper = clause_with_enforcement.to_ascii_uppercase();
+    let (clause, enforced) = if upper.ends_with(" NOT ENFORCED") {
+        (
+            &clause_with_enforcement[..clause_with_enforcement.len() - " NOT ENFORCED".len()],
+            false,
+        )
+    } else if upper.ends_with(" ENFORCED") {
+        (
+            &clause_with_enforcement[..clause_with_enforcement.len() - " ENFORCED".len()],
+            true,
+        )
+    } else {
+        (clause_with_enforcement, true)
+    };
+    let clause = clause.trim();
+    if !clause.starts_with('(') || !clause.ends_with(')') {
+        return Err(DbErr::Custom(format!(
+            "check constraint {table}.{name} has an invalid expression"
+        )));
+    }
+    let key = (table.to_owned(), name.clone());
+    let previous = schema.checks.insert(
+        key,
+        ExpectedCheck {
+            clause: normalize_check_clause(clause),
+            enforced,
+        },
+    );
+    if previous.is_some() {
+        return Err(DbErr::Custom(format!(
+            "canonical baseline contains duplicate check constraint {table}.{name}"
+        )));
+    }
     Ok(())
 }
 
@@ -317,4 +359,163 @@ fn backtick_identifiers(value: &str) -> Vec<String> {
         .filter(|(index, _)| index % 2 == 1)
         .map(|(_, identifier)| identifier.to_owned())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ExpectedSchema, add_table_parts, normalize_check_clause};
+
+    fn parse_table(statement: &str) -> ExpectedSchema {
+        let mut schema = ExpectedSchema::default();
+        add_table_parts(
+            &mut schema,
+            "child",
+            statement,
+            "utf8mb4",
+            "utf8mb4_general_ci",
+        )
+        .unwrap();
+        schema
+    }
+
+    #[test]
+    fn synthetic_multiline_check_and_foreign_key_keep_complete_clauses() {
+        let schema = parse_table(
+            r#"CREATE TABLE `child` (
+                `id` BIGINT NOT NULL,
+                `parent_id` BIGINT NOT NULL,
+                `state` VARCHAR(16) NOT NULL DEFAULT 'queued,ready',
+                CONSTRAINT `ck_child_state` CHECK (
+                    (`state` IN ('queued,ready', 'done'))
+                    AND (`id` > 0)),
+                CONSTRAINT `fk_child_parent`
+                    FOREIGN KEY (`parent_id`)
+                    REFERENCES `parent` (`id`)
+                    ON DELETE CASCADE ON UPDATE RESTRICT
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"#,
+        );
+
+        assert_eq!(
+            schema
+                .columns
+                .keys()
+                .filter(|(table, _)| table == "child")
+                .count(),
+            3
+        );
+        let key = &schema.foreign_keys[&("child".into(), "fk_child_parent".into())];
+        assert_eq!(key.columns, ["parent_id"]);
+        assert_eq!(key.referenced_table, "parent");
+        assert_eq!(key.referenced_columns, ["id"]);
+        assert_eq!(key.delete_rule, "cascade");
+        assert_eq!(key.update_rule, "restrict");
+        let check = &schema.checks[&("child".into(), "ck_child_state".into())];
+        assert_eq!(
+            check.clause,
+            normalize_check_clause("((`state` IN ('queued,ready', 'done')) AND (`id` > 0))")
+        );
+        assert!(check.enforced);
+    }
+
+    #[test]
+    fn synthetic_inline_foreign_key_keeps_actions() {
+        let schema = parse_table(
+            r#"CREATE TABLE `child` (
+                `id` BIGINT NOT NULL,
+                `owner_id` BIGINT NULL,
+                CONSTRAINT `fk_child_owner` FOREIGN KEY (`owner_id`) REFERENCES `owner` (`id`) ON DELETE SET NULL ON UPDATE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"#,
+        );
+
+        let key = &schema.foreign_keys[&("child".into(), "fk_child_owner".into())];
+        assert_eq!(key.columns, ["owner_id"]);
+        assert_eq!(key.referenced_table, "owner");
+        assert_eq!(key.referenced_columns, ["id"]);
+        assert_eq!(key.delete_rule, "set null");
+        assert_eq!(key.update_rule, "cascade");
+    }
+
+    #[test]
+    fn multiline_checks_preserve_attempt_columns_and_foreign_key() {
+        let schema = super::expected_schema().unwrap();
+        let table = "sys_background_job_attempt";
+        let columns = schema
+            .columns
+            .iter()
+            .filter(|((name, _), _)| name == table)
+            .collect::<Vec<_>>();
+        assert_eq!(columns.len(), 7);
+        for name in ["available_at", "started_at"] {
+            let column = &schema.columns[&(table.into(), name.into())];
+            assert_eq!(column.column_type, "datetime(6)");
+            assert!(!column.nullable);
+        }
+        for name in ["finished_at", "closed_at"] {
+            let column = &schema.columns[&(table.into(), name.into())];
+            assert_eq!(column.column_type, "datetime(6)");
+            assert!(column.nullable);
+        }
+        let key = &schema.foreign_keys[&(table.into(), "fk_bg_attempt_job".into())];
+        assert_eq!(key.columns, ["job_id"]);
+        assert_eq!(key.referenced_table, "sys_background_job");
+        assert_eq!(key.delete_rule, "cascade");
+        assert_eq!(key.update_rule, "restrict");
+    }
+
+    #[test]
+    fn inline_backup_constraints_are_verified_against_their_columns_and_target() {
+        let schema = super::expected_schema().unwrap();
+        for (table, name) in [
+            ("sys_backup_resource", "fk_backup_resource_set"),
+            ("sys_restore_run", "fk_restore_run_backup"),
+        ] {
+            let key = schema
+                .foreign_keys
+                .get(&(table.into(), name.into()))
+                .unwrap();
+            assert_eq!(key.columns, ["backup_id"]);
+            assert_eq!(key.referenced_table, "sys_backup_set");
+            assert_eq!(key.referenced_columns, ["id"]);
+            assert_eq!(key.delete_rule, "restrict");
+            assert_eq!(key.update_rule, "restrict");
+        }
+    }
+
+    #[test]
+    fn canonical_checks_include_restore_completion_and_every_declared_constraint() {
+        let schema = super::expected_schema().unwrap();
+        assert_eq!(schema.checks.len(), 32);
+        let completed =
+            &schema.checks[&("sys_restore_run".into(), "ck_restore_run_completed".into())];
+        assert_eq!(
+            completed.clause,
+            normalize_check_clause(
+                "((`status` IN ('running', 'data_verified') AND `completed_at` IS NULL) \
+                 OR (`status` IN ('succeeded', 'failed') AND `completed_at` IS NOT NULL \
+                 AND `completed_at` >= `started_at`))"
+            )
+        );
+        assert!(completed.enforced);
+    }
+
+    #[test]
+    fn unnamed_or_incomplete_check_constraints_fail_closed() {
+        for statement in [
+            "CREATE TABLE `child` (`id` BIGINT, CHECK (`id` > 0)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
+            "CREATE TABLE `child` (`id` BIGINT, CONSTRAINT `ck_id`) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci",
+        ] {
+            let mut schema = ExpectedSchema::default();
+            assert!(
+                add_table_parts(
+                    &mut schema,
+                    "child",
+                    statement,
+                    "utf8mb4",
+                    "utf8mb4_general_ci"
+                )
+                .is_err(),
+                "{statement}"
+            );
+        }
+    }
 }

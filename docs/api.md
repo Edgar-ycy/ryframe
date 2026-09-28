@@ -4,7 +4,11 @@
 
 HTTP 接口使用 `/api/v1` 前缀，完整路径、字段和 operation ID 见 `openapi/openapi.json`。开发环境启用 `api_docs.enabled` 并编译 `runtime-swagger-ui` feature 后，可访问 `/api/v1/swagger-ui`；原始文档位于 `/api/v1/api-docs/openapi.json`。
 
+当前 0.x 版本只提供现有普通用户与租户接口，Agent 查询、用户委托和服务账号接口已移除；旧地址按未知路由处理。调用方应使用当前契约生成的 `core/system/platform/monitor` 四域 caller。开发版本的接口变化需要同步更新调用方，不提供旧结构映射。
+
 普通业务端点使用 JSON；上传、文本、验证码图片、Blob 和文件下载按 OpenAPI 声明的 media type 传输，调用方不得把这些响应按 JSON 解码。时间使用带时区的 RFC3339 并在服务端规范化为 UTC。JSON DTO 默认拒绝未知字段；非法枚举、反向时间范围和越界批量请求在入队前返回 400。
+
+上传同时遵守配置中的文件大小与请求体上限，分块传输同样受限，不叠加 Multipart 提取器的默认 2 MiB 限制。畸形上传表单返回 400，大小超限返回 413，底层读取故障返回 500。
 
 JSON 业务响应使用统一包络；文本和二进制响应直接使用契约声明的 content type，不附加 JSON 包络：
 
@@ -29,6 +33,8 @@ Authorization: Bearer <access_token>
 
 客户端应原子应用 `SessionContext` 中的用户、租户、角色、权限、授权与运行 epoch、capability 和菜单投影，不得混用不同响应的会话字段。会话上下文显式返回 `is_super_admin`；客户端使用该字段和授权投影展示界面，不根据角色 code 推断超级管理员。
 
+能力目录和会话能力集合允许为空；套餐版本仍可发布，租户仍通过套餐版本开通并获得基础资源。空集合不允许任意未注册能力，也不会改变普通用户的权限与租户隔离校验。
+
 每条路由在访问目录中声明一种策略：
 
 - `Public`：无需登录。
@@ -37,6 +43,8 @@ Authorization: Bearer <access_token>
 - `Capability`：需要当前部署和租户同时启用能力。
 
 前端缺权限进入 403，已知页面缺 capability 进入“功能不可用”，未知页面进入 404。
+
+已登录用户通过 `GET /api/v1/common/shell-settings` 读取当前租户的侧栏主题和皮肤。该接口只返回固定的界面设置，不接受配置键；缺失项目返回 `null`，客户端使用默认值。按键读取任意配置仍需配置管理权限。
 
 ## 错误
 
@@ -89,4 +97,4 @@ ID 排序去重后必须为 1–100 条。整批先校验租户、申请人、�
 
 ## 契约验证
 
-OpenAPI 改变后运行 `cargo api-sync` 刷新前端派生契约，再执行前端消费者自检与浏览器 smoke。若调用方提示 operation 不存在或 DTO 不匹配，先重新同步契约，再检查后端导出的 operation ID。
+OpenAPI 改变后运行 `cargo xtask generate api --write` 刷新前端派生契约，再执行前端消费者自检与浏览器 smoke。若调用方提示 operation 不存在或 DTO 不匹配，先重新同步契约，再检查后端导出的 operation ID。

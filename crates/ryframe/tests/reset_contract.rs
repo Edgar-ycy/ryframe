@@ -122,6 +122,7 @@ mod engine {
     struct MockRuntime {
         calls: Arc<Mutex<Vec<&'static str>>>,
         fail_at: Option<ResetPhase>,
+        fail_release: bool,
     }
 
     impl MockRuntime {
@@ -181,7 +182,11 @@ mod engine {
         }
         async fn release(&mut self) -> ResetResult<()> {
             self.calls.lock().await.push("release");
-            Ok(())
+            if self.fail_release {
+                Err(ResetError::new("模拟环境锁释放失败"))
+            } else {
+                Ok(())
+            }
         }
     }
 
@@ -231,6 +236,7 @@ mod engine {
         let mut runtime = MockRuntime {
             calls: Arc::clone(&calls),
             fail_at: Some(ResetPhase::ObjectStorage),
+            fail_release: false,
         };
         assert!(
             execute(&mut runtime, &manifest, &hash, &store)
@@ -254,6 +260,7 @@ mod engine {
         let mut first = MockRuntime {
             calls: Arc::clone(&first_calls),
             fail_at: Some(ResetPhase::Redis),
+            fail_release: false,
         };
         assert!(execute(&mut first, &manifest, &hash, &store).await.is_err());
 
@@ -261,6 +268,7 @@ mod engine {
         let mut second = MockRuntime {
             calls: Arc::clone(&second_calls),
             fail_at: None,
+            fail_release: false,
         };
         execute(&mut second, &manifest, &hash, &store)
             .await
@@ -278,6 +286,165 @@ mod engine {
             ]
         );
         std::fs::remove_dir_all(base).expect("清理测试状态目录");
+    }
+
+    #[tokio::test]
+    async fn completed_reset_is_reused_without_new_completion_or_runtime_calls() {
+        let manifest = manifest();
+        let hash = "e".repeat(64);
+        let base = state_dir("reused");
+        let store = LedgerStore::new(&base, &manifest, &hash).expect("账本路径有效");
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let mut runtime = MockRuntime {
+            calls: Arc::clone(&calls),
+            fail_at: None,
+            fail_release: false,
+        };
+        let first = execute(&mut runtime, &manifest, &hash, &store)
+            .await
+            .expect("首次完成");
+        let original = fs::read(store.ledger_path()).expect("读取成功账本");
+        calls.lock().await.clear();
+        let second = execute(&mut runtime, &manifest, &hash, &store)
+            .await
+            .expect("安全复用");
+        let first = serde_json::to_value(first).expect("报告编码");
+        let second = serde_json::to_value(second).expect("报告编码");
+        assert_eq!(first["status"], "completed");
+        assert_eq!(second["status"], "reused");
+        assert!(first["completed_at"].is_string());
+        assert_eq!(first["completed_at"], second["completed_at"]);
+        assert_eq!(first["phases"], second["phases"]);
+        assert!(calls.lock().await.is_empty());
+        assert_eq!(
+            original,
+            fs::read(store.ledger_path()).expect("账本保持原样")
+        );
+        fs::remove_dir_all(base).expect("清理测试状态目录");
+    }
+
+    #[tokio::test]
+    async fn failed_release_never_becomes_success_on_repeated_execute() {
+        let manifest = manifest();
+        let hash = "f".repeat(64);
+        let base = state_dir("release-failure");
+        let store = LedgerStore::new(&base, &manifest, &hash).expect("账本路径有效");
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let mut runtime = MockRuntime {
+            calls: Arc::clone(&calls),
+            fail_at: None,
+            fail_release: true,
+        };
+        assert!(
+            execute(&mut runtime, &manifest, &hash, &store)
+                .await
+                .is_err()
+        );
+        let original = fs::read(store.ledger_path()).expect("失败账本已保存");
+        calls.lock().await.clear();
+        runtime.fail_release = false;
+        let error = execute(&mut runtime, &manifest, &hash, &store)
+            .await
+            .expect_err("不得用空release伪造成功");
+        assert!(error.to_string().contains("人工核对"));
+        assert!(calls.lock().await.is_empty());
+        assert_eq!(
+            original,
+            fs::read(store.ledger_path()).expect("保留失败账本")
+        );
+        let report: serde_json::Value =
+            serde_json::from_slice(&fs::read(store.report_path()).expect("失败报告"))
+                .expect("报告编码有效");
+        assert_eq!(report["status"], "failed");
+        assert_eq!(report["failed_phase"], "release");
+        assert_eq!(report["phases"]["release"]["status"], "failed");
+        assert!(report["completed_at"].is_null());
+        fs::remove_dir_all(base).expect("清理测试状态目录");
+    }
+
+    #[tokio::test]
+    async fn missing_or_interrupted_release_evidence_blocks_all_runtime_work() {
+        for interrupted in [false, true] {
+            let manifest = manifest();
+            let hash = "a".repeat(64);
+            let base = state_dir("release-interrupted");
+            let store = LedgerStore::new(&base, &manifest, &hash).expect("账本路径有效");
+            let mut ledger = store.load_or_create(&manifest, &hash).expect("初始账本");
+            for phase in ResetPhase::ORDERED
+                .into_iter()
+                .filter(|phase| *phase != ResetPhase::Release)
+            {
+                ledger.mark_running(phase);
+                ledger.mark_complete(phase, PhaseEvidence::new());
+            }
+            if interrupted {
+                ledger.mark_running(ResetPhase::Release);
+            }
+            store.save(&ledger).expect("记录释放前中断");
+            let original = fs::read(store.ledger_path()).expect("读取账本");
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let mut runtime = MockRuntime {
+                calls: Arc::clone(&calls),
+                fail_at: None,
+                fail_release: false,
+            };
+            assert!(
+                execute(&mut runtime, &manifest, &hash, &store)
+                    .await
+                    .expect_err("缺少释放证据不能续跑")
+                    .to_string()
+                    .contains("人工核对")
+            );
+            assert!(calls.lock().await.is_empty());
+            assert_eq!(
+                original,
+                fs::read(store.ledger_path()).expect("中断账本不改写")
+            );
+            fs::remove_dir_all(base).expect("清理测试状态目录");
+        }
+    }
+
+    #[tokio::test]
+    async fn phase_and_release_failures_remain_visible_without_resuming() {
+        let manifest = manifest();
+        let hash = "b".repeat(64);
+        let base = state_dir("multiple-failures");
+        let store = LedgerStore::new(&base, &manifest, &hash).expect("账本路径有效");
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let mut runtime = MockRuntime {
+            calls: Arc::clone(&calls),
+            fail_at: Some(ResetPhase::ObjectStorage),
+            fail_release: true,
+        };
+        let error = execute(&mut runtime, &manifest, &hash, &store)
+            .await
+            .expect_err("原始与释放错误均发生");
+        assert!(error.to_string().contains("object_storage 失败"));
+        assert!(error.to_string().contains("模拟环境锁释放失败"));
+        let original = fs::read(store.ledger_path()).expect("读取原失败");
+        calls.lock().await.clear();
+        runtime.fail_at = None;
+        runtime.fail_release = false;
+        assert!(
+            execute(&mut runtime, &manifest, &hash, &store)
+                .await
+                .is_err()
+        );
+        assert!(calls.lock().await.is_empty());
+        assert_eq!(original, fs::read(store.ledger_path()).expect("原失败保留"));
+        let report: serde_json::Value =
+            serde_json::from_slice(&fs::read(store.report_path()).expect("失败报告"))
+                .expect("有效JSON");
+        assert_eq!(report["failed_phase"], "object_storage");
+        assert_eq!(
+            report["phases"]["object_storage"]["last_error"],
+            "object_storage 失败"
+        );
+        assert_eq!(
+            report["phases"]["release"]["last_error"],
+            "模拟环境锁释放失败"
+        );
+        fs::remove_dir_all(base).expect("清理测试状态目录");
     }
 }
 
@@ -339,6 +506,28 @@ mod ledger {
         let mut changed = manifest;
         changed.config_sha = "d".repeat(64);
         assert!(store.load_or_create(&changed, &hash).is_err());
+        fs::remove_dir_all(base).expect("清理测试状态目录");
+    }
+
+    #[test]
+    fn old_ledger_version_is_rejected_without_rewriting_evidence() {
+        let manifest = manifest();
+        let base = std::env::temp_dir().join(format!(
+            "ryframe-reset-old-{}-{}",
+            std::process::id(),
+            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let hash = "f".repeat(64);
+        let store = LedgerStore::new(&base, &manifest, &hash).expect("有效路径");
+        let mut ledger = ResetLedger::new(&manifest, &hash);
+        ledger.ledger_version = 3;
+        store.save(&ledger).expect("保存旧版测试账本");
+        let original = fs::read(store.ledger_path()).expect("旧账本字节");
+        assert!(store.load_or_create(&manifest, &hash).is_err());
+        assert_eq!(
+            original,
+            fs::read(store.ledger_path()).expect("旧账本保持原样")
+        );
         fs::remove_dir_all(base).expect("清理测试状态目录");
     }
 

@@ -4,10 +4,10 @@ use sea_orm::{ConnectionTrait, DbBackend, DbErr, Statement, TryGetable};
 
 use super::{
     normalize::{
-        normalize_action, normalize_actual_extra, normalize_column_type, normalize_default,
-        normalize_generation_expression, normalize_identifier,
+        normalize_action, normalize_actual_extra, normalize_check_clause, normalize_column_type,
+        normalize_default, normalize_generation_expression, normalize_identifier,
     },
-    types::{ActualColumn, ActualForeignKey, ActualIndex, ActualTable},
+    types::{ActualCheck, ActualColumn, ActualForeignKey, ActualIndex, ActualTable},
 };
 
 #[cfg(any(feature = "migration", test))]
@@ -63,6 +63,18 @@ const ACTUAL_FOREIGN_KEYS_SQL: &str = concat!(
     "WHERE k.CONSTRAINT_SCHEMA = DATABASE() ",
     "AND k.REFERENCED_TABLE_NAME IS NOT NULL ",
     "ORDER BY k.TABLE_NAME, k.CONSTRAINT_NAME, k.ORDINAL_POSITION",
+);
+
+const ACTUAL_CHECKS_SQL: &str = concat!(
+    "SELECT tc.TABLE_NAME AS `table_name`, tc.CONSTRAINT_NAME AS `constraint_name`, ",
+    "cc.CHECK_CLAUSE AS `check_clause`, tc.ENFORCED AS `enforced` ",
+    "FROM information_schema.TABLE_CONSTRAINTS tc ",
+    "JOIN information_schema.CHECK_CONSTRAINTS cc ",
+    "ON cc.CONSTRAINT_CATALOG = tc.CONSTRAINT_CATALOG ",
+    "AND cc.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA ",
+    "AND cc.CONSTRAINT_NAME = tc.CONSTRAINT_NAME ",
+    "WHERE tc.TABLE_SCHEMA = DATABASE() AND tc.CONSTRAINT_TYPE = 'CHECK' ",
+    "ORDER BY tc.TABLE_NAME, tc.CONSTRAINT_NAME",
 );
 
 #[cfg(feature = "migration")]
@@ -220,6 +232,29 @@ where
     Ok(foreign_keys)
 }
 
+pub(super) async fn actual_checks<C>(
+    db: &C,
+) -> Result<BTreeMap<(String, String), ActualCheck>, DbErr>
+where
+    C: ConnectionTrait + ?Sized,
+{
+    let rows = db
+        .query_all_raw(Statement::from_string(
+            DbBackend::MySql,
+            ACTUAL_CHECKS_SQL.to_owned(),
+        ))
+        .await?;
+    let mut checks = BTreeMap::new();
+    for row in rows {
+        let table = String::try_get_by_index(&row, 0)?;
+        let name = String::try_get_by_index(&row, 1)?;
+        let clause = normalize_check_clause(&String::try_get_by_index(&row, 2)?);
+        let enforced = String::try_get_by_index(&row, 3)? == "YES";
+        checks.insert((table, name), ActualCheck { clause, enforced });
+    }
+    Ok(checks)
+}
+
 fn is_tenant_data_object(table: &str) -> bool {
     table == "seaql_tenant_data_migrations" || table.starts_with("biz_")
 }
@@ -236,6 +271,7 @@ mod tests {
             ACTUAL_COLUMNS_SQL,
             ACTUAL_INDEXES_SQL,
             ACTUAL_FOREIGN_KEYS_SQL,
+            ACTUAL_CHECKS_SQL,
         ] {
             assert!(!query.contains('\\'));
             assert!(!query.contains('\n'));

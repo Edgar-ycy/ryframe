@@ -362,21 +362,8 @@ impl TenantDataMigrationService {
         }
 
         let preview = self
-            .preview(
-                actor,
-                tenant_id,
-                MigrationPreviewRequest {
-                    target_key: command.target_key.clone(),
-                    expected_placement_generation: command.expected_placement_generation,
-                },
-            )
+            .validated_create_preview(actor, tenant_id, &command)
             .await?;
-        if !preview.eligible {
-            return Err(create_blocker_error(&preview.blockers));
-        }
-        if preview.plan_hash != command.plan_hash {
-            return Err(AppError::Conflict("迁移预览 plan_hash 已失效".into()));
-        }
 
         let migration_id = crate::next_id()?;
         let now = self.persistence.database_now().await?;
@@ -430,15 +417,7 @@ impl TenantDataMigrationService {
             return Err(error);
         }
         let placement = transaction.lock_placement(tenant_id).await?;
-        if placement.state != TenantDataPlacementRecord::STATE_ACTIVE
-            || placement.current_target_key != preview.source_target_key
-            || placement.placement_generation
-                != checked_generation(command.expected_placement_generation, "placement")?
-        {
-            return Err(AppError::StalePlacementGeneration(
-                "租户数据 placement 已变化".into(),
-            ));
-        }
+        validate_create_placement(&placement, &preview, &command)?;
         if transaction
             .lock_active_migration_for_tenant(tenant_id)
             .await?
@@ -488,7 +467,59 @@ impl TenantDataMigrationService {
             }
         };
         let queued = self
-            .queue
+            .enqueue_migration_job(transaction.as_ref(), tenant_id, migration_id, now)
+            .await;
+        let queued = match queued {
+            Ok(queued) => queued,
+            Err(error) => {
+                let _ = transaction.rollback().await;
+                return Err(error);
+            }
+        };
+        migration.background_job_id = Some(queued);
+        migration.updated_at = now;
+        migration = transaction.save_migration(migration).await?;
+        transaction
+            .commit(crate::TransactionAuditMode::CurrentRequest)
+            .await?;
+        self.queue.notify_background_jobs().await;
+        self.migration_view(migration).await
+    }
+
+    async fn validated_create_preview(
+        &self,
+        actor: &ActorContext,
+        tenant_id: &str,
+        command: &CreateMigrationCommand,
+    ) -> AppResult<MigrationPreview> {
+        let preview = self
+            .preview(
+                actor,
+                tenant_id,
+                MigrationPreviewRequest {
+                    target_key: command.target_key.clone(),
+                    expected_placement_generation: command.expected_placement_generation,
+                },
+            )
+            .await?;
+        if !preview.eligible {
+            return Err(create_blocker_error(&preview.blockers));
+        }
+        if preview.plan_hash != command.plan_hash {
+            return Err(AppError::Conflict("迁移预览 plan_hash 已失效".into()));
+        }
+
+        Ok(preview)
+    }
+
+    async fn enqueue_migration_job(
+        &self,
+        transaction: &dyn crate::ports::tenant_data::TenantDataMigrationTransaction,
+        tenant_id: &str,
+        migration_id: i64,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> AppResult<i64> {
+        self.queue
             .enqueue_in_transaction(
                 transaction.background_jobs(),
                 EnqueueJob {
@@ -506,21 +537,24 @@ impl TenantDataMigrationService {
                     tracestate: None,
                 },
             )
-            .await;
-        let queued = match queued {
-            Ok(queued) => queued,
-            Err(error) => {
-                let _ = transaction.rollback().await;
-                return Err(error);
-            }
-        };
-        migration.background_job_id = Some(queued.job_id);
-        migration.updated_at = now;
-        migration = transaction.save_migration(migration).await?;
-        transaction
-            .commit(crate::TransactionAuditMode::CurrentRequest)
-            .await?;
-        self.queue.notify_background_jobs().await;
-        self.migration_view(migration).await
+            .await
+            .map(|queued| queued.job_id)
     }
+}
+
+fn validate_create_placement(
+    placement: &TenantDataPlacementRecord,
+    preview: &MigrationPreview,
+    command: &CreateMigrationCommand,
+) -> AppResult<()> {
+    if placement.state != TenantDataPlacementRecord::STATE_ACTIVE
+        || placement.current_target_key != preview.source_target_key
+        || placement.placement_generation
+            != checked_generation(command.expected_placement_generation, "placement")?
+    {
+        return Err(AppError::StalePlacementGeneration(
+            "租户数据 placement 已变化".into(),
+        ));
+    }
+    Ok(())
 }

@@ -11,6 +11,20 @@ use crate::{
 impl AppConfig {
     /// 校验必填配置项
     pub fn validate(&self) -> AppResult<()> {
+        self.validate_application()?;
+        self.validate_database_settings()?;
+        self.validate_database_topology()?;
+        self.validate_tenant_targets()?;
+        self.validate_auth_secret()?;
+        self.validate_policies()?;
+        self.validate_session_lifetimes()?;
+        self.validate_redis()?;
+        self.validate_http()?;
+        self.validate_object_storage()?;
+        Ok(())
+    }
+
+    fn validate_application(&self) -> AppResult<()> {
         self.scope_id
             .validate_environment(self.environment)
             .map_err(AppError::Config)?;
@@ -33,6 +47,10 @@ impl AppConfig {
         if self.app.port == 0 {
             return Err(AppError::Config("app.port 必须大于 0".into()));
         }
+        Ok(())
+    }
+
+    fn validate_database_settings(&self) -> AppResult<()> {
         self.database.validate().map_err(AppError::Config)?;
         self.tenant_data.validate().map_err(AppError::Config)?;
         validate_database_connection(
@@ -53,6 +71,10 @@ impl AppConfig {
             ));
         }
 
+        Ok(())
+    }
+
+    fn validate_database_topology(&self) -> AppResult<()> {
         let mut replica_names = HashSet::with_capacity(self.database.replicas.len());
         for (index, replica) in self.database.replicas.iter().enumerate() {
             let name = replica.name.trim();
@@ -101,6 +123,10 @@ impl AppConfig {
                 self.environment.is_production(),
             )?;
         }
+        Ok(())
+    }
+
+    fn validate_tenant_targets(&self) -> AppResult<()> {
         let mut tenant_databases = HashSet::with_capacity(
             self.tenant_data.targets.len()
                 + self.database.replicas.len()
@@ -149,6 +175,10 @@ impl AppConfig {
                 )));
             }
         }
+        Ok(())
+    }
+
+    fn validate_auth_secret(&self) -> AppResult<()> {
         let jwt_secret = self.auth.jwt_secret.trim();
         if jwt_secret.is_empty() {
             return Err(AppError::Config("auth.jwt_secret 不能为空".into()));
@@ -170,6 +200,10 @@ impl AppConfig {
                 "auth.max_login_attempts 和 auth.lockout_duration_minutes 必须大于 0".into(),
             ));
         }
+        Ok(())
+    }
+
+    fn validate_policies(&self) -> AppResult<()> {
         self.rate_limit.validate().map_err(AppError::Config)?;
         self.pagination.validate().map_err(AppError::Config)?;
         self.logger.validate().map_err(AppError::Config)?;
@@ -183,9 +217,12 @@ impl AppConfig {
         self.tenant_config_transfer
             .validate(self.upload.file_max_bytes)
             .map_err(AppError::Config)?;
-        self.service_accounts.validate().map_err(AppError::Config)?;
         self.telemetry.validate().map_err(AppError::Config)?;
         self.messaging.validate().map_err(AppError::Config)?;
+        Ok(())
+    }
+
+    fn validate_session_lifetimes(&self) -> AppResult<()> {
         let access_ttl =
             parse_duration_seconds("auth.access_token_expire", &self.auth.access_token_expire)?;
         let refresh_ttl =
@@ -200,16 +237,10 @@ impl AppConfig {
                 "auth.refresh_token_expire cannot exceed the 7-day absolute session limit".into(),
             ));
         }
-        if self.service_accounts.enabled
-            && !self
-                .redis
-                .as_ref()
-                .is_some_and(|redis| redis.mode == RedisMode::Required)
-        {
-            return Err(AppError::Config(
-                "启用 service_accounts 时要求 redis.mode = \"required\"".into(),
-            ));
-        }
+        Ok(())
+    }
+
+    fn validate_redis(&self) -> AppResult<()> {
         if self.environment.is_production()
             && self.messaging.enabled
             && !self
@@ -231,11 +262,6 @@ impl AppConfig {
                 "production requires redis.mode = \"required\"".into(),
             ));
         }
-        if self.environment.is_production() && self.service_accounts.enabled {
-            self.service_accounts
-                .load_pepper_keyring(jwt_secret)
-                .map_err(AppError::Config)?;
-        }
         if let Some(redis) = &self.redis {
             if !redis.has_scope_id(&self.scope_id) {
                 return Err(AppError::Config(
@@ -244,6 +270,10 @@ impl AppConfig {
             }
             validate_redis_tls(redis, self.environment.is_production())?;
         }
+        Ok(())
+    }
+
+    fn validate_http(&self) -> AppResult<()> {
         if self.environment.is_production() && self.cors.allow_origins.is_empty() {
             return Err(AppError::Config(
                 "production requires at least one explicit CORS origin".into(),
@@ -276,6 +306,10 @@ impl AppConfig {
                 "invalid upload limits or timeout configuration".into(),
             ));
         }
+        Ok(())
+    }
+
+    fn validate_object_storage(&self) -> AppResult<()> {
         if !(1..=300).contains(&self.object_storage.request_timeout_secs) {
             return Err(AppError::Config(
                 "object_storage.request_timeout_secs 必须在 1 到 300 之间".into(),

@@ -11,14 +11,14 @@
 
 pub mod access_catalog;
 #[cfg(feature = "bin-api")]
-pub mod agent_limiter;
-#[cfg(feature = "bin-api")]
 pub mod app_state;
 pub mod application_policy;
 pub mod artifact_store;
 pub mod authorization_cache;
 pub mod authorization_cache_keyspace;
 pub mod background_services;
+#[cfg(any(feature = "bin-api", feature = "bin-worker"))]
+pub mod backup;
 pub mod control_plane;
 pub mod datasource;
 pub mod file_content;

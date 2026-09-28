@@ -63,16 +63,6 @@ permissions = [
     "system:role:export",
     "system:role:list",
     "system:role:remove",
-    "system:service-access-audit:list",
-    "system:service-account:add",
-    "system:service-account:edit",
-    "system:service-account:key-revoke",
-    "system:service-account:key-rotate",
-    "system:service-account:list",
-    "system:service-account:remove",
-    "system:service-account:role",
-    "system:service-delegation:list",
-    "system:service-delegation:revoke",
     "system:user-import:add",
     "system:user-import:cancel",
     "system:user-import:list",
@@ -124,16 +114,6 @@ non_route_permissions = ["tenant:capability:override"]
 "system:config-transfer:preview" = "配置迁移预览"
 "system:config-transfer:rollback" = "配置迁移回滚"
 "system:message:publish" = "消息发布"
-"system:service-access-audit:list" = "服务访问审计查询"
-"system:service-account:add" = "服务账号新增"
-"system:service-account:edit" = "服务账号修改"
-"system:service-account:key-revoke" = "服务账号密钥撤销"
-"system:service-account:key-rotate" = "服务账号密钥轮换"
-"system:service-account:list" = "服务账号查询"
-"system:service-account:remove" = "服务账号删除"
-"system:service-account:role" = "服务账号角色配置"
-"system:service-delegation:list" = "服务委托查询"
-"system:service-delegation:revoke" = "服务委托撤销"
 "system:user-import:add" = "用户导入创建"
 "system:user-import:cancel" = "用户导入取消"
 "system:user-import:list" = "用户导入查询"
@@ -236,6 +216,11 @@ policy = "authenticated"
 [[route_policies]]
 method = "GET"
 path = "/api/v1/common/file/download"
+policy = "authenticated"
+
+[[route_policies]]
+method = "GET"
+path = "/api/v1/common/shell-settings"
 policy = "authenticated"
 
 [[route_policies]]
@@ -464,16 +449,6 @@ page_key = "system.config-transfer"
 permission = "system:config-transfer:list"
 
 [[menus]]
-route_key = "system.service-accounts"
-order = 11
-name = "服务账号"
-title_key = "serviceAccounts"
-menu_type = "C"
-page_key = "system.service-accounts"
-permission = "system:service-account:list"
-capability = "system.service_accounts"
-
-[[menus]]
 route_key = "platform.product-plans"
 order = 12
 name = "产品套餐"
@@ -616,20 +591,3 @@ title_key = "overview"
 menu_type = "C"
 page_key = "monitor.overview"
 permission = "monitor:overview:list"
-
-[[capabilities]]
-code = "system.service_accounts"
-route_keys = ["system.service-accounts"]
-page_keys = ["system.service-accounts"]
-permissions = [
-    "system:service-account:list",
-    "system:service-account:add",
-    "system:service-account:edit",
-    "system:service-account:remove",
-    "system:service-account:role",
-    "system:service-account:key-rotate",
-    "system:service-account:key-revoke",
-    "system:service-delegation:list",
-    "system:service-delegation:revoke",
-    "system:service-access-audit:list",
-]

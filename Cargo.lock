@@ -2111,6 +2111,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutants"
+version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "add0ac067452ff1aca8c5002111bd6b1c895baee6e45fcbc44e0193aea17be56"
+
+[[package]]
 name = "nix"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2537,6 +2543,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "processkit"
+version = "3.3.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1549b59abbe4fc78aa39860e36c81da89262c1278679b8f7299ef4ad7668c004"
+dependencies = [
+ "async-trait",
+ "encoding_rs",
+ "libc",
+ "mutants",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3126,10 +3149,12 @@ dependencies = [
  "ryframe-db",
  "ryframe-kernel",
  "ryframe-tenant-db",
+ "same-file",
  "sea-orm",
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-appender",
@@ -3192,6 +3217,7 @@ dependencies = [
  "futures-util",
  "hex",
  "http",
+ "http-body-util",
  "image",
  "opentelemetry",
  "percent-encoding",
@@ -3229,7 +3255,6 @@ dependencies = [
  "futures-util",
  "hex",
  "hmac",
- "rand 0.10.1",
  "ryframe-auth",
  "ryframe-kernel",
  "serde",
@@ -4100,6 +4125,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -4991,6 +5017,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "winsafe"
+version = "0.0.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d135d17ab770252ad95e9a872d365cf3090e3be864a34ab46f48555993efc904"
+
+[[package]]
 name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5016,15 +5048,16 @@ name = "xtask"
 version = "0.12.1"
 dependencies = [
  "chrono",
- "libc",
+ "nix",
  "notify",
+ "processkit",
  "ryframe-generator",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "tokio",
  "toml",
- "windows-sys 0.61.2",
+ "winsafe",
 ]
 
 [[package]]

@@ -13,7 +13,11 @@ fn device_path() -> PathBuf {
 fn all_resource_check_plan_is_read_only_and_reaches_zero_diff() {
     let backend = tempfile::tempdir().expect("应创建后端临时工作区");
     let frontend = tempfile::tempdir().expect("应创建前端临时工作区");
-    fs::write(backend.path().join("Cargo.toml"), "[workspace]\n").expect("应创建工作区标识");
+    fs::write(
+        backend.path().join("Cargo.toml"),
+        "[workspace.package]\nversion = \"1.0.0\"\n",
+    )
+    .expect("应创建工作区标识");
     let device = load_resource(device_path()).expect("Device 资源清单应有效");
     let catalog = render_resources(&[device]).expect("生成应成功");
     let workspace = ResourceWorkspace {

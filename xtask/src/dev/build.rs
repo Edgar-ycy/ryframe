@@ -245,13 +245,13 @@ fn run_resource_check(
 ) -> Result<StepResult<()>> {
     let mut command = context.cargo_command();
     command
-        .args(["resource", "--all", "--check"])
+        .args(["xtask", "generate", "resource", "--all", "--check"])
         .current_dir(context.root)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
     record_cargo_invocation(context.cargo_invocations);
-    let mut child = context.group.spawn(&mut command)?;
+    let mut child = context.group.spawn(command)?;
     Ok(
         match wait_command(
             &mut child,
@@ -304,7 +304,7 @@ pub(crate) fn run_migration_validation(
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
         runtime_secrets.apply(&mut verify);
-        let mut child = group.spawn(&mut verify)?;
+        let mut child = group.spawn(verify)?;
         match wait_command(&mut child, shutdown, watcher, plan, lkg_check)? {
             WaitResult::Complete(status) if status.success() => {}
             WaitResult::Complete(_) => return Ok(StepResult::Failed),

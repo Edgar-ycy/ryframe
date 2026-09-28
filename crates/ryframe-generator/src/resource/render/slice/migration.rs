@@ -1,4 +1,4 @@
-use super::{ResourceIr, StorageKind, ValueType, sql_literal};
+use super::{ResourceIr, StorageKind, sql_literal};
 
 pub(super) fn migration(resource: &ResourceIr, header: &str) -> String {
     assert!(
@@ -55,7 +55,7 @@ use sea_orm_migration::prelude::*;
 pub const MIGRATION_NAME: &str = {migration_name:?};
 pub const CREATE_TABLE_DDL: &str = r#"{ddl}"#;
 
-/// 资源首次引入的不可变迁移；后续 schema 变更只能追加 roll-forward 迁移。
+/// 资源初始迁移；正式发布前可显式重整基线，正式发布后只能追加向前迁移。
 pub const INITIAL_RESOURCE_MIGRATION: bool = true;
 
 pub struct Migration;
@@ -95,34 +95,7 @@ pub(super) fn migration_name(resource: &ResourceIr) -> String {
 }
 
 fn column_definition(field: &super::FieldIr) -> String {
-    let sql_type = match field.value_type {
-        ValueType::String => {
-            let enum_length = field
-                .enum_values
-                .keys()
-                .map(|value| u32::try_from(value.chars().count()).unwrap_or(u32::MAX))
-                .max();
-            let inferred = if field.name == "tenant_id" {
-                Some(64)
-            } else {
-                enum_length
-            };
-            let length = field
-                .validation
-                .max_length
-                .or(inferred)
-                .unwrap_or(255)
-                .max(1);
-            format!("VARCHAR({length})")
-        }
-        ValueType::I32 => "INT".into(),
-        ValueType::I64 => "BIGINT".into(),
-        ValueType::Bool => "BOOLEAN".into(),
-        ValueType::Date => "DATE".into(),
-        ValueType::DateTime => "DATETIME(6)".into(),
-        ValueType::Json => "JSON".into(),
-        ValueType::Decimal => unreachable!("decimal 已在生成边界校验中拒绝"),
-    };
+    let sql_type = super::super::schema::column_type(field);
     let nullability = if field.nullable { "NULL" } else { "NOT NULL" };
     let default = field
         .default

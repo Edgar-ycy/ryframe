@@ -1,3 +1,4 @@
+mod attempts;
 mod claim;
 mod enqueue;
 mod stats;
@@ -6,8 +7,8 @@ mod types;
 
 pub use types::{
     BackgroundJobFilter, BackgroundJobRepository, BackgroundJobStats, BackgroundJobTypeStats,
-    EnqueueBackgroundJob, EnqueueBackgroundJobResult, ExpiredLeaseRecovery, FailBackgroundJob,
-    JobFailureDisposition,
+    DeferBackgroundJob, EnqueueBackgroundJob, EnqueueBackgroundJobResult, ExpiredLeaseRecovery,
+    FailBackgroundJob, JobFailureDisposition,
 };
 
 use chrono::Duration;

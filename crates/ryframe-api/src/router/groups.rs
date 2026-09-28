@@ -114,6 +114,7 @@ pub(super) fn common_router(state: AppState, idempotency_state: IdempotencyState
     );
 
     Router::new()
+        .merge(protect(domains::common::settings(state.clone()), &state))
         .nest("/upload", upload)
         .nest("/file", download)
         .nest("/jobs", exports)

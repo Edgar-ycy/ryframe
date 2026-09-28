@@ -25,9 +25,8 @@ pub struct PostOpenApi;
 
 /// OpenAPI 中 `x-ryframe-crud-resources` 使用的安全 UI 元数据。
 pub fn crud_resource_metadata() -> serde_json::Value {
-    serde_json::json!({
+    let mut metadata = serde_json::json!({
       "access": {
-        "capability": "system.post",
         "permissions": {
           "create": "system:post:add",
           "delete": "system:post:remove",
@@ -49,227 +48,6 @@ pub fn crud_resource_metadata() -> serde_json::Value {
       "extension_permissions": {
         "export": "system:post:export"
       },
-      "fields": [
-        {
-          "enum_values": {},
-          "labels": {
-            "en": "Post ID",
-            "zh_cn": "岗位编号"
-          },
-          "name": "id",
-          "nullable": false,
-          "order": 10,
-          "usage": {
-            "create": false,
-            "create_optional": false,
-            "filter": false,
-            "list": true,
-            "read": true,
-            "sort": false,
-            "update": false,
-            "update_optional": false
-          },
-          "validation": {
-            "max_length": null,
-            "maximum": null,
-            "min_length": null,
-            "minimum": null,
-            "required": false
-          },
-          "value_type": "i64",
-          "widget": "hidden",
-          "wire_type": "string"
-        },
-        {
-          "enum_values": {},
-          "labels": {
-            "en": "Post name",
-            "zh_cn": "岗位名称"
-          },
-          "name": "name",
-          "nullable": false,
-          "order": 30,
-          "usage": {
-            "create": true,
-            "create_optional": false,
-            "filter": true,
-            "list": true,
-            "read": true,
-            "sort": false,
-            "update": true,
-            "update_optional": false
-          },
-          "validation": {
-            "max_length": 64,
-            "maximum": null,
-            "min_length": 1,
-            "minimum": null,
-            "required": true
-          },
-          "value_type": "string",
-          "widget": "text",
-          "wire_type": "string"
-        },
-        {
-          "enum_values": {},
-          "labels": {
-            "en": "Post code",
-            "zh_cn": "岗位编码"
-          },
-          "name": "code",
-          "nullable": false,
-          "order": 40,
-          "usage": {
-            "create": true,
-            "create_optional": false,
-            "filter": true,
-            "list": true,
-            "read": true,
-            "sort": false,
-            "update": false,
-            "update_optional": false
-          },
-          "validation": {
-            "max_length": 64,
-            "maximum": null,
-            "min_length": 1,
-            "minimum": null,
-            "required": true
-          },
-          "value_type": "string",
-          "widget": "text",
-          "wire_type": "string"
-        },
-        {
-          "enum_values": {},
-          "labels": {
-            "en": "Display order",
-            "zh_cn": "显示顺序"
-          },
-          "name": "sort",
-          "nullable": false,
-          "order": 50,
-          "usage": {
-            "create": true,
-            "create_optional": true,
-            "filter": false,
-            "list": true,
-            "read": true,
-            "sort": true,
-            "update": true,
-            "update_optional": true
-          },
-          "validation": {
-            "max_length": null,
-            "maximum": 999,
-            "min_length": null,
-            "minimum": 0,
-            "required": false
-          },
-          "value_type": "i32",
-          "widget": "number",
-          "wire_type": "i32"
-        },
-        {
-          "enum_values": {
-            "0": {
-              "en": "Disabled",
-              "zh_cn": "停用"
-            },
-            "1": {
-              "en": "Active",
-              "zh_cn": "正常"
-            }
-          },
-          "labels": {
-            "en": "Status",
-            "zh_cn": "状态"
-          },
-          "name": "status",
-          "nullable": false,
-          "order": 60,
-          "usage": {
-            "create": false,
-            "create_optional": false,
-            "filter": true,
-            "list": true,
-            "read": true,
-            "sort": false,
-            "update": true,
-            "update_optional": false
-          },
-          "validation": {
-            "max_length": null,
-            "maximum": null,
-            "min_length": null,
-            "minimum": null,
-            "required": true
-          },
-          "value_type": "string",
-          "widget": "select",
-          "wire_type": "string"
-        },
-        {
-          "enum_values": {},
-          "labels": {
-            "en": "Remark",
-            "zh_cn": "备注"
-          },
-          "name": "remark",
-          "nullable": true,
-          "order": 70,
-          "usage": {
-            "create": false,
-            "create_optional": false,
-            "filter": false,
-            "list": false,
-            "read": true,
-            "sort": false,
-            "update": false,
-            "update_optional": false
-          },
-          "validation": {
-            "max_length": 512,
-            "maximum": null,
-            "min_length": null,
-            "minimum": null,
-            "required": false
-          },
-          "value_type": "string",
-          "widget": "textarea",
-          "wire_type": "string"
-        },
-        {
-          "enum_values": {},
-          "labels": {
-            "en": "Created at",
-            "zh_cn": "创建时间"
-          },
-          "name": "created_at",
-          "nullable": false,
-          "order": 90,
-          "usage": {
-            "create": false,
-            "create_optional": false,
-            "filter": false,
-            "list": true,
-            "read": true,
-            "sort": false,
-            "update": false,
-            "update_optional": false
-          },
-          "validation": {
-            "max_length": null,
-            "maximum": null,
-            "min_length": null,
-            "minimum": null,
-            "required": false
-          },
-          "value_type": "date_time",
-          "widget": "date_time",
-          "wire_type": "date_time"
-        }
-      ],
       "labels": {
         "en": "Post",
         "zh_cn": "岗位"
@@ -292,5 +70,255 @@ pub fn crud_resource_metadata() -> serde_json::Value {
         "path": "/system/post"
       },
       "storage": "control_row"
+    });
+    metadata["fields"] = serde_json::json!([
+        field_id(),
+        field_name(),
+        field_code(),
+        field_sort(),
+        field_status(),
+        field_remark(),
+        field_created_at()
+    ]);
+    metadata
+}
+
+fn field_id() -> serde_json::Value {
+    serde_json::json!({
+      "enum_values": {},
+      "labels": {
+        "en": "Post ID",
+        "zh_cn": "岗位编号"
+      },
+      "name": "id",
+      "nullable": false,
+      "order": 10,
+      "usage": {
+        "create": false,
+        "create_optional": false,
+        "filter": false,
+        "list": true,
+        "read": true,
+        "sort": false,
+        "update": false,
+        "update_optional": false
+      },
+      "validation": {
+        "max_length": null,
+        "maximum": null,
+        "min_length": null,
+        "minimum": null,
+        "required": false
+      },
+      "value_type": "i64",
+      "widget": "hidden",
+      "wire_type": "string"
+    })
+}
+
+fn field_name() -> serde_json::Value {
+    serde_json::json!({
+      "enum_values": {},
+      "labels": {
+        "en": "Post name",
+        "zh_cn": "岗位名称"
+      },
+      "name": "name",
+      "nullable": false,
+      "order": 30,
+      "usage": {
+        "create": true,
+        "create_optional": false,
+        "filter": true,
+        "list": true,
+        "read": true,
+        "sort": false,
+        "update": true,
+        "update_optional": false
+      },
+      "validation": {
+        "max_length": 64,
+        "maximum": null,
+        "min_length": 1,
+        "minimum": null,
+        "required": true
+      },
+      "value_type": "string",
+      "widget": "text",
+      "wire_type": "string"
+    })
+}
+
+fn field_code() -> serde_json::Value {
+    serde_json::json!({
+      "enum_values": {},
+      "labels": {
+        "en": "Post code",
+        "zh_cn": "岗位编码"
+      },
+      "name": "code",
+      "nullable": false,
+      "order": 40,
+      "usage": {
+        "create": true,
+        "create_optional": false,
+        "filter": true,
+        "list": true,
+        "read": true,
+        "sort": false,
+        "update": false,
+        "update_optional": false
+      },
+      "validation": {
+        "max_length": 64,
+        "maximum": null,
+        "min_length": 1,
+        "minimum": null,
+        "required": true
+      },
+      "value_type": "string",
+      "widget": "text",
+      "wire_type": "string"
+    })
+}
+
+fn field_sort() -> serde_json::Value {
+    serde_json::json!({
+      "enum_values": {},
+      "labels": {
+        "en": "Display order",
+        "zh_cn": "显示顺序"
+      },
+      "name": "sort",
+      "nullable": false,
+      "order": 50,
+      "usage": {
+        "create": true,
+        "create_optional": true,
+        "filter": false,
+        "list": true,
+        "read": true,
+        "sort": true,
+        "update": true,
+        "update_optional": true
+      },
+      "validation": {
+        "max_length": null,
+        "maximum": 999,
+        "min_length": null,
+        "minimum": 0,
+        "required": false
+      },
+      "value_type": "i32",
+      "widget": "number",
+      "wire_type": "i32"
+    })
+}
+
+fn field_status() -> serde_json::Value {
+    serde_json::json!({
+      "enum_values": {
+        "0": {
+          "en": "Disabled",
+          "zh_cn": "停用"
+        },
+        "1": {
+          "en": "Active",
+          "zh_cn": "正常"
+        }
+      },
+      "labels": {
+        "en": "Status",
+        "zh_cn": "状态"
+      },
+      "name": "status",
+      "nullable": false,
+      "order": 60,
+      "usage": {
+        "create": false,
+        "create_optional": false,
+        "filter": true,
+        "list": true,
+        "read": true,
+        "sort": false,
+        "update": true,
+        "update_optional": false
+      },
+      "validation": {
+        "max_length": null,
+        "maximum": null,
+        "min_length": null,
+        "minimum": null,
+        "required": true
+      },
+      "value_type": "string",
+      "widget": "select",
+      "wire_type": "string"
+    })
+}
+
+fn field_remark() -> serde_json::Value {
+    serde_json::json!({
+      "enum_values": {},
+      "labels": {
+        "en": "Remark",
+        "zh_cn": "备注"
+      },
+      "name": "remark",
+      "nullable": true,
+      "order": 70,
+      "usage": {
+        "create": false,
+        "create_optional": false,
+        "filter": false,
+        "list": false,
+        "read": true,
+        "sort": false,
+        "update": false,
+        "update_optional": false
+      },
+      "validation": {
+        "max_length": 512,
+        "maximum": null,
+        "min_length": null,
+        "minimum": null,
+        "required": false
+      },
+      "value_type": "string",
+      "widget": "textarea",
+      "wire_type": "string"
+    })
+}
+
+fn field_created_at() -> serde_json::Value {
+    serde_json::json!({
+      "enum_values": {},
+      "labels": {
+        "en": "Created at",
+        "zh_cn": "创建时间"
+      },
+      "name": "created_at",
+      "nullable": false,
+      "order": 90,
+      "usage": {
+        "create": false,
+        "create_optional": false,
+        "filter": false,
+        "list": true,
+        "read": true,
+        "sort": false,
+        "update": false,
+        "update_optional": false
+      },
+      "validation": {
+        "max_length": null,
+        "maximum": null,
+        "min_length": null,
+        "minimum": null,
+        "required": false
+      },
+      "value_type": "date_time",
+      "widget": "date_time",
+      "wire_type": "date_time"
     })
 }

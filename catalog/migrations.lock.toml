@@ -2,20 +2,32 @@ format_version = 1
 frozen_at = "2026-08-20"
 
 [[files]]
+path = "crates/ryframe-db/src/migration/m20260820_000000_control_baseline/backup.rs"
+sha256 = "8668ae2f9bb72ff459e6d304aefd7d5942ebeb2799bd0120500dde7ec5cd9997"
+storage = "control"
+target = "m20260820_000000_control_baseline"
+
+[[files]]
 path = "crates/ryframe-db/src/migration/m20260820_000000_control_baseline/base.rs"
-sha256 = "521323f4b729a7231869368fd36f5add7bdc792419c2252c9622abca320974e6"
+sha256 = "26a2af0153571471d744a89ff9ff154bda084c55226d06434a6dce4c097a2c4c"
+storage = "control"
+target = "m20260820_000000_control_baseline"
+
+[[files]]
+path = "crates/ryframe-db/src/migration/m20260820_000000_control_baseline/jobs.rs"
+sha256 = "38ff3e73a42c3a19a17fb836f3b74cabef3b4a0a7b084308f5b2d5d890af0fa6"
 storage = "control"
 target = "m20260820_000000_control_baseline"
 
 [[files]]
 path = "crates/ryframe-db/src/migration/m20260820_000000_control_baseline/mod.rs"
-sha256 = "3d3d494838229ee057d156d30d2a11d42cc2bf08a82f34b4b4606b4b43afc08e"
+sha256 = "15e33ff9fa54268902bc21bd23c63828b33dbc6566fb6c624ad563c20e58dcd8"
 storage = "control"
 target = "m20260820_000000_control_baseline"
 
 [[files]]
 path = "crates/ryframe-db/src/migration/m20260820_000000_control_baseline/schema.rs"
-sha256 = "a3519832e1e71a40ffe0e9cef3575d85e873fbf67f2f3ddb8a1fd900015c53c2"
+sha256 = "d1bb6746219c68660f44b1470b7951de37062f9b0d0d65d0ddc13dceaa8c4428"
 storage = "control"
 target = "m20260820_000000_control_baseline"
 

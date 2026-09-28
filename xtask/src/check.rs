@@ -14,12 +14,22 @@ mod feature;
 pub(crate) mod metrics;
 #[path = "check/model.rs"]
 mod model;
+#[path = "check/node_suite.rs"]
+mod node_suite;
+#[path = "check/plan.rs"]
+mod plan;
+#[path = "check/policy_tasks.rs"]
+mod policy_tasks;
 #[path = "check/resource.rs"]
 mod resource;
 #[path = "check/selection.rs"]
 mod selection;
 #[path = "check/snapshot.rs"]
 mod snapshot;
+#[path = "check/task_plan.rs"]
+mod task_plan;
+#[path = "check/task_registry.rs"]
+mod task_registry;
 
 pub(crate) use cargo_command::ci_test_jobs_from;
 #[allow(unused_imports)]
@@ -27,14 +37,6 @@ pub(crate) use cargo_command::{
     WORKSPACE_CLIPPY_ARGS, backend_package_operation_args, cargo_operation_jobs,
     default_test_jobs_from, workspace_clippy_args, workspace_test_args,
 };
-pub(crate) use execution::{
-    ci_consumer_contract, ci_consumer_contract_against_committed_snapshot, ci_rust_gate,
-};
-#[allow(unused_imports)]
-pub(crate) use execution::{run, verify};
-#[allow(unused_imports)]
-pub(crate) use feature::feature_matrix;
-
 #[allow(unused_imports)]
 pub(crate) use change_surface::{
     ChangeCategory, ChangeSurfacePolicy, ChangeSurfaceReport, RepositoryKind,
@@ -48,11 +50,17 @@ pub(crate) use context::{
     VerifyTargetPolicy, ci_environment_from, ci_target_policy, ci_target_policy_from,
     resolve_target_dir, verify_job_budget_from, verify_target_policy_from,
 };
+pub(crate) use execution::ci_consumer_contract_against_committed_snapshot;
+#[allow(unused_imports)]
+pub(crate) use execution::verify;
 #[allow(unused_imports)]
 pub(crate) use execution::{
-    BACKEND_POLICY_SCRIPTS, CONSUMER_OWNED_COMMANDS, FRONTEND_FULL_NON_CONSUMER_COMMANDS,
-    FRONTEND_ONLY_CONTRACT_COMMANDS, PYTHON_TEST_ARGS, SMART_BACKEND_OPERATIONS,
-    SMART_FEATURE_OPERATIONS,
+    CheckExecutionState, TaskExecutionMode, execute_registered_task, preflight_migration_args,
+    run_parallel_tasks,
+};
+#[allow(unused_imports)]
+pub(crate) use execution::{
+    PYTHON_ENVIRONMENT_ARGS, PYTHON_TEST_ARGS, SMART_BACKEND_OPERATIONS, SMART_FEATURE_OPERATIONS,
 };
 #[allow(unused_imports)]
 pub(crate) use feature::{
@@ -62,6 +70,18 @@ pub(crate) use feature::{
 #[allow(unused_imports)]
 pub(crate) use model::{
     BackendSnapshotProfile, ConsumerContractPlan, FrontendProfile, VerifySelection, WorkspaceGraph,
+};
+#[allow(unused_imports)]
+pub(crate) use node_suite::{discover_node_tests, run_node_tests};
+#[allow(unused_imports)]
+pub(crate) use plan::{
+    CheckPlanMode, CheckTaskPlan, build_task_plan, plan, render_task_plan, select_check_mode,
+    tasks_for, validate_plan,
+};
+#[allow(unused_imports)]
+pub(crate) use policy_tasks::{
+    MIGRATION_HISTORY_SCRIPT, PYTHON_POLICY_TASKS, PolicyProfile, PythonPolicyTask,
+    STRICT_MIGRATION_HISTORY_ARGS, policy_tasks,
 };
 #[allow(unused_imports)]
 pub(crate) use resource::{
@@ -78,6 +98,12 @@ pub(crate) use selection::{
 #[allow(unused_imports)]
 pub(crate) use snapshot::{
     BackendSnapshots, backend_snapshot_export_args, consumer_contract_arguments,
-    consumer_contract_plan, load_consumer_contract_plan, package_tests_generate_snapshots,
-    prepare_backend_snapshots, prepare_consumer_backend_snapshots, verify_backend_snapshots,
+    consumer_contract_command, consumer_contract_plan, load_consumer_contract_plan,
+    package_tests_generate_snapshots, prepare_backend_snapshots,
+    prepare_consumer_backend_snapshots, verify_backend_snapshots,
+};
+#[allow(unused_imports)]
+pub(crate) use task_plan::{
+    TASK_REGISTRY, TaskExecutor, TaskPlan, TaskRepository, TaskSpec, TaskStage,
+    TaskWorkingDirectory,
 };

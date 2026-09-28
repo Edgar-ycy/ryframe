@@ -40,13 +40,13 @@ struct AuthenticatedTenantRateLimitState {
 }
 
 #[derive(Clone)]
-struct CapabilityGuardState {
+pub struct CapabilityGuardState {
     app: AppState,
     capability_code: &'static str,
 }
 
 impl CapabilityGuardState {
-    const fn new(app: AppState, capability_code: &'static str) -> Self {
+    pub const fn new(app: AppState, capability_code: &'static str) -> Self {
         Self {
             app,
             capability_code,
@@ -165,7 +165,7 @@ async fn tenant_context_headers(
 }
 
 /// 通用能力门禁位于具体路由 RBAC 外层：部署 501 → 租户能力 403 → RBAC 403。
-async fn capability_guard(
+pub async fn capability_guard(
     State(state): State<CapabilityGuardState>,
     request: Request,
     next: Next,
@@ -394,14 +394,6 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         router = router.nest("/platform", platform);
     }
 
-    let profile_delegations = protect(
-        domains::profile::service_delegations(state.clone()).layer(from_fn_with_state(
-            OperLogMiddlewareState::new_arc(state.services.operations.audit_outbox.clone()),
-            oper_log_middleware,
-        )),
-        &state,
-    );
-    router = router.nest("/profile/service-delegations", profile_delegations);
     if state.settings.api_docs_enabled {
         router = router.route(
             "/api-docs/openapi.json",

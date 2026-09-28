@@ -44,7 +44,7 @@ impl MigrationStatus {
             expected: expected_versions.len(),
             missing,
             unexpected,
-            schema_fingerprint: super::TENANT_DATA_SCHEMA_FINGERPRINT,
+            schema_fingerprint: super::tenant_data_schema_fingerprint(),
         }
     }
 }

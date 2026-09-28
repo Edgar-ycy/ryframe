@@ -33,12 +33,19 @@ pub(super) struct ExpectedForeignKey {
     pub(super) delete_rule: String,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct ExpectedCheck {
+    pub(super) clause: String,
+    pub(super) enforced: bool,
+}
+
 #[derive(Default)]
 pub(super) struct ExpectedSchema {
     pub(super) tables: BTreeMap<String, ExpectedTable>,
     pub(super) columns: BTreeMap<(String, String), ExpectedColumn>,
     pub(super) indexes: BTreeMap<(String, String), ExpectedIndex>,
     pub(super) foreign_keys: BTreeMap<(String, String), ExpectedForeignKey>,
+    pub(super) checks: BTreeMap<(String, String), ExpectedCheck>,
 }
 
 #[derive(Debug)]
@@ -74,4 +81,10 @@ pub(super) struct ActualForeignKey {
     pub(super) referenced_columns: Vec<(i64, String)>,
     pub(super) update_rule: String,
     pub(super) delete_rule: String,
+}
+
+#[derive(Debug)]
+pub(super) struct ActualCheck {
+    pub(super) clause: String,
+    pub(super) enforced: bool,
 }

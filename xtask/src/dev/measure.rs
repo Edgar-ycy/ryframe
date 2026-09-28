@@ -295,7 +295,7 @@ fn spawn_cancellation_build(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    group.spawn(&mut command)
+    group.spawn(command)
 }
 
 fn wait_for_compile_descendant(child: &mut ManagedChild, target: &Path) -> Result<()> {

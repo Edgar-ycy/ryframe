@@ -378,7 +378,6 @@ fn service(
         Arc::new(DummyProductRead),
         Arc::new(DummyProductWrite),
         AuthorizationCache::disabled(),
-        false,
     ));
     (
         TenantService::new(
@@ -589,7 +588,7 @@ async fn authorization_copy_receives_filtered_template_with_parent_closure_and_r
         permissions,
         [
             ("system:root", true, false),
-            ("system:service-account:list", false, false),
+            ("system:config-transfer:list", false, false),
             ("system:user:list", true, true),
             ("system:user:add", true, false),
             ("monitor:job:list", false, false),
@@ -601,7 +600,7 @@ async fn authorization_copy_receives_filtered_template_with_parent_closure_and_r
             .iter()
             .map(|menu| menu.route_key.as_deref())
             .collect::<Vec<_>>(),
-        [None, Some("system.users")]
+        [None, Some("system.config-transfer"), Some("system.users")]
     );
     let catalogs = calls
         .iter()

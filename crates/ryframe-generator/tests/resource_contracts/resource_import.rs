@@ -35,7 +35,7 @@ fn metadata() -> ResourceDraftMetadata {
             },
         },
         access: AccessSpec {
-            capability: "system.device".into(),
+            capability: Some("system.device".into()),
             owner_field: None,
             permissions: PermissionSpec {
                 create: "system:device:create".into(),
@@ -56,7 +56,7 @@ fn metadata() -> ResourceDraftMetadata {
             },
         },
         route: RouteSpec {
-            key: "SystemDevice".into(),
+            key: "system.device".into(),
             path: "/system/device".into(),
         },
         soft_delete: None,

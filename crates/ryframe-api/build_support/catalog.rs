@@ -1,7 +1,7 @@
 use std::{collections::BTreeSet, error::Error, fs, path::Path};
 
 use super::{
-    model::{AccessCatalog, CATALOG_VERSION, GeneratedAccessCatalog, MenuEntry},
+    model::{AccessCatalog, CATALOG_VERSION, GeneratedAccessCatalog, GeneratedResource, MenuEntry},
     validation::{validate_catalog, validate_code, validate_identifier},
 };
 
@@ -53,33 +53,16 @@ fn merge_generated_catalog(
     for resource in generated.resources {
         validate_identifier("生成资源名称", &resource.name)?;
         validate_identifier("生成资源模块", &resource.module)?;
-        validate_code("生成资源能力码", &resource.capability, '.')?;
+        if let Some(capability) = &resource.capability {
+            validate_code("生成资源能力码", capability, '.')?;
+        }
         validate_generated_label("生成资源中文标签", &resource.labels.zh_cn)?;
         validate_generated_label("生成资源英文标签", &resource.labels.en)?;
         if !generated_names.insert(resource.name.clone()) {
             return Err(format!("生成资源名称重复: {}", resource.name).into());
         }
 
-        validate_identifier("生成菜单 route_key", &resource.menu.key)?;
-        validate_identifier("生成菜单 parent", &resource.menu.parent)?;
-        if let Some(icon) = resource.menu.icon.as_deref() {
-            validate_identifier("生成菜单 icon", icon)?;
-        }
-        validate_generated_label("生成菜单中文标签", &resource.menu.labels.zh_cn)?;
-        validate_generated_label("生成菜单英文标签", &resource.menu.labels.en)?;
-        if resource.menu.order == 0 {
-            return Err(format!("生成菜单 {} 的 order 必须大于 0", resource.menu.key).into());
-        }
-        validate_identifier("生成页面 route_key", &resource.route.key)?;
-        if !resource.route.path.starts_with('/')
-            || resource.route.path.chars().any(char::is_whitespace)
-        {
-            return Err(format!(
-                "生成资源 {} 的前端路由必须是无空白的绝对路径",
-                resource.name
-            )
-            .into());
-        }
+        validate_generated_menu(&resource)?;
         if !manual_menu_keys.contains(&resource.menu.parent) {
             return Err(format!(
                 "生成菜单 {} 的父菜单 {} 不存在于手写访问目录",
@@ -118,7 +101,7 @@ fn merge_generated_catalog(
             menu_type: "C".to_owned(),
             page_key: Some(resource.route.key),
             permission: Some(list_permission),
-            // CRUD 清单中的 capability 是前端安全元数据，不隐式创建产品能力门禁。
+            // 基础 CRUD 不隐式创建产品能力门禁；显式产品能力仍由手写目录闭合。
             capability: None,
         });
     }
@@ -136,4 +119,27 @@ fn validate_generated_label(label: &str, value: &str) -> Result<(), Box<dyn Erro
     } else {
         Ok(())
     }
+}
+
+fn validate_generated_menu(resource: &GeneratedResource) -> Result<(), Box<dyn Error>> {
+    validate_identifier("生成菜单 route_key", &resource.menu.key)?;
+    validate_identifier("生成菜单 parent", &resource.menu.parent)?;
+    if let Some(icon) = resource.menu.icon.as_deref() {
+        validate_identifier("生成菜单 icon", icon)?;
+    }
+    validate_generated_label("生成菜单中文标签", &resource.menu.labels.zh_cn)?;
+    validate_generated_label("生成菜单英文标签", &resource.menu.labels.en)?;
+    if resource.menu.order == 0 {
+        return Err(format!("生成菜单 {} 的 order 必须大于 0", resource.menu.key).into());
+    }
+    validate_identifier("生成页面 route_key", &resource.route.key)?;
+    if !resource.route.path.starts_with('/') || resource.route.path.chars().any(char::is_whitespace)
+    {
+        return Err(format!(
+            "生成资源 {} 的前端路由必须是无空白的绝对路径",
+            resource.name
+        )
+        .into());
+    }
+    Ok(())
 }

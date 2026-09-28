@@ -78,51 +78,10 @@ impl FileService {
     pub(in super::super) async fn reserve_upload(
         &self,
         tenant_id: &str,
-        mut model: FileUploadRecord,
+        model: FileUploadRecord,
     ) -> AppResult<ReservationOutcome> {
         let transaction = self.uploads.begin().await?;
-        let operation = async {
-            transaction.lock_tenant(tenant_id).await?;
-            let database_now = transaction.database_now().await?;
-            model.reservation_expires_at = Some(reservation_expires_at(database_now));
-            model.updated_at = database_now;
-
-            let file_sha256 = model.file_sha256.as_str();
-            if let Some(existing) = transaction
-                .find_by_sha256_for_update(tenant_id, &model.bucket, file_sha256)
-                .await?
-            {
-                if existing.upload_status == FILE_UPLOAD_STATUS_READY {
-                    return Ok(ReservationTransactionOutcome::Ready(existing));
-                }
-                if existing.upload_status == FILE_UPLOAD_STATUS_CLEANUP
-                    && existing.reservation_token.is_none()
-                    && transaction
-                        .restore_for_reference(tenant_id, existing.id, &model.bucket, database_now)
-                        .await?
-                {
-                    let mut restored = existing;
-                    restored.upload_status = FILE_UPLOAD_STATUS_READY.to_owned();
-                    restored.reservation_token = None;
-                    restored.reservation_expires_at = None;
-                    restored.updated_at = database_now;
-                    return Ok(ReservationTransactionOutcome::Restored(restored));
-                }
-                return Ok(ReservationTransactionOutcome::InProgress(existing));
-            }
-
-            transaction
-                .ensure_storage_quota(
-                    tenant_id,
-                    u64::try_from(model.file_size).unwrap_or_default(),
-                )
-                .await?;
-            transaction
-                .insert(tenant_id, model)
-                .await
-                .map(ReservationTransactionOutcome::Reserved)
-        }
-        .await;
+        let operation = reserve_in_transaction(transaction.as_ref(), tenant_id, model).await;
 
         let outcome = match operation {
             Ok(outcome) => outcome,
@@ -435,4 +394,50 @@ impl FileService {
             }
         }
     }
+}
+
+async fn reserve_in_transaction(
+    transaction: &dyn crate::ports::files::FileUploadTransaction,
+    tenant_id: &str,
+    mut model: FileUploadRecord,
+) -> AppResult<ReservationTransactionOutcome> {
+    transaction.lock_tenant(tenant_id).await?;
+    let database_now = transaction.database_now().await?;
+    model.reservation_expires_at = Some(reservation_expires_at(database_now));
+    model.updated_at = database_now;
+
+    let file_sha256 = model.file_sha256.as_str();
+    if let Some(existing) = transaction
+        .find_by_sha256_for_update(tenant_id, &model.bucket, file_sha256)
+        .await?
+    {
+        if existing.upload_status == FILE_UPLOAD_STATUS_READY {
+            return Ok(ReservationTransactionOutcome::Ready(existing));
+        }
+        if existing.upload_status == FILE_UPLOAD_STATUS_CLEANUP
+            && existing.reservation_token.is_none()
+            && transaction
+                .restore_for_reference(tenant_id, existing.id, &model.bucket, database_now)
+                .await?
+        {
+            let mut restored = existing;
+            restored.upload_status = FILE_UPLOAD_STATUS_READY.to_owned();
+            restored.reservation_token = None;
+            restored.reservation_expires_at = None;
+            restored.updated_at = database_now;
+            return Ok(ReservationTransactionOutcome::Restored(restored));
+        }
+        return Ok(ReservationTransactionOutcome::InProgress(existing));
+    }
+
+    transaction
+        .ensure_storage_quota(
+            tenant_id,
+            u64::try_from(model.file_size).unwrap_or_default(),
+        )
+        .await?;
+    transaction
+        .insert(tenant_id, model)
+        .await
+        .map(ReservationTransactionOutcome::Reserved)
 }

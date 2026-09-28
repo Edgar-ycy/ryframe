@@ -199,7 +199,7 @@ mod role_dto {
     }
 
     #[test]
-    fn role_option_query_accepts_both_explicit_purposes() {
+    fn role_option_query_accepts_user_assignment() {
         let user = parse_query("/?purpose=user_assignment").expect("用户分配用途应可解析");
         assert_eq!(user.purpose, RoleOptionPurposeDto::UserAssignment);
         assert_eq!(
@@ -208,26 +208,13 @@ mod role_dto {
                 .purpose,
             RoleOptionPurpose::UserAssignment
         );
-
-        let service =
-            parse_query("/?purpose=service_account_assignment").expect("服务账号分配用途应可解析");
-        assert_eq!(
-            service.purpose,
-            RoleOptionPurposeDto::ServiceAccountAssignment
-        );
-        assert_eq!(
-            service
-                .resolve(PaginationPolicy::new(10, 100))
-                .expect("服务账号分配用途应可转换")
-                .purpose,
-            RoleOptionPurpose::ServiceAccountAssignment
-        );
     }
 
     #[test]
     fn role_option_query_rejects_missing_invalid_and_unknown_fields() {
         assert!(parse_query("/?q=admin").is_err());
         assert!(parse_query("/?purpose=role_code").is_err());
+        assert!(parse_query("/?purpose=service_account_assignment").is_err());
         assert!(parse_query("/?purpose=user_assignment&unexpected=true").is_err());
     }
 }

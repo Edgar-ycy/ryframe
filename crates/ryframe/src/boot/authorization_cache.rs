@@ -56,7 +56,7 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
         let watched = [tenant_key.clone(), user_key.clone(), snapshot_key.clone()];
         let values: (Option<String>, Option<String>, Option<String>) = self
             .redis
-            .transaction(&watched, move |mut connection, mut transaction| {
+            .transaction(&watched, async move |mut connection, mut transaction| {
                 let tenant_key = tenant_key.clone();
                 let user_key = user_key.clone();
                 let snapshot_key = snapshot_key.clone();
@@ -75,6 +75,7 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
                         .hget(&snapshot_key, field);
                     transaction.query_async(&mut connection).await
                 }
+                .await
             })
             .await
             .map_err(|error| error.to_string())?;
@@ -114,7 +115,7 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
         let user_version = versions.user_authorization_version.to_string();
         let ttl_secs = AUTHORIZATION_SNAPSHOT_TTL_SECS;
         self.redis
-            .transaction(&watched, move |mut connection, mut transaction| {
+            .transaction(&watched, async move |mut connection, mut transaction| {
                 let tenant_key = tenant_key.clone();
                 let user_key = user_key.clone();
                 let snapshot_key = snapshot_key.clone();
@@ -149,6 +150,7 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
                     let committed: Option<()> = transaction.query_async(&mut connection).await?;
                     Ok(committed.map(|()| true))
                 }
+                .await
             })
             .await
             .map_err(|error| error.to_string())
@@ -193,7 +195,7 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
         let watched = [tenant_key.clone(), value_key.clone()];
         let values: (Option<String>, Option<String>) = self
             .redis
-            .transaction(&watched, move |mut connection, mut transaction| {
+            .transaction(&watched, async move |mut connection, mut transaction| {
                 let tenant_key = tenant_key.clone();
                 let value_key = value_key.clone();
                 async move {
@@ -204,6 +206,7 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
                     transaction.get(&tenant_key).hget(&value_key, field);
                     transaction.query_async(&mut connection).await
                 }
+                .await
             })
             .await
             .map_err(|error| error.to_string())?;
@@ -232,7 +235,7 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
         let epoch = authorization_epoch.to_string();
         let value = value.to_owned();
         self.redis
-            .transaction(&watched, move |mut connection, mut transaction| {
+            .transaction(&watched, async move |mut connection, mut transaction| {
                 let tenant_key = tenant_key.clone();
                 let value_key = value_key.clone();
                 let epoch = epoch.clone();
@@ -252,6 +255,7 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
                     let committed: Option<()> = transaction.query_async(&mut connection).await?;
                     Ok(committed.map(|()| true))
                 }
+                .await
             })
             .await
             .map_err(|error| error.to_string())
@@ -273,7 +277,7 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
         let incoming = namespace_version.to_string();
         validate_canonical_decimal(&incoming)?;
         self.redis
-            .transaction(&watched, move |mut connection, mut transaction| {
+            .transaction(&watched, async move |mut connection, mut transaction| {
                 let version_key = version_key.clone();
                 let values_key = values_key.clone();
                 let incoming = incoming.clone();
@@ -292,6 +296,7 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
                         .ignore();
                     transaction.query_async(&mut connection).await
                 }
+                .await
             })
             .await
             .map_err(|error| error.to_string())
@@ -313,7 +318,7 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
         let item = item.to_owned();
         let values: (Option<String>, Option<String>) = self
             .redis
-            .transaction(&watched, move |mut connection, mut transaction| {
+            .transaction(&watched, async move |mut connection, mut transaction| {
                 let version_key = version_key.clone();
                 let values_key = values_key.clone();
                 let item = item.clone();
@@ -321,6 +326,7 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
                     transaction.get(&version_key).hget(&values_key, item);
                     transaction.query_async(&mut connection).await
                 }
+                .await
             })
             .await
             .map_err(|error| error.to_string())?;
@@ -357,7 +363,7 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
         let item = item.to_owned();
         let value = value.to_owned();
         self.redis
-            .transaction(&watched, move |mut connection, mut transaction| {
+            .transaction(&watched, async move |mut connection, mut transaction| {
                 let version_key = version_key.clone();
                 let values_key = values_key.clone();
                 let expected_version = expected_version.clone();
@@ -376,6 +382,7 @@ impl AuthorizationCacheBackend for RedisAuthorizationCacheBackend {
                     let committed: Option<()> = transaction.query_async(&mut connection).await?;
                     Ok(committed.map(|()| true))
                 }
+                .await
             })
             .await
             .map_err(|error| error.to_string())
@@ -387,7 +394,7 @@ async fn update_mirror(redis: &RedisClient, key: String, version: i64) -> Result
     let watched = [key.clone()];
     let incoming = version.to_string();
     redis
-        .transaction(&watched, move |mut connection, mut transaction| {
+        .transaction(&watched, async move |mut connection, mut transaction| {
             let key = key.clone();
             let incoming = incoming.clone();
             async move {
@@ -400,6 +407,7 @@ async fn update_mirror(redis: &RedisClient, key: String, version: i64) -> Result
                 transaction.set(&key, incoming).ignore();
                 transaction.query_async(&mut connection).await
             }
+            .await
         })
         .await
         .map_err(|error| error.to_string())

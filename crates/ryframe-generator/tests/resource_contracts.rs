@@ -1,3 +1,5 @@
+#[path = "resource_contracts/development_baseline.rs"]
+mod development_baseline;
 #[path = "resource_contracts/resource_aggregate.rs"]
 mod resource_aggregate;
 #[path = "resource_contracts/resource_check.rs"]
@@ -14,3 +16,8 @@ mod resource_relations;
 mod resource_validation;
 #[path = "resource_contracts/resource_writer_transaction.rs"]
 mod resource_writer_transaction;
+
+#[path = "resource_contracts/resource_schema_evolution.rs"]
+mod resource_schema_evolution;
+#[path = "resource_contracts/tenant_catalog.rs"]
+mod tenant_catalog;

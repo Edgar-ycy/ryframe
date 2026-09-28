@@ -13,6 +13,10 @@ pub(in crate::router) fn download(state: AppState) -> Router {
     common_handler::download_router(state)
 }
 
+pub(in crate::router) fn settings(state: AppState) -> Router {
+    common_handler::settings_router(state)
+}
+
 pub(in crate::router) fn exports(state: AppState) -> Router {
     export_handler::export_router(state)
 }

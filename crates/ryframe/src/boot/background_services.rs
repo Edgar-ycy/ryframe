@@ -153,7 +153,6 @@ fn build_identity_services(
         ryframe_db::application_ports::product::read(database.clone()),
         ryframe_db::application_ports::product::write(database.clone()),
         authorization_cache.clone(),
-        policies.service_accounts.enabled() && redis_client.is_some(),
     ));
     let role = Arc::new(RoleService::new(
         authorization_cache.clone(),

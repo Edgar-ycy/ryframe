@@ -21,7 +21,7 @@ pub struct ResourceExplanation {
     pub storage: String,
     pub api_path: String,
     pub route_path: String,
-    pub capability: String,
+    pub capability: Option<String>,
     pub permissions: Vec<String>,
     pub nodes: Vec<ExplainNode>,
     pub extension_notes: Vec<String>,
@@ -166,7 +166,9 @@ impl ResourceExplanation {
             self.storage,
             self.api_path,
             self.route_path,
-            self.capability,
+            self.capability
+                .as_deref()
+                .unwrap_or("基础资源（不受套餐门禁）"),
             self.permissions.join(", "),
         );
         for node in &self.nodes {

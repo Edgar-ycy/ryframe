@@ -1,4 +1,3 @@
-pub mod agent;
 mod audit;
 mod auth;
 mod authorization_cache;
@@ -11,7 +10,6 @@ pub mod ports;
 mod principal_resolver;
 mod request_tenant_context;
 mod runtime_policy;
-mod service_identity_secret;
 pub mod system;
 mod tenant_config_stable_key;
 mod trace_context;
@@ -59,8 +57,8 @@ pub use principal_resolver::PrincipalResolver;
 pub use request_tenant_context::{TenantContext, with_tenant_context};
 pub use runtime_policy::{
     AuthPolicy, CacheAvailabilityPolicy, ExportPolicy, JobRuntimePolicy, JobSchedulePolicy,
-    JobWorkerMode, JobWorkerPolicy, MessagingPolicy, MultiTenancyPolicy, PepperKeyring,
-    ServiceAccountPolicy, TenantConfigTransferPolicy, UserImportPolicy, is_valid_tenant_target_key,
+    JobWorkerMode, JobWorkerPolicy, MessagingPolicy, MultiTenancyPolicy,
+    TenantConfigTransferPolicy, UserImportPolicy, is_valid_tenant_target_key,
 };
 pub use trace_context::{
     HTTP_REQUEST_LOG_SPAN_TARGET, PersistedTraceContext, TraceContextPort,

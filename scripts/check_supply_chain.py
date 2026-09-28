@@ -1171,6 +1171,48 @@ def _has_value_option(tokens: list[str], name: str) -> bool:
     return False
 
 
+def _typed_security_report(tokens: list[str]) -> tuple[str | None, bool, list[str]]:
+    """解析 workflow 中唯一允许的供应链报告核验入口。"""
+
+    prefix = ["cargo", "xtask", "check", "ci", "security", "report"]
+    if tokens[: len(prefix)] != prefix:
+        return None, False, []
+    errors: list[str] = []
+    if len(tokens) == len(prefix):
+        return None, False, ["security report 缺少报告类型"]
+    kind = tokens[len(prefix)]
+    if kind not in {"cyclonedx", "trivy"}:
+        return None, False, [f"security report 类型无效：{kind}"]
+    input_seen = False
+    reproducible = False
+    index = len(prefix) + 1
+    while index < len(tokens):
+        option = tokens[index]
+        if option == "--input":
+            if input_seen:
+                errors.append("security report --input 不能重复")
+            if index + 1 >= len(tokens) or tokens[index + 1].startswith("-"):
+                errors.append("security report --input 缺少取值")
+                index += 1
+                continue
+            input_seen = True
+            index += 2
+            continue
+        if option == "--require-reproducible":
+            if kind != "cyclonedx":
+                errors.append("security report trivy 不支持 --require-reproducible")
+            elif reproducible:
+                errors.append("security report --require-reproducible 不能重复")
+            reproducible = True
+            index += 1
+            continue
+        errors.append(f"security report 包含未知参数：{option}")
+        index += 1
+    if not input_seen:
+        errors.append("security report 缺少 --input <报告>")
+    return kind, reproducible, errors
+
+
 DOCKER_RUN_FLAG_OPTIONS = {
     "--detach",
     "--init",
@@ -1259,7 +1301,9 @@ def _validate_run_commands(
     errors: list[str] = []
     cargo_cyclonedx = False
     trivy_cyclonedx = False
-    trivy_report = False
+    cyclonedx_reports = 0
+    reproducible_cyclonedx_reports = 0
+    trivy_reports = 0
 
     for path, location, script in run_blocks:
         for line in _logical_command_lines(script):
@@ -1288,6 +1332,20 @@ def _validate_run_commands(
                     if _has_option(gate_tokens, "--format", "cyclonedx"):
                         trivy_cyclonedx = True
                     continue
+                report_kind, reproducible, report_errors = _typed_security_report(
+                    gate_tokens
+                )
+                if report_kind is not None or report_errors:
+                    errors.extend(
+                        f"{path}: {location}.run 的 {error}"
+                        for error in report_errors
+                    )
+                    if not report_errors and report_kind == "cyclonedx":
+                        cyclonedx_reports += 1
+                        reproducible_cyclonedx_reports += int(reproducible)
+                    if not report_errors and report_kind == "trivy":
+                        trivy_reports += 1
+                    continue
                 if (
                     len(gate_tokens) >= 2
                     and gate_tokens[0] in {"python", "python.exe", "python3", "py"}
@@ -1297,8 +1355,14 @@ def _validate_run_commands(
                         "./scripts/check_supply_chain.py",
                     }
                 ):
-                    if _has_value_option(gate_tokens, "--trivy-report"):
-                        trivy_report = True
+                    if _has_value_option(gate_tokens, "--trivy-report") or _has_value_option(
+                        gate_tokens, "--cyclonedx"
+                    ):
+                        errors.append(
+                            f"{path}: {location}.run 禁止直接调用 "
+                            "check_supply_chain.py 核验报告；必须使用 "
+                            "cargo xtask check ci security report"
+                        )
                     continue
                 if (
                     len(tokens) >= 2
@@ -1325,10 +1389,20 @@ def _validate_run_commands(
         errors.append("工作流缺少供应链门禁：cargo cyclonedx --format json")
     if not trivy_cyclonedx:
         errors.append("工作流缺少供应链门禁：trivy image --format cyclonedx")
-    if not trivy_report:
+    if cyclonedx_reports != 2:
         errors.append(
-            "工作流缺少供应链门禁：python scripts/check_supply_chain.py "
-            "--trivy-report <报告>"
+            "工作流必须恰好两次使用 cargo xtask check ci security report "
+            "cyclonedx --input <报告>，分别核验 Cargo 与镜像清单"
+        )
+    if reproducible_cyclonedx_reports != 1:
+        errors.append(
+            "工作流必须恰好一次为 Cargo CycloneDX 核验使用 "
+            "--require-reproducible"
+        )
+    if trivy_reports != 1:
+        errors.append(
+            "工作流必须恰好一次使用 cargo xtask check ci security report "
+            "trivy --input <报告>"
         )
     return errors
 
@@ -1647,25 +1721,38 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    try:
-        policy = load_policy(args.policy)
-    except PolicyError as exc:
-        print(f"供应链策略无效：{exc}", file=sys.stderr)
-        return 1
-
-    errors = validate_local_patch_licenses(ROOT, policy)
-    errors.extend(validate_workflows(args.workflow_dir, policy))
-    if args.cyclonedx is not None:
-        errors.extend(
-            validate_cyclonedx(
-                args.cyclonedx,
-                require_reproducible=args.require_reproducible_cyclonedx,
-            )
+    report_count = int(args.cyclonedx is not None) + int(args.trivy_report is not None)
+    if report_count > 1:
+        print("参数错误：CycloneDX 与 Trivy 报告必须分别核验", file=sys.stderr)
+        return 2
+    if args.require_reproducible_cyclonedx and args.cyclonedx is None:
+        print(
+            "参数错误：--require-reproducible-cyclonedx 只适用于 --cyclonedx",
+            file=sys.stderr,
         )
-    if args.trivy_report is not None:
-        errors.extend(evaluate_trivy_report(args.trivy_report, policy))
-    if args.verify_cargo_graph:
-        errors.extend(verify_cargo_graph(policy))
+        return 2
+    if report_count and args.verify_cargo_graph:
+        print("参数错误：报告核验不能同时执行 Cargo 来源图核验", file=sys.stderr)
+        return 2
+
+    if args.cyclonedx is not None:
+        errors = validate_cyclonedx(
+            args.cyclonedx,
+            require_reproducible=args.require_reproducible_cyclonedx,
+        )
+    else:
+        try:
+            policy = load_policy(args.policy)
+        except PolicyError as exc:
+            print(f"供应链策略无效：{exc}", file=sys.stderr)
+            return 1
+        if args.trivy_report is not None:
+            errors = evaluate_trivy_report(args.trivy_report, policy)
+        else:
+            errors = validate_local_patch_licenses(ROOT, policy)
+            errors.extend(validate_workflows(args.workflow_dir, policy))
+            if args.verify_cargo_graph:
+                errors.extend(verify_cargo_graph(policy))
     if errors:
         for error in errors:
             print(f"供应链门禁失败：{error}", file=sys.stderr)

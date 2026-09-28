@@ -1,5 +1,5 @@
 -- 自动生成文件：RyFrame 控制库新基线快照。
--- schema fingerprint: 595a420d869c5fdb
+-- schema fingerprint: c95b8a97fdbe6f49
 -- 唯一事实来源：ryframe-db::migration Migrator 与 Seeder。
 -- 仅供审阅：部署和重置工具不得执行此文件。
 -- 重新生成命令：cargo run --locked -p ryframe-db --features migration --bin export_mysql_snapshot -- sql/ryframe_config.sql
@@ -447,18 +447,19 @@ CREATE TABLE IF NOT EXISTS `sys_background_job` (
     `payload`       JSON         NOT NULL COMMENT '任务载荷',
     `status`        VARCHAR(16)  NOT NULL DEFAULT 'pending' COMMENT '状态: pending/running/succeeded/dead',
     `priority`      INT          NOT NULL DEFAULT 0 COMMENT '优先级，数值越大越优先',
-    `available_at`  DATETIME     NOT NULL COMMENT '最早可执行时间',
+    `available_at`  DATETIME(6)  NOT NULL COMMENT '最早可执行时间',
     `attempts`      INT          NOT NULL DEFAULT 0 COMMENT '已领取次数',
+    `claim_sequence` BIGINT      NOT NULL DEFAULT 0 COMMENT '单调领取序号，不随重试预算重置',
     `max_attempts`  INT          NOT NULL DEFAULT 5 COMMENT '最大领取次数',
     `lease_owner`   VARCHAR(128)          DEFAULT NULL COMMENT '当前租约持有者',
-    `lease_until`   DATETIME              DEFAULT NULL COMMENT '租约失效时间',
+    `lease_until`   DATETIME(6)           DEFAULT NULL COMMENT '租约失效时间',
     `dedupe_key`    VARCHAR(191)          DEFAULT NULL COMMENT '同类型幂等键',
     `traceparent`   VARCHAR(255)          DEFAULT NULL COMMENT 'W3C Trace Context',
     `tracestate`    VARCHAR(512)          DEFAULT NULL COMMENT 'W3C Trace Context 状态',
     `last_error`    TEXT                  DEFAULT NULL COMMENT '最后失败原因',
-    `created_at`    DATETIME     NOT NULL COMMENT '创建时间',
-    `updated_at`    DATETIME     NOT NULL COMMENT '更新时间',
-    `completed_at`  DATETIME              DEFAULT NULL COMMENT '终态时间',
+    `created_at`    DATETIME(6)  NOT NULL COMMENT '创建时间',
+    `updated_at`    DATETIME(6)  NOT NULL COMMENT '更新时间',
+    `completed_at`  DATETIME(6)           DEFAULT NULL COMMENT '终态时间',
     PRIMARY KEY (`id`),
     UNIQUE KEY `uq_bg_job_dedupe` (`job_type`, `dedupe_key`),
     KEY `idx_bg_job_claim` (`status`, `available_at`, `priority`, `id`),
@@ -466,7 +467,10 @@ CREATE TABLE IF NOT EXISTS `sys_background_job` (
     KEY `idx_bg_job_tenant` (`tenant_id`, `status`, `created_at`),
     KEY `idx_bg_job_schedule_status` (`schedule_id`, `status`, `created_at`),
     KEY `idx_bg_job_retention` (`status`, `completed_at`, `id`),
-    KEY `idx_bg_job_tenant_created_status` (`tenant_id`, `created_at`, `status`)
+    KEY `idx_bg_job_tenant_created_status` (`tenant_id`, `created_at`, `status`),
+    CONSTRAINT `ck_bg_job_attempt_budget` CHECK (
+        `attempts` >= 0 AND `max_attempts` BETWEEN 1 AND 100
+        AND `claim_sequence` >= `attempts`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='持久化后台任务';
 
 CREATE TABLE IF NOT EXISTS `sys_job_schedule` (
@@ -1040,188 +1044,76 @@ CREATE TABLE IF NOT EXISTS `sys_tenant_data_backup_point` (
                 CHECK (`expires_at` IS NULL OR `expires_at` >= `retention_until`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='租户业务数据备份恢复点';
 
-CREATE TABLE IF NOT EXISTS `sys_service_account` (
-            `id` BIGINT NOT NULL,
-            `tenant_id` VARCHAR(64) NOT NULL,
-            `code` VARCHAR(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL,
-            `name` VARCHAR(128) NOT NULL,
-            `description` VARCHAR(500) DEFAULT NULL,
-            `dept_id` BIGINT DEFAULT NULL,
-            `status` CHAR(1) NOT NULL DEFAULT '1',
-            `authorization_version` INT NOT NULL DEFAULT 1,
-            `max_requests_per_minute` INT NOT NULL DEFAULT 60,
-            `created_by` BIGINT NOT NULL,
-            `del_flag` CHAR(1) NOT NULL DEFAULT '0',
-            `created_at` DATETIME(6) NOT NULL,
-            `updated_at` DATETIME(6) NOT NULL,
-            PRIMARY KEY (`id`),
-            UNIQUE KEY `uq_service_account_tenant_id` (`tenant_id`, `id`),
-            UNIQUE KEY `uq_service_account_code` (`tenant_id`, `code`),
-            KEY `idx_service_account_list` (`tenant_id`, `del_flag`, `created_at`, `id`),
-            KEY `idx_service_account_dept` (`tenant_id`, `dept_id`),
-            KEY `fk_service_account_creator` (`tenant_id`, `created_by`),
-            CONSTRAINT `fk_service_account_tenant`
-                FOREIGN KEY (`tenant_id`) REFERENCES `sys_tenant` (`tenant_id`)
-                ON UPDATE CASCADE ON DELETE RESTRICT,
-            CONSTRAINT `fk_service_account_dept`
-                FOREIGN KEY (`tenant_id`, `dept_id`) REFERENCES `sys_dept` (`tenant_id`, `id`)
-                ON UPDATE CASCADE ON DELETE RESTRICT,
-            CONSTRAINT `fk_service_account_creator`
-                FOREIGN KEY (`tenant_id`, `created_by`) REFERENCES `sys_user` (`tenant_id`, `id`)
-                ON UPDATE CASCADE ON DELETE RESTRICT,
-            CONSTRAINT `ck_service_account_status` CHECK (`status` IN ('0', '1')),
-            CONSTRAINT `ck_service_account_del_flag` CHECK (`del_flag` IN ('0', '2')),
-            CONSTRAINT `ck_service_account_rate` CHECK (`max_requests_per_minute` > 0)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='服务账号';
+CREATE TABLE IF NOT EXISTS `sys_backup_set` (
+        `id` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        `scope_id` varchar(48) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        `manifest_hash` char(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        `captured_at` datetime(6) NOT NULL,
+        `retention_until` datetime(6) NOT NULL,
+        `checked_at` datetime(6) NOT NULL,
+        `valid` tinyint(1) NOT NULL,
+        `payload` json NOT NULL,
+        PRIMARY KEY (`id`),
+        KEY `idx_backup_set_scope_capture` (`scope_id`, `captured_at`),
+        CONSTRAINT `ck_backup_set_time` CHECK (`retention_until` > `captured_at`),
+        CONSTRAINT `ck_backup_set_valid` CHECK (`valid` IN (0, 1))
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
-CREATE TABLE IF NOT EXISTS `sys_service_account_role` (
-            `tenant_id` VARCHAR(64) NOT NULL,
-            `account_id` BIGINT NOT NULL,
-            `role_id` BIGINT NOT NULL,
-            PRIMARY KEY (`tenant_id`, `account_id`, `role_id`),
-            KEY `idx_service_account_role_role` (`tenant_id`, `role_id`, `account_id`),
-            CONSTRAINT `fk_service_account_role_account`
-                FOREIGN KEY (`tenant_id`, `account_id`)
-                REFERENCES `sys_service_account` (`tenant_id`, `id`)
-                ON UPDATE CASCADE ON DELETE CASCADE,
-            CONSTRAINT `fk_service_account_role_role`
-                FOREIGN KEY (`tenant_id`, `role_id`) REFERENCES `sys_role` (`tenant_id`, `id`)
-                ON UPDATE CASCADE ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='服务账号角色关系';
+CREATE TABLE IF NOT EXISTS `sys_backup_resource` (
+        `backup_id` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        `resource_key` varchar(140) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        PRIMARY KEY (`backup_id`, `resource_key`),
+        KEY `idx_backup_resource_key` (`resource_key`, `backup_id`),
+        CONSTRAINT `fk_backup_resource_set` FOREIGN KEY (`backup_id`)
+            REFERENCES `sys_backup_set` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
-CREATE TABLE IF NOT EXISTS `sys_service_credential` (
-            `id` BIGINT NOT NULL,
-            `tenant_id` VARCHAR(64) NOT NULL,
-            `account_id` BIGINT NOT NULL,
-            `key_id` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-            `secret_mac` BINARY(32) NOT NULL,
-            `pepper_version` INT NOT NULL,
-            `label` VARCHAR(128) NOT NULL,
-            `status` VARCHAR(16) NOT NULL DEFAULT 'active',
-            `expires_at` DATETIME(6) NOT NULL,
-            `last_used_at` DATETIME(6) DEFAULT NULL,
-            `created_by` BIGINT NOT NULL,
-            `revoked_at` DATETIME(6) DEFAULT NULL,
-            `revoked_by` BIGINT DEFAULT NULL,
-            `created_at` DATETIME(6) NOT NULL,
-            `updated_at` DATETIME(6) NOT NULL,
-            `idempotency_key_hash` BINARY(32) NOT NULL,
-            `request_fingerprint` BINARY(32) NOT NULL,
-            PRIMARY KEY (`id`),
-            UNIQUE KEY `uq_service_credential_key_id` (`key_id`),
-            UNIQUE KEY `uq_service_credential_idempotency` (`tenant_id`, `account_id`, `idempotency_key_hash`),
-            KEY `idx_service_credential_active` (`tenant_id`, `account_id`, `status`, `expires_at`, `id`),
-            KEY `idx_service_credential_expiry` (`status`, `expires_at`, `id`),
-            KEY `fk_service_credential_creator` (`tenant_id`, `created_by`),
-            KEY `fk_service_credential_revoker` (`tenant_id`, `revoked_by`),
-            CONSTRAINT `fk_service_credential_account`
-                FOREIGN KEY (`tenant_id`, `account_id`)
-                REFERENCES `sys_service_account` (`tenant_id`, `id`)
-                ON UPDATE CASCADE ON DELETE CASCADE,
-            CONSTRAINT `fk_service_credential_creator`
-                FOREIGN KEY (`tenant_id`, `created_by`) REFERENCES `sys_user` (`tenant_id`, `id`)
-                ON UPDATE CASCADE ON DELETE RESTRICT,
-            CONSTRAINT `fk_service_credential_revoker`
-                FOREIGN KEY (`tenant_id`, `revoked_by`) REFERENCES `sys_user` (`tenant_id`, `id`)
-                ON UPDATE CASCADE ON DELETE RESTRICT,
-            CONSTRAINT `ck_service_credential_status` CHECK (`status` IN ('active', 'revoked'))
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='服务账号 API Key 凭据';
+CREATE TABLE IF NOT EXISTS `sys_restore_run` (
+        `id` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        `backup_id` varchar(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        `scope_id` varchar(48) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        `status` varchar(24) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+        `started_at` datetime(6) NOT NULL,
+        `completed_at` datetime(6) DEFAULT NULL,
+        `recovered_at` datetime(6) NOT NULL,
+        `payload` json NOT NULL,
+        PRIMARY KEY (`id`),
+        KEY `idx_restore_run_backup` (`backup_id`, `started_at`),
+        KEY `idx_restore_run_completed` (`completed_at`),
+        CONSTRAINT `fk_restore_run_backup` FOREIGN KEY (`backup_id`)
+            REFERENCES `sys_backup_set` (`id`) ON DELETE RESTRICT ON UPDATE RESTRICT,
+        CONSTRAINT `ck_restore_run_status`
+            CHECK (`status` IN ('running', 'data_verified', 'succeeded', 'failed')),
+        CONSTRAINT `ck_restore_run_completed`
+            CHECK ((`status` IN ('running', 'data_verified') AND `completed_at` IS NULL)
+                OR (`status` IN ('succeeded', 'failed')
+                    AND `completed_at` IS NOT NULL
+                    AND `completed_at` >= `started_at`))
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
-CREATE TABLE IF NOT EXISTS `sys_service_delegation` (
-            `id` BIGINT NOT NULL,
-            `tenant_id` VARCHAR(64) NOT NULL,
-            `account_id` BIGINT NOT NULL,
-            `user_id` BIGINT NOT NULL,
-            `token_mac` BINARY(32) NOT NULL,
-            `pepper_version` INT NOT NULL,
-            `status` VARCHAR(16) NOT NULL DEFAULT 'active',
-            `version` INT NOT NULL DEFAULT 1,
-            `not_before` DATETIME(6) NOT NULL,
-            `expires_at` DATETIME(6) NOT NULL,
-            `reason` VARCHAR(500) NOT NULL,
-            `created_by_user_id` BIGINT NOT NULL,
-            `revoked_at` DATETIME(6) DEFAULT NULL,
-            `revoked_by` BIGINT DEFAULT NULL,
-            `created_at` DATETIME(6) NOT NULL,
-            `updated_at` DATETIME(6) NOT NULL,
-            `idempotency_key_hash` BINARY(32) NOT NULL,
-            `request_fingerprint` BINARY(32) NOT NULL,
-            PRIMARY KEY (`id`),
-            UNIQUE KEY `uq_service_delegation_tenant_id` (`tenant_id`, `id`),
-            UNIQUE KEY `uq_service_delegation_token_mac` (`token_mac`),
-            UNIQUE KEY `uq_service_delegation_idempotency` (`tenant_id`, `user_id`, `idempotency_key_hash`),
-            KEY `idx_service_delegation_account` (`tenant_id`, `account_id`, `status`, `expires_at`, `id`),
-            KEY `idx_service_delegation_user` (`tenant_id`, `user_id`, `status`, `expires_at`, `id`),
-            KEY `idx_service_delegation_expiry` (`status`, `expires_at`, `id`),
-            KEY `fk_service_delegation_creator` (`tenant_id`, `created_by_user_id`),
-            KEY `fk_service_delegation_revoker` (`tenant_id`, `revoked_by`),
-            CONSTRAINT `fk_service_delegation_account`
-                FOREIGN KEY (`tenant_id`, `account_id`)
-                REFERENCES `sys_service_account` (`tenant_id`, `id`)
-                ON UPDATE CASCADE ON DELETE CASCADE,
-            CONSTRAINT `fk_service_delegation_user`
-                FOREIGN KEY (`tenant_id`, `user_id`) REFERENCES `sys_user` (`tenant_id`, `id`)
-                ON UPDATE CASCADE ON DELETE RESTRICT,
-            CONSTRAINT `fk_service_delegation_creator`
-                FOREIGN KEY (`tenant_id`, `created_by_user_id`) REFERENCES `sys_user` (`tenant_id`, `id`)
-                ON UPDATE CASCADE ON DELETE RESTRICT,
-            CONSTRAINT `fk_service_delegation_revoker`
-                FOREIGN KEY (`tenant_id`, `revoked_by`) REFERENCES `sys_user` (`tenant_id`, `id`)
-                ON UPDATE CASCADE ON DELETE RESTRICT,
-            CONSTRAINT `ck_service_delegation_status` CHECK (`status` IN ('active', 'revoked')),
-            CONSTRAINT `ck_service_delegation_window` CHECK (`not_before` < `expires_at`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='用户显式查询委托';
-
-CREATE TABLE IF NOT EXISTS `sys_service_delegation_capability` (
-            `tenant_id` VARCHAR(64) NOT NULL,
-            `delegation_id` BIGINT NOT NULL,
-            `capability_key` VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-            PRIMARY KEY (`tenant_id`, `delegation_id`, `capability_key`),
-            KEY `idx_service_delegation_capability` (`tenant_id`, `capability_key`, `delegation_id`),
-            CONSTRAINT `fk_service_delegation_capability_delegation`
-                FOREIGN KEY (`tenant_id`, `delegation_id`)
-                REFERENCES `sys_service_delegation` (`tenant_id`, `id`)
-                ON UPDATE CASCADE ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='委托查询能力白名单';
-
-CREATE TABLE IF NOT EXISTS `sys_service_access_audit` (
-            `id` BIGINT NOT NULL,
-            `request_id` CHAR(36) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-            `tenant_id` VARCHAR(64) DEFAULT NULL,
-            `account_id` BIGINT DEFAULT NULL,
-            `credential_id` BIGINT DEFAULT NULL,
-            `delegation_id` BIGINT DEFAULT NULL,
-            `represented_user_id` BIGINT DEFAULT NULL,
-            `operation_id` VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-            `capability_key` VARCHAR(96) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-            `required_permission` VARCHAR(128) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-            `access_mode` VARCHAR(16) NOT NULL,
-            `result` VARCHAR(16) NOT NULL,
-            `reason_code` VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-            `http_status` INT NOT NULL,
-            `request_ip_digest` BINARY(32) DEFAULT NULL,
-            `user_agent_digest` BINARY(32) DEFAULT NULL,
-            `row_count` INT DEFAULT NULL,
-            `response_bytes` BIGINT DEFAULT NULL,
-            `tenant_epoch` INT DEFAULT NULL,
-            `account_authorization_version` INT DEFAULT NULL,
-            `user_authorization_version` INT DEFAULT NULL,
-            `delegation_version` INT DEFAULT NULL,
-            `started_at` DATETIME(6) NOT NULL,
-            `completed_at` DATETIME(6) NOT NULL,
-            PRIMARY KEY (`id`),
-            UNIQUE KEY `uq_service_access_audit_request` (`request_id`),
-            KEY `idx_service_access_audit_retention` (`completed_at`, `id`),
-            KEY `idx_service_access_audit_tenant` (`tenant_id`, `completed_at`, `id`),
-            KEY `idx_service_access_audit_account` (`tenant_id`, `account_id`, `completed_at`, `id`),
-            KEY `idx_service_access_audit_user` (`tenant_id`, `represented_user_id`, `completed_at`, `id`),
-            CONSTRAINT `ck_service_access_audit_mode` CHECK (`access_mode` IN ('direct', 'delegated', 'unknown')),
-            CONSTRAINT `ck_service_access_audit_result` CHECK (`result` IN ('success', 'denied', 'error')),
-            CONSTRAINT `ck_service_access_audit_counts` CHECK (
-                (`row_count` IS NULL OR `row_count` >= 0)
-                AND (`response_bytes` IS NULL OR `response_bytes` >= 0)
-            )
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='Agent API 访问审计';
+CREATE TABLE IF NOT EXISTS `sys_background_job_attempt` (
+    `job_id` BIGINT NOT NULL COMMENT '后台任务ID',
+    `sequence` BIGINT NOT NULL COMMENT '该任务的单调领取序号',
+    `available_at` DATETIME(6) NOT NULL COMMENT '本次领取的最早可执行时间',
+    `started_at` DATETIME(6) NOT NULL COMMENT '领取事务记录的实际开始时间',
+    `finished_at` DATETIME(6) DEFAULT NULL COMMENT '处理器完成或失败时间，租约失效时未知',
+    `closed_at` DATETIME(6) DEFAULT NULL COMMENT '尝试闭合时间，包含租约回收时间',
+    `outcome` VARCHAR(32) NOT NULL COMMENT 'running/succeeded/failed/dead/deferred/lease_expired',
+    PRIMARY KEY (`job_id`, `sequence`),
+    CONSTRAINT `fk_bg_attempt_job` FOREIGN KEY (`job_id`)
+        REFERENCES `sys_background_job` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT,
+    CONSTRAINT `ck_bg_attempt_sequence` CHECK (`sequence` > 0),
+    CONSTRAINT `ck_bg_attempt_times` CHECK (
+        `started_at` >= `available_at`
+        AND (`finished_at` IS NULL OR `finished_at` >= `started_at`)
+        AND (`closed_at` IS NULL OR `closed_at` >= `started_at`)),
+    CONSTRAINT `ck_bg_attempt_outcome` CHECK (
+        (`outcome` = 'running' AND `finished_at` IS NULL AND `closed_at` IS NULL)
+        OR (`outcome` = 'lease_expired' AND `finished_at` IS NULL AND `closed_at` IS NOT NULL)
+        OR (`outcome` IN ('succeeded', 'failed', 'dead', 'deferred')
+            AND `finished_at` IS NOT NULL AND `closed_at` IS NOT NULL
+            AND `closed_at` = `finished_at`))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='后台任务单次执行事实';
 
 CREATE TABLE IF NOT EXISTS `sys_outbox_event` (
     `id` BIGINT NOT NULL,
@@ -1669,38 +1561,28 @@ INSERT INTO `sys_permission` (`id`, `tenant_id`, `name`, `code`, `parent_id`, `p
 (10068, 'system', 'system:role:export', 'system:role:export', NULL, 'api', NULL, 68, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
 (10069, 'system', 'system:role:list', 'system:role:list', NULL, 'api', NULL, 69, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
 (10070, 'system', 'system:role:remove', 'system:role:remove', NULL, 'api', NULL, 70, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10071, 'system', '服务访问审计查询', 'system:service-access-audit:list', NULL, 'api', NULL, 71, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10072, 'system', '服务账号新增', 'system:service-account:add', NULL, 'api', NULL, 72, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10073, 'system', '服务账号修改', 'system:service-account:edit', NULL, 'api', NULL, 73, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10074, 'system', '服务账号密钥撤销', 'system:service-account:key-revoke', NULL, 'api', NULL, 74, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10075, 'system', '服务账号密钥轮换', 'system:service-account:key-rotate', NULL, 'api', NULL, 75, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10076, 'system', '服务账号查询', 'system:service-account:list', NULL, 'api', NULL, 76, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10077, 'system', '服务账号删除', 'system:service-account:remove', NULL, 'api', NULL, 77, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10078, 'system', '服务账号角色配置', 'system:service-account:role', NULL, 'api', NULL, 78, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10079, 'system', '服务委托查询', 'system:service-delegation:list', NULL, 'api', NULL, 79, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10080, 'system', '服务委托撤销', 'system:service-delegation:revoke', NULL, 'api', NULL, 80, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10081, 'system', '用户导入创建', 'system:user-import:add', NULL, 'api', NULL, 81, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10082, 'system', '用户导入取消', 'system:user-import:cancel', NULL, 'api', NULL, 82, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10083, 'system', '用户导入查询', 'system:user-import:list', NULL, 'api', NULL, 83, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10084, 'system', 'system:user:add', 'system:user:add', NULL, 'api', NULL, 84, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10085, 'system', 'system:user:edit', 'system:user:edit', NULL, 'api', NULL, 85, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10086, 'system', 'system:user:export', 'system:user:export', NULL, 'api', NULL, 86, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10087, 'system', 'system:user:list', 'system:user:list', NULL, 'api', NULL, 87, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10088, 'system', 'system:user:remove', 'system:user:remove', NULL, 'api', NULL, 88, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10089, 'system', 'tenant:add', 'tenant:add', NULL, 'api', NULL, 89, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10090, 'system', '租户能力覆盖', 'tenant:capability:override', NULL, 'api', NULL, 90, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10091, 'system', '租户数据备份查询', 'tenant:data-backup:list', NULL, 'api', NULL, 91, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10092, 'system', '租户数据迁移取消', 'tenant:data-migration:cancel', NULL, 'api', NULL, 92, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10093, 'system', '租户数据迁移创建', 'tenant:data-migration:create', NULL, 'api', NULL, 93, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10094, 'system', '租户数据迁移完成', 'tenant:data-migration:finalize', NULL, 'api', NULL, 94, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10095, 'system', '租户数据迁移查询', 'tenant:data-migration:list', NULL, 'api', NULL, 95, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10096, 'system', '租户数据放置查看', 'tenant:data-placement:view', NULL, 'api', NULL, 96, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10097, 'system', 'tenant:edit', 'tenant:edit', NULL, 'api', NULL, 97, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10098, 'system', 'tenant:list', 'tenant:list', NULL, 'api', NULL, 98, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10099, 'system', '租户产品分配', 'tenant:product:assign', NULL, 'api', NULL, 99, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10100, 'system', '租户产品查看', 'tenant:product:view', NULL, 'api', NULL, 100, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10101, 'system', 'tenant:status', 'tenant:status', NULL, 'api', NULL, 101, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
-(10102, 'system', '租户用量查询', 'tenant:usage:list', NULL, 'api', NULL, 102, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
+(10071, 'system', '用户导入创建', 'system:user-import:add', NULL, 'api', NULL, 71, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10072, 'system', '用户导入取消', 'system:user-import:cancel', NULL, 'api', NULL, 72, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10073, 'system', '用户导入查询', 'system:user-import:list', NULL, 'api', NULL, 73, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10074, 'system', 'system:user:add', 'system:user:add', NULL, 'api', NULL, 74, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10075, 'system', 'system:user:edit', 'system:user:edit', NULL, 'api', NULL, 75, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10076, 'system', 'system:user:export', 'system:user:export', NULL, 'api', NULL, 76, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10077, 'system', 'system:user:list', 'system:user:list', NULL, 'api', NULL, 77, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10078, 'system', 'system:user:remove', 'system:user:remove', NULL, 'api', NULL, 78, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10079, 'system', 'tenant:add', 'tenant:add', NULL, 'api', NULL, 79, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10080, 'system', '租户能力覆盖', 'tenant:capability:override', NULL, 'api', NULL, 80, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10081, 'system', '租户数据备份查询', 'tenant:data-backup:list', NULL, 'api', NULL, 81, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10082, 'system', '租户数据迁移取消', 'tenant:data-migration:cancel', NULL, 'api', NULL, 82, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10083, 'system', '租户数据迁移创建', 'tenant:data-migration:create', NULL, 'api', NULL, 83, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10084, 'system', '租户数据迁移完成', 'tenant:data-migration:finalize', NULL, 'api', NULL, 84, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10085, 'system', '租户数据迁移查询', 'tenant:data-migration:list', NULL, 'api', NULL, 85, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10086, 'system', '租户数据放置查看', 'tenant:data-placement:view', NULL, 'api', NULL, 86, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10087, 'system', 'tenant:edit', 'tenant:edit', NULL, 'api', NULL, 87, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10088, 'system', 'tenant:list', 'tenant:list', NULL, 'api', NULL, 88, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10089, 'system', '租户产品分配', 'tenant:product:assign', NULL, 'api', NULL, 89, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10090, 'system', '租户产品查看', 'tenant:product:view', NULL, 'api', NULL, 90, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10091, 'system', 'tenant:status', 'tenant:status', NULL, 'api', NULL, 91, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)),
+(10092, 'system', '租户用量查询', 'tenant:usage:list', NULL, 'api', NULL, 92, '1', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6))
 ON DUPLICATE KEY UPDATE `name` = IF(`name` = `code`, VALUES(`name`), `name`);
 
 INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20000, 'system', '首页', NULL, 'C', NULL, 'home', NULL, 0, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'home');
@@ -1815,19 +1697,13 @@ INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `pe
 
 UPDATE `sys_menu` SET `name` = IF(`name` = `route_key`, '角色管理', `name`), `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:role:list' LIMIT 1), `icon` = COALESCE(NULL, `icon`), `sort` = 5, `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'system.role';
 
-INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20028, 'system', '服务账号', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:service-account:list' LIMIT 1), 'system.service-accounts', NULL, 11, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system.service-accounts');
-
-UPDATE `sys_menu` SET `name` = IF(`name` = `route_key`, '服务账号', `name`), `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:service-account:list' LIMIT 1), `icon` = COALESCE(NULL, `icon`), `sort` = 11, `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'system.service-accounts';
-
-INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20029, 'system', '用户管理', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:user:list' LIMIT 1), 'system.user', NULL, 4, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system.user');
+INSERT INTO `sys_menu` (`id`, `tenant_id`, `name`, `parent_id`, `menu_type`, `perm_id`, `route_key`, `icon`, `sort`, `visible`, `status`, `remark`, `del_flag`, `created_at`, `updated_at`) SELECT 20028, 'system', '用户管理', (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), 'C', (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:user:list' LIMIT 1), 'system.user', NULL, 4, 1, '1', NULL, '0', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) WHERE NOT EXISTS (SELECT 1 FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system.user');
 
 UPDATE `sys_menu` SET `name` = IF(`name` = `route_key`, '用户管理', `name`), `parent_id` = (SELECT `id` FROM `sys_menu` WHERE `tenant_id` = 'system' AND `route_key` = 'system' LIMIT 1), `menu_type` = 'C', `perm_id` = (SELECT `id` FROM `sys_permission` WHERE `tenant_id` = 'system' AND `code` = 'system:user:list' LIMIT 1), `icon` = COALESCE(NULL, `icon`), `sort` = 4, `status` = '1', `del_flag` = '0' WHERE `tenant_id` = 'system' AND `route_key` = 'system.user';
 
 INSERT INTO `sys_product_plan` (`id`, `plan_key`, `name`, `description`, `status`, `created_by`, `created_at`, `updated_at`) VALUES (1, 'standard', '标准版', '普通租户的默认产品套餐', '1', 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)), (2, 'platform', '平台版', '系统租户的平台控制面套餐', '1', 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE `id` = `id`;
 
 INSERT INTO `sys_product_plan_version` (`id`, `plan_id`, `version`, `name`, `description`, `status`, `created_by`, `published_by`, `published_at`, `created_at`, `updated_at`) VALUES (1, 1, 1, '标准版 v1', '标准版初始能力集合', 'published', 1, 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)), (2, 2, 1, '平台版 v1', '平台控制面初始能力集合', 'published', 1, 1, UTC_TIMESTAMP(6), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE `id` = `id`;
-
-INSERT INTO `sys_product_plan_capability` (`plan_version_id`, `capability_code`, `variant_code`, `schema_version`, `config`, `created_at`, `updated_at`) VALUES (2, 'system.service_accounts', 'default', 1, JSON_OBJECT(), UTC_TIMESTAMP(6), UTC_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE `plan_version_id` = `plan_version_id`;
 
 INSERT INTO `sys_tenant_product_plan` (`tenant_id`, `plan_version_id`, `changed_by`, `change_reason`, `created_at`, `updated_at`) SELECT `tenant_id`, IF(`tenant_id` = 'system', 2, 1), NULL, 'fresh_baseline', UTC_TIMESTAMP(6), UTC_TIMESTAMP(6) FROM `sys_tenant` ON DUPLICATE KEY UPDATE `tenant_id` = `sys_tenant_product_plan`.`tenant_id`;
 

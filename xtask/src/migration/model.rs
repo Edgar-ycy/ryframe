@@ -59,7 +59,7 @@ impl MigrationLock {
             .open(&path)
             .map_err(|error| {
                 format!(
-                    "无法获取迁移写入锁 {}：{error}。若确认没有其他 cargo migrate new 正在运行，请检查迁移事务残留后再删除该锁",
+                    "无法获取迁移写入锁 {}：{error}。若确认没有其他 cargo xtask data migrate new 正在运行，请检查迁移事务残留后再删除该锁",
                     path.display()
                 )
             })?;

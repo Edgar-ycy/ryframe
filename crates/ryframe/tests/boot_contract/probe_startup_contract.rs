@@ -177,6 +177,23 @@ fn background_job_handlers_are_grouped_by_domain() {
     assert!(!worker_main.contains("JobWorkerDependencies {"));
 }
 
+#[test]
+fn continuous_worker_publishes_backup_health_metrics() {
+    let worker_main = include_str!("../../src/bin/ryframe_worker.rs");
+    let continuous = worker_main
+        .split_once("async fn run_continuous")
+        .expect("应存在持续 Worker 入口")
+        .1;
+    let before_continuous = worker_main
+        .split_once("async fn run_continuous")
+        .expect("应存在持续 Worker 入口")
+        .0;
+
+    assert!(worker_main.contains("process_backup::spawn("));
+    assert!(continuous.contains("health_tasks.push(start_backup_health_collector("));
+    assert!(!before_continuous.contains("health_tasks.push(start_backup_health_collector("));
+}
+
 #[tokio::test]
 async fn worker_and_health_tasks_share_expired_shutdown_deadline() {
     let mut worker_tasks = vec![tokio::spawn(std::future::pending::<()>())];

@@ -7,7 +7,14 @@ use axum::Router;
 use ryframe_application::generated::GeneratedServices;
 use ryframe_kernel::PaginationPolicy;
 
-pub fn generated_router(services: &GeneratedServices, pagination: PaginationPolicy) -> Router {
+use crate::state::AppState;
+
+pub fn generated_router(
+    state: AppState,
+    services: &GeneratedServices,
+    pagination: PaginationPolicy,
+) -> Router {
+    let _ = &state;
     Router::new()
         .nest(
             "/notices",

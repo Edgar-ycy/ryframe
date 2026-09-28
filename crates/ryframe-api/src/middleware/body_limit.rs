@@ -1,15 +1,15 @@
 //! API 流式请求体安全大小限制。
 
-use crate::http::{API_PREFIX, ApiResponse};
+use std::error::Error;
+
+use crate::http::{API_PREFIX, app_error_response};
 use axum::{
-    Json,
     body::{Body, to_bytes},
     extract::{Request, State},
-    http::StatusCode,
     middleware::Next,
-    response::{IntoResponse, Response},
+    response::Response,
 };
-use ryframe_kernel::ErrorCode;
+use ryframe_kernel::AppError;
 
 use crate::settings::UploadSettings;
 
@@ -29,16 +29,15 @@ pub async fn body_limit_middleware(
     let bytes = match to_bytes(body, limit).await {
         Ok(bytes) => bytes,
         Err(error) => {
-            tracing::warn!(%error, limit_bytes = limit, "request body exceeded its limit");
-            return (
-                StatusCode::PAYLOAD_TOO_LARGE,
-                Json(ApiResponse::<()>::fail(
-                    StatusCode::PAYLOAD_TOO_LARGE.as_u16(),
-                    "请求体过大",
-                    ErrorCode::PayloadTooLarge.as_str(),
-                )),
-            )
-                .into_response();
+            let error = if error
+                .source()
+                .is_some_and(|source| source.is::<http_body_util::LengthLimitError>())
+            {
+                AppError::PayloadTooLarge(format!("请求体超过 {limit} 字节限制"))
+            } else {
+                AppError::Internal(format!("读取请求体失败: {error:?}"))
+            };
+            return app_error_response(error);
         }
     };
 

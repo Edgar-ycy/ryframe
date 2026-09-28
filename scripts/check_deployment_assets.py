@@ -393,7 +393,7 @@ def inspect_image(image: str, expected_commit: str | None) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--image", help="同时检查已经构建的生产镜像")
+    parser.add_argument("--image", help="检查已经构建的生产镜像")
     parser.add_argument("--expected-commit", help="镜像必须携带的 40 位源码提交")
     args = parser.parse_args()
     if args.expected_commit and not re.fullmatch(r"[0-9a-f]{40}", args.expected_commit):
@@ -403,13 +403,14 @@ def main() -> int:
 
     violations: list[str] = []
     try:
-        check_dockerfile(violations)
-        check_online_generator(violations)
-        check_compose_fixture(violations)
-        check_alert_runbooks(violations)
-        check_pinned_actions(violations)
         if args.image:
             violations.extend(inspect_image(args.image, args.expected_commit))
+        else:
+            check_dockerfile(violations)
+            check_online_generator(violations)
+            check_compose_fixture(violations)
+            check_alert_runbooks(violations)
+            check_pinned_actions(violations)
     except (OSError, ValueError, subprocess.CalledProcessError, json.JSONDecodeError) as error:
         print(f"部署资产检查执行失败: {error}")
         return 1
@@ -419,7 +420,7 @@ def main() -> int:
         for violation in violations:
             print(f"  - {violation}")
         return 1
-    suffix = "（含生产镜像）" if args.image else "（静态）"
+    suffix = "（生产镜像）" if args.image else "（静态）"
     print(f"部署资产检查通过{suffix}。")
     return 0
 

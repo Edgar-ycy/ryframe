@@ -122,6 +122,4 @@ fn log_time_range_is_strict_and_normalized() {
 fn role_option_purpose_controls_super_role_visibility() {
     assert!(RoleOptionPurpose::UserAssignment.includes_super_role(true));
     assert!(!RoleOptionPurpose::UserAssignment.includes_super_role(false));
-    assert!(!RoleOptionPurpose::ServiceAccountAssignment.includes_super_role(true));
-    assert!(!RoleOptionPurpose::ServiceAccountAssignment.includes_super_role(false));
 }

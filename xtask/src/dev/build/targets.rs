@@ -97,10 +97,9 @@ fn build_target(
         .stderr(Stdio::inherit());
 
     record_cargo_invocation(context.cargo_invocations);
-    let mut child = context.group.spawn(&mut build)?;
+    let mut child = context.group.spawn(build)?;
     let stdout = child
-        .stdout
-        .take()
+        .take_stdout_reader()?
         .ok_or("Cargo JSON 输出未建立 stdout pipe")?;
     let reader =
         thread::spawn(move || read_cargo_artifacts(stdout).map_err(|error| error.to_string()));

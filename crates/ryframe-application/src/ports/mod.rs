@@ -2,13 +2,13 @@
 
 pub mod auth;
 pub mod authorization;
+pub mod backup;
 pub mod export;
 pub mod files;
 pub mod health;
 pub mod jobs;
 pub mod product;
 pub mod retention;
-pub mod service_accounts;
 pub mod spreadsheet;
 pub mod system;
 pub mod tenant_config;

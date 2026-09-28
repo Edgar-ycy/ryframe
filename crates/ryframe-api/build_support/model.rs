@@ -39,7 +39,8 @@ pub(super) struct GeneratedAccessCatalog {
 pub(super) struct GeneratedResource {
     pub(super) name: String,
     pub(super) module: String,
-    pub(super) capability: String,
+    #[serde(default)]
+    pub(super) capability: Option<String>,
     pub(super) labels: GeneratedLabels,
     pub(super) menu: GeneratedMenu,
     pub(super) route: GeneratedRoute,

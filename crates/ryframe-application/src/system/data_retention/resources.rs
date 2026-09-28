@@ -39,11 +39,6 @@ impl DataRetentionService {
                 self.config.user_import_history_days,
             ),
             cutoff(
-                RetentionResource::ServiceAccessAudits,
-                now,
-                self.config.service_access_audit_days,
-            ),
-            cutoff(
                 RetentionResource::RetentionRuns,
                 now,
                 self.config.retention_run_days,

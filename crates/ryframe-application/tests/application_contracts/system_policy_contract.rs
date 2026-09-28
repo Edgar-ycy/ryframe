@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
 use chrono::{Duration, TimeZone, Utc};
 use ryframe_application::{
@@ -319,9 +319,9 @@ fn tenant_permission_boundary_is_case_insensitive_and_fail_closed() {
 }
 
 #[test]
-fn product_version_rejects_duplicate_capabilities() {
+fn product_version_accepts_empty_and_rejects_unknown_or_duplicate_capabilities() {
     let capability = || ProductCapabilityRecord {
-        code: SERVICE_ACCOUNTS_CAPABILITY.into(),
+        code: "unknown.capability".into(),
         variant: "default".into(),
         schema_version: 1,
         config: serde_json::json!({}),
@@ -337,7 +337,9 @@ fn product_version_rejects_duplicate_capabilities() {
         published_at: None,
         capabilities,
     };
-    assert!(ProductService::version_record_vo(version(vec![capability()])).is_ok());
+    assert!(ProductService::version_record_vo(version(vec![])).is_ok());
+    assert!(CAPABILITY_CATALOG.is_empty());
+    assert!(ProductService::version_record_vo(version(vec![capability()])).is_err());
     assert!(ProductService::version_record_vo(version(vec![capability(), capability()])).is_err());
 }
 
@@ -350,37 +352,6 @@ fn preferred_locale_accepts_only_supported_values() {
         Some("zh-CN".into())
     );
     assert!(normalize_preferred_locale(Some("zh-cn".into())).is_err());
-}
-
-#[test]
-fn delegated_capability_requires_both_permission_sets() {
-    let capabilities = vec![
-        ServiceCapabilityDescriptor {
-            key: "read".to_owned(),
-            permission: "system:user:list".to_owned(),
-            direct: true,
-            delegated: true,
-        },
-        ServiceCapabilityDescriptor {
-            key: "write".to_owned(),
-            permission: "system:user:create".to_owned(),
-            direct: true,
-            delegated: false,
-        },
-    ];
-    let permissions = |values: &[&str]| {
-        values
-            .iter()
-            .map(|value| (*value).to_owned())
-            .collect::<HashSet<_>>()
-    };
-    let common = common_capabilities(
-        &capabilities,
-        &permissions(&["system:user:*"]),
-        &permissions(&["system:user:list"]),
-    );
-    assert_eq!(common.len(), 1);
-    assert_eq!(common[0].key, "read");
 }
 
 #[test]

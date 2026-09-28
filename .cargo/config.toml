@@ -1,10 +1,5 @@
 [alias]
 xtask = "run --locked --target-dir target/xtask-run -p xtask --"
-dev = "run --locked --target-dir target/xtask-run -p xtask -- dev"
-verify = "run --locked --target-dir target/xtask-run -p xtask -- verify"
-resource = "run --locked --target-dir target/xtask-resource -p xtask --features resource -- resource"
-api-sync = "run --locked --target-dir target/xtask-run -p xtask -- api-sync"
-migrate = "run --locked --target-dir target/xtask-run -p xtask -- migrate"
 
 [target.x86_64-pc-windows-msvc]
 linker = "rust-lld.exe"

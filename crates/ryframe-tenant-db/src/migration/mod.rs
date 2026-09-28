@@ -6,10 +6,8 @@
 
 mod baseline_contract;
 mod catalog;
-mod generated_catalog;
 #[cfg(feature = "migration")]
 mod m20260820_000000_tenant_baseline;
-mod normalization;
 #[cfg(feature = "migration")]
 mod runtime;
 mod schema;
@@ -25,17 +23,17 @@ pub fn expected_migration_names() -> impl Iterator<Item = &'static str> {
 }
 
 pub use catalog::{
-    TENANT_DATA_CATALOG, TENANT_DATA_SCHEMA_FINGERPRINT, TenantDataCatalog,
-    TenantDataForeignKeyDescriptor, TenantDataTableDescriptor, catalog_entry_canonical,
-    schema_fingerprint_for_catalog,
+    TENANT_DATA_CATALOG, TenantDataCatalog, TenantDataForeignKeyDescriptor,
+    TenantDataTableDescriptor, catalog_entry_canonical, schema_fingerprint_for_catalog,
+    tenant_data_schema_fingerprint,
 };
 #[cfg(feature = "migration")]
 pub use m20260820_000000_tenant_baseline::{
     RESOURCE_OWNERSHIP_DDL, TENANT_FENCE_DDL, TENANT_TARGET_SLOT_DDL,
 };
-pub use normalization::normalize_check_clause;
 #[cfg(feature = "migration")]
 pub use runtime::{Migrator, up};
+pub use ryframe_db::migration::normalize_check_clause;
 pub use schema::{
     canonical_table_schema, ensure_local_foreign_key_schema, ensure_mysql_target_boundary, verify,
     verify_for_catalog, verify_mysql_80, verify_mysql_target, verify_mysql_target_for_catalog,

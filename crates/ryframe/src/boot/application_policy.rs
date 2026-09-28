@@ -1,13 +1,10 @@
-use std::sync::Arc;
-
 use ryframe_application::{
     AuthPolicy, CacheAvailabilityPolicy, ExportPolicy, JobRuntimePolicy, JobSchedulePolicy,
-    JobWorkerMode, JobWorkerPolicy, MessagingPolicy, MultiTenancyPolicy, PepperKeyring,
-    ServiceAccountPolicy, TenantConfigTransferPolicy, UserImportPolicy,
-    system::operations::DataRetentionPolicy,
+    JobWorkerMode, JobWorkerPolicy, MessagingPolicy, MultiTenancyPolicy,
+    TenantConfigTransferPolicy, UserImportPolicy, system::operations::DataRetentionPolicy,
 };
 use ryframe_config::{AppConfig, JobWorkerMode as ConfigJobWorkerMode, RedisMode};
-use ryframe_kernel::{AppError, AppResult};
+use ryframe_kernel::AppResult;
 
 /// 组合根从部署配置提取的全部应用用例运行策略。
 // 该模块也由独立 Worker 复用；Worker 不装配 HTTP 专属策略。
@@ -23,7 +20,6 @@ pub struct ApplicationPolicies {
     pub user_import: UserImportPolicy,
     pub tenant_config_transfer: TenantConfigTransferPolicy,
     pub messaging: MessagingPolicy,
-    pub service_accounts: ServiceAccountPolicy,
     pub multi_tenancy: MultiTenancyPolicy,
 }
 
@@ -32,7 +28,6 @@ impl ApplicationPolicies {
     pub fn from_config(config: &AppConfig) -> AppResult<Self> {
         let jobs = &config.jobs;
         let messaging = &config.messaging;
-        let service_accounts = &config.service_accounts;
         let transfer = &config.tenant_config_transfer;
         let retention = &config.data_retention;
         let user_import = &config.user_import;
@@ -83,7 +78,6 @@ impl ApplicationPolicies {
                 tenant_config_artifact_hours: transfer.artifact_hours,
                 tenant_config_rollback_hours: transfer.rollback_hours,
                 retention_run_days: retention.retention_run_days,
-                service_access_audit_days: retention.service_access_audit_days,
                 dead_background_jobs_permanent: true,
                 dead_outbox_events_permanent: true,
             },
@@ -109,32 +103,9 @@ impl ApplicationPolicies {
                 messaging.retention_days,
                 messaging.max_recipients_per_message,
             )?,
-            service_accounts: ServiceAccountPolicy::new(
-                service_accounts.enabled,
-                service_accounts.max_active_credentials,
-                service_accounts.max_credential_days,
-                service_accounts.default_delegation_hours,
-                service_accounts.max_delegation_days,
-                service_accounts.default_requests_per_minute,
-                service_accounts.max_concurrent_queries,
-                service_accounts.query_timeout_ms,
-                service_accounts.max_page_size,
-                service_accounts.max_response_bytes,
-            )?,
             multi_tenancy: MultiTenancyPolicy::new(config.multi_tenancy.enabled),
         })
     }
-}
-
-/// 读取部署密钥后移动所有权到应用安全类型，不复制密钥字节。
-#[allow(dead_code)]
-pub fn load_pepper_keyring(config: &AppConfig) -> AppResult<Arc<PepperKeyring>> {
-    let loaded = config
-        .service_accounts
-        .load_pepper_keyring(&config.auth.jwt_secret)
-        .map_err(AppError::Config)?;
-    let (active_version, peppers) = loaded.into_parts();
-    Ok(Arc::new(PepperKeyring::new(active_version, peppers)?))
 }
 
 const fn map_worker_mode(mode: ConfigJobWorkerMode) -> JobWorkerMode {

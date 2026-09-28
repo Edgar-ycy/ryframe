@@ -32,7 +32,7 @@ pub(super) fn probe_candidate(
     watcher: &SourceWatcher,
 ) -> Result<ProbeResult> {
     let (api_port, worker_port) = available_ports()?;
-    let mut command = api_command(
+    let command = api_command(
         root,
         &binaries.api,
         RuntimeInputPaths::new(
@@ -45,8 +45,8 @@ pub(super) fn probe_candidate(
         worker_ids.probe_api,
         true,
     );
-    let mut api = group.spawn(&mut command)?;
-    let mut worker_command = worker_command(
+    let mut api = group.spawn(command)?;
+    let worker_command = worker_command(
         root,
         &binaries.worker,
         RuntimeInputPaths::new(
@@ -58,7 +58,7 @@ pub(super) fn probe_candidate(
         worker_ids.probe_worker,
         true,
     );
-    let mut worker = match group.spawn(&mut worker_command) {
+    let mut worker = match group.spawn(worker_command) {
         Ok(worker) => worker,
         Err(error) => {
             let api_stop = stop_child(&mut api);
@@ -131,7 +131,7 @@ pub(super) fn start_services_in_mode(
     if mode.is_probe() {
         return start_probe_services(group, root, binaries, ports, worker_ids);
     }
-    let mut api_command = api_command(
+    let api_command = api_command(
         root,
         &binaries.api,
         RuntimeInputPaths::new(
@@ -144,7 +144,7 @@ pub(super) fn start_services_in_mode(
         worker_ids.api,
         mode.is_probe(),
     );
-    let mut api = match group.spawn(&mut api_command) {
+    let mut api = match group.spawn(api_command) {
         Ok(api) => api,
         Err(error) => {
             let cleanup = cleanup_binaries(&binaries);
@@ -152,7 +152,7 @@ pub(super) fn start_services_in_mode(
         }
     };
     let health_deadline = Instant::now() + HEALTH_TIMEOUT;
-    let mut worker_command = worker_command(
+    let worker_command = worker_command(
         root,
         &binaries.worker,
         RuntimeInputPaths::new(
@@ -166,7 +166,7 @@ pub(super) fn start_services_in_mode(
     );
     let mut worker = match start_worker_after_api_ready(
         || wait_healthy_until(&mut api, ports.api, "API", health_deadline),
-        || group.spawn(&mut worker_command),
+        || group.spawn(worker_command),
     ) {
         Ok(worker) => worker,
         Err(error) => {
@@ -216,7 +216,7 @@ fn start_probe_services(
     ports: DevPorts,
     worker_ids: WorkerIds,
 ) -> Result<Services> {
-    let mut api_command = api_command(
+    let api_command = api_command(
         root,
         &binaries.api,
         RuntimeInputPaths::new(
@@ -229,14 +229,14 @@ fn start_probe_services(
         worker_ids.api,
         true,
     );
-    let mut api = match group.spawn(&mut api_command) {
+    let mut api = match group.spawn(api_command) {
         Ok(api) => api,
         Err(error) => {
             let cleanup = cleanup_binaries(&binaries);
             return combine_failures(Err(error), [("清理候选版本目录", cleanup)]);
         }
     };
-    let mut worker_command = worker_command(
+    let worker_command = worker_command(
         root,
         &binaries.worker,
         RuntimeInputPaths::new(
@@ -248,7 +248,7 @@ fn start_probe_services(
         worker_ids.worker,
         true,
     );
-    let mut worker = match group.spawn(&mut worker_command) {
+    let mut worker = match group.spawn(worker_command) {
         Ok(worker) => worker,
         Err(error) => {
             let api_stop = stop_child(&mut api);

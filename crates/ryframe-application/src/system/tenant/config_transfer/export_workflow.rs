@@ -12,28 +12,12 @@ impl TenantConfigTransferService {
                 PACKAGE_EXPORT_PERMISSION,
             )
             .await?;
-        let transaction = self.persistence.begin().await?;
-        transaction
-            .lock_tenant_configuration(tenant_id, None)
-            .await?;
-        let mut bundle = transaction
-            .lock_bundle(tenant_id, bundle_id)
+        if !self
+            .mark_export_running(tenant_id, bundle_id, job.id)
             .await?
-            .ok_or_else(|| AppError::NotFound("配置包导出记录不存在".into()))?;
-        if bundle.background_job_id != Some(job.id) {
-            transaction.rollback().await?;
-            return Err(AppError::Conflict("配置包导出任务身份不匹配".into()));
-        }
-        if bundle.status == TenantConfigBundleRecord::STATUS_SUCCEEDED {
-            transaction.rollback().await?;
+        {
             return Ok(());
         }
-        bundle.status = TenantConfigBundleRecord::STATUS_RUNNING.to_owned();
-        bundle.updated_at = transaction.database_now().await?;
-        transaction.update_bundle(bundle).await?;
-        transaction
-            .commit(crate::TransactionAuditMode::Skip)
-            .await?;
 
         // 在租户配置行锁保护下从同一事务读取全部资源，避免包内混合两个版本。
         let source_transaction = self.persistence.begin().await?;
@@ -154,6 +138,49 @@ impl TenantConfigTransferService {
             transaction.update_bundle(bundle).await
         }
         .await;
+        self.finish_export(transaction, operation, tenant_id, file_id)
+            .await
+    }
+
+    async fn mark_export_running(
+        &self,
+        tenant_id: &str,
+        bundle_id: i64,
+        job_id: i64,
+    ) -> AppResult<bool> {
+        let transaction = self.persistence.begin().await?;
+        transaction
+            .lock_tenant_configuration(tenant_id, None)
+            .await?;
+        let mut bundle = transaction
+            .lock_bundle(tenant_id, bundle_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("配置包导出记录不存在".into()))?;
+        if bundle.background_job_id != Some(job_id) {
+            transaction.rollback().await?;
+            return Err(AppError::Conflict("配置包导出任务身份不匹配".into()));
+        }
+        if bundle.status == TenantConfigBundleRecord::STATUS_SUCCEEDED {
+            transaction.rollback().await?;
+            return Ok(false);
+        }
+        bundle.status = TenantConfigBundleRecord::STATUS_RUNNING.to_owned();
+        bundle.updated_at = transaction.database_now().await?;
+        transaction.update_bundle(bundle).await?;
+        transaction
+            .commit(crate::TransactionAuditMode::Skip)
+            .await?;
+
+        Ok(true)
+    }
+
+    async fn finish_export(
+        &self,
+        transaction: Box<dyn crate::ports::tenant_config::TenantConfigTransferTransaction>,
+        operation: AppResult<TenantConfigBundleRecord>,
+        tenant_id: &str,
+        file_id: i64,
+    ) -> AppResult<()> {
         match operation {
             Ok(_) => {
                 if let Err(error) = transaction.commit(crate::TransactionAuditMode::Skip).await {

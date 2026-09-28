@@ -78,7 +78,6 @@ pub struct RoleListParams {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RoleOptionPurpose {
     UserAssignment,
-    ServiceAccountAssignment,
 }
 
 impl RoleOptionPurpose {

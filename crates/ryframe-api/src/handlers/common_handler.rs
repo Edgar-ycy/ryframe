@@ -1,7 +1,7 @@
 use crate::http::{ApiResponse, HttpResult};
 use axum::{
     Json, Router,
-    extract::{Multipart, Query, State},
+    extract::{DefaultBodyLimit, Multipart, Query, State, multipart::MultipartRejection},
     http::{HeaderMap, header},
     response::IntoResponse,
 };
@@ -63,12 +63,43 @@ pub fn upload_router(state: AppState) -> Router {
         .merge(route!(upload_file))
         .merge(route!(upload_image))
         .merge(route!(upload_avatar))
+        // 大小由配置化请求体中间件与文件策略共同限制。
+        .layer(DefaultBodyLimit::disable())
         .with_state(state)
 }
 
 /// 下载文件路由（需认证）
 pub fn download_router(state: AppState) -> Router {
     Router::new().merge(route!(download_file)).with_state(state)
+}
+
+pub fn settings_router(state: AppState) -> Router {
+    Router::new()
+        .merge(route!(shell_settings))
+        .with_state(state)
+}
+
+/// 所有已认证用户可读取固定的界面设置，不接受任意配置键。
+#[get("/shell-settings")]
+#[utoipa::path(get, path = "/api/v1/common/shell-settings", tag = "通用",
+    responses((status = 200, description = "当前租户界面设置", body = ApiResponse<crate::dto::config_dto::ShellSettingsDto>)),
+    security(("bearer" = [])))]
+pub async fn shell_settings(
+    State(state): State<AppState>,
+    current_user: RequestPrincipal,
+) -> HttpResult<Json<ApiResponse<crate::dto::config_dto::ShellSettingsDto>>> {
+    let settings = state
+        .services
+        .content
+        .config
+        .shell_settings(&current_user)
+        .await?;
+    Ok(Json(ApiResponse::success(
+        crate::dto::config_dto::ShellSettingsDto {
+            side_theme: settings.side_theme,
+            skin_name: settings.skin_name,
+        },
+    )))
 }
 
 // ==================== 上传接口（薄层：仅解析 HTTP 参数，委托 Service） ====================
@@ -79,13 +110,14 @@ pub fn download_router(state: AppState) -> Router {
     request_body(content = FileUploadForm, content_type = "multipart/form-data"),
     responses(
         (status = 200, description = "上传成功", body = ApiResponse<Vec<UploadResponse>>),
-        (status = 413, description = "上传内容超过 10 MiB 限制"),
+        (status = 400, description = "上传表单或文件内容无效"),
+        (status = 413, description = "上传内容超过配置的文件大小限制"),
         (status = 503, description = "对象存储暂不可用")
     ), security(("bearer" = [])))]
 pub async fn upload_file(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    multipart: Multipart,
+    multipart: Result<Multipart, MultipartRejection>,
 ) -> HttpResult<Json<ApiResponse<MultiUploadResponse>>> {
     let policy = UploadPolicy {
         max_file_size: state.settings.upload.file_max_bytes as u64,
@@ -93,7 +125,7 @@ pub async fn upload_file(
     };
     process_multipart_upload(
         state,
-        multipart,
+        multipart?,
         &policy,
         UPLOAD_BUCKET,
         false,
@@ -108,13 +140,14 @@ pub async fn upload_file(
     request_body(content = FileUploadForm, content_type = "multipart/form-data"),
     responses(
         (status = 200, description = "图片上传成功", body = ApiResponse<Vec<UploadResponse>>),
-        (status = 413, description = "上传内容超过 10 MiB 限制"),
+        (status = 400, description = "上传表单或文件内容无效"),
+        (status = 413, description = "上传内容超过配置的文件大小限制"),
         (status = 503, description = "对象存储暂不可用")
     ), security(("bearer" = [])))]
 pub async fn upload_image(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    multipart: Multipart,
+    multipart: Result<Multipart, MultipartRejection>,
 ) -> HttpResult<Json<ApiResponse<MultiUploadResponse>>> {
     let policy = UploadPolicy {
         allowed_extensions: vec![
@@ -127,7 +160,15 @@ pub async fn upload_image(
         ],
         max_file_size: state.settings.upload.file_max_bytes as u64,
     };
-    process_multipart_upload(state, multipart, &policy, UPLOAD_BUCKET, true, current_user).await
+    process_multipart_upload(
+        state,
+        multipart?,
+        &policy,
+        UPLOAD_BUCKET,
+        true,
+        current_user,
+    )
+    .await
 }
 
 /// 头像上传（固定使用 `avatar` 桶）
@@ -136,13 +177,14 @@ pub async fn upload_image(
     request_body(content = FileUploadForm, content_type = "multipart/form-data"),
     responses(
         (status = 200, description = "头像上传成功", body = ApiResponse<Vec<UploadResponse>>),
-        (status = 413, description = "上传内容超过 5 MiB 限制"),
+        (status = 400, description = "上传表单或头像内容无效"),
+        (status = 413, description = "上传内容超过配置的头像大小限制"),
         (status = 503, description = "对象存储暂不可用")
     ), security(("bearer" = [])))]
 pub async fn upload_avatar(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    multipart: Multipart,
+    multipart: Result<Multipart, MultipartRejection>,
 ) -> HttpResult<Json<ApiResponse<MultiUploadResponse>>> {
     let policy = UploadPolicy {
         allowed_extensions: vec![
@@ -155,7 +197,15 @@ pub async fn upload_avatar(
         ],
         max_file_size: state.settings.upload.avatar_max_bytes as u64,
     };
-    process_multipart_upload(state, multipart, &policy, AVATAR_BUCKET, true, current_user).await
+    process_multipart_upload(
+        state,
+        multipart?,
+        &policy,
+        AVATAR_BUCKET,
+        true,
+        current_user,
+    )
+    .await
 }
 
 /// 解析 multipart 中的文件并逐文件委托 FileService 处理
@@ -176,11 +226,7 @@ async fn process_multipart_upload(
     let mut results: MultiUploadResponse = Vec::new();
     let mut total_file_bytes = 0_u64;
 
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|e| AppError::Internal(format!("读取 multipart 失败: {}", e)))?
-    {
+    while let Some(field) = multipart.next_field().await? {
         let field_name = field.name().unwrap_or("").to_string();
 
         if field_name == "bucket" {
@@ -192,10 +238,7 @@ async fn process_multipart_upload(
             None => continue,
         };
 
-        let data = field
-            .bytes()
-            .await
-            .map_err(|e| AppError::Internal(format!("读取文件数据失败: {}", e)))?;
+        let data = field.bytes().await?;
 
         total_file_bytes = total_file_bytes.saturating_add(data.len() as u64);
         if total_file_bytes > policy.max_file_size {

@@ -34,6 +34,12 @@ pub(super) fn render(resources: &[&ResourceIr], assets: &mut Vec<GeneratedAsset>
     assets.push(GeneratedAsset {
         resource: "__catalog__".into(),
         root: AssetRoot::Backend,
+        path: "crates/ryframe-tenant-db/src/generated/catalog.rs".into(),
+        content: super::tenant_catalog::render(resources, &aggregate),
+    });
+    assets.push(GeneratedAsset {
+        resource: "__catalog__".into(),
+        root: AssetRoot::Backend,
         path: "crates/ryframe-api/src/generated/mod.rs".into(),
         content: render_api_mod(resources, &aggregate),
     });
@@ -210,7 +216,7 @@ fn render_storage_mod(resources: &[&ResourceIr], storage: StorageKind, header: &
         .collect::<Vec<_>>()
         .join("\n");
     let arc_import = if storage == StorageKind::TenantData {
-        "#[cfg(feature = \"repositories\")]\nuse std::sync::Arc;\n\n"
+        "pub mod catalog;\n\n#[cfg(feature = \"repositories\")]\nuse std::sync::Arc;\n\n"
     } else {
         ""
     };
@@ -238,12 +244,25 @@ fn render_api_mod(resources: &[&ResourceIr], header: &str) -> String {
 fn render_generated_router(resources: &[&ResourceIr], header: &str) -> String {
     let nests = resources
         .iter()
-        .map(|resource| {
+        .enumerate()
+        .map(|(index, resource)| {
             let path = resource.api.path.trim_start_matches("/api/v1/system");
-            format!(
-                "        .nest({path:?}, super::{name}::handler::router(Arc::clone(&services.{name}), pagination))",
+            let state = if index + 1 == resources.len() {
+                "state"
+            } else {
+                "state.clone()"
+            };
+            let router = format!(
+                "super::{name}::handler::router(Arc::clone(&services.{name}), pagination)",
                 name = resource.name,
-            )
+            );
+            let router = match &resource.access.capability {
+                Some(capability) => format!(
+                    "{router}.layer(from_fn_with_state(CapabilityGuardState::new({state}, {capability:?}), capability_guard))"
+                ),
+                None => router,
+            };
+            format!("        .nest({path:?}, {router})")
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -252,13 +271,26 @@ fn render_generated_router(resources: &[&ResourceIr], header: &str) -> String {
     } else {
         "use std::sync::Arc;\n\n"
     };
-    let empty = if resources.is_empty() {
-        "    let _ = (services, pagination);\n"
+    let state_usage = if resources.is_empty() {
+        "    let _ = (state, services, pagination);\n"
+    } else if !resources
+        .iter()
+        .any(|resource| resource.access.capability.is_some())
+    {
+        "    let _ = &state;\n"
+    } else {
+        ""
+    };
+    let guard_import = if resources
+        .iter()
+        .any(|resource| resource.access.capability.is_some())
+    {
+        "use axum::middleware::from_fn_with_state;\nuse crate::router::{CapabilityGuardState, capability_guard};\n"
     } else {
         ""
     };
     format!(
-        "{header}{arc_import}use axum::Router;\nuse ryframe_application::generated::GeneratedServices;\nuse ryframe_kernel::PaginationPolicy;\n\npub fn generated_router(services: &GeneratedServices, pagination: PaginationPolicy) -> Router {{\n{empty}    Router::new()\n{nests}\n}}\n"
+        "{header}{arc_import}use axum::Router;\nuse ryframe_application::generated::GeneratedServices;\nuse ryframe_kernel::PaginationPolicy;\n\n{guard_import}use crate::state::AppState;\n\npub fn generated_router(state: AppState, services: &GeneratedServices, pagination: PaginationPolicy) -> Router {{\n{state_usage}    Router::new()\n{nests}\n}}\n"
     )
 }
 

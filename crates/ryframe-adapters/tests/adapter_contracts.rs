@@ -1,3 +1,9 @@
+#[path = "adapter_contracts/backup.rs"]
+mod backup;
+#[path = "adapter_contracts/backup_runtime.rs"]
+mod backup_runtime;
+#[path = "adapter_contracts/backup_s3.rs"]
+mod backup_s3;
 #[path = "adapter_contracts/excel_and_i18n.rs"]
 mod excel_and_i18n;
 #[cfg(feature = "redis-api")]

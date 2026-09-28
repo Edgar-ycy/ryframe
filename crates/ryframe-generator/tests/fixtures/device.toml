@@ -193,7 +193,7 @@ zh_cn = "设备管理"
 en = "Devices"
 
 [route]
-key = "SystemDevice"
+key = "system.device"
 path = "/system/device"
 
 [extensions.backend]

@@ -12,6 +12,38 @@ pub(super) fn validate_references(
     fields: &BTreeSet<String>,
     field_specs: &[FieldIr],
 ) -> Result<(), ResourceError> {
+    validate_keys(resource, source_path, spec, fields)?;
+    validate_relations(resource, source_path, spec, fields, field_specs)?;
+    validate_lifecycle_references(resource, source_path, spec, fields, field_specs)?;
+    Ok(())
+}
+
+pub(super) fn ensure_field_reference(
+    resource: &str,
+    source_path: &str,
+    fields: &BTreeSet<String>,
+    field: &str,
+    owner: &str,
+) -> Result<(), ResourceError> {
+    if fields.contains(field) {
+        Ok(())
+    } else {
+        Err(field_error(
+            resource,
+            field,
+            source_path,
+            format!("{owner}引用了未声明字段"),
+            "补充 fields 条目，或修正引用名称",
+        ))
+    }
+}
+
+fn validate_keys(
+    resource: &str,
+    source_path: &str,
+    spec: &ResourceSpec,
+    fields: &BTreeSet<String>,
+) -> Result<(), ResourceError> {
     if spec.database.primary_key.is_empty() {
         return Err(
             ResourceError::new("主键不能为空", "在 database.primary_key 中声明字段")
@@ -64,6 +96,16 @@ pub(super) fn validate_references(
             }
         }
     }
+    Ok(())
+}
+
+fn validate_relations(
+    resource: &str,
+    source_path: &str,
+    spec: &ResourceSpec,
+    fields: &BTreeSet<String>,
+    field_specs: &[FieldIr],
+) -> Result<(), ResourceError> {
     let mut relation_names = BTreeSet::new();
     for relation in &spec.relations {
         if !is_snake_identifier(&relation.name) {
@@ -114,6 +156,16 @@ pub(super) fn validate_references(
             .with_file(source_path));
         }
     }
+    Ok(())
+}
+
+fn validate_lifecycle_references(
+    resource: &str,
+    source_path: &str,
+    spec: &ResourceSpec,
+    fields: &BTreeSet<String>,
+    field_specs: &[FieldIr],
+) -> Result<(), ResourceError> {
     if let Some(soft_delete) = &spec.database.soft_delete {
         ensure_field_reference(resource, source_path, fields, &soft_delete.field, "软删除")?;
         let field = field_specs
@@ -174,24 +226,4 @@ pub(super) fn validate_references(
         }
     }
     Ok(())
-}
-
-pub(super) fn ensure_field_reference(
-    resource: &str,
-    source_path: &str,
-    fields: &BTreeSet<String>,
-    field: &str,
-    owner: &str,
-) -> Result<(), ResourceError> {
-    if fields.contains(field) {
-        Ok(())
-    } else {
-        Err(field_error(
-            resource,
-            field,
-            source_path,
-            format!("{owner}引用了未声明字段"),
-            "补充 fields 条目，或修正引用名称",
-        ))
-    }
 }

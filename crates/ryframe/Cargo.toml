@@ -31,12 +31,17 @@ futures-util = { workspace = true, optional = true }
 md5 = { version = "0.8", optional = true }
 sha2 = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
+same-file = { version = "1.0.6", optional = true }
 serde = { workspace = true, optional = true, features = ["derive"] }
 serde_json = { workspace = true, optional = true }
 chrono = { workspace = true, optional = true }
 async-trait = { workspace = true, optional = true }
 zip = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
+
+[dev-dependencies]
+futures-util.workspace = true
+tempfile.workspace = true
 
 [features]
 default = ["bin-api", "runtime-swagger-ui"]
@@ -106,6 +111,13 @@ bin-tenant-data = [
     "ryframe-db/repositories",
     "ryframe-tenant-db/repositories",
     "dep:chrono",
+    "dep:sha2",
+    "dep:hex",
+    "dep:same-file",
+    "dep:ryframe-application",
+    "dep:ryframe-adapters",
+    "dep:serde",
+    "dep:serde_json",
 ]
 bin-file-maintenance = [
     "runtime-crypto",
@@ -185,6 +197,16 @@ required-features = ["bin-api"]
 name = "reset_contract"
 path = "tests/reset_contract.rs"
 required-features = ["bin-reset"]
+
+[[test]]
+name = "backup_cli_contract"
+path = "tests/backup_cli_contract.rs"
+required-features = ["bin-tenant-data"]
+
+[[test]]
+name = "target_inventory_mysql"
+path = "tests/target_inventory_mysql.rs"
+required-features = ["bin-tenant-data", "bin-migrate"]
 
 [lints]
 workspace = true

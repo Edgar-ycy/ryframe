@@ -2,6 +2,37 @@ use super::*;
 
 #[async_trait]
 impl ObjectStorage for S3ObjectStorage {
+    async fn digest(&self, bucket: &str, key: &str) -> StorageResult<crate::storage::ObjectDigest> {
+        trace_storage_operation("s3", StorageOperation::Digest, async {
+            let url = self.object_url(bucket, key)?;
+            let mut response = self
+                .send_request(
+                    StorageOperation::Digest,
+                    self.signed_request(Method::GET, url, "UNSIGNED-PAYLOAD")?,
+                )
+                .await?;
+            if !response.status().is_success() {
+                return Err(service_error("校验 S3 对象", response));
+            }
+            let expected_size = response.content_length();
+            let mut digest = Sha256::new();
+            let mut bytes = 0_u64;
+            while let Some(chunk) = response.chunk().await.map_err(transport_error)? {
+                bytes += chunk.len() as u64;
+                digest.update(&chunk);
+            }
+            if expected_size.is_some_and(|size| size != bytes) {
+                return Err(StorageError::InvalidResponse(
+                    "S3 对象长度与响应不一致".into(),
+                ));
+            }
+            Ok(crate::storage::ObjectDigest {
+                bytes,
+                sha256: hex::encode(digest.finalize()),
+            })
+        })
+        .await
+    }
     fn late_put_completion_bound(&self) -> Duration {
         self.request_timeout
     }

@@ -1,5 +1,6 @@
 //! 消息、导出、日志、在线状态、监控与保留策略领域。
 
+pub use super::backup::*;
 pub use super::data_retention::*;
 pub use super::export::*;
 pub use super::log_time_range::*;

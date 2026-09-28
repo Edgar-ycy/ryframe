@@ -8,6 +8,50 @@ pub(super) fn validate_field(
     source_path: &str,
     field: &FieldSpec,
 ) -> Result<(), ResourceError> {
+    validate_identity(resource, source_path, field)?;
+    validate_bounds(resource, source_path, field)?;
+    validate_widgets(resource, source_path, field)?;
+    validate_usage(resource, source_path, field)?;
+    Ok(())
+}
+
+pub(super) fn validate_labels(
+    labels: &LabelsSpec,
+    resource: &str,
+    field: Option<&str>,
+    source_path: &str,
+) -> Result<(), ResourceError> {
+    if labels.zh_cn.trim().is_empty() || labels.en.trim().is_empty() {
+        let mut error =
+            ResourceError::new("中英文标签均不能为空", "同时填写 labels.zh_cn 和 labels.en")
+                .with_resource(resource)
+                .with_file(source_path);
+        if let Some(field) = field {
+            error = error.with_field(field);
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+pub(super) fn field_error(
+    resource: &str,
+    field: &str,
+    source_path: &str,
+    message: impl Into<String>,
+    suggestion: impl Into<String>,
+) -> ResourceError {
+    ResourceError::new(message, suggestion)
+        .with_resource(resource)
+        .with_field(field)
+        .with_file(source_path)
+}
+
+fn validate_identity(
+    resource: &str,
+    source_path: &str,
+    field: &FieldSpec,
+) -> Result<(), ResourceError> {
     if !is_snake_identifier(&field.name) {
         return Err(field_error(
             resource,
@@ -53,6 +97,14 @@ pub(super) fn validate_field(
             "将精度与舍入规则放入强类型业务切片，或先扩展完整 decimal 契约测试",
         ));
     }
+    Ok(())
+}
+
+fn validate_bounds(
+    resource: &str,
+    source_path: &str,
+    field: &FieldSpec,
+) -> Result<(), ResourceError> {
     if field.validation.required && field.nullable {
         return Err(field_error(
             resource,
@@ -139,6 +191,14 @@ pub(super) fn validate_field(
             "移除 minimum/maximum，或使用 i32/i64；精确数值规则放入强类型扩展",
         ));
     }
+    Ok(())
+}
+
+fn validate_widgets(
+    resource: &str,
+    source_path: &str,
+    field: &FieldSpec,
+) -> Result<(), ResourceError> {
     if (field.usage.create || field.usage.update)
         && !matches!(
             field.widget,
@@ -183,6 +243,14 @@ pub(super) fn validate_field(
         )?;
         validate_enum_key(resource, source_path, field, key)?;
     }
+    Ok(())
+}
+
+fn validate_usage(
+    resource: &str,
+    source_path: &str,
+    field: &FieldSpec,
+) -> Result<(), ResourceError> {
     if field.usage.create_optional && !field.usage.create {
         return Err(field_error(
             resource,
@@ -250,36 +318,4 @@ pub(super) fn validate_field(
         validate_field_value(resource, source_path, field, default, "default")?;
     }
     Ok(())
-}
-
-pub(super) fn validate_labels(
-    labels: &LabelsSpec,
-    resource: &str,
-    field: Option<&str>,
-    source_path: &str,
-) -> Result<(), ResourceError> {
-    if labels.zh_cn.trim().is_empty() || labels.en.trim().is_empty() {
-        let mut error =
-            ResourceError::new("中英文标签均不能为空", "同时填写 labels.zh_cn 和 labels.en")
-                .with_resource(resource)
-                .with_file(source_path);
-        if let Some(field) = field {
-            error = error.with_field(field);
-        }
-        return Err(error);
-    }
-    Ok(())
-}
-
-pub(super) fn field_error(
-    resource: &str,
-    field: &str,
-    source_path: &str,
-    message: impl Into<String>,
-    suggestion: impl Into<String>,
-) -> ResourceError {
-    ResourceError::new(message, suggestion)
-        .with_resource(resource)
-        .with_field(field)
-        .with_file(source_path)
 }

@@ -4,35 +4,28 @@ use std::{
     process,
 };
 
-use crate::{
-    Result,
-    cli::{ApiSyncCommand, ContractOperation},
-    process::{run as run_process, run_pnpm},
-    workspace::root_dir,
-};
+use crate::{Result, cli::ApiGenerateCommand, process::run as run_process, workspace::root_dir};
 
 use super::{
+    atomic::write_atomically,
     formal::sync_commit,
     model::{
         CANDIDATE_MARKER, CRUD_RESOURCE_ARTIFACT, ContractLock, Snapshot, StagingFrontend, nonce,
         sha256_hex,
     },
-    transaction::{install_snapshots, reject_contract_recovery_artifacts, write_atomically},
+    ownership::contract_managed_paths,
+    recovery::reject_contract_recovery_artifacts,
+    transaction::install_snapshots,
 };
 
 pub(crate) const CANDIDATE_GENERATION_ARGS: &[&str] =
     &["scripts/generate-api-artifacts.mjs", "--write"];
 
-pub(crate) fn run(operation: ContractOperation, frontend_dir: &Path) -> Result<()> {
-    match operation {
-        ContractOperation::Check => run_pnpm(frontend_dir, &["api:check"]),
-    }
-}
-
-pub(crate) fn api_sync(command: &ApiSyncCommand, frontend_dir: &Path) -> Result<()> {
-    match command {
-        ApiSyncCommand::Candidate => sync_candidate(frontend_dir),
-        ApiSyncCommand::Commit(reference) => sync_commit(reference, frontend_dir),
+pub(crate) fn generate_api(command: &ApiGenerateCommand, frontend_dir: &Path) -> Result<()> {
+    match (&command.reference, command.write) {
+        (_, false) => super::readonly::check_current(frontend_dir),
+        (None, true) => sync_candidate(frontend_dir),
+        (Some(reference), true) => sync_commit(reference, frontend_dir),
     }
 }
 
@@ -113,7 +106,7 @@ pub(crate) fn validate_candidate_contract(bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn canonical_contract(bytes: &[u8]) -> Result<Vec<u8>> {
+pub(super) fn canonical_contract(bytes: &[u8]) -> Result<Vec<u8>> {
     validate_candidate_contract(bytes)?;
     let document: serde_json::Value = serde_json::from_slice(bytes)?;
     let mut canonical = serde_json::to_string_pretty(&document)?.into_bytes();
@@ -151,7 +144,7 @@ where
         .is_some();
     let inputs = snapshot_staging_inputs(frontend_dir)?;
     let artifact_paths = artifact_paths_from_inputs(&inputs, frontend_dir)?;
-    let mut managed_paths = contract_managed_paths(frontend_dir, &artifact_paths);
+    let mut managed_paths = contract_managed_paths(frontend_dir, &artifact_paths)?;
     managed_paths.insert(0, backend_dir.join("openapi/openapi.json"));
     reject_contract_recovery_artifacts(&managed_paths)?;
     let before = snapshot_managed_files(&managed_paths)?;
@@ -223,25 +216,6 @@ fn candidate_marker(candidate: &[u8], formal_source: &[u8]) -> Result<Vec<u8>> {
     let mut bytes = serde_json::to_string_pretty(&marker)?.into_bytes();
     bytes.push(b'\n');
     Ok(bytes)
-}
-
-pub(super) fn contract_managed_paths(
-    frontend_dir: &Path,
-    artifact_paths: &[String],
-) -> Vec<PathBuf> {
-    let mut paths = vec![
-        frontend_dir.join("openapi/openapi.json"),
-        frontend_dir.join("openapi/source.json"),
-        frontend_dir.join(CANDIDATE_MARKER),
-    ];
-    paths.extend(artifact_paths.iter().map(|path| frontend_dir.join(path)));
-    if !artifact_paths
-        .iter()
-        .any(|path| path == CRUD_RESOURCE_ARTIFACT)
-    {
-        paths.push(frontend_dir.join(CRUD_RESOURCE_ARTIFACT));
-    }
-    paths
 }
 
 #[allow(dead_code)]
@@ -353,7 +327,10 @@ pub(super) fn snapshot_managed_files(managed_paths: &[PathBuf]) -> Result<Vec<Sn
 
 pub(super) fn snapshot_staging_inputs(frontend_dir: &Path) -> Result<Vec<Snapshot>> {
     let scripts = frontend_dir.join("scripts");
-    let mut paths = vec![frontend_dir.join("package.json")];
+    let mut paths = vec![
+        frontend_dir.join("package.json"),
+        frontend_dir.join("pnpm-lock.yaml"),
+    ];
     collect_file_paths(&scripts, &mut paths)?;
     paths.sort();
     paths.dedup();

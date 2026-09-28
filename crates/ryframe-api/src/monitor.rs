@@ -2,6 +2,7 @@
 
 use std::{collections::BTreeMap, sync::Arc};
 
+use ryframe_application::ports::backup::BackupHealthCache;
 pub use ryframe_application::ports::health::{
     DatabaseMonitor, DatabaseNodeHealth, DatabaseTopologyHealth, DependencyHealthCache,
     DependencyHealthSnapshot, DependencyStatus,
@@ -39,6 +40,7 @@ pub struct MonitorState {
     pub readiness: DependencyHealthCache,
     pub metrics_bearer_token: Arc<str>,
     pub server_info: Arc<dyn ServerInfoMonitor>,
+    pub backup_health: BackupHealthCache,
 }
 
 /// 公开指标路由。进程和依赖探针位于根应用路由的 `/livez` 与 `/readyz`。

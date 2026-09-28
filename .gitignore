@@ -6,6 +6,7 @@ uploads/
 **/*.rs.bk
 *.pdb
 __pycache__/
+/.pytest_cache/
 *.pyc
 vendor/**/.cargo-ok
 .local-tests/

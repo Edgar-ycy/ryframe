@@ -18,6 +18,7 @@ use ryframe_api::{
         RateLimitSettings, StorageRuntimeSettings, UploadSettings,
     },
 };
+use ryframe_application::ports::backup::BackupHealthCache;
 use ryframe_config::{AppConfig, JobWorkerMode, RedisMode, StorageBackend};
 use ryframe_db::ControlDatabaseCluster;
 use ryframe_kernel::Localizer;
@@ -143,6 +144,7 @@ pub struct AppStateAssembly {
     pub services: AppServices,
     pub limiter: Arc<RateLimiter>,
     pub server_info: ServerInfoSampler,
+    pub backup_health: BackupHealthCache,
 }
 
 fn http_runtime_settings(config: &AppConfig) -> HttpRuntimeSettings {
@@ -221,6 +223,7 @@ pub fn assemble(assembly: AppStateAssembly) -> ryframe_api::AppState {
         services,
         limiter,
         server_info,
+        backup_health,
     } = assembly;
     let trusted_proxies = TrustedProxySet::new(&config.proxy.trusted_cidrs)
         .expect("proxy CIDRs were validated during configuration loading");
@@ -258,6 +261,7 @@ pub fn assemble(assembly: AppStateAssembly) -> ryframe_api::AppState {
         server_info: Arc::new(ServerInfoMonitorBridge {
             sampler: server_info,
         }),
+        backup_health,
     };
     let idempotency_store = super::idempotency::store(redis_client.clone());
     let redis_connected = redis_client.is_some();

@@ -5,6 +5,7 @@ mod model;
 mod ownership;
 mod path;
 mod plan;
+mod release_stage;
 mod schema;
 mod transaction;
 

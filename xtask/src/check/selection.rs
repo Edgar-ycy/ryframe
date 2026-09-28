@@ -279,31 +279,32 @@ pub(super) fn print_selection(selection: &VerifySelection) {
 pub(crate) fn frontend_profile_commands(
     profiles: &BTreeSet<FrontendProfile>,
     consumer_contract_ran: bool,
-) -> Vec<&'static str> {
+) -> Vec<&'static [&'static str]> {
+    const CHECK_DEFAULT: &[&str] = &["check"];
+    const CHECK_STATIC: &[&str] = &["check", "--stage", "static"];
+    const CHECK_CONTRACT: &[&str] = &["check", "--stage", "contract"];
+    const CHECK_UNIT: &[&str] = &["check", "--stage", "unit"];
+    const BUILD: &[&str] = &["build"];
+    const CHECK_BROWSER: &[&str] = &["check", "--stage", "browser"];
+
     let contract = profiles.contains(&FrontendProfile::Contract);
     let code = profiles.contains(&FrontendProfile::Code);
     let mut commands = Vec::new();
-    if contract && !consumer_contract_ran {
-        // api:check 同时覆盖来源摘要、契约结构、派生物与 operation 使用，避免拆分后漏项。
-        commands.push("api:check");
-    }
-    if code {
-        commands.extend(["check:source-size", "lint", "lint:styles"]);
+    if code && (contract || consumer_contract_ran) {
+        commands.push(CHECK_STATIC);
+        if !consumer_contract_ran {
+            commands.push(CHECK_UNIT);
+        }
+    } else if code {
+        commands.push(CHECK_DEFAULT);
+    } else if contract && !consumer_contract_ran {
+        commands.extend([CHECK_CONTRACT, CHECK_UNIT]);
     }
     if contract || code {
-        if code && !contract && !consumer_contract_ran {
-            commands.push("check:api-operations");
-        }
-        if !consumer_contract_ran {
-            commands.extend(["typecheck", "test:unit"]);
-        }
-        commands.push("build");
-    }
-    if code {
-        commands.push("check:bundle");
+        commands.push(BUILD);
     }
     if profiles.contains(&FrontendProfile::Browser) {
-        commands.push("test:browser-smoke");
+        commands.push(CHECK_BROWSER);
     }
     commands
 }

@@ -23,7 +23,7 @@ impl RedisRefreshSessionStore {
         let family = family.clone();
         let code = self
             .client
-            .transaction(&watched, move |mut connection, mut transaction| {
+            .transaction(&watched, async move |mut connection, mut transaction| {
                 let family = family.clone();
                 let family_key = family_key.clone();
                 let tenant_key = tenant_key.clone();
@@ -121,6 +121,7 @@ impl RedisRefreshSessionStore {
                     let committed: Option<()> = transaction.query_async(&mut connection).await?;
                     Ok(committed.map(|()| 1_i64))
                 }
+                .await
             })
             .await
             .map_err(codec::redis_unavailable)?;

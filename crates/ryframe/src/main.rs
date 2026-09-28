@@ -39,6 +39,7 @@ struct ApiTasks {
     message_replay_scheduler: Option<tokio::task::JoinHandle<()>>,
     replica_health_monitor: Option<tokio::task::JoinHandle<()>>,
     message_listener: Option<tokio::task::JoinHandle<()>>,
+    backup_health_collector: Option<tokio::task::JoinHandle<()>>,
 }
 
 struct ApiRuntime {
@@ -194,6 +195,9 @@ async fn prepare_runtime(
         replica_health_monitor,
     } = dependencies;
     let (shutdown_sender, shutdown_receiver) = watch::channel(false);
+    let backup_health =
+        ryframe_application::ports::backup::BackupHealthCache::new(boot::backup::CACHE_MAX_AGE);
+    let backup_database = database.clone();
     let worker_tasks = start_embedded_workers(
         startup,
         &database,
@@ -212,6 +216,7 @@ async fn prepare_runtime(
         services,
         limiter: limiter.limiter,
         server_info,
+        backup_health: backup_health.clone(),
     });
     let message_hub = state.message_hub.clone();
     let readiness_database = state.monitor.database.clone();
@@ -241,11 +246,16 @@ async fn prepare_runtime(
         .flatten();
     let router = app::build_app(state, limiter.rate_limit_state)?;
 
-    let addr = format!("{}:{}", startup.config.app.host, startup.config.app.port);
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .map_err(|error| AppError::Internal(format!("failed to bind {addr}: {error}")))?;
-    tracing::info!(address = %addr, "HTTP server started");
+    let listener = bind_listener(startup).await?;
+
+    let backup_health_collector = startup.starts_background_tasks().then(|| {
+        boot::backup::spawn(
+            backup_database,
+            startup.config.scope_id.as_str().to_owned(),
+            backup_health,
+            shutdown_receiver.clone(),
+        )
+    });
 
     let readiness_monitor = boot::readiness::spawn(
         readiness_database,
@@ -266,8 +276,18 @@ async fn prepare_runtime(
             message_replay_scheduler,
             replica_health_monitor,
             message_listener,
+            backup_health_collector,
         },
     })
+}
+
+async fn bind_listener(startup: &ApiStartup) -> Result<tokio::net::TcpListener, AppError> {
+    let address = format!("{}:{}", startup.config.app.host, startup.config.app.port);
+    let listener = tokio::net::TcpListener::bind(&address)
+        .await
+        .map_err(|error| AppError::Internal(format!("failed to bind {address}: {error}")))?;
+    tracing::info!(%address, "HTTP server started");
+    Ok(listener)
 }
 
 fn start_embedded_workers(
@@ -442,6 +462,14 @@ async fn stop_tasks(
     }
     if let Some(listener) = tasks.message_listener.take() {
         listener.abort();
+    }
+    if let Some(collector) = tasks.backup_health_collector.as_mut()
+        && tokio::time::timeout_at(shutdown_deadline, &mut *collector)
+            .await
+            .is_err()
+    {
+        tracing::warn!("备份健康采集器未在宽限期内停止");
+        collector.abort();
     }
 }
 

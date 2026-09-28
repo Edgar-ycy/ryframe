@@ -1,3 +1,7 @@
+mod check;
+
+pub use check::normalize_check_clause;
+
 pub fn extract_column_type(value: &str) -> &str {
     let value = value.trim_start();
     let first_whitespace = value.find(char::is_whitespace).unwrap_or(value.len());

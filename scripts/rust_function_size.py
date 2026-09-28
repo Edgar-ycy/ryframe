@@ -32,6 +32,13 @@ class FunctionRecord:
 
 
 @dataclass(frozen=True)
+class UnsafeSyntaxRecord:
+    path: str
+    line: int
+    context: str
+
+
+@dataclass(frozen=True)
 class FunctionRule:
     path: str
     symbol: str
@@ -62,13 +69,32 @@ class RustAstRuntime:
     language: Any
     parser: Any
 
-    def parse_records(self, path: str, source: bytes, errors: list[str]) -> list[FunctionRecord]:
+    def parse_source_records(
+        self, path: str, source: bytes, errors: list[str]
+    ) -> tuple[list[FunctionRecord], list[UnsafeSyntaxRecord]]:
         tree = self.parser.parse(source)
         if tree.root_node.has_error:
             errors.append(f"tree-sitter 无法完整解析 Rust 源码：{path}")
-            return []
+            return [], []
         # Tree 必须覆盖完整的 Node 遍历周期；不要只把临时 root_node 传给调用方。
-        return functions_in_tree(path, source, tree.root_node)
+        return (
+            functions_in_tree(path, source, tree.root_node),
+            unsafe_syntax_in_tree(path, tree.root_node),
+        )
+
+    def parse_records(
+        self, path: str, source: bytes, errors: list[str]
+    ) -> list[FunctionRecord]:
+        functions, _ = self.parse_source_records(path, source, errors)
+        return functions
+
+    def parse_template_unsafe(
+        self, path: str, source: bytes
+    ) -> list[UnsafeSyntaxRecord]:
+        """模板允许占位符导致恢复性语法错误，但仍按 Rust token 识别 unsafe。"""
+
+        tree = self.parser.parse(source)
+        return unsafe_syntax_in_tree(path, tree.root_node)
 
 
 def parse_policy(raw: Any, errors: list[str]) -> FunctionSizePolicy | None:
@@ -235,15 +261,42 @@ def load_ast_runtime(errors: list[str]) -> RustAstRuntime | None:
     return RustAstRuntime(language=language, parser=parser)
 
 
-def parse_functions(root: Path, paths: list[Path], errors: list[str]) -> list[FunctionRecord]:
+def parse_rust_sources(
+    root: Path, paths: list[Path], errors: list[str]
+) -> tuple[list[FunctionRecord], list[UnsafeSyntaxRecord]]:
     runtime = load_ast_runtime(errors)
     if runtime is None:
-        return []
-    records: list[FunctionRecord] = []
+        return [], []
+    functions: list[FunctionRecord] = []
+    unsafe_syntax: list[UnsafeSyntaxRecord] = []
     for path in paths:
         source = path.read_bytes()
         relative = path.relative_to(root).as_posix()
-        records.extend(runtime.parse_records(relative, source, errors))
+        source_functions, source_unsafe = runtime.parse_source_records(
+            relative, source, errors
+        )
+        functions.extend(source_functions)
+        unsafe_syntax.extend(source_unsafe)
+    return functions, unsafe_syntax
+
+
+def parse_functions(
+    root: Path, paths: list[Path], errors: list[str]
+) -> list[FunctionRecord]:
+    functions, _ = parse_rust_sources(root, paths, errors)
+    return functions
+
+
+def parse_template_unsafe(
+    root: Path, paths: list[Path], errors: list[str]
+) -> list[UnsafeSyntaxRecord]:
+    runtime = load_ast_runtime(errors)
+    if runtime is None:
+        return []
+    records: list[UnsafeSyntaxRecord] = []
+    for path in paths:
+        relative = path.relative_to(root).as_posix()
+        records.extend(runtime.parse_template_unsafe(relative, path.read_bytes()))
     return records
 
 
@@ -305,6 +358,35 @@ def functions_in_tree(path: str, source: bytes, root_node: Any) -> list[Function
                 child_scopes = (*scopes, function_name)
         stack.extend((child, child_scopes) for child in reversed(node.named_children))
     return result
+
+
+def unsafe_syntax_in_tree(path: str, root_node: Any) -> list[UnsafeSyntaxRecord]:
+    """只匹配语法树中的 unsafe 关键字，不误报注释、字符串或原始标识符。"""
+
+    result: list[UnsafeSyntaxRecord] = []
+    stack = [root_node]
+    while stack:
+        node = stack.pop()
+        if node.type == "unsafe":
+            parent = node.parent
+            result.append(
+                UnsafeSyntaxRecord(
+                    path=path,
+                    line=node.start_point.row + 1,
+                    context=parent.type if parent is not None else "unknown",
+                )
+            )
+        stack.extend(reversed(node.children))
+    return result
+
+
+def validate_no_unsafe(records: list[UnsafeSyntaxRecord], errors: list[str]) -> int:
+    for record in records:
+        errors.append(
+            "自维护 Rust 源码禁止 unsafe 语法："
+            f"{record.path}:{record.line}（{record.context}）"
+        )
+    return len(records)
 
 
 def source_text(node: Any, source: bytes) -> str:

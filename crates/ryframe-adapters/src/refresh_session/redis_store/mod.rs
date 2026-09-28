@@ -43,7 +43,7 @@ impl RedisRefreshSessionStore {
         let attempt_id = attempt_id.to_owned();
         let result: (i64, String, i64) = self
             .client
-            .transaction(&watched, move |mut connection, mut transaction| {
+            .transaction(&watched, async move |mut connection, mut transaction| {
                 let family_key = family_key.clone();
                 let presented_jti = presented_jti.clone();
                 let new_jti = new_jti.clone();
@@ -135,6 +135,7 @@ impl RedisRefreshSessionStore {
                     let committed: Option<()> = transaction.query_async(&mut connection).await?;
                     Ok(committed.map(|()| outcome))
                 }
+                .await
             })
             .await
             .map_err(codec::redis_unavailable)?;
@@ -198,7 +199,7 @@ impl RedisRefreshSessionStore {
         let tenant_id = tenant_id.map(str::to_owned);
         let sid = sid.to_owned();
         self.client
-            .transaction(&watched, move |mut connection, mut transaction| {
+            .transaction(&watched, async move |mut connection, mut transaction| {
                 let family_key = family_key.clone();
                 let tenant_id = tenant_id.clone();
                 let sid = sid.clone();
@@ -242,6 +243,7 @@ impl RedisRefreshSessionStore {
                     let committed: Option<()> = transaction.query_async(&mut connection).await?;
                     Ok(committed.map(|()| code))
                 }
+                .await
             })
             .await
             .map_err(codec::redis_unavailable)
@@ -267,7 +269,7 @@ impl RedisRefreshSessionStore {
             .collect::<Vec<_>>();
         let count: i64 = self
             .client
-            .transaction(&watched, move |mut connection, mut transaction| {
+            .transaction(&watched, async move |mut connection, mut transaction| {
                 let tenant_key = tenant_key.clone();
                 let user_key = user_key.clone();
                 let tenant_id = tenant_id.clone();
@@ -321,6 +323,7 @@ impl RedisRefreshSessionStore {
                     let committed: Option<()> = transaction.query_async(&mut connection).await?;
                     Ok(committed.map(|()| revoked))
                 }
+                .await
             })
             .await
             .map_err(codec::redis_unavailable)?;
@@ -343,7 +346,7 @@ impl RedisRefreshSessionStore {
         let watched = [family_key.clone()];
         let values: Vec<String> = self
             .client
-            .transaction(&watched, move |mut connection, mut transaction| {
+            .transaction(&watched, async move |mut connection, mut transaction| {
                 let family_key = family_key.clone();
                 let scope = scope.clone();
                 async move {
@@ -380,6 +383,7 @@ impl RedisRefreshSessionStore {
                     let committed: Option<()> = transaction.query_async(&mut connection).await?;
                     Ok(committed.map(|()| Vec::new()))
                 }
+                .await
             })
             .await
             .map_err(codec::redis_unavailable)?;
@@ -430,7 +434,7 @@ impl RedisRefreshSessionStore {
         let watched = [primary_key.clone(), tenant_key.clone()];
         let tenant_id = tenant_id.to_owned();
         self.client
-            .transaction(&watched, move |mut connection, mut transaction| {
+            .transaction(&watched, async move |mut connection, mut transaction| {
                 let primary_key = primary_key.clone();
                 let tenant_key = tenant_key.clone();
                 let tenant_id = tenant_id.clone();
@@ -491,6 +495,7 @@ impl RedisRefreshSessionStore {
                     let committed: Option<()> = transaction.query_async(&mut connection).await?;
                     Ok(committed.map(|()| active))
                 }
+                .await
             })
             .await
             .map_err(codec::redis_unavailable)

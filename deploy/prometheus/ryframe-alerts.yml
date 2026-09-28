@@ -293,26 +293,92 @@ groups:
           summary: "Filesystem has less than 5% free space"
           runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#磁盘容量"
 
-      # 备份任务只能在备份校验成功后，通过 node_exporter 的文本文件采集器或
-      # Pushgateway 发布此 Unix 时间戳。
+      # API 与 Worker 从控制库采集；时间戳来自备份实际采集时间。
+      - alert: RyFrameBackupAging
+        expr: ryframe_backup_last_success_timestamp_seconds > 0 and time() - ryframe_backup_last_success_timestamp_seconds >= 82800 and time() - ryframe_backup_last_success_timestamp_seconds < 86400
+        for: 0m
+        labels:
+          severity: warning
+          service: ryframe
+        annotations:
+          summary: "必需目标中最旧有效备份已超过 23 小时"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#备份失败或过期"
+
       - alert: RyFrameBackupStale
-        expr: time() - ryframe_backup_last_success_timestamp_seconds > 90000
-        for: 30m
+        expr: ryframe_backup_last_success_timestamp_seconds > 0 and time() - ryframe_backup_last_success_timestamp_seconds >= 86400
+        for: 0m
         labels:
           severity: critical
           service: ryframe
         annotations:
-          summary: "No validated RyFrame backup in the last 25 hours"
+          summary: "必需目标中最旧有效备份已达到 24 小时"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#备份失败或过期"
+
+      - alert: RyFrameBackupMissing
+        expr: ryframe_backup_resources{state="missing"} > 0
+        for: 0m
+        labels:
+          severity: critical
+          service: ryframe
+        annotations:
+          summary: "必需资源缺少已登记备份"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#备份失败或过期"
+
+      - alert: RyFrameBackupExpired
+        expr: ryframe_backup_resources{state="expired"} > 0
+        for: 0m
+        labels:
+          severity: critical
+          service: ryframe
+        annotations:
+          summary: "必需资源的备份保留期已过期"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#备份失败或过期"
+
+      - alert: RyFrameBackupInvalid
+        expr: ryframe_backup_resources{state="invalid"} > 0
+        for: 0m
+        labels:
+          severity: critical
+          service: ryframe
+        annotations:
+          summary: "备份文件校验失败"
           runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#备份失败或过期"
 
       - alert: RyFrameBackupMetricMissing
-        expr: absent(ryframe_backup_last_success_timestamp_seconds)
-        for: 30m
+        expr: |
+          absent(ryframe_backup_collector_up)
+          or ryframe_backup_collector_up == 0
+          or (
+            ryframe_backup_collector_up == 1
+            unless on(job, instance) ryframe_backup_collector_last_success_timestamp_seconds > 0
+          )
+          or time() - ryframe_backup_collector_last_success_timestamp_seconds > 150
+        for: 0m
         labels:
           severity: critical
           service: ryframe
         annotations:
-          summary: "RyFrame backup success metric is missing"
+          summary: "备份状态采集缺失或失败"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#备份失败或过期"
+
+      - alert: RyFrameRestoreFailed
+        expr: ryframe_restore_last_completed_timestamp_seconds > 0 and ryframe_restore_last_succeeded == 0
+        for: 0m
+        labels:
+          severity: critical
+          service: ryframe
+        annotations:
+          summary: "最近一次恢复演练失败"
+          runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#备份失败或过期"
+
+      - alert: RyFrameRestoreOverdue
+        expr: ryframe_restore_runs{state="overdue"} > 0
+        for: 0m
+        labels:
+          severity: critical
+          service: ryframe
+        annotations:
+          summary: "恢复演练超过 60 分钟仍未完成"
           runbook_url: "https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#备份失败或过期"
 
       # 依赖 blackbox_exporter 的 probe_success 和 TLS 到期指标。

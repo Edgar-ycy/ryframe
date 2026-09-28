@@ -310,7 +310,7 @@ impl TenantDatabaseTargetRegistry {
                     // fingerprint off the authoritative health record instead.
                     schema_fingerprint: (health.status
                         == TenantDatabaseTargetHealthStatus::Verified)
-                        .then(|| crate::migration::TENANT_DATA_SCHEMA_FINGERPRINT.to_owned()),
+                        .then(|| crate::migration::tenant_data_schema_fingerprint().to_owned()),
                     health: health.status,
                     last_verified_at: health.last_verified_at,
                 }

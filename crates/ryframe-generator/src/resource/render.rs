@@ -7,7 +7,9 @@ use super::{ResourceError, ResourceExplanation, ResourceIr, StorageKind, ValueTy
 mod aggregate;
 mod catalog;
 mod format;
+mod schema;
 mod slice;
+mod tenant_catalog;
 
 const MAX_GENERATED_LINES: usize = 500;
 

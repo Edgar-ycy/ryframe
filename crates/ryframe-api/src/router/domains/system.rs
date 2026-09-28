@@ -1,4 +1,4 @@
-use axum::{Router, middleware::from_fn_with_state};
+use axum::Router;
 
 use crate::{
     generated,
@@ -6,12 +6,10 @@ use crate::{
         authorization_diagnostic_handler, config_handler, dept_handler, dict_handler,
         login_log_handler, menu_handler, message_handler, notice_handler, online_user_handler,
         oper_log_handler, permission_handler, post_export_handler, role_handler,
-        service_account_handler, tenant_config_handler, user_handler, user_import_handler,
+        tenant_config_handler, user_handler, user_import_handler,
     },
     state::AppState,
 };
-
-use super::super::{CapabilityGuardState, capability_guard};
 
 pub(in crate::router) fn database_idempotent(state: AppState) -> Router {
     Router::new()
@@ -21,43 +19,7 @@ pub(in crate::router) fn database_idempotent(state: AppState) -> Router {
         )
         .nest(
             "/config-transfers",
-            tenant_config_handler::config_transfer_router(state.clone()),
-        )
-        .nest(
-            "/service-accounts",
-            service_account_handler::service_account_router(state.clone()).layer(
-                from_fn_with_state(
-                    CapabilityGuardState::new(
-                        state.clone(),
-                        ryframe_application::system::platform::SERVICE_ACCOUNTS_CAPABILITY,
-                    ),
-                    capability_guard,
-                ),
-            ),
-        )
-        .nest(
-            "/service-delegations",
-            service_account_handler::service_delegation_router(state.clone()).layer(
-                from_fn_with_state(
-                    CapabilityGuardState::new(
-                        state.clone(),
-                        ryframe_application::system::platform::SERVICE_ACCOUNTS_CAPABILITY,
-                    ),
-                    capability_guard,
-                ),
-            ),
-        )
-        .nest(
-            "/service-access-audits",
-            service_account_handler::service_access_audit_router(state.clone()).layer(
-                from_fn_with_state(
-                    CapabilityGuardState::new(
-                        state,
-                        ryframe_application::system::platform::SERVICE_ACCOUNTS_CAPABILITY,
-                    ),
-                    capability_guard,
-                ),
-            ),
+            tenant_config_handler::config_transfer_router(state),
         )
 }
 
@@ -80,6 +42,7 @@ pub(in crate::router) fn redis_idempotent(state: AppState) -> Router {
         .nest("/menus", menu_handler::menu_router(state.clone()))
         .nest("/depts", dept_handler::dept_router(state.clone()))
         .merge(generated::generated_router(
+            state.clone(),
             &state.services.content.generated,
             state.settings.pagination,
         ))

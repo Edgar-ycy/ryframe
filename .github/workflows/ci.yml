@@ -3,6 +3,7 @@ name: CI
 on:
   push:
     branches: [ main ]
+    tags: [ "v*.*.*" ]
   pull_request:
     branches: [ main ]
     types: [ opened, synchronize, reopened, edited ]
@@ -22,6 +23,7 @@ env:
   GIT_CONFIG_COUNT: "1"
   GIT_CONFIG_KEY_0: init.defaultBranch
   GIT_CONFIG_VALUE_0: main
+  FRONTEND_REPOSITORY: ${{ vars.RYFRAME_FRONTEND_REPOSITORY || format('{0}/ryframe-vue3', github.repository_owner) }}
 
 jobs:
   # ============================================================
@@ -54,13 +56,36 @@ jobs:
           GITHUB_EVENT_ACTION: ${{ github.event.action }}
           RYFRAME_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           RYFRAME_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: cargo xtask ci plan
+        run: cargo xtask check ci plan
 
       - name: 固定 CI Python 3.12
         if: ${{ steps.plan.outputs.preflight == 'true' }}
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.12"
+
+      - name: 选择快速预检匹配的前端提交
+        if: ${{ steps.plan.outputs.preflight == 'true' }}
+        id: preflight-frontend-ref
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: >-
+          cargo xtask check ci frontend-source
+          --event-name "$EVENT_NAME"
+          --event "$GITHUB_EVENT_PATH"
+          --base-sha "$BASE_SHA"
+          --prefer-marker
+          --release-ref "$GITHUB_REF"
+
+      - name: 检出快速预检使用的前端源码
+        if: ${{ steps.plan.outputs.preflight == 'true' }}
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ env.FRONTEND_REPOSITORY }}
+          ref: ${{ steps.preflight-frontend-ref.outputs.ref }}
+          path: frontend
 
       - name: 安装固定并校验哈希的 CI Python 依赖
         if: ${{ steps.plan.outputs.preflight == 'true' }}
@@ -85,11 +110,18 @@ jobs:
         with:
           args: backend/.github/workflows/ci.yml backend/.github/workflows/extended-ci.yml backend/.github/workflows/release.yml
 
+      - name: 安装性能检查使用的 Node.js
+        if: ${{ steps.plan.outputs.preflight == 'true' }}
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: '24.15.0'
+          package-manager-cache: false
+
       - name: 执行仓库快速预检
         if: ${{ steps.plan.outputs.preflight == 'true' }}
         env:
           RYFRAME_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: cargo xtask ci preflight
+        run: cargo xtask check ci preflight --frontend-dir ../frontend
 
   # ============================================================
   # Rust 单一编译门禁
@@ -110,29 +142,6 @@ jobs:
           fetch-depth: 0
           path: backend
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-
-      - name: 选择匹配的前端提交
-        id: frontend-ref
-        working-directory: backend
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: >-
-          python scripts/select_frontend_commit.py
-          --event-name "$EVENT_NAME"
-          --event "$GITHUB_EVENT_PATH"
-          --backend-worktree .
-          --base-sha "$BASE_SHA"
-          --prefer-marker
-          --release-ref "$GITHUB_REF"
-
-      - name: 检出前端资源 Workspace
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          repository: Edgar-ycy/ryframe-vue3
-          ref: ${{ steps.frontend-ref.outputs.ref }}
-          path: frontend
 
       - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
@@ -163,6 +172,28 @@ jobs:
             v3-rust-${{ runner.os }}-${{ runner.arch }}-rust-gate-
             v3-rust-${{ runner.os }}-${{ runner.arch }}-
 
+      - name: 选择匹配的前端提交
+        id: frontend-ref
+        working-directory: backend
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: >-
+          cargo xtask check ci frontend-source
+          --event-name "$EVENT_NAME"
+          --event "$GITHUB_EVENT_PATH"
+          --base-sha "$BASE_SHA"
+          --prefer-marker
+          --release-ref "$GITHUB_REF"
+
+      - name: 检出前端资源 Workspace
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ env.FRONTEND_REPOSITORY }}
+          ref: ${{ steps.frontend-ref.outputs.ref }}
+          path: frontend
+
       - name: 安装 Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
@@ -180,7 +211,7 @@ jobs:
 
       - name: 执行 Clippy、feature、Workspace 测试与快照门禁
         working-directory: backend
-        run: cargo xtask ci rust-gate --frontend-dir ../frontend
+        run: cargo xtask check ci rust-gate --frontend-dir ../frontend
 
       - name: 输出 sccache 命中统计
         if: ${{ always() }}
@@ -189,10 +220,6 @@ jobs:
         run: |
           stats_file="$RUNNER_TEMP/sccache-rust-gate.json"
           sccache --show-stats --stats-format=json > "$stats_file"
-          python backend/scripts/summarize_sccache_stats.py \
-            --stats "$stats_file" \
-            --label "Rust Gate" \
-            --summary "$GITHUB_STEP_SUMMARY"
           sccache --show-stats
           sccache --stop-server
 
@@ -284,10 +311,9 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: >-
-          python scripts/select_frontend_commit.py
+          cargo xtask check ci frontend-source
           --event-name "$EVENT_NAME"
           --event "$GITHUB_EVENT_PATH"
-          --backend-worktree .
           --base-sha "$BASE_SHA"
           --prefer-marker
           --fallback-main-on-invalid-base
@@ -301,17 +327,16 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: >-
-          python scripts/select_frontend_commit.py
+          cargo xtask check ci frontend-source
           --event-name pull_request
           --event "$GITHUB_EVENT_PATH"
-          --backend-worktree .
           --base-sha "$BASE_SHA"
           --candidate-openapi "$RUNNER_TEMP/candidate-openapi.json"
 
       - name: 检出前端资源 Workspace
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
-          repository: Edgar-ycy/ryframe-vue3
+          repository: ${{ env.FRONTEND_REPOSITORY }}
           ref: ${{ steps.contract-frontend-ref.outputs.ref || steps.resource-frontend-ref.outputs.ref }}
           path: frontend
 
@@ -338,17 +363,17 @@ jobs:
           RYFRAME_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           RYFRAME_CI_FRONTEND_REF: ${{ steps.contract-frontend-ref.outputs.ref || steps.resource-frontend-ref.outputs.ref }}
           RYFRAME_RESOURCE_GATE_TARGETED: replay-verified-v1
-        run: cargo xtask ci resource-gate --frontend-dir ../frontend
+        run: cargo xtask check ci resource-gate --frontend-dir ../frontend
 
       - name: 校验正式前端消费契约
         if: ${{ needs.plan.outputs.consumer_contract == 'true' }}
         working-directory: backend
         env:
           RYFRAME_CI_BACKEND_HEAD: ${{ github.event.pull_request.head.sha }}
-          RYFRAME_CI_BACKEND_REPOSITORY: Edgar-ycy/ryframe
+          RYFRAME_CI_BACKEND_REPOSITORY: ${{ github.repository }}
           RYFRAME_CI_CANDIDATE_OPENAPI: ${{ runner.temp }}/candidate-openapi.json
           RYFRAME_CI_FRONTEND_REF: ${{ steps.contract-frontend-ref.outputs.ref }}
-        run: cargo xtask ci consumer-contract --frontend-dir ../frontend
+        run: cargo xtask check ci consumer-contract --frontend-dir ../frontend
 
   # ============================================================
   # MySQL、Redis 与 AWS-LC TLS 真实出站协议
@@ -396,6 +421,7 @@ jobs:
       - name: 检出后端源码
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
+          fetch-depth: 0
           path: backend
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
@@ -423,7 +449,7 @@ jobs:
         working-directory: backend
         env:
           RYFRAME_TLS_ARTIFACT_DIR: ${{ runner.temp }}/ryframe-tls-integration
-        run: cargo xtask ci integration
+        run: cargo xtask check ci integration
 
       - name: 保存 AWS-LC TLS fixture 与测试日志
         if: ${{ always() }}
@@ -479,10 +505,9 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: >-
-          python scripts/select_frontend_commit.py
+          cargo xtask check ci frontend-source
           --event-name "$EVENT_NAME"
           --event "$GITHUB_EVENT_PATH"
-          --backend-worktree .
           --base-sha "$BASE_SHA"
           --prefer-marker
           --candidate-openapi "$RUNNER_TEMP/windows-candidate-openapi.json"
@@ -491,7 +516,7 @@ jobs:
       - name: 检出前端真实 Workspace
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
-          repository: Edgar-ycy/ryframe-vue3
+          repository: ${{ env.FRONTEND_REPOSITORY }}
           ref: ${{ steps.windows-frontend-ref.outputs.ref }}
           path: ryframe-vue3
 
@@ -516,7 +541,7 @@ jobs:
           RYFRAME_CI_FRONTEND_REF: ${{ steps.windows-frontend-ref.outputs.ref }}
           RYFRAME_CI_RUST_GATE_PROFILE: windows-smoke
           RYFRAME_CI_TEST_JOBS: "4"
-        run: cargo xtask ci rust-gate --frontend-dir ../ryframe-vue3
+        run: cargo xtask check ci rust-gate --frontend-dir ../ryframe-vue3
 
       - name: 输出 sccache 统计
         if: ${{ always() }}
@@ -525,10 +550,6 @@ jobs:
         run: |
           $statsFile = Join-Path $env:RUNNER_TEMP "sccache-windows-smoke.json"
           sccache --show-stats --stats-format=json | Set-Content -LiteralPath $statsFile -Encoding utf8
-          python ryframe/scripts/summarize_sccache_stats.py `
-            --stats $statsFile `
-            --label "Windows Smoke" `
-            --summary $env:GITHUB_STEP_SUMMARY
           sccache --show-stats
           sccache --stop-server
 
@@ -547,7 +568,7 @@ jobs:
   security-audit:
     name: Security, Supply Chain & Deployment
     needs: plan
-    if: ${{ needs.plan.result == 'success' && github.event.action != 'edited' }}
+    if: ${{ needs.plan.result == 'success' }}
     runs-on: ubuntu-latest
     env:
       DOCKER_BUILDKIT: "1"
@@ -584,106 +605,27 @@ jobs:
           tool: cargo-audit@0.22.2
           fallback: none
 
-      - name: 校验供应链策略和条件依赖例外
-        run: python scripts/check_supply_chain.py --verify-cargo-graph
-
-      - name: Run cargo audit
-        run: cargo audit --deny warnings
-
       - name: Install cargo-deny
         uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
         with:
           tool: cargo-deny@0.20.2
           fallback: none
 
-      - name: Check licenses, bans, and sources
-        run: cargo deny check licenses bans sources
+      - name: 校验供应链来源
+        run: cargo xtask check ci security source
 
-      - name: 判断是否需要校验部署资产
-        id: deployment-changes
-        shell: bash
+      - name: 校验部署来源
+        id: deployment
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: |
-          set -euo pipefail
-          required=false
-          if [[ ! "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] \
-            || [[ "$BASE_SHA" == "0000000000000000000000000000000000000000" ]]; then
-            required=true
-          else
-            set +e
-            git diff --quiet "$BASE_SHA" "$GITHUB_SHA" -- \
-              .github/workflows/ci.yml \
-              .cargo \
-              .dockerignore \
-              Cargo.lock \
-              Cargo.toml \
-              build.rs \
-              rust-toolchain.toml \
-              architecture \
-              catalog \
-              config \
-              crates \
-              deploy \
-              locales \
-              scripts/check_deployment_assets.py \
-              scripts/fixtures/deploy.env \
-              vendor \
-              xtask
-            diff_status=$?
-            set -e
-            case "$diff_status" in
-              0) required=false ;;
-              1) required=true ;;
-              *) echo "部署资产变更检测失败" >&2; exit "$diff_status" ;;
-            esac
-          fi
-          echo "required=$required" >> "$GITHUB_OUTPUT"
-
-      - name: 校验部署资产静态边界
-        if: steps.deployment-changes.outputs.required == 'true'
-        run: python scripts/check_deployment_assets.py
-
-      - name: 校验供应链固定版本与例外策略
-        if: steps.deployment-changes.outputs.required == 'true'
-        run: python scripts/check_supply_chain.py
-
-      - name: 校验 Compose 展开结果
-        if: steps.deployment-changes.outputs.required == 'true'
+          DEPLOYMENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: >-
-          docker compose
-          --project-directory "$GITHUB_WORKSPACE/backend"
-          --env-file scripts/fixtures/deploy.env
-          --file deploy/compose.prod.yml
-          config --quiet
-
-      - name: 校验 Nginx 配置
-        if: steps.deployment-changes.outputs.required == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          certificate_dir="$RUNNER_TEMP/nginx-cert"
-          mkdir --parents "$certificate_dir"
-          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
-            -subj "/CN=example.com" \
-            -keyout "$certificate_dir/privkey.pem" \
-            -out "$certificate_dir/fullchain.pem" >/dev/null 2>&1
-          docker run --rm --entrypoint nginx \
-            --volume "$GITHUB_WORKSPACE/backend/deploy/nginx/ryframe.conf:/etc/nginx/conf.d/default.conf:ro" \
-            --volume "$certificate_dir:/etc/letsencrypt/live/example.com:ro" \
-            nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10 \
-            -t
-
-      - name: 校验 Prometheus 告警规则
-        if: steps.deployment-changes.outputs.required == 'true'
-        run: >-
-          docker run --rm --entrypoint /bin/promtool
-          --volume "$GITHUB_WORKSPACE/backend/deploy/prometheus:/rules:ro"
-          prom/prometheus@sha256:8672a850efe2f9874702406c8318704edb363587f8c2ca88586b4c8fdb5cea24
-          check rules /rules/ryframe-alerts.yml
+          cargo xtask check ci security deployment source
+          --base "$DEPLOYMENT_BASE_SHA"
+          --head "$GITHUB_SHA"
+          --github-output "$GITHUB_OUTPUT"
 
       - name: 构建生产镜像
-        if: steps.deployment-changes.outputs.required == 'true'
+        if: steps.deployment.outputs.required == 'true'
         run: >-
           docker build
           --file deploy/Dockerfile
@@ -692,9 +634,13 @@ jobs:
           .
 
       - name: 校验生产镜像内容
-        if: steps.deployment-changes.outputs.required == 'true'
+        if: steps.deployment.outputs.required == 'true'
+        env:
+          DEPLOYMENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: >-
-          python scripts/check_deployment_assets.py
+          cargo xtask check ci security deployment image
+          --base "$DEPLOYMENT_BASE_SHA"
+          --head "$GITHUB_SHA"
           --image "ryframe-ci:$GITHUB_SHA"
           --expected-commit "$GITHUB_SHA"
 
@@ -716,13 +662,16 @@ jobs:
       - name: 检出汇总规则
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+
       - name: 汇总必须门禁
         env:
           EVENT_NAME: ${{ github.event_name }}
           EVENT_ACTION: ${{ github.event.action }}
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: >-
-          python scripts/check_required_jobs.py
+          cargo xtask check ci required
           --event "$EVENT_NAME"
           --action "$EVENT_ACTION"
           --needs-json "$NEEDS_JSON"

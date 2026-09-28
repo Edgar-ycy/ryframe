@@ -67,6 +67,13 @@ impl VerifyExecutionContext {
         })
     }
 
+    pub(crate) fn new_ci(frontend_dir: &Path) -> Result<Self> {
+        let mut context = Self::new(frontend_dir, true)?;
+        context.targets = ci_target_policy()?;
+        context.ci = true;
+        Ok(context)
+    }
+
     /// 智能门禁因共享面变更扩大为完整门禁时，立即切换到完整 target 策略。
     pub(super) fn promote_to_full(&mut self) {
         self.targets = verify_target_policy_from(true, self.ci, None);

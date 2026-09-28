@@ -13,7 +13,6 @@ use ryframe_api::{
 };
 use ryframe_application::{
     AuditOutbox, AuthService,
-    agent::{AgentService, AgentServiceDependencies, service_capability_descriptors},
     generated::{GeneratedPersistencePorts, GeneratedServices},
     ports::{auth::RefreshSessionPort, files::ArtifactStore},
     system::{
@@ -22,10 +21,7 @@ use ryframe_application::{
             ProfileService, WebSocketTicketService,
         },
         operations::OnlineUserService,
-        platform::{
-            AuthorizationDiagnosticService, ServiceAccountReadDependencies, ServiceAccountService,
-            TenantService, TenantUsageService,
-        },
+        platform::{AuthorizationDiagnosticService, TenantService, TenantUsageService},
     },
 };
 use ryframe_config::AppConfig;
@@ -33,7 +29,7 @@ use ryframe_db::ControlDatabaseCluster;
 use ryframe_kernel::AppError;
 use ryframe_tenant_db::TenantDatabaseRouter;
 
-use super::application_policy::{ApplicationPolicies, load_pepper_keyring};
+use super::application_policy::ApplicationPolicies;
 use super::background_services::{
     BackgroundServiceInfrastructure, BackgroundServices, build as build_background_services,
 };
@@ -138,8 +134,6 @@ fn build_platform_services(
         config.rate_limit.enabled,
         policies.job_schedule.enabled,
     ));
-    let service_account_services =
-        build_service_account_services(database, config, policies, redis_client, background)?;
     let authorization_diagnostic = Arc::new(AuthorizationDiagnosticService::new(
         ryframe_db::application_ports::authorization::diagnostic(database.clone()),
         Arc::clone(&background.user),
@@ -152,67 +146,9 @@ fn build_platform_services(
         product: Arc::clone(&background.product),
         tenant_data,
         tenant_usage,
-        service_accounts: service_account_services.management,
-        agent: service_account_services.agent,
         tenant_config_transfer: Arc::clone(&background.tenant_config_transfer),
         tenant_data_migration: Arc::clone(&background.tenant_data_migration),
         authorization_diagnostic,
-    })
-}
-
-struct ServiceAccountServices {
-    management: Option<Arc<ServiceAccountService>>,
-    agent: Option<Arc<AgentService>>,
-}
-
-fn build_service_account_services(
-    database: &ControlDatabaseCluster,
-    config: &AppConfig,
-    policies: &ApplicationPolicies,
-    redis_client: &Option<RedisClient>,
-    background: &BackgroundServices,
-) -> Result<ServiceAccountServices, AppError> {
-    if !policies.service_accounts.enabled() {
-        return Ok(ServiceAccountServices {
-            management: None,
-            agent: None,
-        });
-    }
-    let redis = redis_client.clone().ok_or_else(|| {
-        AppError::Config("启用服务账号后必须配置 Redis，以保证 Agent 多实例限流一致".into())
-    })?;
-    let keyring = load_pepper_keyring(config)?;
-    let management = Arc::new(ServiceAccountService::new(
-        ryframe_db::application_ports::service_accounts::write(database.clone()),
-        policies.service_accounts,
-        Arc::clone(&keyring),
-        service_capability_descriptors(),
-        background.authorization_cache.clone(),
-        ServiceAccountReadDependencies {
-            accounts: ryframe_db::application_ports::service_accounts::read(database.clone()),
-            authorization: ryframe_db::application_ports::service_accounts::authorization(
-                database.clone(),
-            ),
-            audits: ryframe_db::application_ports::service_accounts::audit(database.clone()),
-        },
-    )?);
-    let agent = Arc::new(AgentService::new(
-        super::agent_limiter::redis_limiter(redis),
-        keyring,
-        policies.service_accounts,
-        policies.multi_tenancy,
-        AgentServiceDependencies {
-            identity: ryframe_db::application_ports::agent::identity(database.clone()),
-            audit: ryframe_db::application_ports::agent::audit(database.clone()),
-            persistence: ryframe_db::application_ports::agent::storage(
-                database.clone(),
-                Arc::clone(&background.product),
-            ),
-        },
-    )?);
-    Ok(ServiceAccountServices {
-        management: Some(management),
-        agent: Some(agent),
     })
 }
 

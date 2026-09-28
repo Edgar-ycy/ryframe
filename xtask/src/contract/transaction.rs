@@ -10,6 +10,7 @@ use crate::Result;
 use super::{
     candidate::read_optional,
     model::{ContractFileOperations, RealContractFileOperations, Snapshot, nonce},
+    recovery::reject_contract_recovery_artifacts,
 };
 
 struct ContractTransactionMarker {
@@ -402,95 +403,6 @@ fn contract_sibling_path(path: &Path, role: &str, marker: &str, index: usize) ->
     Ok(path.with_file_name(format!(".{name}.xtask-{role}-{marker}-{index}")))
 }
 
-pub(super) fn reject_contract_recovery_artifacts(paths: &[PathBuf]) -> Result<()> {
-    let mut artifacts = Vec::new();
-    let mut parents = Vec::new();
-    for path in paths {
-        let parent = path
-            .parent()
-            .ok_or_else(|| format!("契约文件没有父目录：{}", path.display()))?;
-        let name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| format!("契约文件名不是 UTF-8：{}", path.display()))?;
-        let prefix = format!(".{name}.xtask-");
-        parents.push(parent.to_path_buf());
-        let entries = match fs::read_dir(parent) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error.into()),
-        };
-        for entry in entries {
-            let candidate = entry?.path();
-            if candidate
-                .file_name()
-                .and_then(|value| value.to_str())
-                .is_some_and(|value| {
-                    value
-                        .strip_prefix(&prefix)
-                        .is_some_and(is_contract_file_artifact)
-                })
-            {
-                artifacts.push(candidate);
-            }
-        }
-    }
-    parents.sort();
-    parents.dedup();
-    for parent in parents {
-        let entries = match fs::read_dir(&parent) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error.into()),
-        };
-        for entry in entries {
-            let candidate = entry?.path();
-            if candidate
-                .file_name()
-                .and_then(|value| value.to_str())
-                .and_then(|value| value.strip_prefix(".xtask-contract-transaction-"))
-                .is_some_and(is_contract_identity)
-            {
-                artifacts.push(candidate);
-            }
-        }
-    }
-    artifacts.sort();
-    artifacts.dedup();
-    if artifacts.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "检测到上次契约事务未完整结束，已拒绝继续写入：{}；请根据 backup 恢复或确认目标已完整写入后再清理这些精确文件",
-            artifacts
-                .iter()
-                .map(|path| path.display().to_string())
-                .collect::<Vec<_>>()
-                .join("；")
-        )
-        .into())
-    }
-}
-
-fn is_contract_file_artifact(value: &str) -> bool {
-    let mut parts = value.split('-');
-    matches!(parts.next(), Some("new" | "backup"))
-        && parts.next().is_some_and(is_contract_number)
-        && parts.next().is_some_and(is_contract_number)
-        && parts.all(is_contract_number)
-}
-
-fn is_contract_identity(value: &str) -> bool {
-    let mut parts = value.split('-');
-    parts.next().is_some_and(is_contract_number)
-        && parts.next().is_some_and(is_contract_number)
-        && parts.next().is_none()
-}
-
-fn is_contract_number(value: &str) -> bool {
-    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
-}
-
 fn cleanup_contract_files_with<'a>(
     paths: impl Iterator<Item = &'a PathBuf>,
     operations: &impl ContractFileOperations,
@@ -502,84 +414,4 @@ fn cleanup_contract_files_with<'a>(
             Err(error) => Some(format!("{}：{error}", path.display())),
         })
         .collect()
-}
-
-fn ensure_atomic_write_has_no_recovery_artifacts(path: &Path) -> Result<()> {
-    reject_contract_recovery_artifacts(&[path.to_path_buf()])
-}
-
-pub(super) fn write_atomically(path: &Path, content: &[u8]) -> Result<()> {
-    write_atomically_with(path, content, &RealContractFileOperations)
-}
-
-pub(crate) fn write_atomically_with(
-    path: &Path,
-    content: &[u8],
-    operations: &impl ContractFileOperations,
-) -> Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| format!("文件没有父目录：{}", path.display()))?;
-    fs::create_dir_all(parent)?;
-    ensure_atomic_write_has_no_recovery_artifacts(path)?;
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| format!("文件名不是 UTF-8：{}", path.display()))?;
-    let marker = format!("{}-{}", process::id(), nonce()?);
-    let staged = path.with_file_name(format!(".{name}.xtask-new-{marker}"));
-    let backup = path.with_file_name(format!(".{name}.xtask-backup-{marker}"));
-    let mut output = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&staged)?;
-    if let Err(error) = output.write_all(content).and_then(|_| output.sync_all()) {
-        drop(output);
-        let _ = operations.remove_file(&staged);
-        return Err(error.into());
-    }
-    drop(output);
-
-    let had_original = path.exists();
-    if had_original && let Err(error) = operations.rename(path, &backup) {
-        let cleanup = operations.remove_file(&staged);
-        return match cleanup {
-            Ok(()) => Err(error.into()),
-            Err(cleanup_error) => Err(format!(
-                "{error}；清理暂存文件 {} 同时失败：{cleanup_error}",
-                staged.display()
-            )
-            .into()),
-        };
-    }
-    if let Err(error) = operations.rename(&staged, path) {
-        let mut recovery_errors = Vec::new();
-        if had_original && let Err(restore_error) = operations.rename(&backup, path) {
-            recovery_errors.push(format!(
-                "恢复目标失败，原文件备份保留在 {}：{restore_error}",
-                backup.display()
-            ));
-        }
-        if let Err(cleanup_error) = operations.remove_file(&staged)
-            && cleanup_error.kind() != io::ErrorKind::NotFound
-        {
-            recovery_errors.push(format!(
-                "清理暂存文件 {} 失败：{cleanup_error}",
-                staged.display()
-            ));
-        }
-        return if recovery_errors.is_empty() {
-            Err(error.into())
-        } else {
-            Err(format!("{error}；{}", recovery_errors.join("；")).into())
-        };
-    }
-    if had_original && let Err(error) = operations.remove_file(&backup) {
-        eprintln!(
-            "警告：{} 已写入新内容，但清理备份 {} 失败：{error}；可确认后人工删除备份",
-            path.display(),
-            backup.display()
-        );
-    }
-    Ok(())
 }

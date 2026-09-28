@@ -6,53 +6,69 @@ use std::{
 };
 
 use super::{
-    cli::{Command, parse},
     dev::{
         ReadyKind, SaveCase, SaveMeasurement, SaveMeasurementContract, read_measurement,
         read_measurement_with_contract,
     },
     devex::{
-        BaselineContract, CacheState, DevexCommand, DevexRunOptions, DevexSuite, PairedArm,
-        PathNormalizer, abba_pair_order, cleanup_successful_sample_target, compare, distribution,
-        filter_environment, read_resource_gate_decision, require_frontend_dependencies,
-        sample_target, summarize, with_source_edit,
+        BaselineContract, CacheState, DevexRunOptions, DevexSuite, PairedArm, PathNormalizer,
+        abba_pair_order, cleanup_successful_sample_target, compare, distribution,
+        filter_environment, parse_frontend_fast_plan, read_resource_gate_decision,
+        require_frontend_dependencies, sample_target, summarize, with_source_edit,
     },
     source_edit::SourceEdit,
 };
 
-fn strings(values: &[&str]) -> Vec<String> {
-    values.iter().map(ToString::to_string).collect()
-}
-
 #[test]
 fn successful_targets_follow_suite_storage_policy() {
-    let run = temporary_directory("cold-target-cleanup");
-    let cold = run.join("cache/cold-001");
-    fs::create_dir_all(&cold).unwrap();
-    fs::write(cold.join("artifact"), b"ok").unwrap();
-    cleanup_successful_sample_target(&run, &cold, DevexSuite::RustColdBuild, CacheState::Cold)
-        .unwrap();
-    assert!(!cold.exists());
-
-    let warm = run.join("cache/warm");
-    fs::create_dir_all(&warm).unwrap();
-    cleanup_successful_sample_target(&run, &warm, DevexSuite::RustIncremental, CacheState::Warm)
-        .unwrap();
-    assert!(warm.is_dir());
-
-    let sccache = sample_target(&run, DevexSuite::RustSccache, CacheState::Warm, 1);
-    fs::create_dir_all(&sccache).unwrap();
-    fs::write(sccache.join("artifact"), b"ok").unwrap();
-    cleanup_successful_sample_target(&run, &sccache, DevexSuite::RustSccache, CacheState::Warm)
-        .unwrap();
-    assert!(!sccache.exists());
-
-    let isolated = run.join("cache/sccache-measure-001");
-    fs::create_dir_all(&isolated).unwrap();
-    cleanup_successful_sample_target(&run, &isolated, DevexSuite::RustGate, CacheState::Warm)
-        .unwrap();
-    assert!(!isolated.exists());
-    fs::remove_dir_all(run).unwrap();
+    // 相对的自有 target 沙箱使两种祖先布局与宿主 TEMP 无关。
+    let root = PathBuf::from("target").join(format!("devex-storage-{}", std::process::id()));
+    fs::create_dir_all("target").unwrap();
+    fs::create_dir(&root).unwrap();
+    let outside = root.join("outside");
+    fs::create_dir(&outside).unwrap();
+    fs::write(outside.join("keep"), b"owned sentinel").unwrap();
+    for run in [root.join("ordinary"), root.join(".local-tests/devex/short")] {
+        fs::create_dir_all(&run).unwrap();
+        let cold = sample_target(&run, DevexSuite::RustColdBuild, CacheState::Cold, 1);
+        let target_root = cold.parent().unwrap();
+        if run == root.join("ordinary") {
+            assert_eq!(target_root, run.join("cache"));
+        } else {
+            assert_eq!(target_root.parent().unwrap(), root.join(".local-tests/d"));
+            assert_eq!(target_root.file_name().unwrap().len(), 12);
+        }
+        for (suite, cache, preserved) in [
+            (DevexSuite::RustColdBuild, CacheState::Cold, false),
+            (DevexSuite::RustIncremental, CacheState::Warm, true),
+            (DevexSuite::RustSccache, CacheState::Warm, false),
+            (DevexSuite::RustGate, CacheState::Warm, false),
+            (DevexSuite::RuntimeHomepage, CacheState::Cold, true),
+        ] {
+            let target = sample_target(&run, suite, cache, 1);
+            assert_eq!(target.parent().unwrap(), target_root);
+            fs::create_dir_all(&target).unwrap();
+            fs::write(target.join("artifact"), b"ok").unwrap();
+            cleanup_successful_sample_target(&run, &target, suite, cache).unwrap();
+            assert_eq!(target.exists(), preserved);
+            if preserved {
+                assert_eq!(fs::read(target.join("artifact")).unwrap(), b"ok");
+                super::workspace::remove_isolated_directory(target_root, &target).unwrap();
+            }
+        }
+        for forbidden in [&outside, target_root] {
+            let rejected = cleanup_successful_sample_target(
+                &run,
+                forbidden,
+                DevexSuite::RustColdBuild,
+                CacheState::Cold,
+            );
+            assert!(rejected.is_err());
+        }
+        assert_eq!(fs::read(outside.join("keep")).unwrap(), b"owned sentinel");
+        fs::remove_dir(target_root).unwrap();
+    }
+    super::workspace::remove_isolated_directory(Path::new("target"), &root).unwrap();
 }
 
 #[test]
@@ -102,240 +118,6 @@ fn resource_gate_decision_artifact_must_prove_targeted_mode() {
 }
 
 #[test]
-fn fixed_suite_whitelist_is_complete_and_closed() {
-    let names = DevexSuite::ALL.map(DevexSuite::as_str);
-    assert_eq!(
-        names,
-        [
-            "rust-cold-build",
-            "rust-incremental",
-            "cargo-dev-save",
-            "resource-generator",
-            "resource-gate",
-            "rust-gate",
-            "rust-sccache",
-            "frontend-fast",
-            "frontend-build",
-        ]
-    );
-    assert!(
-        names
-            .into_iter()
-            .all(|name| DevexSuite::parse(name).is_some())
-    );
-    assert!(DevexSuite::parse("backend-check").is_none());
-}
-
-#[test]
-fn cli_requires_named_run_and_compare_arguments() {
-    let cli = parse(strings(&[
-        "devex",
-        "run",
-        "--suite",
-        "rust-cold-build",
-        "--variant",
-        "workspace",
-        "--runs",
-        "20",
-        "--cache",
-        "cold",
-    ]))
-    .unwrap();
-    let Command::Devex(DevexCommand::Run(options)) = cli.command else {
-        panic!("应解析为 DevEx run");
-    };
-    assert_eq!(options.suite, DevexSuite::RustColdBuild);
-    assert_eq!(options.variant, "workspace");
-    assert_eq!(options.runs, 20);
-    assert_eq!(options.cache_state, CacheState::Cold);
-
-    assert!(parse(strings(&["devex", "run", "rust-cold-build"])).is_err());
-    assert!(
-        parse(strings(&[
-            "devex",
-            "run",
-            "--suite",
-            "backend-check",
-            "--variant",
-            "x",
-            "--runs",
-            "1",
-            "--cache",
-            "warm",
-        ]))
-        .is_err()
-    );
-    assert!(parse(strings(&["devex", "compare", "base/run", "candidate/run",])).is_err());
-    assert!(matches!(
-        parse(strings(&[
-            "devex",
-            "compare",
-            "--base",
-            "2026-08-01/base",
-            "--candidate",
-            "2026-08-02/candidate",
-        ]))
-        .unwrap()
-        .command,
-        Command::Devex(DevexCommand::Compare { .. })
-    ));
-}
-
-#[test]
-fn cli_rejects_cache_states_that_change_suite_semantics() {
-    for (suite, variant, runs, cache) in [
-        ("rust-cold-build", "api", "20", "warm"),
-        ("rust-incremental", "application", "5", "cold"),
-        ("resource-gate", "auto", "5", "cold"),
-        ("rust-gate", "default", "20", "cold"),
-        ("rust-sccache", "workspace", "20", "cold"),
-    ] {
-        let error = parse(strings(&[
-            "devex",
-            "run",
-            "--suite",
-            suite,
-            "--variant",
-            variant,
-            "--runs",
-            runs,
-            "--cache",
-            cache,
-        ]))
-        .unwrap_err()
-        .to_string();
-        assert!(error.contains("只允许 --cache"), "{suite}: {error}");
-    }
-}
-
-#[test]
-fn paired_cli_requires_two_explicit_backend_worktrees() {
-    let cli = parse(strings(&[
-        "devex",
-        "paired",
-        "--base-backend",
-        "D:/worktrees/base",
-        "--candidate-backend",
-        "D:/worktrees/candidate",
-        "--suite",
-        "rust-cold-build",
-        "--variant",
-        "api",
-        "--runs",
-        "20",
-        "--cache",
-        "cold",
-    ]))
-    .unwrap();
-    let Command::Devex(DevexCommand::Paired(options)) = cli.command else {
-        panic!("应解析为 DevEx paired");
-    };
-    assert_eq!(options.baseline_backend, Path::new("D:/worktrees/base"));
-    assert_eq!(
-        options.candidate_backend,
-        Path::new("D:/worktrees/candidate")
-    );
-    assert!(options.baseline_frontend.is_none());
-    assert!(options.candidate_frontend.is_none());
-
-    let error = parse(strings(&[
-        "devex",
-        "paired",
-        "--base-backend",
-        "D:/worktrees/base",
-        "--suite",
-        "rust-cold-build",
-        "--variant",
-        "api",
-        "--runs",
-        "20",
-        "--cache",
-        "cold",
-    ]))
-    .unwrap_err()
-    .to_string();
-    assert!(error.contains("--candidate-backend"), "{error}");
-
-    let error = parse(strings(&[
-        "devex",
-        "paired",
-        "--base-backend",
-        "D:/worktrees/base",
-        "--candidate-backend",
-        "D:/worktrees/candidate",
-        "--suite",
-        "rust-gate",
-        "--variant",
-        "default",
-        "--runs",
-        "20",
-        "--cache",
-        "warm",
-    ]))
-    .unwrap_err()
-    .to_string();
-    assert!(error.contains("两个前端 worktree"), "{error}");
-}
-
-#[test]
-fn legacy_baseline_contract_is_closed_to_config_only() {
-    let cli = parse(strings(&[
-        "devex",
-        "paired",
-        "--base-backend",
-        "D:/worktrees/base",
-        "--candidate-backend",
-        "D:/worktrees/candidate",
-        "--baseline-contract",
-        "legacy-cargo-dev-v1",
-        "--suite",
-        "cargo-dev-save",
-        "--variant",
-        "config-only",
-        "--runs",
-        "5",
-        "--cache",
-        "warm",
-    ]))
-    .unwrap();
-    let Command::Devex(DevexCommand::Paired(options)) = cli.command else {
-        panic!("应解析为 DevEx paired");
-    };
-    assert_eq!(
-        options.baseline_contract,
-        Some(BaselineContract::LegacyCargoDevV1)
-    );
-
-    for (suite, variant, contract) in [
-        ("rust-cold-build", "api", "legacy-cargo-dev-v1"),
-        ("cargo-dev-save", "api-only", "legacy-cargo-dev-v1"),
-        ("cargo-dev-save", "config-only", "legacy-cargo-dev-v2"),
-    ] {
-        assert!(
-            parse(strings(&[
-                "devex",
-                "paired",
-                "--base-backend",
-                "D:/worktrees/base",
-                "--candidate-backend",
-                "D:/worktrees/candidate",
-                "--baseline-contract",
-                contract,
-                "--suite",
-                suite,
-                "--variant",
-                variant,
-                "--runs",
-                "20",
-                "--cache",
-                "warm",
-            ]))
-            .is_err()
-        );
-    }
-}
-
-#[test]
 fn suite_definitions_select_the_measured_workload() {
     let api = DevexSuite::RustColdBuild.definition("api").unwrap();
     assert_eq!(api.features, &["bin-api"]);
@@ -359,7 +141,37 @@ fn suite_definitions_select_the_measured_workload() {
         ]
     );
     let frontend = DevexSuite::FrontendFast.definition("default").unwrap();
-    assert_eq!(frontend.steps[0].args, &["pnpm", "check:fast"]);
+    assert_eq!(frontend.steps[0].args, &["pnpm", "check"]);
+    let baseline_frontend = DevexSuite::FrontendFast
+        .paired_definition(
+            "default",
+            Some(BaselineContract::LegacyStableReadinessB0V1),
+            PairedArm::Baseline,
+        )
+        .unwrap();
+    assert_eq!(baseline_frontend.steps[0].args, &["pnpm", "check:fast"]);
+    let candidate_frontend = DevexSuite::FrontendFast
+        .paired_definition(
+            "default",
+            Some(BaselineContract::LegacyStableReadinessB0V1),
+            PairedArm::Candidate,
+        )
+        .unwrap();
+    assert_eq!(candidate_frontend.steps[0].args, &["pnpm", "check"]);
+    let workload = BaselineContract::LegacyStableReadinessB0V1
+        .workload_contract(DevexSuite::FrontendFast, "default")
+        .unwrap();
+    assert_eq!(workload.baseline_primitives.len(), 9);
+    assert_eq!(workload.candidate_primitives.len(), 8);
+    assert_eq!(
+        workload
+            .candidate_primitives
+            .iter()
+            .find(|primitive| primitive.id == "imports")
+            .unwrap()
+            .covers,
+        ["imports", "api-operation-policy"]
+    );
 
     let incremental = DevexSuite::RustIncremental
         .definition("application")
@@ -390,22 +202,33 @@ fn suite_definitions_select_the_measured_workload() {
 }
 
 #[test]
+fn frontend_fast_machine_plan_extracts_the_exact_candidate_primitive_ids() {
+    let plan = "将执行以下任务：\n  阶段 1:\n    format {\"cache\":true}\n    imports {}\n";
+    assert_eq!(parse_frontend_fast_plan(plan), ["format", "imports"]);
+}
+
+#[test]
 fn suite_sample_policy_rejects_semantic_cache_mismatches() {
     assert!(DevexSuite::RustColdBuild.definition("baseline").is_err());
     assert!(DevexSuite::CargoDevSave.definition("baseline").is_err());
     assert_eq!(DevexSuite::RustColdBuild.minimum_runs("api"), 20);
-    assert_eq!(DevexSuite::RustIncremental.minimum_runs("application"), 5);
+    assert_eq!(DevexSuite::RustIncremental.minimum_runs("application"), 6);
     assert_eq!(DevexSuite::RustIncremental.minimum_runs("workspace"), 20);
     assert_eq!(DevexSuite::CargoDevSave.minimum_runs("api-only"), 20);
     assert_eq!(DevexSuite::CargoDevSave.minimum_runs("cancellation"), 20);
-    assert_eq!(DevexSuite::CargoDevSave.minimum_runs("config-only"), 5);
+    assert_eq!(DevexSuite::CargoDevSave.minimum_runs("config-only"), 6);
+    assert_eq!(
+        DevexSuite::CargoDevSave.minimum_runs("resource-manifest"),
+        6
+    );
+    assert_eq!(DevexSuite::RustSccache.minimum_runs("workspace"), 20);
     let cancellation = DevexSuite::CargoDevSave.definition("cancellation").unwrap();
     assert!(
         cancellation
             .environment
             .contains(&("RYFRAME_DEVEX_SAVE_CASE", "cancellation"))
     );
-    assert_eq!(DevexSuite::FrontendFast.minimum_runs("default"), 5);
+    assert_eq!(DevexSuite::FrontendFast.minimum_runs("default"), 6);
     assert!(
         DevexSuite::RustColdBuild
             .validate_cache_state(CacheState::Cold)
@@ -466,8 +289,10 @@ fn gate_suite_definitions_preserve_audited_execution_contracts() {
 #[test]
 fn abba_order_and_sccache_targets_are_auditable() {
     assert_eq!(
-        [1, 2, 3, 4].map(abba_pair_order),
+        [1, 2, 3, 4, 5, 6].map(abba_pair_order),
         [
+            [PairedArm::Baseline, PairedArm::Candidate],
+            [PairedArm::Candidate, PairedArm::Baseline],
             [PairedArm::Baseline, PairedArm::Candidate],
             [PairedArm::Candidate, PairedArm::Baseline],
             [PairedArm::Baseline, PairedArm::Candidate],
@@ -580,42 +405,6 @@ fn legacy_config_result_requires_one_cargo_without_relaxing_current_results() {
 }
 
 #[test]
-fn cli_rejects_under_sampled_and_unknown_variants() {
-    let under_sampled = parse(strings(&[
-        "devex",
-        "run",
-        "--suite",
-        "frontend-fast",
-        "--variant",
-        "default",
-        "--runs",
-        "4",
-        "--cache",
-        "warm",
-    ]));
-    assert!(
-        under_sampled
-            .unwrap_err()
-            .to_string()
-            .contains("至少需要 5 次")
-    );
-
-    let unknown = parse(strings(&[
-        "devex",
-        "run",
-        "--suite",
-        "cargo-dev-save",
-        "--variant",
-        "baseline",
-        "--runs",
-        "5",
-        "--cache",
-        "warm",
-    ]));
-    assert!(unknown.unwrap_err().to_string().contains("变体"));
-}
-
-#[test]
 fn environment_snapshot_only_keeps_explicit_safe_names() {
     let environment = filter_environment([
         (OsString::from("CARGO_INCREMENTAL"), OsString::from("0")),
@@ -680,11 +469,12 @@ fn metadata_paths_use_stable_workspace_tokens() {
 }
 
 #[test]
-fn summary_uses_nearest_rank_p50_and_p95() {
+fn summary_uses_nearest_rank_p50_p95_and_p99() {
     let distribution = distribution(&[50.0, 10.0, 20.0, 40.0, 30.0]).unwrap();
     assert_eq!(distribution.min, 10.0);
     assert_eq!(distribution.p50, 30.0);
     assert_eq!(distribution.p95, 50.0);
+    assert_eq!(distribution.p99, 50.0);
     assert_eq!(distribution.max, 50.0);
     assert_eq!(distribution.mean, 30.0);
 }
@@ -781,6 +571,89 @@ fn compare_enforces_legacy_baseline_cargo_counts() {
     }
 }
 
+#[test]
+fn stable_readiness_comparison_reports_and_enforces_adapter_provenance() {
+    let baseline = fake_stable_readiness_run("stable-b0", PairedArm::Baseline);
+    let candidate = fake_stable_readiness_run("stable-b1", PairedArm::Candidate);
+    let report = compare(&baseline, &candidate).unwrap();
+    assert!(report.contains("legacy-stable-readiness-b0-v1"));
+    assert!(report.contains("legacy adapter"));
+    let comparison: serde_json::Value =
+        serde_json::from_slice(&fs::read(candidate.join("comparison.json")).unwrap()).unwrap();
+    assert_eq!(
+        comparison["baselineContract"],
+        "legacy-stable-readiness-b0-v1"
+    );
+    assert_eq!(
+        comparison["baselineProvenance"]["patch_sha256"],
+        BaselineContract::STABLE_READINESS_B0_PATCH_SHA256
+    );
+
+    for run in [&baseline, &candidate] {
+        let metadata_path = run.join("metadata.json");
+        let mut metadata: serde_json::Value =
+            serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
+        metadata["pairing"]["baseline_provenance"]["adapter_commit"] =
+            serde_json::json!("1111111111111111111111111111111111111111");
+        fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    }
+    let error = compare(&baseline, &candidate).unwrap_err().to_string();
+    assert!(error.contains("实际 B0 源码身份不一致"), "{error}");
+
+    for run in [&baseline, &candidate] {
+        let metadata_path = run.join("metadata.json");
+        let mut metadata: serde_json::Value =
+            serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
+        metadata["pairing"]["baseline_provenance"]["adapter_commit"] =
+            serde_json::json!("c05114bcdf5c369cd74087db6317ce3c8f89bee8");
+        fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    }
+
+    let metadata_path = baseline.join("metadata.json");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
+    metadata["backend"]["commit"] = serde_json::Value::Null;
+    fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    let error = compare(&baseline, &candidate).unwrap_err().to_string();
+    assert!(error.contains("实际 B0 源码身份不一致"), "{error}");
+    metadata["backend"]["commit"] = serde_json::json!("c05114bcdf5c369cd74087db6317ce3c8f89bee8");
+    fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+
+    for run in [&baseline, &candidate] {
+        let metadata_path = run.join("metadata.json");
+        let mut metadata: serde_json::Value =
+            serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
+        metadata["pairing"]["baseline_provenance"]["patch_sha256"] =
+            serde_json::json!(format!("sha256:{}", "0".repeat(64)));
+        fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    }
+    let error = compare(&baseline, &candidate).unwrap_err().to_string();
+    assert!(error.contains("来源或工具层适配证据无效"), "{error}");
+
+    for path in [baseline, candidate] {
+        fs::remove_dir_all(path).unwrap();
+    }
+}
+
+#[test]
+fn stable_frontend_fast_records_equivalent_primitives_and_distinct_real_entries() {
+    let baseline = fake_stable_frontend_fast_run("stable-fast-b0", PairedArm::Baseline);
+    let candidate = fake_stable_frontend_fast_run("stable-fast-b1", PairedArm::Candidate);
+    compare(&baseline, &candidate).unwrap();
+
+    let metadata_path = candidate.join("metadata.json");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
+    metadata["commands"][0]["args"] = serde_json::json!(["pnpm", "check:fast"]);
+    fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    let error = compare(&baseline, &candidate).unwrap_err().to_string();
+    assert!(error.contains("实际执行入口不匹配"), "{error}");
+
+    for path in [baseline, candidate] {
+        fs::remove_dir_all(path).unwrap();
+    }
+}
+
 fn fake_paired_run(
     name: &str,
     fingerprint: &str,
@@ -834,6 +707,7 @@ fn fake_paired_run(
                 "run_id": name,
                 "sequence": pair,
                 "kind": "measurement",
+                "memory": super::devex_memory_tests::evidence(),
                 "cache_state": "cold",
                 "started_at": format!("2026-08-27T00:00:{order:02}Z"),
                 "duration_ms": duration,
@@ -910,6 +784,7 @@ fn fake_legacy_paired_run(name: &str, arm: PairedArm, cargo_invocations: usize) 
                 "run_id": name,
                 "sequence": pair,
                 "kind": "measurement",
+                "memory": super::devex_memory_tests::evidence(),
                 "cache_state": "warm",
                 "started_at": format!("2026-08-27T00:00:{order:02}Z"),
                 "duration_ms": if arm == PairedArm::Baseline {
@@ -938,6 +813,123 @@ fn fake_legacy_paired_run(name: &str, arm: PairedArm, cargo_invocations: usize) 
     directory
 }
 
+fn fake_stable_readiness_run(name: &str, arm: PairedArm) -> PathBuf {
+    let directory = fake_paired_run(
+        name,
+        "sha256:stable-readiness-surface",
+        &[100.0, 101.0, 102.0, 103.0, 104.0, 105.0],
+        "stable-readiness-comparison",
+        arm,
+    );
+    let metadata_path = directory.join("metadata.json");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
+    metadata["suite"] = serde_json::json!("resource-generator");
+    metadata["variant"] = serde_json::json!("post");
+    metadata["cache_state"] = serde_json::json!("warm");
+    metadata["features"] = serde_json::json!(["resource"]);
+    metadata["frontend"] = serde_json::json!({
+        "commit": if arm == PairedArm::Baseline {
+            BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT
+        } else {
+            "1111111111111111111111111111111111111111"
+        },
+        "dirty": false,
+        "worktree_fingerprint": if arm == PairedArm::Baseline {
+            clean_source_fingerprint(BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT)
+        } else {
+            format!("sha256:frontend-{}", arm.as_str())
+        },
+    });
+    if arm == PairedArm::Baseline {
+        metadata["backend"] = serde_json::json!({
+            "commit": "c05114bcdf5c369cd74087db6317ce3c8f89bee8",
+            "dirty": false,
+            "worktree_fingerprint": clean_source_fingerprint(
+                "c05114bcdf5c369cd74087db6317ce3c8f89bee8"
+            ),
+        });
+    }
+    metadata["pairing"]["baseline_contract"] = serde_json::json!("legacy-stable-readiness-b0-v1");
+    metadata["pairing"]["baseline_provenance"] = serde_json::json!({
+        "base_commit": BaselineContract::STABLE_READINESS_B0_BASE_COMMIT,
+        "adapter_commit": "c05114bcdf5c369cd74087db6317ce3c8f89bee8",
+        "patch_sha256": BaselineContract::STABLE_READINESS_B0_PATCH_SHA256,
+        "adapter_tree": BaselineContract::STABLE_READINESS_B0_ADAPTER_TREE,
+        "frontend_commit": BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT,
+        "adapter_paths": BaselineContract::STABLE_READINESS_B0_ADAPTER_PATHS,
+    });
+    fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+
+    let samples_path = directory.join("samples.jsonl");
+    let samples = fs::read_to_string(&samples_path)
+        .unwrap()
+        .lines()
+        .map(|line| {
+            let mut sample: serde_json::Value = serde_json::from_str(line).unwrap();
+            sample["cache_state"] = serde_json::json!("warm");
+            if arm == PairedArm::Baseline {
+                sample["source_fingerprints"]["backend"] = serde_json::json!(
+                    clean_source_fingerprint("c05114bcdf5c369cd74087db6317ce3c8f89bee8")
+                );
+                sample["source_fingerprints"]["frontend"] = serde_json::json!(
+                    clean_source_fingerprint(BaselineContract::STABLE_READINESS_B0_FRONTEND_COMMIT)
+                );
+            } else {
+                sample["source_fingerprints"]["frontend"] =
+                    serde_json::json!(format!("sha256:frontend-{}", arm.as_str()));
+            }
+            sample.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(samples_path, format!("{samples}\n")).unwrap();
+    directory
+}
+
+fn fake_stable_frontend_fast_run(name: &str, arm: PairedArm) -> PathBuf {
+    let directory = fake_stable_readiness_run(name, arm);
+    let metadata_path = directory.join("metadata.json");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metadata_path).unwrap()).unwrap();
+    metadata["suite"] = serde_json::json!("frontend-fast");
+    metadata["variant"] = serde_json::json!("default");
+    metadata["features"] = serde_json::json!([]);
+    metadata["commands"] = serde_json::json!([{
+        "working_directory": "$FRONTEND",
+        "program": "corepack",
+        "args": if arm == PairedArm::Baseline {
+            vec!["pnpm", "check:fast"]
+        } else {
+            vec!["pnpm", "check"]
+        },
+    }]);
+    metadata["pairing"]["workload_contract"] = serde_json::to_value(
+        BaselineContract::LegacyStableReadinessB0V1
+            .workload_contract(DevexSuite::FrontendFast, "default")
+            .unwrap(),
+    )
+    .unwrap();
+    fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    directory
+}
+
+fn clean_source_fingerprint(commit: &str) -> String {
+    use sha2::{Digest, Sha256};
+
+    let mut digest = Sha256::new();
+    for value in [commit.as_bytes(), &[]] {
+        digest.update((value.len() as u64).to_le_bytes());
+        digest.update(value);
+    }
+    let hex = digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("sha256:{hex}")
+}
+
 fn temporary_directory(name: &str) -> PathBuf {
     static NEXT_RUN: AtomicUsize = AtomicUsize::new(0);
     let id = NEXT_RUN.fetch_add(1, Ordering::Relaxed);
@@ -947,7 +939,7 @@ fn temporary_directory(name: &str) -> PathBuf {
     directory
 }
 
-fn fake_run(name: &str, fingerprint: &str, durations: &[f64]) -> PathBuf {
+pub(super) fn fake_run(name: &str, fingerprint: &str, durations: &[f64]) -> PathBuf {
     let directory = temporary_directory(name);
     let metadata = serde_json::json!({
         "schema_version": 1,
@@ -983,6 +975,7 @@ fn fake_run(name: &str, fingerprint: &str, durations: &[f64]) -> PathBuf {
                 "run_id": name,
                 "sequence": index + 1,
                 "kind": "measurement",
+                "memory": super::devex_memory_tests::evidence(),
                 "cache_state": "cold",
                 "started_at": "2026-08-27T00:00:00Z",
                 "duration_ms": duration,

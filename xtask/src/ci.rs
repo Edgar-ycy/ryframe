@@ -9,73 +9,103 @@ use std::{
 use crate::{
     Result,
     check::{
-        BACKEND_CI_TARGET_DIR, BackendSnapshotProfile, RESOURCE_CI_TARGET_DIR, VerifySelection,
-        changed_paths, changed_paths_between, ci_consumer_contract, ci_rust_gate, ci_target_policy,
-        ci_test_jobs_from, classify_changes, complete_verify_selection, load_workspace_graph,
-        resource_workspace_compilation,
+        BACKEND_CI_TARGET_DIR, RESOURCE_CI_TARGET_DIR, VerifySelection, changed_paths,
+        changed_paths_between, ci_target_policy, ci_test_jobs_from, classify_changes,
+        complete_verify_selection, load_workspace_graph, resource_workspace_compilation,
     },
-    cli::CiCommand,
-    process::{command_output, run as run_process, run_owned},
+    cli::{CiCommand, ResourceGateReplayOptions},
+    contract::verify_contract_source,
+    process::{command_output, run_owned},
     workspace::root_dir,
 };
 
+#[path = "ci/frontend_source.rs"]
+mod frontend_source;
+#[path = "ci/required.rs"]
+mod required;
 #[path = "ci/resource_gate.rs"]
 pub(crate) mod resource_gate;
+#[path = "ci/security.rs"]
+mod security;
+#[path = "ci/task_plan.rs"]
+mod task_plan;
+
+#[allow(unused_imports)]
+pub(crate) use required::validate_required_jobs;
+#[allow(unused_imports)]
+pub(crate) use security::report_command as security_report_command;
+#[allow(unused_imports)]
+pub(crate) use security::source_command as security_source_command;
+#[allow(unused_imports)]
+pub(crate) use security::{
+    deployment_commands, deployment_required_at, plan_at, plan_for_required, run_at,
+};
+#[allow(unused_imports)]
+pub(crate) use task_plan::{
+    CiJob, ci_execution_plan_for, ci_execution_plan_for_profile, ci_plan_for, plan_outputs,
+    required_ci_jobs,
+};
 
 const FULL_CI_EVENTS: &[&str] = &["push", "schedule", "workflow_dispatch"];
 const INTEGRATION_PACKAGES: &[&str] = &["ryframe-adapters", "ryframe-db", "ryframe-tenant-db"];
 const WINDOWS_RUST_GATE_PROFILE: &str = "windows-smoke";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct CiPlan {
-    pub(crate) preflight: bool,
-    pub(crate) rust_gate: bool,
-    pub(crate) resource_gate: bool,
-    pub(crate) integration: bool,
-    pub(crate) consumer_contract: bool,
-}
-
-impl CiPlan {
-    const fn full() -> Self {
-        Self {
-            preflight: true,
-            rust_gate: true,
-            resource_gate: true,
-            integration: true,
-            consumer_contract: true,
-        }
-    }
-}
-
 pub(crate) fn run(command: CiCommand, frontend_dir: &Path) -> Result<()> {
     match command {
         CiCommand::Plan => plan(),
-        CiCommand::Preflight => preflight(),
-        CiCommand::RustGate => rust_gate(frontend_dir),
-        CiCommand::ResourceGate => resource_gate::run(frontend_dir),
-        CiCommand::Integration => integration(),
-        CiCommand::ConsumerContract => consumer_contract(frontend_dir),
-    }
-}
-
-fn rust_gate(frontend_dir: &Path) -> Result<()> {
-    match env::var("RYFRAME_CI_RUST_GATE_PROFILE").ok().as_deref() {
-        None | Some("") | Some("standard") => {
-            verify_frontend_checkout_from_environment(frontend_dir)?;
-            ci_rust_gate(frontend_dir)
+        CiCommand::ResourceGateReplay(options) => resource_gate_replay(&options, frontend_dir),
+        CiCommand::FrontendSource(options) => {
+            let task_plan = frontend_source::plan(&options)?;
+            if options.plan {
+                crate::check::render_task_plan(&task_plan);
+                Ok(())
+            } else {
+                frontend_source::run(&options, &task_plan)
+            }
         }
-        Some(WINDOWS_RUST_GATE_PROFILE) => windows_smoke(frontend_dir),
-        Some(profile) => Err(format!(
-            "RYFRAME_CI_RUST_GATE_PROFILE 只允许 standard 或 {WINDOWS_RUST_GATE_PROFILE}，实际为 {profile}"
-        )
-        .into()),
+        command => execute_ci_command(&command, frontend_dir),
     }
 }
 
-fn consumer_contract(frontend_dir: &Path) -> Result<()> {
-    verify_frontend_checkout_from_environment(frontend_dir)?;
-    verify_formal_contract_source_from_environment(frontend_dir)?;
-    ci_consumer_contract(frontend_dir)
+fn execute_ci_command(command: &CiCommand, frontend_dir: &Path) -> Result<()> {
+    let plan = ci_execution_plan_for(command)?;
+    task_plan::execute_ci_job(command, &plan, frontend_dir)
+}
+
+fn resource_gate_replay(options: &ResourceGateReplayOptions, frontend_dir: &Path) -> Result<()> {
+    let root = root_dir();
+    let arguments = resource_gate_replay_args(options, &root, frontend_dir)?;
+    run_owned(&root, "python", &arguments)
+}
+
+pub(crate) fn resource_gate_replay_args(
+    options: &ResourceGateReplayOptions,
+    backend: &Path,
+    frontend: &Path,
+) -> Result<Vec<String>> {
+    fn utf8(path: &Path) -> Result<String> {
+        path.to_str()
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| "resource gate replay 路径必须能表示为 UTF-8".into())
+    }
+
+    let mut arguments = vec![
+        "scripts/resource_gate_replay.py".to_owned(),
+        "--repository".to_owned(),
+        utf8(backend)?,
+        "--frontend-repository".to_owned(),
+        utf8(frontend)?,
+        "--manifest".to_owned(),
+        utf8(&options.manifest)?,
+        "--work-dir".to_owned(),
+        utf8(&options.work_dir)?,
+        "--report".to_owned(),
+        utf8(&options.report)?,
+    ];
+    if options.activation_gate {
+        arguments.push("--activation-gate".to_owned());
+    }
+    Ok(arguments)
 }
 
 fn plan() -> Result<()> {
@@ -87,7 +117,7 @@ fn plan() -> Result<()> {
     let selection = ci_selection_for_paths(&paths, &graph);
     let resource_gate = resource_gate::should_run_for_paths(&paths)
         || resource_gate_required_for_ci_range(&event, repository_range_valid);
-    let plan = ci_plan_for(&event, &action, &selection, resource_gate);
+    let plan = ci_plan_for(&event, &action, &selection, resource_gate)?;
 
     println!("CI 事件：{event}{}", action_label(&action));
     if paths.is_empty() {
@@ -98,10 +128,10 @@ fn plan() -> Result<()> {
     if let Some(reason) = &selection.full_reason {
         println!("CI 计划扩大为完整门禁：{reason}");
     }
-    for (name, enabled) in plan_outputs(plan) {
+    for (name, enabled) in plan_outputs(&plan) {
         println!("{name}={enabled}");
     }
-    write_github_outputs(plan)
+    write_github_outputs(&plan)
 }
 
 pub(crate) fn ci_selection_for_paths(
@@ -128,50 +158,6 @@ fn action_label(action: &str) -> String {
         String::new()
     } else {
         format!("（{action}）")
-    }
-}
-
-pub(crate) fn ci_plan_for(
-    event: &str,
-    action: &str,
-    selection: &VerifySelection,
-    resource_gate: bool,
-) -> CiPlan {
-    if event == "pull_request" && action == "edited" {
-        return CiPlan {
-            preflight: false,
-            rust_gate: false,
-            resource_gate: false,
-            integration: false,
-            consumer_contract: true,
-        };
-    }
-    if FULL_CI_EVENTS.contains(&event) {
-        return CiPlan {
-            consumer_contract: false,
-            ..CiPlan::full()
-        };
-    }
-    if selection.full_reason.is_some() {
-        return CiPlan::full();
-    }
-
-    let has_backend_work =
-        !selection.backend_packages.is_empty() || !selection.backend_snapshot_profiles.is_empty();
-    let integration = selection
-        .backend_packages
-        .iter()
-        .any(|package| INTEGRATION_PACKAGES.contains(&package.as_str()));
-    let consumer_contract = selection
-        .backend_snapshot_profiles
-        .contains(&BackendSnapshotProfile::OpenApiContract);
-    CiPlan {
-        // 文档变更仍执行仓库策略与格式检查，保持 Required 的确定性。
-        preflight: true,
-        rust_gate: has_backend_work,
-        resource_gate,
-        integration,
-        consumer_contract,
     }
 }
 
@@ -243,17 +229,7 @@ pub(crate) fn resource_gate_required_for_ci_range(
     event == "pull_request" && !repository_range_valid
 }
 
-fn plan_outputs(plan: CiPlan) -> [(&'static str, bool); 5] {
-    [
-        ("preflight", plan.preflight),
-        ("rust_gate", plan.rust_gate),
-        ("resource_gate", plan.resource_gate),
-        ("integration", plan.integration),
-        ("consumer_contract", plan.consumer_contract),
-    ]
-}
-
-fn write_github_outputs(plan: CiPlan) -> Result<()> {
+fn write_github_outputs(plan: &[CiJob]) -> Result<()> {
     let Some(path) = env::var_os("GITHUB_OUTPUT").map(PathBuf::from) else {
         return Ok(());
     };
@@ -264,54 +240,7 @@ fn write_github_outputs(plan: CiPlan) -> Result<()> {
     Ok(())
 }
 
-fn preflight() -> Result<()> {
-    let root = root_dir();
-    run_process(&root, "cargo", &["fmt", "--all", "--", "--check"])?;
-    run_process(&root, "python", &["scripts/check_python_environment.py"])?;
-    run_process(
-        &root,
-        "python",
-        &[
-            "-m",
-            "unittest",
-            "discover",
-            "-s",
-            "scripts/tests",
-            "-p",
-            "test_*.py",
-        ],
-    )?;
-    for script in [
-        "scripts/check_prerelease_dependencies.py",
-        "scripts/check_supply_chain.py",
-        "scripts/check_architecture.py",
-        "scripts/check_permission_routes.py",
-        "scripts/check_deployment_assets.py",
-    ] {
-        run_process(&root, "python", &[script])?;
-    }
-    let migration_args = preflight_migration_args(
-        env::var("RYFRAME_CI_BASE_SHA")
-            .or_else(|_| env::var("GITHUB_BASE_SHA"))
-            .ok()
-            .as_deref(),
-    );
-    run_owned(&root, "python", &migration_args)
-}
-
-pub(crate) fn preflight_migration_args(base: Option<&str>) -> Vec<String> {
-    let mut args = vec![
-        "scripts/check_migration_history.py".to_owned(),
-        "--require-frozen".to_owned(),
-    ];
-    if let Some(base) = base.filter(|base| valid_git_sha(base)) {
-        args.extend(["--trusted-ref".to_owned(), base.to_owned()]);
-    }
-    args
-}
-
 fn windows_smoke(frontend_dir: &Path) -> Result<()> {
-    verify_frontend_checkout_from_environment(frontend_dir)?;
     let root = root_dir();
     let jobs = ci_test_jobs_from(
         env::var("RYFRAME_CI_TEST_JOBS").ok().as_deref(),
@@ -392,49 +321,22 @@ fn verify_formal_contract_source_from_environment(frontend_dir: &Path) -> Result
     else {
         return Ok(());
     };
-    if !valid_git_sha(&backend_head) {
-        return Err("RYFRAME_CI_BACKEND_HEAD 必须是 40 位 Git SHA".into());
-    }
     let repository = env::var("RYFRAME_CI_BACKEND_REPOSITORY")
         .unwrap_or_else(|_| "Edgar-ycy/ryframe".to_owned());
     let candidate = env::var_os("RYFRAME_CI_CANDIDATE_OPENAPI")
         .map(PathBuf::from)
         .ok_or("消费契约来源检查缺少 RYFRAME_CI_CANDIDATE_OPENAPI")?;
     let root = root_dir();
-    run_owned(
+    let commit = verify_contract_source(
         &root,
-        "python",
-        &formal_contract_source_args(frontend_dir, &backend_head, &repository, &candidate),
-    )
-}
-
-pub(crate) fn formal_contract_source_args(
-    frontend_dir: &Path,
-    backend_head: &str,
-    backend_repository: &str,
-    candidate: &Path,
-) -> Vec<String> {
-    vec![
-        "scripts/verify_frontend_contract_source.py".to_owned(),
-        "--backend-worktree".to_owned(),
-        ".".to_owned(),
-        "--backend-head".to_owned(),
-        backend_head.to_owned(),
-        "--backend-repository".to_owned(),
-        backend_repository.to_owned(),
-        "--source-metadata".to_owned(),
-        frontend_dir
-            .join("openapi/source.json")
-            .to_string_lossy()
-            .into_owned(),
-        "--frontend-openapi".to_owned(),
-        frontend_dir
-            .join("openapi/openapi.json")
-            .to_string_lossy()
-            .into_owned(),
-        "--candidate-openapi".to_owned(),
-        candidate.to_string_lossy().into_owned(),
-    ]
+        &backend_head,
+        &repository,
+        &frontend_dir.join("openapi/source.json"),
+        &frontend_dir.join("openapi/openapi.json"),
+        &candidate,
+    )?;
+    println!("{commit}");
+    Ok(())
 }
 
 fn integration() -> Result<()> {
@@ -446,7 +348,11 @@ fn integration() -> Result<()> {
         std::thread::available_parallelism().map_or(1, usize::from),
     )?;
     for (package, target, features) in [
-        ("ryframe-db", "mysql_real_protocol", Some("repositories")),
+        (
+            "ryframe-db",
+            "mysql_real_protocol",
+            Some("repositories,migration"),
+        ),
         ("ryframe-adapters", "redis_real_protocol", Some("redis-api")),
     ] {
         run_owned(

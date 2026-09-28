@@ -20,6 +20,7 @@ description = "Production-oriented Rust 2024 admin backend with Vue 3, RBAC, obs
 
 [workspace.lints.rust]
 non_ascii_idents = "forbid"
+unsafe_code = "forbid"
 
 
 [workspace.dependencies]
@@ -58,6 +59,7 @@ uuid = "1"
 
 thiserror = "2"
 http = "1"
+http-body-util = "0.1"
 
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 

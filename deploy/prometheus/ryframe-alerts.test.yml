@@ -1,0 +1,238 @@
+rule_files:
+  - ryframe-alerts.yml
+
+evaluation_interval: 30s
+
+tests:
+  # t=30s 采集备份；以下评估点分别对应 23h 前 30s、23h 和 24h。
+  # 生产规则 for=0m，达到边界的当次评估必须直接触发。
+  - name: 备份年龄在 23 小时预警并在 24 小时升级
+    interval: 30s
+    input_series:
+      - series: 'ryframe_backup_last_success_timestamp_seconds{job="ryframe-api",instance="api:8080"}'
+        values: '0 30+0x2880'
+    alert_rule_test:
+      - eval_time: 23h
+        alertname: RyFrameBackupAging
+        exp_alerts: []
+      - eval_time: 23h
+        alertname: RyFrameBackupStale
+        exp_alerts: []
+      - eval_time: 23h30s
+        alertname: RyFrameBackupAging
+        exp_alerts:
+          - exp_labels:
+              job: ryframe-api
+              instance: api:8080
+              severity: warning
+              service: ryframe
+            exp_annotations:
+              summary: 必需目标中最旧有效备份已超过 23 小时
+              runbook_url: https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#备份失败或过期
+      - eval_time: 23h30s
+        alertname: RyFrameBackupStale
+        exp_alerts: []
+      - eval_time: 24h30s
+        alertname: RyFrameBackupAging
+        exp_alerts: []
+      - eval_time: 24h30s
+        alertname: RyFrameBackupStale
+        exp_alerts:
+          - exp_labels:
+              job: ryframe-api
+              instance: api:8080
+              severity: critical
+              service: ryframe
+            exp_annotations:
+              summary: 必需目标中最旧有效备份已达到 24 小时
+              runbook_url: https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#备份失败或过期
+
+  - name: 没有有效采集时间时不伪报备份年龄
+    interval: 30s
+    input_series:
+      - series: ryframe_backup_last_success_timestamp_seconds
+        values: '0+0x2881'
+    alert_rule_test:
+      - eval_time: 24h30s
+        alertname: RyFrameBackupAging
+        exp_alerts: []
+      - eval_time: 24h30s
+        alertname: RyFrameBackupStale
+        exp_alerts: []
+
+  # 三种故障同时存在，各规则仍只能保留自身的 state 标签；恢复为零后立即解除。
+  - name: 缺失过期与校验失败分别触发并在恢复后解除
+    interval: 30s
+    input_series:
+      - series: 'ryframe_backup_resources{state="required"}'
+        values: '6 6 6'
+      - series: 'ryframe_backup_resources{state="missing"}'
+        values: '0 1 0'
+      - series: 'ryframe_backup_resources{state="expired"}'
+        values: '0 2 0'
+      - series: 'ryframe_backup_resources{state="invalid"}'
+        values: '0 3 0'
+    alert_rule_test:
+      - eval_time: 0s
+        alertname: RyFrameBackupMissing
+        exp_alerts: []
+      - eval_time: 0s
+        alertname: RyFrameBackupExpired
+        exp_alerts: []
+      - eval_time: 0s
+        alertname: RyFrameBackupInvalid
+        exp_alerts: []
+      - eval_time: 30s
+        alertname: RyFrameBackupMissing
+        exp_alerts:
+          - exp_labels:
+              state: missing
+              severity: critical
+              service: ryframe
+            exp_annotations:
+              summary: 必需资源缺少已登记备份
+              runbook_url: https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#备份失败或过期
+      - eval_time: 30s
+        alertname: RyFrameBackupExpired
+        exp_alerts:
+          - exp_labels:
+              state: expired
+              severity: critical
+              service: ryframe
+            exp_annotations:
+              summary: 必需资源的备份保留期已过期
+              runbook_url: https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#备份失败或过期
+      - eval_time: 30s
+        alertname: RyFrameBackupInvalid
+        exp_alerts:
+          - exp_labels:
+              state: invalid
+              severity: critical
+              service: ryframe
+            exp_annotations:
+              summary: 备份文件校验失败
+              runbook_url: https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#备份失败或过期
+      - eval_time: 1m
+        alertname: RyFrameBackupMissing
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: RyFrameBackupExpired
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: RyFrameBackupInvalid
+        exp_alerts: []
+
+  - name: 采集失败立即触发且成功后解除
+    interval: 30s
+    input_series:
+      - series: 'ryframe_backup_collector_up{job="ryframe-worker",instance="worker:9091"}'
+        values: '1 0 1'
+      - series: 'ryframe_backup_collector_last_success_timestamp_seconds{job="ryframe-worker",instance="worker:9091"}'
+        values: '1 1 60'
+    alert_rule_test:
+      - eval_time: 0s
+        alertname: RyFrameBackupMetricMissing
+        exp_alerts: []
+      - eval_time: 30s
+        alertname: RyFrameBackupMetricMissing
+        exp_alerts:
+          - exp_labels:
+              job: ryframe-worker
+              instance: worker:9091
+              severity: critical
+              service: ryframe
+            exp_annotations:
+              summary: 备份状态采集缺失或失败
+              runbook_url: https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#备份失败或过期
+      - eval_time: 1m
+        alertname: RyFrameBackupMetricMissing
+        exp_alerts: []
+
+  - name: 采集器仍报告up但成功时间过期时触发
+    interval: 30s
+    input_series:
+      - series: 'ryframe_backup_collector_up{job="ryframe-api",instance="api:8080"}'
+        values: '1+0x7'
+      - series: 'ryframe_backup_collector_last_success_timestamp_seconds{job="ryframe-api",instance="api:8080"}'
+        values: '30+0x7'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: RyFrameBackupMetricMissing
+        exp_alerts: []
+      - eval_time: 3m30s
+        alertname: RyFrameBackupMetricMissing
+        exp_alerts:
+          - exp_labels:
+              job: ryframe-api
+              instance: api:8080
+              severity: critical
+              service: ryframe
+            exp_annotations:
+              summary: 备份状态采集缺失或失败
+              runbook_url: https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#备份失败或过期
+
+  - name: 从未采集到备份指标时立即触发
+    input_series: []
+    alert_rule_test:
+      - eval_time: 0s
+        alertname: RyFrameBackupMetricMissing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: ryframe
+            exp_annotations:
+              summary: 备份状态采集缺失或失败
+              runbook_url: https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#备份失败或过期
+
+  - name: 最近恢复失败触发且后续成功解除
+    interval: 30s
+    input_series:
+      - series: 'ryframe_restore_last_completed_timestamp_seconds{job="ryframe-api",instance="api:8080"}'
+        values: '0 30 60'
+      - series: 'ryframe_restore_last_succeeded{job="ryframe-api",instance="api:8080"}'
+        values: '0 0 1'
+    alert_rule_test:
+      - eval_time: 0s
+        alertname: RyFrameRestoreFailed
+        exp_alerts: []
+      - eval_time: 30s
+        alertname: RyFrameRestoreFailed
+        exp_alerts:
+          - exp_labels:
+              job: ryframe-api
+              instance: api:8080
+              severity: critical
+              service: ryframe
+            exp_annotations:
+              summary: 最近一次恢复演练失败
+              runbook_url: https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#备份失败或过期
+      - eval_time: 1m
+        alertname: RyFrameRestoreFailed
+        exp_alerts: []
+
+  - name: 仅超时恢复触发并在状态解除后恢复
+    interval: 30s
+    input_series:
+      - series: 'ryframe_restore_runs{job="ryframe-worker",instance="worker:9091",state="running"}'
+        values: '1 1 1'
+      - series: 'ryframe_restore_runs{job="ryframe-worker",instance="worker:9091",state="overdue"}'
+        values: '0 1 0'
+    alert_rule_test:
+      - eval_time: 0s
+        alertname: RyFrameRestoreOverdue
+        exp_alerts: []
+      - eval_time: 30s
+        alertname: RyFrameRestoreOverdue
+        exp_alerts:
+          - exp_labels:
+              job: ryframe-worker
+              instance: worker:9091
+              state: overdue
+              severity: critical
+              service: ryframe
+            exp_annotations:
+              summary: 恢复演练超过 60 分钟仍未完成
+              runbook_url: https://github.com/Edgar-ycy/ryframe/blob/main/docs/operations.md#备份失败或过期
+      - eval_time: 1m
+        alertname: RyFrameRestoreOverdue
+        exp_alerts: []

@@ -10,7 +10,7 @@ use std::fs;
 
 #[cfg(feature = "resource")]
 use crate::{
-    cli::{ApiSyncCommand, ResourceAction},
+    cli::{ApiGenerateCommand, ResourceAction},
     workspace::root_dir,
 };
 
@@ -18,7 +18,7 @@ use crate::{
 use ryframe_generator::{
     GeneratedCatalog, PlanAction, ResourceAssetPlan, ResourceError, ResourceIr, ResourceWorkspace,
     load_resource, plan_all_resource_changes, plan_resource_changes, render_resources,
-    write_resource,
+    write_resource, write_resources,
 };
 
 #[cfg(feature = "resource")]
@@ -44,34 +44,48 @@ pub(crate) fn run(command: &ResourceCommand, frontend_dir: &Path) -> Result<()> 
             write(&catalog, name, &root, frontend_dir)
         }
         (ResourceTarget::All, ResourceAction::Check) => check_all(&catalog, &root, frontend_dir),
+        (ResourceTarget::All, ResourceAction::Write) => write_all(&catalog, &root, frontend_dir),
         (ResourceTarget::All, _) => {
-            Err("`--all` 仅支持只读的 `cargo resource --all --check`".into())
+            Err("`--all` 只支持 `cargo xtask generate resource --all --check|--write`".into())
         }
     }
 }
 
 #[cfg(not(feature = "resource"))]
-pub(crate) fn run(command: &ResourceCommand, _frontend_dir: &Path) -> Result<()> {
-    Err(format!(
-        "内部调用缺少 resource feature，未修改文件；请使用 `{}`",
-        resource_invocation(command)
-    )
-    .into())
+pub(crate) fn run(command: &ResourceCommand, frontend_dir: &Path) -> Result<()> {
+    let mut arguments = vec![
+        "run".to_owned(),
+        "--locked".to_owned(),
+        "--target-dir".to_owned(),
+        "target/xtask-resource".to_owned(),
+        "-p".to_owned(),
+        "xtask".to_owned(),
+        "--features".to_owned(),
+        "resource".to_owned(),
+        "--".to_owned(),
+        "generate".to_owned(),
+        "resource".to_owned(),
+    ];
+    arguments.extend(resource_arguments(command));
+    arguments.push("--frontend-dir".to_owned());
+    arguments.push(frontend_dir.to_string_lossy().into_owned());
+    crate::process::run_owned(&crate::workspace::root_dir(), "cargo", &arguments)
 }
 
 #[cfg(not(feature = "resource"))]
-fn resource_invocation(command: &ResourceCommand) -> String {
-    let target = match &command.target {
-        ResourceTarget::Named(name) => name.as_str(),
-        ResourceTarget::All => "--all",
-    };
+fn resource_arguments(command: &ResourceCommand) -> Vec<String> {
+    let mut arguments = vec![match &command.target {
+        ResourceTarget::Named(name) => name.clone(),
+        ResourceTarget::All => "--all".to_owned(),
+    }];
     let action = match command.action {
-        crate::cli::ResourceAction::Preview => "",
-        crate::cli::ResourceAction::Check => " --check",
-        crate::cli::ResourceAction::Write => " --write",
-        crate::cli::ResourceAction::Explain => " --explain",
+        crate::cli::ResourceAction::Preview => None,
+        crate::cli::ResourceAction::Check => Some("--check"),
+        crate::cli::ResourceAction::Write => Some("--write"),
+        crate::cli::ResourceAction::Explain => Some("--explain"),
     };
-    format!("cargo resource {target}{action}")
+    arguments.extend(action.map(str::to_owned));
+    arguments
 }
 
 #[cfg(feature = "resource")]
@@ -165,7 +179,7 @@ fn preview(
         println!("生成结果与工作区一致，无需写入。");
     } else {
         println!(
-            "共 {changed} 个文件需要新增、更新或删除；确认后运行 `cargo resource {resource} --write`。"
+            "共 {changed} 个文件需要新增、更新或删除；确认后运行 `cargo xtask generate resource {resource} --write`。"
         );
     }
     Ok(())
@@ -189,7 +203,9 @@ fn check_named(
     ensure_clean(
         plan,
         &format!("资源 `{resource}`"),
-        &format!("运行 `cargo resource {resource}` 查看差异，确认后显式执行 `--write`"),
+        &format!(
+            "运行 `cargo xtask generate resource {resource}` 查看差异，确认后显式执行 `--write`"
+        ),
     )
 }
 
@@ -205,7 +221,7 @@ fn check_all(catalog: &GeneratedCatalog, backend_root: &Path, frontend_root: &Pa
     ensure_clean(
         plan,
         "全部资源",
-        "逐个运行 `cargo resource <资源名>` 查看差异，确认后显式执行对应的 `--write`",
+        "逐个运行 `cargo xtask generate resource <资源名>` 查看差异，确认后显式执行对应的 `--write`",
     )
 }
 
@@ -277,9 +293,36 @@ fn write(
     for path in &report.removed {
         println!("  删除 {path}");
     }
-    if let Err(error) = crate::contract::api_sync(&ApiSyncCommand::Candidate, frontend_root) {
+    refresh_api(frontend_root)
+}
+
+#[cfg(feature = "resource")]
+fn write_all(catalog: &GeneratedCatalog, backend_root: &Path, frontend_root: &Path) -> Result<()> {
+    let report = write_resources(
+        catalog,
+        ResourceWorkspace {
+            backend_root,
+            frontend_root: Some(frontend_root),
+        },
+    )?;
+    println!(
+        "全部资源生成完成：写入 {}，删除 {}，未变化 {}。",
+        report.written.len(),
+        report.removed.len(),
+        report.unchanged.len()
+    );
+    refresh_api(frontend_root)
+}
+
+#[cfg(feature = "resource")]
+fn refresh_api(frontend_root: &Path) -> Result<()> {
+    let api = ApiGenerateCommand {
+        reference: None,
+        write: true,
+    };
+    if let Err(error) = crate::contract::generate_api(&api, frontend_root) {
         return Err(format!(
-            "资源代码已经安全写入，但候选 OpenAPI 刷新失败：{error}；修复编译或契约错误后运行 `cargo api-sync`"
+            "资源代码已经安全写入，但候选 OpenAPI 刷新失败：{error}；修复编译或契约错误后运行 `cargo xtask generate api --write`"
         )
         .into());
     }

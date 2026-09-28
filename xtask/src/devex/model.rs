@@ -6,8 +6,13 @@ use serde::{Deserialize, Serialize};
 mod baseline;
 #[path = "model/execution_contract.rs"]
 mod execution_contract;
+#[path = "model/runtime.rs"]
+mod runtime;
+#[path = "model/steps.rs"]
+mod steps;
+use steps::*;
 
-pub(crate) use baseline::{BaselineContract, BaselineProvenance};
+pub(crate) use baseline::{BaselineContract, BaselineProvenance, PairedWorkloadContract};
 pub(crate) use execution_contract::{
     RESOURCE_GATE_DECISION_ENV, RESOURCE_GATE_DECISION_TEMPLATE, RESOURCE_GATE_TARGETED_ACTIVATION,
     RESOURCE_GATE_TARGETED_ENV,
@@ -25,10 +30,14 @@ pub(crate) enum DevexSuite {
     RustSccache,
     FrontendFast,
     FrontendBuild,
+    RuntimeHomepage,
+    RuntimeApi,
+    RuntimeJobs,
+    RuntimeTenants,
 }
 
 impl DevexSuite {
-    pub(crate) const ALL: [Self; 9] = [
+    pub(crate) const ALL: [Self; 13] = [
         Self::RustColdBuild,
         Self::RustIncremental,
         Self::CargoDevSave,
@@ -38,6 +47,10 @@ impl DevexSuite {
         Self::RustSccache,
         Self::FrontendFast,
         Self::FrontendBuild,
+        Self::RuntimeHomepage,
+        Self::RuntimeApi,
+        Self::RuntimeJobs,
+        Self::RuntimeTenants,
     ];
 
     pub(crate) fn parse(value: &str) -> Option<Self> {
@@ -55,11 +68,18 @@ impl DevexSuite {
             Self::RustSccache => "rust-sccache",
             Self::FrontendFast => "frontend-fast",
             Self::FrontendBuild => "frontend-build",
+            Self::RuntimeHomepage => "runtime-homepage",
+            Self::RuntimeApi => "runtime-api",
+            Self::RuntimeJobs => "runtime-jobs",
+            Self::RuntimeTenants => "runtime-tenants",
         }
     }
 
     pub(crate) fn definition(self, variant: &str) -> Result<SuiteDefinition, String> {
         match self {
+            Self::RuntimeHomepage | Self::RuntimeApi | Self::RuntimeJobs | Self::RuntimeTenants => {
+                runtime::definition(self, variant)
+            }
             Self::RustColdBuild => Ok(SuiteDefinition {
                 steps: rust_steps(variant, BuildProfile::Build)?,
                 features: rust_features(variant)?,
@@ -157,6 +177,22 @@ impl DevexSuite {
         }
     }
 
+    pub(crate) fn paired_definition(
+        self,
+        variant: &str,
+        contract: Option<BaselineContract>,
+        arm: PairedArm,
+    ) -> Result<SuiteDefinition, String> {
+        let mut definition = self.definition(variant)?;
+        if contract == Some(BaselineContract::LegacyStableReadinessB0V1)
+            && arm == PairedArm::Baseline
+            && self == Self::FrontendFast
+        {
+            definition.steps = FRONTEND_FAST_STABLE_READINESS_B0;
+        }
+        Ok(definition)
+    }
+
     pub(crate) const fn variant_help(self) -> &'static str {
         match self {
             Self::RustIncremental => "application、api、worker、migrate 或 workspace",
@@ -167,7 +203,8 @@ impl DevexSuite {
             Self::ResourceGenerator => "all、post 或 notice",
             Self::ResourceGate => "auto",
             Self::RustGate => "default",
-            Self::FrontendFast | Self::FrontendBuild => "default",
+            Self::FrontendFast | Self::FrontendBuild | Self::RuntimeHomepage => "default",
+            Self::RuntimeApi | Self::RuntimeJobs | Self::RuntimeTenants => "10、50 或 100",
         }
     }
 
@@ -189,6 +226,13 @@ impl DevexSuite {
             }
         };
         Ok(Some(source))
+    }
+
+    pub(crate) const fn is_runtime(self) -> bool {
+        matches!(
+            self,
+            Self::RuntimeHomepage | Self::RuntimeApi | Self::RuntimeJobs | Self::RuntimeTenants
+        )
     }
 
     pub(crate) const fn uses_sccache(self) -> bool {
@@ -324,6 +368,8 @@ pub(crate) struct PairingMetadata {
     pub(crate) baseline_contract: Option<BaselineContract>,
     #[serde(default)]
     pub(crate) baseline_provenance: Option<BaselineProvenance>,
+    #[serde(default)]
+    pub(crate) workload_contract: Option<PairedWorkloadContract>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -342,12 +388,36 @@ pub(crate) enum DevexCommand {
     Paired(DevexPairedOptions),
     Summarize { run: String },
     Compare { baseline: String, candidate: String },
+    Cgroup(DevexCgroupOptions),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DevexCgroupOperation {
+    Run,
+    Cleanup,
+}
+
+impl DevexCgroupOperation {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Run => "run",
+            Self::Cleanup => "cleanup",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DevexCgroupOptions {
+    pub(crate) operation: DevexCgroupOperation,
+    pub(crate) output: PathBuf,
+    pub(crate) plan: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WorkingDirectory {
     Backend,
     Frontend,
+    RunnerFrontend,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -374,226 +444,3 @@ pub(crate) struct SuiteDefinition {
     pub(crate) requirement: SuiteRequirement,
     pub(crate) requires_frontend: bool,
 }
-
-const RUST_BUILD_WORKSPACE: &[StepDefinition] = &[StepDefinition {
-    working_directory: WorkingDirectory::Backend,
-    program: "cargo",
-    args: &["build", "--locked", "--workspace"],
-}];
-const RUST_CHECK_WORKSPACE: &[StepDefinition] = &[StepDefinition {
-    working_directory: WorkingDirectory::Backend,
-    program: "cargo",
-    args: &["check", "--locked", "--workspace"],
-}];
-const RUST_CHECK_APPLICATION: &[StepDefinition] = &[StepDefinition {
-    working_directory: WorkingDirectory::Backend,
-    program: "cargo",
-    args: &["check", "--locked", "-p", "ryframe-application"],
-}];
-const RUST_BUILD_API: &[StepDefinition] = &[StepDefinition {
-    working_directory: WorkingDirectory::Backend,
-    program: "cargo",
-    args: &[
-        "build",
-        "--locked",
-        "-p",
-        "ryframe",
-        "--no-default-features",
-        "--features",
-        "bin-api",
-        "--bin",
-        "ryframe",
-    ],
-}];
-const RUST_BUILD_WORKER: &[StepDefinition] = &[StepDefinition {
-    working_directory: WorkingDirectory::Backend,
-    program: "cargo",
-    args: &[
-        "build",
-        "--locked",
-        "-p",
-        "ryframe",
-        "--no-default-features",
-        "--features",
-        "bin-worker",
-        "--bin",
-        "ryframe-worker",
-    ],
-}];
-const RUST_BUILD_MIGRATE: &[StepDefinition] = &[StepDefinition {
-    working_directory: WorkingDirectory::Backend,
-    program: "cargo",
-    args: &[
-        "build",
-        "--locked",
-        "-p",
-        "ryframe",
-        "--no-default-features",
-        "--features",
-        "bin-migrate",
-        "--bin",
-        "ryframe-migrate",
-    ],
-}];
-const RUST_CHECK_API: &[StepDefinition] = &[StepDefinition {
-    working_directory: WorkingDirectory::Backend,
-    program: "cargo",
-    args: &[
-        "check",
-        "--locked",
-        "-p",
-        "ryframe",
-        "--no-default-features",
-        "--features",
-        "bin-api",
-        "--bin",
-        "ryframe",
-    ],
-}];
-const RUST_CHECK_WORKER: &[StepDefinition] = &[StepDefinition {
-    working_directory: WorkingDirectory::Backend,
-    program: "cargo",
-    args: &[
-        "check",
-        "--locked",
-        "-p",
-        "ryframe",
-        "--no-default-features",
-        "--features",
-        "bin-worker",
-        "--bin",
-        "ryframe-worker",
-    ],
-}];
-const RUST_CHECK_MIGRATE: &[StepDefinition] = &[StepDefinition {
-    working_directory: WorkingDirectory::Backend,
-    program: "cargo",
-    args: &[
-        "check",
-        "--locked",
-        "-p",
-        "ryframe",
-        "--no-default-features",
-        "--features",
-        "bin-migrate",
-        "--bin",
-        "ryframe-migrate",
-    ],
-}];
-const CARGO_DEV_SAVE: &[StepDefinition] = &[StepDefinition {
-    working_directory: WorkingDirectory::Backend,
-    program: "cargo",
-    args: &["dev", "--measure-once"],
-}];
-const RESOURCE_GENERATOR_ALL: &[StepDefinition] = &[StepDefinition {
-    working_directory: WorkingDirectory::Backend,
-    program: "cargo",
-    args: &[
-        "run",
-        "--locked",
-        "--target-dir",
-        "{target}",
-        "-p",
-        "xtask",
-        "--features",
-        "resource",
-        "--",
-        "resource",
-        "--all",
-        "--check",
-        "--frontend-dir",
-        "{frontend}",
-    ],
-}];
-const RESOURCE_GENERATOR_POST: &[StepDefinition] = &[StepDefinition {
-    working_directory: WorkingDirectory::Backend,
-    program: "cargo",
-    args: &[
-        "run",
-        "--locked",
-        "--target-dir",
-        "{target}",
-        "-p",
-        "xtask",
-        "--features",
-        "resource",
-        "--",
-        "resource",
-        "post",
-        "--check",
-        "--frontend-dir",
-        "{frontend}",
-    ],
-}];
-const RESOURCE_GENERATOR_NOTICE: &[StepDefinition] = &[StepDefinition {
-    working_directory: WorkingDirectory::Backend,
-    program: "cargo",
-    args: &[
-        "run",
-        "--locked",
-        "--target-dir",
-        "{target}",
-        "-p",
-        "xtask",
-        "--features",
-        "resource",
-        "--",
-        "resource",
-        "notice",
-        "--check",
-        "--frontend-dir",
-        "{frontend}",
-    ],
-}];
-const RESOURCE_GATE: &[StepDefinition] = &[StepDefinition {
-    working_directory: WorkingDirectory::Backend,
-    program: "cargo",
-    args: &[
-        "run",
-        "--locked",
-        "--target-dir",
-        "{target}/driver",
-        "-p",
-        "xtask",
-        "--",
-        "ci",
-        "resource-gate",
-        "--frontend-dir",
-        "{frontend}",
-    ],
-}];
-const RUST_GATE: &[StepDefinition] = &[StepDefinition {
-    working_directory: WorkingDirectory::Backend,
-    program: "cargo",
-    args: &[
-        "run",
-        "--locked",
-        "--target-dir",
-        "{target}/driver",
-        "-p",
-        "xtask",
-        "--",
-        "ci",
-        "rust-gate",
-        "--frontend-dir",
-        "{frontend}",
-    ],
-}];
-const FRONTEND_FAST: &[StepDefinition] = &[StepDefinition {
-    working_directory: WorkingDirectory::Frontend,
-    program: "corepack",
-    args: &["pnpm", "check:fast"],
-}];
-const FRONTEND_BUILD: &[StepDefinition] = &[StepDefinition {
-    working_directory: WorkingDirectory::Frontend,
-    program: "corepack",
-    args: &[
-        "pnpm",
-        "exec",
-        "vite",
-        "build",
-        "--outDir",
-        "{target}/frontend/dist",
-        "--emptyOutDir",
-    ],
-}];

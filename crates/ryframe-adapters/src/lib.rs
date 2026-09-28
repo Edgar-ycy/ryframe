@@ -1,5 +1,6 @@
 #[cfg(feature = "redis-api")]
 pub mod application_ports;
+pub mod backup;
 #[cfg(feature = "redis-api")]
 pub mod cache;
 #[cfg(feature = "redis-api")]
@@ -37,7 +38,7 @@ pub use distributed_lock::{
     DistributedLock, LocalDistributedLock, LockGuard, RedisDistributedLock, create_distributed_lock,
 };
 #[cfg(feature = "redis-client")]
-pub use redis_client::{RedisClient, RedisNamespace};
+pub use redis_client::{RedisClient, RedisNamespace, RedisTransactionConnection};
 #[cfg(feature = "redis-api")]
 pub use refresh_session::{
     RefreshFamily, RefreshRotation, RefreshSessionIdentity, RefreshSessionRevocation,

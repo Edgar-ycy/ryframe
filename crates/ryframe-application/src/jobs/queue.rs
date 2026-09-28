@@ -15,7 +15,7 @@ use super::{
 use crate::ports::jobs::{
     BackgroundJobPersistencePort, BackgroundJobReadFilter, BackgroundJobRecord,
     BackgroundJobTransaction, ClaimedJobRecord, ExecutionTenantScope, FailJobCommand,
-    JobFailureOutcome, TenantConfigJobKind,
+    JobFailureOutcome, RecoveredJobLeases, TenantConfigJobKind,
 };
 
 mod filters;
@@ -65,46 +65,59 @@ impl JobQueue {
     pub(super) async fn dead_letter(
         &self,
         job_id: i64,
+        claim_sequence: i64,
         worker_id: &str,
         error_message: &str,
         now: DateTime<Utc>,
-    ) -> AppResult<bool> {
+    ) -> AppResult<JobFailureOutcome> {
         self.persistence
-            .dead_letter(job_id, worker_id, error_message, now)
+            .dead_letter(job_id, claim_sequence, worker_id, error_message, now)
             .await
     }
 
     pub(super) async fn renew_lease(
         &self,
         job_id: i64,
+        claim_sequence: i64,
         worker_id: &str,
         lease_duration: chrono::Duration,
         now: DateTime<Utc>,
     ) -> AppResult<bool> {
         self.persistence
-            .renew_lease(job_id, worker_id, lease_duration, now)
+            .renew_lease(job_id, claim_sequence, worker_id, lease_duration, now)
             .await
     }
 
     pub(super) async fn complete(
         &self,
         job_id: i64,
+        claim_sequence: i64,
         worker_id: &str,
         now: DateTime<Utc>,
     ) -> AppResult<bool> {
-        self.persistence.complete(job_id, worker_id, now).await
+        self.persistence
+            .complete(job_id, claim_sequence, worker_id, now)
+            .await
     }
 
     pub(super) async fn defer_retryable_conflict(
         &self,
         job_id: i64,
+        claim_sequence: i64,
         worker_id: &str,
         available_at: DateTime<Utc>,
         error_message: &str,
         now: DateTime<Utc>,
-    ) -> AppResult<bool> {
+    ) -> AppResult<JobFailureOutcome> {
         self.persistence
-            .defer_retryable_conflict(job_id, worker_id, available_at, error_message, now)
+            .defer_retryable_conflict(
+                job_id,
+                claim_sequence,
+                worker_id,
+                available_at,
+                error_message,
+                now,
+            )
             .await
     }
 
@@ -188,7 +201,7 @@ impl JobQueue {
                 .persistence
                 .recover_expired_leases(now, tenant_scope)
                 .await?;
-            if recovered.requeued.saturating_add(recovered.dead) < 500 {
+            if !recovered_batch_is_full(recovered) {
                 break;
             }
         }
@@ -303,16 +316,28 @@ impl JobQueue {
             .await?;
 
         let now = self.database_now().await?;
-        let retried = self
+        let outcome = self
             .persistence
             .retry_dead(tenant_id, include_platform, job_id, principal.user_id, now)
             .await?;
-        if !retried {
-            return Err(AppError::Conflict(
-                "后台任务状态已变化，请刷新后重试".into(),
-            ));
+        match outcome {
+            JobFailureOutcome::Retried { .. } => self.notify_background_jobs().await,
+            JobFailureOutcome::Completed => {
+                return Err(AppError::Conflict(
+                    "关联业务已经完成、取消或过期，后台任务已同步为完成状态".into(),
+                ));
+            }
+            JobFailureOutcome::Dead => {
+                return Err(AppError::Conflict(
+                    "关联业务已经失败且不能重新投递，后台任务保持死信状态".into(),
+                ));
+            }
+            JobFailureOutcome::LeaseLost => {
+                return Err(AppError::Conflict(
+                    "后台任务状态已变化，请刷新后重试".into(),
+                ));
+            }
         }
-        self.notify_background_jobs().await;
 
         self.persistence
             .find_for_tenant(tenant_id, include_platform, job_id)
@@ -405,5 +430,32 @@ impl JobQueue {
         if let Some(observer) = self.metrics_observer() {
             observer.record_claim_attempt(queue, result);
         }
+    }
+}
+
+fn recovered_batch_is_full(recovered: RecoveredJobLeases) -> bool {
+    recovered
+        .requeued
+        .saturating_add(recovered.dead)
+        .saturating_add(recovered.completed)
+        >= 500
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RecoveredJobLeases, recovered_batch_is_full};
+
+    #[test]
+    fn completed_recoveries_count_towards_batch_limit() {
+        assert!(recovered_batch_is_full(RecoveredJobLeases {
+            requeued: 200,
+            dead: 100,
+            completed: 200,
+        }));
+        assert!(!recovered_batch_is_full(RecoveredJobLeases {
+            requeued: 200,
+            dead: 100,
+            completed: 199,
+        }));
     }
 }

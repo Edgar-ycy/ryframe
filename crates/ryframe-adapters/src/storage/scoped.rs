@@ -105,6 +105,9 @@ impl ScopedObjectStorage {
 
 #[async_trait]
 impl ObjectStorage for ScopedObjectStorage {
+    async fn digest(&self, bucket: &str, key: &str) -> StorageResult<super::ObjectDigest> {
+        self.inner.digest(bucket, &self.physical_key(key)?).await
+    }
     fn late_put_completion_bound(&self) -> Duration {
         self.inner.late_put_completion_bound()
     }

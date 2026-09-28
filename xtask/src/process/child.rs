@@ -1,10 +1,16 @@
 use std::{
-    ops::{Deref, DerefMut},
-    process::{Child, Command},
+    io::Read,
+    process::{Command, ExitStatus},
 };
+
+#[cfg(not(windows))]
+use std::process::Child;
+#[cfg(windows)]
+use std::{thread, time::Duration};
 
 use crate::Result;
 
+#[cfg(unix)]
 use super::prepare_process_group;
 
 /// 开发任务的子进程工厂。每次 spawn 都创建独立的可终止进程树，避免一个构建代次
@@ -13,9 +19,12 @@ pub(crate) struct ChildGroup;
 
 /// 一个直接子进程及其独立进程树所有权。
 pub(crate) struct ManagedChild {
+    #[cfg(windows)]
+    child: tokio::process::Child,
+    #[cfg(not(windows))]
     child: Child,
     #[cfg(windows)]
-    job: windows_sys::Win32::Foundation::HANDLE,
+    group: Option<processkit::ProcessGroup>,
     #[cfg(unix)]
     process_group_id: u32,
 }
@@ -25,85 +34,76 @@ impl ChildGroup {
         Ok(Self)
     }
 
-    pub(crate) fn spawn(&self, command: &mut Command) -> Result<ManagedChild> {
-        prepare_process_group(command);
-        #[cfg(windows)]
-        let job = create_kill_on_close_job()?;
-        let child = match command.spawn() {
-            Ok(child) => child,
-            Err(error) => {
-                #[cfg(windows)]
-                unsafe {
-                    windows_sys::Win32::Foundation::CloseHandle(job);
-                }
-                return Err(error.into());
-            }
-        };
-        #[cfg(unix)]
-        let process_group_id = child.id();
-        #[cfg(windows)]
-        let mut child = child;
-        #[cfg(windows)]
-        {
-            if let Err(error) = assign_and_resume_suspended_child(job, &child) {
-                let _ = child.kill();
-                let _ = child.wait();
-                unsafe { windows_sys::Win32::Foundation::CloseHandle(job) };
-                return Err(error);
-            }
-        }
-        Ok(ManagedChild {
-            child,
-            #[cfg(windows)]
-            job,
-            #[cfg(unix)]
-            process_group_id,
-        })
-    }
-}
-
-impl Deref for ManagedChild {
-    type Target = Child;
-
-    fn deref(&self) -> &Self::Target {
-        &self.child
-    }
-}
-
-impl DerefMut for ManagedChild {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.child
+    /// 接管命令所有权，确保同一 `Command` 不会重复叠加平台进程组配置。
+    pub(crate) fn spawn(&self, command: Command) -> Result<ManagedChild> {
+        spawn_managed(command)
     }
 }
 
 impl ManagedChild {
+    pub(crate) fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+        self.child.try_wait()
+    }
+
+    /// 保持现有同步 xtask 调用合同，不要求调用方创建 Tokio runtime。
+    pub(crate) fn wait(&mut self) -> std::io::Result<ExitStatus> {
+        #[cfg(windows)]
+        loop {
+            if let Some(status) = self.child.try_wait()? {
+                return Ok(status);
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        #[cfg(not(windows))]
+        {
+            self.child.wait()
+        }
+    }
+
+    #[cfg(not(windows))]
+    pub(crate) fn kill(&mut self) -> std::io::Result<()> {
+        self.child.kill()
+    }
+
+    /// 把管道转换成可在线程中同步读取的所有权对象；Windows 不轮询异步句柄，
+    /// 因而该路径同样不要求 Tokio runtime。
+    pub(crate) fn take_stdout_reader(&mut self) -> Result<Option<Box<dyn Read + Send>>> {
+        let Some(stdout) = self.child.stdout.take() else {
+            return Ok(None);
+        };
+        #[cfg(windows)]
+        {
+            let handle = stdout.into_owned_handle()?;
+            Ok(Some(Box::new(std::fs::File::from(handle))))
+        }
+        #[cfg(not(windows))]
+        {
+            Ok(Some(Box::new(stdout)))
+        }
+    }
+
+    /// 与 stdout 相同地把 stderr 管道交给同步读取线程，供可取消的捕获命令使用。
+    pub(crate) fn take_stderr_reader(&mut self) -> Result<Option<Box<dyn Read + Send>>> {
+        let Some(stderr) = self.child.stderr.take() else {
+            return Ok(None);
+        };
+        #[cfg(windows)]
+        {
+            let handle = stderr.into_owned_handle()?;
+            Ok(Some(Box::new(std::fs::File::from(handle))))
+        }
+        #[cfg(not(windows))]
+        {
+            Ok(Some(Box::new(stderr)))
+        }
+    }
+
     #[cfg(windows)]
     pub(crate) fn active_process_count(&self) -> Result<Option<u32>> {
-        use std::{ffi::c_void, mem};
-        use windows_sys::Win32::System::JobObjects::{
-            JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JobObjectBasicAccountingInformation,
-            QueryInformationJobObject,
-        };
-
-        let mut information = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
-        let queried = unsafe {
-            QueryInformationJobObject(
-                self.job,
-                JobObjectBasicAccountingInformation,
-                (&raw mut information).cast::<c_void>(),
-                u32::try_from(mem::size_of_val(&information))
-                    .expect("Job Object 统计大小必须可由 u32 表示"),
-                std::ptr::null_mut(),
-            )
-        };
-        if queried == 0 {
-            return Err(format!(
-                "无法查询 Windows 子进程 Job Object：{}",
-                std::io::Error::last_os_error()
-            )
-            .into());
-        }
-        Ok(Some(information.ActiveProcesses))
+        let active = self.job_stats()?.active_process_count;
+        Ok(Some(u32::try_from(active).map_err(|_| {
+            format!("Windows Job Object 活跃进程数超出 u32 范围：{active}")
+        })?))
     }
 
     #[cfg(not(windows))]
@@ -112,17 +112,26 @@ impl ManagedChild {
     }
 
     #[cfg(windows)]
-    pub(super) fn terminate_tree(&self) -> Result<()> {
-        use windows_sys::Win32::System::JobObjects::TerminateJobObject;
+    pub(crate) fn job_stats(&self) -> Result<processkit::ProcessGroupStats> {
+        Ok(self.group().stats()?)
+    }
 
-        if unsafe { TerminateJobObject(self.job, 1) } == 0 {
-            return Err(format!(
-                "无法终止 Windows 子进程 Job Object：{}",
-                std::io::Error::last_os_error()
-            )
-            .into());
-        }
+    #[cfg(windows)]
+    pub(super) fn terminate_tree(&self) -> Result<()> {
+        self.group().kill_all()?;
         Ok(())
+    }
+
+    #[cfg(windows)]
+    pub(super) fn member_handles(&self) -> Result<super::windows_members::MemberHandles> {
+        super::windows_members::MemberHandles::capture(self.group())
+    }
+
+    #[cfg(windows)]
+    fn group(&self) -> &processkit::ProcessGroup {
+        self.group
+            .as_ref()
+            .expect("ManagedChild 释放前必须持有 Windows Job Object")
     }
 
     #[cfg(unix)]
@@ -135,146 +144,51 @@ impl Drop for ManagedChild {
     fn drop(&mut self) {
         #[cfg(windows)]
         {
-            if !self.job.is_null() {
-                unsafe { windows_sys::Win32::Foundation::CloseHandle(self.job) };
-                self.job = std::ptr::null_mut();
-            }
+            // 先关闭带 KILL_ON_JOB_CLOSE 的 Job 句柄，再等待直接子进程，保持原有
+            // 析构顺序；即使显式 kill_all 失败也不会卡在仍运行的直接子进程上。
+            drop(self.group.take());
         }
         #[cfg(unix)]
         {
-            let _ = super::signal_process_group(self.process_group_id, libc::SIGKILL);
+            let _ = super::signal_process_group(
+                self.process_group_id,
+                nix::sys::signal::Signal::SIGKILL,
+            );
         }
         #[cfg(not(any(unix, windows)))]
         {
             let _ = self.child.kill();
         }
-        let _ = self.child.wait();
+        let _ = self.wait();
     }
 }
 
 #[cfg(windows)]
-fn create_kill_on_close_job() -> Result<windows_sys::Win32::Foundation::HANDLE> {
-    use std::{ffi::c_void, mem};
-    use windows_sys::Win32::{
-        Foundation::{CloseHandle, HANDLE},
-        System::JobObjects::{
-            CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-            SetInformationJobObject,
-        },
-    };
-
-    let job: HANDLE = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
-    if job.is_null() {
-        return Err(format!(
-            "无法创建 Windows Job Object：{}",
-            std::io::Error::last_os_error()
-        )
-        .into());
-    }
-    let mut information: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { mem::zeroed() };
-    information.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-    let configured = unsafe {
-        SetInformationJobObject(
-            job,
-            JobObjectExtendedLimitInformation,
-            (&raw const information).cast::<c_void>(),
-            u32::try_from(mem::size_of_val(&information))
-                .expect("Job Object 配置大小必须可由 u32 表示"),
-        )
-    };
-    if configured == 0 {
-        let error = std::io::Error::last_os_error();
-        unsafe { CloseHandle(job) };
-        return Err(format!("无法配置 Windows Job Object：{error}").into());
-    }
-    Ok(job)
+fn spawn_managed(command: Command) -> Result<ManagedChild> {
+    let group = processkit::ProcessGroup::new()
+        .map_err(|error| format!("无法创建 Windows 子进程 Job Object：{error}"))?;
+    let child = group
+        .spawn(tokio::process::Command::from(command))
+        .map_err(|error| format!("无法启动 Windows Job Object 子进程：{error}"))?;
+    Ok(ManagedChild {
+        child,
+        group: Some(group),
+    })
 }
 
-#[cfg(windows)]
-fn assign_and_resume_suspended_child(
-    job: windows_sys::Win32::Foundation::HANDLE,
-    child: &Child,
-) -> Result<()> {
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::System::JobObjects::AssignProcessToJobObject;
-
-    // Child 保有 CreateProcess 返回的真实进程句柄，可避免按 PID 再次打开时的竞态。
-    let process = child.as_raw_handle().cast();
-    if unsafe { AssignProcessToJobObject(job, process) } == 0 {
-        return Err(format!(
-            "无法把挂起的子进程加入 Windows Job Object：{}",
-            std::io::Error::last_os_error()
-        )
-        .into());
-    }
-    resume_initial_thread(child.id())
+#[cfg(unix)]
+fn spawn_managed(mut command: Command) -> Result<ManagedChild> {
+    prepare_process_group(&mut command);
+    let child = command.spawn()?;
+    let process_group_id = child.id();
+    Ok(ManagedChild {
+        child,
+        process_group_id,
+    })
 }
 
-#[cfg(windows)]
-fn resume_initial_thread(process_id: u32) -> Result<()> {
-    use std::mem;
-    use windows_sys::Win32::{
-        Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE},
-        System::{
-            Diagnostics::ToolHelp::{
-                CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First,
-                Thread32Next,
-            },
-            Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME},
-        },
-    };
-
-    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) };
-    if snapshot == INVALID_HANDLE_VALUE {
-        return Err(format!(
-            "无法枚举挂起子进程的初始线程：{}",
-            std::io::Error::last_os_error()
-        )
-        .into());
-    }
-
-    let result = (|| {
-        let mut entry = THREADENTRY32 {
-            dwSize: u32::try_from(mem::size_of::<THREADENTRY32>())
-                .expect("Windows 线程条目大小必须可由 u32 表示"),
-            ..Default::default()
-        };
-        let mut has_entry = unsafe { Thread32First(snapshot, &raw mut entry) } != 0;
-        let mut last_open_error = None;
-        while has_entry {
-            if entry.th32OwnerProcessID == process_id {
-                let thread: HANDLE =
-                    unsafe { OpenThread(THREAD_SUSPEND_RESUME, 0, entry.th32ThreadID) };
-                if thread.is_null() {
-                    last_open_error = Some(std::io::Error::last_os_error());
-                } else {
-                    let previous_suspend_count = unsafe { ResumeThread(thread) };
-                    unsafe { CloseHandle(thread) };
-                    if previous_suspend_count == u32::MAX {
-                        return Err(format!(
-                            "无法恢复挂起子进程 {process_id} 的初始线程：{}",
-                            std::io::Error::last_os_error()
-                        )
-                        .into());
-                    }
-                    if previous_suspend_count == 1 {
-                        return Ok(());
-                    }
-                    return Err(format!(
-                        "挂起子进程 {process_id} 的初始线程挂起计数异常：{previous_suspend_count}"
-                    )
-                    .into());
-                }
-            }
-            has_entry = unsafe { Thread32Next(snapshot, &raw mut entry) } != 0;
-        }
-        if let Some(error) = last_open_error {
-            Err(format!("无法打开挂起子进程 {process_id} 的初始线程：{error}").into())
-        } else {
-            Err(format!("未找到挂起子进程 {process_id} 的初始线程").into())
-        }
-    })();
-    unsafe { CloseHandle(snapshot) };
-    result
+#[cfg(not(any(unix, windows)))]
+fn spawn_managed(mut command: Command) -> Result<ManagedChild> {
+    let child = command.spawn()?;
+    Ok(ManagedChild { child })
 }

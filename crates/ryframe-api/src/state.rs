@@ -3,7 +3,6 @@ use std::sync::Arc;
 use crate::TrustedProxySet;
 use ryframe_application::{
     AuditOutbox, AuthService, JobQueue, JobScheduleService,
-    agent::AgentService,
     generated::GeneratedServices,
     ports::tenants::TenantRuntimeReadPort,
     system::{
@@ -17,9 +16,8 @@ use ryframe_application::{
             OnlineUserService, OperLogService, OverviewService,
         },
         platform::{
-            AuthorizationDiagnosticService, ProductService, ServiceAccountService,
-            TenantConfigTransferService, TenantDataMigrationService, TenantService,
-            TenantUsageService,
+            AuthorizationDiagnosticService, ProductService, TenantConfigTransferService,
+            TenantDataMigrationService, TenantService, TenantUsageService,
         },
     },
 };
@@ -51,8 +49,6 @@ pub struct PlatformServices {
     pub product: Arc<ProductService>,
     pub tenant_data: Arc<dyn TenantRuntimeReadPort>,
     pub tenant_usage: Arc<TenantUsageService>,
-    pub service_accounts: Option<Arc<ServiceAccountService>>,
-    pub agent: Option<Arc<AgentService>>,
     pub tenant_config_transfer: Arc<TenantConfigTransferService>,
     pub tenant_data_migration: Arc<TenantDataMigrationService>,
     pub authorization_diagnostic: Arc<AuthorizationDiagnosticService>,

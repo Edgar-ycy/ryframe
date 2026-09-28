@@ -2,7 +2,7 @@ use crate::RequestPrincipal;
 use crate::http::{ApiPageResponse, ApiResponse, HttpResult};
 use axum::{
     Json, Router,
-    extract::{Multipart, Path, Query, State},
+    extract::{DefaultBodyLimit, Multipart, Path, Query, State, multipart::MultipartRejection},
     http::{HeaderMap, StatusCode},
 };
 use ryframe_application::system::identity::{RequestUserImportCommand, UserImportListParams};
@@ -24,7 +24,7 @@ const INVALID_IMPORT_ID: &str = "用户导入任务 ID 必须是正整数";
 
 pub fn user_import_router(state: AppState) -> Router {
     Router::new()
-        .merge(route!(create))
+        .merge(route!(create).layer(DefaultBodyLimit::disable()))
         .merge(route!(list))
         .merge(route!(detail))
         .merge(route!(cancel))
@@ -38,14 +38,19 @@ pub fn user_import_router(state: AppState) -> Router {
 #[utoipa::path(post, path = "/api/v1/system/user-imports", tag = "用户导入",
     params(("Idempotency-Key" = String, Header, description = "用户导入幂等键")),
     request_body(content = UserImportUploadForm, content_type = "multipart/form-data"),
-    responses((status = 202, description = "用户导入任务已创建", body = ApiResponse<UserImportJobVo>)),
+    responses(
+        (status = 202, description = "用户导入任务已创建", body = ApiResponse<UserImportJobVo>),
+        (status = 400, description = "上传表单、幂等键或导入文件无效"),
+        (status = 413, description = "上传内容超过配置的导入文件大小限制")
+    ),
     security(("bearer" = [])))]
 async fn create(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     headers: HeaderMap,
-    mut multipart: Multipart,
+    multipart: Result<Multipart, MultipartRejection>,
 ) -> HttpResult<(StatusCode, Json<ApiResponse<UserImportJobVo>>)> {
+    let multipart = multipart?;
     let idempotency_hash = idempotency_key_hash(&headers)?;
     if let Some(existing) = state
         .services
@@ -61,51 +66,7 @@ async fn create(
         ));
     }
 
-    let mut source = None;
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|error| AppError::Validation(format!("读取上传表单失败: {error}")))?
-    {
-        if field.name() != Some("file") {
-            return Err(AppError::Validation("上传表单只允许 file 字段".into()).into());
-        }
-        if source.is_some() {
-            return Err(AppError::Validation("只能上传一个用户导入文件".into()).into());
-        }
-        let file_name = field
-            .file_name()
-            .map(str::to_owned)
-            .filter(|name| !name.trim().is_empty())
-            .ok_or_else(|| AppError::Validation("用户导入文件名不能为空".into()))?;
-        if !file_name.to_ascii_lowercase().ends_with(".xlsx") {
-            return Err(AppError::Validation("用户导入只接受 .xlsx 文件".into()).into());
-        }
-        let bytes = field
-            .bytes()
-            .await
-            .map_err(|error| AppError::Validation(format!("读取用户导入文件失败: {error}")))?
-            .to_vec();
-        if bytes.is_empty() {
-            return Err(AppError::Validation("用户导入文件不能为空".into()).into());
-        }
-        if bytes.len() > state.settings.user_import_max_file_bytes {
-            return Err(AppError::PayloadTooLarge(format!(
-                "用户导入文件超过 {} 字节上限",
-                state.settings.user_import_max_file_bytes
-            ))
-            .into());
-        }
-        let bytes = state
-            .services
-            .identity
-            .user_import
-            .validate_source(bytes)
-            .await?;
-        source = Some((file_name, bytes));
-    }
-    let (file_name, bytes) =
-        source.ok_or_else(|| AppError::Validation("未找到 file 上传字段".into()))?;
+    let (file_name, bytes) = read_source(&state, multipart).await?;
     let source_sha256 = hex::encode(Sha256::digest(&bytes));
     let uploaded = state
         .services
@@ -304,4 +265,45 @@ async fn report(
         .await
         .map_err(crate::http::HttpAppError::from)?;
     excel_response(file.data, &file.original_name)
+}
+
+async fn read_source(state: &AppState, mut multipart: Multipart) -> HttpResult<(String, Vec<u8>)> {
+    let mut source = None;
+    while let Some(field) = multipart.next_field().await? {
+        if field.name() != Some("file") {
+            return Err(AppError::Validation("上传表单只允许 file 字段".into()).into());
+        }
+        if source.is_some() {
+            return Err(AppError::Validation("只能上传一个用户导入文件".into()).into());
+        }
+        let file_name = field
+            .file_name()
+            .map(str::to_owned)
+            .filter(|name| !name.trim().is_empty())
+            .ok_or_else(|| AppError::Validation("用户导入文件名不能为空".into()))?;
+        if !file_name.to_ascii_lowercase().ends_with(".xlsx") {
+            return Err(AppError::Validation("用户导入只接受 .xlsx 文件".into()).into());
+        }
+        let bytes = field.bytes().await?.to_vec();
+        if bytes.is_empty() {
+            return Err(AppError::Validation("用户导入文件不能为空".into()).into());
+        }
+        if bytes.len() > state.settings.user_import_max_file_bytes {
+            return Err(AppError::PayloadTooLarge(format!(
+                "用户导入文件超过 {} 字节上限",
+                state.settings.user_import_max_file_bytes
+            ))
+            .into());
+        }
+        let bytes = state
+            .services
+            .identity
+            .user_import
+            .validate_source(bytes)
+            .await?;
+        source = Some((file_name, bytes));
+    }
+    let (file_name, bytes) =
+        source.ok_or_else(|| AppError::Validation("未找到 file 上传字段".into()))?;
+    Ok((file_name, bytes))
 }

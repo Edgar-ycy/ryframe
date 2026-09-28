@@ -95,6 +95,7 @@ const REQUIRED_TABLES: &[&str] = &[
     "sys_user_role",
     "sys_role_permission",
     "sys_background_job",
+    "sys_background_job_attempt",
     "sys_message",
     "sys_message_audience",
     "sys_message_recipient",
@@ -107,12 +108,6 @@ const REQUIRED_TABLES: &[&str] = &[
     "sys_tenant_product_plan",
     "sys_tenant_capability_override",
     "sys_tenant_operation_lease",
-    "sys_service_account",
-    "sys_service_account_role",
-    "sys_service_credential",
-    "sys_service_delegation",
-    "sys_service_delegation_capability",
-    "sys_service_access_audit",
 ];
 
 #[derive(Debug, FromQueryResult)]

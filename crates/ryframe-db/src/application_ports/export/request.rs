@@ -76,12 +76,7 @@ impl ExportRequestTransaction for DatabaseExportRequestTransaction {
                     .summarize_export(
                         &self.transaction,
                         tenant_id,
-                        &UserFilter {
-                            username: filter.username(),
-                            phone: filter.phone(),
-                            status: filter.status(),
-                            dept_id: filter.dept_id(),
-                        },
+                        &user_filter(filter),
                         &data_scope,
                     )
                     .await
@@ -157,12 +152,7 @@ impl ExportRequestTransaction for DatabaseExportRequestTransaction {
                     .summarize_export(
                         &self.transaction,
                         tenant_id,
-                        &LoginInfoFilter {
-                            user_name: filter.user_name(),
-                            status: filter.status(),
-                            begin_time: filter.begin_time(),
-                            end_time: filter.end_time(),
-                        },
+                        &login_filter(filter),
                         &data_scope,
                     )
                     .await
@@ -230,5 +220,27 @@ pub fn database_create(command: CreateExportRecord) -> CreateExportJob {
         snapshot_at: command.snapshot_at,
         upper_id: command.upper_id,
         matched_rows: command.matched_rows,
+    }
+}
+
+fn user_filter(
+    filter: &ryframe_application::system::operations::UserExportFilter,
+) -> UserFilter<'_> {
+    UserFilter {
+        username: filter.username(),
+        phone: filter.phone(),
+        status: filter.status(),
+        dept_id: filter.dept_id(),
+    }
+}
+
+fn login_filter(
+    filter: &ryframe_application::system::operations::LoginLogExportFilter,
+) -> LoginInfoFilter<'_> {
+    LoginInfoFilter {
+        user_name: filter.user_name(),
+        status: filter.status(),
+        begin_time: filter.begin_time(),
+        end_time: filter.end_time(),
     }
 }

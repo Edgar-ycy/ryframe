@@ -1,9 +1,11 @@
 //! 对象存储端口与非 SQL 出站实现。
 
+mod digest;
 mod local;
 mod s3;
 mod scoped;
 mod signing;
+pub(crate) use digest::file_digest;
 
 use std::{future::Future, path::Path, time::Duration};
 
@@ -60,6 +62,12 @@ pub struct ObjectListPage {
     pub next_cursor: Option<String>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ObjectDigest {
+    pub bytes: u64,
+    pub sha256: String,
+}
+
 /// 单次精确前缀清理结果。
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PrefixDeleteBatch {
@@ -72,6 +80,7 @@ pub struct PrefixDeleteBatch {
 pub(crate) enum StorageOperation {
     Put,
     Get,
+    Digest,
     Delete,
     Exists,
     List,
@@ -89,6 +98,7 @@ impl StorageOperation {
         match self {
             Self::Put => "PUT",
             Self::Get => "GET",
+            Self::Digest => "DIGEST",
             Self::Delete => "DELETE",
             Self::Exists => "EXISTS",
             Self::List => "LIST",
@@ -214,6 +224,9 @@ pub trait ObjectStorage: Send + Sync {
     ) -> StorageResult<()>;
 
     async fn get(&self, bucket: &str, key: &str) -> StorageResult<Vec<u8>>;
+
+    /// 流式读取完整对象并计算校验摘要，不把大对象整体载入内存。
+    async fn digest(&self, bucket: &str, key: &str) -> StorageResult<ObjectDigest>;
 
     /// 读取小型控制对象，并在分配完整响应前拒绝超过上限的内容。
     ///
@@ -376,6 +389,10 @@ fn key_segments(key: &str) -> StorageResult<Vec<&str>> {
         ));
     }
     Ok(segments)
+}
+
+pub(crate) fn validate_object_key(key: &str) -> StorageResult<()> {
+    key_segments(key).map(|_| ())
 }
 
 fn encoded_segment(value: &str) -> String {

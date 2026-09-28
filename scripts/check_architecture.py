@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -20,11 +21,16 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from rust_function_size import (
+from tenant_data_boundaries import validate_tenant_data_boundaries  # noqa: E402
+
+from rust_function_size import (  # noqa: E402
+    FunctionRecord,
     changed_line_ranges,
-    parse_functions,
     parse_policy as parse_function_size_policy,
+    parse_rust_sources,
+    parse_template_unsafe,
     validate_functions,
+    validate_no_unsafe,
 )
 
 
@@ -53,6 +59,21 @@ DOCUMENT_LIMITS = {
     "docs/operations.md": 240,
 }
 HISTORICAL_DOCUMENTS = {"CHANGELOG.md"}
+DOCUMENTATION_EXCLUDED_DIRECTORIES = frozenset(
+    {
+        ".cache",
+        ".git",
+        ".github",
+        ".local-tests",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        "__pycache__",
+        "node_modules",
+        "target",
+        "vendor",
+    }
+)
 TEST_FILE_NAME = re.compile(r"(?:^tests?\.rs$|_tests?\.rs$)", re.IGNORECASE)
 TEST_ATTRIBUTE = re.compile(
     r"#\s*\[\s*(?:cfg\s*\(\s*test\s*\)|(?:[A-Za-z_][A-Za-z0-9_]*::)?test)\s*\]"
@@ -83,29 +104,35 @@ def validate_system_domain_surface(root: Path, errors: list[str]) -> None:
         errors.append("system 根模块不得保留兼容 re-export")
 
 
-def business_sources() -> list[Path]:
-    result: list[Path] = []
-    for path in sorted((ROOT / "crates").glob("*/src/**/*.rs")):
-        relative = path.relative_to(ROOT)
-        lowered_parts = {part.lower() for part in relative.parts}
-        source = path.read_text(encoding="utf-8")
-        if (
-            lowered_parts.intersection({"biz", "business", "tenant_business"})
-            or path.name.lower().startswith("biz_")
-            or "tenant-data-boundary: business" in source
-        ):
-            result.append(path)
-    return result
+def documentation_paths(root: Path, errors: list[str]) -> set[str]:
+    """列出项目人工文档，并在进入工具缓存前剪枝。"""
 
+    actual: set[str] = set()
 
-def validate_documentation(errors: list[str]) -> None:
-    actual = {
-        path.relative_to(ROOT).as_posix()
-        for path in ROOT.rglob("*.md")
-        if not set(path.relative_to(ROOT).parts).intersection(
-            {".github", ".local-tests", "target", "vendor"}
+    def record_walk_error(error: OSError) -> None:
+        errors.append(f"无法枚举文档目录: {error}")
+
+    for directory, directory_names, file_names in os.walk(
+        root,
+        topdown=True,
+        onerror=record_walk_error,
+    ):
+        directory_names[:] = [
+            name
+            for name in directory_names
+            if name.casefold() not in DOCUMENTATION_EXCLUDED_DIRECTORIES
+        ]
+        directory_path = Path(directory)
+        actual.update(
+            (directory_path / name).relative_to(root).as_posix()
+            for name in file_names
+            if name.casefold().endswith(".md")
         )
-    }
+    return actual
+
+
+def validate_documentation(root: Path, errors: list[str]) -> None:
+    actual = documentation_paths(root, errors)
     expected = set(DOCUMENT_LIMITS) | HISTORICAL_DOCUMENTS
     if actual != expected:
         missing = expected - actual
@@ -115,7 +142,7 @@ def validate_documentation(errors: list[str]) -> None:
         if unexpected:
             errors.append(f"后端存在额外人工文档: {', '.join(sorted(unexpected))}")
     for relative, limit in DOCUMENT_LIMITS.items():
-        path = ROOT / relative
+        path = root / relative
         if not path.is_file():
             continue
         lines = len(path.read_text(encoding="utf-8").splitlines())
@@ -294,11 +321,6 @@ def validate_profile(name: str, profile: Any, errors: list[str]) -> dict[str, An
         errors.append(
             f"{label} 声明 {expected_count} 个包，但 packages 实际包含 {len(packages)} 个"
         )
-    run_legacy_checks = profile.get("run_tenant_data_legacy_checks", False)
-    if not isinstance(run_legacy_checks, bool):
-        errors.append(f"{label}.run_tenant_data_legacy_checks 必须是布尔值")
-        run_legacy_checks = False
-
     if products & tools:
         errors.append(f"{label} 的产品包与工具包不得重叠")
     if products | tools != packages:
@@ -344,7 +366,6 @@ def validate_profile(name: str, profile: Any, errors: list[str]) -> dict[str, An
         "allowed_edges": allowed_edges,
         "temporary_edges": temporary_edges,
         "expected_count": expected_count,
-        "run_legacy_checks": run_legacy_checks,
     }
 
 
@@ -426,6 +447,40 @@ def workspace_packages(metadata: dict[str, Any]) -> dict[str, dict[str, Any]]:
         for package in metadata.get("packages", [])
         if package.get("id") in workspace_members
     }
+
+
+def validate_unsafe_lint_policy(
+    root: Path, packages: dict[str, dict[str, Any]], errors: list[str]
+) -> int:
+    """固定 Workspace lint，并确保每个自维护 crate 都继承该策略。"""
+
+    try:
+        workspace_manifest = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as error:
+        errors.append(f"无法读取 Workspace unsafe lint：{error}")
+        return 0
+    workspace_lints = workspace_manifest.get("workspace", {}).get("lints", {})
+    rust_lints = workspace_lints.get("rust", {}) if isinstance(workspace_lints, dict) else {}
+    if not isinstance(rust_lints, dict) or rust_lints.get("unsafe_code") != "forbid":
+        errors.append("Workspace 必须设置 [workspace.lints.rust] unsafe_code = \"forbid\"")
+
+    checked = 0
+    for package_name, package in sorted(packages.items()):
+        manifest_path = Path(package["manifest_path"]).resolve()
+        try:
+            manifest_path.relative_to(root)
+            manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+        except ValueError:
+            errors.append(f"工作区 crate 位于仓库之外：{package_name}")
+            continue
+        except (OSError, tomllib.TOMLDecodeError) as error:
+            errors.append(f"无法读取 crate lint 配置：{package_name}（{error}）")
+            continue
+        checked += 1
+        lints = manifest.get("lints")
+        if not isinstance(lints, dict) or lints.get("workspace") is not True:
+            errors.append(f"工作区 crate 必须继承 Workspace lint：{package_name}")
+    return checked
 
 
 def workspace_edges(packages: dict[str, dict[str, Any]]) -> set[tuple[str, str]]:
@@ -597,16 +652,16 @@ def validate_source_size(
     packages: dict[str, dict[str, Any]],
     errors: list[str],
     warnings: list[str],
-) -> tuple[int, dict[str, int]]:
+) -> tuple[int, dict[str, int], set[str]]:
     max_lines = source_size.get("max_lines")
     if not isinstance(max_lines, int) or max_lines < 1:
         errors.append("source_size.max_lines 必须是正整数")
-        return 0, {}
+        return 0, {}, set()
 
     generated_max_lines = source_size.get("generated_max_lines")
     if not isinstance(generated_max_lines, int) or generated_max_lines < 1:
         errors.append("source_size.generated_max_lines 必须是正整数")
-        return 0, {}
+        return 0, {}, set()
     if generated_max_lines > max_lines:
         errors.append("source_size.generated_max_lines 不得大于 source_size.max_lines")
 
@@ -634,7 +689,9 @@ def validate_source_size(
 
     scanned_paths: set[str] = set()
     scanned_by_package: dict[str, int] = {}
-    for package_name in sorted(profile.get("products", set()) | profile.get("tools", set())):
+    for package_name in sorted(
+        profile.get("products", set()) | profile.get("tools", set())
+    ):
         package = packages.get(package_name)
         if package is None:
             continue
@@ -677,7 +734,22 @@ def validate_source_size(
     stale_frozen_paths = frozen_migrations - scanned_paths
     for path in sorted(stale_frozen_paths):
         errors.append(f"冻结迁移清单未命中工作区源码: {path}")
-    return len(scanned_paths), scanned_by_package
+    return len(scanned_paths), scanned_by_package, frozen_migrations
+
+
+def mutable_function_records(
+    records: list[FunctionRecord],
+    frozen_migrations: set[str],
+    retained_exceptions: set[tuple[str, str]],
+) -> list[FunctionRecord]:
+    """冻结迁移按摘要锁定；过渡期仍保留策略中已登记的旧例外。"""
+
+    return [
+        record
+        for record in records
+        if record.path not in frozen_migrations
+        or (record.path, record.symbol) in retained_exceptions
+    ]
 
 
 def validate_test_layout(
@@ -816,6 +888,25 @@ def workspace_rust_sources(
     return sorted(sources)
 
 
+def workspace_rust_templates(
+    root: Path,
+    profile: dict[str, Any],
+    packages: dict[str, dict[str, Any]],
+) -> list[Path]:
+    templates: set[Path] = set()
+    for package_name in sorted(profile.get("products", set()) | profile.get("tools", set())):
+        package = packages.get(package_name)
+        if package is None:
+            continue
+        package_root = Path(package["manifest_path"]).resolve().parent
+        try:
+            package_root.relative_to(root)
+        except ValueError:
+            continue
+        templates.update(package_root.rglob("*.rs.tpl"))
+    return sorted(path for path in templates if path.is_file())
+
+
 def validate_legacy_persistence_apis(
     root: Path,
     sources: Iterable[Path],
@@ -885,153 +976,36 @@ def validate_async_port_traits(
     return len(source_paths), violations
 
 
-def validate_tenant_data_boundaries(errors: list[str]) -> None:
-    """校验租户数据目录、生成模板和应用端口边界。"""
-
-    tenant_manifest = read("crates/ryframe-tenant-db/Cargo.toml")
-    for forbidden in ("ryframe-api",):
-        if re.search(rf"(?m)^\s*{re.escape(forbidden)}\s*=", tenant_manifest):
-            errors.append(f"ryframe-tenant-db must not depend on {forbidden}")
-
-    use_case_template = read("crates/ryframe-generator/src/template/use_case.rs")
-    repository_template = read("crates/ryframe-generator/src/template/repository.rs")
-    tenant_data_repository = read(
-        "crates/ryframe-db/src/repositories/tenant_data_repo.rs"
-    )
-    catalog_template = read("crates/ryframe-generator/src/template/catalog.rs")
-    generator_engine = read("crates/ryframe-generator/src/engine.rs")
-    for fragment in (
-        "DataSource",
-        "RepositoryPort",
-        ".begin(tenant_id)",
-        ".commit(transaction)",
-        ".rollback(transaction)",
-        ".insert(&transaction",
-    ):
-        if fragment not in use_case_template:
-            errors.append(f"generator use-case template misses application boundary: {fragment}")
-    for forbidden in (
-        "ryframe_db",
-        "ryframe_tenant_db",
-        "ryframe_adapters",
-        "ryframe_http",
-        "sea_orm",
-        "axum",
-    ):
-        if forbidden in use_case_template:
-            errors.append(f"generator use-case template crosses application boundary: {forbidden}")
-    for fragment in (
-        "connection: &DatabaseConnection",
-        "transaction: &DatabaseTransaction",
-        "find_by_id",
-        "insert",
-        "update",
-        "delete",
-        ".reset_all()",
-    ):
-        if fragment not in repository_template:
-            errors.append(f"generator repository template misses SQL boundary: {fragment}")
-    for forbidden in (".begin(", ".commit(", ".rollback(", "TransactionTrait"):
-        if forbidden in repository_template:
-            errors.append(f"generator repository template owns transaction boundary: {forbidden}")
-    if tenant_data_repository.count(".reset_all()") < 3:
-        errors.append(
-            "tenant-data repository saves must mark mutated model fields for UPDATE"
-        )
-    for fragment in ('starts_with("biz_")', 'column.name == "tenant_id"'):
-        if fragment not in generator_engine:
-            errors.append(f"generator business-table validation misses: {fragment}")
-    for fragment in (
-        "TenantDataTableDescriptor",
-        "primary_key_cursor_columns",
-        "checksum_columns",
-        "foreign_key_dependencies",
-        "GENERATED_TENANT_DATA_SCHEMA_FINGERPRINT",
-    ):
-        if fragment not in catalog_template:
-            errors.append(f"generator catalog template misses: {fragment}")
-    for forbidden in ("ControlDatabaseCluster", ".write(", ".source("):
-        if forbidden in use_case_template or forbidden in repository_template:
-            errors.append(f"generator business template reaches control data source: {forbidden}")
-
-    for path in business_sources():
-        source = path.read_text(encoding="utf-8")
-        relative = path.relative_to(ROOT).as_posix()
-        is_generated_sql_boundary = relative.startswith(
-            "crates/ryframe-db/src/repositories/business/"
-        )
-        forbidden_type_pattern = (
-            r"\b(?:ControlDatabaseCluster|TenantDataTargetHandle|"
-            r"TenantDatabaseTargetRegistry)\b"
-            if is_generated_sql_boundary
-            else r"\b(?:ControlDatabaseCluster|DatabaseConnection|"
-            r"TenantDataTargetHandle|TenantDatabaseTargetRegistry)\b"
-        )
-        forbidden_types = re.search(forbidden_type_pattern, source)
-        forbidden_methods = re.search(
-            r"\.(?:write|source|open_target(?:_for_catalog)?|verify_target_now(?:_for_catalog)?|"
-            r"target_occupancy(?:_for_catalog)?|tenant_is_empty_on_target(?:_for_catalog)?|"
-            r"prepare_migration_target(?:_for_catalog)?|freeze_fence(?:_for_catalog)?|"
-            r"activate_fence(?:_for_catalog)?|clear_prepared_target(?:_for_catalog)?|"
-            r"cleanup_ownership_for_catalog|delete_tenant_rows_batch(?:_for_catalog)?|"
-            r"finish_tenant_cleanup_for_catalog|finalize_retained_source(?:_for_catalog)?|"
-            r"runtime_snapshot|verify_current_targets|placement_metrics_snapshot|"
-            r"prepare_provisioning|provision_tenant_fence|provision_pending_fence)\(",
-            source,
-        )
-        if forbidden_types or forbidden_methods:
-            errors.append(
-                "tenant business module bypasses TenantDataSession: "
-                f"{relative}"
-            )
-
-    generated_catalog = read(
-        "crates/ryframe-tenant-db/src/migration/generated_catalog.rs"
-    )
-    migration_module = read("crates/ryframe-tenant-db/src/migration/mod.rs")
-    migration_catalog = read("crates/ryframe-tenant-db/src/migration/catalog.rs")
-    if "mod generated_catalog;" not in migration_module:
-        errors.append("tenant-data generated catalog is not compiled into the migration module")
-    for fragment in (
-        "GENERATED_TENANT_DATA_TABLES",
-        "GENERATED_TENANT_DATA_SCHEMA_FINGERPRINT",
-    ):
-        if fragment not in generated_catalog or fragment not in migration_catalog:
-            errors.append(f"tenant-data compiled catalog misses: {fragment}")
-
-    adapters_multi_tenant = ROOT / "crates/ryframe-adapters/src/multi_tenant.rs"
-    if adapters_multi_tenant.is_file():
-        source = adapters_multi_tenant.read_text(encoding="utf-8")
-        for removed in ("IsolationStrategy", "TenantFilter"):
-            if re.search(rf"\b{removed}\b", source):
-                errors.append(f"removed multi-tenant shell remains: {removed}")
-
-
 def main() -> int:
     errors: list[str] = []
     warnings: list[str] = []
-    validate_documentation(errors)
+    validate_documentation(ROOT, errors)
     validate_system_domain_surface(ROOT, errors)
     active_profile, profiles, source_size, test_layout, function_size = load_policy(errors)
     metadata = cargo_metadata(errors)
     packages = workspace_packages(metadata) if metadata else {}
+    unsafe_lint_packages = validate_unsafe_lint_policy(ROOT, packages, errors) if packages else 0
     active = profiles.get(active_profile, {})
     actual_edges: set[tuple[str, str]] = set()
     scanned = 0
     scanned_by_package: dict[str, int] = {}
+    frozen_migrations: set[str] = set()
     checked_test_sources = 0
     integration_targets = 0
     persistence_sources = 0
     legacy_persistence_violations = 0
     async_port_sources = 0
     async_port_violations = 0
+    checked_unsafe_sources = 0
+    unsafe_syntax_violations = 0
     checked_functions = 0
     function_size_violations = 0
+    excluded_frozen_functions = 0
     if active and packages:
         actual_edges = validate_active_workspace(
             active_profile, active, packages, errors
         )
-        scanned, scanned_by_package = validate_source_size(
+        scanned, scanned_by_package, frozen_migrations = validate_source_size(
             source_size, active, packages, errors, warnings
         )
         checked_test_sources, integration_targets = validate_test_layout(
@@ -1047,10 +1021,24 @@ def main() -> int:
             workspace_rust_sources(ROOT, active, packages),
             errors,
         )
+        rust_sources = workspace_rust_sources(ROOT, active, packages)
+        functions, unsafe_syntax = parse_rust_sources(ROOT, rust_sources, errors)
+        rust_templates = workspace_rust_templates(ROOT, active, packages)
+        unsafe_syntax.extend(parse_template_unsafe(ROOT, rust_templates, errors))
+        checked_unsafe_sources = len(rust_sources) + len(rust_templates)
+        unsafe_syntax_violations = validate_no_unsafe(unsafe_syntax, errors)
         function_policy = parse_function_size_policy(function_size, errors)
         if function_policy is not None:
-            rust_sources = workspace_rust_sources(ROOT, active, packages)
-            functions = parse_functions(ROOT, rust_sources, errors)
+            retained_exceptions = {
+                (exception.path, exception.symbol)
+                for exception in function_policy.exceptions
+            }
+            mutable_functions = mutable_function_records(
+                functions,
+                frozen_migrations,
+                retained_exceptions,
+            )
+            excluded_frozen_functions = len(functions) - len(mutable_functions)
             changed = (
                 changed_line_ranges(ROOT, errors)
                 if function_policy.mode == "changed"
@@ -1058,14 +1046,12 @@ def main() -> int:
             )
             checked_functions, function_size_violations = validate_functions(
                 function_policy,
-                functions,
+                mutable_functions,
                 changed,
                 errors,
             )
 
-    ran_tenant_checks = bool(active.get("run_legacy_checks"))
-    if ran_tenant_checks:
-        validate_tenant_data_boundaries(errors)
+    validate_tenant_data_boundaries(ROOT, errors)
 
     if warnings:
         print("Architecture size notices:", file=sys.stderr)
@@ -1106,10 +1092,14 @@ def main() -> int:
     print(
         "Rust function-size AST gate passed "
         f"(mode={function_size.get('mode')}, functions={checked_functions}, "
-        f"violations={function_size_violations})."
+        f"frozen_functions={excluded_frozen_functions}, violations={function_size_violations})."
     )
-    if ran_tenant_checks:
-        print("Tenant-data architecture boundaries are valid.")
+    print(
+        "Rust unsafe AST gate passed "
+        f"(source_files={checked_unsafe_sources}, violations={unsafe_syntax_violations})."
+    )
+    print(f"Workspace unsafe lint inheritance passed (packages={unsafe_lint_packages}).")
+    print("Tenant-data architecture boundaries are valid.")
     return 0
 
 

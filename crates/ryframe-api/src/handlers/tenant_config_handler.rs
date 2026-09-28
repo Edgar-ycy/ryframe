@@ -2,7 +2,7 @@ use crate::RequestPrincipal;
 use crate::http::{ApiPageResponse, ApiResponse, HttpResult};
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Multipart, Path, Query, State},
+    extract::{DefaultBodyLimit, Multipart, Path, Query, State, multipart::MultipartRejection},
     http::{HeaderMap, StatusCode, header::CONTENT_LENGTH},
 };
 use ryframe_application::system::platform::ApplyTenantConfigTransferCommand;
@@ -189,15 +189,12 @@ async fn upload_transfer(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     headers: HeaderMap,
-    mut multipart: Multipart,
+    multipart: Result<Multipart, MultipartRejection>,
 ) -> HttpResult<(StatusCode, Json<ApiResponse<TenantConfigTransferVo>>)> {
+    let mut multipart = multipart?;
     let idempotency_hash = idempotency_key_hash(&headers)?;
     let mut package = None;
-    while let Some(mut field) = multipart
-        .next_field()
-        .await
-        .map_err(|error| AppError::Validation(format!("读取上传表单失败: {error}")))?
-    {
+    while let Some(mut field) = multipart.next_field().await? {
         if field.name() != Some("file") {
             return Err(AppError::Validation("上传表单只允许 file 字段".into()).into());
         }
@@ -236,11 +233,7 @@ async fn upload_transfer(
             .into());
         }
         let mut data = Vec::with_capacity(declared_length.unwrap_or_default());
-        while let Some(chunk) = field
-            .chunk()
-            .await
-            .map_err(|error| AppError::Validation(format!("读取配置包失败: {error}")))?
-        {
+        while let Some(chunk) = field.chunk().await? {
             if chunk.len() > max_package_bytes.saturating_sub(data.len()) {
                 return Err(AppError::PayloadTooLarge(format!(
                     "配置包超过 {max_package_bytes} 字节上限"

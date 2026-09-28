@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::reset::{ResetError, ResetResult, model::ResetManifest};
 
-const LEDGER_VERSION: u32 = 3;
+const LEDGER_VERSION: u32 = 4;
 const STATE_DIR_ENV: &str = "RYFRAME_RESET_STATE_DIR";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -23,10 +23,11 @@ pub enum ResetPhase {
     ControlBaseline,
     TenantBaselines,
     Verification,
+    Release,
 }
 
 impl ResetPhase {
-    pub const ORDERED: [Self; 7] = [
+    pub const ORDERED: [Self; 8] = [
         Self::Preflight,
         Self::ObjectStorage,
         Self::Redis,
@@ -34,6 +35,7 @@ impl ResetPhase {
         Self::ControlBaseline,
         Self::TenantBaselines,
         Self::Verification,
+        Self::Release,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -45,6 +47,7 @@ impl ResetPhase {
             Self::ControlBaseline => "control_baseline",
             Self::TenantBaselines => "tenant_baselines",
             Self::Verification => "verification",
+            Self::Release => "release",
         }
     }
 }
@@ -291,6 +294,13 @@ impl ResetLedger {
             || ResetPhase::ORDERED
                 .iter()
                 .any(|phase| !self.phases.contains_key(phase))
+            || self.phases.values().any(|record| {
+                record.status == PhaseStatus::Complete
+                    && record
+                        .completed_at
+                        .as_deref()
+                        .is_none_or(|value| chrono::DateTime::parse_from_rfc3339(value).is_err())
+            })
             || self
                 .resources
                 .keys()

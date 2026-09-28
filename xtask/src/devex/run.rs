@@ -3,7 +3,7 @@ use std::{
     fs,
     net::{Ipv4Addr, TcpListener},
     path::{Path, PathBuf},
-    process::{Command, ExitStatus, Stdio},
+    process::{Command, ExitStatus},
     time::Instant,
 };
 
@@ -16,26 +16,21 @@ use crate::{
 
 use super::{
     incremental::with_source_edit,
-    metadata::{
-        MetadataContext, PathNormalizer, SourceFingerprints, collect as collect_metadata,
-        corepack_executable,
-    },
-    model::{
-        CacheState, DevexRunOptions, DevexSuite, PairedArm, PairingMetadata, StepDefinition,
-        SuiteDefinition, WorkingDirectory,
-    },
+    metadata::{MetadataContext, PathNormalizer, SourceFingerprints, collect as collect_metadata},
+    model::{CacheState, DevexRunOptions, DevexSuite, PairedArm, PairingMetadata, SuiteDefinition},
     preflight,
     report::{
         ResourceGateDecisionEvidence, SampleKind, SampleRecord, SampleStatus, append_sample,
         summarize, write_metadata,
     },
-    support::{
-        cleanup_successful_sample_target, display_step, metric, sample_target, success_status,
-    },
+    support::{cleanup_successful_sample_target, metric, sample_target},
 };
 
 #[path = "run/environment.rs"]
 mod environment;
+#[path = "run/process.rs"]
+mod process;
+use process::execute_steps;
 #[path = "run/resource_gate.rs"]
 mod resource_gate;
 #[path = "run/save.rs"]
@@ -53,10 +48,22 @@ pub(super) fn execute(
         .suite
         .definition(&options.variant)
         .map_err(|error| format!("DevEx 变体无效：{error}"))?;
-    preflight::check(backend_root, frontend_root, options, definition)?;
+    preflight::check(
+        backend_root,
+        frontend_root,
+        frontend_root,
+        options,
+        definition,
+    )?;
     let session = prepare_run(backend_root, frontend_root, options, definition)?;
     let execution = (|| {
-        execute_warmup(backend_root, frontend_root, options, &session)?;
+        execute_warmup(
+            backend_root,
+            frontend_root,
+            frontend_root,
+            options,
+            &session,
+        )?;
         capture_sccache_stats(
             backend_root,
             options.suite,
@@ -64,7 +71,13 @@ pub(super) fn execute(
             &session.run_dir,
             "sccache-before.json",
         )?;
-        execute_measurements(backend_root, frontend_root, options, &session)?;
+        execute_measurements(
+            backend_root,
+            frontend_root,
+            frontend_root,
+            options,
+            &session,
+        )?;
         capture_sccache_stats(
             backend_root,
             options.suite,
@@ -157,6 +170,7 @@ fn prepare_run(
     prepare_run_at(
         backend_root,
         frontend_root,
+        frontend_root,
         &devex_root,
         options,
         definition,
@@ -170,6 +184,7 @@ fn prepare_run(
 pub(super) fn prepare_run_at(
     backend_root: &Path,
     frontend_root: &Path,
+    runner_frontend_root: &Path,
     devex_root: &Path,
     options: &DevexRunOptions,
     definition: SuiteDefinition,
@@ -198,9 +213,18 @@ pub(super) fn prepare_run_at(
             environment.remove("SCCACHE_RECACHE");
         }
     }
+    if options.suite.is_runtime() {
+        super::runtime::prepare(
+            backend_root,
+            runner_frontend_root,
+            options.cache_state,
+            &mut environment,
+        )?;
+    }
     let metadata = collect_metadata(MetadataContext {
         backend_root,
         frontend_root,
+        runner_frontend_root,
         devex_root,
         run_id: &run_id,
         options,
@@ -209,6 +233,19 @@ pub(super) fn prepare_run_at(
         pairing: pairing.clone(),
     })?;
     let source_fingerprints = metadata.source_fingerprints();
+    if options.suite.is_runtime() {
+        if source_fingerprints.runner_frontend.as_deref()
+            != environment
+                .get("RYFRAME_DEVEX_RUNNER_FRONTEND_FINGERPRINT")
+                .map(String::as_str)
+        {
+            return Err("运行时 runner 前端在准备收据期间发生变化".into());
+        }
+        environment.insert(
+            "RYFRAME_DEVEX_SOURCE_FINGERPRINTS".into(),
+            serde_json::to_string(&source_fingerprints)?,
+        );
+    }
     write_metadata(&run_dir, &metadata)?;
     fs::write(run_dir.join("samples.jsonl"), [])?;
     let normalizer = PathNormalizer::new(backend_root, frontend_root, devex_root);
@@ -232,12 +269,14 @@ fn available_sccache_port() -> Result<u16> {
 pub(super) fn execute_warmup(
     backend_root: &Path,
     frontend_root: &Path,
+    runner_frontend_root: &Path,
     options: &DevexRunOptions,
     session: &RunSession,
 ) -> Result<()> {
     execute_warmup_with_contract(
         backend_root,
         frontend_root,
+        runner_frontend_root,
         options,
         session,
         SaveMeasurementContract::Current,
@@ -247,6 +286,7 @@ pub(super) fn execute_warmup(
 pub(super) fn execute_warmup_with_contract(
     backend_root: &Path,
     frontend_root: &Path,
+    runner_frontend_root: &Path,
     options: &DevexRunOptions,
     session: &RunSession,
     save_contract: SaveMeasurementContract,
@@ -256,6 +296,7 @@ pub(super) fn execute_warmup_with_contract(
         let outcome = execute_sample_with_contract(
             backend_root,
             frontend_root,
+            runner_frontend_root,
             &target,
             session.definition,
             &session.environment,
@@ -293,6 +334,7 @@ pub(super) fn execute_warmup_with_contract(
 fn execute_measurements(
     backend_root: &Path,
     frontend_root: &Path,
+    runner_frontend_root: &Path,
     options: &DevexRunOptions,
     session: &RunSession,
 ) -> Result<()> {
@@ -314,6 +356,7 @@ fn execute_measurements(
         let outcome = execute_sample(
             backend_root,
             frontend_root,
+            runner_frontend_root,
             &target,
             session.definition,
             &session.environment,
@@ -360,9 +403,11 @@ fn execute_measurements(
 pub(super) struct SampleOutcome {
     started_at: chrono::DateTime<Utc>,
     duration_ms: f64,
+    memory: super::memory::MemoryEvidence,
     cargo_invocations: Option<usize>,
     ready_kind: Option<ReadyKind>,
     resource_gate_decision: Option<ResourceGateDecisionEvidence>,
+    runtime: Option<super::runtime::RuntimeEvidence>,
     pub(super) status: ExitStatus,
 }
 
@@ -370,6 +415,7 @@ pub(super) struct SampleOutcome {
 pub(super) fn execute_sample(
     backend_root: &Path,
     frontend_root: &Path,
+    runner_frontend_root: &Path,
     target: &Path,
     definition: SuiteDefinition,
     environment: &BTreeMap<String, String>,
@@ -380,6 +426,7 @@ pub(super) fn execute_sample(
     execute_sample_with_contract(
         backend_root,
         frontend_root,
+        runner_frontend_root,
         target,
         definition,
         environment,
@@ -394,6 +441,7 @@ pub(super) fn execute_sample(
 pub(super) fn execute_sample_with_contract(
     backend_root: &Path,
     frontend_root: &Path,
+    runner_frontend_root: &Path,
     target: &Path,
     definition: SuiteDefinition,
     environment: &BTreeMap<String, String>,
@@ -413,13 +461,14 @@ pub(super) fn execute_sample_with_contract(
         execute_steps(
             backend_root,
             frontend_root,
+            runner_frontend_root,
             target,
             definition,
             environment,
             label,
         )
     };
-    let status = if let Some(source) = source.as_deref() {
+    let (status, memory) = if let Some(source) = source.as_deref() {
         with_source_edit(source, label, execute)?
     } else {
         execute()?
@@ -432,97 +481,28 @@ pub(super) fn execute_sample_with_contract(
     let outcome = SampleOutcome {
         started_at,
         duration_ms: started.elapsed().as_secs_f64() * 1_000.0,
+        memory,
         cargo_invocations: None,
         ready_kind: None,
         resource_gate_decision,
+        runtime: if suite.is_runtime() {
+            super::runtime::read(target, label, suite, status.success())?
+        } else {
+            None
+        },
         status,
     };
     if suite == DevexSuite::CargoDevSave && outcome.status.success() {
-        save::measurement_outcome(target, variant, outcome.status, save_contract)
+        save::measurement_outcome(
+            target,
+            variant,
+            outcome.status,
+            save_contract,
+            outcome.memory,
+        )
     } else {
         Ok(outcome)
     }
-}
-
-fn execute_steps(
-    backend_root: &Path,
-    frontend_root: &Path,
-    target: &Path,
-    definition: SuiteDefinition,
-    environment: &BTreeMap<String, String>,
-    label: &str,
-) -> Result<ExitStatus> {
-    let mut last_status = success_status()?;
-    for (index, step) in definition.steps.iter().enumerate() {
-        println!("  → {label} step {:02}: {}", index + 1, display_step(step));
-        last_status = step_command(
-            step,
-            backend_root,
-            frontend_root,
-            target,
-            definition,
-            environment,
-            label,
-        )
-        .status()?;
-        if !last_status.success() {
-            break;
-        }
-    }
-    Ok(last_status)
-}
-
-fn step_command(
-    step: &StepDefinition,
-    backend_root: &Path,
-    frontend_root: &Path,
-    target: &Path,
-    definition: SuiteDefinition,
-    environment: &BTreeMap<String, String>,
-    label: &str,
-) -> Command {
-    let program = if step.program == "corepack" {
-        corepack_executable()
-    } else {
-        step.program
-    };
-    let mut command = Command::new(program);
-    let target = target.to_string_lossy();
-    let frontend = frontend_root.to_string_lossy();
-    let args = step
-        .args
-        .iter()
-        .map(|arg| {
-            arg.replace("{target}", &target)
-                .replace("{frontend}", &frontend)
-                .replace("{label}", label)
-        })
-        .collect::<Vec<_>>();
-    command
-        .args(args)
-        .current_dir(match step.working_directory {
-            WorkingDirectory::Backend => backend_root,
-            WorkingDirectory::Frontend => frontend_root,
-        })
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-    for key in definition.remove_environment {
-        command.env_remove(key);
-    }
-    for (key, value) in environment {
-        command.env(
-            key,
-            value
-                .replace("{target}", &target)
-                .replace("{frontend}", &frontend)
-                .replace("{label}", label),
-        );
-    }
-    if step.program == "cargo" {
-        command.env("CARGO_TARGET_DIR", target.as_ref());
-    }
-    command
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -552,6 +532,7 @@ pub(super) fn sample_record(
         cache_state,
         started_at: outcome.started_at.to_rfc3339(),
         duration_ms: outcome.duration_ms,
+        memory: outcome.memory.clone(),
         cargo_invocations: outcome.cargo_invocations,
         ready_kind: outcome.ready_kind,
         status: if outcome.status.success() {
@@ -566,6 +547,7 @@ pub(super) fn sample_record(
         order,
         source_fingerprints,
         resource_gate_decision: outcome.resource_gate_decision.clone(),
+        runtime: outcome.runtime.clone(),
     }
 }
 

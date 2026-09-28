@@ -143,14 +143,19 @@ fn generated_resource_access_is_owned_once_by_the_merged_seed_catalog() {
 #[test]
 fn review_snapshot_matches_the_fresh_schema() {
     let snapshot = mysql_snapshot_sql();
-    assert!(snapshot.contains("schema fingerprint: 595a420d869c5fdb"));
-    assert_eq!(snapshot.matches("CREATE TABLE IF NOT EXISTS").count(), 51);
+    assert!(snapshot.contains("schema fingerprint: c95b8a97fdbe6f49"));
+    assert_eq!(snapshot.matches("CREATE TABLE IF NOT EXISTS").count(), 49);
     for required in [
         "`sys_background_job`",
+        "`sys_background_job_attempt`",
+        "`claim_sequence`",
         "`payload_version`",
         "`sys_export_job`",
         "`active_request_fingerprint`",
         "`delete_pending_at`",
+        "`sys_backup_set`",
+        "`sys_backup_resource`",
+        "`sys_restore_run`",
     ] {
         assert!(snapshot.contains(required));
     }
@@ -245,6 +250,80 @@ fn baseline_contains_export_snapshot_and_task_versions() {
 }
 
 #[test]
+fn background_attempt_baseline_preserves_sequence_time_and_outcome_constraints() {
+    let statements = control_ddl_statements().collect::<Vec<_>>();
+    let background = statements
+        .iter()
+        .find(|statement| statement.contains("CREATE TABLE IF NOT EXISTS `sys_background_job`"))
+        .expect("基线必须包含后台任务表");
+    for required in [
+        "`claim_sequence` BIGINT      NOT NULL DEFAULT 0",
+        "`available_at`  DATETIME(6)",
+        "`lease_until`   DATETIME(6)",
+        "CONSTRAINT `ck_bg_job_attempt_budget`",
+        "`claim_sequence` >= `attempts`",
+    ] {
+        assert!(
+            background.contains(required),
+            "后台任务缺少约束: {required}"
+        );
+    }
+
+    let attempt = statements
+        .iter()
+        .find(|statement| {
+            statement.contains("CREATE TABLE IF NOT EXISTS `sys_background_job_attempt`")
+        })
+        .expect("基线必须包含后台任务尝试表");
+    for required in [
+        "PRIMARY KEY (`job_id`, `sequence`)",
+        "CONSTRAINT `fk_bg_attempt_job`",
+        "CONSTRAINT `ck_bg_attempt_sequence`",
+        "CONSTRAINT `ck_bg_attempt_times`",
+        "CONSTRAINT `ck_bg_attempt_outcome`",
+        "`outcome` = 'lease_expired' AND `finished_at` IS NULL",
+    ] {
+        assert!(attempt.contains(required), "尝试表缺少约束: {required}");
+    }
+}
+
+#[test]
+fn backup_baseline_preserves_state_and_relationship_contracts() {
+    let statements = control_ddl_statements().collect::<Vec<_>>();
+    let resource = statements
+        .iter()
+        .find(|statement| statement.contains("CREATE TABLE IF NOT EXISTS `sys_backup_resource`"))
+        .expect("基线必须包含备份资源关系表");
+    for required in [
+        "PRIMARY KEY (`backup_id`, `resource_key`)",
+        "KEY `idx_backup_resource_key` (`resource_key`, `backup_id`)",
+        "CONSTRAINT `fk_backup_resource_set`",
+    ] {
+        assert!(
+            resource.contains(required),
+            "备份资源表缺少约束: {required}"
+        );
+    }
+
+    let restore = statements
+        .iter()
+        .find(|statement| statement.contains("CREATE TABLE IF NOT EXISTS `sys_restore_run`"))
+        .expect("基线必须包含恢复演练表");
+    for required in [
+        "KEY `idx_restore_run_backup` (`backup_id`, `started_at`)",
+        "CONSTRAINT `fk_restore_run_backup`",
+        "CHECK (`status` IN ('running', 'data_verified', 'succeeded', 'failed'))",
+        concat!(
+            "OR (`status` IN ('succeeded', 'failed')\n",
+            "                    AND `completed_at` IS NOT NULL\n",
+            "                    AND `completed_at` >= `started_at`))"
+        ),
+    ] {
+        assert!(restore.contains(required), "恢复演练表缺少约束: {required}");
+    }
+}
+
+#[test]
 fn baseline_table_set_and_schema_fingerprint_are_stable() {
     let mut tables = control_ddl_statements()
         .map(|statement| statement.split('`').nth(1).expect("基线语句必须包含表名"))
@@ -253,6 +332,6 @@ fn baseline_table_set_and_schema_fingerprint_are_stable() {
     tables.sort_unstable();
     tables.dedup();
     assert_eq!(tables.len(), count);
-    assert_eq!(count, 51);
-    assert_eq!(schema_fingerprint(), "595a420d869c5fdb");
+    assert_eq!(count, 49);
+    assert_eq!(schema_fingerprint(), "c95b8a97fdbe6f49");
 }

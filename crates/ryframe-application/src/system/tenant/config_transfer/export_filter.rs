@@ -2,8 +2,7 @@ use super::*;
 
 /// 将源租户配置收缩到当前二进制真正支持的 API 权限和页面路由闭包。
 ///
-/// 历史数据库可能仍保留当前版本已经删除的接口权限或页面菜单；它们不能让上传包
-/// 自证有效，也不应导致本版本自己导出的包随后被本版本预览阻断。
+/// 配置数据不能让上传包自行证明权限或路由有效，导出和预览复用同一注册目录。
 pub(super) fn filter_exportable_resources(
     mut resources: TenantConfigPackageResources,
     target_catalog: &TenantConfigTargetCatalog,
@@ -83,6 +82,59 @@ pub(super) fn filter_exportable_resources(
         .permissions
         .retain(|item| allowed_permissions.contains(&item.code));
 
+    retain_supported_menus(
+        &mut resources,
+        target_catalog,
+        &allowed_permissions,
+        &permission_types,
+    );
+    for role in &mut resources.roles {
+        role.permission_codes
+            .retain(|code| allowed_permissions.contains(code));
+    }
+    let required_codes = crate::system::product_capability_catalog::CAPABILITY_CATALOG
+        .iter()
+        .filter(|descriptor| {
+            resources.permissions.iter().any(|permission| {
+                descriptor
+                    .permission_codes
+                    .contains(&permission.code.as_str())
+            }) || resources.roles.iter().any(|role| {
+                role.permission_codes
+                    .iter()
+                    .any(|permission| descriptor.permission_codes.contains(&permission.as_str()))
+            }) || resources.menus.iter().any(|menu| {
+                menu.permission_code
+                    .as_deref()
+                    .is_some_and(|permission| descriptor.permission_codes.contains(&permission))
+                    || menu
+                        .route_key
+                        .as_deref()
+                        .is_some_and(|route| descriptor.route_keys.contains(&route))
+            })
+        })
+        .map(|descriptor| descriptor.code)
+        .collect::<BTreeSet<_>>();
+    let required_capabilities = required_codes
+        .into_iter()
+        .map(|code| {
+            enabled_by_code
+                .get(code)
+                .cloned()
+                .cloned()
+                .ok_or_else(|| AppError::Internal(format!("导出资源引用了未启用能力 {code}")))
+        })
+        .collect::<AppResult<Vec<_>>>()?;
+    resources.canonicalize();
+    Ok((resources, required_capabilities))
+}
+
+fn retain_supported_menus(
+    resources: &mut TenantConfigPackageResources,
+    target_catalog: &TenantConfigTargetCatalog,
+    allowed_permissions: &BTreeSet<String>,
+    permission_types: &BTreeMap<String, String>,
+) {
     let menu_types = resources
         .menus
         .iter()
@@ -142,43 +194,4 @@ pub(super) fn filter_exportable_resources(
     resources
         .menus
         .retain(|item| allowed_menus.contains(&item.stable_key));
-    for role in &mut resources.roles {
-        role.permission_codes
-            .retain(|code| allowed_permissions.contains(code));
-    }
-    let required_codes = crate::system::product_capability_catalog::CAPABILITY_CATALOG
-        .iter()
-        .filter(|descriptor| {
-            resources.permissions.iter().any(|permission| {
-                descriptor
-                    .permission_codes
-                    .contains(&permission.code.as_str())
-            }) || resources.roles.iter().any(|role| {
-                role.permission_codes
-                    .iter()
-                    .any(|permission| descriptor.permission_codes.contains(&permission.as_str()))
-            }) || resources.menus.iter().any(|menu| {
-                menu.permission_code
-                    .as_deref()
-                    .is_some_and(|permission| descriptor.permission_codes.contains(&permission))
-                    || menu
-                        .route_key
-                        .as_deref()
-                        .is_some_and(|route| descriptor.route_keys.contains(&route))
-            })
-        })
-        .map(|descriptor| descriptor.code)
-        .collect::<BTreeSet<_>>();
-    let required_capabilities = required_codes
-        .into_iter()
-        .map(|code| {
-            enabled_by_code
-                .get(code)
-                .cloned()
-                .cloned()
-                .ok_or_else(|| AppError::Internal(format!("导出资源引用了未启用能力 {code}")))
-        })
-        .collect::<AppResult<Vec<_>>>()?;
-    resources.canonicalize();
-    Ok((resources, required_capabilities))
 }

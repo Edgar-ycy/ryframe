@@ -4,6 +4,7 @@
 //! 映射为 Axum 响应，并提供稳定的 REST 响应结构。
 
 use axum::{
+    extract::multipart::{MultipartError, MultipartRejection},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
@@ -233,6 +234,27 @@ impl From<ValidationErrors> for HttpAppError {
     fn from(error: ValidationErrors) -> Self {
         Self(AppError::from(error))
     }
+}
+
+impl From<MultipartError> for HttpAppError {
+    fn from(error: MultipartError) -> Self {
+        multipart_error(error.status(), &error)
+    }
+}
+
+impl From<MultipartRejection> for HttpAppError {
+    fn from(error: MultipartRejection) -> Self {
+        multipart_error(error.status(), &error)
+    }
+}
+
+fn multipart_error(status: StatusCode, error: &dyn fmt::Debug) -> HttpAppError {
+    match status {
+        StatusCode::BAD_REQUEST => AppError::Validation("上传表单格式无效".into()),
+        StatusCode::PAYLOAD_TOO_LARGE => AppError::PayloadTooLarge("上传内容超过大小限制".into()),
+        _ => AppError::Internal(format!("读取上传请求失败: {error:?}")),
+    }
+    .into()
 }
 
 /// HTTP 处理器的统一结果类型。

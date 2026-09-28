@@ -2,6 +2,18 @@ use std::{fs, path::PathBuf};
 
 use ryframe_generator::{ResourceSpec, normalize_resource, render_resources};
 
+#[test]
+fn route_and_menu_keys_must_agree_before_generation() {
+    let source = changed(
+        &device_source(),
+        "[route]\nkey = \"system.device\"",
+        "[route]\nkey = \"SystemDevice\"",
+    );
+    let error = normalize(&source, "device").expect_err("不一致的路由键必须在生成前失败");
+    assert!(error.contains("route.key 必须与 menu.key 一致"));
+    normalize(&device_source(), "device").expect("使用同一资源键的 Device 清单必须有效");
+}
+
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(name)
 }

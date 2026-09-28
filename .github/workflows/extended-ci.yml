@@ -5,14 +5,29 @@ on:
     branches: [ main ]
     tags: [ "v*.*.*" ]
     paths:
+      - ".cargo/**"
+      - ".dockerignore"
+      - ".github/actions/**"
+      - ".github/workflows/ci.yml"
       - ".github/workflows/extended-ci.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
       - "Dockerfile"
+      - "architecture/**"
+      - "build.rs"
+      - "catalog/**"
+      - "config/**"
+      - "crates/**"
+      - "deny.toml"
       - "docker-compose*.yml"
       - "deploy/**"
-      - "scripts/ci_full_stack.py"
-      - "scripts/check_deployment_assets.py"
-      - "scripts/check_vulnerability_exceptions.py"
-      - "scripts/vulnerability-exceptions.json"
+      - "locales/**"
+      - "migrations/**"
+      - "openapi/**"
+      - "rust-toolchain.toml"
+      - "scripts/**"
+      - "vendor/**"
+      - "xtask/**"
   schedule:
     - cron: "17 3 * * 1"
   workflow_dispatch:
@@ -32,17 +47,76 @@ env:
   GIT_CONFIG_COUNT: "1"
   GIT_CONFIG_KEY_0: init.defaultBranch
   GIT_CONFIG_VALUE_0: main
+  FRONTEND_REPOSITORY: ${{ vars.RYFRAME_FRONTEND_REPOSITORY || format('{0}/ryframe-vue3', github.repository_owner) }}
 
 jobs:
-  full-stack-e2e:
-    name: Real API MySQL Redis Chrome E2E
+  devex-cgroup:
+    name: Linux DevEx Cgroup Memory
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: 检出后端源码
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          path: backend
+
+      - name: 固定 CI Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+
+      - name: 确认后端固定工具链
+        working-directory: backend
+        run: rustup show active-toolchain
+
+      - name: 显式验收专属 cgroup 的孙进程峰值与精确清理
+        id: cgroup
+        working-directory: backend
+        run: cargo xtask check perf cgroup run --output .local-tests/ci-devex-cgroup
+
+      - name: 复核并清理本 job 的精确 cgroup
+        if: ${{ always() && steps.cgroup.outcome != 'skipped' }}
+        working-directory: backend
+        run: cargo xtask check perf cgroup cleanup --output .local-tests/ci-devex-cgroup
+
+      - name: 保存 cgroup 成功与失败证据
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ryframe-devex-cgroup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: backend/.local-tests/ci-devex-cgroup
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+
+  full-stack-e2e:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - fixture: core
+            name: Real API MySQL Redis Chrome E2E
+            backend: backend
+            frontend: frontend
+            artifact_suffix: ""
+          - fixture: device
+            name: Generated Device Data Migration E2E
+            backend: backend/.local-tests/device-fixture/backend
+            frontend: backend/.local-tests/device-fixture/frontend
+            artifact_suffix: -device
     env:
       APP_ENV: test
       APP_API_DOCS_ENABLED: "false"
       APP_SCOPE_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
       APP_APP_HOST: 127.0.0.1
       APP_APP_PORT: "8080"
+      APP_RATE_LIMIT_CAPACITY: "100"
+      APP_RATE_LIMIT_WINDOW_SECS: "60"
       APP_DATABASE_HOST: 127.0.0.1
       APP_DATABASE_PORT: "3306"
       APP_DATABASE_NAME: ryframe_e2e_${{ github.run_id }}_${{ github.run_attempt }}
@@ -60,10 +134,16 @@ jobs:
       APP_RESET_LEGACY_REDIS_EXCLUSIVE: "true"
       APP_RESET_LEGACY_OBJECT_STORAGE_EXCLUSIVE: "true"
       APP_RESET_REDIS_OUTSIDE_SENTINEL_KEY: ryframe-ci-outside-sentinel
-      APP_OBJECT_STORAGE_BACKEND: local
+      APP_OBJECT_STORAGE_BACKEND: s3
+      APP_OBJECT_STORAGE_ENDPOINT: http://127.0.0.1:9000
+      APP_OBJECT_STORAGE_ACCESS_KEY: ryframe-ci-access
+      APP_OBJECT_STORAGE_SECRET_KEY: ryframe-ci-isolated-storage-secret
+      APP_OBJECT_STORAGE_USE_SSL: "false"
       APP_AUTH_JWT_SECRET: ryframe-ci-only-jwt-secret-with-more-than-thirty-two-bytes
       APP_CORS_ALLOW_ORIGINS: http://127.0.0.1:4174
-      APP_JOBS_MODE: disabled
+      APP_JOBS_MODE: external
+      APP_JOBS_HEALTH_HOST: 127.0.0.1
+      APP_JOBS_HEALTH_PORT: "9091"
       RYFRAME_CODE_SHA: ${{ github.sha }}
       RYFRAME_RESET_SERVICES_STOPPED: "YES"
       RYFRAME_RESET_ADMIN_PASSWORD: Valid!Admin123
@@ -71,9 +151,20 @@ jobs:
       RYFRAME_E2E_TENANT_ID: system
       RYFRAME_E2E_USERNAME: admin
       RYFRAME_E2E_PASSWORD: Valid!Admin123
+      RYFRAME_E2E_BACKEND_DIR: ${{ github.workspace }}/${{ matrix.backend }}
+      RYFRAME_E2E_FIXTURE: ${{ matrix.fixture }}
       VITE_APP_PROXY_TARGET: http://127.0.0.1:8080
       CARGO_TARGET_DIR: ${{ github.workspace }}/target/ci/full-stack/backend
     services:
+      rustfs:
+        image: ghcr.io/rustfs/rustfs:1.0.0-rc.5-glibc@sha256:65fdebfd6cf628f66747f0aacb2c5d531bd634f39e382c6ef07142dbc3313876
+        env:
+          RUSTFS_ACCESS_KEY: ryframe-ci-access
+          RUSTFS_SECRET_KEY: ryframe-ci-isolated-storage-secret
+          RUSTFS_VOLUMES: /data
+          RUSTFS_CONSOLE_ENABLE: "false"
+        ports:
+          - 9000:9000
       mysql:
         image: mysql:8.4.11@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
         env:
@@ -99,14 +190,23 @@ jobs:
       - name: 配置全栈临时目录
         shell: bash
         run: |
-          echo "APP_OBJECT_STORAGE_LOCAL_BASE_DIR=$RUNNER_TEMP/ryframe-full-stack/storage" >> "$GITHUB_ENV"
-          echo "RYFRAME_RESET_STATE_DIR=$RUNNER_TEMP/ryframe-full-stack/reset-state" >> "$GITHUB_ENV"
+          {
+            echo "APP_OBJECT_STORAGE_LOCAL_BASE_DIR=$RUNNER_TEMP/ryframe-full-stack/storage"
+            echo "RYFRAME_RESET_STATE_DIR=$RUNNER_TEMP/ryframe-full-stack/reset-state"
+            echo "RYFRAME_E2E_RUNTIME_DIR=$RUNNER_TEMP/ryframe-full-stack"
+            echo "RYFRAME_E2E_RATE_LIMIT_CAPACITY=$APP_RATE_LIMIT_CAPACITY"
+            echo "RYFRAME_E2E_RATE_LIMIT_WINDOW_SECS=$APP_RATE_LIMIT_WINDOW_SECS"
+            echo "RYFRAME_E2E_LOGIN_BUDGET_STATE=$RUNNER_TEMP/ryframe-full-stack/login-budget.json"
+          } >> "$GITHUB_ENV"
 
       - name: 检出后端源码
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 0
           path: backend
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
 
       - name: 固定 CI Python 3.12
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
@@ -124,26 +224,6 @@ jobs:
           --require-hashes
           --requirement scripts/requirements-ci.txt
 
-      - name: 选择配套前端引用
-        id: frontend-ref
-        shell: bash
-        run: >-
-          python backend/scripts/select_frontend_commit.py
-          --event-name "$GITHUB_EVENT_NAME"
-          --event "$GITHUB_EVENT_PATH"
-          --backend-worktree backend
-          --release-ref "$GITHUB_REF"
-
-      - name: 检出配套前端
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          repository: Edgar-ycy/ryframe-vue3
-          ref: ${{ steps.frontend-ref.outputs.ref }}
-          path: frontend
-
-      - name: 安装 Rust 工具链
-        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
-
       - name: 缓存 Cargo 依赖
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
         with:
@@ -155,6 +235,30 @@ jobs:
           restore-keys: |
             v3-rust-${{ runner.os }}-${{ runner.arch }}-full-stack-
             v3-rust-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: 选择配套前端引用
+        id: frontend-ref
+        shell: bash
+        working-directory: backend
+        run: >-
+          cargo xtask check ci frontend-source
+          --event-name "$GITHUB_EVENT_NAME"
+          --event "$GITHUB_EVENT_PATH"
+          --release-ref "$GITHUB_REF"
+
+      - name: 检出配套前端
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ${{ env.FRONTEND_REPOSITORY }}
+          ref: ${{ steps.frontend-ref.outputs.ref }}
+          path: frontend
+
+      - name: 记录本次全栈源码组合
+        working-directory: backend
+        run: >-
+          cargo xtask check release ci record-pair
+          --output "$RUNNER_TEMP/ryframe-full-stack/source-pair.json"
+          --frontend-dir "$GITHUB_WORKSPACE/frontend"
 
       - name: 安装 Node.js
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
@@ -173,19 +277,54 @@ jobs:
           corepack pnpm install --frozen-lockfile
           corepack pnpm exec playwright install --with-deps chromium
 
-      - name: 构建并安全初始化临时全栈环境
+      - name: 在隔离工作树生成 Device 并校验幂等性
+        if: ${{ matrix.fixture == 'device' }}
         working-directory: backend
+        run: >-
+          cargo xtask check recovery fixture
+          --frontend-dir ../frontend
+          --output-dir .local-tests/device-fixture --write
+
+      - name: 构建并安全初始化临时全栈环境
+        working-directory: ${{ matrix.backend }}
         env:
           RYFRAME_CI_REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
-        run: python scripts/ci_full_stack.py prepare
+          RYFRAME_CI_S3_CONTAINER_ID: ${{ job.services.rustfs.id }}
+          RYFRAME_CI_MYSQL_CONTAINER_ID: ${{ job.services.mysql.id }}
+        run: cargo xtask check recovery full-stack prepare
 
-      - name: 启动真实 API 并等待就绪
-        working-directory: backend
-        run: python scripts/ci_full_stack.py start
+      - name: 从当前隔离配置导出登录预算
+        working-directory: ${{ matrix.backend }}
+        run: >-
+          cargo xtask check recovery full-stack rate-limit
+          --environment-file "$GITHUB_ENV"
+
+      - name: 启动真实 API、Worker 并等待就绪
+        working-directory: ${{ matrix.backend }}
+        run: cargo xtask check recovery full-stack start
 
       - name: 执行真实浏览器全栈流程
-        working-directory: frontend
-        run: corepack pnpm ci:browser-real
+        working-directory: ${{ matrix.frontend }}
+        env:
+          RYFRAME_CI_MYSQL_CONTAINER_ID: ${{ job.services.mysql.id }}
+        run: >-
+          corepack pnpm check --stage browser --real
+          --fixture "${{ matrix.fixture }}" --server dev
+
+      - name: 构建并验收生产前端
+        working-directory: ${{ matrix.frontend }}
+        env:
+          RYFRAME_CI_MYSQL_CONTAINER_ID: ${{ job.services.mysql.id }}
+        run: |
+          VITE_APP_BUILD_COMMIT="$(git rev-parse HEAD)" corepack pnpm build --real
+          corepack pnpm check --stage browser --real --fixture "${{ matrix.fixture }}" --server preview
+
+      - name: 复核全栈源码组合未变化
+        working-directory: backend
+        run: >-
+          cargo xtask check release ci verify-pair
+          --input "$RUNNER_TEMP/ryframe-full-stack/source-pair.json"
+          --frontend-dir "$GITHUB_WORKSPACE/frontend"
 
       - name: 收集进程与基础设施日志
         if: ${{ always() }}
@@ -193,27 +332,35 @@ jobs:
         env:
           RYFRAME_CI_MYSQL_CONTAINER_ID: ${{ job.services.mysql.id }}
           RYFRAME_CI_REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
-        run: python scripts/ci_full_stack.py collect
+          RYFRAME_CI_S3_CONTAINER_ID: ${{ job.services.rustfs.id }}
+        run: cargo xtask check recovery full-stack collect
 
       - name: 保存全栈诊断产物
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: ryframe-full-stack-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ryframe-full-stack-${{ github.run_id }}-${{ github.run_attempt }}${{ matrix.artifact_suffix }}
+          include-hidden-files: true
           path: |
             ${{ runner.temp }}/ryframe-full-stack
             frontend/.local-tests/playwright-real/report
             frontend/.local-tests/playwright-real/results
+            backend/.local-tests/device-fixture/fixture.json
+            backend/.local-tests/device-fixture/prepare.log
+            backend/.local-tests/device-fixture/frontend/.local-tests/playwright-real/report
+            backend/.local-tests/device-fixture/frontend/.local-tests/playwright-real/results
           if-no-files-found: error
           retention-days: 14
 
       - name: 安装固定版本 CycloneDX 工具
+        if: ${{ matrix.fixture == 'core' }}
         uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
         with:
           tool: cargo-cyclonedx@0.5.9
           fallback: none
 
       - name: 生成并校验可复现 Cargo CycloneDX 清单
+        if: ${{ matrix.fixture == 'core' }}
         working-directory: backend
         shell: bash
         env:
@@ -231,11 +378,12 @@ jobs:
             --all \
             --override-filename ryframe-backend.cdx
           mv crates/ryframe/ryframe-backend.cdx.json "$SBOM_PATH"
-          python scripts/check_supply_chain.py \
-            --cyclonedx "$SBOM_PATH" \
-            --require-reproducible-cyclonedx
+          cargo xtask check ci security report cyclonedx \
+            --input "$SBOM_PATH" \
+            --require-reproducible
 
       - name: 保存 Cargo CycloneDX 清单
+        if: ${{ matrix.fixture == 'core' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ryframe-cargo-cyclonedx-${{ github.sha }}
@@ -244,6 +392,7 @@ jobs:
           retention-days: 30
 
       - name: 构建生产镜像
+        if: ${{ matrix.fixture == 'core' }}
         working-directory: backend
         run: >-
           docker build
@@ -253,12 +402,14 @@ jobs:
           .
 
       - name: 安装固定版本镜像扫描器
+        if: ${{ matrix.fixture == 'core' }}
         uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc
         with:
           tool: trivy@0.72.0
           fallback: none
 
       - name: 生成并校验生产镜像 CycloneDX 清单
+        if: ${{ matrix.fixture == 'core' }}
         id: image-sbom
         working-directory: backend
         shell: bash
@@ -272,10 +423,11 @@ jobs:
             --format cyclonedx \
             --output "$output_dir/ryframe-image.cdx.json" \
             "ryframe-ci:$GITHUB_SHA"
-          python scripts/check_supply_chain.py \
-            --cyclonedx "$output_dir/ryframe-image.cdx.json"
+          cargo xtask check ci security report cyclonedx \
+            --input "$output_dir/ryframe-image.cdx.json"
 
       - name: 扫描生产镜像高危漏洞
+        if: ${{ matrix.fixture == 'core' }}
         id: image-scan
         shell: bash
         run: |
@@ -290,13 +442,14 @@ jobs:
             "ryframe-ci:$GITHUB_SHA"
 
       - name: 应用有期限的漏洞例外策略
+        if: ${{ matrix.fixture == 'core' }}
         working-directory: backend
         run: >-
-          python scripts/check_supply_chain.py
-          --trivy-report "$RUNNER_TEMP/supply-chain/trivy-report.json"
+          cargo xtask check ci security report trivy
+          --input "$RUNNER_TEMP/supply-chain/trivy-report.json"
 
       - name: 保存镜像清单与漏洞报告
-        if: ${{ always() && (steps.image-sbom.outcome == 'success' || steps.image-scan.outcome == 'success') }}
+        if: ${{ always() && matrix.fixture == 'core' && (steps.image-sbom.outcome == 'success' || steps.image-scan.outcome == 'success') }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ryframe-image-security-${{ github.sha }}

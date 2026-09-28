@@ -11,6 +11,15 @@ use super::LocalObjectStorage;
 
 #[async_trait]
 impl ObjectStorage for LocalObjectStorage {
+    async fn digest(&self, bucket: &str, key: &str) -> StorageResult<crate::storage::ObjectDigest> {
+        trace_storage_operation("local", StorageOperation::Digest, async {
+            let segments = self.validate_location(bucket, key)?;
+            let bucket_root = self.canonical_bucket_directory(bucket, false).await?;
+            let resolved = self.resolve_existing_path(&bucket_root, &segments).await?;
+            crate::storage::file_digest(&resolved).await
+        })
+        .await
+    }
     fn late_put_completion_bound(&self) -> Duration {
         // 异步工作仅写入私有暂存文件。发布操作是在同一文件系统内同步重命名，
         // 因而取消操作不会导致最终对象键在之后才出现。

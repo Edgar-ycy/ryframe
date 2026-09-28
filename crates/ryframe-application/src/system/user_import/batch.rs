@@ -147,19 +147,7 @@ impl UserImportService {
             .await?
             .into_iter()
             .collect::<HashSet<_>>();
-        let mut new_users = Vec::new();
-        for prepared_user in prepared.users {
-            if existing.contains(&prepared_user.candidate.data.username) {
-                prepared.issues.push(RowIssue::skipped(
-                    prepared_user.candidate.row_number,
-                    &prepared_user.candidate.data.username,
-                    "username_exists",
-                    "用户名已存在，未覆盖现有用户",
-                ));
-            } else {
-                new_users.push(prepared_user);
-            }
-        }
+        let mut new_users = partition_new_users(&mut prepared, &existing);
 
         if !new_users.is_empty()
             && let Err(error) = transaction
@@ -183,24 +171,8 @@ impl UserImportService {
             .into_iter()
             .map(|prepared| build_user_record(&import.tenant_id, prepared, now))
             .collect::<AppResult<Vec<_>>>()?;
-        let success_count = i32::try_from(users.len())
-            .map_err(|_| AppError::Internal("用户导入成功计数溢出".into()))?;
-        let skipped_count = i32::try_from(
-            prepared
-                .issues
-                .iter()
-                .filter(|issue| issue.outcome == UserImportRowRecord::OUTCOME_SKIPPED)
-                .count(),
-        )
-        .map_err(|_| AppError::Internal("用户导入跳过计数溢出".into()))?;
-        let failure_count = i32::try_from(
-            prepared
-                .issues
-                .iter()
-                .filter(|issue| issue.outcome == UserImportRowRecord::OUTCOME_FAILED)
-                .count(),
-        )
-        .map_err(|_| AppError::Internal("用户导入失败计数溢出".into()))?;
+        let (success_count, skipped_count, failure_count) =
+            batch_counts(users.len(), &prepared.issues)?;
 
         transaction
             .insert_users(&import.tenant_id, users)
@@ -410,4 +382,46 @@ fn truncate_utf8(value: &str, maximum_bytes: usize) -> String {
         end = end.saturating_sub(1);
     }
     format!("{}…", &value[..end])
+}
+
+fn partition_new_users(
+    prepared: &mut PreparedBatch,
+    existing: &HashSet<String>,
+) -> Vec<PreparedUser> {
+    let mut new_users = Vec::new();
+    for prepared_user in prepared.users.drain(..) {
+        if existing.contains(&prepared_user.candidate.data.username) {
+            prepared.issues.push(RowIssue::skipped(
+                prepared_user.candidate.row_number,
+                &prepared_user.candidate.data.username,
+                "username_exists",
+                "用户名已存在，未覆盖现有用户",
+            ));
+        } else {
+            new_users.push(prepared_user);
+        }
+    }
+
+    new_users
+}
+
+fn batch_counts(users: usize, issues: &[RowIssue]) -> AppResult<(i32, i32, i32)> {
+    let success_count = i32::try_from(users)
+        .map_err(|_| AppError::Internal("用户导入成功计数溢出".into()))?;
+    let skipped_count = i32::try_from(
+        issues
+            .iter()
+            .filter(|issue| issue.outcome == UserImportRowRecord::OUTCOME_SKIPPED)
+            .count(),
+    )
+    .map_err(|_| AppError::Internal("用户导入跳过计数溢出".into()))?;
+    let failure_count = i32::try_from(
+        issues
+            .iter()
+            .filter(|issue| issue.outcome == UserImportRowRecord::OUTCOME_FAILED)
+            .count(),
+    )
+    .map_err(|_| AppError::Internal("用户导入失败计数溢出".into()))?;
+
+    Ok((success_count, skipped_count, failure_count))
 }

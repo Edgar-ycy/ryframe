@@ -17,6 +17,8 @@ use crate::{
 
 use super::user::UserService;
 
+mod projection;
+
 #[derive(Debug, Serialize)]
 pub struct AuthorizationDiagnosticVo {
     pub calculated_at: DateTime<Utc>,
@@ -180,26 +182,10 @@ impl AuthorizationDiagnosticService {
         let tenant_available = authorization.tenant.is_available(calculated_at);
         let user_enabled = authorization.user.is_enabled();
         let final_access_enabled = tenant_available && user_enabled;
-        let enabled_role_ids = authorization
-            .roles
-            .iter()
-            .map(|role| role.id)
-            .collect::<HashSet<_>>();
         let mut assigned_roles = self.persistence.assigned_roles(tenant_id, user_id).await?;
         assigned_roles.sort_unstable_by_key(|role| role.id);
 
-        let roles = assigned_roles
-            .into_iter()
-            .map(|role| AuthorizationDiagnosticRoleVo {
-                id: role.id.to_string(),
-                name: role.name,
-                code: role.code,
-                status: role.status,
-                data_scope: data_scope_key(&DataScope::from_db_value(&role.data_scope)).to_owned(),
-                is_super: role.is_super,
-                participates: final_access_enabled && enabled_role_ids.contains(&role.id),
-            })
-            .collect::<Vec<_>>();
+        let roles = projection::roles(assigned_roles, &authorization.roles, final_access_enabled);
 
         let all_permissions = self.persistence.permissions(tenant_id).await?;
         let permission_by_id = all_permissions
@@ -214,20 +200,7 @@ impl AuthorizationDiagnosticService {
         let permission_sources = self
             .permission_sources(tenant_id, &authorization.roles, &active_permissions)
             .await?;
-        let permissions = permission_sources
-            .into_values()
-            .filter_map(|source| {
-                source
-                    .permission
-                    .map(|permission| AuthorizationDiagnosticPermissionVo {
-                        id: permission.id.to_string(),
-                        name: permission.name,
-                        code: permission.code,
-                        source_roles: source.roles.into_iter().collect(),
-                        effective: final_access_enabled,
-                    })
-            })
-            .collect::<Vec<_>>();
+        let permissions = projection::permissions(permission_sources, final_access_enabled);
 
         let all_menus = self.persistence.menus(tenant_id).await?;
         let accessible_ids = if final_access_enabled {
@@ -239,39 +212,13 @@ impl AuthorizationDiagnosticService {
         } else {
             HashSet::new()
         };
-        let mut invalid_menu_permission = false;
-        let menus = all_menus
-            .into_iter()
-            .filter(|menu| !menu.is_button())
-            .map(|menu| {
-                let permission = menu
-                    .perm_id
-                    .and_then(|permission_id| permission_by_id.get(&permission_id).copied());
-                if menu.perm_id.is_some() && permission.is_none() {
-                    invalid_menu_permission = true;
-                }
-                let accessible = accessible_ids.contains(&menu.id);
-                let inaccessible_reason = menu_inaccessible_reason(
-                    &menu,
-                    permission,
-                    tenant_available,
-                    user_enabled,
-                    accessible,
-                );
-                AuthorizationDiagnosticMenuVo {
-                    id: menu.id.to_string(),
-                    parent_id: menu.parent_id.map(|id| id.to_string()),
-                    name: menu.name,
-                    route_key: menu.route_key,
-                    permission_code: permission.map(|permission| permission.code.clone()),
-                    status: menu.status,
-                    configured_visible: menu.visible,
-                    accessible,
-                    visible_in_navigation: accessible && menu.visible,
-                    inaccessible_reason,
-                }
-            })
-            .collect::<Vec<_>>();
+        let (menus, invalid_menu_permission) = projection::menus(
+            all_menus,
+            &permission_by_id,
+            &accessible_ids,
+            tenant_available,
+            user_enabled,
+        );
 
         let department_path = self
             .department_path(
@@ -283,14 +230,7 @@ impl AuthorizationDiagnosticService {
         let custom_departments = self
             .departments(tenant_id, &authorization.actor.custom_dept_ids)
             .await?;
-        let data_scope_sources = authorization
-            .roles
-            .iter()
-            .map(|role| AuthorizationDiagnosticDataScopeSourceVo {
-                role_code: role.code.clone(),
-                scope: data_scope_key(&DataScope::from_db_value(&role.data_scope)).to_owned(),
-            })
-            .collect::<Vec<_>>();
+        let data_scope_sources = projection::data_scope_sources(&authorization.roles);
 
         let (versions, cache_warning) = self
             .diagnose_cache(

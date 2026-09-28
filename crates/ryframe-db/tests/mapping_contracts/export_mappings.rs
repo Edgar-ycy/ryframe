@@ -60,6 +60,7 @@ fn background(status: &str, lease_until: Option<DateTime<Utc>>) -> background_jo
         priority: 0,
         available_at: now,
         attempts: 1,
+        claim_sequence: 1,
         max_attempts: 3,
         lease_owner: lease_until.map(|_| "worker-a".into()),
         lease_until,

@@ -15,9 +15,12 @@ use crate::{Result, process::child_command};
 
 use super::model::{DevexSuite, StepDefinition, SuiteDefinition, WorkingDirectory};
 
+#[path = "metadata/path_normalizer.rs"]
+mod path_normalizer;
 #[path = "metadata/schema.rs"]
 mod schema;
 
+pub(crate) use path_normalizer::PathNormalizer;
 pub(crate) use schema::SourceFingerprints;
 use schema::{CommandMetadata, SourceState, Toolchain};
 pub(super) use schema::{MetadataContext, RunMetadata};
@@ -80,23 +83,7 @@ pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
         context.devex_root,
     );
     let frontend_suite = context.definition.requires_frontend;
-    let toolchain = Toolchain {
-        cargo: version(context.backend_root, "cargo", &["--version"]),
-        rustc: version(context.backend_root, "rustc", &["-vV"]),
-        sccache: context
-            .options
-            .suite
-            .uses_sccache()
-            .then(|| version(context.backend_root, "sccache", &["--version"])),
-        node: frontend_suite.then(|| version(context.frontend_root, "node", &["--version"])),
-        pnpm: frontend_suite.then(|| {
-            version(
-                context.frontend_root,
-                corepack_executable(),
-                &["pnpm", "--version"],
-            )
-        }),
-    };
+    let toolchain = collect_toolchain(&context, frontend_suite);
     let comparable_environment = comparable_environment(context.effective_environment, &normalizer);
     let environment_hash = environment_hash(&comparable_environment);
     let environment = visible_environment(&comparable_environment);
@@ -110,6 +97,10 @@ pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
         &target,
         context.definition,
         &commands,
+        context
+            .pairing
+            .as_ref()
+            .and_then(|pairing| pairing.workload_contract.as_ref()),
         &environment_hash,
         jobs,
     )?;
@@ -124,6 +115,12 @@ pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
     let frontend = frontend_suite
         .then(|| source_state(context.frontend_root))
         .transpose()?;
+    let runner_frontend = context
+        .options
+        .suite
+        .is_runtime()
+        .then(|| source_state(context.runner_frontend_root))
+        .transpose()?;
     Ok(RunMetadata {
         schema_version: 1,
         run_id: context.run_id.to_owned(),
@@ -134,6 +131,7 @@ pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
         requested_runs: context.options.runs,
         backend,
         frontend,
+        runner_frontend,
         toolchain,
         target,
         features: context
@@ -150,6 +148,31 @@ pub(super) fn collect(context: MetadataContext<'_>) -> Result<RunMetadata> {
         input_fingerprint,
         pairing: context.pairing,
     })
+}
+
+fn collect_toolchain(context: &MetadataContext<'_>, frontend_suite: bool) -> Toolchain {
+    let frontend_tooling = if context.options.suite.is_runtime() {
+        context.runner_frontend_root
+    } else {
+        context.frontend_root
+    };
+    Toolchain {
+        cargo: version(context.backend_root, "cargo", &["--version"]),
+        rustc: version(context.backend_root, "rustc", &["-vV"]),
+        sccache: context
+            .options
+            .suite
+            .uses_sccache()
+            .then(|| version(context.backend_root, "sccache", &["--version"])),
+        node: frontend_suite.then(|| version(frontend_tooling, "node", &["--version"])),
+        pnpm: frontend_suite.then(|| {
+            version(
+                frontend_tooling,
+                corepack_executable(),
+                &["pnpm", "--version"],
+            )
+        }),
+    }
 }
 
 pub(super) fn inherited_environment() -> BTreeMap<String, String> {
@@ -214,6 +237,7 @@ fn command_metadata(steps: &[StepDefinition]) -> Vec<CommandMetadata> {
             working_directory: match step.working_directory {
                 WorkingDirectory::Backend => "$BACKEND",
                 WorkingDirectory::Frontend => "$FRONTEND",
+                WorkingDirectory::RunnerFrontend => "$RUNNER_FRONTEND",
             }
             .to_owned(),
             program: step.program.to_owned(),
@@ -234,9 +258,14 @@ fn compile_surface_fingerprint(
     target: &str,
     definition: SuiteDefinition,
     commands: &[CommandMetadata],
+    workload_contract: Option<&super::model::PairedWorkloadContract>,
     environment_hash: &str,
     jobs: usize,
 ) -> Result<String> {
+    let execution = workload_contract.map_or_else(
+        || json!({"commands": commands}),
+        |contract| json!({"paired_workload_contract": contract}),
+    );
     let document = json!({
         "schema_version": 1,
         "suite": suite,
@@ -246,7 +275,7 @@ fn compile_surface_fingerprint(
         "features": definition.features,
         "jobs": jobs,
         "environment_hash": environment_hash,
-        "commands": commands,
+        "execution": execution,
     });
     Ok(sha256(&serde_json::to_vec(&document)?))
 }
@@ -380,7 +409,21 @@ pub(super) fn collect_source_fingerprints(
             .map(source_state)
             .transpose()?
             .map(|state| state.worktree_fingerprint),
+        runner_frontend: None,
     })
+}
+
+pub(super) fn collect_runtime_source_fingerprints(
+    backend_root: &Path,
+    frontend_root: &Path,
+    runner_frontend_root: Option<&Path>,
+) -> Result<SourceFingerprints> {
+    let mut fingerprints = collect_source_fingerprints(backend_root, Some(frontend_root))?;
+    fingerprints.runner_frontend = runner_frontend_root
+        .map(source_state)
+        .transpose()?
+        .map(|state| state.worktree_fingerprint);
+    Ok(fingerprints)
 }
 
 impl RunMetadata {
@@ -389,6 +432,10 @@ impl RunMetadata {
             backend: self.backend.worktree_fingerprint.clone(),
             frontend: self
                 .frontend
+                .as_ref()
+                .map(|state| state.worktree_fingerprint.clone()),
+            runner_frontend: self
+                .runner_frontend
                 .as_ref()
                 .map(|state| state.worktree_fingerprint.clone()),
         }
@@ -515,48 +562,4 @@ fn format_digest(digest: impl AsRef<[u8]>) -> String {
         write!(value, "{byte:02x}").expect("写入 String 不会失败");
     }
     value
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct PathNormalizer {
-    replacements: Vec<(String, &'static str)>,
-}
-
-impl PathNormalizer {
-    pub(crate) fn new(backend: &Path, frontend: &Path, devex: &Path) -> Self {
-        let mut replacements = vec![
-            (normalized_path(devex), "$DEVEX"),
-            (normalized_path(frontend), "$FRONTEND"),
-            (normalized_path(backend), "$BACKEND"),
-        ];
-        replacements.sort_by_key(|entry| std::cmp::Reverse(entry.0.len()));
-        Self { replacements }
-    }
-
-    pub(crate) fn normalize(&self, value: &str) -> String {
-        let mut value = value.replace('\\', "/");
-        for (path, replacement) in &self.replacements {
-            value = value.replace(path, replacement);
-        }
-        value
-    }
-
-    fn normalize_environment_value(&self, value: &str) -> String {
-        let normalized = self.normalize(value);
-        if Path::new(&normalized).is_absolute() {
-            let name = Path::new(&normalized)
-                .file_name()
-                .and_then(|value| value.to_str())
-                .unwrap_or("executable");
-            format!("$EXTERNAL_PATH/{name}")
-        } else {
-            normalized
-        }
-    }
-}
-
-fn normalized_path(path: &Path) -> String {
-    path.to_string_lossy()
-        .trim_end_matches(['/', '\\'])
-        .replace('\\', "/")
 }

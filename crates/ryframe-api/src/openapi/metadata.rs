@@ -65,12 +65,7 @@ use utoipa::OpenApi;
         (name = "产品套餐", description = "产品套餐元数据、不可变发布版本及租户产品变更。"),
         (name = "租户数据放置", description = "安全目标元数据、租户 placement 与迁移资格。"),
         (name = "租户数据迁移", description = "停写复制、校验、切换、取消与保留期清理。"),
-        (name = "租户数据备份", description = "数据库平台 opaque 备份恢复点登记结果。"),
-        (name = "服务账号", description = "管理不可登录的服务账号、角色范围和一次性 API Key。"),
-        (name = "服务委托", description = "当前用户本人创建的限时双主体查询委托，以及管理员只读治理入口。"),
-        (name = "服务访问审计", description = "查询 Agent API 的最小化访问审计，不包含请求或响应正文。"),
-        (name = "个人服务委托", description = "当前用户本人查看、创建和撤销限时服务委托。"),
-        (name = "Agent API", description = "仅接受 RyFrameApiKey 的编译期白名单只读接口，不接受普通 Bearer。")
+        (name = "租户数据备份", description = "数据库平台 opaque 备份恢复点登记结果。")
     ),
     paths(crate::router::api_version),
     components(schemas(

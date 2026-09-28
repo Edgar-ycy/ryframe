@@ -1,6 +1,6 @@
 use super::devex::{
     CacheState, DevexSuite, Distribution, ResourceGateDecisionEvidence, RunSummary,
-    SourceFingerprints, duration_acceptance,
+    SourceFingerprints, comparison_checks, duration_acceptance,
 };
 
 #[test]
@@ -46,6 +46,28 @@ fn planned_duration_thresholds_accept_boundaries_and_reject_regressions() {
 }
 
 #[test]
+fn retained_p95_reports_signed_change_and_keeps_regression_boundary() {
+    let baseline = summary(DevexSuite::FrontendBuild, "default");
+    for (value, observed, passed) in [
+        (90.0, "-10.0%", true),
+        (100.0, "+0.0%", true),
+        (110.0, "+10.0%", true),
+        (110.1, "+10.1%", false),
+    ] {
+        let checks = comparison_checks(
+            &baseline,
+            &baseline,
+            &distribution(100.0),
+            &distribution(value),
+        )
+        .unwrap();
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].observed, observed);
+        assert_eq!(checks[0].passed, passed);
+    }
+}
+
+#[test]
 fn targeted_decision_evidence_rejects_tampering() {
     let mut evidence = ResourceGateDecisionEvidence {
         format_version: 1,
@@ -71,13 +93,16 @@ fn distribution(value: f64) -> Distribution {
         min: value,
         p50: value,
         p95: value,
+        p99: value,
         max: value,
         mean: value,
     }
 }
 
-fn summary(suite: DevexSuite, variant: &str) -> RunSummary {
+pub(super) fn summary(suite: DevexSuite, variant: &str) -> RunSummary {
     RunSummary {
+        memory: None,
+        runtime: None,
         schema_version: 1,
         run_id: "run".into(),
         suite,

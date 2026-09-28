@@ -10,6 +10,7 @@ use ryframe_application::{
 
 struct FakePersistence {
     calls: Arc<Mutex<Vec<&'static str>>>,
+    reads: Arc<Mutex<Vec<(String, String)>>>,
 }
 
 struct FakeTransaction {
@@ -40,8 +41,27 @@ impl ConfigPersistencePort for FakePersistence {
         unreachable!("本测试不读取详情")
     }
 
-    async fn find_by_key(&self, _tenant_id: &str, _key: &str) -> AppResult<Option<ConfigRecord>> {
-        unreachable!("本测试不读取键值")
+    async fn find_by_key(&self, tenant_id: &str, key: &str) -> AppResult<Option<ConfigRecord>> {
+        self.reads
+            .lock()
+            .expect("读取记录锁应可用")
+            .push((tenant_id.into(), key.into()));
+        if tenant_id == "empty" {
+            return Ok(None);
+        }
+        if tenant_id == "unavailable" {
+            return Err(AppError::ServiceUnavailable("配置不可用".into()));
+        }
+        Ok(Some(ConfigRecord {
+            id: 1,
+            name: "界面配置".into(),
+            key: key.into(),
+            value: format!("{tenant_id}:{key}"),
+            portable: true,
+            remark: None,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }))
     }
 
     async fn find_namespace_version(&self, _tenant_id: &str, _namespace: &str) -> AppResult<i64> {
@@ -126,6 +146,7 @@ async fn cache_clear_commits_authoritative_version_first() {
     let service = ConfigService::new(
         Arc::new(FakePersistence {
             calls: Arc::clone(&calls),
+            reads: Arc::default(),
         }),
         AuthorizationCache::disabled(),
     );
@@ -146,4 +167,50 @@ async fn cache_clear_commits_authoritative_version_first() {
         *calls.lock().expect("调用记录锁应可用"),
         ["begin", "namespace", "commit"]
     );
+}
+
+#[tokio::test]
+async fn shell_settings_only_read_fixed_keys_in_the_authenticated_tenant() {
+    let reads = Arc::new(Mutex::new(Vec::new()));
+    let service = ConfigService::new(
+        Arc::new(FakePersistence {
+            calls: Arc::default(),
+            reads: reads.clone(),
+        }),
+        AuthorizationCache::disabled(),
+    );
+    let mut actor = ActorContext {
+        user_id: 1,
+        tenant_id: "tenant-a".into(),
+        username: "ordinary".into(),
+        dept_id: None,
+        dept_path: None,
+        data_scope: DataScope::SelfOnly,
+        custom_dept_ids: Vec::new(),
+        include_self: true,
+        is_super_admin: false,
+    };
+    for tenant in ["tenant-a", "tenant-b", "empty"] {
+        actor.tenant_id = tenant.into();
+        let settings = service
+            .shell_settings(&actor)
+            .await
+            .expect("普通身份应能读取界面配置");
+        let expected = |key| (tenant != "empty").then(|| format!("{tenant}:{key}"));
+        assert_eq!(settings.side_theme, expected("sys.index.sideTheme"));
+        assert_eq!(settings.skin_name, expected("sys.index.skinName"));
+    }
+    let expected: Vec<_> = ["tenant-a", "tenant-b", "empty"]
+        .into_iter()
+        .flat_map(|tenant| {
+            ["sys.index.sideTheme", "sys.index.skinName"]
+                .map(|key| (tenant.to_owned(), key.to_owned()))
+        })
+        .collect();
+    assert_eq!(*reads.lock().expect("读取记录锁应可用"), expected);
+    actor.tenant_id = "unavailable".into();
+    assert!(service.shell_settings(&actor).await.is_err());
+    actor.tenant_id.clear();
+    assert!(service.shell_settings(&actor).await.is_err());
+    assert_eq!(reads.lock().expect("读取记录锁应可用").len(), 7);
 }

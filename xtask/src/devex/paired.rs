@@ -5,7 +5,6 @@ use std::{
 };
 
 use chrono::Utc;
-use sha2::{Digest, Sha256};
 
 use crate::{Result, dev::SaveMeasurementContract};
 
@@ -24,6 +23,9 @@ use super::{
     support::{cleanup_successful_sample_target, sample_target},
 };
 
+#[path = "paired/provenance.rs"]
+mod provenance;
+
 pub(super) fn execute(
     coordinator_backend: &Path,
     coordinator_frontend: &Path,
@@ -40,19 +42,46 @@ pub(super) fn execute(
         options,
         definition,
     )?;
-    let baseline_provenance =
-        baseline_provenance(&roots.baseline_backend, options.baseline_contract)?;
-    preflight::check(
+    let baseline_definition = options
+        .run
+        .suite
+        .paired_definition(
+            &options.run.variant,
+            options.baseline_contract,
+            PairedArm::Baseline,
+        )
+        .map_err(|error| format!("DevEx 基线变体无效：{error}"))?;
+    let candidate_definition = options
+        .run
+        .suite
+        .paired_definition(
+            &options.run.variant,
+            options.baseline_contract,
+            PairedArm::Candidate,
+        )
+        .map_err(|error| format!("DevEx 候选变体无效：{error}"))?;
+    preflight::check_paired(
         &roots.baseline_backend,
         &roots.baseline_frontend,
+        &roots.runner_frontend,
         &options.run,
-        definition,
+        baseline_definition,
+        options.baseline_contract,
+        PairedArm::Baseline,
     )?;
-    preflight::check(
+    preflight::check_paired(
         &roots.candidate_backend,
         &roots.candidate_frontend,
+        &roots.runner_frontend,
         &options.run,
-        definition,
+        candidate_definition,
+        options.baseline_contract,
+        PairedArm::Candidate,
+    )?;
+    let baseline_provenance = provenance::collect(
+        &roots.baseline_backend,
+        &roots.baseline_frontend,
+        options.baseline_contract,
     )?;
 
     let devex_root = coordinator_backend.join(".local-tests/devex");
@@ -60,9 +89,10 @@ pub(super) fn execute(
     let baseline = prepare_arm(
         &roots.baseline_backend,
         &roots.baseline_frontend,
+        &roots.runner_frontend,
         &devex_root,
         &options.run,
-        definition,
+        baseline_definition,
         &directories,
         PairedArm::Baseline,
         options.baseline_contract,
@@ -71,14 +101,28 @@ pub(super) fn execute(
     let candidate = prepare_arm(
         &roots.candidate_backend,
         &roots.candidate_frontend,
+        &roots.runner_frontend,
         &devex_root,
         &options.run,
-        definition,
+        candidate_definition,
         &directories,
         PairedArm::Candidate,
         options.baseline_contract,
         baseline_provenance,
     )?;
+    let prepared_provenance = provenance::collect(
+        &roots.baseline_backend,
+        &roots.baseline_frontend,
+        options.baseline_contract,
+    )?;
+    if prepared_provenance
+        != baseline
+            .pairing
+            .as_ref()
+            .and_then(|value| value.baseline_provenance.clone())
+    {
+        return Err("baseline 来源在创建运行记录期间发生变化，拒绝开始测量".into());
+    }
 
     let execution = execute_samples(
         &roots,
@@ -123,6 +167,7 @@ struct PairedRoots {
     candidate_backend: PathBuf,
     baseline_frontend: PathBuf,
     candidate_frontend: PathBuf,
+    runner_frontend: PathBuf,
 }
 
 fn paired_roots(
@@ -140,35 +185,40 @@ fn paired_roots(
         &baseline_backend,
         &candidate_backend,
     )?;
-    let (baseline_frontend, candidate_frontend) = if definition.requires_frontend {
-        let coordinator = canonical_worktree(coordinator_frontend, "当前前端")?;
-        let baseline = canonical_worktree(
-            options
-                .baseline_frontend
-                .as_deref()
-                .ok_or("paired 前端 suite 缺少 --base-frontend")?,
-            "基线前端",
-        )?;
-        let candidate = canonical_worktree(
-            options
-                .candidate_frontend
-                .as_deref()
-                .ok_or("paired 前端 suite 缺少 --candidate-frontend")?,
-            "候选前端",
-        )?;
-        ensure_distinct_roots("前端", &coordinator, &baseline, &candidate)?;
-        (baseline, candidate)
-    } else {
-        (
-            coordinator_frontend.to_path_buf(),
-            coordinator_frontend.to_path_buf(),
-        )
-    };
+    let binds_stable_product =
+        options.baseline_contract == Some(BaselineContract::LegacyStableReadinessB0V1);
+    let (baseline_frontend, candidate_frontend, runner_frontend) =
+        if definition.requires_frontend || binds_stable_product {
+            let coordinator = canonical_worktree(coordinator_frontend, "当前前端")?;
+            let baseline = canonical_worktree(
+                options
+                    .baseline_frontend
+                    .as_deref()
+                    .ok_or("paired 前端 suite 缺少 --base-frontend")?,
+                "基线前端",
+            )?;
+            let candidate = canonical_worktree(
+                options
+                    .candidate_frontend
+                    .as_deref()
+                    .ok_or("paired 前端 suite 缺少 --candidate-frontend")?,
+                "候选前端",
+            )?;
+            ensure_distinct_roots("前端", &coordinator, &baseline, &candidate)?;
+            (baseline, candidate, coordinator)
+        } else {
+            (
+                coordinator_frontend.to_path_buf(),
+                coordinator_frontend.to_path_buf(),
+                coordinator_frontend.to_path_buf(),
+            )
+        };
     Ok(PairedRoots {
         baseline_backend,
         candidate_backend,
         baseline_frontend,
         candidate_frontend,
+        runner_frontend,
     })
 }
 
@@ -209,99 +259,6 @@ fn ensure_distinct_roots(
     Ok(())
 }
 
-fn baseline_provenance(
-    baseline_root: &Path,
-    contract: Option<BaselineContract>,
-) -> Result<Option<BaselineProvenance>> {
-    let Some(contract @ (BaselineContract::LegacyCargoDevV1 | BaselineContract::LegacyCargoDevV2)) =
-        contract
-    else {
-        return Ok(None);
-    };
-    let (base_commit, adapter_commit) = match contract {
-        BaselineContract::LegacyCargoDevV1 => (
-            BaselineContract::LEGACY_CARGO_DEV_BASE_COMMIT,
-            BaselineContract::LEGACY_CARGO_DEV_ADAPTER_COMMIT,
-        ),
-        BaselineContract::LegacyCargoDevV2 => (
-            BaselineContract::LEGACY_CARGO_DEV_V2_BASE_COMMIT,
-            BaselineContract::LEGACY_CARGO_DEV_V2_ADAPTER_COMMIT,
-        ),
-    };
-    let head = git_text(baseline_root, &["rev-parse", "HEAD"])?;
-    if head != adapter_commit {
-        return Err(format!(
-            "{} 基线必须是已审核适配提交 {}，实际为 {head}",
-            contract.as_str(),
-            adapter_commit
-        )
-        .into());
-    }
-    let parent = git_text(baseline_root, &["rev-parse", "HEAD^"])?;
-    if parent != base_commit {
-        return Err(format!(
-            "{} 适配提交不再直接基于基线提交 {}",
-            contract.as_str(),
-            base_commit
-        )
-        .into());
-    }
-    if !git_text(
-        baseline_root,
-        &["status", "--porcelain", "--untracked-files=all"],
-    )?
-    .is_empty()
-    {
-        return Err(format!("{} 基线 worktree 必须干净", contract.as_str()).into());
-    }
-    let patch = git_output(
-        baseline_root,
-        &[
-            "diff",
-            "--binary",
-            "--full-index",
-            base_commit,
-            adapter_commit,
-            "--",
-            ".",
-        ],
-    )?;
-    Ok(Some(BaselineProvenance {
-        base_commit: base_commit.to_owned(),
-        adapter_commit: adapter_commit.to_owned(),
-        patch_sha256: sha256(&patch),
-    }))
-}
-
-fn git_text(root: &Path, args: &[&str]) -> Result<String> {
-    Ok(String::from_utf8(git_output(root, args)?)?
-        .trim()
-        .to_owned())
-}
-
-fn git_output(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
-    let output = Command::new("git").args(args).current_dir(root).output()?;
-    if output.status.success() {
-        Ok(output.stdout)
-    } else {
-        Err(format!(
-            "无法读取 legacy baseline 证据：git {}\n{}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr).trim()
-        )
-        .into())
-    }
-}
-
-fn sha256(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let hex = digest
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    format!("sha256:{hex}")
-}
-
 struct PairedRunDirectories {
     comparison_id: String,
     baseline_id: String,
@@ -314,6 +271,7 @@ struct PairedRunDirectories {
 fn prepare_arm(
     backend_root: &Path,
     frontend_root: &Path,
+    runner_frontend_root: &Path,
     devex_root: &Path,
     options: &DevexRunOptions,
     definition: SuiteDefinition,
@@ -329,6 +287,7 @@ fn prepare_arm(
     prepare_run_at(
         backend_root,
         frontend_root,
+        runner_frontend_root,
         devex_root,
         options,
         definition,
@@ -339,6 +298,8 @@ fn prepare_arm(
             arm,
             baseline_contract,
             baseline_provenance,
+            workload_contract: baseline_contract
+                .and_then(|contract| contract.workload_contract(options.suite, &options.variant)),
         }),
     )
 }
@@ -353,6 +314,7 @@ fn execute_samples(
     execute_warmup_with_contract(
         &roots.baseline_backend,
         &roots.baseline_frontend,
+        &roots.runner_frontend,
         options,
         baseline,
         save_contract(baseline_contract, PairedArm::Baseline),
@@ -360,6 +322,7 @@ fn execute_samples(
     execute_warmup_with_contract(
         &roots.candidate_backend,
         &roots.candidate_frontend,
+        &roots.runner_frontend,
         options,
         candidate,
         save_contract(baseline_contract, PairedArm::Candidate),
@@ -440,7 +403,8 @@ fn execute_measurement(
             candidate,
         ),
     };
-    let expected_fingerprints = source_fingerprints(backend_root, frontend_root, session)?;
+    let expected_fingerprints =
+        source_fingerprints(backend_root, frontend_root, &roots.runner_frontend, session)?;
     let target = sample_target(&session.run_dir, options.suite, options.cache_state, pair);
     let label = format!("{}-pair-{pair:03}-order-{order:03}", arm.as_str());
     println!(
@@ -453,6 +417,7 @@ fn execute_measurement(
     let outcome = execute_sample_with_contract(
         backend_root,
         frontend_root,
+        &roots.runner_frontend,
         &target,
         session.definition,
         &session.environment,
@@ -461,7 +426,8 @@ fn execute_measurement(
         &label,
         save_contract(baseline_contract, arm),
     )?;
-    let restored = source_fingerprints(backend_root, frontend_root, session)?;
+    let restored =
+        source_fingerprints(backend_root, frontend_root, &roots.runner_frontend, session)?;
     if restored != expected_fingerprints {
         return Err(format!(
             "paired {} 第 {pair} 对样本结束后源码指纹发生变化",
@@ -523,15 +489,20 @@ fn save_contract(
 fn source_fingerprints(
     backend_root: &Path,
     frontend_root: &Path,
+    runner_frontend_root: &Path,
     session: &RunSession,
 ) -> Result<super::metadata::SourceFingerprints> {
-    let observed = collect_source_fingerprints(
-        backend_root,
-        session
+    let observed = if session.definition.requires_frontend {
+        let runner = session
             .definition
-            .requires_frontend
-            .then_some(frontend_root),
-    )?;
+            .steps
+            .iter()
+            .any(|step| step.working_directory == super::model::WorkingDirectory::RunnerFrontend)
+            .then_some(runner_frontend_root);
+        super::metadata::collect_runtime_source_fingerprints(backend_root, frontend_root, runner)?
+    } else {
+        collect_source_fingerprints(backend_root, None)?
+    };
     if observed != session.source_fingerprints {
         return Err(format!(
             "paired {} worktree 在测量期间发生变化，拒绝混入样本",

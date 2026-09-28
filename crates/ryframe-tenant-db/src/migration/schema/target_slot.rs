@@ -1,10 +1,10 @@
 use sea_orm::{DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement};
 
-use super::super::normalization::normalize_check_clause;
 use super::catalog::{
     FenceCheckRow, FenceColumnRow, FenceConstraintRow, FenceIndexRow, TenantDataTableRow,
 };
 use super::{normalize_column_default, normalize_column_extra, schema_fingerprint_mismatch};
+use ryframe_db::migration::normalize_check_clause;
 
 pub(super) async fn verify_target_slot_schema(
     db: &DatabaseConnection,
@@ -25,6 +25,13 @@ pub(super) async fn verify_target_slot_schema(
         ));
     }
 
+    verify_columns(db).await?;
+    verify_indexes(db).await?;
+    verify_constraints(db).await?;
+    Ok(())
+}
+
+async fn verify_columns(db: &DatabaseConnection) -> Result<(), DbErr> {
     let columns = FenceColumnRow::find_by_statement(Statement::from_string(
         DbBackend::MySql,
         "SELECT column_name AS `column_name`, column_type AS `column_type`, \
@@ -108,6 +115,10 @@ pub(super) async fn verify_target_slot_schema(
         }
     }
 
+    Ok(())
+}
+
+async fn verify_indexes(db: &DatabaseConnection) -> Result<(), DbErr> {
     let indexes = FenceIndexRow::find_by_statement(Statement::from_string(
         DbBackend::MySql,
         "SELECT index_name AS `index_name`, column_name AS `column_name`, \
@@ -131,6 +142,10 @@ pub(super) async fn verify_target_slot_schema(
         return Err(schema_fingerprint_mismatch("target slot primary key"));
     }
 
+    Ok(())
+}
+
+async fn verify_constraints(db: &DatabaseConnection) -> Result<(), DbErr> {
     let constraints = FenceConstraintRow::find_by_statement(Statement::from_string(
         DbBackend::MySql,
         "SELECT constraint_name AS `constraint_name`, constraint_type AS `constraint_type`, \
@@ -177,13 +192,15 @@ pub(super) async fn verify_target_slot_schema(
         .iter()
         .find(|check| check.constraint_name == "ck_biz_tenant_target_slot_value")
         .map(|check| normalize_check_clause(&check.check_clause));
+    let expected_slot_id = normalize_check_clause("`slot_id` = 1");
+    let expected_value = normalize_check_clause(
+        "(((`tenant_id` IS NULL) AND (`placement_generation` IS NULL) \
+         AND (`switch_token` IS NULL)) OR ((`tenant_id` IS NOT NULL) \
+         AND (`placement_generation` > 0) AND (`switch_token` IS NOT NULL)))",
+    );
     if checks.len() != 2
-        || slot_id.as_deref() != Some("slot_id=1")
-        || value.as_deref()
-            != Some(
-                "((tenant_idisnull)and(placement_generationisnull)and(switch_tokenisnull))or(\
-                 (tenant_idisnotnull)and(placement_generation>0)and(switch_tokenisnotnull))",
-            )
+        || slot_id.as_deref() != Some(expected_slot_id.as_str())
+        || value.as_deref() != Some(expected_value.as_str())
     {
         return Err(schema_fingerprint_mismatch("target slot check constraints"));
     }

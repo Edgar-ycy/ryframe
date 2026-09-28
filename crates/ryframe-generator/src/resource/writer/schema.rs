@@ -1,9 +1,12 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
     process::Command,
 };
+
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 use super::{
     GeneratedAsset, GeneratedCatalog, OwnershipManifest, ResourceError, ResourceWorkspace,
@@ -17,6 +20,9 @@ pub(super) fn preserve_initial_migrations(
     workspace: ResourceWorkspace<'_>,
     require_all: bool,
 ) -> Result<Vec<GeneratedAsset>, ResourceError> {
+    if !super::release_stage::stable(workspace.backend_root)? {
+        return Ok(assets);
+    }
     for entry in manifest
         .entries
         .iter()
@@ -54,6 +60,10 @@ pub(super) fn validate_evolution(
     manifest: &OwnershipManifest,
     workspace: ResourceWorkspace<'_>,
 ) -> Result<(), ResourceError> {
+    let locked = verified_locked_migrations(workspace.backend_root)?;
+    if !super::release_stage::stable(workspace.backend_root)? {
+        return Ok(());
+    }
     let managed = managed_schemas(manifest)?;
     for resource in catalog.resources.values() {
         let Some((previous_hash, previous_revision)) = managed.get(resource.name.as_str()) else {
@@ -97,7 +107,14 @@ pub(super) fn validate_evolution(
                     .with_file(&resource.source_path)
                 },
             )?;
-        verify_revision_state(workspace.backend_root, &migration_files, &resource.name)?;
+        verify_revision_state(
+            workspace.backend_root,
+            resource.storage,
+            revision,
+            &migration_files,
+            &locked,
+            &resource.name,
+        )?;
     }
     Ok(())
 }
@@ -159,7 +176,10 @@ fn find_revision_files(root: &Path, storage: StorageKind, revision: &str) -> Opt
 
 fn verify_revision_state(
     root: &Path,
+    storage: StorageKind,
+    revision: &str,
     files: &[PathBuf],
+    locked: &BTreeMap<String, LockedMigration>,
     resource: &str,
 ) -> Result<(), ResourceError> {
     let relative = files
@@ -171,8 +191,12 @@ fn verify_revision_state(
                 .replace('\\', "/")
         })
         .collect::<Vec<_>>();
-    let locked = locked_paths(root)?;
-    if relative.iter().all(|path| locked.contains(path)) {
+    let expected_storage = storage_label(storage);
+    if relative.iter().all(|path| {
+        locked
+            .get(path)
+            .is_some_and(|entry| entry.storage == expected_storage && entry.target == revision)
+    }) {
         return Ok(());
     }
     if !root.join(".git").exists() {
@@ -208,11 +232,31 @@ fn verify_revision_state(
     Ok(())
 }
 
-fn locked_paths(root: &Path) -> Result<BTreeSet<String>, ResourceError> {
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MigrationLock {
+    format_version: u32,
+    #[serde(rename = "frozen_at")]
+    _frozen_at: String,
+    files: Vec<LockedMigration>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LockedMigration {
+    path: String,
+    sha256: String,
+    storage: String,
+    target: String,
+}
+
+fn verified_locked_migrations(
+    root: &Path,
+) -> Result<BTreeMap<String, LockedMigration>, ResourceError> {
     let path = root.join("catalog/migrations.lock.toml");
     let source = match fs::read_to_string(&path) {
         Ok(source) => source,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeSet::new()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeMap::new()),
         Err(error) => {
             return Err(ResourceError::file(
                 &path,
@@ -221,30 +265,179 @@ fn locked_paths(root: &Path) -> Result<BTreeSet<String>, ResourceError> {
             ));
         }
     };
-    let value = toml::from_str::<toml::Value>(&source).map_err(|error| {
+    let lock = toml::from_str::<MigrationLock>(&source).map_err(|error| {
         ResourceError::file(
             &path,
             format!("迁移冻结清单格式错误：{error}"),
-            "先通过 cargo migrate verify 修复冻结清单",
+            "先通过 cargo xtask data migrate verify 修复冻结清单",
         )
     })?;
-    Ok(value
-        .get("files")
-        .and_then(toml::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| entry.get("path").and_then(toml::Value::as_str))
-        .map(str::to_owned)
-        .collect())
+    if lock.format_version != 1 || lock.files.is_empty() {
+        return Err(ResourceError::file(
+            &path,
+            "迁移冻结清单必须使用 format_version=1 并包含至少一个文件",
+            "先通过 cargo xtask data migrate verify 修复冻结清单",
+        ));
+    }
+    let mut verified = BTreeMap::new();
+    for entry in lock.files {
+        verify_locked_migration(root, &path, &entry)?;
+        if verified.insert(entry.path.clone(), entry).is_some() {
+            return Err(ResourceError::file(
+                &path,
+                "迁移冻结清单包含重复 path",
+                "删除重复条目后运行 cargo xtask data migrate verify",
+            ));
+        }
+    }
+    Ok(verified)
+}
+
+fn verify_locked_migration(
+    root: &Path,
+    lock_path: &Path,
+    entry: &LockedMigration,
+) -> Result<(), ResourceError> {
+    let (expected_storage, expected_target) = lock_identity(&entry.path).map_err(|message| {
+        ResourceError::file(
+            lock_path,
+            message,
+            "修正冻结条目的 path、storage 和 target 后运行 cargo xtask data migrate verify",
+        )
+    })?;
+    if entry.storage != expected_storage || entry.target != expected_target {
+        return Err(ResourceError::file(
+            lock_path,
+            format!(
+                "冻结迁移 {} 的身份无效：storage/target 必须是 {expected_storage:?}/{expected_target:?}",
+                entry.path
+            ),
+            "从受控路径推导 storage 和 target，不能在 lock 中另行声明语义",
+        ));
+    }
+    if entry.sha256.len() != 64
+        || !entry
+            .sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(ResourceError::file(
+            lock_path,
+            format!("冻结迁移 {} 的 sha256 不是 64 位小写十六进制", entry.path),
+            "重新核对迁移文件并通过 data migrate freeze 生成锁条目",
+        ));
+    }
+    let target = root.join(Path::new(&entry.path));
+    let content = fs::read(&target).map_err(|error| {
+        ResourceError::file(
+            &target,
+            format!("冻结迁移被删除、改名或无法读取：{error}"),
+            "从版本控制恢复冻结迁移后重试",
+        )
+    })?;
+    let actual = hex::encode(Sha256::digest(&content));
+    if actual != entry.sha256 {
+        return Err(ResourceError::file(
+            &target,
+            "冻结迁移被修改，源码与 migrations.lock.toml 不一致",
+            "恢复冻结源码；正式版 schema 变化必须追加 roll-forward 迁移",
+        ));
+    }
+    Ok(())
+}
+
+fn lock_identity(path: &str) -> Result<(&'static str, String), String> {
+    if path.contains('\\')
+        || path.starts_with('/')
+        || path
+            .split('/')
+            .any(|part| part.is_empty() || matches!(part, "." | ".."))
+        || !path.ends_with(".rs")
+    {
+        return Err(format!("冻结迁移路径不安全：{path:?}"));
+    }
+    for (prefix, storage, generated) in [
+        ("crates/ryframe-db/src/migration/", "control", false),
+        (
+            "crates/ryframe-tenant-db/src/migration/",
+            "tenant-data",
+            false,
+        ),
+        ("crates/ryframe-db/src/generated/", "control", true),
+        (
+            "crates/ryframe-tenant-db/src/generated/",
+            "tenant-data",
+            true,
+        ),
+    ] {
+        let Some(remainder) = path.strip_prefix(prefix) else {
+            continue;
+        };
+        let parts = remainder.split('/').collect::<Vec<_>>();
+        let target = if generated {
+            if parts.len() != 2 || parts[1] != "migration.rs" {
+                return Err(format!(
+                    "生成迁移路径必须是 <resource>/migration.rs：{path}"
+                ));
+            }
+            format!("resource:{}:initial", parts[0])
+        } else if parts.len() == 1 {
+            parts[0]
+                .strip_suffix(".rs")
+                .expect("已校验 Rust 后缀")
+                .to_owned()
+        } else {
+            parts[0].to_owned()
+        };
+        if !valid_migration_target(&target, generated) {
+            return Err(format!("冻结迁移无法推导合法 target：{path}"));
+        }
+        return Ok((storage, target));
+    }
+    Err(format!("冻结文件不属于迁移目录：{path}"))
+}
+
+fn valid_migration_target(target: &str, generated: bool) -> bool {
+    if generated {
+        return target
+            .strip_prefix("resource:")
+            .and_then(|value| value.strip_suffix(":initial"))
+            .is_some_and(|resource| {
+                !resource.is_empty()
+                    && resource.bytes().all(|byte| {
+                        byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'
+                    })
+            });
+    }
+    let mut parts = target.splitn(3, '_');
+    let date = parts.next().unwrap_or_default();
+    let time = parts.next().unwrap_or_default();
+    let label = parts.next().unwrap_or_default();
+    date.len() == 9
+        && date.starts_with('m')
+        && date[1..].bytes().all(|byte| byte.is_ascii_digit())
+        && time.len() == 6
+        && time.bytes().all(|byte| byte.is_ascii_digit())
+        && !label.is_empty()
+        && label
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+}
+
+fn storage_label(storage: StorageKind) -> &'static str {
+    match storage {
+        StorageKind::ControlRow => "control",
+        StorageKind::TenantData => "tenant-data",
+    }
 }
 
 fn schema_change_suggestion(storage: StorageKind) -> &'static str {
     match storage {
         StorageKind::ControlRow => {
-            "先运行 `cargo migrate new control <name>`，再把生成的完整迁移名写入 database.schema_revision"
+            "先运行 `cargo xtask data migrate new control <name>`，再把生成的完整迁移名写入 database.schema_revision"
         }
         StorageKind::TenantData => {
-            "先运行 `cargo migrate new tenant-data <name>`，再把生成的完整迁移名写入 database.schema_revision"
+            "先运行 `cargo xtask data migrate new tenant-data <name>`，再把生成的完整迁移名写入 database.schema_revision"
         }
     }
 }

@@ -9,8 +9,8 @@ pub(super) fn policy_template() -> TenantProvisioningTemplate {
         authorization: TenantAuthorizationTemplate {
             permissions: vec![
                 permission(1, "system:root", None),
-                // 管理能力父权限虽未在首事务启用，仍须因普通子权限而保留结构闭包。
-                permission(2, "system:service-account:list", Some(1)),
+                // 父权限必须因普通子权限而保留结构闭包。
+                permission(2, "system:config-transfer:list", Some(1)),
                 permission(3, "system:user:list", Some(2)),
                 permission(4, "system:user:add", Some(1)),
                 permission(5, "monitor:job:list", Some(1)),
@@ -24,7 +24,7 @@ pub(super) fn policy_template() -> TenantProvisioningTemplate {
                 menu(2, Some("platform")),
                 menu(3, Some("platform.users")),
                 menu(4, Some("monitor.retention")),
-                menu(5, Some("system.service-accounts")),
+                menu(5, Some("system.config-transfer")),
                 menu(6, Some("system.users")),
             ],
         },

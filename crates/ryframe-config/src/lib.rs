@@ -16,7 +16,6 @@ mod redis_config;
 mod reset_config;
 mod resource_scope;
 mod runtime_config;
-mod service_accounts_config;
 mod telemetry_config;
 mod tenant_config_transfer_config;
 mod tenant_data_config;
@@ -43,7 +42,6 @@ pub use redis_config::{RedisConfig, RedisMode};
 pub use reset_config::ResetConfig;
 pub use resource_scope::ResourceScopeId;
 pub use runtime_config::{ProxyConfig, UploadLimitsConfig};
-pub use service_accounts_config::{PepperKeyring, ServiceAccountsConfig};
 pub use telemetry_config::TelemetryConfig;
 pub use tenant_config_transfer_config::TenantConfigTransferConfig;
 pub use tenant_data_config::{
