@@ -1,112 +1,154 @@
-//! RyFrame 的仓库级开发任务入口。
-//!
-//! 所有公开自动化都从 `cargo xtask` 进入。每类任务放在独立模块中，避免命令解析、
-//! 业务编排与进程管理互相耦合。
-
-mod build;
-mod check;
-mod ci;
-mod cli;
-mod contract;
-mod data;
-mod dev;
-mod devex;
-#[cfg(feature = "resource")]
-mod diff;
-mod doctor;
-mod local_test_path;
-mod migration;
-mod process;
-mod recovery;
-mod release;
-mod resource;
-mod source_edit;
-mod watch;
-mod workspace;
-
-use std::{env, error::Error};
-
-use cli::{CheckCommand, Cli, Command, DataCommand, GenerateCommand};
-
-type Result<T> = std::result::Result<T, Box<dyn Error>>;
+use std::{
+    env,
+    ffi::OsString,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 fn main() {
-    #[cfg(target_os = "linux")]
-    if let Some(result) = devex::memory::run_trampoline_if_requested() {
-        if let Err(error) = result {
-            eprintln!("DevEx cgroup 执行跳板失败：{error}");
-            std::process::exit(125);
-        }
-        unreachable!("成功的 exec 不会返回");
-    }
-
-    let cli = match cli::parse(env::args().skip(1).collect()) {
-        Ok(cli) => cli,
-        Err(error) => {
-            eprintln!("参数错误：{error}");
-            eprintln!("运行 `cargo xtask --help` 查看完整用法。");
-            std::process::exit(2);
-        }
-    };
-
-    if let Err(error) = dispatch(cli) {
-        eprintln!("任务失败：{error}");
-        let code = dev::failure_exit_code(error.as_ref())
-            .or_else(|| process::failure_exit_code(error.as_ref()))
-            .unwrap_or(1);
-        std::process::exit(code);
+    if let Err(error) = run(env::args_os().skip(1).collect()) {
+        eprintln!("xtask: {error}");
+        std::process::exit(1);
     }
 }
 
-fn dispatch(cli: Cli) -> Result<()> {
-    match cli.command {
-        Command::Dev { measure_once: true } => dev::measure_once(),
-        Command::Dev {
-            measure_once: false,
-        } => dev::run(&cli.frontend_dir),
-        Command::Check(command) => dispatch_check(command, &cli.frontend_dir),
-        Command::Build(options) => build::run(options, &cli.frontend_dir),
-        Command::Generate(command) => dispatch_generate(command, &cli.frontend_dir),
-        Command::Data(command) => dispatch_data(command),
-        Command::Help(topic) => {
-            cli::print_help(topic.as_deref());
-            Ok(())
-        }
+fn run(args: Vec<OsString>) -> Result<(), String> {
+    let root = workspace_root()?;
+    let mut args = args.into_iter();
+    let command = args.next().unwrap_or_else(|| OsString::from("help"));
+
+    match command.to_string_lossy().as_ref() {
+        "help" | "--help" | "-h" => print_help(),
+        "check" => run_check(&root, args.collect()),
+        "build" => run_build(&root, args.collect()),
+        "dev" => run_backend(&root, "ryframe", args.collect()),
+        "data" => run_data(&root, args.collect()),
+        "generate" => Err("资源生成入口已从 xtask 移除，请使用对应的后端生成命令".into()),
+        other => Err(format!(
+            "未知命令 `{other}`，使用 `cargo xtask help` 查看帮助"
+        )),
     }
 }
 
-fn dispatch_check(command: CheckCommand, frontend_dir: &std::path::Path) -> Result<()> {
-    match command {
-        CheckCommand::Run(options) if options.plan => {
-            check::plan(options.scope, options.full, frontend_dir)
+fn workspace_root() -> Result<PathBuf, String> {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| "无法定位后端工作区".into())
+}
+
+fn run_check(root: &Path, args: Vec<OsString>) -> Result<(), String> {
+    let plan = args.iter().any(|arg| arg == "--plan");
+    for arg in &args {
+        if arg != "--plan" && arg != "--full" {
+            return Err(format!("check 不支持参数 `{}`", arg.to_string_lossy()));
         }
-        CheckCommand::Run(options) => check::verify(options.scope, options.full, frontend_dir),
-        CheckCommand::Doctor => doctor::run(frontend_dir),
-        CheckCommand::Ci(command) => ci::run(command, frontend_dir),
-        CheckCommand::Perf(command) => devex::run(&command, frontend_dir),
-        CheckCommand::Release(command) => release::run(&command, frontend_dir),
-        CheckCommand::Recovery(command) => recovery::run(&command, frontend_dir),
+    }
+    if plan {
+        println!("cargo check --workspace --all-targets --locked");
+        return Ok(());
+    }
+    run_cargo(root, ["check", "--workspace", "--all-targets", "--locked"])
+}
+
+fn run_build(root: &Path, args: Vec<OsString>) -> Result<(), String> {
+    let mut profile = String::from("dev");
+    let mut plan = false;
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.to_string_lossy().as_ref() {
+            "--plan" => plan = true,
+            "--profile" => {
+                profile = args
+                    .next()
+                    .ok_or_else(|| "--profile 缺少值".to_string())?
+                    .into_string()
+                    .map_err(|_| "--profile 不是有效文本".to_string())?;
+                if profile != "dev" && profile != "release" {
+                    return Err("--profile 只支持 dev 或 release".into());
+                }
+            }
+            other => return Err(format!("build 不支持参数 `{other}`")),
+        }
+    }
+
+    if plan {
+        println!(
+            "cargo build --workspace --locked{}",
+            if profile == "release" {
+                " --release"
+            } else {
+                ""
+            }
+        );
+        return Ok(());
+    }
+
+    if profile == "release" {
+        run_cargo(root, ["build", "--workspace", "--locked", "--release"])
+    } else {
+        run_cargo(root, ["build", "--workspace", "--locked"])
     }
 }
 
-fn dispatch_generate(command: GenerateCommand, frontend_dir: &std::path::Path) -> Result<()> {
-    match command {
-        GenerateCommand::Help => {
-            cli::print_help(Some("generate"));
-            Ok(())
-        }
-        GenerateCommand::Resource(command) => resource::run(&command, frontend_dir),
-        GenerateCommand::Api(command) => contract::generate_api(&command, frontend_dir),
+fn run_backend(root: &Path, package: &str, args: Vec<OsString>) -> Result<(), String> {
+    let mut command = vec![
+        OsString::from("run"),
+        OsString::from("--locked"),
+        OsString::from("-p"),
+        OsString::from(package),
+        OsString::from("--bin"),
+        OsString::from(package),
+    ];
+    if !args.is_empty() {
+        command.push(OsString::from("--"));
+        command.extend(args);
+    }
+    run_cargo_os(root, command)
+}
+
+fn run_data(root: &Path, args: Vec<OsString>) -> Result<(), String> {
+    let mut args = args.into_iter();
+    let operation = args
+        .next()
+        .ok_or_else(|| "data 缺少操作名，目前支持 migrate".to_string())?;
+    if operation != "migrate" {
+        return Err(format!("data 不支持操作 `{}`", operation.to_string_lossy()));
+    }
+
+    let mut command = vec![
+        OsString::from("run"),
+        OsString::from("--locked"),
+        OsString::from("-p"),
+        OsString::from("ryframe"),
+        OsString::from("--bin"),
+        OsString::from("ryframe-migrate"),
+        OsString::from("--"),
+    ];
+    command.extend(args);
+    run_cargo_os(root, command)
+}
+
+fn run_cargo<const N: usize>(root: &Path, args: [&str; N]) -> Result<(), String> {
+    run_cargo_os(root, args.into_iter().map(OsString::from).collect())
+}
+
+fn run_cargo_os(root: &Path, args: Vec<OsString>) -> Result<(), String> {
+    let status = Command::new("cargo")
+        .args(args)
+        .current_dir(root)
+        .status()
+        .map_err(|error| format!("启动 cargo 失败: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("cargo 退出状态为 {status}"))
     }
 }
 
-fn dispatch_data(command: DataCommand) -> Result<()> {
-    match command {
-        DataCommand::Help => {
-            cli::print_help(Some("data"));
-            Ok(())
-        }
-        DataCommand::Migrate(command) => migration::run(&command),
-        command => data::run(&command),
-    }
+fn print_help() -> Result<(), String> {
+    println!(
+        "RyFrame 后端任务入口\n\n  cargo xtask dev [参数]\n  cargo xtask check [--full|--plan]\n  cargo xtask build [--profile dev|release] [--plan]\n  cargo xtask data migrate [参数]\n"
+    );
+    Ok(())
 }

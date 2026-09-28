@@ -8,27 +8,6 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
-[features]
-default = []
-resource = ["dep:ryframe-generator"]
-
-[dependencies]
-chrono = { workspace = true }
-notify = "8.2"
-ryframe-generator = { path = "../crates/ryframe-generator", default-features = false, optional = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-sha2 = { workspace = true }
-tokio = { workspace = true, features = ["rt", "signal"] }
-toml = { workspace = true }
-
-[target.'cfg(unix)'.dependencies]
-nix = { version = "=0.29.0", default-features = false, features = ["fs", "signal"] }
-
-[target.'cfg(windows)'.dependencies]
-processkit = { version = "=3.3.4", default-features = false, features = ["stats", "process-control"] }
-winsafe = { version = "=0.0.19", default-features = false, features = ["kernel"] }
-
 [[bin]]
 name = "xtask"
 path = "src/main.rs"
