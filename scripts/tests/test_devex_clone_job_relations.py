@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import test_devex_clone as base
 from devex_clone_jobs_fixture import CLEANUPS, JSON_TIME, SQL_TIME, add_cleanup, bind_actions
 from devex_clone_model import create_plan
-from devex_clone_job_relations import PAYLOAD_FIELDS, SYSTEM_CLEANUP_JOBS, TRIGGERS, positive_id
+from devex_clone_model import PAYLOAD_FIELDS, SYSTEM_CLEANUP_JOBS, TRIGGERS, positive_id
 
 
 class CleanupRelationTests(unittest.TestCase):
