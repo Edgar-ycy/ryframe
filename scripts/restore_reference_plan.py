@@ -9,7 +9,7 @@ from pathlib import Path
 
 from process_sockets import endpoint
 from restore_build import file_digest
-from restore_identifiers import valid_identifier, valid_scope_identifier
+from restore_runtime_evidence import valid_identifier, valid_scope_identifier
 
 BUCKETS = {"uploads", "avatar", "exports", "imports", "config-packages"}
 EXCLUDED_TABLES = {"ryframe_resource_ownership", "sys_backup_set", "sys_backup_resource", "sys_restore_run"}

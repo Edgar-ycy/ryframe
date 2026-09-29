@@ -15,10 +15,11 @@ from urllib.parse import urlsplit
 
 from process_sockets import endpoint
 from restore_build import validate_build_context
-from restore_identifiers import valid_identifier, valid_scope_identifier
 from source_inventory import validate_build_source_domains
 
 MAX_JSON_BYTES = 16 * 1024 * 1024
+IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
+SCOPE_IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9_-]{0,46}[a-z0-9]")
 HEX_40 = re.compile(r"[a-f0-9]{40}")
 HEX_64 = re.compile(r"[a-f0-9]{64}")
 AUTHORITY_FIELDS = {
@@ -38,6 +39,14 @@ AUTHORITY_FIELDS = {
     "worker_endpoint",
     "frontend_endpoint",
 }
+
+
+def valid_identifier(value: object) -> bool:
+    return isinstance(value, str) and bool(IDENTIFIER.fullmatch(value))
+
+
+def valid_scope_identifier(value: object) -> bool:
+    return isinstance(value, str) and bool(SCOPE_IDENTIFIER.fullmatch(value))
 
 
 def is_reparse(metadata: os.stat_result) -> bool:

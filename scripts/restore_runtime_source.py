@@ -6,8 +6,15 @@ from pathlib import Path
 
 from restore_build import registered_source, repository, verify_build
 from restore_frontend_build import validate_registered_frontend
-from restore_identifiers import valid_identifier, valid_scope_identifier
-from restore_runtime_evidence import HEX_40, HEX_64, JsonDocument, timestamp, validate_authority
+from restore_runtime_evidence import (
+    HEX_40,
+    HEX_64,
+    JsonDocument,
+    timestamp,
+    valid_identifier,
+    valid_scope_identifier,
+    validate_authority,
+)
 from source_inventory import build_source_domains, capture_inventory
 
 
