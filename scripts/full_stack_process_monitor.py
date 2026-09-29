@@ -36,10 +36,13 @@ def start_monitor(directory: Path, role: str, scope: str, operation_id: str) -> 
     ready = receipt_path(directory, role, operation_id, "ready")
     if ready.exists():
         raise ValueError("成员监督器登记已经存在，拒绝接管")
-    child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "__monitor",
+    environment = dict(os.environ)
+    environment.pop("__PYVENV_LAUNCHER__", None)
+    python = str(Path(getattr(sys, "_base_executable", sys.executable)).resolve(strict=True))
+    child = subprocess.Popen([python, "-X", "utf8", str(Path(__file__).resolve()), "__monitor",
                               "--directory", str(directory), "--role", role, "--scope", scope,
                               "--operation-id", operation_id, "--supervisor", json.dumps(supervisor)],
-                             stdin=subprocess.DEVNULL, start_new_session=True,
+                             env=environment, stdin=subprocess.DEVNULL, start_new_session=True,
                              creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
     identity = process_identity(child.pid)
     try:

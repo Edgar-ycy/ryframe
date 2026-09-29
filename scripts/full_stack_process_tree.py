@@ -444,6 +444,26 @@ def supervise_product(process: subprocess.Popen, receipt: dict, grace: float = 1
     return code
 
 
+def _child_environment(environment: dict[str, str] | None = None) -> dict[str, str]:
+    """避免 Windows 虚拟环境启动器成为受控进程树中的额外父进程。"""
+    result = dict(os.environ if environment is None else environment)
+    result.pop("__PYVENV_LAUNCHER__", None)
+    return result
+
+
+def _python_executable() -> str:
+    return str(Path(getattr(sys, "_base_executable", sys.executable)).resolve(strict=True))
+
+
+def _canonical_command(command: list[str]) -> list[str]:
+    if not command:
+        return command
+    launcher = Path(sys.executable).resolve(strict=True)
+    if Path(command[0]).resolve(strict=True) == launcher:
+        return [_python_executable(), *command[1:]]
+    return command
+
+
 def launch_supervised_process(
     directory: Path,
     role: str,
@@ -464,7 +484,9 @@ def launch_supervised_process(
     if path.exists():
         raise ValueError("运行目录已有进程树收据；必须先核对并回收原进程树")
     command = [
-        sys.executable,
+        _python_executable(),
+        "-X",
+        "utf8",
         str(Path(__file__).resolve()),
         "__supervise",
         "--runtime-dir", str(directory),
@@ -478,7 +500,7 @@ def launch_supervised_process(
     supervisor = subprocess.Popen(
         command,
         cwd=cwd,
-        env=environment,
+        env=_child_environment(environment),
         stdin=subprocess.DEVNULL,
         stdout=output,
         stderr=subprocess.STDOUT,
@@ -531,6 +553,7 @@ def _supervise(arguments: list[str]) -> int:
         command = command[1:]
     if not command:
         raise ValueError("监督进程缺少产品启动命令")
+    command = _canonical_command(command)
     membership = enter_supervision(args.runtime_dir, args.role, args.scope, args.operation_id)
     try:
         supervisor = process_identity(os.getpid())
@@ -539,7 +562,7 @@ def _supervise(arguments: list[str]) -> int:
         process = subprocess.Popen(
             command,
             cwd=args.cwd.resolve(strict=True),
-            env=os.environ,
+            env=_child_environment(),
             stdin=subprocess.DEVNULL,
         )
         identity = process_identity(process.pid)
