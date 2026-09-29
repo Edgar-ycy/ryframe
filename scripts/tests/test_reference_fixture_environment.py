@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import reference_fixture_environment as environment
 import reference_fixture_services as services
 import reference_fixture_successor as successor
-from reference_fixture_paths import service_run
+from reference_fixture_service_context import service_run
 from restore_build import file_digest
 
 

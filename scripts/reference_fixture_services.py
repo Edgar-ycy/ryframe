@@ -22,7 +22,7 @@ from devex_clone_storage_process import start as start_rustfs
 from restore_build import file_digest
 from restore_reference_plan import BUCKETS, plan_hash
 from reference_fixture_environment import validate_current_review_tools, validate_preflight_successor
-from reference_fixture_paths import service_run
+from reference_fixture_service_context import service_run
 from reference_fixture_control_protocol import run_private
 
 

@@ -12,7 +12,7 @@ from devex_clone_model import linked, local_path
 from devex_clone_target_binding import KEYS, request_binding, validate_review
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
-from reference_fixture_paths import service_run as expected_service_run
+from reference_fixture_service_context import service_run as expected_service_run
 from reference_fixture_control_protocol import run_private
 from reference_fixture_service_history import validate_history
 from devex_clone_run_state import load_state

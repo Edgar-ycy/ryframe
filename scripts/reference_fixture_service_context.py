@@ -12,10 +12,27 @@ from devex_clone_storage_process import inspect_attempt, running
 from devex_clone_storage_request import arguments, directory_identity
 from full_stack_process import process_identity
 from full_stack_process_tree import read_process_tree
-from reference_fixture_paths import service_run
 from reference_fixture_service_history import (close_reconciliation_evidence,
                                                reconcilable_failed_close, validate_history,
                                                validate_manifest)
+
+
+def service_run(review: dict) -> Path:
+    """为一份审阅计划派生唯一服务账本目录。"""
+    try:
+        root = Path(review["future_root"])
+        backend = Path(review["scopes"]["seed"]["backend_dir"])
+    except (KeyError, TypeError) as error:
+        raise ValueError("审阅计划缺少 future_root 或 seed 后端路径") from error
+    allowed = backend / ".local-tests/reference-fixture"
+    if (
+        not root.is_absolute()
+        or not backend.is_absolute()
+        or root.parent != allowed
+        or root.name in {"", ".", ".."}
+    ):
+        raise ValueError("审阅计划 future_root 必须是 Device 参考夹具目录的直接子目录")
+    return root / "service-run"
 
 
 def context(backend: Path, review_path: Path, bootstrap_path: Path) -> dict:
