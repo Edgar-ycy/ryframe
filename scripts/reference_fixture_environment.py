@@ -19,9 +19,8 @@ from devex_clone_model import linked, local_path
 from devex_clone_target_binding import KEYS, REVIEW_FILE_TOOLS, REVIEW_TOOLS, validate_review
 from devex_clone_tools import verify as verify_tools
 from full_stack_runtime import configuration_digest
-from reference_fixture_service_context import service_run
+from reference_fixture_service_context import load_prepared_environment, service_run
 from reference_fixture_control_protocol import run_private
-from reference_fixture_environment_receipt import load as load_prepared_environment
 from restore_build import file_digest
 from restore_reference_plan import plan_hash
 from restore_source_binding import mysql_client
