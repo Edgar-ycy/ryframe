@@ -1,0 +1,323 @@
+"""seed 单次导出、明确失败采用及双侧共享发布的离线回归。"""
+from contextlib import ExitStack, nullcontext
+import copy
+import os
+from pathlib import Path
+from types import SimpleNamespace
+import unittest
+from unittest.mock import patch
+
+from workspace_directory import WorkspaceDirectory
+import devex_clone_seed_export as export
+import devex_clone_export_recovery as recovery
+import devex_clone_run as run
+import devex_clone_run_state as state
+from devex_clone_capture import read_json, write_json
+from process_environment import Environments
+from restore_reference_plan import plan_hash
+
+
+class SeedExportTests(unittest.TestCase):
+    def setUp(self):
+        self.backend = Path(__file__).resolve().parents[2]
+        temporary = WorkspaceDirectory(dir=self.backend / ".local-tests/tmp", prefix="seed-export-")
+        self.addCleanup(temporary.cleanup)
+        self.directory = Path(temporary.name).resolve()
+        write_json(self.directory / "manifest.json", {"copy_stage": "source_to_seed"})
+        state.initialize_state(self.directory)
+        self.request = self.file("source-request.json", {"kind": "source-fixture"})
+        self.registration = self.file("C52.json", {"frozen": "registration"})
+        self.rebound = self.file("rebind.json", {"frozen": "generation"})
+        self.successor = self.file("successor.json", {"frozen": "relationship"})
+        self.storage = {"generation": "same-rustfs", "request": "frozen"}
+        self.sources = {"fingerprints": {"product": {"sha256": "a" * 64, "files": 7}}, "tools": "same"}
+        self.generation = {"physical": "same-source"}
+        self.source = {
+            "directory": self.directory, "registration": {"source_request": self.request},
+            "source_request": self.request, "source_generation": self.file("generation.json", {"v2": True}),
+            "source_rebind": self.rebound, "review_successor": {"source_result": self.registration},
+            "review_successor_binding": self.successor, "storage": {"storage": self.storage},
+            "environment": {"environment": {}}, "manifest": {"build_bridges": []},
+            "request": read_json(Path(self.request["path"])),
+        }
+        self.export_value = {"request": self.request, "logical_inventory_sha256": "c" * 64,
+                             "databases": [{"key": "control"}], "objects": [{"entries": []}]}
+
+    def file(self, name, value):
+        path = self.directory / name
+        write_json(path, value)
+        return state.binding(path)
+
+    def start(self, mode):
+        number = state.begin(self.directory, "seed-runtime", mode, self.sources)
+        attempt = state.load_state(self.directory)["attempts"][-1]
+        self.file(f"controller-{number:04d}.json", {"format_version": 1, "kind": "devex-stage-controller",
+                  "owner": {"directory": str(self.directory), "manifest_sha256": state.binding(self.directory / "manifest.json")["sha256"]},
+                  "attempt": number, "attempt_sha256": plan_hash(attempt)})
+        return number
+
+    def verified(self, descriptor):
+        return {"export": read_json(Path(descriptor["path"])), "binding": descriptor,
+                "request": self.source["request"], "generation": self.generation, "proof_files": {}}
+
+    def capture(self, backend, request, output, *, control_environment=None):
+        self.assertEqual(backend, self.backend)
+        self.assertEqual(request, Path(self.request["path"]))
+        output.mkdir()
+        write_json(output / "export.json", self.export_value)
+
+    def context(self):
+        stack = ExitStack()
+        stack.enter_context(patch.object(run, "_require_owned_run"))
+        stack.enter_context(patch.object(export, "_source", return_value=copy.deepcopy(self.source)))
+        stack.enter_context(patch.object(export, "verify_source_export", side_effect=lambda _, value: self.verified(value)))
+        return stack
+
+    def complete(self, *, failed=False):
+        number = self.start("source-export")
+        with self.context(), patch.object(export, "export_source", side_effect=self.capture) as capture:
+            result = export.execute_export(self.backend, self.directory, number)
+        capture.assert_called_once()
+        state.finish(self.directory, number, result=result, error=RuntimeError("outer publish") if failed else None)
+        return number, result, state.binding(self.directory / f"results/{number:04d}.json")
+
+    def test_single_source_export_publishes_full_seal_and_cannot_run_twice(self):
+        _, result, descriptor = self.complete()
+        self.assertEqual(result["source_rebind"], self.rebound)
+        self.assertEqual(result["source_registration"], self.registration)
+        self.assertEqual(result["remote_writes"], 0)
+        self.assertTrue((self.directory / "export-0001.verified.json").is_file())
+        self.assertEqual(export.published_export(self.backend, descriptor, self.source), result)
+        before = state.load_state(self.directory)
+        with self.assertRaises(ValueError):
+            export.preflight(self.directory, "source-export")
+        self.assertEqual(before, state.load_state(self.directory))
+
+    def test_export_separates_service_environment_and_final_source_review(self):
+        number = self.start("source-export")
+        controller = {**dict(os.environ), "CARGO_BUILD_JOBS": "4", "APP_ENV": "controller"}
+        self.source["environment"]["environment"] = {"APP_ENV": "fixture-service"}
+        phases = []
+        def registered(*_args, **_kwargs):
+            self.assertEqual(dict(os.environ), controller)
+            phases.append("registered")
+            return copy.deepcopy(self.source)
+        def capture(backend, request, output, *, control_environment):
+            self.assertEqual(os.environ["APP_ENV"], "fixture-service")
+            self.assertFalse(any(key.startswith("CARGO_") for key in os.environ))
+            service = dict(os.environ)
+            with control_environment():
+                self.assertEqual(dict(os.environ), controller)
+            self.assertEqual(dict(os.environ), service)
+            os.environ["CARGO_BUILD_JOBS"] = "unexpected"
+            try:
+                with self.assertRaisesRegex(ValueError, "未登记的环境变化"):
+                    with control_environment():
+                        self.fail("未登记环境不得被控制环境替换掩盖")
+            finally:
+                del os.environ["CARGO_BUILD_JOBS"]
+            phases.append("capture")
+            self.capture(backend, request, output)
+        def verified(_backend, descriptor):
+            self.assertEqual(os.environ["APP_ENV"], "fixture-service")
+            self.assertNotIn("CARGO_BUILD_JOBS", os.environ)
+            phases.append("verified")
+            return self.verified(descriptor)
+        with patch.dict(os.environ, controller, clear=True), self.context(), \
+                patch.object(export, "_source", side_effect=registered), \
+                patch.object(export, "export_source", side_effect=capture), \
+                patch.object(export, "verify_source_export", side_effect=verified):
+            result = export.execute_export(self.backend, self.directory, number)
+            self.assertEqual(dict(os.environ), controller)
+        self.assertEqual(phases, ["registered", "capture", "verified", "registered"])
+        state.finish(self.directory, number, result=result)
+
+    def test_failed_reconcile_restores_controller_after_resource_verification(self):
+        self.complete(failed=True)
+        number = self.start("source-export-reconcile")
+        controller = {**dict(os.environ), "CARGO_BUILD_JOBS": "4", "APP_ENV": "controller"}
+        self.source["environment"]["environment"] = {"APP_ENV": "fixture-service"}
+        def generation(*_args, control_environment):
+            self.assertEqual(os.environ["APP_ENV"], "fixture-service")
+            self.assertNotIn("CARGO_BUILD_JOBS", os.environ)
+            service = dict(os.environ)
+            with control_environment():
+                self.assertEqual(dict(os.environ), controller)
+            self.assertEqual(dict(os.environ), service)
+            raise ValueError("fixture generation changed")
+        with patch.dict(os.environ, controller, clear=True), self.context(), \
+                patch.object(export, "export_source") as capture, \
+                patch("devex_clone_export_verify.verify_source_export", side_effect=lambda _, item: self.verified(item)), \
+                patch("devex_clone_storage.current_storage_binding", return_value=self.storage), \
+                patch.object(recovery, "verify_generation", side_effect=generation):
+            with self.assertRaisesRegex(ValueError, "fixture generation changed"):
+                export.execute_export(self.backend, self.directory, number, reconcile=True)
+            self.assertEqual(dict(os.environ), controller)
+        capture.assert_not_called()
+        state.finish(self.directory, number, error=RuntimeError("fixture generation changed"))
+
+    def test_both_arms_bind_one_export_and_each_export_stage_only_verifies(self):
+        _, result, descriptor = self.complete()
+        for side in ("base", "candidate"):
+            value = {"id": side, "source_export": result["export"], "source_export_result": descriptor,
+                     "source_request": self.request}
+            export.require_export_binding(self.backend, self.source, value)
+            with patch.object(run, "source_storage_binding", return_value=self.storage), \
+                    patch("devex_clone_source.export_source") as capture, \
+                    patch("devex_clone_export_verify.verify_source_export", side_effect=lambda _, item: self.verified(item)) as verify:
+                observed = run.run_export(self.backend, self.directory, value, Environments({}, {}), 4, "run", self.sources)
+            self.assertEqual(observed["export"], result["export"])
+            capture.assert_not_called()
+            verify.assert_called_once_with(self.backend, result["export"])
+        with self.assertRaises(ValueError):
+            export.require_export_binding(self.backend, self.source, {"source_export_result": descriptor, "source_export": self.request})
+
+    def test_complete_failed_attempt_is_reconciled_without_reexport(self):
+        _, original, _ = self.complete(failed=True)
+        export.preflight(self.directory, "source-export-reconcile")
+        number = self.start("source-export-reconcile")
+        with self.context(), patch.object(export, "export_source") as capture, \
+                patch("devex_clone_export_verify.verify_source_export", side_effect=lambda _, item: self.verified(item)), \
+                patch("devex_clone_storage.current_storage_binding", return_value=self.storage) as storage, \
+                patch.object(recovery, "verify_generation", return_value=self.generation):
+            adopted = export.execute_export(self.backend, self.directory, number, reconcile=True)
+        capture.assert_not_called()
+        self.assertEqual([call.args[2] for call in storage.call_args_list], ["target", "target"])
+        self.assertEqual(adopted, original)
+        state.finish(self.directory, number, result=adopted)
+        descriptor = state.binding(self.directory / f"results/{number:04d}.json")
+        self.assertEqual(export.published_export(self.backend, descriptor, self.source), adopted)
+        history = state.load_state(self.directory)
+        self.assertTrue(export.reconciles_failed_export(self.directory, history, history["attempts"][0], None, self.registration))
+        self.assertFalse(export.reconciles_failed_export(self.directory, history, history["attempts"][0], None, self.request))
+        with self.assertRaises(ValueError):
+            export.preflight(self.directory, "source-export-reconcile")
+
+    def test_failed_readonly_reconcile_can_retry_same_candidate_without_reexport(self):
+        _, original, _ = self.complete(failed=True)
+        first = self.start("source-export-reconcile")
+        state.finish(self.directory, first, error=RuntimeError("temporary verifier failure"))
+        export.preflight(self.directory, "source-export-reconcile")
+        second = self.start("source-export-reconcile")
+        with self.context(), patch.object(export, "export_source") as capture, \
+                patch("devex_clone_export_verify.verify_source_export", side_effect=lambda _, item: self.verified(item)), \
+                patch("devex_clone_storage.current_storage_binding", return_value=self.storage), \
+                patch.object(recovery, "verify_generation", return_value=self.generation):
+            adopted = export.execute_export(self.backend, self.directory, second, reconcile=True)
+        capture.assert_not_called()
+        self.assertEqual(adopted, original)
+        state.finish(self.directory, second, result=adopted)
+        descriptor = state.binding(self.directory / f"results/{second:04d}.json")
+        self.assertEqual(export.published_export(self.backend, descriptor, self.source), adopted)
+        history = state.load_state(self.directory)
+        self.assertTrue(export.reconciles_failed_export(
+            self.directory, history, history["attempts"][0], None, self.registration))
+
+    def test_retry_rejects_a_conflicting_prior_reconcile_result(self):
+        _, original, _ = self.complete(failed=True)
+        first = self.start("source-export-reconcile")
+        changed = copy.deepcopy(original)
+        changed["source_storage"] = {"generation": "conflicting"}
+        state.finish(self.directory, first, result=changed, error=RuntimeError("outer failure"))
+        second = self.start("source-export-reconcile")
+        with self.context(), patch.object(export, "export_source") as capture, \
+                patch("devex_clone_export_verify.verify_source_export", side_effect=lambda _, item: self.verified(item)), \
+                patch("devex_clone_storage.current_storage_binding", return_value=self.storage), \
+                patch.object(recovery, "verify_generation", return_value=self.generation), self.assertRaisesRegex(
+                    ValueError, "重试采用结果"):
+            export.execute_export(self.backend, self.directory, second, reconcile=True)
+        capture.assert_not_called()
+        state.finish(self.directory, second, error=RuntimeError("conflicting receipt"))
+
+    def test_partial_failed_attempt_never_reexports_or_adopts_missing_candidate(self):
+        number = self.start("source-export")
+        state.finish(self.directory, number, error=RuntimeError("partial"))
+        for mode in export.MODES:
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                export.preflight(self.directory, mode)
+        self.assertEqual(len(state.load_state(self.directory)["attempts"]), 1)
+
+    def test_export_generation_or_source_change_leaves_unpublished_evidence(self):
+        number = self.start("source-export")
+        changed = {**self.source, "source_rebind": self.successor}
+        with self.context(), patch.object(export, "export_source", side_effect=self.capture), \
+                patch.object(export, "_source", side_effect=[self.source, changed]), self.assertRaises(ValueError):
+            export.execute_export(self.backend, self.directory, number)
+        self.assertTrue((self.directory / "e0001/export.json").is_file())
+        self.assertTrue((self.directory / "export-0001.verified.json").is_file())
+        self.assertFalse((self.directory / "results/0001.json").exists())
+        state.finish(self.directory, number, error=RuntimeError("source changed"))
+
+    def test_outer_publication_and_export_content_cannot_drift(self):
+        _, result, descriptor = self.complete()
+        for field in ("source_registration", "source_rebind", "review_successor", "source_request", "source_storage"):
+            changed = copy.deepcopy(self.source)
+            if field == "source_registration":
+                changed["review_successor"]["source_result"] = self.request
+            elif field == "review_successor":
+                changed["review_successor_binding"] = self.request
+            elif field == "source_request":
+                changed["source_request"] = self.successor
+            elif field == "source_storage":
+                changed["storage"]["storage"] = {"generation": "replaced"}
+            else:
+                changed[field] = self.request
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                export.published_export(self.backend, descriptor, changed)
+        Path(result["export"]["path"]).write_text('{"tampered":true}', encoding="utf-8")
+        with self.assertRaises(ValueError):
+            export.published_export(self.backend, descriptor, self.source)
+
+    def test_unpublished_and_wrong_result_descriptors_cannot_arm(self):
+        _, _, descriptor = self.complete(failed=True)
+        for value in (descriptor, self.registration):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                export.published_export(self.backend, value, self.source)
+
+    def test_missing_or_tampered_verification_seal_cannot_arm(self):
+        _, _, descriptor = self.complete()
+        seal = self.directory / "export-0001.verified.json"
+        seal.write_text('{"unexpected":"seal"}', encoding="utf-8")
+        with self.assertRaises(ValueError):
+            export.published_export(self.backend, descriptor, self.source)
+
+    def test_reconcile_rejects_changed_storage_and_generation_without_exporter(self):
+        self.complete(failed=True)
+        number = self.start("source-export-reconcile")
+        for storage, generation in (({"generation": "replaced"}, self.generation),
+                                    (self.storage, {"physical": "changed"})):
+            with self.subTest(storage=storage, generation=generation), self.context(), \
+                    patch.object(export, "export_source") as capture, \
+                    patch("devex_clone_export_verify.verify_source_export", side_effect=lambda _, item: self.verified(item)), \
+                    patch("devex_clone_storage.current_storage_binding", return_value=storage), \
+                    patch.object(recovery, "verify_generation", return_value=generation), self.assertRaises(ValueError):
+                export.execute_export(self.backend, self.directory, number, reconcile=True)
+            capture.assert_not_called()
+        state.finish(self.directory, number, error=RuntimeError("mismatched source"))
+
+    def test_cli_export_modes_require_write_and_reject_unneeded_request(self):
+        import devex_clone_run_cli as cli
+        import devex_clone_seed_runtime as runtime
+
+        for mode in sorted(export.MODES):
+            def args(*, request=None, write=False):
+                return SimpleNamespace(command="seed-runtime", run_dir=self.directory,
+                                       operation=mode, request=request,
+                                       producer_binding=None, write=write)
+            with patch.object(cli, "execute") as execute:
+                for request, write in ((None, False), (Path(self.successor["path"]), True)):
+                    with self.subTest(mode=mode, request=request), self.assertRaises(ValueError):
+                        cli.dispatch(args(request=request, write=write), self.backend)
+                execute.assert_not_called()
+            completed = {"status": "stage_finished", "stage": "seed-runtime", "mode": mode,
+                         "attempt": 3, "restore_qualified": False}
+            with patch.object(cli, "execute", return_value=completed) as execute:
+                self.assertEqual(cli.dispatch(args(write=True), self.backend), completed)
+            self.assertIsNone(execute.call_args.kwargs["seed_request"])
+            with patch.object(runtime, "require_quiet"), patch.object(export, "execute_export", return_value=completed) as stage:
+                self.assertEqual(runtime.execute_seed(self.backend, self.directory, {}, mode, 3), completed)
+            stage.assert_called_once_with(self.backend, self.directory, 3, reconcile=mode.endswith("-reconcile"))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,394 @@
+#!/usr/bin/env python3
+"""准备、启动并收集 CI 真实全栈门禁的隔离资源。"""
+
+from __future__ import annotations
+
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Callable, Protocol
+
+
+from ci_full_stack_databases import DatabasePlan, plan_databases, prepare_databases
+from ci_full_stack_resources import build_binaries, prepare_storage, read_binaries
+from full_stack_process import read_process
+from full_stack_process_tree import (
+    SupervisedProcess,
+    launch_supervised_process,
+    read_process_tree,
+    terminate_owned_process_tree,
+)
+from full_stack_rate_limit_config import login_budget_environment
+from full_stack_runtime import register_runtime
+from full_stack_worker import control as control_worker
+from full_stack_worker import ensure_port_free, wait_for_port_free
+from process_sockets import verify_listener
+
+PLAN_HASH_PATTERN = re.compile(r"^plan_hash=([0-9a-f]{64})$", re.MULTILINE)
+
+
+class FullStackError(RuntimeError):
+    """全栈门禁无法安全准备或启动。"""
+
+
+class ApiProcess(Protocol):
+    pid: int
+
+    def poll(self) -> int | None: ...
+
+
+def _required_environment(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise FullStackError(f"缺少环境变量 {name}")
+    return value
+
+
+def _output_dir() -> Path:
+    root = Path(_required_environment("RUNNER_TEMP"))
+    if not root.is_absolute() or "\n" in str(root) or "\r" in str(root):
+        raise FullStackError("RUNNER_TEMP 必须是无换行的绝对路径")
+    return root / "ryframe-full-stack"
+
+
+def _container_id(name: str) -> str:
+    value = _required_environment(name)
+    if not re.fullmatch(r"[a-f0-9]{12,64}", value):
+        raise FullStackError(f"{name} 必须是当前 Job 的明确容器 ID")
+    return value
+
+
+def _api_ready_url() -> str:
+    host = _required_environment("APP_APP_HOST")
+    port = _required_environment("APP_APP_PORT")
+    if host != "127.0.0.1" or not port.isdecimal() or not 1 <= int(port) <= 65535:
+        raise FullStackError("测试 API 必须显式绑定本机 IPv4 和有效端口")
+    return f"http://{host}:{port}/readyz"
+
+
+def _preflight_prepare(backend_root: Path, output_dir: Path) -> DatabasePlan:
+    plan = plan_databases(_required_environment, backend_root, output_dir)
+    target = Path(_required_environment("CARGO_TARGET_DIR"))
+    if not target.is_absolute():
+        raise FullStackError("CARGO_TARGET_DIR 必须是明确的绝对路径")
+    _container_id("RYFRAME_CI_REDIS_CONTAINER_ID")
+    database = _required_environment("APP_REDIS_DATABASE")
+    if not database.isdecimal() or not 0 <= int(database) <= 15:
+        raise FullStackError("隔离 Redis 数据库编号必须在 0 到 15 之间")
+    _required_environment("APP_RESET_REDIS_OUTSIDE_SENTINEL_KEY")
+    storage = os.environ.get("APP_OBJECT_STORAGE_BACKEND", "local")
+    if storage not in {"local", "s3", "rustfs", "minio"}:
+        raise FullStackError("对象存储后端无效")
+    if storage != "local":
+        _container_id("RYFRAME_CI_S3_CONTAINER_ID")
+    return plan
+
+
+def _run(
+    arguments: list[str],
+    *,
+    cwd: Path,
+    capture_output: bool = False,
+    stdout: object | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    completed = subprocess.run(
+        arguments,
+        cwd=cwd,
+        check=False,
+        text=True,
+        capture_output=capture_output,
+        stdout=stdout,
+        stderr=subprocess.STDOUT if stdout is not None else None,
+        env=env,
+    )
+    if completed.returncode != 0:
+        detail = (
+            completed.stderr.strip() if completed.stderr else str(completed.returncode)
+        )
+        raise FullStackError(f"命令失败（{' '.join(arguments)}）：{detail}")
+    return completed
+
+
+def prepare(backend_root: Path) -> None:
+    """构建产品二进制、重建隔离资源，并显式应用全部迁移。"""
+
+    output_dir = _output_dir()
+    database_plan = _preflight_prepare(backend_root, output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    binaries = build_binaries(_run, backend_root, output_dir)
+    prepare_storage(_required_environment)
+    prepare_databases(
+        _run, _required_environment, backend_root, output_dir, plan=database_plan
+    )
+
+    _run(
+        [
+            "docker",
+            "exec",
+            _container_id("RYFRAME_CI_REDIS_CONTAINER_ID"),
+            "redis-cli",
+            "-n",
+            _required_environment("APP_REDIS_DATABASE"),
+            "SET",
+            _required_environment("APP_RESET_REDIS_OUTSIDE_SENTINEL_KEY"),
+            "ci-sentinel",
+            "NX",
+        ],
+        cwd=backend_root,
+        stdout=subprocess.DEVNULL,
+    )
+    reset = binaries["ryframe-reset"]
+    plan = _run([str(reset), "plan"], cwd=backend_root, capture_output=True).stdout
+    (output_dir / "reset-plan.log").write_text(plan, encoding="utf-8", newline="\n")
+    hashes = PLAN_HASH_PATTERN.findall(plan)
+    if not hashes:
+        raise FullStackError("未能从 reset plan 读取有效 hash")
+    confirmation = (
+        f"RESET-RYFRAME-{_required_environment('APP_ENV')}-"
+        f"{_required_environment('APP_SCOPE_ID')}"
+    )
+    with (output_dir / "reset-execute.log").open("w", encoding="utf-8") as log:
+        _run(
+            [
+                str(reset),
+                "execute",
+                "--plan-hash",
+                hashes[-1],
+                "--confirm-reset",
+                confirmation,
+            ],
+            cwd=backend_root,
+            stdout=log,
+        )
+    migrate = binaries["ryframe-migrate"]
+    _run([str(migrate), "control", "up"], cwd=backend_root)
+    _run([str(migrate), "tenant-data", "up", "--all"], cwd=backend_root)
+    _run([str(migrate), "control", "verify"], cwd=backend_root)
+    _run([str(migrate), "tenant-data", "verify", "--all"], cwd=backend_root)
+
+
+def _ready(url: str = "http://127.0.0.1:8080/readyz") -> bool:
+    try:
+        with urllib.request.urlopen(url, timeout=2) as response:
+            return 200 <= response.status < 300
+    except (OSError, urllib.error.URLError):
+        return False
+
+
+def wait_for_api(
+    process: ApiProcess,
+    *,
+    ready: Callable[[], bool] = _ready,
+    sleep: Callable[[float], None] = time.sleep,
+    attempts: int = 90,
+) -> None:
+    for _ in range(attempts):
+        exit_code = process.poll()
+        if exit_code is not None:
+            raise FullStackError(f"API 在就绪前退出，退出码 {exit_code}")
+        if ready():
+            return
+        sleep(2)
+    raise FullStackError("API 就绪等待超时")
+
+
+def _tail(path: Path, lines: int = 200) -> str:
+    if not path.is_file():
+        return ""
+    return "\n".join(
+        path.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:]
+    )
+
+
+def _stop_started_process(
+    process: SupervisedProcess, ready_url: str, *, crash: bool = True
+) -> None:
+    terminate_owned_process_tree(process.tree, crash=crash)
+    process.wait(timeout=5)
+    wait_for_port_free(ready_url)
+
+
+def start(backend_root: Path) -> None:
+    """后台启动 API 与 Worker，并在超时或早退时附带最近日志。"""
+
+    output_dir = _output_dir()
+    if _required_environment("APP_JOBS_MODE") != "external":
+        raise FullStackError("真实全栈验收必须启用 external Worker")
+    api_ready_url = _api_ready_url()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    receipt = register_runtime(backend_root, output_dir)
+    if receipt["worker_ready_url"] == api_ready_url:
+        raise FullStackError("API 和 Worker 必须使用不同的明确监听端口")
+    binaries = read_binaries(output_dir)
+    for name, binary, ready_url in (("api", "ryframe", api_ready_url),):
+        if (output_dir / f"{name}.json").exists() or (
+            output_dir / f"{name}-tree.json"
+        ).exists():
+            raise FullStackError("运行目录已有 API 进程或进程树收据；请先核对现场")
+        ensure_port_free(ready_url)
+        service_log = output_dir / f"{name}.log"
+        service_environment = os.environ.copy()
+        service_environment["SNOWFLAKE_WORKER_ID"] = "1" if name == "api" else "2"
+        process = None
+        try:
+            with service_log.open("ab") as log:
+                process = launch_supervised_process(
+                    output_dir,
+                    name,
+                    receipt["scope_id"],
+                    [str(Path(binaries[binary]).resolve(strict=True))],
+                    backend_root,
+                    service_environment,
+                    log,
+                )
+            wait_for_api(process, ready=lambda url=ready_url: _ready(url))
+            verify_listener(process.pid, ready_url)
+        except BaseException as error:
+            try:
+                if process is not None:
+                    _stop_started_process(process, ready_url)
+                else:
+                    wait_for_port_free(ready_url)
+            except Exception as cleanup_error:
+                raise FullStackError(
+                    f"{name}: {error}；并且启动失败后的进程回收失败：{cleanup_error}"
+                ) from error
+            recent = _tail(service_log)
+            if not isinstance(error, Exception):
+                raise
+            raise FullStackError(f"{name}: {error}\n{recent}") from error
+    try:
+        control_worker("start", backend_root, output_dir, timeout=180)
+    except BaseException as error:
+        try:
+            _stop_started_process(process, api_ready_url, crash=False)
+        except Exception as cleanup_error:
+            raise FullStackError(
+                f"Worker 启动失败：{error}；并且 API 回收失败：{cleanup_error}"
+            ) from error
+        if not isinstance(error, Exception):
+            raise
+        raise FullStackError(f"Worker 启动失败：{error}；API 已安全回收") from error
+
+
+def _best_effort(arguments: list[str], *, output: Path) -> None:
+    with output.open("a", encoding="utf-8") as log:
+        try:
+            subprocess.run(
+                arguments,
+                check=False,
+                text=True,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+            )
+        except OSError as error:
+            log.write(f"无法执行 {' '.join(arguments)}：{error}\n")
+
+
+def collect(backend_root: Path | None = None) -> None:
+    """尽力停止本 Job 的 API、Worker，并收集基础设施与编译缓存日志。"""
+
+    backend_root = (backend_root or Path.cwd()).resolve()
+    output_dir = _output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    failures: list[str] = []
+    if (output_dir / "runtime.json").is_file():
+        try:
+            control_worker("stop", backend_root, output_dir, timeout=180)
+        except Exception as error:
+            failures.append(f"worker: {error}")
+    elif (output_dir / "worker.json").exists() or (
+        output_dir / "worker-control.lock"
+    ).exists():
+        failures.append("worker: 存在进程或控制收据，但缺少可信 runtime 收据")
+    for name in ("api",):
+        process_path = output_dir / f"{name}.json"
+        tree_path = output_dir / f"{name}-tree.json"
+        if process_path.is_file() or tree_path.is_file():
+            try:
+                scope = _required_environment("APP_SCOPE_ID")
+                tree = read_process_tree(
+                    output_dir, name, scope
+                )
+                if not process_path.is_file():
+                    failures.append("api: 进程树已登记，但缺少产品进程收据")
+                elif tree["process"] != read_process(output_dir, name, scope):
+                    raise ValueError("API 进程与进程树收据不一致")
+                terminate_owned_process_tree(tree)
+            except Exception as error:
+                failures.append(f"{name}: {error}")
+        try:
+            wait_for_port_free(_api_ready_url())
+        except Exception as error:
+            failures.append(f"{name} 端口: {error}")
+
+    for variable, filename in (
+        ("RYFRAME_CI_MYSQL_CONTAINER_ID", "mysql.log"),
+        ("RYFRAME_CI_REDIS_CONTAINER_ID", "redis.log"),
+        ("RYFRAME_CI_S3_CONTAINER_ID", "rustfs.log"),
+    ):
+        container = os.environ.get(variable, "").strip()
+        if container:
+            try:
+                _container_id(variable)
+            except FullStackError as error:
+                failures.append(str(error))
+            else:
+                _best_effort(
+                    ["docker", "logs", container], output=output_dir / filename
+                )
+    sccache_log = output_dir / "sccache.log"
+    _best_effort(["sccache", "--show-stats"], output=sccache_log)
+    _best_effort(["sccache", "--stop-server"], output=sccache_log)
+    if failures:
+        details = "\n".join(failures)
+        (output_dir / "cleanup-errors.log").write_text(details, encoding="utf-8")
+        raise FullStackError(f"全栈进程未安全回收：\n{details}")
+
+
+def export_rate_limit(backend_root: Path, environment_file: Path) -> None:
+    """从当前隔离配置导出浏览器登录预算。"""
+
+    raw = _required_environment("RYFRAME_E2E_LOGIN_BUDGET_STATE")
+    values = login_budget_environment(backend_root, os.environ, Path(raw))
+    with environment_file.open("a", encoding="utf-8", newline="\n") as output:
+        output.writelines(f"{key}={value}\n" for key, value in values.items())
+    print("已从当前配置导出登录预算容量与窗口")
+
+
+def _internal_path(name: str) -> Path:
+    raw = _required_environment(name)
+    path = Path(raw)
+    if not path.is_absolute() or any(char in raw for char in "\r\n"):
+        raise FullStackError(f"{name} 必须是无换行的绝对路径")
+    return path
+
+
+def main() -> None:
+    if len(sys.argv) != 1:
+        raise FullStackError("私有全栈阶段程序不接受命令行参数")
+    operation = _required_environment("RYFRAME_XTASK_FULL_STACK_OPERATION")
+    backend_root = _internal_path("RYFRAME_XTASK_BACKEND_ROOT").resolve()
+    if operation == "prepare":
+        prepare(backend_root)
+    elif operation == "rate-limit":
+        export_rate_limit(
+            backend_root,
+            _internal_path("RYFRAME_XTASK_FULL_STACK_ENVIRONMENT_FILE"),
+        )
+    elif operation == "start":
+        start(backend_root)
+    elif operation == "collect":
+        collect(backend_root)
+    else:
+        raise FullStackError("RYFRAME_XTASK_FULL_STACK_OPERATION 不是已登记阶段")
+
+
+if __name__ == "__main__":
+    main()

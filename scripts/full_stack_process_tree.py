@@ -1,0 +1,583 @@
+"""为真实全栈服务建立可核验的私有进程树边界。"""
+
+from __future__ import annotations
+
+import argparse
+import ctypes
+import json
+import os
+import re
+import signal
+import subprocess
+import sys
+import time
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
+
+from full_stack_process import (
+    assert_identity,
+    process_identity,
+    read_process,
+    record_process,
+    terminate_owned_process,
+    write_receipt,
+)
+
+from full_stack_process import PROCESS_ROLES
+
+ROLES = PROCESS_ROLES
+OPERATION_ID = re.compile(r"^[a-f0-9]{32}$")
+
+
+def _valid_identity(value: object, label: str) -> dict:
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"pid", "started", "executable"}
+        or type(value["pid"]) is not int
+        or value["pid"] <= 1
+        or not isinstance(value["started"], str)
+        or not value["started"].isdigit()
+        or not isinstance(value["executable"], str)
+        or not Path(value["executable"]).is_absolute()
+    ):
+        raise ValueError(f"{label}缺少有效的 PID 创建身份")
+    return value
+
+
+def _tree_path(directory: Path, role: str) -> Path:
+    if role not in ROLES:
+        raise ValueError("未知全栈进程树角色")
+    return directory / f"{role}-tree.json"
+
+
+def validate_process_tree_directory(
+    directory: Path,
+    operations: dict[str, str],
+    *,
+    extra_files: tuple[str, ...] = (),
+) -> tuple[str, ...]:
+    """只接受绑定到明确角色和 operation ID 的进程树文件集合。"""
+    if (
+        not directory.is_absolute()
+        or not directory.is_dir()
+        or directory.is_symlink()
+        or (hasattr(directory, "is_junction") and directory.is_junction())
+        or not operations
+        or any(role not in ROLES for role in operations)
+        or any(OPERATION_ID.fullmatch(operation) is None for operation in operations.values())
+        or len(set(operations.values())) != len(operations)
+        or len(set(extra_files)) != len(extra_files)
+        or any(
+            not name or Path(name).name != name or name in {".", ".."}
+            for name in extra_files
+        )
+    ):
+        raise ValueError("进程树目录、角色、operation ID 或额外文件声明无效")
+    allowed = set(extra_files)
+    for role, operation in operations.items():
+        allowed.update(
+            {
+                f"{role}.log",
+                f"{role}.json",
+                f"{role}-tree.json",
+                f"{role}-members-{operation}-ready.json",
+                f"{role}-members-{operation}-stopped.json",
+                f"{role}-tree-{operation}-control.json",
+                f"{role}-tree-{operation}-result.json",
+            }
+        )
+    entries = tuple(sorted(directory.iterdir(), key=lambda item: item.name))
+    if any(
+        not entry.is_file()
+        or entry.is_symlink()
+        or (hasattr(entry, "is_junction") and entry.is_junction())
+        for entry in entries
+    ):
+        raise ValueError("进程树目录包含目录、链接或重解析点")
+    names = tuple(entry.name for entry in entries)
+    unknown = sorted(set(names) - allowed)
+    if unknown:
+        raise ValueError("进程树目录包含未登记文件：" + ", ".join(unknown))
+    return names
+
+
+def _read_object(path: Path) -> dict:
+    def unique(pairs: list[tuple[str, object]]) -> dict:
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("进程树收据包含重复字段")
+            value[key] = item
+        return value
+
+    if not path.is_file() or path.is_symlink() or path.stat().st_size > 64 * 1024:
+        raise ValueError("进程树收据不存在或不是可信普通文件")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique)
+    except (json.JSONDecodeError, UnicodeError) as error:
+        raise ValueError("进程树收据不是有效 JSON") from error
+    if not isinstance(value, dict):
+        raise ValueError("进程树收据必须是对象")
+    return value
+
+
+def record_process_tree(
+    directory: Path,
+    role: str,
+    scope: str,
+    supervisor: dict,
+    process: dict,
+    operation_id: str,
+    monitor: dict,
+) -> dict:
+    if not isinstance(scope, str) or not scope:
+        raise ValueError("进程树必须绑定非空隔离 scope")
+    if not isinstance(operation_id, str) or OPERATION_ID.fullmatch(operation_id) is None:
+        raise ValueError("进程树操作 ID 无效")
+    receipt = {
+        "format_version": 2,
+        "kind": "full-stack-process-tree",
+        "runtime_directory": str(directory.resolve(strict=True)),
+        "role": role,
+        "scope_id": scope,
+        "operation_id": operation_id,
+        "supervisor": _valid_identity(supervisor, "监督进程"),
+        "process": _valid_identity(process, "产品进程"),
+        "monitor": _valid_identity(monitor, "树外成员监督器"),
+        "group_id": supervisor["pid"],
+    }
+    write_receipt(_tree_path(directory, role), receipt)
+    return receipt
+
+
+def read_process_tree(directory: Path, role: str, scope: str) -> dict:
+    receipt = _read_object(_tree_path(directory, role))
+    if set(receipt) != {
+        "format_version",
+        "kind",
+        "runtime_directory",
+        "role",
+        "scope_id",
+        "operation_id",
+        "supervisor",
+        "process",
+        "monitor",
+        "group_id",
+    } or any(
+        receipt.get(key) != value
+        for key, value in {
+            "format_version": 2,
+            "kind": "full-stack-process-tree",
+            "runtime_directory": str(directory.resolve(strict=True)),
+            "role": role,
+            "scope_id": scope,
+        }.items()
+    ):
+        raise ValueError("进程树收据与角色或隔离 scope 不匹配")
+    supervisor = _valid_identity(receipt["supervisor"], "监督进程")
+    process = _valid_identity(receipt["process"], "产品进程")
+    _valid_identity(receipt["monitor"], "树外成员监督器")
+    if (
+        receipt["group_id"] != supervisor["pid"]
+        or receipt["monitor"]["pid"] in {supervisor["pid"], process["pid"]}
+        or not isinstance(receipt["operation_id"], str)
+        or OPERATION_ID.fullmatch(receipt["operation_id"]) is None
+    ):
+        raise ValueError("进程树收据缺少可信进程组或操作 ID")
+    return {**receipt, "supervisor": supervisor, "process": process}
+
+
+def _bound_path(receipt: dict, suffix: str) -> Path:
+    directory = Path(receipt.get("runtime_directory", ""))
+    if not directory.is_absolute() or not directory.is_dir() or directory.is_symlink():
+        raise ValueError("进程树收据没有绑定可信运行目录")
+    return directory / (
+        f"{receipt['role']}-tree-{receipt['operation_id']}-{suffix}.json"
+    )
+
+
+def _write_control(receipt: dict, mode: str) -> None:
+    if mode not in {"normal", "crash"}:
+        raise ValueError("未知进程树停止模式")
+    directory = Path(receipt["runtime_directory"])
+    if read_process_tree(directory, receipt["role"], receipt["scope_id"]) != receipt:
+        raise ValueError("进程树收据在停止前发生变化")
+    write_receipt(
+        _bound_path(receipt, "control"),
+        {
+            "format_version": 1,
+            "kind": "full-stack-process-tree-control",
+            "operation_id": receipt["operation_id"],
+            "mode": mode,
+            "requested_at_ns": time.time_ns(),
+        },
+    )
+
+
+def _read_control(receipt: dict) -> str | None:
+    path = _bound_path(receipt, "control")
+    if not path.exists():
+        return None
+    control = _read_object(path)
+    if (
+        set(control)
+        != {"format_version", "kind", "operation_id", "mode", "requested_at_ns"}
+        or control.get("format_version") != 1
+        or control.get("kind") != "full-stack-process-tree-control"
+        or control.get("operation_id") != receipt["operation_id"]
+        or control.get("mode") not in {"normal", "crash"}
+        or type(control.get("requested_at_ns")) is not int
+        or control["requested_at_ns"] <= 0
+    ):
+        raise ValueError("进程树停止收据与当前启动操作不匹配")
+    return control["mode"]
+
+
+def _write_result(receipt: dict, exit_code: int, termination: str) -> None:
+    write_receipt(
+        _bound_path(receipt, "result"),
+        {
+            "format_version": 1,
+            "kind": "full-stack-process-tree-result",
+            "operation_id": receipt["operation_id"],
+            "process": receipt["process"],
+            "exit_code": exit_code,
+            "termination": termination,
+        },
+    )
+
+
+def _read_result(receipt: dict) -> dict | None:
+    path = _bound_path(receipt, "result")
+    if not path.exists():
+        return None
+    result = _read_object(path)
+    if (
+        set(result)
+        != {"format_version", "kind", "operation_id", "process", "exit_code", "termination"}
+        or result.get("format_version") != 1
+        or result.get("kind") != "full-stack-process-tree-result"
+        or result.get("operation_id") != receipt["operation_id"]
+        or result.get("process") != receipt["process"]
+        or type(result.get("exit_code")) is not int
+        or result.get("termination") not in {"natural", "normal", "forced"}
+    ):
+        raise ValueError("进程树结果收据与当前启动操作不匹配")
+    return result
+
+
+class _IoCounters(ctypes.Structure):
+    _fields_ = [(name, ctypes.c_ulonglong) for name in (
+        "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+        "ReadTransferCount", "WriteTransferCount", "OtherTransferCount",
+    )]
+
+
+class _BasicLimitInformation(ctypes.Structure):
+    _fields_ = [
+        ("PerProcessUserTimeLimit", ctypes.c_longlong),
+        ("PerJobUserTimeLimit", ctypes.c_longlong),
+        ("LimitFlags", ctypes.c_ulong),
+        ("MinimumWorkingSetSize", ctypes.c_size_t),
+        ("MaximumWorkingSetSize", ctypes.c_size_t),
+        ("ActiveProcessLimit", ctypes.c_ulong),
+        ("Affinity", ctypes.c_size_t),
+        ("PriorityClass", ctypes.c_ulong),
+        ("SchedulingClass", ctypes.c_ulong),
+    ]
+
+
+class _ExtendedLimitInformation(ctypes.Structure):
+    _fields_ = [
+        ("BasicLimitInformation", _BasicLimitInformation),
+        ("IoInfo", _IoCounters),
+        ("ProcessMemoryLimit", ctypes.c_size_t),
+        ("JobMemoryLimit", ctypes.c_size_t),
+        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+        ("PeakJobMemoryUsed", ctypes.c_size_t),
+    ]
+
+
+def enter_supervision(directory: Path, role: str, scope: str, operation_id: str) -> dict:
+    """在启动产品代码前建立 Job Object 或独立 Unix session。"""
+
+    from full_stack_process_monitor import start_monitor
+    return start_monitor(directory, role, scope, operation_id)
+
+
+def finish_supervision(membership: object) -> None:
+    """树外 monitor 观察原监督进程退出后回收全部成员并签发完成证明。"""
+    _ = membership
+
+
+def _linux_group(identity: dict) -> tuple[int, int] | None:
+    try:
+        fields = Path(f"/proc/{identity['pid']}/stat").read_text().rpartition(")")[2].split()
+    except FileNotFoundError:
+        return None
+    return int(fields[2]), int(fields[3])
+
+
+def _expected_alive(identity: dict) -> bool:
+    try:
+        return assert_identity(process_identity(identity["pid"]), identity)
+    except PermissionError:
+        # Windows 正在终止的 Job 成员可能短暂拒绝查询镜像路径；继续等待句柄消失。
+        return True
+
+
+def _wait_stopped(identities: tuple[dict, ...], timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not any(_expected_alive(identity) for identity in identities):
+            return True
+        time.sleep(0.02)
+    return not any(_expected_alive(identity) for identity in identities)
+
+
+def terminate_owned_process_tree(receipt: dict, *, crash: bool = False) -> bool:
+    from full_stack_process_monitor import wait_members
+
+    supervisor = _valid_identity(receipt.get("supervisor"), "监督进程")
+    process = _valid_identity(receipt.get("process"), "产品进程")
+    group_id = receipt.get("group_id")
+    if group_id != supervisor["pid"]:
+        raise ValueError("进程树收据的进程组与监督进程不匹配")
+    actual_supervisor = process_identity(supervisor["pid"])
+    actual_process = process_identity(process["pid"])
+    supervisor_alive = assert_identity(actual_supervisor, supervisor)
+    process_alive = assert_identity(actual_process, process)
+    if not supervisor_alive and not process_alive:
+        wait_members(receipt)
+        return False
+    _write_control(receipt, "crash" if crash else "normal")
+    if not crash and supervisor_alive and _wait_stopped((supervisor, process), 3):
+        wait_members(receipt)
+        return True
+    if os.name == "nt":
+        if not supervisor_alive:
+            raise ValueError("Job 监督进程已退出但产品进程仍在，拒绝降级为单进程回收")
+        terminate_owned_process(supervisor, crash=True)
+        if not _wait_stopped((supervisor, process), 5):
+            raise TimeoutError("Windows Job Object 未在期限内回收完整进程树")
+        wait_members(receipt)
+        return True
+    for identity, alive in ((supervisor, supervisor_alive), (process, process_alive)):
+        if alive and _linux_group(identity) != (group_id, group_id):
+            raise ValueError("Unix 进程已离开登记的 session 或进程组")
+    try:
+        os.killpg(group_id, signal.SIGKILL if crash else signal.SIGTERM)
+    except ProcessLookupError:
+        wait_members(receipt)
+        return False
+    if not _wait_stopped((supervisor, process), 5):
+        os.killpg(group_id, signal.SIGKILL)
+        if not _wait_stopped((supervisor, process), 5):
+            raise TimeoutError("Unix 进程组未在期限内退出")
+    wait_members(receipt)
+    return True
+
+
+@dataclass
+class SupervisedProcess:
+    supervisor: subprocess.Popen
+    tree: dict
+
+    @property
+    def pid(self) -> int:
+        return self.tree["process"]["pid"]
+
+    def poll(self) -> int | None:
+        result = _read_result(self.tree)
+        if result is not None:
+            from full_stack_process_monitor import wait_members
+            if _expected_alive(self.tree["monitor"]):
+                return None
+            wait_members(self.tree, timeout=0)
+            return result["exit_code"]
+        if _expected_alive(self.tree["process"]):
+            return None
+        return self.supervisor.poll()
+
+    def wait(self, timeout: float) -> int:
+        from full_stack_process_monitor import wait_members
+
+        supervisor_code = self.supervisor.wait(timeout=timeout)
+        wait_members(self.tree, timeout=timeout)
+        result = _read_result(self.tree)
+        return result["exit_code"] if result is not None else supervisor_code
+
+    def release_controller_handle(self) -> None:
+        """启动收据发布后释放当前短命控制器的 Popen 所有权。"""
+        if self.poll() is not None:
+            self.wait(timeout=10)
+            return
+        # Popen 没有公开 detach；该对象此后不再使用。设置已消费状态可让析构
+        # 关闭本机句柄而不把仍由 monitor 管理的监督进程登记为资源泄漏。
+        self.supervisor.returncode = 0
+
+
+def supervise_product(process: subprocess.Popen, receipt: dict, grace: float = 1) -> int:
+    requested, forced, deadline = None, False, None
+    while process.poll() is None:
+        mode = _read_control(receipt)
+        if mode is not None and requested is None:
+            requested = mode
+            if mode == "crash":
+                process.kill()
+                forced = True
+            else:
+                # Windows 无可继承的控制台和温和信号通道，Popen.terminate 等价于
+                # TerminateProcess；结果必须如实标为 forced。
+                process.terminate()
+                forced = os.name == "nt"
+                deadline = time.monotonic() + grace
+        if deadline is not None and time.monotonic() >= deadline and process.poll() is None:
+            process.kill()
+            forced = True
+            deadline = None
+        time.sleep(0.02)
+    code = process.wait()
+    termination = "natural" if requested is None else "forced" if forced else "normal"
+    _write_result(receipt, code, termination)
+    return code
+
+
+def launch_supervised_process(
+    directory: Path,
+    role: str,
+    scope: str,
+    arguments: list[str],
+    cwd: Path,
+    environment: dict[str, str],
+    output,
+    timeout: float = 5,
+    operation_id: str | None = None,
+) -> SupervisedProcess:
+    if not arguments or not Path(arguments[0]).is_absolute():
+        raise ValueError("监督进程要求明确的绝对产品可执行文件")
+    operation_id = uuid.uuid4().hex if operation_id is None else operation_id
+    if OPERATION_ID.fullmatch(operation_id) is None:
+        raise ValueError("监督进程操作 ID 无效")
+    path = _tree_path(directory, role)
+    if path.exists():
+        raise ValueError("运行目录已有进程树收据；必须先核对并回收原进程树")
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "__supervise",
+        "--runtime-dir", str(directory),
+        "--role", role,
+        "--scope", scope,
+        "--operation-id", operation_id,
+        "--cwd", str(cwd),
+        "--",
+        *arguments,
+    ]
+    supervisor = subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=environment,
+        stdin=subprocess.DEVNULL,
+        stdout=output,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
+    supervisor_identity = process_identity(supervisor.pid)
+    if supervisor_identity is None:
+        supervisor.wait(timeout=5)
+        raise RuntimeError("全栈监督进程在登记创建身份前退出")
+    deadline = time.monotonic() + timeout
+    try:
+        while time.monotonic() < deadline:
+            if path.is_file() and (directory / f"{role}.json").is_file():
+                tree = read_process_tree(directory, role, scope)
+                if tree["operation_id"] != operation_id:
+                    raise ValueError("进程树收据属于其他启动操作")
+                assert_identity(tree["supervisor"], supervisor_identity)
+                if not assert_identity(process_identity(tree["monitor"]["pid"]), tree["monitor"]):
+                    raise ValueError("完整成员监督器在登记产品进程前退出")
+                assert_identity(process_identity(tree["process"]["pid"]), tree["process"])
+                if read_process(directory, role, scope) != tree["process"]:
+                    raise ValueError("产品进程与进程树收据不一致")
+                return SupervisedProcess(supervisor, tree)
+            if supervisor.poll() is not None:
+                raise RuntimeError(f"全栈监督进程在登记产品进程前退出，退出码 {supervisor.returncode}")
+            time.sleep(0.02)
+        raise TimeoutError("全栈监督进程未在期限内登记产品进程")
+    except BaseException as error:
+        if process_identity(supervisor_identity["pid"]) == supervisor_identity:
+            terminate_owned_process(supervisor_identity, crash=True)
+        supervisor.wait(timeout=5)
+        from full_stack_process_monitor import wait_startup_cleanup
+        try:
+            wait_startup_cleanup(directory, role, scope, operation_id, supervisor_identity)
+        except BaseException as cleanup:
+            error.add_note("完整成员启动失败回收：" + str(cleanup))
+        raise
+
+
+def _supervise(arguments: list[str]) -> int:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--runtime-dir", required=True, type=Path)
+    parser.add_argument("--role", required=True, choices=tuple(sorted(ROLES)))
+    parser.add_argument("--scope", required=True)
+    parser.add_argument("--operation-id", required=True)
+    parser.add_argument("--cwd", required=True, type=Path)
+    args, command = parser.parse_known_args(arguments)
+    if command[:1] == ["--"]:
+        command = command[1:]
+    if not command:
+        raise ValueError("监督进程缺少产品启动命令")
+    membership = enter_supervision(args.runtime_dir, args.role, args.scope, args.operation_id)
+    try:
+        supervisor = process_identity(os.getpid())
+        if supervisor is None:
+            raise RuntimeError("无法取得全栈监督进程身份")
+        process = subprocess.Popen(
+            command,
+            cwd=args.cwd.resolve(strict=True),
+            env=os.environ,
+            stdin=subprocess.DEVNULL,
+        )
+        identity = process_identity(process.pid)
+        if identity is None:
+            process.wait(timeout=5)
+            raise RuntimeError("产品进程在登记创建身份前退出")
+        executable = Path(command[0]).resolve(strict=True)
+        if Path(identity["executable"]) != executable:
+            raise RuntimeError("启动产物与产品进程的实际可执行文件不一致")
+        tree = record_process_tree(
+            args.runtime_dir,
+            args.role,
+            args.scope,
+            supervisor,
+            identity,
+            args.operation_id,
+            membership,
+        )
+        recorded = record_process(
+            args.runtime_dir.resolve(strict=True),
+            args.role,
+            process.pid,
+            command[0],
+            args.scope,
+        )["identity"]
+        if identity != recorded:
+            raise RuntimeError("产品进程在登记进程树期间身份发生变化")
+        code = supervise_product(process, tree)
+        return code if 0 <= code <= 255 else 1
+    finally:
+        finish_supervision(membership)
+
+
+def main() -> None:
+    if sys.argv[1:2] != ["__supervise"]:
+        raise SystemExit("full_stack_process_tree.py 只供全栈内部监督使用")
+    raise SystemExit(_supervise(sys.argv[2:]))
+
+
+if __name__ == "__main__":
+    main()
