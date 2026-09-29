@@ -7,7 +7,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from devex_clone_schedule import schedule_row_sha256
-from devex_clone_schedule_check import inspect_disabled
+from devex_clone_post_model import inspect_disabled
 
 REPO = Path(__file__).resolve().parents[2]
 

@@ -73,7 +73,7 @@ class ActionsTests(unittest.TestCase):
             'database_now': '2026-09-04 07:00:02' if not self.context.rows[action['schedule_id']]['enabled'] else '2026-09-04 07:00:00'}
         self.addCleanup(patch.stopall)
         patch('devex_clone_post_model.schema_catalog', return_value=({'sys_job_schedule': COLUMNS}, {})).start()
-        patch('devex_clone_schedule_check.schema_catalog', return_value=({'sys_job_schedule': COLUMNS}, {})).start()
+        patch('devex_clone_post_model.schema_catalog', return_value=({'sys_job_schedule': COLUMNS}, {})).start()
         self.bridge = FakeBridge(self.context)
         self.number = 0
 
