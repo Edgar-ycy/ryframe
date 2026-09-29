@@ -13,7 +13,7 @@ from process_environment import Environments, configured
 from devex_clone_model import exact, linked, local_path
 from devex_clone_run_state import binding, controller_observation, historical_state, load_state, run_lock
 from devex_clone_source_proof import bound_file
-import devex_clone_target_cli_snapshot as snapshot_evidence
+import devex_clone_target_tree_claim as snapshot_evidence
 from process_guard import process_guard
 
 FIELDS = {"format_version", "kind", "request", "environment", "storage_run", "target_directory"}
