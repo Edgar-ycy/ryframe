@@ -1,7 +1,96 @@
-# 后端架构说明
+# 架构与扩展位置
 
-后端由 API、Worker、迁移和数据维护组成。业务用例位于 application 层，数据库访问由 db 与 tenant-db 实现，传输层由 api 负责，`ryframe` 作为组合根装配运行时。
+本文帮助业务开发者理解一次请求如何经过 RyFrame，并选择合适的扩展位置。
 
-依赖方向、crate 边界、配置事实源和生成约束以 `architecture/crate-boundaries.toml`、Workspace 清单及 `AGENTS.md` 为准。新增能力必须先确认所属边界，再补充实现和针对性检查。
+## 运行结构
 
-当前 `xtask` 只提供后端开发、检查、构建和迁移转发入口，不承载其他项目的构建、契约或浏览器任务。
+```text
+浏览器 / 客户端
+       │ HTTP / WebSocket
+       ▼
+ryframe-api（路由、DTO、认证提取、OpenAPI）
+       │
+       ▼
+ryframe-application（业务用例、事务、状态机、端口）
+       │
+       ├── ryframe-db / ryframe-tenant-db（控制库与租户库）
+       └── ryframe-adapters（Redis、对象存储、表格、限流、遥测）
+       │
+       ▼
+ryframe（API、Worker、迁移与依赖装配）
+```
+
+HTTP 层把请求解析为明确的 DTO，再调用 application 用例。用例通过端口访问数据库、Redis 和对象存储，因此业务流程可以在不依赖具体连接实现的情况下测试。API 与 Worker 使用同一组应用服务。
+
+## 模块定位
+
+| 模块 | 开发时用于 |
+|---|---|
+| `ryframe-kernel` | 通用 ID、Snowflake、分页、错误和值对象 |
+| `ryframe-config` | 配置结构、环境覆盖和校验 |
+| `ryframe-auth` | 密码、JWT 与 RBAC 决策 |
+| `ryframe-application` | 业务用例、事务、状态机和出站端口 |
+| `ryframe-db` | 控制库查询、写入与迁移 |
+| `ryframe-tenant-db` | 租户目标路由、查询、写入与迁移 |
+| `ryframe-adapters` | Redis、对象存储、表格、限流、本地化和遥测 |
+| `ryframe-api` | Axum 路由、DTO、OpenAPI、extractor 和传输中间件 |
+| `ryframe` | API、Worker、迁移和重建的启动装配 |
+| `ryframe-generator` | 标准资源的离线生成；默认构建不包含数据库驱动 |
+
+## 进程编译面
+
+根组合 crate 默认只编译 API 与 Swagger UI。独立进程必须关闭默认 feature，并只选择对应入口，避免把 HTTP、Redis、图片处理和遥测带入迁移工具：
+
+| 进程 | feature |
+|---|---|
+| API | `bin-api`，按需附加 `runtime-swagger-ui` |
+| Worker | `bin-worker` |
+| 控制库迁移 | `bin-migrate` |
+| 租户数据维护 | `bin-tenant-data` |
+| 文件维护 | `bin-file-maintenance` |
+| 非生产重建 | `bin-reset` |
+
+`ryframe-adapters` 默认不启用高成本能力；API 显式组合 `image-processing`、`monitoring`、`otel`、`redis-api` 与 `spreadsheet`，Worker 使用 `monitoring`、`otel`、`redis-client` 与 `spreadsheet`。验证码只启用 PNG codec，通用图片处理 codec 仅随 `image-processing` 编译。生成 fake 只在 `ryframe-application/test-support` 下可用，不进入产品进程。
+
+Worker 的健康状态模型与数据库监控端口位于 application，不依赖 `ryframe-api`；HTTP 健康端点只在 Worker 组合根装配。所有二进制在创建 MySQL、Redis、HTTP、对象存储或 OTLP 客户端前统一安装 AWS-LC provider；遇到已安装的不同 provider 时拒绝启动。Security Audit 解析真实 Cargo feature tree：API（含 Swagger UI）与 Worker 要求 JWT、HTTP、Rustls 和 SQLx 链路启用 AWS-LC，并拒绝实际 `ring` package/provider；Worker 额外禁止依赖 `ryframe-api`。迁移进程只保留数据库所需的 AWS-LC TLS 链路，禁止 API、Adapter、Web、Redis、图片处理、遥测和 HTTP client 依赖。生成器默认运行图禁止数据库与网络 runtime，unique package closure 上限为 90；schema import 依赖仅由对应 feature 引入。`aws-lc-rs` 自身的 `ring-io`、`ring-sig-verify` 兼容 feature 不属于 ring provider。统一 provider 只描述项目选择的密码学实现，不代表项目自动获得 FIPS 认证。OTLP 的 HTTP protobuf 出站链路只编译 trace、Tokio runtime 与 reqwest client，不包含 logs、metrics 或 blocking client。
+
+`ryframe-application::system` 按业务分为四个入口：
+
+- `identity`：用户、角色、权限、部门、档案、导入、验证码和 WebSocket ticket；
+- `platform`：租户、产品和授权诊断；
+- `content`：配置、字典、公告、文件、选项和标准内容资源；
+- `operations`：消息、导出、审计日志、登录日志、在线用户、监控、备份恢复验证和保留策略。
+
+查找现有能力时，先从对应业务域的公开服务开始，再进入具体用例。
+
+## 选择开发方式
+
+字段、筛选、排序和普通 CRUD 行为可由资源清单表达时，使用 `cargo xtask generate resource`。Post 与 Notice 展示了完整链路；生成结果包含后端持久化、应用服务、API、权限资产和前端标准页面。日常资源命令只使用生成器的默认离线能力；既有 MySQL 表结构读取被隔离在可选的 `schema-import` feature 中，只产生待人工确认的草案，不进入默认生成依赖闭包。
+
+需要事务编排、外部连接、异步任务或特殊状态机时，使用自定义用例：
+
+1. 在 application 的对应业务域定义请求、结果和业务流程。
+2. 需要外部能力时定义端口，在 DB 或 adapters 中实现。
+3. 在组合根构造实现并注入应用服务。
+4. 在 API 层增加 DTO、路由和 OpenAPI 描述；后台执行则由 Worker 调用同一用例。
+5. 同步前端契约并完成联调。
+
+标准资源也可以保留一个强类型扩展，例如 Post 导出或 Notice 消息发布；其余常规 CRUD 继续由资源清单生成。
+
+## 数据与事务
+
+控制库保存身份、授权、租户目录和平台任务；租户业务数据通过目标路由进入 shared-control 或独立租户库。涉及多步写入时，由 application 用例开启并提交事务，同一流程中的 Repository 调用接收同一事务上下文。
+
+列表展示可按场景选择 eventual consistency；权限校验、任务领取、下载和状态转换使用 strong consistency。租户切换和后台任务应继续传递明确的租户与作用域信息。
+
+## 访问控制与契约
+
+路由使用 `Public`、`Authenticated`、`Permission` 或 `Capability` 访问策略。菜单、权限、页面键和 capability 来自 `catalog/access.toml`；业务路由在 API 层关联对应策略。
+
+接口的请求与响应进入 OpenAPI 快照，前端从快照生成 operation descriptor。接口变更后的同步步骤见[开发指南](development.md#api-与前后端联调)。
+
+## 外部备份与恢复验证
+
+外部运维工具负责生成一致的数据库与对象备份。application 的备份用例拥有登记、恢复状态机和事务；控制库 Repository 保存清单及演练记录，租户库实现目标与数据校验，adapters 实现文件摘要、对象摘要和就绪探测。维护 CLI 负责读取显式配置、装配端口并打印结构化结果。API 后台采集器只读取汇总状态，向 Prometheus 输出固定维度指标。
+
+恢复依次经历开始、数据验证、业务与运行验证；失败为终态。目标必须具有独立 scope 和 ownership，数据校验比较明确登记的物理数据库、schema、租户关系、表摘要与对象摘要。业务证明绑定演练记录和精确前后端源码，只有数据校验、完整浏览器场景、API/Worker 就绪以及恢复时间目标都满足时才登记成功。具体操作见[运维指南](operations.md#备份失败或过期)。
