@@ -187,7 +187,7 @@ class TargetCliTests(unittest.TestCase):
                     "active_generation": {"kind": "initial"}}
 
         with patch("reference_fixture_service_history.validate_history", side_effect=closed):
-            result = target_cli.fixture_context.fixture_service_generation(fixture, descriptor)
+            result = target_cli._fixture_service_generation(fixture, descriptor)
         self.assertFalse(result["available"])
         self.assertIn("fixture services restart", result["reason"])
 
@@ -221,7 +221,7 @@ class TargetCliTests(unittest.TestCase):
                     "active_generation": {"kind": "initial"}}
 
         with patch("reference_fixture_service_history.validate_history", side_effect=reconciled):
-            result = target_cli.fixture_context.fixture_service_generation(fixture, descriptor)
+            result = target_cli._fixture_service_generation(fixture, descriptor)
         self.assertFalse(result["available"])
         self.assertIn("fixture services restart", result["reason"])
 
@@ -341,7 +341,7 @@ class TargetCliTests(unittest.TestCase):
                 patch("devex_clone_target_resume.resume_initialize_target", side_effect=resume) as operation:
             blocked = {"available": False, "active_generation": {"kind": "initial"},
                        "reason": "夹具服务已经关闭"}
-            with patch.object(target_cli.fixture_context, "fixture_service_generation", return_value=blocked), \
+            with patch.object(target_cli, "_fixture_service_generation", return_value=blocked), \
                     self.assertRaisesRegex(ValueError, "已经关闭"):
                 target_cli.resume_initialize(self.backend, self.workspace)
             operation.assert_not_called()
@@ -376,7 +376,7 @@ class TargetCliTests(unittest.TestCase):
         blocked_services = {"available": False, "active_generation": {"kind": "initial"},
                             "reason": "夹具服务已正常关闭，当前生命周期没有可执行重启"}
         with patch("devex_clone_target_resume.initialize_resume_state", return_value=state), \
-                patch.object(target_cli.fixture_context, "fixture_service_generation", return_value=blocked_services):
+                patch.object(target_cli, "_fixture_service_generation", return_value=blocked_services):
             blocked = target_cli.status(self.backend, self.workspace)
         self.assertEqual(blocked["status"], "fresh_target_migration_resume_pending")
         self.assertEqual(blocked["pending_stage"], "service_restart")

@@ -11,9 +11,8 @@ from devex_clone_capture import read_bound_json, write_json
 from devex_clone_factory_context import initialization_history
 from process_environment import Environments, configured
 from devex_clone_model import exact, linked, local_path
-from devex_clone_run_state import binding, controller_observation, historical_state, run_lock
+from devex_clone_run_state import binding, controller_observation, historical_state, load_state, run_lock
 from devex_clone_source_proof import bound_file
-import devex_clone_target_cli_fixture as fixture_context
 import devex_clone_target_cli_snapshot as snapshot_evidence
 from process_guard import process_guard
 
@@ -73,6 +72,39 @@ def _private_environment(backend: Path, descriptor: dict) -> tuple[Path, dict]:
     return path, private
 
 
+def _fixture_service_run(manifest: dict, state: dict) -> bool:
+    """识别只提供首代服务的参考夹具，不能把它伪装成复制重启。"""
+    if manifest.get("kind") != "reference-fixture-service-run":
+        return False
+    from reference_fixture_service_history import INITIAL, validate_manifest
+
+    validate_manifest(manifest)
+    initial = state["attempts"][:len(INITIAL)]
+    actual = tuple((item["stage"], item["mode"]) for item in initial)
+    if actual != INITIAL or any(item["status"] != "passed" for item in initial):
+        raise ValueError("夹具服务账本必须完整包含 RustFS、Redis 与对象桶初始化")
+    return True
+
+
+def _fixture_service_generation(directory: Path, descriptor: dict) -> dict | None:
+    """返回执行入口与 status 共用的夹具服务代次可用性。"""
+    manifest = read_bound_json(directory / "manifest.json", descriptor["manifest"])
+    historical_state(directory, descriptor["state"])
+    state = load_state(directory)
+    if not _fixture_service_run(manifest, state):
+        return None
+    from reference_fixture_service_history import validate_history
+
+    history = validate_history(directory, state)
+    if history["closed"]:
+        return {"available": False, "active_generation": history["active_generation"],
+                "reason": "夹具服务已正常关闭；须先执行 fixture services restart 再续作 fresh target"}
+    if history["external_recovery"] is not None:
+        return {"available": False, "active_generation": history["active_generation"],
+                "reason": "夹具服务外部终止已核对但尚未重启"}
+    return {"available": True, "active_generation": history["active_generation"], "reason": None}
+
+
 def _storage_run(backend: Path, descriptor: dict) -> Path:
     exact(descriptor, {"path", "manifest", "state"})
     directory = local_path(backend, descriptor["path"])
@@ -82,7 +114,7 @@ def _storage_run(backend: Path, descriptor: dict) -> Path:
     if manifest_path != directory / "manifest.json":
         raise ValueError("fresh 目标 storage manifest 不属于固定统一目录")
     historical = historical_state(directory, descriptor["state"])
-    if fixture_context.fixture_service_run(manifest, historical["state"]):
+    if _fixture_service_run(manifest, historical["state"]):
         from reference_fixture_service_history import validate_history
 
         validate_history(directory, historical["state"])
@@ -215,7 +247,7 @@ def _run_registered(backend: Path, workspace: Path, operation, *args) -> dict:
     storage_run = _storage_run(backend, value["storage_run"])
     storage_binding = copy.deepcopy(value["storage_run"])
     storage_state = binding(storage_run / "state.json")
-    fixture_services = fixture_context.fixture_service_generation(storage_run, storage_binding)
+    fixture_services = _fixture_service_generation(storage_run, storage_binding)
     active_storage_run = storage_run
     if fixture_services is not None:
         if not fixture_services["available"]:
@@ -449,7 +481,7 @@ def status(backend: Path, workspace: Path) -> dict:
     storage = _storage_run(backend, value["storage_run"])
     storage_state = binding(storage / "state.json")
     try:
-        fixture_services = fixture_context.fixture_service_generation(storage, value["storage_run"])
+        fixture_services = _fixture_service_generation(storage, value["storage_run"])
     except (OSError, TypeError, ValueError):
         _unchanged(backend, path, value, private, storage_state)
         return report("fresh_target_needs_reconciliation", "registered", "reconciliation", None,
