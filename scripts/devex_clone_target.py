@@ -585,7 +585,7 @@ def initialize_target(backend: Path, output: Path, run=subprocess.run, *, storag
             request = read_bound_json(local_path(backend, expected_request["path"]), expected_request)
             if request != read_json(output / "request.json") or plan_hash(request) != prepared["request_sha256"]:
                 raise ValueError("prepare 请求文件已变化")
-            from devex_clone_target_initialization_claim import prepared_baseline, validate_complete
+            from devex_clone_target_tree_claim import prepared_baseline, validate_complete
             baseline = prepared_baseline(backend, output, expected_request, request)
             original, resources = context(
                 backend, request, output, run, storage_run=storage_run,

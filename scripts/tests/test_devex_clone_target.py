@@ -13,7 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import devex_clone_target as target
 import devex_clone_target_binding as binding
-import devex_clone_target_initialization_claim as initialization_claim
+import devex_clone_target_tree_claim as initialization_claim
 import devex_clone_target_resume as target_resume
 import devex_clone_target_resume_evidence as target_evidence
 import devex_clone_target_runtime_evidence as runtime_evidence
