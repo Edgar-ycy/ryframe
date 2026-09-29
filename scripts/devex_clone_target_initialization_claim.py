@@ -1,6 +1,7 @@
 """首次 fresh 初始化的锁内最终文件树闭合。"""
 from pathlib import Path
 
+from devex_clone import read_json
 from devex_clone_model import exact
 from devex_clone_run_state import binding
 from devex_clone_target_binding import target_files, validate_initialization_delta
@@ -56,7 +57,7 @@ def validate_complete(backend: Path, output: Path, baseline: list[dict], request
     required.discard("failure.json")
     required.update(_inventory_paths(output, initial, inventory_files))
     required.update({"initialized-candidate.json", "initialized.json"})
-    if result != __import__("devex_clone").read_json(output / "initialized.json"):
+    if result != read_json(output / "initialized.json"):
         raise ValueError("首次初始化最终收据内容变化")
     current = target_files(output, ignored={"initialize.lock"}, locked_guard=True)
     validate_initialization_delta(output, current, baseline, request, required,

@@ -83,7 +83,7 @@ class ReferenceFixtureReviewTests(unittest.TestCase):
         self.assertEqual(result["services"]["rustfs"]["data_dir"], str(self.execution / ".local-tests/reference-fixture/recovery-r11/rustfs"))
         self.assertEqual(result["scopes"]["seed"]["objects"]["endpoint"], "http://127.0.0.1:29210")
         self.assertEqual(result["services"]["redis"]["endpoint"], "127.0.0.1:16391")
-        self.assertTrue(all(item["connection_file"].endswith("secrets\\mysql-client.cnf")
+        self.assertTrue(all(item["connection_file"].replace("\\", "/").endswith("secrets/mysql-client.cnf")
                             for item in result["scopes"]["seed"]["databases"]))
 
     def test_renewal_rejects_overlapping_port_ranges(self):

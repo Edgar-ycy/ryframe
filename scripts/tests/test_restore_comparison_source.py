@@ -85,7 +85,7 @@ class B0AdapterEvidenceTests(unittest.TestCase):
             comparison._reconstructed_tree(root, root / comparison.B0_ADAPTER_PATCH)
         git.assert_not_called()
 
-    def test_readonly_adapter_verifies_trusted_git_evidence_without_writing(self):
+    def test_readonly_adapter_verifies_embedded_reference_without_writing(self):
         root = Path(__file__).resolve().parents[2]
         directory = root / "target"
         before = {path.name: path.stat().st_mtime_ns for path in directory.iterdir()} if directory.exists() else None
@@ -101,16 +101,16 @@ class B0AdapterEvidenceTests(unittest.TestCase):
             observed = comparison.b0_adapter_evidence(root, reconstruct=False)
         self.assertEqual(observed["reconstructed_tree"], comparison.B0_ADAPTER_TREE)
         self.assertEqual(before, {path.name: path.stat().st_mtime_ns for path in directory.iterdir()} if directory.exists() else None)
-        self.assertTrue(any(arguments[0] == "diff" for arguments in calls))
+        self.assertTrue(any(arguments[:2] == ("rev-parse", "--show-toplevel") for arguments in calls))
+        self.assertTrue(any(arguments[0] == "rev-parse" for arguments in calls))
 
-    def test_readonly_adapter_rejects_wrong_tree_parent_or_patch(self):
+    def test_readonly_adapter_rejects_wrong_base_tree_or_patch(self):
         root = Path(__file__).resolve().parents[2]
         original = comparison._text
-        for field in (f"{comparison.B0_ADAPTER_COMMIT}^", f"{comparison.B0_ADAPTER_COMMIT}^{{tree}}"):
-            def changed(location, *arguments, **kwargs):
-                return "f" * 40 if field in arguments else original(location, *arguments, **kwargs)
-            with patch.object(comparison, "_text", side_effect=changed), self.assertRaises(ValueError):
-                comparison.b0_adapter_evidence(root, reconstruct=False)
+        def changed(location, *arguments, **kwargs):
+            return "f" * 40 if f"{comparison.B0_BACKEND_COMMIT}^{{tree}}" in arguments else original(location, *arguments, **kwargs)
+        with patch.object(comparison, "_text", side_effect=changed), self.assertRaises(ValueError):
+            comparison.b0_adapter_evidence(root, reconstruct=False)
         with patch.object(comparison, "_patch_bytes", return_value=b"changed"), self.assertRaises(ValueError):
             comparison.b0_adapter_evidence(root, reconstruct=False)
 

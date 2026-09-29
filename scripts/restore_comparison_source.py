@@ -31,6 +31,7 @@ from source_inventory import (
 
 
 B0_BACKEND_COMMIT = "815c5eafb09d4b493319d255fb7ab88ddd02c8b6"
+B0_BACKEND_TREE = "aeb1824ee52ea12d53d0cf87c327c7be3d1e12b4"
 B0_FRONTEND_COMMIT = "0087ea2ecf62530d042b9e52f5c950fb34c66d78"
 B0_ADAPTER_COMMIT = "c05114bcdf5c369cd74087db6317ce3c8f89bee8"
 B0_ADAPTER_TREE = "2ff15e7f34da1749c7eb27a1a025b9d3811b87a7"
@@ -92,7 +93,7 @@ def _reconstructed_tree(root: Path, patch: Path) -> str:
 
 
 def b0_adapter_evidence(root: Path, *, reconstruct: bool = True) -> dict:
-    """发布时重建；只读复核用受信父提交、树和逐字节补丁验证已登记重建结果。"""
+    """发布时重建；只读复核用受信基线树和逐字节补丁验证已登记重建结果。"""
     reject_link_or_reparse(root)
     root = root.resolve(strict=True)
     actual_root = Path(_text(root, "rev-parse", "--show-toplevel")).resolve(strict=True)
@@ -101,19 +102,12 @@ def b0_adapter_evidence(root: Path, *, reconstruct: bool = True) -> dict:
     patch_path = root / B0_ADAPTER_PATCH
     patch = _patch_bytes(root)
     digest = hashlib.sha256(patch).hexdigest()
-    reference = _git(root, "diff", "--binary", "--full-index", B0_BACKEND_COMMIT,
-                     B0_ADAPTER_COMMIT, "--", ".")
-    parent = _text(root, "rev-parse", f"{B0_ADAPTER_COMMIT}^")
-    tree = _text(root, "rev-parse", f"{B0_ADAPTER_COMMIT}^{{tree}}")
-    paths = [item.decode("utf-8", errors="strict") for item in _git(
-        root, "diff", "--name-only", "-z", B0_BACKEND_COMMIT, B0_ADAPTER_COMMIT,
-        "--", ".").split(b"\0") if item]
-    if (parent != B0_BACKEND_COMMIT or tree != B0_ADAPTER_TREE or paths != B0_ADAPTER_PATHS
-            or digest != B0_ADAPTER_PATCH_SHA256 or reference != patch):
-        raise ValueError("B0 工具适配提交、补丁摘要、路径或重建树不匹配")
-    rebuilt = _reconstructed_tree(root, patch_path) if reconstruct else tree
-    if rebuilt != tree:
-        raise ValueError("B0 工具补丁重建树与受信适配提交不匹配")
+    base_tree = _text(root, "rev-parse", f"{B0_BACKEND_COMMIT}^{{tree}}")
+    if (base_tree != B0_BACKEND_TREE or digest != B0_ADAPTER_PATCH_SHA256):
+        raise ValueError("B0 基线树或工具适配补丁摘要不匹配")
+    rebuilt = _reconstructed_tree(root, patch_path) if reconstruct else B0_ADAPTER_TREE
+    if rebuilt != B0_ADAPTER_TREE:
+        raise ValueError("B0 工具补丁重建树不匹配")
     return {
         "contract": "legacy-stable-readiness-b0-v1",
         "base_backend_sha": B0_BACKEND_COMMIT,
