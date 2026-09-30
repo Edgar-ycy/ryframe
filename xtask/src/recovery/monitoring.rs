@@ -11,7 +11,7 @@ use crate::{
     process::run_with_env_removed,
 };
 
-const SCRIPT: &str = "scripts/restore_monitoring_delivery.py";
+const SCRIPT: &str = "tools/python/restore_monitoring_delivery.py";
 const PROTOCOL_KEY: &str = "RYFRAME_XTASK_RECOVERY_MONITORING";
 const KIND: &str = "ryframe-xtask-recovery-monitoring";
 

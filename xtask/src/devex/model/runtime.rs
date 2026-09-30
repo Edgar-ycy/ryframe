@@ -33,7 +33,7 @@ macro_rules! runtime_step {
             working_directory: WorkingDirectory::RunnerFrontend,
             program: "node",
             args: &[
-                "{driver}/scripts/devex/runtime.mjs",
+                "{driver}/tools/js/runtime.mjs",
                 "--suite",
                 $suite,
                 "--backend",

@@ -10,7 +10,7 @@ use crate::{
     workspace::root_dir,
 };
 
-const SCRIPT: &str = "scripts/devex_prepare_identities.mjs";
+const SCRIPT: &str = "tools/js/devex_prepare_identities.mjs";
 const PROTOCOL_KEY: &str = "RYFRAME_PERFORMANCE_IDENTITIES_PROTOCOL";
 
 #[derive(Debug, Clone, PartialEq, Eq)]

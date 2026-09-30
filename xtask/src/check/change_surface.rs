@@ -327,7 +327,8 @@ fn classify_backend(path: &str) -> ChangeCategory {
     {
         ChangeCategory::HandwrittenProduct
     } else if path.starts_with("xtask/")
-        || path.starts_with("scripts/")
+        || path.starts_with("tools/")
+        || path == "scripts/requirements-ci.txt"
         || path.starts_with("architecture/")
         || path.starts_with("crates/ryframe-generator/")
         || path.starts_with("crates/ryframe-macro/")
@@ -383,7 +384,7 @@ fn is_documentation(path: &str) -> bool {
 
 fn is_test(path: &str) -> bool {
     path.starts_with("tests/")
-        || path.starts_with("scripts/tests/")
+        || path.starts_with("tools/python/test_")
         || path.contains("/tests/")
         || path.ends_with(".test.ts")
         || path.ends_with(".spec.ts")

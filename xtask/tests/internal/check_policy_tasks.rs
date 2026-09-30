@@ -33,45 +33,45 @@ fn smart_and_ci_profiles_reuse_the_same_policy_task_definitions() {
     assert_eq!(
         scripts(PolicyProfile::FullStatic),
         [
-            "scripts/check_architecture.py",
-            "scripts/check_deployment_assets.py",
-            "scripts/check_prerelease_dependencies.py",
-            "scripts/check_permission_routes.py",
-            "scripts/check_removed_identity.py",
-            "scripts/check_supply_chain.py",
+            "tools/python/check_architecture.py",
+            "tools/python/check_deployment_assets.py",
+            "tools/python/check_prerelease_dependencies.py",
+            "tools/python/check_permission_routes.py",
+            "tools/python/check_removed_identity.py",
+            "tools/python/check_supply_chain.py",
         ]
     );
     assert_eq!(
         scripts(PolicyProfile::Smart),
         [
-            "scripts/check_architecture.py",
-            "scripts/check_migration_history.py",
-            "scripts/check_permission_routes.py",
-            "scripts/check_removed_identity.py",
+            "tools/python/check_architecture.py",
+            "tools/python/check_migration_history.py",
+            "tools/python/check_permission_routes.py",
+            "tools/python/check_removed_identity.py",
         ]
     );
     assert_eq!(
         scripts(PolicyProfile::CiPreflight),
         [
-            "scripts/check_prerelease_dependencies.py",
-            "scripts/check_architecture.py",
-            "scripts/check_permission_routes.py",
-            "scripts/check_removed_identity.py",
+            "tools/python/check_prerelease_dependencies.py",
+            "tools/python/check_architecture.py",
+            "tools/python/check_permission_routes.py",
+            "tools/python/check_removed_identity.py",
         ]
     );
     assert_eq!(
         scripts(PolicyProfile::FullStatic)
             .iter()
-            .filter(|script| **script == "scripts/check_supply_chain.py")
+            .filter(|script| **script == "tools/python/check_supply_chain.py")
             .count(),
         1
     );
     assert!(
-        !scripts(PolicyProfile::CiPreflight).contains(&"scripts/check_supply_chain.py"),
+        !scripts(PolicyProfile::CiPreflight).contains(&"tools/python/check_supply_chain.py"),
         "CI preflight 的供应链检查由始终执行的 security source job 覆盖"
     );
     assert!(
-        !scripts(PolicyProfile::CiPreflight).contains(&"scripts/check_deployment_assets.py"),
+        !scripts(PolicyProfile::CiPreflight).contains(&"tools/python/check_deployment_assets.py"),
         "CI preflight 的部署静态检查由始终执行的 security deployment source 覆盖"
     );
 }
@@ -104,7 +104,7 @@ fn removed_identity_task_binds_the_frontend_directory_without_splitting_it() {
         .unwrap();
 
     let arguments = task.arguments(&root, frontend).unwrap();
-    assert_eq!(arguments[0], "scripts/check_removed_identity.py");
+    assert_eq!(arguments[0], "tools/python/check_removed_identity.py");
     assert_eq!(arguments[1], "--frontend-dir");
     assert!(Path::new(&arguments[2]).is_absolute());
     assert_eq!(
@@ -113,6 +113,6 @@ fn removed_identity_task_binds_the_frontend_directory_without_splitting_it() {
     );
     assert_eq!(
         PYTHON_POLICY_TASKS[0].arguments(&root, frontend).unwrap(),
-        ["scripts/check_architecture.py"]
+        ["tools/python/check_architecture.py"]
     );
 }

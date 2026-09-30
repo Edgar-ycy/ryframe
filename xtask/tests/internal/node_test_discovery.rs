@@ -16,7 +16,7 @@ fn discovery_covers_every_tracked_test_once() {
     let root = backend_root();
     let discovered = discover_node_tests(root).unwrap();
     let output = Command::new("git")
-        .args(["ls-files", "--", "scripts/tests"])
+        .args(["ls-files", "--", "tools/js"])
         .current_dir(root)
         .output()
         .unwrap();
@@ -34,8 +34,8 @@ fn discovery_covers_every_tracked_test_once() {
         discovered.iter().collect::<BTreeSet<_>>().len(),
         discovered.len()
     );
-    assert!(discovered.contains(&"scripts/tests/devex_clone_department_bridge.test.mjs".into()));
-    assert!(discovered.contains(&"scripts/tests/devex_clone_existing.test.mjs".into()));
+    assert!(discovered.contains(&"tools/js/devex_clone_department_bridge.test.mjs".into()));
+    assert!(discovered.contains(&"tools/js/devex_clone_existing.test.mjs".into()));
     assert!(!discovered.iter().any(|path| path.ends_with("_fixture.mjs")));
 }
 
@@ -43,7 +43,7 @@ fn discovery_covers_every_tracked_test_once() {
 fn python_discovery_does_not_duplicate_node_tests() {
     let root = backend_root();
     let output = Command::new("git")
-        .args(["ls-files", "--", "scripts/tests"])
+        .args(["ls-files", "--", "tools/python"])
         .current_dir(root)
         .output()
         .unwrap();
@@ -69,18 +69,15 @@ fn python_discovery_does_not_duplicate_node_tests() {
 #[test]
 fn discovery_is_recursive_and_deterministic() {
     let root = create_test_directory();
-    let nested = root.join("scripts/tests/nested");
+    let nested = root.join("tools/js/nested");
     fs::create_dir_all(&nested).unwrap();
-    fs::write(root.join("scripts/tests/z.test.mjs"), "").unwrap();
+    fs::write(root.join("tools/js/z.test.mjs"), "").unwrap();
     fs::write(nested.join("a.test.mjs"), "").unwrap();
     fs::write(nested.join("helper.mjs"), "").unwrap();
 
     assert_eq!(
         discover_node_tests(&root).unwrap(),
-        [
-            "scripts/tests/nested/a.test.mjs",
-            "scripts/tests/z.test.mjs"
-        ]
+        ["tools/js/nested/a.test.mjs", "tools/js/z.test.mjs"]
     );
     remove_test_directory(&root);
 }
@@ -102,14 +99,14 @@ fn create_test_directory() -> PathBuf {
 }
 
 fn remove_test_directory(root: &Path) {
-    let test_root = root.join("scripts/tests");
+    let test_root = root.join("tools/js");
     let nested = test_root.join("nested");
     fs::remove_file(nested.join("a.test.mjs")).unwrap();
     fs::remove_file(test_root.join("z.test.mjs")).unwrap();
     fs::remove_file(nested.join("helper.mjs")).unwrap();
     fs::remove_dir(nested).unwrap();
     fs::remove_dir(test_root).unwrap();
-    fs::remove_dir(root.join("scripts")).unwrap();
+    fs::remove_dir(root.join("tools")).unwrap();
     fs::remove_dir(root).unwrap();
 }
 

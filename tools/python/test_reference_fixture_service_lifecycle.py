@@ -1,0 +1,826 @@
+"""服务生命周期的本地账本与进程边界回归，不访问共享服务。"""
+from __future__ import annotations
+
+from contextlib import ExitStack
+import copy
+import io
+import json
+import os
+from pathlib import Path
+import sys
+import unittest
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import test_reference_fixture_request as request_fixture
+from devex_clone_capture import read_json, write_json
+from devex_clone_run_state import binding, begin, finish, load_state
+import reference_fixture_service_context as context
+import reference_fixture_service_lifecycle as lifecycle
+from reference_fixture_service_history import validate_history
+import reference_fixture_services as cli
+import devex_clone_target_cli as target
+
+
+class ServiceLifecycleTests(unittest.TestCase):
+    def setUp(self):
+        fixture = request_fixture.ReferenceFixtureRequestTests()
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        self.fixture = fixture
+        self.backend, self.root, self.run = fixture.backend, fixture.root, fixture.service_run
+        self.review, self.bootstrap = fixture.review_path, fixture.environments["seed"]
+        identity = {"pid": 2147481000, "started": "1", "executable": str(Path(sys.executable).resolve())}
+        tree = {"format_version": 2, "runtime_directory": str(self.run / "rustfs"), "role": "rustfs",
+                "scope_id": "fixture-service-test", "operation_id": "b" * 32, "supervisor": identity,
+                "monitor": {**identity, "pid": 2147481001}, "process": {**identity, "pid": 2147481002}}
+        self.services = {"requests": {"redis": {}},
+                         "runtime": read_json(self.run / "redis/runtime.json"), "tree": tree}
+
+    def snapshot(self):
+        return {str(path.relative_to(self.root)): path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
+
+    def mocks(self, *, failure=False):
+        stack = ExitStack()
+        stack.enter_context(patch.object(lifecycle, "registered_services", return_value=self.services))
+        stack.enter_context(patch.object(lifecycle, "observe_services", return_value={
+            "redis": "running", "rustfs": "running", "termination": None}))
+        def redis_stop(_request, _environment, _runtime, output):
+            self.events.append("redis")
+            if failure:
+                raise RuntimeError("Redis 关闭结果未知")
+            value = {"status": "redis_process_stopped", "alive": False, "resources_deleted": False,
+                     "runtime": self.services["runtime"]}
+            write_json(output / "stopped.json", value)
+            return value
+        stack.enter_context(patch.object(lifecycle, "stop_cache", side_effect=redis_stop))
+        stack.enter_context(patch.object(lifecycle, "terminate_owned_process_tree", side_effect=lambda tree: self.events.append("rustfs") or True))
+        stack.enter_context(patch.object(lifecycle, "_closed_services", return_value={
+            "redis": "stopped", "rustfs": "stopped", "termination": None}))
+        def completed(_tree):
+            from full_stack_process_monitor import receipt_path
+            tree = self.services["tree"]
+            path = receipt_path(self.run / "rustfs", "rustfs", tree["operation_id"], "stopped")
+            write_json(path, {"directory": tree["runtime_directory"], "status": "stopped", "error_type": None,
+                              "members": [tree["supervisor"]],
+                              **{key: tree[key] for key in ("operation_id", "role", "scope_id", "monitor", "supervisor")}})
+            return binding(path)
+        stack.enter_context(patch.object(lifecycle, "completion_binding", side_effect=completed))
+        self.events = []
+        return stack
+
+    def failed_close(self):
+        with self.mocks(), patch.object(lifecycle, "_closed_services", side_effect=PermissionError), \
+                self.assertRaises(PermissionError):
+            lifecycle.close(self.backend, self.review, self.bootstrap, write=True)
+        tree_path = self.run / "rustfs/rustfs-tree.json"
+        write_json(tree_path, self.services["tree"])
+        from full_stack_process_monitor import receipt_path
+        members = receipt_path(self.run / "rustfs", "rustfs", self.services["tree"]["operation_id"], "stopped")
+        write_json(members, {"format_version": 1,
+                             "directory": self.services["tree"]["runtime_directory"], "status": "stopped",
+                             "error_type": None, "members": [self.services["tree"]["supervisor"]],
+                             **{key: self.services["tree"][key]
+                                for key in ("operation_id", "role", "scope_id", "monitor", "supervisor")}})
+        self.services["evidence"] = {"rustfs_tree": binding(tree_path)}
+        return members
+
+    def reconcile_mocks(self, members, *, observed=None):
+        stack = ExitStack()
+        stack.enter_context(patch.object(lifecycle, "controller_observation", return_value=None))
+        stack.enter_context(patch.object(lifecycle, "registered_services", return_value=self.services))
+        stack.enter_context(patch.object(lifecycle, "completion_binding", return_value=binding(members)))
+        stack.enter_context(patch.object(lifecycle, "observe_services", return_value=observed or {
+            "redis": "stopped", "rustfs": "stopped", "termination": None}))
+        return stack
+
+    def external_observation(self):
+        from full_stack_process_monitor import receipt_path
+
+        tree_path = self.run / "rustfs/rustfs-tree.json"
+        write_json(tree_path, self.services["tree"])
+        ready_path = receipt_path(self.run / "rustfs", "rustfs",
+                                  self.services["tree"]["operation_id"], "ready")
+        write_json(ready_path, {"ready": True})
+        return {"status": "external-termination-unreconciled",
+                "identities": {role: "missing" for role in ("supervisor", "monitor", "process")},
+                "normal_shutdown_proof": None,
+                "evidence": {"rustfs_tree": binding(tree_path),
+                             "redis_runtime": binding(self.run / "redis/runtime.json"),
+                             "rustfs_monitor_ready": binding(ready_path)}}
+
+    def restart_services(self, evidence=None):
+        old_tree = self.services["tree"]
+        old_rustfs = {"scope_id": old_tree["scope_id"],
+                      "executable": {"path": str(self.fixture.tool), "sha256": "1" * 64},
+                      "data_directory": {"path": str(self.run / "rustfs"),
+                                         "device": (self.run / "rustfs").stat().st_dev,
+                                         "inode": (self.run / "rustfs").stat().st_ino},
+                      "api_url": "http://127.0.0.1:29200", "console_url": "http://127.0.0.1:29201",
+                      "credential_files": {}, "timeout_seconds": 60}
+        old_redis = {"previous_identity": None, "previous_boot_id": None, "previous_run_id": None,
+                     "configuration": {"path": str(self.run / "redis/redis.conf")}, "port": 16390}
+        write_json(self.run / "rustfs/request.json", old_rustfs)
+        write_json(self.run / "redis/request.json", old_redis)
+        old_runtime = {"linux_identity": {"pid": 201, "started": "11",
+                                          "executable": "/usr/bin/redis-server",
+                                          "boot_id": "1b3389bf-ef50-48a5-94d4-4cc51ad55a42"},
+                       "redis": {"run_id": "1" * 40}, "output": str(self.run / "redis")}
+        return {"requests": {"rustfs": old_rustfs, "redis": old_redis}, "tree": old_tree,
+                "runtime": old_runtime, "storage": {}, "origin": {"storage": {}, "redis": {}},
+                "evidence": evidence or {}}
+
+    def restart_generation(self, old_services, stopped):
+        prior_state = binding(self.run / "state.json")
+        prior_generation = validate_history(self.run, load_state(self.run))["active_generation"]
+        number = len(load_state(self.run)["attempts"]) + 1
+        old_tree = old_services["tree"]
+        new_tree = {**old_tree, "operation_id": "c" * 32,
+                    "runtime_directory": str(self.run / f"lifecycle-{number:04d}/rustfs"),
+                    "supervisor": {**old_tree["supervisor"], "pid": 2147481100},
+                    "monitor": {**old_tree["monitor"], "pid": 2147481101},
+                    "process": {**old_tree["process"], "pid": 2147481102}, "group_id": 2147481100}
+
+        def start_storage(_backend, request, _environment, output, _manifest, _controller,
+                          _number, guard, **_options):
+            guard()
+            write_json(output / "process.json", {"process": True})
+            write_json(output / "launch.json", {"launch": True})
+            write_json(output / "rustfs-tree.json", new_tree)
+            return {"identity": new_tree["process"], "sha256": request["executable"]["sha256"],
+                    "process_receipt": binding(output / "process.json"),
+                    "launch_receipt": binding(output / "launch.json"),
+                    "tree": binding(output / "rustfs-tree.json")}
+
+        def start_redis(_request, _environment, output, guard):
+            guard()
+            runtime = {"linux_identity": {"pid": 301, "started": "22",
+                                           "executable": "/usr/bin/redis-server",
+                                           "boot_id": "2b3389bf-ef50-48a5-94d4-4cc51ad55a42"},
+                       "redis": {"run_id": "2" * 40}, "output": str(output)}
+            write_json(output / "runtime.json", runtime)
+            return runtime
+
+        def observe(value):
+            return ({"redis": "running", "rustfs": "running", "termination": None}
+                    if value["tree"]["operation_id"] == new_tree["operation_id"] else stopped)
+
+        with patch.object(lifecycle, "registered_services", return_value=old_services), \
+                patch.object(lifecycle, "observe_services", side_effect=observe), \
+                patch("devex_clone_storage_process.start", side_effect=start_storage), \
+                patch.object(lifecycle, "start_cache", side_effect=start_redis), \
+                patch("full_stack_process_tree.read_process_tree", return_value=new_tree):
+            result = lifecycle.restart(self.backend, self.review, self.bootstrap,
+                                       self.run / "state.json", write=True)
+        return result, prior_state, prior_generation
+
+    def test_status_has_no_writes_and_reports_unique_next_operation(self):
+        before = self.snapshot()
+        with patch.object(context, "registered_services", return_value=self.services), \
+                patch.object(context, "observe_services", return_value={"redis": "running", "rustfs": "running",
+                                                                         "termination": None}):
+            result = context.status(self.backend, self.review, self.bootstrap)
+        self.assertEqual(result["next_operation"], "close")
+        self.assertEqual(before, self.snapshot())
+        self.assertFalse((self.run / "run-control.guard").exists())
+
+    def test_status_reports_external_termination_without_writing_or_inventing_shutdown_proof(self):
+        before = self.snapshot()
+        evidence = {"status": "external-termination-unreconciled",
+                    "identities": {role: "missing" for role in ("supervisor", "monitor", "process")},
+                    "normal_shutdown_proof": None,
+                    "evidence": {"rustfs_tree": {"path": "tree"}, "redis_runtime": {"path": "runtime"},
+                                 "rustfs_monitor_ready": {"path": "ready"}}}
+        with patch.object(context, "registered_services", return_value=self.services), \
+                patch.object(context, "observe_services", return_value={"redis": "stopped",
+                    "rustfs": "external-termination-unreconciled", "termination": evidence}):
+            result = context.status(self.backend, self.review, self.bootstrap)
+        self.assertEqual(result["services"], "external-termination-unreconciled")
+        self.assertEqual(result["next_operation"], "recover")
+        self.assertEqual(result["reconciliation"]["owner"], result["state"])
+        self.assertIsNone(result["reconciliation"]["normal_shutdown_proof"])
+        self.assertEqual(before, self.snapshot())
+
+    def test_external_termination_requires_every_identity_missing_and_redis_stopped(self):
+        request = {"api_url": "http://127.0.0.1:29200", "console_url": "http://127.0.0.1:29201"}
+        services = {**self.services, "requests": {"rustfs": request, "redis": {}}, "evidence": {}}
+        identities = {role: "missing" for role in ("supervisor", "monitor", "process")}
+        ready = {"format_version": 1, "operation_id": self.services["tree"]["operation_id"],
+                 "directory": self.services["tree"]["runtime_directory"], "role": "rustfs",
+                 "scope_id": self.services["tree"]["scope_id"],
+                 "supervisor": self.services["tree"]["supervisor"], "monitor": self.services["tree"]["monitor"]}
+        with patch.object(context, "read_json", return_value=ready), \
+                patch.object(context, "binding", return_value={"path": "ready"}), \
+                patch.object(context, "require_closed_port") as closed, \
+                patch.object(context, "_identity_observations", return_value=identities):
+            result = context._external_termination(services, identities)
+        self.assertEqual(result["status"], "external-termination-unreconciled")
+        self.assertEqual(closed.call_count, 2)
+
+        with patch("devex_clone_cache_process.status", return_value={"state": "running"}), \
+                patch.object(context, "_identity_observations", return_value=identities), \
+                patch("full_stack_process_monitor.wait_members", side_effect=ValueError(
+                    "成员监督器退出但没有完整成员关闭证明")), \
+                patch.object(context, "_external_termination", return_value=result), \
+                self.assertRaisesRegex(ValueError, "Redis 仍存活"):
+            context.observe_services(services)
+
+    def test_service_observation_rejects_pid_reuse_or_partial_tree(self):
+        reused = {**self.services["tree"]["monitor"], "started": "2"}
+        with patch.object(context, "process_identity", side_effect=lambda pid: reused
+                          if pid == self.services["tree"]["monitor"]["pid"] else None), \
+                self.assertRaisesRegex(ValueError, "PID 已复用"):
+            context._identity_observations(self.services["tree"])
+        with patch("devex_clone_cache_process.status", return_value={"state": "stopped"}), \
+                patch.object(context, "_identity_observations", return_value={
+                    "supervisor": "missing", "monitor": "missing", "process": "running"}), \
+                self.assertRaisesRegex(ValueError, "部分存活"):
+            context.observe_services({**self.services, "requests": {"redis": {}, "rustfs": {}}, "evidence": {}})
+
+    def test_identity_observation_retries_transient_permission_denial_but_not_persistent_denial(self):
+        with patch.object(context, "process_identity",
+                          side_effect=[PermissionError(), None, None, None]), \
+                patch.object(context.time, "sleep") as sleep:
+            self.assertEqual(context._identity_observations(self.services["tree"]), {
+                role: "missing" for role in ("supervisor", "monitor", "process")})
+        sleep.assert_called_once_with(0.05)
+        with patch.object(context, "process_identity", side_effect=PermissionError), \
+                patch.object(context.time, "monotonic", side_effect=[0, 6]), \
+                patch.object(context.time, "sleep") as sleep, self.assertRaises(PermissionError):
+            context._identity_observations(self.services["tree"])
+        sleep.assert_not_called()
+
+    def test_identity_observation_permission_retry_uses_one_shared_deadline(self):
+        with patch.object(context, "process_identity",
+                          side_effect=[PermissionError(), None, PermissionError()]), \
+                patch.object(context.time, "monotonic", side_effect=[0, 1, 6]), \
+                patch.object(context.time, "sleep") as sleep, self.assertRaises(PermissionError):
+            context._identity_observations(self.services["tree"])
+        sleep.assert_called_once_with(0.05)
+
+    def test_close_orders_services_and_preserves_registered_history_prefix(self):
+        descriptor = {"path": str(self.run), "manifest": binding(self.run / "manifest.json"), "state": binding(self.run / "state.json")}
+        original = copy.deepcopy(load_state(self.run)["attempts"])
+        with self.mocks():
+            result = lifecycle.close(self.backend, self.review, self.bootstrap, write=True)
+        self.assertEqual(self.events, ["redis", "rustfs"])
+        self.assertEqual(result["status"], "services_closed")
+        self.assertEqual(load_state(self.run)["attempts"][:3], original)
+        self.assertTrue(validate_history(self.run, load_state(self.run))["closed"])
+        self.assertEqual(target._storage_run(self.backend, descriptor), self.run)
+        with self.mocks():
+            again = lifecycle.close(self.backend, self.review, self.bootstrap, write=True)
+        self.assertEqual(again["status"], "services_already_closed")
+        self.assertEqual(self.events, [])
+
+    def test_closed_status_reports_explicit_restart_without_writes(self):
+        with self.mocks():
+            lifecycle.close(self.backend, self.review, self.bootstrap, write=True)
+        before = self.snapshot()
+        stopped = {"redis": "stopped", "rustfs": "stopped", "termination": None}
+        with patch.object(context, "registered_services", return_value=self.services), \
+                patch.object(context, "observe_services", return_value=stopped):
+            result = context.status(self.backend, self.review, self.bootstrap)
+        self.assertEqual(result["next_operation"], "restart")
+        self.assertEqual(result["state"], binding(self.run / "state.json"))
+        self.assertEqual(before, self.snapshot())
+
+    def test_unknown_close_result_is_not_replayed_and_rustfs_is_not_stopped(self):
+        with self.mocks(failure=True), self.assertRaisesRegex(RuntimeError, "未知"):
+            lifecycle.close(self.backend, self.review, self.bootstrap, write=True)
+        self.assertEqual(self.events, ["redis"])
+        with self.mocks(), self.assertRaisesRegex(ValueError, "未成功收尾"):
+            lifecycle.close(self.backend, self.review, self.bootstrap, write=True)
+        self.assertEqual(self.events, [])
+
+    def test_unknown_stage_or_tampered_close_evidence_is_rejected(self):
+        with self.mocks():
+            lifecycle.close(self.backend, self.review, self.bootstrap, write=True)
+        evidence = self.run / "lifecycle-0004/stopped.json"
+        evidence.write_text("{}", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "关闭收据"):
+            validate_history(self.run, load_state(self.run))
+        state = load_state(self.run)
+        state["attempts"][3]["mode"] = "replace"
+        with self.assertRaisesRegex(ValueError, "仅允许"):
+            validate_history(self.run, state)
+
+    def test_failed_close_reconcile_appends_proof_without_service_operations(self):
+        members = self.failed_close()
+        with patch.object(context, "registered_services", return_value=self.services):
+            before = context.status(self.backend, self.review, self.bootstrap)
+        self.assertEqual(before["unsettled"], [4])
+        self.assertEqual(before["next_operation"], "reconcile")
+        with self.reconcile_mocks(members), patch.object(lifecycle, "stop_cache") as stop, \
+                patch.object(lifecycle, "terminate_owned_process_tree") as terminate, \
+                patch.object(lifecycle, "start_cache") as start:
+            result = lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                         self.run / "state.json", write=True)
+        stop.assert_not_called()
+        terminate.assert_not_called()
+        start.assert_not_called()
+        self.assertEqual(result["status"], "failed_close_reconciled")
+        history = validate_history(self.run, load_state(self.run))
+        self.assertTrue(history["closed"])
+        self.assertEqual(history["unsettled"], [])
+        with patch.object(context, "registered_services", return_value=self.services), \
+                patch.object(context, "observe_services", return_value={
+                    "redis": "stopped", "rustfs": "stopped", "termination": None}):
+            self.assertEqual(context.status(self.backend, self.review, self.bootstrap)["next_operation"], "restart")
+        snapshot = self.snapshot()
+        with self.assertRaisesRegex(ValueError, "唯一未结算"):
+            lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                self.run / "state.json", write=True)
+        self.assertEqual(snapshot, self.snapshot())
+
+    def test_failed_close_reconcile_requires_explicit_write_before_reading_context(self):
+        with patch.object(lifecycle, "context") as read_context, \
+                self.assertRaisesRegex(ValueError, "--write"):
+            lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                self.run / "state.json", write=False)
+        read_context.assert_not_called()
+
+    def test_failed_close_reconcile_rejects_old_state_and_tampered_evidence_without_writes(self):
+        members = self.failed_close()
+        old = self.root / "old-state.json"
+        write_json(old, read_json(self.run / "state.json"))
+        before = self.snapshot()
+        with self.assertRaisesRegex(ValueError, "当前 state"):
+            lifecycle.reconcile(self.backend, self.review, self.bootstrap, old, write=True)
+        self.assertEqual(before, self.snapshot())
+        stopped = self.run / "lifecycle-0004/stopped.json"
+        value = read_json(stopped)
+        value["alive"] = True
+        stopped.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        before = self.snapshot()
+        self.assertEqual(context.status(self.backend, self.review, self.bootstrap)["next_operation"],
+                         "reconcile-evidence")
+        self.assertEqual(before, self.snapshot())
+        with self.reconcile_mocks(members), self.assertRaisesRegex(ValueError, "Redis"):
+            lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                self.run / "state.json", write=True)
+        self.assertEqual(before, self.snapshot())
+
+    def test_failed_close_reconcile_rejects_tampered_failed_controller_without_writes(self):
+        members = self.failed_close()
+        controller = self.run / "controller-0004.json"
+        value = read_json(controller)
+        value["attempt_sha256"] = "0" * 64
+        controller.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        before = self.snapshot()
+        self.assertEqual(context.status(self.backend, self.review, self.bootstrap)["next_operation"],
+                         "reconcile-evidence")
+        self.assertEqual(before, self.snapshot())
+        with self.reconcile_mocks(members), self.assertRaisesRegex(ValueError, "控制器"):
+            lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                self.run / "state.json", write=True)
+        self.assertEqual(before, self.snapshot())
+
+    def test_failed_close_reconcile_rejects_attempt_and_controller_group_tampering(self):
+        members = self.failed_close()
+        state_file = self.run / "state.json"
+        state = read_json(state_file)
+        failed = state["attempts"][-1]
+        failed["sources"]["invented"] = binding(self.run / "manifest.json")
+        state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        from restore_reference_plan import plan_hash
+
+        controller_file = self.run / "controller-0004.json"
+        controller = read_json(controller_file)
+        running = {**failed, "finished_at": None, "status": "running", "result": None,
+                   "error_type": None}
+        controller["attempt_sha256"] = plan_hash(running)
+        controller_file.write_text(json.dumps(controller, ensure_ascii=False, indent=2) + "\n",
+                                   encoding="utf-8")
+        before = self.snapshot()
+        self.assertEqual(context.status(self.backend, self.review, self.bootstrap)["next_operation"],
+                         "reconcile-evidence")
+        self.assertEqual(before, self.snapshot())
+        with self.reconcile_mocks(members), self.assertRaisesRegex(ValueError, "当前夹具输入"):
+            lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                self.run / "state.json", write=True)
+        self.assertEqual(before, self.snapshot())
+
+    def test_failed_close_reconcile_consumes_complete_unpublished_rustfs_wrapper(self):
+        members = self.failed_close()
+        write_json(self.run / "lifecycle-0004/rustfs-stopped.json", {
+            "tree": self.services["tree"], "terminated": True, "state": "stopped",
+            "completion": binding(members)})
+        with self.reconcile_mocks(members):
+            result = lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                         self.run / "state.json", write=True)
+        self.assertEqual(result["status"], "failed_close_reconciled")
+        proof = read_json(self.run / "lifecycle-0005/reconciliation.json")
+        self.assertEqual(proof["evidence"]["rustfs_close"],
+                         binding(self.run / "lifecycle-0004/rustfs-stopped.json"))
+        self.assertTrue(validate_history(self.run, load_state(self.run))["closed"])
+
+    def test_failed_close_reconcile_rejects_tampered_rustfs_members_without_writes(self):
+        members = self.failed_close()
+        proof = read_json(members)
+        proof["error_type"] = "unexpected"
+        members.write_text(json.dumps(proof, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        before = self.snapshot()
+        stopped = {"redis": "stopped", "rustfs": "stopped", "termination": None}
+        with patch.object(lifecycle, "controller_observation", return_value=None), \
+                patch.object(lifecycle, "registered_services", return_value=self.services), \
+                patch.object(lifecycle, "observe_services", return_value=stopped), \
+                patch("full_stack_process_monitor.process_identity", return_value=None), \
+                self.assertRaisesRegex(ValueError, "完整成员"):
+            lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                self.run / "state.json", write=True)
+        self.assertEqual(before, self.snapshot())
+
+    def test_reconciliation_history_rejects_rebound_failed_controller_metadata(self):
+        members = self.failed_close()
+        with self.reconcile_mocks(members):
+            lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                self.run / "state.json", write=True)
+        proof_file = self.run / "lifecycle-0005/reconciliation.json"
+        proof = read_json(proof_file)
+        proof["failed_controller"] = binding(self.run / "controller-0005.json")
+        proof_file.write_text(json.dumps(proof, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        result_file = self.run / "results/0005.json"
+        result = read_json(result_file)
+        result["reconciliation"] = binding(proof_file)
+        result_file.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        state_file = self.run / "state.json"
+        state = read_json(state_file)
+        state["attempts"][-1]["result"] = binding(result_file)
+        state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "和解证据"):
+            validate_history(self.run, load_state(self.run))
+
+    def test_reconciliation_history_rejects_result_owner_not_bound_to_sources(self):
+        members = self.failed_close()
+        with self.reconcile_mocks(members):
+            lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                self.run / "state.json", write=True)
+        result_file = self.run / "results/0005.json"
+        result = read_json(result_file)
+        result["owner"] = result["controller"]
+        result_file.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        state_file = self.run / "state.json"
+        state = read_json(state_file)
+        state["attempts"][-1]["result"] = binding(result_file)
+        state_file.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "和解结果"):
+            validate_history(self.run, load_state(self.run))
+
+    def test_failed_close_reconcile_rejects_running_service_and_extra_failure(self):
+        members = self.failed_close()
+        running = {"redis": "stopped", "rustfs": "running", "termination": None}
+        before = self.snapshot()
+        with self.reconcile_mocks(members, observed=running), self.assertRaisesRegex(ValueError, "尚未完整停止"):
+            lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                self.run / "state.json", write=True)
+        self.assertEqual(before, self.snapshot())
+        value = context.context(self.backend, self.review, self.bootstrap)
+        number = begin(self.run, "fixture-services", "recover", value["sources"])
+        finish(self.run, number, error=RuntimeError("second failure"))
+        self.assertEqual(context.status(self.backend, self.review, self.bootstrap)["next_operation"],
+                         "reconcile-evidence")
+        before = self.snapshot()
+        with self.assertRaisesRegex(ValueError, "唯一未结算"):
+            lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                self.run / "state.json", write=True)
+        self.assertEqual(before, self.snapshot())
+
+    def test_new_requests_reject_closed_service_generations(self):
+        with self.mocks():
+            lifecycle.close(self.backend, self.review, self.bootstrap, write=True)
+        from reference_fixture_request import build
+        with self.assertRaisesRegex(ValueError, "关闭"):
+            build(self.backend, self.bootstrap, self.run, "fresh-seed", "seed")
+
+    def test_status_pid_reuse_fails_without_any_file_changes(self):
+        before = self.snapshot()
+        observation = {"owner": {}, "process_matches": False, "process_missing": False}
+        with patch.object(context, "controller_observation", return_value=observation), \
+                self.assertRaisesRegex(ValueError, "PID 已复用"):
+            context.status(self.backend, self.review, self.bootstrap)
+        self.assertEqual(before, self.snapshot())
+
+    def dead_lock(self):
+        owner = {"format_version": 1, "directory": str(self.run),
+                 "manifest_sha256": binding(self.run / "manifest.json")["sha256"],
+                 "identity": {"pid": 2147483000, "started": "1", "executable": str(Path(sys.executable).resolve())}}
+        lock = self.run / "run.lock"
+        lock.mkdir()
+        write_json(lock / "owner.json", owner)
+        owner_file = self.root / "owner-binding.json"
+        write_json(owner_file, binding(lock / "owner.json"))
+        return owner_file
+
+    def test_recover_only_removes_dead_controller_and_appends_auditable_receipt(self):
+        owner_file = self.dead_lock()
+        with patch("devex_clone_run_state.process_identity", side_effect=lambda pid: None if pid == 2147483000 else __import__("full_stack_process").process_identity(pid)), \
+                patch.object(lifecycle, "stop_cache") as cache_stop, patch.object(lifecycle, "terminate_owned_process_tree") as tree_stop:
+            result = lifecycle.recover(self.backend, self.review, self.bootstrap, owner_file, write=True)
+        self.assertEqual(result["next_operation"], "status")
+        self.assertFalse((self.run / "run.lock").exists())
+        cache_stop.assert_not_called()
+        tree_stop.assert_not_called()
+        self.assertFalse(validate_history(self.run, load_state(self.run))["closed"])
+
+    def test_recover_reconciles_external_termination_without_stopping_or_starting_services(self):
+        termination = self.external_observation()
+        observed = {"redis": "stopped", "rustfs": "external-termination-unreconciled",
+                    "termination": termination}
+        with patch.object(lifecycle, "registered_services", return_value=self.services), \
+                patch.object(lifecycle, "observe_services", return_value=observed), \
+                patch.object(lifecycle, "stop_cache") as cache_stop, \
+                patch.object(lifecycle, "terminate_owned_process_tree") as tree_stop:
+            result = lifecycle.recover(self.backend, self.review, self.bootstrap,
+                                       self.run / "state.json", write=True)
+        self.assertEqual(result["status"], "external_termination_reconciled")
+        self.assertEqual(result["next_operation"], "restart")
+        cache_stop.assert_not_called()
+        tree_stop.assert_not_called()
+        self.assertFalse(any(self.run.rglob("*-stopped.json")))
+        evidence = read_json(Path(result["evidence"]["path"]))
+        self.assertIsNone(evidence["normal_shutdown_proof"])
+        history = validate_history(self.run, load_state(self.run))
+        self.assertEqual(history["external_recovery"], load_state(self.run)["attempts"][-1]["result"])
+
+        with patch.object(context, "registered_services", return_value=self.services), \
+                patch.object(context, "observe_services", return_value=observed):
+            status = context.status(self.backend, self.review, self.bootstrap)
+        self.assertEqual(status["services"], "external-termination-reconciled")
+        self.assertEqual(status["next_operation"], "restart")
+        self.assertEqual(status["reconciliation"]["receipt"], history["external_recovery"])
+
+    def test_external_recovery_rejects_stale_owner_or_changed_service_state_without_writes(self):
+        services = {**self.services, "evidence": {}}
+        stopped = {"redis": "stopped", "rustfs": "external-termination-unreconciled",
+                   "termination": {"status": "external-termination-unreconciled"}}
+        wrong = self.root / "wrong-state.json"
+        write_json(wrong, read_json(self.run / "state.json"))
+        before = self.snapshot()
+        with patch.object(lifecycle, "registered_services", return_value=services), \
+                patch.object(lifecycle, "observe_services", return_value=stopped), \
+                self.assertRaisesRegex(ValueError, "当前 state"):
+            lifecycle.recover(self.backend, self.review, self.bootstrap, wrong, write=True)
+        self.assertEqual(before, self.snapshot())
+
+        running = {"redis": "running", "rustfs": "running", "termination": None}
+        with patch.object(lifecycle, "registered_services", return_value=services), \
+                patch.object(lifecycle, "observe_services", return_value=running), \
+                self.assertRaisesRegex(ValueError, "全部登记服务"):
+            lifecycle.recover(self.backend, self.review, self.bootstrap,
+                              self.run / "state.json", write=True)
+        self.assertEqual(before, self.snapshot())
+
+    def test_external_recovery_evidence_tampering_is_rejected(self):
+        termination = self.external_observation()
+        observed = {"redis": "stopped", "rustfs": "external-termination-unreconciled",
+                    "termination": termination}
+        with patch.object(lifecycle, "registered_services", return_value=self.services), \
+                patch.object(lifecycle, "observe_services", return_value=observed):
+            result = lifecycle.recover(self.backend, self.review, self.bootstrap,
+                                       self.run / "state.json", write=True)
+        Path(result["evidence"]["path"]).write_text("{}", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            validate_history(self.run, load_state(self.run))
+
+    def test_restart_appends_a_new_generation_with_previous_lineage(self):
+        termination = self.external_observation()
+        stopped = {"redis": "stopped", "rustfs": "external-termination-unreconciled",
+                   "termination": termination}
+        old_services = self.restart_services(termination["evidence"])
+        with patch.object(lifecycle, "registered_services", return_value=old_services), \
+                patch.object(lifecycle, "observe_services", return_value=stopped):
+            lifecycle.recover(self.backend, self.review, self.bootstrap,
+                              self.run / "state.json", write=True)
+        result, prior_state, prior_generation = self.restart_generation(old_services, stopped)
+        self.assertEqual(result["status"], "services_restarted")
+        self.assertEqual(result["previous_generation"], prior_generation)
+        self.assertNotEqual(binding(self.run / "state.json"), prior_state)
+        generation = read_json(Path(result["generation"]["path"]))
+        self.assertEqual(generation["previous_generation"], prior_generation)
+        self.assertEqual(generation["predecessor"], load_state(self.run)["attempts"][-2]["result"])
+        self.assertEqual(Path(generation["rustfs"]["request"]["path"]).parent.name, "rustfs")
+        history = validate_history(self.run, load_state(self.run))
+        self.assertIsNone(history["external_recovery"])
+        self.assertIsNone(history["restart_predecessor"])
+        self.assertEqual(history["active_generation"], load_state(self.run)["attempts"][-1]["result"])
+
+    def test_restart_accepts_the_current_successful_normal_close_only(self):
+        with self.mocks():
+            lifecycle.close(self.backend, self.review, self.bootstrap, write=True)
+        close_result = load_state(self.run)["attempts"][-1]["result"]
+        old_services = self.restart_services()
+        stopped = {"redis": "stopped", "rustfs": "stopped", "termination": None}
+        result, _, _ = self.restart_generation(old_services, stopped)
+        generation = read_json(Path(result["generation"]["path"]))
+        self.assertEqual(generation["predecessor"], close_result)
+        history = validate_history(self.run, load_state(self.run))
+        self.assertFalse(history["closed"])
+        self.assertIsNone(history["restart_predecessor"])
+        tampered = load_state(self.run)
+        tampered["attempts"][-1]["sources"]["restart_predecessor"] = {"path": "other"}
+        with self.assertRaisesRegex(ValueError, "关闭前驱"):
+            validate_history(self.run, tampered)
+
+    def test_restart_rejects_missing_predecessor_or_stale_owner_without_writes(self):
+        before = self.snapshot()
+        with self.assertRaisesRegex(ValueError, "正常关闭或外部终止"):
+            lifecycle.restart(self.backend, self.review, self.bootstrap,
+                              self.run / "state.json", write=True)
+        self.assertEqual(before, self.snapshot())
+
+        with self.mocks():
+            lifecycle.close(self.backend, self.review, self.bootstrap, write=True)
+        stale = self.root / "stale-state.json"
+        write_json(stale, read_json(self.run / "state.json"))
+        before = self.snapshot()
+        with self.assertRaisesRegex(ValueError, "当前 state"):
+            lifecycle.restart(self.backend, self.review, self.bootstrap, stale, write=True)
+        self.assertEqual(before, self.snapshot())
+
+    def test_restart_requires_write_before_reading_context(self):
+        with patch.object(lifecycle, "context") as read_context, \
+                self.assertRaisesRegex(ValueError, "--write"):
+            lifecycle.restart(self.backend, self.review, self.bootstrap,
+                              self.run / "state.json", write=False)
+        read_context.assert_not_called()
+
+    def test_recover_rejects_live_or_reused_controller_without_writes(self):
+        owner_file = self.dead_lock()
+        before = self.snapshot()
+        with patch("devex_clone_run_state.process_identity", return_value={"pid": 2147483000, "started": "changed", "executable": "other"}), \
+                self.assertRaisesRegex(ValueError, "PID 复用"):
+            lifecycle.recover(self.backend, self.review, self.bootstrap, owner_file, write=True)
+        self.assertEqual(before, self.snapshot())
+
+    def test_partial_startup_recovery_never_suggests_an_illegal_next_stage(self):
+        state = load_state(self.run)
+        for item in state["attempts"][1:]:
+            Path(item["result"]["path"]).unlink()
+        state["attempts"] = state["attempts"][:1]
+        self.fixture.write(self.run / "state.json", state)
+        owner_file = self.dead_lock()
+        with patch("devex_clone_run_state.process_identity", side_effect=lambda pid: None if pid == 2147483000 else __import__("full_stack_process").process_identity(pid)):
+            lifecycle.recover(self.backend, self.review, self.bootstrap, owner_file, write=True)
+        before = self.snapshot()
+        result = context.status(self.backend, self.review, self.bootstrap)
+        self.assertEqual(result["next_operation"], "reconcile-evidence")
+        self.assertEqual(before, self.snapshot())
+
+    def test_interrupted_close_recovery_keeps_unknown_service_write_unreplayed(self):
+        value = context.context(self.backend, self.review, self.bootstrap)
+        begin(self.run, "fixture-services", "close", value["sources"])
+        owner_file = self.dead_lock()
+        with patch("devex_clone_run_state.process_identity", side_effect=lambda pid: None if pid == 2147483000 else __import__("full_stack_process").process_identity(pid)), \
+                patch.object(lifecycle, "stop_cache") as stop:
+            result = lifecycle.recover(self.backend, self.review, self.bootstrap, owner_file, write=True)
+        self.assertEqual(result["next_operation"], "reconcile-evidence")
+        stop.assert_not_called()
+        state = load_state(self.run)
+        self.assertEqual(state["attempts"][3]["error_type"], "ControllerInterrupted")
+        with self.assertRaisesRegex(ValueError, "未成功收尾"):
+            validate_history(self.run, state)
+
+    def test_mid_close_input_drift_stops_before_rustfs_and_preserves_failed_stage(self):
+        with self.mocks(), patch.object(lifecycle, "stop_cache") as stop:
+            def changed(_request, _environment, _runtime, output):
+                self.review.write_text("{}", encoding="utf-8")
+                return {"status": "redis_process_stopped"}
+            stop.side_effect = changed
+            with self.assertRaises(ValueError):
+                lifecycle.close(self.backend, self.review, self.bootstrap, write=True)
+        self.assertEqual(self.events, [])
+        self.assertEqual(load_state(self.run)["attempts"][-1]["status"], "failed")
+
+    def test_pid_reuse_during_close_wait_fails_immediately(self):
+        expected = {"pid": 12345, "started": "1", "executable": "original"}
+        services = {"tree": {"supervisor": expected, "process": expected}}
+        with patch.object(lifecycle, "process_identity", return_value={**expected, "started": "2"}), \
+                patch.object(lifecycle.time, "sleep") as sleep, self.assertRaisesRegex(ValueError, "PID 已复用"):
+            lifecycle._closed_services(services)
+        sleep.assert_not_called()
+
+    def test_close_wait_retries_transient_windows_identity_denial(self):
+        supervisor = {"pid": 12345, "started": "1", "executable": "supervisor"}
+        process = {"pid": 12346, "started": "2", "executable": "rustfs"}
+        services = {"tree": {"supervisor": supervisor, "process": process}}
+        stopped = {"redis": "stopped", "rustfs": "stopped", "termination": None}
+        with patch.object(lifecycle, "process_identity",
+                          side_effect=[PermissionError(), None, None, None]), \
+                patch.object(lifecycle, "observe_services", return_value=stopped), \
+                patch.object(lifecycle.time, "sleep") as sleep:
+            self.assertEqual(lifecycle._closed_services(services), stopped)
+        sleep.assert_called_once_with(0.05)
+
+    def test_close_wait_does_not_turn_persistent_identity_denial_into_success(self):
+        expected = {"pid": 12345, "started": "1", "executable": "original"}
+        services = {"tree": {"supervisor": expected, "process": expected}}
+        with patch.object(lifecycle, "process_identity", side_effect=PermissionError), \
+                patch.object(lifecycle.time, "monotonic", side_effect=[0, 6]), \
+                patch.object(lifecycle.time, "sleep") as sleep, \
+                self.assertRaisesRegex(TimeoutError, "仍存活"):
+            lifecycle._closed_services(services)
+        sleep.assert_not_called()
+
+    def test_close_wait_does_not_hide_non_identity_permission_denial(self):
+        expected = {"pid": 12345, "started": "1", "executable": "original"}
+        services = {"tree": {"supervisor": expected, "process": expected}}
+        with patch.object(lifecycle, "process_identity", return_value=None), \
+                patch.object(lifecycle, "observe_services", side_effect=PermissionError), \
+                patch.object(lifecycle.time, "sleep") as sleep, \
+                self.assertRaises(PermissionError):
+            lifecycle._closed_services(services)
+        sleep.assert_not_called()
+
+    def test_unknown_recovery_intent_blocks_close_before_service_operations(self):
+        write_json(self.run / "recovery-unknown.intent.json", {"unknown": True})
+        with self.mocks(), self.assertRaisesRegex(ValueError, "未知控制恢复"):
+            lifecycle.close(self.backend, self.review, self.bootstrap, write=True)
+        self.assertEqual(self.events, [])
+
+    def test_legacy_receipts_do_not_gain_invented_tree_ownership(self):
+        value = context.context(self.backend, self.review, self.bootstrap)
+        before = self.snapshot()
+        with self.assertRaisesRegex(ValueError, "历史首代"):
+            context.registered_services(value)
+        self.assertEqual(before, self.snapshot())
+
+    def test_frozen_service_requests_tree_and_results_are_bound_together(self):
+        from full_stack_process_tree import record_process_tree
+        state = load_state(self.run)
+        executable = str(self.fixture.tool)
+        storage_identity = {"pid": 12345, "started": "1", "executable": executable}
+        supervisor = {"pid": 12346, "started": "2", "executable": str(Path(sys.executable).resolve())}
+        data = self.run / "rustfs-data"
+        data.mkdir()
+        request = {"scope_id": "services-fixture-seed", "executable": {"sha256": "1" * 64},
+                   "data_directory": {"path": str(data), "device": data.stat().st_dev, "inode": data.stat().st_ino}}
+        for role, body, index in (("rustfs", request, 0), ("redis", {}, 1)):
+            path = self.run / role / "request.json"
+            write_json(path, body)
+            state["attempts"][index]["sources"]["request"] = binding(path)
+        tree = record_process_tree(self.run / "rustfs", "rustfs", request["scope_id"], supervisor, storage_identity, "a" * 32,
+                                   {**supervisor, "pid": 12347})
+        write_json(self.run / "controller-0001.json", {"fixture": True})
+        observed = {"state": "recorded", "identity": storage_identity,
+                    "process_receipt": binding(self.run / "rustfs/process.json"),
+                    "launch_receipt": binding(self.run / "rustfs/launch.json")}
+        results = [{**observed, "sha256": "1" * 64, "tree": binding(self.run / "rustfs/rustfs-tree.json")},
+                   {"service": "redis", "runtime": read_json(self.run / "redis/runtime.json")}]
+        for index, result in enumerate(results):
+            path = self.run / "results" / f"{index + 1:04d}.json"
+            self.fixture.write(path, result)
+            state["attempts"][index]["result"] = binding(path)
+        self.fixture.write(self.run / "state.json", state)
+        value = context.context(self.backend, self.review, self.bootstrap)
+        with patch.object(context, "inspect_attempt", return_value=observed) as inspect:
+            services = context.registered_services(value)
+        self.assertEqual(services["tree"], tree)
+        self.assertEqual(inspect.call_args.kwargs["request_binding"], state["attempts"][0]["sources"]["request"])
+        self.fixture.write(self.run / "redis/request.json", {"changed": True})
+        with self.assertRaises(ValueError):
+            context.registered_services(value)
+
+    def test_close_requires_write_before_reading_resources(self):
+        with patch.object(lifecycle, "context") as read, self.assertRaisesRegex(ValueError, "--write"):
+            lifecycle.close(self.backend, self.review, self.bootstrap, write=False)
+        read.assert_not_called()
+
+    def test_cli_rejects_ambiguous_or_write_status_arguments_with_usage_exit(self):
+        common = ["--backend-dir", str(self.backend), "--review", str(self.review), "--environment", str(self.bootstrap)]
+        for args in (("status", "--write"), ("close",), ("reconcile", "--write"),
+                     ("recover", "--write"), ("close", "--write", "--owner-binding", "owner.json")):
+            with self.subTest(args=args), patch("sys.stderr", new_callable=io.StringIO), \
+                    self.assertRaises(SystemExit) as error:
+                cli.main([*args, *common])
+            self.assertEqual(error.exception.code, 2)
+
+    def test_cli_dispatches_reconcile_with_explicit_owner_binding(self):
+        expected = {"status": "failed_close_reconciled", "remote_writes": 0}
+        arguments = ["reconcile", "--backend-dir", str(self.backend),
+                     "--review", str(self.review), "--environment", str(self.bootstrap),
+                     "--owner-binding", str(self.run / "state.json"), "--write"]
+        with patch.object(lifecycle, "reconcile", return_value=expected) as reconcile, \
+                patch("builtins.print") as output:
+            cli.main(arguments)
+        reconcile.assert_called_once_with(self.backend.resolve(), self.review, self.bootstrap,
+                                          self.run / "state.json", write=True)
+        output.assert_called_once_with(json.dumps(expected, ensure_ascii=False))
+
+    def test_cli_rejects_duplicate_and_abbreviated_options_before_reading_inputs(self):
+        common = ["--backend-dir", str(self.backend), "--review", str(self.review), "--environment", str(self.bootstrap)]
+        before = self.snapshot()
+        invalid = [("status", "--review", "other"), ("status", "--environment=other"),
+                   ("close", "--write", "--write"), ("status", "--rev", "other")]
+        for args in invalid:
+            with self.subTest(args=args), patch("sys.stderr", new_callable=io.StringIO), \
+                    patch.object(cli, "document") as read, \
+                    self.assertRaises(SystemExit) as error:
+                cli.main([*args, *common])
+            self.assertEqual(error.exception.code, 2)
+            read.assert_not_called()
+            self.assertEqual(before, self.snapshot())
+
+
+if __name__ == "__main__":
+    unittest.main()

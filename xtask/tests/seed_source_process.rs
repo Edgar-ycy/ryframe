@@ -100,7 +100,7 @@ fn valid_request_replaces_inherited_protocol_and_hides_paths_from_argv() {
     assert_eq!(result.status.code(), Some(1));
     let stdout = String::from_utf8_lossy(&result.stdout);
     let stderr = String::from_utf8_lossy(&result.stderr);
-    assert!(stdout.contains("scripts/devex_clone.py"), "{stdout}");
+    assert!(stdout.contains("tools/python/devex_clone.py"), "{stdout}");
     assert!(!stdout.contains("--run-dir"), "{stdout}");
     assert!(
         !stdout.contains(fixture.directory.to_str().unwrap()),

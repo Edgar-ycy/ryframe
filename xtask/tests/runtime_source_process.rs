@@ -145,12 +145,12 @@ fn runtime_status_replaces_inherited_protocol_and_hides_evidence_paths_from_argv
     let result = invoke_runtime_with_conflicting_python_environment(&arguments, &fixture);
     let stdout = String::from_utf8(result.stdout.clone()).unwrap();
     assert!(
-        stdout.contains("-X utf8 -B scripts/restore_runtime.py"),
+        stdout.contains("-X utf8 -B tools/python/restore_runtime.py"),
         "{stdout}"
     );
     assert_private_dispatch(
         result,
-        "scripts/restore_runtime.py",
+        "tools/python/restore_runtime.py",
         &[&fixture.registration, &fixture.target],
     );
     let capture: Value = serde_json::from_slice(&fs::read(&fixture.capture).unwrap()).unwrap();
@@ -184,7 +184,7 @@ fn source_comparison_verify_replaces_protocol_and_hides_receipt_path_from_argv()
     let result = invoke(&arguments, "RYFRAME_RESTORE_SOURCE_PROTOCOL");
     assert_private_dispatch(
         result,
-        "scripts/restore_source.py",
+        "tools/python/restore_source.py",
         &[&fixture.source_receipt],
     );
 }

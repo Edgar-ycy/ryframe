@@ -9,7 +9,7 @@ pub(crate) enum PolicyProfile {
     CiPreflight,
 }
 
-pub(crate) const MIGRATION_HISTORY_SCRIPT: &str = "scripts/check_migration_history.py";
+pub(crate) const MIGRATION_HISTORY_SCRIPT: &str = "tools/python/check_migration_history.py";
 pub(crate) const STRICT_MIGRATION_HISTORY_ARGS: &[&str] =
     &[MIGRATION_HISTORY_SCRIPT, "--require-frozen"];
 
@@ -59,7 +59,7 @@ impl PythonPolicyTask {
 pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
     PythonPolicyTask {
         id: "architecture",
-        script: "scripts/check_architecture.py",
+        script: "tools/python/check_architecture.py",
         full_order: Some(0),
         smart_order: Some(0),
         ci_preflight_order: Some(2),
@@ -67,7 +67,7 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
     },
     PythonPolicyTask {
         id: "deployment-assets",
-        script: "scripts/check_deployment_assets.py",
+        script: "tools/python/check_deployment_assets.py",
         full_order: Some(1),
         smart_order: None,
         ci_preflight_order: None,
@@ -83,7 +83,7 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
     },
     PythonPolicyTask {
         id: "prerelease-dependencies",
-        script: "scripts/check_prerelease_dependencies.py",
+        script: "tools/python/check_prerelease_dependencies.py",
         full_order: Some(3),
         smart_order: None,
         ci_preflight_order: Some(0),
@@ -91,7 +91,7 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
     },
     PythonPolicyTask {
         id: "permission-routes",
-        script: "scripts/check_permission_routes.py",
+        script: "tools/python/check_permission_routes.py",
         full_order: Some(4),
         smart_order: Some(2),
         ci_preflight_order: Some(3),
@@ -99,7 +99,7 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
     },
     PythonPolicyTask {
         id: "removed-identity",
-        script: "scripts/check_removed_identity.py",
+        script: "tools/python/check_removed_identity.py",
         full_order: Some(5),
         smart_order: Some(3),
         ci_preflight_order: Some(4),
@@ -107,7 +107,7 @@ pub(crate) const PYTHON_POLICY_TASKS: &[PythonPolicyTask] = &[
     },
     PythonPolicyTask {
         id: "supply-chain",
-        script: "scripts/check_supply_chain.py",
+        script: "tools/python/check_supply_chain.py",
         full_order: Some(6),
         smart_order: None,
         ci_preflight_order: None,

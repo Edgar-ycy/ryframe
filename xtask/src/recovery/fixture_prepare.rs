@@ -9,7 +9,7 @@ use crate::{
     process::run_with_env_removed,
 };
 
-const SCRIPT: &str = "scripts/prepare_full_stack_fixture.py";
+const SCRIPT: &str = "tools/python/prepare_full_stack_fixture.py";
 const PROTOCOL_KEY: &str = "RYFRAME_REFERENCE_FIXTURE_CONTROL_PROTOCOL";
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -90,7 +90,7 @@ pub(crate) fn resource_gate_replay_args(
     }
 
     let mut arguments = vec![
-        "scripts/resource_gate_replay.py".to_owned(),
+        "tools/python/resource_gate_replay.py".to_owned(),
         "--repository".to_owned(),
         utf8(backend)?,
         "--frontend-repository".to_owned(),
@@ -371,7 +371,7 @@ fn integration() -> Result<()> {
 
 pub(crate) fn tls_integration_args(target_dir: &str, jobs: usize) -> Vec<String> {
     vec![
-        "scripts/tls_integration_gate.py".to_owned(),
+        "tools/python/tls_integration_gate.py".to_owned(),
         "--backend-root".to_owned(),
         ".".to_owned(),
         "--target-dir".to_owned(),

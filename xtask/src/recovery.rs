@@ -65,7 +65,7 @@ fn run_seed_source(options: &SeedSourceOptions) -> Result<()> {
     run_with_env_removed(
         &root,
         "python",
-        &["-B", "scripts/devex_clone.py"],
+        &["-B", "tools/python/devex_clone.py"],
         &[(SEED_SOURCE_PROTOCOL_ENV, payload.as_str())],
         &[
             FRESH_TARGET_PROTOCOL_ENV,
@@ -85,7 +85,7 @@ fn run_clone(command: &CloneCommand) -> Result<()> {
     run_with_env_removed(
         &root,
         "python",
-        &["-B", "scripts/devex_clone.py"],
+        &["-B", "tools/python/devex_clone.py"],
         &[(CLONE_PROTOCOL_ENV, payload.as_str())],
         &[
             FRESH_TARGET_PROTOCOL_ENV,
@@ -133,7 +133,7 @@ fn run_fresh_target(command: &FreshTargetCommand) -> Result<()> {
     run_with_env_removed(
         &root_dir(),
         "python",
-        &["-B", "scripts/devex_clone.py"],
+        &["-B", "tools/python/devex_clone.py"],
         &[(FRESH_TARGET_PROTOCOL_ENV, payload.as_str())],
         &[
             FRESH_TARGET_PROTOCOL_ENV,
@@ -183,7 +183,7 @@ fn run_full_stack(command: &FullStackCommand) -> Result<()> {
     run_owned_with_env(
         &root_dir(),
         "python",
-        &strings(&["-B", "scripts/ci_full_stack.py"]),
+        &strings(&["-B", "tools/python/ci_full_stack.py"]),
         &environment,
     )
 }

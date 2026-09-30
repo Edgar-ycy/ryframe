@@ -242,7 +242,7 @@ fn runtime_private_protocol_is_exact_and_contains_no_forwarded_argv() {
     };
     let invocation =
         runtime::private_invocation_at(&command, &root_dir(), &fixture.directory).unwrap();
-    assert_eq!(invocation.script, "scripts/restore_runtime.py");
+    assert_eq!(invocation.script, "tools/python/restore_runtime.py");
     assert!(!invocation.protocol.contains(['\n', '\r', '\0']));
     let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
     assert_eq!(protocol["format_version"], 1);
@@ -272,7 +272,7 @@ fn parses_source_operations_and_emits_the_fixed_private_protocol() {
         panic!("source verify 没有解析为结构化请求")
     };
     let invocation = source::private_invocation_at(&command, &root_dir()).unwrap();
-    assert_eq!(invocation.script, "scripts/restore_source.py");
+    assert_eq!(invocation.script, "tools/python/restore_source.py");
     let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
     assert_eq!(protocol["kind"], "ryframe-xtask-restore-source");
     assert_eq!(protocol["operation"], "verify");

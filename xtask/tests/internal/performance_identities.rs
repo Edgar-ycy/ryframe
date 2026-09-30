@@ -153,7 +153,7 @@ fn private_invocation_has_a_fixed_script_no_arguments_and_exact_json() {
         output: output.clone(),
     };
     let invocation = private_invocation_at(&command, &root_dir()).unwrap();
-    assert_eq!(invocation.script, "scripts/devex_prepare_identities.mjs");
+    assert_eq!(invocation.script, "tools/js/devex_prepare_identities.mjs");
     assert!(!invocation.protocol.contains(['\n', '\r', '\0']));
     let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
     assert_eq!(

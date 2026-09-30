@@ -96,8 +96,14 @@ reason = "后端本地化资源变化"
 [[full_invalidation_paths]]
 repository = "backend"
 match = "prefix"
-path = "scripts/"
+path = "tools/"
 reason = "策略与构建辅助脚本变化"
+
+[[full_invalidation_paths]]
+repository = "backend"
+match = "exact"
+path = "scripts/requirements-ci.txt"
+reason = "Python 检查依赖清单变化"
 
 [[full_invalidation_paths]]
 repository = "backend"

@@ -73,7 +73,13 @@ fn full_all_plan_exposes_the_executed_topology_and_metadata() {
     assert_eq!(migrations[0].dependencies, ["node.tests"]);
     assert_eq!(
         migrations[0].executor.static_arguments(),
-        Some(["scripts/check_migration_history.py", "--require-frozen"].as_slice())
+        Some(
+            [
+                "tools/python/check_migration_history.py",
+                "--require-frozen"
+            ]
+            .as_slice()
+        )
     );
 
     let python = &plan.tasks[0];

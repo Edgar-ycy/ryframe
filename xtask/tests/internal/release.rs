@@ -117,7 +117,7 @@ fn source_and_evidence_use_fixed_scripts_and_typed_environment() {
         panic!("应为来源核验");
     };
     let invocation = source_invocation(&source, &parsed_frontend).unwrap();
-    assert_eq!(invocation.script, "scripts/validate_release.py");
+    assert_eq!(invocation.script, "tools/python/validate_release.py");
     let source_environment = environment(&invocation.environment);
     assert_eq!(source_environment["RYFRAME_RELEASE_PROTOCOL_VERSION"], "1");
     assert_eq!(source_environment["RYFRAME_RELEASE_MODE"], "source");
@@ -140,7 +140,7 @@ fn source_and_evidence_use_fixed_scripts_and_typed_environment() {
         panic!("应为 CI 核验");
     };
     let invocation = ci_invocation(&ci, &frontend).unwrap();
-    assert_eq!(invocation.script, "scripts/verify_release_ci.py");
+    assert_eq!(invocation.script, "tools/python/verify_release_ci.py");
     let ci_environment = environment(&invocation.environment);
     assert_eq!(ci_environment["RYFRAME_RELEASE_MODE"], "ci-evidence");
     assert_eq!(
@@ -195,7 +195,7 @@ fn source_pair_modes_bind_current_worktrees_through_protocol() {
                 | (ReleaseCiOperation::VerifyPair { .. }, "verify-pair")
         ));
         let invocation = ci_invocation(&options, &parsed_frontend).unwrap();
-        assert_eq!(invocation.script, "scripts/verify_release_ci.py");
+        assert_eq!(invocation.script, "tools/python/verify_release_ci.py");
         let values = environment(&invocation.environment);
         assert_eq!(values["RYFRAME_RELEASE_MODE"], mode);
         assert_eq!(values[protocol_path], receipt.to_str().unwrap());

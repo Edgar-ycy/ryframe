@@ -90,7 +90,7 @@ fn valid_request_replaces_inherited_protocol_and_hides_paths_from_argv() {
     let stdout = String::from_utf8(result.stdout).unwrap();
     let stderr = String::from_utf8(result.stderr).unwrap();
     assert!(
-        stdout.contains("-B scripts/restore_monitoring_delivery.py"),
+        stdout.contains("-B tools/python/restore_monitoring_delivery.py"),
         "{stdout}"
     );
     assert!(!stdout.contains("--binding"), "{stdout}");

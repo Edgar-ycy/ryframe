@@ -118,7 +118,7 @@ fn feature_matrix_compiles_and_tests_required_feature_targets() {
 fn full_gate_discovers_repository_python_and_node_tests() {
     assert_eq!(
         PYTHON_ENVIRONMENT_ARGS,
-        ["scripts/check_python_environment.py"]
+        ["tools/python/check_python_environment.py"]
     );
     assert_eq!(
         PYTHON_TEST_ARGS,
@@ -127,7 +127,7 @@ fn full_gate_discovers_repository_python_and_node_tests() {
             "unittest",
             "discover",
             "-s",
-            "scripts/tests",
+            "tools/python",
             "-p",
             "test_*.py",
         ]
@@ -138,12 +138,12 @@ fn full_gate_discovers_repository_python_and_node_tests() {
             .map(|task| task.script)
             .collect::<Vec<_>>(),
         [
-            "scripts/check_architecture.py",
-            "scripts/check_deployment_assets.py",
-            "scripts/check_prerelease_dependencies.py",
-            "scripts/check_permission_routes.py",
-            "scripts/check_removed_identity.py",
-            "scripts/check_supply_chain.py",
+            "tools/python/check_architecture.py",
+            "tools/python/check_deployment_assets.py",
+            "tools/python/check_prerelease_dependencies.py",
+            "tools/python/check_permission_routes.py",
+            "tools/python/check_removed_identity.py",
+            "tools/python/check_supply_chain.py",
         ]
     );
     assert_eq!(

@@ -365,7 +365,7 @@ fn permission_policy_script() -> Result<String> {
     let runner_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .ok_or("xtask manifest 缺少父目录")?;
-    let script = runner_root.join("scripts/check_permission_routes.py");
+    let script = runner_root.join("tools/python/check_permission_routes.py");
     if !script.is_file() {
         return Err(format!("当前 runner 缺少权限门禁脚本：{}", script.display()).into());
     }
@@ -430,7 +430,7 @@ fn execute_step(
             &affected_package_args_for_target("test", packages, &targets.backend, test_jobs)?,
         )?,
         GateStep::PermissionContract => {
-            run_process(root, "python", &["scripts/check_permission_routes.py"])?;
+            run_process(root, "python", &["tools/python/check_permission_routes.py"])?;
         }
         GateStep::MigrationContract => {
             let args = preflight_migration_args(base);

@@ -169,7 +169,7 @@ fn private_protocol_contains_exact_fields_and_rechecks_paths() {
         },
     };
     let invocation = private_invocation_at(&options, &super::workspace::root_dir()).unwrap();
-    assert_eq!(invocation.script, "scripts/restore_reference_dataset.mjs");
+    assert_eq!(invocation.script, "tools/js/restore_reference_dataset.mjs");
     let value: Value = serde_json::from_str(&invocation.protocol).unwrap();
     assert_eq!(value["format_version"], 1);
     assert_eq!(value["kind"], "ryframe-xtask-recovery-dataset-prepare");

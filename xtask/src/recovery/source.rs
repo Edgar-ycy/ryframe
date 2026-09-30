@@ -11,7 +11,7 @@ use crate::{
 
 use super::{RUNTIME_PROTOCOL_ENV, SOURCE_PROTOCOL_ENV as PROTOCOL_KEY};
 
-const SCRIPT: &str = "scripts/restore_source.py";
+const SCRIPT: &str = "tools/python/restore_source.py";
 const MAX_PROTOCOL_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

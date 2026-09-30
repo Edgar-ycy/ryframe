@@ -128,23 +128,29 @@ fn fresh_target_uses_a_versioned_private_protocol_without_forwarded_argv() {
 fn private_recovery_scripts_exist_in_checkout() {
     let root = super::workspace::root_dir();
     assert!(
-        root.join("scripts/ci_full_stack.py").is_file(),
+        root.join("tools/python/ci_full_stack.py").is_file(),
         "全栈恢复私有脚本不在当前检出中"
     );
-    assert!(root.join("scripts/full_stack_artifacts.py").is_file());
-    assert!(root.join("scripts/devex_clone.py").is_file());
-    assert!(root.join("scripts/restore_runtime.py").is_file());
-    assert!(root.join("scripts/restore_source.py").is_file());
-    assert!(root.join("scripts/restore_reference_dataset.mjs").is_file());
+    assert!(root.join("tools/python/full_stack_artifacts.py").is_file());
+    assert!(root.join("tools/python/devex_clone.py").is_file());
+    assert!(root.join("tools/python/restore_runtime.py").is_file());
+    assert!(root.join("tools/python/restore_source.py").is_file());
     assert!(
-        root.join("scripts/restore_monitoring_delivery.py")
+        root.join("tools/js/restore_reference_dataset.mjs")
             .is_file()
     );
-    assert!(root.join("scripts/prepare_full_stack_fixture.py").is_file());
     assert!(
-        root.join("scripts/reference_fixture_source_pair.py")
+        root.join("tools/python/restore_monitoring_delivery.py")
             .is_file()
     );
-    assert!(root.join("scripts/restore_reference.py").is_file());
-    assert!(root.join("scripts/restore_input_plan.py").is_file());
+    assert!(
+        root.join("tools/python/prepare_full_stack_fixture.py")
+            .is_file()
+    );
+    assert!(
+        root.join("tools/python/reference_fixture_source_pair.py")
+            .is_file()
+    );
+    assert!(root.join("tools/python/restore_reference.py").is_file());
+    assert!(root.join("tools/python/restore_input_plan.py").is_file());
 }

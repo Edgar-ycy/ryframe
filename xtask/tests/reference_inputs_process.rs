@@ -95,7 +95,7 @@ fn reference_request_replaces_inherited_protocol_and_hides_paths_from_argv() {
         "{}",
         String::from_utf8_lossy(&result.stderr)
     );
-    assert_private_invocation(result, "scripts/restore_reference.py", &[&plan]);
+    assert_private_invocation(result, "tools/python/restore_reference.py", &[&plan]);
 }
 
 #[test]
@@ -131,7 +131,7 @@ fn restore_inputs_request_replaces_inherited_protocol_and_hides_paths_from_argv(
     );
     assert_private_invocation(
         result,
-        "scripts/restore_input_plan.py",
+        "tools/python/restore_input_plan.py",
         &[&reference, &target, &backup, &record],
     );
 }

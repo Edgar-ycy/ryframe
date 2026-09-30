@@ -82,7 +82,7 @@ fn deployment_commands_preserve_fixed_images_paths_and_exact_check_counts() {
     assert_eq!(static_commands[0].program, "python");
     assert_eq!(
         static_commands[0].arguments,
-        ["scripts/check_deployment_assets.py"]
+        ["tools/python/check_deployment_assets.py"]
     );
 
     let compose =
@@ -94,7 +94,7 @@ fn deployment_commands_preserve_fixed_images_paths_and_exact_check_counts() {
         compose[0]
             .arguments
             .iter()
-            .any(|value| value.ends_with("/scripts/fixtures/deploy.env"))
+            .any(|value| value.ends_with("/tools/fixtures/deployment/deploy.env"))
     );
     assert!(
         compose[0]
@@ -144,7 +144,7 @@ fn deployment_commands_preserve_fixed_images_paths_and_exact_check_counts() {
     assert_eq!(
         image_commands[0].arguments,
         [
-            "scripts/check_deployment_assets.py",
+            "tools/python/check_deployment_assets.py",
             "--image",
             "ryframe-ci:test",
             "--expected-commit",

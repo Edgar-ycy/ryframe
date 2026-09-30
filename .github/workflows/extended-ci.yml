@@ -25,7 +25,8 @@ on:
       - "migrations/**"
       - "openapi/**"
       - "rust-toolchain.toml"
-      - "scripts/**"
+      - "tools/**"
+      - "scripts/requirements-ci.txt"
       - "vendor/**"
       - "xtask/**"
   schedule:

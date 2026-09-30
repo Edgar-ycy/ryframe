@@ -248,7 +248,7 @@ pub(super) fn run_consumer_contract(
     let plan = load_consumer_contract_plan(frontend_dir, candidate_commit.as_deref())?;
     let arguments = consumer_contract_arguments(&plan, openapi);
     let context = serde_json::to_string(&arguments)?;
-    let source_domain_checker = backend_root.join("scripts/source_domain_contract.py");
+    let source_domain_checker = backend_root.join("tools/python/source_domain_contract.py");
     let source_domain_checker = source_domain_checker
         .to_str()
         .ok_or("来源分域检查器路径不是有效 UTF-8")?;

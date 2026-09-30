@@ -6,12 +6,12 @@ const NODE_TEST_SUFFIX: &str = ".test.mjs";
 const NODE_TEST_CONCURRENCY: &str = "4";
 
 pub(crate) fn discover_node_tests(root: &Path) -> Result<Vec<String>> {
-    let test_root = root.join("scripts/tests");
+    let test_root = root.join("tools/js");
     let mut tests = Vec::new();
     collect_tests(root, &test_root, &mut tests)?;
     tests.sort();
     if tests.is_empty() {
-        return Err("scripts/tests 下没有可执行的 *.test.mjs".into());
+        return Err("tools/js 下没有可执行的 *.test.mjs".into());
     }
     Ok(tests)
 }

@@ -14,13 +14,13 @@ fn security_source_uses_one_ordered_task_plan_and_fixed_commands() {
             TaskExecutor::PythonEnvironment,
             "python.environment",
             "python",
-            &["scripts/check_python_environment.py"][..],
+            &["tools/python/check_python_environment.py"][..],
         ),
         (
             TaskExecutor::CiSupplyChainSource,
             "ci.security.supply-chain",
             "python",
-            &["scripts/check_supply_chain.py", "--verify-cargo-graph"][..],
+            &["tools/python/check_supply_chain.py", "--verify-cargo-graph"][..],
         ),
         (
             TaskExecutor::CiCargoAudit,
@@ -99,14 +99,14 @@ fn security_reports_use_one_typed_node_after_the_python_prerequisite() {
             security_report_command(TaskExecutor::PythonEnvironment, &options).unwrap(),
             (
                 "python",
-                vec!["scripts/check_python_environment.py".to_owned()]
+                vec!["tools/python/check_python_environment.py".to_owned()]
             )
         );
         let (_, arguments) = security_report_command(report_task, &options).unwrap();
         assert_eq!(
             arguments[..3],
             [
-                "scripts/check_supply_chain.py",
+                "tools/python/check_supply_chain.py",
                 option,
                 input.to_str().unwrap(),
             ]
@@ -155,7 +155,7 @@ fn extended_workflow_generates_uploads_and_uses_only_typed_report_checks() {
             .count(),
         1
     );
-    assert!(!workflow.contains("python scripts/check_supply_chain.py"));
+    assert!(!workflow.contains("python tools/python/check_supply_chain.py"));
     assert!(workflow.contains("cargo cyclonedx \\"));
     assert_eq!(workflow.matches("trivy image \\").count(), 2);
     assert!(workflow.contains("actions/upload-artifact@"));
@@ -180,7 +180,7 @@ fn security_workflow_installs_tools_then_uses_only_typed_security_entries() {
             .count(),
         1
     );
-    assert!(!security.contains("python scripts/check_supply_chain.py"));
+    assert!(!security.contains("python tools/python/check_supply_chain.py"));
     assert!(!security.contains("cargo audit --deny warnings"));
     assert!(!security.contains("cargo deny check licenses bans sources"));
     assert_eq!(
@@ -195,7 +195,7 @@ fn security_workflow_installs_tools_then_uses_only_typed_security_entries() {
             .count(),
         1
     );
-    assert!(!security.contains("python scripts/check_deployment_assets.py"));
+    assert!(!security.contains("python tools/python/check_deployment_assets.py"));
     assert!(!security.contains("git diff --quiet"));
     assert!(!security.contains("docker compose"));
     assert!(!security.contains("docker run"));

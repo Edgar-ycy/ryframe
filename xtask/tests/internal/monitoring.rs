@@ -211,7 +211,10 @@ fn private_protocol_uses_exact_fields_and_rechecks_inputs() {
     let fixture = Fixture::new();
     let command = parse_monitoring(fixture.bind_arguments()).unwrap();
     let invocation = private_invocation_at(&command, &super::workspace::root_dir()).unwrap();
-    assert_eq!(invocation.script, "scripts/restore_monitoring_delivery.py");
+    assert_eq!(
+        invocation.script,
+        "tools/python/restore_monitoring_delivery.py"
+    );
     let value: Value = serde_json::from_str(&invocation.protocol).unwrap();
     assert_eq!(value["format_version"], 1);
     assert_eq!(value["kind"], "ryframe-xtask-recovery-monitoring");

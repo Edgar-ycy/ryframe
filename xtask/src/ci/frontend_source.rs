@@ -14,7 +14,7 @@ use crate::{
 };
 
 const REQUEST_ENV: &str = "RYFRAME_CI_FRONTEND_SOURCE_REQUEST";
-const SCRIPT: &str = "scripts/select_frontend_commit.py";
+const SCRIPT: &str = "tools/python/select_frontend_commit.py";
 
 pub(super) fn plan(options: &FrontendSourceOptions) -> Result<TaskPlan> {
     validate_options(options)?;

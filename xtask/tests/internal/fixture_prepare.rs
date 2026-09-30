@@ -130,7 +130,10 @@ fn private_protocol_fixes_paths_and_hides_the_public_request_from_argv() {
         }),
     };
     let invocation = private_invocation_at(&options, &root_dir(), &default_frontend_dir()).unwrap();
-    assert_eq!(invocation.script, "scripts/prepare_full_stack_fixture.py");
+    assert_eq!(
+        invocation.script,
+        "tools/python/prepare_full_stack_fixture.py"
+    );
     let document: Value = serde_json::from_str(&invocation.protocol).unwrap();
     assert_eq!(document["format_version"], 1);
     assert_eq!(document["kind"], "ryframe-reference-fixture-control");

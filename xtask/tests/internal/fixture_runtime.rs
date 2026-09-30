@@ -264,7 +264,10 @@ fn private_invocation_has_no_path_arguments_and_an_exact_read_only_protocol() {
     let fixture = Fixture::new();
     let command = parse_runtime(fixture.arguments("verify")).unwrap();
     let invocation = private_invocation_at(&command, &root_dir()).unwrap();
-    assert_eq!(invocation.script, "scripts/reference_fixture_runtime.py");
+    assert_eq!(
+        invocation.script,
+        "tools/python/reference_fixture_runtime.py"
+    );
     assert!(!invocation.protocol.contains(['\n', '\r', '\0']));
     let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
     assert_eq!(

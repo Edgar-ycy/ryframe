@@ -33,7 +33,7 @@ pub(crate) fn run(command: &MigrationCommand) -> Result<()> {
             &root_dir(),
             "python",
             &[
-                "scripts/check_migration_history.py",
+                "tools/python/check_migration_history.py",
                 "--refresh-baseline",
                 "--write",
             ],
@@ -41,7 +41,7 @@ pub(crate) fn run(command: &MigrationCommand) -> Result<()> {
         MigrationCommand::Freeze => run_process(
             &root_dir(),
             "python",
-            &["scripts/check_migration_history.py", "--freeze"],
+            &["tools/python/check_migration_history.py", "--freeze"],
         ),
         MigrationCommand::Run { operation, target } => {
             let args = migration_run_args(*operation, target);

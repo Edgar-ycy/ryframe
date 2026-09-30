@@ -36,7 +36,7 @@ fn resource_gate_replay_fixes_repository_paths_at_the_xtask_boundary() {
     assert_eq!(
         arguments,
         [
-            "scripts/resource_gate_replay.py",
+            "tools/python/resource_gate_replay.py",
             "--repository",
             "D:/后端 worktree",
             "--frontend-repository",
@@ -356,7 +356,7 @@ fn preflight_uses_only_a_valid_nonzero_base_sha() {
     assert_eq!(
         preflight_migration_args(Some(sha)),
         [
-            "scripts/check_migration_history.py",
+            "tools/python/check_migration_history.py",
             "--require-frozen",
             "--trusted-ref",
             sha,
@@ -364,7 +364,10 @@ fn preflight_uses_only_a_valid_nonzero_base_sha() {
     );
     assert_eq!(
         preflight_migration_args(Some(&"0".repeat(40))),
-        ["scripts/check_migration_history.py", "--require-frozen"]
+        [
+            "tools/python/check_migration_history.py",
+            "--require-frozen"
+        ]
     );
 }
 
@@ -423,7 +426,7 @@ fn integration_commands_share_the_ci_target_and_jobs() {
     assert_eq!(
         tls_integration_args("target/ci/backend", 4),
         [
-            "scripts/tls_integration_gate.py",
+            "tools/python/tls_integration_gate.py",
             "--backend-root",
             ".",
             "--target-dir",

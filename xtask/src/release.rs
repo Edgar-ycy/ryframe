@@ -150,7 +150,7 @@ pub(crate) fn source_invocation(
         "发布清单",
     )?;
     Ok(PrivatePythonInvocation {
-        script: "scripts/validate_release.py",
+        script: "tools/python/validate_release.py",
         environment,
     })
 }
@@ -175,7 +175,7 @@ pub(crate) fn ci_invocation(
         )?,
     };
     Ok(PrivatePythonInvocation {
-        script: "scripts/verify_release_ci.py",
+        script: "tools/python/verify_release_ci.py",
         environment,
     })
 }

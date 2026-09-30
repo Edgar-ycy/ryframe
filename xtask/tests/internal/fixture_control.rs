@@ -150,7 +150,7 @@ fn parses_artifact_operations_and_serializes_job_id_as_text() {
         FixtureControlCommand::Artifact(FixtureArtifactCommand::Snapshot(_))
     ));
     let invocation = private_invocation_at(&snapshot, &root_dir()).unwrap();
-    assert_eq!(invocation.script, "scripts/full_stack_artifacts.py");
+    assert_eq!(invocation.script, "tools/python/full_stack_artifacts.py");
     let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
     assert_eq!(protocol["domain"], "artifact");
     assert_eq!(protocol["operation"], "snapshot");
@@ -248,7 +248,10 @@ fn parses_retention_operations_and_serializes_private_values() {
                 | FixtureControlCommand::Retention(FixtureRetentionCommand::ExportBackup(_))
         ));
         let invocation = private_invocation_at(&command, &root_dir()).unwrap();
-        assert_eq!(invocation.script, "scripts/full_stack_migration_history.py");
+        assert_eq!(
+            invocation.script,
+            "tools/python/full_stack_migration_history.py"
+        );
         let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
         assert_eq!(protocol["domain"], "retention");
         assert_eq!(protocol["operation"], operation);
@@ -714,7 +717,7 @@ fn source_pair_publish_is_typed_and_uses_the_fixed_private_script() {
     let invocation = private_invocation_at(&command, &root_dir()).unwrap();
     assert_eq!(
         invocation.script,
-        "scripts/reference_fixture_source_pair.py"
+        "tools/python/reference_fixture_source_pair.py"
     );
     let document: Value = serde_json::from_str(&invocation.protocol).unwrap();
     assert_eq!(document["domain"], "source-pair");
@@ -781,7 +784,10 @@ fn private_protocol_selects_fixed_script_and_never_contains_argv_fields() {
     ))
     .unwrap();
     let invocation = private_invocation_at(&command, &root_dir()).unwrap();
-    assert_eq!(invocation.script, "scripts/reference_fixture_services.py");
+    assert_eq!(
+        invocation.script,
+        "tools/python/reference_fixture_services.py"
+    );
     assert!(!invocation.protocol.contains(['\n', '\r', '\0']));
     let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
     assert_eq!(protocol["format_version"], 1);

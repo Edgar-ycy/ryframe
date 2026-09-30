@@ -140,7 +140,7 @@ pub(crate) fn report_command(
         SecurityReportKind::Trivy => "--trivy-report",
     };
     let mut arguments = vec![
-        "scripts/check_supply_chain.py".to_owned(),
+        "tools/python/check_supply_chain.py".to_owned(),
         report_option.to_owned(),
         input.to_owned(),
     ];

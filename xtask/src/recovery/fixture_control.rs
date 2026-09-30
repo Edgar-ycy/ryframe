@@ -60,39 +60,39 @@ pub(crate) fn private_invocation_at(
     }
     let (script, fields) = match command {
         FixtureControlCommand::Artifact(command) => (
-            "scripts/full_stack_artifacts.py",
+            "tools/python/full_stack_artifacts.py",
             artifact::fields(command, root)?,
         ),
         FixtureControlCommand::Dataset(command) => (
-            "scripts/reference_fixture_dataset.py",
+            "tools/python/reference_fixture_dataset.py",
             dataset::fields(command, root)?,
         ),
         FixtureControlCommand::Environment(command) => (
-            "scripts/reference_fixture_environment.py",
+            "tools/python/reference_fixture_environment.py",
             environment::fields(command, root)?,
         ),
         FixtureControlCommand::Retention(command) => (
-            "scripts/full_stack_migration_history.py",
+            "tools/python/full_stack_migration_history.py",
             retention::fields(command, root)?,
         ),
         FixtureControlCommand::Review(command) => (
-            "scripts/reference_fixture_review.py",
+            "tools/python/reference_fixture_review.py",
             review::fields(command, root)?,
         ),
         FixtureControlCommand::Request(command) => (
-            "scripts/reference_fixture_request.py",
+            "tools/python/reference_fixture_request.py",
             request::fields(command, root)?,
         ),
         FixtureControlCommand::SourcePair(command) => (
-            "scripts/reference_fixture_source_pair.py",
+            "tools/python/reference_fixture_source_pair.py",
             source_pair::fields(command, root)?,
         ),
         FixtureControlCommand::Successor(command) => (
-            "scripts/reference_fixture_successor.py",
+            "tools/python/reference_fixture_successor.py",
             successor::fields(command, root)?,
         ),
         FixtureControlCommand::Services(command) => (
-            "scripts/reference_fixture_services.py",
+            "tools/python/reference_fixture_services.py",
             services::fields(command, root)?,
         ),
     };

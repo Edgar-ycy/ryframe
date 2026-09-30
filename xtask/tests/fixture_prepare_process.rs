@@ -95,7 +95,7 @@ fn valid_request_replaces_inherited_protocol_and_hides_paths_from_argv() {
     let stdout = String::from_utf8(result.stdout).unwrap();
     let stderr = String::from_utf8(result.stderr).unwrap();
     assert!(
-        stdout.contains("scripts/prepare_full_stack_fixture.py"),
+        stdout.contains("tools/python/prepare_full_stack_fixture.py"),
         "{stdout}"
     );
     assert!(!stdout.contains("--output-dir"), "{stdout}");

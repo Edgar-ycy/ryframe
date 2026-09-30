@@ -117,7 +117,7 @@ pub(super) const TASKS: [TaskDefinition; 19] = [
         Backend,
         Static,
         Backend,
-        Some(&["scripts/check_supply_chain.py", "--verify-cargo-graph"]),
+        Some(&["tools/python/check_supply_chain.py", "--verify-cargo-graph"]),
         &["Cargo feature graph"],
         &["Cargo registry cache"],
         &["Cargo registry"]
@@ -195,7 +195,7 @@ pub(super) const TASKS: [TaskDefinition; 19] = [
         Backend,
         Static,
         Backend,
-        Some(&["scripts/check_deployment_assets.py"]),
+        Some(&["tools/python/check_deployment_assets.py"]),
         &[],
         &[],
         &[]

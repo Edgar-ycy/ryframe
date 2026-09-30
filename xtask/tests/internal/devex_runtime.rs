@@ -32,7 +32,7 @@ fn public_perf_plan_resolves_to_the_actual_runtime_driver() {
     assert_eq!(definition.steps.len(), 1);
     let step = &definition.steps[0];
     assert_eq!(step.program, "node");
-    assert_eq!(step.args[0], "{driver}/scripts/devex/runtime.mjs");
+    assert_eq!(step.args[0], "{driver}/tools/js/runtime.mjs");
     assert!(
         step.args
             .windows(2)
@@ -40,9 +40,9 @@ fn public_perf_plan_resolves_to_the_actual_runtime_driver() {
     );
 
     let backend = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    let driver = backend.join("scripts/devex/runtime.mjs");
+    let driver = backend.join("tools/js/runtime.mjs");
     assert!(driver.is_file(), "{}", driver.display());
-    let node_test = backend.join("scripts/tests/devex-runtime.test.mjs");
+    let node_test = backend.join("tools/js/devex-runtime.test.mjs");
     let integration = ProcessCommand::new("node")
         .args(["--test", "--test-isolation=none", "--test-concurrency=1"])
         .arg(&node_test)

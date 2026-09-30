@@ -111,7 +111,10 @@ fn parses_dataset_plan_and_prepare_into_exact_private_protocols() {
         FixtureControlCommand::Dataset(FixtureDatasetCommand::Plan { .. })
     ));
     let invocation = private_invocation_at(&plan, &root_dir()).unwrap();
-    assert_eq!(invocation.script, "scripts/reference_fixture_dataset.py");
+    assert_eq!(
+        invocation.script,
+        "tools/python/reference_fixture_dataset.py"
+    );
     let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
     assert_eq!(protocol["domain"], "dataset");
     assert_eq!(protocol["operation"], "plan");

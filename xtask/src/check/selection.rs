@@ -200,7 +200,8 @@ fn is_backend_shared_path(path: &str) -> bool {
         || path.starts_with("catalog/")
         || path.starts_with("config/")
         || path.starts_with("openapi/")
-        || path.starts_with("scripts/")
+        || path.starts_with("tools/")
+        || path == "scripts/requirements-ci.txt"
         || path.starts_with("sql/")
         || path.starts_with("xtask/")
         || path.starts_with("rust-toolchain")
@@ -212,7 +213,8 @@ fn is_frontend_shared_path(path: &str) -> bool {
         || path == "pnpm-lock.yaml"
         || path == "openapi/source.json"
         || path.starts_with(".github/")
-        || path.starts_with("scripts/")
+        || path.starts_with("tools/")
+        || path == "scripts/requirements-ci.txt"
         || path.starts_with("tsconfig")
         || path.contains(".config.")
         || matches!(path, ".gitignore" | "eslint.config.js")

@@ -12,7 +12,7 @@ use crate::{
 
 use super::{DevexCgroupOperation, DevexCgroupOptions};
 
-const SCRIPT: &str = "scripts/ci_devex_cgroup.py";
+const SCRIPT: &str = "tools/python/ci_devex_cgroup.py";
 
 pub(super) fn validate_cli_options(
     options: &DevexCgroupOptions,

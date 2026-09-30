@@ -12,7 +12,7 @@ use crate::{
     process::run_with_env_removed,
 };
 
-const SCRIPT: &str = "scripts/restore_input_plan.py";
+const SCRIPT: &str = "tools/python/restore_input_plan.py";
 const PROTOCOL_KEY: &str = "RYFRAME_XTASK_RECOVERY_INPUTS";
 const REFERENCE_PROTOCOL_KEY: &str = "RYFRAME_XTASK_RECOVERY_REFERENCE";
 const FRESH_TARGET_PROTOCOL_KEY: &str = "RYFRAME_XTASK_RECOVERY_FRESH_TARGET";

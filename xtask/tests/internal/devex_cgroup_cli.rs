@@ -139,7 +139,7 @@ fn cgroup_command_consumes_the_same_registered_task_plan() {
             arguments,
             [
                 "-B".to_owned(),
-                "scripts/ci_devex_cgroup.py".to_owned(),
+                "tools/python/ci_devex_cgroup.py".to_owned(),
                 operation.to_owned(),
                 "--output".to_owned(),
                 root.join(".local-tests/cgroup-plan")

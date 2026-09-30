@@ -11,7 +11,7 @@ use crate::{
     process::run_with_env_removed,
 };
 
-const SCRIPT: &str = "scripts/restore_reference.py";
+const SCRIPT: &str = "tools/python/restore_reference.py";
 const PROTOCOL_KEY: &str = "RYFRAME_XTASK_RECOVERY_REFERENCE";
 const INPUTS_PROTOCOL_KEY: &str = "RYFRAME_XTASK_RECOVERY_INPUTS";
 const FRESH_TARGET_PROTOCOL_KEY: &str = "RYFRAME_XTASK_RECOVERY_FRESH_TARGET";

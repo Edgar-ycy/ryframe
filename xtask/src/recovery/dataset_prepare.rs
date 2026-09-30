@@ -9,7 +9,7 @@ use crate::{
     process::run_with_env_removed,
 };
 
-const SCRIPT: &str = "scripts/restore_reference_dataset.mjs";
+const SCRIPT: &str = "tools/js/restore_reference_dataset.mjs";
 const PROTOCOL_KEY: &str = "RYFRAME_XTASK_RECOVERY_DATASET_PREPARE";
 const KIND: &str = "ryframe-xtask-recovery-dataset-prepare";
 

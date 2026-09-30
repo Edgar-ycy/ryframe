@@ -9,7 +9,7 @@ use crate::{
     process::run_with_env_removed,
 };
 
-const SCRIPT: &str = "scripts/reference_fixture_runtime.py";
+const SCRIPT: &str = "tools/python/reference_fixture_runtime.py";
 const PROTOCOL_KEY: &str = "RYFRAME_REFERENCE_FIXTURE_RUNTIME_PROTOCOL";
 
 #[derive(Debug, Clone, PartialEq, Eq)]

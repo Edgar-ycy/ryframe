@@ -195,7 +195,7 @@ fn valid_request_replaces_inherited_protocol_and_hides_paths_from_argv() {
     let stdout = String::from_utf8(result.stdout).unwrap();
     let stderr = String::from_utf8(result.stderr).unwrap();
     assert!(
-        stdout.contains("scripts/reference_fixture_services.py"),
+        stdout.contains("tools/python/reference_fixture_services.py"),
         "{stdout}"
     );
     assert!(!stdout.contains("--review"), "{stdout}");
@@ -232,7 +232,7 @@ fn source_pair_request_uses_the_same_private_protocol_without_forwarded_paths() 
     let stdout = String::from_utf8(result.stdout).unwrap();
     let stderr = String::from_utf8(result.stderr).unwrap();
     assert!(
-        stdout.contains("scripts/reference_fixture_source_pair.py"),
+        stdout.contains("tools/python/reference_fixture_source_pair.py"),
         "{stdout}"
     );
     assert!(!stdout.contains("--output"), "{stdout}");
@@ -253,7 +253,7 @@ fn artifact_snapshot_uses_private_protocol_without_public_write_or_forwarded_val
     let stdout = String::from_utf8(result.stdout).unwrap();
     let stderr = String::from_utf8(result.stderr).unwrap();
     assert!(
-        stdout.contains("scripts/full_stack_artifacts.py"),
+        stdout.contains("tools/python/full_stack_artifacts.py"),
         "{stdout}"
     );
     for private in ["--runtime-dir", "--job-id", "--receipt", "123"] {
@@ -323,7 +323,7 @@ fn retention_request_uses_private_protocol_without_forwarded_values() {
     let stdout = String::from_utf8(result.stdout).unwrap();
     let stderr = String::from_utf8(result.stderr).unwrap();
     assert!(
-        stdout.contains("scripts/full_stack_migration_history.py"),
+        stdout.contains("tools/python/full_stack_migration_history.py"),
         "{stdout}"
     );
     for private in [
@@ -385,11 +385,11 @@ fn dataset_plan_uses_private_protocol_without_forwarded_values() {
     let stdout = String::from_utf8(result.stdout).unwrap();
     let stderr = String::from_utf8(result.stderr).unwrap();
     assert!(
-        stdout.contains("scripts/reference_fixture_dataset.py"),
+        stdout.contains("tools/python/reference_fixture_dataset.py"),
         "{stdout}"
     );
     assert!(
-        stdout.contains("-X utf8 -B scripts/reference_fixture_dataset.py"),
+        stdout.contains("-X utf8 -B tools/python/reference_fixture_dataset.py"),
         "{stdout}"
     );
     for private in [
@@ -418,7 +418,7 @@ fn dataset_prepare_uses_private_protocol_without_forwarded_values() {
     let stdout = String::from_utf8(result.stdout).unwrap();
     let stderr = String::from_utf8(result.stderr).unwrap();
     assert!(
-        stdout.contains("scripts/reference_fixture_dataset.py"),
+        stdout.contains("tools/python/reference_fixture_dataset.py"),
         "{stdout}"
     );
     for private in [

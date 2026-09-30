@@ -36,8 +36,8 @@ pub(crate) const DEPLOYMENT_PATHS: &[&str] = &[
     "locales",
     "migrations",
     "openapi",
-    "scripts/check_deployment_assets.py",
-    "scripts/fixtures/deploy.env",
+    "tools/python/check_deployment_assets.py",
+    "tools/fixtures/deployment/deploy.env",
     "vendor",
     "xtask",
 ];
@@ -258,7 +258,7 @@ pub(crate) fn deployment_commands(
         TaskExecutor::CiDeploymentChanges => Ok(Vec::new()),
         TaskExecutor::CiDeploymentStatic => Ok(vec![command(
             "python",
-            vec!["scripts/check_deployment_assets.py".to_owned()],
+            vec!["tools/python/check_deployment_assets.py".to_owned()],
         )]),
         TaskExecutor::CiDeploymentCompose => Ok(vec![command(
             "docker",
@@ -267,7 +267,7 @@ pub(crate) fn deployment_commands(
                 "--project-directory".to_owned(),
                 root.clone(),
                 "--env-file".to_owned(),
-                format!("{root}/scripts/fixtures/deploy.env"),
+                format!("{root}/tools/fixtures/deployment/deploy.env"),
                 "--file".to_owned(),
                 format!("{root}/deploy/compose.prod.yml"),
                 "config".to_owned(),
@@ -281,7 +281,7 @@ pub(crate) fn deployment_commands(
         TaskExecutor::CiDeploymentImage => Ok(vec![command(
             "python",
             vec![
-                "scripts/check_deployment_assets.py".to_owned(),
+                "tools/python/check_deployment_assets.py".to_owned(),
                 "--image".to_owned(),
                 options.image.clone().ok_or("镜像阶段缺少 --image")?,
                 "--expected-commit".to_owned(),

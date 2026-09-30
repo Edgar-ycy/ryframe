@@ -108,7 +108,7 @@ fn valid_public_request_replaces_inherited_protocol_and_hides_paths_from_argv() 
     let stdout = String::from_utf8(result.stdout).unwrap();
     let stderr = String::from_utf8(result.stderr).unwrap();
     assert!(
-        stdout.contains("→ node scripts/devex_prepare_identities.mjs"),
+        stdout.contains("→ node tools/js/devex_prepare_identities.mjs"),
         "{stdout}"
     );
     assert!(!stdout.contains("--environment"), "{stdout}");
