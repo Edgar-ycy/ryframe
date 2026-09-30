@@ -113,7 +113,7 @@ def _committed_sources(
     coordinator = Path(coordinator_name)
     execution = Path(execution_name)
     script_paths = [
-        path for path in _tree_files(coordinator, coordinator_sha, "scripts")
+        path for path in _tree_files(coordinator, coordinator_sha, "tools/js")
         if PurePosixPath(path).suffix in {".js", ".mjs"}
     ]
     scripts = {path: _blob(coordinator, coordinator_sha, path) for path in script_paths}

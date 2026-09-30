@@ -24,7 +24,7 @@ except ModuleNotFoundError:
 
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_POLICY = ROOT / "scripts" / "supply_chain_policy.json"
+DEFAULT_POLICY = ROOT / "tools" / "policies" / "supply_chain_policy.json"
 DEFAULT_WORKFLOWS = ROOT / ".github" / "workflows"
 TOOL_NAMES = ("cargo-audit", "cargo-deny", "cargo-cyclonedx", "sccache", "trivy")
 SEMVER = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")

@@ -373,7 +373,7 @@ def _node(backend: Path, run: Path, registered: dict) -> dict | None:
         raise ValueError("Node 工具路径或摘要已变化")
     script_path = _binding_path(launch["script"], "Node 历史脚本")
     digest(launch["script"]["sha256"])
-    expected_script = backend / "scripts" / KINDS[kind]
+    expected_script = backend / "tools" / "js" / KINDS[kind]
     if (script_path != expected_script or type(launch["script"]["bytes"]) is not int
             or launch["script"]["bytes"] <= 0):
         raise ValueError("Node 历史脚本绑定无效")

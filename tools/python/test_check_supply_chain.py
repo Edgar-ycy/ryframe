@@ -266,7 +266,7 @@ class SupplyChainPolicyTests(unittest.TestCase):
         return configured, cargo_home, vendor, registry
 
     def test_ci_yaml_parser_requirement_is_exact_and_hashed(self) -> None:
-        requirements = (SCRIPT.parent / "requirements-ci.txt").read_text(
+        requirements = (SCRIPT.parents[2] / "scripts/requirements-ci.txt").read_text(
             encoding="utf-8"
         )
         for requirement in (
@@ -287,7 +287,7 @@ class SupplyChainPolicyTests(unittest.TestCase):
         self,
     ) -> None:
         loaded = MODULE.load_policy(
-            SCRIPT.parent / "supply_chain_policy.json",
+            SCRIPT.parents[1] / "policies/supply_chain_policy.json",
             today=dt.date(2026, 8, 20),
         )
         profiles = {

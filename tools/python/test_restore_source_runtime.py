@@ -44,7 +44,7 @@ class FakeProcess:
         self.state = state
         self.result = result
         script = Path(argv[1])
-        staging = script.parents[1]
+        staging = script.parents[2]
         manifest = read_json(staging / "manifest.json")
         contract = next(row for row in manifest["files"] if row["path"] == manifest["contract"])
         value = {

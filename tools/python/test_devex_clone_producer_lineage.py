@@ -107,7 +107,7 @@ class ProducerLineageTests(unittest.TestCase):
 
     def node_attempt(self, number: int = 1) -> dict:
         stage, mode, kind = "seed-runtime", "identities-verify", "identity-verify"
-        script = self.backend / "scripts" / "devex_clone_identity.mjs"
+        script = self.backend / "tools" / "js" / "devex_clone_identity.mjs"
         script_binding = binding(script)
         sources = {
             "snapshot": {"head": "a" * 40, "patch_sha256": "b" * 64, "clean": False,

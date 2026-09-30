@@ -23,7 +23,7 @@ MODULE = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = MODULE
 sys.path.insert(0, str(SCRIPT.parent))
 SPEC.loader.exec_module(MODULE)
-BACKEND_ROOT = SCRIPT.parents[1]
+BACKEND_ROOT = SCRIPT.parents[2]
 TEMP_ROOT = BACKEND_ROOT / ".local-tests/python-unit"
 TEMP_ROOT.mkdir(parents=True, exist_ok=True)
 
