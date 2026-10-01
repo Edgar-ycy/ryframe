@@ -135,7 +135,7 @@ fn run_verifier(
     paths: &EvidencePaths<'_>,
     authority: &[u8],
 ) -> AppResult<RestoreBusinessProof> {
-    let script = backend.join("scripts/restore_business_proof.py");
+    let script = backend.join("tools/python/restore_business_proof.py");
     regular_path(&script, "恢复业务证明核验器")?;
     let scripts = script
         .parent()
@@ -266,7 +266,7 @@ fn verified_python(backend: &Path) -> AppResult<ArtifactSource> {
         PathBuf::from(value.trim())
     };
     let before = artifact_source(&path, "Python 解释器")?;
-    let environment = backend.join("scripts/check_python_environment.py");
+    let environment = backend.join("tools/python/check_python_environment.py");
     regular_path(&environment, "Python 环境核验器")?;
     let mut command = Command::new(&before.path);
     command

@@ -649,7 +649,7 @@
 ### Validation
 
 - `cargo fmt --all -- --check`
-- `python scripts/check_permission_routes.py`
+- `python tools/python/check_permission_routes.py`
 - `cargo check --workspace --all-targets`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo test --workspace`

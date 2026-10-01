@@ -3,7 +3,7 @@ use std::{env, ffi::OsString, path::Path, process::Command};
 use super::ResourceError;
 
 // 检查工具与生成器嵌入同一个只读判定入口，避免各自维护稳定版截止规则。
-const POLICY: &str = include_str!("../../../../../scripts/release_stage.py");
+const POLICY: &str = include_str!("../../../../../tools/python/release_stage.py");
 
 pub(super) fn stable(root: &Path) -> Result<bool, ResourceError> {
     let output = Command::new(python_executable(env::var_os("RYFRAME_PYTHON")))
@@ -13,7 +13,7 @@ pub(super) fn stable(root: &Path) -> Result<bool, ResourceError> {
         .map_err(|error| {
             ResourceError::new(
                 format!("无法检查 Workspace 版本阶段：{error}"),
-                "使用 scripts/check_python_environment.py 验证 Python 检查环境",
+                "使用 tools/python/check_python_environment.py 验证 Python 检查环境",
             )
         })?;
     if !output.status.success() {
