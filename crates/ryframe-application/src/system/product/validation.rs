@@ -213,7 +213,10 @@ impl ProductService {
         Ok(())
     }
 
-    pub(super) fn deployment_enabled(&self, _capability_code: &str) -> bool {
-        false
+    pub(super) fn deployment_enabled(&self, capability_code: &str) -> bool {
+        CAPABILITY_CATALOG
+            .iter()
+            .find(|descriptor| descriptor.code == capability_code)
+            .is_some_and(|descriptor| descriptor.deployment_dependencies.is_empty())
     }
 }

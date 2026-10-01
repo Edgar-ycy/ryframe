@@ -223,6 +223,7 @@ update = "put_system_posts_by_id"
 delete = "delete_system_posts_by_id"
 
 [access]
+capability = "system.post"
 
 [access.permissions]
 create = "system:post:add"

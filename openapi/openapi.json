@@ -35171,6 +35171,7 @@
       },
       {
         "access": {
+          "capability": "system.post",
           "permissions": {
             "create": "system:post:add",
             "delete": "system:post:remove",
@@ -35676,7 +35677,7 @@
         "title_key": "permission"
       },
       {
-        "capability_code": null,
+        "capability_code": "system.post",
         "menu_type": "C",
         "name": "岗位管理",
         "page_key": "system.post",
@@ -35824,7 +35825,39 @@
     "version": 1
   },
   "x-ryframe-product-capabilities": {
-    "capabilities": [],
+    "capabilities": [
+      {
+        "client_config_fields": [],
+        "code": "system.post",
+        "conflicts": [],
+        "default_admin_permissions": [
+          "system:post:add",
+          "system:post:edit",
+          "system:post:export",
+          "system:post:list",
+          "system:post:remove"
+        ],
+        "dependencies": [],
+        "deployment_available": true,
+        "deployment_dependencies": [],
+        "permission_codes": [
+          "system:post:add",
+          "system:post:edit",
+          "system:post:export",
+          "system:post:list",
+          "system:post:remove"
+        ],
+        "route_keys": [
+          "system.post"
+        ],
+        "variants": [
+          {
+            "code": "standard",
+            "schema_version": 1
+          }
+        ]
+      }
+    ],
     "version": 1
   },
   "x-ryframe-product-errors": {
@@ -35867,7 +35900,56 @@
     "version": 1
   },
   "x-ryframe-route-contract": {
-    "routes": [],
+    "routes": [
+      {
+        "capability_code": "system.post",
+        "handler": "create",
+        "method": "POST",
+        "path": "/api/v1/system/posts",
+        "permission_code": "system:post:add",
+        "source": "crates/ryframe-api/src/generated/post/handler.rs"
+      },
+      {
+        "capability_code": "system.post",
+        "handler": "detail",
+        "method": "GET",
+        "path": "/api/v1/system/posts/{id}",
+        "permission_code": "system:post:list",
+        "source": "crates/ryframe-api/src/generated/post/handler.rs"
+      },
+      {
+        "capability_code": "system.post",
+        "handler": "list",
+        "method": "GET",
+        "path": "/api/v1/system/posts",
+        "permission_code": "system:post:list",
+        "source": "crates/ryframe-api/src/generated/post/handler.rs"
+      },
+      {
+        "capability_code": "system.post",
+        "handler": "remove",
+        "method": "DELETE",
+        "path": "/api/v1/system/posts/{id}",
+        "permission_code": "system:post:remove",
+        "source": "crates/ryframe-api/src/generated/post/handler.rs"
+      },
+      {
+        "capability_code": "system.post",
+        "handler": "update",
+        "method": "PUT",
+        "path": "/api/v1/system/posts/{id}",
+        "permission_code": "system:post:edit",
+        "source": "crates/ryframe-api/src/generated/post/handler.rs"
+      },
+      {
+        "capability_code": "system.post",
+        "handler": "request_post_export",
+        "method": "POST",
+        "path": "/api/v1/system/posts/exports",
+        "permission_code": "system:post:export",
+        "source": "crates/ryframe-api/src/handlers/post_export_handler.rs"
+      }
+    ],
     "version": 1
   },
   "x-ryframe-tenant-context-headers": {

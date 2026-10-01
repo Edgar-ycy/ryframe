@@ -78,6 +78,7 @@ export const pageManifest = definePageManifest({{
       routeKey: {:?},
       permissionCode: {:?},
       path: {:?},
+      requiredCapabilities: {:?},
       page: () => import({page:?}),
     }},
   ],
@@ -87,6 +88,12 @@ export const pageManifest = definePageManifest({{
         resource.route.key,
         resource.access.permissions.list,
         resource.route.path,
+        resource
+            .access
+            .capability
+            .as_ref()
+            .map(|code| vec![code.as_str()])
+            .unwrap_or_default(),
     )
 }
 

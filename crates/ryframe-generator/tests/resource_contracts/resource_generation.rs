@@ -75,7 +75,7 @@ fn post_manifest_preserves_the_existing_public_contract_and_extensions() {
     assert_eq!(post.api.path, "/api/v1/system/posts");
     assert_eq!(post.api.operations.list, "get_system_posts");
     assert_eq!(post.api.operations.create, "post_system_posts");
-    assert_eq!(post.access.capability, None);
+    assert_eq!(post.access.capability, Some("system.post".into()));
     let id = post
         .fields
         .iter()

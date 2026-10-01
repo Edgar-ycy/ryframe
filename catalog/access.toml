@@ -128,6 +128,18 @@ non_route_permissions = ["tenant:capability:override"]
 "tenant:product:view" = "租户产品查看"
 "tenant:usage:list" = "租户用量查询"
 
+[[capabilities]]
+code = "system.post"
+route_keys = ["system.post"]
+page_keys = ["system.post"]
+permissions = [
+    "system:post:add",
+    "system:post:edit",
+    "system:post:export",
+    "system:post:list",
+    "system:post:remove",
+]
+
 [[route_policies]]
 method = "GET"
 path = "/api/v1/auth/context"

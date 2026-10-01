@@ -21,6 +21,7 @@ pub fn post_export_router(state: AppState) -> Router {
 
 /// 创建岗位异步导出任务。
 #[post("/exports")]
+#[ryframe_macro::capability("system.post")]
 #[perm("system:post:export")]
 #[utoipa::path(post, path = "/api/v1/system/posts/exports", tag = "岗位管理",
     params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = PostExportRequestDto,

@@ -7,14 +7,15 @@ use axum::Router;
 use ryframe_application::generated::GeneratedServices;
 use ryframe_kernel::PaginationPolicy;
 
+use crate::router::{CapabilityGuardState, capability_guard};
 use crate::state::AppState;
+use axum::middleware::from_fn_with_state;
 
 pub fn generated_router(
     state: AppState,
     services: &GeneratedServices,
     pagination: PaginationPolicy,
 ) -> Router {
-    let _ = &state;
     Router::new()
         .nest(
             "/notices",
@@ -22,6 +23,11 @@ pub fn generated_router(
         )
         .nest(
             "/posts",
-            super::post::handler::router(Arc::clone(&services.post), pagination),
+            super::post::handler::router(Arc::clone(&services.post), pagination).layer(
+                from_fn_with_state(
+                    CapabilityGuardState::new(state, "system.post"),
+                    capability_guard,
+                ),
+            ),
         )
 }

@@ -326,6 +326,12 @@ fn product_version_accepts_empty_and_rejects_unknown_or_duplicate_capabilities()
         schema_version: 1,
         config: serde_json::json!({}),
     };
+    let valid_capability = || ProductCapabilityRecord {
+        code: "system.post".into(),
+        variant: "standard".into(),
+        schema_version: 1,
+        config: serde_json::json!({}),
+    };
     let version = |capabilities| ProductVersionRecord {
         id: 1,
         version: 1,
@@ -338,7 +344,8 @@ fn product_version_accepts_empty_and_rejects_unknown_or_duplicate_capabilities()
         capabilities,
     };
     assert!(ProductService::version_record_vo(version(vec![])).is_ok());
-    assert!(CAPABILITY_CATALOG.is_empty());
+    assert!(!CAPABILITY_CATALOG.is_empty());
+    assert!(ProductService::version_record_vo(version(vec![valid_capability()])).is_ok());
     assert!(ProductService::version_record_vo(version(vec![capability()])).is_err());
     assert!(ProductService::version_record_vo(version(vec![capability(), capability()])).is_err());
 }

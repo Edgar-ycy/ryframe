@@ -26,8 +26,47 @@ pub struct CapabilityDescriptor {
     pub variants: &'static [CapabilityVariantDescriptor],
 }
 
-/// 当前部署没有可选业务能力；套餐和租户始终支持合法的空能力集合。
-pub const CAPABILITY_CATALOG: &[CapabilityDescriptor] = &[];
+fn validate_empty_config(config: &Value) -> AppResult<()> {
+    if config.as_object().is_some_and(|object| object.is_empty()) {
+        Ok(())
+    } else {
+        Err(AppError::Validation("能力配置必须是空对象".into()))
+    }
+}
+
+const STANDARD_VARIANT: CapabilityVariantDescriptor = CapabilityVariantDescriptor {
+    code: "standard",
+    schema_version: 1,
+    validate: validate_empty_config,
+};
+
+/// 编译期能力目录。能力必须同时在前端 manifest、访问目录和资源路由中闭合。
+pub const CAPABILITY_CATALOG: &[CapabilityDescriptor] = &[CapabilityDescriptor {
+    code: "system.post",
+    name: "岗位管理",
+    description: "租户岗位的查询、创建、修改、删除和导出能力。",
+    affects_authorization: true,
+    dependencies: &[],
+    conflicts: &[],
+    route_keys: &["system.post"],
+    permission_codes: &[
+        "system:post:add",
+        "system:post:edit",
+        "system:post:export",
+        "system:post:list",
+        "system:post:remove",
+    ],
+    default_admin_permissions: &[
+        "system:post:add",
+        "system:post:edit",
+        "system:post:export",
+        "system:post:list",
+        "system:post:remove",
+    ],
+    deployment_dependencies: &[],
+    client_config_fields: &[],
+    variants: &[STANDARD_VARIANT],
+}];
 
 pub fn capability_descriptor(code: &str) -> AppResult<&'static CapabilityDescriptor> {
     CAPABILITY_CATALOG

@@ -101,8 +101,7 @@ fn merge_generated_catalog(
             menu_type: "C".to_owned(),
             page_key: Some(resource.route.key),
             permission: Some(list_permission),
-            // 基础 CRUD 不隐式创建产品能力门禁；显式产品能力仍由手写目录闭合。
-            capability: None,
+            capability: resource.capability.clone(),
         });
     }
 

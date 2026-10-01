@@ -54,7 +54,7 @@ mod permission_catalog {
     }
 
     #[test]
-    fn generated_post_access_is_merged_once_without_product_capability() {
+    fn generated_post_access_is_merged_once_with_product_capability() {
         for permission in [
             "system:post:add",
             "system:post:edit",
@@ -80,7 +80,7 @@ mod permission_catalog {
         assert_eq!(menus[0].name, "岗位管理");
         assert_eq!(menus[0].page_key, Some("system.post"));
         assert_eq!(menus[0].permission_code, Some("system:post:list"));
-        assert_eq!(menus[0].capability_code, None);
+        assert_eq!(menus[0].capability_code, Some("system.post"));
 
         let post_routes = route_policies()
             .iter()

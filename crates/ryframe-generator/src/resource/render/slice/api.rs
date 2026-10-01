@@ -172,6 +172,12 @@ pub(super) fn handler(resource: &ResourceIr, header: &str) -> String {
     let operations = &resource.api.operations;
     let path = &resource.api.path;
     let tag = &resource.menu.labels.zh_cn;
+    let capability_attribute = resource
+        .access
+        .capability
+        .as_deref()
+        .map(|code| format!("#[ryframe_macro::capability({code:?})]\n"))
+        .unwrap_or_default();
     format!(
         include_str!("handler.rs.tpl"),
         name = resource.name,
@@ -180,6 +186,7 @@ pub(super) fn handler(resource: &ResourceIr, header: &str) -> String {
         create_permission = permissions.create,
         update_permission = permissions.update,
         delete_permission = permissions.delete,
+        capability_attribute = capability_attribute,
         list_operation = operations.list,
         read_operation = operations.read,
         create_operation = operations.create,

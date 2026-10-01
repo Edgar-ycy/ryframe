@@ -32,7 +32,7 @@ pub fn router(service: Arc<{pascal}Service>, pagination: PaginationPolicy) -> Ro
 }}
 
 #[get("/")]
-#[perm({list_permission:?})]
+{capability_attribute}#[perm({list_permission:?})]
 #[utoipa::path(
     get,
     path = {path:?},
@@ -62,7 +62,7 @@ pub async fn list(
 }}
 
 #[get("/{{id}}")]
-#[perm({read_permission:?})]
+{capability_attribute}#[perm({read_permission:?})]
 #[utoipa::path(
     get,
     path = {detail_path:?},
@@ -87,7 +87,7 @@ pub async fn detail(
 }}
 
 #[post("/")]
-#[perm({create_permission:?})]
+{capability_attribute}#[perm({create_permission:?})]
 #[utoipa::path(
     post,
     path = {path:?},
@@ -112,7 +112,7 @@ pub async fn create(
 }}
 
 #[put("/{{id}}")]
-#[perm({update_permission:?})]
+{capability_attribute}#[perm({update_permission:?})]
 #[utoipa::path(
     put,
     path = {detail_path:?},
@@ -143,7 +143,7 @@ pub async fn update(
 }}
 
 #[delete("/{{id}}")]
-#[perm({delete_permission:?})]
+{capability_attribute}#[perm({delete_permission:?})]
 #[utoipa::path(
     delete,
     path = {detail_path:?},

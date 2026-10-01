@@ -30,6 +30,7 @@ delete = "system:notice:remove"
 [[resources]]
 name = "post"
 module = "system"
+capability = "system.post"
 [resources.labels]
 zh_cn = "岗位"
 en = "Post"

@@ -27,6 +27,7 @@ pub struct PostOpenApi;
 pub fn crud_resource_metadata() -> serde_json::Value {
     let mut metadata = serde_json::json!({
       "access": {
+        "capability": "system.post",
         "permissions": {
           "create": "system:post:add",
           "delete": "system:post:remove",
