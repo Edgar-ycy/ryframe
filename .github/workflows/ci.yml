@@ -379,7 +379,7 @@ jobs:
   # MySQL、Redis 与 AWS-LC TLS 真实出站协议
   # ============================================================
   integration:
-    name: MySQL 8.4, Redis 7.4 & AWS-LC TLS Integration
+    name: MySQL 8.4.11, Redis 7.4.9 & AWS-LC TLS Integration
     needs: plan
     if: ${{ needs.plan.result == 'success' && needs.plan.outputs.integration == 'true' }}
     runs-on: ubuntu-latest
