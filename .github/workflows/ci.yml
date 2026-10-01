@@ -257,7 +257,7 @@ jobs:
       RYFRAME_REDIS_DATABASE: "15"
     services:
       mysql:
-        image: mysql:8.4.11@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
+        image: mysql:8.0.46@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
         env:
           MYSQL_ROOT_PASSWORD: ryframe-ci-password
           MYSQL_ROOT_HOST: "%"
@@ -379,7 +379,7 @@ jobs:
   # MySQL、Redis 与 AWS-LC TLS 真实出站协议
   # ============================================================
   integration:
-    name: MySQL 8.4.11, Redis 7.4.9 & AWS-LC TLS Integration
+    name: MySQL 8.0.46, Redis 7.4.9 & AWS-LC TLS Integration
     needs: plan
     if: ${{ needs.plan.result == 'success' && needs.plan.outputs.integration == 'true' }}
     runs-on: ubuntu-latest
@@ -397,7 +397,7 @@ jobs:
       RYFRAME_REDIS_DATABASE: "15"
     services:
       mysql:
-        image: mysql:8.4.11@sha256:b3b90af2a6552ae30c266fdb7d5dd55f3afb72404bb78d37fe8a23eb857fd3fb
+        image: mysql:8.0.46@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
         env:
           MYSQL_ROOT_PASSWORD: ryframe-ci-password
           MYSQL_ROOT_HOST: "%"

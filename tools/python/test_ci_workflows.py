@@ -37,7 +37,7 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertIn('RYFRAME_MYSQL_INTEGRATION: "1"', block)
         self.assertIn('RYFRAME_MYSQL_TLS_INTEGRATION: "1"', block)
         self.assertIn('RYFRAME_REDIS_INTEGRATION: "1"', block)
-        self.assertIn("mysql:8.4.11@sha256:", block)
+        self.assertIn("mysql:8.0.46@sha256:", block)
         self.assertIn("redis:7.4.9@sha256:", block)
         self.assertIn("fetch-depth: 0", block)
         self.assertIn("path: backend", block)

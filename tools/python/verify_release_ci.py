@@ -255,7 +255,7 @@ def requirements(request) -> list[Requirement]:
     return [
         Requirement(request.backend_repository, "ci.yml", request.backend_sha, (
             "Plan & Preflight", "Rust Gate", "Resource & Contract Gate",
-            "MySQL 8.4.11, Redis 7.4.9 & AWS-LC TLS Integration", "Windows Smoke",
+            "MySQL 8.0.46, Redis 7.4.9 & AWS-LC TLS Integration", "Windows Smoke",
             "Security, Supply Chain & Deployment", "Required",
         ), request.tag),
         Requirement(request.frontend_repository, "ci.yml", request.frontend_sha, (
