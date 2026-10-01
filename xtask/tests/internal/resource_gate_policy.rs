@@ -66,6 +66,7 @@ fn ownership_parser_is_strict_and_commands_share_ci_target() {
             "-p".to_owned(),
             "xtask".to_owned(),
             "--features".to_owned(),
+            "generate".to_owned(),
             "resource".to_owned(),
             "--jobs".to_owned(),
             "2".to_owned(),

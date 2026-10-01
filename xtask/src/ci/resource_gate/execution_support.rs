@@ -50,6 +50,7 @@ pub(crate) fn resource_check_args_for_target(
         "-p".to_owned(),
         "xtask".to_owned(),
         "--features".to_owned(),
+        "generate".to_owned(),
         "resource".to_owned(),
         "--jobs".to_owned(),
         jobs.max(1).to_string(),

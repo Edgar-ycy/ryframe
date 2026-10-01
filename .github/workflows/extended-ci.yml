@@ -338,7 +338,7 @@ jobs:
 
       - name: 收集进程与基础设施日志
         if: ${{ always() }}
-        working-directory: backend
+        working-directory: ${{ matrix.backend }}
         env:
           RYFRAME_CI_MYSQL_CONTAINER_ID: ${{ job.services.mysql.id }}
           RYFRAME_CI_REDIS_CONTAINER_ID: ${{ job.services.redis.id }}
