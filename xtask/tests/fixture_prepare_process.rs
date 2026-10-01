@@ -26,7 +26,13 @@ impl Fixture {
         ));
         fs::create_dir_all(&directory).unwrap();
         let output = directory.join("Device fixture");
-        let frontend = root.parent().unwrap().join("ryframe-vue3");
+        let frontend = [
+            root.parent().unwrap().join("frontend"),
+            root.parent().unwrap().join("ryframe-vue3"),
+        ]
+        .into_iter()
+        .find(|path| path.is_dir())
+        .unwrap_or_else(|| root.parent().unwrap().join("frontend"));
         Self {
             directory,
             output,
