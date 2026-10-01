@@ -6,6 +6,8 @@
 
 RyFrame 是面向企业后台的 Rust 2024 服务端，与 RyFrame-Vue3 配套使用。它提供认证授权、系统管理、多租户、异步任务、筛选导出、对象存储和可观测性能力。
 
+项目运行时以 Rust 为唯一业务实现语言：API、Worker、迁移、生成器和开发编排均由 Rust workspace 与 `cargo xtask` 提供。`tools/` 不承载产品运行时逻辑，只保存构建检查、契约生成、CI、恢复演练和真实资源验收所需的辅助实现；Python 与 Node 文件仅在这些维护流程中被 Rust 入口按需调用。
+
 ## 当前项目状态
 
 API、Worker、迁移和维护程序按 feature 定向构建；标准资源生成默认离线，数据库结构导入按需启用 `schema-import`。前端首屏只同步加载核心、外壳和全局导出文案，生产构建自动检查初始依赖图与包体积预算。
@@ -54,6 +56,8 @@ cargo xtask check --full
 ```
 
 `--scope backend|frontend` 可限制主要检查侧。更多迁移、测试和排障命令见[开发指南](docs/development.md)。
+
+维护和验收统一从 `cargo xtask` 进入，不直接把 `tools/` 中的文件当作用户命令。各辅助文件的职责与调用边界见 [`tools/README.md`](tools/README.md)。
 
 生产构建分别生成 release API、Worker 和前端生产目录，并输出每项产物的路径、大小和 SHA-256。`--plan` 使用同一任务图展示依赖、输入范围和允许写入，不执行任务或写入文件：
 

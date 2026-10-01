@@ -16,7 +16,7 @@ import uuid
 
 ROOT = Path("/sys/fs/cgroup")
 BACKEND = Path(__file__).resolve().parents[2]
-CASE = "devex_memory_tests::linux_cgroup_covers_grandchildren_and_cleans_only_its_own_group"
+CASE = "devex_memory_tests::linux_cgroup_joins_before_exec_covers_grandchildren_and_cleans_its_group"
 ENVIRONMENT = {"PATH", "HOME", "CARGO_HOME", "RUSTUP_HOME", "RUSTUP_TOOLCHAIN",
                "CARGO_INCREMENTAL", "CARGO_TERM_COLOR", "CARGO_NET_RETRY"}
 
