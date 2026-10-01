@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 ARG RYFRAME_BUILD_COMMIT
 ARG RUST_IMAGE=rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e
-ARG RUNTIME_IMAGE=gcr.io/distroless/cc-debian13:nonroot@sha256:54df941ed0d06a1bd95ef5e0ce391fd8d9f94b64782dc9a60062727849ee3f97
+ARG RUNTIME_IMAGE=gcr.io/distroless/base-nossl-debian13:nonroot@sha256:8c563c1fb5e120606f0d85733049775faed6192e2bd2223ef283a5393eec22b9
 
 FROM ${RUST_IMAGE} AS builder
 ARG RYFRAME_BUILD_COMMIT
@@ -36,6 +36,7 @@ WORKDIR /opt/ryframe
 COPY --from=builder /workspace/out/ryframe /usr/local/bin/ryframe
 COPY --from=builder /workspace/out/ryframe-migrate /usr/local/bin/ryframe-migrate
 COPY --from=builder /workspace/out/ryframe-worker /usr/local/bin/ryframe-worker
+COPY --from=builder /usr/lib/x86_64-linux-gnu/libgcc_s.so.1 /usr/lib/x86_64-linux-gnu/libgcc_s.so.1
 COPY --from=builder --chown=10001:10001 /workspace/runtime-data/ /var/lib/ryframe/
 COPY --chown=10001:10001 config ./config
 COPY --chown=10001:10001 locales ./locales
