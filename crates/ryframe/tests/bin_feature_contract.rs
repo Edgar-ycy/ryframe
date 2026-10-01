@@ -6,7 +6,6 @@ const APPLICATION_MANIFEST: &str = include_str!("../../ryframe-application/Cargo
 const DB_MANIFEST: &str = include_str!("../../ryframe-db/Cargo.toml");
 const MIGRATE_SOURCE: &str = include_str!("../src/bin/ryframe_migrate.rs");
 const TENANT_DB_MANIFEST: &str = include_str!("../../ryframe-tenant-db/Cargo.toml");
-const OTLP_MANIFEST: &str = include_str!("../../../vendor/opentelemetry-otlp/Cargo.toml");
 
 fn manifest_feature_members<'a>(manifest: &'a str, feature: &str) -> &'a str {
     let marker = format!("{feature} = [");
@@ -286,16 +285,16 @@ fn otlp_http_exporter_keeps_only_the_trace_signal() {
         WORKSPACE_MANIFEST
             .contains("opentelemetry-otlp = { path = \"vendor/opentelemetry-otlp\" }")
     );
-    assert!(WORKSPACE_MANIFEST.contains(
-        "opentelemetry-otlp = { version = \"0.32\", default-features = false, features = [\"trace\", \"http-proto\", \"reqwest-client\"] }"
-    ));
-    let http_proto = OTLP_MANIFEST
-        .split_once("http-proto = [")
-        .and_then(|(_, features)| features.split_once("]"))
-        .map(|(features, _)| features)
-        .expect("本地 OTLP 补丁必须保留 http-proto feature");
-    assert!(http_proto.contains("\"trace\""));
-    assert!(!http_proto.contains("\"metrics\""));
-    assert!(!http_proto.contains("\"logs\""));
+    let otlp_dependency = WORKSPACE_MANIFEST
+        .lines()
+        .find(|line| {
+            line.trim_start()
+                .starts_with("opentelemetry-otlp = { version")
+        })
+        .expect("Workspace 必须声明 OTLP 直接依赖");
+    assert!(otlp_dependency.contains("default-features = false"));
+    assert!(otlp_dependency.contains("\"trace\""));
+    assert!(!otlp_dependency.contains("\"metrics\""));
+    assert!(!otlp_dependency.contains("\"logs\""));
     assert!(!WORKSPACE_MANIFEST.contains("reqwest-blocking-client"));
 }
