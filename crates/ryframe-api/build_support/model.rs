@@ -98,6 +98,8 @@ impl GeneratedPermissions {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct MenuEntry {
+    #[serde(default)]
+    pub(super) icon: Option<String>,
     pub(super) route_key: String,
     pub(super) order: u32,
     pub(super) name: String,

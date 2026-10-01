@@ -397,6 +397,7 @@ menu_type = "M"
 
 [[menus]]
 route_key = "platform"
+icon = "OfficeBuilding"
 order = 3
 name = "平台管理"
 title_key = "platform"

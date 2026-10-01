@@ -94,6 +94,7 @@ fn merge_generated_catalog(
         catalog.permissions.extend(resource_permissions);
         let list_permission = resource.permissions.list.clone();
         catalog.menus.push(MenuEntry {
+            icon: resource.menu.icon,
             route_key: resource.menu.key,
             order: resource.menu.order,
             name: resource.menu.labels.zh_cn,
