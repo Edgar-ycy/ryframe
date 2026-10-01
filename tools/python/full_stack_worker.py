@@ -519,12 +519,21 @@ def _reconcile_legacy(directory: Path, receipt: dict, source: str) -> str:
 
 
 def _reconcile_active(
-    backend: Path, directory: Path, receipt: dict, source: str
+    backend: Path,
+    directory: Path,
+    receipt: dict,
+    source: str,
+    *,
+    controlling_operation_id: str | None = None,
 ) -> dict:
     operation = _operation(directory, source)
     _validate_request(operation, backend, receipt)
     owner_identity = operation["owner"]["identity"]
-    if process_identity(owner_identity["pid"]) == owner_identity:
+    owner_operation_id = operation["owner"]["operation_id"]
+    if (
+        process_identity(owner_identity["pid"]) == owner_identity
+        and owner_operation_id != controlling_operation_id
+    ):
         raise ValueError("Worker 控制器仍在运行，拒绝并发操作")
     result_path = operation["path"] / "result.json"
     if result_path.is_file():
@@ -646,7 +655,13 @@ def _finish_start(
                 _control_checkpoint("waiting-ready")
         if supervisor.poll() is not None:
             with process_guard(directory, "worker-control.guard"):
-                result = _reconcile_active(backend, directory, receipt, source)
+                result = _reconcile_active(
+                    backend,
+                    directory,
+                    receipt,
+                    source,
+                    controlling_operation_id=operation_id,
+                )
             return result
         time.sleep(0.05)
     raise TimeoutError("Worker 后台启动结果未知；请使用 status 或 reconcile 核对")
