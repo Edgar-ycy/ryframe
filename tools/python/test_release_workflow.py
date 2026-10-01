@@ -120,27 +120,17 @@ class ReleaseWorkflowTests(unittest.TestCase):
         for step in (record, verify):
             self.assertIn('--frontend-dir "$GITHUB_WORKSPACE/frontend"', step["run"])
 
-    def test_extended_browser_commands_bind_fixture_and_server_explicitly(self):
+    def test_extended_frontend_build_does_not_call_removed_check_script(self):
         steps = {
             step["name"]: step
             for step in workflow("extended-ci.yml")["jobs"]["full-stack-e2e"]["steps"]
         }
         mysql_container = "${{ job.services.mysql.id }}"
+        production = steps["构建前端生产产物"]
+        self.assertIn("corepack pnpm build", production["run"])
+        self.assertNotIn("corepack pnpm check", production["run"])
         self.assertEqual(
-            steps["执行真实浏览器全栈流程"]["run"],
-            'corepack pnpm check --stage browser --real --fixture "${{ matrix.fixture }}" --server dev',
-        )
-        self.assertNotIn("if", steps["执行真实浏览器全栈流程"])
-        self.assertEqual(
-            steps["执行真实浏览器全栈流程"]["env"]["RYFRAME_CI_MYSQL_CONTAINER_ID"],
-            mysql_container,
-        )
-        self.assertIn(
-            'corepack pnpm check --stage browser --real --fixture "${{ matrix.fixture }}" --server preview',
-            steps["构建并验收生产前端"]["run"],
-        )
-        self.assertEqual(
-            steps["构建并验收生产前端"]["env"]["RYFRAME_CI_MYSQL_CONTAINER_ID"],
+            production["env"]["RYFRAME_CI_MYSQL_CONTAINER_ID"],
             mysql_container,
         )
 

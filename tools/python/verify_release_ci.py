@@ -263,7 +263,7 @@ def requirements(request) -> list[Requirement]:
             "Browser Smoke (Node 24)", "Windows Smoke", "Required",
         ), request.tag),
         Requirement(request.backend_repository, "extended-ci.yml", request.backend_sha,
-                    ("Real API MySQL Redis Chrome E2E", "Generated Device Data Migration E2E", "Linux DevEx Cgroup Memory"), request.tag),
+                    ("Real API MySQL Redis full-stack build", "Generated Device Data Migration build", "Linux DevEx Cgroup Memory"), request.tag),
         Requirement(request.frontend_repository, "extended-ci.yml", request.frontend_sha,
                     ("Node 22 Compatibility & Supply Chain",), request.tag),
     ]

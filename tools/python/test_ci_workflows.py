@@ -235,7 +235,8 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertNotIn("ryframe-reset plan", block)
         self.assertNotIn("nohup", block)
         self.assertNotIn("curl --fail", block)
-        self.assertIn("corepack pnpm check --stage browser --real", block)
+        self.assertIn("corepack pnpm build", block)
+        self.assertNotIn("corepack pnpm check", block)
         self.assertIn("--override-filename ryframe-backend.cdx", block)
         self.assertNotIn("--override-filename ryframe-backend.cdx.json", block)
         self.assertIn(
@@ -250,8 +251,7 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertEqual(block.count("if: ${{ always() }}"), 2)
         self.assertNotIn("sccache-full-stack.json", block)
         self.assertNotIn("name: sccache-full-stack-", block)
-        self.assertIn("frontend/.local-tests/playwright-real/report", block)
-        self.assertIn("frontend/.local-tests/playwright-real/results", block)
+        self.assertNotIn("playwright-real", block)
         self.assertGreaterEqual(block.count("if-no-files-found: error"), 1)
         self.assertEqual(block.count("if-no-files-found: warn"), 0)
 

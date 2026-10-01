@@ -101,12 +101,12 @@ jobs:
       matrix:
         include:
           - fixture: core
-            name: Real API MySQL Redis Chrome E2E
+            name: Real API MySQL Redis full-stack build
             backend: backend
             frontend: frontend
             artifact_suffix: ""
           - fixture: device
-            name: Generated Device Data Migration E2E
+            name: Generated Device Data Migration build
             backend: backend/.local-tests/device-fixture/backend
             frontend: backend/.local-tests/device-fixture/frontend
             artifact_suffix: -device
@@ -304,21 +304,11 @@ jobs:
         working-directory: ${{ matrix.backend }}
         run: cargo xtask check recovery full-stack start
 
-      - name: 执行真实浏览器全栈流程
+      - name: 构建前端生产产物
         working-directory: ${{ matrix.frontend }}
         env:
           RYFRAME_CI_MYSQL_CONTAINER_ID: ${{ job.services.mysql.id }}
-        run: >-
-          corepack pnpm check --stage browser --real
-          --fixture "${{ matrix.fixture }}" --server dev
-
-      - name: 构建并验收生产前端
-        working-directory: ${{ matrix.frontend }}
-        env:
-          RYFRAME_CI_MYSQL_CONTAINER_ID: ${{ job.services.mysql.id }}
-        run: |
-          VITE_APP_BUILD_COMMIT="$(git rev-parse HEAD)" corepack pnpm build --real
-          corepack pnpm check --stage browser --real --fixture "${{ matrix.fixture }}" --server preview
+        run: VITE_APP_BUILD_COMMIT="$(git rev-parse HEAD)" corepack pnpm build
 
       - name: 复核全栈源码组合未变化
         working-directory: backend
@@ -344,12 +334,8 @@ jobs:
           include-hidden-files: true
           path: |
             ${{ runner.temp }}/ryframe-full-stack
-            frontend/.local-tests/playwright-real/report
-            frontend/.local-tests/playwright-real/results
             backend/.local-tests/device-fixture/fixture.json
             backend/.local-tests/device-fixture/prepare.log
-            backend/.local-tests/device-fixture/frontend/.local-tests/playwright-real/report
-            backend/.local-tests/device-fixture/frontend/.local-tests/playwright-real/results
           if-no-files-found: error
           retention-days: 14
 

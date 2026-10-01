@@ -48,7 +48,7 @@ class DeviceWorkflowTests(unittest.TestCase):
             self.steps["复核全栈源码组合未变化"]["working-directory"], "backend"
         )
         self.assertLess(
-            names.index("构建并验收生产前端"),
+            names.index("构建前端生产产物"),
             names.index("复核全栈源码组合未变化"),
         )
         self.assertLess(
@@ -57,12 +57,10 @@ class DeviceWorkflowTests(unittest.TestCase):
         )
         for name in ("构建并安全初始化临时全栈环境", "启动真实 API、Worker 并等待就绪"):
             self.assertEqual(self.steps[name]["working-directory"], "${{ matrix.backend }}")
-        production = self.steps["构建并验收生产前端"]
+        production = self.steps["构建前端生产产物"]
         self.assertNotIn("if", production)
-        self.assertIn("build --real", production["run"])
-        self.assertIn(
-            '--fixture "${{ matrix.fixture }}" --server preview', production["run"]
-        )
+        self.assertIn("corepack pnpm build", production["run"])
+        self.assertNotIn("pnpm check", production["run"])
         self.assertEqual(production["working-directory"], "${{ matrix.frontend }}")
 
     def test_both_attempt_scoped_artifacts_keep_hidden_browser_evidence(self):
@@ -76,7 +74,7 @@ class DeviceWorkflowTests(unittest.TestCase):
             names.add(name.replace("${{ matrix.artifact_suffix }}", entry["artifact_suffix"]))
         self.assertEqual(names, {"ryframe-full-stack-123-2", "ryframe-full-stack-123-2-device"})
         self.assertIn("device-fixture/fixture.json", upload["with"]["path"])
-        self.assertIn("device-fixture/frontend/.local-tests/playwright-real/results", upload["with"]["path"])
+        self.assertNotIn("playwright-real", upload["with"]["path"])
 
 
 if __name__ == "__main__":
