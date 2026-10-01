@@ -15,8 +15,10 @@ pub(crate) mod linux;
 
 pub(crate) use collect::execute;
 
-#[cfg(all(target_os = "linux", not(test)))]
-pub(crate) use linux::run_trampoline_if_requested;
+#[cfg(target_os = "linux")]
+pub(crate) fn run_trampoline_if_requested() -> Option<Result<()>> {
+    linux::run_trampoline_if_requested()
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
