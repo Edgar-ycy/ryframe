@@ -27,7 +27,7 @@ class ProducerTests(unittest.TestCase):
         self.directory = Path(temporary.name).resolve()
         write_json(self.directory / 'manifest.json', {'id': 'fixture-only'})
         initialize_state(self.directory)
-        node = Path('D:/Program Files/nodejs/node.exe') if os.name == 'nt' else Path('/usr/bin/node')
+        node = Path('D:/Program Files/nodejs/node.exe') if os.name == 'nt' else Path(os.path.realpath('/usr/bin/node'))
         self.request = {'node': {'path': str(node), 'sha256': file_digest(node)['sha256']},
                         'reference_plan': {'path': str(self.directory / 'plan.json')},
                         'dataset': {'path': str(self.directory / 'dataset.json')}}

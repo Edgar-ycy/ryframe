@@ -55,7 +55,7 @@ with run_lock(directory) as owner:
 class NativeProducerTests(unittest.TestCase):
     def exercise(self, kind):
         root = next(path for path in Path(__file__).resolve().parents if (path / 'Cargo.toml').is_file())
-        node = Path('D:/Program Files/nodejs/node.exe') if os.name == 'nt' else Path('/usr/bin/node')
+        node = Path('D:/Program Files/nodejs/node.exe') if os.name == 'nt' else Path(os.path.realpath('/usr/bin/node'))
         if not node.is_file():
             self.skipTest('未登记本机 Node stub 工具')
         with WorkspaceDirectory(dir=root / '.local-tests/tmp', prefix='post-node-crash-') as temporary:
@@ -185,7 +185,7 @@ class NativeProducerTests(unittest.TestCase):
 
     def test_identity_gate_validates_arguments_and_defers_api_module_loading(self):
         root = next(path for path in Path(__file__).resolve().parents if (path / 'Cargo.toml').is_file())
-        node = Path('D:/Program Files/nodejs/node.exe') if os.name == 'nt' else Path('/usr/bin/node')
+        node = Path('D:/Program Files/nodejs/node.exe') if os.name == 'nt' else Path(os.path.realpath('/usr/bin/node'))
         if not node.is_file():
             self.skipTest('未登记本机 Node stub 工具')
         with WorkspaceDirectory(dir=root / '.local-tests/tmp', prefix='identity-node-contract-') as temporary:
@@ -231,7 +231,7 @@ assert.deepEqual(globalThis.identityOptions, {lockOwnerToken:'10000000-0000-4000
 
     def test_both_node_gates_make_no_request_before_release_or_on_wrong_run_and_eof(self):
         root = next(path for path in Path(__file__).resolve().parents if (path / 'Cargo.toml').is_file())
-        node = Path('D:/Program Files/nodejs/node.exe') if os.name == 'nt' else Path('/usr/bin/node')
+        node = Path('D:/Program Files/nodejs/node.exe') if os.name == 'nt' else Path(os.path.realpath('/usr/bin/node'))
         if not node.is_file():
             self.skipTest('未登记本机 Node stub 工具')
         with WorkspaceDirectory(dir=root / '.local-tests/tmp', prefix='post-node-gates-') as temporary:

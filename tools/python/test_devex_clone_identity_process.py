@@ -23,7 +23,7 @@ class IdentityProducerTests(unittest.TestCase):
         self.directory = Path(temporary.name).resolve()
         write_json(self.directory / 'manifest.json', {'kind': 'isolated-producer-fixture'})
         initialize_state(self.directory)
-        self.node = Path('D:/Program Files/nodejs/node.exe') if os.name == 'nt' else Path('/usr/bin/node')
+        self.node = Path('D:/Program Files/nodejs/node.exe') if os.name == 'nt' else Path(os.path.realpath('/usr/bin/node'))
         self.plan_sha256 = 'a' * 64
         write_json(self.directory / 'identity-plan.json', {
             'kind': 'fixture-plan', 'plan_sha256': self.plan_sha256})
