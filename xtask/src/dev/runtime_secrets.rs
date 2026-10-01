@@ -243,7 +243,9 @@ fn inspect_table(table: &toml::Table, path: &mut Vec<String>) -> Result<()> {
 fn inspect_value(value: &toml::Value, path: &mut Vec<String>) -> Result<()> {
     match sensitive_value_action(value, path)? {
         SensitiveValueAction::NotSensitive => {}
-        SensitiveValueAction::RegisteredString | SensitiveValueAction::EmptyUnregisteredString => {
+        SensitiveValueAction::RegisteredString
+        | SensitiveValueAction::TomlDatabasePassword
+        | SensitiveValueAction::EmptyUnregisteredString => {
             return Ok(());
         }
     }
@@ -265,12 +267,23 @@ fn inspect_value(value: &toml::Value, path: &mut Vec<String>) -> Result<()> {
 enum SensitiveValueAction {
     NotSensitive,
     RegisteredString,
+    TomlDatabasePassword,
     EmptyUnregisteredString,
 }
 
 fn sensitive_value_action(value: &toml::Value, path: &[String]) -> Result<SensitiveValueAction> {
     if !SENSITIVE_KEYS.contains(&path.last().map(String::as_str).unwrap_or_default()) {
         return Ok(SensitiveValueAction::NotSensitive);
+    }
+    if is_toml_database_password(path) {
+        return match value {
+            toml::Value::String(_) => Ok(SensitiveValueAction::TomlDatabasePassword),
+            _ => Err(format!(
+                "运行配置包含数据库密码 {}，但值不是字符串；拒绝建立运行快照",
+                path.join(".")
+            )
+            .into()),
+        };
     }
     match (registered_path(path), value) {
         (true, toml::Value::String(_)) => Ok(SensitiveValueAction::RegisteredString),
@@ -302,6 +315,14 @@ fn registered_path(path: &[String]) -> bool {
                 .zip(path)
                 .all(|(expected, actual)| *expected == actual)
     })
+}
+
+fn is_toml_database_password(path: &[String]) -> bool {
+    matches!(path, [database, kind, index, password]
+        if database == "database"
+            && matches!(kind.as_str(), "replicas" | "sources")
+            && index == "[]"
+            && password == "password")
 }
 
 fn copy_sanitized_tree(source: &Path, target: &Path) -> Result<()> {
@@ -428,6 +449,7 @@ fn sanitize_value(value: &mut toml::Value, path: &mut Vec<String>) -> Result<()>
             secret.clear();
             return Ok(());
         }
+        SensitiveValueAction::TomlDatabasePassword => return Ok(()),
         SensitiveValueAction::EmptyUnregisteredString => return Ok(()),
         SensitiveValueAction::NotSensitive => {}
     }

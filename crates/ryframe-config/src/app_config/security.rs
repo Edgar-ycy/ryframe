@@ -26,6 +26,7 @@ fn inspect_production_file_secrets(value: &toml::Value, path: &str) -> AppResult
                     format!("{path}.{key}")
                 };
                 if PRODUCTION_FILE_SECRET_KEYS.contains(&key.as_str())
+                    && !(key == "password" && is_database_password_path(path))
                     && let toml::Value::String(secret) = child
                     && !secret.is_empty()
                     && !(key == "jwt_secret" && secret == "change-me-in-production")
@@ -46,6 +47,12 @@ fn inspect_production_file_secrets(value: &toml::Value, path: &str) -> AppResult
     }
 
     Ok(())
+}
+
+fn is_database_password_path(path: &str) -> bool {
+    path == "database.primary"
+        || (path.starts_with("database.replicas[") && path.ends_with(']'))
+        || (path.starts_with("database.sources[") && path.ends_with(']'))
 }
 
 pub(super) fn reject_removed_secret_encoding(table: &toml::Table) -> AppResult<()> {

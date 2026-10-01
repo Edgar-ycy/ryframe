@@ -221,20 +221,18 @@ fn runtime_config_snapshot_never_persists_registered_secret_values() {
 }
 
 #[test]
-fn unregistered_nested_file_secret_fails_closed_before_snapshot() {
-    let fixture = SnapshotFixture::new("unregistered-secret");
+fn database_replica_and_source_passwords_are_kept_in_toml_snapshots() {
+    let fixture = SnapshotFixture::new("database-passwords");
     fs::write(
         fixture.root.join("config/app.toml"),
-        "[[database.replicas]]\nname = 'replica'\npassword = 'must-not-persist'\n",
+        "[[database.replicas]]\nname = 'replica'\nhost = 'localhost'\nport = 3306\ndatabase = 'replica'\nusername = 'root'\npassword = 'replica-password'\nmax_connections = 1\nmin_connections = 1\n\n[[database.sources]]\nname = 'source'\nhost = 'localhost'\nport = 3306\ndatabase = 'source'\nusername = 'root'\npassword = 'source-password'\nmax_connections = 1\nmin_connections = 1\n",
     )
     .unwrap();
-
-    let error = DevSession::prepare(&fixture.root, SourceRevision::from_value(0))
-        .unwrap_err()
-        .to_string();
-
-    assert!(error.contains("未登记的敏感字段 database.replicas.[].password"));
-    assert!(!fixture.root.join(".local-tests/dev-runtime").exists());
+    let target = fixture.root.join(".local-tests/sanitized-config");
+    snapshot_config_tree(&fixture.root.join("config"), &target).unwrap();
+    let sanitized = fs::read_to_string(target.join("app.toml")).unwrap();
+    assert!(sanitized.contains("replica-password"));
+    assert!(sanitized.contains("source-password"));
 }
 
 #[test]
@@ -256,11 +254,11 @@ fn non_string_registered_secret_fails_closed_before_snapshot() {
 }
 
 #[test]
-fn non_string_unregistered_secret_fails_closed_before_snapshot() {
+fn non_string_database_source_password_fails_closed_before_snapshot() {
     let fixture = SnapshotFixture::new("non-string-unregistered-secret");
     fs::write(
         fixture.root.join("config/app.toml"),
-        "[[database.replicas]]\nname = 'replica'\npassword = [123456]\n",
+        "[[database.sources]]\nname = 'source'\npassword = [123456]\n",
     )
     .unwrap();
 
@@ -268,8 +266,8 @@ fn non_string_unregistered_secret_fails_closed_before_snapshot() {
         .unwrap_err()
         .to_string();
 
-    assert!(error.contains("database.replicas.[].password"));
-    assert!(error.contains("值不是字符串"));
+    assert!(error.contains("database.sources.[].password"));
+    assert!(error.contains("数据库密码"));
     assert!(!fixture.root.join(".local-tests/dev-runtime").exists());
 }
 
