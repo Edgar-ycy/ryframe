@@ -46,7 +46,7 @@ def actual_windows_argv(resources, identity: dict) -> list[str]:
               f"(Get-CimInstance Win32_Process -Filter 'ProcessId = {identity['pid']}').CommandLine | ConvertTo-Json -Compress")
     result = resources.runner([str(executable), "-NoProfile", "-NonInteractive", "-Command", script],
                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=15,
-                              creationflags=subprocess.CREATE_NO_WINDOW)
+                              creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
     value = json.loads(result.stdout.decode("utf-8-sig"))
     if not isinstance(value, str) or not value or process_identity(identity["pid"]) != identity:
         raise ValueError("RustFS 参数读取窗口发生进程变化")

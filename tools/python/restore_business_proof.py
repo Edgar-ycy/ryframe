@@ -458,7 +458,7 @@ def verify_business_proof(
     verifier = _clean_source(backend, verifier_source["sha"], "恢复证明协调后端")
     if str(runner) != runner_source["root"] or str(verifier) != verifier_source["root"]:
         raise ValueError("恢复核验源码根与 Rust 权威上下文不同")
-    python = artifact_snapshot(Path(sys.executable))
+    python = artifact_snapshot(Path(sys.executable).resolve(strict=True))
     if python.descriptor() != tools["python"]:
         raise ValueError("恢复证明核验器没有使用权威上下文绑定的 Python 解释器")
     _evidence_root(runner, record["plan"]["id"], proof, tests, runtime)

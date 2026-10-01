@@ -150,7 +150,7 @@ def _cim_creation_time(pid: int, run) -> int:
     result = run([str(executable), "-NoProfile", "-NonInteractive", "-Command", script],
                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                  check=True, timeout=15,
-                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0)
     if result.returncode != 0:
         raise ValueError("历史 producer 创建时间查询失败")
     value = json.loads(result.stdout.decode("utf-8-sig"))
@@ -192,7 +192,7 @@ def _counter_creation_time(pid: int, run) -> int:
     result = run([str(executable), "-NoProfile", "-NonInteractive", "-Command", script],
                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                  check=True, timeout=15,
-                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0)
     if result.returncode != 0:
         raise ValueError("历史 producer 性能计数器查询失败")
     value = json.loads(result.stdout.decode("utf-8-sig"))

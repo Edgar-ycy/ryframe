@@ -16,6 +16,7 @@ import devex_clone_cache_process as process
 BOOT = "5a81dc04-9e9a-416b-8eab-1b059bddf489"
 
 
+@unittest.skipUnless(os.name == "nt", "WSL Redis 进程测试仅在 Windows runner 执行")
 class CacheProcessTests(unittest.TestCase):
     def setUp(self):
         self.backend = next(path for path in Path(__file__).resolve().parents if (path / "Cargo.toml").is_file())

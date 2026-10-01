@@ -2,6 +2,7 @@
 import copy
 import io
 import os
+import shutil
 from pathlib import Path
 import sys
 import threading
@@ -27,7 +28,10 @@ class ProducerTests(unittest.TestCase):
         self.directory = Path(temporary.name).resolve()
         write_json(self.directory / 'manifest.json', {'id': 'fixture-only'})
         initialize_state(self.directory)
-        node = Path('D:/Program Files/nodejs/node.exe') if os.name == 'nt' else Path(os.path.realpath('/usr/bin/node'))
+        node = shutil.which('node')
+        if node is None:
+            self.skipTest('Node.js 不在 CI PATH 中')
+        node = Path(node).resolve()
         self.request = {'node': {'path': str(node), 'sha256': file_digest(node)['sha256']},
                         'reference_plan': {'path': str(self.directory / 'plan.json')},
                         'dataset': {'path': str(self.directory / 'dataset.json')}}

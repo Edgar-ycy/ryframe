@@ -47,7 +47,7 @@ class NativeDigestTests(unittest.TestCase):
                     operation()
             self.assertEqual(self.path.read_bytes(), self.original)
             result = subprocess.run([str(self.path), "/?"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                    creationflags=subprocess.CREATE_NO_WINDOW, timeout=10)
+                                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0, timeout=10)
             self.assertEqual(result.returncode, 0)
             self.assertEqual(file_digest(self.path), {
                 "bytes": len(self.original), "sha256": self.value["sha256"],

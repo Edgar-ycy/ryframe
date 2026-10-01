@@ -264,7 +264,7 @@ class RestoreBusinessProofTests(unittest.TestCase):
             "tools": {
                 "runner": {"root": str(self.runner), "sha": self.runner_sha},
                 "verifier": {"root": str(self.verifier), "sha": self.verifier_sha},
-                "python": proof.artifact_snapshot(Path(sys.executable)).descriptor(),
+                "python": proof.artifact_snapshot(Path(sys.executable).resolve(strict=True)).descriptor(),
             },
         }
 

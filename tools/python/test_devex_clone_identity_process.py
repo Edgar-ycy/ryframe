@@ -2,6 +2,7 @@
 import copy
 import json
 import os
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -23,7 +24,10 @@ class IdentityProducerTests(unittest.TestCase):
         self.directory = Path(temporary.name).resolve()
         write_json(self.directory / 'manifest.json', {'kind': 'isolated-producer-fixture'})
         initialize_state(self.directory)
-        self.node = Path('D:/Program Files/nodejs/node.exe') if os.name == 'nt' else Path(os.path.realpath('/usr/bin/node'))
+        node = shutil.which('node')
+        if node is None:
+            self.skipTest('Node.js 不在 CI PATH 中')
+        self.node = Path(node).resolve()
         self.plan_sha256 = 'a' * 64
         write_json(self.directory / 'identity-plan.json', {
             'kind': 'fixture-plan', 'plan_sha256': self.plan_sha256})
