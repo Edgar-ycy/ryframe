@@ -311,7 +311,7 @@ class CiWorkflowTests(unittest.TestCase):
             (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
             for name in ("ci.yml", "extended-ci.yml")
         )
-        self.assertEqual(workflow.count("--requirement scripts/requirements-ci.txt"), 5)
+        self.assertEqual(workflow.count("--requirement scripts/requirements-ci.txt"), 6)
         self.assertEqual(workflow.count("--force-reinstall"), 5)
         self.assertEqual(workflow.count("--require-hashes"), 5)
 
