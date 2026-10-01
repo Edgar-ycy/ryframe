@@ -267,6 +267,10 @@ jobs:
           node-version-file: frontend/.node-version
           package-manager-cache: false
 
+      - name: 固定 CI Node.js 可执行文件
+        shell: bash
+        run: echo "RYFRAME_NODE=$(command -v node)" >> "$GITHUB_ENV"
+
       - name: 安装 pnpm
         uses: ./frontend/.github/actions/setup-pnpm
         with:

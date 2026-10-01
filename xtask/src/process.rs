@@ -251,6 +251,11 @@ pub(crate) fn resolved_executable(
     executable: &str,
     configured_python: Option<OsString>,
 ) -> OsString {
+    if executable == "node"
+        && let Some(configured) = env::var_os("RYFRAME_NODE").filter(|value| !value.is_empty())
+    {
+        return configured;
+    }
     if executable == "python"
         && let Some(configured) = configured_python.filter(|value| !value.is_empty())
     {
