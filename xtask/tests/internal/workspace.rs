@@ -5,10 +5,13 @@ use super::resource;
 
 fn default_frontend_is_sibling_of_backend() {
     let root = workspace::root_dir();
-    assert_eq!(
-        workspace::default_frontend_dir(),
+    let expected = root.parent().unwrap().join("frontend");
+    let expected = if expected.is_dir() {
+        expected
+    } else {
         root.parent().unwrap().join("ryframe-vue3")
-    );
+    };
+    assert_eq!(workspace::default_frontend_dir(), expected);
 }
 
 #[test]

@@ -125,12 +125,11 @@ pub(crate) fn valid_group_name(name: Option<&OsStr>) -> bool {
     let Some(identity) = name.strip_prefix(GROUP_PREFIX) else {
         return false;
     };
-    let mut components = identity.split('-');
-    let valid = components
-        .by_ref()
-        .take(3)
-        .all(|value| !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()));
-    valid && components.next().is_none()
+    let components = identity.split('-').collect::<Vec<_>>();
+    components.len() == 3
+        && components
+            .iter()
+            .all(|value| !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
 }
 
 fn authorized_root() -> Result<PathBuf> {
