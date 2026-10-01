@@ -4,10 +4,10 @@ use crate::ports::jobs::BackgroundJobRecord;
 
 pub(super) fn manual_retry_permission(job_type: &str) -> Option<&'static str> {
     match job_type {
-        "system.tenant_config.export" => Some("system:config-package:export"),
-        "system.tenant_config.preview" => Some("system:config-transfer:preview"),
-        "system.tenant_config.apply" => Some("system:config-transfer:apply"),
-        "system.tenant_config.rollback" => Some("system:config-transfer:rollback"),
+        "system.tenant_config.export" => Some("platform:config-package:export"),
+        "system.tenant_config.preview" => Some("platform:config-transfer:preview"),
+        "system.tenant_config.apply" => Some("platform:config-transfer:apply"),
+        "system.tenant_config.rollback" => Some("platform:config-transfer:rollback"),
         _ => None,
     }
 }

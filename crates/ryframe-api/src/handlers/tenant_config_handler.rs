@@ -5,7 +5,7 @@ use axum::{
     extract::{DefaultBodyLimit, Multipart, Path, Query, State, multipart::MultipartRejection},
     http::{HeaderMap, StatusCode, header::CONTENT_LENGTH},
 };
-use ryframe_application::system::platform::ApplyTenantConfigTransferCommand;
+use ryframe_application::system::platform::{ApplyTenantConfigTransferCommand, TenantConfigScope};
 use ryframe_kernel::AppError;
 use ryframe_macro::{get, post, route};
 
@@ -49,9 +49,9 @@ pub fn config_transfer_router(state: AppState) -> Router {
 }
 
 #[post("/")]
-#[perm("system:config-package:export")]
-#[utoipa::path(post, path = "/api/v1/system/config-packages", tag = "租户配置迁移",
-    params(("Idempotency-Key" = String, Header, description = "配置包导出幂等键")),
+#[perm("platform:config-package:export")]
+#[utoipa::path(post, path = "/api/v1/platform/tenants/{tenant_id}/config-packages", tag = "租户配置迁移",
+    params(("tenant_id" = String, Path, description = "目标租户标识"), ("Idempotency-Key" = String, Header, description = "配置包导出幂等键")),
     responses(
         (status = 202, description = "配置包导出任务已创建", body = ApiResponse<TenantConfigBundleVo>),
         (status = 400, description = "幂等键格式无效"),
@@ -63,13 +63,15 @@ pub fn config_transfer_router(state: AppState) -> Router {
 async fn request_package_export(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
+    Path(tenant_id): Path<String>,
     headers: HeaderMap,
 ) -> HttpResult<(StatusCode, Json<ApiResponse<TenantConfigBundleVo>>)> {
+    let scope = TenantConfigScope::new(&current_user, &tenant_id)?;
     let outcome = state
         .services
         .platform
         .tenant_config_transfer
-        .request_package_export(&current_user, &idempotency_key_hash(&headers)?)
+        .request_package_export(&scope, &idempotency_key_hash(&headers)?)
         .await
         .map_err(crate::http::HttpAppError::from)?;
     Ok((
@@ -79,9 +81,9 @@ async fn request_package_export(
 }
 
 #[get("/")]
-#[perm("system:config-package:list")]
-#[utoipa::path(get, path = "/api/v1/system/config-packages", tag = "租户配置迁移",
-    params(TenantConfigPageQuery),
+#[perm("platform:config-package:list")]
+#[utoipa::path(get, path = "/api/v1/platform/tenants/{tenant_id}/config-packages", tag = "租户配置迁移",
+    params(("tenant_id" = String, Path, description = "目标租户标识"), TenantConfigPageQuery),
     responses(
         (status = 200, description = "配置包列表", body = ApiPageResponse<TenantConfigBundleVo>),
         (status = 400, description = "分页参数无效"),
@@ -91,13 +93,15 @@ async fn request_package_export(
 async fn list_packages(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
+    Path(tenant_id): Path<String>,
     Query(query): Query<TenantConfigPageQuery>,
 ) -> HttpResult<Json<ApiPageResponse<TenantConfigBundleVo>>> {
+    let scope = TenantConfigScope::new(&current_user, &tenant_id)?;
     let page = state
         .services
         .platform
         .tenant_config_transfer
-        .list_bundles(&current_user, query.into_page(state.settings.pagination)?)
+        .list_bundles(&scope, query.into_page(state.settings.pagination)?)
         .await
         .map_err(crate::http::HttpAppError::from)?;
     Ok(Json(page_response(
@@ -110,9 +114,9 @@ async fn list_packages(
 }
 
 #[get("/{id}")]
-#[perm("system:config-package:list")]
-#[utoipa::path(get, path = "/api/v1/system/config-packages/{id}", tag = "租户配置迁移",
-    params(("id" = String, Path, description = "配置包 ID")),
+#[perm("platform:config-package:list")]
+#[utoipa::path(get, path = "/api/v1/platform/tenants/{tenant_id}/config-packages/{id}", tag = "租户配置迁移",
+    params(("tenant_id" = String, Path, description = "目标租户标识"), ("id" = String, Path, description = "配置包 ID")),
     responses(
         (status = 200, description = "配置包详情", body = ApiResponse<TenantConfigBundleVo>),
         (status = 400, description = "配置包 ID 无效"),
@@ -123,16 +127,14 @@ async fn list_packages(
 async fn get_package(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<String>,
+    Path((tenant_id, id)): Path<(String, String)>,
 ) -> HttpResult<Json<ApiResponse<TenantConfigBundleVo>>> {
+    let scope = TenantConfigScope::new(&current_user, &tenant_id)?;
     state
         .services
         .platform
         .tenant_config_transfer
-        .get_bundle(
-            &current_user,
-            parse_positive_id(&id, "配置包 ID 必须是正整数")?,
-        )
+        .get_bundle(&scope, parse_positive_id(&id, "配置包 ID 必须是正整数")?)
         .await
         .map_err(crate::http::HttpAppError::from)
         .map(TenantConfigBundleVo::from)
@@ -141,9 +143,9 @@ async fn get_package(
 }
 
 #[get("/{id}/download")]
-#[perm("system:config-package:download")]
-#[utoipa::path(get, path = "/api/v1/system/config-packages/{id}/download", tag = "租户配置迁移",
-    params(("id" = String, Path, description = "配置包 ID")),
+#[perm("platform:config-package:download")]
+#[utoipa::path(get, path = "/api/v1/platform/tenants/{tenant_id}/config-packages/{id}/download", tag = "租户配置迁移",
+    params(("tenant_id" = String, Path, description = "目标租户标识"), ("id" = String, Path, description = "配置包 ID")),
     responses(
         (status = 200, description = "配置包文件", body = Vec<u8>, content_type = "application/zip"),
         (status = 400, description = "配置包 ID 无效"),
@@ -156,25 +158,23 @@ async fn get_package(
 async fn download_package(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<String>,
+    Path((tenant_id, id)): Path<(String, String)>,
 ) -> HttpResult<axum::response::Response> {
+    let scope = TenantConfigScope::new(&current_user, &tenant_id)?;
     let file = state
         .services
         .platform
         .tenant_config_transfer
-        .download_bundle(
-            &current_user,
-            parse_positive_id(&id, "配置包 ID 必须是正整数")?,
-        )
+        .download_bundle(&scope, parse_positive_id(&id, "配置包 ID 必须是正整数")?)
         .await
         .map_err(crate::http::HttpAppError::from)?;
     attachment_response(file.data, &file.original_name, CONFIG_PACKAGE_CONTENT_TYPE)
 }
 
 #[post("/upload")]
-#[perm("system:config-transfer:add")]
-#[utoipa::path(post, path = "/api/v1/system/config-transfers/upload", tag = "租户配置迁移",
-    params(("Idempotency-Key" = String, Header, description = "配置包上传幂等键")),
+#[perm("platform:config-transfer:add")]
+#[utoipa::path(post, path = "/api/v1/platform/tenants/{tenant_id}/config-transfers/upload", tag = "租户配置迁移",
+    params(("tenant_id" = String, Path, description = "目标租户标识"), ("Idempotency-Key" = String, Header, description = "配置包上传幂等键")),
     request_body(content = TenantConfigPackageUploadForm, content_type = "multipart/form-data"),
     responses(
         (status = 202, description = "配置迁移已创建", body = ApiResponse<TenantConfigTransferVo>),
@@ -188,9 +188,11 @@ async fn download_package(
 async fn upload_transfer(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
+    Path(tenant_id): Path<String>,
     headers: HeaderMap,
     multipart: Result<Multipart, MultipartRejection>,
 ) -> HttpResult<(StatusCode, Json<ApiResponse<TenantConfigTransferVo>>)> {
+    let scope = TenantConfigScope::new(&current_user, &tenant_id)?;
     let mut multipart = multipart?;
     let idempotency_hash = idempotency_key_hash(&headers)?;
     let mut package = None;
@@ -253,7 +255,7 @@ async fn upload_transfer(
         .services
         .platform
         .tenant_config_transfer
-        .upload_package_and_create_transfer(&current_user, file_name, data, &idempotency_hash)
+        .upload_package_and_create_transfer(&scope, file_name, data, &idempotency_hash)
         .await
         .map_err(crate::http::HttpAppError::from)?;
     Ok((
@@ -263,9 +265,9 @@ async fn upload_transfer(
 }
 
 #[post("/from-package")]
-#[perm("system:config-transfer:add")]
-#[utoipa::path(post, path = "/api/v1/system/config-transfers/from-package", tag = "租户配置迁移",
-    params(("Idempotency-Key" = String, Header, description = "配置迁移创建幂等键")),
+#[perm("platform:config-transfer:add")]
+#[utoipa::path(post, path = "/api/v1/platform/tenants/{tenant_id}/config-transfers/from-package", tag = "租户配置迁移",
+    params(("tenant_id" = String, Path, description = "目标租户标识"), ("Idempotency-Key" = String, Header, description = "配置迁移创建幂等键")),
     request_body = CreateTenantConfigTransferDto,
     responses(
         (status = 202, description = "配置迁移已创建", body = ApiResponse<TenantConfigTransferVo>),
@@ -279,15 +281,17 @@ async fn upload_transfer(
 async fn create_transfer_from_package(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
+    Path(tenant_id): Path<String>,
     headers: HeaderMap,
     Json(request): Json<CreateTenantConfigTransferDto>,
 ) -> HttpResult<(StatusCode, Json<ApiResponse<TenantConfigTransferVo>>)> {
+    let scope = TenantConfigScope::new(&current_user, &tenant_id)?;
     let outcome = state
         .services
         .platform
         .tenant_config_transfer
         .create_transfer_from_package(
-            &current_user,
+            &scope,
             parse_positive_id(&request.bundle_id, "配置包 ID 必须是正整数")?,
             &idempotency_key_hash(&headers)?,
         )
@@ -300,9 +304,9 @@ async fn create_transfer_from_package(
 }
 
 #[get("/")]
-#[perm("system:config-transfer:list")]
-#[utoipa::path(get, path = "/api/v1/system/config-transfers", tag = "租户配置迁移",
-    params(TenantConfigPageQuery),
+#[perm("platform:config-transfer:list")]
+#[utoipa::path(get, path = "/api/v1/platform/tenants/{tenant_id}/config-transfers", tag = "租户配置迁移",
+    params(("tenant_id" = String, Path, description = "目标租户标识"), TenantConfigPageQuery),
     responses(
         (status = 200, description = "配置迁移列表", body = ApiPageResponse<TenantConfigTransferVo>),
         (status = 400, description = "分页参数无效"),
@@ -312,13 +316,15 @@ async fn create_transfer_from_package(
 async fn list_transfers(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
+    Path(tenant_id): Path<String>,
     Query(query): Query<TenantConfigPageQuery>,
 ) -> HttpResult<Json<ApiPageResponse<TenantConfigTransferVo>>> {
+    let scope = TenantConfigScope::new(&current_user, &tenant_id)?;
     let page = state
         .services
         .platform
         .tenant_config_transfer
-        .list_transfers(&current_user, query.into_page(state.settings.pagination)?)
+        .list_transfers(&scope, query.into_page(state.settings.pagination)?)
         .await
         .map_err(crate::http::HttpAppError::from)?;
     Ok(Json(page_response(
@@ -331,9 +337,9 @@ async fn list_transfers(
 }
 
 #[get("/{id}")]
-#[perm("system:config-transfer:list")]
-#[utoipa::path(get, path = "/api/v1/system/config-transfers/{id}", tag = "租户配置迁移",
-    params(("id" = String, Path, description = "配置迁移 ID")),
+#[perm("platform:config-transfer:list")]
+#[utoipa::path(get, path = "/api/v1/platform/tenants/{tenant_id}/config-transfers/{id}", tag = "租户配置迁移",
+    params(("tenant_id" = String, Path, description = "目标租户标识"), ("id" = String, Path, description = "配置迁移 ID")),
     responses(
         (status = 200, description = "配置迁移详情", body = ApiResponse<TenantConfigTransferVo>),
         (status = 400, description = "配置迁移 ID 无效"),
@@ -344,16 +350,14 @@ async fn list_transfers(
 async fn get_transfer(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<String>,
+    Path((tenant_id, id)): Path<(String, String)>,
 ) -> HttpResult<Json<ApiResponse<TenantConfigTransferVo>>> {
+    let scope = TenantConfigScope::new(&current_user, &tenant_id)?;
     state
         .services
         .platform
         .tenant_config_transfer
-        .get_transfer(
-            &current_user,
-            parse_positive_id(&id, "配置迁移 ID 必须是正整数")?,
-        )
+        .get_transfer(&scope, parse_positive_id(&id, "配置迁移 ID 必须是正整数")?)
         .await
         .map_err(crate::http::HttpAppError::from)
         .map(TenantConfigTransferVo::from)
@@ -362,9 +366,9 @@ async fn get_transfer(
 }
 
 #[get("/{id}/items")]
-#[perm("system:config-transfer:list")]
-#[utoipa::path(get, path = "/api/v1/system/config-transfers/{id}/items", tag = "租户配置迁移",
-    params(("id" = String, Path, description = "配置迁移 ID"), TenantConfigPageQuery),
+#[perm("platform:config-transfer:list")]
+#[utoipa::path(get, path = "/api/v1/platform/tenants/{tenant_id}/config-transfers/{id}/items", tag = "租户配置迁移",
+    params(("tenant_id" = String, Path, description = "目标租户标识"), ("id" = String, Path, description = "配置迁移 ID"), TenantConfigPageQuery),
     responses(
         (status = 200, description = "配置迁移明细", body = ApiPageResponse<TenantConfigTransferItemVo>),
         (status = 400, description = "配置迁移 ID 或分页参数无效"),
@@ -375,15 +379,16 @@ async fn get_transfer(
 async fn list_transfer_items(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<String>,
+    Path((tenant_id, id)): Path<(String, String)>,
     Query(query): Query<TenantConfigPageQuery>,
 ) -> HttpResult<Json<ApiPageResponse<TenantConfigTransferItemVo>>> {
+    let scope = TenantConfigScope::new(&current_user, &tenant_id)?;
     let page = state
         .services
         .platform
         .tenant_config_transfer
         .list_transfer_items(
-            &current_user,
+            &scope,
             parse_positive_id(&id, "配置迁移 ID 必须是正整数")?,
             query.into_page(state.settings.pagination)?,
         )
@@ -399,9 +404,9 @@ async fn list_transfer_items(
 }
 
 #[post("/{id}/preview")]
-#[perm("system:config-transfer:preview")]
-#[utoipa::path(post, path = "/api/v1/system/config-transfers/{id}/preview", tag = "租户配置迁移",
-    params(("id" = String, Path, description = "配置迁移 ID"), ("Idempotency-Key" = String, Header, description = "配置预览幂等键")),
+#[perm("platform:config-transfer:preview")]
+#[utoipa::path(post, path = "/api/v1/platform/tenants/{tenant_id}/config-transfers/{id}/preview", tag = "租户配置迁移",
+    params(("tenant_id" = String, Path, description = "目标租户标识"), ("id" = String, Path, description = "配置迁移 ID"), ("Idempotency-Key" = String, Header, description = "配置预览幂等键")),
     request_body = EmptyRequestDto,
     responses(
         (status = 202, description = "配置预览任务已创建", body = ApiResponse<TenantConfigTransferVo>),
@@ -415,16 +420,17 @@ async fn list_transfer_items(
 async fn request_preview(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<String>,
+    Path((tenant_id, id)): Path<(String, String)>,
     headers: HeaderMap,
     Json(_request): Json<EmptyRequestDto>,
 ) -> HttpResult<(StatusCode, Json<ApiResponse<TenantConfigTransferVo>>)> {
+    let scope = TenantConfigScope::new(&current_user, &tenant_id)?;
     let transfer = state
         .services
         .platform
         .tenant_config_transfer
         .request_preview(
-            &current_user,
+            &scope,
             parse_positive_id(&id, "配置迁移 ID 必须是正整数")?,
             &idempotency_key_hash(&headers)?,
         )
@@ -437,9 +443,9 @@ async fn request_preview(
 }
 
 #[post("/{id}/apply")]
-#[perm("system:config-transfer:apply")]
-#[utoipa::path(post, path = "/api/v1/system/config-transfers/{id}/apply", tag = "租户配置迁移",
-    params(("id" = String, Path, description = "配置迁移 ID"), ("Idempotency-Key" = String, Header, description = "配置应用幂等键")),
+#[perm("platform:config-transfer:apply")]
+#[utoipa::path(post, path = "/api/v1/platform/tenants/{tenant_id}/config-transfers/{id}/apply", tag = "租户配置迁移",
+    params(("tenant_id" = String, Path, description = "目标租户标识"), ("id" = String, Path, description = "配置迁移 ID"), ("Idempotency-Key" = String, Header, description = "配置应用幂等键")),
     request_body = ApplyTenantConfigTransferDto,
     responses(
         (status = 202, description = "配置应用任务已创建", body = ApiResponse<TenantConfigTransferVo>),
@@ -453,16 +459,17 @@ async fn request_preview(
 async fn request_apply(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<String>,
+    Path((tenant_id, id)): Path<(String, String)>,
     headers: HeaderMap,
     Json(request): Json<ApplyTenantConfigTransferDto>,
 ) -> HttpResult<(StatusCode, Json<ApiResponse<TenantConfigTransferVo>>)> {
+    let scope = TenantConfigScope::new(&current_user, &tenant_id)?;
     let transfer = state
         .services
         .platform
         .tenant_config_transfer
         .request_apply(
-            &current_user,
+            &scope,
             parse_positive_id(&id, "配置迁移 ID 必须是正整数")?,
             ApplyTenantConfigTransferCommand {
                 plan_hash: request.plan_hash,
@@ -482,9 +489,9 @@ async fn request_apply(
 }
 
 #[post("/{id}/rollback")]
-#[perm("system:config-transfer:rollback")]
-#[utoipa::path(post, path = "/api/v1/system/config-transfers/{id}/rollback", tag = "租户配置迁移",
-    params(("id" = String, Path, description = "配置迁移 ID"), ("Idempotency-Key" = String, Header, description = "配置回滚幂等键")),
+#[perm("platform:config-transfer:rollback")]
+#[utoipa::path(post, path = "/api/v1/platform/tenants/{tenant_id}/config-transfers/{id}/rollback", tag = "租户配置迁移",
+    params(("tenant_id" = String, Path, description = "目标租户标识"), ("id" = String, Path, description = "配置迁移 ID"), ("Idempotency-Key" = String, Header, description = "配置回滚幂等键")),
     request_body = EmptyRequestDto,
     responses(
         (status = 202, description = "配置回滚任务已创建", body = ApiResponse<TenantConfigTransferVo>),
@@ -498,16 +505,17 @@ async fn request_apply(
 async fn request_rollback(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
-    Path(id): Path<String>,
+    Path((tenant_id, id)): Path<(String, String)>,
     headers: HeaderMap,
     Json(_request): Json<EmptyRequestDto>,
 ) -> HttpResult<(StatusCode, Json<ApiResponse<TenantConfigTransferVo>>)> {
+    let scope = TenantConfigScope::new(&current_user, &tenant_id)?;
     let transfer = state
         .services
         .platform
         .tenant_config_transfer
         .request_rollback(
-            &current_user,
+            &scope,
             parse_positive_id(&id, "配置迁移 ID 必须是正整数")?,
             &idempotency_key_hash(&headers)?,
         )

@@ -24996,6 +24996,2343 @@
         ]
       }
     },
+    "/api/v1/platform/tenants/{tenant_id}/config-packages": {
+      "get": {
+        "operationId": "get_platform_tenants_by_tenant_id_config_packages",
+        "parameters": [
+          {
+            "description": "目标租户标识",
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiPageResponse_TenantConfigBundleVo"
+                }
+              }
+            },
+            "description": "配置包列表",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "分页参数无效",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "没有配置包列表权限",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "租户配置迁移"
+        ]
+      },
+      "post": {
+        "operationId": "post_platform_tenants_by_tenant_id_config_packages",
+        "parameters": [
+          {
+            "description": "目标租户标识",
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "配置包导出幂等键",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TenantConfigBundleVo"
+                }
+              }
+            },
+            "description": "配置包导出任务已创建",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "幂等键格式无效",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "没有配置包导出权限",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "同一幂等键对应不同请求",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "数据库、对象存储或后台任务服务不可用",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "租户配置迁移"
+        ]
+      }
+    },
+    "/api/v1/platform/tenants/{tenant_id}/config-packages/{id}": {
+      "get": {
+        "operationId": "get_platform_tenants_by_tenant_id_config_packages_by_id",
+        "parameters": [
+          {
+            "description": "目标租户标识",
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "配置包 ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TenantConfigBundleVo"
+                }
+              }
+            },
+            "description": "配置包详情",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "配置包 ID 无效",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "没有配置包列表权限",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "配置包不存在或不属于当前租户",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "租户配置迁移"
+        ]
+      }
+    },
+    "/api/v1/platform/tenants/{tenant_id}/config-packages/{id}/download": {
+      "get": {
+        "operationId": "get_platform_tenants_by_tenant_id_config_packages_by_id_download",
+        "parameters": [
+          {
+            "description": "目标租户标识",
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "配置包 ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "items": {
+                    "format": "int32",
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "配置包文件",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "配置包 ID 无效",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "没有配置包下载权限",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "配置包或文件不存在",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "配置包尚未生成或文件已经过期",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "对象存储不可用",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "租户配置迁移"
+        ]
+      }
+    },
+    "/api/v1/platform/tenants/{tenant_id}/config-transfers": {
+      "get": {
+        "operationId": "get_platform_tenants_by_tenant_id_config_transfers",
+        "parameters": [
+          {
+            "description": "目标租户标识",
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiPageResponse_TenantConfigTransferVo"
+                }
+              }
+            },
+            "description": "配置迁移列表",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "分页参数无效",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "没有配置迁移列表权限",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "租户配置迁移"
+        ]
+      }
+    },
+    "/api/v1/platform/tenants/{tenant_id}/config-transfers/from-package": {
+      "post": {
+        "operationId": "post_platform_tenants_by_tenant_id_config_transfers_from_package",
+        "parameters": [
+          {
+            "description": "目标租户标识",
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "配置迁移创建幂等键",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTenantConfigTransferDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TenantConfigTransferVo"
+                }
+              }
+            },
+            "description": "配置迁移已创建",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "配置包 ID 或幂等键无效",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "没有配置迁移创建权限",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "配置包不存在或不属于当前租户",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "配置包状态或幂等结果冲突",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "数据库或后台任务服务不可用",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "租户配置迁移"
+        ]
+      }
+    },
+    "/api/v1/platform/tenants/{tenant_id}/config-transfers/upload": {
+      "post": {
+        "operationId": "post_platform_tenants_by_tenant_id_config_transfers_upload",
+        "parameters": [
+          {
+            "description": "目标租户标识",
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "配置包上传幂等键",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/TenantConfigPackageUploadForm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TenantConfigTransferVo"
+                }
+              }
+            },
+            "description": "配置迁移已创建",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "上传表单、幂等键或配置包无效",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "没有配置迁移创建权限",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "幂等冲突或当前配置状态冲突",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "配置包压缩或解压大小超过限制",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "数据库、对象存储或后台任务服务不可用",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "租户配置迁移"
+        ]
+      }
+    },
+    "/api/v1/platform/tenants/{tenant_id}/config-transfers/{id}": {
+      "get": {
+        "operationId": "get_platform_tenants_by_tenant_id_config_transfers_by_id",
+        "parameters": [
+          {
+            "description": "目标租户标识",
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "配置迁移 ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TenantConfigTransferVo"
+                }
+              }
+            },
+            "description": "配置迁移详情",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "配置迁移 ID 无效",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "没有配置迁移列表权限",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "配置迁移不存在或不属于当前租户",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "租户配置迁移"
+        ]
+      }
+    },
+    "/api/v1/platform/tenants/{tenant_id}/config-transfers/{id}/apply": {
+      "post": {
+        "operationId": "post_platform_tenants_by_tenant_id_config_transfers_by_id_apply",
+        "parameters": [
+          {
+            "description": "目标租户标识",
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "配置迁移 ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "配置应用幂等键",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyTenantConfigTransferDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TenantConfigTransferVo"
+                }
+              }
+            },
+            "description": "配置应用任务已创建",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数、计划哈希或幂等键无效",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "没有配置迁移应用权限",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "配置迁移不存在或不属于当前租户",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "预览、目标版本、租约或迁移状态冲突",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "数据库、对象存储或后台任务服务不可用",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "租户配置迁移"
+        ]
+      }
+    },
+    "/api/v1/platform/tenants/{tenant_id}/config-transfers/{id}/items": {
+      "get": {
+        "operationId": "get_platform_tenants_by_tenant_id_config_transfers_by_id_items",
+        "parameters": [
+          {
+            "description": "目标租户标识",
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "配置迁移 ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiPageResponse_TenantConfigTransferItemVo"
+                }
+              }
+            },
+            "description": "配置迁移明细",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "配置迁移 ID 或分页参数无效",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "没有配置迁移列表权限",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "配置迁移不存在或不属于当前租户",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "租户配置迁移"
+        ]
+      }
+    },
+    "/api/v1/platform/tenants/{tenant_id}/config-transfers/{id}/preview": {
+      "post": {
+        "operationId": "post_platform_tenants_by_tenant_id_config_transfers_by_id_preview",
+        "parameters": [
+          {
+            "description": "目标租户标识",
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "配置迁移 ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "配置预览幂等键",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TenantConfigTransferVo"
+                }
+              }
+            },
+            "description": "配置预览任务已创建",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "配置迁移 ID 或幂等键无效",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "没有配置迁移预览权限",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "配置迁移不存在或不属于当前租户",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "预览任务、配置版本或迁移状态冲突",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "数据库或后台任务服务不可用",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "租户配置迁移"
+        ]
+      }
+    },
+    "/api/v1/platform/tenants/{tenant_id}/config-transfers/{id}/rollback": {
+      "post": {
+        "operationId": "post_platform_tenants_by_tenant_id_config_transfers_by_id_rollback",
+        "parameters": [
+          {
+            "description": "目标租户标识",
+            "in": "path",
+            "name": "tenant_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "配置迁移 ID",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "配置回滚幂等键",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TenantConfigTransferVo"
+                }
+              }
+            },
+            "description": "配置回滚任务已创建",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "配置迁移 ID 或幂等键无效",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "没有配置迁移回滚权限",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "配置迁移或回滚快照不存在",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "回滚窗口、引用、版本、租约或迁移状态冲突",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "数据库、对象存储或后台任务服务不可用",
+            "headers": {
+              "X-Authorization-Epoch": {
+                "description": "本次响应所依据的租户授权纪元",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-Generation": {
+                "description": "本次响应所依据的租户数据放置代次",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Data-State": {
+                "description": "本次响应所依据的租户业务数据状态",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Tenant-Runtime-Epoch": {
+                "description": "本次响应所依据的租户产品运行纪元",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "租户配置迁移"
+        ]
+      }
+    },
     "/api/v1/platform/tenants/{tenant_id}/data-migration-previews": {
       "post": {
         "operationId": "post_platform_tenants_by_tenant_id_data_migration_previews",
@@ -26303,2235 +28640,6 @@
         ],
         "tags": [
           "权限诊断"
-        ]
-      }
-    },
-    "/api/v1/system/config-packages": {
-      "get": {
-        "operationId": "get_system_config_packages",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "page",
-            "required": false,
-            "schema": {
-              "format": "int64",
-              "minimum": 1,
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "page_size",
-            "required": false,
-            "schema": {
-              "format": "int64",
-              "minimum": 1,
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiPageResponse_TenantConfigBundleVo"
-                }
-              }
-            },
-            "description": "配置包列表",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "分页参数无效",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "没有配置包列表权限",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "租户配置迁移"
-        ]
-      },
-      "post": {
-        "operationId": "post_system_config_packages",
-        "parameters": [
-          {
-            "description": "配置包导出幂等键",
-            "in": "header",
-            "name": "Idempotency-Key",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_TenantConfigBundleVo"
-                }
-              }
-            },
-            "description": "配置包导出任务已创建",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "幂等键格式无效",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "没有配置包导出权限",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "同一幂等键对应不同请求",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "数据库、对象存储或后台任务服务不可用",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "租户配置迁移"
-        ]
-      }
-    },
-    "/api/v1/system/config-packages/{id}": {
-      "get": {
-        "operationId": "get_system_config_packages_by_id",
-        "parameters": [
-          {
-            "description": "配置包 ID",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_TenantConfigBundleVo"
-                }
-              }
-            },
-            "description": "配置包详情",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "配置包 ID 无效",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "没有配置包列表权限",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "配置包不存在或不属于当前租户",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "租户配置迁移"
-        ]
-      }
-    },
-    "/api/v1/system/config-packages/{id}/download": {
-      "get": {
-        "operationId": "get_system_config_packages_by_id_download",
-        "parameters": [
-          {
-            "description": "配置包 ID",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/zip": {
-                "schema": {
-                  "items": {
-                    "format": "int32",
-                    "minimum": 0,
-                    "type": "integer"
-                  },
-                  "type": "array"
-                }
-              }
-            },
-            "description": "配置包文件",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "配置包 ID 无效",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "没有配置包下载权限",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "配置包或文件不存在",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "配置包尚未生成或文件已经过期",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "对象存储不可用",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "租户配置迁移"
-        ]
-      }
-    },
-    "/api/v1/system/config-transfers": {
-      "get": {
-        "operationId": "get_system_config_transfers",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "page",
-            "required": false,
-            "schema": {
-              "format": "int64",
-              "minimum": 1,
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "page_size",
-            "required": false,
-            "schema": {
-              "format": "int64",
-              "minimum": 1,
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiPageResponse_TenantConfigTransferVo"
-                }
-              }
-            },
-            "description": "配置迁移列表",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "分页参数无效",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "没有配置迁移列表权限",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "租户配置迁移"
-        ]
-      }
-    },
-    "/api/v1/system/config-transfers/from-package": {
-      "post": {
-        "operationId": "post_system_config_transfers_from_package",
-        "parameters": [
-          {
-            "description": "配置迁移创建幂等键",
-            "in": "header",
-            "name": "Idempotency-Key",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CreateTenantConfigTransferDto"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_TenantConfigTransferVo"
-                }
-              }
-            },
-            "description": "配置迁移已创建",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "配置包 ID 或幂等键无效",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "没有配置迁移创建权限",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "配置包不存在或不属于当前租户",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "配置包状态或幂等结果冲突",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "数据库或后台任务服务不可用",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "租户配置迁移"
-        ]
-      }
-    },
-    "/api/v1/system/config-transfers/upload": {
-      "post": {
-        "operationId": "post_system_config_transfers_upload",
-        "parameters": [
-          {
-            "description": "配置包上传幂等键",
-            "in": "header",
-            "name": "Idempotency-Key",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/TenantConfigPackageUploadForm"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_TenantConfigTransferVo"
-                }
-              }
-            },
-            "description": "配置迁移已创建",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "上传表单、幂等键或配置包无效",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "没有配置迁移创建权限",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "幂等冲突或当前配置状态冲突",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "413": {
-            "description": "配置包压缩或解压大小超过限制",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "数据库、对象存储或后台任务服务不可用",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "租户配置迁移"
-        ]
-      }
-    },
-    "/api/v1/system/config-transfers/{id}": {
-      "get": {
-        "operationId": "get_system_config_transfers_by_id",
-        "parameters": [
-          {
-            "description": "配置迁移 ID",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_TenantConfigTransferVo"
-                }
-              }
-            },
-            "description": "配置迁移详情",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "配置迁移 ID 无效",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "没有配置迁移列表权限",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "配置迁移不存在或不属于当前租户",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "租户配置迁移"
-        ]
-      }
-    },
-    "/api/v1/system/config-transfers/{id}/apply": {
-      "post": {
-        "operationId": "post_system_config_transfers_by_id_apply",
-        "parameters": [
-          {
-            "description": "配置迁移 ID",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "配置应用幂等键",
-            "in": "header",
-            "name": "Idempotency-Key",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ApplyTenantConfigTransferDto"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_TenantConfigTransferVo"
-                }
-              }
-            },
-            "description": "配置应用任务已创建",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "请求参数、计划哈希或幂等键无效",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "没有配置迁移应用权限",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "配置迁移不存在或不属于当前租户",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "预览、目标版本、租约或迁移状态冲突",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "数据库、对象存储或后台任务服务不可用",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "租户配置迁移"
-        ]
-      }
-    },
-    "/api/v1/system/config-transfers/{id}/items": {
-      "get": {
-        "operationId": "get_system_config_transfers_by_id_items",
-        "parameters": [
-          {
-            "description": "配置迁移 ID",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "page",
-            "required": false,
-            "schema": {
-              "format": "int64",
-              "minimum": 1,
-              "type": "integer"
-            }
-          },
-          {
-            "in": "query",
-            "name": "page_size",
-            "required": false,
-            "schema": {
-              "format": "int64",
-              "minimum": 1,
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiPageResponse_TenantConfigTransferItemVo"
-                }
-              }
-            },
-            "description": "配置迁移明细",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "配置迁移 ID 或分页参数无效",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "没有配置迁移列表权限",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "配置迁移不存在或不属于当前租户",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "租户配置迁移"
-        ]
-      }
-    },
-    "/api/v1/system/config-transfers/{id}/preview": {
-      "post": {
-        "operationId": "post_system_config_transfers_by_id_preview",
-        "parameters": [
-          {
-            "description": "配置迁移 ID",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "配置预览幂等键",
-            "in": "header",
-            "name": "Idempotency-Key",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EmptyRequestDto"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_TenantConfigTransferVo"
-                }
-              }
-            },
-            "description": "配置预览任务已创建",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "配置迁移 ID 或幂等键无效",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "没有配置迁移预览权限",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "配置迁移不存在或不属于当前租户",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "预览任务、配置版本或迁移状态冲突",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "数据库或后台任务服务不可用",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "租户配置迁移"
-        ]
-      }
-    },
-    "/api/v1/system/config-transfers/{id}/rollback": {
-      "post": {
-        "operationId": "post_system_config_transfers_by_id_rollback",
-        "parameters": [
-          {
-            "description": "配置迁移 ID",
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "配置回滚幂等键",
-            "in": "header",
-            "name": "Idempotency-Key",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EmptyRequestDto"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_TenantConfigTransferVo"
-                }
-              }
-            },
-            "description": "配置回滚任务已创建",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "配置迁移 ID 或幂等键无效",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "没有配置迁移回滚权限",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "配置迁移或回滚快照不存在",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "回滚窗口、引用、版本、租约或迁移状态冲突",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          },
-          "503": {
-            "description": "数据库、对象存储或后台任务服务不可用",
-            "headers": {
-              "X-Authorization-Epoch": {
-                "description": "本次响应所依据的租户授权纪元",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-Generation": {
-                "description": "本次响应所依据的租户数据放置代次",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Data-State": {
-                "description": "本次响应所依据的租户业务数据状态",
-                "schema": {
-                  "type": "string"
-                }
-              },
-              "X-Tenant-Runtime-Epoch": {
-                "description": "本次响应所依据的租户产品运行纪元",
-                "schema": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "tags": [
-          "租户配置迁移"
         ]
       }
     },
@@ -35696,6 +35804,15 @@
       {
         "capability_code": null,
         "menu_type": "C",
+        "name": "配置迁移",
+        "page_key": "platform.config-transfer",
+        "permission_code": "platform:config-transfer:list",
+        "route_key": "platform.config-transfer",
+        "title_key": "configTransfer"
+      },
+      {
+        "capability_code": null,
+        "menu_type": "C",
         "name": "数据目标",
         "page_key": "platform.data-targets",
         "permission_code": "tenant:data-placement:view",
@@ -35746,15 +35863,6 @@
         "permission_code": "system:config:list",
         "route_key": "system.config",
         "title_key": "config"
-      },
-      {
-        "capability_code": null,
-        "menu_type": "C",
-        "name": "配置迁移",
-        "page_key": "system.config-transfer",
-        "permission_code": "system:config-transfer:list",
-        "route_key": "system.config-transfer",
-        "title_key": "configTransfer"
       },
       {
         "capability_code": "system.dept",
@@ -35887,19 +35995,19 @@
       "monitor:schedule:remove",
       "monitor:schedule:run",
       "monitor:server:list",
+      "platform:config-package:download",
+      "platform:config-package:export",
+      "platform:config-package:list",
+      "platform:config-transfer:add",
+      "platform:config-transfer:apply",
+      "platform:config-transfer:list",
+      "platform:config-transfer:preview",
+      "platform:config-transfer:rollback",
       "platform:product-plan:add",
       "platform:product-plan:edit",
       "platform:product-plan:list",
       "platform:product-plan:publish",
       "system:authorization-diagnostic:list",
-      "system:config-package:download",
-      "system:config-package:export",
-      "system:config-package:list",
-      "system:config-transfer:add",
-      "system:config-transfer:apply",
-      "system:config-transfer:list",
-      "system:config-transfer:preview",
-      "system:config-transfer:rollback",
       "system:config:add",
       "system:config:edit",
       "system:config:export",

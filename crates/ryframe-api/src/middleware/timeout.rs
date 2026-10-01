@@ -43,10 +43,11 @@ pub fn request_timeout_seconds(config: &UploadSettings, path: &str) -> u64 {
     if api_path.is_some_and(|path| path.starts_with("/common/upload"))
         || matches!(
             api_path,
-            Some(
-                "/auth/profile/avatar" | "/system/user-imports" | "/system/config-transfers/upload"
-            )
+            Some("/auth/profile/avatar" | "/system/user-imports")
         )
+        || api_path.is_some_and(|path| {
+            path.starts_with("/platform/tenants/") && path.ends_with("/config-transfers/upload")
+        })
     {
         config.upload_timeout_seconds
     } else {

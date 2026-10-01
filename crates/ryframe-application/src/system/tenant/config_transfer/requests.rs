@@ -9,11 +9,12 @@ use cleanup::clear_superseded_dead_operation_jobs;
 impl TenantConfigTransferService {
     pub async fn request_package_export(
         &self,
-        actor: &ActorContext,
+        scope: &TenantConfigScope,
         idempotency_key_hash: &str,
     ) -> AppResult<RequestTenantConfigBundleOutcome> {
         validate_sha256(idempotency_key_hash)?;
-        let tenant_id = crate::validated_tenant_id(actor)?;
+        let actor = scope.operator();
+        let tenant_id = scope.tenant_id();
         let transaction = self.persistence.begin().await?;
         let operation = async {
             transaction
@@ -107,13 +108,14 @@ impl TenantConfigTransferService {
 
     pub async fn upload_package_and_create_transfer(
         &self,
-        actor: &ActorContext,
+        scope: &TenantConfigScope,
         original_name: String,
         data: Vec<u8>,
         idempotency_key_hash: &str,
     ) -> AppResult<RequestTenantConfigTransferOutcome> {
         validate_sha256(idempotency_key_hash)?;
-        let tenant_id = crate::validated_tenant_id(actor)?;
+        let actor = scope.operator();
+        let tenant_id = scope.tenant_id();
         let (parsed, data) =
             crate::system::tenant::config_package::parse_tenant_config_package_with_source(
                 Arc::clone(&self.archive),
@@ -148,7 +150,7 @@ impl TenantConfigTransferService {
             .await?;
         let file_id = parse_file_id(&uploaded.file_id)?;
         let result = self
-            .insert_uploaded_bundle_and_transfer(actor, file_id, parsed, idempotency_key_hash)
+            .insert_uploaded_bundle_and_transfer(scope, file_id, parsed, idempotency_key_hash)
             .await;
         if match result.as_ref() {
             Ok(outcome) => !outcome.inserted,
@@ -221,12 +223,13 @@ impl TenantConfigTransferService {
 
     pub async fn create_transfer_from_package(
         &self,
-        actor: &ActorContext,
+        scope: &TenantConfigScope,
         bundle_id: i64,
         idempotency_key_hash: &str,
     ) -> AppResult<RequestTenantConfigTransferOutcome> {
         validate_sha256(idempotency_key_hash)?;
-        let tenant_id = crate::validated_tenant_id(actor)?;
+        let actor = scope.operator();
+        let tenant_id = scope.tenant_id();
         let parsed = self.load_bundle_package(tenant_id, bundle_id).await?;
         let request_fingerprint =
             transfer_request_fingerprint(REQUEST_KIND_FROM_PACKAGE, bundle_id);
@@ -302,12 +305,13 @@ impl TenantConfigTransferService {
 
     async fn insert_uploaded_bundle_and_transfer(
         &self,
-        actor: &ActorContext,
+        scope: &TenantConfigScope,
         file_id: i64,
         parsed: ParsedTenantConfigPackage,
         idempotency_key_hash: &str,
     ) -> AppResult<RequestTenantConfigTransferOutcome> {
-        let tenant_id = crate::validated_tenant_id(actor)?;
+        let actor = scope.operator();
+        let tenant_id = scope.tenant_id();
         let transaction = self.persistence.begin().await?;
         let operation = async {
             let fence = transaction
@@ -389,14 +393,15 @@ impl TenantConfigTransferService {
 
     pub(super) async fn enqueue_transfer_operation(
         &self,
-        actor: &ActorContext,
+        scope: &TenantConfigScope,
         transfer_id: i64,
         idempotency_key_hash: &str,
         job_type: &'static str,
         operation: TransferOperationRequest,
     ) -> AppResult<TenantConfigTransferVo> {
         validate_sha256(idempotency_key_hash)?;
-        let tenant_id = crate::validated_tenant_id(actor)?;
+        let actor = scope.operator();
+        let tenant_id = scope.tenant_id();
         let transaction = self.persistence.begin().await?;
         let result = async {
             transaction

@@ -3,10 +3,10 @@ use super::*;
 impl TenantConfigTransferService {
     pub async fn list_bundles(
         &self,
-        actor: &ActorContext,
+        scope: &TenantConfigScope,
         page: ValidatedPageQuery,
     ) -> AppResult<PageResult<TenantConfigBundleVo>> {
-        let tenant_id = crate::validated_tenant_id(actor)?;
+        let tenant_id = scope.tenant_id();
         let page = self.persistence.bundle_page(tenant_id, page).await?;
         Ok(PageResult {
             records: page.records.into_iter().map(Into::into).collect(),
@@ -18,10 +18,10 @@ impl TenantConfigTransferService {
 
     pub async fn get_bundle(
         &self,
-        actor: &ActorContext,
+        scope: &TenantConfigScope,
         id: i64,
     ) -> AppResult<TenantConfigBundleVo> {
-        let tenant_id = crate::validated_tenant_id(actor)?;
+        let tenant_id = scope.tenant_id();
         self.persistence
             .find_bundle(tenant_id, id)
             .await?
@@ -31,10 +31,10 @@ impl TenantConfigTransferService {
 
     pub async fn download_bundle(
         &self,
-        actor: &ActorContext,
+        scope: &TenantConfigScope,
         id: i64,
     ) -> AppResult<DownloadedFile> {
-        let tenant_id = crate::validated_tenant_id(actor)?;
+        let tenant_id = scope.tenant_id();
         let bundle = self
             .persistence
             .find_bundle(tenant_id, id)
@@ -51,10 +51,10 @@ impl TenantConfigTransferService {
 
     pub async fn list_transfers(
         &self,
-        actor: &ActorContext,
+        scope: &TenantConfigScope,
         page: ValidatedPageQuery,
     ) -> AppResult<PageResult<TenantConfigTransferVo>> {
-        let tenant_id = crate::validated_tenant_id(actor)?;
+        let tenant_id = scope.tenant_id();
         let page = self.persistence.transfer_page(tenant_id, page).await?;
         let records = page.records;
         let bundle_ids = records
@@ -89,10 +89,10 @@ impl TenantConfigTransferService {
 
     pub async fn get_transfer(
         &self,
-        actor: &ActorContext,
+        scope: &TenantConfigScope,
         id: i64,
     ) -> AppResult<TenantConfigTransferVo> {
-        let tenant_id = crate::validated_tenant_id(actor)?;
+        let tenant_id = scope.tenant_id();
         let transfer = self
             .persistence
             .find_transfer(tenant_id, id)
@@ -108,11 +108,11 @@ impl TenantConfigTransferService {
 
     pub async fn list_transfer_items(
         &self,
-        actor: &ActorContext,
+        scope: &TenantConfigScope,
         transfer_id: i64,
         page: ValidatedPageQuery,
     ) -> AppResult<PageResult<TenantConfigTransferItemVo>> {
-        let tenant_id = crate::validated_tenant_id(actor)?;
+        let tenant_id = scope.tenant_id();
         self.ensure_transfer_visible(tenant_id, transfer_id).await?;
         let page = self
             .persistence

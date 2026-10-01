@@ -108,8 +108,6 @@ fn assign_standard_admin_permission(code: &str) -> bool {
         && code != "monitor:overview:list"
         && !code.starts_with("system:user-import:")
         && code != "system:authorization-diagnostic:list"
-        && !code.starts_with("system:config-package:")
-        && !code.starts_with("system:config-transfer:")
 }
 
 fn string_set(values: &[String]) -> HashSet<&str> {

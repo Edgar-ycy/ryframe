@@ -22,14 +22,14 @@ permissions = [
     "platform:product-plan:list",
     "platform:product-plan:publish",
     "system:authorization-diagnostic:list",
-    "system:config-package:download",
-    "system:config-package:export",
-    "system:config-package:list",
-    "system:config-transfer:add",
-    "system:config-transfer:apply",
-    "system:config-transfer:list",
-    "system:config-transfer:preview",
-    "system:config-transfer:rollback",
+    "platform:config-package:download",
+    "platform:config-package:export",
+    "platform:config-package:list",
+    "platform:config-transfer:add",
+    "platform:config-transfer:apply",
+    "platform:config-transfer:list",
+    "platform:config-transfer:preview",
+    "platform:config-transfer:rollback",
     "system:config:add",
     "system:config:edit",
     "system:config:export",
@@ -105,14 +105,14 @@ non_route_permissions = ["tenant:capability:override"]
 "platform:product-plan:list" = "产品套餐查询"
 "platform:product-plan:publish" = "产品套餐发布"
 "system:authorization-diagnostic:list" = "权限诊断查询"
-"system:config-package:download" = "配置包下载"
-"system:config-package:export" = "配置包生成"
-"system:config-package:list" = "配置包查询"
-"system:config-transfer:add" = "配置迁移新增"
-"system:config-transfer:apply" = "配置迁移应用"
-"system:config-transfer:list" = "配置迁移查询"
-"system:config-transfer:preview" = "配置迁移预览"
-"system:config-transfer:rollback" = "配置迁移回滚"
+"platform:config-package:download" = "配置包下载"
+"platform:config-package:export" = "配置包生成"
+"platform:config-package:list" = "配置包查询"
+"platform:config-transfer:add" = "配置迁移新增"
+"platform:config-transfer:apply" = "配置迁移应用"
+"platform:config-transfer:list" = "配置迁移查询"
+"platform:config-transfer:preview" = "配置迁移预览"
+"platform:config-transfer:rollback" = "配置迁移回滚"
 "system:message:publish" = "消息发布"
 "system:user-import:add" = "用户导入创建"
 "system:user-import:cancel" = "用户导入取消"
@@ -464,13 +464,13 @@ page_key = "system.config"
 permission = "system:config:list"
 
 [[menus]]
-route_key = "system.config-transfer"
-order = 10
+route_key = "platform.config-transfer"
+order = 15
 name = "配置迁移"
 title_key = "configTransfer"
 menu_type = "C"
-page_key = "system.config-transfer"
-permission = "system:config-transfer:list"
+page_key = "platform.config-transfer"
+permission = "platform:config-transfer:list"
 
 [[menus]]
 route_key = "platform.product-plans"

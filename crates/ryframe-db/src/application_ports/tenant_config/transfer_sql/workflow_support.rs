@@ -8,24 +8,34 @@ pub(crate) async fn ensure_requester_snapshot_in_txn(
     fence: TenantConfigurationFenceRecord,
     database_now: DateTime<Utc>,
 ) -> AppResult<()> {
-    if requester.tenant_id != tenant_id
-        || requester.tenant_authorization_epoch != fence.authorization_epoch
-    {
-        return Err(AppError::Conflict(
-            "申请人授权在执行期间发生变化，请重新发起操作".into(),
-        ));
+    if requester.tenant_id != "system" {
+        return Err(AppError::Conflict("配置迁移申请人必须属于系统租户".into()));
     }
-    let tenant = tenant::Entity::find()
+    let target = tenant::Entity::find()
         .filter(tenant::Column::TenantId.eq(tenant_id))
         .one(transaction)
         .await
         .db()?
-        .ok_or_else(|| AppError::NotFound("租户不存在".into()))?;
-    if !tenant.is_available(database_now) {
-        return Err(AppError::Authorization("申请人的租户已停用或到期".into()));
+        .ok_or_else(|| AppError::NotFound("目标租户不存在".into()))?;
+    if !target.is_available(database_now) || target.authorization_epoch != fence.authorization_epoch
+    {
+        return Err(AppError::Conflict("目标租户状态在执行期间发生变化".into()));
+    }
+    let operator_tenant = tenant::Entity::find()
+        .filter(tenant::Column::TenantId.eq("system"))
+        .one(transaction)
+        .await
+        .db()?
+        .ok_or_else(|| AppError::NotFound("系统租户不存在".into()))?;
+    if !operator_tenant.is_available(database_now)
+        || operator_tenant.authorization_epoch != requester.tenant_authorization_epoch
+    {
+        return Err(AppError::Authorization(
+            "申请人租户授权在执行期间发生变化".into(),
+        ));
     }
     let current_user = user::Entity::find_by_id(requester.user_id)
-        .filter(user::Column::TenantId.eq(tenant_id))
+        .filter(user::Column::TenantId.eq("system"))
         .filter(user::Column::DelFlag.eq(user::Model::DEL_FLAG_NORMAL))
         .one(transaction)
         .await

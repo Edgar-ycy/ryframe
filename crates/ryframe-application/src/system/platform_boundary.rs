@@ -10,8 +10,6 @@ pub fn is_platform_permission(code: &str) -> bool {
         "monitor:db-pool:",
         "monitor:runtime:",
         "monitor:overview:",
-        "system:config-package:",
-        "system:config-transfer:",
     ]
     .iter()
     .any(|prefix| code.starts_with(prefix))
@@ -22,8 +20,7 @@ pub fn is_platform_route(key: &str) -> bool {
         || key.starts_with("platform.")
         || matches!(
             key,
-            "system.config-transfer"
-                | "monitor.server"
+            "monitor.server"
                 | "monitor.cache"
                 | "monitor.db-pool"
                 | "monitor.runtime"
@@ -44,7 +41,7 @@ mod tests {
             "monitor:cache:list",
             "monitor:server:list",
             "monitor:db-pool:list",
-            "system:config-transfer:apply",
+            "platform:config-transfer:apply",
         ] {
             assert!(is_platform_permission(code));
         }

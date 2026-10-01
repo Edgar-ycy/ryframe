@@ -19,7 +19,7 @@ impl TenantConfigTransferService {
         let requester = self
             .user
             .resolve_current_authorization(
-                tenant_id,
+                "system",
                 transfer.requested_by,
                 TRANSFER_ROLLBACK_PERMISSION,
             )

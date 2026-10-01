@@ -68,7 +68,7 @@ fn rejects_platform_permissions_and_routes() {
     for code in [
         "tenant:read",
         "platform:product:list",
-        "system:config-transfer:list",
+        "platform:config-transfer:list",
         "monitor:server:list",
     ] {
         let resources = TenantConfigPackageResources {
@@ -77,7 +77,7 @@ fn rejects_platform_permissions_and_routes() {
         };
         assert_eq!(validation_message(&resources), "配置包不能包含平台专属权限");
     }
-    for route_key in ["platform", "platform.tenants", "system.config-transfer"] {
+    for route_key in ["platform", "platform.tenants", "platform.config-transfer"] {
         let mut route = menu(&route_menu_stable_key(route_key), "M", None);
         route.route_key = Some(route_key.into());
         let resources = TenantConfigPackageResources {
