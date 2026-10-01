@@ -44,9 +44,9 @@ class DatasetCliTests(unittest.TestCase):
         plan_path.write_bytes(encoded)
         dataset = self.root / "dataset.json"
         dataset.write_text("{}", encoding="utf-8")
-        scripts = self.root / "scripts"
-        scripts.mkdir()
-        (scripts / "restore_reference.py").write_text(
+        tools_python = self.root / "tools" / "python"
+        tools_python.mkdir(parents=True)
+        (tools_python / "restore_reference.py").write_text(
             "import json, os, sys\n"
             "assert sys.argv[1:] == []\n"
             "request = json.loads(os.environ.pop('RYFRAME_XTASK_RECOVERY_REFERENCE'))['request']\n"

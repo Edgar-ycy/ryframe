@@ -99,20 +99,20 @@ class StaticRuntimeTests(unittest.TestCase):
             self.verify()
 
     def test_cli_without_B_does_not_create_project_bytecode(self):
-        scripts = self.fixture.root / "scripts"
-        scripts.mkdir()
-        for source in runtime_tests.ROOT.joinpath("scripts").glob("*.py"):
-            shutil.copyfile(source, scripts / source.name)
+        tools_python = self.fixture.root / "tools" / "python"
+        tools_python.mkdir(parents=True)
+        for source in runtime_tests.ROOT.joinpath("tools", "python").glob("*.py"):
+            shutil.copyfile(source, tools_python / source.name)
         environment = dict(os.environ)
         environment.pop("PYTHONDONTWRITEBYTECODE", None)
         environment.pop("PYTHONPYCACHEPREFIX", None)
-        result = subprocess.run([sys.executable, "-X", "utf8", str(scripts / "restore_business_proof.py"), "--help"],
+        result = subprocess.run([sys.executable, "-X", "utf8", str(tools_python / "restore_business_proof.py"), "--help"],
                                 cwd=self.fixture.root, env=environment, stdin=subprocess.DEVNULL,
                                 capture_output=True, text=True, encoding="utf-8", timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--preflight", result.stdout)
-        self.assertEqual(list(scripts.rglob("*.pyc")), [])
-        self.assertEqual(list(scripts.rglob("__pycache__")), [])
+        self.assertEqual(list(tools_python.rglob("*.pyc")), [])
+        self.assertEqual(list(tools_python.rglob("__pycache__")), [])
 
 
 if __name__ == "__main__":
