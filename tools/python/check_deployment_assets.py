@@ -37,8 +37,8 @@ EXPECTED_BASE_IMAGES = {
         "sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e"
     ),
     "RUNTIME_IMAGE": (
-        "gcr.io/distroless/cc-debian13:nonroot@"
-        "sha256:54df941ed0d06a1bd95ef5e0ce391fd8d9f94b64782dc9a60062727849ee3f97"
+        "gcr.io/distroless/base-nossl-debian13:nonroot@"
+        "sha256:8c563c1fb5e120606f0d85733049775faed6192e2bd2223ef283a5393eec22b9"
     ),
 }
 REPOSITORY_BLOB_PREFIX = "https://github.com/Edgar-ycy/ryframe/blob/main/"
