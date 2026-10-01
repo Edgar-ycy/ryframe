@@ -178,8 +178,11 @@ def cargo_command(plan: dict) -> list[str]:
 
 
 def validate_test_output(code: int, text: str) -> None:
-    if (code != 0 or f"test {CASE} ... ok" not in text
-            or not re.search(r"test result: ok\. 1 passed; 0 failed; 0 ignored;", text)):
+    case_header = re.findall(rf"(?m)^test {re.escape(CASE)} \.\.\.", text)
+    result_lines = re.findall(r"(?m)^test result: .+$", text)
+    final_result = result_lines[-1] if result_lines else ""
+    if (code != 0 or len(case_header) != 1
+            or not final_result.startswith("test result: ok. 1 passed; 0 failed; 0 ignored;")):
         raise ValueError("cgroup 实机用例未恰好通过一次；零测试、ignored 或失败均不算验收")
 
 

@@ -217,6 +217,17 @@ class CgroupTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 gate.validate_test_output(code, text)
 
+    def test_test_parser_accepts_nested_nocapture_output(self):
+        nested = (
+            f"test {gate.CASE} ... \n"
+            "running 1 test\n"
+            "test devex_memory_tests::memory_child ... ok\n"
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 408 filtered out;\n"
+            "\nok\n"
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 408 filtered out;"
+        )
+        gate.validate_test_output(0, nested)
+
     def test_cargo_runs_only_after_permanent_uid_and_gid_drop(self):
         self.created()
         (self.root / "driver").mkdir()
