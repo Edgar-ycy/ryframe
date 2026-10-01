@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = ROOT / "deploy" / "Dockerfile"
 COMPOSE_FILE = ROOT / "deploy" / "compose.prod.yml"
 ALERT_RULES = ROOT / "deploy" / "prometheus" / "ryframe-alerts.yml"
-FIXTURE_ENV = ROOT / "scripts" / "fixtures" / "deploy.env"
+FIXTURE_ENV = ROOT / "tools" / "fixtures" / "deployment" / "deploy.env"
 EXPECTED_BINARIES = {"ryframe", "ryframe-migrate", "ryframe-worker"}
 FORBIDDEN_RUNTIME_TOOLS = {
     "bin/bash",
@@ -33,8 +33,8 @@ FORBIDDEN_RUNTIME_TOOLS = {
 ONLINE_GENERATOR_PATTERN = re.compile(rb"/api/v1/tools/gen|tools:gen(?:[^a-z]|$)")
 EXPECTED_BASE_IMAGES = {
     "RUST_IMAGE": (
-        "rust:1.98.0-bookworm@"
-        "sha256:82150a52ec202c1b14d7817e14516c392bb7f5cfebd88f1ed531cb37ebd39922"
+        "rust:1.98.1-bookworm@"
+        "sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e"
     ),
     "RUNTIME_IMAGE": (
         "gcr.io/distroless/cc-debian13:nonroot@"

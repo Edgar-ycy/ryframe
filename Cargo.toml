@@ -11,7 +11,7 @@ resolver = "3"
 [workspace.package]
 version = "0.12.1"
 edition = "2024"
-rust-version = "1.98.1"
+rust-version = "1.98"
 authors = ["edgar_ye <edgar@example.com>"]
 license = "MIT"
 repository = "https://github.com/Edgar-ycy/ryframe"

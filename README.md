@@ -18,7 +18,7 @@ API、Worker、迁移和维护程序按 feature 定向构建；标准资源生�
 
 本地开发使用 Windows，需要准备：
 
-- Rust 1.98.0（由 `rust-toolchain.toml` 固定，最低版本为 1.98）；
+- Rust 1.98.1（由 `rust-toolchain.toml` 固定，最低版本为 1.98）；
 - MySQL；
 - WSL 中的 Redis；
 - 需要文件能力时启动 Windows RustFS；

@@ -4,7 +4,7 @@
 
 ## 环境与配置
 
-本地开发以 Windows 为准，MySQL 和 RustFS 在 Windows 运行，Redis 连接 WSL 中的实例，应用直接在 Windows 启动。安装 rustup 后，在项目目录运行 `rustup show` 安装并选择固定的 Rust 1.98.0、rustfmt 和 Clippy；项目使用 Rust 2024 edition，最低 Rust 版本为 1.98，本地、CI 和生产构建镜像使用同一固定工具链。
+本地开发以 Windows 为准，MySQL 和 RustFS 在 Windows 运行，Redis 连接 WSL 中的实例，应用直接在 Windows 启动。安装 rustup 后，在项目目录运行 `rustup show` 安装并选择固定的 Rust 1.98.1、rustfmt 和 Clippy；项目使用 Rust 2024 edition，最低 Rust 版本为 1.98，本地、CI 和生产构建镜像使用同一固定工具链。
 选择开发配置后再运行命令，例如 `$env:APP_ENV = "dev"`。配置文件位于 `config/`，环境变量使用 `APP_` 前缀覆盖对应字段；外部服务地址、密码、令牌和证书通过本机环境变量或密钥文件提供，所有可用字段和校验范围以配置结构及启动错误为准。
 ## 启动与热切换
 
