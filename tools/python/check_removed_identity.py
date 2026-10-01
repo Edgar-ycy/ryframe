@@ -117,7 +117,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--frontend-dir", type=Path)
     args = parser.parse_args()
-    root = Path(__file__).resolve().parent.parent
+    root = Path(__file__).resolve().parents[2]
     if args.frontend_dir is not None and not (args.frontend_dir / "src").is_dir():
         parser.error("--frontend-dir 必须指向现有前端项目")
     errors = check(root, args.frontend_dir)
