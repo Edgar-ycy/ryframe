@@ -54,7 +54,6 @@ fn ownership_parser_is_strict_and_commands_share_ci_target() {
     let resource_args = resource_check_args_for_target(
         std::path::Path::new("../ryframe-vue3"),
         "target/ci/resource",
-        2,
     );
     assert_eq!(
         resource_args,
@@ -66,11 +65,9 @@ fn ownership_parser_is_strict_and_commands_share_ci_target() {
             "-p".to_owned(),
             "xtask".to_owned(),
             "--features".to_owned(),
-            "generate".to_owned(),
             "resource".to_owned(),
-            "--jobs".to_owned(),
-            "2".to_owned(),
             "--".to_owned(),
+            "generate".to_owned(),
             "resource".to_owned(),
             "--all".to_owned(),
             "--check".to_owned(),

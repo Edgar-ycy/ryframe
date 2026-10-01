@@ -37,11 +37,7 @@ where
     }
 }
 
-pub(crate) fn resource_check_args_for_target(
-    frontend_dir: &Path,
-    target_dir: &str,
-    jobs: usize,
-) -> Vec<String> {
+pub(crate) fn resource_check_args_for_target(frontend_dir: &Path, target_dir: &str) -> Vec<String> {
     vec![
         "run".to_owned(),
         "--locked".to_owned(),
@@ -50,11 +46,9 @@ pub(crate) fn resource_check_args_for_target(
         "-p".to_owned(),
         "xtask".to_owned(),
         "--features".to_owned(),
-        "generate".to_owned(),
         "resource".to_owned(),
-        "--jobs".to_owned(),
-        jobs.max(1).to_string(),
         "--".to_owned(),
+        "generate".to_owned(),
         "resource".to_owned(),
         "--all".to_owned(),
         "--check".to_owned(),

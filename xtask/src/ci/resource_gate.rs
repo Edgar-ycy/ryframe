@@ -408,7 +408,7 @@ fn execute_step(
             run_owned(
                 root,
                 "cargo",
-                &resource_check_args_for_target(frontend_dir, &targets.resource, budget.resource),
+                &resource_check_args_for_target(frontend_dir, &targets.resource),
             )?;
         }
         GateStep::ResourceWorkspace => {

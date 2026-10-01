@@ -6,12 +6,15 @@ use std::{
 };
 
 fn xtask_command() -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_xtask"));
+    let command = Command::new(env!("CARGO_BIN_EXE_xtask"));
     #[cfg(windows)]
     {
+        let mut command = command;
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000);
+        command
     }
+    #[cfg(not(windows))]
     command
 }
 

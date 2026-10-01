@@ -15,7 +15,7 @@ pub(crate) mod linux;
 
 pub(crate) use collect::execute;
 
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", not(test)))]
 pub(crate) use linux::run_trampoline_if_requested;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
