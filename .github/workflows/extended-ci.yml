@@ -281,6 +281,11 @@ jobs:
       - name: 在隔离工作树生成 Device 并校验幂等性
         if: ${{ matrix.fixture == 'device' }}
         working-directory: backend
+        run: mkdir -p .local-tests
+
+      - name: 生成 Device fixture 并校验幂等性
+        if: ${{ matrix.fixture == 'device' }}
+        working-directory: backend
         run: >-
           cargo xtask check recovery fixture
           --frontend-dir ../frontend
