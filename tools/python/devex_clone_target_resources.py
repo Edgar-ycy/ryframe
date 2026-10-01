@@ -81,7 +81,7 @@ class Resources:
         if diagnostic is not None:
             diagnostic.update({"phase": "command-running", "_receipt_path": str(path),
                                "receipt_path_length": len(str(path)),
-                               "receipt_path_limit_risk": os.name == "nt" and len(str(path)) >= 260})
+                               "receipt_path_limit_risk": len(str(path)) >= 260})
         stdout, stderr, code, error_type = b"", b"", None, None
         try:
             result = self.runner(args, cwd=self.execution_backend, input=data, env=env or self.environment,

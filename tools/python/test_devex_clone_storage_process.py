@@ -78,6 +78,7 @@ class NativeProcessTests(unittest.TestCase):
         self.assertIsNone(process_identity(tree["process"]["pid"]))
         self.assertIsNone(process_identity(tree["supervisor"]["pid"]))
 
+    @unittest.skipUnless(os.name == "nt", "RustFS 原生参数核验仅在 Windows runner 执行")
     def test_parent_crash_leaves_precise_child_receipt_for_explicit_recovery(self):
         launcher = self.root / "parent.py"
         code = "\n".join([
