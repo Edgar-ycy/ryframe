@@ -202,6 +202,9 @@ fn rejects_paths_outside_local_tests_parent_jumps_missing_inputs_and_links() {
     let mut linked_arguments = source_arguments(&fixture, "source-register", false, true);
     linked_arguments[5] = linked.to_string_lossy().into_owned();
     assert!(parse(linked_arguments).is_err());
+    #[cfg(unix)]
+    fs::remove_file(&linked).unwrap();
+    #[cfg(windows)]
     fs::remove_dir(&linked).unwrap();
 }
 

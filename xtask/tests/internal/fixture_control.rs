@@ -652,6 +652,9 @@ fn successor_generation_keeps_source_and_evidence_path_boundaries() {
             assert!(private_invocation_at(&request, &root_dir()).is_err());
         }
     }
+    #[cfg(unix)]
+    fs::remove_file(&link).unwrap();
+    #[cfg(windows)]
     fs::remove_dir(&link).unwrap();
     for index in [1, 7, 9, 11] {
         let mut arguments = valid.clone();
@@ -863,6 +866,9 @@ fn rejects_linked_components_before_private_protocol_creation() {
         ],
     );
     assert!(parse_control(dataset).is_err());
+    #[cfg(unix)]
+    fs::remove_file(linked_directory).unwrap();
+    #[cfg(windows)]
     fs::remove_dir(linked_directory).unwrap();
 }
 

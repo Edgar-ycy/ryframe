@@ -295,6 +295,9 @@ fn rejects_reparse_or_link_components_before_protocol_creation() {
     let mut arguments = fixture.arguments("verify");
     arguments[8] = text(&linked);
     assert!(parse_runtime(arguments).is_err());
+    #[cfg(unix)]
+    fs::remove_file(&linked).unwrap();
+    #[cfg(windows)]
     fs::remove_dir(&linked).unwrap();
 }
 

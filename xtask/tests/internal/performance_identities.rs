@@ -185,6 +185,9 @@ fn rejects_link_or_junction_components_even_when_the_target_exists() {
         error.contains("链接") || error.contains("junction"),
         "{error}"
     );
+    #[cfg(unix)]
+    fs::remove_file(&linked).unwrap();
+    #[cfg(windows)]
     fs::remove_dir(&linked).unwrap();
 }
 

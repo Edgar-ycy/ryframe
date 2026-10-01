@@ -633,6 +633,9 @@ fn linked_data_paths_are_rejected_when_the_platform_can_create_a_link() {
         "--output".into(),
         linked.join("target.json").to_string_lossy().into_owned(),
     ]);
+    #[cfg(unix)]
+    fs::remove_file(&linked).unwrap();
+    #[cfg(windows)]
     fs::remove_dir(&linked).unwrap();
 }
 

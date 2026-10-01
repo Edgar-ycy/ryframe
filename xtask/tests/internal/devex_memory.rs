@@ -79,7 +79,10 @@ fn memory_summary_preserves_failed_samples_and_blocks_mixed_or_missing_collector
     assert!(report.contains("- 采集器："));
 
     let mut mixed = stats.clone();
-    mixed.method = MemoryMethod::LinuxCgroupCharge;
+    mixed.method = match stats.method {
+        MemoryMethod::LinuxCgroupCharge => MemoryMethod::WindowsJobCommit,
+        _ => MemoryMethod::LinuxCgroupCharge,
+    };
     assert!(memory::ensure_comparable(Some(&stats), Some(&mixed)).is_err());
     samples[1]["memory"]["steps"] = json!([{"status":"unavailable","reason":"采集失败"}]);
     save(&path, &samples);

@@ -538,6 +538,9 @@ fn rejects_linked_external_source_before_private_protocol_creation() {
     ]);
     replace_option(&mut verify, "--source-backend", text(&linked));
     assert!(parse(verify).is_err());
+    #[cfg(unix)]
+    fs::remove_file(&linked).unwrap();
+    #[cfg(windows)]
     fs::remove_dir(&linked).unwrap();
 }
 
