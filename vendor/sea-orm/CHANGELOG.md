@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](http://semver.org/).
 
+## [2.0.4](changelog/2.0.4.md) - 2026-09-27
+
+`select_except`, `save_as` casts for `eq_any` / `ne_all`, linked-join alias and `condition_type` fixes, MySQL schema-sync index drop fix, arrow 60
+
+## [2.0.3](changelog/2.0.3.md) - 2026-09-12
+
+`select_as` aliases in combined selects, derive macro hygiene, `ModelEx` `Eq` handling, PostgreSQL partial-unique-index and `postgres:db_name` CLI fixes
+
+## [2.0.2](changelog/2.0.2.md) - 2026-08-12
+
+`require_one` query helper, `date_time_default_now` / `timestamp_default_now` schema helpers, entity-merge duplicate-import fix
+
+## [2.0.1](changelog/2.0.1.md) - 2026-08-02
+
+`ActiveValue` helpers (`set_unset`, `is_set_and`, `as_option`), `Paginator::set_page`, `before_acquire` pool hooks, read-only migration status queries, nested-transaction recursion fix
+
 ## 2.0.0 - 2026-07-19
 
 ### Release Candidates

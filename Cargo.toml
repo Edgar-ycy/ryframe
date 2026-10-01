@@ -11,7 +11,7 @@ resolver = "3"
 [workspace.package]
 version = "0.12.1"
 edition = "2024"
-rust-version = "1.98"
+rust-version = "1.98.1"
 authors = ["edgar_ye <edgar@example.com>"]
 license = "MIT"
 repository = "https://github.com/Edgar-ycy/ryframe"
@@ -32,14 +32,14 @@ async-trait = { version = "0.1" }
 chrono = { version = "0.4" }
 chrono-tz = "0.10"
 cron = "0.17"
-sea-orm = { version = "=2.0", default-features = false, features = [
+sea-orm = { version = "=2.0.4", default-features = false, features = [
     "runtime-tokio-rustls",
     "macros",
     "with-chrono",
     "with-json",
     "sqlx-mysql",
 ] }
-sea-orm-migration = { version = "=2.0.0", default-features = false, features = ["runtime-tokio-rustls", "sqlx-mysql"] }
+sea-orm-migration = { version = "=2.0.4", default-features = false, features = ["runtime-tokio-rustls", "sqlx-mysql"] }
 rand = "0.10"
 rand_core = { version = "0.10" }
 serde = "1"
@@ -47,7 +47,7 @@ serde_json = "1"
 jsonwebtoken = { version = "11.0", default-features = false }
 #密码哈希
 base64 = "0.23"
-argon2 = "0.5"
+argon2 = "0.6.0"
 toml = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3" }
@@ -65,9 +65,9 @@ sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 
 image = { version = "0.25", default-features = false }
 calamine = { version = "0.36" }
-rust_xlsxwriter = { version = "0.98.2" }
-utoipa = { version = "5", features = ["axum_extras", "chrono"] }
-utoipa-swagger-ui = { version = "9.0.2", default-features = false, features = ["vendored"] }
+rust_xlsxwriter = { version = "0.99.1" }
+utoipa = { version = "6.0.0", features = ["axum_extras", "chrono"] }
+utoipa-swagger-ui = { version = "10.0.1", default-features = false, features = ["vendored"] }
 redis = { version = "1.4", default-features = false, features = ["tokio-rustls-comp", "connection-manager"] }
 
 regex = "1"
@@ -81,15 +81,15 @@ prometheus = { version = "0.14", default-features = false }
 lazy_static = "1"
 futures-util = "0.3"
 # OpenTelemetry 链路追踪
-opentelemetry = { version = "0.32", default-features = false, features = ["trace"] }
-opentelemetry_sdk = { version = "0.32", default-features = false, features = [
+opentelemetry = { version = "0.33", default-features = false, features = ["trace"] }
+opentelemetry_sdk = { version = "0.33", default-features = false, features = [
     "trace",
     "rt-tokio",
     "experimental_trace_batch_span_processor_with_async_runtime",
 ] }
-opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "http-proto", "reqwest-client"] }
-opentelemetry-semantic-conventions = { version = "0.32" }
-tracing-opentelemetry = { version = "0.33", default-features = false }
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["trace", "http-proto", "reqwest-client"] }
+opentelemetry-semantic-conventions = { version = "0.33" }
+tracing-opentelemetry = { version = "0.34", default-features = false }
 # gRPC 传输支持
 # 对象存储 (MinIO/S3)
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
@@ -99,14 +99,13 @@ sha2 = "0.11"
 hex = "0.4"
 percent-encoding = "2"
 # 消息队列 (Kafka, 可选 feature)
-syn = { version = "2", features = ["full"] }
+syn = { version = "3.0.6", features = ["full"] }
 quote = "1"
 proc-macro2 = "1"
 tempfile = "3"
 
 [patch.crates-io]
 opentelemetry-otlp = { path = "vendor/opentelemetry-otlp" }
-proc-macro-error2 = { path = "vendor/proc-macro-error2" }
 sea-orm = { path = "vendor/sea-orm" }
 sea-orm-migration = { path = "vendor/sea-orm-migration" }
 sqlx = { path = "vendor/sqlx-mysql-only" }

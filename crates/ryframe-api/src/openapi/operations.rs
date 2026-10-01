@@ -20,14 +20,19 @@ fn finalize_operation(
     let Some(operation) = operation else {
         return;
     };
-    // utoipa 5 的 tuple 参数语法无法声明 Header required；运行时 handler 已强制
+    // 生成器的 tuple 参数语法无法声明 Header required；运行时 handler 已强制
     // 提取该值，这里把生成契约同步为必填，避免客户端生成可空调用签名。
     if method == "post"
         && path == "/api/v1/platform/tenants"
         && let Some(parameter) = operation.parameters.as_mut().and_then(|parameters| {
-            parameters
-                .iter_mut()
-                .find(|parameter| parameter.name.eq_ignore_ascii_case("Idempotency-Key"))
+            parameters.iter_mut().find_map(|parameter| match parameter {
+                utoipa::openapi::RefOr::T(parameter)
+                    if parameter.name.eq_ignore_ascii_case("Idempotency-Key") =>
+                {
+                    Some(parameter)
+                }
+                _ => None,
+            })
         })
     {
         parameter.required = utoipa::openapi::Required::True;
@@ -56,7 +61,10 @@ fn finalize_operation(
         ] {
             let mut header = utoipa::openapi::header::Header::default();
             header.description = Some(description.to_owned());
-            response.headers.entry(name.to_owned()).or_insert(header);
+            response
+                .headers
+                .entry(name.to_owned())
+                .or_insert(utoipa::openapi::RefOr::T(header));
         }
     }
 }

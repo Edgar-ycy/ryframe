@@ -1,6 +1,7 @@
 use crate::sea_query::{Nullable, ValueType};
 use crate::{ActiveValue, Value};
 
+#[cfg(feature = "with-uuid")]
 macro_rules! impl_serde_with_str {
     ($ty:ty) => {
         #[cfg(feature = "serde")]
@@ -26,6 +27,7 @@ macro_rules! impl_serde_with_str {
     };
 }
 
+#[cfg(any(feature = "with-chrono", feature = "with-time"))]
 macro_rules! impl_serde_with_i64 {
     ($ty:ident, $from:ident, $to:ident) => {
         #[cfg(feature = "serde")]
@@ -56,7 +58,10 @@ macro_rules! impl_serde_with_i64 {
     };
 }
 
-pub(super) use {impl_serde_with_i64, impl_serde_with_str};
+#[cfg(any(feature = "with-chrono", feature = "with-time"))]
+pub(super) use impl_serde_with_i64;
+#[cfg(feature = "with-uuid")]
+pub(super) use impl_serde_with_str;
 
 mod timestamp;
 use timestamp::*;

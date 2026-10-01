@@ -13,7 +13,7 @@ license       = "MIT OR Apache-2.0"
 name          = "sea-orm"
 repository    = "https://github.com/SeaQL/sea-orm"
 rust-version  = "1.94.0"
-version       = "2.0.0"
+version       = "2.0.4"
 
 [package.metadata.docs.rs]
 features = [
@@ -38,6 +38,7 @@ name = "sea_orm"
 path = "src/lib.rs"
 
 [dependencies]
+async-stream = { version = "0.3", default-features = false }
 async-trait = { version = "0.1", default-features = false }
 bigdecimal = { version = "0.4", default-features = false, features = [
     "std",
@@ -61,7 +62,7 @@ rust_decimal = { version = "1", default-features = false, features = [
     "std",
 ], optional = true }
 sea-orm-arrow = { version = "2.0.0-rc", path = "sea-orm-arrow", default-features = false, optional = true }
-sea-orm-macros = { version = "~2.0.0", path = "sea-orm-macros", default-features = false, features = [
+sea-orm-macros = { version = "~2.0.4", path = "sea-orm-macros", default-features = false, features = [
     "async",
     "strum",
 ] }

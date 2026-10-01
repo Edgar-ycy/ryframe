@@ -13,7 +13,7 @@
 edition = "2024"
 rust-version = "1.94.0"
 name = "sea-orm"
-version = "2.0.0"
+version = "2.0.4"
 authors = ["Chris Tsang <chris.2y3@outlook.com>"]
 build = false
 autolib = false
@@ -284,6 +284,10 @@ name = "delete_by_id_tests"
 path = "tests/delete_by_id_tests.rs"
 
 [[test]]
+name = "derive_active_model_ex_send_future_test"
+path = "tests/derive_active_model_ex_send_future_test.rs"
+
+[[test]]
 name = "derive_iden_tests"
 path = "tests/derive_iden_tests.rs"
 
@@ -471,6 +475,10 @@ path = "tests/uuid_tests.rs"
 name = "value_type_tests"
 path = "tests/value_type_tests.rs"
 
+[dependencies.async-stream]
+version = "0.3"
+default-features = false
+
 [dependencies.async-trait]
 version = "0.1"
 default-features = false
@@ -542,7 +550,7 @@ optional = true
 default-features = false
 
 [dependencies.sea-orm-macros]
-version = "~2.0.0"
+version = "~2.0.4"
 features = [
     "async",
     "strum",

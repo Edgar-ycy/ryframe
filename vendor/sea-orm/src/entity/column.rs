@@ -440,10 +440,8 @@ pub trait ColumnTrait: IdenStatic + Iterable + FromStr {
         let values: Vec<Value> = v.into_iter().map(|v| v.into()).collect();
 
         if let Some(first) = values.first() {
-            Expr::col(self.as_column_ref()).eq(PgFunc::any(Value::Array(
-                first.array_type(),
-                Some(Box::new(values)),
-            )))
+            let array = Value::Array(first.array_type(), Some(Box::new(values)));
+            Expr::col(self.as_column_ref()).eq(PgFunc::any(self.save_array_as(Expr::val(array))))
         } else {
             Expr::col(self.as_column_ref()).is_in(std::iter::empty::<V>())
         }
@@ -479,10 +477,8 @@ pub trait ColumnTrait: IdenStatic + Iterable + FromStr {
         let values: Vec<Value> = v.into_iter().map(|v| v.into()).collect();
 
         if let Some(first) = values.first() {
-            Expr::col(self.as_column_ref()).ne(PgFunc::all(Value::Array(
-                first.array_type(),
-                Some(Box::new(values)),
-            )))
+            let array = Value::Array(first.array_type(), Some(Box::new(values)));
+            Expr::col(self.as_column_ref()).ne(PgFunc::all(self.save_array_as(Expr::val(array))))
         } else {
             Expr::col(self.as_column_ref()).is_not_in(std::iter::empty::<V>())
         }
@@ -530,6 +526,13 @@ pub trait ColumnTrait: IdenStatic + Iterable + FromStr {
     /// Cast a value into the column's enum type; no-op for non-enum columns.
     fn save_enum_as(&self, val: Expr) -> Expr {
         cast_enum_as(val, &self.def(), save_enum_as)
+    }
+
+    /// Array counterpart of [`ColumnTrait::save_as`], applied to the array
+    /// operand of `eq_any` / `ne_all`. For a column with `save_as = "citext"`,
+    /// this casts the array to `citext[]`. No-op by default.
+    fn save_array_as(&self, val: Expr) -> Expr {
+        val
     }
 
     /// JSON key used for this column when (de)serializing the model.
@@ -736,10 +739,9 @@ mod tests {
         );
     }
 
-    #[test]
     #[cfg(feature = "macros")]
-    fn select_as_1() {
-        use crate::{ActiveModelTrait, ActiveValue, Update};
+    mod select_as {
+        use super::*;
 
         mod hello_expanded {
             use crate as sea_orm;
@@ -836,37 +838,91 @@ mod tests {
             impl ActiveModelBehavior for ActiveModel {}
         }
 
-        fn assert_it<E, A>(active_model: A)
-        where
-            E: EntityTrait,
-            A: ActiveModelTrait<Entity = E>,
-        {
-            assert_eq!(
-                E::find().build(DbBackend::Postgres).to_string(),
-                r#"SELECT "hello"."id", "hello"."one1", CAST("hello"."two" AS integer), "hello"."three3" FROM "hello""#,
-            );
-            assert_eq!(
-                Update::one(active_model)
-                    .validate()
-                    .unwrap()
-                    .build(DbBackend::Postgres)
-                    .to_string(),
-                r#"UPDATE "hello" SET "one1" = 1, "two" = 2, "three3" = 3 WHERE "hello"."id" = 1"#,
-            );
+        #[test]
+        fn select_as_1() {
+            use crate::{ActiveModelTrait, ActiveValue, Update};
+
+            fn assert_it<E, A>(active_model: A)
+            where
+                E: EntityTrait,
+                A: ActiveModelTrait<Entity = E>,
+            {
+                assert_eq!(
+                    E::find().build(DbBackend::Postgres).to_string(),
+                    r#"SELECT "hello"."id", "hello"."one1", CAST("hello"."two" AS integer) AS "two", "hello"."three3" FROM "hello""#,
+                );
+                assert_eq!(
+                    Update::one(active_model)
+                        .validate()
+                        .unwrap()
+                        .build(DbBackend::Postgres)
+                        .to_string(),
+                    r#"UPDATE "hello" SET "one1" = 1, "two" = 2, "three3" = 3 WHERE "hello"."id" = 1"#,
+                );
+            }
+
+            assert_it(hello_expanded::ActiveModel {
+                id: ActiveValue::set(1),
+                one: ActiveValue::set(1),
+                two: ActiveValue::set(2),
+                three: ActiveValue::set(3),
+            });
+            assert_it(hello_compact::ActiveModel {
+                id: ActiveValue::set(1),
+                one: ActiveValue::set(1),
+                two: ActiveValue::set(2),
+                three: ActiveValue::set(3),
+            });
         }
 
-        assert_it(hello_expanded::ActiveModel {
-            id: ActiveValue::set(1),
-            one: ActiveValue::set(1),
-            two: ActiveValue::set(2),
-            three: ActiveValue::set(3),
-        });
-        assert_it(hello_compact::ActiveModel {
-            id: ActiveValue::set(1),
-            one: ActiveValue::set(1),
-            two: ActiveValue::set(2),
-            three: ActiveValue::set(3),
-        });
+        #[test]
+        fn select_except_keeps_select_as_aliases() {
+            use crate::QuerySelect;
+
+            fn assert_it<E: EntityTrait>(except: E::Column) {
+                assert_eq!(
+                    E::find()
+                        .select_except([except])
+                        .build(DbBackend::Postgres)
+                        .to_string(),
+                    r#"SELECT "hello"."id", "hello"."one1", CAST("hello"."two" AS integer) AS "two" FROM "hello""#,
+                );
+                assert_eq!(
+                    E::find()
+                        .select_except([except])
+                        .select_also(E::default())
+                        .build(DbBackend::Postgres)
+                        .to_string(),
+                    r#"SELECT "hello"."id" AS "A_id", "hello"."one1" AS "A_one1", CAST("hello"."two" AS integer) AS "A_two", "hello"."id" AS "B_id", "hello"."one1" AS "B_one1", CAST("hello"."two" AS integer) AS "B_two", "hello"."three3" AS "B_three3" FROM "hello""#,
+                );
+            }
+
+            assert_it::<hello_expanded::Entity>(hello_expanded::Column::Three3);
+            assert_it::<hello_compact::Entity>(hello_compact::Column::Three3);
+        }
+
+        #[test]
+        fn select_as_columns_keep_aliases_in_multi_selects() {
+            use crate::{Iterable, QuerySelect};
+
+            fn assert_it<E: EntityTrait>() {
+                for select in [
+                    E::find(),
+                    E::find().select_only().columns(E::Column::iter()),
+                ] {
+                    assert_eq!(
+                        select
+                            .select_also(E::default())
+                            .build(DbBackend::Postgres)
+                            .to_string(),
+                        r#"SELECT "hello"."id" AS "A_id", "hello"."one1" AS "A_one1", CAST("hello"."two" AS integer) AS "A_two", "hello"."three3" AS "A_three3", "hello"."id" AS "B_id", "hello"."one1" AS "B_one1", CAST("hello"."two" AS integer) AS "B_two", "hello"."three3" AS "B_three3" FROM "hello""#,
+                    );
+                }
+            }
+
+            assert_it::<hello_expanded::Entity>();
+            assert_it::<hello_compact::Entity>();
+        }
     }
 
     #[test]
@@ -1116,7 +1172,7 @@ mod tests {
         {
             assert_eq!(
                 E::find().build(DbBackend::Postgres).to_string(),
-                r#"SELECT "hello"."id", "hello"."one1", CAST("hello"."two" AS integer), "hello"."three3" FROM "hello""#,
+                r#"SELECT "hello"."id", "hello"."one1", CAST("hello"."two" AS integer) AS "two", "hello"."three3" FROM "hello""#,
             );
             assert_eq!(
                 Update::one(active_model)

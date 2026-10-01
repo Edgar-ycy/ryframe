@@ -37,7 +37,7 @@ pub async fn setup(base_url: &str, db_name: &str) -> DatabaseConnection {
         let _drop_db_result = db
             .execute_raw(Statement::from_string(
                 DatabaseBackend::Postgres,
-                format!("DROP DATABASE IF EXISTS \"{db_name}\";"),
+                format!("DROP DATABASE IF EXISTS \"{db_name}\" WITH (FORCE);"),
             ))
             .await;
 
@@ -75,7 +75,7 @@ pub async fn tear_down(base_url: &str, db_name: &str) {
         let _ = db
             .execute_raw(Statement::from_string(
                 DatabaseBackend::Postgres,
-                format!("DROP DATABASE IF EXISTS \"{db_name}\";"),
+                format!("DROP DATABASE IF EXISTS \"{db_name}\" WITH (FORCE);"),
             ))
             .await;
     };
@@ -187,4 +187,31 @@ pub async fn create_table_without_asserts(
 pub fn rust_dec<T: ToString>(v: T) -> rust_decimal::Decimal {
     use std::str::FromStr;
     rust_decimal::Decimal::from_str(&v.to_string()).unwrap()
+}
+
+pub struct TestContext {
+    base_url: String,
+    db_name: String,
+    pub db: DatabaseConnection,
+}
+
+impl TestContext {
+    pub async fn new(test_name: &str) -> Self {
+        dotenv::from_filename(".env.local").ok();
+        dotenv::from_filename(".env").ok();
+
+        let base_url =
+            std::env::var("DATABASE_URL").expect("Environment variable 'DATABASE_URL' not set");
+        let db: DatabaseConnection = setup(&base_url, test_name).await;
+
+        Self {
+            base_url,
+            db_name: test_name.to_string(),
+            db,
+        }
+    }
+
+    pub async fn delete(&self) {
+        tear_down(&self.base_url, &self.db_name).await;
+    }
 }

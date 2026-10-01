@@ -2,7 +2,8 @@ use crate::{
     ConnectionTrait, EntityTrait, FromQueryResult, Select, SelectModel, SelectTwo, SelectTwoModel,
     Selector, SelectorRaw, SelectorTrait, error::*,
 };
-use futures_util::{Stream, stream};
+use async_stream::stream;
+use futures_util::Stream;
 use sea_query::{Expr, SelectStatement};
 use std::{marker::PhantomData, pin::Pin};
 
@@ -125,6 +126,11 @@ where
         self.page
     }
 
+    /// Set the page counter
+    pub fn set_page(&mut self, page: u64) {
+        self.page = page;
+    }
+
     /// Fetch one page and increment the page counter
     ///
     /// ```
@@ -234,12 +240,12 @@ where
     pub fn into_stream(self) -> PinBoxStream<'db, Result<Vec<S::Item>, DbErr>> {
         #[cfg(not(feature = "sync"))]
         {
-            Box::pin(stream::try_unfold(self, |mut paginator| async move {
-                match paginator.fetch_and_next().await? {
-                    Some(page) => Ok(Some((page, paginator))),
-                    None => Ok(None),
+            let mut streamer = self;
+            Box::pin(stream! {
+                while let Some(vec) = streamer.fetch_and_next().await? {
+                    yield Ok(vec);
                 }
-            }))
+            })
         }
         #[cfg(feature = "sync")]
         {

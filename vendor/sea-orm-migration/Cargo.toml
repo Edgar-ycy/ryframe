@@ -13,7 +13,7 @@
 edition = "2024"
 rust-version = "1.85.0"
 name = "sea-orm-migration"
-version = "2.0.0"
+version = "2.0.4"
 authors = ["Billy Chan <ccw.billy.123@gmail.com>"]
 build = false
 autolib = false
@@ -40,7 +40,6 @@ repository = "https://github.com/SeaQL/sea-orm"
 cli = [
     "clap",
     "dotenvy",
-    "dep:tracing-subscriber",
     "sea-orm-cli/cli",
 ]
 default = ["cli"]
@@ -138,18 +137,21 @@ optional = true
 default-features = false
 
 [dependencies.sea-orm]
-version = "~2.0.0"
-default-features = false
+version = "~2.0.4"
 features = ["schema-sync"]
 
 [dependencies.sea-orm-cli]
-version = "~2.0.0"
+version = "~2.0.4"
 optional = true
 default-features = false
 
 [dependencies.sea-schema]
 version = "0.18.1"
-features = ["probe"]
+features = [
+    "discovery",
+    "writer",
+    "probe",
+]
 default-features = false
 
 [dependencies.tracing]
@@ -163,7 +165,6 @@ features = [
     "env-filter",
     "fmt",
 ]
-optional = true
 default-features = false
 
 [dev-dependencies.tokio]
