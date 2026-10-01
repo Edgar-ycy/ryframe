@@ -47,12 +47,18 @@ fn sync_candidate(frontend_dir: &Path) -> Result<()> {
     let candidate = candidate_path
         .to_str()
         .ok_or("候选 OpenAPI 路径不是有效 UTF-8")?;
+    let target_dir = root.join("target/xtask-contract");
+    let target_dir = target_dir
+        .to_str()
+        .ok_or("契约导出 target 路径不是有效 UTF-8")?;
     let export_result = run_process(
         &root,
         "cargo",
         &[
             "run",
             "--locked",
+            "--target-dir",
+            target_dir,
             "-p",
             "ryframe-api",
             "--bin",

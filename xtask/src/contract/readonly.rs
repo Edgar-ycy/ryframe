@@ -122,12 +122,18 @@ where
 
 fn export_current_openapi(backend_dir: &Path, output: &Path) -> Result<()> {
     let output = output.to_str().ok_or("候选 OpenAPI 路径不是有效 UTF-8")?;
+    let target_dir = backend_dir.join("target/xtask-contract");
+    let target_dir = target_dir
+        .to_str()
+        .ok_or("契约导出 target 路径不是有效 UTF-8")?;
     run_process(
         backend_dir,
         "cargo",
         &[
             "run",
             "--locked",
+            "--target-dir",
+            target_dir,
             "-p",
             "ryframe-api",
             "--bin",
