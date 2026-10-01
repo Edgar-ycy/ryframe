@@ -234,6 +234,7 @@ pub fn auth_router(state: AppState) -> Router {
     // 认证端点可能携带 Cookie、CSRF challenge 或令牌数据，因此绝不进入通用的
     // 操作日志中间件。
     let public = Router::new()
+        .route("/tenants", get_route(auth_handler::tenants::login_tenants))
         .route("/csrf", get_route(auth_handler::csrf))
         .route("/login", post(auth_handler::login))
         .route("/refresh", post(auth_handler::refresh))

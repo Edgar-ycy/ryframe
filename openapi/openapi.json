@@ -2793,6 +2793,59 @@
         ],
         "type": "object"
       },
+      "ApiResponse_LoginTenantPage": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "properties": {
+              "has_more": {
+                "type": "boolean"
+              },
+              "items": {
+                "items": {
+                  "$ref": "#/components/schemas/LoginTenantChoice"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "items",
+              "has_more"
+            ],
+            "type": "object"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
       "ApiResponse_MenuVo": {
         "description": "统一 API 响应结构。",
         "properties": {
@@ -10381,6 +10434,39 @@
           "access_token",
           "expires_in",
           "session_context"
+        ],
+        "type": "object"
+      },
+      "LoginTenantChoice": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "tenant_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_id",
+          "name"
+        ],
+        "type": "object"
+      },
+      "LoginTenantPage": {
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LoginTenantChoice"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "has_more"
         ],
         "type": "object"
       },
@@ -18880,6 +18966,61 @@
           }
         ],
         "summary": "撤销当前用户的一台登录设备。",
+        "tags": [
+          "认证"
+        ]
+      }
+    },
+    "/api/v1/auth/tenants": {
+      "get": {
+        "operationId": "get_auth_tenants",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "minimum": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LoginTenantPage"
+                }
+              }
+            },
+            "description": "可登录租户"
+          },
+          "400": {
+            "description": "查询参数无效"
+          },
+          "429": {
+            "description": "请求过于频繁"
+          }
+        },
+        "summary": "登录前仅公开启用、未过期租户的名称和标识。",
         "tags": [
           "认证"
         ]

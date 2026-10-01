@@ -98,3 +98,5 @@ ID 排序去重后必须为 1–100 条。整批先校验租户、申请人、�
 ## 契约验证
 
 OpenAPI 改变后运行 `cargo xtask generate api --write` 刷新前端派生契约，再执行前端消费者自检与浏览器 smoke。若调用方提示 operation 不存在或 DTO 不匹配，先重新同步契约，再检查后端导出的 operation ID。
+
+登录页通过公开的租户名称搜索选择租户，认证请求继续传递所选租户标识。`GET /api/v1/auth/tenants` 支持 `search`、`page` 和 `page_size`，每页最多 50 项，只返回启用且未过期租户的名称与标识；登录时仍重新校验租户状态。

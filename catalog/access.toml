@@ -142,6 +142,11 @@ permissions = [
 
 [[route_policies]]
 method = "GET"
+path = "/api/v1/auth/tenants"
+policy = "public"
+
+[[route_policies]]
+method = "GET"
 path = "/api/v1/auth/context"
 policy = "authenticated"
 

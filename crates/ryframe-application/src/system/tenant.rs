@@ -1,10 +1,13 @@
 pub mod config_package;
 pub mod config_transfer;
 pub mod data_migration;
+mod login_choices;
 mod provisioning;
 mod provisioning_saga;
 pub mod usage;
 mod validation;
+
+pub use login_choices::{LoginTenantChoice, LoginTenantPage};
 
 use std::sync::Arc;
 
