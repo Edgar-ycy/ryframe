@@ -284,7 +284,7 @@ jobs:
         run: >-
           cargo xtask check recovery fixture
           --frontend-dir ../frontend
-          --output-dir .local-tests/device-fixture --write
+          --output-dir "$GITHUB_WORKSPACE/backend/.local-tests/device-fixture" --write
 
       - name: 构建并安全初始化临时全栈环境
         working-directory: ${{ matrix.backend }}
