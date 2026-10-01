@@ -291,6 +291,16 @@ jobs:
           --frontend-dir "$GITHUB_WORKSPACE/frontend"
           --output-dir "$GITHUB_WORKSPACE/backend/.local-tests/device-fixture" --write
 
+      - name: 输出 Device fixture 失败诊断
+        if: ${{ failure() && matrix.fixture == 'device' }}
+        working-directory: backend
+        run: |
+          if [ -f .local-tests/device-fixture/prepare.log ]; then
+            tail -n 160 .local-tests/device-fixture/prepare.log
+          else
+            echo 'Device fixture 未生成 prepare.log'
+          fi
+
       - name: 构建并安全初始化临时全栈环境
         working-directory: ${{ matrix.backend }}
         env:
