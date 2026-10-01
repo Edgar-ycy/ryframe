@@ -115,4 +115,3 @@ fn valid_request_replaces_inherited_protocol_and_hides_paths_from_argv() {
     );
     assert!(!fixture.output.exists());
 }
-

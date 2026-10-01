@@ -130,4 +130,3 @@ fn consumer_contract_runs_the_inline_source_gate_before_frontend_tasks() {
         "{stderr}"
     );
 }
-
