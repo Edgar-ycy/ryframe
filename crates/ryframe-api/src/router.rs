@@ -1,4 +1,6 @@
 use std::sync::Arc;
+mod access_guard;
+pub(crate) use access_guard::excluded_platform_routes;
 
 use crate::http::{API_PREFIX, ApiResponse, HttpAppError, HttpResult, api_path};
 use crate::{
@@ -97,6 +99,10 @@ where
     S: Clone + Send + Sync + 'static,
 {
     router
+        .layer(from_fn_with_state(
+            state.clone(),
+            access_guard::catalog_access_guard,
+        ))
         .layer(middleware::from_fn(request_locale_middleware))
         .layer(from_fn_with_state(
             state.services.operations.online_user.clone(),

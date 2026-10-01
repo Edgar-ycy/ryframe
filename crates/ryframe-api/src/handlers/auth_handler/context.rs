@@ -66,18 +66,30 @@ pub(super) async fn build_session_context(
             .tenant_data
             .runtime_snapshot(&actor.tenant_id)
             .await?;
-        let user = state.services.identity.auth.get_current_user(actor).await?;
+        let mut user = state.services.identity.auth.get_current_user(actor).await?;
         let service_product = state
             .services
             .platform
             .product
             .session_context(&actor.tenant_id)
             .await?;
-        let excluded_routes = state
+        let mut excluded_routes = state
             .services
             .platform
             .product
             .disabled_session_route_keys(&service_product);
+        if actor.tenant_id != "system" {
+            let disabled_permissions = state
+                .services
+                .platform
+                .product
+                .disabled_session_permission_codes(&service_product);
+            user.perms.retain(|permission| {
+                !ryframe_application::system::platform::is_platform_permission(permission)
+                    && !disabled_permissions.contains(permission.as_str())
+            });
+        }
+        excluded_routes.extend(crate::router::excluded_platform_routes(&actor.tenant_id));
         let product = SessionProductContextVo::try_from(service_product)?;
         let menus = state
             .services

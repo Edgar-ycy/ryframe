@@ -149,11 +149,18 @@ fn build_identity_services(
             authorization_cache.clone(),
         ),
     ));
-    let product = Arc::new(ProductService::new(
-        ryframe_db::application_ports::product::read(database.clone()),
-        ryframe_db::application_ports::product::write(database.clone()),
-        authorization_cache.clone(),
-    ));
+    let product = Arc::new(
+        ProductService::new(
+            ryframe_db::application_ports::product::read(database.clone()),
+            ryframe_db::application_ports::product::write(database.clone()),
+            authorization_cache.clone(),
+        )
+        .with_deployment(ryframe_application::system::platform::ProductDeployment {
+            redis: redis_client.is_some(),
+            messaging: policies.messaging.enabled(),
+            scheduler: policies.job_runtime.scheduler_enabled,
+        }),
+    );
     let role = Arc::new(RoleService::new(
         authorization_cache.clone(),
         ryframe_db::application_ports::system::role_read(database.clone()),

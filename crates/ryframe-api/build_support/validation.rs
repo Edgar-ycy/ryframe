@@ -344,14 +344,13 @@ fn validate_menus<'a>(
     let mut route_keys = BTreeSet::new();
     let mut page_keys = BTreeSet::new();
     for menu in &catalog.menus {
-        if let Some(icon) = &menu.icon {
-            if icon.is_empty()
+        if let Some(icon) = &menu.icon
+            && (icon.is_empty()
                 || !icon
                     .chars()
-                    .all(|value| value.is_ascii_alphanumeric() || value == '_' || value == '-')
-            {
-                return Err(format!("菜单 {} 图标格式无效", menu.route_key).into());
-            }
+                    .all(|value| value.is_ascii_alphanumeric() || value == '_' || value == '-'))
+        {
+            return Err(format!("菜单 {} 图标格式无效", menu.route_key).into());
         }
         validate_identifier("菜单 route_key", &menu.route_key)?;
         if menu.order > i32::MAX as u32 {

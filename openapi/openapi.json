@@ -9865,6 +9865,7 @@
       "EffectiveCapabilitySource": {
         "description": "有效能力配置的来源。",
         "enum": [
+          "platform",
           "plan",
           "override",
           "none"
@@ -35050,6 +35051,7 @@
     "resources": [
       {
         "access": {
+          "capability": "system.notice",
           "owner_field": "created_by",
           "permissions": {
             "create": "system:notice:add",
@@ -35620,7 +35622,7 @@
         "title_key": "dbPoolMonitor"
       },
       {
-        "capability_code": null,
+        "capability_code": "monitor.jobs",
         "menu_type": "C",
         "name": "后台任务",
         "page_key": "monitor.jobs",
@@ -35629,7 +35631,7 @@
         "title_key": "jobs"
       },
       {
-        "capability_code": null,
+        "capability_code": "monitor.online",
         "menu_type": "C",
         "name": "在线用户",
         "page_key": "monitor.online",
@@ -35665,7 +35667,7 @@
         "title_key": "runtimeMonitor"
       },
       {
-        "capability_code": null,
+        "capability_code": "monitor.schedules",
         "menu_type": "C",
         "name": "定时任务",
         "page_key": "monitor.schedules",
@@ -35728,7 +35730,7 @@
         "title_key": "system"
       },
       {
-        "capability_code": null,
+        "capability_code": "system.authorization-diagnostics",
         "menu_type": "C",
         "name": "权限诊断",
         "page_key": "system.authorization-diagnostics",
@@ -35737,7 +35739,7 @@
         "title_key": "authorizationDiagnostics"
       },
       {
-        "capability_code": null,
+        "capability_code": "system.config",
         "menu_type": "C",
         "name": "参数设置",
         "page_key": "system.config",
@@ -35755,7 +35757,7 @@
         "title_key": "configTransfer"
       },
       {
-        "capability_code": null,
+        "capability_code": "system.dept",
         "menu_type": "C",
         "name": "部门管理",
         "page_key": "system.dept",
@@ -35764,7 +35766,7 @@
         "title_key": "dept"
       },
       {
-        "capability_code": null,
+        "capability_code": "system.dict",
         "menu_type": "C",
         "name": "字典管理",
         "page_key": "system.dict",
@@ -35773,7 +35775,7 @@
         "title_key": "dict"
       },
       {
-        "capability_code": null,
+        "capability_code": "system.logininfor",
         "menu_type": "C",
         "name": "登录日志",
         "page_key": "system.logininfor",
@@ -35782,7 +35784,7 @@
         "title_key": "loginlog"
       },
       {
-        "capability_code": null,
+        "capability_code": "system.menu",
         "menu_type": "C",
         "name": "菜单管理",
         "page_key": "system.menu",
@@ -35791,7 +35793,7 @@
         "title_key": "menu"
       },
       {
-        "capability_code": null,
+        "capability_code": "system.notice",
         "menu_type": "C",
         "name": "通知公告",
         "page_key": "system.notice",
@@ -35800,7 +35802,7 @@
         "title_key": "notice"
       },
       {
-        "capability_code": null,
+        "capability_code": "system.operlog",
         "menu_type": "C",
         "name": "操作日志",
         "page_key": "system.operlog",
@@ -35809,7 +35811,7 @@
         "title_key": "operlog"
       },
       {
-        "capability_code": null,
+        "capability_code": "system.perm",
         "menu_type": "C",
         "name": "权限管理",
         "page_key": "system.perm",
@@ -35827,7 +35829,7 @@
         "title_key": "post"
       },
       {
-        "capability_code": null,
+        "capability_code": "system.role",
         "menu_type": "C",
         "name": "角色管理",
         "page_key": "system.role",
@@ -35836,7 +35838,7 @@
         "title_key": "role"
       },
       {
-        "capability_code": null,
+        "capability_code": "system.user",
         "menu_type": "C",
         "name": "用户管理",
         "page_key": "system.user",
@@ -35997,6 +35999,435 @@
             "schema_version": 1
           }
         ]
+      },
+      {
+        "client_config_fields": [],
+        "code": "system.user",
+        "conflicts": [],
+        "default_admin_permissions": [
+          "system:user-import:add",
+          "system:user-import:cancel",
+          "system:user-import:list",
+          "system:user:add",
+          "system:user:edit",
+          "system:user:export",
+          "system:user:list",
+          "system:user:remove"
+        ],
+        "dependencies": [],
+        "deployment_available": true,
+        "deployment_dependencies": [],
+        "permission_codes": [
+          "system:user-import:add",
+          "system:user-import:cancel",
+          "system:user-import:list",
+          "system:user:add",
+          "system:user:edit",
+          "system:user:export",
+          "system:user:list",
+          "system:user:remove"
+        ],
+        "route_keys": [
+          "system.user"
+        ],
+        "variants": [
+          {
+            "code": "standard",
+            "schema_version": 1
+          }
+        ]
+      },
+      {
+        "client_config_fields": [],
+        "code": "system.role",
+        "conflicts": [],
+        "default_admin_permissions": [
+          "system:role:add",
+          "system:role:edit",
+          "system:role:export",
+          "system:role:list",
+          "system:role:remove"
+        ],
+        "dependencies": [],
+        "deployment_available": true,
+        "deployment_dependencies": [],
+        "permission_codes": [
+          "system:role:add",
+          "system:role:edit",
+          "system:role:export",
+          "system:role:list",
+          "system:role:remove"
+        ],
+        "route_keys": [
+          "system.role"
+        ],
+        "variants": [
+          {
+            "code": "standard",
+            "schema_version": 1
+          }
+        ]
+      },
+      {
+        "client_config_fields": [],
+        "code": "system.menu",
+        "conflicts": [],
+        "default_admin_permissions": [
+          "system:menu:add",
+          "system:menu:edit",
+          "system:menu:list",
+          "system:menu:remove"
+        ],
+        "dependencies": [],
+        "deployment_available": true,
+        "deployment_dependencies": [],
+        "permission_codes": [
+          "system:menu:add",
+          "system:menu:edit",
+          "system:menu:list",
+          "system:menu:remove"
+        ],
+        "route_keys": [
+          "system.menu"
+        ],
+        "variants": [
+          {
+            "code": "standard",
+            "schema_version": 1
+          }
+        ]
+      },
+      {
+        "client_config_fields": [],
+        "code": "system.dept",
+        "conflicts": [],
+        "default_admin_permissions": [
+          "system:dept:add",
+          "system:dept:edit",
+          "system:dept:list",
+          "system:dept:remove"
+        ],
+        "dependencies": [],
+        "deployment_available": true,
+        "deployment_dependencies": [],
+        "permission_codes": [
+          "system:dept:add",
+          "system:dept:edit",
+          "system:dept:list",
+          "system:dept:remove"
+        ],
+        "route_keys": [
+          "system.dept"
+        ],
+        "variants": [
+          {
+            "code": "standard",
+            "schema_version": 1
+          }
+        ]
+      },
+      {
+        "client_config_fields": [],
+        "code": "system.dict",
+        "conflicts": [],
+        "default_admin_permissions": [
+          "system:dict:add",
+          "system:dict:edit",
+          "system:dict:export",
+          "system:dict:list",
+          "system:dict:remove"
+        ],
+        "dependencies": [],
+        "deployment_available": true,
+        "deployment_dependencies": [],
+        "permission_codes": [
+          "system:dict:add",
+          "system:dict:edit",
+          "system:dict:export",
+          "system:dict:list",
+          "system:dict:remove"
+        ],
+        "route_keys": [
+          "system.dict"
+        ],
+        "variants": [
+          {
+            "code": "standard",
+            "schema_version": 1
+          }
+        ]
+      },
+      {
+        "client_config_fields": [],
+        "code": "system.config",
+        "conflicts": [],
+        "default_admin_permissions": [
+          "system:config:add",
+          "system:config:edit",
+          "system:config:export",
+          "system:config:list",
+          "system:config:remove"
+        ],
+        "dependencies": [],
+        "deployment_available": true,
+        "deployment_dependencies": [],
+        "permission_codes": [
+          "system:config:add",
+          "system:config:edit",
+          "system:config:export",
+          "system:config:list",
+          "system:config:remove"
+        ],
+        "route_keys": [
+          "system.config"
+        ],
+        "variants": [
+          {
+            "code": "standard",
+            "schema_version": 1
+          }
+        ]
+      },
+      {
+        "client_config_fields": [],
+        "code": "system.perm",
+        "conflicts": [],
+        "default_admin_permissions": [
+          "system:perm:add",
+          "system:perm:edit",
+          "system:perm:list",
+          "system:perm:remove",
+          "system:perm:sync"
+        ],
+        "dependencies": [],
+        "deployment_available": true,
+        "deployment_dependencies": [],
+        "permission_codes": [
+          "system:perm:add",
+          "system:perm:edit",
+          "system:perm:list",
+          "system:perm:remove",
+          "system:perm:sync"
+        ],
+        "route_keys": [
+          "system.perm"
+        ],
+        "variants": [
+          {
+            "code": "standard",
+            "schema_version": 1
+          }
+        ]
+      },
+      {
+        "client_config_fields": [],
+        "code": "system.authorization-diagnostics",
+        "conflicts": [],
+        "default_admin_permissions": [
+          "system:authorization-diagnostic:list"
+        ],
+        "dependencies": [],
+        "deployment_available": true,
+        "deployment_dependencies": [],
+        "permission_codes": [
+          "system:authorization-diagnostic:list"
+        ],
+        "route_keys": [
+          "system.authorization-diagnostics"
+        ],
+        "variants": [
+          {
+            "code": "standard",
+            "schema_version": 1
+          }
+        ]
+      },
+      {
+        "client_config_fields": [],
+        "code": "system.operlog",
+        "conflicts": [],
+        "default_admin_permissions": [
+          "system:operlog:export",
+          "system:operlog:list"
+        ],
+        "dependencies": [],
+        "deployment_available": true,
+        "deployment_dependencies": [],
+        "permission_codes": [
+          "system:operlog:export",
+          "system:operlog:list"
+        ],
+        "route_keys": [
+          "system.operlog"
+        ],
+        "variants": [
+          {
+            "code": "standard",
+            "schema_version": 1
+          }
+        ]
+      },
+      {
+        "client_config_fields": [],
+        "code": "system.logininfor",
+        "conflicts": [],
+        "default_admin_permissions": [
+          "system:logininfor:export",
+          "system:logininfor:list"
+        ],
+        "dependencies": [],
+        "deployment_available": true,
+        "deployment_dependencies": [],
+        "permission_codes": [
+          "system:logininfor:export",
+          "system:logininfor:list"
+        ],
+        "route_keys": [
+          "system.logininfor"
+        ],
+        "variants": [
+          {
+            "code": "standard",
+            "schema_version": 1
+          }
+        ]
+      },
+      {
+        "client_config_fields": [],
+        "code": "system.message",
+        "conflicts": [],
+        "default_admin_permissions": [
+          "system:message:publish"
+        ],
+        "dependencies": [],
+        "deployment_available": true,
+        "deployment_dependencies": [
+          "messaging"
+        ],
+        "permission_codes": [
+          "system:message:publish"
+        ],
+        "route_keys": [],
+        "variants": [
+          {
+            "code": "standard",
+            "schema_version": 1
+          }
+        ]
+      },
+      {
+        "client_config_fields": [],
+        "code": "monitor.online",
+        "conflicts": [],
+        "default_admin_permissions": [
+          "monitor:online:force-logout",
+          "monitor:online:list"
+        ],
+        "dependencies": [],
+        "deployment_available": true,
+        "deployment_dependencies": [
+          "redis"
+        ],
+        "permission_codes": [
+          "monitor:online:force-logout",
+          "monitor:online:list"
+        ],
+        "route_keys": [
+          "monitor.online"
+        ],
+        "variants": [
+          {
+            "code": "standard",
+            "schema_version": 1
+          }
+        ]
+      },
+      {
+        "client_config_fields": [],
+        "code": "monitor.jobs",
+        "conflicts": [],
+        "default_admin_permissions": [
+          "monitor:job:list",
+          "monitor:job:retry"
+        ],
+        "dependencies": [],
+        "deployment_available": true,
+        "deployment_dependencies": [],
+        "permission_codes": [
+          "monitor:job:list",
+          "monitor:job:retry"
+        ],
+        "route_keys": [
+          "monitor.jobs"
+        ],
+        "variants": [
+          {
+            "code": "standard",
+            "schema_version": 1
+          }
+        ]
+      },
+      {
+        "client_config_fields": [],
+        "code": "monitor.schedules",
+        "conflicts": [],
+        "default_admin_permissions": [
+          "monitor:schedule:add",
+          "monitor:schedule:edit",
+          "monitor:schedule:list",
+          "monitor:schedule:remove",
+          "monitor:schedule:run"
+        ],
+        "dependencies": [],
+        "deployment_available": true,
+        "deployment_dependencies": [
+          "scheduler"
+        ],
+        "permission_codes": [
+          "monitor:schedule:add",
+          "monitor:schedule:edit",
+          "monitor:schedule:list",
+          "monitor:schedule:remove",
+          "monitor:schedule:run"
+        ],
+        "route_keys": [
+          "monitor.schedules"
+        ],
+        "variants": [
+          {
+            "code": "standard",
+            "schema_version": 1
+          }
+        ]
+      },
+      {
+        "client_config_fields": [],
+        "code": "system.notice",
+        "conflicts": [],
+        "default_admin_permissions": [
+          "system:notice:add",
+          "system:notice:edit",
+          "system:notice:list",
+          "system:notice:remove"
+        ],
+        "dependencies": [],
+        "deployment_available": true,
+        "deployment_dependencies": [],
+        "permission_codes": [
+          "system:notice:add",
+          "system:notice:edit",
+          "system:notice:list",
+          "system:notice:remove"
+        ],
+        "route_keys": [
+          "system.notice"
+        ],
+        "variants": [
+          {
+            "code": "standard",
+            "schema_version": 1
+          }
+        ]
       }
     ],
     "version": 1
@@ -36043,6 +36474,46 @@
   "x-ryframe-route-contract": {
     "routes": [
       {
+        "capability_code": "system.notice",
+        "handler": "create",
+        "method": "POST",
+        "path": "/api/v1/system/notices",
+        "permission_code": "system:notice:add",
+        "source": "crates/ryframe-api/src/generated/notice/handler.rs"
+      },
+      {
+        "capability_code": "system.notice",
+        "handler": "detail",
+        "method": "GET",
+        "path": "/api/v1/system/notices/{id}",
+        "permission_code": "system:notice:list",
+        "source": "crates/ryframe-api/src/generated/notice/handler.rs"
+      },
+      {
+        "capability_code": "system.notice",
+        "handler": "list",
+        "method": "GET",
+        "path": "/api/v1/system/notices",
+        "permission_code": "system:notice:list",
+        "source": "crates/ryframe-api/src/generated/notice/handler.rs"
+      },
+      {
+        "capability_code": "system.notice",
+        "handler": "remove",
+        "method": "DELETE",
+        "path": "/api/v1/system/notices/{id}",
+        "permission_code": "system:notice:remove",
+        "source": "crates/ryframe-api/src/generated/notice/handler.rs"
+      },
+      {
+        "capability_code": "system.notice",
+        "handler": "update",
+        "method": "PUT",
+        "path": "/api/v1/system/notices/{id}",
+        "permission_code": "system:notice:edit",
+        "source": "crates/ryframe-api/src/generated/notice/handler.rs"
+      },
+      {
         "capability_code": "system.post",
         "handler": "create",
         "method": "POST",
@@ -36083,12 +36554,708 @@
         "source": "crates/ryframe-api/src/generated/post/handler.rs"
       },
       {
+        "capability_code": "system.authorization-diagnostics",
+        "handler": "diagnose_user",
+        "method": "GET",
+        "path": "/api/v1/system/authorization-diagnostics/users/{id}",
+        "permission_code": "system:authorization-diagnostic:list",
+        "source": "crates/ryframe-api/src/handlers/authorization_diagnostic_handler.rs"
+      },
+      {
+        "capability_code": "system.config",
+        "handler": "create",
+        "method": "POST",
+        "path": "/api/v1/system/configs",
+        "permission_code": "system:config:add",
+        "source": "crates/ryframe-api/src/handlers/config_handler.rs"
+      },
+      {
+        "capability_code": "system.config",
+        "handler": "detail",
+        "method": "GET",
+        "path": "/api/v1/system/configs/{id}",
+        "permission_code": "system:config:list",
+        "source": "crates/ryframe-api/src/handlers/config_handler.rs"
+      },
+      {
+        "capability_code": "system.config",
+        "handler": "get_by_key",
+        "method": "GET",
+        "path": "/api/v1/system/configs/key/{key}",
+        "permission_code": "system:config:list",
+        "source": "crates/ryframe-api/src/handlers/config_handler.rs"
+      },
+      {
+        "capability_code": "system.config",
+        "handler": "list",
+        "method": "GET",
+        "path": "/api/v1/system/configs",
+        "permission_code": "system:config:list",
+        "source": "crates/ryframe-api/src/handlers/config_handler.rs"
+      },
+      {
+        "capability_code": "system.config",
+        "handler": "refresh_cache",
+        "method": "DELETE",
+        "path": "/api/v1/system/configs/cache",
+        "permission_code": "system:config:edit",
+        "source": "crates/ryframe-api/src/handlers/config_handler.rs"
+      },
+      {
+        "capability_code": "system.config",
+        "handler": "remove",
+        "method": "DELETE",
+        "path": "/api/v1/system/configs/{id}",
+        "permission_code": "system:config:remove",
+        "source": "crates/ryframe-api/src/handlers/config_handler.rs"
+      },
+      {
+        "capability_code": "system.config",
+        "handler": "request_config_export",
+        "method": "POST",
+        "path": "/api/v1/system/configs/exports",
+        "permission_code": "system:config:export",
+        "source": "crates/ryframe-api/src/handlers/config_handler.rs"
+      },
+      {
+        "capability_code": "system.config",
+        "handler": "update",
+        "method": "PUT",
+        "path": "/api/v1/system/configs/{id}",
+        "permission_code": "system:config:edit",
+        "source": "crates/ryframe-api/src/handlers/config_handler.rs"
+      },
+      {
+        "capability_code": "system.dept",
+        "handler": "create",
+        "method": "POST",
+        "path": "/api/v1/system/depts",
+        "permission_code": "system:dept:add",
+        "source": "crates/ryframe-api/src/handlers/dept_handler.rs"
+      },
+      {
+        "capability_code": "system.dept",
+        "handler": "detail",
+        "method": "GET",
+        "path": "/api/v1/system/depts/{id}",
+        "permission_code": "system:dept:list",
+        "source": "crates/ryframe-api/src/handlers/dept_handler.rs"
+      },
+      {
+        "capability_code": "system.dept",
+        "handler": "list_page",
+        "method": "GET",
+        "path": "/api/v1/system/depts",
+        "permission_code": "system:dept:list",
+        "source": "crates/ryframe-api/src/handlers/dept_handler.rs"
+      },
+      {
+        "capability_code": "system.dept",
+        "handler": "remove",
+        "method": "DELETE",
+        "path": "/api/v1/system/depts/{id}",
+        "permission_code": "system:dept:remove",
+        "source": "crates/ryframe-api/src/handlers/dept_handler.rs"
+      },
+      {
+        "capability_code": "system.dept",
+        "handler": "tree",
+        "method": "GET",
+        "path": "/api/v1/system/depts/tree",
+        "permission_code": "system:dept:list",
+        "source": "crates/ryframe-api/src/handlers/dept_handler.rs"
+      },
+      {
+        "capability_code": "system.dept",
+        "handler": "update",
+        "method": "PUT",
+        "path": "/api/v1/system/depts/{id}",
+        "permission_code": "system:dept:edit",
+        "source": "crates/ryframe-api/src/handlers/dept_handler.rs"
+      },
+      {
+        "capability_code": "system.dict",
+        "handler": "create_data",
+        "method": "POST",
+        "path": "/api/v1/system/dict/data",
+        "permission_code": "system:dict:add",
+        "source": "crates/ryframe-api/src/handlers/dict_handler.rs"
+      },
+      {
+        "capability_code": "system.dict",
+        "handler": "create_type",
+        "method": "POST",
+        "path": "/api/v1/system/dict/types",
+        "permission_code": "system:dict:add",
+        "source": "crates/ryframe-api/src/handlers/dict_handler.rs"
+      },
+      {
+        "capability_code": "system.dict",
+        "handler": "delete_data",
+        "method": "DELETE",
+        "path": "/api/v1/system/dict/data/{id}",
+        "permission_code": "system:dict:remove",
+        "source": "crates/ryframe-api/src/handlers/dict_handler.rs"
+      },
+      {
+        "capability_code": "system.dict",
+        "handler": "delete_type",
+        "method": "DELETE",
+        "path": "/api/v1/system/dict/types/{id}",
+        "permission_code": "system:dict:remove",
+        "source": "crates/ryframe-api/src/handlers/dict_handler.rs"
+      },
+      {
+        "capability_code": "system.dict",
+        "handler": "list_data",
+        "method": "GET",
+        "path": "/api/v1/system/dict/data",
+        "permission_code": "system:dict:list",
+        "source": "crates/ryframe-api/src/handlers/dict_handler.rs"
+      },
+      {
+        "capability_code": "system.dict",
+        "handler": "list_data_by_type_path",
+        "method": "GET",
+        "path": "/api/v1/system/dict/data/type/{dict_type}",
+        "permission_code": "system:dict:list",
+        "source": "crates/ryframe-api/src/handlers/dict_handler.rs"
+      },
+      {
+        "capability_code": "system.dict",
+        "handler": "list_types",
+        "method": "GET",
+        "path": "/api/v1/system/dict/types",
+        "permission_code": "system:dict:list",
+        "source": "crates/ryframe-api/src/handlers/dict_handler.rs"
+      },
+      {
+        "capability_code": "system.dict",
+        "handler": "request_dict_type_export",
+        "method": "POST",
+        "path": "/api/v1/system/dict/types/exports",
+        "permission_code": "system:dict:export",
+        "source": "crates/ryframe-api/src/handlers/dict_handler.rs"
+      },
+      {
+        "capability_code": "system.dict",
+        "handler": "update_data",
+        "method": "PUT",
+        "path": "/api/v1/system/dict/data/{id}",
+        "permission_code": "system:dict:edit",
+        "source": "crates/ryframe-api/src/handlers/dict_handler.rs"
+      },
+      {
+        "capability_code": "system.dict",
+        "handler": "update_type",
+        "method": "PUT",
+        "path": "/api/v1/system/dict/types/{id}",
+        "permission_code": "system:dict:edit",
+        "source": "crates/ryframe-api/src/handlers/dict_handler.rs"
+      },
+      {
+        "capability_code": "monitor.jobs",
+        "handler": "list",
+        "method": "GET",
+        "path": "/api/v1/monitor/jobs",
+        "permission_code": "monitor:job:list",
+        "source": "crates/ryframe-api/src/handlers/job_handler.rs"
+      },
+      {
+        "capability_code": "monitor.jobs",
+        "handler": "retry_dead",
+        "method": "POST",
+        "path": "/api/v1/monitor/jobs/{id}/retry",
+        "permission_code": "monitor:job:retry",
+        "source": "crates/ryframe-api/src/handlers/job_handler.rs"
+      },
+      {
+        "capability_code": "monitor.jobs",
+        "handler": "stats",
+        "method": "GET",
+        "path": "/api/v1/monitor/jobs/stats",
+        "permission_code": "monitor:job:list",
+        "source": "crates/ryframe-api/src/handlers/job_handler.rs"
+      },
+      {
+        "capability_code": "system.logininfor",
+        "handler": "list",
+        "method": "GET",
+        "path": "/api/v1/system/loginlogs",
+        "permission_code": "system:logininfor:list",
+        "source": "crates/ryframe-api/src/handlers/login_log_handler.rs"
+      },
+      {
+        "capability_code": "system.logininfor",
+        "handler": "request_login_log_export",
+        "method": "POST",
+        "path": "/api/v1/system/loginlogs/exports",
+        "permission_code": "system:logininfor:export",
+        "source": "crates/ryframe-api/src/handlers/login_log_handler.rs"
+      },
+      {
+        "capability_code": "system.menu",
+        "handler": "create",
+        "method": "POST",
+        "path": "/api/v1/system/menus",
+        "permission_code": "system:menu:add",
+        "source": "crates/ryframe-api/src/handlers/menu_handler.rs"
+      },
+      {
+        "capability_code": "system.menu",
+        "handler": "detail",
+        "method": "GET",
+        "path": "/api/v1/system/menus/{id}",
+        "permission_code": "system:menu:list",
+        "source": "crates/ryframe-api/src/handlers/menu_handler.rs"
+      },
+      {
+        "capability_code": "system.menu",
+        "handler": "list_page",
+        "method": "GET",
+        "path": "/api/v1/system/menus",
+        "permission_code": "system:menu:list",
+        "source": "crates/ryframe-api/src/handlers/menu_handler.rs"
+      },
+      {
+        "capability_code": "system.menu",
+        "handler": "remove",
+        "method": "DELETE",
+        "path": "/api/v1/system/menus/{id}",
+        "permission_code": "system:menu:remove",
+        "source": "crates/ryframe-api/src/handlers/menu_handler.rs"
+      },
+      {
+        "capability_code": "system.menu",
+        "handler": "tree",
+        "method": "GET",
+        "path": "/api/v1/system/menus/tree",
+        "permission_code": "system:menu:list",
+        "source": "crates/ryframe-api/src/handlers/menu_handler.rs"
+      },
+      {
+        "capability_code": "system.menu",
+        "handler": "update",
+        "method": "PUT",
+        "path": "/api/v1/system/menus/{id}",
+        "permission_code": "system:menu:edit",
+        "source": "crates/ryframe-api/src/handlers/menu_handler.rs"
+      },
+      {
+        "capability_code": "system.message",
+        "handler": "publish",
+        "method": "POST",
+        "path": "/api/v1/system/messages",
+        "permission_code": "system:message:publish",
+        "source": "crates/ryframe-api/src/handlers/message_handler.rs"
+      },
+      {
+        "capability_code": "system.message",
+        "handler": "publish_to_message_center",
+        "method": "POST",
+        "path": "/api/v1/system/notices/{id}/publish-message",
+        "permission_code": "system:message:publish",
+        "source": "crates/ryframe-api/src/handlers/notice_handler.rs"
+      },
+      {
+        "capability_code": "monitor.online",
+        "handler": "force_logout",
+        "method": "DELETE",
+        "path": "/api/v1/system/online/{sid}",
+        "permission_code": "monitor:online:force-logout",
+        "source": "crates/ryframe-api/src/handlers/online_user_handler.rs"
+      },
+      {
+        "capability_code": "monitor.online",
+        "handler": "list_online_users_page",
+        "method": "GET",
+        "path": "/api/v1/system/online",
+        "permission_code": "monitor:online:list",
+        "source": "crates/ryframe-api/src/handlers/online_user_handler.rs"
+      },
+      {
+        "capability_code": "system.operlog",
+        "handler": "list",
+        "method": "GET",
+        "path": "/api/v1/system/operlogs",
+        "permission_code": "system:operlog:list",
+        "source": "crates/ryframe-api/src/handlers/oper_log_handler.rs"
+      },
+      {
+        "capability_code": "system.operlog",
+        "handler": "request_oper_log_export",
+        "method": "POST",
+        "path": "/api/v1/system/operlogs/exports",
+        "permission_code": "system:operlog:export",
+        "source": "crates/ryframe-api/src/handlers/oper_log_handler.rs"
+      },
+      {
+        "capability_code": "system.perm",
+        "handler": "create",
+        "method": "POST",
+        "path": "/api/v1/system/perms",
+        "permission_code": "system:perm:add",
+        "source": "crates/ryframe-api/src/handlers/permission_handler.rs"
+      },
+      {
+        "capability_code": "system.perm",
+        "handler": "detail",
+        "method": "GET",
+        "path": "/api/v1/system/perms/{id}",
+        "permission_code": "system:perm:list",
+        "source": "crates/ryframe-api/src/handlers/permission_handler.rs"
+      },
+      {
+        "capability_code": "system.perm",
+        "handler": "remove",
+        "method": "DELETE",
+        "path": "/api/v1/system/perms/{id}",
+        "permission_code": "system:perm:remove",
+        "source": "crates/ryframe-api/src/handlers/permission_handler.rs"
+      },
+      {
+        "capability_code": "system.perm",
+        "handler": "sync_perm_from_route",
+        "method": "POST",
+        "path": "/api/v1/system/perms/sync",
+        "permission_code": "system:perm:sync",
+        "source": "crates/ryframe-api/src/handlers/permission_handler.rs"
+      },
+      {
+        "capability_code": "system.perm",
+        "handler": "tree",
+        "method": "GET",
+        "path": "/api/v1/system/perms/tree",
+        "permission_code": "system:perm:list",
+        "source": "crates/ryframe-api/src/handlers/permission_handler.rs"
+      },
+      {
+        "capability_code": "system.perm",
+        "handler": "update",
+        "method": "PUT",
+        "path": "/api/v1/system/perms/{id}",
+        "permission_code": "system:perm:edit",
+        "source": "crates/ryframe-api/src/handlers/permission_handler.rs"
+      },
+      {
         "capability_code": "system.post",
         "handler": "request_post_export",
         "method": "POST",
         "path": "/api/v1/system/posts/exports",
         "permission_code": "system:post:export",
         "source": "crates/ryframe-api/src/handlers/post_export_handler.rs"
+      },
+      {
+        "capability_code": "system.role",
+        "handler": "batch_remove",
+        "method": "DELETE",
+        "path": "/api/v1/system/roles/batch/{ids}",
+        "permission_code": "system:role:remove",
+        "source": "crates/ryframe-api/src/handlers/role_handler.rs"
+      },
+      {
+        "capability_code": "system.role",
+        "handler": "create",
+        "method": "POST",
+        "path": "/api/v1/system/roles",
+        "permission_code": "system:role:add",
+        "source": "crates/ryframe-api/src/handlers/role_handler.rs"
+      },
+      {
+        "capability_code": "system.role",
+        "handler": "detail",
+        "method": "GET",
+        "path": "/api/v1/system/roles/{id}",
+        "permission_code": "system:role:list",
+        "source": "crates/ryframe-api/src/handlers/role_handler.rs"
+      },
+      {
+        "capability_code": "system.role",
+        "handler": "get_role_perms",
+        "method": "GET",
+        "path": "/api/v1/system/roles/{id}/permissions",
+        "permission_code": "system:role:list",
+        "source": "crates/ryframe-api/src/handlers/role_handler.rs"
+      },
+      {
+        "capability_code": "system.role",
+        "handler": "list",
+        "method": "GET",
+        "path": "/api/v1/system/roles",
+        "permission_code": "system:role:list",
+        "source": "crates/ryframe-api/src/handlers/role_handler.rs"
+      },
+      {
+        "capability_code": "system.role",
+        "handler": "options",
+        "method": "GET",
+        "path": "/api/v1/system/roles/options",
+        "permission_code": "system:role:list",
+        "source": "crates/ryframe-api/src/handlers/role_handler.rs"
+      },
+      {
+        "capability_code": "system.role",
+        "handler": "remove",
+        "method": "DELETE",
+        "path": "/api/v1/system/roles/{id}",
+        "permission_code": "system:role:remove",
+        "source": "crates/ryframe-api/src/handlers/role_handler.rs"
+      },
+      {
+        "capability_code": "system.role",
+        "handler": "replace_data_scope",
+        "method": "PUT",
+        "path": "/api/v1/system/roles/{id}/data-scope",
+        "permission_code": "system:role:edit",
+        "source": "crates/ryframe-api/src/handlers/role_handler.rs"
+      },
+      {
+        "capability_code": "system.role",
+        "handler": "replace_permissions",
+        "method": "PUT",
+        "path": "/api/v1/system/roles/{id}/permissions",
+        "permission_code": "system:role:edit",
+        "source": "crates/ryframe-api/src/handlers/role_handler.rs"
+      },
+      {
+        "capability_code": "system.role",
+        "handler": "request_role_export",
+        "method": "POST",
+        "path": "/api/v1/system/roles/exports",
+        "permission_code": "system:role:export",
+        "source": "crates/ryframe-api/src/handlers/role_handler.rs"
+      },
+      {
+        "capability_code": "system.role",
+        "handler": "update",
+        "method": "PUT",
+        "path": "/api/v1/system/roles/{id}",
+        "permission_code": "system:role:edit",
+        "source": "crates/ryframe-api/src/handlers/role_handler.rs"
+      },
+      {
+        "capability_code": "monitor.schedules",
+        "handler": "create",
+        "method": "POST",
+        "path": "/api/v1/monitor/schedules",
+        "permission_code": "monitor:schedule:add",
+        "source": "crates/ryframe-api/src/handlers/schedule_handler.rs"
+      },
+      {
+        "capability_code": "monitor.schedules",
+        "handler": "detail",
+        "method": "GET",
+        "path": "/api/v1/monitor/schedules/{id}",
+        "permission_code": "monitor:schedule:list",
+        "source": "crates/ryframe-api/src/handlers/schedule_handler.rs"
+      },
+      {
+        "capability_code": "monitor.schedules",
+        "handler": "executions",
+        "method": "GET",
+        "path": "/api/v1/monitor/schedules/{id}/executions",
+        "permission_code": "monitor:schedule:list",
+        "source": "crates/ryframe-api/src/handlers/schedule_handler.rs"
+      },
+      {
+        "capability_code": "monitor.schedules",
+        "handler": "list",
+        "method": "GET",
+        "path": "/api/v1/monitor/schedules",
+        "permission_code": "monitor:schedule:list",
+        "source": "crates/ryframe-api/src/handlers/schedule_handler.rs"
+      },
+      {
+        "capability_code": "monitor.schedules",
+        "handler": "preview",
+        "method": "POST",
+        "path": "/api/v1/monitor/schedules/preview",
+        "permission_code": "monitor:schedule:list",
+        "source": "crates/ryframe-api/src/handlers/schedule_handler.rs"
+      },
+      {
+        "capability_code": "monitor.schedules",
+        "handler": "remove",
+        "method": "DELETE",
+        "path": "/api/v1/monitor/schedules/{id}",
+        "permission_code": "monitor:schedule:remove",
+        "source": "crates/ryframe-api/src/handlers/schedule_handler.rs"
+      },
+      {
+        "capability_code": "monitor.schedules",
+        "handler": "run_now",
+        "method": "POST",
+        "path": "/api/v1/monitor/schedules/{id}/run",
+        "permission_code": "monitor:schedule:run",
+        "source": "crates/ryframe-api/src/handlers/schedule_handler.rs"
+      },
+      {
+        "capability_code": "monitor.schedules",
+        "handler": "targets",
+        "method": "GET",
+        "path": "/api/v1/monitor/schedules/targets",
+        "permission_code": "monitor:schedule:list",
+        "source": "crates/ryframe-api/src/handlers/schedule_handler.rs"
+      },
+      {
+        "capability_code": "monitor.schedules",
+        "handler": "update",
+        "method": "PUT",
+        "path": "/api/v1/monitor/schedules/{id}",
+        "permission_code": "monitor:schedule:edit",
+        "source": "crates/ryframe-api/src/handlers/schedule_handler.rs"
+      },
+      {
+        "capability_code": "monitor.schedules",
+        "handler": "update_status",
+        "method": "PUT",
+        "path": "/api/v1/monitor/schedules/{id}/status",
+        "permission_code": "monitor:schedule:edit",
+        "source": "crates/ryframe-api/src/handlers/schedule_handler.rs"
+      },
+      {
+        "capability_code": "system.user",
+        "handler": "batch_remove",
+        "method": "DELETE",
+        "path": "/api/v1/system/users/batch/{ids}",
+        "permission_code": "system:user:remove",
+        "source": "crates/ryframe-api/src/handlers/user_handler/crud.rs"
+      },
+      {
+        "capability_code": "system.user",
+        "handler": "create",
+        "method": "POST",
+        "path": "/api/v1/system/users",
+        "permission_code": "system:user:add",
+        "source": "crates/ryframe-api/src/handlers/user_handler/crud.rs"
+      },
+      {
+        "capability_code": "system.user",
+        "handler": "detail",
+        "method": "GET",
+        "path": "/api/v1/system/users/{id}",
+        "permission_code": "system:user:list",
+        "source": "crates/ryframe-api/src/handlers/user_handler/crud.rs"
+      },
+      {
+        "capability_code": "system.user",
+        "handler": "list",
+        "method": "GET",
+        "path": "/api/v1/system/users",
+        "permission_code": "system:user:list",
+        "source": "crates/ryframe-api/src/handlers/user_handler/crud.rs"
+      },
+      {
+        "capability_code": "system.user",
+        "handler": "options",
+        "method": "GET",
+        "path": "/api/v1/system/users/options",
+        "permission_code": "system:user:list",
+        "source": "crates/ryframe-api/src/handlers/user_handler/crud.rs"
+      },
+      {
+        "capability_code": "system.user",
+        "handler": "remove",
+        "method": "DELETE",
+        "path": "/api/v1/system/users/{id}",
+        "permission_code": "system:user:remove",
+        "source": "crates/ryframe-api/src/handlers/user_handler/crud.rs"
+      },
+      {
+        "capability_code": "system.user",
+        "handler": "replace_roles",
+        "method": "PUT",
+        "path": "/api/v1/system/users/{id}/roles",
+        "permission_code": "system:user:edit",
+        "source": "crates/ryframe-api/src/handlers/user_handler/crud.rs"
+      },
+      {
+        "capability_code": "system.user",
+        "handler": "update",
+        "method": "PUT",
+        "path": "/api/v1/system/users/{id}",
+        "permission_code": "system:user:edit",
+        "source": "crates/ryframe-api/src/handlers/user_handler/crud.rs"
+      },
+      {
+        "capability_code": "system.user",
+        "handler": "update_status",
+        "method": "PUT",
+        "path": "/api/v1/system/users/{id}/status",
+        "permission_code": "system:user:edit",
+        "source": "crates/ryframe-api/src/handlers/user_handler/crud.rs"
+      },
+      {
+        "capability_code": "system.user",
+        "handler": "download_import_template",
+        "method": "GET",
+        "path": "/api/v1/system/users/import-template",
+        "permission_code": "system:user-import:add",
+        "source": "crates/ryframe-api/src/handlers/user_handler/import_export.rs"
+      },
+      {
+        "capability_code": "system.user",
+        "handler": "request_user_export",
+        "method": "POST",
+        "path": "/api/v1/system/users/exports",
+        "permission_code": "system:user:export",
+        "source": "crates/ryframe-api/src/handlers/user_handler/import_export.rs"
+      },
+      {
+        "capability_code": "system.user",
+        "handler": "request_password_reset",
+        "method": "POST",
+        "path": "/api/v1/system/users/{id}/password-reset-requests",
+        "permission_code": "system:user:edit",
+        "source": "crates/ryframe-api/src/handlers/user_handler/password_reset.rs"
+      },
+      {
+        "capability_code": "system.user",
+        "handler": "cancel",
+        "method": "POST",
+        "path": "/api/v1/system/user-imports/{id}/cancel",
+        "permission_code": "system:user-import:cancel",
+        "source": "crates/ryframe-api/src/handlers/user_import_handler.rs"
+      },
+      {
+        "capability_code": "system.user",
+        "handler": "create",
+        "method": "POST",
+        "path": "/api/v1/system/user-imports",
+        "permission_code": "system:user-import:add",
+        "source": "crates/ryframe-api/src/handlers/user_import_handler.rs"
+      },
+      {
+        "capability_code": "system.user",
+        "handler": "detail",
+        "method": "GET",
+        "path": "/api/v1/system/user-imports/{id}",
+        "permission_code": "system:user-import:list",
+        "source": "crates/ryframe-api/src/handlers/user_import_handler.rs"
+      },
+      {
+        "capability_code": "system.user",
+        "handler": "list",
+        "method": "GET",
+        "path": "/api/v1/system/user-imports",
+        "permission_code": "system:user-import:list",
+        "source": "crates/ryframe-api/src/handlers/user_import_handler.rs"
+      },
+      {
+        "capability_code": "system.user",
+        "handler": "report",
+        "method": "GET",
+        "path": "/api/v1/system/user-imports/{id}/report",
+        "permission_code": "system:user-import:list",
+        "source": "crates/ryframe-api/src/handlers/user_import_handler.rs"
+      },
+      {
+        "capability_code": "system.user",
+        "handler": "rows",
+        "method": "GET",
+        "path": "/api/v1/system/user-imports/{id}/rows",
+        "permission_code": "system:user-import:list",
+        "source": "crates/ryframe-api/src/handlers/user_import_handler.rs"
       }
     ],
     "version": 1

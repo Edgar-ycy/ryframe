@@ -25,6 +25,7 @@ pub fn notice_router(state: AppState) -> Router {
 /// 使用公告 ID 作为业务幂等键，因此重复点击不会再次创建收件人快照。
 #[post("/{id}/publish-message")]
 #[perm("system:message:publish")]
+#[ryframe_macro::capability("system.message")]
 #[utoipa::path(post, path = "/api/v1/system/notices/{id}/publish-message", tag = "通知公告",
     params(("id" = String, Path)),
     responses((status = 200, description = "消息中心发布结果", body = ApiResponse<PublishedMessageVo>)),

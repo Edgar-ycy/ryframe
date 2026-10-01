@@ -17,6 +17,7 @@ use crate::{
 
 #[post("/{id}/password-reset-requests")]
 #[perm("system:user:edit")]
+#[ryframe_macro::capability("system.user")]
 #[utoipa::path(post, path = "/api/v1/system/users/{id}/password-reset-requests", tag = "用户管理",
     params(("id" = String, Path, description = "用户ID")),
     request_body = PasswordResetRequestDto,

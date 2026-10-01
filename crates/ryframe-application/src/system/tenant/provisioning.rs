@@ -29,9 +29,7 @@ fn filter_provisioning_template(
     let enabled_routes = string_set(&record.enabled_capability_route_keys);
     template.authorization.menus.retain(|menu| {
         menu.route_key.as_deref().is_none_or(|route_key| {
-            route_key != "monitor.retention"
-                && route_key != "platform"
-                && !route_key.starts_with("platform.")
+            !super::super::platform_boundary::is_platform_route(route_key)
                 && (!managed_routes.contains(route_key) || enabled_routes.contains(route_key))
         })
     });
@@ -101,10 +99,7 @@ fn close_permission_parents(permissions: &[TenantPermissionTemplate], retained: 
 }
 
 fn permission_allowed(code: &str) -> bool {
-    code != "*:*:*"
-        && !code.starts_with("tenant:")
-        && !code.starts_with("platform:")
-        && !code.starts_with("monitor:retention:")
+    code != "*:*:*" && !super::super::platform_boundary::is_platform_permission(code)
 }
 
 fn assign_standard_admin_permission(code: &str) -> bool {

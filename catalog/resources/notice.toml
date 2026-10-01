@@ -214,6 +214,7 @@ update = "put_system_notices_by_id"
 delete = "delete_system_notices_by_id"
 
 [access]
+capability = "system.notice"
 owner_field = "created_by"
 
 [access.permissions]

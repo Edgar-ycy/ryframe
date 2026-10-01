@@ -21,7 +21,6 @@ pub use tree::build_perm_tree;
 
 const SYSTEM_TENANT_ID: &str = "system";
 const TENANT_PERMISSION_PREFIX: &str = "tenant:";
-const PLATFORM_PERMISSION_PREFIX: &str = "platform:";
 
 pub struct PermissionService {
     read: Arc<dyn PermissionReadPort>,
@@ -343,7 +342,7 @@ impl PermissionService {
 }
 
 pub fn ensure_tenant_permission_code_boundary(tenant_id: &str, code: &str) -> AppResult<()> {
-    if tenant_id != SYSTEM_TENANT_ID && is_tenant_permission_code(code) {
+    if tenant_id != SYSTEM_TENANT_ID && super::platform_boundary::is_platform_permission(code) {
         return Err(AppError::Authorization(
             "租户管理权限仅允许系统租户维护".into(),
         ));
@@ -357,6 +356,5 @@ fn is_tenant_permission_code(code: &str) -> bool {
 }
 
 pub fn is_platform_permission_code(code: &str) -> bool {
-    code.get(..PLATFORM_PERMISSION_PREFIX.len())
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(PLATFORM_PERMISSION_PREFIX))
+    super::platform_boundary::is_platform_permission(code)
 }

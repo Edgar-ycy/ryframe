@@ -47,7 +47,7 @@ enum Call {
     AssignProduct,
     CreatePending,
     LockTenant,
-    SyncResources,
+    SyncResources(Vec<String>, Vec<String>, Vec<String>),
     Activate,
     UpdateStatus,
     Commit(TransactionAuditMode),
@@ -57,6 +57,7 @@ enum Call {
 struct FakeState {
     calls: Mutex<Vec<Call>>,
     fail_at: Option<FailAt>,
+    capabilities: Vec<&'static str>,
 }
 
 impl FakeState {
@@ -144,16 +145,32 @@ impl ProductTransactionPort for FakeTransaction {
             version_id,
             version: 1,
             version_status: "published".into(),
-            capabilities: Vec::new(),
+            capabilities: self
+                .state
+                .capabilities
+                .iter()
+                .map(
+                    |code| ryframe_application::ports::product::ProductCapabilityRecord {
+                        code: (*code).into(),
+                        variant: "standard".into(),
+                        schema_version: 1,
+                        config: serde_json::json!({}),
+                    },
+                )
+                .collect(),
         })
     }
 
     async fn sync_capability_resources<'a>(
         &'a self,
         _tenant_id: &'a str,
-        _resources: &'a ProvisioningCapabilityResources,
+        resources: &'a ProvisioningCapabilityResources,
     ) -> AppResult<()> {
-        self.state.push(Call::SyncResources);
+        self.state.push(Call::SyncResources(
+            resources.enabled_route_keys.clone(),
+            resources.enabled_permission_codes.clone(),
+            resources.default_admin_permissions.clone(),
+        ));
         Ok(())
     }
 }
@@ -365,10 +382,12 @@ impl TenantProvisioningPort for DummyProvisioning {
 fn service(
     fail_at: Option<FailAt>,
     template: TenantProvisioningTemplate,
+    capabilities: Vec<&'static str>,
 ) -> (TenantService, Arc<FakeState>) {
     let state = Arc::new(FakeState {
         calls: Mutex::new(Vec::new()),
         fail_at,
+        capabilities,
     });
     let persistence = Arc::new(FakePersistence {
         state: Arc::clone(&state),
@@ -426,7 +445,7 @@ async fn run_create(
     fail_at: Option<FailAt>,
     template: TenantProvisioningTemplate,
 ) -> (AppResult<TenantVo>, Arc<FakeState>) {
-    let (service, state) = service(fail_at, template);
+    let (service, state) = service(fail_at, template, Vec::new());
     let result = service.create(&actor(), params()).await;
     (result, state)
 }
@@ -549,7 +568,7 @@ async fn provisioning_success_uses_four_stages_before_related_writes_and_commit(
             Call::Begin,
             Call::LockTenant,
             Call::Product,
-            Call::SyncResources,
+            Call::SyncResources(_, _, _),
             Call::Commit(TransactionAuditMode::CurrentRequest),
             Call::Begin,
             Call::LockTenant,
@@ -562,7 +581,8 @@ async fn provisioning_success_uses_four_stages_before_related_writes_and_commit(
 
 #[tokio::test]
 async fn authorization_copy_receives_filtered_template_with_parent_closure_and_role_grants() {
-    let (result, state) = run_create(None, policy_template()).await;
+    let (service, state) = service(None, policy_template(), vec!["system.user", "monitor.jobs"]);
+    let result = service.create(&actor(), params()).await;
     result.expect("完整开通应成功");
     let calls = state.calls();
     let filtered = calls
@@ -588,10 +608,7 @@ async fn authorization_copy_receives_filtered_template_with_parent_closure_and_r
         permissions,
         [
             ("system:root", true, false),
-            ("system:config-transfer:list", false, false),
-            ("system:user:list", true, true),
-            ("system:user:add", true, false),
-            ("monitor:job:list", false, false),
+            ("system:identity", true, false),
         ]
     );
     assert_eq!(
@@ -600,7 +617,25 @@ async fn authorization_copy_receives_filtered_template_with_parent_closure_and_r
             .iter()
             .map(|menu| menu.route_key.as_deref())
             .collect::<Vec<_>>(),
-        [None, Some("system.config-transfer"), Some("system.users")]
+        [None]
+    );
+    let (routes, permissions, defaults) = calls
+        .iter()
+        .find_map(|call| match call {
+            Call::SyncResources(routes, permissions, defaults) => {
+                Some((routes, permissions, defaults))
+            }
+            _ => None,
+        })
+        .expect("数据面就绪后必须同步选定能力");
+    assert_eq!(routes, &["system.user", "monitor.jobs"]);
+    assert!(permissions.iter().any(|code| code == "system:user:list"));
+    assert!(permissions.iter().any(|code| code == "monitor:job:list"));
+    assert_eq!(permissions, defaults);
+    assert!(
+        permissions
+            .iter()
+            .all(|code| !code.contains("config-transfer"))
     );
     let catalogs = calls
         .iter()
@@ -611,4 +646,34 @@ async fn authorization_copy_receives_filtered_template_with_parent_closure_and_r
         .expect("基础目录复制阶段应收到过滤后的模板");
     assert_eq!(catalogs.dictionary_data.len(), 1);
     assert_eq!(catalogs.dictionary_data[0].type_code, "active");
+}
+
+#[tokio::test]
+async fn empty_plan_excludes_management_and_platform_resources() {
+    let (result, state) = run_create(None, policy_template()).await;
+    result.expect("空能力套餐允许开通租户");
+    let calls = state.calls();
+    let filtered = calls
+        .iter()
+        .find_map(|call| match call {
+            Call::Authorization(_, template) => Some(template),
+            _ => None,
+        })
+        .expect("授权复制阶段必须执行");
+    assert_eq!(
+        filtered
+            .permissions
+            .iter()
+            .map(|permission| permission.code.as_str())
+            .collect::<Vec<_>>(),
+        ["system:root", "system:identity"]
+    );
+    assert_eq!(
+        filtered
+            .menus
+            .iter()
+            .map(|menu| menu.route_key.as_deref())
+            .collect::<Vec<_>>(),
+        [None]
+    );
 }

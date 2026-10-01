@@ -41,6 +41,15 @@ pub struct ProductService {
     read: Arc<dyn ProductReadPort>,
     write: Arc<dyn ProductWritePort>,
     authorization_cache: AuthorizationCache,
+    deployment: ProductDeployment,
+}
+
+/// 组合根确认的实际部署能力，不从套餐或权限推断基础设施。
+#[derive(Clone, Copy, Default)]
+pub struct ProductDeployment {
+    pub redis: bool,
+    pub messaging: bool,
+    pub scheduler: bool,
 }
 
 impl ProductService {
@@ -53,7 +62,13 @@ impl ProductService {
             read,
             write,
             authorization_cache,
+            deployment: ProductDeployment::default(),
         }
+    }
+
+    pub fn with_deployment(mut self, deployment: ProductDeployment) -> Self {
+        self.deployment = deployment;
+        self
     }
 
     pub fn capability_catalog(&self, actor: &ActorContext) -> AppResult<Vec<CapabilityCatalogVo>> {

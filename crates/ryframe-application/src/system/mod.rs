@@ -30,3 +30,4 @@ pub mod content;
 pub mod identity;
 pub mod operations;
 pub mod platform;
+mod platform_boundary;

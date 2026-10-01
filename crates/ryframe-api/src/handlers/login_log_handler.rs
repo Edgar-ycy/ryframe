@@ -21,6 +21,7 @@ pub fn login_log_router(state: AppState) -> Router {
 /// 登录日志列表
 #[get("/")]
 #[perm("system:logininfor:list")]
+#[ryframe_macro::capability("system.logininfor")]
 #[utoipa::path(get, path = "/api/v1/system/loginlogs", tag = "登录日志",
     params(LoginLogPageQuery),
     responses((status = 200, description = "日志列表", body = ApiPageResponse<LoginInfoVo>)), security(("bearer" = [])))]
@@ -53,6 +54,7 @@ async fn list(
 /// 创建登录日志异步导出任务。
 #[post("/exports")]
 #[perm("system:logininfor:export")]
+#[ryframe_macro::capability("system.logininfor")]
 #[utoipa::path(post, path = "/api/v1/system/loginlogs/exports", tag = "登录日志",
     params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = LoginLogExportRequestDto,
     responses((status = 202, description = "登录日志导出任务已创建", body = ApiResponse<ExportJobVo>)), security(("bearer" = [])))]

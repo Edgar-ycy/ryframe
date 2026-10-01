@@ -40,6 +40,7 @@ pub fn router(service: Arc<NoticeService>, pagination: PaginationPolicy) -> Rout
 }
 
 #[get("/")]
+#[ryframe_macro::capability("system.notice")]
 #[perm("system:notice:list")]
 #[utoipa::path(
     get,
@@ -70,6 +71,7 @@ pub async fn list(
 }
 
 #[get("/{id}")]
+#[ryframe_macro::capability("system.notice")]
 #[perm("system:notice:list")]
 #[utoipa::path(
     get,
@@ -95,6 +97,7 @@ pub async fn detail(
 }
 
 #[post("/")]
+#[ryframe_macro::capability("system.notice")]
 #[perm("system:notice:add")]
 #[utoipa::path(
     post,
@@ -120,6 +123,7 @@ pub async fn create(
 }
 
 #[put("/{id}")]
+#[ryframe_macro::capability("system.notice")]
 #[perm("system:notice:edit")]
 #[utoipa::path(
     put,
@@ -151,6 +155,7 @@ pub async fn update(
 }
 
 #[delete("/{id}")]
+#[ryframe_macro::capability("system.notice")]
 #[perm("system:notice:remove")]
 #[utoipa::path(
     delete,

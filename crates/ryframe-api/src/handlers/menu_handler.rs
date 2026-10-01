@@ -44,6 +44,7 @@ pub fn menu_router(state: AppState) -> Router {
 /// 菜单树查询
 #[get("/tree")]
 #[perm("system:menu:list")]
+#[ryframe_macro::capability("system.menu")]
 #[utoipa::path(get, path = "/api/v1/system/menus/tree", tag = "菜单管理",
     responses((status = 200, description = "菜单树", body = ApiResponse<Vec<MenuTreeNode>>)), security(("bearer" = [])))]
 async fn tree(
@@ -66,6 +67,7 @@ async fn tree(
 /// 菜单列表分页查询
 #[get("/")]
 #[perm("system:menu:list")]
+#[ryframe_macro::capability("system.menu")]
 #[utoipa::path(get, path = "/api/v1/system/menus", tag = "菜单管理",
     params(MenuListQuery),
     responses((status = 200, description = "菜单列表", body = ApiPageResponse<MenuVo>)),
@@ -99,6 +101,7 @@ async fn list_page(
 /// 创建菜单
 #[post("/")]
 #[perm("system:menu:add")]
+#[ryframe_macro::capability("system.menu")]
 #[utoipa::path(post, path = "/api/v1/system/menus", tag = "菜单管理",
     request_body = CreateMenuDto, responses((status = 200, description = "创建成功", body = ApiResponse<MenuVo>)), security(("bearer" = [])))]
 async fn create(
@@ -133,6 +136,7 @@ async fn create(
 /// 更新菜单
 #[put("/{id}")]
 #[perm("system:menu:edit")]
+#[ryframe_macro::capability("system.menu")]
 #[utoipa::path(put, path = "/api/v1/system/menus/{id}", tag = "菜单管理",
     params(("id" = String, Path)), request_body = UpdateMenuDto,
     responses((status = 200, description = "更新成功", body = ApiResponse<MenuVo>)), security(("bearer" = [])))]
@@ -171,6 +175,7 @@ async fn update(
 /// 菜单详情
 #[get("/{id}")]
 #[perm("system:menu:list")]
+#[ryframe_macro::capability("system.menu")]
 #[utoipa::path(get, path = "/api/v1/system/menus/{id}", tag = "菜单管理",
     params(("id" = String, Path)),
     responses((status = 200, description = "菜单详情", body = ApiResponse<MenuVo>)),
@@ -193,6 +198,7 @@ async fn detail(
 /// 删除菜单
 #[delete("/{id}")]
 #[perm("system:menu:remove")]
+#[ryframe_macro::capability("system.menu")]
 #[utoipa::path(delete, path = "/api/v1/system/menus/{id}", tag = "菜单管理",
     params(("id" = String, Path)), responses((status = 200, description = "删除成功", body = crate::http::ApiEmptyResponse)), security(("bearer" = [])))]
 async fn remove(

@@ -30,6 +30,7 @@ pub fn force_logout_router(state: AppState) -> Router {
 /// 获取在线用户列表（分页）
 #[get("/")]
 #[perm("monitor:online:list")]
+#[ryframe_macro::capability("monitor.online")]
 #[utoipa::path(get, path = "/api/v1/system/online", tag = "在线用户",
     params(OnlineUserQuery),
     responses((status = 200, description = "在线用户列表", body = ApiPageResponse<OnlineUserVo>)),
@@ -65,6 +66,7 @@ pub async fn list_online_users_page(
 /// 强制下线用户
 #[delete("/{sid}")]
 #[perm("monitor:online:force-logout")]
+#[ryframe_macro::capability("monitor.online")]
 /// 强制下线用户
 #[utoipa::path(delete, path = "/api/v1/system/online/{sid}", tag = "在线用户",
     params(("sid" = String, Path, description = "稳定的设备会话标识")),

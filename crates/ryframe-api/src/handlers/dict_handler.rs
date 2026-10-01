@@ -54,6 +54,7 @@ pub fn dict_router(state: AppState) -> Router {
 /// 字典类型列表
 #[get("/types")]
 #[perm("system:dict:list")]
+#[ryframe_macro::capability("system.dict")]
 #[utoipa::path(get, path = "/api/v1/system/dict/types", tag = "字典管理",
     params(DictTypeListQuery),
     responses((status = 200, description = "字典类型列表", body = ApiPageResponse<DictTypeVo>)), security(("bearer" = [])))]
@@ -85,6 +86,7 @@ async fn list_types(
 /// 创建字典类型
 #[post("/types")]
 #[perm("system:dict:add")]
+#[ryframe_macro::capability("system.dict")]
 #[utoipa::path(post, path = "/api/v1/system/dict/types", tag = "字典管理",
     request_body = CreateDictTypeDto, responses((status = 200, description = "创建成功", body = ApiResponse<DictTypeVo>)), security(("bearer" = [])))]
 async fn create_type(
@@ -106,6 +108,7 @@ async fn create_type(
 /// 更新字典类型
 #[put("/types/{id}")]
 #[perm("system:dict:edit")]
+#[ryframe_macro::capability("system.dict")]
 #[utoipa::path(put, path = "/api/v1/system/dict/types/{id}", tag = "字典管理",
     params(("id" = String, Path)),
     request_body = UpdateDictTypeDto,
@@ -131,6 +134,7 @@ async fn update_type(
 /// 删除字典类型
 #[delete("/types/{id}")]
 #[perm("system:dict:remove")]
+#[ryframe_macro::capability("system.dict")]
 #[utoipa::path(delete, path = "/api/v1/system/dict/types/{id}", tag = "字典管理",
     params(("id" = String, Path)),
     responses((status = 200, description = "删除成功", body = crate::http::ApiEmptyResponse)),
@@ -158,6 +162,7 @@ struct ListDataQuery {
 
 #[get("/data")]
 #[perm("system:dict:list")]
+#[ryframe_macro::capability("system.dict")]
 #[utoipa::path(get, path = "/api/v1/system/dict/data", tag = "字典管理",
     params(ListDataQuery),
     responses((status = 200, description = "字典数据列表", body = ApiResponse<Vec<DictDataVo>>)), security(("bearer" = [])))]
@@ -184,6 +189,7 @@ async fn list_data(
 /// 查询字典数据
 #[get("/data/type/{dict_type}")]
 #[perm("system:dict:list")]
+#[ryframe_macro::capability("system.dict")]
 #[utoipa::path(get, path = "/api/v1/system/dict/data/type/{dict_type}", tag = "字典管理",
     params(("dict_type" = String, Path)), responses((status = 200, description = "字典数据", body = ApiResponse<Vec<DictOptionDto>>)), security(("bearer" = [])))]
 async fn list_data_by_type_path(
@@ -211,6 +217,7 @@ async fn list_data_by_type_path(
 /// 创建字典数据
 #[post("/data")]
 #[perm("system:dict:add")]
+#[ryframe_macro::capability("system.dict")]
 #[utoipa::path(post, path = "/api/v1/system/dict/data", tag = "字典管理",
     request_body = CreateDictDataDto, responses((status = 200, description = "创建成功", body = ApiResponse<DictDataVo>)), security(("bearer" = [])))]
 async fn create_data(
@@ -238,6 +245,7 @@ async fn create_data(
 /// 更新字典数据
 #[put("/data/{id}")]
 #[perm("system:dict:edit")]
+#[ryframe_macro::capability("system.dict")]
 #[utoipa::path(put, path = "/api/v1/system/dict/data/{id}", tag = "字典管理",
     params(("id" = String, Path)),
     request_body = UpdateDictDataDto,
@@ -270,6 +278,7 @@ async fn update_data(
 /// 删除字典数据
 #[delete("/data/{id}")]
 #[perm("system:dict:remove")]
+#[ryframe_macro::capability("system.dict")]
 #[utoipa::path(delete, path = "/api/v1/system/dict/data/{id}", tag = "字典管理",
     params(("id" = String, Path)),
     responses((status = 200, description = "删除成功", body = crate::http::ApiEmptyResponse)),
@@ -291,6 +300,7 @@ async fn delete_data(
 /// 创建字典类型异步导出任务。
 #[post("/types/exports")]
 #[perm("system:dict:export")]
+#[ryframe_macro::capability("system.dict")]
 #[utoipa::path(post, path = "/api/v1/system/dict/types/exports", tag = "字典管理",
     params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = DictTypeExportRequestDto,
     responses((status = 202, description = "字典类型导出任务已创建", body = ApiResponse<ExportJobVo>)), security(("bearer" = [])))]

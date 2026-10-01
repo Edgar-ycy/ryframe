@@ -9,8 +9,8 @@ pub(super) fn policy_template() -> TenantProvisioningTemplate {
         authorization: TenantAuthorizationTemplate {
             permissions: vec![
                 permission(1, "system:root", None),
-                // 父权限必须因普通子权限而保留结构闭包。
-                permission(2, "system:config-transfer:list", Some(1)),
+                // 普通目录保留结构闭包，平台权限始终排除。
+                permission(2, "system:identity", Some(1)),
                 permission(3, "system:user:list", Some(2)),
                 permission(4, "system:user:add", Some(1)),
                 permission(5, "monitor:job:list", Some(1)),
@@ -18,6 +18,7 @@ pub(super) fn policy_template() -> TenantProvisioningTemplate {
                 permission(21, "tenant:read", None),
                 permission(22, "platform:read", None),
                 permission(23, "monitor:retention:execute", None),
+                permission(24, "system:config-transfer:list", Some(1)),
             ],
             menus: vec![
                 menu(1, None),
@@ -25,7 +26,7 @@ pub(super) fn policy_template() -> TenantProvisioningTemplate {
                 menu(3, Some("platform.users")),
                 menu(4, Some("monitor.retention")),
                 menu(5, Some("system.config-transfer")),
-                menu(6, Some("system.users")),
+                menu(6, Some("system.user")),
             ],
         },
         base_catalogs: TenantBaseCatalogTemplate {

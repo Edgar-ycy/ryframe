@@ -164,6 +164,9 @@ fn validate_permissions(resources: &TenantConfigPackageResources) -> AppResult<B
         if permission_contains_wildcard(&item.code) {
             return Err(AppError::Validation("配置包不能包含超级通配权限".into()));
         }
+        if crate::system::platform::is_platform_permission(&item.code) {
+            return Err(AppError::Validation("配置包不能包含平台专属权限".into()));
+        }
         if let Some(parent) = item.parent_code.as_deref()
             && !permissions.contains(&collation_key(parent))
         {
@@ -251,6 +254,9 @@ fn validate_route_menu(
         AppError::Validation(format!("目录或页面菜单 {} 缺少 route_key", item.stable_key))
     })?;
     validate_stable_code(route_key, ROUTE_KEY_MAX_BYTES, "页面 route_key")?;
+    if crate::system::platform::is_platform_route(route_key) {
+        return Err(AppError::Validation("配置包不能包含平台专属菜单".into()));
+    }
     if item.stable_key != route_menu_stable_key(route_key) {
         return Err(AppError::Validation(format!(
             "菜单 {} 的稳定键与 route_key 不匹配",

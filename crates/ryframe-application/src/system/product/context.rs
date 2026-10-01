@@ -66,6 +66,24 @@ impl ProductService {
             .collect()
     }
 
+    /// 会话权限与页面使用相同的有效能力集合。
+    pub fn disabled_session_permission_codes(
+        &self,
+        context: &SessionProductContextVo,
+    ) -> BTreeSet<String> {
+        let enabled = context
+            .capabilities
+            .iter()
+            .map(|capability| capability.code.as_str())
+            .collect::<BTreeSet<_>>();
+        CAPABILITY_CATALOG
+            .iter()
+            .filter(|descriptor| !enabled.contains(descriptor.code))
+            .flat_map(|descriptor| descriptor.permission_codes.iter())
+            .map(|code| (*code).to_owned())
+            .collect()
+    }
+
     /// 强一致 Capability 门禁：部署缺依赖返回 501，租户未开通返回 403。
     pub async fn require_capability(
         &self,

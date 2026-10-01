@@ -6,6 +6,7 @@ version = 1
 [[resources]]
 name = "notice"
 module = "system"
+capability = "system.notice"
 [resources.labels]
 zh_cn = "通知公告"
 en = "Notice"
