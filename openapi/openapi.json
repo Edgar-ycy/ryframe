@@ -1315,11 +1315,11 @@
               "memory": {
                 "oneOf": [
                   {
-                    "type": "null"
-                  },
-                  {
                     "$ref": "#/components/schemas/RedisMemoryInfo",
                     "description": "内存信息"
+                  },
+                  {
+                    "type": "null"
                   }
                 ]
               },
@@ -1330,11 +1330,11 @@
               "server": {
                 "oneOf": [
                   {
-                    "type": "null"
-                  },
-                  {
                     "$ref": "#/components/schemas/RedisServerInfo",
                     "description": "Redis 服务器信息（仅 Redis 模式）"
+                  },
+                  {
+                    "type": "null"
                   }
                 ]
               }
@@ -4780,11 +4780,11 @@
               "usage": {
                 "oneOf": [
                   {
-                    "type": "null"
-                  },
-                  {
                     "$ref": "#/components/schemas/TenantUsageVo",
                     "description": "调用者没有 `tenant:usage:list` 权限时为 `None`。"
+                  },
+                  {
+                    "type": "null"
                   }
                 ]
               }
@@ -5248,10 +5248,10 @@
                   "department": {
                     "oneOf": [
                       {
-                        "type": "null"
+                        "$ref": "#/components/schemas/DeptVo"
                       },
                       {
-                        "$ref": "#/components/schemas/DeptVo"
+                        "type": "null"
                       }
                     ]
                   },
@@ -8050,11 +8050,11 @@
           "memory": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/RedisMemoryInfo",
                 "description": "内存信息"
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -8065,11 +8065,11 @@
           "server": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/RedisServerInfo",
                 "description": "Redis 服务器信息（仅 Redis 模式）"
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -9415,11 +9415,11 @@
           "eligible_for": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/DataTargetEligibility",
                 "description": "省略时只返回缓存健康快照；向导可指定 new_tenant 或 migration 做资格检查。"
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -13337,11 +13337,11 @@
                 "usage": {
                   "oneOf": [
                     {
-                      "type": "null"
-                    },
-                    {
                       "$ref": "#/components/schemas/TenantUsageVo",
                       "description": "调用者没有 `tenant:usage:list` 权限时为 `None`。"
+                    },
+                    {
+                      "type": "null"
                     }
                   ]
                 }
@@ -15180,10 +15180,10 @@
           "health": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/RuntimeBackupHealth"
               },
               {
-                "$ref": "#/components/schemas/RuntimeBackupHealth"
+                "type": "null"
               }
             ]
           },
@@ -15873,22 +15873,22 @@
           "capacity_status": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/TenantCapacityStatusFilter",
                 "description": "按容量状态筛选；调用者还必须具有 `tenant:usage:list` 权限。"
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "expiration_status": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/TenantExpirationStatusFilter",
                 "description": "按到期状态筛选。"
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -15920,11 +15920,11 @@
           "status": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/TenantStatusFilter",
                 "description": "按租户启停状态筛选。"
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -16005,11 +16005,11 @@
           "usage": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/TenantUsageVo",
                 "description": "调用者没有 `tenant:usage:list` 权限时为 `None`。"
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -17091,10 +17091,10 @@
               "department": {
                 "oneOf": [
                   {
-                    "type": "null"
+                    "$ref": "#/components/schemas/DeptVo"
                   },
                   {
-                    "$ref": "#/components/schemas/DeptVo"
+                    "type": "null"
                   }
                 ]
               },
@@ -22087,7 +22087,6 @@
                 }
               }
             },
-            "description": "",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -22187,7 +22186,6 @@
                 }
               }
             },
-            "description": "",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -22277,7 +22275,6 @@
                 }
               }
             },
-            "description": "",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -22387,7 +22384,6 @@
                 }
               }
             },
-            "description": "",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -22490,7 +22486,6 @@
                 }
               }
             },
-            "description": "",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -22549,7 +22544,6 @@
                 }
               }
             },
-            "description": "",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -22697,7 +22691,6 @@
                 }
               }
             },
-            "description": "",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -22766,7 +22759,6 @@
                 }
               }
             },
-            "description": "",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -22943,7 +22935,6 @@
                 }
               }
             },
-            "description": "",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -23012,7 +23003,6 @@
                 }
               }
             },
-            "description": "",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -23208,7 +23198,6 @@
                 }
               }
             },
-            "description": "",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -23394,7 +23383,6 @@
                 }
               }
             },
-            "description": "",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -23609,7 +23597,6 @@
                 }
               }
             },
-            "description": "",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -23757,7 +23744,6 @@
                 }
               }
             },
-            "description": "",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -23855,7 +23841,6 @@
                 }
               }
             },
-            "description": "",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -23982,7 +23967,6 @@
                 }
               }
             },
-            "description": "",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -24902,7 +24886,6 @@
                 }
               }
             },
-            "description": "",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -25061,7 +25044,6 @@
                 }
               }
             },
-            "description": "",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -25138,7 +25120,6 @@
                 }
               }
             },
-            "description": "",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -25286,7 +25267,6 @@
                 }
               }
             },
-            "description": "",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -25386,7 +25366,6 @@
                 }
               }
             },
-            "description": "",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -25602,7 +25581,6 @@
                 }
               }
             },
-            "description": "",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
@@ -25808,7 +25786,6 @@
                 }
               }
             },
-            "description": "",
             "headers": {
               "X-Authorization-Epoch": {
                 "description": "本次响应所依据的租户授权纪元",
