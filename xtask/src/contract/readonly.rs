@@ -279,7 +279,7 @@ struct ExportDirectory {
 
 impl ExportDirectory {
     fn create(backend_dir: &Path) -> Result<Self> {
-        let parent = backend_dir.join("target/xtask");
+        let parent = backend_dir.join(".local-tests/contract-export");
         fs::create_dir_all(&parent)?;
         let path = parent.join(format!("api-contract-check-{}-{}", process::id(), nonce()?));
         fs::create_dir(&path).map_err(|error| {

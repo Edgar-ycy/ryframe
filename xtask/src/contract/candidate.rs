@@ -34,7 +34,7 @@ fn sync_candidate(frontend_dir: &Path) -> Result<()> {
         return Err(format!("前端目录不存在：{}", frontend_dir.display()).into());
     }
     let root = root_dir();
-    let temporary_dir = root.join("target/xtask");
+    let temporary_dir = root.join(".local-tests/contract-export");
     fs::create_dir_all(&temporary_dir)?;
     let candidate_path = temporary_dir.join(format!(
         "candidate-openapi-{}-{}.json",
