@@ -95,13 +95,15 @@ fn recovery_runtime_status_rejects_missing_evidence_before_python() {
 
 #[test]
 fn consumer_contract_runs_the_inline_source_gate_before_frontend_tasks() {
+    let frontend_dir = std::env::temp_dir().join("ryframe-frontend-worktree");
+    let frontend_dir = frontend_dir.to_string_lossy().into_owned();
     let result = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .args([
             "check",
             "ci",
             "consumer-contract",
             "--frontend-dir",
-            "D:/前端 worktree",
+            frontend_dir.as_str(),
         ])
         .env(
             "RYFRAME_CI_BACKEND_HEAD",

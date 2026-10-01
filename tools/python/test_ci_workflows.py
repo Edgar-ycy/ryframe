@@ -311,9 +311,9 @@ class CiWorkflowTests(unittest.TestCase):
             (ROOT / ".github/workflows" / name).read_text(encoding="utf-8")
             for name in ("ci.yml", "extended-ci.yml")
         )
-        self.assertEqual(workflow.count("--requirement scripts/requirements-ci.txt"), 3)
-        self.assertEqual(workflow.count("--force-reinstall"), 3)
-        self.assertEqual(workflow.count("--require-hashes"), 3)
+        self.assertEqual(workflow.count("--requirement scripts/requirements-ci.txt"), 5)
+        self.assertEqual(workflow.count("--force-reinstall"), 5)
+        self.assertEqual(workflow.count("--require-hashes"), 5)
 
     def test_preflight_passes_the_fetched_trusted_base_to_xtask(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
