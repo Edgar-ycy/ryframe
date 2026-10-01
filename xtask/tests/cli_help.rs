@@ -95,7 +95,8 @@ fn recovery_runtime_status_rejects_missing_evidence_before_python() {
 
 #[test]
 fn consumer_contract_runs_the_inline_source_gate_before_frontend_tasks() {
-    let frontend_dir = std::env::temp_dir().join("ryframe-frontend-worktree");
+    // 传入实际存在的目录，确保测试验证的是仓库身份预检，而不是平台相关的路径错误。
+    let frontend_dir = std::env::current_dir().unwrap();
     let frontend_dir = frontend_dir.to_string_lossy().into_owned();
     let result = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .args([
@@ -112,7 +113,11 @@ fn consumer_contract_runs_the_inline_source_gate_before_frontend_tasks() {
         .env("RYFRAME_CI_BACKEND_REPOSITORY", "invalid")
         .env(
             "RYFRAME_CI_CANDIDATE_OPENAPI",
-            "D:/候选 contract/candidate-openapi.json",
+            std::env::current_dir()
+                .unwrap()
+                .join("openapi/openapi.json")
+                .to_string_lossy()
+                .into_owned(),
         )
         .env_remove("GITHUB_OUTPUT")
         .output()
@@ -125,3 +130,4 @@ fn consumer_contract_runs_the_inline_source_gate_before_frontend_tasks() {
         "{stderr}"
     );
 }
+
