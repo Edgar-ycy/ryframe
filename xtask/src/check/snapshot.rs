@@ -57,7 +57,12 @@ pub(super) fn export_and_verify_backend_snapshots(
         run_owned(
             root,
             "cargo",
-            &backend_snapshot_export_args(target_dir, "ryframe-api", "export_openapi", openapi),
+            &backend_snapshot_export_args(
+                target_dir,
+                "ryframe-business-api",
+                "export_business_openapi",
+                openapi,
+            ),
         )?;
     }
     if let Some(mysql) = &snapshots.mysql {

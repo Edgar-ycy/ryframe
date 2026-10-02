@@ -14,6 +14,10 @@ fn every_workspace_package_has_one_resource_gate_disposition() {
         "ryframe-api",
         "ryframe-application",
         "ryframe-auth",
+        "ryframe-business-api",
+        "ryframe-business-application",
+        "ryframe-business-db",
+        "ryframe-business-runtime",
         "ryframe-config",
         "ryframe-db",
         "ryframe-generator",
@@ -50,6 +54,10 @@ fn resource_cargo_surface_selects_only_runtime_api_contracts() {
         "ryframe-adapters",
         "ryframe-api",
         "ryframe-application",
+        "ryframe-business-api",
+        "ryframe-business-application",
+        "ryframe-business-db",
+        "ryframe-business-runtime",
         "ryframe-db",
         "ryframe-generator",
         "ryframe-tenant-db",
@@ -66,6 +74,9 @@ fn resource_cargo_surface_selects_only_runtime_api_contracts() {
     for feature in [
         "ryframe/bin-api",
         "ryframe-application/test-support",
+        "ryframe-business-application/test-support",
+        "ryframe-business-db/migration",
+        "ryframe-business-db/repositories",
         "ryframe-db/migration",
         "ryframe-db/repositories",
         "ryframe-tenant-db/migration",
@@ -97,6 +108,7 @@ fn resource_cargo_surface_selects_only_runtime_api_contracts() {
 
     for bin in [
         "ryframe",
+        "export_business_openapi",
         "export_openapi",
         "export_mysql_snapshot",
         "xtask",
@@ -106,6 +118,7 @@ fn resource_cargo_surface_selects_only_runtime_api_contracts() {
     assert!(!test.contains(&"--bin".to_owned()));
     for contract in [
         "resource_api_contracts",
+        "openapi_contract",
         "resource_application_contracts",
         "resource_tenant_contracts",
     ] {

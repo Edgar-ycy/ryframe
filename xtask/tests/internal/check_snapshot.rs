@@ -38,12 +38,12 @@ fn snapshot_test_environment_is_stable_and_absolute() {
 }
 
 #[test]
-fn openapi_snapshot_reuses_the_backend_verify_target() {
+fn combined_openapi_snapshot_reuses_the_backend_verify_target() {
     assert_eq!(
         backend_snapshot_export_args(
             "target",
-            "ryframe-api",
-            "export_openapi",
+            "ryframe-business-api",
+            "export_business_openapi",
             Path::new("target/xtask/openapi.json"),
         ),
         [
@@ -54,9 +54,9 @@ fn openapi_snapshot_reuses_the_backend_verify_target() {
             "--target-dir",
             "target",
             "-p",
-            "ryframe-api",
+            "ryframe-business-api",
             "--bin",
-            "export_openapi",
+            "export_business_openapi",
             "--",
             "target/xtask/openapi.json",
         ]
