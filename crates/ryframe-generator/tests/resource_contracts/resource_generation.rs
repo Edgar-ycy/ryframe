@@ -14,6 +14,10 @@ fn post_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../catalog/resources/post.toml")
 }
 
+fn business_device_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../catalog/resources/device.toml")
+}
+
 fn assert_control_database_repository_gates(generated: &GeneratedCatalog) {
     let database_slice = generated
         .assets
@@ -93,6 +97,41 @@ fn post_manifest_preserves_the_existing_public_contract_and_extensions() {
     assert_eq!(
         post.frontend_extensions.get("export"),
         Some(&toml::Value::String("post".into()))
+    );
+}
+
+#[test]
+fn business_manifest_generates_crud_into_the_independent_business_crates() {
+    let device = load_resource(business_device_path()).expect("业务 Device 清单应有效");
+    let generated = render_resources(&[device]).expect("业务 Device 应能生成");
+    let paths = generated
+        .assets
+        .iter()
+        .map(|asset| asset.path.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        paths.contains(
+            &"crates/business/ryframe-business-application/src/generated/device/model.rs"
+        )
+    );
+    assert!(paths.contains(&"crates/business/ryframe-business-db/src/generated/device/entity.rs"));
+    assert!(
+        paths.contains(&"crates/business/ryframe-business-db/src/generated/device/repository.rs")
+    );
+    assert!(
+        paths.contains(&"crates/business/ryframe-business-api/src/generated/device/handler.rs")
+    );
+    assert!(paths.contains(&"crates/ryframe-tenant-db/src/generated/business_device_migration.rs"));
+    assert!(!paths.contains(&"crates/ryframe-application/src/generated/device/model.rs"));
+    let handler = generated_asset(&generated.assets, "device/handler.rs");
+    assert!(handler.content.contains("/api/v1/business/devices"));
+    assert!(handler.content.contains("business:device:create"));
+    let frontend_api = generated_asset(&generated.assets, "device/api.ts");
+    assert!(
+        frontend_api
+            .content
+            .contains("@/api/generated/operations/core")
     );
 }
 
@@ -185,16 +224,24 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
     assert!(!handler.contains("tag = \"岗位\","));
     assert!(handler.contains("use crate::handler_utils::parse_id;"));
     assert!(!handler.contains("fn parse_id(value: &str)"));
-    let router = content("ryframe-api/src/generated/router.rs");
-    assert!(router.contains("super::post::handler::router"));
-    assert!(!router.contains("CapabilityGuardState"));
-    assert!(!router.contains("system.post"));
+    assert_post_router(&generated);
     assert!(
         generated
             .assets
             .iter()
             .all(|asset| { asset.path != "crates/ryframe-db/src/generated/post/migration.rs" })
     );
+}
+
+fn assert_post_router(generated: &GeneratedCatalog) {
+    let router = generated
+        .assets
+        .iter()
+        .find(|asset| asset.path == "crates/ryframe-api/src/generated/router.rs")
+        .expect("应生成框架 API 聚合路由");
+    assert!(router.content.contains("super::post::handler::router"));
+    assert!(router.content.contains("CapabilityGuardState"));
+    assert!(router.content.contains("system.post"));
 }
 
 #[test]
@@ -356,7 +403,10 @@ fn assert_device_frontend_contracts(assets: &[GeneratedAsset]) {
 }
 
 fn assert_device_openapi_contracts(assets: &[GeneratedAsset]) {
-    let aggregate = generated_asset(assets, "generated/crud_resources.rs");
+    let aggregate = assets
+        .iter()
+        .find(|asset| asset.path == "crates/ryframe-api/src/generated/crud_resources.rs")
+        .expect("应生成框架 CRUD 目录");
     for expected in [
         "CRUD_RESOURCES_VERSION: u16 = 1",
         "crud_resources_extension",

@@ -3,6 +3,7 @@ use utoipa::OpenApi;
 #[derive(OpenApi)]
 #[openapi(
     paths(
+        crate::handlers::auth_handler::tenants::login_tenants,
         crate::handlers::auth_handler::session::csrf,
         crate::handlers::auth_handler::login::login,
         crate::handlers::auth_handler::session::logout,
@@ -23,6 +24,8 @@ use utoipa::OpenApi;
         crate::handlers::profile_handler::update_avatar
     ),
     components(schemas(
+        crate::handlers::auth_handler::tenants::LoginTenantChoice,
+        crate::handlers::auth_handler::tenants::LoginTenantPage,
         crate::dto::auth_dto::LoginRequest,
         crate::dto::auth_dto::CompletePasswordResetRequest,
         crate::dto::auth_dto::LoginResponse,

@@ -1,4 +1,6 @@
 use std::sync::Arc;
+mod access_guard;
+pub(crate) use access_guard::excluded_platform_routes;
 
 use crate::http::{API_PREFIX, ApiResponse, HttpAppError, HttpResult, api_path};
 use crate::{
@@ -97,6 +99,10 @@ where
     S: Clone + Send + Sync + 'static,
 {
     router
+        .layer(from_fn_with_state(
+            state.clone(),
+            access_guard::catalog_access_guard,
+        ))
         .layer(middleware::from_fn(request_locale_middleware))
         .layer(from_fn_with_state(
             state.services.operations.online_user.clone(),
@@ -234,6 +240,7 @@ pub fn auth_router(state: AppState) -> Router {
     // 认证端点可能携带 Cookie、CSRF challenge 或令牌数据，因此绝不进入通用的
     // 操作日志中间件。
     let public = Router::new()
+        .route("/tenants", get_route(auth_handler::tenants::login_tenants))
         .route("/csrf", get_route(auth_handler::csrf))
         .route("/login", post(auth_handler::login))
         .route("/refresh", post(auth_handler::refresh))
@@ -364,6 +371,21 @@ pub async fn api_version(State(state): State<AppState>) -> Response {
 ///
 /// `rate_limit_state` 传递到子路由以启用用户级限流。
 pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
+    api_router_with_business(
+        state,
+        rate_limit_state,
+        Router::new(),
+        crate::openapi::document(),
+    )
+}
+
+/// 将业务 crate 的路由置于与内置管理 API 相同的认证和租户上下文边界内。
+pub fn api_router_with_business(
+    state: AppState,
+    rate_limit_state: RateLimitState,
+    business_router: Router,
+    openapi_document: utoipa::openapi::OpenApi,
+) -> Router {
     let idempotency_state = IdempotencyState::new(state.idempotency_store.clone(), 300);
     idempotency_state.spawn_gc();
     let public_runtime = Router::new()
@@ -383,6 +405,8 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         )
         .nest("/common", common_router(state.clone(), idempotency_state));
 
+    router = router.nest("/business", protect(business_router, &state));
+
     if state.settings.multi_tenancy.enabled {
         let platform = protect(
             domains::platform::router(state.clone()).layer(from_fn_with_state(
@@ -395,10 +419,13 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
     }
 
     if state.settings.api_docs_enabled {
-        router = router.route(
-            "/api-docs/openapi.json",
-            get_route(crate::openapi::openapi_json),
-        );
+        let docs = Router::new()
+            .route(
+                "/api-docs/openapi.json",
+                get_route(crate::openapi::output::supplied_openapi_json),
+            )
+            .layer(Extension(Arc::new(openapi_document)));
+        router = router.merge(docs);
         #[cfg(feature = "runtime-swagger-ui")]
         {
             router = router.merge(swagger_ui_router());

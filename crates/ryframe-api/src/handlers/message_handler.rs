@@ -95,6 +95,7 @@ async fn unread_count(
 /// 发布一条消息并固化收件人快照。
 #[post("/")]
 #[perm("system:message:publish")]
+#[ryframe_macro::capability("system.message")]
 #[utoipa::path(post, path = "/api/v1/system/messages", tag = "消息中心",
     request_body = PublishMessageDto,
     responses((status = 200, description = "发布结果", body = ApiResponse<PublishedMessageVo>)),

@@ -131,7 +131,7 @@ fn v1_structural_assumptions_are_manifest_errors_not_renderer_panics() {
     let cases = [
         (
             changed(&source, "module = \"system\"", "module = \"inventory\""),
-            "仅支持 system 模块",
+            "仅支持 system 或 business 模块",
         ),
         (
             changed(
@@ -147,7 +147,7 @@ fn v1_structural_assumptions_are_manifest_errors_not_renderer_panics() {
                 "path = \"/api/v1/system/devices\"",
                 "path = \"/api/v1/system/devices/{id}\"",
             ),
-            "无占位符",
+            "不含占位符",
         ),
         (
             changed(

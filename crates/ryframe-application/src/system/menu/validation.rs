@@ -21,6 +21,13 @@ impl MenuService {
         tenant_id: &str,
         binding: MenuBinding<'_>,
     ) -> AppResult<()> {
+        if tenant_id != "system"
+            && binding
+                .route_key
+                .is_some_and(super::super::platform_boundary::is_platform_route)
+        {
+            return Err(AppError::Authorization("平台菜单仅允许系统租户维护".into()));
+        }
         match binding.menu_type {
             MenuType::Action => {
                 if binding.perm_id.is_none() {

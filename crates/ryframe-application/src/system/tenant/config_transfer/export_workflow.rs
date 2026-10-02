@@ -7,7 +7,7 @@ impl TenantConfigTransferService {
         let requester = self
             .user
             .resolve_current_authorization(
-                tenant_id,
+                "system",
                 self.bundle_requester(tenant_id, bundle_id).await?,
                 PACKAGE_EXPORT_PERMISSION,
             )
@@ -92,7 +92,7 @@ impl TenantConfigTransferService {
         let final_requester = self
             .user
             .resolve_current_authorization(
-                tenant_id,
+                "system",
                 requester.actor.user_id,
                 PACKAGE_EXPORT_PERMISSION,
             )

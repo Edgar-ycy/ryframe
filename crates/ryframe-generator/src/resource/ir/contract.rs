@@ -79,21 +79,28 @@ fn validate_api_identity(
             .with_resource(resource)
             .with_file(source_path)
     };
-    if spec.resource.module != "system" {
+    if !matches!(spec.resource.module.as_str(), "system" | "business") {
         return Err(error(
-            "flat_crud v1 仅支持 system 模块",
-            "其他模块使用普通手写切片；扩展生成边界时同时补真实 Workspace 编译测试",
+            "flat_crud 仅支持 system 或 business 模块",
+            "将业务资源放入 business 模块，并补齐真实 Workspace 编译验证",
         ));
     }
-    if !spec.api.path.starts_with("/api/v1/system/")
+    if spec.resource.module == "business" && spec.storage.kind != StorageKind::TenantData {
+        return Err(error(
+            "业务资源必须使用 tenant_data 存储",
+            "业务表声明 tenant_field 并使用 [tenant_id, id] 主键",
+        ));
+    }
+    let path_prefix = format!("/api/v1/{}/", spec.resource.module);
+    if !spec.api.path.starts_with(&path_prefix)
         || spec.api.path.ends_with('/')
         || spec.api.path.contains("//")
         || spec.api.path.contains('{')
         || spec.api.path.contains('}')
     {
         return Err(error(
-            "flat_crud v1 API 路径必须是无占位符的 /api/v1/system/<resources>",
-            "使用例如 `/api/v1/system/posts` 的集合路径，不要添加尾斜杠或路径参数",
+            "flat_crud API 路径必须使用资源模块且不含占位符",
+            "使用 /api/v1/system/<resources> 或 /api/v1/business/<resources>，不要添加尾斜杠或路径参数",
         ));
     }
 

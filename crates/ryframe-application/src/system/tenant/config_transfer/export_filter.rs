@@ -22,22 +22,23 @@ pub(super) fn filter_exportable_resources(
         .filter(|descriptor| !enabled_by_code.contains_key(descriptor.code))
         .flat_map(|descriptor| descriptor.route_keys.iter().copied())
         .collect::<BTreeSet<_>>();
-    resources
-        .permissions
-        .retain(|permission| !disabled_permissions.contains(permission.code.as_str()));
+    resources.permissions.retain(|permission| {
+        !disabled_permissions.contains(permission.code.as_str())
+            && !crate::system::platform::is_platform_permission(&permission.code)
+    });
     for role in &mut resources.roles {
-        role.permission_codes
-            .retain(|permission| !disabled_permissions.contains(permission.as_str()));
+        role.permission_codes.retain(|permission| {
+            !disabled_permissions.contains(permission.as_str())
+                && !crate::system::platform::is_platform_permission(permission)
+        });
     }
     resources.menus.retain(|menu| {
-        !menu
-            .permission_code
-            .as_deref()
-            .is_some_and(|permission| disabled_permissions.contains(permission))
-            && !menu
-                .route_key
-                .as_deref()
-                .is_some_and(|route| disabled_routes.contains(route))
+        !menu.permission_code.as_deref().is_some_and(|permission| {
+            disabled_permissions.contains(permission)
+                || crate::system::platform::is_platform_permission(permission)
+        }) && !menu.route_key.as_deref().is_some_and(|route| {
+            disabled_routes.contains(route) || crate::system::platform::is_platform_route(route)
+        })
     });
 
     let permission_types = resources

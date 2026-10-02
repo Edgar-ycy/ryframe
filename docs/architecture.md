@@ -65,14 +65,14 @@ Worker 的健康状态模型与数据库监控端口位于 application，不依�
 
 ## 选择开发方式
 
-字段、筛选、排序和普通 CRUD 行为可由资源清单表达时，使用 `cargo xtask generate resource`。Post 与 Notice 展示了完整链路；生成结果包含后端持久化、应用服务、API、权限资产和前端标准页面。日常资源命令只使用生成器的默认离线能力；既有 MySQL 表结构读取被隔离在可选的 `schema-import` feature 中，只产生待人工确认的草案，不进入默认生成依赖闭包。
+字段、筛选、排序和普通 CRUD 行为可由资源清单表达时，使用 `cargo xtask generate resource`。框架内置资源保留在原有分层；`module = "business"` 的租户业务资源分别生成到 `crates/business/ryframe-business-application`、`ryframe-business-db` 和 `ryframe-business-api`，再由 `ryframe-business-runtime` 装配到 `/api/v1/business`。Device 展示了完整业务链路，生成结果包含 SeaORM 持久化、应用服务、API、权限资产和前端标准页面。日常资源命令只使用生成器的默认离线能力；既有 MySQL 表结构读取被隔离在可选的 `schema-import` feature 中，只产生待人工确认的草案，不进入默认生成依赖闭包。
 
 需要事务编排、外部连接、异步任务或特殊状态机时，使用自定义用例：
 
-1. 在 application 的对应业务域定义请求、结果和业务流程。
-2. 需要外部能力时定义端口，在 DB 或 adapters 中实现。
-3. 在组合根构造实现并注入应用服务。
-4. 在 API 层增加 DTO、路由和 OpenAPI 描述；后台执行则由 Worker 调用同一用例。
+1. 在 business application 定义请求、结果和业务流程。
+2. 需要外部能力时定义端口，在 business DB 或框架 adapters 中实现。
+3. 在 business runtime 构造实现并注入应用服务。
+4. 在 business API 增加 DTO、路由和 OpenAPI 描述；后台执行则由 Worker 调用同一用例。
 5. 同步前端契约并完成联调。
 
 标准资源也可以保留一个强类型扩展，例如 Post 导出或 Notice 消息发布；其余常规 CRUD 继续由资源清单生成。

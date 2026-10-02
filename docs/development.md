@@ -2,6 +2,8 @@
 
 当前契约生成使用 `core/system/platform/monitor` 四个领域。套餐能力目录可以为空，开发新业务能力时仍需明确登记 capability，未知能力继续被拒绝。标准 CRUD 的生成与幂等检查保持不变。
 
+产品套餐的能力选项来自后端编译目录和前端 feature manifest。用户、角色、菜单、部门等租户管理功能可以按套餐启停；停用后管理 API 和页面关闭，已有数据、认证和内部只读投影保留。租户、产品套餐、数据目标及平台基础设施管理属于系统租户，不能通过普通租户的权限通配符、菜单授权或配置包开放。系统租户具备已部署的管理能力，仍受实际基础设施可用性校验。
+
 ## 环境与配置
 
 本地开发以 Windows 为准，MySQL 和 RustFS 在 Windows 运行，Redis 连接 WSL 中的实例，应用直接在 Windows 启动。安装 rustup 后，在项目目录运行 `rustup show` 安装并选择固定的 Rust 1.98.1、rustfmt 和 Clippy；项目使用 Rust 2024 edition，最低 Rust 版本为 1.98，本地、CI 和生产构建镜像使用同一固定工具链。
@@ -59,19 +61,18 @@ cargo xtask generate resource --all --check
 cargo xtask generate resource post --write
 cargo xtask generate resource post --explain
 ```
-`cargo xtask generate resource --all --check` 会校验全部受管后端、前端资产和 ownership 清单，适合在提交前确认重复生成零差异。该命令不会创建临时生成文件、刷新 OpenAPI 或连接数据库；发现差异后，先按资源预览，再显式执行对应的 `--write`。Post 和 Notice 可作为标准 CRUD 示例；导出、发布等特殊动作保留为自定义强类型用例。开发新资源时：
+`cargo xtask generate resource --all --check` 会校验全部受管后端、前端资产和 ownership 清单，适合在提交前确认重复生成零差异。该命令不会创建临时生成文件、刷新 OpenAPI 或连接数据库；发现差异后，先按资源预览，再显式执行对应的 `--write`。Post 和 Notice 是框架内置 CRUD 示例，Device 是独立业务 crate 的租户数据示例；导出、发布等特殊动作保留为自定义强类型用例。开发新资源时：
 
-1. 在 `catalog/resources/` 编写资源清单，预览并确认字段、校验、筛选、排序和权限。
-2. 使用 `--write` 更新后端、OpenAPI 和前端派生文件，再以 `cargo xtask generate resource --all --check` 确认零差异。
+1. 在 `catalog/resources/` 编写资源清单。业务资源设置 `resource.module = "business"` 和 `storage.kind = "tenant_data"`，预览并确认字段、校验、筛选、排序和权限。
+2. 使用 `--write` 更新 `crates/business/` 下的 application、SeaORM、API 代码以及 OpenAPI 和前端页面，再以 `cargo xtask generate resource --all --check` 确认零差异。
 3. 补充前端业务交互，执行 `cargo xtask check`，用浏览器验证新增、查询、编辑和删除。
 
-租户资源生成同时更新建表迁移和复制目录；路由键须与菜单键一致。需要验证完整 Device 链路时，在隔离后端工作树执行 `cargo xtask check recovery fixture --output-dir <后端根目录>/.local-tests/device-fixture --write`。该入口固定当前后端与 `--frontend-dir` 选择的前端工作树，在新建隔离工作树生成资源并验证只读幂等性，不启动外部服务。正式候选验收还必须同时传入 `--expected-backend-sha <SHA>` 和 `--expected-frontend-sha <SHA>`；入口会在创建输出目录前拒绝提交不匹配、已修改或存在未跟踪文件的来源。随后给隔离工作树显式配置全栈测试资源，并以 `RYFRAME_E2E_FIXTURE=device` 运行真实浏览器验收。工作树收据记录源代码与生成内容指纹，失败证据保留在输出目录。
+租户资源生成同时更新建表迁移和复制目录；路由键须与菜单键一致。Cargo 会向上查找 Workspace，因此在 `crates/business/ryframe-business-runtime` 等业务 crate 目录执行同一条 `cargo xtask generate resource <资源> --write` 也会写入正确的业务分层。数据库结构导入仍只负责产生待确认清单；确认清单的 `module = "business"` 后，再由资源命令生成完整增删改查文件。
 ## 开发自定义业务
-
 不能由标准资源表达的流程按以下顺序实现：
 
-1. 在 `ryframe-application::system` 对应业务域编写用例；SQL Repository 在 DB 模块实现，Redis、对象存储等端口在 adapters 实现。
-2. 在 `ryframe` 启动装配中注入实现；在 API 层增加 DTO、路由和 OpenAPI 描述，或由 Worker 调用用例。
+1. 在 `crates/business/ryframe-business-application` 编写用例，在 `ryframe-business-db` 实现 SQL Repository，在 `ryframe-business-api` 增加 DTO、路由和 OpenAPI 描述。
+2. 在 `ryframe-business-runtime` 装配业务端口和服务；Redis、对象存储等框架出站能力继续通过明确端口使用。
 3. 覆盖业务成功和失败路径的测试，同步前端契约并联调；模块选择和请求流见[架构说明](architecture.md)。
 ## API 与前后端联调
 

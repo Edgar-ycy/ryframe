@@ -90,7 +90,7 @@ cargo xtask generate resource post --write
 cargo xtask generate resource post --explain
 ```
 
-资源清单位于 `catalog/resources/`。Post 和 Notice 可作为标准资源示例；导出、消息发布等特殊行为使用普通 Rust 用例扩展。完整流程见[开发指南](docs/development.md)。
+资源清单位于 `catalog/resources/`。新业务资源将 `resource.module` 设为 `business`，生成器会把应用服务、SeaORM Repository、API 与运行时装配写入 `crates/business/`，框架源码保持独立；Device 是可直接参考的租户业务 CRUD 示例。命令可在工作区根目录或任一业务 crate 中执行。Post 和 Notice 保留为框架内置标准资源示例；导出、消息发布等特殊行为使用普通 Rust 用例扩展。完整流程见[开发指南](docs/development.md)。
 
 ## 文档
 

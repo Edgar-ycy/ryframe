@@ -84,7 +84,15 @@ impl ProductService {
             let plan_value = plan_capabilities.get(descriptor.code).copied();
             let override_value = override_capabilities.get(descriptor.code).copied();
             let (entitled, source, variant_code, schema_version, config) =
-                if let Some(value) = override_value {
+                if tenant_id == SYSTEM_TENANT_ID {
+                    (
+                        true,
+                        "platform",
+                        Some("standard".into()),
+                        Some(1),
+                        Some(serde_json::json!({})),
+                    )
+                } else if let Some(value) = override_value {
                     (
                         value.enabled,
                         "override",
@@ -217,6 +225,16 @@ impl ProductService {
         CAPABILITY_CATALOG
             .iter()
             .find(|descriptor| descriptor.code == capability_code)
-            .is_some_and(|descriptor| descriptor.deployment_dependencies.is_empty())
+            .is_some_and(|descriptor| {
+                descriptor
+                    .deployment_dependencies
+                    .iter()
+                    .all(|dependency| match *dependency {
+                        "redis" => self.deployment.redis,
+                        "messaging" => self.deployment.messaging,
+                        "scheduler" => self.deployment.scheduler,
+                        _ => false,
+                    })
+            })
     }
 }

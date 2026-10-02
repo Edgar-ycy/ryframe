@@ -72,6 +72,7 @@ fixed_string_enum! {
 fixed_string_enum! {
     /// 有效能力配置的来源。
     pub enum EffectiveCapabilitySource {
+        Platform => "platform",
         Plan => "plan",
         Override => "override",
         NotEntitled => "none",

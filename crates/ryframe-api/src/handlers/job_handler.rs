@@ -28,6 +28,7 @@ pub fn job_router(state: AppState) -> Router {
 /// 分页查询当前租户的后台任务。
 #[get("/jobs")]
 #[perm("monitor:job:list")]
+#[ryframe_macro::capability("monitor.jobs")]
 #[utoipa::path(get, path = "/api/v1/monitor/jobs", tag = "后台任务",
     params(BackgroundJobPageQuery),
     responses((status = 200, description = "后台任务列表", body = ApiPageResponse<BackgroundJobVo>)),
@@ -64,6 +65,7 @@ async fn list(
 /// 统计当前租户的后台任务队列状态。
 #[get("/jobs/stats")]
 #[perm("monitor:job:list")]
+#[ryframe_macro::capability("monitor.jobs")]
 #[utoipa::path(get, path = "/api/v1/monitor/jobs/stats", tag = "后台任务",
     responses((status = 200, description = "后台任务队列统计", body = ApiResponse<BackgroundJobQueueStats>)),
     security(("bearer" = [])))]
@@ -86,6 +88,7 @@ async fn stats(
 /// 人工重新投递一条死信任务。
 #[post("/jobs/{id}/retry")]
 #[perm("monitor:job:retry")]
+#[ryframe_macro::capability("monitor.jobs")]
 #[utoipa::path(post, path = "/api/v1/monitor/jobs/{id}/retry", tag = "后台任务",
     params(("id" = String, Path, description = "后台任务 ID")),
     responses(

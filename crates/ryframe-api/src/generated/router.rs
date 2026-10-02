@@ -19,7 +19,12 @@ pub fn generated_router(
     Router::new()
         .nest(
             "/notices",
-            super::notice::handler::router(Arc::clone(&services.notice), pagination),
+            super::notice::handler::router(Arc::clone(&services.notice), pagination).layer(
+                from_fn_with_state(
+                    CapabilityGuardState::new(state.clone(), "system.notice"),
+                    capability_guard,
+                ),
+            ),
         )
         .nest(
             "/posts",

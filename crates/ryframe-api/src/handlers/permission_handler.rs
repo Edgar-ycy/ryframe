@@ -35,6 +35,7 @@ pub fn permission_router(state: AppState) -> Router {
 
 #[get("/tree")]
 #[perm("system:perm:list")]
+#[ryframe_macro::capability("system.perm")]
 #[utoipa::path(get, path = "/api/v1/system/perms/tree", tag = "权限管理",
     params(PermissionListQuery),
     responses((status = 200, description = "权限树", body = ApiResponse<Vec<PermissionTreeNode>>)), security(("bearer" = [])))]
@@ -59,6 +60,7 @@ pub async fn tree(
 
 #[get("/{id}")]
 #[perm("system:perm:list")]
+#[ryframe_macro::capability("system.perm")]
 #[utoipa::path(get, path = "/api/v1/system/perms/{id}", tag = "权限管理",
     params(("id" = String, Path)), responses((status = 200, description = "权限详情", body = ApiResponse<PermissionVo>)),
     security(("bearer" = [])))]
@@ -81,6 +83,7 @@ pub async fn detail(
 
 #[post("/")]
 #[perm("system:perm:add")]
+#[ryframe_macro::capability("system.perm")]
 #[utoipa::path(post, path = "/api/v1/system/perms", tag = "权限管理",
     request_body = CreatePermissionDto, responses((status = 200, description = "创建成功", body = ApiResponse<PermissionVo>)),
     security(("bearer" = [])))]
@@ -113,6 +116,7 @@ pub async fn create(
 
 #[put("/{id}")]
 #[perm("system:perm:edit")]
+#[ryframe_macro::capability("system.perm")]
 #[utoipa::path(put, path = "/api/v1/system/perms/{id}", tag = "权限管理",
     params(("id" = String, Path)), request_body = UpdatePermissionDto,
     responses((status = 200, description = "更新成功", body = ApiResponse<PermissionVo>)), security(("bearer" = [])))]
@@ -147,6 +151,7 @@ pub async fn update(
 
 #[delete("/{id}")]
 #[perm("system:perm:remove")]
+#[ryframe_macro::capability("system.perm")]
 #[utoipa::path(delete, path = "/api/v1/system/perms/{id}", tag = "权限管理",
     params(("id" = String, Path)), responses((status = 200, description = "删除成功", body = crate::http::ApiEmptyResponse)),
     security(("bearer" = [])))]
@@ -166,6 +171,7 @@ pub async fn remove(
 
 #[post("/sync")]
 #[perm("system:perm:sync")]
+#[ryframe_macro::capability("system.perm")]
 #[utoipa::path(post, path = "/api/v1/system/perms/sync", tag = "权限管理",
     responses((status = 200, description = "同步成功", body = ApiResponse<PermissionSyncReport>)), security(("bearer" = [])))]
 pub async fn sync_perm_from_route(

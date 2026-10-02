@@ -33,7 +33,9 @@ Authorization: Bearer <access_token>
 
 客户端应原子应用 `SessionContext` 中的用户、租户、角色、权限、授权与运行 epoch、capability 和菜单投影，不得混用不同响应的会话字段。会话上下文显式返回 `is_super_admin`；客户端使用该字段和授权投影展示界面，不根据角色 code 推断超级管理员。
 
-能力目录和会话能力集合允许为空；套餐版本仍可发布，租户仍通过套餐版本开通并获得基础资源。空集合不允许任意未注册能力，也不会改变普通用户的权限与租户隔离校验。
+套餐版本允许空能力集合，租户仍可开通并保留认证和基础资源。管理 API、菜单与权限受编译能力目录和有效套餐共同约束；普通租户的权限通配符不能打开已关闭的能力，也不能使用平台专属接口。
+
+配置迁移属于平台管理。系统租户操作者通过 `/api/v1/platform/tenants/{tenant_id}/config-packages` 和 `/api/v1/platform/tenants/{tenant_id}/config-transfers` 明确指定资源所属租户；`tenant_id` 是配置来源或应用目标，操作者仍以系统租户身份完成授权和后台复核。配置包会过滤平台、租户管理、通配权限和未开通能力。
 
 每条路由在访问目录中声明一种策略：
 
@@ -98,3 +100,5 @@ ID 排序去重后必须为 1–100 条。整批先校验租户、申请人、�
 ## 契约验证
 
 OpenAPI 改变后运行 `cargo xtask generate api --write` 刷新前端派生契约，再执行前端消费者自检与浏览器 smoke。若调用方提示 operation 不存在或 DTO 不匹配，先重新同步契约，再检查后端导出的 operation ID。
+
+登录页通过公开的租户名称搜索选择租户，认证请求继续传递所选租户标识。`GET /api/v1/auth/tenants` 支持 `search`、`page` 和 `page_size`，每页最多 50 项，只返回启用且未过期租户的名称与标识；登录时仍重新校验租户状态。

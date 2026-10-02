@@ -5,23 +5,11 @@ use crate::{
     handlers::{
         authorization_diagnostic_handler, config_handler, dept_handler, dict_handler,
         login_log_handler, menu_handler, message_handler, notice_handler, online_user_handler,
-        oper_log_handler, permission_handler, post_export_handler, role_handler,
-        tenant_config_handler, user_handler, user_import_handler,
+        oper_log_handler, permission_handler, post_export_handler, role_handler, user_handler,
+        user_import_handler,
     },
     state::AppState,
 };
-
-pub(in crate::router) fn database_idempotent(state: AppState) -> Router {
-    Router::new()
-        .nest(
-            "/config-packages",
-            tenant_config_handler::config_package_router(state.clone()),
-        )
-        .nest(
-            "/config-transfers",
-            tenant_config_handler::config_transfer_router(state),
-        )
-}
 
 pub(in crate::router) fn redis_idempotent(state: AppState) -> Router {
     Router::new()

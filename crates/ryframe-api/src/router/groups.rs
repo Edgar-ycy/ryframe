@@ -27,14 +27,6 @@ pub(super) fn system_router(
     rate_limit_state: RateLimitState,
     idempotency_state: IdempotencyState,
 ) -> Router {
-    // 配置迁移写接口已经使用 MySQL 唯一键和后台任务去重实现持久幂等，
-    // 不应让 Redis 可用性成为创建、预览、应用或回滚的前置条件。
-    let database_idempotent =
-        domains::system::database_idempotent(state.clone()).layer(from_fn_with_state(
-            OperLogMiddlewareState::new_arc(state.services.operations.audit_outbox.clone()),
-            oper_log_middleware,
-        ));
-
     let redis_idempotent = domains::system::redis_idempotent(state.clone())
         // 从内到外注册：内层 layer 先注册
         .layer(from_fn_with_state(
@@ -60,7 +52,6 @@ pub(super) fn system_router(
         ));
 
     let router = Router::new()
-        .merge(database_idempotent)
         .merge(redis_idempotent)
         .merge(independent_online)
         // 从内到外注册：公共系统管理层继续统一提供用户限流。

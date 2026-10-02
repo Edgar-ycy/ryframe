@@ -3,7 +3,11 @@ use super::super::{html_header, slash_header};
 
 pub(super) fn api(resource: &ResourceIr) -> String {
     let pascal = &resource.pascal_name;
-    let domain = &resource.module;
+    let domain = if resource.module == "business" {
+        "core"
+    } else {
+        resource.module.as_str()
+    };
     let operations = &resource.api.operations;
     let detail_type = if resource.relations.is_empty() {
         String::new()

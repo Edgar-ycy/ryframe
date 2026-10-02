@@ -17,6 +17,7 @@ use crate::{
 /// 创建用户异步导出任务，实际文件由 Worker 生成并保存到对象存储。
 #[post("/exports")]
 #[perm("system:user:export")]
+#[ryframe_macro::capability("system.user")]
 #[utoipa::path(post, path = "/api/v1/system/users/exports", tag = "用户管理",
     params(("Idempotency-Key" = String, Header, description = "幂等键")),
     request_body = UserExportRequestDto,
@@ -42,6 +43,7 @@ pub(crate) async fn request_user_export(
 
 #[get("/import-template")]
 #[perm("system:user-import:add")]
+#[ryframe_macro::capability("system.user")]
 #[utoipa::path(get, path = "/api/v1/system/users/import-template", tag = "用户管理",
     responses((status = 200, description = "下载用户导入模板", body = Vec<u8>, content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")), security(("bearer" = [])))]
 pub(crate) async fn download_import_template(

@@ -4,6 +4,7 @@ mod guards;
 pub(crate) mod login;
 pub(crate) mod password_reset;
 pub(crate) mod session;
+pub(crate) mod tenants;
 pub(crate) mod ws_ticket;
 
 pub(crate) use context::TenantContextHeaderValues;

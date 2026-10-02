@@ -20,6 +20,7 @@ use crate::{
 
 #[get("/")]
 #[perm("system:user:list")]
+#[ryframe_macro::capability("system.user")]
 #[utoipa::path(get, path = "/api/v1/system/users", tag = "用户管理",
     params(UserListQuery),
     responses((status = 200, description = "用户列表", body = ApiPageResponse<UserVo>)),
@@ -51,6 +52,7 @@ pub(crate) async fn list(
 /// 查询当前操作者数据范围内的用户选项。
 #[get("/options")]
 #[perm("system:user:list")]
+#[ryframe_macro::capability("system.user")]
 #[utoipa::path(get, path = "/api/v1/system/users/options", tag = "用户管理",
     params(OptionQuery),
     responses((status = 200, description = "用户选项", body = ApiResponse<OptionList>)),
@@ -75,6 +77,7 @@ pub(crate) async fn options(
 
 #[get("/{id}")]
 #[perm("system:user:list")]
+#[ryframe_macro::capability("system.user")]
 #[utoipa::path(get, path = "/api/v1/system/users/{id}", tag = "用户管理",
     params(("id" = String, Path, description = "用户ID")),
     responses((status = 200, description = "用户详情", body = ApiResponse<UserDetailVo>)),
@@ -96,6 +99,7 @@ pub(crate) async fn detail(
 
 #[post("/")]
 #[perm("system:user:add")]
+#[ryframe_macro::capability("system.user")]
 #[utoipa::path(post, path = "/api/v1/system/users", tag = "用户管理",
     request_body = CreateUserDto,
     responses((status = 200, description = "创建成功", body = ApiResponse<UserVo>)),
@@ -130,6 +134,7 @@ pub(crate) async fn create(
 
 #[put("/{id}")]
 #[perm("system:user:edit")]
+#[ryframe_macro::capability("system.user")]
 #[utoipa::path(put, path = "/api/v1/system/users/{id}", tag = "用户管理",
     params(("id" = String, Path, description = "用户ID")),
     request_body = UpdateUserDto,
@@ -164,6 +169,7 @@ pub(crate) async fn update(
 
 #[put("/{id}/roles")]
 #[perm("system:user:edit")]
+#[ryframe_macro::capability("system.user")]
 #[utoipa::path(put, path = "/api/v1/system/users/{id}/roles", tag = "用户管理",
     params(("id" = String, Path, description = "用户ID")),
     request_body = ReplaceUserRolesDto,
@@ -209,6 +215,7 @@ pub(crate) async fn replace_roles(
 
 #[delete("/{id}")]
 #[perm("system:user:remove")]
+#[ryframe_macro::capability("system.user")]
 #[utoipa::path(delete, path = "/api/v1/system/users/{id}", tag = "用户管理",
     params(("id" = String, Path, description = "用户ID")),
     responses((status = 200, description = "删除成功", body = crate::http::ApiEmptyResponse)),
@@ -229,6 +236,7 @@ pub(crate) async fn remove(
 
 #[delete("/batch/{ids}")]
 #[perm("system:user:remove")]
+#[ryframe_macro::capability("system.user")]
 #[utoipa::path(delete, path = "/api/v1/system/users/batch/{ids}", tag = "用户管理",
     params(("ids" = String, Path, description = "用户ID列表，逗号分隔")),
     responses((status = 200, description = "批量删除成功", body = crate::http::ApiEmptyResponse)),
@@ -253,6 +261,7 @@ pub(crate) async fn batch_remove(
 
 #[put("/{id}/status")]
 #[perm("system:user:edit")]
+#[ryframe_macro::capability("system.user")]
 #[utoipa::path(put, path = "/api/v1/system/users/{id}/status", tag = "用户管理",
     params(("id" = String, Path, description = "用户ID")),
     request_body = UpdateUserStatusDto,

@@ -29,6 +29,7 @@ pub fn config_router(state: AppState) -> Router {
 /// 参数配置列表
 #[get("/")]
 #[perm("system:config:list")]
+#[ryframe_macro::capability("system.config")]
 #[utoipa::path(get, path = "/api/v1/system/configs", tag = "参数配置",
     params(ConfigListQuery),
     responses((status = 200, description = "配置列表", body = ApiPageResponse<ConfigVo>)), security(("bearer" = [])))]
@@ -61,6 +62,7 @@ async fn list(
 /// 参数配置详情
 #[get("/{id}")]
 #[perm("system:config:list")]
+#[ryframe_macro::capability("system.config")]
 #[utoipa::path(get, path = "/api/v1/system/configs/{id}", tag = "参数配置",
     params(("id" = String, Path)),
     responses((status = 200, description = "配置详情", body = ApiResponse<ConfigVo>)),
@@ -85,6 +87,7 @@ async fn detail(
 /// 创建参数配置
 #[post("/")]
 #[perm("system:config:add")]
+#[ryframe_macro::capability("system.config")]
 #[utoipa::path(post, path = "/api/v1/system/configs", tag = "参数配置",
     request_body = CreateConfigDto, responses((status = 200, description = "创建成功", body = ApiResponse<ConfigVo>)), security(("bearer" = [])))]
 async fn create(
@@ -113,6 +116,7 @@ async fn create(
 /// 更新参数配置
 #[put("/{id}")]
 #[perm("system:config:edit")]
+#[ryframe_macro::capability("system.config")]
 #[utoipa::path(put, path = "/api/v1/system/configs/{id}", tag = "参数配置",
     params(("id" = String, Path)), request_body = UpdateConfigDto,
     responses((status = 200, description = "更新成功", body = ApiResponse<ConfigVo>)), security(("bearer" = [])))]
@@ -136,6 +140,7 @@ async fn update(
 /// 删除参数配置
 #[delete("/{id}")]
 #[perm("system:config:remove")]
+#[ryframe_macro::capability("system.config")]
 #[utoipa::path(delete, path = "/api/v1/system/configs/{id}", tag = "参数配置",
     params(("id" = String, Path)), responses((status = 200, description = "删除成功", body = crate::http::ApiEmptyResponse)), security(("bearer" = [])))]
 async fn remove(
@@ -155,6 +160,7 @@ async fn remove(
 /// 根据参数键名查询参数值
 #[get("/key/{key}")]
 #[perm("system:config:list")]
+#[ryframe_macro::capability("system.config")]
 #[utoipa::path(get, path = "/api/v1/system/configs/key/{key}", tag = "参数配置",
     params(("key" = String, Path)), responses((status = 200, description = "参数值", body = ApiResponse<String>)), security(("bearer" = [])))]
 async fn get_by_key(
@@ -179,6 +185,7 @@ async fn get_by_key(
 /// 清空所有参数配置的 Redis 缓存
 #[delete("/cache")]
 #[perm("system:config:edit")]
+#[ryframe_macro::capability("system.config")]
 #[utoipa::path(delete, path = "/api/v1/system/configs/cache", tag = "参数配置",
     responses((status = 200, description = "缓存刷新成功", body = crate::http::ApiEmptyResponse)), security(("bearer" = [])))]
 async fn refresh_cache(
@@ -197,6 +204,7 @@ async fn refresh_cache(
 /// 创建参数配置异步导出任务。
 #[post("/exports")]
 #[perm("system:config:export")]
+#[ryframe_macro::capability("system.config")]
 #[utoipa::path(post, path = "/api/v1/system/configs/exports", tag = "参数配置",
     params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = ConfigExportRequestDto,
     responses((status = 202, description = "参数配置导出任务已创建", body = ApiResponse<ExportJobVo>)), security(("bearer" = [])))]

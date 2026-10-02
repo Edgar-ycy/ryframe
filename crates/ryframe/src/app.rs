@@ -16,6 +16,17 @@ pub fn build_app(
     state: ryframe_api::AppState,
     rate_limit_state: RateLimitState,
 ) -> AppResult<Router> {
+    let openapi_document = ryframe_api::openapi::document();
+    build_app_with_business(state, rate_limit_state, Router::new(), openapi_document)
+}
+
+/// 将独立业务 crate 的路由装配到受保护的 API 命名空间。
+pub fn build_app_with_business(
+    state: ryframe_api::AppState,
+    rate_limit_state: RateLimitState,
+    business_router: Router,
+    openapi_document: ryframe_api::openapi::OpenApiDocument,
+) -> AppResult<Router> {
     ryframe_api::validate_runtime_features(state.settings.api_docs_enabled)?;
     let trusted_proxies = state.trusted_proxies.clone();
     let response_localizer = state.localizer.clone();
@@ -29,9 +40,11 @@ pub fn build_app(
     };
 
     let business = ryframe_api::VersionedRouter::new()
-        .with_v1(ryframe_api::api_router(
+        .with_v1(ryframe_api::api_router_with_business(
             state.clone(),
             rate_limit_state_for_api,
+            business_router,
+            openapi_document,
         ))
         .into_router()
         .layer(from_fn_with_state(

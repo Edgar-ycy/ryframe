@@ -41,6 +41,7 @@ pub fn schedule_router(state: AppState) -> Router {
 
 #[get("/schedules/targets")]
 #[perm("monitor:schedule:list")]
+#[ryframe_macro::capability("monitor.schedules")]
 #[utoipa::path(
     get,
     path = "/api/v1/monitor/schedules/targets",
@@ -63,6 +64,7 @@ async fn targets(
 
 #[post("/schedules/preview")]
 #[perm("monitor:schedule:list")]
+#[ryframe_macro::capability("monitor.schedules")]
 #[utoipa::path(
     post,
     path = "/api/v1/monitor/schedules/preview",
@@ -91,6 +93,7 @@ async fn preview(
 
 #[get("/schedules")]
 #[perm("monitor:schedule:list")]
+#[ryframe_macro::capability("monitor.schedules")]
 #[utoipa::path(
     get,
     path = "/api/v1/monitor/schedules",
@@ -122,6 +125,7 @@ async fn list(
 
 #[get("/schedules/{id}")]
 #[perm("monitor:schedule:list")]
+#[ryframe_macro::capability("monitor.schedules")]
 #[utoipa::path(
     get,
     path = "/api/v1/monitor/schedules/{id}",
@@ -150,6 +154,7 @@ async fn detail(
 
 #[post("/schedules")]
 #[perm("monitor:schedule:add")]
+#[ryframe_macro::capability("monitor.schedules")]
 #[utoipa::path(
     post,
     path = "/api/v1/monitor/schedules",
@@ -180,6 +185,7 @@ async fn create(
 
 #[put("/schedules/{id}")]
 #[perm("monitor:schedule:edit")]
+#[ryframe_macro::capability("monitor.schedules")]
 #[utoipa::path(
     put,
     path = "/api/v1/monitor/schedules/{id}",
@@ -215,6 +221,7 @@ async fn update(
 
 #[put("/schedules/{id}/status")]
 #[perm("monitor:schedule:edit")]
+#[ryframe_macro::capability("monitor.schedules")]
 #[utoipa::path(
     put,
     path = "/api/v1/monitor/schedules/{id}/status",
@@ -250,6 +257,7 @@ async fn update_status(
 
 #[post("/schedules/{id}/run")]
 #[perm("monitor:schedule:run")]
+#[ryframe_macro::capability("monitor.schedules")]
 #[utoipa::path(
     post,
     path = "/api/v1/monitor/schedules/{id}/run",
@@ -290,6 +298,7 @@ async fn run_now(
 
 #[delete("/schedules/{id}")]
 #[perm("monitor:schedule:remove")]
+#[ryframe_macro::capability("monitor.schedules")]
 #[utoipa::path(
     delete,
     path = "/api/v1/monitor/schedules/{id}",
@@ -321,6 +330,7 @@ async fn remove(
 
 #[get("/schedules/{id}/executions")]
 #[perm("monitor:schedule:list")]
+#[ryframe_macro::capability("monitor.schedules")]
 #[utoipa::path(
     get,
     path = "/api/v1/monitor/schedules/{id}/executions",

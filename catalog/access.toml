@@ -22,14 +22,14 @@ permissions = [
     "platform:product-plan:list",
     "platform:product-plan:publish",
     "system:authorization-diagnostic:list",
-    "system:config-package:download",
-    "system:config-package:export",
-    "system:config-package:list",
-    "system:config-transfer:add",
-    "system:config-transfer:apply",
-    "system:config-transfer:list",
-    "system:config-transfer:preview",
-    "system:config-transfer:rollback",
+    "platform:config-package:download",
+    "platform:config-package:export",
+    "platform:config-package:list",
+    "platform:config-transfer:add",
+    "platform:config-transfer:apply",
+    "platform:config-transfer:list",
+    "platform:config-transfer:preview",
+    "platform:config-transfer:rollback",
     "system:config:add",
     "system:config:edit",
     "system:config:export",
@@ -105,14 +105,14 @@ non_route_permissions = ["tenant:capability:override"]
 "platform:product-plan:list" = "产品套餐查询"
 "platform:product-plan:publish" = "产品套餐发布"
 "system:authorization-diagnostic:list" = "权限诊断查询"
-"system:config-package:download" = "配置包下载"
-"system:config-package:export" = "配置包生成"
-"system:config-package:list" = "配置包查询"
-"system:config-transfer:add" = "配置迁移新增"
-"system:config-transfer:apply" = "配置迁移应用"
-"system:config-transfer:list" = "配置迁移查询"
-"system:config-transfer:preview" = "配置迁移预览"
-"system:config-transfer:rollback" = "配置迁移回滚"
+"platform:config-package:download" = "配置包下载"
+"platform:config-package:export" = "配置包生成"
+"platform:config-package:list" = "配置包查询"
+"platform:config-transfer:add" = "配置迁移新增"
+"platform:config-transfer:apply" = "配置迁移应用"
+"platform:config-transfer:list" = "配置迁移查询"
+"platform:config-transfer:preview" = "配置迁移预览"
+"platform:config-transfer:rollback" = "配置迁移回滚"
 "system:message:publish" = "消息发布"
 "system:user-import:add" = "用户导入创建"
 "system:user-import:cancel" = "用户导入取消"
@@ -139,6 +139,11 @@ permissions = [
     "system:post:list",
     "system:post:remove",
 ]
+
+[[route_policies]]
+method = "GET"
+path = "/api/v1/auth/tenants"
+policy = "public"
 
 [[route_policies]]
 method = "GET"
@@ -392,13 +397,23 @@ menu_type = "M"
 
 [[menus]]
 route_key = "platform"
+icon = "OfficeBuilding"
 order = 3
 name = "平台管理"
 title_key = "platform"
 menu_type = "M"
 
 [[menus]]
+route_key = "business"
+icon = "Grid"
+order = 4
+name = "业务管理"
+title_key = "business"
+menu_type = "M"
+
+[[menus]]
 route_key = "system.user"
+capability = "system.user"
 order = 4
 name = "用户管理"
 title_key = "user"
@@ -408,6 +423,7 @@ permission = "system:user:list"
 
 [[menus]]
 route_key = "system.role"
+capability = "system.role"
 order = 5
 name = "角色管理"
 title_key = "role"
@@ -417,6 +433,7 @@ permission = "system:role:list"
 
 [[menus]]
 route_key = "system.menu"
+capability = "system.menu"
 order = 6
 name = "菜单管理"
 title_key = "menu"
@@ -426,6 +443,7 @@ permission = "system:menu:list"
 
 [[menus]]
 route_key = "system.dept"
+capability = "system.dept"
 order = 7
 name = "部门管理"
 title_key = "dept"
@@ -435,6 +453,7 @@ permission = "system:dept:list"
 
 [[menus]]
 route_key = "system.dict"
+capability = "system.dict"
 order = 8
 name = "字典管理"
 title_key = "dict"
@@ -444,6 +463,7 @@ permission = "system:dict:list"
 
 [[menus]]
 route_key = "system.config"
+capability = "system.config"
 order = 9
 name = "参数设置"
 title_key = "config"
@@ -452,13 +472,13 @@ page_key = "system.config"
 permission = "system:config:list"
 
 [[menus]]
-route_key = "system.config-transfer"
-order = 10
+route_key = "platform.config-transfer"
+order = 15
 name = "配置迁移"
 title_key = "configTransfer"
 menu_type = "C"
-page_key = "system.config-transfer"
-permission = "system:config-transfer:list"
+page_key = "platform.config-transfer"
+permission = "platform:config-transfer:list"
 
 [[menus]]
 route_key = "platform.product-plans"
@@ -489,6 +509,7 @@ permission = "tenant:list"
 
 [[menus]]
 route_key = "system.perm"
+capability = "system.perm"
 order = 16
 name = "权限管理"
 title_key = "permission"
@@ -498,6 +519,7 @@ permission = "system:perm:list"
 
 [[menus]]
 route_key = "system.authorization-diagnostics"
+capability = "system.authorization-diagnostics"
 order = 17
 name = "权限诊断"
 title_key = "authorizationDiagnostics"
@@ -507,6 +529,7 @@ permission = "system:authorization-diagnostic:list"
 
 [[menus]]
 route_key = "system.operlog"
+capability = "system.operlog"
 order = 18
 name = "操作日志"
 title_key = "operlog"
@@ -516,6 +539,7 @@ permission = "system:operlog:list"
 
 [[menus]]
 route_key = "system.logininfor"
+capability = "system.logininfor"
 order = 19
 name = "登录日志"
 title_key = "loginlog"
@@ -525,6 +549,7 @@ permission = "system:logininfor:list"
 
 [[menus]]
 route_key = "monitor.online"
+capability = "monitor.online"
 order = 20
 name = "在线用户"
 title_key = "online"
@@ -570,6 +595,7 @@ permission = "monitor:db-pool:list"
 
 [[menus]]
 route_key = "monitor.jobs"
+capability = "monitor.jobs"
 order = 25
 name = "后台任务"
 title_key = "jobs"
@@ -579,6 +605,7 @@ permission = "monitor:job:list"
 
 [[menus]]
 route_key = "monitor.schedules"
+capability = "monitor.schedules"
 order = 26
 name = "定时任务"
 title_key = "schedules"
@@ -603,3 +630,93 @@ title_key = "overview"
 menu_type = "C"
 page_key = "monitor.overview"
 permission = "monitor:overview:list"
+
+[[capabilities]]
+code = "system.user"
+route_keys = ["system.user"]
+page_keys = ["system.user"]
+permissions = ["system:user-import:add", "system:user-import:cancel", "system:user-import:list", "system:user:add", "system:user:edit", "system:user:export", "system:user:list", "system:user:remove"]
+
+[[capabilities]]
+code = "system.role"
+route_keys = ["system.role"]
+page_keys = ["system.role"]
+permissions = ["system:role:add", "system:role:edit", "system:role:export", "system:role:list", "system:role:remove"]
+
+[[capabilities]]
+code = "system.menu"
+route_keys = ["system.menu"]
+page_keys = ["system.menu"]
+permissions = ["system:menu:add", "system:menu:edit", "system:menu:list", "system:menu:remove"]
+
+[[capabilities]]
+code = "system.dept"
+route_keys = ["system.dept"]
+page_keys = ["system.dept"]
+permissions = ["system:dept:add", "system:dept:edit", "system:dept:list", "system:dept:remove"]
+
+[[capabilities]]
+code = "system.dict"
+route_keys = ["system.dict"]
+page_keys = ["system.dict"]
+permissions = ["system:dict:add", "system:dict:edit", "system:dict:export", "system:dict:list", "system:dict:remove"]
+
+[[capabilities]]
+code = "system.config"
+route_keys = ["system.config"]
+page_keys = ["system.config"]
+permissions = ["system:config:add", "system:config:edit", "system:config:export", "system:config:list", "system:config:remove"]
+
+[[capabilities]]
+code = "system.perm"
+route_keys = ["system.perm"]
+page_keys = ["system.perm"]
+permissions = ["system:perm:add", "system:perm:edit", "system:perm:list", "system:perm:remove", "system:perm:sync"]
+
+[[capabilities]]
+code = "system.authorization-diagnostics"
+route_keys = ["system.authorization-diagnostics"]
+page_keys = ["system.authorization-diagnostics"]
+permissions = ["system:authorization-diagnostic:list"]
+
+[[capabilities]]
+code = "system.operlog"
+route_keys = ["system.operlog"]
+page_keys = ["system.operlog"]
+permissions = ["system:operlog:export", "system:operlog:list"]
+
+[[capabilities]]
+code = "system.logininfor"
+route_keys = ["system.logininfor"]
+page_keys = ["system.logininfor"]
+permissions = ["system:logininfor:export", "system:logininfor:list"]
+
+[[capabilities]]
+code = "system.message"
+route_keys = []
+page_keys = []
+permissions = ["system:message:publish"]
+
+[[capabilities]]
+code = "monitor.online"
+route_keys = ["monitor.online"]
+page_keys = ["monitor.online"]
+permissions = ["monitor:online:force-logout", "monitor:online:list"]
+
+[[capabilities]]
+code = "monitor.jobs"
+route_keys = ["monitor.jobs"]
+page_keys = ["monitor.jobs"]
+permissions = ["monitor:job:list", "monitor:job:retry"]
+
+[[capabilities]]
+code = "monitor.schedules"
+route_keys = ["monitor.schedules"]
+page_keys = ["monitor.schedules"]
+permissions = ["monitor:schedule:add", "monitor:schedule:edit", "monitor:schedule:list", "monitor:schedule:remove", "monitor:schedule:run"]
+
+[[capabilities]]
+code = "system.notice"
+route_keys = ["system.notice"]
+page_keys = ["system.notice"]
+permissions = ["system:notice:add", "system:notice:edit", "system:notice:list", "system:notice:remove"]

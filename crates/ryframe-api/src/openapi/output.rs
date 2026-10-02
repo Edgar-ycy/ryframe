@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use axum::Extension;
 use utoipa::OpenApi;
 
 use super::ApiDoc;
@@ -17,4 +20,10 @@ pub(super) async fn openapi_json() -> impl axum::response::IntoResponse {
     use axum::Json;
 
     Json(ApiDoc::openapi())
+}
+
+pub(crate) async fn supplied_openapi_json(
+    Extension(document): Extension<Arc<utoipa::openapi::OpenApi>>,
+) -> impl axum::response::IntoResponse {
+    axum::Json((*document).clone())
 }

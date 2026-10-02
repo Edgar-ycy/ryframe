@@ -1,0 +1,21 @@
+[package]
+name = "ryframe-business-application"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ryframe-application = { path = "../../ryframe-application", default-features = false }
+ryframe-kernel = { path = "../../ryframe-kernel" }
+async-trait.workspace = true
+chrono.workspace = true
+
+[features]
+default = []
+test-support = ["ryframe-application/test-support"]
+
+[lints]
+workspace = true

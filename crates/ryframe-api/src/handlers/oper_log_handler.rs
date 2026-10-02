@@ -21,6 +21,7 @@ pub fn oper_log_router(state: AppState) -> Router {
 /// 操作日志列表
 #[get("/")]
 #[perm("system:operlog:list")]
+#[ryframe_macro::capability("system.operlog")]
 #[utoipa::path(get, path = "/api/v1/system/operlogs", tag = "操作日志",
     params(OperLogPageQuery),
     responses((status = 200, description = "日志列表", body = ApiPageResponse<OperLogVo>)), security(("bearer" = [])))]
@@ -53,6 +54,7 @@ async fn list(
 /// 创建操作日志异步导出任务。
 #[post("/exports")]
 #[perm("system:operlog:export")]
+#[ryframe_macro::capability("system.operlog")]
 #[utoipa::path(post, path = "/api/v1/system/operlogs/exports", tag = "操作日志",
     params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = OperLogExportRequestDto,
     responses((status = 202, description = "操作日志导出任务已创建", body = ApiResponse<ExportJobVo>)), security(("bearer" = [])))]
