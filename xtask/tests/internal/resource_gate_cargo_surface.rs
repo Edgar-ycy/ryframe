@@ -6,6 +6,36 @@ fn packages(values: &[&str]) -> BTreeSet<String> {
     values.iter().map(|value| (*value).to_owned()).collect()
 }
 
+fn assert_runtime_contract_targets(clippy: &[String], test: &[String]) {
+    for bin in [
+        "ryframe",
+        "export_business_openapi",
+        "export_openapi",
+        "export_mysql_snapshot",
+        "xtask",
+    ] {
+        assert!(clippy.windows(2).any(|pair| pair == ["--bin", bin]));
+    }
+    assert!(!test.contains(&"--bin".to_owned()));
+    for contract in [
+        "resource_api_contracts",
+        "openapi_contract",
+        "resource_application_contracts",
+        "resource_tenant_contracts",
+    ] {
+        assert!(clippy.windows(2).any(|pair| pair == ["--test", contract]));
+        assert!(test.windows(2).any(|pair| pair == ["--test", contract]));
+    }
+    assert!(clippy.contains(&"--lib".to_owned()));
+    assert!(!test.contains(&"--lib".to_owned()));
+    assert!(
+        test.windows(2)
+            .any(|pair| pair == ["--test", "mapping_contracts"])
+    );
+    assert!(!test.contains(&"mysql_real_protocol".to_owned()));
+    assert!(test.windows(2).any(|pair| pair == ["--test", "internal"]));
+}
+
 #[test]
 fn every_workspace_package_has_one_resource_gate_disposition() {
     for package in [
@@ -106,33 +136,7 @@ fn resource_cargo_surface_selects_only_runtime_api_contracts() {
         assert!(!test.contains(&forbidden_test.to_owned()));
     }
 
-    for bin in [
-        "ryframe",
-        "export_business_openapi",
-        "export_openapi",
-        "export_mysql_snapshot",
-        "xtask",
-    ] {
-        assert!(clippy.windows(2).any(|pair| pair == ["--bin", bin]));
-    }
-    assert!(!test.contains(&"--bin".to_owned()));
-    for contract in [
-        "resource_api_contracts",
-        "openapi_contract",
-        "resource_application_contracts",
-        "resource_tenant_contracts",
-    ] {
-        assert!(clippy.windows(2).any(|pair| pair == ["--test", contract]));
-        assert!(test.windows(2).any(|pair| pair == ["--test", contract]));
-    }
-    assert!(clippy.contains(&"--lib".to_owned()));
-    assert!(!test.contains(&"--lib".to_owned()));
-    assert!(
-        test.windows(2)
-            .any(|pair| pair == ["--test", "mapping_contracts"])
-    );
-    assert!(!test.contains(&"mysql_real_protocol".to_owned()));
-    assert!(test.windows(2).any(|pair| pair == ["--test", "internal"]));
+    assert_runtime_contract_targets(&clippy, &test);
     let test_features = test
         .windows(2)
         .find_map(|pair| (pair[0] == "--features").then_some(pair[1].as_str()))
