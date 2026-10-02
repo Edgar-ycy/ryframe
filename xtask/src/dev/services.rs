@@ -406,9 +406,6 @@ pub(super) fn stop_services(services: &mut Services) -> Result<()> {
     worker
 }
 
-pub(super) fn stop_all(services: &mut Services, vite: &mut ManagedChild) -> Result<()> {
-    let backend = stop_services(services);
-    let frontend = stop_child(vite);
-    backend?;
-    frontend
+pub(super) fn stop_all(services: &mut Services) -> Result<()> {
+    stop_services(services)
 }

@@ -8,7 +8,7 @@ use std::{
 
 use crate::{
     Result, doctor,
-    process::{ChildGroup, ManagedChild, spawn_pnpm_with_env, stop_child},
+    process::ChildGroup,
     watch::{ChangeBatch, SourceWatcher, WatchEvent},
     workspace::root_dir,
 };
@@ -48,8 +48,8 @@ pub(crate) fn candidate_probe_disposition(
     }
 }
 
-pub(crate) fn run(frontend_dir: &Path) -> Result<()> {
-    doctor::run(frontend_dir)?;
+pub(crate) fn run() -> Result<()> {
+    doctor::run_backend()?;
     let root = root_dir();
     let ports = DevPorts::from_environment()?;
     ensure_initial_ports_available(ports)?;
@@ -60,44 +60,29 @@ pub(crate) fn run(frontend_dir: &Path) -> Result<()> {
     let shutdown = Arc::new(AtomicBool::new(false));
     let _shutdown_listener = spawn_shutdown_listener(Arc::clone(&shutdown));
 
-    let proxy_target = format!("http://127.0.0.1:{}", ports.api);
-    let vite = spawn_pnpm_with_env(
-        &group,
-        frontend_dir,
-        &["dev"],
-        &[("VITE_APP_PROXY_TARGET", proxy_target.as_str())],
-    )?;
-    run_with_vite(
-        &group, &root, &session, &watcher, &shutdown, vite, ports, worker_ids, recovered,
+    run_backend(
+        &group, &root, &session, &watcher, &shutdown, ports, worker_ids, recovered,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_with_vite(
+fn run_backend(
     group: &ChildGroup,
     root: &Path,
     session: &DevSession,
     watcher: &SourceWatcher,
     shutdown: &AtomicBool,
-    mut vite: ManagedChild,
     ports: DevPorts,
     worker_ids: WorkerIds,
     recovered: Option<Binaries>,
 ) -> Result<()> {
-    let backend = match start_backend(
+    let backend = start_backend(
         group, root, session, shutdown, watcher, ports, worker_ids, recovered,
-    ) {
-        Ok(backend) => backend,
-        Err(error) => {
-            let _ = stop_child(&mut vite);
-            return Err(error);
-        }
-    };
+    )?;
     let Some((services, recovered)) = backend else {
-        stop_child(&mut vite)?;
         return Ok(());
     };
-    let mut running = RunningProcesses { services, vite };
+    let mut running = RunningProcesses { services };
     if recovered {
         println!("已恢复最近完整的 last-known-good；正在后台构建当前源码候选。");
         if matches!(
@@ -113,7 +98,7 @@ fn run_with_vite(
             )?,
             ChangeOutcome::Shutdown
         ) {
-            stop_all(&mut running.services, &mut running.vite)?;
+            stop_all(&mut running.services)?;
             return Ok(());
         }
     }
@@ -152,7 +137,7 @@ fn start_backend(
             }
         }
     }
-    println!("Vite 已启动；正在构建初始 API、Worker 与迁移工具。按 Ctrl+C 可统一停止。");
+    println!("正在构建初始 API、Worker 与迁移工具。按 Ctrl+C 可统一停止后端进程。");
     let initial = match build_initial_candidate(group, root, session, shutdown, watcher)? {
         Some(candidate) => candidate,
         None => return Ok(None),
@@ -196,13 +181,12 @@ fn supervise(
 ) -> Result<()> {
     loop {
         if shutdown.load(Ordering::Acquire) {
-            println!("收到中断信号，正在停止 API、Worker 与 Vite。");
-            stop_all(&mut running.services, &mut running.vite)?;
+            println!("收到中断信号，正在停止 API 与 Worker。");
+            stop_all(&mut running.services)?;
             return Ok(());
         }
         ensure_running("API", &mut running.services.api)?;
         ensure_running("Worker", &mut running.services.worker)?;
-        ensure_running("Vite", &mut running.vite)?;
         let Some(batch) = receive_change(watcher)? else {
             continue;
         };
@@ -222,7 +206,7 @@ fn supervise(
             )?,
             ChangeOutcome::Shutdown
         ) {
-            stop_all(&mut running.services, &mut running.vite)?;
+            stop_all(&mut running.services)?;
             return Ok(());
         }
     }

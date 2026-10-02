@@ -339,22 +339,6 @@ fn pnpm_executable(dir: &Path) -> Result<PathBuf> {
     Ok(executable)
 }
 
-pub(crate) fn spawn_pnpm_with_env(
-    group: &ChildGroup,
-    dir: &Path,
-    args: &[&str],
-    environment: &[(&str, &str)],
-) -> Result<ManagedChild> {
-    let mut command = pnpm_command(dir)?;
-    command
-        .args(args)
-        .envs(environment.iter().copied())
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-    group.spawn(command)
-}
-
 #[cfg(unix)]
 fn prepare_process_group(command: &mut Command) {
     use std::os::unix::process::CommandExt;

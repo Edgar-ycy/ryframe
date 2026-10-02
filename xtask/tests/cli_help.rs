@@ -34,9 +34,13 @@ fn dev_help_lists_every_supported_development_option() {
     assert!(result.stderr.is_empty());
     let output = String::from_utf8(result.stdout).unwrap();
     assert!(
-        output.contains("cargo xtask dev [--measure-once] [--frontend-dir PATH]"),
+        output.contains("cargo xtask dev [--measure-once]"),
         "{output}"
     );
+    assert!(output.contains("只管理后端 API、Worker"), "{output}");
+    assert!(output.contains("corepack pnpm dev"), "{output}");
+    assert!(!output.contains("Vite"), "{output}");
+    assert!(!output.contains("--frontend-dir"), "{output}");
     assert!(output.contains("DevEx 保存场景"), "{output}");
 }
 

@@ -36,7 +36,7 @@ cargo xtask dev
 
 `cargo xtask data migrate verify` 校验控制库结构，不修改数据库。需要更新本地数据库时运行 `cargo xtask data migrate up`；租户数据目标可使用 `cargo xtask data migrate verify tenant-data --all` 校验。
 
-`cargo xtask dev` 同时管理 API、Worker 和 Vite，并在后端修改后完成探活再切换版本。按 `Ctrl+C` 可停止整组进程。
+`cargo xtask dev` 只管理后端 API、Worker 及其进程树，并在后端修改后完成探活再切换版本。按 `Ctrl+C` 可停止全部后端进程。前端需要在 `ryframe-vue3` 仓库中单独运行 `corepack pnpm dev`。
 
 排障时仍通过 `cargo xtask dev` 管理 API、Worker 与其进程树；维护二进制的专用操作按职责从
 `cargo xtask data --help` 进入，避免绕开运行收据和 ownership 核验。

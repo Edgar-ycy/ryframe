@@ -50,6 +50,19 @@ const MINIMUM_PYTHON_VERSION: ToolVersion = ToolVersion {
 };
 
 pub(crate) fn run(frontend_dir: &Path) -> Result<()> {
+    check_backend()?;
+    check_frontend(frontend_dir)?;
+    println!("RyFrame 开发环境检查通过。");
+    Ok(())
+}
+
+pub(crate) fn run_backend() -> Result<()> {
+    check_backend()?;
+    println!("RyFrame 后端开发环境检查通过。");
+    Ok(())
+}
+
+fn check_backend() -> Result<()> {
     let root = root_dir();
     for executable in ["cargo", "rustc", "python", "git"] {
         run_process(&root, executable, &["--version"])?;
@@ -66,15 +79,25 @@ pub(crate) fn run(frontend_dir: &Path) -> Result<()> {
 
     for (name, path) in [
         ("后端 Git 仓库", root.join(".git")),
-        ("前端目录", frontend_dir.to_path_buf()),
-        ("前端 Git 仓库", frontend_dir.join(".git")),
         ("后端配置", root.join("config/app.toml")),
     ] {
         if !path.exists() {
             return Err(format!("缺少{name}：{}", path.display()).into());
         }
     }
+    Ok(())
+}
 
+fn check_frontend(frontend_dir: &Path) -> Result<()> {
+    let root = root_dir();
+    for (name, path) in [
+        ("前端目录", frontend_dir.to_path_buf()),
+        ("前端 Git 仓库", frontend_dir.join(".git")),
+    ] {
+        if !path.exists() {
+            return Err(format!("缺少{name}：{}", path.display()).into());
+        }
+    }
     let toolchain = frontend_toolchain(frontend_dir)?;
     let node_version = command_version(&root, "node")?;
     if !node_engine_satisfies(node_version, &toolchain.node_engine)? {
@@ -93,7 +116,6 @@ pub(crate) fn run(frontend_dir: &Path) -> Result<()> {
         .into());
     }
 
-    println!("RyFrame 开发环境检查通过。");
     Ok(())
 }
 

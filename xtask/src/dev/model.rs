@@ -278,12 +278,11 @@ pub(super) struct Services {
 
 pub(super) struct RunningProcesses {
     pub(super) services: Services,
-    pub(super) vite: ManagedChild,
 }
 
 impl Drop for RunningProcesses {
     fn drop(&mut self) {
-        let _ = stop_all(&mut self.services, &mut self.vite);
+        let _ = stop_all(&mut self.services);
     }
 }
 

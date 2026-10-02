@@ -63,7 +63,7 @@ fn dispatch(cli: Cli) -> Result<()> {
         Command::Dev { measure_once: true } => dev::measure_once(),
         Command::Dev {
             measure_once: false,
-        } => dev::run(&cli.frontend_dir),
+        } => dev::run(),
         Command::Check(command) => dispatch_check(command, &cli.frontend_dir),
         Command::Build(options) => build::run(options, &cli.frontend_dir),
         Command::Generate(command) => dispatch_generate(command, &cli.frontend_dir),
