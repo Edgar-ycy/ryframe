@@ -419,6 +419,40 @@ class SupplyChainPolicyTests(unittest.TestCase):
                 [],
             )
 
+    def test_local_patch_license_accepts_registry_manifest_license(self) -> None:
+        with self.temporary_directory() as raw:
+            root = Path(raw)
+            configured, cargo_home, _, registry = self.write_local_patch_fixture(root)
+            source = configured["local_patch_licenses"][0]["license_files"][1][
+                "registry_source"
+            ]
+            source.pop("file")
+            source["manifest_license"] = "Apache-2.0"
+            (registry / "LICENSE-APACHE").unlink()
+            (registry / "Cargo.toml").write_text(
+                '[package]\nname = "fixture-source"\nversion = "1.2.3"\n'
+                'license = "Apache-2.0"\n',
+                encoding="utf-8",
+            )
+            policy_path = self.write_json(root, "policy.json", configured)
+            loaded = MODULE.load_policy(policy_path, today=dt.date(2026, 8, 20))
+            self.assertEqual(
+                MODULE.validate_local_patch_licenses(
+                    root, loaded, cargo_home=cargo_home
+                ),
+                [],
+            )
+
+            (registry / "Cargo.toml").write_text(
+                '[package]\nname = "fixture-source"\nversion = "1.2.3"\n'
+                'license = "MIT"\n',
+                encoding="utf-8",
+            )
+            errors = MODULE.validate_local_patch_licenses(
+                root, loaded, cargo_home=cargo_home
+            )
+            self.assertTrue(any("registry 清单许可证不一致" in error for error in errors))
+
     def test_local_patch_license_rejects_vendor_or_registry_drift(self) -> None:
         with self.temporary_directory() as raw:
             root = Path(raw)

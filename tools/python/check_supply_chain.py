@@ -180,11 +180,13 @@ def _validate_local_patch_policy(policy: dict[str, Any]) -> None:
             registry = _object(
                 license_file["registry_source"], f"{file_label}.registry_source"
             )
-            _exact_keys(
-                registry,
-                {"package", "version", "file"},
-                f"{file_label}.registry_source",
-            )
+            registry_keys = set(registry)
+            file_source_keys = {"package", "version", "file"}
+            manifest_source_keys = {"package", "version", "manifest_license"}
+            if registry_keys not in (file_source_keys, manifest_source_keys):
+                raise PolicyError(
+                    f"{file_label}.registry_source 必须选择 file 或 manifest_license 原件"
+                )
             registry_package = _text(
                 registry["package"], f"{file_label}.registry_source.package"
             )
@@ -199,7 +201,17 @@ def _validate_local_patch_policy(policy: dict[str, Any]) -> None:
                 raise PolicyError(
                     f"{file_label}.registry_source.version 必须固定到完整三段版本"
                 )
-            _portable_path(registry["file"], f"{file_label}.registry_source.file")
+            if "file" in registry:
+                _portable_path(registry["file"], f"{file_label}.registry_source.file")
+            else:
+                manifest_licenses = _license_identifiers(
+                    registry["manifest_license"],
+                    f"{file_label}.registry_source.manifest_license",
+                )
+                if spdx not in manifest_licenses:
+                    raise PolicyError(
+                        f"{file_label}.registry_source.manifest_license 未声明 {spdx}"
+                    )
         if seen_spdx != declared:
             raise PolicyError(
                 f"{label}.license_files 必须逐项覆盖 license_expression，"
@@ -605,6 +617,22 @@ def _validate_registry_copy(
     errors: list[str] = []
     package_roots = _registry_source_paths(cargo_home, source)
     for package_root in package_roots:
+        if "manifest_license" in source:
+            manifest, error = _read_toml(
+                package_root / "Cargo.toml", f"{label} registry Cargo.toml"
+            )
+            if error is not None or manifest is None:
+                errors.append(error or f"{label} registry Cargo.toml 无法读取")
+                continue
+            package = manifest.get("package")
+            expected_license = source["manifest_license"]
+            if not isinstance(package, dict) or package.get("license") != expected_license:
+                actual_license = package.get("license") if isinstance(package, dict) else None
+                errors.append(
+                    f"{label} registry 清单许可证不一致：{package_root / 'Cargo.toml'} "
+                    f"(期望 {expected_license}，实际 {actual_license})"
+                )
+            continue
         source_path, error = _resolve_regular_path(
             package_root,
             source["file"],
