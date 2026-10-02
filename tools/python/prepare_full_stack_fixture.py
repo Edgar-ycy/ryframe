@@ -147,6 +147,50 @@ def register_fixture_migration(root: Path, log: Path) -> None:
     )
 
 
+def register_fixture_capability(root: Path) -> None:
+    """只在隔离 Device 夹具中登记完整的测试产品能力。"""
+    access = root / "catalog/access.toml"
+    access.write_text(
+        access.read_text(encoding="utf-8")
+        + '\n\n[[capabilities]]\n'
+        + 'code = "system.device"\n'
+        + 'route_keys = ["system.device"]\n'
+        + 'page_keys = ["system.device"]\n'
+        + 'permissions = ["system:device:create", "system:device:read", '
+        + '"system:device:list", "system:device:update", "system:device:delete"]\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    application = (
+        root
+        / "crates/ryframe-application/src/system/product_capability_catalog.rs"
+    )
+    source = application.read_text(encoding="utf-8")
+    marker = "];\n\npub fn capability_descriptor"
+    capability = '''    standard_capability(
+        "system.device",
+        "设备管理",
+        &["system.device"],
+        &[
+            "system:device:create",
+            "system:device:read",
+            "system:device:list",
+            "system:device:update",
+            "system:device:delete",
+        ],
+        &[],
+    ),
+];
+
+pub fn capability_descriptor'''
+    if source.count(marker) != 1:
+        raise ValueError("隔离夹具无法定位产品能力目录写入点")
+    application.write_text(
+        source.replace(marker, capability, 1), encoding="utf-8", newline="\n"
+    )
+
+
 def reference_fixture_root(backend: Path) -> Path:
     """为后续审阅、秘密 bootstrap 和运行计划预置唯一的忽略证据父目录。"""
     root = backend / ".local-tests/reference-fixture"
@@ -196,6 +240,7 @@ def prepare(
     copy_snapshot(backend, roots["backend"], backend_receipt, backend_patch, log)
     copy_snapshot(frontend, roots["frontend"], frontend_receipt, frontend_patch, log)
     reference_fixture_root(roots["backend"])
+    register_fixture_capability(roots["backend"])
     (roots["backend"] / "catalog/resources/device.toml").write_bytes(fixture_bytes)
     # Corepack 读取快照内 packageManager；使用已安装的离线 store，不复制本机环境文件。
     package = ["corepack", "pnpm", "install", "--offline", "--frozen-lockfile"]
