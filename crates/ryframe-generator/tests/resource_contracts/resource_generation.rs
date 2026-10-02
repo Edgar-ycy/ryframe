@@ -224,22 +224,24 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
     assert!(!handler.contains("tag = \"岗位\","));
     assert!(handler.contains("use crate::handler_utils::parse_id;"));
     assert!(!handler.contains("fn parse_id(value: &str)"));
-    let router = generated
-        .assets
-        .iter()
-        .find(|asset| asset.path == "crates/ryframe-api/src/generated/router.rs")
-        .expect("应生成框架 API 聚合路由")
-        .content
-        .as_str();
-    assert!(router.contains("super::post::handler::router"));
-    assert!(router.contains("CapabilityGuardState"));
-    assert!(router.contains("system.post"));
+    assert_post_router(&generated);
     assert!(
         generated
             .assets
             .iter()
             .all(|asset| { asset.path != "crates/ryframe-db/src/generated/post/migration.rs" })
     );
+}
+
+fn assert_post_router(generated: &GeneratedCatalog) {
+    let router = generated
+        .assets
+        .iter()
+        .find(|asset| asset.path == "crates/ryframe-api/src/generated/router.rs")
+        .expect("应生成框架 API 聚合路由");
+    assert!(router.content.contains("super::post::handler::router"));
+    assert!(router.content.contains("CapabilityGuardState"));
+    assert!(router.content.contains("system.post"));
 }
 
 #[test]
