@@ -49,6 +49,9 @@ pub(super) fn validate_managed_path(root: AssetRoot, relative: &str) -> Result<(
                     "crates/ryframe-db/src/generated/",
                     "crates/ryframe-api/src/generated/",
                     "crates/ryframe-tenant-db/src/generated/",
+                    "crates/business/ryframe-business-application/src/generated/",
+                    "crates/business/ryframe-business-db/src/generated/",
+                    "crates/business/ryframe-business-api/src/generated/",
                 ]
                 .iter()
                 .any(|prefix| relative.starts_with(prefix))

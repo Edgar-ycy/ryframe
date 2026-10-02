@@ -3157,6 +3157,7 @@ dependencies = [
  "ryframe-api",
  "ryframe-application",
  "ryframe-auth",
+ "ryframe-business-runtime",
  "ryframe-config",
  "ryframe-db",
  "ryframe-kernel",
@@ -3292,6 +3293,60 @@ dependencies = [
  "serde",
  "sha2 0.11.0",
  "uuid",
+]
+
+[[package]]
+name = "ryframe-business-api"
+version = "0.12.1"
+dependencies = [
+ "axum",
+ "chrono",
+ "ryframe-api",
+ "ryframe-business-application",
+ "ryframe-kernel",
+ "ryframe-macro",
+ "serde",
+ "serde_json",
+ "utoipa",
+ "validator",
+]
+
+[[package]]
+name = "ryframe-business-application"
+version = "0.12.1"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "ryframe-application",
+ "ryframe-kernel",
+]
+
+[[package]]
+name = "ryframe-business-db"
+version = "0.12.1"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "ryframe-application",
+ "ryframe-business-application",
+ "ryframe-db",
+ "ryframe-kernel",
+ "ryframe-tenant-db",
+ "sea-orm",
+ "sea-orm-migration",
+]
+
+[[package]]
+name = "ryframe-business-runtime"
+version = "0.12.1"
+dependencies = [
+ "axum",
+ "ryframe-api",
+ "ryframe-business-api",
+ "ryframe-business-application",
+ "ryframe-business-db",
+ "ryframe-kernel",
+ "ryframe-tenant-db",
 ]
 
 [[package]]

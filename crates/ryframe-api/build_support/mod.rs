@@ -39,6 +39,9 @@ pub(super) fn run() -> Result<(), Box<dyn Error>> {
     println!("cargo:rerun-if-changed={}", source_root.display());
     let mut source_files = Vec::new();
     collect_rust_files(&source_root, &mut source_files)?;
+    let business_source = workspace_root.join("crates/business/ryframe-business-api/src/generated");
+    println!("cargo:rerun-if-changed={}", business_source.display());
+    collect_rust_files(&business_source, &mut source_files)?;
     source_files.sort();
 
     let mut routes = Vec::new();

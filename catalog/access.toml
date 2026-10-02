@@ -404,6 +404,14 @@ title_key = "platform"
 menu_type = "M"
 
 [[menus]]
+route_key = "business"
+icon = "Grid"
+order = 4
+name = "业务管理"
+title_key = "business"
+menu_type = "M"
+
+[[menus]]
 route_key = "system.user"
 capability = "system.user"
 order = 4

@@ -1,0 +1,20 @@
+[package]
+name = "ryframe-business-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+ryframe-business-application = { path = "../ryframe-business-application" }
+ryframe-business-db = { path = "../ryframe-business-db" }
+ryframe-business-api = { path = "../ryframe-business-api" }
+ryframe-api = { path = "../../ryframe-api", default-features = false }
+ryframe-tenant-db = { path = "../../ryframe-tenant-db", default-features = false, features = ["repositories"] }
+ryframe-kernel = { path = "../../ryframe-kernel" }
+axum.workspace = true
+
+[lints]
+workspace = true

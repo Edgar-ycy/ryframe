@@ -216,6 +216,39 @@
         ],
         "type": "object"
       },
+      "ApiPageResponse_DeviceVo": {
+        "description": "统一分页 API 响应结构。",
+        "properties": {
+          "code": {
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PageData_DeviceVo"
+          },
+          "details": {},
+          "error_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "data",
+          "request_id"
+        ],
+        "type": "object"
+      },
       "ApiPageResponse_DictTypeVo": {
         "description": "统一分页 API 响应结构。",
         "properties": {
@@ -2122,6 +2155,82 @@
               "sort",
               "status",
               "created_at"
+            ],
+            "type": "object"
+          },
+          "details": {
+            "description": "可安全公开的结构化错误参数；无参数时为 `null`。"
+          },
+          "error_key": {
+            "description": "面向程序处理的稳定错误键；成功时为 `null`。",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "description": "面向用户的可读消息。",
+            "type": "string"
+          },
+          "request_id": {
+            "description": "与 `X-Request-Id` 响应头一致的 UUID v7。",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "request_id"
+        ],
+        "type": "object"
+      },
+      "ApiResponse_DeviceVo": {
+        "description": "统一 API 响应结构。",
+        "properties": {
+          "code": {
+            "description": "与 HTTP 状态码一致的业务结果码。",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "data": {
+            "properties": {
+              "created_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "del_flag": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "status": {
+                "format": "int32",
+                "type": "integer"
+              },
+              "tenant_id": {
+                "type": "string"
+              },
+              "updated_at": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "tenant_id",
+              "id",
+              "name",
+              "status",
+              "created_at",
+              "del_flag"
             ],
             "type": "object"
           },
@@ -8656,6 +8765,23 @@
         ],
         "type": "object"
       },
+      "CreateDeviceDto": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "status"
+        ],
+        "type": "object"
+      },
       "CreateDictDataDto": {
         "additionalProperties": false,
         "properties": {
@@ -9723,6 +9849,82 @@
           "sort",
           "status",
           "created_at"
+        ],
+        "type": "object"
+      },
+      "DeviceListQuery": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "page": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "DeviceVo": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "del_flag": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "tenant_id": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "tenant_id",
+          "id",
+          "name",
+          "status",
+          "created_at",
+          "del_flag"
         ],
         "type": "object"
       },
@@ -12269,6 +12471,89 @@
                 "sort",
                 "status",
                 "created_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "max_page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "page_size": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "total_pages": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "page",
+          "page_size",
+          "total",
+          "total_pages",
+          "max_page_size"
+        ],
+        "type": "object"
+      },
+      "PageData_DeviceVo": {
+        "description": "分页接口的业务数据。",
+        "properties": {
+          "items": {
+            "items": {
+              "properties": {
+                "created_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "del_flag": {
+                  "format": "int32",
+                  "type": "integer"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "status": {
+                  "format": "int32",
+                  "type": "integer"
+                },
+                "tenant_id": {
+                  "type": "string"
+                },
+                "updated_at": {
+                  "format": "date-time",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "tenant_id",
+                "id",
+                "name",
+                "status",
+                "created_at",
+                "del_flag"
               ],
               "type": "object"
             },
@@ -16707,6 +16992,23 @@
         ],
         "type": "object"
       },
+      "UpdateDeviceDto": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "status"
+        ],
+        "type": "object"
+      },
       "UpdateDictDataDto": {
         "additionalProperties": false,
         "properties": {
@@ -19147,6 +19449,214 @@
         "summary": "申请仅可用于一次 WebSocket 握手的短期票据。",
         "tags": [
           "认证"
+        ]
+      }
+    },
+    "/api/v1/business/devices": {
+      "get": {
+        "operationId": "get_business_devices",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "format": "int64",
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "name",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiPageResponse_DeviceVo"
+                }
+              }
+            },
+            "description": "列表"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "设备管理"
+        ]
+      },
+      "post": {
+        "operationId": "post_business_devices",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDeviceDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DeviceVo"
+                }
+              }
+            },
+            "description": "创建成功"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "设备管理"
+        ]
+      }
+    },
+    "/api/v1/business/devices/{id}": {
+      "delete": {
+        "operationId": "delete_business_devices_by_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiEmptyResponse"
+                }
+              }
+            },
+            "description": "删除成功"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "设备管理"
+        ]
+      },
+      "get": {
+        "operationId": "get_business_devices_by_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DeviceVo"
+                }
+              }
+            },
+            "description": "详情"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "设备管理"
+        ]
+      },
+      "put": {
+        "operationId": "put_business_devices_by_id",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateDeviceDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DeviceVo"
+                }
+              }
+            },
+            "description": "更新成功"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "tags": [
+          "设备管理"
         ]
       }
     },
@@ -35159,6 +35669,271 @@
     "resources": [
       {
         "access": {
+          "permissions": {
+            "create": "business:device:create",
+            "delete": "business:device:delete",
+            "list": "business:device:list",
+            "read": "business:device:read",
+            "update": "business:device:update"
+          }
+        },
+        "api": {
+          "operations": {
+            "create": "post_business_devices",
+            "delete": "delete_business_devices_by_id",
+            "list": "get_business_devices",
+            "read": "get_business_devices_by_id",
+            "update": "put_business_devices_by_id"
+          },
+          "path": "/api/v1/business/devices"
+        },
+        "extension_permissions": {},
+        "fields": [
+          {
+            "enum_values": {},
+            "labels": {
+              "en": "Tenant",
+              "zh_cn": "租户"
+            },
+            "name": "tenant_id",
+            "nullable": false,
+            "order": 10,
+            "usage": {
+              "create": false,
+              "create_optional": false,
+              "filter": true,
+              "list": false,
+              "read": true,
+              "sort": false,
+              "update": false,
+              "update_optional": false
+            },
+            "validation": {
+              "max_length": null,
+              "maximum": null,
+              "min_length": null,
+              "minimum": null,
+              "required": false
+            },
+            "value_type": "string",
+            "widget": "hidden",
+            "wire_type": "string"
+          },
+          {
+            "enum_values": {},
+            "labels": {
+              "en": "Device ID",
+              "zh_cn": "设备编号"
+            },
+            "name": "id",
+            "nullable": false,
+            "order": 20,
+            "usage": {
+              "create": false,
+              "create_optional": false,
+              "filter": false,
+              "list": true,
+              "read": true,
+              "sort": true,
+              "update": false,
+              "update_optional": false
+            },
+            "validation": {
+              "max_length": null,
+              "maximum": null,
+              "min_length": null,
+              "minimum": null,
+              "required": false
+            },
+            "value_type": "i64",
+            "widget": "hidden",
+            "wire_type": "string"
+          },
+          {
+            "enum_values": {},
+            "labels": {
+              "en": "Device name",
+              "zh_cn": "设备名称"
+            },
+            "name": "name",
+            "nullable": false,
+            "order": 30,
+            "usage": {
+              "create": true,
+              "create_optional": false,
+              "filter": true,
+              "list": true,
+              "read": true,
+              "sort": false,
+              "update": true,
+              "update_optional": false
+            },
+            "validation": {
+              "max_length": 100,
+              "maximum": null,
+              "min_length": 1,
+              "minimum": null,
+              "required": true
+            },
+            "value_type": "string",
+            "widget": "text",
+            "wire_type": "string"
+          },
+          {
+            "enum_values": {
+              "0": {
+                "en": "Disabled",
+                "zh_cn": "停用"
+              },
+              "1": {
+                "en": "Enabled",
+                "zh_cn": "启用"
+              }
+            },
+            "labels": {
+              "en": "Status",
+              "zh_cn": "状态"
+            },
+            "name": "status",
+            "nullable": false,
+            "order": 40,
+            "usage": {
+              "create": true,
+              "create_optional": false,
+              "filter": true,
+              "list": true,
+              "read": true,
+              "sort": false,
+              "update": true,
+              "update_optional": false
+            },
+            "validation": {
+              "max_length": null,
+              "maximum": 1,
+              "min_length": null,
+              "minimum": 0,
+              "required": true
+            },
+            "value_type": "i32",
+            "widget": "select",
+            "wire_type": "i32"
+          },
+          {
+            "enum_values": {},
+            "labels": {
+              "en": "Created at",
+              "zh_cn": "创建时间"
+            },
+            "name": "created_at",
+            "nullable": false,
+            "order": 50,
+            "usage": {
+              "create": false,
+              "create_optional": false,
+              "filter": false,
+              "list": true,
+              "read": true,
+              "sort": false,
+              "update": false,
+              "update_optional": false
+            },
+            "validation": {
+              "max_length": null,
+              "maximum": null,
+              "min_length": null,
+              "minimum": null,
+              "required": false
+            },
+            "value_type": "date_time",
+            "widget": "date_time",
+            "wire_type": "date_time"
+          },
+          {
+            "enum_values": {},
+            "labels": {
+              "en": "Updated at",
+              "zh_cn": "更新时间"
+            },
+            "name": "updated_at",
+            "nullable": true,
+            "order": 60,
+            "usage": {
+              "create": false,
+              "create_optional": false,
+              "filter": false,
+              "list": true,
+              "read": true,
+              "sort": false,
+              "update": false,
+              "update_optional": false
+            },
+            "validation": {
+              "max_length": null,
+              "maximum": null,
+              "min_length": null,
+              "minimum": null,
+              "required": false
+            },
+            "value_type": "date_time",
+            "widget": "date_time",
+            "wire_type": "date_time"
+          },
+          {
+            "enum_values": {},
+            "labels": {
+              "en": "Deleted flag",
+              "zh_cn": "删除标记"
+            },
+            "name": "del_flag",
+            "nullable": false,
+            "order": 70,
+            "usage": {
+              "create": false,
+              "create_optional": false,
+              "filter": false,
+              "list": false,
+              "read": true,
+              "sort": false,
+              "update": false,
+              "update_optional": false
+            },
+            "validation": {
+              "max_length": null,
+              "maximum": null,
+              "min_length": null,
+              "minimum": null,
+              "required": false
+            },
+            "value_type": "i32",
+            "widget": "hidden",
+            "wire_type": "i32"
+          }
+        ],
+        "labels": {
+          "en": "Device",
+          "zh_cn": "设备"
+        },
+        "menu": {
+          "icon": "monitor",
+          "key": "business.device",
+          "labels": {
+            "en": "Devices",
+            "zh_cn": "设备管理"
+          },
+          "order": 80,
+          "parent": "business"
+        },
+        "module": "business",
+        "name": "device",
+        "profile": "flat_crud",
+        "route": {
+          "key": "business.device",
+          "path": "/business/device"
+        },
+        "storage": "tenant_data"
+      },
+      {
+        "access": {
           "capability": "system.notice",
           "owner_field": "created_by",
           "permissions": {
@@ -35695,6 +36470,24 @@
     "routes": [
       {
         "capability_code": null,
+        "menu_type": "M",
+        "name": "业务管理",
+        "page_key": null,
+        "permission_code": null,
+        "route_key": "business",
+        "title_key": "business"
+      },
+      {
+        "capability_code": null,
+        "menu_type": "C",
+        "name": "设备管理",
+        "page_key": "business.device",
+        "permission_code": "business:device:list",
+        "route_key": "business.device",
+        "title_key": "device"
+      },
+      {
+        "capability_code": null,
         "menu_type": "C",
         "name": "首页",
         "page_key": "home",
@@ -35979,6 +36772,11 @@
   },
   "x-ryframe-permission-catalog": {
     "codes": [
+      "business:device:create",
+      "business:device:delete",
+      "business:device:list",
+      "business:device:read",
+      "business:device:update",
       "monitor:cache:list",
       "monitor:db-pool:list",
       "monitor:job:list",

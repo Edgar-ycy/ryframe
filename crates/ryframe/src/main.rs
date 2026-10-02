@@ -25,6 +25,7 @@ impl ApiStartup {
 
 struct ApiDependencies {
     database: ryframe_db::ControlDatabaseCluster,
+    tenant_database: Arc<ryframe_tenant_db::TenantDatabaseRouter>,
     redis: boot::redis::RedisState,
     limiter: boot::limiter::LimiterState,
     services: ryframe_api::AppServices,
@@ -176,6 +177,7 @@ async fn prepare_dependencies(startup: &ApiStartup) -> Result<ApiDependencies, A
     install_job_metrics(&services.operations.job_queue);
     Ok(ApiDependencies {
         database,
+        tenant_database: tenant_database_router,
         redis,
         limiter: limit,
         services,
@@ -189,6 +191,7 @@ async fn prepare_runtime(
 ) -> Result<ApiRuntime, AppError> {
     let ApiDependencies {
         database,
+        tenant_database,
         redis,
         limiter,
         services,
@@ -244,7 +247,7 @@ async fn prepare_runtime(
             )
         })
         .flatten();
-    let router = app::build_app(state, limiter.rate_limit_state)?;
+    let router = build_router(state, tenant_database, limiter.rate_limit_state)?;
 
     let listener = bind_listener(startup).await?;
 
@@ -279,6 +282,15 @@ async fn prepare_runtime(
             backup_health_collector,
         },
     })
+}
+
+fn build_router(
+    state: ryframe_api::AppState,
+    tenant_database: Arc<ryframe_tenant_db::TenantDatabaseRouter>,
+    rate_limit_state: ryframe_api::middleware::rate_limit::RateLimitState,
+) -> Result<axum::Router, AppError> {
+    let business = ryframe_business_runtime::build(state.clone(), tenant_database)?;
+    app::build_app_with_business(state, rate_limit_state, business.router, business.openapi)
 }
 
 async fn bind_listener(startup: &ApiStartup) -> Result<tokio::net::TcpListener, AppError> {

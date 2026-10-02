@@ -1,7 +1,7 @@
 use ryframe_kernel::{AppError, AppResult};
 
 /// 按调用方提供的稳定文案解析整数 ID。
-pub(crate) fn parse_id(value: &str, invalid_message: &str) -> AppResult<i64> {
+pub fn parse_id(value: &str, invalid_message: &str) -> AppResult<i64> {
     value
         .parse::<i64>()
         .map_err(|_| AppError::Validation(invalid_message.to_owned()))

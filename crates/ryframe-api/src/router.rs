@@ -371,6 +371,21 @@ pub async fn api_version(State(state): State<AppState>) -> Response {
 ///
 /// `rate_limit_state` 传递到子路由以启用用户级限流。
 pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
+    api_router_with_business(
+        state,
+        rate_limit_state,
+        Router::new(),
+        crate::openapi::document(),
+    )
+}
+
+/// 将业务 crate 的路由置于与内置管理 API 相同的认证和租户上下文边界内。
+pub fn api_router_with_business(
+    state: AppState,
+    rate_limit_state: RateLimitState,
+    business_router: Router,
+    openapi_document: utoipa::openapi::OpenApi,
+) -> Router {
     let idempotency_state = IdempotencyState::new(state.idempotency_store.clone(), 300);
     idempotency_state.spawn_gc();
     let public_runtime = Router::new()
@@ -390,6 +405,8 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
         )
         .nest("/common", common_router(state.clone(), idempotency_state));
 
+    router = router.nest("/business", protect(business_router, &state));
+
     if state.settings.multi_tenancy.enabled {
         let platform = protect(
             domains::platform::router(state.clone()).layer(from_fn_with_state(
@@ -402,10 +419,13 @@ pub fn api_router(state: AppState, rate_limit_state: RateLimitState) -> Router {
     }
 
     if state.settings.api_docs_enabled {
-        router = router.route(
-            "/api-docs/openapi.json",
-            get_route(crate::openapi::openapi_json),
-        );
+        let docs = Router::new()
+            .route(
+                "/api-docs/openapi.json",
+                get_route(crate::openapi::output::supplied_openapi_json),
+            )
+            .layer(Extension(Arc::new(openapi_document)));
+        router = router.merge(docs);
         #[cfg(feature = "runtime-swagger-ui")]
         {
             router = router.merge(swagger_ui_router());

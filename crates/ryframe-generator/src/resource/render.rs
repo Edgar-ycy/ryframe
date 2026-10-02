@@ -65,12 +65,30 @@ pub fn render_resources(resources: &[ResourceIr]) -> Result<GeneratedCatalog, Re
     }
     validate_relation_targets(&ordered)?;
     let ordered = ordered.iter().collect::<Vec<_>>();
+    let framework = ordered
+        .iter()
+        .copied()
+        .filter(|resource| resource.module == "system")
+        .collect::<Vec<_>>();
+    let business = ordered
+        .iter()
+        .copied()
+        .filter(|resource| resource.module == "business")
+        .collect::<Vec<_>>();
     let mut assets = Vec::new();
     for resource in &ordered {
-        render_backend(resource, &ordered, &mut assets);
+        if resource.module == "business" {
+            let mut business_assets = Vec::new();
+            render_backend(resource, &business, &mut business_assets);
+            assets.extend(business_assets.into_iter().map(business_asset));
+        } else {
+            render_backend(resource, &framework, &mut assets);
+        }
         render_frontend(resource, &mut assets);
     }
-    aggregate::render(&ordered, &mut assets);
+    aggregate::render(&framework, &ordered, &business, &mut assets);
+    aggregate::render_business(&business, &mut assets);
+    aggregate::render_shared(&ordered, &mut assets);
     format::rust_assets(&mut assets)?;
     validate_assets(&assets)?;
     assets.sort_by(|left, right| {
@@ -107,6 +125,29 @@ fn render_backend(
     render_application(resource, assets);
     render_database(resource, resources, assets);
     render_api(resource, assets);
+}
+
+fn business_asset(mut asset: GeneratedAsset) -> GeneratedAsset {
+    asset.path = asset
+        .path
+        .replace(
+            "crates/ryframe-application/",
+            "crates/business/ryframe-business-application/",
+        )
+        .replace("crates/ryframe-db/", "crates/business/ryframe-business-db/")
+        .replace(
+            "crates/ryframe-tenant-db/",
+            "crates/business/ryframe-business-db/",
+        )
+        .replace(
+            "crates/ryframe-api/",
+            "crates/business/ryframe-business-api/",
+        );
+    asset.content = asset.content.replace(
+        "ryframe_application::generated",
+        "ryframe_business_application::generated",
+    );
+    asset
 }
 
 fn render_application(resource: &ResourceIr, assets: &mut Vec<GeneratedAsset>) {
@@ -260,6 +301,15 @@ fn validate_relation_targets(resources: &[ResourceIr]) -> Result<(), ResourceErr
                         relation.name, resource.storage, target.storage
                     ),
                     "生成关系只允许同一存储边界；跨存储读取放入手写查询切片",
+                )
+                .with_resource(&resource.name)
+                .with_field(&relation.local_field)
+                .with_file(&resource.source_path));
+            }
+            if target.module != resource.module {
+                return Err(ResourceError::new(
+                    format!("关系 `{}` 跨越框架与业务模块", relation.name),
+                    "跨模块关系放入明确的手写查询端口",
                 )
                 .with_resource(&resource.name)
                 .with_field(&relation.local_field)

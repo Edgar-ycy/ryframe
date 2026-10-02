@@ -39,10 +39,11 @@ pub mod versioning;
 
 pub use client_ip::{ClientIp, TrustedProxySet};
 pub use handlers::common_handler::{download_router, upload_router};
+pub use id_parser::parse_id;
 pub use principal::RequestPrincipal;
 pub use probes::{livez, readyz};
 pub use request_locale::RequestLocale;
-pub use router::{api_router, auth_router};
+pub use router::{api_router, api_router_with_business, auth_router};
 pub use settings::HttpRuntimeSettings;
 pub use state::{
     AppServices, AppState, ContentServices, IdentityServices, OperationsServices, PlatformServices,
