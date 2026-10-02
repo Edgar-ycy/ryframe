@@ -294,7 +294,7 @@ class ExportVerificationTests(unittest.TestCase):
             with self.subTest(selection=selection), patch.object(verify, "schema_models", side_effect=AssertionError("unused full models")), \
                     patch.object(sql_rows, "parse_schema", wraps=sql_rows.parse_schema) as parser:
                 verify.verify_export_bindings(self.fixture.backend, loaded, selection=selection)
-                self.assertEqual(parser.call_count, 2)
+                self.assertEqual(parser.call_count, 3)
 
     def test_binding_rejects_actual_control_ddl_column_type_drift(self):
         loaded = self.load()
@@ -313,7 +313,7 @@ class ExportVerificationTests(unittest.TestCase):
         with patch.object(sql_rows, "parse_schema", wraps=sql_rows.parse_schema) as catalog_parser, \
                 patch.object(export, "parse_schema", wraps=export.parse_schema) as full_parser:
             models = export.schema_models(self.fixture.backend)
-        self.assertEqual(catalog_parser.call_count, 2)
+        self.assertEqual(catalog_parser.call_count, 3)
         self.assertEqual(full_parser.call_count, 2)
         self.assertEqual(len(models), 4)
         self.assertEqual(models[:2], verify.schema_catalog(self.fixture.backend))

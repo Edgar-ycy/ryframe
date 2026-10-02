@@ -23,6 +23,7 @@ class TenantDataBoundaryTests(unittest.TestCase):
             "crates/ryframe-tenant-db/src/migration/catalog.rs",
             "crates/ryframe-generator/src/resource/render/tenant_catalog.rs",
             "crates/ryframe-generator/src/resource/render/slice/migration.rs",
+            "catalog/resources/device.toml",
         ):
             target = self.root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -33,14 +34,14 @@ class TenantDataBoundaryTests(unittest.TestCase):
         validate_tenant_data_boundaries(self.root, errors)
         return errors
 
-    def test_empty_directory_is_valid_but_missing_generated_module_is_rejected(self):
+    def test_current_catalog_is_valid_but_missing_generated_module_is_rejected(self):
         self.assertEqual(self.errors(), [])
         (self.root / CATALOG).unlink()
         self.assertTrue(any("源码缺失" in error for error in self.errors()))
 
     def test_missing_unknown_or_duplicate_business_table_is_rejected(self):
         directory = self.root / "catalog/resources"
-        directory.mkdir(parents=True)
+        directory.mkdir(parents=True, exist_ok=True)
         (directory / "device.toml").write_text('[storage]\nkind="tenant_data"\n[database]\ntable="biz_device"\n')
         for content, valid in (('', False), ('table: "biz_unknown"', False),
                                ('table: "biz_device"', True), ('table: "biz_device"\ntable: "biz_device"', False)):

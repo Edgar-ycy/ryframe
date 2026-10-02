@@ -72,9 +72,16 @@ def generated_catalog(backend: Path, content: str) -> dict:
                 or generated_columns != "false"):
             raise ValueError("生成租户描述符包含未审查表、重复表或不支持的列规则")
         resource = table.removeprefix("biz_")
-        migration = backend / "crates/ryframe-tenant-db/src/generated" / resource / "migration.rs"
-        if not migration.is_file():
+        generated = backend / "crates/ryframe-tenant-db/src/generated"
+        migrations = [
+            path for path in (
+                generated / f"business_{resource}_migration.rs",
+                generated / resource / "migration.rs",
+            ) if path.is_file()
+        ]
+        if len(migrations) != 1:
             raise ValueError("生成租户描述符缺少同名迁移")
+        migration = migrations[0]
         ddl = re.search(r'pub const CREATE_TABLE_DDL: &str = r#"(.*?)"#;', migration.read_text(encoding="utf-8"), re.S)
         if ddl is None:
             raise ValueError("生成租户迁移缺少确定性 DDL")

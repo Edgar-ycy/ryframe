@@ -48,6 +48,7 @@ class CloneTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.backend = Path(temporary.name).resolve()
         for relative in ("sql/ryframe_config.sql", "crates/ryframe-tenant-db/src/generated/catalog.rs",
+                         "crates/ryframe-tenant-db/src/generated/business_device_migration.rs",
                          "crates/ryframe-tenant-db/src/migration/m20260820_000000_tenant_baseline.rs"):
             destination = self.backend / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -323,6 +324,7 @@ class CloneTests(unittest.TestCase):
 
     def test_generated_tenant_catalog_requires_matching_migration_columns(self):
         catalog = self.backend / "crates/ryframe-tenant-db/src/generated/catalog.rs"
+        (self.backend / "crates/ryframe-tenant-db/src/generated/business_device_migration.rs").unlink()
         catalog.write_text("""pub const GENERATED_TENANT_DATA_TABLES: &[TenantDataTableDescriptor] = &[
 TenantDataTableDescriptor { table: \"biz_device\", tenant_column: \"tenant_id\", column_types: &[\"varchar\", \"bigint\"], has_generated_columns: false, },
 ];""", encoding="utf-8")

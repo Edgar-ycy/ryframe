@@ -39,6 +39,7 @@ class _PlanState:
 
 _VERIFIED = WeakKeyDictionary()
 CATALOG_INPUTS = ("sql/ryframe_config.sql", "crates/ryframe-tenant-db/src/generated/catalog.rs",
+                  "crates/ryframe-tenant-db/src/generated/business_device_migration.rs",
                   "crates/ryframe-tenant-db/src/migration/m20260820_000000_tenant_baseline.rs")
 
 
