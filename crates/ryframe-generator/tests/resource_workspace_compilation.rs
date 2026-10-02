@@ -215,29 +215,12 @@ fn run_shared_workspace() -> Result<(), String> {
     if profile == VerificationProfile::Targeted {
         return Ok(());
     }
-    register_device_capability(&workspace.backend);
     register_generated_backend_modules(&workspace.backend);
     register_device_frontend_contract(&workspace.frontend);
     write_device_fake_transaction_test(&workspace.backend);
     assert_backend_checks(&workspace);
     assert_frontend_checks(&workspace.frontend_source, &workspace.frontend);
     Ok(())
-}
-
-fn register_device_capability(backend: &Path) {
-    let catalog = backend.join("catalog/access.toml");
-    let mut source = fs::read_to_string(&catalog).expect("应读取临时访问目录");
-    source.push_str(
-        r#"
-
-[[capabilities]]
-code = "system.device"
-route_keys = ["system.device"]
-page_keys = ["system.device"]
-permissions = ["system:device:create", "system:device:read", "system:device:list", "system:device:update", "system:device:delete"]
-"#,
-    );
-    fs::write(catalog, source).expect("应在临时副本登记设备能力");
 }
 
 fn prepare_shared_workspace(profile: VerificationProfile) -> Result<SharedWorkspace, String> {

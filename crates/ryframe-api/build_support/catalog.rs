@@ -1,7 +1,10 @@
 use std::{collections::BTreeSet, error::Error, fs, path::Path};
 
 use super::{
-    model::{AccessCatalog, CATALOG_VERSION, GeneratedAccessCatalog, GeneratedResource, MenuEntry},
+    model::{
+        AccessCatalog, CATALOG_VERSION, CapabilityEntry, GeneratedAccessCatalog, GeneratedResource,
+        MenuEntry,
+    },
     validation::{validate_catalog, validate_code, validate_identifier},
 };
 
@@ -91,6 +94,7 @@ fn merge_generated_catalog(
                 return Err(format!("生成权限码与其他资源或手写目录冲突: {permission}").into());
             }
         }
+        merge_generated_capability(catalog, &resource, &resource_permissions)?;
         catalog.permissions.extend(resource_permissions);
         let list_permission = resource.permissions.list.clone();
         catalog.menus.push(MenuEntry {
@@ -110,6 +114,38 @@ fn merge_generated_catalog(
     catalog
         .menus
         .sort_by(|left, right| left.route_key.cmp(&right.route_key));
+    Ok(())
+}
+
+fn merge_generated_capability(
+    catalog: &mut AccessCatalog,
+    resource: &GeneratedResource,
+    permissions: &BTreeSet<String>,
+) -> Result<(), Box<dyn Error>> {
+    let Some(code) = resource.capability.as_ref() else {
+        return Ok(());
+    };
+    if let Some(capability) = catalog
+        .capabilities
+        .iter_mut()
+        .find(|capability| capability.code == *code)
+    {
+        if !capability.route_keys.contains(&resource.menu.key)
+            || !capability.page_keys.contains(&resource.route.key)
+            || permissions
+                .iter()
+                .any(|permission| !capability.permissions.contains(permission))
+        {
+            return Err(format!("生成资源 {} 与能力目录 {code} 不一致", resource.name).into());
+        }
+        return Ok(());
+    }
+    catalog.capabilities.push(CapabilityEntry {
+        code: code.clone(),
+        route_keys: vec![resource.menu.key.clone()],
+        page_keys: vec![resource.route.key.clone()],
+        permissions: permissions.iter().cloned().collect(),
+    });
     Ok(())
 }
 
