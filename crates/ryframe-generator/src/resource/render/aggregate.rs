@@ -185,12 +185,21 @@ fn render_business_database_mod(resources: &[&ResourceIr], header: &str) -> Stri
         .collect::<Vec<_>>()
         .join("\n");
     let registration = |storage: StorageKind, source: &str| {
-        resources
+        let selected = resources
             .iter()
             .filter(|resource| resource.storage == storage)
-            .map(|resource| {
+            .collect::<Vec<_>>();
+        selected
+            .iter()
+            .enumerate()
+            .map(|(index, resource)| {
+                let argument = if index + 1 == selected.len() {
+                    source.to_owned()
+                } else {
+                    format!("{source}.clone()")
+                };
                 format!(
-                    "    ports.{name} = Some({name}::port({source}.clone()));",
+                    "    ports.{name} = Some({name}::port({argument}));",
                     name = resource.name
                 )
             })

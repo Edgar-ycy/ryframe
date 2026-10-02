@@ -158,8 +158,8 @@ content_hash = "0484190aab764470b8828281c6b9ffc07619ac629a729bfb5ded03901ffee9a8
 resource = "__catalog__"
 root = "backend"
 path = "crates/business/ryframe-business-db/src/generated/mod.rs"
-source_hash = "87fdc470d5c9c25ac41cd2e6c81c6a1b13a1bb15cfc22372e1dd54fee9fdaf4f"
-content_hash = "87fdc470d5c9c25ac41cd2e6c81c6a1b13a1bb15cfc22372e1dd54fee9fdaf4f"
+source_hash = "d6789d0b3e37d8b98cee462d28301f7f5dbe92a30ae4695ee8102ace45bc7fa9"
+content_hash = "d6789d0b3e37d8b98cee462d28301f7f5dbe92a30ae4695ee8102ace45bc7fa9"
 
 [[entries]]
 resource = "__catalog__"

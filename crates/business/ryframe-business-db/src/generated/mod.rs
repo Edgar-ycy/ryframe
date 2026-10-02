@@ -23,5 +23,5 @@ pub fn tenant_ports(
     ports: &mut GeneratedPersistencePorts,
 ) {
     let _ = (&router, &ports);
-    ports.device = Some(device::port(router.clone()));
+    ports.device = Some(device::port(router));
 }
