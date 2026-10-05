@@ -161,6 +161,12 @@ pub fn compose_openapi(
         };
         for operation in document_keys(&fragment)? {
             if !operations.insert(operation.clone()) {
+                if let Some(schema_name) = operation.strip_prefix("schema:")
+                    && schema_definition(&document, schema_name)?
+                        == schema_definition(&fragment, schema_name)?
+                {
+                    continue;
+                }
                 return Err(AppError::Config(format!(
                     "业务模块 {} 的 OpenAPI 路由冲突：{operation}",
                     module.name()
@@ -380,4 +386,19 @@ fn document_keys(document: &OpenApiDocument) -> AppResult<BTreeSet<String>> {
         keys.extend(schemas.keys().map(|name| format!("schema:{name}")));
     }
     Ok(keys)
+}
+
+#[cfg(feature = "api")]
+fn schema_definition(
+    document: &OpenApiDocument,
+    name: &str,
+) -> AppResult<Option<serde_json::Value>> {
+    let value = serde_json::to_value(document)
+        .map_err(|error| AppError::Internal(format!("OpenAPI 序列化失败：{error}")))?;
+    Ok(value
+        .get("components")
+        .and_then(|components| components.get("schemas"))
+        .and_then(serde_json::Value::as_object)
+        .and_then(|schemas| schemas.get(name))
+        .cloned())
 }
