@@ -211,28 +211,21 @@ class FullStackFixtureTests(unittest.TestCase):
                 fixture.register_fixture_migration(self.backend, self.root / "log")
             run.assert_not_called()
 
-    def test_fixture_capability_closes_access_and_product_catalogs(self):
-        access = self.backend / "catalog/access.toml"
-        access.parent.mkdir(parents=True)
-        access.write_text("version = 1\n", encoding="utf-8")
-        application = (
-            self.backend
-            / "crates/ryframe-application/src/system/product_capability_catalog.rs"
-        )
-        application.parent.mkdir(parents=True)
-        application.write_text(
-            "pub const CAPABILITY_CATALOG: &[CapabilityDescriptor] = &[\n"
-            "];\n\npub fn capability_descriptor(code: &str) {}\n",
-            encoding="utf-8",
-        )
+    def test_business_fixture_is_created_and_explicitly_registered(self):
+        cargo = self.backend / "crates/ryframe/Cargo.toml"
+        cargo.parent.mkdir(parents=True)
+        cargo.write_text("[dependencies]\n", encoding="utf-8")
+        registry = self.backend / "crates/ryframe/src/business.rs"
+        registry.parent.mkdir(parents=True)
+        registry.write_text("pub fn business_modules() {\n    vec![]\n}\n", encoding="utf-8")
+        with patch.object(fixture, "run") as run:
+            model = fixture.create_business_fixture(self.backend, self.root / "log")
 
-        fixture.register_fixture_capability(self.backend)
-
-        self.assertIn('code = "system.device"', access.read_text(encoding="utf-8"))
-        product = application.read_text(encoding="utf-8")
-        self.assertIn('"system.device"', product)
-        self.assertIn('"system:device:delete"', product)
-        self.assertEqual(product.count("pub fn capability_descriptor"), 1)
+        self.assertIn(b"biz_device", model)
+        self.assertIn('order-business', cargo.read_text(encoding="utf-8"))
+        self.assertIn('order_business::module()', registry.read_text(encoding="utf-8"))
+        self.assertTrue((self.backend / "crates/order-business/src/resources/mod.rs").is_file())
+        self.assertEqual(run.call_count, 1)
 
     def test_reference_fixture_root_is_created_once_for_new_device_worktree(self):
         root = fixture.reference_fixture_root(self.backend)

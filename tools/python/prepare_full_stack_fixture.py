@@ -1,4 +1,4 @@
-"""在新的隔离工作树生成 Device，用于带业务数据的真实全栈验收。"""
+"""在隔离工作树创建业务 crate，用于带业务数据的真实全栈验收。"""
 
 from __future__ import annotations
 
@@ -147,55 +147,89 @@ def register_fixture_migration(root: Path, log: Path) -> None:
     )
 
 
-def register_fixture_capability(root: Path) -> None:
-    """只在隔离 Device 夹具中登记完整的测试产品能力。"""
-    access = root / "catalog/access.toml"
-    access.write_text(
-        access.read_text(encoding="utf-8")
-        + '\n\n[[capabilities]]\n'
-        + 'code = "system.device"\n'
-        + 'route_keys = ["system.device"]\n'
-        + 'page_keys = ["system.device"]\n'
-        + 'permissions = ["system:device:create", "system:device:read", '
-        + '"system:device:list", "system:device:update", "system:device:delete"]\n',
+def create_business_fixture(root: Path, log: Path) -> bytes:
+    """创建并显式接入单一业务 crate，不改写框架资源目录。"""
+    crate = root / "crates/order-business"
+    (crate / "src/resources").mkdir(parents=True)
+    (crate / "Cargo.toml").write_text('''[package]
+name = "order-business"
+version = "0.1.0"
+edition = "2024"
+
+[package.metadata.ryframe]
+kind = "business"
+module = "order"
+
+[features]
+default = []
+catalog = []
+persistence = ["ryframe-sdk/persistence"]
+api = ["persistence", "ryframe-sdk/api"]
+migration = ["persistence", "ryframe-sdk/migration"]
+
+[dependencies]
+ryframe-sdk = { path = "../ryframe-sdk", default-features = false }
+
+[lints]
+workspace = true
+''', encoding="utf-8", newline="\n")
+    (crate / "src/lib.rs").write_text('''pub mod resources;
+#[cfg(any(feature = "api", feature = "migration"))]
+pub mod generated;
+
+#[cfg(any(feature = "api", feature = "migration"))]
+pub fn module() -> ryframe_sdk::RyFrameBusinessModule {
+    let builder = ryframe_sdk::BusinessModuleBuilder::new("order")
+        .resources(&generated::RESOURCES);
+    #[cfg(feature = "api")]
+    let builder = builder.routes(generated::routes).openapi(generated::openapi);
+    #[cfg(feature = "migration")]
+    let builder = builder.migrations(generated::migrations::migrations());
+    builder.build()
+}
+''', encoding="utf-8", newline="\n")
+    model = '''#[derive(ryframe_sdk::ResourceModel)]
+#[resource(name = "order", title = "订单", table = "biz_device", database = "tenant")]
+pub struct Order {
+    #[resource(primary_key)]
+    pub tenant_id: String,
+    #[resource(primary_key, generated)]
+    pub id: i64,
+    #[resource(unique, filter, sort)]
+    pub code: String,
+    #[resource(read_only)]
+    pub created_at: ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>,
+    #[resource(read_only)]
+    pub updated_at: ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>,
+}
+'''
+    (crate / "src/resources/mod.rs").write_text(model, encoding="utf-8", newline="\n")
+    cargo = root / "crates/ryframe/Cargo.toml"
+    source = cargo.read_text(encoding="utf-8")
+    marker = '[dependencies]\n'
+    if source.count(marker) != 1:
+        raise ValueError("隔离夹具无法定位组合根依赖区")
+    cargo.write_text(source.replace(marker, marker + 'order-business = { path = "../order-business" }\n', 1), encoding="utf-8", newline="\n")
+    registry = root / "crates/ryframe/src/business.rs"
+    source = registry.read_text(encoding="utf-8")
+    if source.count('    vec![]') != 1:
+        raise ValueError("隔离夹具无法定位业务模块注册表")
+    registry.write_text(source.replace('    vec![]', '    vec![order_business::module()]', 1), encoding="utf-8", newline="\n")
+    run(["cargo", "run", "--locked", "-p", "ryframe-generator", "--bin", "ryframe-generate", "--", "resource", "--package", "order-business", "--write"], root, log)
+    manifest = crate / "Cargo.toml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8").replace('default = []', 'default = ["api", "migration"]', 1),
         encoding="utf-8",
         newline="\n",
     )
-
-    application = (
-        root
-        / "crates/ryframe-application/src/system/product_capability_catalog.rs"
-    )
-    source = application.read_text(encoding="utf-8")
-    marker = "];\n\npub fn capability_descriptor"
-    capability = '''    standard_capability(
-        "system.device",
-        "设备管理",
-        &["system.device"],
-        &[
-            "system:device:create",
-            "system:device:read",
-            "system:device:list",
-            "system:device:update",
-            "system:device:delete",
-        ],
-        &[],
-    ),
-];
-
-pub fn capability_descriptor'''
-    if source.count(marker) != 1:
-        raise ValueError("隔离夹具无法定位产品能力目录写入点")
-    application.write_text(
-        source.replace(marker, capability, 1), encoding="utf-8", newline="\n"
-    )
+    return model.encode()
 
 
 def reference_fixture_root(backend: Path) -> Path:
     """为后续审阅、秘密 bootstrap 和运行计划预置唯一的忽略证据父目录。"""
     root = backend / ".local-tests/reference-fixture"
     if root.exists() or root.is_symlink():
-        raise ValueError("新的 Device 工作树已存在参考夹具目录")
+        raise ValueError("新的业务工作树已存在参考夹具目录")
     root.mkdir(parents=True)
     return root
 
@@ -215,8 +249,6 @@ def prepare(
     backend_source, frontend_source = sources
     backend_receipt, backend_patch = backend_source
     frontend_receipt, frontend_patch = frontend_source
-    fixture = backend / "crates/ryframe-generator/tests/fixtures/device.toml"
-    fixture_bytes = fixture.read_bytes()
     revalidate_formal_sources(
         backend,
         frontend,
@@ -231,7 +263,7 @@ def prepare(
         "format_version": 1,
         "fixture": "device",
         "status": "preparing",
-        "fixture_sha256": hashlib.sha256(fixture_bytes).hexdigest(),
+        "fixture_sha256": None,
         "sources": {"backend": backend_receipt, "frontend": frontend_receipt},
         "paths": {name: str(path) for name, path in roots.items()},
     }
@@ -240,8 +272,9 @@ def prepare(
     copy_snapshot(backend, roots["backend"], backend_receipt, backend_patch, log)
     copy_snapshot(frontend, roots["frontend"], frontend_receipt, frontend_patch, log)
     reference_fixture_root(roots["backend"])
-    register_fixture_capability(roots["backend"])
-    (roots["backend"] / "catalog/resources/device.toml").write_bytes(fixture_bytes)
+    fixture_bytes = create_business_fixture(roots["backend"], log)
+    receipt["fixture_sha256"] = hashlib.sha256(fixture_bytes).hexdigest()
+    write_receipt(output / "fixture.json", receipt)
     # Corepack 读取快照内 packageManager；使用已安装的离线 store，不复制本机环境文件。
     package = ["corepack", "pnpm", "install", "--offline", "--frozen-lockfile"]
     if os.name == "nt":
@@ -253,42 +286,12 @@ def prepare(
             " ".join(package),
         ]
     run(package, roots["frontend"], log)
-    cargo = [
-        "cargo",
-        "run",
-        "--locked",
-        "--target-dir",
-        str(backend / "target/xtask-resource"),
-        "-p",
-        "xtask",
-        "--features",
-        "resource",
-        "--",
-    ]
-    run(
-        [
-            *cargo,
-            "generate",
-            "resource",
-            "device",
-            "--write",
-            "--frontend-dir",
-            str(roots["frontend"]),
-        ],
-        roots["backend"],
-        log,
-    )
     register_fixture_migration(roots["backend"], log)
     before = {name: snapshot(path)[0] for name, path in roots.items()}
     run(
         [
-            *cargo,
-            "generate",
-            "resource",
-            "--all",
-            "--check",
-            "--frontend-dir",
-            str(roots["frontend"]),
+            "cargo", "run", "--locked", "-p", "ryframe-generator", "--bin", "ryframe-generate", "--",
+            "resource", "--package", "order-business",
         ],
         roots["backend"],
         log,
