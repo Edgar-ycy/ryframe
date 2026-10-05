@@ -97,11 +97,11 @@ fn missing_order_frontend_contract_is_injected_once() {
 #[test]
 fn basic_generated_order_frontend_contract_is_upgraded_once() {
     let operation_names = [
-        "delete_system_orders_by_id",
-        "get_system_orders",
-        "get_system_orders_by_id",
-        "post_system_orders",
-        "put_system_orders_by_id",
+        "delete_business_orders_by_id",
+        "get_business_orders",
+        "get_business_orders_by_id",
+        "post_business_orders",
+        "put_business_orders_by_id",
     ];
     let operations = operation_names
         .map(|name| format!("export const {name} = bindJsonOperation({{}})\n"))
@@ -121,7 +121,7 @@ fn basic_generated_order_frontend_contract_is_upgraded_once() {
         ),
         schema_operations = schema_operations,
     );
-    let permissions = "\"system:order:list\"".to_owned();
+    let permissions = "\"business:order:list\"".to_owned();
 
     let upgraded =
         prepare_order_frontend_contract(permissions.clone(), operations.clone(), schema)
@@ -148,14 +148,14 @@ fn basic_generated_order_frontend_contract_is_upgraded_once() {
 fn partial_order_frontend_contract_fails_closed() {
     let partial_contracts = [
         (
-            "export const permissionCatalog = [\n  \"system:order:list\",\n]\n",
+            "export const permissionCatalog = [\n  \"business:order:list\",\n]\n",
             "",
             "",
         ),
         ("", "", "OrderDetailVo: {}"),
         (
-            "\"system:order:list\"",
-            "export const get_system_orders = bindJsonOperation({})",
+            "\"business:order:list\"",
+            "export const get_business_orders = bindJsonOperation({})",
             "ApiPageResponse_OrderVo:\nApiResponse_OrderVo:",
         ),
     ];
@@ -234,7 +234,7 @@ fn register_order_capability(backend: &Path) {
 code = "business.order"
 route_keys = ["business.order"]
 page_keys = ["business.order"]
-permissions = ["system:order:create", "system:order:read", "system:order:list", "system:order:update", "system:order:delete"]
+permissions = ["business:order:create", "business:order:read", "business:order:list", "business:order:update", "business:order:delete"]
 "#,
     );
     fs::write(catalog, source).expect("应在临时副本登记设备访问能力");
@@ -248,11 +248,11 @@ permissions = ["system:order:create", "system:order:read", "system:order:list", 
         "设备管理",
         &["business.order"],
         &[
-            "system:order:create",
-            "system:order:read",
-            "system:order:list",
-            "system:order:update",
-            "system:order:delete",
+            "business:order:create",
+            "business:order:read",
+            "business:order:list",
+            "business:order:update",
+            "business:order:delete",
         ],
         &[],
     ),
@@ -685,7 +685,7 @@ fn prepare_order_frontend_contract(
     }
     let permissions = permissions.replacen(
         permission_marker,
-        "export const permissionCatalog = [\n  \"system:order:list\",\n",
+        "export const permissionCatalog = [\n  \"business:order:list\",\n",
         1,
     );
 
@@ -757,11 +757,11 @@ fn order_frontend_contract_state(
     schema: &str,
 ) -> Result<OrderFrontendContractState, String> {
     const OPERATION_NAMES: [&str; 5] = [
-        "delete_system_orders_by_id",
-        "get_system_orders",
-        "get_system_orders_by_id",
-        "post_system_orders",
-        "put_system_orders_by_id",
+        "delete_business_orders_by_id",
+        "get_business_orders",
+        "get_business_orders_by_id",
+        "post_business_orders",
+        "put_business_orders_by_id",
     ];
     const GENERATED_SCHEMA_MARKERS: [&str; 4] = [
         "ApiPageResponse_OrderVo:",
@@ -776,7 +776,7 @@ fn order_frontend_contract_state(
     ];
     const GENERATED_DETAIL_MARKER: &str = "OrderDetailVo:";
 
-    let permission_present = permissions.contains("\"system:order:list\"");
+    let permission_present = permissions.contains("\"business:order:list\"");
     let operation_constants =
         OPERATION_NAMES.map(|name| operations.contains(&format!("export const {name} =")));
     let schema_operations = OPERATION_NAMES.map(|name| schema.contains(&format!("    {name}: {{")));

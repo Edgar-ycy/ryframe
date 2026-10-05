@@ -1,0 +1,5 @@
+export const delete_business_orders_by_id = bindJsonOperation({"operationId":"delete_business_orders_by_id","method":"delete","path":"/business/orders/{id}"})
+export const get_business_orders = bindJsonOperation({"operationId":"get_business_orders","method":"get","path":"/business/orders"})
+export const get_business_orders_by_id = bindJsonOperation({"operationId":"get_business_orders_by_id","method":"get","path":"/business/orders/{id}"})
+export const post_business_orders = bindJsonOperation({"operationId":"post_business_orders","method":"post","path":"/business/orders"})
+export const put_business_orders_by_id = bindJsonOperation({"operationId":"put_business_orders_by_id","method":"put","path":"/business/orders/{id}"})
