@@ -118,7 +118,7 @@ def process_fact(pid: int) -> dict | None:
         fields = (base / "stat").read_text(encoding="utf-8").rsplit(")", 1)[1].split()
         uid = next(line.split()[1] for line in (base / "status").read_text(encoding="utf-8").splitlines() if line.startswith("Uid:"))
         return {"pid": pid, "started": fields[19], "parent": int(fields[1]), "uid": int(uid)}
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return None
 
 
