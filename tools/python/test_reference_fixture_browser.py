@@ -1,4 +1,4 @@
-"""Device 浏览器绑定来源、预算与进程树均不可被隐式替换或重放。"""
+"""业务 浏览器绑定来源、预算与进程树均不可被隐式替换或重放。"""
 
 from __future__ import annotations
 
@@ -35,11 +35,11 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         self.temporary = WorkspaceDirectory(dir=self.backend / ".local-tests", prefix="reference-browser-")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        self.execution = self.root / "device"
+        self.execution = self.root / "business"
         self.reference = self.execution / ".local-tests/reference-fixture"
         self.reference.mkdir(parents=True)
         (self.execution / "Cargo.toml").write_text("[workspace]", encoding="utf-8")
-        self.frontend = self.root / "device-frontend"
+        self.frontend = self.root / "business-frontend"
         self.frontend.mkdir()
         (self.frontend / "package.json").write_text("{}", encoding="utf-8")
         self.environment = self.root / "environment"
@@ -103,7 +103,7 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         for name in ("runtime.json", "source-pair.json", "backend-build.json"):
             write_json(self.output / name, {"name": name})
         self.source = {
-            "fixture": "device", "roots": {"backend": str(self.execution), "frontend": str(self.frontend)},
+            "fixture": "business", "roots": {"backend": str(self.execution), "frontend": str(self.frontend)},
             "original": {name: {"head": "a" * 40, "patch_sha256": "b" * 64, "files": []}
                          for name in ("backend", "frontend")},
             "generated": {name: {"head": "a" * 40, "patch_sha256": "c" * 64, "files": []}
@@ -128,7 +128,7 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
             "api_limits": {"POST /api/v1/auth/login": 7},
         }))
         stack.enter_context(patch.object(security, "login_budget_environment", return_value={
-            "RYFRAME_E2E_LOGIN_BUDGET_STATE": str(self.output / "browser-r24-device-login-budget.json"),
+            "RYFRAME_E2E_LOGIN_BUDGET_STATE": str(self.output / "browser-r24-business-login-budget.json"),
             "RYFRAME_E2E_LOGIN_RATE_LIMIT_CAPACITY": "7",
             "RYFRAME_E2E_LOGIN_RATE_LIMIT_WINDOW_SECS": "30",
         }))
@@ -144,31 +144,31 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         stack.enter_context(patch.object(security, "configured", side_effect=safe))
         return stack
 
-    def bind(self, server="preview", run_id="r24-device"):
+    def bind(self, server="preview", run_id="r24-business"):
         binding = self.output / f"browser-binding-{run_id}.json"
         result = browser.bind_browser(
             self.api, self.backend, self.bootstrap, self.output, binding, run_id, server
         )
         return binding, result
 
-    def browser_artifacts(self, server="preview", run_id="r24-device"):
+    def browser_artifacts(self, server="preview", run_id="r24-business"):
         outputs = browser.browser_outputs(self.frontend, self.output, run_id, server)
         outputs["report"].mkdir(parents=True)
         (outputs["report"] / "index.html").write_text("report", encoding="utf-8")
         outputs["results"].mkdir(parents=True)
-        write_json(outputs["results"] / "device-tests.json", {
-            "format_version": 1, "kind": "device-browser-tests", "fixture": "device",
+        write_json(outputs["results"] / "business-tests.json", {
+            "format_version": 1, "kind": "business-browser-tests", "fixture": "business",
             "server": server, "run_id": run_id, "status": "passed",
             "runs": [
-                {"title": ["真实 Device 数据从 shared-control 复制校验并切换到 shared"],
+                {"title": ["真实业务数据从 shared-control 复制校验并切换到 shared"],
                  "status": "passed", "retry": 0, "scenarios": ["shared-migration"]},
-                {"title": ["真实 Device 数据从 dedicated-a 复制校验并切换到 dedicated-b"],
+                {"title": ["真实业务数据从 dedicated-a 复制校验并切换到 dedicated-b"],
                  "status": "passed", "retry": 0,
                  "scenarios": ["dedicated-migration", "retention"]},
-                {"title": ["真实排队 Device 迁移取消恢复源数据，并允许再次迁移"],
+                {"title": ["真实排队业务迁移取消恢复源数据，并允许再次迁移"],
                  "status": "passed", "retry": 0,
                  "scenarios": ["cancellation"]},
-                {"title": ["真实 Device 复制阻塞时 Worker 崩溃，重启后同一迁移恢复并完成校验"],
+                {"title": ["真实业务复制阻塞时 Worker 崩溃，重启后同一迁移恢复并完成校验"],
                  "status": "passed", "retry": 0,
                  "scenarios": ["crash-recovery"]},
             ],
@@ -181,7 +181,7 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
                               "destination": destination, "status": 200,
                               **runtime.file_digest(target), "representation": "identity"})
             write_json(outputs["response_audit"], {
-                "format_version": 1, "kind": "device-preview-static-responses",
+                "format_version": 1, "kind": "business-preview-static-responses",
                 "status": "complete", "run_id": run_id, "scope_id": "fixture-source",
                 "limits": {"entries": 10_000, "bytes": 8 * 1024 * 1024 * 1024},
                 "total_entries": len(files), "total_bytes": sum(item["bytes"] for item in files),
@@ -217,13 +217,13 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         self.assertFalse(Path(value["login_budget"]["path"]).exists())
 
     def test_binding_rejects_every_unregistered_run_output(self):
-        unknown = self.output / "browser-r24-device-unknown.json"
+        unknown = self.output / "browser-r24-business-unknown.json"
         unknown.write_text("{}", encoding="utf-8")
         with self.patches(), self.assertRaisesRegex(ValueError, "未登记"):
             self.bind()
-        self.assertFalse((self.output / "browser-binding-r24-device.json").exists())
+        self.assertFalse((self.output / "browser-binding-r24-business.json").exists())
 
-    def test_real_build_precedes_device_browser_and_binds_same_origin(self):
+    def test_real_build_precedes_business_browser_and_binds_same_origin(self):
         calls = []
 
         def execute(_binding, frontend, arguments, environment, log, process_dir, _timeout, _secrets):
@@ -250,7 +250,7 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         self.assertEqual([call[0] for call in calls], [
             ["build", "--real"],
             ["exec", "node", "scripts/restore-build.mjs", "verify", "--source-root", str(self.frontend)],
-            ["check", "--stage", "browser", "--real", "--fixture", "device", "--server", "preview"],
+            ["check", "--stage", "browser", "--real", "--fixture", "business", "--server", "preview"],
             ["exec", "node", "scripts/restore-build.mjs", "verify", "--source-root", str(self.frontend)],
         ])
         self.assertNotIn("RYFRAME_E2E_PASSWORD", calls[0][1])
@@ -259,7 +259,7 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         self.assertEqual(calls[2][1]["RYFRAME_E2E_PASSWORD"], "Admin!Secret123")
         self.assertEqual(calls[2][1]["RYFRAME_E2E_RUNTIME_DIR"], str(self.output))
         self.assertEqual(calls[2][1]["RYFRAME_E2E_PREVIEW_RESPONSE_AUDIT"],
-                         str(self.output / "browser-r24-device-preview-responses.json"))
+                         str(self.output / "browser-r24-business-preview-responses.json"))
         self.assertEqual(calls[2][1]["RYFRAME_E2E_LOGIN_RATE_LIMIT_CAPACITY"], "7")
         self.assertEqual(result["status"], "passed")
         self.assertNotIn("Secret123", json.dumps(result))
@@ -272,22 +272,22 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
             calls.append(arguments)
             process_dir.mkdir()
             log.write_text("ok\n", encoding="utf-8")
-            self.browser_artifacts("dev", "r24-device-dev")
+            self.browser_artifacts("dev", "r24-business-dev")
             return {"directory": str(process_dir), "completion": {"sha256": "d" * 64}}
 
         with self.patches(), patch.object(browser, "_frontend_command", side_effect=execute), \
                 patch.object(browser, "verify_browser_evidence", return_value={}):
-            binding, _ = self.bind("dev", "r24-device-dev")
+            binding, _ = self.bind("dev", "r24-business-dev")
             result = browser.run_browser(self.api, self.backend, self.bootstrap, self.output, binding)
         self.assertEqual(calls, [["check", "--stage", "browser", "--real", "--fixture",
-                                  "device", "--server", "dev"]])
+                                  "business", "--server", "dev"]])
         self.assertIsNone(result["build"])
         self.assertFalse((self.frontend / "dist").exists())
 
     def test_browser_environment_is_explicit_and_redacts_every_bound_secret(self):
         with self.patches():
             binding, context = browser._plan(
-                self.api, self.backend, self.bootstrap, self.output, "r24-device", "preview",
+                self.api, self.backend, self.bootstrap, self.output, "r24-business", "preview",
                 require_fresh=True)
             values = security.browser_environment(context["private"], binding)
         self.assertEqual(values["APP_OBJECT_STORAGE_ACCESS_KEY"], "RustfsAccess123")
@@ -307,11 +307,11 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "禁止重放"):
                 browser.run_browser(self.api, self.backend, self.bootstrap, self.output, binding)
         self.assertEqual(raised.exception.returncode, 19)
-        failure = read(self.output / "browser-r24-device-failure.json")
+        failure = read(self.output / "browser-r24-business-failure.json")
         self.assertEqual((failure["stage"], failure["returncode"]), ("build", 19))
         self.assertFalse(failure["unknown_business_writes"])
         self.assertEqual(execute.call_count, 1)
-        self.assertFalse((self.output / "browser-r24-device-result.json").exists())
+        self.assertFalse((self.output / "browser-r24-business-result.json").exists())
 
     def test_intent_publication_failure_records_absent_intent_before_any_business_write(self):
         with self.patches():
@@ -380,17 +380,17 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
                     _timeout, _secrets):
             process_dir.mkdir()
             log.write_text("ok\n", encoding="utf-8")
-            self.browser_artifacts("dev", "r24-device-dev")
+            self.browser_artifacts("dev", "r24-business-dev")
             return {"directory": str(process_dir)}
 
         guard = Mock(spec=["assert_unchanged"])
         guard.assert_unchanged.side_effect = ValueError("late artifact drift")
-        outputs = browser.browser_outputs(self.frontend, self.output, "r24-device-dev", "dev")
+        outputs = browser.browser_outputs(self.frontend, self.output, "r24-business-dev", "dev")
         with self.patches(), patch.object(browser, "_frontend_command", side_effect=execute), \
                 patch.object(browser, "_browser_artifacts", return_value=({
                     "report": {}, "results": {}, "tests": {}, "responses": None}, (guard,))), \
                 patch.object(browser, "verify_browser_evidence", return_value={}):
-            binding, _ = self.bind("dev", "r24-device-dev")
+            binding, _ = self.bind("dev", "r24-business-dev")
             with self.assertRaisesRegex(ValueError, "late artifact drift"):
                 browser.run_browser(self.api, self.backend, self.bootstrap, self.output, binding)
         self.assertFalse(outputs["result"].exists())
@@ -420,12 +420,12 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
                     _timeout, _secrets):
             process_dir.mkdir()
             log.write_text("ok\n", encoding="utf-8")
-            self.browser_artifacts("dev", "r24-device-dev")
+            self.browser_artifacts("dev", "r24-business-dev")
             return {"directory": str(process_dir)}
 
         with self.patches():
-            binding, _ = self.bind("dev", "r24-device-dev")
-        outputs = browser.browser_outputs(self.frontend, self.output, "r24-device-dev", "dev")
+            binding, _ = self.bind("dev", "r24-business-dev")
+        outputs = browser.browser_outputs(self.frontend, self.output, "r24-business-dev", "dev")
         publish = browser._publish_json
 
         def failure_unavailable(path, value):
@@ -442,7 +442,7 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         self.assertTrue(outputs["result"].is_file())
         self.assertFalse(outputs["failure"].exists())
         self.assertEqual(len(list(self.output.glob(
-            "browser-r24-device-dev-result.json.pending-*"))), 1)
+            "browser-r24-business-dev-result.json.pending-*"))), 1)
         with self.patches(), self.assertRaisesRegex(ValueError, "未登记"):
             browser.verify_browser(
                 self.api, self.backend, self.bootstrap, self.output, binding, closed=False
@@ -502,8 +502,8 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
 
     def test_verify_and_close_are_read_only_and_require_the_expected_runtime_state(self):
         with self.patches(), patch.object(browser, "verify_browser_result", return_value={}) as verify:
-            binding, _ = self.bind("dev", "r24-device-dev")
-            write_json(self.output / "browser-r24-device-dev-result.json", {"status": "fixture"})
+            binding, _ = self.bind("dev", "r24-business-dev")
+            write_json(self.output / "browser-r24-business-dev-result.json", {"status": "fixture"})
             control_count = self.api.control.call_count
             before = {path: path.read_bytes() for path in self.output.rglob("*") if path.is_file()}
             result = browser.verify_browser(
@@ -530,10 +530,10 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
             write_json(self.review, review)
             with self.assertRaisesRegex(ValueError, "摘要已变化"):
                 browser.run_browser(self.api, self.backend, self.bootstrap, self.output, binding)
-        self.assertFalse((self.output / "browser-r24-device-intent.json").exists())
+        self.assertFalse((self.output / "browser-r24-business-intent.json").exists())
 
     def test_binding_rejects_an_occupied_reviewed_frontend_port(self):
-        binding = self.output / "browser-binding-r24-device.json"
+        binding = self.output / "browser-binding-r24-business.json"
         with self.patches(), patch.object(browser, "require_closed_port",
                                           side_effect=ValueError("port occupied")):
             with self.assertRaisesRegex(ValueError, "port occupied"):
@@ -632,7 +632,7 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         self.assertTrue(result["completion"]["path"].endswith("-stopped.json"))
 
     def test_failure_collects_all_completed_processes_and_logs(self):
-        outputs = browser.browser_outputs(self.frontend, self.output, "r24-device", "preview")
+        outputs = browser.browser_outputs(self.frontend, self.output, "r24-business", "preview")
         completed = {"build": {"completion": "build"},
                      "build_verify_before": {"completion": "before"}}
         for name in ("build", "build_verify_before", "browser"):

@@ -1,4 +1,4 @@
-"""Device 浏览器只读消费者逐项复核成功结果，不能只信路径。"""
+"""业务 浏览器只读消费者逐项复核成功结果，不能只信路径。"""
 
 from __future__ import annotations
 
@@ -41,8 +41,8 @@ class ReferenceFixtureBrowserReviewTests(unittest.TestCase):
             "failure": self.runtime / f"{prefix}-failure.json",
             "browser_log": self.runtime / f"{prefix}-check.log",
             "browser_process": self.runtime / f"{prefix}-check-process",
-            "report": self.frontend / f".local-tests/playwright-real/report/device/{server}/{run_id}",
-            "results": self.frontend / f".local-tests/playwright-real/results/device/{server}/{run_id}",
+            "report": self.frontend / f".local-tests/playwright-real/report/business/{server}/{run_id}",
+            "results": self.frontend / f".local-tests/playwright-real/results/business/{server}/{run_id}",
         }
         if server == "preview":
             for name in ("build", "build_verify_before", "build_verify_after"):
@@ -75,24 +75,24 @@ class ReferenceFixtureBrowserReviewTests(unittest.TestCase):
 
     def fixture_tests_receipt(self, server: str, run_id: str) -> dict:
         return {
-            "format_version": 1, "kind": "device-browser-tests", "fixture": "device",
+            "format_version": 1, "kind": "business-browser-tests", "fixture": "business",
             "server": server, "run_id": run_id, "status": "passed",
             "runs": [
-                {"title": ["真实 Device 数据从 shared-control 复制校验并切换到 shared"],
+                {"title": ["真实业务数据从 shared-control 复制校验并切换到 shared"],
                  "status": "passed", "retry": 0, "scenarios": ["shared-migration"]},
-                {"title": ["真实 Device 数据从 dedicated-a 复制校验并切换到 dedicated-b"],
+                {"title": ["真实业务数据从 dedicated-a 复制校验并切换到 dedicated-b"],
                  "status": "passed", "retry": 0,
                  "scenarios": ["dedicated-migration", "retention"]},
-                {"title": ["真实排队 Device 迁移取消恢复源数据，并允许再次迁移"],
+                {"title": ["真实排队业务迁移取消恢复源数据，并允许再次迁移"],
                  "status": "passed", "retry": 0,
                  "scenarios": ["cancellation"]},
-                {"title": ["真实 Device 复制阻塞时 Worker 崩溃，重启后同一迁移恢复并完成校验"],
+                {"title": ["真实业务复制阻塞时 Worker 崩溃，重启后同一迁移恢复并完成校验"],
                  "status": "passed", "retry": 0,
                  "scenarios": ["crash-recovery"]},
             ],
         }
 
-    def prepare(self, server="preview", run_id="r24-device-preview"):
+    def prepare(self, server="preview", run_id="r24-business-preview"):
         outputs = self.outputs(server, run_id)
         binding_path = self.runtime / f"browser-binding-{run_id}.json"
         commands = (["build", "verify", "browser", "verify"] if server == "preview" else ["browser"])
@@ -113,7 +113,7 @@ class ReferenceFixtureBrowserReviewTests(unittest.TestCase):
         outputs["report"].mkdir(parents=True)
         (outputs["report"] / "index.html").write_text("report", encoding="utf-8")
         outputs["results"].mkdir(parents=True)
-        write_json(outputs["results"] / "device-tests.json", self.fixture_tests_receipt(server, run_id))
+        write_json(outputs["results"] / "business-tests.json", self.fixture_tests_receipt(server, run_id))
         now = int(time.time() * 1_000)
         write_json(outputs["login_budget"], {
             "version": 1,
@@ -141,7 +141,7 @@ class ReferenceFixtureBrowserReviewTests(unittest.TestCase):
             (self.frontend / "dist/assets/app.js").write_text("script", encoding="utf-8")
             build = {"receipt": bound(outputs["build_receipt"]),
                      "dist": evidence.artifact_manifest(self.frontend / "dist", self.frontend,
-                                                        "Device 前端生产产物")}
+                                                        "业务 前端生产产物")}
             entries = []
             for request_path, target, destination in (
                     ("/login", self.frontend / "dist/index.html", "document"),
@@ -150,7 +150,7 @@ class ReferenceFixtureBrowserReviewTests(unittest.TestCase):
                                 "path": request_path, "destination": destination, "status": 200,
                                 **file_digest(target), "representation": "identity"})
             write_json(outputs["response_audit"], {
-                "format_version": 1, "kind": "device-preview-static-responses",
+                "format_version": 1, "kind": "business-preview-static-responses",
                 "status": "complete", "run_id": run_id, "scope_id": "fixture-source",
                 "limits": {"entries": 10_000, "bytes": 8 * 1024 * 1024 * 1024},
                 "total_entries": len(entries),
@@ -159,11 +159,11 @@ class ReferenceFixtureBrowserReviewTests(unittest.TestCase):
         artifacts = {
             "report": evidence.artifact_manifest(
                 outputs["report"], self.frontend / ".local-tests/playwright-real/report",
-                "Device 浏览器 HTML 报告"),
+                "业务 浏览器 HTML 报告"),
             "results": evidence.artifact_manifest(
                 outputs["results"], self.frontend / ".local-tests/playwright-real/results",
-                "Device 浏览器结果"),
-            "tests": evidence.device_tests(outputs["results"] / "device-tests.json", server, run_id),
+                "业务 浏览器结果"),
+            "tests": evidence.business_tests(outputs["results"] / "business-tests.json", server, run_id),
             "responses": (responses.preview_responses(
                 outputs["response_audit"], binding, build["dist"]
             ) if server == "preview" else None),
@@ -192,7 +192,7 @@ class ReferenceFixtureBrowserReviewTests(unittest.TestCase):
                 review.verify_browser_result(binding, context, path)
 
     def test_dev_consumer_rejects_an_unregistered_build(self):
-        binding, path, outputs, _ = self.prepare("dev", "r24-device-dev")
+        binding, path, outputs, _ = self.prepare("dev", "r24-business-dev")
         value = __import__("json").loads(outputs["result"].read_text(encoding="utf-8"))
         value["build"] = {"unexpected": True}
         outputs["result"].unlink()
@@ -203,7 +203,7 @@ class ReferenceFixtureBrowserReviewTests(unittest.TestCase):
             review.verify_browser_result(binding, context, path)
 
     def test_consumer_rechecks_logs_even_when_the_result_descriptor_matches(self):
-        binding, path, outputs, _ = self.prepare("dev", "r24-device-dev")
+        binding, path, outputs, _ = self.prepare("dev", "r24-business-dev")
         outputs["browser_log"].write_text("request AdminSecret\n", encoding="utf-8")
         value = __import__("json").loads(outputs["result"].read_text(encoding="utf-8"))
         value["logs"]["browser"] = bound(outputs["browser_log"])
@@ -214,7 +214,7 @@ class ReferenceFixtureBrowserReviewTests(unittest.TestCase):
             review.verify_browser_result(binding, context, path)
 
     def test_consumer_rejects_process_receipt_from_an_unrelated_tree(self):
-        binding, path, outputs, _ = self.prepare("dev", "r24-device-dev")
+        binding, path, outputs, _ = self.prepare("dev", "r24-business-dev")
         process = __import__("json").loads(
             (outputs["browser_process"] / "frontend.json").read_text(encoding="utf-8")
         )

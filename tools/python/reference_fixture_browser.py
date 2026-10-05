@@ -144,8 +144,8 @@ def browser_outputs(frontend: Path, runtime: Path, run_id: str, server: str) -> 
         "failure": runtime / f"{prefix}-failure.json",
         "browser_log": runtime / f"{prefix}-check.log",
         "browser_process": runtime / f"{prefix}-check-process",
-        "report": frontend / f".local-tests/playwright-real/report/device/{server}/{run_id}",
-        "results": frontend / f".local-tests/playwright-real/results/device/{server}/{run_id}",
+        "report": frontend / f".local-tests/playwright-real/report/business/{server}/{run_id}",
+        "results": frontend / f".local-tests/playwright-real/results/business/{server}/{run_id}",
     }
     if server == "preview":
         outputs.update({
@@ -355,7 +355,7 @@ def _browser_artifacts(binding: dict, context: dict, build: dict | None) \
         -> tuple[dict, tuple[ArtifactManifestSnapshot, ...]]:
     outputs, frontend = context["outputs"], context["frontend"]
     report, results = outputs["report"], outputs["results"]
-    sidecar = results / "device-tests.json"
+    sidecar = results / "business-tests.json"
     if not (report / "index.html").is_file():
         raise ValueError("Device 浏览器报告缺少首页")
     tests = business_tests(sidecar, binding["server"], binding["run_id"])
@@ -367,7 +367,7 @@ def _browser_artifacts(binding: dict, context: dict, build: dict | None) \
     )
     report_manifest, results_manifest = report_snapshot.manifest, results_snapshot.manifest
     if not any(item["path"] == "index.html" for item in report_manifest["files"]) \
-            or not any(item["path"] == "device-tests.json" for item in results_manifest["files"]):
+            or not any(item["path"] == "business-tests.json" for item in results_manifest["files"]):
         raise ValueError("Device 浏览器完整清单缺少报告首页或场景收据")
     responses = (preview_responses(outputs["response_audit"], binding, build["dist"])
                  if binding["server"] == "preview" and build is not None else None)

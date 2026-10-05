@@ -111,7 +111,7 @@ def verify_browser_evidence(binding: dict, context: dict, binding_path: Path,
         ".local-tests/playwright-real/results", "Device 浏览器结果"
     )
     if artifacts["tests"] != business_tests(
-            outputs["results"] / "device-tests.json", binding["server"], binding["run_id"]):
+            outputs["results"] / "business-tests.json", binding["server"], binding["run_id"]):
         raise ValueError("Device 浏览器场景收据与成功结果不一致")
     if result["login_budget"] != login_budget(outputs["login_budget"], binding):
         raise ValueError("Device 登录预算账本与成功结果不一致")

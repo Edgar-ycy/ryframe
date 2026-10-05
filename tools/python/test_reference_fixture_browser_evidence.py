@@ -1,4 +1,4 @@
-"""Device 浏览器产物只接受有界完整清单和精确成功场景。"""
+"""业务 浏览器产物只接受有界完整清单和精确成功场景。"""
 
 from __future__ import annotations
 
@@ -65,27 +65,27 @@ class ReferenceFixtureBrowserEvidenceTests(unittest.TestCase):
 
     def fixture_tests_receipt(self) -> dict:
         return {
-            "format_version": 1, "kind": "device-browser-tests", "fixture": "device",
-            "server": "dev", "run_id": "r24-device-dev", "status": "passed",
+            "format_version": 1, "kind": "business-browser-tests", "fixture": "business",
+            "server": "dev", "run_id": "r24-business-dev", "status": "passed",
             "runs": [
-                {"title": ["真实 Device 数据从 shared-control 复制校验并切换到 shared"],
+                {"title": ["真实业务数据从 shared-control 复制校验并切换到 shared"],
                  "status": "passed", "retry": 0, "scenarios": ["shared-migration"]},
-                {"title": ["真实 Device 数据从 dedicated-a 复制校验并切换到 dedicated-b"],
+                {"title": ["真实业务数据从 dedicated-a 复制校验并切换到 dedicated-b"],
                  "status": "passed", "retry": 0,
                  "scenarios": ["dedicated-migration", "retention"]},
-                {"title": ["真实排队 Device 迁移取消恢复源数据，并允许再次迁移"],
+                {"title": ["真实排队业务迁移取消恢复源数据，并允许再次迁移"],
                  "status": "passed", "retry": 0,
                  "scenarios": ["cancellation"]},
-                {"title": ["真实 Device 复制阻塞时 Worker 崩溃，重启后同一迁移恢复并完成校验"],
+                {"title": ["真实业务复制阻塞时 Worker 崩溃，重启后同一迁移恢复并完成校验"],
                  "status": "passed", "retry": 0,
                  "scenarios": ["crash-recovery"]},
             ],
         }
 
-    def test_device_receipt_requires_exact_four_runs_and_five_scenarios(self):
-        path = self.root / "device-tests.json"
+    def test_business_receipt_requires_exact_four_runs_and_five_scenarios(self):
+        path = self.root / "business-tests.json"
         write_json(path, self.fixture_tests_receipt())
-        verified = evidence.device_tests(path, "dev", "r24-device-dev")
+        verified = evidence.business_tests(path, "dev", "r24-business-dev")
         self.assertEqual(verified["receipt"]["status"], "passed")
         changed = self.fixture_tests_receipt()
         changed["runs"].append({"title": ["extra"], "status": "passed", "retry": 0,
@@ -93,14 +93,14 @@ class ReferenceFixtureBrowserEvidenceTests(unittest.TestCase):
         path.unlink()
         write_json(path, changed)
         with self.assertRaisesRegex(ValueError, "本次运行"):
-            evidence.device_tests(path, "dev", "r24-device-dev")
+            evidence.business_tests(path, "dev", "r24-business-dev")
 
         changed = self.fixture_tests_receipt()
         changed["runs"][0]["title"] = ["任意前缀", *changed["runs"][0]["title"]]
         path.unlink()
         write_json(path, changed)
         with self.assertRaisesRegex(ValueError, "无效标题"):
-            evidence.device_tests(path, "dev", "r24-device-dev")
+            evidence.business_tests(path, "dev", "r24-business-dev")
 
     def test_login_budget_binds_scope_capacity_and_nonempty_first_write(self):
         path = self.root / "login-budget.json"

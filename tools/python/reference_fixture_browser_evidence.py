@@ -1,4 +1,4 @@
-"""严格核验 Device 浏览器产物、场景收据与登录预算。"""
+"""严格核验业务 crate 浏览器产物、场景收据与登录预算。"""
 
 from __future__ import annotations
 
@@ -25,20 +25,20 @@ MAX_ARTIFACT_FILES = 10_000
 MAX_ARTIFACT_BYTES = 8 * 1024 * 1024 * 1024
 MAX_LOG_BYTES = 64 * 1024 * 1024
 MAX_LOGIN_BUCKETS = 1_024
-DEVICE_SCENARIOS = (
+BUSINESS_SCENARIOS = (
     "shared-migration",
     "dedicated-migration",
     "retention",
     "cancellation",
     "crash-recovery",
 )
-DEVICE_TESTS = {
-    "真实 Device 数据从 shared-control 复制校验并切换到 shared": ("shared-migration",),
-    "真实 Device 数据从 dedicated-a 复制校验并切换到 dedicated-b": (
+BUSINESS_TESTS = {
+    "真实业务数据从 shared-control 复制校验并切换到 shared": ("shared-migration",),
+    "真实业务数据从 dedicated-a 复制校验并切换到 dedicated-b": (
         "dedicated-migration", "retention",
     ),
-    "真实排队 Device 迁移取消恢复源数据，并允许再次迁移": ("cancellation",),
-    "真实 Device 复制阻塞时 Worker 崩溃，重启后同一迁移恢复并完成校验": ("crash-recovery",),
+    "真实排队业务迁移取消恢复源数据，并允许再次迁移": ("cancellation",),
+    "真实业务复制阻塞时 Worker 崩溃，重启后同一迁移恢复并完成校验": ("crash-recovery",),
 }
 RUN_ID = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
 LOGIN_KEY = re.compile(r"(?:principal|ip):[a-f0-9]{64}")
@@ -221,7 +221,7 @@ def business_tests(path: Path, server: str, run_id: str) -> dict:
     titles = set()
     scenarios = []
     for item in receipt["runs"]:
-        run = exact_fields(item, {"title", "status", "retry", "scenarios"}, "Device 浏览器测试明细")
+        run = exact_fields(item, {"title", "status", "retry", "scenarios"}, "业务 crate 浏览器测试明细")
         if (
             not isinstance(run["title"], list)
             or len(run["title"]) != 1
@@ -233,19 +233,19 @@ def business_tests(path: Path, server: str, run_id: str) -> dict:
             or not run["scenarios"]
             or any(not isinstance(item, str) or not item for item in run["scenarios"])
         ):
-            raise ValueError("Device 浏览器测试包含失败、跳过、重试或无效标题")
+            raise ValueError("业务 crate 浏览器测试包含失败、跳过、重试或无效标题")
         title = tuple(run["title"])
         if title in titles:
-            raise ValueError("Device 浏览器测试标题重复")
-        expected_scenarios = DEVICE_TESTS.get(run["title"][0])
+            raise ValueError("业务 crate 浏览器测试标题重复")
+        expected_scenarios = BUSINESS_TESTS.get(run["title"][0])
         if expected_scenarios is None or tuple(run["scenarios"]) != expected_scenarios:
-            raise ValueError("Device 浏览器测试标题与场景不匹配")
+            raise ValueError("业务 crate 浏览器测试标题与场景不匹配")
         titles.add(title)
         scenarios.extend(run["scenarios"])
-    if {title[0] for title in titles} != set(DEVICE_TESTS):
-        raise ValueError("Device 浏览器测试标题集合不完整")
-    if len(scenarios) != len(DEVICE_SCENARIOS) or set(scenarios) != set(DEVICE_SCENARIOS):
-        raise ValueError("Device 浏览器场景缺失、重复或包含未知值")
+    if {title[0] for title in titles} != set(BUSINESS_TESTS):
+        raise ValueError("业务 crate 浏览器测试标题集合不完整")
+    if len(scenarios) != len(BUSINESS_SCENARIOS) or set(scenarios) != set(BUSINESS_SCENARIOS):
+        raise ValueError("业务 crate 浏览器场景缺失、重复或包含未知值")
     document.assert_unchanged()
     return {"receipt": document.value, "descriptor": {
         "path": str(document.path), "bytes": len(document.raw), "sha256": document.sha256

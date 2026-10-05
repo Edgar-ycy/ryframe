@@ -69,7 +69,7 @@ def preview_responses(path: Path, binding: dict, manifest: object) -> dict:
     entries = receipt["entries"]
     if (
         receipt["format_version"] != 1
-        or receipt["kind"] != "device-preview-static-responses"
+        or receipt["kind"] != "business-preview-static-responses"
         or receipt["status"] != "complete"
         or receipt["run_id"] != binding["run_id"]
         or receipt["scope_id"] != binding["scope_id"]
