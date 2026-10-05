@@ -81,6 +81,20 @@
       ]
     },
     {
+      "package": "ryframe-sdk",
+      "minimal": [],
+      "maximal": [
+        "api",
+        "default",
+        "migration",
+        "persistence",
+        "runtime"
+      ],
+      "test_targets": [
+        "business_module_contract"
+      ]
+    },
+    {
       "package": "ryframe-tenant-db",
       "minimal": [],
       "maximal": [
