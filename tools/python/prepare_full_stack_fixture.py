@@ -49,7 +49,12 @@ def validate_paths(backend: Path, frontend: Path, output: Path) -> None:
 
 
 def run(
-    arguments: list[str], cwd: Path, log: Path, *, data: bytes | None = None
+    arguments: list[str],
+    cwd: Path,
+    log: Path,
+    *,
+    data: bytes | None = None,
+    environment: dict[str, str] | None = None,
 ) -> None:
     with log.open("ab") as stream:
         stream.write(("\n> " + " ".join(arguments) + "\n").encode())
@@ -61,6 +66,7 @@ def run(
             stdout=stream,
             stderr=subprocess.STDOUT,
             check=True,
+            env=None if environment is None else {**os.environ, **environment},
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
 
@@ -163,6 +169,9 @@ def create_business_fixture(root: Path, log: Path) -> bytes:
     if source.count('    vec![]') != 1:
         raise ValueError("隔离夹具无法定位业务模块注册表")
     registry.write_text(source.replace('    vec![]', '    vec![order_business::module()]', 1), encoding="utf-8", newline="\n")
+    # 显式接入 path crate 会改变解析图；仅在隔离夹具中离线刷新锁文件，
+    # 后续所有生成命令仍使用 --locked，确保不会隐式修改业务源码。
+    run(["cargo", "generate-lockfile", "--offline"], root, log)
     run(["cargo", "run", "--locked", "-p", "ryframe-generator", "--bin", "ryframe-generate", "--", "resource", "--package", "order-business", "--write"], root, log)
     return (crate / "src/resources/mod.rs").read_bytes()
 
@@ -235,6 +244,7 @@ def prepare(
         ],
         roots["backend"],
         log,
+        environment={"RYFRAME_GENERATOR_FRONTEND_DIR": str(roots["frontend"])},
     )
     register_fixture_migration(roots["backend"], log)
     before = {name: snapshot(path)[0] for name, path in roots.items()}

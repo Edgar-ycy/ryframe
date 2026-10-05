@@ -198,12 +198,20 @@ fn sync_frontend(workspace: &std::path::Path, write: bool) -> Result<(), String>
     if !write {
         return Err("--sync-frontend 必须与 --write 一起使用".into());
     }
-    let frontend = workspace
-        .parent()
-        .map(|parent| parent.join("ryframe-vue3"))
+    let frontend = std::env::var_os("RYFRAME_GENERATOR_FRONTEND_DIR")
+        .map(std::path::PathBuf::from)
+        .or_else(|| workspace.parent().map(|parent| parent.join("ryframe-vue3")))
         .filter(|path| path.join("package.json").is_file())
-        .ok_or_else(|| "无法定位相邻的 ryframe-vue3 工作区".to_owned())?;
-    let status = std::process::Command::new("corepack")
+        .ok_or_else(|| {
+            "无法定位前端工作区：请设置 RYFRAME_GENERATOR_FRONTEND_DIR 或在后端同级放置 ryframe-vue3"
+                .to_owned()
+        })?;
+    let corepack = if cfg!(windows) {
+        "corepack.cmd"
+    } else {
+        "corepack"
+    };
+    let status = std::process::Command::new(corepack)
         .args(["pnpm", "generate", "--write"])
         .current_dir(frontend)
         .status()

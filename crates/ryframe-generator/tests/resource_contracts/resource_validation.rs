@@ -288,11 +288,7 @@ fn extended_manifest_contracts_validate_and_render_exact_runtime_behavior() {
             .unwrap_err()
             .contains("数据库列名 `order_name` 重复")
     );
-    let unsafe_alias = changed(
-        &aliased,
-        "column = \"order_name\"",
-        "column = \"bad-name\"",
-    );
+    let unsafe_alias = changed(&aliased, "column = \"order_name\"", "column = \"bad-name\"");
     assert!(
         normalize(&unsafe_alias, "order")
             .unwrap_err()

@@ -225,7 +225,11 @@ class FullStackFixtureTests(unittest.TestCase):
         self.assertIn('order-business', cargo.read_text(encoding="utf-8"))
         self.assertIn('order_business::module()', registry.read_text(encoding="utf-8"))
         self.assertTrue((self.backend / "crates/order-business/src/resources/mod.rs").is_file())
-        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(
+            run.call_args_list[0].args[0],
+            ["cargo", "generate-lockfile", "--offline"],
+        )
 
     def test_reference_fixture_root_is_created_once_for_new_business_worktree(self):
         root = fixture.reference_fixture_root(self.backend)

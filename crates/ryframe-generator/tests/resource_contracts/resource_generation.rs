@@ -445,9 +445,7 @@ fn explanation_shows_the_complete_debugging_chain() {
     let order = order();
     let post = load_resource(post_path()).expect("Post 清单应有效");
     let generated = render_resources(&[order, post]).expect("生成应成功");
-    let explanation = generated
-        .explanation("order")
-        .expect("应生成 explain 模型");
+    let explanation = generated.explanation("order").expect("应生成 explain 模型");
     let text = explanation.render_text();
 
     for expected in [
@@ -600,9 +598,7 @@ fn safe_writer_is_idempotent_and_detects_manual_edits() {
     assert!(error.contains("人工修改"));
     assert!(error.contains("model.rs"));
 
-    let unaffected = frontend
-        .path()
-        .join("src/generated/resources/order/api.ts");
+    let unaffected = frontend.path().join("src/generated/resources/order/api.ts");
     assert!(
         fs::read_to_string(unaffected)
             .expect("前端文件应保留")

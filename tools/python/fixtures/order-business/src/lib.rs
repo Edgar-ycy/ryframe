@@ -1,4 +1,10 @@
 pub mod resources;
+
+/// 为离线生成器提供手写资源模型的稳定描述符目录。
+pub fn resource_descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
+    vec![<resources::Order as ryframe_sdk::ResourceModel>::descriptor()]
+}
+
 #[cfg(any(feature = "api", feature = "migration"))]
 pub mod generated;
 

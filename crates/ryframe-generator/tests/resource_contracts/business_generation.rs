@@ -104,7 +104,9 @@ pub struct Order {
 
 fn assert_generated_business(workspace: &std::path::Path) {
     assert!(
-        workspace.join("order-business/src/generated/entities/order.rs").is_file()
+        workspace
+            .join("order-business/src/generated/entities/order.rs")
+            .is_file()
     );
     assert!(
         workspace

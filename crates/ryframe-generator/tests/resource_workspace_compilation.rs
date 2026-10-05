@@ -123,10 +123,9 @@ fn basic_generated_order_frontend_contract_is_upgraded_once() {
     );
     let permissions = "\"business:order:list\"".to_owned();
 
-    let upgraded =
-        prepare_order_frontend_contract(permissions.clone(), operations.clone(), schema)
-            .expect("完整 basic generated 契约应可升级")
-            .expect("首次升级应补充 OrderDetailVo");
+    let upgraded = prepare_order_frontend_contract(permissions.clone(), operations.clone(), schema)
+        .expect("完整 basic generated 契约应可升级")
+        .expect("首次升级应补充 OrderDetailVo");
     assert_eq!(upgraded.0, permissions, "升级不得改写已生成权限清单");
     assert_eq!(upgraded.1, operations, "升级不得改写已生成 operation");
     let order_vo_reference = "import(\"./core\").components[\"schemas\"][\"OrderVo\"]";
