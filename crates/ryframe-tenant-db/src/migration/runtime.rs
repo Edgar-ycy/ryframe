@@ -29,6 +29,14 @@ impl MigratorTrait for Migrator {
 
 /// 升级一个明确选择的租户数据目标。不会创建任何控制面 `sys_*` 表。
 pub async fn up(db: &DatabaseConnection) -> Result<(), DbErr> {
+    up_pending_business_migrations(db).await?;
+    verify(db).await
+}
+
+/// 应用框架租户库迁移但不立即校验业务表。
+///
+/// 组合根会先调用此入口，再运行已注册业务模块的租户迁移，最后统一校验完整 schema。
+pub async fn up_pending_business_migrations(db: &DatabaseConnection) -> Result<(), DbErr> {
     ensure_mysql(db)?;
     verify_mysql_80(db).await?;
     TENANT_DATA_CATALOG
@@ -51,7 +59,7 @@ pub async fn up(db: &DatabaseConnection) -> Result<(), DbErr> {
             return Err(error);
         }
     }
-    verify(db).await
+    Ok(())
 }
 
 async fn acquire_migration_lock<C>(db: &C) -> Result<(), DbErr>

@@ -32,7 +32,7 @@ pub use m20260820_000000_tenant_baseline::{
     RESOURCE_OWNERSHIP_DDL, TENANT_FENCE_DDL, TENANT_TARGET_SLOT_DDL,
 };
 #[cfg(feature = "migration")]
-pub use runtime::{Migrator, up};
+pub use runtime::{Migrator, up, up_pending_business_migrations};
 pub use ryframe_db::migration::normalize_check_clause;
 pub use schema::{
     canonical_table_schema, ensure_local_foreign_key_schema, ensure_mysql_target_boundary,

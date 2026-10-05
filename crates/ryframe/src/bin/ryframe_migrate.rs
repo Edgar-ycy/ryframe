@@ -190,11 +190,22 @@ async fn run_tenant_data_operation(
             if mysql_target {
                 ryframe_tenant_db::migration::ensure_mysql_target_boundary(database).await?;
             }
-            ryframe_tenant_db::migration::up(database).await?;
+            ryframe_tenant_db::migration::up_pending_business_migrations(database).await?;
+            run_business_migrations(
+                operation,
+                BusinessMigrationScope::Tenant,
+                database,
+                business_modules,
+                &format!("tenant-data/{target}"),
+            )
+            .await?;
             if mysql_target {
                 ryframe_tenant_db::migration::verify_mysql_target(database).await?;
+            } else {
+                ryframe_tenant_db::migration::verify(database).await?;
             }
             println!("scope=tenant-data target={target} migration=completed schema=verified");
+            return Ok(());
         }
         Operation::Verify => {
             if mysql_target {
