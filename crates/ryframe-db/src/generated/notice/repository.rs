@@ -12,8 +12,8 @@ use ryframe_application::generated::notice::{
 use ryframe_application::{PersistenceTransaction, TransactionAuditMode};
 use ryframe_kernel::{AppError, AppResult, PageResult, ValidatedPageQuery};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter,
-    QueryOrder, QuerySelect, TransactionTrait, sea_query::LockType,
+    ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait, QueryFilter, QueryOrder,
+    QuerySelect, TransactionTrait, sea_query::LockType,
 };
 
 use super::entity;

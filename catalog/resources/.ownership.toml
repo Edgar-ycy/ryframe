@@ -223,7 +223,7 @@ root = "backend"
 path = "crates/ryframe-db/src/generated/notice/repository.rs"
 source_hash = "9c7717ecf319783c9296cc84459c3b661dcadc10a233acf1bf058176b737d151"
 schema_hash = "b68503cbce094b4575d4b533331cf0e09c0b3ea55291b17d2b06cfba23d80803"
-content_hash = "0024802c513378c6f5dce172fbdac87dd4e7d684ff7a241abaf04ceca645e13c"
+content_hash = "a2c22f0c99797501e9f33b5c44e082afda74ad39a933db1a563da2b20993016c"
 
 [[entries]]
 resource = "post"
@@ -247,7 +247,7 @@ root = "backend"
 path = "crates/ryframe-db/src/generated/post/repository.rs"
 source_hash = "dedbe510d8f1627ba6042a31069ac37c86e72fb4fb91826adbfb3a1aff97179e"
 schema_hash = "2f4af73c2cfc449e270f2cf5eae8104ebe75cf19f7001cbfcf2ac750feb4fdc9"
-content_hash = "9d13c0e1d72519252df67ea88b376a706490914c7ee51e431df60b98c6c161d8"
+content_hash = "590274cb4650314379367ea00d425860cb8420526bc117e8b6a3052a0cdd990c"
 
 [[entries]]
 resource = "__catalog__"
