@@ -14,7 +14,7 @@ from reference_fixture_source_pair import write_pair
 from workspace_directory import WorkspaceDirectory
 
 
-class DeviceSourceEvidenceTests(unittest.TestCase):
+class BusinessSourceEvidenceTests(unittest.TestCase):
     def setUp(self):
         local = Path(__file__).resolve().parents[2] / ".local-tests/python-unit"
         local.mkdir(parents=True, exist_ok=True)
@@ -25,11 +25,10 @@ class DeviceSourceEvidenceTests(unittest.TestCase):
         self.frontend = self.root / "frontend"
         self.backend.mkdir()
         self.frontend.mkdir()
-        definition = b'[resource]\nname = "device"\n'
-        for relative in (provenance.DEVICE_FIXTURE, provenance.DEVICE_RESOURCE):
-            path = self.backend / relative
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(definition)
+        definition = b'#[derive(ryframe_sdk::ResourceModel)]\n'
+        path = self.backend / provenance.BUSINESS_MODEL
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(definition)
         self.backend_head = "a" * 40
         self.frontend_head = "b" * 40
         self.sources = {
@@ -42,7 +41,7 @@ class DeviceSourceEvidenceTests(unittest.TestCase):
         }
         self.receipt = {
             "format_version": 1,
-            "fixture": "device",
+            "fixture": "business",
             "status": "ready",
             "fixture_sha256": hashlib.sha256(definition).hexdigest(),
             "sources": self.sources,
@@ -67,7 +66,7 @@ class DeviceSourceEvidenceTests(unittest.TestCase):
         )
         environment = mock.patch.dict(
             os.environ,
-            {"RYFRAME_E2E_FIXTURE": "device", "RYFRAME_CODE_SHA": self.backend_head},
+            {"RYFRAME_E2E_FIXTURE": "business", "RYFRAME_CODE_SHA": self.backend_head},
             clear=True,
         )
         environment.start()
@@ -161,16 +160,16 @@ class DeviceSourceEvidenceTests(unittest.TestCase):
             ),
             (
                 "definition",
-                lambda: (self.backend / provenance.DEVICE_RESOURCE).write_bytes(b"changed"),
+                lambda: (self.backend / provenance.BUSINESS_MODEL).write_bytes(b"changed"),
                 "摘要",
             ),
         )
         original_receipt = copy.deepcopy(self.receipt)
-        original_definition = (self.backend / provenance.DEVICE_RESOURCE).read_bytes()
+        original_definition = (self.backend / provenance.BUSINESS_MODEL).read_bytes()
         for name, mutate, message in mutations:
             with self.subTest(name=name):
                 self.receipt = copy.deepcopy(original_receipt)
-                (self.backend / provenance.DEVICE_RESOURCE).write_bytes(original_definition)
+                (self.backend / provenance.BUSINESS_MODEL).write_bytes(original_definition)
                 mutate()
                 self.write_fixture()
                 with self.assertRaisesRegex(ValueError, message):
@@ -322,7 +321,7 @@ class ArchiveEvidenceTests(unittest.TestCase):
         self.run_id = 123
         self.attempt = 2
         self.receipt_root = "/home/runner/work/_temp/ryframe-full-stack"
-        self.fixture_hash = hashlib.sha256(b"device fixture").hexdigest()
+        self.fixture_hash = hashlib.sha256(b"business fixture").hexdigest()
 
     @staticmethod
     def raw(value: dict) -> bytes:
@@ -375,7 +374,7 @@ class ArchiveEvidenceTests(unittest.TestCase):
                 "original": {"backend": sources["backend"]},
             }
         else:
-            fixture_root = "/home/runner/work/ryframe/ryframe/backend/.local-tests/device-fixture"
+            fixture_root = "/home/runner/work/ryframe/ryframe/backend/.local-tests/business-fixture"
             backend_root = f"{fixture_root}/backend"
             frontend_root = f"{fixture_root}/frontend"
             original = sources
@@ -385,7 +384,7 @@ class ArchiveEvidenceTests(unittest.TestCase):
                     clean=False,
                     files=[
                         {
-                            "path": provenance.DEVICE_RESOURCE.as_posix(),
+                            "path": "crates/order-business/src/resources/mod.rs",
                             "sha256": self.fixture_hash,
                         }
                     ],
@@ -393,13 +392,13 @@ class ArchiveEvidenceTests(unittest.TestCase):
                 "frontend": self.snapshot(
                     self.frontend_sha,
                     clean=False,
-                    files=[{"path": "src/generated/resources/device/index.ts", "sha256": "c" * 64}],
+                    files=[{"path": "src/generated/resources/order/index.ts", "sha256": "c" * 64}],
                 ),
             }
             roots = {"backend": backend_root, "frontend": frontend_root}
             fixture_receipt = {
                 "format_version": 1,
-                "fixture": "device",
+                "fixture": "business",
                 "status": "ready",
                 "fixture_sha256": self.fixture_hash,
                 "sources": original,
@@ -408,20 +407,16 @@ class ArchiveEvidenceTests(unittest.TestCase):
             }
             fixture_raw = self.raw(fixture_receipt)
             definition = {
-                "bytes": len(b"device fixture"),
+                "bytes": len(b"business fixture"),
                 "sha256": self.fixture_hash,
             }
             source = {
                 "format_version": 1,
-                "fixture": "device",
+                "fixture": "business",
                 "fixture_receipt": self.binding(f"{fixture_root}/fixture.json", fixture_raw),
                 "fixture_definition": {
-                    "fixture": {
-                        "path": f"{backend_root}/{provenance.DEVICE_FIXTURE.as_posix()}",
-                        **definition,
-                    },
-                    "resource": {
-                        "path": f"{backend_root}/{provenance.DEVICE_RESOURCE.as_posix()}",
+                    "model": {
+                        "path": f"{backend_root}/{provenance.BUSINESS_MODEL.as_posix()}",
                         **definition,
                     },
                 },
@@ -495,7 +490,7 @@ class ArchiveEvidenceTests(unittest.TestCase):
             frontend_sha=self.frontend_sha,
             run_id=self.run_id,
             attempt=self.attempt,
-            fixture_sha256=self.fixture_hash if fixture == "device" else None,
+            fixture_sha256=self.fixture_hash if fixture == "business" else None,
         )
 
     @staticmethod
@@ -513,9 +508,9 @@ class ArchiveEvidenceTests(unittest.TestCase):
         self.assertEqual(result["runtime"], values["runtime"])
         self.assertEqual(result["runtime_evidence"], values["runtime_evidence"])
 
-    def test_device_archive_binds_raw_fixture_clean_sources_and_generated_resource(self):
-        entries, values = self.archive("device")
-        result = self.validate(entries, "device")
+    def test_business_archive_binds_raw_fixture_clean_sources_and_generated_model(self):
+        entries, values = self.archive("business")
+        result = self.validate(entries, "business")
         self.assertEqual(result["fixture_receipt"], values["fixture"])
         self.assertEqual(
             result["build_evidence"]["source"]["original"], values["fixture"]["sources"]
@@ -523,7 +518,7 @@ class ArchiveEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fixture"):
             provenance.validate_archive_evidence(
                 entries,
-                fixture="device",
+                fixture="business",
                 backend_sha=self.backend_sha,
                 frontend_sha=self.frontend_sha,
                 run_id=self.run_id,
@@ -532,10 +527,10 @@ class ArchiveEvidenceTests(unittest.TestCase):
             )
 
     def test_every_json_receipt_rejects_duplicate_fields_before_binding_checks(self):
-        entries, _ = self.archive("device")
+        entries, _ = self.archive("business")
         for name in provenance.ARCHIVE_RECEIPT_LIMITS:
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, "重复字段"):
-                self.validate(self.replace(entries, name, b'{"field":1,"field":2}'), "device")
+                self.validate(self.replace(entries, name, b'{"field":1,"field":2}'), "business")
 
     def test_missing_duplicate_and_noncanonical_archive_members_fail_closed(self):
         entries, _ = self.archive()
