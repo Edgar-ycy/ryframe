@@ -116,7 +116,7 @@ class ReferenceFixtureReviewTests(unittest.TestCase):
                 with (
                     patch.object(review, "snapshot", return_value=(self.generated, b"")),
                     patch.object(review, "_scope", side_effect=derive),
-                    self.assertRaisesRegex(ValueError, "模板、Business 收据"),
+                    self.assertRaisesRegex(ValueError, "模板、业务 crate 收据"),
                 ):
                     review.renew(
                         self.backend, template, fixture,

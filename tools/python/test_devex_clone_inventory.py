@@ -174,7 +174,7 @@ class InventoryTests(unittest.TestCase):
         for current in result.observations[1:]:
             self.assertEqual(current.schema_sha256, plan_hash({"control_schema_fingerprint": None, "tenant_schema_fingerprint": "d" * 64}))
             self.assertEqual(set(current.preserved), {"ryframe_resource_ownership", "seaql_tenant_data_migrations"})
-            self.assertEqual(set(current.tables), {"biz_order", "biz_tenant_fence", "biz_tenant_target_slot"})
+            self.assertEqual(set(current.tables), {"biz_tenant_fence", "biz_tenant_target_slot"})
         text = "\n".join(path.read_text(encoding="utf-8") for path in self.output.glob("*.json"))
         for secret in ("fixture-secret", "access-fixture", "secret-fixture"):
             self.assertNotIn(secret, text)

@@ -317,7 +317,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
             patch.object(environment, "_environment", return_value=({"APP_SCOPE_ID": "fixture-seed"}, {})),
             patch.object(environment, "configuration_digest", side_effect=configuration),
             patch.object(environment, "verify_tools", return_value={"source": {}}),
-            self.assertRaisesRegex(ValueError, "Business 收据"),
+            self.assertRaisesRegex(ValueError, "业务 crate 收据"),
         ):
             environment.prepare(self.backend, ready, fixture, maintenance, output)
         self.assertTrue((output / "failed.json").is_file())
@@ -458,7 +458,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
 
         self.review["scopes"]["base"]["backend_dir"] = str(self.root / "other-business-backend")
         with patch.object(environment, "snapshot", return_value=(generated, b"")):
-            with self.assertRaisesRegex(ValueError, "所选侧 Business"):
+            with self.assertRaisesRegex(ValueError, "所选侧 业务 crate"):
                 environment._environment(self.backend, self.review, fixture, self.root / "base-output", "base")
 
 
