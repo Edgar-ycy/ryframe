@@ -136,7 +136,7 @@ def generate_and_classify_candidate(
             "--target-dir",
             "target/ci/backend",
             "-p",
-            "ryframe-api",
+            "ryframe",
             "--bin",
             "export_openapi",
             "--",

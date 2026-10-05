@@ -4,11 +4,7 @@ default-members = ["crates/ryframe"]
 members = [
     "crates/ryframe",
     "crates/ryframe-api", "crates/ryframe-auth", "crates/ryframe-config", "crates/ryframe-adapters", "crates/ryframe-db", "crates/ryframe-tenant-db", "crates/ryframe-kernel", "crates/ryframe-application",
-    "crates/ryframe-generator", "crates/ryframe-macro",
-    "crates/business/ryframe-business-application",
-    "crates/business/ryframe-business-db",
-    "crates/business/ryframe-business-api",
-    "crates/business/ryframe-business-runtime",
+    "crates/ryframe-generator", "crates/ryframe-macro", "crates/ryframe-sdk",
     "xtask",
 ]
 resolver = "3"

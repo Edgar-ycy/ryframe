@@ -29,7 +29,7 @@ fn ownership_parser_is_strict_and_commands_share_ci_target() {
         parse_ownership(&changed_content).unwrap().entries[0].fingerprint
     );
 
-    let packages = set(&["ryframe-api"]);
+    let packages = set(&["ryframe", "ryframe-api"]);
     let clippy =
         affected_package_args_for_target("clippy", &packages, "target/ci/backend", 3).unwrap();
     assert!(

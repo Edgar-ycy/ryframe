@@ -23,7 +23,7 @@ pub(super) const TASKS: [TaskDefinition; 19] = [
         Contract,
         Backend,
         None,
-        &["ryframe-api export_openapi（独立 Cargo 编译，不声明复用）"],
+        &["ryframe export_openapi（与 API 共用业务模块注册表）"],
         &[
             "Cargo target/ci/backend",
             "候选 OpenAPI",

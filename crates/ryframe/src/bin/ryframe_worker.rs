@@ -71,6 +71,7 @@ async fn main() -> Result<(), AppError> {
         return ryframe::healthcheck::probe_from_env("APP_JOBS_HEALTH_PORT", 9091);
     }
     ryframe::crypto::install_crypto_provider()?;
+    let _business_modules = ryframe::business::registered_business_modules()?;
     let startup = load_startup(run_mode)?;
     let (_logger_guard, telemetry_guard) = process_logging::init(&startup.config)?;
     if startup.run_mode.allows_initialization_writes() {

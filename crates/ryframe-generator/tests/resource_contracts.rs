@@ -1,5 +1,7 @@
 #[path = "resource_contracts/development_baseline.rs"]
 mod development_baseline;
+#[path = "resource_contracts/business_generation.rs"]
+mod business_generation;
 #[path = "resource_contracts/resource_aggregate.rs"]
 mod resource_aggregate;
 #[path = "resource_contracts/resource_check.rs"]

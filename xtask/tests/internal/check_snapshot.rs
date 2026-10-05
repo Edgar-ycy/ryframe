@@ -42,8 +42,8 @@ fn combined_openapi_snapshot_reuses_the_backend_verify_target() {
     assert_eq!(
         backend_snapshot_export_args(
             "target",
-            "ryframe-business-api",
-            "export_business_openapi",
+            "ryframe",
+            "export_openapi",
             Path::new("target/xtask/openapi.json"),
         ),
         [
@@ -54,9 +54,9 @@ fn combined_openapi_snapshot_reuses_the_backend_verify_target() {
             "--target-dir",
             "target",
             "-p",
-            "ryframe-business-api",
+            "ryframe",
             "--bin",
-            "export_business_openapi",
+            "export_openapi",
             "--",
             "target/xtask/openapi.json",
         ]

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::{ResourceError, ResourceExplanation, ResourceIr, StorageKind, ValueType};
 
 mod aggregate;
+pub(crate) mod business;
 mod catalog;
 mod format;
 mod schema;
@@ -64,30 +65,25 @@ pub fn render_resources(resources: &[ResourceIr]) -> Result<GeneratedCatalog, Re
         }
     }
     validate_relation_targets(&ordered)?;
+    if let Some(resource) = ordered.iter().find(|resource| resource.module == "business") {
+        return Err(ResourceError::new(
+            format!("业务资源 `{}` 不能放在框架资源目录", resource.name),
+            "在使用者业务 crate 中声明 Rust ResourceModel，并运行 cargo generate",
+        )
+        .with_resource(&resource.name));
+    }
     let ordered = ordered.iter().collect::<Vec<_>>();
     let framework = ordered
         .iter()
         .copied()
         .filter(|resource| resource.module == "system")
         .collect::<Vec<_>>();
-    let business = ordered
-        .iter()
-        .copied()
-        .filter(|resource| resource.module == "business")
-        .collect::<Vec<_>>();
     let mut assets = Vec::new();
     for resource in &ordered {
-        if resource.module == "business" {
-            let mut business_assets = Vec::new();
-            render_backend(resource, &business, &mut business_assets);
-            assets.extend(business_assets.into_iter().map(business_asset));
-        } else {
-            render_backend(resource, &framework, &mut assets);
-        }
+        render_backend(resource, &framework, &mut assets);
         render_frontend(resource, &mut assets);
     }
-    aggregate::render(&framework, &ordered, &business, &mut assets);
-    aggregate::render_business(&business, &mut assets);
+    aggregate::render(&framework, &ordered, &mut assets);
     aggregate::render_shared(&ordered, &mut assets);
     format::rust_assets(&mut assets)?;
     validate_assets(&assets)?;
@@ -125,29 +121,6 @@ fn render_backend(
     render_application(resource, assets);
     render_database(resource, resources, assets);
     render_api(resource, assets);
-}
-
-fn business_asset(mut asset: GeneratedAsset) -> GeneratedAsset {
-    asset.path = asset
-        .path
-        .replace(
-            "crates/ryframe-application/",
-            "crates/business/ryframe-business-application/",
-        )
-        .replace("crates/ryframe-db/", "crates/business/ryframe-business-db/")
-        .replace(
-            "crates/ryframe-tenant-db/",
-            "crates/business/ryframe-business-db/",
-        )
-        .replace(
-            "crates/ryframe-api/",
-            "crates/business/ryframe-business-api/",
-        );
-    asset.content = asset.content.replace(
-        "ryframe_application::generated",
-        "ryframe_business_application::generated",
-    );
-    asset
 }
 
 fn render_application(resource: &ResourceIr, assets: &mut Vec<GeneratedAsset>) {

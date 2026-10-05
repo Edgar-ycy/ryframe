@@ -55,25 +55,6 @@
       "test_targets": []
     },
     {
-      "package": "ryframe-business-application",
-      "minimal": [],
-      "maximal": [
-        "default",
-        "test-support"
-      ],
-      "test_targets": []
-    },
-    {
-      "package": "ryframe-business-db",
-      "minimal": [],
-      "maximal": [
-        "default",
-        "migration",
-        "repositories"
-      ],
-      "test_targets": []
-    },
-    {
       "package": "ryframe-db",
       "minimal": [],
       "maximal": [

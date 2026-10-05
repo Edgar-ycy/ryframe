@@ -884,7 +884,7 @@ fn change_surface_warns_over_budget_without_blocking_ordinary_changes() {
 fn standard_resource_change_rejects_manual_central_registration() {
     let report = analyze_change_surface(
         &[
-            "catalog/resources/device.toml".into(),
+            "catalog/resources/post.toml".into(),
             "crates/ryframe-api/src/openapi.rs".into(),
         ],
         &[],
@@ -916,7 +916,7 @@ fn workspace_change_surface_policy_is_valid_and_versioned() {
     );
     assert!(
         policy
-            .full_invalidation_reason(RepositoryKind::Backend, "catalog/resources/device.toml")
+            .full_invalidation_reason(RepositoryKind::Backend, "catalog/resources/post.toml")
             .is_none()
     );
 }

@@ -1,5 +1,10 @@
 [alias]
 xtask = "run --locked --target-dir target/xtask-run -p xtask --"
+serve = "run -p ryframe --bin ryframe"
+worker = "run -p ryframe --bin ryframe-worker --no-default-features --features bin-worker"
+migrate = "run -p ryframe --bin ryframe-migrate --no-default-features --features bin-migrate"
+reset = "run -p ryframe --bin ryframe-reset --no-default-features --features bin-reset"
+generate = "run -p ryframe-generator --bin ryframe-generate"
 
 [target.x86_64-pc-windows-msvc]
 linker = "rust-lld.exe"

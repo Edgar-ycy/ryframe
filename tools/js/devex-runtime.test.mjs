@@ -17,12 +17,8 @@ test('契约 operation 使用真实前缀且不手写 URL', async () => {
   const catalog = await operationCatalog(process.cwd())
   assert.deepEqual(catalog.get('get_system_posts'), { method: 'GET', path: '/api/v1/system/posts' })
   assert.deepEqual(catalog.get('get_common_shell_settings'), { method: 'GET', path: '/api/v1/common/shell-settings' })
-  assert.deepEqual(catalog.get('get_business_devices'), {
-    method: 'GET',
-    path: '/api/v1/business/devices',
-  })
   assert.deepEqual(catalog.get('get_auth_tenants'), { method: 'GET', path: '/api/v1/auth/tenants' })
-  assert.equal(catalog.size, 197)
+  assert.equal(catalog.size, 192)
 })
 
 test('下载按流计数，大 JSON 失败且不积累大文件内容', async () => {

@@ -63,10 +63,5 @@ toml.workspace = true
 tower = { workspace = true, features = ["util"] }
 ryframe-application = { path = "../ryframe-application", default-features = false, features = ["test-support"] }
 
-[[bin]]
-name = "export_openapi"
-path = "src/bin/export_openapi.rs"
-test = false
-
 [lints]
 workspace = true

@@ -6,7 +6,7 @@
 
 RyFrame 是面向企业后台的 Rust 2024 服务端，与 RyFrame-Vue3 配套使用。它提供认证授权、系统管理、多租户、异步任务、筛选导出、对象存储和可观测性能力。
 
-项目运行时以 Rust 为唯一业务实现语言：API、Worker、迁移、生成器和开发编排均由 Rust workspace 与 `cargo xtask` 提供。`tools/` 不承载产品运行时逻辑，只保存构建检查、契约生成、CI、恢复演练和真实资源验收所需的辅助实现；Python 与 Node 文件仅在这些维护流程中被 Rust 入口按需调用。
+项目运行时以 Rust 为唯一业务实现语言。API、Worker、迁移、重建和业务生成器均有独立 Rust 二进制；`cargo xtask` 只用于 RyFrame 自身的检查、构建、CI、性能、恢复和发布维护。
 
 ## 当前项目状态
 
@@ -30,16 +30,15 @@ API、Worker、迁移和维护程序按 feature 定向构建；标准资源生�
 
 ```powershell
 $env:APP_ENV = "dev"
-cargo xtask data migrate verify
-cargo xtask dev
+cargo migrate -- control verify
+cargo serve
 ```
 
-`cargo xtask data migrate verify` 校验控制库结构，不修改数据库。需要更新本地数据库时运行 `cargo xtask data migrate up`；租户数据目标可使用 `cargo xtask data migrate verify tenant-data --all` 校验。
+`cargo migrate -- control verify` 校验控制库结构，不修改数据库。确认迁移后使用 `cargo migrate -- control up`。租户库必须明确指定配置中的目标键，例如 `cargo migrate -- tenant-data verify --target <目标键>`。
 
-`cargo xtask dev` 只管理后端 API、Worker 及其进程树，并在后端修改后完成探活再切换版本。按 `Ctrl+C` 可停止全部后端进程。前端需要在 `ryframe-vue3` 仓库中单独运行 `corepack pnpm dev`。
+`cargo serve` 只启动后端 API。需要 Worker 时在另一个终端运行 `cargo worker`；前端在 `ryframe-vue3` 仓库中单独运行 `corepack pnpm dev`。
 
-排障时仍通过 `cargo xtask dev` 管理 API、Worker 与其进程树；维护二进制的专用操作按职责从
-`cargo xtask data --help` 进入，避免绕开运行收据和 ownership 核验。
+非生产重建通过 `cargo reset -- <参数>` 执行。备份、恢复、性能和发布演练属于框架维护流程，按运维文档使用 `cargo xtask`。
 
 ## 开发与检查
 
@@ -78,19 +77,17 @@ cargo xtask generate api --write
 
 完成同步后，在前端运行消费者检查并进行浏览器联调。请求格式、认证方式和稳定错误码见 [API 指南](docs/api.md)。
 
-## 开发标准资源
+## 创建自己的业务 crate
 
-标准 CRUD 资源通过资源清单离线生成。预览和检查都只读，只有显式的 `--write` 会更新生成结果：
+RyFrame 不内置示例业务 crate。开发者在 `crates/` 下按业务域创建一个或多个普通库 crate：
 
 ```powershell
-cargo xtask generate resource post
-cargo xtask generate resource post --check
-cargo xtask generate resource --all --check
-cargo xtask generate resource post --write
-cargo xtask generate resource post --explain
+cargo new crates/order-business --lib
+cargo generate -- resource --package order-business
+cargo generate -- resource --package order-business --model Order --write
 ```
 
-资源清单位于 `catalog/resources/`。新业务资源将 `resource.module` 设为 `business`，生成器会把应用服务、SeaORM Repository、API 与运行时装配写入 `crates/business/`，框架源码保持独立；Device 是可直接参考的租户业务 CRUD 示例。命令可在工作区根目录或任一业务 crate 中执行。Post 和 Notice 保留为框架内置标准资源示例；导出、消息发布等特殊行为使用普通 Rust 用例扩展。完整流程见[开发指南](docs/development.md)。
+业务 crate 在 `Cargo.toml` 中声明 `kind = "business"` 和模块名，用 Rust `ResourceModel` 维护模型。生成器可从工作区根目录或业务 crate 的任意子目录运行；预览默认只显示差异，只有 `--write` 更新 `src/generated/`、`migrations/` 和 ownership。手写代码放在 `src/resources/` 与 `src/extensions/`，不会被生成器覆盖。随后只需在 `crates/ryframe/Cargo.toml` 添加依赖，并在 `business_modules()` 中加入 `order_business::module()`。完整结构和代码见[开发指南](docs/development.md#创建业务-crate)。
 
 ## 文档
 

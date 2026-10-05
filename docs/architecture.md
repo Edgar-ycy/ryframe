@@ -35,6 +35,7 @@ HTTP 层把请求解析为明确的 DTO，再调用 application 用例。用例�
 | `ryframe-adapters` | Redis、对象存储、表格、限流、本地化和遥测 |
 | `ryframe-api` | Axum 路由、DTO、OpenAPI、extractor 和传输中间件 |
 | `ryframe` | API、Worker、迁移和重建的启动装配 |
+| `ryframe-sdk` | 使用者业务 crate 的稳定资源、路由、持久化与迁移扩展接口 |
 | `ryframe-generator` | 标准资源的离线生成；默认构建不包含数据库驱动 |
 
 ## 进程编译面
@@ -65,15 +66,18 @@ Worker 的健康状态模型与数据库监控端口位于 application，不依�
 
 ## 选择开发方式
 
-字段、筛选、排序和普通 CRUD 行为可由资源清单表达时，使用 `cargo xtask generate resource`。框架内置资源保留在原有分层；`module = "business"` 的租户业务资源分别生成到 `crates/business/ryframe-business-application`、`ryframe-business-db` 和 `ryframe-business-api`，再由 `ryframe-business-runtime` 装配到 `/api/v1/business`。Device 展示了完整业务链路，生成结果包含 SeaORM 持久化、应用服务、API、权限资产和前端标准页面。日常资源命令只使用生成器的默认离线能力；既有 MySQL 表结构读取被隔离在可选的 `schema-import` feature 中，只产生待人工确认的草案，不进入默认生成依赖闭包。
+RyFrame 官方源码不内置业务示例。开发者在 `crates/` 下创建按业务域命名的普通 crate，例如 `order-business`、`inventory-business`，并通过 `ryframe-sdk` 使用框架扩展接口。一个业务 crate 默认可以同时包含模型、用例、Repository、Handler、路由和迁移；业务复杂后再按实际边界拆分。
+
+业务模块通过普通 Cargo 依赖显式接入。`crates/ryframe` 是唯一组合根，`business_modules()` 是唯一注册表；API、Worker 和迁移程序共用该列表。该结构不会使用运行时目录扫描、自动链接注册或构建脚本改写源码，Cargo 依赖图和模块依赖图都可以静态检查无环。
+
+标准 CRUD 从手写 Rust `ResourceModel` 生成到业务 crate 自己的 `src/generated/` 与 `migrations/`。目录按 `entities`、`dto`、`repositories`、`services`、`handlers`、`openapi` 分类，便于阅读；`resources/` 和 `extensions/` 始终由开发者维护。默认 catalog 编译只依赖轻量 SDK，不引入数据库或网络 runtime。
 
 需要事务编排、外部连接、异步任务或特殊状态机时，使用自定义用例：
 
-1. 在 business application 定义请求、结果和业务流程。
-2. 需要外部能力时定义端口，在 business DB 或框架 adapters 中实现。
-3. 在 business runtime 构造实现并注入应用服务。
-4. 在 business API 增加 DTO、路由和 OpenAPI 描述；后台执行则由 Worker 调用同一用例。
-5. 同步前端契约并完成联调。
+1. 在业务 crate 的 `extensions/` 定义请求、结果和业务流程。
+2. 需要外部能力时定义端口并在该业务 crate 实现，框架能力通过 `ryframe-sdk` 使用。
+3. 在 `module()` 中装配路由、OpenAPI 和迁移；后台执行由 Worker 从同一模块注册表取得能力。
+4. 同步前端契约并完成联调。
 
 标准资源也可以保留一个强类型扩展，例如 Post 导出或 Notice 消息发布；其余常规 CRUD 继续由资源清单生成。
 

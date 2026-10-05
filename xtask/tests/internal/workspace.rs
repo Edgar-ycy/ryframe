@@ -35,12 +35,21 @@ fn daily_cargo_aliases_lock_dependencies_and_isolate_the_runner() {
             line.starts_with("xtask = \"run --locked --target-dir target/xtask-run ")
         })
     );
-    for removed in ["dev", "verify", "resource", "api-sync", "migrate"] {
+    for removed in ["dev", "verify", "resource", "api-sync"] {
         assert!(
             !config
                 .lines()
                 .any(|line| line.starts_with(&format!("{removed} =")))
         );
+    }
+    for (alias, command) in [
+        ("serve", "run -p ryframe --bin ryframe"),
+        ("worker", "run -p ryframe --bin ryframe-worker --no-default-features --features bin-worker"),
+        ("migrate", "run -p ryframe --bin ryframe-migrate --no-default-features --features bin-migrate"),
+        ("reset", "run -p ryframe --bin ryframe-reset --no-default-features --features bin-reset"),
+        ("generate", "run -p ryframe-generator --bin ryframe-generate"),
+    ] {
+        assert!(config.lines().any(|line| line == format!("{alias} = \"{command}\"")));
     }
 }
 

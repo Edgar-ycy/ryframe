@@ -135,7 +135,7 @@ fn export_current_openapi(backend_dir: &Path, output: &Path) -> Result<()> {
             "--target-dir",
             target_dir,
             "-p",
-            "ryframe-api",
+            "ryframe",
             "--bin",
             "export_openapi",
             "--",

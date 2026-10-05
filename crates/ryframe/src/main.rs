@@ -57,6 +57,7 @@ async fn main() -> Result<(), AppError> {
     if run_mode == boot::startup::ApiRunMode::Healthcheck {
         return ryframe::healthcheck::probe_from_env("APP_APP_PORT", 8080);
     }
+    let _business_modules = ryframe::business::registered_business_modules()?;
     ryframe::crypto::install_crypto_provider()?;
     install_process_hooks()?;
     let startup = load_startup(run_mode)?;
@@ -210,6 +211,7 @@ async fn prepare_runtime(
     )?;
     let (server_info, server_info_sampler) =
         ryframe_adapters::monitor::ServerInfoSampler::spawn(shutdown_receiver.clone()).await?;
+    let business_database = database.clone();
     let state = boot::app_state::assemble(boot::app_state::AppStateAssembly {
         database,
         config: Arc::new(startup.config.clone()),
@@ -247,25 +249,25 @@ async fn prepare_runtime(
             )
         })
         .flatten();
-    let router = build_router(state, tenant_database, limiter.rate_limit_state)?;
-
+    let router = build_router(
+        state,
+        business_database,
+        tenant_database,
+        limiter.rate_limit_state,
+    )?;
     let listener = bind_listener(startup).await?;
-
-    let backup_health_collector = startup.starts_background_tasks().then(|| {
-        boot::backup::spawn(
-            backup_database,
-            startup.config.scope_id.as_str().to_owned(),
-            backup_health,
-            shutdown_receiver.clone(),
-        )
-    });
-
-    let readiness_monitor = boot::readiness::spawn(
+    let backup_health_collector = start_backup_health_collector(
+        startup,
+        backup_database,
+        backup_health,
+        &shutdown_receiver,
+    );
+    let readiness_monitor = start_readiness_monitor(
         readiness_database,
         readiness_redis,
-        Some(readiness_file),
+        readiness_file,
         readiness_cache,
-        shutdown_receiver.clone(),
+        &shutdown_receiver,
     );
     Ok(ApiRuntime {
         listener,
@@ -284,13 +286,51 @@ async fn prepare_runtime(
     })
 }
 
+fn start_backup_health_collector(
+    startup: &ApiStartup,
+    database: ryframe_db::ControlDatabaseCluster,
+    health: ryframe_application::ports::backup::BackupHealthCache,
+    shutdown: &watch::Receiver<bool>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    startup.starts_background_tasks().then(|| {
+        boot::backup::spawn(
+            database,
+            startup.config.scope_id.as_str().to_owned(),
+            health,
+            shutdown.clone(),
+        )
+    })
+}
+
+fn start_readiness_monitor(
+    database: Arc<dyn ryframe_application::ports::health::DatabaseMonitor>,
+    redis: Option<ryframe_adapters::RedisClient>,
+    file: Arc<ryframe_application::system::content::FileService>,
+    cache: ryframe_application::ports::health::DependencyHealthCache,
+    shutdown: &watch::Receiver<bool>,
+) -> tokio::task::JoinHandle<()> {
+    boot::readiness::spawn(database, redis, Some(file), cache, shutdown.clone())
+}
+
 fn build_router(
     state: ryframe_api::AppState,
+    control_database: ryframe_db::ControlDatabaseCluster,
     tenant_database: Arc<ryframe_tenant_db::TenantDatabaseRouter>,
     rate_limit_state: ryframe_api::middleware::rate_limit::RateLimitState,
 ) -> Result<axum::Router, AppError> {
-    let business = ryframe_business_runtime::build(state.clone(), tenant_database)?;
-    app::build_app_with_business(state, rate_limit_state, business.router, business.openapi)
+    let modules = ryframe::business::registered_business_modules()?;
+    let mut business_router = axum::Router::new();
+    for module in &modules {
+        business_router = business_router.merge(module.router(
+            ryframe_sdk::BusinessRuntimeContext {
+                state: state.clone(),
+                control_database: control_database.clone(),
+                tenant_database: tenant_database.clone(),
+            },
+        )?);
+    }
+    let openapi = ryframe_sdk::compose_openapi(ryframe_api::openapi::document(), &modules)?;
+    app::build_app_with_business(state, rate_limit_state, business_router, openapi)
 }
 
 async fn bind_listener(startup: &ApiStartup) -> Result<tokio::net::TcpListener, AppError> {

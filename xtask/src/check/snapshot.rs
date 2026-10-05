@@ -59,8 +59,8 @@ pub(super) fn export_and_verify_backend_snapshots(
             "cargo",
             &backend_snapshot_export_args(
                 target_dir,
-                "ryframe-business-api",
-                "export_business_openapi",
+                "ryframe",
+                "export_openapi",
                 openapi,
             ),
         )?;

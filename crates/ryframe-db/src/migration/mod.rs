@@ -25,7 +25,7 @@ pub use access_catalog::{
 pub use baseline_contract::ddl_statements as control_ddl_statements;
 pub use schema::{
     expected_extra, extract_column_type, normalize_check_clause, normalize_column_type,
-    verify_current_schema,
+    register_business_tables, verify_current_schema,
 };
 #[cfg(feature = "migration")]
 pub use seeder::{mysql_snapshot_sql, seed, validate_seed_statements};

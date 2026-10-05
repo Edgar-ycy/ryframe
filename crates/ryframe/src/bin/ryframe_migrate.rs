@@ -4,6 +4,7 @@
 //! 进程继续使用 `database.migration_mode = "verify"`，不会在启动时遍历独立目标。
 
 use ryframe_config::{AppConfig, Environment, TenantDatabaseTargetKind};
+use ryframe_sdk::{BusinessMigrationScope, RyFrameBusinessModule};
 use ryframe_tenant_db::TenantDatabaseTargetRegistry;
 use sea_orm::DatabaseConnection;
 
@@ -38,10 +39,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let environment = Environment::from_env()?;
     let config = AppConfig::load_from_env(environment)?;
+    let business_modules = ryframe::business::registered_business_modules()?;
     match command.scope {
-        MigrationScope::Control => run_control(command.operation, &config).await?,
+        MigrationScope::Control => {
+            run_control(command.operation, &config, &business_modules).await?
+        }
         MigrationScope::TenantData(selection) => {
-            run_tenant_data(command.operation, selection, &config).await?
+            run_tenant_data(command.operation, selection, &config, &business_modules).await?
         }
     }
     Ok(())
@@ -73,6 +77,7 @@ fn parse_command(args: Vec<String>) -> Result<Command, Box<dyn std::error::Error
 async fn run_control(
     operation: Operation,
     config: &AppConfig,
+    business_modules: &[RyFrameBusinessModule],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let database = ryframe_db::connection::connect_with_sql_logging(
         &config.database.primary,
@@ -95,6 +100,14 @@ async fn run_control(
                 print_control_status("control", &status);
             }
         }
+        run_business_migrations(
+            operation,
+            BusinessMigrationScope::Control,
+            &database,
+            business_modules,
+            "control",
+        )
+        .await?;
         Ok::<(), sea_orm::DbErr>(())
     }
     .await;
@@ -108,6 +121,7 @@ async fn run_tenant_data(
     operation: Operation,
     selection: TargetSelection,
     config: &AppConfig,
+    business_modules: &[RyFrameBusinessModule],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let registry = TenantDatabaseTargetRegistry::new(
         &config.tenant_data,
@@ -132,14 +146,28 @@ async fn run_tenant_data(
                     config.database.sql_slow_threshold_ms,
                 )
                 .await?;
-                let result = run_tenant_data_operation(operation, &target, &database, false).await;
+                let result = run_tenant_data_operation(
+                    operation,
+                    &target,
+                    &database,
+                    false,
+                    business_modules,
+                )
+                .await;
                 let close_result = database.close().await;
                 result?;
                 close_result?;
             }
             Some(TenantDatabaseTargetKind::Mysql) => {
                 let lease = registry.acquire(&target).await?;
-                run_tenant_data_operation(operation, &target, lease.connection(), true).await?;
+                run_tenant_data_operation(
+                    operation,
+                    &target,
+                    lease.connection(),
+                    true,
+                    business_modules,
+                )
+                .await?;
                 drop(lease);
             }
             None => {
@@ -155,6 +183,7 @@ async fn run_tenant_data_operation(
     target: &str,
     database: &DatabaseConnection,
     mysql_target: bool,
+    business_modules: &[RyFrameBusinessModule],
 ) -> Result<(), sea_orm::DbErr> {
     match operation {
         Operation::Up => {
@@ -181,6 +210,59 @@ async fn run_tenant_data_operation(
             }
             let status = ryframe_tenant_db::migration::status(database).await?;
             print_tenant_data_status(&format!("tenant-data/{target}"), &status);
+        }
+    }
+    run_business_migrations(
+        operation,
+        BusinessMigrationScope::Tenant,
+        database,
+        business_modules,
+        &format!("tenant-data/{target}"),
+    )
+    .await?;
+    Ok(())
+}
+
+async fn run_business_migrations(
+    operation: Operation,
+    scope: BusinessMigrationScope,
+    database: &DatabaseConnection,
+    modules: &[RyFrameBusinessModule],
+    target: &str,
+) -> Result<(), sea_orm::DbErr> {
+    for module in modules {
+        for migration in module
+            .migrations()
+            .iter()
+            .filter(|migration| migration.scope() == scope)
+        {
+            let result = match operation {
+                Operation::Up => migration.up(database).await,
+                Operation::Verify => migration.verify(database).await,
+                Operation::Status => {
+                    let status = migration.status(database).await.map_err(|error| {
+                        sea_orm::DbErr::Custom(format!(
+                            "business migration {} for {target} failed: {error}",
+                            module.name()
+                        ))
+                    })?;
+                    println!(
+                        "scope={target} module={} applied={} expected={} current={} missing={}",
+                        module.name(),
+                        status.applied,
+                        status.expected,
+                        status.is_current(),
+                        display_versions(&status.missing),
+                    );
+                    Ok(())
+                }
+            };
+            result.map_err(|error| {
+                sea_orm::DbErr::Custom(format!(
+                    "business migration {} for {target} failed: {error}",
+                    module.name()
+                ))
+            })?;
         }
     }
     Ok(())

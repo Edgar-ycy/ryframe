@@ -11,10 +11,7 @@ use ryframe_application::generated::GeneratedPersistencePorts;
 #[cfg(feature = "migration")]
 use sea_orm_migration::MigrationTrait;
 
-#[cfg(feature = "migration")]
-pub mod business_device_migration;
-
-pub const MIGRATION_NAMES: &[&str] = &["m_resource_initial_device"];
+pub const MIGRATION_NAMES: &[&str] = &[];
 
 #[cfg(feature = "repositories")]
 pub mod entities {}
@@ -29,5 +26,5 @@ pub fn register_ports(
 
 #[cfg(feature = "migration")]
 pub fn migrations() -> Vec<Box<dyn MigrationTrait>> {
-    vec![Box::new(business_device_migration::Migration)]
+    vec![]
 }

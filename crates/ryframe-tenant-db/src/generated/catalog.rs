@@ -3,30 +3,7 @@
 
 use crate::migration::TenantDataTableDescriptor;
 
-pub const GENERATED_TENANT_DATA_TABLES: &[TenantDataTableDescriptor] = &[
-    TenantDataTableDescriptor {
-        table: "biz_device",
-        copy_order: 1,
-        tenant_column: "tenant_id",
-        primary_key_cursor_columns: &["tenant_id", "id"],
-        checksum_columns: &[
-            "tenant_id",
-            "id",
-            "name",
-            "status",
-            "created_at",
-            "updated_at",
-            "del_flag",
-        ],
-        column_types: &[
-            "varchar", "bigint", "varchar", "int", "datetime", "datetime", "int",
-        ],
-        has_generated_columns: false,
-        foreign_key_dependencies: &[],
-        foreign_keys: &[],
-        schema_canonical: "v2|table=\"biz_device\"|engine=\"innodb\"|charset=\"utf8mb4\"|collation=\"utf8mb4_general_ci\"|columns=[\"tenant_id\":\"varchar(64)\":\"NO\":Some(\"utf8mb4\"):Some(\"utf8mb4_general_ci\"):\"PRI\":None:\"\":\"\";\"id\":\"bigint\":\"NO\":None:None:\"PRI\":None:\"\":\"\";\"name\":\"varchar(100)\":\"NO\":Some(\"utf8mb4\"):Some(\"utf8mb4_general_ci\"):\"\":None:\"\":\"\";\"status\":\"int\":\"NO\":None:None:\"\":Some(\"1\"):\"\":\"\";\"created_at\":\"datetime(6)\":\"NO\":None:None:\"\":None:\"\":\"\";\"updated_at\":\"datetime(6)\":\"YES\":None:None:\"\":None:\"\":\"\";\"del_flag\":\"int\":\"NO\":None:None:\"\":Some(\"0\"):\"\":\"\";]|indexes=[\"idx_device_tenant_status\":\"tenant_id\":1:1:\"btree\":None:\"YES\";\"idx_device_tenant_status\":\"status\":2:1:\"btree\":None:\"YES\";\"PRIMARY\":\"tenant_id\":1:0:\"btree\":None:\"YES\";\"PRIMARY\":\"id\":2:0:\"btree\":None:\"YES\";\"uk_device_tenant_name\":\"tenant_id\":1:0:\"btree\":None:\"YES\";\"uk_device_tenant_name\":\"name\":2:0:\"btree\":None:\"YES\";]|constraints=[\"PRIMARY\":\"PRIMARY KEY\":\"YES\";\"uk_device_tenant_name\":\"UNIQUE\":\"YES\";]|checks=[]|foreign_keys=[]",
-    },
-];
+pub const GENERATED_TENANT_DATA_TABLES: &[TenantDataTableDescriptor] = &[];
 
 pub const GENERATED_TENANT_DATA_SCHEMA_FINGERPRINT: &str =
-    "d70d50029e0500cbb1742e34a8b179acb4ec3680346fa341c40001ce7018ba91";
+    "a0a5cf5e7aae4ec0cdfe15765d450539dd32e7b7119846aac319ec98e122b04e";

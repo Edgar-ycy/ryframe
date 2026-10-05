@@ -497,6 +497,31 @@ def workspace_edges(packages: dict[str, dict[str, Any]]) -> set[tuple[str, str]]
     }
 
 
+def business_packages(
+    packages: dict[str, dict[str, Any]], errors: list[str]
+) -> set[str]:
+    """识别并校验使用者业务 crate；它们不占用框架核心包数量。"""
+
+    result: set[str] = set()
+    for package_name, package in sorted(packages.items()):
+        metadata = package.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        ryframe = metadata.get("ryframe")
+        if not isinstance(ryframe, dict) or ryframe.get("kind") != "business":
+            continue
+        module = ryframe.get("module")
+        if not isinstance(module, str) or not re.fullmatch(r"[a-z][a-z0-9_-]*", module):
+            errors.append(f"业务 crate {package_name} 的 metadata.ryframe.module 无效")
+        manifest = Path(package["manifest_path"]).resolve()
+        try:
+            manifest.relative_to(ROOT / "crates")
+        except ValueError:
+            errors.append(f"业务 crate {package_name} 必须位于 crates/ 下")
+        result.add(package_name)
+    return result
+
+
 def validate_active_workspace(
     active_profile: str,
     profile: dict[str, Any],
@@ -504,27 +529,32 @@ def validate_active_workspace(
     errors: list[str],
 ) -> set[tuple[str, str]]:
     actual_packages = set(packages)
+    business = business_packages(packages, errors)
+    core_packages = actual_packages - business
     expected_packages = profile.get("packages", set())
-    if len(actual_packages) != profile.get("expected_count"):
+    if len(core_packages) != profile.get("expected_count"):
         errors.append(
-            f"工作区包数漂移：profile={active_profile} 期望 "
-            f"{profile.get('expected_count')}，实际 {len(actual_packages)}"
+            f"工作区核心包数漂移：profile={active_profile} 期望 "
+            f"{profile.get('expected_count')}，实际 {len(core_packages)}"
         )
-    missing = expected_packages - actual_packages
-    unexpected = actual_packages - expected_packages
+    missing = expected_packages - core_packages
+    unexpected = core_packages - expected_packages
     if missing:
         errors.append(f"工作区缺少 profile 包: {', '.join(sorted(missing))}")
     if unexpected:
         errors.append(f"工作区出现未批准包: {', '.join(sorted(unexpected))}")
 
     actual_edges = workspace_edges(packages)
-    forbidden_edges = actual_edges - profile.get("allowed_edges", set())
+    core_edges = {
+        edge for edge in actual_edges if edge[0] in core_packages and edge[1] in core_packages
+    }
+    forbidden_edges = core_edges - profile.get("allowed_edges", set())
     if forbidden_edges:
         errors.append(
             "工作区出现未批准内部依赖边: "
             + ", ".join(f"{a} -> {b}" for a, b in sorted(forbidden_edges))
         )
-    stale_declared_edges = profile.get("allowed_edges", set()) - actual_edges
+    stale_declared_edges = profile.get("allowed_edges", set()) - core_edges
     if stale_declared_edges:
         errors.append(
             "架构事实源包含已不存在的内部依赖边: "
@@ -533,7 +563,7 @@ def validate_active_workspace(
 
     actual_product_tool_edges = {
         edge
-        for edge in actual_edges
+        for edge in core_edges
         if edge[0] in profile.get("products", set())
         and edge[1] in profile.get("tools", set())
     }
@@ -549,6 +579,22 @@ def validate_active_workspace(
         errors.append(
             "产品 -> 工具临时豁免已失效，应删除: "
             + ", ".join(f"{a} -> {b}" for a, b in sorted(stale_exceptions))
+        )
+
+    invalid_business_edges = {
+        edge
+        for edge in actual_edges
+        if (edge[0] in business or edge[1] in business)
+        and not (
+            (edge[0] == "ryframe" and edge[1] in business)
+            or (edge[0] in business and edge[1] == "ryframe-sdk")
+            or (edge[0] in business and edge[1] in business)
+        )
+    }
+    if invalid_business_edges:
+        errors.append(
+            "业务 crate 只能由 ryframe 组合根接入，并且只能依赖 ryframe-sdk 或其他业务 crate: "
+            + ", ".join(f"{a} -> {b}" for a, b in sorted(invalid_business_edges))
         )
 
     for component in cyclic_components(actual_packages, actual_edges):

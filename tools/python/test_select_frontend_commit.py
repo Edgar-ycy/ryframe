@@ -152,7 +152,7 @@ class SelectFrontendCommitTests(unittest.TestCase):
                     "--target-dir",
                     "target/ci/backend",
                     "-p",
-                    "ryframe-api",
+                    "ryframe",
                     "--bin",
                     "export_openapi",
                     "--",

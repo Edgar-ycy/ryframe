@@ -4,7 +4,6 @@ use super::{AssetRoot, GeneratedAsset, aggregate_header, catalog};
 pub(super) fn render(
     resources: &[&ResourceIr],
     all_resources: &[&ResourceIr],
-    business: &[&ResourceIr],
     assets: &mut Vec<GeneratedAsset>,
 ) {
     let aggregate = aggregate_header();
@@ -28,7 +27,7 @@ pub(super) fn render(
             resource: "__catalog__".into(),
             root: AssetRoot::Backend,
             path: format!("crates/{crate_name}/src/generated/mod.rs"),
-            content: render_storage_mod(resources, storage, &aggregate, business),
+            content: render_storage_mod(resources, storage, &aggregate),
         });
     }
     assets.push(GeneratedAsset {
@@ -37,20 +36,6 @@ pub(super) fn render(
         path: "crates/ryframe-tenant-db/src/generated/catalog.rs".into(),
         content: super::tenant_catalog::render(all_resources, &aggregate),
     });
-    for resource in business
-        .iter()
-        .filter(|resource| resource.bootstrap_migration)
-    {
-        assets.push(GeneratedAsset {
-            resource: resource.name.clone(),
-            root: AssetRoot::Backend,
-            path: format!(
-                "crates/ryframe-tenant-db/src/generated/business_{}_migration.rs",
-                resource.name
-            ),
-            content: super::slice::migration(resource, &super::rust_header(resource)),
-        });
-    }
     assets.push(GeneratedAsset {
         resource: "__catalog__".into(),
         root: AssetRoot::Backend,
@@ -123,96 +108,6 @@ pub(super) fn render_shared(resources: &[&ResourceIr], assets: &mut Vec<Generate
     });
 }
 
-pub(super) fn render_business(resources: &[&ResourceIr], assets: &mut Vec<GeneratedAsset>) {
-    let header = aggregate_header();
-    for (path, content) in [
-        (
-            "crates/business/ryframe-business-application/src/generated/mod.rs",
-            render_application_mod(resources, &header),
-        ),
-        (
-            "crates/business/ryframe-business-application/src/generated/services.rs",
-            render_generated_services(resources, &header),
-        ),
-        (
-            "crates/business/ryframe-business-db/src/generated/mod.rs",
-            render_business_database_mod(resources, &header),
-        ),
-        (
-            "crates/business/ryframe-business-api/src/generated/mod.rs",
-            render_api_mod(resources, &header),
-        ),
-        (
-            "crates/business/ryframe-business-api/src/generated/router.rs",
-            render_generated_router(resources, &header)
-                .replace(
-                    "ryframe_application::generated",
-                    "ryframe_business_application::generated",
-                )
-                .replace(
-                    "crate::router::{CapabilityGuardState, capability_guard}",
-                    "ryframe_api::{CapabilityGuardState, capability_guard}",
-                )
-                .replace("crate::state::AppState", "ryframe_api::AppState"),
-        ),
-        (
-            "crates/business/ryframe-business-api/src/generated/openapi.rs",
-            render_generated_openapi(resources, &header),
-        ),
-    ] {
-        assets.push(GeneratedAsset {
-            resource: "__catalog__".into(),
-            root: AssetRoot::Backend,
-            path: path.into(),
-            content,
-        });
-    }
-    assets.push(crud_resources_asset(
-        resources,
-        "crates/business/ryframe-business-api/src/generated/crud_resources.rs",
-    ));
-}
-
-fn render_business_database_mod(resources: &[&ResourceIr], header: &str) -> String {
-    let modules = resources
-        .iter()
-        .map(|resource| {
-            format!(
-                "#[cfg(feature = \"repositories\")]\npub mod {};",
-                resource.name
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    let registration = |storage: StorageKind, source: &str| {
-        let selected = resources
-            .iter()
-            .filter(|resource| resource.storage == storage)
-            .collect::<Vec<_>>();
-        selected
-            .iter()
-            .enumerate()
-            .map(|(index, resource)| {
-                let argument = if index + 1 == selected.len() {
-                    source.to_owned()
-                } else {
-                    format!("{source}.clone()")
-                };
-                format!(
-                    "    ports.{name} = Some({name}::port({argument}));",
-                    name = resource.name
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    let control = registration(StorageKind::ControlRow, "database");
-    let tenant = registration(StorageKind::TenantData, "router");
-    format!(
-        "{header}#[cfg(feature = \"repositories\")]\nuse std::sync::Arc;\n#[cfg(feature = \"repositories\")]\nuse ryframe_business_application::generated::GeneratedPersistencePorts;\n\n{modules}\n\n#[cfg(feature = \"repositories\")]\npub fn control_ports(database: crate::ControlDatabaseCluster, ports: &mut GeneratedPersistencePorts) {{\n    let _ = (&database, &ports);\n{control}\n}}\n\n#[cfg(feature = \"repositories\")]\npub fn tenant_ports(router: Arc<crate::TenantDatabaseRouter>, ports: &mut GeneratedPersistencePorts) {{\n    let _ = (&router, &ports);\n{tenant}\n}}\n"
-    )
-}
-
 fn render_application_mod(resources: &[&ResourceIr], header: &str) -> String {
     let modules = resources
         .iter()
@@ -280,14 +175,13 @@ fn render_storage_mod(
     resources: &[&ResourceIr],
     storage: StorageKind,
     header: &str,
-    business: &[&ResourceIr],
 ) -> String {
     let selected = resources
         .iter()
         .copied()
         .filter(|resource| resource.storage == storage)
         .collect::<Vec<_>>();
-    let mut modules = selected
+    let modules = selected
         .iter()
         .map(|resource| {
             let feature_gate = if resource.bootstrap_migration {
@@ -329,25 +223,18 @@ fn render_storage_mod(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let mut migrations = selected
+    let migrations = selected
         .iter()
         .filter(|resource| resource.bootstrap_migration)
         .map(|resource| format!("        Box::new({}::migration::Migration),", resource.name))
         .collect::<Vec<_>>()
         .join("\n");
-    let mut migration_names = selected
+    let migration_names = selected
         .iter()
         .filter(|resource| resource.bootstrap_migration)
         .map(|resource| format!("    {:?},", super::slice::migration_name(resource)))
         .collect::<Vec<_>>()
         .join("\n");
-    append_business_migrations(
-        storage,
-        business,
-        &mut modules,
-        &mut migrations,
-        &mut migration_names,
-    );
     let arc_import = if storage == StorageKind::TenantData {
         "pub mod catalog;\n\n#[cfg(feature = \"repositories\")]\nuse std::sync::Arc;\n\n"
     } else {
@@ -361,35 +248,6 @@ fn render_storage_mod(
     format!(
         "{header}{arc_import}#[cfg(feature = \"repositories\")]\nuse ryframe_application::generated::GeneratedPersistencePorts;\n#[cfg(feature = \"migration\")]\nuse sea_orm_migration::MigrationTrait;\n\n{modules}\n\npub const MIGRATION_NAMES: &[&str] = &[\n{migration_names}\n];\n\n#[cfg(feature = \"repositories\")]\npub mod entities {{\n{entity_exports}\n}}\n\n#[cfg(feature = \"repositories\")]\npub fn register_ports({parameter_name}: {parameter_type}, ports: &mut GeneratedPersistencePorts) {{\n{empty_body}{registrations}\n}}\n\n#[cfg(feature = \"migration\")]\npub fn migrations() -> Vec<Box<dyn MigrationTrait>> {{\n    vec![\n{migrations}\n    ]\n}}\n"
     )
-}
-
-fn append_business_migrations(
-    storage: StorageKind,
-    business: &[&ResourceIr],
-    modules: &mut String,
-    migrations: &mut String,
-    migration_names: &mut String,
-) {
-    if storage != StorageKind::TenantData {
-        return;
-    }
-    for resource in business
-        .iter()
-        .filter(|resource| resource.bootstrap_migration)
-    {
-        modules.push_str(&format!(
-            "\n#[cfg(feature = \"migration\")]\npub mod business_{}_migration;",
-            resource.name
-        ));
-        migrations.push_str(&format!(
-            "\n        Box::new(business_{}_migration::Migration),",
-            resource.name
-        ));
-        migration_names.push_str(&format!(
-            "\n    {:?},",
-            super::slice::migration_name(resource)
-        ));
-    }
 }
 
 fn render_api_mod(resources: &[&ResourceIr], header: &str) -> String {

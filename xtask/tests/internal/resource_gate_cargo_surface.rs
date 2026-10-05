@@ -9,7 +9,7 @@ fn packages(values: &[&str]) -> BTreeSet<String> {
 fn assert_runtime_contract_targets(clippy: &[String], test: &[String]) {
     for bin in [
         "ryframe",
-        "export_business_openapi",
+        "ryframe-generate",
         "export_openapi",
         "export_mysql_snapshot",
         "xtask",
@@ -19,7 +19,6 @@ fn assert_runtime_contract_targets(clippy: &[String], test: &[String]) {
     assert!(!test.contains(&"--bin".to_owned()));
     for contract in [
         "resource_api_contracts",
-        "openapi_contract",
         "resource_application_contracts",
         "resource_tenant_contracts",
     ] {
@@ -44,15 +43,12 @@ fn every_workspace_package_has_one_resource_gate_disposition() {
         "ryframe-api",
         "ryframe-application",
         "ryframe-auth",
-        "ryframe-business-api",
-        "ryframe-business-application",
-        "ryframe-business-db",
-        "ryframe-business-runtime",
         "ryframe-config",
         "ryframe-db",
         "ryframe-generator",
         "ryframe-kernel",
         "ryframe-macro",
+        "ryframe-sdk",
         "ryframe-tenant-db",
         "xtask",
     ] {
@@ -84,10 +80,7 @@ fn resource_cargo_surface_selects_only_runtime_api_contracts() {
         "ryframe-adapters",
         "ryframe-api",
         "ryframe-application",
-        "ryframe-business-api",
-        "ryframe-business-application",
-        "ryframe-business-db",
-        "ryframe-business-runtime",
+        "ryframe-sdk",
         "ryframe-db",
         "ryframe-generator",
         "ryframe-tenant-db",
@@ -104,9 +97,8 @@ fn resource_cargo_surface_selects_only_runtime_api_contracts() {
     for feature in [
         "ryframe/bin-api",
         "ryframe-application/test-support",
-        "ryframe-business-application/test-support",
-        "ryframe-business-db/migration",
-        "ryframe-business-db/repositories",
+        "ryframe-sdk/api",
+        "ryframe-sdk/migration",
         "ryframe-db/migration",
         "ryframe-db/repositories",
         "ryframe-tenant-db/migration",

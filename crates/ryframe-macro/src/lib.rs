@@ -35,6 +35,7 @@
 //! ```
 
 mod auto_fill;
+mod resource_model;
 mod route;
 
 use proc_macro::TokenStream;
@@ -79,6 +80,12 @@ use syn::parse_macro_input;
 #[proc_macro_derive(AutoFill, attributes(auto_fill))]
 pub fn derive_auto_fill(input: TokenStream) -> TokenStream {
     auto_fill::expand_auto_fill(input)
+}
+
+/// 为手写业务资源模型生成只读描述符。宏不访问文件、网络或数据库。
+#[proc_macro_derive(ResourceModel, attributes(resource))]
+pub fn derive_resource_model(input: TokenStream) -> TokenStream {
+    resource_model::expand(input)
 }
 
 /// 声明 GET 路由。将 `#[perm("code")]` 紧接放在该属性下方，以为生成的路由绑定权限。

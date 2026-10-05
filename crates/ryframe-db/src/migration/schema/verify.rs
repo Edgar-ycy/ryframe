@@ -1,10 +1,43 @@
 use sea_orm::{ConnectionTrait, DbBackend, DbErr};
+use std::{
+    collections::BTreeSet,
+    sync::{OnceLock, RwLock},
+};
 
 use super::{
     expected::expected_schema,
     inspect::{actual_checks, actual_columns, actual_foreign_keys, actual_indexes, actual_tables},
     normalize::{compatible_column_type, nullable_label},
 };
+
+static BUSINESS_TABLES: OnceLock<RwLock<BTreeSet<String>>> = OnceLock::new();
+
+pub fn register_business_tables<'a>(tables: impl IntoIterator<Item = &'a str>) -> Result<(), DbErr> {
+    let registry = BUSINESS_TABLES.get_or_init(|| RwLock::new(BTreeSet::new()));
+    let mut registry = registry
+        .write()
+        .map_err(|_| DbErr::Custom("control business table registry is poisoned".into()))?;
+    for table in tables {
+        if table.is_empty()
+            || !table
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        {
+            return Err(DbErr::Custom(format!(
+                "invalid control business table: {table}"
+            )));
+        }
+        registry.insert(table.to_owned());
+    }
+    Ok(())
+}
+
+fn registered_business_tables() -> BTreeSet<String> {
+    BUSINESS_TABLES
+        .get()
+        .and_then(|registry| registry.read().ok().map(|tables| tables.clone()))
+        .unwrap_or_default()
+}
 
 /// 校验完整的规范 MySQL 指纹。
 ///
@@ -55,6 +88,7 @@ fn verify_tables(
     actual_tables: &std::collections::BTreeMap<String, super::types::ActualTable>,
     problems: &mut Vec<String>,
 ) {
+    let business_tables = registered_business_tables();
     for (table, expected_table) in &expected.tables {
         let Some(actual) = actual_tables.get(table) else {
             problems.push(format!("missing table {table}"));
@@ -80,7 +114,11 @@ fn verify_tables(
         }
     }
     for table in actual_tables.keys() {
-        if table != "seaql_migrations" && !expected.tables.contains_key(table) {
+        if table != "seaql_migrations"
+            && table != "ryframe_business_migration"
+            && !business_tables.contains(table)
+            && !expected.tables.contains_key(table)
+        {
             problems.push(format!("unexpected application table {table}"));
         }
     }

@@ -403,6 +403,26 @@ class CrateBoundaryPolicyTests(unittest.TestCase):
             "second": {"manifest_path": str(second), "dependencies": []},
         }
 
+    def test_business_package_is_excluded_from_core_count_and_has_strict_edges(self) -> None:
+        packages = self.packages()
+        business_manifest = MODULE.ROOT / "crates/order-business/Cargo.toml"
+        packages["order-business"] = {
+            "manifest_path": str(business_manifest),
+            "metadata": {"ryframe": {"kind": "business", "module": "order"}},
+            "dependencies": [
+                {"path": str(Path(packages["second"]["manifest_path"]).parent)}
+            ],
+        }
+        packages["first"]["dependencies"].append({"path": str(business_manifest.parent)})
+        profile = self.profile({("first", "second")})
+        profile["packages"] = {"first", "second"}
+        errors: list[str] = []
+
+        MODULE.validate_active_workspace("final", profile, packages, errors)
+
+        self.assertTrue(any("业务 crate 只能" in error for error in errors))
+        self.assertFalse(any("核心包数漂移" in error for error in errors))
+
     def profile(self, edges: set[tuple[str, str]]) -> dict[str, object]:
         return {
             "packages": {"first", "second"},

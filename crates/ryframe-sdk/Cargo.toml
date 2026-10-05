@@ -1,0 +1,41 @@
+[package]
+name = "ryframe-sdk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "RyFrame 业务模块开发接口"
+
+[features]
+default = []
+runtime = ["dep:ryframe-application", "dep:ryframe-kernel"]
+api = ["runtime", "dep:axum", "dep:ryframe-api", "dep:ryframe-db", "dep:ryframe-tenant-db", "dep:serde_json", "dep:utoipa", "dep:validator"]
+migration = ["persistence", "dep:sea-orm-migration"]
+persistence = ["runtime", "dep:async-trait", "dep:ryframe-db", "dep:ryframe-tenant-db", "dep:sea-orm"]
+
+[dependencies]
+async-trait = { workspace = true, optional = true }
+axum = { workspace = true, optional = true }
+chrono = { workspace = true }
+ryframe-api = { path = "../ryframe-api", optional = true }
+ryframe-application = { path = "../ryframe-application", default-features = false, optional = true }
+ryframe-db = { path = "../ryframe-db", default-features = false, features = ["repositories"], optional = true }
+ryframe-kernel = { path = "../ryframe-kernel", optional = true }
+ryframe-macro = { path = "../ryframe-macro" }
+ryframe-tenant-db = { path = "../ryframe-tenant-db", default-features = false, features = ["repositories"], optional = true }
+sea-orm = { workspace = true, optional = true }
+sea-orm-migration = { workspace = true, optional = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, optional = true }
+utoipa = { workspace = true, optional = true }
+validator = { workspace = true, features = ["derive"], optional = true }
+
+[lints]
+workspace = true
+
+[[test]]
+name = "business_module_contract"
+path = "tests/business_module_contract.rs"
+required-features = ["runtime"]

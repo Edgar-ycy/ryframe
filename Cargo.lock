@@ -3157,10 +3157,10 @@ dependencies = [
  "ryframe-api",
  "ryframe-application",
  "ryframe-auth",
- "ryframe-business-runtime",
  "ryframe-config",
  "ryframe-db",
  "ryframe-kernel",
+ "ryframe-sdk",
  "ryframe-tenant-db",
  "same-file",
  "sea-orm",
@@ -3296,60 +3296,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ryframe-business-api"
-version = "0.12.1"
-dependencies = [
- "axum",
- "chrono",
- "ryframe-api",
- "ryframe-business-application",
- "ryframe-kernel",
- "ryframe-macro",
- "serde",
- "serde_json",
- "utoipa",
- "validator",
-]
-
-[[package]]
-name = "ryframe-business-application"
-version = "0.12.1"
-dependencies = [
- "async-trait",
- "chrono",
- "ryframe-application",
- "ryframe-kernel",
-]
-
-[[package]]
-name = "ryframe-business-db"
-version = "0.12.1"
-dependencies = [
- "async-trait",
- "chrono",
- "ryframe-application",
- "ryframe-business-application",
- "ryframe-db",
- "ryframe-kernel",
- "ryframe-tenant-db",
- "sea-orm",
- "sea-orm-migration",
-]
-
-[[package]]
-name = "ryframe-business-runtime"
-version = "0.12.1"
-dependencies = [
- "axum",
- "ryframe-api",
- "ryframe-business-api",
- "ryframe-business-application",
- "ryframe-business-db",
- "ryframe-kernel",
- "ryframe-tenant-db",
-]
-
-[[package]]
 name = "ryframe-config"
 version = "0.12.1"
 dependencies = [
@@ -3419,6 +3365,27 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
+]
+
+[[package]]
+name = "ryframe-sdk"
+version = "0.12.1"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "ryframe-api",
+ "ryframe-application",
+ "ryframe-db",
+ "ryframe-kernel",
+ "ryframe-macro",
+ "ryframe-tenant-db",
+ "sea-orm",
+ "sea-orm-migration",
+ "serde",
+ "serde_json",
+ "utoipa",
+ "validator",
 ]
 
 [[package]]
