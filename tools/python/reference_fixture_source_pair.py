@@ -1,4 +1,4 @@
-"""为已完成的 Device 隔离夹具签发本地来源组合收据。"""
+"""为已完成的 业务 crate 隔离夹具签发本地来源组合收据。"""
 
 from __future__ import annotations
 

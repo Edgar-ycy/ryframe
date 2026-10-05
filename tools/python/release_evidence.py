@@ -42,11 +42,11 @@ def _sha256(value: object) -> str | None:
 def _generated_files(snapshot: dict, name: str) -> dict[str, str]:
     entries = snapshot.get("files")
     if not isinstance(entries, list):
-        raise EvidenceError(f"Device {name} 生成文件摘要不是列表")
+        raise EvidenceError(f"业务 crate {name} 生成文件摘要不是列表")
     files: dict[str, str] = {}
     for entry in entries:
         if not isinstance(entry, dict):
-            raise EvidenceError(f"Device {name} 生成文件摘要无效")
+            raise EvidenceError(f"业务 crate {name} 生成文件摘要无效")
         path, digest = entry.get("path"), _sha256(entry.get("sha256"))
         parsed = PurePosixPath(path) if isinstance(path, str) else None
         if (
@@ -58,7 +58,7 @@ def _generated_files(snapshot: dict, name: str) -> dict[str, str]:
             or digest is None
             or path in files
         ):
-            raise EvidenceError(f"Device {name} 生成文件摘要无效或重复")
+            raise EvidenceError(f"业务 crate {name} 生成文件摘要无效或重复")
         files[path] = digest
     return files
 
@@ -171,30 +171,30 @@ def validate_fixture(
         raise EvidenceError("业务 crate fixture 摘要与发布源码不一致")
     sources, generated_sources = receipt.get("sources"), receipt.get("generated")
     if not isinstance(sources, dict) or not isinstance(generated_sources, dict):
-        raise EvidenceError("Device 缺少源码或生成内容指纹")
+        raise EvidenceError("业务 crate 缺少源码或生成内容指纹")
     generated_files = {}
     for name, expected in (("backend", backend_sha), ("frontend", frontend_sha)):
         source = sources.get(name)
         if not _clean_source(source, expected):
-            raise EvidenceError("Device 必须从本次精确 SHA 的干净源码生成")
+            raise EvidenceError("业务 crate 必须从本次精确 SHA 的干净源码生成")
         generated = generated_sources.get(name)
         if (
             not isinstance(generated, dict)
             or generated.get("head") != expected
             or _sha256(generated.get("patch_sha256")) is None
         ):
-            raise EvidenceError("Device 缺少生成内容的源码指纹")
+            raise EvidenceError("业务 crate 缺少生成内容的源码指纹")
         files = _generated_files(generated, name)
         generated_files[name] = files
         if generated.get("patch_sha256") == EMPTY_SHA256 and not files:
-            raise EvidenceError(f"Device {name} 没有实际生成变化")
+            raise EvidenceError(f"业务 crate {name} 没有实际生成变化")
         missing = set(BUSINESS_OUTPUTS[name]).difference(files)
         if missing:
-            raise EvidenceError(f"Device {name} 缺少必要生成输出：{sorted(missing)}")
+            raise EvidenceError(f"业务 crate {name} 缺少必要生成输出：{sorted(missing)}")
         if any(files[path] == EMPTY_SHA256 for path in BUSINESS_OUTPUTS[name]):
-            raise EvidenceError(f"Device {name} 必要生成输出为空")
+            raise EvidenceError(f"业务 crate {name} 必要生成输出为空")
     if (
         generated_files["backend"]["crates/order-business/src/resources/mod.rs"]
         != fixture_sha256
     ):
-        raise EvidenceError("Device fixture 摘要与隔离工作树中的资源定义不一致")
+        raise EvidenceError("业务 crate fixture 摘要与隔离工作树中的资源定义不一致")

@@ -32,13 +32,13 @@ def service_run(review: dict) -> Path:
         or root.parent != allowed
         or root.name in {"", ".", ".."}
     ):
-        raise ValueError("审阅计划 future_root 必须是 Device 参考夹具目录的直接子目录")
+        raise ValueError("审阅计划 future_root 必须是 业务 crate 参考夹具目录的直接子目录")
     return root / "service-run"
 
 
 def load_prepared_environment(backend: Path, value: Path, secret_files: tuple[str, ...],
                               bound) -> tuple[Path, Path, dict, dict]:
-    """严格读取 Device 参考夹具的唯一已准备环境收据。"""
+    """严格读取 业务 crate 参考夹具的唯一已准备环境收据。"""
     backend = backend.resolve(strict=True)
     requested = value if value.is_absolute() else backend / value
     receipt_path = local_path(backend, str(requested))

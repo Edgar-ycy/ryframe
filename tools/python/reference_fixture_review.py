@@ -48,7 +48,7 @@ def _fixture_execution(backend: Path, fixture_path: Path) -> tuple[Path, dict, P
     generated = fixture.get("generated", {}).get("backend")
     if (not isinstance(generated, dict) or not execution.is_dir()
             or snapshot(execution)[0] != generated):
-        raise ValueError("新 Device 工作树与生成快照不一致")
+        raise ValueError("新 业务 crate 工作树与生成快照不一致")
     return receipt_path, fixture, execution
 
 
@@ -58,7 +58,7 @@ def _future_root(backend: Path, execution: Path, value: Path) -> Path:
     allowed = execution / ".local-tests/reference-fixture"
     if (root.exists() or linked(root) or not root.is_relative_to(allowed)
             or not root.parent.is_dir()):
-        raise ValueError("新运行根目录必须是 Device 参考夹具目录下尚不存在的直接子目录")
+        raise ValueError("新运行根目录必须是 业务 crate 参考夹具目录下尚不存在的直接子目录")
     return root
 
 
@@ -156,7 +156,7 @@ def renew(backend: Path, template_path: Path, fixture_path: Path, future_root: P
             or {"path": str(fixture_file), **file_digest(fixture_file)} != fixture_descriptor
             or read_json(fixture_file) != fixture
             or snapshot(execution)[0] != fixture["generated"]["backend"]):
-        raise ValueError("审阅续签期间模板、Device 收据或生成工作树发生变化")
+        raise ValueError("审阅续签期间模板、业务 crate 收据或生成工作树发生变化")
     return revised
 
 

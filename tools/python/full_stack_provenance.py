@@ -298,23 +298,23 @@ def _archive_business_source(
             "original",
             "generated",
         },
-        "Device 构建来源",
+        "业务 crate 构建来源",
     )
-    fixture_hash = _sha256(fixture_sha256, "发布源码 Device fixture 摘要")
+    fixture_hash = _sha256(fixture_sha256, "发布源码 业务 crate fixture 摘要")
     if fixture_hash == EMPTY_SHA256:
-        raise ValueError("发布源码 Device fixture 不能为空")
+        raise ValueError("发布源码 业务 crate fixture 不能为空")
     if receipt["format_version"] != 1 or receipt["fixture"] != "business":
-        raise ValueError("Device 构建来源格式无效")
+        raise ValueError("业务 crate 构建来源格式无效")
     _, fixture_path = _archive_binding(
         receipt["fixture_receipt"],
-        "Device fixture 收据绑定",
+        "业务 crate fixture 收据绑定",
         filename=FIXTURE_RECEIPT,
         raw=fixture_raw,
     )
     fixture_root = fixture_path.parent
-    roots = _exact(receipt["roots"], {"backend", "frontend"}, "Device 工作树根目录")
+    roots = _exact(receipt["roots"], {"backend", "frontend"}, "业务 crate 工作树根目录")
     root_paths = {
-        name: _archive_path(roots[name], f"Device {name} 工作树")
+        name: _archive_path(roots[name], f"业务 crate {name} 工作树")
         for name in ("backend", "frontend")
     }
     if (
@@ -322,13 +322,13 @@ def _archive_business_source(
         or root_paths["backend"] != fixture_root / "backend"
         or root_paths["frontend"] != fixture_root / "frontend"
     ):
-        raise ValueError("Device 工作树与 fixture 收据路径不匹配")
+        raise ValueError("业务 crate 工作树与 fixture 收据路径不匹配")
 
-    original = _exact(receipt["original"], {"backend", "frontend"}, "Device 原始来源")
-    generated = _exact(receipt["generated"], {"backend", "frontend"}, "Device 生成来源")
+    original = _exact(receipt["original"], {"backend", "frontend"}, "业务 crate 原始来源")
+    generated = _exact(receipt["generated"], {"backend", "frontend"}, "业务 crate 生成来源")
     for name, expected_head in (("backend", backend_sha), ("frontend", frontend_sha)):
-        _clean_archive_snapshot(original[name], f"Device 原始 {name} 来源", expected_head)
-        _generated_archive_snapshot(generated[name], f"Device 生成 {name} 来源", expected_head)
+        _clean_archive_snapshot(original[name], f"业务 crate 原始 {name} 来源", expected_head)
+        _generated_archive_snapshot(generated[name], f"业务 crate 生成 {name} 来源", expected_head)
 
     fixture = _exact(
         fixture_receipt,
@@ -339,7 +339,7 @@ def _archive_business_source(
         fixture["format_version"] != 1
         or fixture["fixture"] != "business"
         or fixture["status"] != "ready"
-        or _sha256(fixture["fixture_sha256"], "归档 Device fixture 摘要") != fixture_hash
+        or _sha256(fixture["fixture_sha256"], "归档 业务 crate fixture 摘要") != fixture_hash
         or fixture["sources"] != original
         or fixture["paths"] != roots
         or fixture["generated"] != generated
@@ -353,7 +353,7 @@ def _archive_business_source(
     for name, expected_path in expected_paths.items():
         binding, path = _archive_binding(definitions[name], f"业务 crate {name} 定义")
         if path != expected_path or binding["sha256"] != fixture_hash:
-            raise ValueError("Device fixture 定义路径或摘要不匹配")
+            raise ValueError("业务 crate fixture 定义路径或摘要不匹配")
     
     files = {entry["path"]: entry["sha256"] for entry in generated["backend"]["files"]}
     if files.get("crates/order-business/src/resources/mod.rs") != fixture_hash:
@@ -501,10 +501,10 @@ def validate_archive_evidence(
 def _stable_snapshots(roots: dict[str, Path], expected: dict) -> dict:
     observed = {name: snapshot(root)[0] for name, root in roots.items()}
     if observed != expected:
-        raise ValueError("Device 生成工作树源码快照与 fixture 收据不匹配")
+        raise ValueError("业务 crate 生成工作树源码快照与 fixture 收据不匹配")
     repeated = {name: snapshot(root)[0] for name, root in roots.items()}
     if repeated != observed:
-        raise ValueError("核验 Device 生成工作树期间源码发生变化")
+        raise ValueError("核验 业务 crate 生成工作树期间源码发生变化")
     return observed
 
 
@@ -614,23 +614,23 @@ def _business_source_evidence(backend: Path, directory: Path) -> dict:
     )
     if receipt["format_version"] != 1 or receipt["fixture"] != "business" or receipt["status"] != "ready":
         raise ValueError("业务 crate fixture 尚未完成或格式不受支持")
-    sources = _exact(receipt["sources"], {"backend", "frontend"}, "Device 原始来源")
-    generated = _exact(receipt["generated"], {"backend", "frontend"}, "Device 生成来源")
-    paths = _exact(receipt["paths"], {"backend", "frontend"}, "Device 工作树路径")
+    sources = _exact(receipt["sources"], {"backend", "frontend"}, "业务 crate 原始来源")
+    generated = _exact(receipt["generated"], {"backend", "frontend"}, "业务 crate 生成来源")
+    paths = _exact(receipt["paths"], {"backend", "frontend"}, "业务 crate 工作树路径")
     roots = {
-        name: _canonical_root(paths[name], fixture_root, f"Device {name} 工作树")
+        name: _canonical_root(paths[name], fixture_root, f"业务 crate {name} 工作树")
         for name in ("backend", "frontend")
     }
     if roots["backend"] != backend or roots["backend"] == roots["frontend"]:
-        raise ValueError("Device fixture 与当前后端工作树不匹配")
+        raise ValueError("业务 crate fixture 与当前后端工作树不匹配")
     for name in ("backend", "frontend"):
-        _snapshot(sources[name], f"Device 原始 {name} 来源")
-        _snapshot(generated[name], f"Device 生成 {name} 来源")
+        _snapshot(sources[name], f"业务 crate 原始 {name} 来源")
+        _snapshot(generated[name], f"业务 crate 生成 {name} 来源")
         if sources[name]["head"] != generated[name]["head"]:
-            raise ValueError(f"Device {name} 原始 SHA 与生成工作树 HEAD 不匹配")
+            raise ValueError(f"业务 crate {name} 原始 SHA 与生成工作树 HEAD 不匹配")
     expected_backend = os.environ.get("RYFRAME_CODE_SHA", "")
     if COMMIT_PATTERN.fullmatch(expected_backend) is None or sources["backend"]["head"] != expected_backend:
-        raise ValueError("Device 后端原始 SHA 与本次验收提交不匹配")
+        raise ValueError("业务 crate 后端原始 SHA 与本次验收提交不匹配")
     fixture_binding = _binding(receipt_path)
     pair = _source_pair(
         directory,
@@ -640,8 +640,8 @@ def _business_source_evidence(backend: Path, directory: Path) -> dict:
         fixture_sources=sources,
     )
     if pair["sources"] != sources:
-        raise ValueError("Device 原始来源与全栈源码组合收据不匹配")
-    fixture_sha = _sha256(receipt["fixture_sha256"], "Device fixture 内容摘要")
+        raise ValueError("业务 crate 原始来源与全栈源码组合收据不匹配")
+    fixture_sha = _sha256(receipt["fixture_sha256"], "业务 crate fixture 内容摘要")
     definitions = {
         "model": _binding(roots["backend"] / BUSINESS_MODEL)
     }
@@ -661,23 +661,23 @@ def _business_source_evidence(backend: Path, directory: Path) -> dict:
 
 
 def reference_fixture_source_pair(backend: Path) -> dict:
-    """为已完成的 Device fixture 签发本地来源组合，不伪装为 CI 运行。"""
+    """为已完成的 业务 crate fixture 签发本地来源组合，不伪装为 CI 运行。"""
     root = backend.resolve(strict=True).parent
     receipt_path = root / FIXTURE_RECEIPT
-    receipt, _ = _read_json(receipt_path, "Device fixture 收据")
+    receipt, _ = _read_json(receipt_path, "业务 crate fixture 收据")
     _exact(
         receipt,
         {"format_version", "fixture", "status", "fixture_sha256", "sources", "paths", "generated"},
-        "Device fixture 收据",
+        "业务 crate fixture 收据",
     )
     if receipt["format_version"] != 1 or receipt["fixture"] != "business" or receipt["status"] != "ready":
-        raise ValueError("Device fixture 尚未完成或格式不受支持")
-    paths = _exact(receipt["paths"], {"backend", "frontend"}, "Device 工作树路径")
-    if _canonical_root(paths["backend"], root, "Device 后端工作树") != backend.resolve():
-        raise ValueError("Device fixture 与当前后端工作树不匹配")
-    sources = _exact(receipt["sources"], {"backend", "frontend"}, "Device 原始来源")
+        raise ValueError("业务 crate fixture 尚未完成或格式不受支持")
+    paths = _exact(receipt["paths"], {"backend", "frontend"}, "业务 crate 工作树路径")
+    if _canonical_root(paths["backend"], root, "业务 crate 后端工作树") != backend.resolve():
+        raise ValueError("业务 crate fixture 与当前后端工作树不匹配")
+    sources = _exact(receipt["sources"], {"backend", "frontend"}, "业务 crate 原始来源")
     for name in ("backend", "frontend"):
-        _clean_archive_snapshot(sources[name], f"Device {name} 原始来源", sources[name].get("head", ""))
+        _clean_archive_snapshot(sources[name], f"业务 crate {name} 原始来源", sources[name].get("head", ""))
     return {
         "format_version": 1,
         "kind": REFERENCE_FIXTURE_SOURCE_PAIR,

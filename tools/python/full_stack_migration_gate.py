@@ -1,4 +1,4 @@
-"""以明确事务锁定位 Device 复制阶段；只控制测试数据库连接，不修改产品状态。"""
+"""以明确事务锁定位 业务 crate 复制阶段；只控制测试数据库连接，不修改产品状态。"""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def validate_pending(rows: list[dict], tenant: str, migration: str) -> dict:
         "job_migration_id": migration,
     }
     if len(rows) != 1 or rows[0] != expected:
-        raise ValueError("迁移并非本次隔离租户的未执行 Device 复制任务")
+        raise ValueError("迁移并非本次隔离租户的未执行 业务 crate 复制任务")
     return rows[0]
 
 
@@ -103,7 +103,7 @@ def hold(backend: Path, directory: Path, tenant: str, migration: str) -> None:
             f"'target',(SELECT COUNT(*) FROM `{target['database']}`.biz_order WHERE tenant_id='{tenant}'))"
         )
         if counts != [{"source": 3, "target": 0}]:
-            raise ValueError("测试必须有恰好三条源 Device，且目标数据为空")
+            raise ValueError("测试必须有恰好三条源 业务 crate，且目标数据为空")
         connection = gate.execute(lock_sql(target["database"], tenant))[0][
             "connection_id"
         ]
@@ -139,7 +139,7 @@ def hold(backend: Path, directory: Path, tenant: str, migration: str) -> None:
                     raise ValueError("gate 检测到多个请求，无法证明唯一复制执行")
                 time.sleep(0.1)
             else:
-                raise TimeoutError("没有观察到 Worker 在本 gate 的 Device 行锁上等待")
+                raise TimeoutError("没有观察到 Worker 在本 gate 的 业务 crate 行锁上等待")
         # stdin EOF 同样退出 with，回滚锁事务；没有后台驻留服务。
 
 

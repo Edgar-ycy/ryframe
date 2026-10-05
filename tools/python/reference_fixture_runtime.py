@@ -1,4 +1,4 @@
-"""在已审阅的 Device 夹具环境中构建并控制唯一的源运行时。"""
+"""在已审阅的 业务 crate 夹具环境中构建并控制唯一的源运行时。"""
 
 from __future__ import annotations
 
@@ -260,9 +260,9 @@ def _validate_browser_request(request: RuntimeRequest) -> None:
         raise RuntimeProtocolError("浏览器绑定必须直接位于本次运行目录")
     if request.operation == "bind":
         if not isinstance(request.run_id, str) or RUN_ID.fullmatch(request.run_id) is None:
-            raise RuntimeProtocolError("Device 浏览器 run id 无效")
+            raise RuntimeProtocolError("业务 crate 浏览器 run id 无效")
         if request.server not in {"dev", "preview"}:
-            raise RuntimeProtocolError("Device 浏览器 server 无效")
+            raise RuntimeProtocolError("业务 crate 浏览器 server 无效")
         if request.browser_binding.name != f"browser-binding-{request.run_id}.json":
             raise RuntimeProtocolError("浏览器绑定文件名与 run id 不一致")
     elif request.run_id is not None or request.server is not None:

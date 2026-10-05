@@ -74,7 +74,7 @@ def assert_history(directory: Path, contract: dict, row: dict) -> dict:
     from full_stack_migration_history_sql import verify_shift
 
     history = json.loads(
-        (directory / f"device-history-{row['migration_id']}.json").read_text(
+        (directory / f"business-history-{row['migration_id']}.json").read_text(
             encoding="utf-8"
         )
     )
@@ -139,7 +139,7 @@ def apply_history(
     row = planned["before"]
     evidence = {key: value for key, value in planned.items() if key != "state"}
     # 在提交前保存原始时间；任何后续失败均保留收据并拒绝重复平移。
-    write_evidence(directory / f"device-history-{row['migration_id']}.json", evidence)
+    write_evidence(directory / f"business-history-{row['migration_id']}.json", evidence)
     session.execute(shift_sql(control, row))
     after = validate_snapshot(
         session.execute(query), contract["tenant_id"], contract["migration_id"]
@@ -201,7 +201,7 @@ def backup_history(
         "provider_ref": provider,
         "tenant_write_fence_held": True,
     }
-    write_evidence(directory / f"device-backup-{row['migration_id']}.json", evidence)
+    write_evidence(directory / f"business-backup-{row['migration_id']}.json", evidence)
     session.execute(register_sql(control, row, provider, artifact["sha256"]))
     session.execute("COMMIT")
     return evidence
@@ -220,7 +220,7 @@ def verify_cleaned(
         finalized=True,
     )
     evidence = json.loads(
-        (directory / f"device-backup-{row['migration_id']}.json").read_text(
+        (directory / f"business-backup-{row['migration_id']}.json").read_text(
             encoding="utf-8"
         )
     )

@@ -245,27 +245,27 @@ def _secret_directory(backend: Path, execution: Path, selected: Path | None = No
 
 
 def _fixture_execution(backend: Path, fixture_path: Path) -> tuple[Path, dict, dict]:
-    """读取并核验一个 Device 收据及其生成后的后端工作树。"""
+    """读取并核验一个 业务 crate 收据及其生成后的后端工作树。"""
     receipt_path, fixture = _read(backend, fixture_path)
     _fixture(fixture)
     execution = Path(fixture["paths"]["backend"])
     generated = fixture.get("generated", {}).get("backend")
     if (not isinstance(generated, dict) or not execution.is_dir()
             or snapshot(execution)[0] != generated):
-        raise ValueError("Device 工作树与生成快照不一致")
+        raise ValueError("业务 crate 工作树与生成快照不一致")
     return receipt_path, fixture, generated
 
 
 def bootstrap_secrets(backend: Path, source_fixture_path: Path, source_directory: Path,
                       target_fixture_path: Path) -> dict:
-    """将已登记的秘密集复制到新 Device；只写新工作树内的私有文件。"""
+    """将已登记的秘密集复制到新 业务 crate；只写新工作树内的私有文件。"""
     backend = backend.resolve(strict=True)
     source_receipt, source_fixture, _ = _fixture_execution(backend, source_fixture_path)
     target_receipt, target_fixture, _ = _fixture_execution(backend, target_fixture_path)
     source_execution = Path(source_fixture["paths"]["backend"])
     target_execution = Path(target_fixture["paths"]["backend"])
     if source_execution == target_execution:
-        raise ValueError("秘密导入必须在两个不同的 Device 工作树之间进行")
+        raise ValueError("秘密导入必须在两个不同的 业务 crate 工作树之间进行")
     source = _secret_directory(backend, source_execution, source_directory)
     source_fixture_binding = bound(source_receipt)
     target_fixture_binding = bound(target_receipt)
@@ -280,7 +280,7 @@ def bootstrap_secrets(backend: Path, source_fixture_path: Path, source_directory
         source_files[name], contents[name] = descriptor, content
     destination = target_execution / ".local-tests/reference-fixture/secrets"
     if destination.exists() or linked(destination) or not destination.parent.is_dir():
-        raise ValueError("新 Device 默认秘密目录已存在或父目录无效")
+        raise ValueError("新 业务 crate 默认秘密目录已存在或父目录无效")
     destination.mkdir()
     try:
         for name in SECRET_FILES:
@@ -296,7 +296,7 @@ def bootstrap_secrets(backend: Path, source_fixture_path: Path, source_directory
                 or any({key: target_files[name][key] for key in ("bytes", "sha256")}
                        != {key: source_files[name][key] for key in ("bytes", "sha256")}
                        for name in SECRET_FILES)):
-            raise ValueError("秘密导入源、Device 收据或目标字节在复制期间发生变化")
+            raise ValueError("秘密导入源、业务 crate 收据或目标字节在复制期间发生变化")
         receipt = {
             "format_version": 1,
             "kind": "reference-fixture-secret-bootstrap",
@@ -329,7 +329,7 @@ def rotate_secrets(backend: Path, fixture_path: Path, output: Path) -> dict:
     execution = Path(fixture["paths"]["backend"])
     generated = fixture.get("generated", {}).get("backend")
     if execution != Path(fixture["paths"]["backend"]) or snapshot(execution)[0] != generated:
-        raise ValueError("Device 执行工作树与生成快照不一致")
+        raise ValueError("业务 crate 执行工作树与生成快照不一致")
     source = _secret_directory(backend, execution)
     output = local_path(backend, str(output if output.is_absolute() else backend / output), new=True)
     root = execution / ".local-tests/reference-fixture"
@@ -369,7 +369,7 @@ def _database_credentials(backend: Path, source: Path, destination: Path) -> dic
     source = local_path(backend, str(source))
     destination = local_path(backend, str(destination))
     if linked(source) or not source.is_file():
-        raise ValueError("冻结 Device MySQL 凭据缺失或经过链接")
+        raise ValueError("冻结 业务 crate MySQL 凭据缺失或经过链接")
     if destination == source:
         return bound(source)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -377,7 +377,7 @@ def _database_credentials(backend: Path, source: Path, destination: Path) -> dic
         raise ValueError("目标 MySQL 凭据路径无效")
     if destination.exists():
         if destination.read_bytes() != source.read_bytes():
-            raise ValueError("目标 MySQL 凭据已存在且不属于冻结 Device 来源")
+            raise ValueError("目标 MySQL 凭据已存在且不属于冻结 业务 crate 来源")
     else:
         with destination.open("xb") as stream:
             stream.write(source.read_bytes())
@@ -404,14 +404,14 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
         raise ValueError("夹具环境必须选择已审阅侧")
     selected = review["scopes"][side]
     execution = Path(fixture["paths"]["backend"])
-    # Device 收据记录的是生成工作树的内容快照，不包含其后产生的忽略运行目录状态。
+    # 业务 crate 收据记录的是生成工作树的内容快照，不包含其后产生的忽略运行目录状态。
     if execution != Path(selected["backend_dir"]) or snapshot(execution)[0] != fixture["generated"]["backend"]:
-        raise ValueError("所选侧 Device 工作树与审阅计划或生成快照不一致")
+        raise ValueError("所选侧 业务 crate 工作树与审阅计划或生成快照不一致")
     source_secrets = _secret_directory(backend, execution)
     secrets = _secret_directory(backend, execution, secret_directory)
     source_mysql = source_secrets / "mysql-client.cnf"
     if source_mysql != source_secrets / "mysql-client.cnf" or linked(source_mysql) or not source_mysql.is_file():
-        raise ValueError("Device MySQL 凭据路径不属于冻结工作树")
+        raise ValueError("业务 crate MySQL 凭据路径不属于冻结工作树")
     database = {item["key"]: item for item in selected["databases"]}
     mysql_path = Path(database["shared-control"]["connection_file"])
     if any(item["connection_file"] != str(mysql_path) for item in database.values()):
@@ -529,7 +529,7 @@ def _planned_document(backend: Path, descriptor: dict, label: str, *, canonical:
 
 def _planned_inputs(backend: Path, result: dict) -> tuple[Path, dict, Path, dict, Path, dict]:
     review_file, review = _planned_document(backend, result["review"], "审阅收据", canonical=True)
-    fixture_file, fixture = _planned_document(backend, result["fixture"], "Device 收据")
+    fixture_file, fixture = _planned_document(backend, result["fixture"], "业务 crate 收据")
     maintenance_file, maintenance = _planned_document(backend, result["maintenance_build"], "维护构建收据")
     _preflight_binding(review)
     _fixture(fixture)

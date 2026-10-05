@@ -543,7 +543,7 @@ def pending_request_binding(backend: Path, request: dict, predecessor: dict) -> 
 
 
 def execution_backend(backend: Path, request: dict) -> tuple[Path, dict]:
-    """解析可选的冻结 Device 执行工作树，默认继续使用当前后端。"""
+    """解析可选的冻结 业务 crate 执行工作树，默认继续使用当前后端。"""
     declared = request.get("execution_backend")
     if declared is None:
         return backend.resolve(strict=True), {"kind": "current-backend", "path": str(backend.resolve(strict=True))}
@@ -553,15 +553,15 @@ def execution_backend(backend: Path, request: dict) -> tuple[Path, dict]:
     if (fixture.get("format_version") != 1 or fixture.get("fixture") != "business"
             or fixture.get("status") != "ready" or not isinstance(fixture.get("paths"), dict)
             or not isinstance(fixture.get("generated"), dict)):
-        raise ValueError("冻结 Device 工作树收据无效")
+        raise ValueError("冻结 业务 crate 工作树收据无效")
     root = local_path(backend, declared["path"])
     expected = Path(fixture["paths"].get("backend", ""))
     generated = fixture["generated"].get("backend")
     if (root != expected or not (root / "Cargo.toml").is_file() or not (root / ".git").exists()
-            # Device 收据绑定的是生成内容快照；忽略运行目录不应让冻结执行树失效。
+            # 业务 crate 收据绑定的是生成内容快照；忽略运行目录不应让冻结执行树失效。
             or not isinstance(generated, dict) or snapshot(root)[0] != generated):
-        raise ValueError("冻结 Device 后端工作树或生成来源已变化")
-    return root, {"kind": "device-fixture", "path": str(root), "fixture": declared["fixture"], "source": generated}
+        raise ValueError("冻结 业务 crate 后端工作树或生成来源已变化")
+    return root, {"kind": "business-fixture", "path": str(root), "fixture": declared["fixture"], "source": generated}
 
 
 def reset_config(backend: Path, request: dict, selected: dict) -> None:

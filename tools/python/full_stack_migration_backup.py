@@ -12,7 +12,7 @@ from full_stack_migration_mysql import client_invocation, identifier
 
 def export_target(binding: dict, directory: Path, migration: str) -> dict:
     database = identifier(binding["database"])
-    artifact = directory / f"device-retention-{migration}.sql"
+    artifact = directory / f"business-retention-{migration}.sql"
     command, environment = client_invocation(binding, "mysqldump")
     command += [
         "--single-transaction",
@@ -50,7 +50,7 @@ def export_target(binding: dict, directory: Path, migration: str) -> dict:
         b"CREATE TABLE `biz_order`" not in content
         or content.count(b"INSERT INTO `biz_order` ") != 3
     ):
-        raise ValueError("导出未包含 Device 结构和三条独立记录")
+        raise ValueError("导出未包含 业务 crate 结构和三条独立记录")
     return {
         "path": str(artifact),
         "bytes": size,
@@ -74,7 +74,7 @@ def register_sql(control: str, row: dict, provider: str, checksum: str) -> str:
 
 
 def verify_artifact(artifact: dict, directory: Path, migration: str) -> None:
-    expected = directory / f"device-retention-{migration}.sql"
+    expected = directory / f"business-retention-{migration}.sql"
     if artifact.get("path") != str(expected) or not expected.is_file():
         raise ValueError("备份文件不属于当前运行目录和迁移")
     with expected.open("rb") as source:

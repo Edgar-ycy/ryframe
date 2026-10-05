@@ -1,4 +1,4 @@
-"""将 Device 夹具的已登记源运行时接入正式参考数据准备流程。"""
+"""将 业务 crate 夹具的已登记源运行时接入正式参考数据准备流程。"""
 
 from __future__ import annotations
 

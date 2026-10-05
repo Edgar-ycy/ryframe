@@ -140,7 +140,7 @@ cargo xtask data backup status
 
 ### 参考环境的外部验收驱动
 
-`cargo xtask check recovery` 调用私有的本机 MySQL、mysqldump、AWS CLI 和 Node 阶段程序准备演练数据与外部备份。参考计划只能通过 `inputs reference` 从已发布共享导出、对应侧 arm 和 fresh-target 完整前像推导，不能手工拼接源、工具或目标字段。入口固定来源和工具摘要、目标侧、fresh ownership 及独立工作目录；默认只在标准输出预览，加 `--output <新文件> --write` 才发布且不覆盖已有文件。MySQL 使用计划内明确的客户端配置文件及其摘要，S3 凭据只引用环境变量。工具不创建或扫描数据库，源目标均需事先初始化。参考规模为 system 加十个普通租户、至少十万条实际岗位记录及至少 1 GiB 已登记上传对象，租户分布覆盖共享和独立目标；例如 256 个 4 MiB 对象。岗位记录属于控制库，租户业务表复制另由 Device 生成资源验收覆盖。
+`cargo xtask check recovery` 调用私有的本机 MySQL、mysqldump、AWS CLI 和 Node 阶段程序准备演练数据与外部备份。参考计划只能通过 `inputs reference` 从已发布共享导出、对应侧 arm 和 fresh-target 完整前像推导，不能手工拼接源、工具或目标字段。入口固定来源和工具摘要、目标侧、fresh ownership 及独立工作目录；默认只在标准输出预览，加 `--output <新文件> --write` 才发布且不覆盖已有文件。MySQL 使用计划内明确的客户端配置文件及其摘要，S3 凭据只引用环境变量。工具不创建或扫描数据库，源目标均需事先初始化。参考规模为 system 加十个普通租户、至少十万条实际岗位记录及至少 1 GiB 已登记上传对象，租户分布覆盖共享和独立目标；例如 256 个 4 MiB 对象。岗位记录属于控制库，租户业务表复制另由 隔离业务 crate 生成资源验收覆盖。
 
 数据准备计划的 `dataset.request_interval_ms` 必须为 1000 至 5000 毫秒，限制每个固定客户端的实际 HTTP 请求启动频率；十一个租户可并发准备，每个租户使用自己的身份与地址。`dataset.timeout_seconds` 显式设置整阶段时限（1 至 604800 秒），例如参考规模预留 21600 秒；其他外部命令仍使用 1800 秒超时。收到 429 时保留失败，不通过重试或更换地址绕过限流。数据准备发生在备份与恢复开始之前，其耗时不计入恢复时间。
 
@@ -223,7 +223,7 @@ scrape_configs:
 
 ## 发布门禁排障
 
-协调版本 tag 同时触发双方日常 CI 和 Extended CI。后端的 core 与 Device 全栈任务均检出配套前端 tag，产物内记录双方精确 SHA、run ID 和 attempt；Device 产物另附从干净源码生成隔离工作树的收据。Release 通过 `cargo xtask check release source` 核对双端 tag、版本与契约来源，通过 `cargo xtask check release ci` 在校验阶段和实际创建 Release 前分别检查四组最新运行、两套全栈产物及必需 job；缺失、失败、取消、超时、错误 SHA、跳过必需 job 或最新重跑未成功都会阻断发布。两个入口都先核验固定 Python 环境，并支持 `--plan` 只查看实际任务图。
+协调版本 tag 同时触发双方日常 CI 和 Extended CI。后端的 core 与业务 crate 全栈任务均检出配套前端 tag，产物内记录双方精确 SHA、run ID 和 attempt；业务 crate 产物另附从干净源码生成隔离工作树的收据。Release 通过 `cargo xtask check release source` 核对双端 tag、版本与契约来源，通过 `cargo xtask check release ci` 在校验阶段和实际创建 Release 前分别检查四组最新运行、两套全栈产物及必需 job；缺失、失败、取消、超时、错误 SHA、跳过必需 job 或最新重跑未成功都会阻断发布。两个入口都先核验固定 Python 环境，并支持 `--plan` 只查看实际任务图。
 
 检查 Release 保存的 `release-ci-evidence.json` 与 `release-final-evidence.json`，按其中 run ID 和 attempt 定位失败。默认总等待上限为 5400 秒，GitHub API 分页和单次调用共享截止时间。修复后对同一目标源码重跑相应 CI，再重新运行 Release；不移动已有 tag，也不以其他提交的成功结果替代。发布资产仍为 GitHub 源码归档。
 
@@ -233,7 +233,7 @@ scrape_configs:
 
 ## 故障记录
 
-隔离参考夹具服务通过 `cargo xtask check recovery fixture services status --review <审阅收据> --environment <bootstrap.json>` 查看只读状态，输出原账本、控制器身份及下一合法操作。关闭时改用 `close` 并显式追加 `--write`，按 Redis、RustFS 顺序回收原进程树，确认端口释放；数据库、对象及服务目录保留。正常关闭后需要继续同一夹具时，先确认 `status` 返回 `restart`，再把状态中的当前 `state.json` 路径传给 `restart --owner-binding <state.json> --write`；重启追加新代次，不重放关闭或先前业务写入。若宿主在正常关闭收据发布前回收了整棵服务树，`status` 仅在全部登记身份消失、端口关闭且 ownership 未变化时报告外部终止，并返回当前 `state.json` 的 owner binding；先用该文件执行 `recover --owner-binding <state.json> --write` 追加独立核对证据，再对新的 state binding 执行 `restart --owner-binding <state.json> --write`。重启在新代次目录保存请求、进程树和前代 lineage，不补造旧代次的正常关闭证明。Device 产品运行时启动后，同一恢复入口先发布只含来源、工具、端点、限流和凭据变量名的浏览器绑定，再明确执行前端 `build --real` 与 Device preview 浏览器阶段；绑定和预检不创建登录预算账本，实际登录才首次创建，失败或中断后保留 intent 且禁止重放。Corepack、Node、Vite、Playwright 和 Chrome 都处于本次监督进程树内，控制器退出前核对完整后代停止证明；日志及收据不保存密码。新首代 RustFS 在产品代码执行前建立 Job Object 或 Unix session；独立的私有成员监督器持有完整成员的内核句柄，确认全部退出后才签发完成证明。历史收据缺少进程树归属时不能补造完整关闭证据。
+隔离参考夹具服务通过 `cargo xtask check recovery fixture services status --review <审阅收据> --environment <bootstrap.json>` 查看只读状态，输出原账本、控制器身份及下一合法操作。关闭时改用 `close` 并显式追加 `--write`，按 Redis、RustFS 顺序回收原进程树，确认端口释放；数据库、对象及服务目录保留。正常关闭后需要继续同一夹具时，先确认 `status` 返回 `restart`，再把状态中的当前 `state.json` 路径传给 `restart --owner-binding <state.json> --write`；重启追加新代次，不重放关闭或先前业务写入。若宿主在正常关闭收据发布前回收了整棵服务树，`status` 仅在全部登记身份消失、端口关闭且 ownership 未变化时报告外部终止，并返回当前 `state.json` 的 owner binding；先用该文件执行 `recover --owner-binding <state.json> --write` 追加独立核对证据，再对新的 state binding 执行 `restart --owner-binding <state.json> --write`。重启在新代次目录保存请求、进程树和前代 lineage，不补造旧代次的正常关闭证明。业务 crate 产品运行时启动后，同一恢复入口先发布只含来源、工具、端点、限流和凭据变量名的浏览器绑定，再明确执行前端 `build --real` 与 业务 crate preview 浏览器阶段；绑定和预检不创建登录预算账本，实际登录才首次创建，失败或中断后保留 intent 且禁止重放。Corepack、Node、Vite、Playwright 和 Chrome 都处于本次监督进程树内，控制器退出前核对完整后代停止证明；日志及收据不保存密码。新首代 RustFS 在产品代码执行前建立 Job Object 或 Unix session；独立的私有成员监督器持有完整成员的内核句柄，确认全部退出后才签发完成证明。历史收据缺少进程树归属时不能补造完整关闭证据。
 
 死亡控制器通过同一入口的 `recover --review <审阅收据> --environment <bootstrap.json> --owner-binding <状态输出中的 owner 文件绑定 JSON> --write` 显式恢复。它只清理已核对的本地控制锁并追加账本，不停止服务或重放未收尾操作；PID 已复用、来源改变、未知启动或关闭结果均须保留现场核对完整前后像。已关闭代次不能再签发 fresh-target 请求；已登记目标只接受严格核验过的已收尾生命周期追加。
 
