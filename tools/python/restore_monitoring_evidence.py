@@ -128,7 +128,7 @@ def _maintenance_execution(value: object) -> dict:
         raise ValueError("监控维护绑定与执行源码根不同")
     if maintenance_binding.get("kind") == "current-backend":
         exact_fields(maintenance_binding, {"kind", "path"}, "监控维护绑定")
-    elif maintenance_binding.get("kind") == "device-fixture":
+    elif maintenance_binding.get("kind") == "business-fixture":
         exact_fields(maintenance_binding, {"kind", "path", "fixture", "source"}, "监控维护绑定")
         _receipt_descriptor(maintenance_binding["fixture"], "监控维护 业务 crate fixture")
         if not isinstance(maintenance_binding["source"], dict):
