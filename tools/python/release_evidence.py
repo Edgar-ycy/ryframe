@@ -13,29 +13,20 @@ class EvidenceError(ValueError):
 
 
 EMPTY_SHA256 = sha256(b"").hexdigest()
-DEVICE_OUTPUTS = {
+BUSINESS_OUTPUTS = {
     "backend": (
-        "catalog/resources/device.toml",
-        "crates/ryframe-api/src/generated/device/dto.rs",
-        "crates/ryframe-api/src/generated/device/handler.rs",
-        "crates/ryframe-api/src/generated/device/mod.rs",
-        "crates/ryframe-api/src/generated/device/openapi.rs",
-        "crates/ryframe-application/src/generated/device/fake.rs",
-        "crates/ryframe-application/src/generated/device/mod.rs",
-        "crates/ryframe-application/src/generated/device/model.rs",
-        "crates/ryframe-application/src/generated/device/port.rs",
-        "crates/ryframe-application/src/generated/device/service.rs",
-        "crates/ryframe-tenant-db/src/generated/device/entity.rs",
-        "crates/ryframe-tenant-db/src/generated/device/migration.rs",
-        "crates/ryframe-tenant-db/src/generated/device/mod.rs",
-        "crates/ryframe-tenant-db/src/generated/device/repository.rs",
+        "crates/order-business/src/resources/mod.rs",
+        "crates/order-business/src/generated/entities/order.rs",
+        "crates/order-business/src/generated/openapi/order.rs",
+        "crates/order-business/src/generated/handlers/order.rs",
+        "crates/order-business/migrations/m_resource_initial_order.rs",
     ),
     "frontend": (
-        "src/generated/resources/device/api.ts",
-        "src/generated/resources/device/fields.ts",
-        "src/generated/resources/device/index.ts",
-        "src/generated/resources/device/page.vue",
-        "src/generated/resources/device/registration.ts",
+        "src/generated/resources/order/api.ts",
+        "src/generated/resources/order/fields.ts",
+        "src/generated/resources/order/index.ts",
+        "src/generated/resources/order/page.vue",
+        "src/generated/resources/order/registration.ts",
     ),
 }
 
@@ -197,10 +188,10 @@ def validate_fixture(
         generated_files[name] = files
         if generated.get("patch_sha256") == EMPTY_SHA256 and not files:
             raise EvidenceError(f"Device {name} 没有实际生成变化")
-        missing = set(DEVICE_OUTPUTS[name]).difference(files)
+        missing = set(BUSINESS_OUTPUTS[name]).difference(files)
         if missing:
             raise EvidenceError(f"Device {name} 缺少必要生成输出：{sorted(missing)}")
-        if any(files[path] == EMPTY_SHA256 for path in DEVICE_OUTPUTS[name]):
+        if any(files[path] == EMPTY_SHA256 for path in BUSINESS_OUTPUTS[name]):
             raise EvidenceError(f"Device {name} 必要生成输出为空")
     if (
         generated_files["backend"]["crates/order-business/src/resources/mod.rs"]
