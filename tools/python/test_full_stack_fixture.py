@@ -39,7 +39,7 @@ class FullStackFixtureTests(unittest.TestCase):
 
         with patch.object(fixture, "git", side_effect=git):
             fixture.validate_paths(
-                self.backend, self.frontend, self.backend / ".local-tests/device"
+                self.backend, self.frontend, self.backend / ".local-tests/business"
             )
             for path in (
                 self.backend,
@@ -160,14 +160,14 @@ class FullStackFixtureTests(unittest.TestCase):
         self.assertFalse(output.exists())
 
     def test_formal_pair_is_rechecked_immediately_before_output_creation(self):
-        definition = self.backend / "crates/ryframe-generator/tests/fixtures/device.toml"
+        definition = self.backend / "tools/python/fixtures/order-business/src/resources/mod.rs"
         definition.parent.mkdir(parents=True)
         definition.write_text("[resource]\n", encoding="utf-8")
         sources = (
             ({"head": "a" * 40, "patch_sha256": "0" * 64, "files": []}, b""),
             ({"head": "b" * 40, "patch_sha256": "0" * 64, "files": []}, b""),
         )
-        output = self.backend / ".local-tests/formal-device"
+        output = self.backend / ".local-tests/formal-business"
         with (
             patch.object(fixture, "validate_paths"),
             patch.object(
@@ -221,13 +221,13 @@ class FullStackFixtureTests(unittest.TestCase):
         with patch.object(fixture, "run") as run:
             model = fixture.create_business_fixture(self.backend, self.root / "log")
 
-        self.assertIn(b"biz_device", model)
+        self.assertIn(b"biz_order", model)
         self.assertIn('order-business', cargo.read_text(encoding="utf-8"))
         self.assertIn('order_business::module()', registry.read_text(encoding="utf-8"))
         self.assertTrue((self.backend / "crates/order-business/src/resources/mod.rs").is_file())
         self.assertEqual(run.call_count, 1)
 
-    def test_reference_fixture_root_is_created_once_for_new_device_worktree(self):
+    def test_reference_fixture_root_is_created_once_for_new_business_worktree(self):
         root = fixture.reference_fixture_root(self.backend)
         self.assertEqual(root, self.backend / ".local-tests/reference-fixture")
         self.assertTrue(root.is_dir())
@@ -242,7 +242,7 @@ class FullStackFixtureTests(unittest.TestCase):
             "frontend_dir": str(self.frontend),
             "kind": protocol.PROTOCOL_KIND,
             "operation": "prepare",
-            "output_dir": str(self.backend / ".local-tests/device"),
+            "output_dir": str(self.backend / ".local-tests/business"),
             "expected_backend_sha": "a" * 40,
             "expected_frontend_sha": "b" * 40,
             "write": True,
@@ -263,7 +263,7 @@ class FullStackFixtureTests(unittest.TestCase):
                 "--frontend-dir",
                 str(self.frontend),
                 "--output-dir",
-                str(self.backend / ".local-tests/device"),
+                str(self.backend / ".local-tests/business"),
                 "--expected-backend-sha",
                 "a" * 40,
                 "--expected-frontend-sha",
