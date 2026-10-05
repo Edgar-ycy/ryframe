@@ -1,4 +1,4 @@
-"""将 Device 参考夹具运行时绑定到前端真实构建与浏览器验收。"""
+"""将 业务 crate 参考夹具运行时绑定到前端真实构建与浏览器验收。"""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ class SourceGuard:
         snapshot = {key: value for key, value in inventory["source"]["snapshot"].items()
                     if key != "clean"}
         if snapshot != expected:
-            raise ValueError("Device 浏览器源码与已登记生成来源不一致")
+            raise ValueError("业务 crate 浏览器源码与已登记生成来源不一致")
         states = []
         for item in inventory["files"]:
             found = source_file(root, item["path"])
@@ -73,9 +73,9 @@ class SourceGuard:
         for relative, expected in self.states:
             found = source_file(self.root, relative, allow_missing=True)
             if found is None or file_state(found[1]) != expected:
-                raise ValueError("Device 浏览器期间源码曾被替换或修改")
+                raise ValueError("业务 crate 浏览器期间源码曾被替换或修改")
         if capture_inventory(self.root) != self.inventory:
-            raise ValueError("Device 浏览器期间源码发生变化")
+            raise ValueError("业务 crate 浏览器期间源码发生变化")
 
 
 def _bound(path: Path) -> dict:
@@ -88,7 +88,7 @@ def _binding_path(execution: Path, runtime: Path, value: Path, *, new: bool,
     expected = f"browser-binding-{run_id}.json" if run_id is not None else path.name
     if (path.parent != runtime or path.name != expected or linked(path)
             or new and path.exists() or not new and (not path.is_file() or linked(path))):
-        raise ValueError("Device 浏览器绑定必须是源运行时目录中的明确文件")
+        raise ValueError("业务 crate 浏览器绑定必须是源运行时目录中的明确文件")
     return path
 
 
@@ -105,17 +105,17 @@ def _review(backend: Path, bootstrap_file: Path) -> tuple[dict, dict, dict]:
     binding = plan.get("review") if isinstance(plan, dict) else None
     side = plan.get("side") if isinstance(plan, dict) else None
     if not isinstance(binding, dict) or side not in {"seed", "base", "candidate"}:
-        raise ValueError("Device 浏览器环境缺少审阅计划绑定")
+        raise ValueError("业务 crate 浏览器环境缺少审阅计划绑定")
     requested = Path(binding.get("path", ""))
     review_file = local_path(backend, str(requested if requested.is_absolute() else backend / requested))
     if linked(review_file) or not review_file.is_file():
-        raise ValueError("Device 浏览器审阅计划必须是受控普通文件")
+        raise ValueError("业务 crate 浏览器审阅计划必须是受控普通文件")
     review = read_json(review_file)
     if _bound(review_file) != {key: binding.get(key) for key in ("path", "bytes", "sha256")}:
-        raise ValueError("Device 浏览器审阅计划摘要已变化")
+        raise ValueError("业务 crate 浏览器审阅计划摘要已变化")
     selected = review.get("scopes", {}).get(side)
     if not isinstance(selected, dict):
-        raise ValueError("Device 浏览器审阅计划缺少当前侧")
+        raise ValueError("业务 crate 浏览器审阅计划缺少当前侧")
     return review, selected, _bound(review_file)
 
 
@@ -128,10 +128,10 @@ def _frontend_source(build: dict) -> tuple[Path, dict]:
             or not isinstance(roots, dict) or not isinstance(originals, dict) \
             or not isinstance(generated, dict) or originals.get("frontend") is None \
             or generated.get("frontend") is None:
-        raise ValueError("Device 浏览器构建来源缺少完整前端工作树")
+        raise ValueError("业务 crate 浏览器构建来源缺少完整前端工作树")
     frontend = Path(roots.get("frontend", "")).resolve(strict=True)
     if linked(frontend) or not (frontend / "package.json").is_file():
-        raise ValueError("Device 浏览器前端工作树无效")
+        raise ValueError("业务 crate 浏览器前端工作树无效")
     return frontend, {"original": originals["frontend"], "generated": generated["frontend"]}
 
 
@@ -165,9 +165,9 @@ def _assert_output_set(runtime: Path, run_id: str, outputs: dict[str, Path], *, 
     expected = {path for path in outputs.values() if path.parent == runtime}
     actual = set(runtime.glob(f"browser-{run_id}-*"))
     if actual - expected:
-        raise ValueError("Device 浏览器运行目录包含未登记的同 run id 产物")
+        raise ValueError("业务 crate 浏览器运行目录包含未登记的同 run id 产物")
     if fresh and (actual or any(path.exists() or linked(path) for path in outputs.values())):
-        raise ValueError("Device 浏览器 run id 已存在产物，禁止重放")
+        raise ValueError("业务 crate 浏览器 run id 已存在产物，禁止重放")
 
 
 def _commands(frontend: Path, server: str) -> list[list[str]]:
@@ -196,7 +196,7 @@ def _input_guards(binding: dict) -> tuple:
     collect(binding)
     guards = tuple(artifact_snapshot(Path(path)) for path in sorted(descriptors))
     if any(guard.descriptor() != descriptors[str(guard.path)] for guard in guards):
-        raise ValueError("Device 浏览器输入文件与绑定摘要不一致")
+        raise ValueError("业务 crate 浏览器输入文件与绑定摘要不一致")
     return guards
 
 
@@ -204,11 +204,11 @@ def _plan(api: RuntimeApi, backend: Path, environment_path: Path, output_path: P
           run_id: str, server: str, *, require_fresh: bool,
           process_state: str = "running", read_only: bool = False) -> tuple[dict, dict]:
     if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", run_id) is None:
-        raise ValueError("Device 浏览器 run id 必须是小写字母、数字或连字符")
+        raise ValueError("业务 crate 浏览器 run id 必须是小写字母、数字或连字符")
     if server not in {"dev", "preview"}:
-        raise ValueError("Device 浏览器 server 必须是 dev 或 preview")
+        raise ValueError("业务 crate 浏览器 server 必须是 dev 或 preview")
     if process_state not in {"running", "stopped"}:
-        raise ValueError("Device 浏览器运行时状态无效")
+        raise ValueError("业务 crate 浏览器运行时状态无效")
     bootstrap_file, execution, private = api.bootstrap(backend, environment_path)
     runtime = api.output(execution, output_path, new=False)
     verified = api.verify(backend, environment_path, runtime)
@@ -217,7 +217,7 @@ def _plan(api: RuntimeApi, backend: Path, environment_path: Path, output_path: P
     )
     expected_processes = {"api": process_state, "worker": process_state}
     if status["processes"] != expected_processes:
-        raise ValueError(f"Device 浏览器核验要求 API 与 Worker 均为 {process_state}")
+        raise ValueError(f"业务 crate 浏览器核验要求 API 与 Worker 均为 {process_state}")
     build = verify_build_evidence(execution, runtime)
     frontend, frontend_source = _frontend_source(build)
     review, selected, review_binding = _review(backend, bootstrap_file)
@@ -228,14 +228,14 @@ def _plan(api: RuntimeApi, backend: Path, environment_path: Path, output_path: P
             or parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "::1"}
             or parsed.port is None or parsed.path not in {"", "/"} or parsed.query or parsed.fragment
             or private.get("APP_CORS_ALLOW_ORIGINS") != frontend_url):
-        raise ValueError("Device 浏览器端点、scope 或 CORS 与已审阅环境不一致")
+        raise ValueError("业务 crate 浏览器端点、scope 或 CORS 与已审阅环境不一致")
     require_closed_port(frontend_url)
     mysql = review.get("tools", {}).get("mysql")
     if not isinstance(mysql, dict) or not isinstance(mysql.get("path"), str):
-        raise ValueError("Device 浏览器审阅计划缺少 MySQL 客户端")
+        raise ValueError("业务 crate 浏览器审阅计划缺少 MySQL 客户端")
     mysql_tool = _tool(Path(mysql["path"]), "MySQL 客户端")
     if mysql_tool["sha256"] != mysql.get("sha256"):
-        raise ValueError("Device 浏览器 MySQL 客户端摘要已变化")
+        raise ValueError("业务 crate 浏览器 MySQL 客户端摘要已变化")
     safe = configured({})
     corepack_path = shutil.which("corepack", path=safe.get("PATH"))
     launcher_path = safe.get("COMSPEC") if os.name == "nt" else corepack_path
@@ -244,7 +244,7 @@ def _plan(api: RuntimeApi, backend: Path, environment_path: Path, output_path: P
     limits = rate_limit_settings(execution, private)
     outputs = browser_outputs(frontend, runtime, run_id, server)
     if require_fresh and server == "preview" and (frontend / "dist").exists():
-        raise ValueError("Device 前端已有生产产物，禁止覆盖未知构建")
+        raise ValueError("业务 crate 前端已有生产产物，禁止覆盖未知构建")
     _assert_output_set(runtime, run_id, outputs, fresh=require_fresh)
     binding = {
         "format_version": 1, "kind": "reference-fixture-browser-binding", "status": "bound",
@@ -275,7 +275,7 @@ def _plan(api: RuntimeApi, backend: Path, environment_path: Path, output_path: P
         "remote_writes": 0,
     }
     if not private.get(binding["identity"]["password_env"]):
-        raise ValueError("Device 浏览器环境缺少已登记管理员凭据")
+        raise ValueError("业务 crate 浏览器环境缺少已登记管理员凭据")
     source_guards = (
         SourceGuard.capture(execution, binding["backend"]["source"]),
         SourceGuard.capture(frontend, frontend_source["generated"]),
@@ -307,7 +307,7 @@ def bind_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_
         api, backend, environment_path, output_path, run_id, server, require_fresh=True
     )
     if read_json(target) != binding or repeated != binding:
-        raise ValueError("Device 浏览器绑定发布后来源发生变化；保留文件且禁止重放")
+        raise ValueError("业务 crate 浏览器绑定发布后来源发生变化；保留文件且禁止重放")
     return {"status": "reference_fixture_browser_bound", "binding": _bound(target),
             "run_id": run_id, "server": server, "remote_writes": 0}
 
@@ -331,9 +331,9 @@ def _preview_build(binding: dict, context: dict,
         outputs["build_verify_before_process"], 300, (),
     )
     _, receipt = validate_frontend_build(frontend)
-    snapshot = artifact_manifest_snapshot(frontend / "dist", frontend, "Device 前端生产产物")
+    snapshot = artifact_manifest_snapshot(frontend / "dist", frontend, "业务 crate 前端生产产物")
     if receipt.path != outputs["build_receipt"]:
-        raise ValueError("Device 前端真实构建收据路径不一致")
+        raise ValueError("业务 crate 前端真实构建收据路径不一致")
     return {"receipt": _bound(receipt.path), "dist": snapshot.manifest}, snapshot
 
 
@@ -347,8 +347,8 @@ def _verify_preview_after(binding: dict, context: dict, processes: dict,
     build_guard.assert_unchanged()
     _, receipt = validate_frontend_build(frontend)
     if _bound(receipt.path) != build["receipt"]:
-        raise ValueError("Device 浏览器期间生产构建收据发生变化")
-    verify_artifact_manifest(build["dist"], frontend / "dist", frontend, "Device 前端生产产物")
+        raise ValueError("业务 crate 浏览器期间生产构建收据发生变化")
+    verify_artifact_manifest(build["dist"], frontend / "dist", frontend, "业务 crate 前端生产产物")
 
 
 def _browser_artifacts(binding: dict, context: dict, build: dict | None) \
@@ -357,18 +357,18 @@ def _browser_artifacts(binding: dict, context: dict, build: dict | None) \
     report, results = outputs["report"], outputs["results"]
     sidecar = results / "business-tests.json"
     if not (report / "index.html").is_file():
-        raise ValueError("Device 浏览器报告缺少首页")
+        raise ValueError("业务 crate 浏览器报告缺少首页")
     tests = business_tests(sidecar, binding["server"], binding["run_id"])
     report_snapshot = artifact_manifest_snapshot(
-        report, frontend / ".local-tests/playwright-real/report", "Device 浏览器 HTML 报告"
+        report, frontend / ".local-tests/playwright-real/report", "业务 crate 浏览器 HTML 报告"
     )
     results_snapshot = artifact_manifest_snapshot(
-        results, frontend / ".local-tests/playwright-real/results", "Device 浏览器结果"
+        results, frontend / ".local-tests/playwright-real/results", "业务 crate 浏览器结果"
     )
     report_manifest, results_manifest = report_snapshot.manifest, results_snapshot.manifest
     if not any(item["path"] == "index.html" for item in report_manifest["files"]) \
             or not any(item["path"] == "business-tests.json" for item in results_manifest["files"]):
-        raise ValueError("Device 浏览器完整清单缺少报告首页或场景收据")
+        raise ValueError("业务 crate 浏览器完整清单缺少报告首页或场景收据")
     responses = (preview_responses(outputs["response_audit"], binding, build["dist"])
                  if binding["server"] == "preview" and build is not None else None)
     return ({"report": report_manifest, "results": results_manifest, "tests": tests,
@@ -438,7 +438,7 @@ def _publish_failure(error: BaseException, stage: str, binding: dict, path: Path
         _publish_json(outputs["failure"], failure)
     except Exception as evidence_error:
         raise RuntimeError(
-            f"Device 浏览器失败且失败证据保存失败：{evidence_error}"
+            f"业务 crate 浏览器失败且失败证据保存失败：{evidence_error}"
         ) from error
 
 
@@ -451,13 +451,13 @@ def run_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_p
     run_id = binding.get("run_id") if isinstance(binding, dict) else None
     server = binding.get("server") if isinstance(binding, dict) else None
     if not isinstance(run_id, str) or not isinstance(server, str):
-        raise ValueError("Device 浏览器绑定缺少 run id 或 server")
+        raise ValueError("业务 crate 浏览器绑定缺少 run id 或 server")
     _binding_path(execution, runtime, path, new=False, run_id=run_id)
     expected, context = _plan(
         api, backend, environment_path, output_path, run_id, server, require_fresh=True
     )
     if binding != expected:
-        raise ValueError("Device 浏览器绑定与当前源码、运行时或环境不一致")
+        raise ValueError("业务 crate 浏览器绑定与当前源码、运行时或环境不一致")
     binding_guard = artifact_snapshot(path)
     _assert_guards(context)
     outputs = context["outputs"]
@@ -481,13 +481,13 @@ def run_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_p
             api, backend, environment_path, output_path, run_id, server, require_fresh=False
         )
         if repeated != binding:
-            raise ValueError("Device 前端构建后来源或运行端点发生变化")
+            raise ValueError("业务 crate 前端构建后来源或运行端点发生变化")
         binding_guard.assert_unchanged()
         stage, business_started = "browser", True
         if outputs["login_budget"].exists():
-            raise ValueError("Device 登录预算在浏览器首次写入前已经出现")
+            raise ValueError("业务 crate 登录预算在浏览器首次写入前已经出现")
         if server == "preview" and outputs["response_audit"].exists():
-            raise ValueError("Device 静态响应收据在 preview 首次写入前已经出现")
+            raise ValueError("业务 crate 静态响应收据在 preview 首次写入前已经出现")
         environment = browser_environment(context["private"], binding)
         processes["browser"] = _frontend_command(
             binding, context["frontend"], binding["commands"][2 if server == "preview" else 0],
@@ -504,7 +504,7 @@ def run_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_p
             api, backend, environment_path, output_path, run_id, server, require_fresh=False
         )
         if repeated != binding:
-            raise ValueError("Device 浏览器结束后的来源、端点或结果不完整")
+            raise ValueError("业务 crate 浏览器结束后的来源、端点或结果不完整")
         artifacts, artifact_guards = _browser_artifacts(binding, context, build)
         budget = login_budget(outputs["login_budget"], binding)
         result = {"format_version": 1, "kind": "reference-fixture-browser-result", "status": "passed",
@@ -546,14 +546,14 @@ def verify_browser(api: RuntimeApi, backend: Path, environment_path: Path, outpu
     binding = read_json(path)
     run_id, server = binding.get("run_id"), binding.get("server")
     if not isinstance(run_id, str) or not isinstance(server, str):
-        raise ValueError("Device 浏览器绑定缺少 run id 或 server")
+        raise ValueError("业务 crate 浏览器绑定缺少 run id 或 server")
     _binding_path(execution, runtime, path, new=False, run_id=run_id)
     expected, context = _plan(
         api, backend, environment_path, output_path, run_id, server,
         require_fresh=False, process_state="stopped" if closed else "running", read_only=True,
     )
     if binding != expected:
-        raise ValueError("Device 浏览器绑定与当前源码、运行时或环境不一致")
+        raise ValueError("业务 crate 浏览器绑定与当前源码、运行时或环境不一致")
     binding_guard = artifact_snapshot(path)
     _assert_guards(context)
     verify_browser_result(binding, context, path)

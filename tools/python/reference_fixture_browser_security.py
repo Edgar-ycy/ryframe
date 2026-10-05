@@ -1,4 +1,4 @@
-"""为 Device 浏览器子进程构造最小环境并从权威秘密文件取得脱敏值。"""
+"""为 业务 crate 浏览器子进程构造最小环境并从权威秘密文件取得脱敏值。"""
 
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ def secret_values(private: dict, bootstrap: dict) -> tuple[str, ...]:
 def browser_environment(private: dict, binding: dict) -> dict:
     missing = sorted(name for name in RUNTIME_NAMES if not isinstance(private.get(name), str))
     if missing:
-        raise ValueError("Device 浏览器环境缺少运行字段：" + "、".join(missing))
+        raise ValueError("业务 crate 浏览器环境缺少运行字段：" + "、".join(missing))
     values = configured({name: private[name] for name in RUNTIME_NAMES})
     request, login = binding["rate_limits"]["request"], binding["rate_limits"]["login"]
     values.update({
@@ -75,13 +75,13 @@ def browser_environment(private: dict, binding: dict) -> dict:
     values.update(login_budget_environment(Path(binding["backend"]["path"]), private, state))
     if (values["RYFRAME_E2E_LOGIN_RATE_LIMIT_CAPACITY"] != str(login["capacity"])
             or values["RYFRAME_E2E_LOGIN_RATE_LIMIT_WINDOW_SECS"] != str(login["window_secs"])):
-        raise ValueError("Device 浏览器登录预算与绑定不一致")
+        raise ValueError("业务 crate 浏览器登录预算与绑定不一致")
     response_audit = binding.get("response_audit")
     if binding["server"] == "preview":
         if not isinstance(response_audit, dict) or set(response_audit) != {
                 "path", "initial_state", "first_writer"}:
-            raise ValueError("Device preview 缺少静态响应审计绑定")
+            raise ValueError("业务 crate preview 缺少静态响应审计绑定")
         values["RYFRAME_E2E_PREVIEW_RESPONSE_AUDIT"] = response_audit["path"]
     elif response_audit is not None:
-        raise ValueError("Device dev 不得绑定生产静态响应审计")
+        raise ValueError("业务 crate dev 不得绑定生产静态响应审计")
     return values

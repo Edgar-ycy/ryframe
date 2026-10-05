@@ -130,9 +130,9 @@ def _maintenance_execution(value: object) -> dict:
         exact_fields(maintenance_binding, {"kind", "path"}, "监控维护绑定")
     elif maintenance_binding.get("kind") == "device-fixture":
         exact_fields(maintenance_binding, {"kind", "path", "fixture", "source"}, "监控维护绑定")
-        _receipt_descriptor(maintenance_binding["fixture"], "监控维护 Device fixture")
+        _receipt_descriptor(maintenance_binding["fixture"], "监控维护 业务 crate fixture")
         if not isinstance(maintenance_binding["source"], dict):
-            raise ValueError("监控维护 Device 来源无效")
+            raise ValueError("监控维护 业务 crate 来源无效")
     else:
         raise ValueError("监控维护绑定类型无效")
     _receipt_descriptor(maintenance["build"], "监控维护构建")

@@ -73,12 +73,12 @@ def _scan(root: Path, maximum_files: int, maximum_bytes: int) -> tuple[list[dict
             metadata = (base / name).lstat()
             if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode) \
                     or getattr(metadata, "st_file_attributes", 0) & 0x400:
-                raise ValueError("Device 浏览器产物包含链接、重解析点或非普通目录")
+                raise ValueError("业务 crate 浏览器产物包含链接、重解析点或非普通目录")
         for name in filenames:
             path = base / name
             metadata = path.lstat()
             if len(snapshots) >= maximum_files or total + metadata.st_size > maximum_bytes:
-                raise ValueError("Device 浏览器产物超过已登记文件数或字节上限")
+                raise ValueError("业务 crate 浏览器产物超过已登记文件数或字节上限")
             snapshot = artifact_snapshot(path)
             snapshots.append(snapshot)
             total += snapshot.bytes
@@ -112,7 +112,7 @@ def artifact_manifest_snapshot(root: Path, parent: Path, label: str, *,
     """固定完整有界清单及文件状态，供运行期间检测 A→B→A。"""
     if type(maximum_files) is not int or type(maximum_bytes) is not int \
             or maximum_files < 1 or maximum_bytes < 1:
-        raise ValueError("Device 浏览器产物上限无效")
+        raise ValueError("业务 crate 浏览器产物上限无效")
     parent = directory(parent, label + "父目录")
     root = directory(root, label)
     if root == parent or not root.is_relative_to(parent):
@@ -293,16 +293,16 @@ def login_budget(path: Path, binding: dict) -> dict:
 
 
 def verify_redacted_log(path: Path, descriptor: object, secrets: tuple[str, ...]) -> dict:
-    value = exact_fields(descriptor, {"path", "bytes", "sha256"}, "Device 前端日志")
+    value = exact_fields(descriptor, {"path", "bytes", "sha256"}, "业务 crate 前端日志")
     snapshot = artifact_snapshot(path)
     if snapshot.descriptor() != value or snapshot.bytes > MAX_LOG_BYTES:
-        raise ValueError("Device 前端日志描述或大小无效")
+        raise ValueError("业务 crate 前端日志描述或大小无效")
     reject_link_or_reparse(path)
     before = path.lstat()
     with path.open("rb") as stream:
         opened = os.fstat(stream.fileno())
         if file_state(opened) != snapshot.state:
-            raise ValueError("Device 前端日志在脱敏核验前被替换")
+            raise ValueError("业务 crate 前端日志在脱敏核验前被替换")
         raw = stream.read(MAX_LOG_BYTES + 1)
         after_read = os.fstat(stream.fileno())
     reject_link_or_reparse(path)
@@ -310,5 +310,5 @@ def verify_redacted_log(path: Path, descriptor: object, secrets: tuple[str, ...]
             or file_state(path.lstat()) != snapshot.state or len(raw) != snapshot.bytes
             or hashlib.sha256(raw).hexdigest() != snapshot.sha256
             or any(secret.encode("utf-8") in raw for secret in secrets)):
-        raise ValueError("Device 前端日志包含未脱敏凭据或读取期间发生变化")
+        raise ValueError("业务 crate 前端日志包含未脱敏凭据或读取期间发生变化")
     return value

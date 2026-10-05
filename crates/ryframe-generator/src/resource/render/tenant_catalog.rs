@@ -214,7 +214,7 @@ mod tests {
         let resource = crate::resource::load_resource(
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/device.toml"),
         )
-        .expect("Device fixture 应有效");
+        .expect("业务 crate fixture 应有效");
         let resources = [&resource];
         let runtime_entry = ryframe_tenant_db::migration::catalog_entry_canonical(
             &resource.table,

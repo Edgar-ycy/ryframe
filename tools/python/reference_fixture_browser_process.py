@@ -1,4 +1,4 @@
-"""运行 Device 前端命令并严格绑定完整进程树证据。"""
+"""运行 业务 crate 前端命令并严格绑定完整进程树证据。"""
 
 from __future__ import annotations
 
@@ -49,9 +49,9 @@ class OutputCapture:
     def finish(self, path: Path, secrets: tuple[str, ...]) -> None:
         self.thread.join(timeout=15)
         if self.thread.is_alive():
-            raise TimeoutError("Device 前端日志管道未在进程树停止后关闭")
+            raise TimeoutError("业务 crate 前端日志管道未在进程树停止后关闭")
         if self.error is not None:
-            raise RuntimeError("Device 前端日志读取失败") from self.error
+            raise RuntimeError("业务 crate 前端日志读取失败") from self.error
         raw = b"".join(self.chunks)
         for secret in secrets:
             raw = raw.replace(secret.encode("utf-8"), b"[REDACTED]")
@@ -60,23 +60,23 @@ class OutputCapture:
             stream.flush()
             os.fsync(stream.fileno())
         if self.overflow:
-            raise ValueError("Device 前端日志超过 64 MiB，完整输出未写入证据")
+            raise ValueError("业务 crate 前端日志超过 64 MiB，完整输出未写入证据")
 
 
 def process_evidence(directory: Path, scope_id: str, expected_tree: dict | None = None) -> dict:
     tree = read_process_tree(directory, "frontend", scope_id)
     if expected_tree is not None and tree != expected_tree:
-        raise ValueError("Device 前端进程树与本次受控启动不一致")
+        raise ValueError("业务 crate 前端进程树与本次受控启动不一致")
     process, identity = process_document(directory / "frontend.json", "frontend", scope_id)
     if identity != tree["process"]:
-        raise ValueError("Device 前端产品进程身份与进程树不一致")
+        raise ValueError("业务 crate 前端产品进程身份与进程树不一致")
     completion = completion_binding(tree)
     tree_path = directory / "frontend-tree.json"
     result = {"directory": str(directory), "process": _bound(process.path),
               "tree": _bound(tree_path), "completion": completion}
     process.assert_unchanged()
     if read_process_tree(directory, "frontend", scope_id) != tree:
-        raise ValueError("Device 前端进程树在证据绑定期间发生变化")
+        raise ValueError("业务 crate 前端进程树在证据绑定期间发生变化")
     return result
 
 
@@ -101,7 +101,7 @@ def run_frontend_command(binding: dict, frontend: Path, arguments: list[str], en
             frontend, environment, subprocess.PIPE,
         )
         if process.supervisor.stdout is None:
-            raise ValueError("Device 前端监督进程没有提供受控日志管道")
+            raise ValueError("业务 crate 前端监督进程没有提供受控日志管道")
         capture = OutputCapture(process.supervisor.stdout)
         capture.start()
         exit_code = process.wait(timeout=timeout)
@@ -117,7 +117,7 @@ def run_frontend_command(binding: dict, frontend: Path, arguments: list[str], en
                 process.wait(timeout=10)
                 completion_binding(process.tree)
             except BaseException as cleanup:
-                caught.add_note("Device 前端进程树回收失败：" + type(cleanup).__name__)
+                caught.add_note("业务 crate 前端进程树回收失败：" + type(cleanup).__name__)
         raise
     finally:
         if capture is not None:
@@ -126,7 +126,7 @@ def run_frontend_command(binding: dict, frontend: Path, arguments: list[str], en
             except BaseException as cleanup:
                 if error is None:
                     raise
-                error.add_note("Device 前端日志脱敏失败：" + type(cleanup).__name__)
+                error.add_note("业务 crate 前端日志脱敏失败：" + type(cleanup).__name__)
 
 
 def failure_process(directory: Path, scope_id: str) -> dict:

@@ -1,4 +1,4 @@
-"""只读消费 Device 浏览器成功结果及全部绑定证据。"""
+"""只读消费 业务 crate 浏览器成功结果及全部绑定证据。"""
 
 from __future__ import annotations
 
@@ -60,15 +60,15 @@ def verify_browser_evidence(binding: dict, context: dict, binding_path: Path,
                             value: object) -> dict:
     outputs = context["outputs"]
     if outputs["failure"].exists():
-        raise ValueError("Device 浏览器没有唯一成功结果，必须核对失败或不确定状态")
+        raise ValueError("业务 crate 浏览器没有唯一成功结果，必须核对失败或不确定状态")
     raw = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     if any(secret.encode("utf-8") in raw for secret in context["secrets"]):
-        raise ValueError("Device 浏览器成功结果包含未脱敏凭据")
+        raise ValueError("业务 crate 浏览器成功结果包含未脱敏凭据")
     result = exact_fields(
         value,
         {"format_version", "kind", "status", "run_id", "server", "binding", "intent",
          "build", "logs", "processes", "artifacts", "login_budget", "remote_writes"},
-        "Device 浏览器成功结果",
+        "业务 crate 浏览器成功结果",
     )
     if (
         type(result["format_version"]) is not int
@@ -79,8 +79,8 @@ def verify_browser_evidence(binding: dict, context: dict, binding_path: Path,
         or result["server"] != binding["server"]
         or result["remote_writes"] != {"business_data": True}
     ):
-        raise ValueError("Device 浏览器成功结果身份或状态无效")
-    _descriptor(result["binding"], binding_path, "Device 浏览器绑定")
+        raise ValueError("业务 crate 浏览器成功结果身份或状态无效")
+    _descriptor(result["binding"], binding_path, "业务 crate 浏览器绑定")
     intent = read_json_document(outputs["intent"])
     expected_intent = {"format_version": 1, "kind": "reference-fixture-browser-intent",
                         "binding": result["binding"], "commands": binding["commands"],
@@ -88,46 +88,46 @@ def verify_browser_evidence(binding: dict, context: dict, binding_path: Path,
                                          "existed_before": False},
                         "response_audit": binding["response_audit"]}
     if intent.value != expected_intent:
-        raise ValueError("Device 浏览器 intent 与首次写入边界不一致")
-    _descriptor(result["intent"], outputs["intent"], "Device 浏览器 intent")
+        raise ValueError("业务 crate 浏览器 intent 与首次写入边界不一致")
+    _descriptor(result["intent"], outputs["intent"], "业务 crate 浏览器 intent")
     keys = ["browser"] if binding["server"] == "dev" else [
         "build", "build_verify_before", "browser", "build_verify_after"
     ]
-    logs = exact_fields(result["logs"], set(keys), "Device 浏览器日志")
-    processes = exact_fields(result["processes"], set(keys), "Device 浏览器进程")
+    logs = exact_fields(result["logs"], set(keys), "业务 crate 浏览器日志")
+    processes = exact_fields(result["processes"], set(keys), "业务 crate 浏览器进程")
     for name in keys:
         verify_redacted_log(outputs[name + "_log"], logs[name], context["secrets"])
         _process(processes[name], outputs[name + "_process"], binding["scope_id"],
-                 f"Device {name} 进程")
+                 f"业务 crate {name} 进程")
     artifacts = exact_fields(
-        result["artifacts"], {"report", "results", "tests", "responses"}, "Device 浏览器产物"
+        result["artifacts"], {"report", "results", "tests", "responses"}, "业务 crate 浏览器产物"
     )
     verify_artifact_manifest(
         artifacts["report"], outputs["report"], context["frontend"] /
-        ".local-tests/playwright-real/report", "Device 浏览器 HTML 报告"
+        ".local-tests/playwright-real/report", "业务 crate 浏览器 HTML 报告"
     )
     verify_artifact_manifest(
         artifacts["results"], outputs["results"], context["frontend"] /
-        ".local-tests/playwright-real/results", "Device 浏览器结果"
+        ".local-tests/playwright-real/results", "业务 crate 浏览器结果"
     )
     if artifacts["tests"] != business_tests(
             outputs["results"] / "business-tests.json", binding["server"], binding["run_id"]):
-        raise ValueError("Device 浏览器场景收据与成功结果不一致")
+        raise ValueError("业务 crate 浏览器场景收据与成功结果不一致")
     if result["login_budget"] != login_budget(outputs["login_budget"], binding):
-        raise ValueError("Device 登录预算账本与成功结果不一致")
+        raise ValueError("业务 crate 登录预算账本与成功结果不一致")
     if binding["server"] == "preview":
-        build = exact_fields(result["build"], {"receipt", "dist"}, "Device 前端生产构建")
+        build = exact_fields(result["build"], {"receipt", "dist"}, "业务 crate 前端生产构建")
         _, receipt = validate_frontend_build(context["frontend"])
-        _descriptor(build["receipt"], receipt.path, "Device 前端构建收据")
+        _descriptor(build["receipt"], receipt.path, "业务 crate 前端构建收据")
         verify_artifact_manifest(
             build["dist"], context["frontend"] / "dist", context["frontend"],
-            "Device 前端生产产物"
+            "业务 crate 前端生产产物"
         )
         responses = preview_responses(outputs["response_audit"], binding, build["dist"])
         if artifacts["responses"] != responses:
-            raise ValueError("Device preview 静态响应收据与成功结果不一致")
+            raise ValueError("业务 crate preview 静态响应收据与成功结果不一致")
     elif result["build"] is not None or artifacts["responses"] is not None:
-        raise ValueError("Device dev 浏览器结果不得绑定未使用的生产构建")
+        raise ValueError("业务 crate dev 浏览器结果不得绑定未使用的生产构建")
     intent.assert_unchanged()
     return result
 
@@ -135,7 +135,7 @@ def verify_browser_evidence(binding: dict, context: dict, binding_path: Path,
 def verify_browser_result(binding: dict, context: dict, binding_path: Path) -> dict:
     outputs = context["outputs"]
     if outputs["failure"].exists() or not outputs["result"].is_file():
-        raise ValueError("Device 浏览器没有唯一成功结果，必须核对失败或不确定状态")
+        raise ValueError("业务 crate 浏览器没有唯一成功结果，必须核对失败或不确定状态")
     document = read_json_document(outputs["result"])
     result = verify_browser_evidence(binding, context, binding_path, document.value)
     document.assert_unchanged()

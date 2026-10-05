@@ -1,4 +1,4 @@
-"""严格核验 Device preview 浏览器实际接收的静态响应。"""
+"""严格核验 业务 crate preview 浏览器实际接收的静态响应。"""
 
 from __future__ import annotations
 
@@ -23,34 +23,34 @@ def _manifest_files(manifest: object) -> dict[str, dict]:
     value = exact_fields(
         manifest,
         {"format_version", "kind", "root", "limits", "total_files", "total_bytes", "files"},
-        "Device 前端生产产物清单",
+        "业务 crate 前端生产产物清单",
     )
     if value["format_version"] != 1 or value["kind"] != "bounded-artifact-manifest" \
             or not isinstance(value["files"], list):
-        raise ValueError("Device 前端生产产物清单版本或文件列表无效")
+        raise ValueError("业务 crate 前端生产产物清单版本或文件列表无效")
     files = {}
     for item in value["files"]:
-        entry = exact_fields(item, {"path", "bytes", "sha256"}, "Device 前端生产文件")
+        entry = exact_fields(item, {"path", "bytes", "sha256"}, "业务 crate 前端生产文件")
         path = entry["path"]
         if not isinstance(path, str) or not path or path in files:
-            raise ValueError("Device 前端生产产物清单包含重复或无效路径")
+            raise ValueError("业务 crate 前端生产产物清单包含重复或无效路径")
         files[path] = entry
     return files
 
 
 def _target(path: object) -> str:
     if not isinstance(path, str) or not path.startswith("/") or "\\" in path:
-        raise ValueError("Device 静态响应路径不是规范化同源路径")
+        raise ValueError("业务 crate 静态响应路径不是规范化同源路径")
     try:
         decoded = unquote(path, errors="strict")
     except UnicodeDecodeError as error:
-        raise ValueError("Device 静态响应路径不是规范化 UTF-8") from error
+        raise ValueError("业务 crate 静态响应路径不是规范化 UTF-8") from error
     if quote(decoded, safe=URL_SAFE) != path or "?" in decoded or "#" in decoded:
-        raise ValueError("Device 静态响应路径包含查询、片段或非规范化转义")
+        raise ValueError("业务 crate 静态响应路径包含查询、片段或非规范化转义")
     segments = decoded.removeprefix("/").split("/")
     if any(part in {".", ".."} or not part and index != len(segments) - 1
            for index, part in enumerate(segments)):
-        raise ValueError("Device 静态响应路径包含空段或目录跳转")
+        raise ValueError("业务 crate 静态响应路径包含空段或目录跳转")
     relative = PurePosixPath(decoded.removeprefix("/"))
     if decoded == "/" or not relative.suffix:
         return "index.html"
@@ -63,9 +63,9 @@ def preview_responses(path: Path, binding: dict, manifest: object) -> dict:
         document.value,
         {"format_version", "kind", "status", "run_id", "scope_id", "limits",
          "total_entries", "total_bytes", "entries"},
-        "Device preview 静态响应收据",
+        "业务 crate preview 静态响应收据",
     )
-    limits = exact_fields(receipt["limits"], {"entries", "bytes"}, "Device 静态响应上限")
+    limits = exact_fields(receipt["limits"], {"entries", "bytes"}, "业务 crate 静态响应上限")
     entries = receipt["entries"]
     if (
         receipt["format_version"] != 1
@@ -79,7 +79,7 @@ def preview_responses(path: Path, binding: dict, manifest: object) -> dict:
         or receipt["total_entries"] != len(entries)
         or type(receipt["total_bytes"]) is not int
     ):
-        raise ValueError("Device preview 静态响应收据身份、状态或上限无效")
+        raise ValueError("业务 crate preview 静态响应收据身份、状态或上限无效")
     files = _manifest_files(manifest)
     total = 0
     targets = set()
@@ -88,7 +88,7 @@ def preview_responses(path: Path, binding: dict, manifest: object) -> dict:
             raw,
             {"sequence", "method", "path", "destination", "status", "bytes", "sha256",
              "representation"},
-            "Device preview 静态响应",
+            "业务 crate preview 静态响应",
         )
         target = _target(entry["path"])
         expected = files.get(target)
@@ -106,13 +106,13 @@ def preview_responses(path: Path, binding: dict, manifest: object) -> dict:
             or entry["bytes"] != expected["bytes"]
             or entry["sha256"] != expected["sha256"]
         ):
-            raise ValueError("Device preview 静态响应与绑定生产产物不一致")
+            raise ValueError("业务 crate preview 静态响应与绑定生产产物不一致")
         total += entry["bytes"]
         targets.add(target)
     if total != receipt["total_bytes"] or total > MAX_BYTES:
-        raise ValueError("Device preview 静态响应字节汇总无效")
+        raise ValueError("业务 crate preview 静态响应字节汇总无效")
     if "index.html" not in targets or not any(target.endswith(".js") for target in targets):
-        raise ValueError("Device preview 没有实际加载入口 HTML 与 JavaScript")
+        raise ValueError("业务 crate preview 没有实际加载入口 HTML 与 JavaScript")
     document.assert_unchanged()
     return {"receipt": receipt, "descriptor": {
         "path": str(document.path), "bytes": len(document.raw), "sha256": document.sha256,
