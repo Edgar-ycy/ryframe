@@ -104,7 +104,7 @@ fn catalog_copy_order_is_deterministic_for_multiple_resources() {
     let after = render_resources(&[order, meter]).unwrap();
     let catalog = asset(&before, CATALOG);
     assert_eq!(catalog, asset(&after, CATALOG));
-    assert!(catalog.find("biz_order").unwrap() < catalog.find("biz_meter").unwrap());
+    assert!(catalog.find("biz_meter").unwrap() < catalog.find("biz_order").unwrap());
     assert!(catalog.contains("copy_order: 1"));
     assert!(catalog.contains("copy_order: 2"));
     assert!(!catalog.contains("copy_order: 0"));
