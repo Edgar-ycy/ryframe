@@ -339,7 +339,7 @@ class TargetTests(unittest.TestCase):
                    "process_receipt": f.bound(restarted / "process.json", process),
                    "launch_receipt": f.bound(restarted / "launch.json", launch)}
         data = Path(process["data_dir"])
-        runtime = {"storage": storage, "data_directory": {"path": str(data), "business": data.stat().st_dev,
+        runtime = {"storage": storage, "data_directory": {"path": str(data), "device": data.stat().st_dev,
                    "inode": data.stat().st_ino}, "api_url": process["api_url"], "console_url": process["console_url"],
                    "request": f.bound(restarted / "request.json", {"previous": original})}
         with patch("devex_clone_storage.registered_storage_binding", return_value=runtime), \

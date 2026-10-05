@@ -23,7 +23,6 @@ class TenantDataBoundaryTests(unittest.TestCase):
             "crates/ryframe-tenant-db/src/migration/catalog.rs",
             "crates/ryframe-generator/src/resource/render/tenant_catalog.rs",
             "crates/ryframe-generator/src/resource/render/slice/migration.rs",
-            "crates/order-business/src/resources/mod.rs",
         ):
             target = self.root / relative
             target.parent.mkdir(parents=True, exist_ok=True)

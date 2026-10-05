@@ -7,7 +7,7 @@ use ryframe_application::generated::{name}::{{
 use ryframe_application::{{PersistenceTransaction, TransactionAuditMode}};
 use ryframe_kernel::{{AppError, AppResult, PageResult, ValidatedPageQuery}};
 use sea_orm::{{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, DatabaseTransaction, EntityTrait,
+    ActiveModelTrait, ColumnTrait, DatabaseTransaction, EntityTrait,
     {model_trait}QueryFilter, QueryOrder, QuerySelect, {transaction_trait}sea_query::LockType,
 }};
 
