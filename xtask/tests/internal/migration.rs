@@ -161,28 +161,28 @@ fn creates_control_migration_and_registers_it_once() {
     create_migration(
         &root.0,
         MigrationScope::Control,
-        "add_device",
+        "add_order",
         "20260823_010203",
     )
     .unwrap();
     let migration = fs::read_to_string(
         root.0
-            .join("crates/ryframe-db/src/migration/m20260823_010203_add_device.rs"),
+            .join("crates/ryframe-db/src/migration/m20260823_010203_add_order.rs"),
     )
     .unwrap();
     assert!(migration.contains("尚未实现"));
-    assert!(migration.contains("追加迁移 m20260823_010203_add_device 不支持 down"));
+    assert!(migration.contains("追加迁移 m20260823_010203_add_order 不支持 down"));
     let registry =
         fs::read_to_string(root.0.join("crates/ryframe-db/src/migration/mod.rs")).unwrap();
-    assert!(registry.contains("mod m20260823_010203_add_device;"));
-    assert!(registry.contains("\"m20260823_010203_add_device\","));
+    assert!(registry.contains("mod m20260823_010203_add_order;"));
+    assert!(registry.contains("\"m20260823_010203_add_order\","));
     assert!(registry.contains("#[cfg(feature = \"migration\")]"));
-    assert!(registry.contains("Box::new(m20260823_010203_add_device::Migration)"));
+    assert!(registry.contains("Box::new(m20260823_010203_add_order::Migration)"));
     assert!(
         create_migration(
             &root.0,
             MigrationScope::Control,
-            "add_device",
+            "add_order",
             "20260823_010203",
         )
         .is_err()
@@ -203,7 +203,7 @@ fn tenant_migration_updates_module_and_runtime_registries() {
     create_migration(
         &root.0,
         MigrationScope::TenantData,
-        "add_device",
+        "add_order",
         "20260823_010204",
     )
     .unwrap();
@@ -214,10 +214,10 @@ fn tenant_migration_updates_module_and_runtime_registries() {
             .join("crates/ryframe-tenant-db/src/migration/runtime.rs"),
     )
     .unwrap();
-    assert!(modules.contains("mod m20260823_010204_add_device;"));
-    assert!(modules.contains("\"m20260823_010204_add_device\","));
+    assert!(modules.contains("mod m20260823_010204_add_order;"));
+    assert!(modules.contains("\"m20260823_010204_add_order\","));
     assert!(modules.contains("#[cfg(feature = \"migration\")]"));
-    assert!(runtime.contains("Box::new(super::m20260823_010204_add_device::Migration)"));
+    assert!(runtime.contains("Box::new(super::m20260823_010204_add_order::Migration)"));
 }
 
 #[test]
@@ -256,7 +256,7 @@ fn migration_timestamp_must_advance_without_partial_writes() {
         create_migration(
             &root.0,
             MigrationScope::Control,
-            "add_device",
+            "add_order",
             "20260823_010203",
         )
         .is_err()
@@ -268,7 +268,7 @@ fn migration_timestamp_must_advance_without_partial_writes() {
     assert!(
         !root
             .0
-            .join("crates/ryframe-db/src/migration/m20260823_010203_add_device.rs")
+            .join("crates/ryframe-db/src/migration/m20260823_010203_add_order.rs")
             .exists()
     );
 }

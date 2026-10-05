@@ -15,11 +15,11 @@ class EvidenceError(ValueError):
 EMPTY_SHA256 = sha256(b"").hexdigest()
 BUSINESS_OUTPUTS = {
     "backend": (
-        "crates/order-business/src/resources/mod.rs",
-        "crates/order-business/src/generated/entities/order.rs",
-        "crates/order-business/src/generated/openapi/order.rs",
-        "crates/order-business/src/generated/handlers/order.rs",
         "crates/order-business/migrations/m_resource_initial_order.rs",
+        "crates/order-business/src/generated/entities/order.rs",
+        "crates/order-business/src/generated/handlers/order.rs",
+        "crates/order-business/src/generated/openapi/order.rs",
+        "crates/order-business/src/resources/mod.rs",
     ),
     "frontend": (
         "src/generated/resources/order/api.ts",

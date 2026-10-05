@@ -22,7 +22,7 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
         self.temp = WorkspaceDirectory(BACKEND / ".local-tests/t", prefix="rfd-")
         self.addCleanup(self.temp.cleanup)
         self.backend = self.temp.path / "backend"
-        self.execution = self.backend / ".local-tests/device/backend"
+        self.execution = self.backend / ".local-tests/business/backend"
         self.runtime = self.execution / ".local-tests/reference-fixture/source-runtime-r1"
         self.runtime.mkdir(parents=True)
         self.work = self.runtime / "dataset-r1"

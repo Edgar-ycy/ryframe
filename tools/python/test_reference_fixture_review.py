@@ -19,13 +19,13 @@ class ReferenceFixtureReviewTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(dir=self.backend / ".local-tests")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        self.execution = self.root / "device-backend"
+        self.execution = self.root / "business-backend"
         (self.execution / ".local-tests/reference-fixture").mkdir(parents=True)
         self.generated = {"head": "a" * 40, "patch_sha256": "b" * 64, "files": []}
         self.fixture = {
-            "format_version": 1, "fixture": "device", "status": "ready",
+            "format_version": 1, "fixture": "business", "status": "ready",
             "sources": {"backend": {"head": "a" * 40}, "frontend": {"head": "b" * 40}},
-            "paths": {"backend": str(self.execution), "frontend": str(self.root / "device-frontend")},
+            "paths": {"backend": str(self.execution), "frontend": str(self.root / "business-frontend")},
             "generated": {"backend": self.generated},
         }
         self.template = {
@@ -116,7 +116,7 @@ class ReferenceFixtureReviewTests(unittest.TestCase):
                 with (
                     patch.object(review, "snapshot", return_value=(self.generated, b"")),
                     patch.object(review, "_scope", side_effect=derive),
-                    self.assertRaisesRegex(ValueError, "模板、Device 收据"),
+                    self.assertRaisesRegex(ValueError, "模板、Business 收据"),
                 ):
                     review.renew(
                         self.backend, template, fixture,

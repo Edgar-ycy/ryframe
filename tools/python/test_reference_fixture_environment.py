@@ -55,7 +55,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         for side in ("seed", "base", "candidate"):
             scope = "fixture-" + side
             self.review["scopes"][side] = {"scope_id": scope, "runtime_dir": str(self.root / (side + "-runtime")),
-                "backend_dir": str(self.root / "device-backend"),
+                "backend_dir": str(self.root / "business-backend"),
                 "identity_ledger": str(self.root / (side + "-identities")), "api_url": "http://127.0.0.1:18210",
                 "worker_ready_url": "http://127.0.0.1:19210/readyz", "frontend_url": "http://127.0.0.1:4190",
                 "objects": {"endpoint": "http://127.0.0.1:29200", "region": "us-east-1"},
@@ -65,9 +65,9 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
                                "mode": "shared" if key in ("shared-control", "shared") else "dedicated",
                                "expected_server_uuid": "uuid", "connection_file": str(defaults), "host": "127.0.0.1", "port": 3306}
                                for key in ("shared-control", "shared", "dedicated-a", "dedicated-b")]}
-        self.review["future_root"] = str(self.root / "device-backend/.local-tests/reference-fixture/run-r1")
-        self.fixture = {"format_version": 1, "fixture": "device", "status": "ready", "sources": {"backend": {"head": "a" * 40}, "frontend": {"head": "b" * 40}},
-                        "paths": {"backend": str(self.root / "device-backend"), "frontend": str(self.root / "device-frontend")}}
+        self.review["future_root"] = str(self.root / "business-backend/.local-tests/reference-fixture/run-r1")
+        self.fixture = {"format_version": 1, "fixture": "business", "status": "ready", "sources": {"backend": {"head": "a" * 40}, "frontend": {"head": "b" * 40}},
+                        "paths": {"backend": str(self.root / "business-backend"), "frontend": str(self.root / "business-frontend")}}
         self.maintenance = {"format_version": 1, "kind": "devex-clone-tool-build", "resources_modified": False, "artifacts":
                             {key: {"executable": str(self.tools["mysql"])} for key in ("reset", "migrate", "tenant-data")}}
 
@@ -317,13 +317,13 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
             patch.object(environment, "_environment", return_value=({"APP_SCOPE_ID": "fixture-seed"}, {})),
             patch.object(environment, "configuration_digest", side_effect=configuration),
             patch.object(environment, "verify_tools", return_value={"source": {}}),
-            self.assertRaisesRegex(ValueError, "Device 收据"),
+            self.assertRaisesRegex(ValueError, "Business 收据"),
         ):
             environment.prepare(self.backend, ready, fixture, maintenance, output)
         self.assertTrue((output / "failed.json").is_file())
         self.assertFalse((output / "bootstrap.json").exists())
 
-    def test_service_run_rejects_roots_outside_the_device_fixture(self):
+    def test_service_run_rejects_roots_outside_the_business_fixture(self):
         self.assertEqual(
             service_run(self.review),
             Path(self.review["future_root"]) / "service-run",
@@ -334,8 +334,8 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "future_root"):
                     service_run(invalid)
 
-    def test_environment_uses_the_frozen_device_tree_and_private_secret_files(self):
-        execution = self.root / "device-backend"
+    def test_environment_uses_the_frozen_business_tree_and_private_secret_files(self):
+        execution = self.root / "business-backend"
         secrets = execution / ".local-tests/reference-fixture/secrets"
         config = execution / "config"
         secrets.mkdir(parents=True)
@@ -363,9 +363,9 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         for item in seed["databases"]:
             item["connection_file"] = str(secrets / "mysql-client.cnf")
         generated = {"head": "a" * 40, "patch_sha256": "b" * 64, "files": []}
-        fixture = {"format_version": 1, "fixture": "device", "status": "ready",
+        fixture = {"format_version": 1, "fixture": "business", "status": "ready",
                    "sources": {"backend": {"head": "a" * 40}, "frontend": {"head": "b" * 40}},
-                   "paths": {"backend": str(execution), "frontend": str(self.root / "device-frontend")},
+                   "paths": {"backend": str(execution), "frontend": str(self.root / "business-frontend")},
                    "generated": {"backend": generated}}
 
         with patch.object(environment, "snapshot", return_value=(generated, b"")):
@@ -383,7 +383,7 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual(set(files), {"mysql-client.cnf", *names})
 
         secret_set = secrets.parent / "secrets-r10"
-        fixture_file = self.write("device-fixture.json", fixture)
+        fixture_file = self.write("business-fixture.json", fixture)
         with patch.object(environment, "snapshot", return_value=(generated, b"")):
             rotated = environment.rotate_secrets(self.backend, fixture_file, secret_set)
             rotated_values, rotated_files = environment._environment(
@@ -395,13 +395,13 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertNotEqual(rotated_values["RYFRAME_RESET_USER_PASSWORD"], values["RYFRAME_RESET_USER_PASSWORD"])
         environment._validate_reset_passwords(rotated_values)
 
-        target_execution = self.root / "new-device-backend"
+        target_execution = self.root / "new-business-backend"
         (target_execution / ".local-tests/reference-fixture").mkdir(parents=True)
         (target_execution / "Cargo.toml").write_text("[workspace]", encoding="utf-8")
         (target_execution / ".git").write_text("gitdir: fixture", encoding="utf-8")
         target_fixture = json.loads(json.dumps(fixture))
         target_fixture["paths"]["backend"] = str(target_execution)
-        target_fixture_file = self.write("new-device-fixture.json", target_fixture)
+        target_fixture_file = self.write("new-business-fixture.json", target_fixture)
         with patch.object(environment, "snapshot", return_value=(generated, b"")):
             bootstrapped = environment.bootstrap_secrets(
                 self.backend, fixture_file, secret_set.relative_to(self.backend), target_fixture_file)
@@ -415,13 +415,13 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
                 {key: bootstrapped["source_files"][name][key] for key in ("bytes", "sha256")},
             )
 
-        drift_execution = self.root / "drift-device-backend"
+        drift_execution = self.root / "drift-business-backend"
         (drift_execution / ".local-tests/reference-fixture").mkdir(parents=True)
         (drift_execution / "Cargo.toml").write_text("[workspace]", encoding="utf-8")
         (drift_execution / ".git").write_text("gitdir: fixture", encoding="utf-8")
         drift_fixture = json.loads(json.dumps(fixture))
         drift_fixture["paths"]["backend"] = str(drift_execution)
-        drift_fixture_file = self.write("drift-device-fixture.json", drift_fixture)
+        drift_fixture_file = self.write("drift-business-fixture.json", drift_fixture)
         real_fsync = environment.os.fsync
         changed = False
 
@@ -456,9 +456,9 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertEqual(base_mysql.read_bytes(), (secrets / "mysql-client.cnf").read_bytes())
         self.assertEqual(base_files["mysql-client.cnf"], {"path": str(base_mysql), **file_digest(base_mysql)})
 
-        self.review["scopes"]["base"]["backend_dir"] = str(self.root / "other-device-backend")
+        self.review["scopes"]["base"]["backend_dir"] = str(self.root / "other-business-backend")
         with patch.object(environment, "snapshot", return_value=(generated, b"")):
-            with self.assertRaisesRegex(ValueError, "所选侧 Device"):
+            with self.assertRaisesRegex(ValueError, "所选侧 Business"):
                 environment._environment(self.backend, self.review, fixture, self.root / "base-output", "base")
 
 

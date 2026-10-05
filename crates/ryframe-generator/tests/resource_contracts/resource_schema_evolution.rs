@@ -4,11 +4,11 @@ use ryframe_generator::{
 };
 use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf, process::Command};
-fn device_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/device.toml")
+fn order_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/order.toml")
 }
-fn device() -> ryframe_generator::ResourceIr {
-    load_resource(device_path()).expect("Device 资源清单应有效")
+fn order() -> ryframe_generator::ResourceIr {
+    load_resource(order_path()).expect("Order 资源清单应有效")
 }
 
 fn assert_tenant_bootstrap_migration_gates(generated: &GeneratedCatalog) {
@@ -20,20 +20,20 @@ fn assert_tenant_bootstrap_migration_gates(generated: &GeneratedCatalog) {
     assert!(
         aggregate
             .content
-            .contains("Box::new(device::migration::Migration)")
+            .contains("Box::new(order::migration::Migration)")
     );
     assert!(
         aggregate
             .content
-            .contains("pub const MIGRATION_NAMES: &[&str] = &[\"m_resource_initial_device\"];")
+            .contains("pub const MIGRATION_NAMES: &[&str] = &[\"m_resource_initial_order\"];")
     );
     assert!(aggregate.content.contains(
-        "#[cfg(any(feature = \"repositories\", feature = \"migration\"))]\npub mod device;"
+        "#[cfg(any(feature = \"repositories\", feature = \"migration\"))]\npub mod order;"
     ));
     let database_slice = generated
         .assets
         .iter()
-        .find(|asset| asset.path == "crates/ryframe-tenant-db/src/generated/device/mod.rs")
+        .find(|asset| asset.path == "crates/ryframe-tenant-db/src/generated/order/mod.rs")
         .expect("应生成 tenant 数据库模块");
     assert!(
         database_slice
@@ -55,13 +55,13 @@ fn initial_migration_is_immutable_and_schema_evolution_requires_new_revision() {
         backend_root: backend.path(),
         frontend_root: Some(frontend.path()),
     };
-    let original = device();
-    let rendered = render_resources(std::slice::from_ref(&original)).expect("Device 应生成");
+    let original = order();
+    let rendered = render_resources(std::slice::from_ref(&original)).expect("Order 应生成");
     assert_tenant_bootstrap_migration_gates(&rendered);
-    write_resource(&rendered, "device", workspace).expect("首次写入应成功");
+    write_resource(&rendered, "order", workspace).expect("首次写入应成功");
     let migration_path = backend
         .path()
-        .join("crates/ryframe-tenant-db/src/generated/device/migration.rs");
+        .join("crates/ryframe-tenant-db/src/generated/order/migration.rs");
     let initial_migration = fs::read_to_string(&migration_path).expect("初始迁移应存在");
 
     let mut label_only = original;
@@ -69,7 +69,7 @@ fn initial_migration_is_immutable_and_schema_evolution_requires_new_revision() {
     label_only.labels.zh_cn = "终端设备".into();
     write_resource(
         &render_resources(&[label_only]).expect("标签变更应生成"),
-        "device",
+        "order",
         workspace,
     )
     .expect("非 schema 变更应保留初始迁移");
@@ -78,18 +78,18 @@ fn initial_migration_is_immutable_and_schema_evolution_requires_new_revision() {
         initial_migration
     );
 
-    let unversioned_source = fs::read_to_string(device_path())
-        .expect("应读取 Device fixture")
+    let unversioned_source = fs::read_to_string(order_path())
+        .expect("应读取 Order fixture")
         .replacen("max_length = 100", "max_length = 110", 1);
     let unversioned = normalize_resource(
-        ResourceSpec::parse(&unversioned_source, "catalog/resources/device.toml").unwrap(),
-        "catalog/resources/device.toml",
+        ResourceSpec::parse(&unversioned_source, "catalog/resources/order.toml").unwrap(),
+        "catalog/resources/order.toml",
         "schema-without-revision",
     )
     .expect("缺少 revision 不影响清单语法校验");
     let error = write_resource(
         &render_resources(&[unversioned]).expect("未声明 revision 的 schema 仍应可预览"),
-        "device",
+        "order",
         workspace,
     )
     .expect_err("已受管 schema 变化必须声明新 revision")
@@ -97,18 +97,18 @@ fn initial_migration_is_immutable_and_schema_evolution_requires_new_revision() {
     assert!(error.contains("没有声明新的 schema_revision"));
     assert!(error.contains("cargo xtask data migrate new tenant-data"));
 
-    let revision = "m20260823_123456_expand_device_name";
-    let changed_source = fs::read_to_string(device_path())
-        .expect("应读取 Device fixture")
+    let revision = "m20260823_123456_expand_order_name";
+    let changed_source = fs::read_to_string(order_path())
+        .expect("应读取 Order fixture")
         .replacen(
             "bootstrap_migration = true",
             &format!("bootstrap_migration = true\nschema_revision = {revision:?}"),
             1,
         )
         .replacen("max_length = 100", "max_length = 120", 1);
-    let spec = ResourceSpec::parse(&changed_source, "catalog/resources/device.toml")
+    let spec = ResourceSpec::parse(&changed_source, "catalog/resources/order.toml")
         .expect("schema 变更 TOML 应有效");
-    let changed = normalize_resource(spec, "catalog/resources/device.toml", "schema-v2")
+    let changed = normalize_resource(spec, "catalog/resources/order.toml", "schema-v2")
         .expect("schema v2 应通过 IR");
     let revision_path = backend
         .path()
@@ -118,7 +118,7 @@ fn initial_migration_is_immutable_and_schema_evolution_requires_new_revision() {
     fs::write(&revision_path, "// 待冻结的追加 roll-forward 迁移\n").expect("应写入追加迁移");
     write_resource(
         &render_resources(&[changed]).expect("schema v2 应生成"),
-        "device",
+        "order",
         workspace,
     )
     .expect("新 revision 与未提交迁移应允许 schema 演进");
@@ -137,14 +137,14 @@ fn initial_migration_is_immutable_and_schema_evolution_requires_new_revision() {
 fn assert_invalid_revision_updates(workspace: ResourceWorkspace<'_>, changed_source: &str) {
     let reused_source = changed_source.replacen("max_length = 120", "max_length = 130", 1);
     let reused = normalize_resource(
-        ResourceSpec::parse(&reused_source, "catalog/resources/device.toml").unwrap(),
-        "catalog/resources/device.toml",
+        ResourceSpec::parse(&reused_source, "catalog/resources/order.toml").unwrap(),
+        "catalog/resources/order.toml",
         "schema-v3",
     )
     .expect("schema v3 IR 本身应有效");
     let error = write_resource(
         &render_resources(&[reused]).expect("schema v3 应生成预览"),
-        "device",
+        "order",
         workspace,
     )
     .expect_err("同 revision 不得承载第二次 schema 变化")
@@ -158,14 +158,14 @@ fn assert_invalid_revision_updates(workspace: ResourceWorkspace<'_>, changed_sou
         1,
     );
     let removed = normalize_resource(
-        ResourceSpec::parse(&removed_source, "catalog/resources/device.toml").unwrap(),
-        "catalog/resources/device.toml",
+        ResourceSpec::parse(&removed_source, "catalog/resources/order.toml").unwrap(),
+        "catalog/resources/order.toml",
         "schema-v2-without-initial",
     )
     .expect("移除初始迁移标记仍是有效 IR");
     let error = write_resource(
         &render_resources(&[removed]).expect("无初始迁移资产的预览应可构造"),
-        "device",
+        "order",
         workspace,
     )
     .expect_err("已落盘初始迁移不得被清单删除")
@@ -187,9 +187,9 @@ fn frozen_migration_lock_is_verified_before_any_generated_write() {
         backend_root: backend.path(),
         frontend_root: Some(frontend.path()),
     };
-    let catalog = render_resources(&[device()]).unwrap();
-    write_resource(&catalog, "device", workspace).unwrap();
-    let relative = "crates/ryframe-tenant-db/src/migration/m20260823_123456_device_state.rs";
+    let catalog = render_resources(&[order()]).unwrap();
+    write_resource(&catalog, "order", workspace).unwrap();
+    let relative = "crates/ryframe-tenant-db/src/migration/m20260823_123456_order_state.rs";
     let migration = backend.path().join(relative);
     fs::create_dir_all(migration.parent().unwrap()).unwrap();
     fs::write(&migration, "// frozen\n").unwrap();
@@ -199,10 +199,10 @@ fn frozen_migration_lock_is_verified_before_any_generated_write() {
         relative,
         &hash,
         "tenant-data",
-        "m20260823_123456_device_state",
+        "m20260823_123456_order_state",
     );
     assert!(
-        write_resource(&catalog, "device", workspace)
+        write_resource(&catalog, "order", workspace)
             .unwrap()
             .written
             .is_empty()
@@ -225,7 +225,7 @@ fn frozen_migration_lock_is_verified_before_any_generated_write() {
         relative,
         &hash,
         "control",
-        "m20260823_123456_device_state",
+        "m20260823_123456_order_state",
     );
     assert_lock_rejected(&catalog, workspace, "身份无效");
     write_lock(
@@ -296,10 +296,10 @@ fn assert_lock_rejected(
         .join("catalog/resources/.ownership.toml");
     let generated = workspace
         .backend_root
-        .join("crates/ryframe-tenant-db/src/generated/device/mod.rs");
+        .join("crates/ryframe-tenant-db/src/generated/order/mod.rs");
     let ownership_before = fs::read(&ownership).unwrap();
     let generated_before = fs::read(&generated).unwrap();
-    let error = write_resource(catalog, "device", workspace)
+    let error = write_resource(catalog, "order", workspace)
         .expect_err("无效冻结锁必须阻止生成")
         .to_string();
     assert!(error.contains(expected), "意外错误：{error}");

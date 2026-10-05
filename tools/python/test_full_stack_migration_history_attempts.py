@@ -144,7 +144,7 @@ class AttemptHistoryTests(unittest.TestCase):
                 history.history_plan(CONTRACT, before)["plan_sha256"],
             )
         self.assertNotIn(mock.call("COMMIT"), session.execute.call_args_list)
-        self.assertTrue((self.directory / f"device-history-{MIGRATION}.json").exists())
+        self.assertTrue((self.directory / f"business-history-{MIGRATION}.json").exists())
 
     def test_foreign_missing_duplicate_or_running_attempts_are_rejected(self):
         mutations = [

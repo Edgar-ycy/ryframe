@@ -778,7 +778,7 @@ fn data_groups_migrations_and_explicit_maintenance() {
             target: MigrationTarget::TenantDataOne("tenant-a".into()),
         }))
     );
-    assert!(parse_command(&["data", "migrate", "new", "unknown", "add_device"]).is_err());
+    assert!(parse_command(&["data", "migrate", "new", "unknown", "add_order"]).is_err());
 }
 
 #[test]

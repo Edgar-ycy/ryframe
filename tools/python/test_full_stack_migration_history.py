@@ -152,7 +152,7 @@ class HistoryTests(unittest.TestCase):
         self.assertFalse(result["natural_elapsed_7_days"])
         self.assertEqual(result["retention_hours"], 168)
         recorded = json.loads(
-            (self.directory / f"device-history-{MIGRATION}.json").read_text(
+            (self.directory / f"business-history-{MIGRATION}.json").read_text(
                 encoding="utf-8"
             )
         )
@@ -239,7 +239,7 @@ class HistoryTests(unittest.TestCase):
     def test_backup_failure_never_registers_or_commits(self):
         after = shifted(snapshot())
         history.write_evidence(
-            self.directory / f"device-history-{MIGRATION}.json",
+            self.directory / f"business-history-{MIGRATION}.json",
             {**CONTRACT, "artificial_history": True, "before": snapshot()},
         )
         session = mock.Mock()
@@ -273,7 +273,7 @@ class HistoryTests(unittest.TestCase):
     ):
         before, after = snapshot(), shifted(snapshot())
         history.write_evidence(
-            self.directory / f"device-history-{MIGRATION}.json",
+            self.directory / f"business-history-{MIGRATION}.json",
             {**CONTRACT, "artificial_history": True, "before": before},
         )
         session = mock.Mock()
@@ -299,7 +299,7 @@ class HistoryTests(unittest.TestCase):
             [],
             [],
         ]
-        artifact_path = self.directory / f"device-retention-{MIGRATION}.sql"
+        artifact_path = self.directory / f"business-retention-{MIGRATION}.sql"
 
         def exported(*_args):
             self.assertIn("FOR UPDATE", session.execute.call_args_list[2].args[0])
@@ -322,7 +322,7 @@ class HistoryTests(unittest.TestCase):
             )
         self.assertTrue(result["tenant_write_fence_held"])
         self.assertFalse(result["restored"])
-        self.assertTrue((self.directory / f"device-backup-{MIGRATION}.json").is_file())
+        self.assertTrue((self.directory / f"business-backup-{MIGRATION}.json").is_file())
         self.assertEqual(session.execute.call_args.args, ("COMMIT",))
 
     def test_runtime_or_worker_mismatch_never_connects_to_database(self):
@@ -359,8 +359,8 @@ class HistoryTests(unittest.TestCase):
 
     def test_actual_dump_completion_and_digest_are_required_before_registration(self):
         content = (
-            b"CREATE TABLE `biz_device` ();\n"
-            + b"INSERT INTO `biz_device` VALUES (1);\n" * 3
+            b"CREATE TABLE `biz_order` ();\n"
+            + b"INSERT INTO `biz_order` VALUES (1);\n" * 3
         )
 
         def complete(command, **kwargs):
@@ -405,11 +405,11 @@ class HistoryTests(unittest.TestCase):
                     {"database": "target_test"}, self.directory, MIGRATION
                 )
         self.assertTrue(
-            (self.directory / f"device-retention-{MIGRATION}.sql").is_file()
+            (self.directory / f"business-retention-{MIGRATION}.sql").is_file()
         )
 
         def incomplete(command, **kwargs):
-            kwargs["stdout"].write(b"CREATE TABLE `biz_device` ();\n")
+            kwargs["stdout"].write(b"CREATE TABLE `biz_order` ();\n")
             return subprocess.CompletedProcess(command, 0)
 
         with (

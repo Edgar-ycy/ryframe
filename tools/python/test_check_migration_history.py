@@ -217,7 +217,7 @@ class MigrationHistoryTests(unittest.TestCase):
         self.assertTrue(any("租户库运行时 Migrator 必须消费" in error for error in errors))
 
     def test_forward_migration_requires_registration_and_rejected_down(self) -> None:
-        name = "m20260823_010203_add_device"
+        name = "m20260823_010203_add_business"
         migration = self.control / name
         migration.mkdir()
         (migration / "mod.rs").write_text(
@@ -242,7 +242,7 @@ class MigrationHistoryTests(unittest.TestCase):
         self.assertEqual(errors, [])
 
     def test_forward_migration_requires_read_only_name_registration(self) -> None:
-        name = "m20260823_010203_add_device"
+        name = "m20260823_010203_add_business"
         self._create_forward(name)
         registry = self.control / "mod.rs"
         registry.write_text(
@@ -255,7 +255,7 @@ class MigrationHistoryTests(unittest.TestCase):
         self.assertTrue(any("迁移未加入只读名称注册表" in error for error in errors))
 
     def test_forward_migration_with_rollback_body_is_rejected(self) -> None:
-        name = "m20260823_010203_add_device"
+        name = "m20260823_010203_add_business"
         migration = self.tenant / f"{name}.rs"
         migration.write_text("async fn down() { Ok(()) }\n", encoding="utf-8")
         (self.tenant / "mod.rs").write_text(
@@ -272,7 +272,7 @@ class MigrationHistoryTests(unittest.TestCase):
         self.assertTrue(any("down 必须返回" in error for error in errors))
 
     def test_down_rejection_text_cannot_hide_a_rollback_body(self) -> None:
-        name = "m20260823_010203_add_device"
+        name = "m20260823_010203_add_business"
         migration = self.tenant / f"{name}.rs"
         migration.write_text(
             "async fn down() {\n"
@@ -296,7 +296,7 @@ class MigrationHistoryTests(unittest.TestCase):
         self.assertTrue(any("不得执行其他逻辑" in error for error in errors))
 
     def test_pending_migration_is_editable_but_full_check_requires_freeze(self) -> None:
-        source = self._create_forward("m20260823_010203_add_device")
+        source = self._create_forward("m20260823_010203_add_business")
         _document, entries, errors = MODULE.load_lock(
             self.root, self.catalog / "migrations.lock.toml"
         )
@@ -316,7 +316,7 @@ class MigrationHistoryTests(unittest.TestCase):
         self.assertTrue(source.is_file())
 
     def test_committed_unlocked_migration_cannot_be_silently_accepted(self) -> None:
-        source = self._create_forward("m20260823_010203_add_device")
+        source = self._create_forward("m20260823_010203_add_business")
         _document, entries, errors = MODULE.load_lock(
             self.root, self.catalog / "migrations.lock.toml"
         )
@@ -331,7 +331,7 @@ class MigrationHistoryTests(unittest.TestCase):
         self.assertTrue(any("已提交迁移未进入冻结清单" in error for error in errors))
 
     def test_frozen_forward_migration_change_delete_and_rename_are_rejected(self) -> None:
-        source = self._create_forward("m20260823_010203_add_device")
+        source = self._create_forward("m20260823_010203_add_business")
         baselines = [
             self.control / "m20260820_000000_control_baseline/mod.rs",
             self.tenant / "m20260820_000000_tenant_baseline.rs",
@@ -342,16 +342,16 @@ class MigrationHistoryTests(unittest.TestCase):
         source.write_text("changed\n", encoding="utf-8")
         self.assertTrue(any("冻结迁移被修改" in error for error in MODULE.verify_lock(self.root, lock)))
 
-        self._create_forward("m20260823_010203_add_device")
+        self._create_forward("m20260823_010203_add_business")
         source.unlink()
         self.assertTrue(any("被删除或改名" in error for error in MODULE.verify_lock(self.root, lock)))
 
-        renamed = source.with_name("m20260823_010204_add_device.rs")
+        renamed = source.with_name("m20260823_010204_add_business.rs")
         renamed.write_text("replacement\n", encoding="utf-8")
         self.assertTrue(any("被删除或改名" in error for error in MODULE.verify_lock(self.root, lock)))
 
     def test_freeze_records_only_new_complete_migration(self) -> None:
-        source = self._create_forward("m20260823_010203_add_device")
+        source = self._create_forward("m20260823_010203_add_business")
 
         errors = MODULE.freeze(self.root)
 
@@ -374,7 +374,7 @@ class MigrationHistoryTests(unittest.TestCase):
         )
 
     def test_freeze_rejects_unimplemented_skeleton(self) -> None:
-        source = self._create_forward("m20260823_010203_add_device")
+        source = self._create_forward("m20260823_010203_add_business")
         source.write_text(
             "async fn up() { Err(\"尚未实现\") }\n"
             'async fn down() { Err(DbErr::Custom("追加迁移".into())) }\n',
@@ -385,7 +385,7 @@ class MigrationHistoryTests(unittest.TestCase):
         self.assertTrue(any("未实现骨架" in error for error in errors))
 
     def test_generated_initial_migration_must_be_frozen_before_commit(self) -> None:
-        source = self.root / "crates/ryframe-tenant-db/src/generated/device/migration.rs"
+        source = self.root / "crates/ryframe-tenant-db/src/generated/business/migration.rs"
         source.parent.mkdir(parents=True)
         source.write_text(
             "pub const INITIAL_RESOURCE_MIGRATION: bool = true;\n"
@@ -394,7 +394,7 @@ class MigrationHistoryTests(unittest.TestCase):
         )
         tenant_generated = self.tenant.parent / "generated/mod.rs"
         tenant_generated.write_text(
-            'pub const MIGRATION_NAMES: &[&str] = &["m_resource_initial_device"];\n'
+            'pub const MIGRATION_NAMES: &[&str] = &["m_resource_initial_business"];\n'
             "pub fn migrations() -> Vec<Box<dyn MigrationTrait>> { vec![] }\n",
             encoding="utf-8",
         )
@@ -428,7 +428,7 @@ class MigrationHistoryTests(unittest.TestCase):
         )
 
     def test_generated_initial_migration_requires_read_only_name_registration(self) -> None:
-        source = self.root / "crates/ryframe-tenant-db/src/generated/device/migration.rs"
+        source = self.root / "crates/ryframe-tenant-db/src/generated/business/migration.rs"
         source.parent.mkdir(parents=True)
         source.write_text(
             "pub const INITIAL_RESOURCE_MIGRATION: bool = true;\n"
@@ -456,7 +456,7 @@ class MigrationHistoryTests(unittest.TestCase):
         self.assertTrue(any("HEAD 条目" in error for error in errors))
 
     def test_existing_head_migration_cannot_be_appended_to_lock(self) -> None:
-        source = self._create_forward("m20260823_010203_add_device")
+        source = self._create_forward("m20260823_010203_add_business")
         baselines = [
             self.control / "m20260820_000000_control_baseline/mod.rs",
             self.tenant / "m20260820_000000_tenant_baseline.rs",

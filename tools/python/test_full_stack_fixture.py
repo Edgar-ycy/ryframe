@@ -140,7 +140,7 @@ class FullStackFixtureTests(unittest.TestCase):
             fixture.exact_clean_snapshot(self.backend, "main")
 
     def test_formal_pair_is_validated_before_output_creation(self):
-        output = self.backend / ".local-tests/formal-device"
+        output = self.backend / ".local-tests/formal-business"
         with (
             patch.object(fixture, "validate_paths"),
             patch.object(

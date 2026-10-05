@@ -104,25 +104,20 @@ pub struct Order {
 
 fn assert_generated_business(workspace: &std::path::Path) {
     assert!(
-        workspace
-            .path()
-            .join("order-business/src/generated/entities/order.rs")
-            .is_file()
+        workspace.join("order-business/src/generated/entities/order.rs").is_file()
     );
     assert!(
         workspace
-            .path()
             .join("order-business/migrations/m_resource_initial_order.rs")
             .is_file()
     );
     assert!(
-        fs::read_to_string(workspace.path().join("order-business/src/generated/mod.rs"))
+        fs::read_to_string(workspace.join("order-business/src/generated/mod.rs"))
             .expect("应读取聚合模块")
             .contains("x-ryframe-crud-resources")
     );
     assert!(
         !workspace
-            .path()
             .join("order-business/src/resources/order.rs")
             .exists()
     );

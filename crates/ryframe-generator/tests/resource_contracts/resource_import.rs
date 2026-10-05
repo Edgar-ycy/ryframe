@@ -11,12 +11,12 @@ use ryframe_generator::{
 fn metadata() -> ResourceDraftMetadata {
     ResourceDraftMetadata {
         identity: ResourceIdentitySpec {
-            name: "device".into(),
+            name: "order".into(),
             module: "system".into(),
             profile: ResourceProfile::FlatCrud,
             labels: LabelsSpec {
                 zh_cn: "设备".into(),
-                en: "Device".into(),
+                en: "Order".into(),
             },
         },
         storage: StorageSpec {
@@ -25,39 +25,39 @@ fn metadata() -> ResourceDraftMetadata {
             configuration_versioned: true,
         },
         api: ApiSpec {
-            path: "/api/v1/system/devices".into(),
+            path: "/api/v1/system/orders".into(),
             operations: OperationSpec {
-                create: "post_system_devices".into(),
-                read: "get_system_devices_by_id".into(),
-                list: "get_system_devices".into(),
-                update: "put_system_devices_by_id".into(),
-                delete: "delete_system_devices_by_id".into(),
+                create: "post_system_orders".into(),
+                read: "get_system_orders_by_id".into(),
+                list: "get_system_orders".into(),
+                update: "put_system_orders_by_id".into(),
+                delete: "delete_system_orders_by_id".into(),
             },
         },
         access: AccessSpec {
-            capability: Some("system.device".into()),
+            capability: Some("business.order".into()),
             owner_field: None,
             permissions: PermissionSpec {
-                create: "system:device:create".into(),
-                read: "system:device:read".into(),
-                list: "system:device:list".into(),
-                update: "system:device:update".into(),
-                delete: "system:device:delete".into(),
+                create: "system:order:create".into(),
+                read: "system:order:read".into(),
+                list: "system:order:list".into(),
+                update: "system:order:update".into(),
+                delete: "system:order:delete".into(),
             },
         },
         menu: MenuSpec {
-            key: "system.device".into(),
+            key: "business.order".into(),
             parent: "system".into(),
             order: 80,
             icon: None,
             labels: LabelsSpec {
                 zh_cn: "设备管理".into(),
-                en: "Devices".into(),
+                en: "Orders".into(),
             },
         },
         route: RouteSpec {
-            key: "system.device".into(),
-            path: "/system/device".into(),
+            key: "business.order".into(),
+            path: "/system/order".into(),
         },
         soft_delete: None,
         audit: None,
@@ -67,7 +67,7 @@ fn metadata() -> ResourceDraftMetadata {
 
 fn table() -> TableInfo {
     TableInfo {
-        table_name: "sys_device".into(),
+        table_name: "sys_order".into(),
         comment: Some("设备".into()),
         columns: vec![
             column("id", "bigint", true, false, true, Some("设备编号")),
@@ -104,7 +104,7 @@ fn table() -> TableInfo {
             },
         ],
         foreign_keys: vec![ForeignKeyInfo {
-            name: "fk_device_tenant".into(),
+            name: "fk_order_tenant".into(),
             columns: vec!["tenant_id".into()],
             referenced_table: "sys_tenant".into(),
             referenced_columns: vec!["tenant_id".into()],
@@ -170,7 +170,7 @@ fn table_import_is_deterministic_and_keeps_business_semantics_pending() {
         first
             .pending_notes
             .iter()
-            .any(|note| note.contains("外键 fk_device_tenant"))
+            .any(|note| note.contains("外键 fk_order_tenant"))
     );
     for field in &first.spec.fields {
         assert!(!field.usage.create);
@@ -184,7 +184,7 @@ fn table_import_is_deterministic_and_keeps_business_semantics_pending() {
     assert!(first_toml.contains("待确认字段"));
     assert!(!first_toml.contains("soft_delete"));
     assert!(!first_toml.contains("audit"));
-    ResourceSpec::parse(&first_toml, "catalog/resources/device.toml")
+    ResourceSpec::parse(&first_toml, "catalog/resources/order.toml")
         .expect("TOML 草案应保持 ResourceSpec 结构有效");
 }
 

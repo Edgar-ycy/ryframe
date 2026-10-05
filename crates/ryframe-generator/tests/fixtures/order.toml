@@ -1,30 +1,30 @@
 schema_version = 1
 
 [resource]
-name = "device"
+name = "order"
 module = "system"
 profile = "flat_crud"
 
 [resource.labels]
 zh_cn = "设备"
-en = "Device"
+en = "Order"
 
 [storage]
 kind = "tenant_data"
 tenant_field = "tenant_id"
 
 [database]
-table = "biz_device"
+table = "biz_order"
 primary_key = ["tenant_id", "id"]
 bootstrap_migration = true
 
 [[database.indexes]]
-name = "uk_device_tenant_name"
+name = "uk_order_tenant_name"
 fields = ["tenant_id", "name"]
 unique = true
 
 [[database.indexes]]
-name = "idx_device_tenant_status"
+name = "idx_order_tenant_status"
 fields = ["tenant_id", "status"]
 
 [database.soft_delete]
@@ -64,7 +64,7 @@ sort = true
 
 [fields.labels]
 zh_cn = "设备编号"
-en = "Device ID"
+en = "Order ID"
 
 [[fields]]
 name = "name"
@@ -86,7 +86,7 @@ max_length = 100
 
 [fields.labels]
 zh_cn = "设备名称"
-en = "Device name"
+en = "Order name"
 
 [[fields]]
 name = "status"
@@ -163,38 +163,38 @@ zh_cn = "删除标记"
 en = "Deleted flag"
 
 [api]
-path = "/api/v1/system/devices"
+path = "/api/v1/system/orders"
 
 [api.operations]
-create = "post_system_devices"
-read = "get_system_devices_by_id"
-list = "get_system_devices"
-update = "put_system_devices_by_id"
-delete = "delete_system_devices_by_id"
+create = "post_system_orders"
+read = "get_system_orders_by_id"
+list = "get_system_orders"
+update = "put_system_orders_by_id"
+delete = "delete_system_orders_by_id"
 
 [access]
-capability = "system.device"
+capability = "business.order"
 
 [access.permissions]
-create = "system:device:create"
-read = "system:device:read"
-list = "system:device:list"
-update = "system:device:update"
-delete = "system:device:delete"
+create = "system:order:create"
+read = "system:order:read"
+list = "system:order:list"
+update = "system:order:update"
+delete = "system:order:delete"
 
 [menu]
-key = "system.device"
+key = "business.order"
 parent = "system"
 order = 80
 icon = "monitor"
 
 [menu.labels]
 zh_cn = "设备管理"
-en = "Devices"
+en = "Orders"
 
 [route]
-key = "system.device"
-path = "/system/device"
+key = "business.order"
+path = "/system/order"
 
 [extensions.backend]
 health_probe = true

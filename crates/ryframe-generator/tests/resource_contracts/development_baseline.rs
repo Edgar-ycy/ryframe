@@ -46,39 +46,39 @@ fn development_schema_changes_require_explicit_write_and_reach_zero_diff() {
         backend_root: backend.path(),
         frontend_root: Some(frontend.path()),
     };
-    let source = include_str!("../fixtures/device.toml");
+    let source = include_str!("../fixtures/order.toml");
     let render = |source: &str| {
-        let spec = ResourceSpec::parse(source, "catalog/resources/device.toml").unwrap();
+        let spec = ResourceSpec::parse(source, "catalog/resources/order.toml").unwrap();
         render_resources(&[
-            normalize_resource(spec, "catalog/resources/device.toml", "fixture").unwrap(),
+            normalize_resource(spec, "catalog/resources/order.toml", "fixture").unwrap(),
         ])
         .unwrap()
     };
     let original = render(source);
-    write_resource(&original, "device", workspace).unwrap();
+    write_resource(&original, "order", workspace).unwrap();
     let migration = backend
         .path()
-        .join("crates/ryframe-tenant-db/src/generated/device/migration.rs");
+        .join("crates/ryframe-tenant-db/src/generated/order/migration.rs");
     let ownership = backend.path().join("catalog/resources/.ownership.toml");
     let before = fs::read(&migration).unwrap();
     let ownership_before = fs::read(&ownership).unwrap();
     let changed = render(&source.replacen("max_length = 100", "max_length = 110", 1));
     for plan in [
-        plan_resource_changes(&changed, "device", workspace).unwrap(),
+        plan_resource_changes(&changed, "order", workspace).unwrap(),
         plan_all_resource_changes(&changed, workspace).unwrap(),
     ] {
         assert!(
             plan.assets
                 .iter()
-                .any(|asset| asset.path.ends_with("device/migration.rs")
+                .any(|asset| asset.path.ends_with("order/migration.rs")
                     && asset.action == PlanAction::Update)
         );
         assert_eq!(fs::read(&migration).unwrap(), before);
         assert_eq!(fs::read(&ownership).unwrap(), ownership_before);
     }
-    write_resource(&changed, "device", workspace).unwrap();
+    write_resource(&changed, "order", workspace).unwrap();
     assert_ne!(fs::read(&migration).unwrap(), before);
-    let repeated = write_resource(&changed, "device", workspace).unwrap();
+    let repeated = write_resource(&changed, "order", workspace).unwrap();
     assert!(repeated.written.is_empty());
     assert!(repeated.removed.is_empty());
     assert!(

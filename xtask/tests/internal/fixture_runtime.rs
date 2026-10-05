@@ -33,7 +33,7 @@ impl Fixture {
         fs::write(&environment, b"{}\n").unwrap();
         let runtime = directory.join("runtime-r1");
         fs::create_dir(&runtime).unwrap();
-        let binding = runtime.join("browser-binding-r24-device.json");
+        let binding = runtime.join("browser-binding-r24-business.json");
         fs::write(&binding, b"{}\n").unwrap();
         Self {
             directory,
@@ -133,13 +133,13 @@ fn parses_all_runtime_operations_into_three_typed_shapes() {
 #[test]
 fn parses_bind_with_new_exactly_named_binding() {
     let fixture = Fixture::new();
-    let binding = fixture.runtime.join("browser-binding-r25-device.json");
+    let binding = fixture.runtime.join("browser-binding-r25-business.json");
     let mut arguments = fixture.arguments("bind");
     arguments.extend(strings(&[
         "--browser-binding",
         binding.to_str().unwrap(),
         "--run-id",
-        "r25-device",
+        "r25-business",
         "--server",
         "preview",
         "--write",
@@ -148,7 +148,7 @@ fn parses_bind_with_new_exactly_named_binding() {
     let invocation = private_invocation_at(&command, &root_dir()).unwrap();
     let protocol: Value = serde_json::from_str(&invocation.protocol).unwrap();
     assert_eq!(protocol["browser_binding"], text(&binding));
-    assert_eq!(protocol["run_id"], "r25-device");
+    assert_eq!(protocol["run_id"], "r25-business");
     assert_eq!(protocol["server"], "preview");
     assert_eq!(protocol["write"], true);
     assert_eq!(
@@ -161,7 +161,7 @@ fn parses_bind_with_new_exactly_named_binding() {
                 },
                 browser_binding: binding,
             },
-            run_id: "r25-device".to_owned(),
+            run_id: "r25-business".to_owned(),
             server: FixtureServer::Preview,
         }
     );
@@ -185,7 +185,7 @@ fn rejects_ambiguous_write_and_option_combinations_before_dispatch() {
     duplicate.extend(strings(&["--output", fixture.runtime.to_str().unwrap()]));
     cases.push(duplicate);
     let mut plain_browser_field = fixture.arguments("verify");
-    plain_browser_field.extend(strings(&["--run-id", "r24-device"]));
+    plain_browser_field.extend(strings(&["--run-id", "r24-business"]));
     cases.push(plain_browser_field);
     for arguments in cases {
         assert!(parse_runtime(arguments.clone()).is_err(), "{arguments:?}");
@@ -221,7 +221,7 @@ fn rejects_browser_binding_drift_before_dispatch() {
     let fixture = Fixture::new();
     let other = fixture.directory.join("other");
     fs::create_dir(&other).unwrap();
-    let outside_binding = other.join("browser-binding-r24-device.json");
+    let outside_binding = other.join("browser-binding-r24-business.json");
     fs::write(&outside_binding, b"{}\n").unwrap();
     let mut wrong_parent = fixture.arguments("browser-verify");
     wrong_parent.extend(["--browser-binding".to_owned(), text(&outside_binding)]);

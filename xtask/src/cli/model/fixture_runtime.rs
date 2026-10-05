@@ -29,7 +29,7 @@ pub(crate) struct FixtureBrowserBinding {
     pub(crate) browser_binding: PathBuf,
 }
 
-/// Device 夹具运行时的公开请求。路径和写入语义在构造此类型前已经核验。
+/// 业务 crate 夹具运行时的公开请求。路径和写入语义在构造此类型前已经核验。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FixtureRuntimeCommand {
     Help,

@@ -30,7 +30,7 @@ impl Fixture {
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&directory).unwrap();
-        let output = directory.join("Device 中文 fixture");
+        let output = directory.join("业务 crate 中文 fixture");
         Self { directory, output }
     }
 
@@ -63,7 +63,7 @@ fn text(path: &Path) -> String {
 fn parsed(arguments: Vec<String>) -> Result<FixturePrepareCommand, super::cli::CliError> {
     parse(arguments).map(|cli| match cli.command {
         Command::Check(CheckCommand::Recovery(RecoveryCommand::FixturePrepare(command))) => command,
-        _ => panic!("Device 夹具准备没有解析为强类型请求"),
+        _ => panic!("业务 crate 夹具准备没有解析为强类型请求"),
     })
 }
 

@@ -11,7 +11,7 @@ from verify_release_ci import requirements
 ROOT = Path(__file__).resolve().parents[2]
 
 
-class DeviceWorkflowTests(unittest.TestCase):
+class BusinessWorkflowTests(unittest.TestCase):
     def setUp(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/extended-ci.yml").read_text(encoding="utf-8"))
         self.job = workflow["jobs"]["full-stack-e2e"]
@@ -22,14 +22,14 @@ class DeviceWorkflowTests(unittest.TestCase):
         args = SimpleNamespace(backend_repository="owner/backend", frontend_repository="owner/frontend",
                                backend_sha="a" * 40, frontend_sha="b" * 40, tag="v0.13.0")
         required = requirements(args)[2]
-        self.assertEqual({entry["fixture"] for entry in self.matrix}, {"core", "device"})
+        self.assertEqual({entry["fixture"] for entry in self.matrix}, {"core", "business"})
         self.assertEqual(set(required.jobs), {entry["name"] for entry in self.matrix} | {"Linux DevEx Cgroup Memory"})
         self.assertFalse(self.job["strategy"]["fail-fast"])
 
     def test_fixture_generation_is_between_source_receipt_and_service_preparation(self):
         names = list(self.steps)
         record = names.index("记录本次全栈源码组合")
-        generate = names.index("在隔离工作树生成 Device 并校验幂等性")
+        generate = names.index("在隔离工作树生成业务 crate 并校验幂等性")
         prepare = names.index("构建并安全初始化临时全栈环境")
         self.assertLess(record, generate)
         self.assertLess(generate, prepare)
@@ -72,8 +72,8 @@ class DeviceWorkflowTests(unittest.TestCase):
         for entry in self.matrix:
             name = template.replace("${{ github.run_id }}", "123").replace("${{ github.run_attempt }}", "2")
             names.add(name.replace("${{ matrix.artifact_suffix }}", entry["artifact_suffix"]))
-        self.assertEqual(names, {"ryframe-full-stack-123-2", "ryframe-full-stack-123-2-device"})
-        self.assertIn("device-fixture/fixture.json", upload["with"]["path"])
+        self.assertEqual(names, {"ryframe-full-stack-123-2", "ryframe-full-stack-123-2-business"})
+        self.assertIn("business-fixture/fixture.json", upload["with"]["path"])
         self.assertNotIn("playwright-real", upload["with"]["path"])
 
 

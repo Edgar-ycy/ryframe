@@ -5,21 +5,21 @@ use ryframe_generator::{ResourceSpec, normalize_resource, render_resources};
 #[test]
 fn route_and_menu_keys_must_agree_before_generation() {
     let source = changed(
-        &device_source(),
-        "[route]\nkey = \"system.device\"",
-        "[route]\nkey = \"SystemDevice\"",
+        &order_source(),
+        "[route]\nkey = \"business.order\"",
+        "[route]\nkey = \"SystemOrder\"",
     );
-    let error = normalize(&source, "device").expect_err("不一致的路由键必须在生成前失败");
+    let error = normalize(&source, "order").expect_err("不一致的路由键必须在生成前失败");
     assert!(error.contains("route.key 必须与 menu.key 一致"));
-    normalize(&device_source(), "device").expect("使用同一资源键的 Device 清单必须有效");
+    normalize(&order_source(), "order").expect("使用同一资源键的 Order 清单必须有效");
 }
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(name)
 }
 
-fn device_source() -> String {
-    fs::read_to_string(fixture("tests/fixtures/device.toml")).expect("应读取 Device fixture")
+fn order_source() -> String {
+    fs::read_to_string(fixture("tests/fixtures/order.toml")).expect("应读取 Order fixture")
 }
 
 fn post_source() -> String {
@@ -40,16 +40,16 @@ fn changed(source: &str, from: &str, to: &str) -> String {
 #[test]
 fn string_filter_can_select_exact_matching_explicitly() {
     let source = changed(
-        &device_source(),
+        &order_source(),
         "list = true\nfilter = true\n\n[fields.validation]\nrequired = true\nmin_length = 1",
         "list = true\nfilter = true\nfilter_exact = true\n\n[fields.validation]\nrequired = true\nmin_length = 1",
     );
-    let device = normalize(&source, "device").expect("字符串字段应支持精确筛选");
-    let generated = render_resources(&[device]).expect("精确筛选资源应生成");
+    let order = normalize(&source, "order").expect("字符串字段应支持精确筛选");
+    let generated = render_resources(&[order]).expect("精确筛选资源应生成");
     let repository = generated
         .assets
         .iter()
-        .find(|asset| asset.path.ends_with("device/repository.rs"))
+        .find(|asset| asset.path.ends_with("order/repository.rs"))
         .expect("应生成数据库仓储")
         .content
         .as_str();
@@ -57,23 +57,23 @@ fn string_filter_can_select_exact_matching_explicitly() {
     assert!(!repository.contains("entity::Column::Name.contains(value)"));
 
     let invalid = changed(
-        &device_source(),
+        &order_source(),
         "read = true\nlist = true\nsort = true",
         "read = true\nlist = true\nfilter_exact = true\nsort = true",
     );
-    let error = normalize(&invalid, "device").expect_err("非筛选字段不得声明精确筛选");
+    let error = normalize(&invalid, "order").expect_err("非筛选字段不得声明精确筛选");
     assert!(error.contains("filter_exact 只能用于筛选字段"));
 }
 
 #[test]
 fn editable_widgets_and_patterns_fail_before_rendering() {
-    let source = device_source();
+    let source = order_source();
     let unsupported = changed(
         &source,
         "name = \"name\"\nvalue_type = \"string\"\norder = 30\nwidget = \"text\"",
         "name = \"name\"\nvalue_type = \"string\"\norder = 30\nwidget = \"textarea\"",
     );
-    let error = normalize(&unsupported, "device").expect_err("可编辑 textarea 必须被拒绝");
+    let error = normalize(&unsupported, "order").expect_err("可编辑 textarea 必须被拒绝");
     assert!(error.contains("字段 name"));
     assert!(error.contains("frontend extension"));
 
@@ -82,30 +82,30 @@ fn editable_widgets_and_patterns_fail_before_rendering() {
         "min_length = 1\nmax_length = 100",
         "min_length = 1\nmax_length = 100\npattern = \"^[a-z]+$\"",
     );
-    let error = normalize(&pattern, "device").expect_err("未生成的 pattern 必须被拒绝");
+    let error = normalize(&pattern, "order").expect_err("未生成的 pattern 必须被拒绝");
     assert!(error.contains("validation.pattern"));
     assert!(error.contains("强类型 DTO"));
 }
 
 #[test]
 fn defaults_soft_delete_and_enum_keys_are_strictly_typed() {
-    let device = device_source();
-    let wrong_default = changed(&device, "default = 1", "default = \"1\"");
-    let error = normalize(&wrong_default, "device").expect_err("i32 默认值不得使用字符串");
+    let order = order_source();
+    let wrong_default = changed(&order, "default = 1", "default = \"1\"");
+    let error = normalize(&wrong_default, "order").expect_err("i32 默认值不得使用字符串");
     assert!(error.contains("字段 status"));
     assert!(error.contains("value_type=I32"));
 
-    let wrong_soft_delete = changed(&device, "active = 0", "active = \"0\"");
-    let error = normalize(&wrong_soft_delete, "device").expect_err("软删值必须同字段类型");
+    let wrong_soft_delete = changed(&order, "active = 0", "active = \"0\"");
+    let error = normalize(&wrong_soft_delete, "order").expect_err("软删值必须同字段类型");
     assert!(error.contains("字段 del_flag"));
     assert!(error.contains("soft_delete.active"));
 
     let wrong_enum_key = changed(
-        &device,
+        &order,
         "[fields.enum_values.\"0\"]",
         "[fields.enum_values.\"zero\"]",
     );
-    let error = normalize(&wrong_enum_key, "device").expect_err("数字枚举键不得退化成字符串");
+    let error = normalize(&wrong_enum_key, "order").expect_err("数字枚举键不得退化成字符串");
     assert!(error.contains("字段 status"));
     assert!(error.contains("枚举键 `zero`"));
 
@@ -116,18 +116,18 @@ fn defaults_soft_delete_and_enum_keys_are_strictly_typed() {
     assert!(error.contains("不在 enum_values"));
 
     let decimal = changed(
-        &device,
+        &order,
         "name = \"name\"\nvalue_type = \"string\"",
         "name = \"name\"\nvalue_type = \"decimal\"",
     );
-    let error = normalize(&decimal, "device").expect_err("decimal 必须在 normalize 阶段失败");
+    let error = normalize(&decimal, "order").expect_err("decimal 必须在 normalize 阶段失败");
     assert!(error.contains("字段 name"));
     assert!(error.contains("decimal"));
 }
 
 #[test]
 fn v1_structural_assumptions_are_manifest_errors_not_renderer_panics() {
-    let source = device_source();
+    let source = order_source();
     let cases = [
         (
             changed(&source, "module = \"system\"", "module = \"inventory\""),
@@ -136,16 +136,16 @@ fn v1_structural_assumptions_are_manifest_errors_not_renderer_panics() {
         (
             changed(
                 &source,
-                "path = \"/api/v1/system/devices\"",
-                "path = \"/api/v1/devices\"",
+                "path = \"/api/v1/system/orders\"",
+                "path = \"/api/v1/orders\"",
             ),
             "/api/v1/system/<resources>",
         ),
         (
             changed(
                 &source,
-                "path = \"/api/v1/system/devices\"",
-                "path = \"/api/v1/system/devices/{id}\"",
+                "path = \"/api/v1/system/orders\"",
+                "path = \"/api/v1/system/orders/{id}\"",
             ),
             "不含占位符",
         ),
@@ -175,9 +175,9 @@ fn v1_structural_assumptions_are_manifest_errors_not_renderer_panics() {
         ),
     ];
     for (invalid, expected) in cases {
-        let error = normalize(&invalid, "device").expect_err("结构前提必须在 IR 拒绝");
+        let error = normalize(&invalid, "order").expect_err("结构前提必须在 IR 拒绝");
         assert!(error.contains(expected), "错误未包含 {expected}: {error}");
-        assert!(error.contains("catalog/resources/device.toml"));
+        assert!(error.contains("catalog/resources/order.toml"));
     }
 }
 
@@ -204,31 +204,31 @@ fn frontend_extension_page_is_a_safe_static_vue_module() {
 
 #[test]
 fn service_managed_and_form_view_contracts_are_explicit() {
-    let device = device_source();
+    let order = order_source();
     let editable_tenant = changed(
-        &device,
+        &order,
         "name = \"tenant_id\"\nvalue_type = \"string\"\norder = 10\nwidget = \"hidden\"\n\n[fields.usage]\nread = true\nfilter = true",
         "name = \"tenant_id\"\nvalue_type = \"string\"\norder = 10\nwidget = \"text\"\n\n[fields.usage]\ncreate = true\nread = true\nfilter = true",
     );
-    let error = normalize(&editable_tenant, "device").expect_err("tenant_id 不得来自表单");
+    let error = normalize(&editable_tenant, "order").expect_err("tenant_id 不得来自表单");
     assert!(error.contains("服务管理字段"));
     assert!(error.contains("字段 tenant_id"));
 
     let wrong_audit_type = changed(
-        &device,
+        &order,
         "name = \"created_at\"\nvalue_type = \"date_time\"",
         "name = \"created_at\"\nvalue_type = \"string\"",
     );
-    let error = normalize(&wrong_audit_type, "device").expect_err("审计时间类型必须固定");
+    let error = normalize(&wrong_audit_type, "order").expect_err("审计时间类型必须固定");
     assert!(error.contains("字段 created_at"));
     assert!(error.contains("date_time"));
 
     let created_by = changed(
-        &device,
+        &order,
         "created_at = \"created_at\"\nupdated_at = \"updated_at\"",
         "created_at = \"created_at\"\ncreated_by = \"name\"\nupdated_at = \"updated_at\"",
     );
-    let error = normalize(&created_by, "device").expect_err("操作者字段必须保存 i64 用户 ID");
+    let error = normalize(&created_by, "order").expect_err("操作者字段必须保存 i64 用户 ID");
     assert!(error.contains("操作者审计字段必须是 i64"));
 
     let post = post_source();
@@ -254,17 +254,17 @@ fn service_managed_and_form_view_contracts_are_explicit() {
 #[test]
 fn extended_manifest_contracts_validate_and_render_exact_runtime_behavior() {
     let aliased = changed(
-        &device_source(),
+        &order_source(),
         "name = \"name\"\nvalue_type = \"string\"",
-        "name = \"name\"\ncolumn = \"device_name\"\nvalue_type = \"string\"",
+        "name = \"name\"\ncolumn = \"order_name\"\nvalue_type = \"string\"",
     );
-    let device = normalize(&aliased, "device").expect("安全列别名应通过");
-    let original = normalize(&device_source(), "device").expect("原始 Device 应有效");
+    let order = normalize(&aliased, "order").expect("安全列别名应通过");
+    let original = normalize(&order_source(), "order").expect("原始 Order 应有效");
     assert_ne!(
-        device.schema_hash, original.schema_hash,
+        order.schema_hash, original.schema_hash,
         "列别名必须进入 schema hash"
     );
-    let generated = render_resources(&[device]).expect("列别名资源应生成");
+    let generated = render_resources(&[order]).expect("列别名资源应生成");
     let content = |suffix: &str| {
         generated
             .assets
@@ -274,27 +274,27 @@ fn extended_manifest_contracts_validate_and_render_exact_runtime_behavior() {
             .content
             .as_str()
     };
-    assert!(content("device/entity.rs").contains("column_name = \"device_name\""));
-    assert!(content("device/migration.rs").contains("`device_name` VARCHAR(100)"));
-    assert!(content("device/migration.rs").contains("(`tenant_id`, `device_name`)"));
+    assert!(content("order/entity.rs").contains("column_name = \"order_name\""));
+    assert!(content("order/migration.rs").contains("`order_name` VARCHAR(100)"));
+    assert!(content("order/migration.rs").contains("(`tenant_id`, `order_name`)"));
 
     let duplicate = changed(
         &aliased,
         "name = \"status\"\nvalue_type = \"i32\"",
-        "name = \"status\"\ncolumn = \"device_name\"\nvalue_type = \"i32\"",
+        "name = \"status\"\ncolumn = \"order_name\"\nvalue_type = \"i32\"",
     );
     assert!(
-        normalize(&duplicate, "device")
+        normalize(&duplicate, "order")
             .unwrap_err()
-            .contains("数据库列名 `device_name` 重复")
+            .contains("数据库列名 `order_name` 重复")
     );
     let unsafe_alias = changed(
         &aliased,
-        "column = \"device_name\"",
+        "column = \"order_name\"",
         "column = \"bad-name\"",
     );
     assert!(
-        normalize(&unsafe_alias, "device")
+        normalize(&unsafe_alias, "order")
             .unwrap_err()
             .contains("不是安全标识符")
     );
@@ -353,7 +353,7 @@ en = "Created by"
 
 "#;
     let source = changed(
-        &device_source(),
+        &order_source(),
         "created_at = \"created_at\"\nupdated_at = \"updated_at\"",
         "created_at = \"created_at\"\ncreated_by = \"created_by\"\nupdated_at = \"updated_at\"\nupdated_by = \"created_by\"",
     );
@@ -364,12 +364,12 @@ en = "Created by"
     );
     let source = changed(
         &source,
-        "capability = \"system.device\"",
-        "capability = \"system.device\"\nowner_field = \"created_by\"",
+        "capability = \"business.order\"",
+        "capability = \"business.order\"\nowner_field = \"created_by\"",
     );
     let source = changed(&source, "sort = true", "sort = true\nsort_desc = true");
-    let device = normalize(&source, "device").expect("数据范围与操作者审计应通过");
-    let generated = render_resources(&[device]).expect("扩展契约应生成");
+    let order = normalize(&source, "order").expect("数据范围与操作者审计应通过");
+    let generated = render_resources(&[order]).expect("扩展契约应生成");
     let content = |suffix: &str| {
         generated
             .assets
@@ -379,21 +379,21 @@ en = "Created by"
             .content
             .as_str()
     };
-    assert!(content("device/model.rs").contains("pub data_scope: &'a DataScopeContext"));
-    assert!(content("device/model.rs").contains("#[derive(Clone, Copy, Debug)]"));
-    assert!(!content("device/model.rs").contains("#[derive(Clone, Copy, Debug, Default)]"));
-    assert!(content("device/service.rs").contains("let data_scope = actor.data_scope_context()"));
-    assert!(content("device/service.rs").contains("created_by: Some(actor.user_id)"));
-    assert!(content("device/service.rs").contains("record.created_by = Some(actor.user_id)"));
-    assert!(content("device/repository.rs").contains("owner_id_condition"));
-    assert!(content("device/repository.rs").contains("order_by_desc(entity::Column::Id)"));
-    assert!(content("device/fake.rs").contains("is_some_and"));
-    assert!(content("device/fake.rs").contains("owner_visible"));
-    assert!(content("device/fake.rs").contains("filter.data_scope"));
-    assert!(content("device/fake.rs").contains("pub fn set_owner_department"));
-    assert!(content("device/fake.rs").contains("ancestors.contains(&dept_id)"));
-    assert!(content("device/fake.rs").contains("scope.custom_dept_ids.contains(&dept_id)"));
-    assert!(content("device/fake.rs").contains("std::cmp::Reverse(record.id)"));
+    assert!(content("order/model.rs").contains("pub data_scope: &'a DataScopeContext"));
+    assert!(content("order/model.rs").contains("#[derive(Clone, Copy, Debug)]"));
+    assert!(!content("order/model.rs").contains("#[derive(Clone, Copy, Debug, Default)]"));
+    assert!(content("order/service.rs").contains("let data_scope = actor.data_scope_context()"));
+    assert!(content("order/service.rs").contains("created_by: Some(actor.user_id)"));
+    assert!(content("order/service.rs").contains("record.created_by = Some(actor.user_id)"));
+    assert!(content("order/repository.rs").contains("owner_id_condition"));
+    assert!(content("order/repository.rs").contains("order_by_desc(entity::Column::Id)"));
+    assert!(content("order/fake.rs").contains("is_some_and"));
+    assert!(content("order/fake.rs").contains("owner_visible"));
+    assert!(content("order/fake.rs").contains("filter.data_scope"));
+    assert!(content("order/fake.rs").contains("pub fn set_owner_department"));
+    assert!(content("order/fake.rs").contains("ancestors.contains(&dept_id)"));
+    assert!(content("order/fake.rs").contains("scope.custom_dept_ids.contains(&dept_id)"));
+    assert!(content("order/fake.rs").contains("std::cmp::Reverse(record.id)"));
 
     let unversioned = changed(
         &post_source(),
@@ -547,13 +547,13 @@ fn access_catalog_contains_lossless_menu_labels_and_named_extension_permissions(
     assert!(error.contains("export_permission"));
     assert!(error.contains("必须是字符串"));
 
-    let device = normalize(&device_source(), "device").expect("Device 清单应有效");
-    let generated = render_resources(&[device]).expect("Device 应生成");
+    let order = normalize(&order_source(), "order").expect("Order 清单应有效");
+    let generated = render_resources(&[order]).expect("Order 应生成");
     let access = generated
         .assets
         .iter()
         .find(|asset| asset.path == "catalog/access.generated.toml")
-        .expect("Device 应生成权限目录")
+        .expect("Order 应生成权限目录")
         .content
         .as_str();
     let access = toml::from_str::<toml::Value>(access).expect("权限目录应是有效 TOML");
@@ -564,8 +564,8 @@ fn access_catalog_contains_lossless_menu_labels_and_named_extension_permissions(
     let openapi = generated
         .assets
         .iter()
-        .find(|asset| asset.path.ends_with("device/openapi.rs"))
-        .expect("应生成 Device OpenAPI")
+        .find(|asset| asset.path.ends_with("order/openapi.rs"))
+        .expect("应生成 Order OpenAPI")
         .content
         .as_str();
     assert!(openapi.contains("\"extension_permissions\": {}"));
@@ -573,9 +573,9 @@ fn access_catalog_contains_lossless_menu_labels_and_named_extension_permissions(
 
 #[test]
 fn permissions_use_three_strict_kebab_case_segments() {
-    let source = device_source()
-        .replacen("name = \"device\"", "name = \"work_order\"", 1)
-        .replace("system:device:", "system:work-order:");
+    let source = order_source()
+        .replacen("name = \"order\"", "name = \"work_order\"", 1)
+        .replace("system:order:", "system:work-order:");
     normalize(&source, "work_order").expect("snake_case 资源可显式使用 kebab-case 权限段");
 
     let invalid = source.replace("system:work-order:list", "system:work_order:list");
@@ -587,26 +587,26 @@ fn permissions_use_three_strict_kebab_case_segments() {
 #[test]
 fn only_one_default_sort_field_is_allowed() {
     let source = changed(
-        &device_source(),
+        &order_source(),
         "create = true\nupdate = true\nread = true\nlist = true\nfilter = true",
         "create = true\nupdate = true\nread = true\nlist = true\nfilter = true\nsort = true",
     );
-    let error = normalize(&source, "device").expect_err("多个默认排序字段必须在 IR 阶段拒绝");
-    assert!(error.contains("资源 device"));
+    let error = normalize(&source, "order").expect_err("多个默认排序字段必须在 IR 阶段拒绝");
+    assert!(error.contains("资源 order"));
     assert!(error.contains("字段 name"));
     assert!(error.contains("只能声明一个默认排序字段"));
-    assert!(error.contains("catalog/resources/device.toml"));
+    assert!(error.contains("catalog/resources/order.toml"));
     assert!(error.contains("只为一个字段保留 usage.sort=true"));
 }
 
 #[test]
 fn schema_revision_uses_the_append_migration_name_format() {
     let source = changed(
-        &device_source(),
+        &order_source(),
         "bootstrap_migration = true",
-        "bootstrap_migration = true\nschema_revision = \"device_v2\"",
+        "bootstrap_migration = true\nschema_revision = \"order_v2\"",
     );
-    let error = normalize(&source, "device").expect_err("任意 revision 名不得进入 ownership");
-    assert!(error.contains("schema_revision `device_v2`"));
+    let error = normalize(&source, "order").expect_err("任意 revision 名不得进入 ownership");
+    assert!(error.contains("schema_revision `order_v2`"));
     assert!(error.contains("mYYYYMMDD_HHMMSS_name"));
 }

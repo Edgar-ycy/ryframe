@@ -28,7 +28,7 @@ pub(super) fn validate_api_and_access(
     {
         return Err(ResourceError::new(
             "operationId 必须是安全标识符",
-            "使用 OpenAPI 中的精确 operationId，例如 `get_system_devices`",
+            "使用 OpenAPI 中的精确 operationId，例如 `get_business_orders`",
         )
         .with_resource(resource)
         .with_file(source_path));

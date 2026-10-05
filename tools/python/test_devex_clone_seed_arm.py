@@ -488,8 +488,8 @@ class SeedArmTests(unittest.TestCase):
                 self.assertRaises(ValueError):
             arm._target_build(self.backend, target, [])
 
-    def test_target_build_uses_device_execution_root_and_its_receipt(self):
-        execution = self.local / "device-backend"
+    def test_target_build_uses_business_execution_root_and_its_receipt(self):
+        execution = self.local / "business-backend"
         (execution / ".git").mkdir(parents=True)
         (execution / "Cargo.toml").write_text("[workspace]", encoding="utf-8")
         build = execution / ".local-tests/build/build.json"
@@ -501,14 +501,14 @@ class SeedArmTests(unittest.TestCase):
             "files": [],
         }
         fixture = self.file(
-            "device-fixture",
+            "business-fixture",
             {
                 "format_version": 1,
-                "fixture": "device",
+                "fixture": "business",
                 "status": "ready",
                 "paths": {
                     "backend": str(execution),
-                    "frontend": str(self.local / "device-frontend"),
+                    "frontend": str(self.local / "business-frontend"),
                 },
                 "generated": {"backend": generated, "frontend": {}},
             },
@@ -520,7 +520,7 @@ class SeedArmTests(unittest.TestCase):
         }
         receipt = {
             "kind": "devex-clone-tool-build",
-            "source": {"worktree_fingerprint": "device-product"},
+            "source": {"worktree_fingerprint": "business-product"},
         }
         with (
             patch("devex_clone_target_binding.snapshot", return_value=(generated, b"")),

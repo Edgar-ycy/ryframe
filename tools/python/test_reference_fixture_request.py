@@ -38,7 +38,7 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
         self.live_service = patch.object(request, "_require_live_service")
         self.live_service_mock = self.live_service.start()
         self.addCleanup(self.live_service.stop)
-        self.execution = self.root / "device-backend"
+        self.execution = self.root / "business-backend"
         (self.execution / ".local-tests/reference-fixture").mkdir(parents=True)
         self.tool = self.root / "tool.exe"
         self.tool.write_bytes(b"tool")
@@ -115,7 +115,7 @@ class ReferenceFixtureRequestTests(unittest.TestCase):
                 ],
             }
         self.review_path = self.write(self.root / "review.json", self.review)
-        self.fixture = self.write(self.root / "fixture.json", {"fixture": "device"})
+        self.fixture = self.write(self.root / "fixture.json", {"fixture": "business"})
         self.maintenance = self.write(
             self.root / "build.json", {"kind": "devex-clone-tool-build"}
         )

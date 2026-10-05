@@ -70,7 +70,7 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertEqual(self.receipt.read_bytes(), before)
 
     def test_full_stack_source_is_checked_before_registration_and_on_verify(self):
-        source = {"format_version": 1, "fixture": "device"}
+        source = {"format_version": 1, "fixture": "business"}
         with patch.object(runtime, "full_stack_source_evidence", return_value=source) as capture, \
                 patch.object(runtime, "verify_build_evidence", return_value={"source": source}) as build, \
                 patch.object(runtime, "register_runtime_evidence") as register:
@@ -84,7 +84,7 @@ class RuntimeContractTests(unittest.TestCase):
         verify.assert_called_once_with(self.backend, self.directory, self.receipt)
 
     def test_build_source_mismatch_does_not_publish_runtime_receipt(self):
-        source = {"format_version": 1, "fixture": "device"}
+        source = {"format_version": 1, "fixture": "business"}
         with patch.object(runtime, "full_stack_source_evidence", return_value=source), \
                 patch.object(runtime, "verify_build_evidence", return_value={"source": {}}), \
                 patch.object(runtime, "write_receipt") as write:

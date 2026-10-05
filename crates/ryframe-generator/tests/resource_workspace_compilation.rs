@@ -53,8 +53,8 @@ struct SharedWorkspace {
 
 #[test]
 #[ignore = "完整门禁在共享的临时真实 Workspace 中运行 Cargo 与 vue-tsc"]
-fn device_slice_compiles_in_temporary_real_workspaces() {
-    assert_shared_workspace("Device");
+fn order_slice_compiles_in_temporary_real_workspaces() {
+    assert_shared_workspace("Order");
 }
 
 #[test]
@@ -70,7 +70,7 @@ fn notice_control_slice_compiles_in_temporary_real_workspace() {
 }
 
 #[test]
-fn missing_device_frontend_contract_is_injected_once() {
+fn missing_order_frontend_contract_is_injected_once() {
     let permissions = "export const permissionCatalog = [\n]\n".to_owned();
     let operations = "import { bindJsonOperation } from '../operationRequest'\n".to_owned();
     let schema = concat!(
@@ -79,15 +79,15 @@ fn missing_device_frontend_contract_is_injected_once() {
     )
     .to_owned();
 
-    let injected = prepare_device_frontend_contract(permissions, operations, schema)
-        .expect("缺失的 Device 契约应可装配")
+    let injected = prepare_order_frontend_contract(permissions, operations, schema)
+        .expect("缺失的 Order 契约应可装配")
         .expect("首次装配应返回修改内容");
     assert!(
-        device_frontend_contract_is_complete(&injected.0, &injected.1, &injected.2)
+        order_frontend_contract_is_complete(&injected.0, &injected.1, &injected.2)
             .expect("装配后的契约应可判定")
     );
     assert!(
-        prepare_device_frontend_contract(injected.0, injected.1, injected.2)
+        prepare_order_frontend_contract(injected.0, injected.1, injected.2)
             .expect("重复装配应成功")
             .is_none(),
         "重复装配完整 fixture 契约必须零修改"
@@ -95,13 +95,13 @@ fn missing_device_frontend_contract_is_injected_once() {
 }
 
 #[test]
-fn basic_generated_device_frontend_contract_is_upgraded_once() {
+fn basic_generated_order_frontend_contract_is_upgraded_once() {
     let operation_names = [
-        "delete_system_devices_by_id",
-        "get_system_devices",
-        "get_system_devices_by_id",
-        "post_system_devices",
-        "put_system_devices_by_id",
+        "delete_system_orders_by_id",
+        "get_system_orders",
+        "get_system_orders_by_id",
+        "post_system_orders",
+        "put_system_orders_by_id",
     ];
     let operations = operation_names
         .map(|name| format!("export const {name} = bindJsonOperation({{}})\n"))
@@ -112,32 +112,32 @@ fn basic_generated_device_frontend_contract_is_upgraded_once() {
     let schema = format!(
         concat!(
             "export interface components {{\n    schemas: {{\n",
-            "        ApiPageResponse_DeviceVo: {{}};\n",
-            "        ApiResponse_DeviceVo: {{ data?: {{ id: string }} }};\n",
-            "        CreateDeviceDto: {{}};\n",
-            "        UpdateDeviceDto: {{}};\n",
+            "        ApiPageResponse_OrderVo: {{}};\n",
+            "        ApiResponse_OrderVo: {{ data?: {{ id: string }} }};\n",
+            "        CreateOrderDto: {{}};\n",
+            "        UpdateOrderDto: {{}};\n",
             "    }};\n}}\n",
             "export interface operations {{\n{schema_operations}}}\n",
         ),
         schema_operations = schema_operations,
     );
-    let permissions = "\"system:device:list\"".to_owned();
+    let permissions = "\"system:order:list\"".to_owned();
 
     let upgraded =
-        prepare_device_frontend_contract(permissions.clone(), operations.clone(), schema)
+        prepare_order_frontend_contract(permissions.clone(), operations.clone(), schema)
             .expect("完整 basic generated 契约应可升级")
-            .expect("首次升级应补充 DeviceDetailVo");
+            .expect("首次升级应补充 OrderDetailVo");
     assert_eq!(upgraded.0, permissions, "升级不得改写已生成权限清单");
     assert_eq!(upgraded.1, operations, "升级不得改写已生成 operation");
-    let device_vo_reference = "import(\"./core\").components[\"schemas\"][\"DeviceVo\"]";
+    let order_vo_reference = "import(\"./core\").components[\"schemas\"][\"OrderVo\"]";
     assert_eq!(
-        upgraded.2.matches(device_vo_reference).count(),
+        upgraded.2.matches(order_vo_reference).count(),
         2,
-        "DeviceDetailVo 本体与 parent 必须复用现有 DeviceVo 的强类型引用"
+        "OrderDetailVo 本体与 parent 必须复用现有 OrderVo 的强类型引用"
     );
-    assert_eq!(upgraded.2.matches("DeviceDetailVo:").count(), 1);
+    assert_eq!(upgraded.2.matches("OrderDetailVo:").count(), 1);
     assert!(
-        prepare_device_frontend_contract(upgraded.0, upgraded.1, upgraded.2)
+        prepare_order_frontend_contract(upgraded.0, upgraded.1, upgraded.2)
             .expect("升级后的 generated 契约应可识别")
             .is_none(),
         "升级后的 generated 契约必须零修改"
@@ -145,25 +145,25 @@ fn basic_generated_device_frontend_contract_is_upgraded_once() {
 }
 
 #[test]
-fn partial_device_frontend_contract_fails_closed() {
+fn partial_order_frontend_contract_fails_closed() {
     let partial_contracts = [
         (
-            "export const permissionCatalog = [\n  \"system:device:list\",\n]\n",
+            "export const permissionCatalog = [\n  \"system:order:list\",\n]\n",
             "",
             "",
         ),
-        ("", "", "DeviceDetailVo: {}"),
+        ("", "", "OrderDetailVo: {}"),
         (
-            "\"system:device:list\"",
-            "export const get_system_devices = bindJsonOperation({})",
-            "ApiPageResponse_DeviceVo:\nApiResponse_DeviceVo:",
+            "\"system:order:list\"",
+            "export const get_system_orders = bindJsonOperation({})",
+            "ApiPageResponse_OrderVo:\nApiResponse_OrderVo:",
         ),
     ];
     for (permissions, operations, schema) in partial_contracts {
         assert!(
-            prepare_device_frontend_contract(permissions.into(), operations.into(), schema.into())
+            prepare_order_frontend_contract(permissions.into(), operations.into(), schema.into())
                 .is_err(),
-            "部分存在的 Device 契约必须失败，不能猜测补齐"
+            "部分存在的 Order 契约必须失败，不能猜测补齐"
         );
     }
 }
@@ -215,26 +215,26 @@ fn run_shared_workspace() -> Result<(), String> {
     if profile == VerificationProfile::Targeted {
         return Ok(());
     }
-    register_device_capability(&workspace.backend);
+    register_order_capability(&workspace.backend);
     register_generated_backend_modules(&workspace.backend);
-    register_device_frontend_contract(&workspace.frontend);
-    write_device_fake_transaction_test(&workspace.backend);
+    register_order_frontend_contract(&workspace.frontend);
+    write_order_fake_transaction_test(&workspace.backend);
     assert_backend_checks(&workspace);
     assert_frontend_checks(&workspace.frontend_source, &workspace.frontend);
     Ok(())
 }
 
-fn register_device_capability(backend: &Path) {
+fn register_order_capability(backend: &Path) {
     let catalog = backend.join("catalog/access.toml");
     let mut source = fs::read_to_string(&catalog).expect("应读取临时访问目录");
     source.push_str(
         r#"
 
 [[capabilities]]
-code = "system.device"
-route_keys = ["system.device"]
-page_keys = ["system.device"]
-permissions = ["system:device:create", "system:device:read", "system:device:list", "system:device:update", "system:device:delete"]
+code = "business.order"
+route_keys = ["business.order"]
+page_keys = ["business.order"]
+permissions = ["system:order:create", "system:order:read", "system:order:list", "system:order:update", "system:order:delete"]
 "#,
     );
     fs::write(catalog, source).expect("应在临时副本登记设备访问能力");
@@ -244,15 +244,15 @@ permissions = ["system:device:create", "system:device:read", "system:device:list
     let source = fs::read_to_string(&application).expect("应读取临时产品能力目录");
     let marker = "];\n\npub fn capability_descriptor";
     let capability = r#"    standard_capability(
-        "system.device",
+        "business.order",
         "设备管理",
-        &["system.device"],
+        &["business.order"],
         &[
-            "system:device:create",
-            "system:device:read",
-            "system:device:list",
-            "system:device:update",
-            "system:device:delete",
+            "system:order:create",
+            "system:order:read",
+            "system:order:list",
+            "system:order:update",
+            "system:order:delete",
         ],
         &[],
     ),
@@ -276,7 +276,7 @@ fn prepare_shared_workspace(profile: VerificationProfile) -> Result<SharedWorksp
         .find(|path| {
             path.join("catalog/resources").is_dir()
                 && path
-                    .join("crates/ryframe-generator/tests/fixtures/device.toml")
+                    .join("crates/ryframe-generator/tests/fixtures/order.toml")
                     .is_file()
         })
         .map(Path::to_path_buf)
@@ -345,19 +345,19 @@ fn reset_workspace_directory(path: &Path) {
 }
 
 fn generate_resource_slices(workspace: &SharedWorkspace, profile: VerificationProfile) {
-    let mut device = load_resource(
+    let mut order = load_resource(
         workspace
             .backend_source
-            .join("crates/ryframe-generator/tests/fixtures/device.toml"),
+            .join("crates/ryframe-generator/tests/fixtures/order.toml"),
     )
-    .expect("Device 清单应有效");
-    device.relations.push(RelationIr {
+    .expect("Order 清单应有效");
+    order.relations.push(RelationIr {
         name: "parent".into(),
         pascal_name: "Parent".into(),
         kind: RelationKind::BelongsTo,
         local_field: "id".into(),
-        target_resource: "device".into(),
-        target_pascal_name: "Device".into(),
+        target_resource: "order".into(),
+        target_pascal_name: "Order".into(),
     });
     let post = load_resource(workspace.backend_source.join("catalog/resources/post.toml"))
         .expect("临时 Workspace 中既有的 Post 清单应有效");
@@ -367,11 +367,11 @@ fn generate_resource_slices(workspace: &SharedWorkspace, profile: VerificationPr
             .join("catalog/resources/notice.toml"),
     )
     .expect("临时 Workspace 中既有的 Notice 清单应有效");
-    let catalog = render_resources(&[device, notice, post]).expect("Device 与既有资源应能共同生成");
+    let catalog = render_resources(&[order, notice, post]).expect("Order 与既有资源应能共同生成");
     let initial_resources: &[&str] = if profile == VerificationProfile::Targeted {
-        &["notice", "post", "device"]
+        &["notice", "post", "order"]
     } else {
-        &["device"]
+        &["order"]
     };
     for resource in initial_resources {
         let first = write_resource(
@@ -403,7 +403,7 @@ fn generate_resource_slices(workspace: &SharedWorkspace, profile: VerificationPr
         };
         assert!(root.join(path).is_file(), "Post 资产未生成：{path}");
     }
-    for resource in ["device", "notice", "post"] {
+    for resource in ["order", "notice", "post"] {
         let repeated = write_resource(
             &catalog,
             resource,
@@ -432,7 +432,7 @@ fn assert_generated_ownership(workspace: &SharedWorkspace) {
     let manifest_path = workspace.backend.join("catalog/resources/.ownership.toml");
     let manifest = fs::read_to_string(&manifest_path).expect("应读取生成后的 ownership manifest");
     let manifest: OwnershipManifest = toml::from_str(&manifest).expect("ownership manifest 应有效");
-    let selected = ["device", "notice", "post"];
+    let selected = ["order", "notice", "post"];
     let mut roots = std::collections::BTreeSet::new();
     let mut paths = std::collections::BTreeSet::new();
     for entry in manifest
@@ -541,13 +541,13 @@ fn assert_backend_checks(workspace: &SharedWorkspace) {
             "--features",
             "test-support",
             "--test",
-            "generated_device_fake",
+            "generated_order_fake",
         ])
         .current_dir(&workspace.backend)
         .env("CARGO_TARGET_DIR", &workspace.cargo_target)
         .output()
         .expect("应运行生成 Fake 事务语义测试");
-    assert_command_succeeded("generated Device fake transaction test", &fake_test);
+    assert_command_succeeded("generated Order fake transaction test", &fake_test);
 }
 
 fn prepare_frontend_workspace(source: &Path, target: &Path) {
@@ -571,13 +571,13 @@ fn assert_frontend_checks(source: &Path, target: &Path) {
         .current_dir(target)
         .output()
         .expect("应运行临时前端 vue-tsc");
-    assert_command_succeeded("Device/Notice/Post vue-tsc", &typecheck);
+    assert_command_succeeded("Order/Notice/Post vue-tsc", &typecheck);
 
     let eslint = source.join("node_modules/eslint/bin/eslint.js");
     let lint = Command::new("node")
         .arg(eslint)
         .args([
-            "src/generated/resources/device",
+            "src/generated/resources/order",
             "src/generated/resources/notice",
             "src/generated/resources/post",
             "--max-warnings=0",
@@ -585,7 +585,7 @@ fn assert_frontend_checks(source: &Path, target: &Path) {
         .current_dir(target)
         .output()
         .expect("应运行临时前端 ESLint");
-    assert_command_succeeded("Device/Notice/Post ESLint", &lint);
+    assert_command_succeeded("Order/Notice/Post ESLint", &lint);
 }
 
 fn sync_directory(source: &Path, target: &Path) {
@@ -642,7 +642,7 @@ fn sync_file(source: &Path, target: &Path) {
     });
 }
 
-fn register_device_frontend_contract(frontend: &Path) {
+fn register_order_frontend_contract(frontend: &Path) {
     let permissions_path = frontend.join("src/api/generated/permissions.ts");
     let permissions = fs::read_to_string(&permissions_path).expect("应读取候选权限清单");
     let operations_path = frontend.join("src/api/generated/operations/system.ts");
@@ -651,8 +651,8 @@ fn register_device_frontend_contract(frontend: &Path) {
     let schema = fs::read_to_string(&schema_path).expect("应读取候选 OpenAPI schema");
 
     let Some((permissions, operations, schema)) =
-        prepare_device_frontend_contract(permissions, operations, schema)
-            .unwrap_or_else(|error| panic!("候选 Device 前端契约不完整：{error}"))
+        prepare_order_frontend_contract(permissions, operations, schema)
+            .unwrap_or_else(|error| panic!("候选 Order 前端契约不完整：{error}"))
     else {
         return;
     };
@@ -661,22 +661,22 @@ fn register_device_frontend_contract(frontend: &Path) {
     fs::write(schema_path, schema).expect("应写入临时候选 OpenAPI schema");
 }
 
-fn prepare_device_frontend_contract(
+fn prepare_order_frontend_contract(
     permissions: String,
     mut operations: String,
     mut schema: String,
 ) -> Result<Option<(String, String, String)>, String> {
-    match device_frontend_contract_state(&permissions, &operations, &schema)? {
-        DeviceFrontendContractState::Complete => return Ok(None),
-        DeviceFrontendContractState::GeneratedBasic => {
-            add_generated_device_detail_schema(&mut schema)?;
+    match order_frontend_contract_state(&permissions, &operations, &schema)? {
+        OrderFrontendContractState::Complete => return Ok(None),
+        OrderFrontendContractState::GeneratedBasic => {
+            add_generated_order_detail_schema(&mut schema)?;
             debug_assert!(
-                device_frontend_contract_is_complete(&permissions, &operations, &schema)
-                    .expect("刚升级的 Device 前端契约应完整")
+                order_frontend_contract_is_complete(&permissions, &operations, &schema)
+                    .expect("刚升级的 Order 前端契约应完整")
             );
             return Ok(Some((permissions, operations, schema)));
         }
-        DeviceFrontendContractState::Missing => {}
+        OrderFrontendContractState::Missing => {}
     }
 
     let permission_marker = "export const permissionCatalog = [\n";
@@ -685,12 +685,12 @@ fn prepare_device_frontend_contract(
     }
     let permissions = permissions.replacen(
         permission_marker,
-        "export const permissionCatalog = [\n  \"system:device:list\",\n",
+        "export const permissionCatalog = [\n  \"system:order:list\",\n",
         1,
     );
 
     operations.push('\n');
-    operations.push_str(include_str!("fixtures/device_operations.ts.part"));
+    operations.push_str(include_str!("fixtures/order_operations.ts.part"));
 
     let component_marker = "export interface components {\n    schemas: {\n";
     if !schema.contains(component_marker) {
@@ -699,7 +699,7 @@ fn prepare_device_frontend_contract(
     schema = schema.replacen(
         component_marker,
         &format!(
-            "{component_marker}        DeviceVo: DeviceContractRecord;\n        DeviceDetailVo: DeviceContractRecord & {{ parent?: DeviceContractRecord | null }};\n"
+            "{component_marker}        OrderVo: OrderContractRecord;\n        OrderDetailVo: OrderContractRecord & {{ parent?: OrderContractRecord | null }};\n"
         ),
         1,
     );
@@ -707,22 +707,22 @@ fn prepare_device_frontend_contract(
     if !schema.contains(marker) {
         return Err("OpenAPI schema 缺少 operations 接口".into());
     }
-    let schema = schema.replacen(marker, include_str!("fixtures/device_schema.ts.part"), 1);
+    let schema = schema.replacen(marker, include_str!("fixtures/order_schema.ts.part"), 1);
     debug_assert!(
-        device_frontend_contract_is_complete(&permissions, &operations, &schema)
-            .expect("刚装配的 Device 前端契约应完整")
+        order_frontend_contract_is_complete(&permissions, &operations, &schema)
+            .expect("刚装配的 Order 前端契约应完整")
     );
     Ok(Some((permissions, operations, schema)))
 }
 
-fn add_generated_device_detail_schema(schema: &mut String) -> Result<(), String> {
+fn add_generated_order_detail_schema(schema: &mut String) -> Result<(), String> {
     let component_marker = "export interface components {\n    schemas: {\n";
     if schema.matches(component_marker).count() != 1 {
         return Err("OpenAPI schema 必须包含唯一的 components 接口".into());
     }
     let detail_schema = concat!(
-        "        DeviceDetailVo: import(\"./core\").components[\"schemas\"][\"DeviceVo\"] & {\n",
-        "            parent?: import(\"./core\").components[\"schemas\"][\"DeviceVo\"] | null;\n",
+        "        OrderDetailVo: import(\"./core\").components[\"schemas\"][\"OrderVo\"] & {\n",
+        "            parent?: import(\"./core\").components[\"schemas\"][\"OrderVo\"] | null;\n",
         "        };\n",
     );
     *schema = schema.replacen(
@@ -734,49 +734,49 @@ fn add_generated_device_detail_schema(schema: &mut String) -> Result<(), String>
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DeviceFrontendContractState {
+enum OrderFrontendContractState {
     Missing,
     GeneratedBasic,
     Complete,
 }
 
-fn device_frontend_contract_is_complete(
+fn order_frontend_contract_is_complete(
     permissions: &str,
     operations: &str,
     schema: &str,
 ) -> Result<bool, String> {
     Ok(matches!(
-        device_frontend_contract_state(permissions, operations, schema)?,
-        DeviceFrontendContractState::Complete
+        order_frontend_contract_state(permissions, operations, schema)?,
+        OrderFrontendContractState::Complete
     ))
 }
 
-fn device_frontend_contract_state(
+fn order_frontend_contract_state(
     permissions: &str,
     operations: &str,
     schema: &str,
-) -> Result<DeviceFrontendContractState, String> {
+) -> Result<OrderFrontendContractState, String> {
     const OPERATION_NAMES: [&str; 5] = [
-        "delete_system_devices_by_id",
-        "get_system_devices",
-        "get_system_devices_by_id",
-        "post_system_devices",
-        "put_system_devices_by_id",
+        "delete_system_orders_by_id",
+        "get_system_orders",
+        "get_system_orders_by_id",
+        "post_system_orders",
+        "put_system_orders_by_id",
     ];
     const GENERATED_SCHEMA_MARKERS: [&str; 4] = [
-        "ApiPageResponse_DeviceVo:",
-        "ApiResponse_DeviceVo:",
-        "CreateDeviceDto:",
-        "UpdateDeviceDto:",
+        "ApiPageResponse_OrderVo:",
+        "ApiResponse_OrderVo:",
+        "CreateOrderDto:",
+        "UpdateOrderDto:",
     ];
     const FIXTURE_SCHEMA_MARKERS: [&str; 3] = [
-        "type DeviceContractRecord = {",
-        "DeviceVo: DeviceContractRecord;",
-        "DeviceDetailVo: DeviceContractRecord & {",
+        "type OrderContractRecord = {",
+        "OrderVo: OrderContractRecord;",
+        "OrderDetailVo: OrderContractRecord & {",
     ];
-    const GENERATED_DETAIL_MARKER: &str = "DeviceDetailVo:";
+    const GENERATED_DETAIL_MARKER: &str = "OrderDetailVo:";
 
-    let permission_present = permissions.contains("\"system:device:list\"");
+    let permission_present = permissions.contains("\"system:order:list\"");
     let operation_constants =
         OPERATION_NAMES.map(|name| operations.contains(&format!("export const {name} =")));
     let schema_operations = OPERATION_NAMES.map(|name| schema.contains(&format!("    {name}: {{")));
@@ -792,13 +792,13 @@ fn device_frontend_contract_state(
     let fixture_any = fixture_schema.iter().any(|present| *present);
     let generated_detail_present = schema.contains(GENERATED_DETAIL_MARKER);
     if common_complete && fixture_complete && !generated_any {
-        return Ok(DeviceFrontendContractState::Complete);
+        return Ok(OrderFrontendContractState::Complete);
     }
     if common_complete && generated_complete && !fixture_any {
         return Ok(if generated_detail_present {
-            DeviceFrontendContractState::Complete
+            OrderFrontendContractState::Complete
         } else {
-            DeviceFrontendContractState::GeneratedBasic
+            OrderFrontendContractState::GeneratedBasic
         });
     }
 
@@ -811,25 +811,25 @@ fn device_frontend_contract_state(
     if any_present {
         return Err("只发现部分权限、operation 或 schema 标记，拒绝猜测并重复装配".into());
     }
-    Ok(DeviceFrontendContractState::Missing)
+    Ok(OrderFrontendContractState::Missing)
 }
 
-fn write_device_fake_transaction_test(backend: &Path) {
+fn write_order_fake_transaction_test(backend: &Path) {
     let tests = backend.join("crates/ryframe-application/tests");
     fs::create_dir_all(&tests).expect("应创建临时 application tests");
     fs::write(
-        tests.join("generated_device_fake.rs"),
+        tests.join("generated_order_fake.rs"),
         r#"use chrono::Utc;
 use ryframe_application::TransactionAuditMode;
-use ryframe_application::generated::device::{
-    DeviceFailure, DeviceFakePersistence, DevicePersistencePort, DeviceRecord,
+use ryframe_application::generated::order::{
+    OrderFailure, OrderFakePersistence, OrderPersistencePort, OrderRecord,
 };
 
-fn record(id: i64) -> DeviceRecord {
-    DeviceRecord {
+fn record(id: i64) -> OrderRecord {
+    OrderRecord {
         tenant_id: "tenant-a".into(),
         id,
-        name: format!("device-{id}"),
+        name: format!("order-{id}"),
         status: 1,
         created_at: Utc::now(),
         updated_at: None,
@@ -839,7 +839,7 @@ fn record(id: i64) -> DeviceRecord {
 
 #[tokio::test]
 async fn transaction_view_only_becomes_visible_after_successful_commit() {
-    let fake = DeviceFakePersistence::default();
+    let fake = OrderFakePersistence::default();
 
     let rolled_back = fake.begin("tenant-a").await.unwrap();
     rolled_back.insert(record(1)).await.unwrap();
@@ -848,7 +848,7 @@ async fn transaction_view_only_becomes_visible_after_successful_commit() {
 
     let commit_failed = fake.begin("tenant-a").await.unwrap();
     commit_failed.insert(record(2)).await.unwrap();
-    fake.fail_next(DeviceFailure::Commit);
+    fake.fail_next(OrderFailure::Commit);
     assert!(
         commit_failed
             .commit(TransactionAuditMode::Skip)

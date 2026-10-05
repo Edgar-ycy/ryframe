@@ -1,4 +1,4 @@
-"""Device preview 静态响应必须逐项匹配浏览器绑定的完整 dist。"""
+"""Business preview 静态响应必须逐项匹配浏览器绑定的完整 dist。"""
 
 from __future__ import annotations
 
@@ -25,9 +25,9 @@ class ReferenceFixtureBrowserResponseTests(unittest.TestCase):
         (self.dist / "assets").mkdir(parents=True)
         (self.dist / "index.html").write_text("index-a", encoding="utf-8")
         (self.dist / "assets/app.js").write_text("script-a", encoding="utf-8")
-        self.manifest = artifact_manifest(self.dist, self.dist.parent, "Device 前端生产产物")
+        self.manifest = artifact_manifest(self.dist, self.dist.parent, "Business 前端生产产物")
         self.path = self.root / "responses.json"
-        self.binding = {"run_id": "r24-device-preview", "scope_id": "fixture-source"}
+        self.binding = {"run_id": "r24-business-preview", "scope_id": "fixture-source"}
 
     def entry(self, sequence: int, path: str, target: Path, destination: str) -> dict:
         return {"sequence": sequence, "method": "GET", "path": path,
@@ -36,7 +36,7 @@ class ReferenceFixtureBrowserResponseTests(unittest.TestCase):
 
     def write(self, entries: list[dict]) -> None:
         write_json(self.path, {
-            "format_version": 1, "kind": "device-preview-static-responses",
+            "format_version": 1, "kind": "business-preview-static-responses",
             "status": "complete", **{"run_id": self.binding["run_id"],
                                       "scope_id": self.binding["scope_id"]},
             "limits": {"entries": 10_000, "bytes": 8 * 1024 * 1024 * 1024},
@@ -46,7 +46,7 @@ class ReferenceFixtureBrowserResponseTests(unittest.TestCase):
 
     def test_accepts_spa_fallback_and_repeated_exact_static_responses(self):
         entries = [
-            self.entry(1, "/system/device", self.dist / "index.html", "document"),
+            self.entry(1, "/system/business", self.dist / "index.html", "document"),
             self.entry(2, "/assets/app.js", self.dist / "assets/app.js", "script"),
             self.entry(3, "/assets/app.js", self.dist / "assets/app.js", "script"),
         ]

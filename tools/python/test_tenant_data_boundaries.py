@@ -23,7 +23,7 @@ class TenantDataBoundaryTests(unittest.TestCase):
             "crates/ryframe-tenant-db/src/migration/catalog.rs",
             "crates/ryframe-generator/src/resource/render/tenant_catalog.rs",
             "crates/ryframe-generator/src/resource/render/slice/migration.rs",
-            "catalog/resources/device.toml",
+            "crates/order-business/src/resources/mod.rs",
         ):
             target = self.root / relative
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -42,15 +42,15 @@ class TenantDataBoundaryTests(unittest.TestCase):
     def test_missing_unknown_or_duplicate_business_table_is_rejected(self):
         directory = self.root / "catalog/resources"
         directory.mkdir(parents=True, exist_ok=True)
-        (directory / "device.toml").write_text('[storage]\nkind="tenant_data"\n[database]\ntable="biz_device"\n')
+        (directory / "business.toml").write_text('[storage]\nkind="tenant_data"\n[database]\ntable="biz_order"\n')
         for content, valid in (('', False), ('table: "biz_unknown"', False),
-                               ('table: "biz_device"', True), ('table: "biz_device"\ntable: "biz_device"', False)):
+                               ('table: "biz_order"', True), ('table: "biz_order"\ntable: "biz_order"', False)):
             with self.subTest(content=content):
                 (self.root / CATALOG).write_text(content)
                 self.assertEqual(not self.errors(), valid)
 
     def test_generated_repository_cannot_reach_raw_target(self):
-        path = self.root / "crates/ryframe-tenant-db/src/generated/device/repository.rs"
+        path = self.root / "crates/ryframe-tenant-db/src/generated/business/repository.rs"
         path.parent.mkdir(parents=True)
         path.write_text('router.open_target("arbitrary");')
         self.assertTrue(any("绕过受控会话" in error for error in self.errors()))

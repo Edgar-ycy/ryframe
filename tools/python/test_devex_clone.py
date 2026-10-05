@@ -48,7 +48,6 @@ class CloneTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.backend = Path(temporary.name).resolve()
         for relative in ("sql/ryframe_config.sql", "crates/ryframe-tenant-db/src/generated/catalog.rs",
-                         "crates/ryframe-tenant-db/src/generated/business_device_migration.rs",
                          "crates/ryframe-tenant-db/src/migration/m20260820_000000_tenant_baseline.rs"):
             destination = self.backend / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -318,24 +317,24 @@ class CloneTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "重复"):
             read_json(filename)
         generated = self.backend / "crates/ryframe-tenant-db/src/generated/catalog.rs"
-        generated.write_text("pub const GENERATED_TENANT_DATA_TABLES: &[TenantDataTableDescriptor] = &[DEVICE];")
+        generated.write_text("pub const GENERATED_TENANT_DATA_TABLES: &[TenantDataTableDescriptor] = &[ORDER];")
         with self.assertRaisesRegex(ValueError, "非空生成"):
             create_plan(self.value, self.backend)
 
     def test_generated_tenant_catalog_requires_matching_migration_columns(self):
         catalog = self.backend / "crates/ryframe-tenant-db/src/generated/catalog.rs"
-        (self.backend / "crates/ryframe-tenant-db/src/generated/business_device_migration.rs").unlink()
+        catalog.unlink()
         catalog.write_text("""pub const GENERATED_TENANT_DATA_TABLES: &[TenantDataTableDescriptor] = &[
-TenantDataTableDescriptor { table: \"biz_device\", tenant_column: \"tenant_id\", column_types: &[\"varchar\", \"bigint\"], has_generated_columns: false, },
+TenantDataTableDescriptor { table: \"biz_order\", tenant_column: \"tenant_id\", column_types: &[\"varchar\", \"bigint\"], has_generated_columns: false, },
 ];""", encoding="utf-8")
-        migration = self.backend / "crates/ryframe-tenant-db/src/generated/device/migration.rs"
+        migration = self.backend / "crates/ryframe-tenant-db/src/generated/order/migration.rs"
         migration.parent.mkdir(parents=True)
-        migration.write_text("""pub const CREATE_TABLE_DDL: &str = r#\"CREATE TABLE `biz_device` (
+        migration.write_text("""pub const CREATE_TABLE_DDL: &str = r#\"CREATE TABLE `biz_order` (
   `tenant_id` VARCHAR(64) NOT NULL,
   `id` BIGINT NOT NULL
 ) ENGINE=InnoDB\"#;""", encoding="utf-8")
         _, tenant = schema_catalog(self.backend)
-        self.assertEqual(tenant["biz_device"], {"tenant_id": "VARCHAR", "id": "BIGINT"})
+        self.assertEqual(tenant["biz_order"], {"tenant_id": "VARCHAR", "id": "BIGINT"})
 
     def test_new_control_table_requires_explicit_policy_and_formal_restore_stays_clean(self):
         schema = self.backend / "sql/ryframe_config.sql"

@@ -87,7 +87,6 @@ class InventoryTests(unittest.TestCase):
     def test_separate_execution_root_keeps_runtime_defaults_and_output_in_coordinator(self):
         execution = self.backend / "execution"
         for relative in ("sql/ryframe_config.sql", "crates/ryframe-tenant-db/src/generated/catalog.rs",
-                         "crates/ryframe-tenant-db/src/generated/business_device_migration.rs",
                          "crates/ryframe-tenant-db/src/migration/m20260820_000000_tenant_baseline.rs"):
             destination = execution / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -175,7 +174,7 @@ class InventoryTests(unittest.TestCase):
         for current in result.observations[1:]:
             self.assertEqual(current.schema_sha256, plan_hash({"control_schema_fingerprint": None, "tenant_schema_fingerprint": "d" * 64}))
             self.assertEqual(set(current.preserved), {"ryframe_resource_ownership", "seaql_tenant_data_migrations"})
-            self.assertEqual(set(current.tables), {"biz_device", "biz_tenant_fence", "biz_tenant_target_slot"})
+            self.assertEqual(set(current.tables), {"biz_order", "biz_tenant_fence", "biz_tenant_target_slot"})
         text = "\n".join(path.read_text(encoding="utf-8") for path in self.output.glob("*.json"))
         for secret in ("fixture-secret", "access-fixture", "secret-fixture"):
             self.assertNotIn(secret, text)

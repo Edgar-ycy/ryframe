@@ -30,7 +30,7 @@ class OutputCapture:
         self.size = 0
         self.overflow = False
         self.error: BaseException | None = None
-        self.thread = threading.Thread(target=self._read, name="device-browser-log", daemon=False)
+        self.thread = threading.Thread(target=self._read, name="business-browser-log", daemon=False)
 
     def _read(self) -> None:
         try:

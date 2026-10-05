@@ -16,10 +16,10 @@ import reference_fixture_runtime as runtime
 class ReferenceFixtureRuntimeProtocolTests(unittest.TestCase):
     def setUp(self):
         root = Path(__file__).resolve().parents[2]
-        self.runtime = root / ".local-tests/device/runtime-r1"
+        self.runtime = root / ".local-tests/business/runtime-r1"
         self.base = {
             "backend_dir": str(root),
-            "environment": str(root / ".local-tests/device/bootstrap.json"),
+            "environment": str(root / ".local-tests/business/bootstrap.json"),
             "format_version": 1,
             "operation": "verify",
             "output": str(self.runtime),
@@ -35,13 +35,13 @@ class ReferenceFixtureRuntimeProtocolTests(unittest.TestCase):
             **self.base,
             "operation": "bind",
             "write": True,
-            "browser_binding": str(self.runtime / "browser-binding-r24-device.json"),
-            "run_id": "r24-device",
+            "browser_binding": str(self.runtime / "browser-binding-r24-business.json"),
+            "run_id": "r24-business",
             "server": "preview",
         }
         request = self.parse(value)
         self.assertEqual(request.operation, "bind")
-        self.assertEqual(request.browser_binding.name, "browser-binding-r24-device.json")
+        self.assertEqual(request.browser_binding.name, "browser-binding-r24-business.json")
         self.assertEqual(request.server, "preview")
 
     def test_rejects_direct_arguments_before_reading_protocol(self):
@@ -83,7 +83,7 @@ class ReferenceFixtureRuntimeProtocolTests(unittest.TestCase):
              "browser_binding": str(self.runtime / "binding.json"), "server": "dev"},
             {**self.base, "operation": "bind", "write": True,
              "browser_binding": str(self.runtime / "wrong.json"),
-             "run_id": "r24-device", "server": "preview"},
+             "run_id": "r24-business", "server": "preview"},
         ]
         for value in invalid:
             with self.subTest(value=value):

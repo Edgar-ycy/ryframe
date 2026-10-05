@@ -105,14 +105,14 @@ class MigrationGateTests(unittest.TestCase):
         self.assertEqual(receipts[1]["proof"]["waiting_connection_id"], 81)
         lock_query = self.lock.queries[1]
         self.assertIn(f"WHERE tenant_id='{TENANT}' FOR UPDATE", lock_query)
-        self.assertIn("`shared_test`.biz_device", lock_query)
+        self.assertIn("`shared_test`.biz_order", lock_query)
         self.assertEqual(self.lock.queries[-1], "ROLLBACK")
         proof = self.observer.queries[-1]
         for selector in (
             "b.PROCESSLIST_ID=42",
             "l.OBJECT_SCHEMA='shared_test'",
             f"m.id={MIGRATION} AND m.tenant_id='{TENANT}'",
-            "i.table_name='biz_device'",
+            "i.table_name='biz_order'",
             "m.state='copying'",
             "i.state='copying'",
             "j.status='running'",

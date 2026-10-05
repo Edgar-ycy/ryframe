@@ -212,7 +212,7 @@ mod tests {
     #[test]
     fn generated_fingerprint_matches_tenant_runtime_contract() {
         let resource = crate::resource::load_resource(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/device.toml"),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/order.toml"),
         )
         .expect("业务 crate fixture 应有效");
         let resources = [&resource];

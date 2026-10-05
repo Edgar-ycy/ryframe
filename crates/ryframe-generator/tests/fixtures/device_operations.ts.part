@@ -1,5 +1,0 @@
-export const delete_system_devices_by_id = bindJsonOperation({"operationId":"delete_system_devices_by_id","method":"delete","path":"/system/devices/{id}"})
-export const get_system_devices = bindJsonOperation({"operationId":"get_system_devices","method":"get","path":"/system/devices"})
-export const get_system_devices_by_id = bindJsonOperation({"operationId":"get_system_devices_by_id","method":"get","path":"/system/devices/{id}"})
-export const post_system_devices = bindJsonOperation({"operationId":"post_system_devices","method":"post","path":"/system/devices"})
-export const put_system_devices_by_id = bindJsonOperation({"operationId":"put_system_devices_by_id","method":"put","path":"/system/devices/{id}"})

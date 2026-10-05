@@ -6,8 +6,8 @@ use ryframe_generator::{
     render_resources, write_resource, write_resources,
 };
 
-fn device_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/device.toml")
+fn order_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/order.toml")
 }
 
 fn post_path() -> PathBuf {
@@ -58,8 +58,8 @@ fn assert_control_database_repository_gates(generated: &GeneratedCatalog) {
     );
 }
 
-fn device() -> ryframe_generator::ResourceIr {
-    load_resource(device_path()).expect("Device 资源清单应有效")
+fn order() -> ryframe_generator::ResourceIr {
+    load_resource(order_path()).expect("Order 资源清单应有效")
 }
 
 #[test]
@@ -206,11 +206,11 @@ fn assert_post_router(generated: &GeneratedCatalog) {
 }
 
 #[test]
-fn device_manifest_normalizes_to_stable_ir() {
-    let resource = device();
+fn order_manifest_normalizes_to_stable_ir() {
+    let resource = order();
 
-    assert_eq!(resource.name, "device");
-    assert!(resource.source_path.ends_with("tests/fixtures/device.toml"));
+    assert_eq!(resource.name, "order");
+    assert!(resource.source_path.ends_with("tests/fixtures/order.toml"));
     assert!(resource.bootstrap_migration);
     assert_eq!(resource.source_hash.len(), 64);
     assert_eq!(resource.primary_key, ["tenant_id", "id"]);
@@ -236,21 +236,21 @@ fn device_manifest_normalizes_to_stable_ir() {
             .iter()
             .map(|index| index.name.as_str())
             .collect::<Vec<_>>(),
-        ["idx_device_tenant_status", "uk_device_tenant_name"]
+        ["idx_order_tenant_status", "uk_order_tenant_name"]
     );
 }
 
 #[test]
 fn rendering_is_deterministic_readable_and_split_by_responsibility() {
-    let resource = device();
+    let resource = order();
     let first = render_resources(std::slice::from_ref(&resource)).expect("首次生成应成功");
     let second = render_resources(&[resource]).expect("再次生成应成功");
 
     assert_eq!(first.assets, second.assets);
-    assert_device_asset_set(&first.assets);
-    assert_device_backend_contracts(&first.assets);
-    assert_device_frontend_contracts(&first.assets);
-    assert_device_openapi_contracts(&first.assets);
+    assert_order_asset_set(&first.assets);
+    assert_order_backend_contracts(&first.assets);
+    assert_order_frontend_contracts(&first.assets);
+    assert_order_openapi_contracts(&first.assets);
 }
 
 fn generated_asset<'a>(assets: &'a [GeneratedAsset], suffix: &str) -> &'a GeneratedAsset {
@@ -260,24 +260,24 @@ fn generated_asset<'a>(assets: &'a [GeneratedAsset], suffix: &str) -> &'a Genera
         .unwrap_or_else(|| panic!("缺少生成资产 {suffix}"))
 }
 
-fn assert_device_asset_set(assets: &[GeneratedAsset]) {
+fn assert_order_asset_set(assets: &[GeneratedAsset]) {
     for expected in [
-        "crates/ryframe-application/src/generated/device/model.rs",
-        "crates/ryframe-application/src/generated/device/port.rs",
-        "crates/ryframe-application/src/generated/device/service.rs",
-        "crates/ryframe-application/src/generated/device/fake.rs",
-        "crates/ryframe-tenant-db/src/generated/device/entity.rs",
-        "crates/ryframe-tenant-db/src/generated/device/repository.rs",
-        "crates/ryframe-api/src/generated/device/handler.rs",
-        "crates/ryframe-api/src/generated/device/dto.rs",
-        "crates/ryframe-api/src/generated/device/openapi.rs",
+        "crates/ryframe-application/src/generated/order/model.rs",
+        "crates/ryframe-application/src/generated/order/port.rs",
+        "crates/ryframe-application/src/generated/order/service.rs",
+        "crates/ryframe-application/src/generated/order/fake.rs",
+        "crates/ryframe-tenant-db/src/generated/order/entity.rs",
+        "crates/ryframe-tenant-db/src/generated/order/repository.rs",
+        "crates/ryframe-api/src/generated/order/handler.rs",
+        "crates/ryframe-api/src/generated/order/dto.rs",
+        "crates/ryframe-api/src/generated/order/openapi.rs",
         "crates/ryframe-api/src/generated/crud_resources.rs",
-        "crates/ryframe-tenant-db/src/generated/device/migration.rs",
+        "crates/ryframe-tenant-db/src/generated/order/migration.rs",
         "catalog/access.generated.toml",
-        "src/generated/resources/device/api.ts",
-        "src/generated/resources/device/fields.ts",
-        "src/generated/resources/device/page.vue",
-        "src/generated/resources/device/registration.ts",
+        "src/generated/resources/order/api.ts",
+        "src/generated/resources/order/fields.ts",
+        "src/generated/resources/order/page.vue",
+        "src/generated/resources/order/registration.ts",
     ] {
         assert!(
             assets.iter().any(|asset| asset.path == expected),
@@ -294,30 +294,30 @@ fn assert_device_asset_set(assets: &[GeneratedAsset]) {
     }
 }
 
-fn assert_device_backend_contracts(assets: &[GeneratedAsset]) {
-    let service = generated_asset(assets, "device/service.rs");
-    assert!(service.content.contains("pub struct DeviceService"));
+fn assert_order_backend_contracts(assets: &[GeneratedAsset]) {
+    let service = generated_asset(assets, "order/service.rs");
+    assert!(service.content.contains("pub struct OrderService"));
     assert!(!service.content.contains("UseCase<"));
-    let port = generated_asset(assets, "device/port.rs");
+    let port = generated_asset(assets, "order/port.rs");
     assert!(port.content.contains("#[async_trait]"));
     assert!(!port.content.contains("Box::pin"));
-    let fake = generated_asset(assets, "device/fake.rs");
-    assert!(fake.content.contains("pub enum DeviceCall"));
-    assert!(fake.content.contains("DeviceTransactionState"));
+    let fake = generated_asset(assets, "order/fake.rs");
+    assert!(fake.content.contains("pub enum OrderCall"));
+    assert!(fake.content.contains("OrderTransactionState"));
     assert!(!fake.content.contains("Vec<String>"));
-    let migration = generated_asset(assets, "device/migration.rs");
-    assert!(migration.content.contains("m_resource_initial_device"));
+    let migration = generated_asset(assets, "order/migration.rs");
+    assert!(migration.content.contains("m_resource_initial_order"));
     assert!(migration.content.contains("INITIAL_RESOURCE_MIGRATION"));
     assert!(migration.content.contains("schema-sha256:"));
     assert!(migration.content.contains("`tenant_id` VARCHAR(64)"));
     assert!(!migration.content.contains("REFERENCES `sys_tenant`"));
     assert!(migration.content.contains("禁止生产 down"));
 
-    let repository = generated_asset(assets, "device/repository.rs");
+    let repository = generated_asset(assets, "order/repository.rs");
     assert!(
         repository
             .content
-            .contains("(\"uk_device_tenant_name\", \"设备名称已存在\")")
+            .contains("(\"uk_order_tenant_name\", \"设备名称已存在\")")
     );
     assert!(repository.content.contains("设备名称已存在"));
     assert!(
@@ -327,7 +327,7 @@ fn assert_device_backend_contracts(assets: &[GeneratedAsset]) {
     );
 
     for forbidden in [
-        "async fn list_device() {}",
+        "async fn list_order() {}",
         "IndexDescriptor",
         "MigrationDescriptor",
     ] {
@@ -340,11 +340,11 @@ fn assert_device_backend_contracts(assets: &[GeneratedAsset]) {
     }
 }
 
-fn assert_device_frontend_contracts(assets: &[GeneratedAsset]) {
-    let page = generated_asset(assets, "device/page.vue");
+fn assert_order_frontend_contracts(assets: &[GeneratedAsset]) {
+    let page = generated_asset(assets, "order/page.vue");
     assert!(page.content.contains("@/components/business/flat-crud"));
     assert!(!page.content.contains("@/components/FlatCrudPage"));
-    let frontend_api = generated_asset(assets, "device/api.ts");
+    let frontend_api = generated_asset(assets, "order/api.ts");
     assert!(!frontend_api.content.contains("requestOperation"));
     assert!(
         frontend_api
@@ -353,17 +353,17 @@ fn assert_device_frontend_contracts(assets: &[GeneratedAsset]) {
     );
     assert!(!frontend_api.content.contains("url:"));
     for operation in [
-        "get_system_devices",
-        "get_system_devices_by_id",
-        "post_system_devices",
-        "put_system_devices_by_id",
-        "delete_system_devices_by_id",
+        "get_system_orders",
+        "get_system_orders_by_id",
+        "post_system_orders",
+        "put_system_orders_by_id",
+        "delete_system_orders_by_id",
     ] {
         assert!(frontend_api.content.contains(operation));
     }
 }
 
-fn assert_device_openapi_contracts(assets: &[GeneratedAsset]) {
+fn assert_order_openapi_contracts(assets: &[GeneratedAsset]) {
     let aggregate = assets
         .iter()
         .find(|asset| asset.path == "crates/ryframe-api/src/generated/crud_resources.rs")
@@ -371,7 +371,7 @@ fn assert_device_openapi_contracts(assets: &[GeneratedAsset]) {
     for expected in [
         "CRUD_RESOURCES_VERSION: u16 = 1",
         "crud_resources_extension",
-        "super::device::openapi::crud_resource_metadata()",
+        "super::order::openapi::crud_resource_metadata()",
         "\"resources\"",
     ] {
         assert!(aggregate.content.contains(expected), "聚合缺少 {expected}");
@@ -389,10 +389,10 @@ fn assert_device_openapi_contracts(assets: &[GeneratedAsset]) {
             .contains("pub use crud_resources::crud_resources_extension;")
     );
 
-    let metadata = generated_asset(assets, "device/openapi.rs");
+    let metadata = generated_asset(assets, "order/openapi.rs");
     assert!(metadata.content.contains("\"profile\": \"flat_crud\""));
     assert!(metadata.content.contains("\"fields\""));
-    assert!(!metadata.content.contains("biz_device"));
+    assert!(!metadata.content.contains("biz_order"));
 }
 
 #[test]
@@ -442,11 +442,11 @@ fn empty_catalog_generates_stable_compile_ready_aggregates() {
 
 #[test]
 fn explanation_shows_the_complete_debugging_chain() {
-    let device = device();
+    let order = order();
     let post = load_resource(post_path()).expect("Post 清单应有效");
-    let generated = render_resources(&[device, post]).expect("生成应成功");
+    let generated = render_resources(&[order, post]).expect("生成应成功");
     let explanation = generated
-        .explanation("device")
+        .explanation("order")
         .expect("应生成 explain 模型");
     let text = explanation.render_text();
 
@@ -458,12 +458,12 @@ fn explanation_shows_the_complete_debugging_chain() {
         "Port",
         "Repository",
         "Table",
-        "biz_device",
-        "system:device:list",
+        "biz_order",
+        "system:order:list",
     ] {
         assert!(text.contains(expected), "explain 缺少 {expected}");
     }
-    assert!(text.contains("crates/ryframe-tenant-db/src/generated/device/repository.rs"));
+    assert!(text.contains("crates/ryframe-tenant-db/src/generated/order/repository.rs"));
     assert!(text.contains("symbol") || text.contains("router"));
     let post_explanation = generated
         .explanation("post")
@@ -484,32 +484,32 @@ fn explanation_shows_the_complete_debugging_chain() {
 
 #[test]
 fn manifest_rejects_hidden_business_dsl_with_actionable_error() {
-    let source = fs::read_to_string(device_path()).expect("应读取 fixture");
+    let source = fs::read_to_string(order_path()).expect("应读取 fixture");
     let invalid =
         format!("{source}\n[extensions.backend.report]\nsql = \"select * from secret\"\n");
-    let error = ResourceSpec::parse(&invalid, "catalog/resources/device.toml")
+    let error = ResourceSpec::parse(&invalid, "catalog/resources/order.toml")
         .expect_err("任意 SQL 必须被拒绝")
         .to_string();
 
     assert!(error.contains("sql"));
     assert!(error.contains("强类型手写扩展"));
-    assert!(error.contains("catalog/resources/device.toml"));
+    assert!(error.contains("catalog/resources/order.toml"));
 }
 
 #[test]
 fn field_errors_include_resource_field_file_and_fix() {
-    let source = fs::read_to_string(device_path()).expect("应读取 fixture");
+    let source = fs::read_to_string(order_path()).expect("应读取 fixture");
     let invalid = source.replacen("min_length = 1", "min_length = 101", 1);
     let spec =
-        ResourceSpec::parse(&invalid, "catalog/resources/device.toml").expect("TOML 结构仍应有效");
-    let error = normalize_resource(spec, "catalog/resources/device.toml", "fixture")
+        ResourceSpec::parse(&invalid, "catalog/resources/order.toml").expect("TOML 结构仍应有效");
+    let error = normalize_resource(spec, "catalog/resources/order.toml", "fixture")
         .expect_err("错误的长度边界必须被拒绝")
         .to_string();
 
     for expected in [
-        "资源 device",
+        "资源 order",
         "字段 name",
-        "catalog/resources/device.toml",
+        "catalog/resources/order.toml",
         "修复建议",
     ] {
         assert!(
@@ -575,7 +575,7 @@ fn safe_writer_is_idempotent_and_detects_manual_edits() {
         "[workspace.package]\nversion = \"1.0.0\"\n",
     )
     .expect("应创建工作区标识");
-    let catalog = render_resources(&[device()]).expect("生成应成功");
+    let catalog = render_resources(&[order()]).expect("生成应成功");
     let workspace = ResourceWorkspace {
         backend_root: backend.path(),
         frontend_root: Some(frontend.path()),
@@ -592,7 +592,7 @@ fn safe_writer_is_idempotent_and_detects_manual_edits() {
 
     let generated_file = backend
         .path()
-        .join("crates/ryframe-application/src/generated/device/model.rs");
+        .join("crates/ryframe-application/src/generated/order/model.rs");
     fs::write(&generated_file, "// 人工修改\n").expect("应模拟人工修改");
     let error = write_resources(&catalog, workspace)
         .expect_err("人工修改必须安全失败")
@@ -602,11 +602,11 @@ fn safe_writer_is_idempotent_and_detects_manual_edits() {
 
     let unaffected = frontend
         .path()
-        .join("src/generated/resources/device/api.ts");
+        .join("src/generated/resources/order/api.ts");
     assert!(
         fs::read_to_string(unaffected)
             .expect("前端文件应保留")
-            .contains("export function listDevice")
+            .contains("export function listOrder")
     );
 }
 
@@ -619,7 +619,7 @@ fn writer_rejects_paths_outside_generated_boundaries_before_writing() {
         "[workspace.package]\nversion = \"1.0.0\"\n",
     )
     .expect("应创建工作区标识");
-    let mut catalog = render_resources(&[device()]).expect("生成应成功");
+    let mut catalog = render_resources(&[order()]).expect("生成应成功");
     catalog.assets[0].root = AssetRoot::Backend;
     catalog.assets[0].path = "README.md".into();
 
@@ -646,7 +646,7 @@ fn named_write_matches_preview_and_preserves_other_managed_resources() {
     )
     .expect("应创建工作区标识");
     let catalog = render_resources(&[
-        device(),
+        order(),
         load_resource(post_path()).expect("Post 资源清单应有效"),
     ])
     .expect("完整清单应生成");
@@ -655,11 +655,11 @@ fn named_write_matches_preview_and_preserves_other_managed_resources() {
         frontend_root: Some(frontend.path()),
     };
 
-    write_resource(&catalog, "device", workspace).expect("首次写 Device 应成功");
-    let device_file = backend
+    write_resource(&catalog, "order", workspace).expect("首次写 Order 应成功");
+    let order_file = backend
         .path()
-        .join("crates/ryframe-application/src/generated/device/model.rs");
-    let device_before = fs::read_to_string(&device_file).expect("Device 文件应存在");
+        .join("crates/ryframe-application/src/generated/order/model.rs");
+    let order_before = fs::read_to_string(&order_file).expect("Order 文件应存在");
 
     let preview = plan_resource_assets(&catalog, "post", workspace).expect("Post 预览应成功");
     let preview_paths = preview
@@ -674,7 +674,7 @@ fn named_write_matches_preview_and_preserves_other_managed_resources() {
     assert!(
         preview
             .iter()
-            .all(|asset| { !asset.path.contains("/device/") })
+            .all(|asset| { !asset.path.contains("/order/") })
     );
 
     let report = write_resource(&catalog, "post", workspace).expect("写 Post 应成功");
@@ -688,16 +688,16 @@ fn named_write_matches_preview_and_preserves_other_managed_resources() {
         preview_paths,
         touched.intersection(&preview_paths).cloned().collect()
     );
-    assert!(report.removed.iter().all(|path| !path.contains("/device/")));
-    assert!(report.written.iter().all(|path| !path.contains("/device/")));
+    assert!(report.removed.iter().all(|path| !path.contains("/order/")));
+    assert!(report.written.iter().all(|path| !path.contains("/order/")));
     assert_eq!(
-        fs::read_to_string(&device_file).expect("Post 写入后 Device 文件仍应存在"),
-        device_before
+        fs::read_to_string(&order_file).expect("Post 写入后 Order 文件仍应存在"),
+        order_before
     );
 
     let ownership = fs::read_to_string(backend.path().join("catalog/resources/.ownership.toml"))
         .expect("ownership 应存在");
-    assert!(ownership.contains("resource = \"device\""));
+    assert!(ownership.contains("resource = \"order\""));
     assert!(ownership.contains("resource = \"post\""));
 }
 
@@ -787,31 +787,31 @@ fn named_write_rejects_pending_changes_in_other_managed_resources() {
     )
     .expect("应创建工作区标识");
     let post = load_resource(post_path()).expect("Post 资源清单应有效");
-    let original_device = device();
-    let initial = render_resources(&[original_device.clone(), post.clone()]).expect("清单应生成");
+    let original_order = order();
+    let initial = render_resources(&[original_order.clone(), post.clone()]).expect("清单应生成");
     let workspace = ResourceWorkspace {
         backend_root: backend.path(),
         frontend_root: Some(frontend.path()),
     };
-    write_resource(&initial, "device", workspace).expect("首次写 Device 应成功");
-    let device_file = backend
+    write_resource(&initial, "order", workspace).expect("首次写 Order 应成功");
+    let order_file = backend
         .path()
-        .join("crates/ryframe-application/src/generated/device/model.rs");
-    let device_before = fs::read_to_string(&device_file).expect("Device 文件应存在");
+        .join("crates/ryframe-application/src/generated/order/model.rs");
+    let order_before = fs::read_to_string(&order_file).expect("Order 文件应存在");
     let ownership_path = backend.path().join("catalog/resources/.ownership.toml");
     let ownership_before = fs::read_to_string(&ownership_path).expect("ownership 应存在");
 
-    let mut changed_device = original_device;
-    changed_device.source_hash = "f".repeat(64);
-    let changed_catalog = render_resources(&[changed_device, post]).expect("变更清单应生成预览");
+    let mut changed_order = original_order;
+    changed_order.source_hash = "f".repeat(64);
+    let changed_catalog = render_resources(&[changed_order, post]).expect("变更清单应生成预览");
     let error = write_resource(&changed_catalog, "post", workspace)
-        .expect_err("不得让聚合入口提前采用未生成的 Device 清单")
+        .expect_err("不得让聚合入口提前采用未生成的 Order 清单")
         .to_string();
 
-    assert!(error.contains("资源 device"));
+    assert!(error.contains("资源 order"));
     assert!(error.contains("待生成变化"));
-    assert!(error.contains("cargo xtask generate resource device --write"));
-    assert_eq!(fs::read_to_string(device_file).unwrap(), device_before);
+    assert!(error.contains("cargo xtask generate resource order --write"));
+    assert_eq!(fs::read_to_string(order_file).unwrap(), order_before);
     assert_eq!(
         fs::read_to_string(ownership_path).unwrap(),
         ownership_before

@@ -5,8 +5,8 @@ use ryframe_generator::{
     render_resources, write_resources,
 };
 
-fn device_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/device.toml")
+fn order_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/order.toml")
 }
 
 #[test]
@@ -18,8 +18,8 @@ fn all_resource_check_plan_is_read_only_and_reaches_zero_diff() {
         "[workspace.package]\nversion = \"1.0.0\"\n",
     )
     .expect("应创建工作区标识");
-    let device = load_resource(device_path()).expect("Device 资源清单应有效");
-    let catalog = render_resources(&[device]).expect("生成应成功");
+    let order = load_resource(order_path()).expect("Order 资源清单应有效");
+    let catalog = render_resources(&[order]).expect("生成应成功");
     let workspace = ResourceWorkspace {
         backend_root: backend.path(),
         frontend_root: Some(frontend.path()),
@@ -37,7 +37,7 @@ fn all_resource_check_plan_is_read_only_and_reaches_zero_diff() {
 
     let model_path = backend
         .path()
-        .join("crates/ryframe-application/src/generated/device/model.rs");
+        .join("crates/ryframe-application/src/generated/order/model.rs");
     let ownership_path = backend.path().join("catalog/resources/.ownership.toml");
     let model_before = fs::read(&model_path).expect("模型文件应存在");
     let ownership_before = fs::read(&ownership_path).expect("ownership 应存在");
@@ -45,14 +45,14 @@ fn all_resource_check_plan_is_read_only_and_reaches_zero_diff() {
     changed
         .assets
         .iter_mut()
-        .find(|asset| asset.path.ends_with("generated/device/model.rs"))
-        .expect("应存在 Device 模型")
+        .find(|asset| asset.path.ends_with("generated/order/model.rs"))
+        .expect("应存在 Order 模型")
         .content
         .push_str("// 生成器新版本输出\n");
 
     let plan = plan_all_resource_changes(&changed, workspace).expect("全量检查应报告差异");
     assert!(plan.assets.iter().any(|asset| {
-        asset.path.ends_with("generated/device/model.rs") && asset.action == PlanAction::Update
+        asset.path.ends_with("generated/order/model.rs") && asset.action == PlanAction::Update
     }));
     assert!(plan.assets.iter().any(|asset| {
         asset.path == "catalog/resources/.ownership.toml" && asset.action == PlanAction::Update
@@ -76,7 +76,7 @@ fn all_resource_check_plan_is_read_only_and_reaches_zero_diff() {
             "stale-generator-version",
         );
     fs::write(&ownership_path, &stale_manifest).expect("应模拟旧 generator version");
-    let named = plan_resource_changes(&changed, "device", workspace).expect("命名检查应成功");
+    let named = plan_resource_changes(&changed, "order", workspace).expect("命名检查应成功");
     assert!(named.assets.iter().any(|asset| {
         asset.path == "catalog/resources/.ownership.toml" && asset.action == PlanAction::Update
     }));

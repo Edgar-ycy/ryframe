@@ -109,28 +109,28 @@ class TargetTests(unittest.TestCase):
         result = target.initialize_target(f.root, f.output, f.run, publish_files=publisher)
         return result
 
-    def test_device_fixture_execution_root_is_bound_to_its_generated_snapshot(self):
+    def test_business_fixture_execution_root_is_bound_to_its_generated_snapshot(self):
         f = self.f
-        execution = f.local / "device-backend"
+        execution = f.local / "business-backend"
         execution.mkdir()
         (execution / "Cargo.toml").write_text("[workspace]", encoding="utf-8")
         (execution / ".git").write_text("gitdir: fixture", encoding="utf-8")
         generated = {"head": "a" * 40, "patch_sha256": "b" * 64, "files": []}
         fixture = {
             "format_version": 1,
-            "fixture": "device",
+            "fixture": "business",
             "status": "ready",
-            "paths": {"backend": str(execution), "frontend": str(f.local / "device-frontend")},
+            "paths": {"backend": str(execution), "frontend": str(f.local / "business-frontend")},
             "generated": {"backend": generated},
         }
-        receipt = f.bound(f.local / "device-fixture.json", fixture)
+        receipt = f.bound(f.local / "business-fixture.json", fixture)
         f.request["execution_backend"] = {"fixture": receipt, "path": str(execution)}
 
         with patch.object(binding, "snapshot", return_value=(generated, b"")):
             root, evidence = binding.execution_backend(f.root, f.request)
 
         self.assertEqual(root, execution)
-        self.assertEqual(evidence["kind"], "device-fixture")
+        self.assertEqual(evidence["kind"], "business-fixture")
         self.assertEqual(evidence["source"], generated)
 
     def test_complete_lifecycle_uses_only_bound_cli_then_readonly_verifies(self):
@@ -339,7 +339,7 @@ class TargetTests(unittest.TestCase):
                    "process_receipt": f.bound(restarted / "process.json", process),
                    "launch_receipt": f.bound(restarted / "launch.json", launch)}
         data = Path(process["data_dir"])
-        runtime = {"storage": storage, "data_directory": {"path": str(data), "device": data.stat().st_dev,
+        runtime = {"storage": storage, "data_directory": {"path": str(data), "business": data.stat().st_dev,
                    "inode": data.stat().st_ino}, "api_url": process["api_url"], "console_url": process["console_url"],
                    "request": f.bound(restarted / "request.json", {"previous": original})}
         with patch("devex_clone_storage.registered_storage_binding", return_value=runtime), \

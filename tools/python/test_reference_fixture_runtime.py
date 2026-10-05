@@ -1,4 +1,4 @@
-"""Device 夹具运行时只能使用已绑定的私有环境与构建来源。"""
+"""业务 crate 夹具运行时只能使用已绑定的私有环境与构建来源。"""
 from __future__ import annotations
 
 import json
@@ -21,7 +21,7 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
         self.temporary = WorkspaceDirectory(dir=self.backend / ".local-tests", prefix="reference-runtime-")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        self.execution = self.root / "device"
+        self.execution = self.root / "business"
         self.reference = self.execution / ".local-tests/reference-fixture"
         self.reference.mkdir(parents=True)
         (self.execution / "Cargo.toml").write_text("[workspace]", encoding="utf-8")
@@ -60,7 +60,7 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
         write_json(output, value)
         return value
 
-    def test_build_binds_device_source_before_writing_runtime_receipts(self):
+    def test_build_binds_business_source_before_writing_runtime_receipts(self):
         captured = {}
         output = self.reference / "runtime-r1"
 
@@ -94,7 +94,7 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "reference_fixture_runtime_built")
         self.assertEqual(captured["environment"]["APP_API_DOCS_ENABLED"], "false")
-        self.assertEqual(captured["environment"]["RYFRAME_E2E_FIXTURE"], "device")
+        self.assertEqual(captured["environment"]["RYFRAME_E2E_FIXTURE"], "business")
         self.assertEqual(captured["environment"]["RYFRAME_CODE_SHA"], "b" * 40)
         self.assertEqual(source_probe.call_count, 1)
         self.assertEqual(inventory_probe.call_args_list[0].args, (self.execution, source))
@@ -104,7 +104,7 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
         self.assertEqual(set(build["artifacts"]), {"api", "worker"})
         self.assertTrue((output / "source-pair.json").is_file())
 
-    def test_output_rejects_paths_outside_the_device_reference_root(self):
+    def test_output_rejects_paths_outside_the_business_reference_root(self):
         with self.assertRaisesRegex(ValueError, "参考夹具根"):
             runtime._output(self.execution, self.root / "outside", new=True)
 

@@ -9,7 +9,7 @@ from pathlib import Path, PurePosixPath
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from release_evidence import DEVICE_OUTPUTS, EvidenceError, Requirement
+from release_evidence import BUSINESS_OUTPUTS, EvidenceError, Requirement
 from verify_release_ci import (
     ARTIFACT_ARCHIVE_MAX_BYTES,
     api,
@@ -102,7 +102,7 @@ class ReleaseCollectorTests(unittest.TestCase):
 
     def pairs(self, evidence):
         empty = hashlib.sha256(b"").hexdigest()
-        fixture_hash = hashlib.sha256(b"device fixture").hexdigest()
+        fixture_hash = hashlib.sha256(b"business fixture").hexdigest()
         sources = {
             name: {"head": "a" * 40, "patch_sha256": empty, "files": []}
             for name in ("backend", "frontend")
@@ -116,21 +116,21 @@ class ReleaseCollectorTests(unittest.TestCase):
                     {
                         "path": path,
                         "sha256": fixture_hash
-                        if path == "catalog/resources/device.toml"
+                        if path == "crates/order-business/src/resources/mod.rs"
                         else hashlib.sha256(path.encode()).hexdigest(),
                     }
-                    for path in DEVICE_OUTPUTS[name]
+                    for path in BUSINESS_OUTPUTS[name]
                 ],
             }
         fixture = {
             "format_version": 1,
-            "fixture": "device",
+            "fixture": "business",
             "status": "ready",
             "fixture_sha256": fixture_hash,
             "sources": sources,
             "paths": {
-                "backend": "/home/runner/work/backend/.local-tests/device-fixture/backend",
-                "frontend": "/home/runner/work/backend/.local-tests/device-fixture/frontend",
+                "backend": "/home/runner/work/backend/.local-tests/business-fixture/backend",
+                "frontend": "/home/runner/work/backend/.local-tests/business-fixture/frontend",
             },
             "generated": generated,
         }
@@ -141,7 +141,7 @@ class ReleaseCollectorTests(unittest.TestCase):
             "frontend_sha": "a" * 40,
             "sources": sources,
         }
-        return {"core": pair, "device": {**pair, "fixture": fixture}}
+        return {"core": pair, "business": {**pair, "fixture": fixture}}
 
     @staticmethod
     def raw(value):
@@ -189,20 +189,16 @@ class ReleaseCollectorTests(unittest.TestCase):
             backend_root = fixture_receipt["paths"]["backend"]
             fixture_root = str(PurePosixPath(backend_root).parent)
             definition = {
-                "bytes": len(b"device fixture"),
+                "bytes": len(b"business fixture"),
                 "sha256": fixture_receipt["fixture_sha256"],
             }
             source = {
                 "format_version": 1,
-                "fixture": "device",
+                "fixture": "business",
                 "fixture_receipt": self.binding(f"{fixture_root}/fixture.json", fixture_raw),
                 "fixture_definition": {
-                    "fixture": {
-                        "path": f"{backend_root}/crates/ryframe-generator/tests/fixtures/device.toml",
-                        **definition,
-                    },
-                    "resource": {
-                        "path": f"{backend_root}/catalog/resources/device.toml",
+                    "model": {
+                        "path": f"{backend_root}/tools/python/fixtures/order-business/src/resources/mod.rs",
                         **definition,
                     },
                 },
@@ -282,14 +278,14 @@ class ReleaseCollectorTests(unittest.TestCase):
                     failed,
                     lambda _: None,
                     lambda: 0,
-                    fixture_sha256=receipt["device"]["fixture"]["fixture_sha256"],
+                    fixture_sha256=receipt["business"]["fixture"]["fixture_sha256"],
                 )
 
     def test_recheck_is_bounded_and_success_records_pair(self):
         required = [self.requirement] * 4
         evidence = {"run_id": 123, "attempt": 2}
         receipt = self.pairs(evidence)
-        fixture_sha256 = receipt["device"]["fixture"]["fixture_sha256"]
+        fixture_sha256 = receipt["business"]["fixture"]["fixture_sha256"]
         result = coordinated_evidence(
             required,
             1,
@@ -311,7 +307,7 @@ class ReleaseCollectorTests(unittest.TestCase):
                 fixture_sha256=fixture_sha256,
             )
 
-        with self.assertRaisesRegex(EvidenceError, "Device fixture 摘要"):
+        with self.assertRaisesRegex(EvidenceError, "业务 crate fixture 摘要"):
             coordinated_evidence(required, 1)
 
     def test_remote_tags_bind_annotated_objects_and_dereferenced_commits(self):
@@ -452,7 +448,7 @@ class ReleaseCollectorTests(unittest.TestCase):
         required = [self.requirement] * 4
         evidence = {"run_id": 123, "attempt": 2}
         receipts = self.pairs(evidence)
-        fixture_sha256 = receipts["device"]["fixture"]["fixture_sha256"]
+        fixture_sha256 = receipts["business"]["fixture"]["fixture_sha256"]
         events = []
 
         def collect(_requirement):
@@ -484,10 +480,10 @@ class ReleaseCollectorTests(unittest.TestCase):
         receipts = self.pairs(evidence)
         artifacts = [
             {"id": 10, "name": "ryframe-full-stack-123-2"},
-            {"id": 11, "name": "ryframe-full-stack-123-2-device"},
+            {"id": 11, "name": "ryframe-full-stack-123-2-business"},
         ]
         archives = {}
-        for artifact, kind in zip(artifacts, ("core", "device"), strict=True):
+        for artifact, kind in zip(artifacts, ("core", "business"), strict=True):
             archives[artifact["id"]] = self.full_stack_archive(receipts[kind], kind)
             artifact["size_in_bytes"] = len(archives[artifact["id"]])
 
@@ -504,10 +500,10 @@ class ReleaseCollectorTests(unittest.TestCase):
                 evidence,
                 "a" * 40,
                 "a" * 40,
-                receipts["device"]["fixture"]["fixture_sha256"],
+                receipts["business"]["fixture"]["fixture_sha256"],
             )
             self.assertEqual(
-                result["device"]["artifact"],
+                result["business"]["artifact"],
                 {
                     "id": 11,
                     "name": artifacts[1]["name"],
@@ -521,7 +517,7 @@ class ReleaseCollectorTests(unittest.TestCase):
         for invalid in (
             artifacts[:1],
             [artifacts[0], {**artifacts[1], "expired": True}],
-            [artifacts[0], {**artifacts[1], "name": "ryframe-full-stack-123-1-device"}],
+            [artifacts[0], {**artifacts[1], "name": "ryframe-full-stack-123-1-business"}],
             [*artifacts, artifacts[1]],
         ):
             with self.subTest(artifacts=invalid), patch(
@@ -534,7 +530,7 @@ class ReleaseCollectorTests(unittest.TestCase):
                         evidence,
                         "a" * 40,
                         "a" * 40,
-                        receipts["device"]["fixture"]["fixture_sha256"],
+                        receipts["business"]["fixture"]["fixture_sha256"],
                     )
 
         oversize = [artifacts[0], {**artifacts[1], "size_in_bytes": ARTIFACT_ARCHIVE_MAX_BYTES + 1}]
@@ -546,7 +542,7 @@ class ReleaseCollectorTests(unittest.TestCase):
                     evidence,
                     "a" * 40,
                     "a" * 40,
-                    receipts["device"]["fixture"]["fixture_sha256"],
+                    receipts["business"]["fixture"]["fixture_sha256"],
                 )
             download.assert_not_called()
 

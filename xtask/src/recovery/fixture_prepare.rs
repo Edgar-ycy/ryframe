@@ -42,7 +42,7 @@ pub(crate) fn private_invocation_at(
     frontend: &Path,
 ) -> Result<PrivateFixturePrepareInvocation> {
     validate_local_test_path(&options.output_dir, root, LocalTestPathKind::NewDirectory)
-        .map_err(|error| format!("Device 夹具输出目录无效：{error}"))?;
+        .map_err(|error| format!("业务 crate 夹具输出目录无效：{error}"))?;
     validate_frontend(frontend)?;
     let mut protocol = json!({
         "backend_dir": path_text(root, "后端目录")?,
@@ -60,7 +60,7 @@ pub(crate) fn private_invocation_at(
     }
     let serialized = serde_json::to_string(&protocol)?;
     if serialized.len() > 32 * 1024 || serialized.contains(['\n', '\r', '\0']) {
-        return Err("Device 夹具私有协议过长或包含换行符/NUL".into());
+        return Err("业务 crate 夹具私有协议过长或包含换行符/NUL".into());
     }
     Ok(PrivateFixturePrepareInvocation {
         script: SCRIPT,
@@ -70,15 +70,15 @@ pub(crate) fn private_invocation_at(
 
 fn validate_frontend(frontend: &Path) -> Result<()> {
     if !frontend.is_absolute() {
-        return Err("Device 夹具前端目录必须是绝对路径".into());
+        return Err("业务 crate 夹具前端目录必须是绝对路径".into());
     }
     let metadata = std::fs::symlink_metadata(frontend)
-        .map_err(|error| format!("无法核验 Device 夹具前端目录：{error}"))?;
+        .map_err(|error| format!("无法核验 业务 crate 夹具前端目录：{error}"))?;
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
-        return Err("Device 夹具前端目录必须是现有真实目录".into());
+        return Err("业务 crate 夹具前端目录必须是现有真实目录".into());
     }
     if !frontend.join("package.json").is_file() {
-        return Err("Device 夹具前端目录缺少 package.json".into());
+        return Err("业务 crate 夹具前端目录缺少 package.json".into());
     }
     Ok(())
 }

@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from release_evidence import (
-    DEVICE_OUTPUTS,
+    BUSINESS_OUTPUTS,
     EvidenceError,
     Requirement,
     latest_run,
@@ -27,7 +27,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
 
     def fixture_receipt(self):
         empty = hashlib.sha256(b"").hexdigest()
-        fixture_hash = hashlib.sha256(b"device fixture").hexdigest()
+        fixture_hash = hashlib.sha256(b"business fixture").hexdigest()
         sources = {
             "backend": {"head": "a" * 40, "patch_sha256": empty, "files": []},
             "frontend": {"head": "b" * 40, "patch_sha256": empty, "files": []},
@@ -35,10 +35,10 @@ class ReleaseEvidenceTests(unittest.TestCase):
         generated = {}
         for name, head in (("backend", "a" * 40), ("frontend", "b" * 40)):
             files = []
-            for path in DEVICE_OUTPUTS[name]:
+            for path in BUSINESS_OUTPUTS[name]:
                 digest = (
                     fixture_hash
-                    if path == "catalog/resources/device.toml"
+                    if path == "crates/order-business/src/resources/mod.rs"
                     else hashlib.sha256(path.encode()).hexdigest()
                 )
                 files.append({"path": path, "sha256": digest})
@@ -49,7 +49,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
             }
         return {
             "format_version": 1,
-            "fixture": "device",
+            "fixture": "business",
             "status": "ready",
             "fixture_sha256": fixture_hash,
             "sources": sources,
@@ -125,7 +125,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
         results = iter((None, {"run_id": 123}))
         self.assertEqual(await_evidence([self.requirement], 3, lambda _: next(results), lambda _: None, lambda: 0), [{"run_id": 123}])
 
-    def test_device_receipt_requires_clean_paired_sources_and_completed_generation(self):
+    def test_business_receipt_requires_clean_paired_sources_and_completed_generation(self):
         receipt = self.fixture_receipt()
         expected_fixture = receipt["fixture_sha256"]
         validate_fixture(receipt, "a" * 40, "b" * 40, expected_fixture)
@@ -159,7 +159,7 @@ class ReleaseEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(EvidenceError, "发布源码不一致"):
             validate_fixture(receipt, "a" * 40, "b" * 40, "d" * 64)
 
-    def test_device_receipt_binds_fixture_and_required_outputs_on_both_sides(self):
+    def test_business_receipt_binds_fixture_and_required_outputs_on_both_sides(self):
         receipt = self.fixture_receipt()
         expected_fixture = receipt["fixture_sha256"]
         for name in ("backend", "frontend"):
@@ -180,7 +180,12 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 )
 
         wrong_fixture = copy.deepcopy(receipt)
-        wrong_fixture["generated"]["backend"]["files"][0]["sha256"] = "c" * 64
+        model = next(
+            entry
+            for entry in wrong_fixture["generated"]["backend"]["files"]
+            if entry["path"] == "crates/order-business/src/resources/mod.rs"
+        )
+        model["sha256"] = "c" * 64
         with self.assertRaisesRegex(EvidenceError, "资源定义不一致"):
             validate_fixture(
                 wrong_fixture, "a" * 40, "b" * 40, expected_fixture

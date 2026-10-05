@@ -25,7 +25,7 @@ impl Fixture {
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&directory).unwrap();
-        let output = directory.join("Device fixture");
+        let output = directory.join("business crate fixture");
         let frontend = [
             root.parent().unwrap().join("frontend"),
             root.parent().unwrap().join("ryframe-vue3"),
@@ -97,9 +97,9 @@ fn invalid_arguments_exit_two_before_python_starts() {
 fn valid_request_replaces_inherited_protocol_and_hides_paths_from_argv() {
     let fixture = Fixture::new();
     let result = invoke(&fixture.valid());
-    assert_eq!(result.status.code(), Some(1));
     let stdout = String::from_utf8(result.stdout).unwrap();
     let stderr = String::from_utf8(result.stderr).unwrap();
+    assert_eq!(result.status.code(), Some(1), "stdout={stdout}\nstderr={stderr}");
     assert!(
         stdout.contains("tools/python/prepare_full_stack_fixture.py"),
         "{stdout}"

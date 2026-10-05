@@ -21,7 +21,7 @@ class ReferenceFixtureServicesTests(unittest.TestCase):
         self.temporary = WorkspaceDirectory(dir=self.backend / ".local-tests/python-unit")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        self.execution = self.root / "device-backend"
+        self.execution = self.root / "business-backend"
         (self.execution / ".local-tests/reference-fixture").mkdir(parents=True)
         self.future = self.execution / ".local-tests/reference-fixture/run-r24"
         self.tool = self.root / "tool.exe"

@@ -47,14 +47,14 @@ fn tenant_catalog_keeps_empty_and_control_only_resources_valid() {
 }
 
 #[test]
-fn device_catalog_includes_all_columns_and_tenant_cursor_without_control_tables() {
-    let device =
-        load_resource(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/device.toml"))
+fn order_catalog_includes_all_columns_and_tenant_cursor_without_control_tables() {
+    let order =
+        load_resource(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/order.toml"))
             .unwrap();
-    let generated = render_resources(std::slice::from_ref(&device)).unwrap();
+    let generated = render_resources(std::slice::from_ref(&order)).unwrap();
     let catalog = asset(&generated, CATALOG);
     for expected in [
-        "table: \"biz_device\"",
+        "table: \"biz_order\"",
         "primary_key_cursor_columns: &[\"tenant_id\", \"id\"]",
         "has_generated_columns: false",
         "foreign_key_dependencies: &[]",
@@ -62,11 +62,11 @@ fn device_catalog_includes_all_columns_and_tenant_cursor_without_control_tables(
     ] {
         assert!(catalog.contains(expected), "目录缺少 {expected}");
     }
-    for field in &device.fields {
+    for field in &order.fields {
         assert!(catalog.contains(&format!("{:?}", field.column)));
     }
     assert!(!catalog.contains("sys_"));
-    let mut changed = device;
+    let mut changed = order;
     changed
         .fields
         .iter_mut()
@@ -82,29 +82,29 @@ fn device_catalog_includes_all_columns_and_tenant_cursor_without_control_tables(
     assert_ne!(
         asset(
             &generated,
-            "crates/ryframe-tenant-db/src/generated/device/migration.rs"
+            "crates/ryframe-tenant-db/src/generated/order/migration.rs"
         ),
         asset(
             &changed_output,
-            "crates/ryframe-tenant-db/src/generated/device/migration.rs"
+            "crates/ryframe-tenant-db/src/generated/order/migration.rs"
         )
     );
 }
 
 #[test]
 fn catalog_copy_order_is_deterministic_for_multiple_resources() {
-    let device =
-        load_resource(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/device.toml"))
+    let order =
+        load_resource(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/order.toml"))
             .unwrap();
-    let mut meter = device.clone();
+    let mut meter = order.clone();
     meter.name = "meter".into();
     meter.pascal_name = "Meter".into();
     meter.table = "biz_meter".into();
-    let before = render_resources(&[meter.clone(), device.clone()]).unwrap();
-    let after = render_resources(&[device, meter]).unwrap();
+    let before = render_resources(&[meter.clone(), order.clone()]).unwrap();
+    let after = render_resources(&[order, meter]).unwrap();
     let catalog = asset(&before, CATALOG);
     assert_eq!(catalog, asset(&after, CATALOG));
-    assert!(catalog.find("biz_device").unwrap() < catalog.find("biz_meter").unwrap());
+    assert!(catalog.find("biz_order").unwrap() < catalog.find("biz_meter").unwrap());
     assert!(catalog.contains("copy_order: 1"));
     assert!(catalog.contains("copy_order: 2"));
     assert!(!catalog.contains("copy_order: 0"));

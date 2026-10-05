@@ -30,7 +30,7 @@ pub(in crate::resource) fn normalize(
     if !is_snake_identifier(&resource) {
         return Err(error(
             "资源名必须是小写 snake_case 标识符".into(),
-            "例如使用 `device` 或 `work_order`",
+            "例如使用 `order` 或 `work_order`",
         ));
     }
     if !is_snake_identifier(&spec.resource.module) {

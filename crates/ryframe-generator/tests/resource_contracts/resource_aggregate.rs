@@ -2,14 +2,14 @@ use std::{collections::BTreeMap, path::PathBuf};
 
 use ryframe_generator::{load_resource, render_resources};
 
-fn device() -> ryframe_generator::ResourceIr {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/device.toml");
-    load_resource(path).expect("Device 资源清单应有效")
+fn order() -> ryframe_generator::ResourceIr {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/order.toml");
+    load_resource(path).expect("Order 资源清单应有效")
 }
 
 #[test]
 fn generated_outputs_ignore_resource_source_hashes() {
-    let original = device();
+    let original = order();
     let mut changed = original.clone();
     changed.source_hash = "source-hash-for-a-non-structural-change".to_owned();
     let before = render_resources(&[original]).expect("原始资源应能生成");

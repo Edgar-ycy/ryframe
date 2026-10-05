@@ -540,7 +540,7 @@ fn fresh_target_owns_arguments_and_write_policy_in_the_rust_parser() {
 #[test]
 fn parses_fixture_generation_and_rejects_ambiguous_sources() {
     let fixture = RecoveryArgumentFixture::new("fixture-generation");
-    let output = fixture.new_path("device");
+    let output = fixture.new_path("business");
     assert_eq!(
         parse_recovery_owned(vec![
             "fixture".to_owned(),
