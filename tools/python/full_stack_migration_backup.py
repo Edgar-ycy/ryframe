@@ -47,8 +47,8 @@ def export_target(binding: dict, directory: Path, migration: str) -> dict:
         raise ValueError("专用目标导出大小无效或超过测试 64 MiB 上限")
     content = artifact.read_bytes()
     if (
-        b"CREATE TABLE `biz_device`" not in content
-        or content.count(b"INSERT INTO `biz_device` ") != 3
+        b"CREATE TABLE `biz_order`" not in content
+        or content.count(b"INSERT INTO `biz_order` ") != 3
     ):
         raise ValueError("导出未包含 Device 结构和三条独立记录")
     return {

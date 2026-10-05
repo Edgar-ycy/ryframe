@@ -105,11 +105,11 @@ jobs:
             backend: backend
             frontend: frontend
             artifact_suffix: ""
-          - fixture: device
-            name: Generated Device Data Migration build
-            backend: backend/.local-tests/device-fixture/backend
-            frontend: backend/.local-tests/device-fixture/frontend
-            artifact_suffix: -device
+          - fixture: business
+            name: Generated business crate data migration build
+            backend: backend/.local-tests/business-fixture/backend
+            frontend: backend/.local-tests/business-fixture/frontend
+            artifact_suffix: -business
     env:
       APP_ENV: test
       APP_API_DOCS_ENABLED: "false"
@@ -282,27 +282,27 @@ jobs:
           corepack pnpm install --frozen-lockfile
           corepack pnpm exec playwright install --with-deps chromium
 
-      - name: 在隔离工作树生成 Device 并校验幂等性
-        if: ${{ matrix.fixture == 'device' }}
+      - name: 在隔离工作树生成业务 crate 并校验幂等性
+        if: ${{ matrix.fixture == 'business' }}
         working-directory: backend
         run: mkdir -p .local-tests
 
-      - name: 生成 Device fixture 并校验幂等性
-        if: ${{ matrix.fixture == 'device' }}
+      - name: 生成业务 crate fixture 并校验幂等性
+        if: ${{ matrix.fixture == 'business' }}
         working-directory: backend
         run: >-
           cargo xtask check recovery fixture
           --frontend-dir "$GITHUB_WORKSPACE/frontend"
-          --output-dir "$GITHUB_WORKSPACE/backend/.local-tests/device-fixture" --write
+          --output-dir "$GITHUB_WORKSPACE/backend/.local-tests/business-fixture" --write
 
-      - name: 输出 Device fixture 失败诊断
-        if: ${{ failure() && matrix.fixture == 'device' }}
+      - name: 输出业务 crate fixture 失败诊断
+        if: ${{ failure() && matrix.fixture == 'business' }}
         working-directory: backend
         run: |
-          if [ -f .local-tests/device-fixture/prepare.log ]; then
-            tail -n 160 .local-tests/device-fixture/prepare.log
+          if [ -f .local-tests/business-fixture/prepare.log ]; then
+            tail -n 160 .local-tests/business-fixture/prepare.log
           else
-            echo 'Device fixture 未生成 prepare.log'
+            echo '业务 crate fixture 未生成 prepare.log'
           fi
 
       - name: 构建并安全初始化临时全栈环境
@@ -353,8 +353,8 @@ jobs:
           include-hidden-files: true
           path: |
             ${{ runner.temp }}/ryframe-full-stack
-            backend/.local-tests/device-fixture/fixture.json
-            backend/.local-tests/device-fixture/prepare.log
+            backend/.local-tests/business-fixture/fixture.json
+            backend/.local-tests/business-fixture/prepare.log
           if-no-files-found: error
           retention-days: 14
 

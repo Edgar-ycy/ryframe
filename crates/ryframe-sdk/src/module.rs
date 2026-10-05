@@ -4,15 +4,15 @@ use std::{borrow::Borrow, collections::BTreeSet};
 use axum::Router;
 #[cfg(feature = "api")]
 use ryframe_api::{AppState, openapi::OpenApiDocument};
+#[cfg(feature = "api")]
+use ryframe_db::ControlDatabaseCluster;
 use ryframe_kernel::{AppError, AppResult};
 #[cfg(feature = "api")]
 use ryframe_tenant_db::TenantDatabaseRouter;
-#[cfg(feature = "api")]
-use ryframe_db::ControlDatabaseCluster;
 
-use crate::ResourceDescriptor;
 #[cfg(feature = "migration")]
 use crate::BusinessMigration;
+use crate::ResourceDescriptor;
 #[cfg(any(feature = "api", feature = "migration"))]
 use std::sync::Arc;
 
@@ -57,7 +57,8 @@ impl RyFrameBusinessModule {
 
     #[cfg(feature = "api")]
     pub fn router(&self, context: BusinessRuntimeContext) -> AppResult<Router> {
-        self.router.map_or_else(|| Ok(Router::new()), |build| build(context))
+        self.router
+            .map_or_else(|| Ok(Router::new()), |build| build(context))
     }
 
     #[cfg(feature = "api")]
@@ -191,7 +192,10 @@ pub fn compose_openapi(
 }
 
 pub fn validate_modules(modules: &[RyFrameBusinessModule]) -> AppResult<()> {
-    let names = modules.iter().map(RyFrameBusinessModule::name).collect::<BTreeSet<_>>();
+    let names = modules
+        .iter()
+        .map(RyFrameBusinessModule::name)
+        .collect::<BTreeSet<_>>();
     if names.len() != modules.len() {
         return Err(AppError::Config("业务模块名称重复".into()));
     }
@@ -273,13 +277,19 @@ pub fn sort_modules(modules: &mut [RyFrameBusinessModule]) -> AppResult<()> {
 
 fn validate_module(module: &RyFrameBusinessModule) -> AppResult<()> {
     if !safe_key(module.name) {
-        return Err(AppError::Config(format!("业务模块名称无效：{}", module.name)));
+        return Err(AppError::Config(format!(
+            "业务模块名称无效：{}",
+            module.name
+        )));
     }
     let mut resources = BTreeSet::new();
     let mut tables = BTreeSet::new();
     for resource in &module.resources {
         if !resources.insert(resource.name) || !tables.insert(resource.table) {
-            return Err(AppError::Config(format!("业务模块 {} 存在重复资源或表名", module.name)));
+            return Err(AppError::Config(format!(
+                "业务模块 {} 存在重复资源或表名",
+                module.name
+            )));
         }
     }
     #[cfg(feature = "migration")]
@@ -288,7 +298,10 @@ fn validate_module(module: &RyFrameBusinessModule) -> AppResult<()> {
         .iter()
         .any(|migration| migration.module() != module.name)
     {
-        return Err(AppError::Config(format!("业务模块 {} 包含归属不一致的迁移", module.name)));
+        return Err(AppError::Config(format!(
+            "业务模块 {} 包含归属不一致的迁移",
+            module.name
+        )));
     }
     Ok(())
 }
@@ -306,9 +319,10 @@ fn reject_cycles(modules: &[RyFrameBusinessModule]) -> AppResult<()> {
         if !visiting.insert(name) {
             return Err(AppError::Config(format!("业务模块依赖存在循环：{name}")));
         }
-        let module = modules.iter().find(|module| module.name() == name).ok_or_else(|| {
-            AppError::Config(format!("业务模块依赖未注册：{name}"))
-        })?;
+        let module = modules
+            .iter()
+            .find(|module| module.name() == name)
+            .ok_or_else(|| AppError::Config(format!("业务模块依赖未注册：{name}")))?;
         for dependency in module.dependencies() {
             visit(dependency, modules, visiting, visited)?;
         }
@@ -327,9 +341,9 @@ fn reject_cycles(modules: &[RyFrameBusinessModule]) -> AppResult<()> {
 
 fn safe_key(value: &str) -> bool {
     !value.is_empty()
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_')
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_'
+        })
 }
 
 #[cfg(feature = "api")]

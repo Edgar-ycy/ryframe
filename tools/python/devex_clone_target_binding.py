@@ -550,7 +550,7 @@ def execution_backend(backend: Path, request: dict) -> tuple[Path, dict]:
     exact(declared, {"fixture", "path"})
     fixture_path = bound_file(backend, declared["fixture"])
     fixture = read_json(fixture_path)
-    if (fixture.get("format_version") != 1 or fixture.get("fixture") != "device"
+    if (fixture.get("format_version") != 1 or fixture.get("fixture") != "business"
             or fixture.get("status") != "ready" or not isinstance(fixture.get("paths"), dict)
             or not isinstance(fixture.get("generated"), dict)):
         raise ValueError("冻结 Device 工作树收据无效")

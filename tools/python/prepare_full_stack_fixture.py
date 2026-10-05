@@ -150,60 +150,8 @@ def register_fixture_migration(root: Path, log: Path) -> None:
 def create_business_fixture(root: Path, log: Path) -> bytes:
     """创建并显式接入单一业务 crate，不改写框架资源目录。"""
     crate = root / "crates/order-business"
-    (crate / "src/resources").mkdir(parents=True)
-    (crate / "Cargo.toml").write_text('''[package]
-name = "order-business"
-version = "0.1.0"
-edition = "2024"
-
-[package.metadata.ryframe]
-kind = "business"
-module = "order"
-
-[features]
-default = []
-catalog = []
-persistence = ["ryframe-sdk/persistence"]
-api = ["persistence", "ryframe-sdk/api"]
-migration = ["persistence", "ryframe-sdk/migration"]
-
-[dependencies]
-ryframe-sdk = { path = "../ryframe-sdk", default-features = false }
-
-[lints]
-workspace = true
-''', encoding="utf-8", newline="\n")
-    (crate / "src/lib.rs").write_text('''pub mod resources;
-#[cfg(any(feature = "api", feature = "migration"))]
-pub mod generated;
-
-#[cfg(any(feature = "api", feature = "migration"))]
-pub fn module() -> ryframe_sdk::RyFrameBusinessModule {
-    let builder = ryframe_sdk::BusinessModuleBuilder::new("order")
-        .resources(&generated::RESOURCES);
-    #[cfg(feature = "api")]
-    let builder = builder.routes(generated::routes).openapi(generated::openapi);
-    #[cfg(feature = "migration")]
-    let builder = builder.migrations(generated::migrations::migrations());
-    builder.build()
-}
-''', encoding="utf-8", newline="\n")
-    model = '''#[derive(ryframe_sdk::ResourceModel)]
-#[resource(name = "order", title = "订单", table = "biz_device", database = "tenant")]
-pub struct Order {
-    #[resource(primary_key)]
-    pub tenant_id: String,
-    #[resource(primary_key, generated)]
-    pub id: i64,
-    #[resource(unique, filter, sort)]
-    pub code: String,
-    #[resource(read_only)]
-    pub created_at: ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>,
-    #[resource(read_only)]
-    pub updated_at: ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>,
-}
-'''
-    (crate / "src/resources/mod.rs").write_text(model, encoding="utf-8", newline="\n")
+    template = Path(__file__).with_name("fixtures") / "order-business"
+    shutil.copytree(template, crate)
     cargo = root / "crates/ryframe/Cargo.toml"
     source = cargo.read_text(encoding="utf-8")
     marker = '[dependencies]\n'
@@ -216,13 +164,7 @@ pub struct Order {
         raise ValueError("隔离夹具无法定位业务模块注册表")
     registry.write_text(source.replace('    vec![]', '    vec![order_business::module()]', 1), encoding="utf-8", newline="\n")
     run(["cargo", "run", "--locked", "-p", "ryframe-generator", "--bin", "ryframe-generate", "--", "resource", "--package", "order-business", "--write"], root, log)
-    manifest = crate / "Cargo.toml"
-    manifest.write_text(
-        manifest.read_text(encoding="utf-8").replace('default = []', 'default = ["api", "migration"]', 1),
-        encoding="utf-8",
-        newline="\n",
-    )
-    return model.encode()
+    return (crate / "src/resources/mod.rs").read_bytes()
 
 
 def reference_fixture_root(backend: Path) -> Path:
@@ -261,7 +203,7 @@ def prepare(
     roots = {name: output / name for name in ("backend", "frontend")}
     receipt = {
         "format_version": 1,
-        "fixture": "device",
+        "fixture": "business",
         "status": "preparing",
         "fixture_sha256": None,
         "sources": {"backend": backend_receipt, "frontend": frontend_receipt},
@@ -286,6 +228,14 @@ def prepare(
             " ".join(package),
         ]
     run(package, roots["frontend"], log)
+    run(
+        [
+            "cargo", "run", "--locked", "-p", "ryframe-generator", "--bin", "ryframe-generate", "--",
+            "resource", "--package", "order-business", "--write", "--sync-frontend",
+        ],
+        roots["backend"],
+        log,
+    )
     register_fixture_migration(roots["backend"], log)
     before = {name: snapshot(path)[0] for name, path in roots.items()}
     run(

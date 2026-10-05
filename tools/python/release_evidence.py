@@ -167,17 +167,17 @@ def validate_fixture(
     frontend_sha: str,
     expected_fixture_sha256: str,
 ) -> None:
-    identity = {"format_version": 1, "fixture": "device", "status": "ready"}
+    identity = {"format_version": 1, "fixture": "business", "status": "ready"}
     if not isinstance(receipt, dict) or any(
         receipt.get(key) != value for key, value in identity.items()
     ):
-        raise EvidenceError("Device 生成工作树收据缺失或未完成")
+        raise EvidenceError("业务 crate 生成工作树收据缺失或未完成")
     fixture_sha256 = _sha256(receipt.get("fixture_sha256"))
     if (
         fixture_sha256 in {None, EMPTY_SHA256}
         or fixture_sha256 != expected_fixture_sha256
     ):
-        raise EvidenceError("Device fixture 摘要与发布源码不一致")
+        raise EvidenceError("业务 crate fixture 摘要与发布源码不一致")
     sources, generated_sources = receipt.get("sources"), receipt.get("generated")
     if not isinstance(sources, dict) or not isinstance(generated_sources, dict):
         raise EvidenceError("Device 缺少源码或生成内容指纹")
@@ -203,7 +203,7 @@ def validate_fixture(
         if any(files[path] == EMPTY_SHA256 for path in DEVICE_OUTPUTS[name]):
             raise EvidenceError(f"Device {name} 必要生成输出为空")
     if (
-        generated_files["backend"]["catalog/resources/device.toml"]
+        generated_files["backend"]["crates/order-business/src/resources/mod.rs"]
         != fixture_sha256
     ):
         raise EvidenceError("Device fixture 摘要与隔离工作树中的资源定义不一致")

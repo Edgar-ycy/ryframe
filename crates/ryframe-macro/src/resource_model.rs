@@ -59,11 +59,19 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = match &input.data {
         Data::Struct(data) => match &data.fields {
             Fields::Named(fields) => &fields.named,
-            _ => return Err(syn::Error::new_spanned(input, "ResourceModel 只支持具名字段结构体")),
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    input,
+                    "ResourceModel 只支持具名字段结构体",
+                ));
+            }
         },
         _ => return Err(syn::Error::new_spanned(input, "ResourceModel 只支持结构体")),
     };
-    let field_descriptors = fields.iter().map(field_descriptor).collect::<syn::Result<Vec<_>>>()?;
+    let field_descriptors = fields
+        .iter()
+        .map(field_descriptor)
+        .collect::<syn::Result<Vec<_>>>()?;
     let model = &input.ident;
     let route = route
         .map(|value| quote!(Some(#value)))
@@ -92,83 +100,79 @@ fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
 }
 
 fn field_descriptor(field: &Field) -> syn::Result<proc_macro2::TokenStream> {
-            let field_name = field.ident.as_ref().expect("具名字段").to_string();
-            let field_type = &field.ty;
-            let column_default = field_name.clone();
-            let mut column = None;
-            let mut rename_from = None;
-            let mut default = None;
-            let mut primary_key = false;
-            let mut generated = false;
-            let mut read_only = false;
-            let mut filter = false;
-            let mut sort = false;
-            let mut unique = false;
-            for attribute in &field.attrs {
-                if !attribute.path().is_ident("resource") {
-                    continue;
-                }
-                attribute.parse_nested_meta(|meta| {
-                    if meta.path.is_ident("rename_from") {
-                        rename_from = Some(meta.value()?.parse::<LitStr>()?.value());
-                        Ok(())
-                    } else if meta.path.is_ident("column") {
-                        column = Some(meta.value()?.parse::<LitStr>()?.value());
-                        Ok(())
-                    } else if meta.path.is_ident("default") {
-                        default = Some(meta.value()?.parse::<LitStr>()?.value());
-                        Ok(())
-                    } else if meta.path.is_ident("primary_key") {
-                        primary_key = true;
-                        Ok(())
-                    } else if meta.path.is_ident("generated") {
-                        generated = true;
-                        Ok(())
-                    } else if meta.path.is_ident("read_only") {
-                        read_only = true;
-                        Ok(())
-                    } else if meta.path.is_ident("filter") {
-                        filter = true;
-                        Ok(())
-                    } else if meta.path.is_ident("sort") {
-                        sort = true;
-                        Ok(())
-                    } else if meta.path.is_ident("unique") {
-                        unique = true;
-                        Ok(())
-                    } else {
-                        Err(meta.error("不支持的字段 resource 属性"))
-                    }
-                })?;
+    let field_name = field.ident.as_ref().expect("具名字段").to_string();
+    let field_type = &field.ty;
+    let column_default = field_name.clone();
+    let mut column = None;
+    let mut rename_from = None;
+    let mut default = None;
+    let mut primary_key = false;
+    let mut generated = false;
+    let mut read_only = false;
+    let mut filter = false;
+    let mut sort = false;
+    let mut unique = false;
+    for attribute in &field.attrs {
+        if !attribute.path().is_ident("resource") {
+            continue;
+        }
+        attribute.parse_nested_meta(|meta| {
+            if meta.path.is_ident("rename_from") {
+                rename_from = Some(meta.value()?.parse::<LitStr>()?.value());
+                Ok(())
+            } else if meta.path.is_ident("column") {
+                column = Some(meta.value()?.parse::<LitStr>()?.value());
+                Ok(())
+            } else if meta.path.is_ident("default") {
+                default = Some(meta.value()?.parse::<LitStr>()?.value());
+                Ok(())
+            } else if meta.path.is_ident("primary_key") {
+                primary_key = true;
+                Ok(())
+            } else if meta.path.is_ident("generated") {
+                generated = true;
+                Ok(())
+            } else if meta.path.is_ident("read_only") {
+                read_only = true;
+                Ok(())
+            } else if meta.path.is_ident("filter") {
+                filter = true;
+                Ok(())
+            } else if meta.path.is_ident("sort") {
+                sort = true;
+                Ok(())
+            } else if meta.path.is_ident("unique") {
+                unique = true;
+                Ok(())
+            } else {
+                Err(meta.error("不支持的字段 resource 属性"))
             }
-            let column = column.unwrap_or(column_default);
-            let rename = rename_from
-                .map(|value| quote!(Some(#value)))
-                .unwrap_or_else(|| quote!(None));
-            let default = default
-                .map(|value| quote!(Some(#value)))
-                .unwrap_or_else(|| quote!(None));
+        })?;
+    }
+    let column = column.unwrap_or(column_default);
+    let rename = rename_from
+        .map(|value| quote!(Some(#value)))
+        .unwrap_or_else(|| quote!(None));
+    let default = default
+        .map(|value| quote!(Some(#value)))
+        .unwrap_or_else(|| quote!(None));
     Ok(quote! {
-                ::ryframe_sdk::ResourceFieldDescriptor {
-                    name: #field_name,
-                    column: #column,
-                    rust_type: stringify!(#field_type),
-                    rename_from: #rename,
-                    default: #default,
-                    primary_key: #primary_key,
-                    generated: #generated,
-                    read_only: #read_only,
-                    filter: #filter,
-                    sort: #sort,
-                    unique: #unique,
-                }
-            })
+        ::ryframe_sdk::ResourceFieldDescriptor {
+            name: #field_name,
+            column: #column,
+            rust_type: stringify!(#field_type),
+            rename_from: #rename,
+            default: #default,
+            primary_key: #primary_key,
+            generated: #generated,
+            read_only: #read_only,
+            filter: #filter,
+            sort: #sort,
+            unique: #unique,
+        }
+    })
 }
 
-fn required(
-    value: Option<String>,
-    input: &DeriveInput,
-    field: &str,
-) -> syn::Result<String> {
+fn required(value: Option<String>, input: &DeriveInput, field: &str) -> syn::Result<String> {
     value.ok_or_else(|| syn::Error::new_spanned(input, format!("缺少 resource {field}")))
 }

@@ -198,7 +198,7 @@ def pair_receipts(
     prefix = f"repos/{evidence['repository']}/actions"
     artifacts = pages(f"{prefix}/runs/{evidence['run_id']}/artifacts", "artifacts")
     selected = []
-    for fixture, suffix in (("core", ""), ("device", "-device")):
+    for fixture, suffix in (("core", ""), ("business", "-business")):
         name = f"ryframe-full-stack-{evidence['run_id']}-{evidence['attempt']}{suffix}"
         matches = [
             item
@@ -229,7 +229,7 @@ def pair_receipts(
                         frontend_sha=frontend_sha,
                         run_id=evidence["run_id"],
                         attempt=evidence["attempt"],
-                        fixture_sha256=fixture_sha256 if fixture == "device" else None,
+                        fixture_sha256=fixture_sha256 if fixture == "business" else None,
                     )
                 except ValueError as error:
                     raise EvidenceError(str(error)) from None
@@ -245,7 +245,7 @@ def pair_receipts(
                     "name": name,
                     "size_in_bytes": _artifact_size(artifact),
                 }
-                if fixture == "device":
+                if fixture == "business":
                     receipt["fixture"] = validated["fixture_receipt"]
                 result[fixture] = receipt
     return result
@@ -263,7 +263,7 @@ def requirements(request) -> list[Requirement]:
             "Browser Smoke (Node 24)", "Windows Smoke", "Required",
         ), request.tag),
         Requirement(request.backend_repository, "extended-ci.yml", request.backend_sha,
-                    ("Real API MySQL Redis full-stack build", "Generated Device Data Migration build", "Linux DevEx Cgroup Memory"), request.tag),
+                    ("Real API MySQL Redis full-stack build", "Generated business crate data migration build", "Linux DevEx Cgroup Memory"), request.tag),
         Requirement(request.frontend_repository, "extended-ci.yml", request.frontend_sha,
                     ("Node 22 Compatibility & Supply Chain",), request.tag),
     ]
@@ -369,19 +369,19 @@ def coordinated_evidence(
     read_tags=validate_remote_tags,
 ):
     if fixture_sha256 is None:
-        raise EvidenceError("缺少发布源码中的 Device fixture 摘要")
+        raise EvidenceError("缺少发布源码中的业务 crate fixture 摘要")
     deadline = clock() + timeout
     while True:
         evidence = await_evidence(required, max(0, deadline - clock()), collect_run, sleep, clock)
         receipts = read_pairs(
             evidence[2], required[0].sha, required[1].sha, fixture_sha256
         )
-        if set(receipts) != {"core", "device"}:
-            raise EvidenceError("全栈证据必须同时包含 core 和 device")
+        if set(receipts) != {"core", "business"}:
+            raise EvidenceError("全栈证据必须同时包含 core 和 business")
         for receipt in receipts.values():
             validate_pair(receipt, evidence[2], required[0].sha, required[1].sha)
         validate_fixture(
-            receipts["device"].get("fixture"),
+            receipts["business"].get("fixture"),
             required[0].sha,
             required[1].sha,
             fixture_sha256,
@@ -447,7 +447,7 @@ def _run_evidence(request: EvidenceRequest) -> None:
     try:
         fixture = (
             Path(__file__).resolve().parents[2]
-            / "crates/ryframe-generator/tests/fixtures/device.toml"
+            / "tools/python/fixtures/order-business/src/resources/mod.rs"
         )
         fixture_sha256 = sha256(fixture.read_bytes()).hexdigest()
         evidence = coordinated_evidence(

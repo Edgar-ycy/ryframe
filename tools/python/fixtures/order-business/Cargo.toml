@@ -1,0 +1,21 @@
+[package]
+name = "order-business"
+version = "0.1.0"
+edition = "2024"
+
+[package.metadata.ryframe]
+kind = "business"
+module = "order"
+
+[features]
+default = ["api", "migration"]
+catalog = []
+persistence = ["ryframe-sdk/persistence"]
+api = ["persistence", "ryframe-sdk/api"]
+migration = ["persistence", "ryframe-sdk/migration"]
+
+[dependencies]
+ryframe-sdk = { path = "../ryframe-sdk", default-features = false }
+
+[lints]
+workspace = true

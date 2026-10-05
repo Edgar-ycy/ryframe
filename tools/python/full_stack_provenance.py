@@ -23,8 +23,7 @@ SOURCE_PAIR_RECEIPT = "source-pair.json"
 FIXTURE_RECEIPT = "fixture.json"
 REFERENCE_FIXTURE_SOURCE_PAIR = "reference-fixture-source-pair"
 BINARY_ROLES = frozenset({"ryframe", "ryframe-worker", "ryframe-reset", "ryframe-migrate"})
-DEVICE_FIXTURE = Path("crates/ryframe-generator/tests/fixtures/device.toml")
-DEVICE_RESOURCE = Path("catalog/resources/device.toml")
+BUSINESS_MODEL = Path("tools/python/fixtures/order-business/src/resources/mod.rs")
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 ARCHIVE_RECEIPT_LIMITS = {
     SOURCE_PAIR_RECEIPT: 16 * 1024,
@@ -175,10 +174,10 @@ def _archive_members(
     entries: Mapping[str, bytes] | Iterable[tuple[str, bytes]], fixture: str
 ) -> dict[str, bytes]:
     expected = {SOURCE_PAIR_RECEIPT, BUILD_EVIDENCE, RUNTIME_RECEIPT, RUNTIME_EVIDENCE}
-    if fixture == "device":
+    if fixture == "business":
         expected.add(FIXTURE_RECEIPT)
     elif fixture != "core":
-        raise ValueError("全栈归档 fixture 必须是 core 或 device")
+        raise ValueError("全栈归档 fixture 必须是 core 或 business")
     selected: dict[str, bytes] = {}
     items = entries.items() if isinstance(entries, Mapping) else entries
     for entry in items:
@@ -250,7 +249,7 @@ def _archive_pair(
     )
     if {name: embedded[name] for name in pair} != pair:
         raise ValueError("构建来源与归档源码组合收据不匹配")
-    expected_original = sources if source["fixture"] == "device" else {"backend": sources["backend"]}
+    expected_original = sources if source["fixture"] == "business" else {"backend": sources["backend"]}
     if source["original"] != expected_original:
         raise ValueError("构建来源与源码组合中的干净来源不匹配")
     _, path = _archive_binding(
@@ -277,7 +276,7 @@ def _archive_core_source(source: object, backend_root: PurePosixPath, backend_sh
     return receipt
 
 
-def _archive_device_source(
+def _archive_business_source(
     source: object,
     fixture_receipt: dict,
     fixture_raw: bytes,
@@ -304,7 +303,7 @@ def _archive_device_source(
     fixture_hash = _sha256(fixture_sha256, "发布源码 Device fixture 摘要")
     if fixture_hash == EMPTY_SHA256:
         raise ValueError("发布源码 Device fixture 不能为空")
-    if receipt["format_version"] != 1 or receipt["fixture"] != "device":
+    if receipt["format_version"] != 1 or receipt["fixture"] != "business":
         raise ValueError("Device 构建来源格式无效")
     _, fixture_path = _archive_binding(
         receipt["fixture_receipt"],
@@ -334,37 +333,31 @@ def _archive_device_source(
     fixture = _exact(
         fixture_receipt,
         {"format_version", "fixture", "status", "fixture_sha256", "sources", "paths", "generated"},
-        "归档 Device fixture 收据",
+        "归档业务 crate fixture 收据",
     )
     if (
         fixture["format_version"] != 1
-        or fixture["fixture"] != "device"
+        or fixture["fixture"] != "business"
         or fixture["status"] != "ready"
         or _sha256(fixture["fixture_sha256"], "归档 Device fixture 摘要") != fixture_hash
         or fixture["sources"] != original
         or fixture["paths"] != roots
         or fixture["generated"] != generated
     ):
-        raise ValueError("归档 Device fixture 与构建来源或发布源码不匹配")
+        raise ValueError("归档业务 crate fixture 与构建来源或发布源码不匹配")
 
     definitions = _exact(
-        receipt["fixture_definition"], {"fixture", "resource"}, "Device fixture 定义绑定"
+        receipt["fixture_definition"], {"model"}, "业务 crate fixture 定义绑定"
     )
-    expected_paths = {
-        "fixture": backend_root / DEVICE_FIXTURE.as_posix(),
-        "resource": backend_root / DEVICE_RESOURCE.as_posix(),
-    }
-    sizes = set()
+    expected_paths = {"model": backend_root / BUSINESS_MODEL.as_posix()}
     for name, expected_path in expected_paths.items():
-        binding, path = _archive_binding(definitions[name], f"Device {name} 定义")
+        binding, path = _archive_binding(definitions[name], f"业务 crate {name} 定义")
         if path != expected_path or binding["sha256"] != fixture_hash:
             raise ValueError("Device fixture 定义路径或摘要不匹配")
-        sizes.add(binding["bytes"])
-    if len(sizes) != 1:
-        raise ValueError("Device fixture 与生成资源字节数不匹配")
+    
     files = {entry["path"]: entry["sha256"] for entry in generated["backend"]["files"]}
-    if files.get(DEVICE_RESOURCE.as_posix()) != fixture_hash:
-        raise ValueError("Device 生成快照未绑定当前 fixture 资源")
+    if files.get("crates/order-business/src/resources/mod.rs") != fixture_hash:
+        raise ValueError("业务 crate 生成快照未绑定当前模型")
     return receipt
 
 
@@ -413,7 +406,7 @@ def validate_archive_evidence(
     source = (
         _archive_core_source(build["source"], backend_root, backend_sha)
         if fixture == "core"
-        else _archive_device_source(
+        else _archive_business_source(
             build["source"],
             receipts[FIXTURE_RECEIPT],
             members[FIXTURE_RECEIPT],
@@ -501,7 +494,7 @@ def validate_archive_evidence(
         "build_evidence": build,
         "runtime": runtime,
         "runtime_evidence": runtime_evidence,
-        **({"fixture_receipt": receipts[FIXTURE_RECEIPT]} if fixture == "device" else {}),
+        **({"fixture_receipt": receipts[FIXTURE_RECEIPT]} if fixture == "business" else {}),
     }
 
 
@@ -610,17 +603,17 @@ def _source_pair(
     return {**pair, "receipt": _binding(root / "source-pair.json")}
 
 
-def _device_source_evidence(backend: Path, directory: Path) -> dict:
+def _business_source_evidence(backend: Path, directory: Path) -> dict:
     fixture_root = backend.parent.resolve(strict=True)
     receipt_path = fixture_root / "fixture.json"
-    receipt, _ = _read_json(receipt_path, "Device fixture 收据")
+    receipt, _ = _read_json(receipt_path, "业务 crate fixture 收据")
     _exact(
         receipt,
         {"format_version", "fixture", "status", "fixture_sha256", "sources", "paths", "generated"},
-        "Device fixture 收据",
+        "业务 crate fixture 收据",
     )
-    if receipt["format_version"] != 1 or receipt["fixture"] != "device" or receipt["status"] != "ready":
-        raise ValueError("Device fixture 尚未完成或格式不受支持")
+    if receipt["format_version"] != 1 or receipt["fixture"] != "business" or receipt["status"] != "ready":
+        raise ValueError("业务 crate fixture 尚未完成或格式不受支持")
     sources = _exact(receipt["sources"], {"backend", "frontend"}, "Device 原始来源")
     generated = _exact(receipt["generated"], {"backend", "frontend"}, "Device 生成来源")
     paths = _exact(receipt["paths"], {"backend", "frontend"}, "Device 工作树路径")
@@ -650,15 +643,14 @@ def _device_source_evidence(backend: Path, directory: Path) -> dict:
         raise ValueError("Device 原始来源与全栈源码组合收据不匹配")
     fixture_sha = _sha256(receipt["fixture_sha256"], "Device fixture 内容摘要")
     definitions = {
-        name: _binding(roots["backend"] / path)
-        for name, path in (("fixture", DEVICE_FIXTURE), ("resource", DEVICE_RESOURCE))
+        "model": _binding(roots["backend"] / BUSINESS_MODEL)
     }
-    if any(value["sha256"] != fixture_sha for value in definitions.values()):
-        raise ValueError("Device fixture 定义、生成资源与登记摘要不匹配")
+    if definitions["model"]["sha256"] != fixture_sha:
+        raise ValueError("业务 crate fixture 定义与登记摘要不匹配")
     actual = _stable_snapshots(roots, generated)
     return {
         "format_version": 1,
-        "fixture": "device",
+        "fixture": "business",
         "fixture_receipt": fixture_binding,
         "fixture_definition": definitions,
         "roots": {name: str(root) for name, root in roots.items()},
@@ -678,7 +670,7 @@ def reference_fixture_source_pair(backend: Path) -> dict:
         {"format_version", "fixture", "status", "fixture_sha256", "sources", "paths", "generated"},
         "Device fixture 收据",
     )
-    if receipt["format_version"] != 1 or receipt["fixture"] != "device" or receipt["status"] != "ready":
+    if receipt["format_version"] != 1 or receipt["fixture"] != "business" or receipt["status"] != "ready":
         raise ValueError("Device fixture 尚未完成或格式不受支持")
     paths = _exact(receipt["paths"], {"backend", "frontend"}, "Device 工作树路径")
     if _canonical_root(paths["backend"], root, "Device 后端工作树") != backend.resolve():
@@ -699,13 +691,13 @@ def full_stack_source_evidence(backend: Path, directory: Path | None = None) -> 
     fixture = os.environ.get("RYFRAME_E2E_FIXTURE")
     if fixture is None:
         return None
-    if fixture not in {"core", "device"}:
-        raise ValueError("RYFRAME_E2E_FIXTURE 必须是 core 或 device")
+    if fixture not in {"core", "business"}:
+        raise ValueError("RYFRAME_E2E_FIXTURE 必须是 core 或 business")
     if directory is None:
         raise ValueError("全栈来源核验缺少明确运行目录")
     root = backend.resolve(strict=True)
-    if fixture == "device":
-        return _device_source_evidence(root, directory)
+    if fixture == "business":
+        return _business_source_evidence(root, directory)
     expected = os.environ.get("RYFRAME_CODE_SHA", "")
     actual_git_root = Path(git(root, "rev-parse", "--show-toplevel").decode().strip()).resolve()
     if actual_git_root != root:

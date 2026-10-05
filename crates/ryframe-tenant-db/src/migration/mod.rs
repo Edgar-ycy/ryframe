@@ -35,8 +35,8 @@ pub use m20260820_000000_tenant_baseline::{
 pub use runtime::{Migrator, up};
 pub use ryframe_db::migration::normalize_check_clause;
 pub use schema::{
-    canonical_table_schema, ensure_local_foreign_key_schema, ensure_mysql_target_boundary, verify,
-    register_business_tables, verify_for_catalog, verify_mysql_80, verify_mysql_target,
+    canonical_table_schema, ensure_local_foreign_key_schema, ensure_mysql_target_boundary,
+    register_business_tables, verify, verify_for_catalog, verify_mysql_80, verify_mysql_target,
     verify_mysql_target_for_catalog,
 };
 pub use status::{MigrationStatus, TENANT_DATA_MIGRATION_LEDGER, status};

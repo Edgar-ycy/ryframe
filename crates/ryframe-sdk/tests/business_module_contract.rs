@@ -1,6 +1,5 @@
 use ryframe_sdk::{
-    BusinessModuleBuilder, ResourceDatabase, ResourceModel, RyFrameBusinessModule,
-    validate_modules,
+    BusinessModuleBuilder, ResourceDatabase, ResourceModel, RyFrameBusinessModule, validate_modules,
 };
 
 #[derive(ResourceModel)]

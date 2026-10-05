@@ -58,7 +58,7 @@ def browser_environment(private: dict, binding: dict) -> dict:
         "COREPACK_ENABLE_NETWORK": "0", "PLAYWRIGHT_CHANNEL": "chrome", "PYTHONUTF8": "1",
         "APP_API_DOCS_ENABLED": "false", "RYFRAME_CODE_SHA": binding["backend"]["source"]["head"],
         "VITE_APP_PROXY_TARGET": binding["endpoints"]["api"],
-        "RYFRAME_E2E_FIXTURE": "device", "RYFRAME_E2E_SERVER": binding.get("server", "preview"),
+        "RYFRAME_E2E_FIXTURE": "business", "RYFRAME_E2E_SERVER": binding.get("server", "preview"),
         "RYFRAME_E2E_SCOPE_ID": binding["scope_id"], "RYFRAME_E2E_TENANT_ID": "system",
         "RYFRAME_E2E_USERNAME": "admin",
         "RYFRAME_E2E_PASSWORD": private[binding["identity"]["password_env"]],

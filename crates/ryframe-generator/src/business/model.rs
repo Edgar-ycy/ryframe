@@ -177,8 +177,7 @@ fn validate_descriptor(
             descriptor.name
         )));
     }
-    if descriptor.model_module.split("::").next() != Some(package.name.replace('-', "_").as_str())
-    {
+    if descriptor.model_module.split("::").next() != Some(package.name.replace('-', "_").as_str()) {
         return Err(error(format!(
             "资源 {} 的模型不属于 package {}",
             descriptor.name, package.name
@@ -191,7 +190,10 @@ fn field_spec(field: &OwnedFieldDescriptor, index: usize) -> Result<FieldSpec, R
     let (value_type, nullable) = value_type(&field.rust_type)?;
     let hidden = field.primary_key
         || field.name == "tenant_id"
-        || matches!(field.name.as_str(), "created_at" | "updated_at" | "del_flag");
+        || matches!(
+            field.name.as_str(),
+            "created_at" | "updated_at" | "del_flag"
+        );
     let mutable = !field.primary_key && !field.generated && !field.read_only && !hidden;
     Ok(FieldSpec {
         name: field.name.clone(),
@@ -242,7 +244,10 @@ fn field_spec(field: &OwnedFieldDescriptor, index: usize) -> Result<FieldSpec, R
 }
 
 fn value_type(rust_type: &str) -> Result<(ValueType, bool), ResourceError> {
-    let compact = rust_type.chars().filter(|char| !char.is_whitespace()).collect::<String>();
+    let compact = rust_type
+        .chars()
+        .filter(|char| !char.is_whitespace())
+        .collect::<String>();
     let (inner, nullable) = compact
         .strip_prefix("Option<")
         .and_then(|value| value.strip_suffix('>'))
@@ -258,7 +263,11 @@ fn value_type(rust_type: &str) -> Result<(ValueType, bool), ResourceError> {
         "chrono::NaiveDate" => ValueType::Date,
         "chrono::DateTime<chrono::Utc>" => ValueType::DateTime,
         "serde_json::Value" => ValueType::Json,
-        _ => return Err(error(format!("暂不支持 ResourceModel 字段类型 `{rust_type}`"))),
+        _ => {
+            return Err(error(format!(
+                "暂不支持 ResourceModel 字段类型 `{rust_type}`"
+            )));
+        }
     };
     Ok((value, nullable))
 }
@@ -306,12 +315,19 @@ fn indexes(descriptor: &OwnedResourceDescriptor) -> Vec<IndexSpec> {
 fn soft_delete(
     descriptor: &OwnedResourceDescriptor,
 ) -> Result<Option<SoftDeleteSpec>, ResourceError> {
-    let Some(field) = descriptor.fields.iter().find(|field| field.name == "del_flag") else {
+    let Some(field) = descriptor
+        .fields
+        .iter()
+        .find(|field| field.name == "del_flag")
+    else {
         return Ok(None);
     };
     let (value_type, _) = value_type(&field.rust_type)?;
     let (active, deleted) = match value_type {
-        ValueType::String => (toml::Value::String("0".into()), toml::Value::String("1".into())),
+        ValueType::String => (
+            toml::Value::String("0".into()),
+            toml::Value::String("1".into()),
+        ),
         ValueType::I32 | ValueType::I64 => (toml::Value::Integer(0), toml::Value::Integer(1)),
         ValueType::Bool => (toml::Value::Boolean(false), toml::Value::Boolean(true)),
         _ => return Err(error("del_flag 只支持 String、i32、i64 或 bool")),

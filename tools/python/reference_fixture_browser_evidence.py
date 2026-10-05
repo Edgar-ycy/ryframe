@@ -197,18 +197,18 @@ def verify_artifact_manifest(value: object, root: Path, parent: Path, label: str
     return manifest
 
 
-def device_tests(path: Path, server: str, run_id: str) -> dict:
+def business_tests(path: Path, server: str, run_id: str) -> dict:
     document = read_json_document(path)
     receipt = exact_fields(
         document.value,
         {"format_version", "kind", "fixture", "server", "run_id", "status", "runs"},
-        "Device 浏览器测试收据",
+        "业务 crate 浏览器测试收据",
     )
     if (
         type(receipt["format_version"]) is not int
         or receipt["format_version"] != 1
-        or receipt["kind"] != "device-browser-tests"
-        or receipt["fixture"] != "device"
+        or receipt["kind"] != "business-browser-tests"
+        or receipt["fixture"] != "business"
         or receipt["server"] != server
         or server not in {"dev", "preview"}
         or receipt["run_id"] != run_id
@@ -217,7 +217,7 @@ def device_tests(path: Path, server: str, run_id: str) -> dict:
         or not isinstance(receipt["runs"], list)
         or len(receipt["runs"]) != 4
     ):
-        raise ValueError("Device 浏览器测试收据与本次运行不一致")
+        raise ValueError("业务 crate 浏览器测试收据与本次运行不一致")
     titles = set()
     scenarios = []
     for item in receipt["runs"]:

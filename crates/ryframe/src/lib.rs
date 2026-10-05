@@ -2,10 +2,10 @@
 
 #[cfg(feature = "bin-api")]
 pub mod app;
-#[cfg(any(feature = "bin-api", feature = "bin-worker", feature = "bin-migrate"))]
-pub mod business;
 #[cfg(any(feature = "bin-api", feature = "bin-worker"))]
 pub mod boot;
+#[cfg(any(feature = "bin-api", feature = "bin-worker", feature = "bin-migrate"))]
+pub mod business;
 #[cfg(any(
     feature = "bin-api",
     feature = "bin-worker",

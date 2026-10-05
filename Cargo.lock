@@ -3338,6 +3338,8 @@ dependencies = [
  "async-trait",
  "chrono",
  "hex",
+ "ryframe-config",
+ "ryframe-db",
  "ryframe-kernel",
  "ryframe-tenant-db",
  "sea-orm",
@@ -3346,6 +3348,7 @@ dependencies = [
  "sha2 0.11.0",
  "syn 3.0.6",
  "tempfile",
+ "tokio",
  "toml",
 ]
 

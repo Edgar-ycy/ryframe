@@ -20,7 +20,7 @@ from full_stack_rate_limit_config import rate_limit_settings
 from reference_fixture_browser_evidence import (
     ArtifactManifestSnapshot,
     artifact_manifest_snapshot,
-    device_tests,
+    business_tests,
     login_budget,
     verify_artifact_manifest,
 )
@@ -124,7 +124,7 @@ def _frontend_source(build: dict) -> tuple[Path, dict]:
     roots = source.get("roots") if isinstance(source, dict) else None
     originals = source.get("original") if isinstance(source, dict) else None
     generated = source.get("generated") if isinstance(source, dict) else None
-    if (source.get("fixture") if isinstance(source, dict) else None) != "device" \
+    if (source.get("fixture") if isinstance(source, dict) else None) != "business" \
             or not isinstance(roots, dict) or not isinstance(originals, dict) \
             or not isinstance(generated, dict) or originals.get("frontend") is None \
             or generated.get("frontend") is None:
@@ -171,7 +171,7 @@ def _assert_output_set(runtime: Path, run_id: str, outputs: dict[str, Path], *, 
 
 
 def _commands(frontend: Path, server: str) -> list[list[str]]:
-    browser = ["check", "--stage", "browser", "--real", "--fixture", "device", "--server", server]
+    browser = ["check", "--stage", "browser", "--real", "--fixture", "business", "--server", server]
     if server == "dev":
         return [browser]
     verify = ["exec", "node", "scripts/restore-build.mjs", "verify", "--source-root", str(frontend)]
@@ -358,7 +358,7 @@ def _browser_artifacts(binding: dict, context: dict, build: dict | None) \
     sidecar = results / "device-tests.json"
     if not (report / "index.html").is_file():
         raise ValueError("Device 浏览器报告缺少首页")
-    tests = device_tests(sidecar, binding["server"], binding["run_id"])
+    tests = business_tests(sidecar, binding["server"], binding["run_id"])
     report_snapshot = artifact_manifest_snapshot(
         report, frontend / ".local-tests/playwright-real/report", "Device 浏览器 HTML 报告"
     )

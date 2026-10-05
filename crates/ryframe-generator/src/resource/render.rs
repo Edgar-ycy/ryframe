@@ -65,7 +65,10 @@ pub fn render_resources(resources: &[ResourceIr]) -> Result<GeneratedCatalog, Re
         }
     }
     validate_relation_targets(&ordered)?;
-    if let Some(resource) = ordered.iter().find(|resource| resource.module == "business") {
+    if let Some(resource) = ordered
+        .iter()
+        .find(|resource| resource.module == "business")
+    {
         return Err(ResourceError::new(
             format!("业务资源 `{}` 不能放在框架资源目录", resource.name),
             "在使用者业务 crate 中声明 Rust ResourceModel，并运行 cargo generate",

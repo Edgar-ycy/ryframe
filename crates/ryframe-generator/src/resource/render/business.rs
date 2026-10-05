@@ -73,7 +73,10 @@ fn asset(resource: &ResourceIr, path: String, content: String) -> GeneratedAsset
 
 fn application_content(content: String) -> String {
     shared_content(content)
-        .replace("crate::validated_tenant_id", "ryframe_sdk::validated_tenant_id")
+        .replace(
+            "crate::validated_tenant_id",
+            "ryframe_sdk::validated_tenant_id",
+        )
         .replace("crate::next_id", "ryframe_sdk::next_id")
         .replace(
             "crate::{TransactionAuditMode, complete_transaction}",
@@ -142,7 +145,10 @@ fn api_content(content: String, model_path: &str, name: &str) -> String {
         )
         .replace(&format!("ryframe_sdk::generated::{name}"), model_path)
         .replace(
-            &format!("{model_path}::{}Service", crate::naming::to_pascal_case(name)),
+            &format!(
+                "{model_path}::{}Service",
+                crate::naming::to_pascal_case(name)
+            ),
             &format!(
                 "crate::generated::services::{name}::{}Service",
                 crate::naming::to_pascal_case(name)
@@ -162,30 +168,35 @@ fn api_content(content: String, model_path: &str, name: &str) -> String {
         )
         .replace("use crate::http::", "use ryframe_sdk::api::http::")
         .replace("crate::http::", "ryframe_sdk::api::http::")
-        .replace(
-            "use ryframe_macro::{",
-            "use ryframe_sdk::{",
-        )
+        .replace("use ryframe_macro::{", "use ryframe_sdk::{")
         .replace(
             "super::handler::",
             &format!("crate::generated::handlers::{name}::"),
         )
-        .replace(
-            "super::dto::",
-            &format!("crate::generated::dto::{name}::"),
-        )
+        .replace("super::dto::", &format!("crate::generated::dto::{name}::"))
         .replace("serde_json::", "ryframe_sdk::serde_json::")
 }
 
 fn handler_content(resource: &ResourceIr, header: &str, model_path: &str) -> String {
-    let content = api_content(slice::api_handler(resource, header), model_path, &resource.name);
+    let content = api_content(
+        slice::api_handler(resource, header),
+        model_path,
+        &resource.name,
+    );
     let content = content
         .lines()
         .filter(|line| {
             let trimmed = line.trim_start();
-            !["#[get(", "#[post(", "#[put(", "#[patch(", "#[delete(", "#[perm("]
-                .iter()
-                .any(|prefix| trimmed.starts_with(prefix))
+            ![
+                "#[get(",
+                "#[post(",
+                "#[put(",
+                "#[patch(",
+                "#[delete(",
+                "#[perm(",
+            ]
+            .iter()
+            .any(|prefix| trimmed.starts_with(prefix))
                 && !trimmed.starts_with("use ryframe_sdk::{delete,")
         })
         .collect::<Vec<_>>()
@@ -257,4 +268,3 @@ fn shared_content(content: String) -> String {
         .replace("validator::", "ryframe_sdk::validator::")
         .replace("chrono::", "ryframe_sdk::chrono::")
 }
-

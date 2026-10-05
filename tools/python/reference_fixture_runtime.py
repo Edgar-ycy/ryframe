@@ -49,7 +49,7 @@ def _runtime_environment(values: dict, pair: dict) -> dict:
     if not isinstance(head, str):
         raise ValueError("夹具来源组合缺少后端提交")
     return {**configured(values), "APP_API_DOCS_ENABLED": "false",
-            "RYFRAME_E2E_FIXTURE": "device", "RYFRAME_CODE_SHA": head}
+            "RYFRAME_E2E_FIXTURE": "business", "RYFRAME_CODE_SHA": head}
 
 
 def _environment(execution: Path, values: dict, output: Path) -> dict:

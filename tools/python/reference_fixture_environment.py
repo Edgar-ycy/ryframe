@@ -50,12 +50,12 @@ def prepared_environment(backend: Path, value: Path) -> tuple[Path, Path, dict, 
 
 
 def _fixture(value: dict) -> None:
-    if (value.get("format_version") != 1 or value.get("fixture") != "device"
+    if (value.get("format_version") != 1 or value.get("fixture") != "business"
             or value.get("status") != "ready" or not isinstance(value.get("sources"), dict)
             or set(value.get("paths", {})) != {"backend", "frontend"}
             or not all(isinstance(item, dict) and isinstance(item.get("head"), str)
                        for item in value["sources"].values())):
-        raise ValueError("Device 隔离工作树收据不完整或尚未就绪")
+        raise ValueError("业务 crate 隔离工作树收据不完整或尚未就绪")
 
 
 def _maintenance(value: dict) -> None:

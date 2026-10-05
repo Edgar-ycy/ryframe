@@ -15,17 +15,25 @@ pub(super) fn load_descriptors(
     let scratch = Builder::new()
         .prefix("catalog-")
         .tempdir_in(&scratch_root)
-        .map_err(|error| catalog_error(format!("无法创建 catalog 临时目录：{error}"), &scratch_root))?;
+        .map_err(|error| {
+            catalog_error(format!("无法创建 catalog 临时目录：{error}"), &scratch_root)
+        })?;
     let dependency_path = package.root.to_string_lossy();
     let manifest = format!(
         "[package]\nname = \"ryframe-catalog-reader\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n\n[dependencies]\nbusiness = {{ package = {:?}, path = {:?}, default-features = false, features = [\"catalog\"] }}\nserde_json = \"1\"\n",
         package.name, dependency_path,
     );
     fs::write(scratch.path().join("Cargo.toml"), manifest).map_err(|error| {
-        catalog_error(format!("无法写入 catalog 临时清单：{error}"), scratch.path())
+        catalog_error(
+            format!("无法写入 catalog 临时清单：{error}"),
+            scratch.path(),
+        )
     })?;
     fs::create_dir(scratch.path().join("src")).map_err(|error| {
-        catalog_error(format!("无法创建 catalog 源码目录：{error}"), scratch.path())
+        catalog_error(
+            format!("无法创建 catalog 源码目录：{error}"),
+            scratch.path(),
+        )
     })?;
     fs::write(
         scratch.path().join("src/main.rs"),
@@ -36,7 +44,11 @@ pub(super) fn load_descriptors(
         .args(["run", "--quiet", "--manifest-path"])
         .arg(scratch.path().join("Cargo.toml"))
         .arg("--target-dir")
-        .arg(package.workspace_root.join("target/ryframe-generate/catalog-target"))
+        .arg(
+            package
+                .workspace_root
+                .join("target/ryframe-generate/catalog-target"),
+        )
         .output()
         .map_err(|error| catalog_error(format!("无法编译业务 catalog：{error}"), &package.root))?;
     if !output.status.success() {
@@ -49,7 +61,10 @@ pub(super) fn load_descriptors(
         ));
     }
     let stdout = String::from_utf8(output.stdout).map_err(|error| {
-        catalog_error(format!("业务 catalog 输出不是 UTF-8：{error}"), &package.root)
+        catalog_error(
+            format!("业务 catalog 输出不是 UTF-8：{error}"),
+            &package.root,
+        )
     })?;
     let mut descriptors: Vec<OwnedResourceDescriptor> = serde_json::from_str(stdout.trim())
         .map_err(|error| {

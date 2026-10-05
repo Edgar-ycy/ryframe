@@ -9,7 +9,7 @@ mod mysql;
 mod type_mapping;
 
 pub use draft::{ResourceDraft, ResourceDraftMetadata, draft_resource_from_table};
-pub use model::{ColumnInfo, ForeignKeyInfo, IndexInfo, TableInfo};
+pub use model::{ColumnInfo, ForeignKeyInfo, IndexInfo, TableInfo, rust_model_source};
 
 #[cfg(feature = "schema-import")]
 pub use mysql::{inspect_existing_table, list_existing_tables};

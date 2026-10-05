@@ -8,7 +8,7 @@ from pathlib import Path
 from full_stack_process_monitor import wait_members
 from full_stack_process_tree import read_process_tree
 from reference_fixture_browser_evidence import (
-    device_tests,
+    business_tests,
     login_budget,
     verify_redacted_log,
     verify_artifact_manifest,
@@ -110,7 +110,7 @@ def verify_browser_evidence(binding: dict, context: dict, binding_path: Path,
         artifacts["results"], outputs["results"], context["frontend"] /
         ".local-tests/playwright-real/results", "Device 浏览器结果"
     )
-    if artifacts["tests"] != device_tests(
+    if artifacts["tests"] != business_tests(
             outputs["results"] / "device-tests.json", binding["server"], binding["run_id"]):
         raise ValueError("Device 浏览器场景收据与成功结果不一致")
     if result["login_budget"] != login_budget(outputs["login_budget"], binding):

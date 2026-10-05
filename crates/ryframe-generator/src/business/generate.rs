@@ -5,9 +5,7 @@ use sha2::{Digest, Sha256};
 use super::catalog::load_descriptors;
 use super::model::{descriptor_to_ir, selected_names};
 use super::writer::{BusinessAsset, install_assets};
-use super::{
-    BusinessPackage, OwnedResourceDescriptor, locate_business_package,
-};
+use super::{BusinessPackage, OwnedResourceDescriptor, locate_business_package};
 use crate::{ResourceError, ResourceIr, StorageKind};
 
 #[derive(Clone, Debug)]
@@ -161,7 +159,10 @@ fn migration_registry(
 ) -> Result<String, ResourceError> {
     let mut modules = Vec::new();
     let mut entries = Vec::new();
-    for resource in resources.iter().filter(|resource| resource.bootstrap_migration) {
+    for resource in resources
+        .iter()
+        .filter(|resource| resource.bootstrap_migration)
+    {
         let migration = format!("m_resource_initial_{}", resource.name);
         let path = format!("migrations/{migration}.rs");
         let content = assets

@@ -171,11 +171,7 @@ fn render_generated_services(resources: &[&ResourceIr], header: &str) -> String 
     )
 }
 
-fn render_storage_mod(
-    resources: &[&ResourceIr],
-    storage: StorageKind,
-    header: &str,
-) -> String {
+fn render_storage_mod(resources: &[&ResourceIr], storage: StorageKind, header: &str) -> String {
     let selected = resources
         .iter()
         .copied()

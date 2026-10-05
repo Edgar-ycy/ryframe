@@ -43,23 +43,22 @@ pub fn locate_business_package(
             String::from_utf8_lossy(&output.stderr).trim()
         )));
     }
-    let metadata: CargoMetadata = serde_json::from_slice(&output.stdout).map_err(|error| {
-        command_error(format!("cargo metadata 输出不是有效 JSON：{error}"))
-    })?;
+    let metadata: CargoMetadata = serde_json::from_slice(&output.stdout)
+        .map_err(|error| command_error(format!("cargo metadata 输出不是有效 JSON：{error}")))?;
     let package = metadata
         .packages
         .into_iter()
         .find(|package| package.name == package_name)
-        .ok_or_else(|| {
-            command_error(format!("Workspace 中不存在 package `{package_name}`"))
-        })?;
+        .ok_or_else(|| command_error(format!("Workspace 中不存在 package `{package_name}`")))?;
     let ryframe = package
         .metadata
         .get("ryframe")
         .and_then(serde_json::Value::as_object)
         .ok_or_else(|| command_error("业务 crate 缺少 [package.metadata.ryframe]"))?;
     if ryframe.get("kind").and_then(serde_json::Value::as_str) != Some("business") {
-        return Err(command_error("package.metadata.ryframe.kind 必须是 business"));
+        return Err(command_error(
+            "package.metadata.ryframe.kind 必须是 business",
+        ));
     }
     let module = ryframe
         .get("module")

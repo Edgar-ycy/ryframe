@@ -51,7 +51,7 @@ def validate_pending(rows: list[dict], tenant: str, migration: str) -> dict:
 def lock_sql(target: str, tenant: str) -> str:
     return f"""SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ;
         START TRANSACTION;
-        SELECT id FROM `{target}`.biz_device WHERE tenant_id='{tenant}' FOR UPDATE;
+        SELECT id FROM `{target}`.biz_order WHERE tenant_id='{tenant}' FOR UPDATE;
         SELECT JSON_OBJECT('connection_id',CONNECTION_ID())"""
 
 
@@ -68,9 +68,9 @@ def blocked_sql(
         JOIN performance_schema.threads b ON b.THREAD_ID=w.BLOCKING_THREAD_ID
         JOIN performance_schema.threads r ON r.THREAD_ID=w.REQUESTING_THREAD_ID
         JOIN `{control}`.sys_tenant_data_migration m ON m.id={migration} AND m.tenant_id='{tenant}'
-        JOIN `{control}`.sys_tenant_data_migration_item i ON i.migration_id=m.id AND i.table_name='biz_device'
+        JOIN `{control}`.sys_tenant_data_migration_item i ON i.migration_id=m.id AND i.table_name='biz_order'
         JOIN `{control}`.sys_background_job j ON j.id=m.background_job_id
-        WHERE b.PROCESSLIST_ID={connection} AND l.OBJECT_SCHEMA='{target}' AND l.OBJECT_NAME='biz_device'
+        WHERE b.PROCESSLIST_ID={connection} AND l.OBJECT_SCHEMA='{target}' AND l.OBJECT_NAME='biz_order'
             AND m.state='copying' AND i.state='copying' AND j.status='running'"""
 
 
@@ -99,8 +99,8 @@ def hold(backend: Path, directory: Path, tenant: str, migration: str) -> None:
         )
         counts = observer.execute(
             f"SELECT JSON_OBJECT('source',"
-            f"(SELECT COUNT(*) FROM `{control['database']}`.biz_device WHERE tenant_id='{tenant}'),"
-            f"'target',(SELECT COUNT(*) FROM `{target['database']}`.biz_device WHERE tenant_id='{tenant}'))"
+            f"(SELECT COUNT(*) FROM `{control['database']}`.biz_order WHERE tenant_id='{tenant}'),"
+            f"'target',(SELECT COUNT(*) FROM `{target['database']}`.biz_order WHERE tenant_id='{tenant}'))"
         )
         if counts != [{"source": 3, "target": 0}]:
             raise ValueError("测试必须有恰好三条源 Device，且目标数据为空")

@@ -256,12 +256,8 @@ async fn prepare_runtime(
         limiter.rate_limit_state,
     )?;
     let listener = bind_listener(startup).await?;
-    let backup_health_collector = start_backup_health_collector(
-        startup,
-        backup_database,
-        backup_health,
-        &shutdown_receiver,
-    );
+    let backup_health_collector =
+        start_backup_health_collector(startup, backup_database, backup_health, &shutdown_receiver);
     let readiness_monitor = start_readiness_monitor(
         readiness_database,
         readiness_redis,
@@ -321,13 +317,12 @@ fn build_router(
     let modules = ryframe::business::registered_business_modules()?;
     let mut business_router = axum::Router::new();
     for module in &modules {
-        business_router = business_router.merge(module.router(
-            ryframe_sdk::BusinessRuntimeContext {
+        business_router =
+            business_router.merge(module.router(ryframe_sdk::BusinessRuntimeContext {
                 state: state.clone(),
                 control_database: control_database.clone(),
                 tenant_database: tenant_database.clone(),
-            },
-        )?);
+            })?);
     }
     let openapi = ryframe_sdk::compose_openapi(ryframe_api::openapi::document(), &modules)?;
     app::build_app_with_business(state, rate_limit_state, business_router, openapi)

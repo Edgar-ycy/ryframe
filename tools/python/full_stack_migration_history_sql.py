@@ -71,16 +71,16 @@ def snapshot_sql(
           AND s.placement_generation=m.source_generation AND s.switch_token=m.source_switch_token),
       'source_fences',(SELECT COUNT(*) FROM `{source}`.biz_tenant_fence WHERE tenant_id=m.tenant_id),
       'source_slots',(SELECT COUNT(*) FROM `{source}`.biz_tenant_target_slot WHERE tenant_id=m.tenant_id),
-      'source_count',(SELECT COUNT(*) FROM `{source}`.biz_device WHERE tenant_id=m.tenant_id),
-      'target_count',(SELECT COUNT(*) FROM `{target}`.biz_device WHERE tenant_id=m.tenant_id),
-      'source_total',(SELECT COUNT(*) FROM `{source}`.biz_device),
-      'target_total',(SELECT COUNT(*) FROM `{target}`.biz_device),
+      'source_count',(SELECT COUNT(*) FROM `{source}`.biz_order WHERE tenant_id=m.tenant_id),
+      'target_count',(SELECT COUNT(*) FROM `{target}`.biz_order WHERE tenant_id=m.tenant_id),
+      'source_total',(SELECT COUNT(*) FROM `{source}`.biz_order),
+      'target_total',(SELECT COUNT(*) FROM `{target}`.biz_order),
       'other_migrations',(SELECT COUNT(*) FROM `{control}`.sys_tenant_data_migration x WHERE x.tenant_id=m.tenant_id AND x.id<>m.id),
       'operation_leases',(SELECT COUNT(*) FROM `{control}`.sys_tenant_operation_lease WHERE tenant_id=m.tenant_id),
       'migration_times',{timeline("m", MIGRATION_TIMES)},'item_times',{timeline("i", ITEM_TIMES)},'job_times',{timeline("j", JOB_TIMES)})
       FROM `{control}`.sys_tenant_data_migration m
       JOIN `{control}`.sys_background_job j ON j.id=m.background_job_id AND j.job_type='tenant_data_migration'
-      JOIN `{control}`.sys_tenant_data_migration_item i ON i.migration_id=m.id AND i.table_name='biz_device'
+      JOIN `{control}`.sys_tenant_data_migration_item i ON i.migration_id=m.id AND i.table_name='biz_order'
       JOIN `{control}`.sys_tenant_data_placement p ON p.tenant_id=m.tenant_id
       WHERE m.id={migration} AND m.tenant_id='{tenant}'"""
 

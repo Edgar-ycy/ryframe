@@ -12,7 +12,9 @@ use super::{
 
 static BUSINESS_TABLES: OnceLock<RwLock<BTreeSet<String>>> = OnceLock::new();
 
-pub fn register_business_tables<'a>(tables: impl IntoIterator<Item = &'a str>) -> Result<(), DbErr> {
+pub fn register_business_tables<'a>(
+    tables: impl IntoIterator<Item = &'a str>,
+) -> Result<(), DbErr> {
     let registry = BUSINESS_TABLES.get_or_init(|| RwLock::new(BTreeSet::new()));
     let mut registry = registry
         .write()

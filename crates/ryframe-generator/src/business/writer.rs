@@ -268,8 +268,8 @@ fn verify_owned_files(root: &Path, manifest: &OwnershipManifest) -> Result<(), R
     for entry in &manifest.entries {
         validate_path(&entry.path)?;
         let path = root.join(&entry.path);
-        let bytes = fs::read(&path)
-            .map_err(|io| error(format!("受管生成文件丢失：{io}"), &path))?;
+        let bytes =
+            fs::read(&path).map_err(|io| error(format!("受管生成文件丢失：{io}"), &path))?;
         if hash(&bytes) != entry.content_hash {
             return Err(error("受管生成文件被人工修改", &path));
         }
@@ -282,7 +282,10 @@ fn ensure_unique_safe_paths(assets: &[BusinessAsset]) -> Result<(), ResourceErro
     for asset in assets {
         validate_path(&asset.path)?;
         if !paths.insert(asset.path.as_str()) {
-            return Err(error(format!("生成路径重复：{}", asset.path), Path::new(&asset.path)));
+            return Err(error(
+                format!("生成路径重复：{}", asset.path),
+                Path::new(&asset.path),
+            ));
         }
     }
     Ok(())
@@ -292,7 +295,9 @@ fn validate_path(path: &str) -> Result<(), ResourceError> {
     let parsed = Path::new(path);
     let safe = !path.contains('\\')
         && !parsed.is_absolute()
-        && parsed.components().all(|part| matches!(part, Component::Normal(_)))
+        && parsed
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)))
         && (path.starts_with("src/generated/") || path.starts_with("migrations/"));
     if safe {
         Ok(())

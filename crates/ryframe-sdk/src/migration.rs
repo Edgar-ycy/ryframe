@@ -162,7 +162,10 @@ impl BusinessMigration for SeaOrmBusinessMigration {
         Ok(MigrationState {
             applied,
             expected: 1,
-            missing: (applied == 0).then(|| self.id.to_owned()).into_iter().collect(),
+            missing: (applied == 0)
+                .then(|| self.id.to_owned())
+                .into_iter()
+                .collect(),
         })
     }
 }
