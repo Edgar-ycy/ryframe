@@ -101,8 +101,6 @@ jobs:
       - name: 安装 Rust 格式化工具链
         if: ${{ steps.plan.outputs.preflight == 'true' }}
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
-        with:
-          components: rustfmt
 
       - name: 校验 GitHub Actions 工作流
         if: ${{ steps.plan.outputs.preflight == 'true' }}
@@ -145,8 +143,6 @@ jobs:
 
       - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
-        with:
-          components: clippy
 
       - name: 安装固定并校验哈希的 CI Python 依赖
         working-directory: backend
@@ -298,8 +294,6 @@ jobs:
 
       - name: 安装 Rust 工具链
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
-        with:
-          components: clippy
 
       - name: 安装 Python 校验依赖
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
