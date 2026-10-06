@@ -66,7 +66,7 @@ Worker 的健康状态模型与数据库监控端口位于 application，不依�
 
 ## 选择开发方式
 
-RyFrame 官方源码不内置业务示例。开发者在 `crates/` 下创建按业务域命名的普通 crate，例如 `order-business`、`inventory-business`，并通过 `ryframe-sdk` 使用框架扩展接口。一个业务 crate 默认可以同时包含模型、用例、Repository、Handler、路由和迁移；业务复杂后再按实际边界拆分。
+RyFrame 官方源码不内置业务示例。开发者用 `cargo ryframe new-business <模块名>` 在 `crates/` 下创建按业务域命名的普通 crate，例如 `order-business`、`inventory-business`，并通过 `ryframe-sdk` 使用框架扩展接口。脚手架原子写入工作区成员、组合根依赖和唯一注册表；`--dry-run` 可先审查变更。一个业务 crate 默认可以同时包含模型、用例、Repository、Handler、路由和迁移；业务复杂后再按实际边界拆分。
 
 业务模块通过普通 Cargo 依赖显式接入。`crates/ryframe` 是唯一组合根，`business_modules()` 是唯一注册表；API、Worker 和迁移程序共用该列表。该结构不会使用运行时目录扫描、自动链接注册或构建脚本改写源码，Cargo 依赖图和模块依赖图都可以静态检查无环。
 

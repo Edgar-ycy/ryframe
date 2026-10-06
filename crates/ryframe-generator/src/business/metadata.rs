@@ -78,6 +78,23 @@ pub fn locate_business_package(
     })
 }
 
+pub fn workspace_root(current_dir: &Path) -> Result<PathBuf, ResourceError> {
+    let output = Command::new("cargo")
+        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .current_dir(current_dir)
+        .output()
+        .map_err(|error| command_error(format!("无法启动 cargo metadata：{error}")))?;
+    if !output.status.success() {
+        return Err(command_error(format!(
+            "cargo metadata 失败：{}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    serde_json::from_slice::<CargoMetadata>(&output.stdout)
+        .map(|metadata| metadata.workspace_root)
+        .map_err(|error| command_error(format!("cargo metadata 输出不是有效 JSON：{error}")))
+}
+
 fn safe_key(value: &str) -> bool {
     !value.is_empty()
         && value.bytes().all(|byte| {

@@ -1,5 +1,6 @@
 use ryframe_generator::business::{
-    BusinessGenerateOptions, generate_business_package, locate_business_package,
+    BusinessBootstrapOptions, BusinessGenerateOptions, bootstrap_business_package,
+    generate_business_package, locate_business_package, workspace_root,
 };
 
 #[cfg(feature = "schema-import")]
@@ -9,7 +10,7 @@ use ryframe_generator::import::{inspect_existing_table, rust_model_source};
 #[cfg(feature = "schema-import")]
 use ryframe_tenant_db::TenantDatabaseTargetRegistry;
 
-const USAGE: &str = "用法：\n  ryframe-generate resource --package <crate> [--model <Model>] [--write] [--sync-frontend]\n  ryframe-generate import --connection <name> --database <control|tenant> --package <crate> --table <table> [--write]";
+const USAGE: &str = "用法：\n  ryframe-generate new-business <模块名> [--dry-run]\n  ryframe-generate resource --package <crate> [--model <Model>] [--write] [--sync-frontend]\n  ryframe-generate import --connection <name> --database <control|tenant> --package <crate> --table <table> [--write]";
 
 #[cfg(feature = "schema-import")]
 #[tokio::main]
@@ -34,6 +35,7 @@ async fn run(args: Vec<String>) -> Result<(), String> {
         return Err(USAGE.into());
     };
     match command {
+        "new-business" => new_business(&args[1..]),
         "resource" => resource(&args[1..]),
         "import" => import(&args[1..]).await,
         _ => Err(USAGE.into()),
@@ -43,10 +45,44 @@ async fn run(args: Vec<String>) -> Result<(), String> {
 #[cfg(not(feature = "schema-import"))]
 fn run(args: Vec<String>) -> Result<(), String> {
     match args.first().map(String::as_str) {
+        Some("new-business") => new_business(&args[1..]),
         Some("resource") => resource(&args[1..]),
         Some("import") => Err("数据库导入需要使用 --features schema-import".into()),
         _ => Err(USAGE.into()),
     }
+}
+
+fn new_business(args: &[String]) -> Result<(), String> {
+    let [module, rest @ ..] = args else {
+        return Err(USAGE.into());
+    };
+    let dry_run = match rest {
+        [] => false,
+        [flag] if flag == "--dry-run" => true,
+        _ => return Err(USAGE.into()),
+    };
+    let current_dir =
+        std::env::current_dir().map_err(|error| format!("无法读取当前目录：{error}"))?;
+    let workspace_root = workspace_root(&current_dir).map_err(|error| error.to_string())?;
+    let report = bootstrap_business_package(BusinessBootstrapOptions {
+        workspace_root: &workspace_root,
+        module,
+        write: !dry_run,
+    })
+    .map_err(|error| error.to_string())?;
+    for path in &report.created {
+        println!("create {path}");
+    }
+    for path in &report.updated {
+        println!("update {path}");
+    }
+    println!(
+        "业务 crate {}：新增 {}，更新 {}。",
+        if dry_run { "预览" } else { "创建完成" },
+        report.created.len(),
+        report.updated.len(),
+    );
+    Ok(())
 }
 
 fn resource(args: &[String]) -> Result<(), String> {

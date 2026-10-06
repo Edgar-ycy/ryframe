@@ -1,13 +1,17 @@
 //! 使用者业务 crate 的发现、描述符读取和生成入口。
 
+mod bootstrap;
 mod catalog;
 mod generate;
 mod metadata;
 mod model;
 mod writer;
 
+pub use bootstrap::{
+    BusinessBootstrapOptions, BusinessBootstrapReport, bootstrap_business_package,
+};
 pub use generate::{BusinessGenerateOptions, BusinessGenerateReport, generate_business_package};
-pub use metadata::{BusinessPackage, locate_business_package};
+pub use metadata::{BusinessPackage, locate_business_package, workspace_root};
 
 use serde::{Deserialize, Serialize};
 
