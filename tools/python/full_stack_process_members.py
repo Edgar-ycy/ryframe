@@ -12,6 +12,11 @@ import time
 from full_stack_process import _windows_handle, _windows_identity, assert_identity, process_identity
 
 
+def _same_process_creation(identity: dict | None, started: str) -> bool:
+    """pidfd 打开后只用创建时刻排除 PID 复用；进程可在此期间完成 exec。"""
+    return identity is not None and identity["started"] == started
+
+
 def job_name(operation_id: str) -> str:
     return "Local\\RyFrameFullStack-" + operation_id
 
@@ -176,10 +181,12 @@ class UnixMembers:
                 key = (identity["pid"], identity["started"])
                 if key not in self.members:
                     descriptor = os.pidfd_open(identity["pid"])
-                    if process_identity(identity["pid"]) != identity:
+                    actual = process_identity(identity["pid"])
+                    if not _same_process_creation(actual, fields[19]):
                         os.close(descriptor)
                         raise ValueError("冻结进程组成员时 PID 已复用")
-                    self.members[key] = (identity, descriptor)
+                    key = (actual["pid"], actual["started"])
+                    self.members[key] = (actual, descriptor)
                 count += 1
             except (FileNotFoundError, ProcessLookupError):
                 continue

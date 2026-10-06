@@ -12,13 +12,22 @@ from workspace_directory import WorkspaceDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from full_stack_process import write_receipt
-from full_stack_process_members import WindowsMembers, finish_members
+from full_stack_process_members import WindowsMembers, _same_process_creation, finish_members
 from full_stack_process_monitor import receipt_path, wait_members
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 class ProcessMembersTests(unittest.TestCase):
+    def test_pidfd_creation_check_allows_exec_but_rejects_pid_reuse(self):
+        before = {"pid": 7, "started": "11", "executable": "/usr/bin/python"}
+        after_exec = {**before, "executable": "/workspace/ryframe-worker"}
+        reused = {**after_exec, "started": "12"}
+
+        self.assertTrue(_same_process_creation(after_exec, before["started"]))
+        self.assertFalse(_same_process_creation(reused, before["started"]))
+        self.assertFalse(_same_process_creation(None, before["started"]))
+
     def test_atomic_receipt_publish_supports_deep_runtime_directory(self):
         directory = WorkspaceDirectory(dir=ROOT / ".local-tests")
         self.addCleanup(directory.cleanup)
