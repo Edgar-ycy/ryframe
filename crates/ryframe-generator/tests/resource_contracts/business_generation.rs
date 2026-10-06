@@ -135,7 +135,7 @@ fn assert_migration_is_immutable(workspace: &std::path::Path, crate_root: &std::
         );
     fs::write(model_path, changed).expect("应更新资源模型");
     let error = generate_business_package(BusinessGenerateOptions {
-        current_dir: &crate_root,
+        current_dir: crate_root,
         package: "order-business",
         model: None,
         write: false,
