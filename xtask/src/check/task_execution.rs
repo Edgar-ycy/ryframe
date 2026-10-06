@@ -21,8 +21,8 @@ use super::super::{
     policy_tasks::{PolicyProfile, policy_tasks},
     resource::resource_workspace_compilation,
     snapshot::{
-        BackendSnapshots, export_and_verify_backend_snapshots, prepare_backend_snapshots,
-        run_consumer_contract, verify_backend_snapshots,
+        BackendSnapshots, export_and_verify_backend_snapshots, run_consumer_contract,
+        verify_backend_snapshots,
     },
     task_plan::TaskExecutor,
 };
@@ -126,9 +126,10 @@ fn execute_snapshot_task(
 ) -> Result<()> {
     match executor {
         TaskExecutor::SnapshotPrepare => {
-            state.snapshots = Some(prepare_backend_snapshots(
+            state.snapshots = Some(export_and_verify_backend_snapshots(
                 &context.root,
                 &snapshot_profiles(mode),
+                context.targets.backend.as_str(),
             )?);
             Ok(())
         }
