@@ -27,7 +27,7 @@ def _linux_identity(pid: int) -> dict | None:
         process = Path(f"/proc/{pid}")
         fields = (process / "stat").read_text().rpartition(")")[2].split()
         return {"pid": pid, "started": fields[19], "executable": str((process / "exe").resolve(strict=True))}
-    except (FileNotFoundError, PermissionError):
+    except (FileNotFoundError, PermissionError, ProcessLookupError):
         return None
 
 

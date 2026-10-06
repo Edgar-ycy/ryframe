@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
 from workspace_directory import WorkspaceDirectory
 from pathlib import Path
 
@@ -40,6 +41,11 @@ class OwnedProcessTests(unittest.TestCase):
         self.process.wait(timeout=5)
         self.assertIsNone(process_identity(self.process.pid))
         self.assertFalse(terminate_owned_process(identity))
+
+    @unittest.skipIf(os.name == "nt", "Linux /proc 退出竞态")
+    def test_process_identity_treats_disappearing_proc_executable_as_exited(self):
+        with patch.object(Path, "resolve", side_effect=ProcessLookupError):
+            self.assertIsNone(process_identity(self.process.pid))
 
     def test_process_receipt_binds_role_scope_and_actual_binary(self):
         receipt = record_process(self.root, "frontend", self.process.pid, sys.executable, "owned-test")
