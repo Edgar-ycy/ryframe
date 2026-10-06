@@ -18,7 +18,7 @@ type OrderContractResponse<T> = {
 type OrderContractHeaders = { [name: string]: unknown };
 
 export interface operations {
-    get_business_orders: {
+    get_system_orders: {
         parameters: {
             query?: { page?: number; page_size?: number; name?: string; status?: number };
             header?: never;
@@ -28,22 +28,22 @@ export interface operations {
         requestBody?: never;
         responses: { 200: { headers: OrderContractHeaders; content: { "application/json": OrderContractResponse<{ items: OrderContractRecord[]; page: number; page_size: number; total: number; total_pages: number; max_page_size: number }> } } };
     };
-    get_business_orders_by_id: {
+    get_system_orders_by_id: {
         parameters: { query?: never; header?: never; path: { id: string }; cookie?: never };
         requestBody?: never;
         responses: { 200: { headers: OrderContractHeaders; content: { "application/json": OrderContractResponse<OrderContractRecord> } } };
     };
-    post_business_orders: {
+    post_system_orders: {
         parameters: { query?: never; header?: never; path?: never; cookie?: never };
         requestBody: { content: { "application/json": { name: string; status: number } } };
         responses: { 200: { headers: OrderContractHeaders; content: { "application/json": OrderContractResponse<OrderContractRecord> } } };
     };
-    put_business_orders_by_id: {
+    put_system_orders_by_id: {
         parameters: { query?: never; header?: never; path: { id: string }; cookie?: never };
         requestBody: { content: { "application/json": { name: string; status: number } } };
         responses: { 200: { headers: OrderContractHeaders; content: { "application/json": OrderContractResponse<OrderContractRecord> } } };
     };
-    delete_business_orders_by_id: {
+    delete_system_orders_by_id: {
         parameters: { query?: never; header?: never; path: { id: string }; cookie?: never };
         requestBody?: never;
         responses: { 200: { headers: OrderContractHeaders; content: { "application/json": OrderContractResponse<null> } } };
