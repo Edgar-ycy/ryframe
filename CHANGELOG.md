@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [v0.13.1] - 2026-10-07
+
+- 后端 Release 只校验后端 CI、扩展验收与正式 OpenAPI 消费契约；前端仓库改由独立 CI 与 Release 验证自身源码，避免等待另一仓库不存在或不相关的工作流。
+
 ## [v0.13.0] - 2026-10-07
 
 - 使用者可通过 `cargo ryframe new-business <模块名>` 创建独立业务 crate；命令以暂存与回滚方式同时接入 Workspace、组合根、API/Worker/迁移 feature 和唯一模块注册表。标准资源继续在业务 crate 内生成 SeaORM、应用服务、受保护 API、租户迁移、OpenAPI typed caller 和前端页面；产品套餐能力目录排除平台租户管理，登录改为选择租户名称，配置迁移归入带图标的平台管理菜单。
