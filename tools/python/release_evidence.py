@@ -21,13 +21,9 @@ BUSINESS_OUTPUTS = {
         "crates/order-business/src/generated/openapi/order.rs",
         "crates/order-business/src/resources/mod.rs",
     ),
-    "frontend": (
-        "src/generated/resources/order/api.ts",
-        "src/generated/resources/order/fields.ts",
-        "src/generated/resources/order/index.ts",
-        "src/generated/resources/order/page.vue",
-        "src/generated/resources/order/registration.ts",
-    ),
+    # 业务 crate 生成器当前只写业务 crate 的 Rust 资源；前端契约由
+    # OpenAPI 正式入口维护，不声称生成尚不存在的业务页面文件。
+    "frontend": (),
 }
 
 
@@ -186,6 +182,10 @@ def validate_fixture(
             raise EvidenceError("业务 crate 缺少生成内容的源码指纹")
         files = _generated_files(generated, name)
         generated_files[name] = files
+        if name == "frontend":
+            if generated != source:
+                raise EvidenceError("业务 crate 生成不得改写前端仓库源码")
+            continue
         if generated.get("patch_sha256") == EMPTY_SHA256 and not files:
             raise EvidenceError(f"业务 crate {name} 没有实际生成变化")
         missing = set(BUSINESS_OUTPUTS[name]).difference(files)

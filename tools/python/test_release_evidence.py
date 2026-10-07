@@ -32,21 +32,22 @@ class ReleaseEvidenceTests(unittest.TestCase):
             "backend": {"head": "a" * 40, "patch_sha256": empty, "files": []},
             "frontend": {"head": "b" * 40, "patch_sha256": empty, "files": []},
         }
-        generated = {}
-        for name, head in (("backend", "a" * 40), ("frontend", "b" * 40)):
-            files = []
-            for path in BUSINESS_OUTPUTS[name]:
-                digest = (
-                    fixture_hash
-                    if path == "crates/order-business/src/resources/mod.rs"
-                    else hashlib.sha256(path.encode()).hexdigest()
-                )
-                files.append({"path": path, "sha256": digest})
-            generated[name] = {
-                "head": head,
-                "patch_sha256": hashlib.sha256(f"generated-{name}".encode()).hexdigest(),
+        files = []
+        for path in BUSINESS_OUTPUTS["backend"]:
+            digest = (
+                fixture_hash
+                if path == "crates/order-business/src/resources/mod.rs"
+                else hashlib.sha256(path.encode()).hexdigest()
+            )
+            files.append({"path": path, "sha256": digest})
+        generated = {
+            "backend": {
+                "head": "a" * 40,
+                "patch_sha256": hashlib.sha256(b"generated-backend").hexdigest(),
                 "files": files,
-            }
+            },
+            "frontend": sources["frontend"],
+        }
         return {
             "format_version": 1,
             "fixture": "business",
@@ -159,10 +160,10 @@ class ReleaseEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(EvidenceError, "发布源码不一致"):
             validate_fixture(receipt, "a" * 40, "b" * 40, "d" * 64)
 
-    def test_business_receipt_binds_fixture_and_required_outputs_on_both_sides(self):
+    def test_business_receipt_binds_backend_outputs_and_keeps_frontend_unchanged(self):
         receipt = self.fixture_receipt()
         expected_fixture = receipt["fixture_sha256"]
-        for name in ("backend", "frontend"):
+        for name in ("backend",):
             missing = copy.deepcopy(receipt)
             missing["generated"][name]["files"].pop()
             with self.subTest(name=name, case="missing"), self.assertRaisesRegex(
@@ -191,13 +192,15 @@ class ReleaseEvidenceTests(unittest.TestCase):
                 wrong_fixture, "a" * 40, "b" * 40, expected_fixture
             )
 
-        duplicate = copy.deepcopy(receipt)
-        duplicate["generated"]["frontend"]["files"].append(
-            copy.deepcopy(duplicate["generated"]["frontend"]["files"][0])
-        )
-        with self.assertRaisesRegex(EvidenceError, "无效或重复"):
+        changed_frontend = copy.deepcopy(receipt)
+        changed_frontend["generated"]["frontend"] = {
+            "head": "b" * 40,
+            "patch_sha256": "c" * 64,
+            "files": [{"path": "src/generated/resources/order/page.vue", "sha256": "d" * 64}],
+        }
+        with self.assertRaisesRegex(EvidenceError, "不得改写前端"):
             validate_fixture(
-                duplicate, "a" * 40, "b" * 40, expected_fixture
+                changed_frontend, "a" * 40, "b" * 40, expected_fixture
             )
 
 

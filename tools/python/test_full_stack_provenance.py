@@ -37,7 +37,7 @@ class BusinessSourceEvidenceTests(unittest.TestCase):
         }
         self.generated = {
             "backend": self.source(self.backend_head, "3"),
-            "frontend": self.source(self.frontend_head, "4"),
+            "frontend": self.sources["frontend"],
         }
         self.receipt = {
             "format_version": 1,
@@ -391,8 +391,7 @@ class ArchiveEvidenceTests(unittest.TestCase):
                 ),
                 "frontend": self.snapshot(
                     self.frontend_sha,
-                    clean=False,
-                    files=[{"path": "src/generated/resources/order/index.ts", "sha256": "c" * 64}],
+                    clean=True,
                 ),
             }
             roots = {"backend": backend_root, "frontend": frontend_root}

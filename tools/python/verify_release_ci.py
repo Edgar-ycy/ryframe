@@ -359,11 +359,14 @@ def coordinated_evidence(
     clock=time.monotonic,
     *,
     fixture_sha256=None,
+    frontend_sha=None,
     tag_oids=None,
     read_tags=validate_remote_tags,
 ):
     if fixture_sha256 is None:
         raise EvidenceError("缺少发布源码中的业务 crate fixture 摘要")
+    if not isinstance(frontend_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", frontend_sha):
+        raise EvidenceError("缺少有效的前端发布提交 SHA")
     deadline = clock() + timeout
     while True:
         evidence = await_evidence(required, max(0, deadline - clock()), collect_run, sleep, clock)
@@ -371,16 +374,16 @@ def coordinated_evidence(
             raise EvidenceError("缺少后端扩展 CI 运行，无法读取真实全栈收据")
         full_stack_evidence = evidence[1]
         receipts = read_pairs(
-            full_stack_evidence, required[0].sha, required[1].sha, fixture_sha256
+            full_stack_evidence, required[0].sha, frontend_sha, fixture_sha256
         )
         if set(receipts) != {"core", "business"}:
             raise EvidenceError("全栈证据必须同时包含 core 和 business")
         for receipt in receipts.values():
-            validate_pair(receipt, full_stack_evidence, required[0].sha, required[1].sha)
+            validate_pair(receipt, full_stack_evidence, required[0].sha, frontend_sha)
         validate_fixture(
             receipts["business"].get("fixture"),
             required[0].sha,
-            required[1].sha,
+            frontend_sha,
             fixture_sha256,
         )
         # 下载全栈产物期间，任何一个仓库开始重跑都必须重新等待整组证据。
@@ -451,6 +454,7 @@ def _run_evidence(request: EvidenceRequest) -> None:
             requirements(request),
             request.timeout,
             fixture_sha256=fixture_sha256,
+            frontend_sha=request.frontend_sha,
             tag_oids=tag_oids if all(tag_oids) else None,
         )
     except (EvidenceError, OSError, subprocess.SubprocessError, ValueError, KeyError, zipfile.BadZipFile) as error:

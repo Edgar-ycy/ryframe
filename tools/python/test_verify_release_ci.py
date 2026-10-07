@@ -100,17 +100,20 @@ class ReleaseCollectorTests(unittest.TestCase):
         with patch("verify_release_ci.api", side_effect=[{"jobs": [self.job] * 100}, {"jobs": [self.job]}]):
             self.assertEqual(len(pages("repos/owner/backend/actions/runs/123/jobs", "jobs")), 101)
 
-    def pairs(self, evidence):
+    def pairs(self, evidence, *, frontend_sha="a" * 40):
         empty = hashlib.sha256(b"").hexdigest()
         fixture_hash = hashlib.sha256(b"business fixture").hexdigest()
         sources = {
-            name: {"head": "a" * 40, "patch_sha256": empty, "files": []}
-            for name in ("backend", "frontend")
+            "backend": {"head": "a" * 40, "patch_sha256": empty, "files": []},
+            "frontend": {"head": frontend_sha, "patch_sha256": empty, "files": []},
         }
         generated = {}
         for name in ("backend", "frontend"):
+            if name == "frontend":
+                generated[name] = sources[name]
+                continue
             generated[name] = {
-                "head": "a" * 40,
+                "head": sources[name]["head"],
                 "patch_sha256": hashlib.sha256(f"generated-{name}".encode()).hexdigest(),
                 "files": [
                     {
@@ -138,7 +141,7 @@ class ReleaseCollectorTests(unittest.TestCase):
             "format_version": 1,
             **evidence,
             "backend_sha": "a" * 40,
-            "frontend_sha": "a" * 40,
+            "frontend_sha": frontend_sha,
             "sources": sources,
         }
         return {"core": pair, "business": {**pair, "fixture": fixture}}
@@ -279,6 +282,7 @@ class ReleaseCollectorTests(unittest.TestCase):
                     lambda _: None,
                     lambda: 0,
                     fixture_sha256=receipt["business"]["fixture"]["fixture_sha256"],
+                    frontend_sha="a" * 40,
                 )
 
     def test_recheck_is_bounded_and_success_records_pair(self):
@@ -292,6 +296,7 @@ class ReleaseCollectorTests(unittest.TestCase):
             lambda *_: receipt,
             lambda _: evidence,
             fixture_sha256=fixture_sha256,
+            frontend_sha="a" * 40,
         )
         self.assertEqual(result, {"runs": [evidence] * 2, "source_pairs": receipt})
         responses = iter([evidence] * 2 + [None] * 2)
@@ -305,6 +310,7 @@ class ReleaseCollectorTests(unittest.TestCase):
                 lambda _: None,
                 lambda: next(times),
                 fixture_sha256=fixture_sha256,
+                frontend_sha="a" * 40,
             )
 
         with self.assertRaisesRegex(EvidenceError, "业务 crate fixture 摘要"):
@@ -318,7 +324,8 @@ class ReleaseCollectorTests(unittest.TestCase):
         ]
         ci_run = {"run_id": 101, "attempt": 1, "workflow": "ci"}
         extended_run = {"run_id": 202, "attempt": 1, "workflow": "extended-ci"}
-        receipt = self.pairs(extended_run)
+        frontend_sha = "b" * 40
+        receipt = self.pairs(extended_run, frontend_sha=frontend_sha)
         collected = iter((ci_run, extended_run, ci_run, extended_run))
         observed = []
 
@@ -332,6 +339,7 @@ class ReleaseCollectorTests(unittest.TestCase):
             read_pairs,
             lambda _requirement: next(collected),
             fixture_sha256=receipt["business"]["fixture"]["fixture_sha256"],
+            frontend_sha=frontend_sha,
         )
 
         self.assertEqual(observed, [extended_run])
@@ -496,6 +504,7 @@ class ReleaseCollectorTests(unittest.TestCase):
             read_pairs,
             collect,
             fixture_sha256=fixture_sha256,
+            frontend_sha="a" * 40,
             tag_oids=("c" * 40, "d" * 40),
             read_tags=read_tags,
         )

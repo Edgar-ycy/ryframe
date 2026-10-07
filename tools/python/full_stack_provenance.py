@@ -328,7 +328,12 @@ def _archive_business_source(
     generated = _exact(receipt["generated"], {"backend", "frontend"}, "业务 crate 生成来源")
     for name, expected_head in (("backend", backend_sha), ("frontend", frontend_sha)):
         _clean_archive_snapshot(original[name], f"业务 crate 原始 {name} 来源", expected_head)
-        _generated_archive_snapshot(generated[name], f"业务 crate 生成 {name} 来源", expected_head)
+        if name == "backend":
+            _generated_archive_snapshot(generated[name], f"业务 crate 生成 {name} 来源", expected_head)
+        else:
+            _snapshot(generated[name], f"业务 crate 生成 {name} 来源")
+            if generated[name] != original[name]:
+                raise ValueError("业务 crate 生成不得改写前端仓库源码")
 
     fixture = _exact(
         fixture_receipt,
