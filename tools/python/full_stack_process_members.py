@@ -17,6 +17,11 @@ def _same_process_creation(identity: dict | None, started: str) -> bool:
     return identity is not None and identity["started"] == started
 
 
+def _matches_process_snapshot(identity: dict | None, fields: list[str]) -> bool:
+    """进程快照过期或 PID 已复用时忽略它，不把新进程纳入原进程树。"""
+    return _same_process_creation(identity, fields[19])
+
+
 def job_name(operation_id: str) -> str:
     return "Local\\RyFrameFullStack-" + operation_id
 
@@ -182,9 +187,9 @@ class UnixMembers:
                 if key not in self.members:
                     descriptor = os.pidfd_open(identity["pid"])
                     actual = process_identity(identity["pid"])
-                    if not _same_process_creation(actual, fields[19]):
+                    if not _matches_process_snapshot(actual, fields):
                         os.close(descriptor)
-                        raise ValueError("冻结进程组成员时 PID 已复用")
+                        continue
                     key = (actual["pid"], actual["started"])
                     self.members[key] = (actual, descriptor)
                 count += 1

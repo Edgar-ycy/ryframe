@@ -12,7 +12,12 @@ from workspace_directory import WorkspaceDirectory
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from full_stack_process import write_receipt
-from full_stack_process_members import WindowsMembers, _same_process_creation, finish_members
+from full_stack_process_members import (
+    WindowsMembers,
+    _matches_process_snapshot,
+    _same_process_creation,
+    finish_members,
+)
 from full_stack_process_monitor import receipt_path, wait_members
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -27,6 +32,16 @@ class ProcessMembersTests(unittest.TestCase):
         self.assertTrue(_same_process_creation(after_exec, before["started"]))
         self.assertFalse(_same_process_creation(reused, before["started"]))
         self.assertFalse(_same_process_creation(None, before["started"]))
+
+    def test_expired_proc_snapshot_skips_reused_pid(self):
+        fields = [""] * 20
+        fields[19] = "11"
+        original = {"pid": 7, "started": "11", "executable": "/usr/bin/python"}
+        reused = {**original, "started": "12"}
+
+        self.assertTrue(_matches_process_snapshot(original, fields))
+        self.assertFalse(_matches_process_snapshot(reused, fields))
+        self.assertFalse(_matches_process_snapshot(None, fields))
 
     def test_atomic_receipt_publish_supports_deep_runtime_directory(self):
         directory = WorkspaceDirectory(dir=ROOT / ".local-tests")
