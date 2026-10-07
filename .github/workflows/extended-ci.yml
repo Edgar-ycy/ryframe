@@ -144,7 +144,6 @@ jobs:
       APP_CORS_ALLOW_ORIGINS: http://127.0.0.1:4174
       APP_JOBS_MODE: external
       APP_JOBS_HEALTH_HOST: 127.0.0.1
-      APP_JOBS_HEALTH_PORT: "9091"
       RYFRAME_CODE_SHA: ${{ github.sha }}
       RYFRAME_RESET_SERVICES_STOPPED: "YES"
       RYFRAME_RESET_ADMIN_PASSWORD: Valid!Admin123
@@ -213,6 +212,13 @@ jobs:
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
         with:
           python-version: "3.12"
+
+      - name: 选择空闲 Worker 健康端口
+        shell: bash
+        run: |
+          set -euo pipefail
+          port="$(python -c 'import socket; sock=socket.socket(); sock.bind(("127.0.0.1", 0)); print(sock.getsockname()[1]); sock.close()')"
+          echo "APP_JOBS_HEALTH_PORT=$port" >> "$GITHUB_ENV"
 
       - name: 安装固定并校验哈希的 CI Python 依赖
         working-directory: backend
