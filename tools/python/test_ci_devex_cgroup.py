@@ -270,7 +270,7 @@ class CgroupWorkflowTests(unittest.TestCase):
     def test_linux_job_is_explicit_always_uploads_and_preserves_default_ignore(self):
         workflow = yaml.safe_load((REPOSITORY / ".github/workflows/extended-ci.yml").read_text(encoding="utf-8"))
         job = workflow["jobs"]["devex-cgroup"]
-        self.assertEqual(job["runs-on"], "ubuntu-latest")
+        self.assertEqual(job["runs-on"], "ubuntu-24.04")
         self.assertNotIn("if", job)
         self.assertNotIn("continue-on-error", job)
         steps = job["steps"]
