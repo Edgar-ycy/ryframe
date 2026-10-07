@@ -291,7 +291,7 @@ class CgroupWorkflowTests(unittest.TestCase):
         source = (REPOSITORY / "xtask/tests/internal/devex_memory.rs").read_text(encoding="utf-8")
         self.assertIn('#[ignore = "需要显式提供具有 memory controller 委托权限的 RYFRAME_DEVEX_CGROUP_ROOT"]', source)
 
-    def test_release_rejects_missing_skipped_failed_or_cancelled_memory_job(self):
+    def test_release_waits_for_missing_or_unfinished_memory_job_and_rejects_failure(self):
         args = SimpleNamespace(backend_repository="owner/backend", frontend_repository="owner/frontend",
                                backend_sha="a" * 40, frontend_sha="b" * 40, tag="v0.13.0")
         requirement = requirements(args)[1]
@@ -301,13 +301,15 @@ class CgroupWorkflowTests(unittest.TestCase):
         jobs = [{"id": index + 1, "name": name, "run_id": 1, "run_attempt": 2, "head_sha": args.backend_sha,
                  "status": "completed", "conclusion": "success"} for index, name in enumerate(requirement.jobs)]
         validate_run(run, jobs, requirement, jobs_attempt=2)
-        for outcome in ("skipped", "failure", "cancelled", None):
+        for outcome in ("skipped", "failure", "cancelled"):
             failing = copy.deepcopy(jobs)
             failing[-1]["conclusion"] = outcome
             with self.subTest(outcome=outcome), self.assertRaises(EvidenceError):
                 validate_run(run, failing, requirement, jobs_attempt=2)
-        with self.assertRaises(EvidenceError):
-            validate_run(run, jobs[:-1], requirement, jobs_attempt=2)
+        unfinished = copy.deepcopy(jobs)
+        unfinished[-1]["conclusion"] = None
+        self.assertIsNone(validate_run(run, unfinished, requirement, jobs_attempt=2))
+        self.assertIsNone(validate_run(run, jobs[:-1], requirement, jobs_attempt=2))
 
 
 if __name__ == "__main__":
