@@ -367,13 +367,16 @@ def coordinated_evidence(
     deadline = clock() + timeout
     while True:
         evidence = await_evidence(required, max(0, deadline - clock()), collect_run, sleep, clock)
+        if len(evidence) < 2:
+            raise EvidenceError("缺少后端扩展 CI 运行，无法读取真实全栈收据")
+        full_stack_evidence = evidence[1]
         receipts = read_pairs(
-            evidence[2], required[0].sha, required[1].sha, fixture_sha256
+            full_stack_evidence, required[0].sha, required[1].sha, fixture_sha256
         )
         if set(receipts) != {"core", "business"}:
             raise EvidenceError("全栈证据必须同时包含 core 和 business")
         for receipt in receipts.values():
-            validate_pair(receipt, evidence[2], required[0].sha, required[1].sha)
+            validate_pair(receipt, full_stack_evidence, required[0].sha, required[1].sha)
         validate_fixture(
             receipts["business"].get("fixture"),
             required[0].sha,

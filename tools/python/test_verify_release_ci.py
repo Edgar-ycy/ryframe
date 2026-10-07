@@ -260,12 +260,12 @@ class ReleaseCollectorTests(unittest.TestCase):
         return buffer.getvalue()
 
     def test_recheck_after_artifact_rejects_new_failure(self):
-        required = [self.requirement] * 4
+        required = [self.requirement] * 2
         evidence = {"run_id": 123, "attempt": 2}
         receipt = self.pairs(evidence)
         with patch("verify_release_ci.collect", return_value=evidence):
             def failed(_):
-                if len(seen) < 4:
+                if len(seen) < 2:
                     seen.append(evidence)
                     return evidence
                 raise EvidenceError("最新重跑失败")
@@ -282,7 +282,7 @@ class ReleaseCollectorTests(unittest.TestCase):
                 )
 
     def test_recheck_is_bounded_and_success_records_pair(self):
-        required = [self.requirement] * 4
+        required = [self.requirement] * 2
         evidence = {"run_id": 123, "attempt": 2}
         receipt = self.pairs(evidence)
         fixture_sha256 = receipt["business"]["fixture"]["fixture_sha256"]
@@ -293,8 +293,8 @@ class ReleaseCollectorTests(unittest.TestCase):
             lambda _: evidence,
             fixture_sha256=fixture_sha256,
         )
-        self.assertEqual(result, {"runs": [evidence] * 4, "source_pairs": receipt})
-        responses = iter([evidence] * 4 + [None] * 4)
+        self.assertEqual(result, {"runs": [evidence] * 2, "source_pairs": receipt})
+        responses = iter([evidence] * 2 + [None] * 2)
         times = iter([0, 0, 0, 2])
         with self.assertRaisesRegex(EvidenceError, "复核期间"):
             coordinated_evidence(
@@ -309,6 +309,33 @@ class ReleaseCollectorTests(unittest.TestCase):
 
         with self.assertRaisesRegex(EvidenceError, "业务 crate fixture 摘要"):
             coordinated_evidence(required, 1)
+
+    def test_full_stack_receipts_are_read_from_backend_extended_ci(self):
+        backend_sha = "a" * 40
+        required = [
+            Requirement("owner/backend", "ci.yml", backend_sha, ("Required",), "v0.13.1"),
+            Requirement("owner/backend", "extended-ci.yml", backend_sha, ("Real API",), "v0.13.1"),
+        ]
+        ci_run = {"run_id": 101, "attempt": 1, "workflow": "ci"}
+        extended_run = {"run_id": 202, "attempt": 1, "workflow": "extended-ci"}
+        receipt = self.pairs(extended_run)
+        collected = iter((ci_run, extended_run, ci_run, extended_run))
+        observed = []
+
+        def read_pairs(run, *_args):
+            observed.append(run)
+            return receipt
+
+        result = coordinated_evidence(
+            required,
+            1,
+            read_pairs,
+            lambda _requirement: next(collected),
+            fixture_sha256=receipt["business"]["fixture"]["fixture_sha256"],
+        )
+
+        self.assertEqual(observed, [extended_run])
+        self.assertEqual(result["runs"], [ci_run, extended_run])
 
     def test_remote_tags_bind_annotated_objects_and_dereferenced_commits(self):
         required = [
@@ -445,7 +472,7 @@ class ReleaseCollectorTests(unittest.TestCase):
             validate_remote_tags(required, tag_oids)
 
     def test_final_tag_check_runs_after_latest_attempt_recheck(self):
-        required = [self.requirement] * 4
+        required = [self.requirement] * 2
         evidence = {"run_id": 123, "attempt": 2}
         receipts = self.pairs(evidence)
         fixture_sha256 = receipts["business"]["fixture"]["fixture_sha256"]
@@ -472,7 +499,7 @@ class ReleaseCollectorTests(unittest.TestCase):
             tag_oids=("c" * 40, "d" * 40),
             read_tags=read_tags,
         )
-        self.assertEqual(events, ["ci"] * 4 + ["pairs"] + ["ci"] * 4 + ["tags"])
+        self.assertEqual(events, ["ci"] * 2 + ["pairs"] + ["ci"] * 2 + ["tags"])
         self.assertEqual(result["remote_tags"], [{"status": "current"}])
 
     def test_pair_artifacts_require_both_current_attempts_and_keep_artifact_identity(self):
