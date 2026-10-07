@@ -72,14 +72,21 @@ class ReleaseEvidenceTests(unittest.TestCase):
             with self.subTest(outcome=outcome), self.assertRaises(EvidenceError):
                 validate_run({**self.run, "conclusion": outcome}, [self.job], self.requirement, jobs_attempt=2)
 
-    def test_job_must_be_present_unique_current_and_successful(self):
-        cases = [[], [self.job, self.job]]
+    def test_job_must_be_unique_current_and_successful(self):
+        cases = [[self.job, self.job]]
         for field, value in (("head_sha", "b" * 40), ("run_attempt", 1), ("run_id", 99),
-                             ("status", "queued"), ("conclusion", "skipped"), ("conclusion", "failure")):
+                             ("conclusion", "skipped"), ("conclusion", "failure")):
             cases.append([{**self.job, field: value}])
         for jobs in cases:
             with self.subTest(jobs=jobs), self.assertRaises(EvidenceError):
                 validate_run(self.run, jobs, self.requirement, jobs_attempt=2)
+
+    def test_stale_jobs_snapshot_waits_for_required_job_conclusion(self):
+        self.assertIsNone(validate_run(self.run, [], self.requirement, jobs_attempt=2))
+        pending = {**self.job, "conclusion": None}
+        self.assertIsNone(validate_run(self.run, [pending], self.requirement, jobs_attempt=2))
+        queued = {**self.job, "status": "in_progress", "conclusion": None}
+        self.assertIsNone(validate_run(self.run, [queued], self.requirement, jobs_attempt=2))
 
     def test_pending_runs_wait(self):
         for status in ("queued", "in_progress", "waiting"):

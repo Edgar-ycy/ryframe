@@ -114,15 +114,28 @@ def validate_run(run: dict, jobs: list[dict], requirement: Requirement, *, jobs_
             raise EvidenceError("job 返回的 attempt 与请求不一致")
         if type(job.get("id")) is not int or job["id"] <= 0:
             raise EvidenceError("job 缺少有效 ID")
+    # Actions 的 run 与 jobs API 不是原子快照。run 已成功时，jobs 列表仍可能
+    # 暂时缺少刚完成的 Required job 或其 conclusion；等待下一次读取，不能误判失败。
+    pending_statuses = {"queued", "in_progress", "waiting", "pending", "requested"}
+    if any(
+        job.get("status") in pending_statuses
+        or (job.get("status") == "completed" and job.get("conclusion") is None)
+        for job in jobs
+    ):
+        return None
+    if any(job.get("status") != "completed" for job in jobs):
+        raise EvidenceError("发布运行包含无效的 job 状态")
     for name in requirement.jobs:
         matches = [job for job in jobs if job.get("name") == name]
+        if not matches:
+            return None
         if len(matches) != 1:
-            raise EvidenceError(f"必需 job 缺失或重复：{name}")
+            raise EvidenceError(f"必需 job 重复：{name}")
         job = matches[0]
-        if job.get("status") != "completed" or job.get("conclusion") != "success":
+        if job.get("conclusion") != "success":
             raise EvidenceError(f"必需 job 未成功：{name} ({job.get('conclusion')})")
     # 包括可复用工作流展开的 job，不能用汇总成功掩盖失败或跳过。
-    if any(job.get("status") != "completed" or job.get("conclusion") != "success" for job in jobs):
+    if any(job.get("conclusion") != "success" for job in jobs):
         raise EvidenceError("发布运行包含失败、取消、跳过或未完成的 job")
     return {
         "repository": requirement.repository, "workflow": requirement.workflow,
