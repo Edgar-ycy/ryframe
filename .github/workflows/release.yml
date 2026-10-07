@@ -30,7 +30,7 @@ permissions:
 jobs:
   validate-release:
     name: Validate coordinated source release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       tag: ${{ steps.release.outputs.tag }}
       backend_tag_oid: ${{ steps.release.outputs.backend_tag_oid }}
@@ -155,7 +155,7 @@ jobs:
   publish-release:
     name: Publish source-only GitHub release
     needs: validate-release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       actions: read

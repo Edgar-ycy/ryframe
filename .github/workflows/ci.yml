@@ -31,7 +31,7 @@ jobs:
   # ============================================================
   plan:
     name: Plan & Preflight
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: backend
@@ -128,7 +128,7 @@ jobs:
     name: Rust Gate
     needs: plan
     if: ${{ needs.plan.result == 'success' && needs.plan.outputs.rust_gate == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       RUSTC_WRAPPER: sccache
       SCCACHE_DIR: ${{ github.workspace }}/.cache/sccache/rust-gate
@@ -249,7 +249,7 @@ jobs:
       ${{ needs.plan.result == 'success' &&
           (needs.plan.outputs.resource_gate == 'true' ||
            needs.plan.outputs.consumer_contract == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       RYFRAME_INTEGRATION_RUN_ID: resource-${{ github.run_id }}-${{ github.run_attempt }}
       RYFRAME_MYSQL_INTEGRATION: "1"
@@ -396,7 +396,7 @@ jobs:
     name: MySQL 8.0.46, Redis 7.4.9 & AWS-LC TLS Integration
     needs: plan
     if: ${{ needs.plan.result == 'success' && needs.plan.outputs.integration == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       RYFRAME_INTEGRATION_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
       RYFRAME_MYSQL_INTEGRATION: "1"
@@ -594,7 +594,7 @@ jobs:
     name: Security, Supply Chain & Deployment
     needs: plan
     if: ${{ needs.plan.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       DOCKER_BUILDKIT: "1"
     defaults:
@@ -675,7 +675,7 @@ jobs:
   required:
     name: Required
     if: ${{ always() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs:
       - plan
       - rust-gate
