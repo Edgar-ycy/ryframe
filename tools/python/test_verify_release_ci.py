@@ -481,10 +481,15 @@ class ReleaseCollectorTests(unittest.TestCase):
 
     def test_final_tag_check_runs_after_latest_attempt_recheck(self):
         required = [self.requirement] * 2
+        tag_requirements = [
+            self.requirement,
+            Requirement("owner/frontend", "ci.yml", "b" * 40, (), "v0.13.5"),
+        ]
         evidence = {"run_id": 123, "attempt": 2}
         receipts = self.pairs(evidence)
         fixture_sha256 = receipts["business"]["fixture"]["fixture_sha256"]
         events = []
+        observed_tag_repositories = []
 
         def collect(_requirement):
             events.append("ci")
@@ -494,8 +499,11 @@ class ReleaseCollectorTests(unittest.TestCase):
             events.append("pairs")
             return receipts
 
-        def read_tags(_required, _tag_oids):
+        def read_tags(tagged_repositories, _tag_oids):
             events.append("tags")
+            observed_tag_repositories.extend(
+                requirement.repository for requirement in tagged_repositories
+            )
             return [{"status": "current"}]
 
         result = coordinated_evidence(
@@ -506,9 +514,11 @@ class ReleaseCollectorTests(unittest.TestCase):
             fixture_sha256=fixture_sha256,
             frontend_sha="a" * 40,
             tag_oids=("c" * 40, "d" * 40),
+            tag_requirements=tag_requirements,
             read_tags=read_tags,
         )
         self.assertEqual(events, ["ci"] * 2 + ["pairs"] + ["ci"] * 2 + ["tags"])
+        self.assertEqual(observed_tag_repositories, ["owner/backend", "owner/frontend"])
         self.assertEqual(result["remote_tags"], [{"status": "current"}])
 
     def test_pair_artifacts_require_both_current_attempts_and_keep_artifact_identity(self):

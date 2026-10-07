@@ -361,6 +361,7 @@ def coordinated_evidence(
     fixture_sha256=None,
     frontend_sha=None,
     tag_oids=None,
+    tag_requirements=None,
     read_tags=validate_remote_tags,
 ):
     if fixture_sha256 is None:
@@ -390,7 +391,9 @@ def coordinated_evidence(
         if [collect_run(item) for item in required] == evidence:
             result = {"runs": evidence, "source_pairs": receipts}
             if tag_oids is not None:
-                result["remote_tags"] = read_tags(required, tag_oids)
+                if not isinstance(tag_requirements, list) or len(tag_requirements) != 2:
+                    raise EvidenceError("远端 tag 核验必须分别绑定后端和前端仓库")
+                result["remote_tags"] = read_tags(tag_requirements, tag_oids)
             return result
         remaining = deadline - clock()
         if remaining <= 0:
@@ -450,12 +453,24 @@ def _run_evidence(request: EvidenceRequest) -> None:
             / "tools/python/fixtures/order-business/src/resources/mod.rs"
         )
         fixture_sha256 = sha256(fixture.read_bytes()).hexdigest()
+        required = requirements(request)
+        tag_requirements = [
+            required[0],
+            Requirement(
+                request.frontend_repository,
+                "ci.yml",
+                request.frontend_sha,
+                (),
+                request.tag,
+            ),
+        ]
         evidence = coordinated_evidence(
-            requirements(request),
+            required,
             request.timeout,
             fixture_sha256=fixture_sha256,
             frontend_sha=request.frontend_sha,
             tag_oids=tag_oids if all(tag_oids) else None,
+            tag_requirements=tag_requirements,
         )
     except (EvidenceError, OSError, subprocess.SubprocessError, ValueError, KeyError, zipfile.BadZipFile) as error:
         request.output.write_text(
