@@ -294,7 +294,7 @@ class CgroupWorkflowTests(unittest.TestCase):
     def test_release_rejects_missing_skipped_failed_or_cancelled_memory_job(self):
         args = SimpleNamespace(backend_repository="owner/backend", frontend_repository="owner/frontend",
                                backend_sha="a" * 40, frontend_sha="b" * 40, tag="v0.13.0")
-        requirement = requirements(args)[2]
+        requirement = requirements(args)[1]
         self.assertIn("Linux DevEx Cgroup Memory", requirement.jobs)
         run = {"id": 1, "run_attempt": 2, "head_sha": args.backend_sha, "status": "completed", "conclusion": "success",
                "event": "push", "head_branch": args.tag}

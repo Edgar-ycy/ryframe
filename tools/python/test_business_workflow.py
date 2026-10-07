@@ -21,7 +21,7 @@ class BusinessWorkflowTests(unittest.TestCase):
     def test_release_requires_every_full_stack_fixture_job(self):
         args = SimpleNamespace(backend_repository="owner/backend", frontend_repository="owner/frontend",
                                backend_sha="a" * 40, frontend_sha="b" * 40, tag="v0.13.0")
-        required = requirements(args)[2]
+        required = requirements(args)[1]
         self.assertEqual({entry["fixture"] for entry in self.matrix}, {"core", "business"})
         self.assertEqual(set(required.jobs), {entry["name"] for entry in self.matrix} | {"Linux DevEx Cgroup Memory"})
         self.assertFalse(self.job["strategy"]["fail-fast"])
