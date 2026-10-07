@@ -8,6 +8,27 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class CiWorkflowTests(unittest.TestCase):
+    def test_tag_push_never_uses_the_old_tag_object_as_a_commit_baseline(self) -> None:
+        import yaml
+
+        workflow = yaml.safe_load(
+            (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        )
+        bases = [
+            step["env"][key]
+            for job in workflow["jobs"].values()
+            for step in job["steps"]
+            for key in ("RYFRAME_CI_BASE_SHA", "DEPLOYMENT_BASE_SHA")
+            if key in step.get("env", {})
+        ]
+        self.assertEqual(len(bases), 5)
+        for expression in bases:
+            self.assertEqual(
+                expression,
+                "${{ github.event.pull_request.base.sha || "
+                "(github.ref_type == 'branch' && github.event.before) || '' }}",
+            )
+
     def test_frontend_source_selection_uses_only_the_typed_entry(self) -> None:
         daily = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         extended = (ROOT / ".github/workflows/extended-ci.yml").read_text(
@@ -58,7 +79,7 @@ class CiWorkflowTests(unittest.TestCase):
         self.assertIn("corepack pnpm install --frozen-lockfile", block)
         self.assertIn(
             "RYFRAME_CI_BASE_SHA: "
-            "${{ github.event.pull_request.base.sha || github.event.before }}",
+            "${{ github.event.pull_request.base.sha || (github.ref_type == 'branch' && github.event.before) || '' }}",
             block,
         )
         self.assertIn(

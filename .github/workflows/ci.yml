@@ -54,7 +54,7 @@ jobs:
         id: plan
         env:
           GITHUB_EVENT_ACTION: ${{ github.event.action }}
-          RYFRAME_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          RYFRAME_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || (github.ref_type == 'branch' && github.event.before) || '' }}
           RYFRAME_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: cargo xtask check ci plan
 
@@ -118,7 +118,7 @@ jobs:
       - name: 执行仓库快速预检
         if: ${{ steps.plan.outputs.preflight == 'true' }}
         env:
-          RYFRAME_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          RYFRAME_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || (github.ref_type == 'branch' && github.event.before) || '' }}
         run: cargo xtask check ci preflight --frontend-dir ../frontend
 
   # ============================================================
@@ -373,7 +373,7 @@ jobs:
         if: ${{ needs.plan.outputs.resource_gate == 'true' }}
         working-directory: backend
         env:
-          RYFRAME_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          RYFRAME_CI_BASE_SHA: ${{ github.event.pull_request.base.sha || (github.ref_type == 'branch' && github.event.before) || '' }}
           RYFRAME_CI_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           RYFRAME_CI_FRONTEND_REF: ${{ steps.contract-frontend-ref.outputs.ref || steps.resource-frontend-ref.outputs.ref }}
           RYFRAME_RESOURCE_GATE_TARGETED: replay-verified-v1
@@ -642,7 +642,7 @@ jobs:
       - name: 校验部署来源
         id: deployment
         env:
-          DEPLOYMENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          DEPLOYMENT_BASE_SHA: ${{ github.event.pull_request.base.sha || (github.ref_type == 'branch' && github.event.before) || '' }}
         run: >-
           cargo xtask check ci security deployment source
           --base "$DEPLOYMENT_BASE_SHA"
@@ -661,7 +661,7 @@ jobs:
       - name: 校验生产镜像内容
         if: steps.deployment.outputs.required == 'true'
         env:
-          DEPLOYMENT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          DEPLOYMENT_BASE_SHA: ${{ github.event.pull_request.base.sha || (github.ref_type == 'branch' && github.event.before) || '' }}
         run: >-
           cargo xtask check ci security deployment image
           --base "$DEPLOYMENT_BASE_SHA"
