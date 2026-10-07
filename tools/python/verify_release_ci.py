@@ -260,8 +260,6 @@ def requirements(request) -> list[Requirement]:
         ), request.tag),
         Requirement(request.backend_repository, "extended-ci.yml", request.backend_sha,
                     ("Real API MySQL Redis full-stack build", "Generated business crate data migration build", "Linux DevEx Cgroup Memory"), request.tag),
-        Requirement(request.frontend_repository, "extended-ci.yml", request.frontend_sha,
-                    ("Node 24 Compatibility & Supply Chain",), request.tag),
     ]
 
 

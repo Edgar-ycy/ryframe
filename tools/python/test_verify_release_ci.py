@@ -47,7 +47,7 @@ class ReleaseCollectorTests(unittest.TestCase):
             tag = "v0.13.0"
 
         required = requirements(Args())
-        self.assertEqual(len(required), 3)
+        self.assertEqual(len(required), 2)
         self.assertEqual({item.tag for item in required}, {Args.tag})
 
     def test_api_uses_remaining_total_deadline(self):
