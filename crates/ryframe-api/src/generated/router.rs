@@ -28,11 +28,6 @@ pub fn generated_router(
         )
         .nest(
             "/posts",
-            super::post::handler::router(Arc::clone(&services.post), pagination).layer(
-                from_fn_with_state(
-                    CapabilityGuardState::new(state, "system.post"),
-                    capability_guard,
-                ),
-            ),
+            super::post::handler::router(Arc::clone(&services.post), pagination),
         )
 }

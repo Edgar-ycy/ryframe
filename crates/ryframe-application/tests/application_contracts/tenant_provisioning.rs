@@ -581,7 +581,7 @@ async fn provisioning_success_uses_four_stages_before_related_writes_and_commit(
 
 #[tokio::test]
 async fn authorization_copy_receives_filtered_template_with_parent_closure_and_role_grants() {
-    let (service, state) = service(None, policy_template(), vec!["system.user", "monitor.jobs"]);
+    let (service, state) = service(None, policy_template(), vec!["system.notice"]);
     let result = service.create(&actor(), params()).await;
     result.expect("完整开通应成功");
     let calls = state.calls();
@@ -609,6 +609,9 @@ async fn authorization_copy_receives_filtered_template_with_parent_closure_and_r
         [
             ("system:root", true, false),
             ("system:identity", true, false),
+            ("system:user:list", true, true),
+            ("system:user:add", true, false),
+            ("monitor:job:list", false, false),
         ]
     );
     assert_eq!(
@@ -617,7 +620,7 @@ async fn authorization_copy_receives_filtered_template_with_parent_closure_and_r
             .iter()
             .map(|menu| menu.route_key.as_deref())
             .collect::<Vec<_>>(),
-        [None]
+        [None, Some("system.user")]
     );
     let (routes, permissions, defaults) = calls
         .iter()
@@ -628,9 +631,13 @@ async fn authorization_copy_receives_filtered_template_with_parent_closure_and_r
             _ => None,
         })
         .expect("数据面就绪后必须同步选定能力");
-    assert_eq!(routes, &["system.user", "monitor.jobs"]);
-    assert!(permissions.iter().any(|code| code == "system:user:list"));
-    assert!(permissions.iter().any(|code| code == "monitor:job:list"));
+    assert_eq!(routes, &["system.notice"]);
+    assert!(permissions.iter().any(|code| code == "system:notice:list"));
+    assert!(
+        permissions
+            .iter()
+            .all(|code| !code.starts_with("monitor:job:"))
+    );
     assert_eq!(permissions, defaults);
     assert!(
         permissions
@@ -649,7 +656,7 @@ async fn authorization_copy_receives_filtered_template_with_parent_closure_and_r
 }
 
 #[tokio::test]
-async fn empty_plan_excludes_management_and_platform_resources() {
+async fn empty_plan_retains_base_management_and_excludes_optional_and_platform_resources() {
     let (result, state) = run_create(None, policy_template()).await;
     result.expect("空能力套餐允许开通租户");
     let calls = state.calls();
@@ -666,7 +673,13 @@ async fn empty_plan_excludes_management_and_platform_resources() {
             .iter()
             .map(|permission| permission.code.as_str())
             .collect::<Vec<_>>(),
-        ["system:root", "system:identity"]
+        [
+            "system:root",
+            "system:identity",
+            "system:user:list",
+            "system:user:add",
+            "monitor:job:list"
+        ]
     );
     assert_eq!(
         filtered
@@ -674,6 +687,6 @@ async fn empty_plan_excludes_management_and_platform_resources() {
             .iter()
             .map(|menu| menu.route_key.as_deref())
             .collect::<Vec<_>>(),
-        [None]
+        [None, Some("system.user")]
     );
 }

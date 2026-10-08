@@ -35,7 +35,6 @@ pub fn user_import_router(state: AppState) -> Router {
 
 #[post("/")]
 #[perm("system:user-import:add")]
-#[ryframe_macro::capability("system.user")]
 #[utoipa::path(post, path = "/api/v1/system/user-imports", tag = "用户导入",
     params(("Idempotency-Key" = String, Header, description = "用户导入幂等键")),
     request_body(content = UserImportUploadForm, content_type = "multipart/form-data"),
@@ -135,7 +134,6 @@ async fn create(
 
 #[get("/")]
 #[perm("system:user-import:list")]
-#[ryframe_macro::capability("system.user")]
 #[utoipa::path(get, path = "/api/v1/system/user-imports", tag = "用户导入",
     params(UserImportPageQuery),
     responses((status = 200, description = "用户导入任务列表", body = ApiPageResponse<UserImportJobVo>)),
@@ -170,7 +168,6 @@ async fn list(
 
 #[get("/{id}")]
 #[perm("system:user-import:list")]
-#[ryframe_macro::capability("system.user")]
 #[utoipa::path(get, path = "/api/v1/system/user-imports/{id}", tag = "用户导入",
     params(("id" = String, Path, description = "用户导入任务 ID")),
     responses((status = 200, description = "用户导入任务详情", body = ApiResponse<UserImportJobVo>)),
@@ -194,7 +191,6 @@ async fn detail(
 
 #[post("/{id}/cancel")]
 #[perm("system:user-import:cancel")]
-#[ryframe_macro::capability("system.user")]
 #[utoipa::path(post, path = "/api/v1/system/user-imports/{id}/cancel", tag = "用户导入",
     params(("id" = String, Path, description = "用户导入任务 ID")),
     request_body = EmptyRequestDto,
@@ -220,7 +216,6 @@ async fn cancel(
 
 #[get("/{id}/rows")]
 #[perm("system:user-import:list")]
-#[ryframe_macro::capability("system.user")]
 #[utoipa::path(get, path = "/api/v1/system/user-imports/{id}/rows", tag = "用户导入",
     params(("id" = String, Path, description = "用户导入任务 ID"), UserImportRowPageQuery),
     responses((status = 200, description = "用户导入异常行", body = ApiPageResponse<UserImportRowVo>)),
@@ -253,7 +248,6 @@ async fn rows(
 
 #[get("/{id}/report")]
 #[perm("system:user-import:list")]
-#[ryframe_macro::capability("system.user")]
 #[utoipa::path(get, path = "/api/v1/system/user-imports/{id}/report", tag = "用户导入",
     params(("id" = String, Path, description = "用户导入任务 ID")),
     responses((status = 200, description = "用户导入错误报告", body = Vec<u8>, content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")),

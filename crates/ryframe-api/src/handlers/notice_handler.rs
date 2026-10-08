@@ -34,8 +34,15 @@ async fn publish_to_message_center(
     State(state): State<AppState>,
     current_user: RequestPrincipal,
     Extension(RequestLocale(locale)): Extension<RequestLocale>,
-    Path(id): Path<i64>,
+    Path(id): Path<String>,
 ) -> HttpResult<Json<ApiResponse<PublishedMessageVo>>> {
+    let id = crate::handler_utils::parse_positive_id(&id, "公告 ID 必须是正整数")?;
+    state
+        .services
+        .platform
+        .product
+        .require_capability(&current_user.tenant_id, "system.notice")
+        .await?;
     let notice = state
         .services
         .content

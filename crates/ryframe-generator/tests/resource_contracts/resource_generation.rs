@@ -75,7 +75,7 @@ fn post_manifest_preserves_the_existing_public_contract_and_extensions() {
     assert_eq!(post.api.path, "/api/v1/system/posts");
     assert_eq!(post.api.operations.list, "get_system_posts");
     assert_eq!(post.api.operations.create, "post_system_posts");
-    assert_eq!(post.access.capability, Some("system.post".into()));
+    assert_eq!(post.access.capability, None);
     let id = post
         .fields
         .iter()
@@ -203,8 +203,8 @@ fn assert_post_router(generated: &GeneratedCatalog) {
         .find(|asset| asset.path == "crates/ryframe-api/src/generated/router.rs")
         .expect("应生成框架 API 聚合路由");
     assert!(router.content.contains("super::post::handler::router"));
-    assert!(router.content.contains("CapabilityGuardState"));
-    assert!(router.content.contains("system.post"));
+    assert!(!router.content.contains("CapabilityGuardState"));
+    assert!(!router.content.contains("\"system.post\""));
 }
 
 #[test]

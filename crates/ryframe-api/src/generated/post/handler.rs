@@ -40,7 +40,6 @@ pub fn router(service: Arc<PostService>, pagination: PaginationPolicy) -> Router
 }
 
 #[get("/")]
-#[ryframe_macro::capability("system.post")]
 #[perm("system:post:list")]
 #[utoipa::path(
     get,
@@ -71,7 +70,6 @@ pub async fn list(
 }
 
 #[get("/{id}")]
-#[ryframe_macro::capability("system.post")]
 #[perm("system:post:list")]
 #[utoipa::path(
     get,
@@ -97,7 +95,6 @@ pub async fn detail(
 }
 
 #[post("/")]
-#[ryframe_macro::capability("system.post")]
 #[perm("system:post:add")]
 #[utoipa::path(
     post,
@@ -123,7 +120,6 @@ pub async fn create(
 }
 
 #[put("/{id}")]
-#[ryframe_macro::capability("system.post")]
 #[perm("system:post:edit")]
 #[utoipa::path(
     put,
@@ -155,7 +151,6 @@ pub async fn update(
 }
 
 #[delete("/{id}")]
-#[ryframe_macro::capability("system.post")]
 #[perm("system:post:remove")]
 #[utoipa::path(
     delete,

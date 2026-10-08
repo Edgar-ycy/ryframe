@@ -33,7 +33,6 @@ pub fn dept_router(state: AppState) -> Router {
 /// 部门树查询
 #[get("/tree")]
 #[perm("system:dept:list")]
-#[ryframe_macro::capability("system.dept")]
 #[utoipa::path(get, path = "/api/v1/system/depts/tree", tag = "部门管理",
     responses((status = 200, description = "部门树", body = ApiResponse<Vec<DeptTreeNode>>)), security(("bearer" = [])))]
 async fn tree(
@@ -57,7 +56,6 @@ async fn tree(
 /// 部门列表分页查询
 #[get("/")]
 #[perm("system:dept:list")]
-#[ryframe_macro::capability("system.dept")]
 #[utoipa::path(get, path = "/api/v1/system/depts", tag = "部门管理",
     params(DeptListQuery),
     responses((status = 200, description = "部门列表", body = ApiPageResponse<DeptVo>)),
@@ -94,7 +92,6 @@ async fn list_page(
 /// 创建部门
 #[post("/")]
 #[perm("system:dept:add")]
-#[ryframe_macro::capability("system.dept")]
 #[utoipa::path(post, path = "/api/v1/system/depts", tag = "部门管理",
     request_body = CreateDeptDto, responses((status = 200, description = "创建成功", body = ApiResponse<DeptVo>)), security(("bearer" = [])))]
 async fn create(
@@ -124,7 +121,6 @@ async fn create(
 /// 更新部门
 #[put("/{id}")]
 #[perm("system:dept:edit")]
-#[ryframe_macro::capability("system.dept")]
 #[utoipa::path(put, path = "/api/v1/system/depts/{id}", tag = "部门管理",
     params(("id" = String, Path)), request_body = UpdateDeptDto,
     responses((status = 200, description = "更新成功", body = ApiResponse<DeptVo>)), security(("bearer" = [])))]
@@ -158,7 +154,6 @@ async fn update(
 /// 部门详情
 #[get("/{id}")]
 #[perm("system:dept:list")]
-#[ryframe_macro::capability("system.dept")]
 #[utoipa::path(get, path = "/api/v1/system/depts/{id}", tag = "部门管理",
     params(("id" = String, Path)),
     responses((status = 200, description = "部门详情", body = ApiResponse<DeptVo>)),
@@ -181,7 +176,6 @@ async fn detail(
 /// 删除部门
 #[delete("/{id}")]
 #[perm("system:dept:remove")]
-#[ryframe_macro::capability("system.dept")]
 #[utoipa::path(delete, path = "/api/v1/system/depts/{id}", tag = "部门管理",
     params(("id" = String, Path)), responses((status = 200, description = "删除成功", body = crate::http::ApiEmptyResponse)), security(("bearer" = [])))]
 async fn remove(

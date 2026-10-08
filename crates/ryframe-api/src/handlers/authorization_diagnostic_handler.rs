@@ -14,7 +14,6 @@ pub fn authorization_diagnostic_router(state: AppState) -> Router {
 
 #[get("/users/{id}")]
 #[perm("system:authorization-diagnostic:list")]
-#[ryframe_macro::capability("system.authorization-diagnostics")]
 #[utoipa::path(
     get,
     path = "/api/v1/system/authorization-diagnostics/users/{id}",

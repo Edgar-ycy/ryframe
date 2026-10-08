@@ -327,7 +327,7 @@ fn product_version_accepts_empty_and_rejects_unknown_or_duplicate_capabilities()
         config: serde_json::json!({}),
     };
     let valid_capability = || ProductCapabilityRecord {
-        code: "system.post".into(),
+        code: "system.notice".into(),
         variant: "standard".into(),
         schema_version: 1,
         config: serde_json::json!({}),

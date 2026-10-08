@@ -94,6 +94,7 @@ impl ProductService {
                     .map(|variant| CapabilityVariantVo {
                         code: variant.code.to_owned(),
                         schema_version: variant.schema_version,
+                        config_schema: (variant.config_schema)(),
                     })
                     .collect(),
             })

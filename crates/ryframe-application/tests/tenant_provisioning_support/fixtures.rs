@@ -14,6 +14,8 @@ pub(super) fn policy_template() -> TenantProvisioningTemplate {
                 permission(3, "system:user:list", Some(2)),
                 permission(4, "system:user:add", Some(1)),
                 permission(5, "monitor:job:list", Some(1)),
+                permission(6, "system:notice:list", Some(1)),
+                permission(7, "system:message:publish", Some(1)),
                 permission(20, "*:*:*", None),
                 permission(21, "tenant:read", None),
                 permission(22, "platform:read", None),
@@ -27,6 +29,7 @@ pub(super) fn policy_template() -> TenantProvisioningTemplate {
                 menu(4, Some("monitor.retention")),
                 menu(5, Some("platform.config-transfer")),
                 menu(6, Some("system.user")),
+                menu(7, Some("system.notice")),
             ],
         },
         base_catalogs: TenantBaseCatalogTemplate {

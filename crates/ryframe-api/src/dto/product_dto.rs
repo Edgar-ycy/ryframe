@@ -160,6 +160,8 @@ pub struct ProductChangeApplyDto {
 pub struct CapabilityVariantVo {
     pub code: String,
     pub schema_version: i32,
+    /// 当前变体的完整配置 JSON Schema。
+    pub config_schema: Value,
 }
 
 #[derive(Clone, Debug, Serialize, ToSchema)]
@@ -200,6 +202,7 @@ impl From<ServiceCapabilityCatalogVo> for CapabilityCatalogVo {
                 .map(|variant| CapabilityVariantVo {
                     code: variant.code,
                     schema_version: variant.schema_version,
+                    config_schema: variant.config_schema,
                 })
                 .collect(),
         }

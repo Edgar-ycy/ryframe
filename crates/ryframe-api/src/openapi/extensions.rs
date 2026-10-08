@@ -113,6 +113,7 @@ fn product_capability_contract() -> serde_json::Value {
                 "variants": descriptor.variants.iter().map(|variant| serde_json::json!({
                     "code": variant.code,
                     "schema_version": variant.schema_version,
+                    "config_schema": (variant.config_schema)(),
                 })).collect::<Vec<_>>(),
             })
         })

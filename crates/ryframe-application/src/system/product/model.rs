@@ -16,6 +16,8 @@ pub struct CapabilityRequirement {
 pub struct CapabilityVariantVo {
     pub code: String,
     pub schema_version: i32,
+    /// 当前变体的完整配置 JSON Schema。
+    pub config_schema: Value,
 }
 
 #[derive(Clone, Debug, Serialize)]

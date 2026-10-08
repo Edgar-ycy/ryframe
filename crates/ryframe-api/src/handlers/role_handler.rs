@@ -78,7 +78,6 @@ pub fn role_router(state: AppState) -> Router {
 /// 查询当前操作者可以分配的角色选项。
 #[get("/options")]
 #[perm("system:role:list")]
-#[ryframe_macro::capability("system.role")]
 #[utoipa::path(get, path = "/api/v1/system/roles/options", tag = "角色管理",
     params(RoleOptionQuery),
     responses((status = 200, description = "角色选项", body = ApiResponse<OptionList>)),
@@ -109,7 +108,6 @@ async fn options(
 /// 角色列表分页查询
 #[get("/")]
 #[perm("system:role:list")]
-#[ryframe_macro::capability("system.role")]
 #[utoipa::path(get, path = "/api/v1/system/roles", tag = "角色管理",
     params(RoleListQuery),
     responses((status = 200, description = "角色列表", body = ApiPageResponse<RoleVo>)), security(("bearer" = [])))]
@@ -140,7 +138,6 @@ async fn list(
 /// 角色详情
 #[get("/{id}")]
 #[perm("system:role:list")]
-#[ryframe_macro::capability("system.role")]
 #[utoipa::path(get, path = "/api/v1/system/roles/{id}", tag = "角色管理",
     params(("id" = String, Path)), responses((status = 200, description = "角色详情", body = ApiResponse<RoleVo>)), security(("bearer" = [])))]
 async fn detail(
@@ -154,7 +151,6 @@ async fn detail(
 /// 创建角色
 #[post("/")]
 #[perm("system:role:add")]
-#[ryframe_macro::capability("system.role")]
 #[utoipa::path(post, path = "/api/v1/system/roles", tag = "角色管理",
     request_body = CreateRoleDto, responses((status = 200, description = "创建成功", body = ApiResponse<RoleVo>)), security(("bearer" = [])))]
 async fn create(
@@ -182,7 +178,6 @@ async fn create(
 /// 更新角色
 #[put("/{id}")]
 #[perm("system:role:edit")]
-#[ryframe_macro::capability("system.role")]
 #[utoipa::path(put, path = "/api/v1/system/roles/{id}", tag = "角色管理",
     params(("id" = String, Path)), request_body = UpdateRoleDto,
     responses((status = 200, description = "更新成功", body = ApiResponse<RoleVo>)), security(("bearer" = [])))]
@@ -213,7 +208,6 @@ async fn update(
 /// 删除角色
 #[delete("/{id}")]
 #[perm("system:role:remove")]
-#[ryframe_macro::capability("system.role")]
 #[utoipa::path(delete, path = "/api/v1/system/roles/{id}", tag = "角色管理",
     params(("id" = String, Path)), responses((status = 200, description = "删除成功", body = crate::http::ApiEmptyResponse)), security(("bearer" = [])))]
 async fn remove(
@@ -234,7 +228,6 @@ async fn remove(
 /// 批量删除角色
 #[delete("/batch/{ids}")]
 #[perm("system:role:remove")]
-#[ryframe_macro::capability("system.role")]
 #[utoipa::path(delete, path = "/api/v1/system/roles/batch/{ids}", tag = "角色管理",
     params(("ids" = String, Path)),
     responses((status = 200, description = "批量删除成功", body = crate::http::ApiEmptyResponse)),
@@ -266,7 +259,6 @@ async fn batch_remove(
 /// 创建角色异步导出任务。
 #[post("/exports")]
 #[perm("system:role:export")]
-#[ryframe_macro::capability("system.role")]
 #[utoipa::path(post, path = "/api/v1/system/roles/exports", tag = "角色管理",
     params(("Idempotency-Key" = String, Header, description = "幂等键")), request_body = RoleExportRequestDto,
     responses((status = 202, description = "角色导出任务已创建", body = ApiResponse<ExportJobVo>)), security(("bearer" = [])))]
@@ -291,7 +283,6 @@ async fn request_role_export(
 /// 替换一个角色已分配的全部权限。
 #[put("/{id}/permissions")]
 #[perm("system:role:edit")]
-#[ryframe_macro::capability("system.role")]
 #[utoipa::path(put, path = "/api/v1/system/roles/{id}/permissions", tag = "角色管理",
     params(("id" = String, Path)), request_body = ReplaceRolePermissionsDto,
     responses((status = 200, description = "权限分配成功", body = crate::http::ApiEmptyResponse)),
@@ -317,7 +308,6 @@ async fn replace_permissions(
 /// 查询角色已分配的权限ID列表
 #[get("/{id}/permissions")]
 #[perm("system:role:list")]
-#[ryframe_macro::capability("system.role")]
 #[utoipa::path(get, path = "/api/v1/system/roles/{id}/permissions", tag = "角色管理",
     params(("id" = String, Path)),
     responses((status = 200, description = "角色权限ID列表", body = ApiResponse<Vec<String>>)),
@@ -340,7 +330,6 @@ async fn get_role_perms(
 /// 原子替换一个角色的数据范围和自定义部门。
 #[put("/{id}/data-scope")]
 #[perm("system:role:edit")]
-#[ryframe_macro::capability("system.role")]
 #[utoipa::path(put, path = "/api/v1/system/roles/{id}/data-scope", tag = "角色管理",
     params(("id" = String, Path)), request_body = ReplaceRoleDataScopeDto,
     responses((status = 200, description = "数据权限更新成功", body = crate::http::ApiEmptyResponse)),
