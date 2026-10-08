@@ -238,6 +238,16 @@ class FullStackFixtureTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "已存在"):
             fixture.reference_fixture_root(self.backend)
 
+    def test_business_contract_uses_candidate_sync_entry_before_source_capture(self):
+        log = self.root / "log"
+        with patch.object(fixture, "run") as run:
+            fixture.sync_fixture_contract(self.backend, self.frontend, log)
+        run.assert_called_once_with(
+            ["cargo", "xtask", "generate", "api", "--write", "--frontend-dir", str(self.frontend)],
+            self.backend,
+            log,
+        )
+
     def test_private_protocol_reconstructs_prepare_arguments_without_leaking_to_children(self):
         value = {
             "backend_dir": str(self.backend),

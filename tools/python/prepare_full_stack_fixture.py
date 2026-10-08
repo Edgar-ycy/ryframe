@@ -71,6 +71,15 @@ def run(
         )
 
 
+def sync_fixture_contract(backend: Path, frontend: Path, log: Path) -> None:
+    """业务资源生成后，通过正式候选入口同步契约及其来源标记。"""
+    run(
+        ["cargo", "xtask", "generate", "api", "--write", "--frontend-dir", str(frontend)],
+        backend,
+        log,
+    )
+
+
 def copy_snapshot(
     source: Path, destination: Path, receipt: dict, patch: bytes, log: Path
 ) -> None:
@@ -247,6 +256,7 @@ def prepare(
         environment={"RYFRAME_GENERATOR_FRONTEND_DIR": str(roots["frontend"])},
     )
     register_fixture_migration(roots["backend"], log)
+    sync_fixture_contract(roots["backend"], roots["frontend"], log)
     before = {name: snapshot(path)[0] for name, path in roots.items()}
     run(
         [
