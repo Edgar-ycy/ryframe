@@ -163,9 +163,14 @@ def run_private(
     try:
         try:
             main(arguments)
-        except Exception:
+        except Exception as error:
+            from restore_reference_io import redact_object_diagnostic
+
+            detail = type(error).__name__
+            if isinstance(error, ValueError):
+                detail += ": " + redact_object_diagnostic(str(error), os.environ)
             print(
-                f"reference_fixture_{domain}_failed：夹具控制阶段失败，请核对原账本和失败证据；不自动重放。",
+                f"reference_fixture_{domain}_failed：{detail}；请核对原账本和失败证据，不自动重放。",
                 file=sys.stderr,
             )
             return 1

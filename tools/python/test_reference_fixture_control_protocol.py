@@ -1,4 +1,5 @@
 import json
+import io
 import os
 from pathlib import Path
 import subprocess
@@ -29,6 +30,38 @@ KIND = "ryframe-reference-fixture-control"
 
 
 class FixtureControlProtocolTests(unittest.TestCase):
+    def test_domain_failure_reports_validation_reason_without_credentials(self):
+        raw = self.protocol(
+            "review", "renew", True,
+            template=self.root + "/.local-tests/template.json",
+            fixture=self.root + "/.local-tests/fixture.json",
+            future_root=self.root + "/.local-tests/future",
+            id="review-test",
+            api_port=18000,
+            worker_port=18003,
+            frontend_port=18006,
+            rustfs_api_port=19000,
+            rustfs_console_port=19001,
+            redis_port=16000,
+            output=self.root + "/.local-tests/output.json",
+        )
+        output = io.StringIO()
+
+        def fail(_args):
+            raise ValueError("计划来源错误：secret-for-test")
+        with (
+            mock.patch.dict(os.environ, {PROTOCOL_KEY: raw, "APP_PASSWORD": "secret-for-test"}),
+            mock.patch.object(sys, "argv", ["review.py"]),
+            mock.patch.object(sys, "stderr", output),
+        ):
+            result = run_private(
+                "review", fixture_review.PROTOCOL_SCHEMAS, fail, positional_operation=False,
+            )
+        self.assertEqual(result, 1)
+        self.assertIn("计划来源错误", output.getvalue())
+        self.assertIn("[REDACTED]", output.getvalue())
+        self.assertNotIn("secret-for-test", output.getvalue())
+
     def setUp(self):
         self.root = str(Path(__file__).resolve().parents[2])
 

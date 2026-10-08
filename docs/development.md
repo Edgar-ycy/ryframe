@@ -41,7 +41,7 @@ cargo ryframe new-business inventory --dry-run
 
 正式创建会原子完成业务 crate 的 `kind = "business"` 元数据和 SDK feature、工作区成员、`crates/ryframe` 的可选依赖与 API/Worker/迁移 feature，以及 `business_modules()` 注册。预览不写文件。命令拒绝覆盖同名 crate 或重复注册；需要撤销时按普通 Git 变更审查和回退。
 
-推荐目录沿用原 `example` 中易读的职责分类，并把可重生成文件统一放入 `generated`：
+业务 crate 按职责分类，并把可重生成文件统一放入 `generated`：
 
 ```text
 order-business/
@@ -75,6 +75,16 @@ cargo generate -- resource --package order-business --model Order --write
 脚手架已经在 `crates/ryframe/Cargo.toml` 添加 `order-business` 依赖，并在 `crates/ryframe/src/business.rs` 的 `business_modules()` 中加入 `order_business::module()`。API、Worker 和迁移程序会读取同一列表。模块名、资源名、表名、路由、OpenAPI operation/schema 和依赖循环在启动前校验。
 
 Post 和 Notice 仍是 RyFrame 框架自身的标准资源。框架维护者继续使用内部 `cargo xtask generate resource` 检查它们；使用者业务不写 `catalog/resources/*.toml`。
+
+从模型到页面可按以下顺序联调：
+
+1. 创建业务 crate、登记 `ResourceModel` 后预览生成，再用 `--write` 写入；再次预览应没有差异。
+2. 为业务模型和用例添加测试，执行 `cargo test --locked -p order-business`。先通过控制库与明确租户目标的迁移状态检查，再显式应用本模块迁移，命令见[数据指南](data.md)。
+3. 分别运行 `cargo serve` 与 `cargo worker`，确认模块路由和任务正常装配。接口变化后从后端执行 `cargo xtask generate api --write` 同步候选契约。
+4. 在前端通过生成的 typed caller 接入业务 API；页面登记路由与 i18n namespace，查询和变更绑定当前会话 scope，方法见[前端架构说明](../../ryframe-vue3/ARCHITECTURE.md)。
+5. 运行前端 `corepack pnpm check --full`，再用本地 Chrome 验证业务成功、权限拒绝、租户切换和取消。只在隔离开发环境准备数据，完成后核验自己创建的数据库与对象资源。
+
+框架的自动化业务夹具使用同一脚手架，在忽略目录中生成使用者业务 crate 并核验重复生成；可通过 `cargo xtask check recovery fixture --output-dir <绝对隔离目录> --write` 创建，不会向框架产品加入内置业务模块。
 
 ## 开发自定义业务
 
