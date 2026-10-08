@@ -3142,7 +3142,7 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "ryframe"
-version = "0.13.2"
+version = "0.13.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -3178,7 +3178,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-adapters"
-version = "0.13.2"
+version = "0.13.1"
 dependencies = [
  "async-trait",
  "calamine",
@@ -3218,7 +3218,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-api"
-version = "0.13.2"
+version = "0.13.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -3258,7 +3258,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-application"
-version = "0.13.2"
+version = "0.13.1"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3281,7 +3281,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-auth"
-version = "0.13.2"
+version = "0.13.1"
 dependencies = [
  "argon2",
  "chrono",
@@ -3297,7 +3297,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-config"
-version = "0.13.2"
+version = "0.13.1"
 dependencies = [
  "base64 0.23.1",
  "percent-encoding",
@@ -3309,7 +3309,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-db"
-version = "0.13.2"
+version = "0.13.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3333,7 +3333,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-generator"
-version = "0.13.2"
+version = "0.13.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3354,7 +3354,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-kernel"
-version = "0.13.2"
+version = "0.13.1"
 dependencies = [
  "serde",
  "validator",
@@ -3362,7 +3362,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-macro"
-version = "0.13.2"
+version = "0.13.1"
 dependencies = [
  "axum",
  "proc-macro2",
@@ -3372,7 +3372,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-sdk"
-version = "0.13.2"
+version = "0.13.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -3393,7 +3393,7 @@ dependencies = [
 
 [[package]]
 name = "ryframe-tenant-db"
-version = "0.13.2"
+version = "0.13.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5069,7 +5069,7 @@ checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
 
 [[package]]
 name = "xtask"
-version = "0.13.2"
+version = "0.13.1"
 dependencies = [
  "chrono",
  "nix 0.29.0",
