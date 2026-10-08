@@ -32,6 +32,11 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
     } else {
         ""
     };
+    let set_import = if resource.soft_delete.is_some() {
+        "ActiveValue::Set, "
+    } else {
+        ""
+    };
     let transaction_trait = if resource.storage == StorageKind::ControlRow {
         "TransactionTrait, "
     } else {
@@ -50,6 +55,7 @@ pub(crate) fn repository(resource: &ResourceIr, resources: &[&ResourceIr], heade
         pascal = pascal,
         detail_import = detail_import,
         model_trait = model_trait,
+        set_import = set_import,
         transaction_trait = transaction_trait,
         tenant_mismatch = tenant_mismatch,
         detail_type = detail_type,

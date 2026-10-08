@@ -103,6 +103,13 @@ pub struct Order {
 }
 
 fn assert_generated_business(workspace: &std::path::Path) {
+    let repository =
+        fs::read_to_string(workspace.join("order-business/src/generated/repositories/order.rs"))
+            .expect("应读取业务 Repository");
+    assert!(
+        !repository.contains("ActiveValue::Set"),
+        "物理删除资源不应生成未使用的软删导入"
+    );
     assert!(
         workspace
             .join("order-business/src/generated/entities/order.rs")
