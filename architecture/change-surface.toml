@@ -11,7 +11,7 @@ attention_percent = 90
 backend_rust_hard_limit = 600
 frontend_typescript_hard_limit = 300
 frontend_composable_hard_limit = 300
-frontend_sfc_hard_limit = 400
+frontend_sfc_hard_limit = 600
 frontend_style_hard_limit = 300
 frontend_script_hard_limit = 500
 

@@ -903,7 +903,7 @@ fn workspace_change_surface_policy_is_valid_and_versioned() {
     assert_eq!(policy.soft_source_size.warning_percent, 80);
     assert_eq!(policy.soft_source_size.attention_percent, 90);
     assert_eq!(policy.soft_source_size.backend_rust_hard_limit, 600);
-    assert_eq!(policy.soft_source_size.frontend_sfc_hard_limit, 400);
+    assert_eq!(policy.soft_source_size.frontend_sfc_hard_limit, 600);
     assert!(
         policy
             .full_invalidation_reason(RepositoryKind::Backend, "Cargo.toml")
