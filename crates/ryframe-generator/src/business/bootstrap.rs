@@ -271,7 +271,9 @@ fn add_module_registration(source: &str, crate_ident: &str) -> Result<String, Re
 
 fn business_manifest(package: &str, module: &str) -> String {
     format!(
-        "[package]\nname = \"{package}\"\nversion.workspace = true\nedition.workspace = true\nrust-version.workspace = true\nauthors.workspace = true\nlicense.workspace = true\nrepository.workspace = true\n\n[package.metadata.ryframe]\nkind = \"business\"\nmodule = \"{module}\"\n\n[features]\ndefault = [\"api\", \"migration\"]\ncatalog = []\nruntime = [\"ryframe-sdk/runtime\"]\npersistence = [\"runtime\", \"ryframe-sdk/persistence\"]\napi = [\"persistence\", \"ryframe-sdk/api\"]\nmigration = [\"persistence\", \"ryframe-sdk/migration\"]\n\n[dependencies]\nryframe-sdk = {{ path = \"../ryframe-sdk\", default-features = false }}\n\n[lints]\nworkspace = true\n"
+        include_str!("manifest.toml.tpl"),
+        package = package,
+        module = module,
     )
 }
 
@@ -410,6 +412,25 @@ mod tests {
         assert!(crate_root.join(".ryframe/generated.toml").is_file());
         let manifest = fs::read_to_string(crate_root.join("Cargo.toml")).expect("读取业务清单");
         assert!(manifest.contains("kind = \"business\""));
+        let parsed: toml::Value = toml::from_str(&manifest).expect("业务清单应为合法 TOML");
+        for dependency in ["sea-orm", "serde", "utoipa", "validator"] {
+            assert_eq!(
+                parsed["dependencies"][dependency]["workspace"].as_bool(),
+                Some(true)
+            );
+            assert_eq!(
+                parsed["dependencies"][dependency]["optional"].as_bool(),
+                Some(true)
+            );
+        }
+        let runtime = parsed["features"]["runtime"]
+            .as_array()
+            .expect("应提供 runtime feature");
+        assert!(!runtime.iter().any(|value| {
+            value
+                .as_str()
+                .is_some_and(|value| value.starts_with("dep:"))
+        }));
         let composition = fs::read_to_string(directory.path().join("crates/ryframe/Cargo.toml"))
             .expect("读取组合根清单");
         for expected in [
