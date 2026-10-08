@@ -163,21 +163,11 @@ def register_fixture_migration(root: Path, log: Path) -> None:
 
 
 def create_business_fixture(root: Path, log: Path) -> bytes:
-    """创建并显式接入单一业务 crate，不改写框架资源目录。"""
+    """复用正式脚手架及进程 feature 装配，只提供验收资源模型。"""
     crate = root / "crates/order-business"
     template = Path(__file__).with_name("fixtures") / "order-business"
-    shutil.copytree(template, crate)
-    cargo = root / "crates/ryframe/Cargo.toml"
-    source = cargo.read_text(encoding="utf-8")
-    marker = '[dependencies]\n'
-    if source.count(marker) != 1:
-        raise ValueError("隔离夹具无法定位组合根依赖区")
-    cargo.write_text(source.replace(marker, marker + 'order-business = { path = "../order-business" }\n', 1), encoding="utf-8", newline="\n")
-    registry = root / "crates/ryframe/src/business.rs"
-    source = registry.read_text(encoding="utf-8")
-    if source.count('    vec![]') != 1:
-        raise ValueError("隔离夹具无法定位业务模块注册表")
-    registry.write_text(source.replace('    vec![]', '    vec![order_business::module()]', 1), encoding="utf-8", newline="\n")
+    run(["cargo", "ryframe", "new-business", "order"], root, log)
+    shutil.copyfile(template / "src/resources/mod.rs", crate / "src/resources/mod.rs")
     # 显式接入 path crate 会改变解析图；仅在隔离夹具中离线刷新锁文件，
     # 后续所有生成命令仍使用 --locked，确保不会隐式修改业务源码。
     run(["cargo", "generate-lockfile", "--offline"], root, log)

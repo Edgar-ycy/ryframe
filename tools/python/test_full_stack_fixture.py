@@ -218,17 +218,21 @@ class FullStackFixtureTests(unittest.TestCase):
         registry = self.backend / "crates/ryframe/src/business.rs"
         registry.parent.mkdir(parents=True)
         registry.write_text("pub fn business_modules() {\n    vec![]\n}\n", encoding="utf-8")
-        with patch.object(fixture, "run") as run:
+        def scaffold(arguments, _root, _log):
+            if arguments == ["cargo", "ryframe", "new-business", "order"]:
+                (self.backend / "crates/order-business/src/resources").mkdir(parents=True)
+
+        with patch.object(fixture, "run", side_effect=scaffold) as run:
             model = fixture.create_business_fixture(self.backend, self.root / "log")
 
         self.assertIn(b"biz_order", model)
-        self.assertIn('order-business', cargo.read_text(encoding="utf-8"))
-        self.assertIn('order_business::module()', registry.read_text(encoding="utf-8"))
+        self.assertEqual(cargo.read_text(encoding="utf-8"), "[dependencies]\n")
+        self.assertEqual(registry.read_text(encoding="utf-8"), "pub fn business_modules() {\n    vec![]\n}\n")
         self.assertTrue((self.backend / "crates/order-business/src/resources/mod.rs").is_file())
-        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_count, 3)
         self.assertEqual(
             run.call_args_list[0].args[0],
-            ["cargo", "generate-lockfile", "--offline"],
+            ["cargo", "ryframe", "new-business", "order"],
         )
 
     def test_reference_fixture_root_is_created_once_for_new_business_worktree(self):

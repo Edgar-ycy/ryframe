@@ -12,3 +12,8 @@ pub struct Order {
     #[resource(read_only)]
     pub updated_at: ryframe_sdk::chrono::DateTime<ryframe_sdk::chrono::Utc>,
 }
+
+/// 登记验收模型；模块和进程 feature 由正式脚手架装配。
+pub fn descriptors() -> Vec<ryframe_sdk::ResourceDescriptor> {
+    vec![<Order as ryframe_sdk::ResourceModel>::descriptor()]
+}
