@@ -97,8 +97,8 @@ content_hash = "511c74fc058c0193b765414144a92dea9b4c0ae9e42f057c68d565900f7bb66d
 resource = "__catalog__"
 root = "backend"
 path = "crates/ryframe-api/src/generated/router.rs"
-source_hash = "0e75eff55cdbfba160b97a9355fe0e6f2e11f6d3fad65e34dc90a2591f1bf49c"
-content_hash = "0e75eff55cdbfba160b97a9355fe0e6f2e11f6d3fad65e34dc90a2591f1bf49c"
+source_hash = "45f8ba45baf92b40493cc8fdbf4655aef7c764107a8a2d2b00217deaf64300c2"
+content_hash = "45f8ba45baf92b40493cc8fdbf4655aef7c764107a8a2d2b00217deaf64300c2"
 
 [[entries]]
 resource = "__catalog__"

@@ -258,13 +258,16 @@ fn render_api_mod(resources: &[&ResourceIr], header: &str) -> String {
 }
 
 fn render_generated_router(resources: &[&ResourceIr], header: &str) -> String {
+    let last_capability = resources
+        .iter()
+        .rposition(|resource| resource.access.capability.is_some());
     let nests = resources
         .iter()
         .enumerate()
         .map(|(index, resource)| {
             let prefix = format!("/api/v1/{}", resource.module);
             let path = resource.api.path.trim_start_matches(&prefix);
-            let state = if index + 1 == resources.len() {
+            let state = if Some(index) == last_capability {
                 "state"
             } else {
                 "state.clone()"

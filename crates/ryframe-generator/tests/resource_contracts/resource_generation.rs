@@ -63,6 +63,23 @@ fn order() -> ryframe_generator::ResourceIr {
 }
 
 #[test]
+fn router_moves_state_into_the_last_guard_before_unguarded_resources() {
+    let notice_path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../catalog/resources/notice.toml");
+    let notice = load_resource(notice_path).expect("Notice 资源清单应有效");
+    let post = load_resource(post_path()).expect("Post 资源清单应有效");
+    let generated = render_resources(&[notice, post]).expect("资源应能生成");
+    let router = &generated
+        .assets
+        .iter()
+        .find(|asset| asset.path == "crates/ryframe-api/src/generated/router.rs")
+        .expect("应生成路由入口")
+        .content;
+    assert!(router.contains("CapabilityGuardState::new(state, \"system.notice\")"));
+    assert!(!router.contains("state.clone()"));
+}
+
+#[test]
 fn post_manifest_preserves_the_existing_public_contract_and_extensions() {
     let post = load_resource(post_path()).expect("Post 资源清单应有效");
 
