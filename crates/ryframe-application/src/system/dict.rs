@@ -128,7 +128,7 @@ impl DictService {
         name: Option<&str>,
         code: Option<&str>,
         status: Option<&str>,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<DictTypeVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         Ok(self

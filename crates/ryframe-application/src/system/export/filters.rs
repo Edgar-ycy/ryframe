@@ -8,6 +8,8 @@ use super::{EXPORT_STATUS_SUCCEEDED, RequestExportCommand};
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct UserExportFilter {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ids: Option<Vec<i64>>,
     username: Option<String>,
     phone: Option<String>,
     status: Option<String>,
@@ -22,6 +24,7 @@ impl UserExportFilter {
         dept_id: Option<i64>,
     ) -> Self {
         Self {
+            ids: None,
             username: normalize_optional_text(username),
             phone: normalize_optional_text(phone),
             status: normalize_optional_text(status),
@@ -46,7 +49,8 @@ impl UserExportFilter {
     }
 
     pub const fn is_empty(&self) -> bool {
-        self.username.is_none()
+        self.ids.is_none()
+            && self.username.is_none()
             && self.phone.is_none()
             && self.status.is_none()
             && self.dept_id.is_none()
@@ -58,6 +62,8 @@ macro_rules! text_export_filter {
         #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
         #[serde(deny_unknown_fields)]
         pub struct $name {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            ids: Option<Vec<i64>>,
             $(
                 $field: Option<String>,
             )+
@@ -66,6 +72,7 @@ macro_rules! text_export_filter {
         impl $name {
             pub fn new($($field: Option<String>),+) -> Self {
                 Self {
+                    ids: None,
                     $($field: normalize_optional_text($field)),+
                 }
             }
@@ -77,7 +84,7 @@ macro_rules! text_export_filter {
             )+
 
             pub const fn is_empty(&self) -> bool {
-                $(self.$field.is_none())&&+
+                self.ids.is_none() && $(self.$field.is_none())&&+
             }
         }
     };
@@ -92,6 +99,8 @@ text_export_filter!(DictTypeExportFilter { name, code, status });
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OperLogExportFilter {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ids: Option<Vec<i64>>,
     oper_name: Option<String>,
     status: Option<String>,
     begin_time: Option<DateTime<Utc>>,
@@ -107,6 +116,7 @@ impl OperLogExportFilter {
     ) -> AppResult<Self> {
         let (begin_time, end_time) = parse_export_time_range(begin_time, end_time)?;
         Ok(Self {
+            ids: None,
             oper_name: normalize_optional_text(oper_name),
             status: normalize_optional_text(status),
             begin_time,
@@ -131,7 +141,8 @@ impl OperLogExportFilter {
     }
 
     const fn is_empty(&self) -> bool {
-        self.oper_name.is_none()
+        self.ids.is_none()
+            && self.oper_name.is_none()
             && self.status.is_none()
             && self.begin_time.is_none()
             && self.end_time.is_none()
@@ -142,6 +153,8 @@ impl OperLogExportFilter {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LoginLogExportFilter {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ids: Option<Vec<i64>>,
     user_name: Option<String>,
     status: Option<String>,
     begin_time: Option<DateTime<Utc>>,
@@ -157,6 +170,7 @@ impl LoginLogExportFilter {
     ) -> AppResult<Self> {
         let (begin_time, end_time) = parse_export_time_range(begin_time, end_time)?;
         Ok(Self {
+            ids: None,
             user_name: normalize_optional_text(user_name),
             status: normalize_optional_text(status),
             begin_time,
@@ -181,7 +195,8 @@ impl LoginLogExportFilter {
     }
 
     const fn is_empty(&self) -> bool {
-        self.user_name.is_none()
+        self.ids.is_none()
+            && self.user_name.is_none()
             && self.status.is_none()
             && self.begin_time.is_none()
             && self.end_time.is_none()
@@ -209,6 +224,40 @@ pub enum ExportSelection {
 }
 
 impl ExportSelection {
+    /// 固定本次选中的主键，归一化后写入任务载荷与幂等指纹。
+    pub fn with_selected_ids(mut self, mut ids: Vec<i64>) -> AppResult<Self> {
+        if ids.len() > 1000 || ids.iter().any(|id| *id <= 0) {
+            return Err(AppError::Validation(
+                "选中导出 ID 必须为正整数且不能超过 1000 个".into(),
+            ));
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        let selected = (!ids.is_empty()).then_some(ids);
+        match &mut self {
+            Self::Users(filter) => filter.ids = selected,
+            Self::Roles(filter) => filter.ids = selected,
+            Self::Posts(filter) => filter.ids = selected,
+            Self::Configs(filter) => filter.ids = selected,
+            Self::DictTypes(filter) => filter.ids = selected,
+            Self::OperLogs(filter) => filter.ids = selected,
+            Self::LoginLogs(filter) => filter.ids = selected,
+        }
+        Ok(self)
+    }
+
+    pub fn selected_ids(&self) -> &[i64] {
+        match self {
+            Self::Users(filter) => filter.ids.as_deref().unwrap_or_default(),
+            Self::Roles(filter) => filter.ids.as_deref().unwrap_or_default(),
+            Self::Posts(filter) => filter.ids.as_deref().unwrap_or_default(),
+            Self::Configs(filter) => filter.ids.as_deref().unwrap_or_default(),
+            Self::DictTypes(filter) => filter.ids.as_deref().unwrap_or_default(),
+            Self::OperLogs(filter) => filter.ids.as_deref().unwrap_or_default(),
+            Self::LoginLogs(filter) => filter.ids.as_deref().unwrap_or_default(),
+        }
+    }
+
     pub const fn resource(&self) -> &'static str {
         match self {
             Self::Users(_) => "users",

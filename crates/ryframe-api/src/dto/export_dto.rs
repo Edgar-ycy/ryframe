@@ -16,6 +16,8 @@ macro_rules! export_request_dto {
         pub struct $request {
             pub filter: $filter,
             pub confirm_all: bool,
+            /// 只导出选中的记录；Snowflake ID 始终按字符串传输。
+            pub ids: Option<Vec<String>>,
         }
     };
 }
@@ -94,11 +96,20 @@ export_request_dto!(DictTypeExportRequestDto, DictTypeExportFilterDto);
 export_request_dto!(OperLogExportRequestDto, OperLogExportFilterDto);
 export_request_dto!(LoginLogExportRequestDto, LoginLogExportFilterDto);
 
+fn finish_selection(
+    selection: ExportSelection,
+    confirm_all: bool,
+    ids: Option<Vec<String>>,
+) -> AppResult<(ExportSelection, bool)> {
+    let parsed = parse_positive_id_list(&ids.unwrap_or_default(), "选中导出 ID 必须是正整数")?;
+    Ok((selection.with_selected_ids(parsed)?, confirm_all))
+}
+
 impl UserExportRequestDto {
     pub fn into_selection(self) -> AppResult<(ExportSelection, bool)> {
         let filter = self.filter;
         let dept_id = parse_optional_id(filter.dept_id.as_deref(), "部门ID")?;
-        Ok((
+        finish_selection(
             ExportSelection::Users(UserExportFilter::new(
                 filter.username,
                 filter.phone,
@@ -106,58 +117,63 @@ impl UserExportRequestDto {
                 dept_id,
             )),
             self.confirm_all,
-        ))
+            self.ids,
+        )
     }
 }
 
 impl RoleExportRequestDto {
-    pub fn into_selection(self) -> (ExportSelection, bool) {
+    pub fn into_selection(self) -> AppResult<(ExportSelection, bool)> {
         let filter = self.filter;
-        (
+        finish_selection(
             ExportSelection::Roles(RoleExportFilter::new(
                 filter.name,
                 filter.code,
                 filter.status,
             )),
             self.confirm_all,
+            self.ids,
         )
     }
 }
 
 impl PostExportRequestDto {
-    pub fn into_selection(self) -> (ExportSelection, bool) {
+    pub fn into_selection(self) -> AppResult<(ExportSelection, bool)> {
         let filter = self.filter;
-        (
+        finish_selection(
             ExportSelection::Posts(PostExportFilter::new(
                 filter.name,
                 filter.code,
                 filter.status,
             )),
             self.confirm_all,
+            self.ids,
         )
     }
 }
 
 impl ConfigExportRequestDto {
-    pub fn into_selection(self) -> (ExportSelection, bool) {
+    pub fn into_selection(self) -> AppResult<(ExportSelection, bool)> {
         let filter = self.filter;
-        (
+        finish_selection(
             ExportSelection::Configs(ConfigExportFilter::new(filter.name, filter.key)),
             self.confirm_all,
+            self.ids,
         )
     }
 }
 
 impl DictTypeExportRequestDto {
-    pub fn into_selection(self) -> (ExportSelection, bool) {
+    pub fn into_selection(self) -> AppResult<(ExportSelection, bool)> {
         let filter = self.filter;
-        (
+        finish_selection(
             ExportSelection::DictTypes(DictTypeExportFilter::new(
                 filter.name,
                 filter.code,
                 filter.status,
             )),
             self.confirm_all,
+            self.ids,
         )
     }
 }
@@ -165,7 +181,7 @@ impl DictTypeExportRequestDto {
 impl OperLogExportRequestDto {
     pub fn into_selection(self) -> AppResult<(ExportSelection, bool)> {
         let filter = self.filter;
-        Ok((
+        finish_selection(
             ExportSelection::OperLogs(OperLogExportFilter::new(
                 filter.oper_name,
                 filter.status,
@@ -173,14 +189,15 @@ impl OperLogExportRequestDto {
                 filter.end_time,
             )?),
             self.confirm_all,
-        ))
+            self.ids,
+        )
     }
 }
 
 impl LoginLogExportRequestDto {
     pub fn into_selection(self) -> AppResult<(ExportSelection, bool)> {
         let filter = self.filter;
-        Ok((
+        finish_selection(
             ExportSelection::LoginLogs(LoginLogExportFilter::new(
                 filter.user_name,
                 filter.status,
@@ -188,7 +205,8 @@ impl LoginLogExportRequestDto {
                 filter.end_time,
             )?),
             self.confirm_all,
-        ))
+            self.ids,
+        )
     }
 }
 

@@ -37,7 +37,7 @@ impl LoginInfoPersistencePort for FakePersistence {
         _tenant_id: &str,
         _filter: LoginInfoFilter<'_>,
         _data_scope: &DataScopeContext,
-        _window: ExportCursorWindow,
+        _window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<LoginInfoRecord>> {
         unreachable!("本测试不执行导出")
     }

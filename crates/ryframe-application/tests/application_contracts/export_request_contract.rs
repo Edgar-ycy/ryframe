@@ -6,6 +6,36 @@ mod filters {
     use super::*;
 
     #[test]
+    fn selected_rows_are_normalized_persisted_and_need_no_all_confirmation() {
+        let selection = ExportSelection::Roles(RoleExportFilter::new(None, None, None))
+            .with_selected_ids(vec![9007199254740993, 2, 2])
+            .expect("合法 ID");
+        assert_eq!(selection.selected_ids(), &[2, 9007199254740993]);
+        let persisted = serde_json::to_value(&selection).expect("可保存");
+        let restored: ExportSelection = serde_json::from_value(persisted).expect("可恢复");
+        assert_eq!(restored.selected_ids(), selection.selected_ids());
+        validate_request_command(&RequestExportCommand {
+            permission_code: "system:role:export".into(),
+            selection,
+            confirm_all: false,
+        })
+        .expect("勾选导出不需要全量确认");
+        for ids in [vec![0], vec![-1], vec![1; 1001]] {
+            assert!(
+                ExportSelection::Roles(RoleExportFilter::new(None, None, None))
+                    .with_selected_ids(ids)
+                    .is_err()
+            );
+        }
+        assert!(
+            ExportSelection::Roles(RoleExportFilter::new(None, None, None))
+                .with_selected_ids(vec![])
+                .expect("空列表等于未勾选")
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn normalizes_text_and_preserves_numeric_zero() {
         let selection = ExportSelection::Users(UserExportFilter::new(
             Some("  alice  ".into()),

@@ -132,7 +132,7 @@ impl LoginInfoService {
         &self,
         actor: &ActorContext,
         filter: LoginInfoFilter<'_>,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<LoginInfoVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let data_scope = actor.data_scope_context();

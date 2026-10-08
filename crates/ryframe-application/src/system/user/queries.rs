@@ -25,7 +25,7 @@ impl UserService {
         &self,
         actor: &ActorContext,
         filter: UserQueryFilter<'_>,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<UserVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let scope = actor.data_scope_context();

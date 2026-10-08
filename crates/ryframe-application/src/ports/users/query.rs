@@ -56,7 +56,7 @@ pub trait UserQueryReadPort: Send + Sync {
         tenant_id: &'a str,
         filter: UserQueryFilter<'a>,
         scope: &'a DataScopeContext,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> ryframe_kernel::AppResult<Vec<UserQueryRecord>>;
 
     async fn page<'a>(

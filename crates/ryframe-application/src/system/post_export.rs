@@ -21,7 +21,7 @@ impl PostExportService {
         name: Option<&str>,
         code: Option<&str>,
         status: Option<&str>,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<PostExportRow>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         self.read

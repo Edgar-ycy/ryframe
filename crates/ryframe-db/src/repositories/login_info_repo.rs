@@ -109,13 +109,17 @@ impl LoginInfoRepository {
         tenant_id: &str,
         filter: &LoginInfoFilter<'_>,
         scope_ctx: &DataScopeContext,
-        window: ryframe_kernel::ExportCursorWindow,
+        window: ryframe_kernel::ExportCursorWindow<'_>,
     ) -> AppResult<Vec<login_info::Model>>
     where
         C: ConnectionTrait,
     {
         let mut select = Self::filtered_select(tenant_id, filter, scope_ctx)
             .filter(login_info::Column::Id.lte(window.upper_id()));
+        if !window.selected_ids().is_empty() {
+            select =
+                select.filter(login_info::Column::Id.is_in(window.selected_ids().iter().copied()));
+        }
         if let Some(id) = window.after_id() {
             select = select.filter(login_info::Column::Id.gt(id));
         }
@@ -134,6 +138,7 @@ impl LoginInfoRepository {
         tenant_id: &str,
         filter: &LoginInfoFilter<'_>,
         scope_ctx: &DataScopeContext,
+        selected_ids: &[i64],
     ) -> AppResult<ryframe_kernel::ExportQuerySnapshot>
     where
         C: ConnectionTrait,
@@ -142,6 +147,7 @@ impl LoginInfoRepository {
             Self::filtered_select(tenant_id, filter, scope_ctx),
             login_info::Column::Id,
             db,
+            selected_ids,
         )
         .await
     }

@@ -75,7 +75,7 @@ impl LoginInfoPersistencePort for DatabaseLoginInfoPersistence {
         tenant_id: &str,
         filter: LoginInfoFilter<'_>,
         data_scope: &DataScopeContext,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<LoginInfoRecord>> {
         let database = self
             .database

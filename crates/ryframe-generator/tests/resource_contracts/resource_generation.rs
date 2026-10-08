@@ -144,7 +144,9 @@ fn post_slice_preserves_control_configuration_and_conflict_semantics() {
     assert!(page.contains(":last-successful-query=\"lastSuccessfulQuery ?? null\""));
     assert!(page.contains("lastSuccessfulQuery: PostQuery | null"));
     assert!(page.contains("actions?(props:"));
-    assert!(page.contains("<template v-if=\"slots.actions\" #actions>"));
+    assert!(page.contains("<template v-if=\"slots.actions\" #actions=\"{ selectedExportIds, captureSelectionOwnership }\">"));
+    assert!(page.contains(":selected-export-ids=\"selectedExportIds\""));
+    assert!(page.contains(":capture-selection-ownership=\"captureSelectionOwnership\""));
     assert!(page.contains("import { computed } from 'vue'"));
     let access = generated
         .assets

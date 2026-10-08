@@ -78,6 +78,7 @@ impl ExportRequestTransaction for DatabaseExportRequestTransaction {
                         tenant_id,
                         &user_filter(filter),
                         &data_scope,
+                        selection.selected_ids(),
                     )
                     .await
             }
@@ -91,6 +92,7 @@ impl ExportRequestTransaction for DatabaseExportRequestTransaction {
                             code: filter.code(),
                             status: filter.status(),
                         },
+                        selection.selected_ids(),
                     )
                     .await
             }
@@ -104,6 +106,7 @@ impl ExportRequestTransaction for DatabaseExportRequestTransaction {
                             code: filter.code(),
                             status: filter.status(),
                         },
+                        selection.selected_ids(),
                     )
                     .await
             }
@@ -116,6 +119,7 @@ impl ExportRequestTransaction for DatabaseExportRequestTransaction {
                             name: filter.name(),
                             key: filter.key(),
                         },
+                        selection.selected_ids(),
                     )
                     .await
             }
@@ -129,6 +133,7 @@ impl ExportRequestTransaction for DatabaseExportRequestTransaction {
                             code: filter.code(),
                             status: filter.status(),
                         },
+                        selection.selected_ids(),
                     )
                     .await
             }
@@ -137,13 +142,9 @@ impl ExportRequestTransaction for DatabaseExportRequestTransaction {
                     .summarize_export(
                         &self.transaction,
                         tenant_id,
-                        &OperLogFilter {
-                            oper_name: filter.oper_name(),
-                            status: filter.status(),
-                            begin_time: filter.begin_time(),
-                            end_time: filter.end_time(),
-                        },
+                        &oper_filter(filter),
                         &data_scope,
+                        selection.selected_ids(),
                     )
                     .await
             }
@@ -154,6 +155,7 @@ impl ExportRequestTransaction for DatabaseExportRequestTransaction {
                         tenant_id,
                         &login_filter(filter),
                         &data_scope,
+                        selection.selected_ids(),
                     )
                     .await
             }
@@ -239,6 +241,17 @@ fn login_filter(
 ) -> LoginInfoFilter<'_> {
     LoginInfoFilter {
         user_name: filter.user_name(),
+        status: filter.status(),
+        begin_time: filter.begin_time(),
+        end_time: filter.end_time(),
+    }
+}
+
+fn oper_filter(
+    filter: &ryframe_application::system::operations::OperLogExportFilter,
+) -> OperLogFilter<'_> {
+    OperLogFilter {
+        oper_name: filter.oper_name(),
         status: filter.status(),
         begin_time: filter.begin_time(),
         end_time: filter.end_time(),

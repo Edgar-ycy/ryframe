@@ -67,11 +67,14 @@ Authorization: Bearer <access_token>
 ```json
 {
   "filter": {},
-  "confirm_all": false
+  "confirm_all": false,
+  "ids": ["101", "102"]
 }
 ```
 
-请求不接受 `page` 或 `page_size`。导出选择页面最后一次成功应用的筛选，覆盖全部匹配分页；规范化后为空必须将 `confirm_all` 设为 `true`。
+请求不接受 `page` 或 `page_size`。勾选行时传入字符串主键 `ids`，只导出选中且符合最后一次成功应用筛选和数据权限的记录；最多传入 1000 个 ID，重复 ID 会归一化。列表的全选只选择当前页，翻页、刷新或切换会话后清空选择。
+
+未勾选时省略 `ids` 或传空列表，按最后一次成功应用的筛选导出全部匹配分页；筛选为空时必须二次确认，并将 `confirm_all` 设为 `true`。
 
 创建时同步完成匹配数、权限指纹和 `upper_id` 快照。Worker 只读取 `id <= upper_id`，后续新增不进入；权限发生任何变化均失败关闭。
 

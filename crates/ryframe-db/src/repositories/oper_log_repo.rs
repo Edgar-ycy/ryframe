@@ -159,13 +159,17 @@ impl OperLogRepository {
         tenant_id: &str,
         filter: &OperLogFilter<'_>,
         scope_ctx: &DataScopeContext,
-        window: ryframe_kernel::ExportCursorWindow,
+        window: ryframe_kernel::ExportCursorWindow<'_>,
     ) -> AppResult<Vec<oper_log::Model>>
     where
         C: ConnectionTrait,
     {
         let mut select = Self::filtered_select(tenant_id, filter, scope_ctx)
             .filter(oper_log::Column::Id.lte(window.upper_id()));
+        if !window.selected_ids().is_empty() {
+            select =
+                select.filter(oper_log::Column::Id.is_in(window.selected_ids().iter().copied()));
+        }
         if let Some(id) = window.after_id() {
             select = select.filter(oper_log::Column::Id.gt(id));
         }
@@ -184,6 +188,7 @@ impl OperLogRepository {
         tenant_id: &str,
         filter: &OperLogFilter<'_>,
         scope_ctx: &DataScopeContext,
+        selected_ids: &[i64],
     ) -> AppResult<ryframe_kernel::ExportQuerySnapshot>
     where
         C: ConnectionTrait,
@@ -192,6 +197,7 @@ impl OperLogRepository {
             Self::filtered_select(tenant_id, filter, scope_ctx),
             oper_log::Column::Id,
             db,
+            selected_ids,
         )
         .await
     }

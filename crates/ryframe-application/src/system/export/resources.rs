@@ -287,7 +287,7 @@ fn export_layout(
 
 pub fn last_batch_id<T>(
     batch: &[T],
-    window: ExportCursorWindow,
+    window: ExportCursorWindow<'_>,
     id: impl Fn(&T) -> &str,
 ) -> AppResult<Option<i64>> {
     if batch.is_empty() {

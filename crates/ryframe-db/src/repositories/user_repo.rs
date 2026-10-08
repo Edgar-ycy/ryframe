@@ -328,7 +328,7 @@ impl UserRepository {
         tenant_id: &str,
         filter: &UserFilter<'_>,
         scope_ctx: &DataScopeContext,
-        window: ryframe_kernel::ExportCursorWindow,
+        window: ryframe_kernel::ExportCursorWindow<'_>,
     ) -> AppResult<Vec<user::Model>>
     where
         C: ConnectionTrait,
@@ -337,6 +337,9 @@ impl UserRepository {
             return Ok(Vec::new());
         };
         select = select.filter(user::Column::Id.lte(window.upper_id()));
+        if !window.selected_ids().is_empty() {
+            select = select.filter(user::Column::Id.is_in(window.selected_ids().iter().copied()));
+        }
         if let Some(after_id) = window.after_id() {
             select = select.filter(user::Column::Id.gt(after_id));
         }
@@ -355,6 +358,7 @@ impl UserRepository {
         tenant_id: &str,
         filter: &UserFilter<'_>,
         scope_ctx: &DataScopeContext,
+        selected_ids: &[i64],
     ) -> AppResult<ryframe_kernel::ExportQuerySnapshot>
     where
         C: ConnectionTrait,
@@ -365,7 +369,7 @@ impl UserRepository {
                 upper_id: None,
             });
         };
-        super::summarize_export_query(select, user::Column::Id, db).await
+        super::summarize_export_query(select, user::Column::Id, db, selected_ids).await
     }
 
     pub async fn find_by_page_with_data_scope(

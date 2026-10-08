@@ -27,7 +27,7 @@ impl UserQueryReadPort for DatabaseUserQueryPersistence {
         tenant_id: &'a str,
         filter: UserQueryFilter<'a>,
         scope: &'a DataScopeContext,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> ryframe_kernel::AppResult<Vec<UserQueryRecord>> {
         let database = self
             .database

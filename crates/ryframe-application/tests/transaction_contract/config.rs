@@ -32,7 +32,7 @@ impl ConfigPersistencePort for FakePersistence {
         &self,
         _tenant_id: &str,
         _filter: ConfigFilter<'_>,
-        _window: ExportCursorWindow,
+        _window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<ConfigRecord>> {
         unreachable!("本测试不执行导出")
     }

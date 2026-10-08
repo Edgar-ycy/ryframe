@@ -125,13 +125,17 @@ impl DictTypeRepository {
         db: &C,
         tenant_id: &str,
         filter: &DictTypeFilter<'_>,
-        window: ryframe_kernel::ExportCursorWindow,
+        window: ryframe_kernel::ExportCursorWindow<'_>,
     ) -> AppResult<Vec<dict_type::Model>>
     where
         C: ConnectionTrait,
     {
         let mut select = Self::filtered_select(tenant_id, filter)
             .filter(dict_type::Column::Id.lte(window.upper_id()));
+        if !window.selected_ids().is_empty() {
+            select =
+                select.filter(dict_type::Column::Id.is_in(window.selected_ids().iter().copied()));
+        }
         if let Some(id) = window.after_id() {
             select = select.filter(dict_type::Column::Id.gt(id));
         }
@@ -149,6 +153,7 @@ impl DictTypeRepository {
         db: &C,
         tenant_id: &str,
         filter: &DictTypeFilter<'_>,
+        selected_ids: &[i64],
     ) -> AppResult<ryframe_kernel::ExportQuerySnapshot>
     where
         C: ConnectionTrait,
@@ -157,6 +162,7 @@ impl DictTypeRepository {
             Self::filtered_select(tenant_id, filter),
             dict_type::Column::Id,
             db,
+            selected_ids,
         )
         .await
     }

@@ -3,7 +3,9 @@ mod macros;
 
 use crate::DbResultExt;
 use ryframe_kernel::{AppError, AppResult, ExportQuerySnapshot};
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QuerySelect, Select, sea_query::Expr};
+use sea_orm::{
+    ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QuerySelect, Select, sea_query::Expr,
+};
 
 pub mod background_job_repo;
 pub mod backup_repo;
@@ -89,14 +91,18 @@ pub use user_repo::{UserFilter, UserRepository};
 
 /// 对已经应用租户、筛选和数据权限的查询计算行数与主键上界。
 pub(crate) async fn summarize_export_query<E, C>(
-    select: Select<E>,
+    mut select: Select<E>,
     id_column: E::Column,
     db: &C,
+    selected_ids: &[i64],
 ) -> AppResult<ExportQuerySnapshot>
 where
     E: EntityTrait,
     C: ConnectionTrait,
 {
+    if !selected_ids.is_empty() {
+        select = select.filter(id_column.is_in(selected_ids.iter().copied()));
+    }
     let (matched_rows, upper_id) = select
         .select_only()
         .expr_as(Expr::cust("CAST(COUNT(*) AS SIGNED)"), "matched_rows")

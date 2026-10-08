@@ -16,7 +16,8 @@ struct ReadCall {
     name: Option<String>,
     code: Option<String>,
     status: Option<String>,
-    window: ExportCursorWindow,
+    window: ExportCursorWindow<'static>,
+    selected_ids: Vec<i64>,
 }
 
 struct FakePostExportRead {
@@ -30,7 +31,7 @@ impl PostExportReadPort for FakePostExportRead {
         &self,
         tenant_id: &str,
         filter: PostExportReadFilter<'_>,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<PostExportRow>> {
         self.calls
             .lock()
@@ -40,7 +41,12 @@ impl PostExportReadPort for FakePostExportRead {
                 name: filter.name.map(str::to_owned),
                 code: filter.code.map(str::to_owned),
                 status: filter.status.map(str::to_owned),
-                window,
+                window: ExportCursorWindow::new(
+                    window.after_id(),
+                    window.upper_id(),
+                    window.limit(),
+                ),
+                selected_ids: window.selected_ids().to_vec(),
             });
         Ok(self.rows.clone())
     }
@@ -83,7 +89,7 @@ async fn service_forwards_tenant_filters_and_cursor_without_losing_string_id() {
         rows: vec![expected.clone()],
     });
     let service = PostExportService::new(read.clone());
-    let window = ExportCursorWindow::new(Some(10), 99, 20);
+    let window = ExportCursorWindow::new(Some(10), 99, 20).with_selected_ids(&[11, 15]);
 
     let rows = service
         .find_batch(&actor(), Some("平台"), Some("platform"), Some("1"), window)
@@ -98,7 +104,8 @@ async fn service_forwards_tenant_filters_and_cursor_without_losing_string_id() {
             name: Some("平台".into()),
             code: Some("platform".into()),
             status: Some("1".into()),
-            window,
+            window: ExportCursorWindow::new(Some(10), 99, 20),
+            selected_ids: vec![11, 15],
         }]
     );
 }

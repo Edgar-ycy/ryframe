@@ -8554,6 +8554,16 @@
           },
           "filter": {
             "$ref": "#/components/schemas/ConfigExportFilterDto"
+          },
+          "ids": {
+            "description": "只导出选中的记录；Snowflake ID 始终按字符串传输。",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           }
         },
         "required": [
@@ -9819,6 +9829,16 @@
           },
           "filter": {
             "$ref": "#/components/schemas/DictTypeExportFilterDto"
+          },
+          "ids": {
+            "description": "只导出选中的记录；Snowflake ID 始终按字符串传输。",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           }
         },
         "required": [
@@ -10334,6 +10354,16 @@
           },
           "filter": {
             "$ref": "#/components/schemas/LoginLogExportFilterDto"
+          },
+          "ids": {
+            "description": "只导出选中的记录；Snowflake ID 始终按字符串传输。",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           }
         },
         "required": [
@@ -11590,6 +11620,16 @@
           },
           "filter": {
             "$ref": "#/components/schemas/OperLogExportFilterDto"
+          },
+          "ids": {
+            "description": "只导出选中的记录；Snowflake ID 始终按字符串传输。",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           }
         },
         "required": [
@@ -14337,6 +14377,16 @@
           },
           "filter": {
             "$ref": "#/components/schemas/PostExportFilterDto"
+          },
+          "ids": {
+            "description": "只导出选中的记录；Snowflake ID 始终按字符串传输。",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           }
         },
         "required": [
@@ -15099,6 +15149,16 @@
           },
           "filter": {
             "$ref": "#/components/schemas/RoleExportFilterDto"
+          },
+          "ids": {
+            "description": "只导出选中的记录；Snowflake ID 始终按字符串传输。",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           }
         },
         "required": [
@@ -17240,6 +17300,16 @@
           },
           "filter": {
             "$ref": "#/components/schemas/UserExportFilterDto"
+          },
+          "ids": {
+            "description": "只导出选中的记录；Snowflake ID 始终按字符串传输。",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
           }
         },
         "required": [

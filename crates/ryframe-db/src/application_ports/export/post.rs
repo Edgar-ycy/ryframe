@@ -24,7 +24,7 @@ impl PostExportReadPort for DatabasePostExportRead {
         &self,
         tenant_id: &str,
         filter: PostExportReadFilter<'_>,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<PostExportRow>> {
         let database = self
             .database

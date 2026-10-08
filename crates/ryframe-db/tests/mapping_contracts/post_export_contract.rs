@@ -62,3 +62,23 @@ fn batch_query_ignores_empty_optional_filters() {
     assert!(!statement.sql.contains("`sys_post`.`status` = ?"));
     assert!(!statement.sql.contains("`sys_post`.`id` > ?"));
 }
+
+#[test]
+fn selected_ids_restrict_batch_without_relaxing_tenant_or_cursor() {
+    let statement = post_export_batch_query(
+        "tenant-a",
+        &PostExportFilter {
+            name: None,
+            code: None,
+            status: None,
+        },
+        ExportCursorWindow::new(Some(10), 99, 20).with_selected_ids(&[11, 15]),
+    )
+    .build(DatabaseBackend::MySql);
+    assert!(statement.sql.contains("`sys_post`.`id` IN (?, ?)"));
+    assert!(statement.sql.contains("`sys_post`.`tenant_id` = ?"));
+    assert!(statement.sql.contains("`sys_post`.`del_flag` = ?"));
+    assert!(statement.sql.contains("`sys_post`.`id` > ?"));
+    assert!(statement.sql.contains("`sys_post`.`id` <= ?"));
+    assert!(!statement.sql.contains(" OR "));
+}

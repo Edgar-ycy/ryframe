@@ -97,7 +97,7 @@ impl ConfigService {
         actor: &ActorContext,
         name: Option<&str>,
         key: Option<&str>,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<ConfigVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         Ok(self

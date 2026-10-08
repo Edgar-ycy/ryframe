@@ -134,13 +134,16 @@ impl RoleRepository {
         db: &C,
         tenant_id: &str,
         filter: &RoleFilter<'_>,
-        window: ryframe_kernel::ExportCursorWindow,
+        window: ryframe_kernel::ExportCursorWindow<'_>,
     ) -> AppResult<Vec<role::Model>>
     where
         C: ConnectionTrait,
     {
         let mut select = Self::filtered_select(tenant_id, filter)
             .filter(role::Column::Id.lte(window.upper_id()));
+        if !window.selected_ids().is_empty() {
+            select = select.filter(role::Column::Id.is_in(window.selected_ids().iter().copied()));
+        }
         if let Some(id) = window.after_id() {
             select = select.filter(role::Column::Id.gt(id));
         }
@@ -158,6 +161,7 @@ impl RoleRepository {
         db: &C,
         tenant_id: &str,
         filter: &RoleFilter<'_>,
+        selected_ids: &[i64],
     ) -> AppResult<ryframe_kernel::ExportQuerySnapshot>
     where
         C: ConnectionTrait,
@@ -166,6 +170,7 @@ impl RoleRepository {
             Self::filtered_select(tenant_id, filter),
             role::Column::Id,
             db,
+            selected_ids,
         )
         .await
     }

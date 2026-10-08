@@ -38,7 +38,7 @@ pub async fn request_post_export(
     headers: HeaderMap,
     Json(request): Json<PostExportRequestDto>,
 ) -> HttpResult<(StatusCode, Json<ApiResponse<ExportJobVo>>)> {
-    let (selection, confirm_all) = request.into_selection();
+    let (selection, confirm_all) = request.into_selection()?;
     request_export(
         state,
         current_user,

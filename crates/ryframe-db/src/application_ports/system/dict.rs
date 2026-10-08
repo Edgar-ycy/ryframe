@@ -58,7 +58,7 @@ impl DictPersistencePort for DatabaseDictPersistence {
         &self,
         tenant_id: &str,
         filter: DictTypeFilter<'_>,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<DictTypeRecord>> {
         let database = self
             .database

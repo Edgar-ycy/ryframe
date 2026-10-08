@@ -182,7 +182,7 @@ impl OperLogService {
         &self,
         actor: &ActorContext,
         filter: OperLogFilter<'_>,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<OperLogVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let data_scope = actor.data_scope_context();

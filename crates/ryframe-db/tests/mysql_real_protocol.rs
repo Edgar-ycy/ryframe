@@ -227,6 +227,78 @@ async fn generated_post_port_enforces_tenant_isolation() {
     .await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn selected_post_export_enforces_ids_filters_tenant_and_cursor() {
+    use ryframe_db::repositories::post_export_repo::{PostExportFilter, PostExportRepository};
+    use ryframe_kernel::ExportCursorWindow;
+    run_mysql_test("selected_export", |database| async move {
+        create_generated_post_fixture(&database).await?;
+        let repository = PostExportRepository;
+        let selected = [101, 202, 999];
+        let filter = PostExportFilter::default();
+        let summary = repository
+            .summarize(&database, "tenant-a", &filter, &selected)
+            .await
+            .map_err(|error| error.to_string())?;
+        if summary.matched_rows != 1 || summary.upper_id != Some(101) {
+            return Err("选中统计混入未选中、其他租户或不存在的岗位".into());
+        }
+        let rows = repository
+            .find_batch(
+                &database,
+                "tenant-a",
+                &filter,
+                ExportCursorWindow::new(None, 999, 1).with_selected_ids(&selected),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        if rows.iter().map(|row| row.id).collect::<Vec<_>>() != vec![101] {
+            return Err("选中导出批次未隔离租户及主键".into());
+        }
+        let remaining = repository
+            .find_batch(
+                &database,
+                "tenant-a",
+                &filter,
+                ExportCursorWindow::new(Some(101), 999, 1).with_selected_ids(&selected),
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        if !remaining.is_empty() {
+            return Err("游标后混入未选中数据".into());
+        }
+        let filtered = repository
+            .summarize(
+                &database,
+                "tenant-a",
+                &PostExportFilter {
+                    status: Some("0"),
+                    ..filter
+                },
+                &selected,
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        if filtered.matched_rows != 0 {
+            return Err("选中主键放宽了已应用筛选".into());
+        }
+        execute(
+            &database,
+            "UPDATE sys_post SET del_flag = '2' WHERE id = 101",
+        )
+        .await?;
+        let deleted = repository
+            .summarize(&database, "tenant-a", &filter, &selected)
+            .await
+            .map_err(|error| error.to_string())?;
+        if deleted.matched_rows != 0 {
+            return Err("选中导出包含已删除数据".into());
+        }
+        Ok(())
+    })
+    .await;
+}
+
 async fn verify_generated_post_update_persists(
     database: &DatabaseConnection,
 ) -> Result<(), String> {

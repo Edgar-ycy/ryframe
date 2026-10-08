@@ -66,7 +66,7 @@ impl ConfigPersistencePort for DatabaseConfigPersistence {
         &self,
         tenant_id: &str,
         filter: ConfigFilter<'_>,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<ConfigRecord>> {
         let database = self
             .database

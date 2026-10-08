@@ -214,7 +214,7 @@ async fn request_config_export(
     headers: HeaderMap,
     Json(request): Json<ConfigExportRequestDto>,
 ) -> HttpResult<(StatusCode, Json<ApiResponse<ExportJobVo>>)> {
-    let (selection, confirm_all) = request.into_selection();
+    let (selection, confirm_all) = request.into_selection()?;
     request_export(
         state,
         current_user,

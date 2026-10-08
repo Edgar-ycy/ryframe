@@ -83,7 +83,7 @@ impl OperLogPersistencePort for DatabaseOperLogPersistence {
         tenant_id: &str,
         filter: OperLogFilter<'_>,
         data_scope: &DataScopeContext,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<OperLogRecord>> {
         let database = self
             .database

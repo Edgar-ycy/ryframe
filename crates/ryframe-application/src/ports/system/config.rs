@@ -62,7 +62,7 @@ pub trait ConfigPersistencePort: Send + Sync {
         &self,
         tenant_id: &str,
         filter: ConfigFilter<'_>,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<ConfigRecord>>;
 
     async fn find_by_id(&self, tenant_id: &str, id: i64) -> AppResult<Option<ConfigRecord>>;

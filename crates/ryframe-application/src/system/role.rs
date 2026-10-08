@@ -205,7 +205,7 @@ impl RoleService {
         name: Option<&str>,
         code: Option<&str>,
         status: Option<&str>,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<RoleVo>> {
         let tenant_id = crate::validated_tenant_id(actor)?;
         let filter = RoleFilter { name, code, status };

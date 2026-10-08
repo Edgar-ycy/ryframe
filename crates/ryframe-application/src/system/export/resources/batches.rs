@@ -6,8 +6,9 @@ impl ExportService {
         writer: &mut dyn SpreadsheetWriter,
         actor: &ActorContext,
         selection: &ExportSelection,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Option<AppendedBatch>> {
+        let window = window.with_selected_ids(selection.selected_ids());
         match selection {
             ExportSelection::Users(filters) => {
                 self.append_users_batch(writer, actor, filters, window)
@@ -45,7 +46,7 @@ impl ExportService {
         writer: &mut dyn SpreadsheetWriter,
         actor: &ActorContext,
         filters: &crate::system::operations::UserExportFilter,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Option<AppendedBatch>> {
         let batch = self
             .users
@@ -87,7 +88,7 @@ impl ExportService {
         writer: &mut dyn SpreadsheetWriter,
         actor: &ActorContext,
         filters: &crate::system::operations::RoleExportFilter,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Option<AppendedBatch>> {
         let batch = self
             .roles
@@ -120,7 +121,7 @@ impl ExportService {
         writer: &mut dyn SpreadsheetWriter,
         actor: &ActorContext,
         filters: &crate::system::operations::PostExportFilter,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Option<AppendedBatch>> {
         let batch = self
             .posts
@@ -153,7 +154,7 @@ impl ExportService {
         writer: &mut dyn SpreadsheetWriter,
         actor: &ActorContext,
         filters: &crate::system::operations::ConfigExportFilter,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Option<AppendedBatch>> {
         let batch = self
             .configs
@@ -179,7 +180,7 @@ impl ExportService {
         writer: &mut dyn SpreadsheetWriter,
         actor: &ActorContext,
         filters: &crate::system::operations::DictTypeExportFilter,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Option<AppendedBatch>> {
         let batch = self
             .dicts
@@ -211,7 +212,7 @@ impl ExportService {
         writer: &mut dyn SpreadsheetWriter,
         actor: &ActorContext,
         filters: &crate::system::operations::OperLogExportFilter,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Option<AppendedBatch>> {
         let batch = self
             .oper_logs
@@ -248,7 +249,7 @@ impl ExportService {
         writer: &mut dyn SpreadsheetWriter,
         actor: &ActorContext,
         filters: &crate::system::operations::LoginLogExportFilter,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Option<AppendedBatch>> {
         let batch = self
             .login_infos

@@ -386,9 +386,11 @@ fn render_page(resource: &ResourceIr) -> String {
     @submit="submit"
     @update:query="setQuery"
   >
-    <template v-if="slots.actions" #actions>
+    <template v-if="slots.actions" #actions="{{ selectedExportIds, captureSelectionOwnership }}">
       <slot
         name="actions"
+        :selected-export-ids="selectedExportIds"
+        :capture-selection-ownership="captureSelectionOwnership"
         :can-export="canExport"
         :last-successful-query="lastSuccessfulQuery ?? null"
       />
@@ -406,7 +408,7 @@ import type {{ {pascal}Query }} from './api'
 import {{ create{pascal}Presentation }} from './fields'
 
 const slots = defineSlots<{{
-  actions?(props: {{ canExport: boolean; lastSuccessfulQuery: {pascal}Query | null }}): unknown
+  actions?(props: {{ selectedExportIds: string[]; captureSelectionOwnership: () => () => boolean; canExport: boolean; lastSuccessfulQuery: {pascal}Query | null }}): unknown
 }}>()
 
 const {{ locale }} = useI18n()

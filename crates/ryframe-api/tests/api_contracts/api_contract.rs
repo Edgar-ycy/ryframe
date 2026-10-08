@@ -144,6 +144,35 @@ mod export_dto {
     }
 
     #[test]
+    fn export_selected_ids_use_strict_positive_string_ids() {
+        for ids in [
+            serde_json::json!(["0"]),
+            serde_json::json!(["-1"]),
+            serde_json::json!(["9223372036854775808"]),
+        ] {
+            let dto: PostExportRequestDto = serde_json::from_value(serde_json::json!({
+                "filter": {}, "confirm_all": false, "ids": ids,
+            }))
+            .expect("结构正确");
+            assert!(dto.into_selection().is_err());
+        }
+        assert!(
+            serde_json::from_value::<PostExportRequestDto>(serde_json::json!({
+                "filter": {}, "confirm_all": false, "ids": [1],
+            }))
+            .is_err()
+        );
+        let dto: PostExportRequestDto = serde_json::from_value(serde_json::json!({
+            "filter": {}, "confirm_all": false, "ids": ["9007199254740993", "2"],
+        }))
+        .expect("字符串 ID");
+        let (selection, confirm) = dto.into_selection().expect("有效 ID");
+        assert_eq!(selection.selected_ids(), &[2, 9007199254740993]);
+        assert!(!confirm);
+        assert!(!selection.is_empty());
+    }
+
+    #[test]
     fn mapping_preserves_zero_and_rejects_invalid_time_before_enqueue() {
         let user: UserExportRequestDto = serde_json::from_value(serde_json::json!({
             "filter": {"username": " ", "dept_id": "0", "status": "0"},

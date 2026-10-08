@@ -57,7 +57,7 @@ pub trait OperLogPersistencePort: Send + Sync {
         tenant_id: &str,
         filter: OperLogFilter<'_>,
         data_scope: &DataScopeContext,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<OperLogRecord>>;
 
     async fn begin(&self) -> AppResult<Box<dyn OperLogTransaction>>;

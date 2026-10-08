@@ -102,7 +102,7 @@ pub trait DictPersistencePort: Send + Sync {
         &self,
         tenant_id: &str,
         filter: DictTypeFilter<'_>,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<DictTypeRecord>>;
 
     async fn find_data_by_type(

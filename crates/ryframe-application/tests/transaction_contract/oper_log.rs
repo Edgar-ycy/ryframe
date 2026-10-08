@@ -37,7 +37,7 @@ impl OperLogPersistencePort for FakePersistence {
         _tenant_id: &str,
         _filter: OperLogFilter<'_>,
         _data_scope: &DataScopeContext,
-        _window: ExportCursorWindow,
+        _window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<OperLogRecord>> {
         unreachable!("本测试不执行导出")
     }

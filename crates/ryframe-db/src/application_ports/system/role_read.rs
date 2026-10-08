@@ -76,7 +76,7 @@ impl RoleReadPort for DatabaseRoleRead {
         &self,
         tenant_id: &str,
         filter: RoleFilter<'_>,
-        window: ExportCursorWindow,
+        window: ExportCursorWindow<'_>,
     ) -> AppResult<Vec<RoleRecord>> {
         RoleRepository
             .find_for_export_after_id(
