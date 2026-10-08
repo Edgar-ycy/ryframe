@@ -183,6 +183,7 @@ pub fn compose_openapi(
                 .cloned()
                 .unwrap_or_default(),
         );
+        crate::openapi_catalog::merge_business_catalog(&mut document, &fragment)?;
         document.merge(fragment);
     }
     resources.sort_by(|left, right| {

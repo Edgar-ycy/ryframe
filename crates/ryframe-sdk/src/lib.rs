@@ -7,6 +7,8 @@
 mod migration;
 #[cfg(feature = "runtime")]
 mod module;
+#[cfg(feature = "api")]
+mod openapi_catalog;
 mod resource;
 
 #[cfg(feature = "persistence")]

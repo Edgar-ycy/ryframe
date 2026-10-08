@@ -39,3 +39,8 @@ workspace = true
 name = "business_module_contract"
 path = "tests/business_module_contract.rs"
 required-features = ["runtime"]
+
+[[test]]
+name = "business_openapi_contract"
+path = "tests/business_openapi_contract.rs"
+required-features = ["api"]
