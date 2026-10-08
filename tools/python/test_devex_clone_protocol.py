@@ -226,8 +226,8 @@ class CloneProtocolTests(unittest.TestCase):
                 current[protocol.PROTOCOL_ENV] = clone_protocol
             current.update(extra or {})
             return subprocess.run(
-                [sys.executable, "-B", str(script), *arguments], cwd=self.backend,
-                env=current, capture_output=True, text=True, check=False,
+                [sys.executable, "-X", "utf8", "-B", str(script), *arguments], cwd=self.backend,
+                env=current, capture_output=True, text=True, encoding="utf-8", check=False,
             )
 
         valid = run(clone_protocol=source)
