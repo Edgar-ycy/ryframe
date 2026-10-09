@@ -7,9 +7,34 @@ from workspace_directory import WorkspaceDirectory
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from full_stack_process import process_identity, read_process, record_process, terminate_owned_process
+from full_stack_process import _linux_identity, process_identity, read_process, record_process, terminate_owned_process
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+class LinuxIdentityFailureTests(unittest.TestCase):
+    def test_deleted_live_image_is_not_reported_as_exited(self):
+        stat = "123 (redis) " + " ".join(["0"] * 20)
+        with patch.object(Path, "read_text", return_value=stat), \
+                patch.object(Path, "resolve", side_effect=FileNotFoundError):
+            with self.assertRaisesRegex(ValueError, "进程仍存在"):
+                _linux_identity(123)
+
+    def test_exit_during_image_lookup_is_reported_as_exited(self):
+        stat = "123 (redis) " + " ".join(["0"] * 20)
+        with patch.object(Path, "read_text", side_effect=[stat, FileNotFoundError()]), \
+                patch.object(Path, "resolve", side_effect=FileNotFoundError):
+            self.assertIsNone(_linux_identity(123))
+
+    def test_access_denial_is_not_reported_as_exited(self):
+        stat = "123 (redis) " + " ".join(["0"] * 20)
+        with patch.object(Path, "read_text", return_value=stat), \
+                patch.object(Path, "resolve", side_effect=PermissionError):
+            with self.assertRaises(PermissionError):
+                _linux_identity(123)
+        with patch.object(Path, "read_text", side_effect=PermissionError):
+            with self.assertRaises(PermissionError):
+                _linux_identity(123)
 
 
 class OwnedProcessTests(unittest.TestCase):

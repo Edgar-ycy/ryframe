@@ -23,12 +23,23 @@ PROCESS_ROLES = frozenset({
 
 
 def _linux_identity(pid: int) -> dict | None:
+    process = Path(f"/proc/{pid}")
     try:
-        process = Path(f"/proc/{pid}")
         fields = (process / "stat").read_text().rpartition(")")[2].split()
-        return {"pid": pid, "started": fields[19], "executable": str((process / "exe").resolve(strict=True))}
-    except (FileNotFoundError, PermissionError, ProcessLookupError):
+    except (FileNotFoundError, ProcessLookupError):
         return None
+    try:
+        executable = str((process / "exe").resolve(strict=True))
+    except ProcessLookupError:
+        return None
+    except FileNotFoundError as error:
+        # 已删除的映像仍可运行。只有 /proc/stat 确实消失才可记录退出。
+        try:
+            (process / "stat").read_text()
+        except (FileNotFoundError, ProcessLookupError):
+            return None
+        raise ValueError("测试进程仍存在但可执行映像无法核验，禁止按已退出推进") from error
+    return {"pid": pid, "started": fields[19], "executable": executable}
 
 
 @contextmanager
