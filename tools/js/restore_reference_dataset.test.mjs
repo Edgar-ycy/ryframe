@@ -9,11 +9,36 @@ import {
   postBatchSamples,
   sampleContent,
   seedPosts,
+  referencePlanVersion,
   verifyDatasetPreflight,
 } from './restore_reference_dataset.mjs'
 import { Session } from './request.mjs'
 import { hash } from './config.mjs'
 import { requestPacer } from './restore_reference_pacing.mjs'
+
+test('参考数据使用空能力套餐，允许空目录或已配置的可选能力目录', async () => {
+  for (const data of [[], [{ key: 'system.notice' }, { key: 'system.message' }]]) {
+    const calls = []
+    const admin = { request: async (request) => {
+      calls.push(request)
+      if (request.operation === 'get_platform_capabilities') return { data }
+      if (request.operation === 'post_platform_product_plans') return { data: { id: '12' } }
+      return { data: { id: '13', version: 1 } }
+    } }
+    assert.deepEqual(await referencePlanVersion(admin, 'reference'), { id: '13', version: 1 })
+    assert.deepEqual(calls[2].body.capabilities, [])
+    assert.deepEqual(calls[3].path, { plan_id: '12', version: 1 })
+  }
+})
+
+test('非法能力目录响应在任何套餐写入之前失败关闭', async () => {
+  for (const data of [null, {}, '[]']) {
+    let calls = 0
+    const admin = { request: async () => { calls++; return { data } } }
+    await assert.rejects(referencePlanVersion(admin, 'reference'), /能力目录响应必须是数组/)
+    assert.equal(calls, 1)
+  }
+})
 
 function protocolEnvironment(value, extra = {}) {
   return {

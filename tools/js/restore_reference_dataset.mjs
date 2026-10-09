@@ -263,15 +263,13 @@ export async function seedPosts(session, id, tenant, count, record) {
   return samples
 }
 
-async function tenants(plan, admin, catalog) {
-  const settings = plan.dataset
-  const ownerPassword = process.env[settings.owner_password_env]
-  if (!ownerPassword) throw new Error('缺少租户管理员密码环境变量')
+export async function referencePlanVersion(admin, id) {
   const capabilities = await admin.request({ operation: 'get_platform_capabilities' })
-  if (JSON.stringify(capabilities?.data) !== '[]') throw new Error('参考套餐要求当前空能力目录')
+  if (!Array.isArray(capabilities?.data)) throw new Error('能力目录响应必须是数组')
+  // 空能力套餐只使用基础管理功能，不要求部署中的可选能力目录为空。
   const product = await admin.request({
     operation: 'post_platform_product_plans',
-    body: { key: plan.id, name: `恢复参考${plan.id}` },
+    body: { key: id, name: `恢复参考${id}` },
   })
   const version = await admin.request({
     operation: 'post_platform_product_plans_by_plan_id_versions',
@@ -282,6 +280,14 @@ async function tenants(plan, admin, catalog) {
     operation: 'post_platform_product_plans_by_plan_id_versions_by_version_publish',
     path: { plan_id: product.data.id, version: version.data.version },
   })
+  return version.data
+}
+
+async function tenants(plan, admin, catalog) {
+  const settings = plan.dataset
+  const ownerPassword = process.env[settings.owner_password_env]
+  if (!ownerPassword) throw new Error('缺少租户管理员密码环境变量')
+  const version = await referencePlanVersion(admin, plan.id)
   const result = [
     {
       tenant_id: 'system',
@@ -300,7 +306,7 @@ async function tenants(plan, admin, catalog) {
         admin_username: 'owner',
         admin_password: ownerPassword,
         data_target_key: settings.tenant_targets[index],
-        plan_version_id: version.data.id,
+        plan_version_id: version.id,
         max_users: 20,
         max_roles: 10,
         max_storage_mb: 512,
