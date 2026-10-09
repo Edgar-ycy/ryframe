@@ -1,5 +1,6 @@
 """当前对象观察的离线状态、归属和未知结果回归；不连接 S3。"""
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -14,6 +15,17 @@ from restore_reference import work_directory
 from restore_reference_fixture import environment
 from restore_reference_io import ExternalTools
 from test_devex_clone_capture import ObjectReads
+
+
+def same_logical_path(left: Path, right: Path) -> bool:
+    """比较普通路径与 Windows 扩展路径，使模拟链接与实际文件系统调用命中同一资源。"""
+    def logical(value: Path) -> str:
+        text = os.fspath(value)
+        if text.startswith("\\\\?\\"):
+            text = text[4:]
+        return os.path.normcase(os.path.normpath(text))
+
+    return logical(left) == logical(right)
 
 
 class CurrentObjects(ObjectReads):
@@ -241,15 +253,31 @@ class LiveObjectTests(unittest.TestCase):
         self.observe()
         target = self.output / "head-before.diagnostic.json"
         original = Path.is_symlink
-        with patch.object(Path, "is_symlink", lambda path: path == target or original(path)):
+        with patch.object(Path, "is_symlink",
+                          lambda path: same_logical_path(path, target) or original(path)):
             with self.assertRaisesRegex(ValueError, "链接"):
                 self.read()
+
+    def test_native_saved_evidence_link_is_rejected(self):
+        self.observe()
+        path = self.output / "head-before.diagnostic.json"
+        real = self.work / "native-head-before.diagnostic.json"
+        real.write_bytes(path.read_bytes())
+        path.unlink()
+        try:
+            path.symlink_to(real)
+        except OSError:
+            real.unlink()
+            self.skipTest("当前 Windows 权限不允许创建符号链接")
+        with self.assertRaisesRegex(ValueError, "链接"):
+            self.read()
 
     def test_dangling_failure_marker_is_not_ignored(self):
         self.observe()
         target = self.output / "failure.json"
         original = Path.is_symlink
-        with patch.object(Path, "is_symlink", lambda path: path == target or original(path)):
+        with patch.object(Path, "is_symlink",
+                          lambda path: same_logical_path(path, target) or original(path)):
             with self.assertRaisesRegex(ValueError, "失败"):
                 self.read()
 
