@@ -1,8 +1,9 @@
 use crate::{
     TenantDataCleanupBatch, TenantDataCleanupOwnership, TenantDatabaseRouter,
-    migration::{TENANT_DATA_CATALOG, TenantDataTableDescriptor},
+    migration::tenant_data_catalog,
 };
 use async_trait::async_trait;
+use ryframe_application::ports::tenant_data::TenantDataTableDescriptor;
 use ryframe_application::ports::tenant_data::{
     TenantDataCatalogTable, TenantDataCleanupOwnership as ApplicationCleanupOwnership,
     TenantDataFence, TenantDataMigrationPort, TenantDataRow, TenantDataRowBatch,
@@ -16,7 +17,7 @@ use super::super::map_error as map_tenant_data_error;
 #[async_trait]
 impl TenantDataMigrationPort for TenantDatabaseRouter {
     fn catalog_tables(&self) -> Vec<TenantDataCatalogTable> {
-        TENANT_DATA_CATALOG
+        tenant_data_catalog()
             .tables()
             .iter()
             .map(|table| TenantDataCatalogTable {
@@ -32,7 +33,7 @@ impl TenantDataMigrationPort for TenantDatabaseRouter {
             fence.target_key,
             fence.generation,
             fence.switch_token,
-            &TENANT_DATA_CATALOG,
+            tenant_data_catalog(),
         )
         .await
         .map_err(map_tenant_data_error)
@@ -44,7 +45,7 @@ impl TenantDataMigrationPort for TenantDatabaseRouter {
             fence.target_key,
             fence.generation,
             fence.switch_token,
-            &TENANT_DATA_CATALOG,
+            tenant_data_catalog(),
         )
         .await
         .map_err(map_tenant_data_error)
@@ -56,7 +57,7 @@ impl TenantDataMigrationPort for TenantDatabaseRouter {
             fence.target_key,
             fence.generation,
             fence.switch_token,
-            &TENANT_DATA_CATALOG,
+            tenant_data_catalog(),
         )
         .await
         .map_err(map_tenant_data_error)
@@ -68,7 +69,7 @@ impl TenantDataMigrationPort for TenantDatabaseRouter {
             fence.target_key,
             fence.generation,
             fence.switch_token,
-            &TENANT_DATA_CATALOG,
+            tenant_data_catalog(),
         )
         .await
         .map_err(map_tenant_data_error)
@@ -80,7 +81,7 @@ impl TenantDataMigrationPort for TenantDatabaseRouter {
             fence.target_key,
             fence.generation,
             fence.switch_token,
-            &TENANT_DATA_CATALOG,
+            tenant_data_catalog(),
         )
         .await
         .map_err(map_tenant_data_error)
@@ -95,7 +96,7 @@ impl TenantDataMigrationPort for TenantDatabaseRouter {
             fence.target_key,
             fence.generation,
             fence.switch_token,
-            &TENANT_DATA_CATALOG,
+            tenant_data_catalog(),
         )
         .await
         .map(map_cleanup_ownership)
@@ -118,7 +119,7 @@ impl TenantDataMigrationPort for TenantDatabaseRouter {
                 descriptor,
                 batch_size,
             },
-            &TENANT_DATA_CATALOG,
+            tenant_data_catalog(),
         )
         .await
         .map_err(map_tenant_data_error)
@@ -130,7 +131,7 @@ impl TenantDataMigrationPort for TenantDatabaseRouter {
             fence.target_key,
             fence.generation,
             fence.switch_token,
-            &TENANT_DATA_CATALOG,
+            tenant_data_catalog(),
         )
         .await
         .map_err(map_tenant_data_error)
@@ -147,7 +148,7 @@ impl TenantDataMigrationPort for TenantDatabaseRouter {
         validate_batch_size(batch_size)?;
         let descriptor = catalog_table(table)?;
         let target = self
-            .open_target_for_catalog(target_key, &TENANT_DATA_CATALOG)
+            .open_target_for_catalog(target_key, tenant_data_catalog())
             .await
             .map_err(map_tenant_data_error)?;
         let business_cursor = business_cursor_columns(descriptor);
@@ -208,7 +209,7 @@ impl TenantDataMigrationPort for TenantDatabaseRouter {
     ) -> AppResult<()> {
         let descriptor = catalog_table(table)?;
         let target = self
-            .open_target_for_catalog(fence.target_key, &TENANT_DATA_CATALOG)
+            .open_target_for_catalog(fence.target_key, tenant_data_catalog())
             .await
             .map_err(map_tenant_data_error)?;
         let transaction = target.connection().begin().await.db()?;
@@ -250,7 +251,7 @@ impl TenantDataMigrationPort for TenantDatabaseRouter {
     ) -> AppResult<()> {
         let descriptor = catalog_table(table)?;
         let target = self
-            .open_target_for_catalog(target_key, &TENANT_DATA_CATALOG)
+            .open_target_for_catalog(target_key, tenant_data_catalog())
             .await
             .map_err(map_tenant_data_error)?;
         for foreign_key in descriptor.foreign_keys {
@@ -302,7 +303,7 @@ impl TenantDataMigrationPort for TenantDatabaseRouter {
 }
 
 pub fn catalog_table(table: &str) -> AppResult<&'static TenantDataTableDescriptor> {
-    TENANT_DATA_CATALOG
+    tenant_data_catalog()
         .tables()
         .iter()
         .find(|descriptor| descriptor.table == table)

@@ -23,13 +23,11 @@ pub fn registered_business_modules() -> AppResult<Vec<RyFrameBusinessModule>> {
             .map(|resource| resource.table)
     }))
     .map_err(|error| ryframe_kernel::AppError::Config(error.to_string()))?;
-    ryframe_tenant_db::migration::register_business_tables(modules.iter().flat_map(|module| {
-        module
-            .resources()
+    ryframe_tenant_db::migration::register_business_catalog(
+        modules
             .iter()
-            .filter(|resource| resource.database == ResourceDatabase::Tenant)
-            .map(|resource| resource.table)
-    }))
+            .flat_map(|module| module.tenant_data_tables().iter().copied()),
+    )
     .map_err(|error| ryframe_kernel::AppError::Config(error.to_string()))?;
     Ok(modules)
 }

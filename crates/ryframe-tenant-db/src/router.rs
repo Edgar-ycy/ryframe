@@ -153,7 +153,7 @@ pub struct TenantDataCleanupBatch<'a> {
     pub target_key: &'a str,
     pub placement_generation: i64,
     pub switch_token: &'a str,
-    pub descriptor: &'a crate::migration::TenantDataTableDescriptor,
+    pub descriptor: &'a ryframe_application::ports::tenant_data::TenantDataTableDescriptor,
     pub batch_size: u32,
 }
 

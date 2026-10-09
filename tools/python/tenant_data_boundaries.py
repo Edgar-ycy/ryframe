@@ -20,9 +20,15 @@ def validate_tenant_data_boundaries(root: Path, errors: list[str]) -> None:
     required = {
         "crates/ryframe-tenant-db/src/generated/mod.rs": ["pub mod catalog;"],
         "crates/ryframe-tenant-db/src/migration/catalog.rs": [
-            "tables: crate::generated::catalog::GENERATED_TENANT_DATA_TABLES",
+            "tables: Cow::Borrowed(crate::generated::catalog::GENERATED_TENANT_DATA_TABLES)",
             "tenant_data_schema_fingerprint()", "self.validate_structure()?",
-            "computed != tenant_data_schema_fingerprint()",
+            "computed != expected", "Cow::Borrowed(_)",
+            "super::business_catalog::runtime_fingerprint()",
+        ],
+        "crates/ryframe-tenant-db/src/migration/business_catalog.rs": [
+            "OnceLock<RuntimeCatalog>", "TENANT_DATA_CATALOG.validate_structure()?",
+            "GENERATED_TENANT_DATA_SCHEMA_FINGERPRINT", "catalog.validate_structure()?",
+            "current.catalog != candidate.catalog", "foreign_key_dependencies",
         ],
         "crates/ryframe-generator/src/resource/render/tenant_catalog.rs": [
             "TenantDataTableDescriptor", "primary_key_cursor_columns", "checksum_columns",

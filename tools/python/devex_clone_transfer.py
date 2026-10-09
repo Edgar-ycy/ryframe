@@ -21,7 +21,7 @@ from restore_build import file_digest
 from restore_reference_io import ExternalTools, validate_dump
 from restore_reference_plan import plan_hash
 
-PRESERVED = EXCLUDED | {"seaql_tenant_data_migrations"}
+PRESERVED = EXCLUDED | {"seaql_tenant_data_migrations", "ryframe_business_migration"}
 
 
 @dataclass(frozen=True)

@@ -86,6 +86,9 @@ def observation_from_inventory(backend: Path, value: dict, declared: dict, scope
     raw_preserved = {"ryframe_resource_ownership", "seaql_tenant_data_migrations"}
     if combined:
         raw_preserved |= {"seaql_migrations", "sys_backup_set", "sys_backup_resource", "sys_restore_run"}
+    from devex_business_catalog import business_tables
+    if business_tables(backend):
+        raw_preserved.add("ryframe_business_migration")
     expected = business | raw_preserved | (set(full_control) if combined else set())
     tables = table_digests(database["tables"])
     kept = table_digests(value["target"]["preserved_tables"])

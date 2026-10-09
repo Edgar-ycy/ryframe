@@ -39,7 +39,7 @@ cargo ryframe new-business order
 cargo ryframe new-business inventory --dry-run
 ```
 
-正式创建会原子完成业务 crate 的 `kind = "business"` 元数据和 SDK feature、工作区成员、`crates/ryframe` 的可选依赖与 API/Worker/迁移 feature，以及 `business_modules()` 注册。预览不写文件。命令拒绝覆盖同名 crate 或重复注册；需要撤销时按普通 Git 变更审查和回退。
+正式创建会原子完成业务 crate 的 `kind = "business"` 元数据和 SDK feature、工作区成员、`crates/ryframe` 的可选依赖与 API/Worker/迁移/数据维护 feature，以及 `business_modules()` 注册。预览不写文件。命令拒绝覆盖同名 crate 或重复注册；需要撤销时按普通 Git 变更审查和回退。
 
 业务 crate 按职责分类，并把可重生成文件统一放入 `generated`：
 
@@ -75,6 +75,8 @@ cargo generate -- resource --package order-business --model Order --write
 脚手架已经在 `crates/ryframe/Cargo.toml` 添加 `order-business` 依赖，并在 `crates/ryframe/src/business.rs` 的 `business_modules()` 中加入 `order_business::module()`。API、Worker 和迁移程序会读取同一列表。模块名、资源名、表名、路由、OpenAPI operation/schema 和依赖循环在启动前校验。
 
 Post 和 Notice 仍是 RyFrame 框架自身的标准资源。框架维护者继续使用内部 `cargo xtask generate resource` 检查它们；使用者业务不写 `catalog/resources/*.toml`。
+
+租户业务资源同时生成 `generated/tenant_catalog.rs` 与 `generated/tenant_catalog.json`，包含完整列、类型、复制游标及规范化 schema。模块通过 `tenant_data_tables()` 声明生成描述，组合根在连接数据库前统一装配、核验依赖并冻结目录；同一进程再次登记只能使用相同描述。重复表、缺失描述或无效 schema 会阻止启动，不会忽略业务表。复制和恢复校验使用完整目录，并保留业务迁移账本。修改模型后先通过正式生成入口更新受管资产，再显式执行业务迁移；不要手改目录或 ownership 摘要。
 
 从模型到页面可按以下顺序联调：
 

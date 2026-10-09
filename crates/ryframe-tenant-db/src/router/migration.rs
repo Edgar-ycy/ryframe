@@ -5,7 +5,7 @@ impl TenantDatabaseRouter {
         &self,
         target_key: &str,
     ) -> Result<Option<TenantDataTargetOccupancy>, TenantDataError> {
-        self.target_occupancy_for_catalog(target_key, &crate::migration::TENANT_DATA_CATALOG)
+        self.target_occupancy_for_catalog(target_key, crate::migration::tenant_data_catalog())
             .await
     }
 
@@ -57,7 +57,7 @@ impl TenantDatabaseRouter {
         self.tenant_is_empty_on_target_for_catalog(
             target_key,
             tenant_id,
-            &crate::migration::TENANT_DATA_CATALOG,
+            crate::migration::tenant_data_catalog(),
         )
         .await
     }
@@ -121,7 +121,7 @@ impl TenantDatabaseRouter {
             target_key,
             placement_generation,
             switch_token,
-            &crate::migration::TENANT_DATA_CATALOG,
+            crate::migration::tenant_data_catalog(),
         )
         .await
     }

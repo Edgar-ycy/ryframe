@@ -253,8 +253,8 @@ content_hash = "9d13c0e1d72519252df67ea88b376a706490914c7ee51e431df60b98c6c161d8
 resource = "__catalog__"
 root = "backend"
 path = "crates/ryframe-tenant-db/src/generated/catalog.rs"
-source_hash = "812320b11e4598173cf681aa92950d0e78802257c3884077365c1e8a58a63bfc"
-content_hash = "812320b11e4598173cf681aa92950d0e78802257c3884077365c1e8a58a63bfc"
+source_hash = "c98e4b0f56a74e427089cd5e6e50319b0e9574a74f5d3c0449af96b56adbe5f5"
+content_hash = "c98e4b0f56a74e427089cd5e6e50319b0e9574a74f5d3c0449af96b56adbe5f5"
 
 [[entries]]
 resource = "__catalog__"

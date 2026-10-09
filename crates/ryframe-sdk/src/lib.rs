@@ -10,6 +10,8 @@ mod module;
 #[cfg(feature = "api")]
 mod openapi_catalog;
 mod resource;
+#[cfg(feature = "runtime")]
+mod tenant_catalog;
 
 #[cfg(feature = "persistence")]
 pub use async_trait::async_trait;
@@ -26,6 +28,10 @@ pub use resource::{ResourceDatabase, ResourceDescriptor, ResourceFieldDescriptor
 pub use ryframe_api::{AppState, openapi::OpenApiDocument};
 #[cfg(feature = "runtime")]
 pub use ryframe_application::PersistenceTransaction;
+#[cfg(feature = "runtime")]
+pub use ryframe_application::ports::tenant_data::{
+    TenantDataForeignKeyDescriptor, TenantDataTableDescriptor,
+};
 #[cfg(feature = "runtime")]
 pub use ryframe_application::{TransactionAuditMode, complete_transaction, next_id};
 #[cfg(feature = "runtime")]

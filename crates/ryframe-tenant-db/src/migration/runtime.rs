@@ -3,7 +3,7 @@ use sea_orm::{
 };
 use sea_orm_migration::prelude::*;
 
-use super::catalog::TENANT_DATA_CATALOG;
+use super::tenant_data_catalog;
 use super::{
     schema::{ensure_mysql, verify, verify_mysql_80},
     status::TENANT_DATA_MIGRATION_LEDGER,
@@ -39,7 +39,7 @@ pub async fn up(db: &DatabaseConnection) -> Result<(), DbErr> {
 pub async fn up_pending_business_migrations(db: &DatabaseConnection) -> Result<(), DbErr> {
     ensure_mysql(db)?;
     verify_mysql_80(db).await?;
-    TENANT_DATA_CATALOG
+    tenant_data_catalog()
         .validate()
         .map_err(|error| DbErr::Custom(format!("tenant-data catalog is invalid: {error}")))?;
 

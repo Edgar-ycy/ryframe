@@ -11,6 +11,7 @@ description.workspace = true
 [features]
 default = []
 connection = [
+    "dep:ryframe-application",
     "dep:ryframe-config",
     "dep:ryframe-db",
     "ryframe-db/connection",
@@ -26,7 +27,6 @@ repositories = [
     "connection",
     "ryframe-db/repositories",
     "dep:ryframe-kernel",
-    "dep:ryframe-application",
     "dep:async-trait",
     "dep:chrono",
 ]
@@ -54,6 +54,11 @@ required-features = ["repositories", "migration"]
 [[test]]
 name = "resource_tenant_contracts"
 path = "tests/resource_tenant_contracts.rs"
+
+[[test]]
+name = "business_catalog_contract"
+path = "tests/business_catalog_contract.rs"
+required-features = ["connection"]
 
 [lints]
 workspace = true

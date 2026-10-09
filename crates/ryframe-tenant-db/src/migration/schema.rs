@@ -1,15 +1,11 @@
-use sea_orm::{DatabaseBackend, DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement};
-use std::{
-    collections::BTreeSet,
-    sync::{OnceLock, RwLock},
-};
-
-use super::catalog::{TENANT_DATA_CATALOG, TenantDataCatalog, tenant_data_schema_fingerprint};
+use super::catalog::{TenantDataCatalog, tenant_data_schema_fingerprint};
 use super::status::{TENANT_DATA_MIGRATION_LEDGER, status_after_server_validation};
+use super::tenant_data_catalog;
 use catalog::{
     FenceCheckRow, FenceColumnRow, FenceConstraintRow, FenceIndexRow, TenantDataTableRow,
 };
 use ryframe_db::migration::normalize_check_clause;
+use sea_orm::{DatabaseBackend, DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement};
 use target_slot::verify_target_slot_schema;
 
 mod catalog;
@@ -18,37 +14,6 @@ mod target_slot;
 use fence::{verify_fence_columns, verify_fence_constraints, verify_fence_indexes};
 
 pub use catalog::{canonical_table_schema, ensure_local_foreign_key_schema};
-
-static BUSINESS_TABLES: OnceLock<RwLock<BTreeSet<String>>> = OnceLock::new();
-
-pub fn register_business_tables<'a>(
-    tables: impl IntoIterator<Item = &'a str>,
-) -> Result<(), DbErr> {
-    let registry = BUSINESS_TABLES.get_or_init(|| RwLock::new(BTreeSet::new()));
-    let mut registry = registry
-        .write()
-        .map_err(|_| DbErr::Custom("tenant business table registry is poisoned".into()))?;
-    for table in tables {
-        if !table.starts_with("biz_")
-            || !table
-                .bytes()
-                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
-        {
-            return Err(DbErr::Custom(format!(
-                "invalid tenant business table: {table}"
-            )));
-        }
-        registry.insert(table.to_owned());
-    }
-    Ok(())
-}
-
-fn registered_business_tables() -> BTreeSet<String> {
-    BUSINESS_TABLES
-        .get()
-        .and_then(|registry| registry.read().ok().map(|tables| tables.clone()))
-        .unwrap_or_default()
-}
 
 #[derive(Debug, FromQueryResult)]
 struct TableNameRow {
@@ -63,10 +28,10 @@ struct ServerIdentityRow {
 
 /// 只读校验独立账本及当前租户数据 schema 契约。
 pub async fn verify(db: &DatabaseConnection) -> Result<(), DbErr> {
-    TENANT_DATA_CATALOG
+    tenant_data_catalog()
         .validate()
         .map_err(|error| DbErr::Custom(format!("tenant-data catalog is invalid: {error}")))?;
-    verify_for_catalog(db, &TENANT_DATA_CATALOG).await
+    verify_for_catalog(db, tenant_data_catalog()).await
 }
 
 /// 使用调用方注入的静态 catalog 做完整 schema 校验。生产入口仍由 [`verify`]
@@ -117,10 +82,10 @@ pub async fn verify_mysql_80(db: &DatabaseConnection) -> Result<(), DbErr> {
 
 /// dedicated/mysql 目标不得混入控制面对象；shared-control 使用 `verify`。
 pub async fn verify_mysql_target(db: &DatabaseConnection) -> Result<(), DbErr> {
-    TENANT_DATA_CATALOG
+    tenant_data_catalog()
         .validate()
         .map_err(|error| DbErr::Custom(format!("tenant-data catalog is invalid: {error}")))?;
-    verify_mysql_target_for_catalog(db, &TENANT_DATA_CATALOG).await
+    verify_mysql_target_for_catalog(db, tenant_data_catalog()).await
 }
 
 pub async fn verify_mysql_target_for_catalog(
@@ -140,7 +105,7 @@ pub async fn verify_mysql_target_for_catalog(
 
 pub async fn ensure_mysql_target_boundary(db: &DatabaseConnection) -> Result<(), DbErr> {
     verify_mysql_80(db).await?;
-    let expected = expected_mysql_target_table_names(&TENANT_DATA_CATALOG);
+    let expected = expected_mysql_target_table_names(tenant_data_catalog());
     let actual = mysql_target_table_names(db).await?;
     if actual.iter().any(|table| !expected.contains(table)) {
         return Err(DbErr::Custom(
@@ -164,10 +129,8 @@ fn expected_mysql_target_table_names(catalog: &TenantDataCatalog) -> Vec<String>
             .iter()
             .map(|descriptor| descriptor.table.to_owned()),
     );
-    let business_tables = registered_business_tables();
-    if !business_tables.is_empty() {
+    if catalog.tables().len() > super::TENANT_DATA_CATALOG.tables().len() {
         expected.push("ryframe_business_migration".to_owned());
-        expected.extend(business_tables);
     }
     expected.sort_unstable();
     expected
@@ -221,8 +184,6 @@ async fn verify_fence_schema(
         .collect::<Vec<_>>();
     let mut expected_business_tables = vec!["biz_tenant_fence", "biz_tenant_target_slot"];
     expected_business_tables.extend(catalog.tables().iter().map(|table| table.table));
-    let registered = registered_business_tables();
-    expected_business_tables.extend(registered.iter().map(String::as_str));
     actual_business_tables.sort_unstable();
     expected_business_tables.sort_unstable();
     if actual_business_tables != expected_business_tables {

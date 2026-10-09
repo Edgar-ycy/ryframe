@@ -12,7 +12,7 @@ use ryframe_tenant_db::TenantDatabaseRouter;
 
 #[cfg(feature = "migration")]
 use crate::BusinessMigration;
-use crate::ResourceDescriptor;
+use crate::{ResourceDescriptor, TenantDataTableDescriptor};
 #[cfg(any(feature = "api", feature = "migration"))]
 use std::sync::Arc;
 
@@ -34,6 +34,7 @@ pub struct RyFrameBusinessModule {
     name: &'static str,
     dependencies: &'static [&'static str],
     resources: Vec<ResourceDescriptor>,
+    tenant_data_tables: &'static [TenantDataTableDescriptor],
     #[cfg(feature = "api")]
     router: Option<BusinessRouterFactory>,
     #[cfg(feature = "api")]
@@ -53,6 +54,9 @@ impl RyFrameBusinessModule {
 
     pub fn resources(&self) -> &[ResourceDescriptor] {
         &self.resources
+    }
+    pub fn tenant_data_tables(&self) -> &'static [TenantDataTableDescriptor] {
+        self.tenant_data_tables
     }
 
     #[cfg(feature = "api")]
@@ -83,6 +87,7 @@ impl BusinessModuleBuilder {
                 name,
                 dependencies: &[],
                 resources: Vec::new(),
+                tenant_data_tables: &[],
                 #[cfg(feature = "api")]
                 router: None,
                 #[cfg(feature = "api")]
@@ -104,6 +109,10 @@ impl BusinessModuleBuilder {
         I::Item: Borrow<ResourceDescriptor>,
     {
         self.module.resources = resources.into_iter().map(|item| *item.borrow()).collect();
+        self
+    }
+    pub fn tenant_data_tables(mut self, tables: &'static [TenantDataTableDescriptor]) -> Self {
+        self.module.tenant_data_tables = tables;
         self
     }
 
@@ -283,6 +292,7 @@ pub fn sort_modules(modules: &mut [RyFrameBusinessModule]) -> AppResult<()> {
 }
 
 fn validate_module(module: &RyFrameBusinessModule) -> AppResult<()> {
+    crate::tenant_catalog::validate_catalog(module)?;
     if !safe_key(module.name) {
         return Err(AppError::Config(format!(
             "业务模块名称无效：{}",

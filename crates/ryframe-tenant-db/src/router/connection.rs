@@ -86,7 +86,7 @@ impl TenantDatabaseRouter {
     }
 
     pub async fn verify_target_now(&self, target_key: &str) -> Result<(), TenantDataError> {
-        self.verify_target_now_for_catalog(target_key, &crate::migration::TENANT_DATA_CATALOG)
+        self.verify_target_now_for_catalog(target_key, crate::migration::tenant_data_catalog())
             .await
     }
 
@@ -128,7 +128,7 @@ impl TenantDatabaseRouter {
                         verify_schema_for_catalog(
                             control.write(),
                             target_key,
-                            &crate::migration::TENANT_DATA_CATALOG,
+                            crate::migration::tenant_data_catalog(),
                         )
                         .await
                     })
@@ -160,7 +160,7 @@ impl TenantDatabaseRouter {
                 &database,
                 target_key,
                 mode,
-                &crate::migration::TENANT_DATA_CATALOG,
+                crate::migration::tenant_data_catalog(),
                 false,
             )
             .await?;

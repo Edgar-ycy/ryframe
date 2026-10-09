@@ -21,6 +21,7 @@ class TenantDataBoundaryTests(unittest.TestCase):
         for relative in (
             CATALOG, "crates/ryframe-tenant-db/src/generated/mod.rs",
             "crates/ryframe-tenant-db/src/migration/catalog.rs",
+            "crates/ryframe-tenant-db/src/migration/business_catalog.rs",
             "crates/ryframe-generator/src/resource/render/tenant_catalog.rs",
             "crates/ryframe-generator/src/resource/render/slice/migration.rs",
         ):
@@ -57,7 +58,8 @@ class TenantDataBoundaryTests(unittest.TestCase):
     def test_catalog_must_be_compiled_and_bound_to_the_current_fingerprint(self):
         for relative, fragment in (
             ("crates/ryframe-tenant-db/src/generated/mod.rs", "pub mod catalog;"),
-            ("crates/ryframe-tenant-db/src/migration/catalog.rs", "computed != tenant_data_schema_fingerprint()"),
+            ("crates/ryframe-tenant-db/src/migration/catalog.rs", "computed != expected"),
+            ("crates/ryframe-tenant-db/src/migration/business_catalog.rs", "current.catalog != candidate.catalog"),
         ):
             path = self.root / relative
             source = path.read_text(encoding="utf-8")

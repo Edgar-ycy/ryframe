@@ -6,7 +6,9 @@ use super::{
 
 pub fn validate_outputs(command: &mut Command) -> AppResult<()> {
     match command {
-        Command::Begin { output, .. } | Command::VerifyData { output, .. } => {
+        Command::Catalog { output }
+        | Command::Begin { output, .. }
+        | Command::VerifyData { output, .. } => {
             *output = output::validate_new_output(output)?;
         }
         _ => {}
@@ -84,6 +86,7 @@ pub async fn execute(config: &AppConfig, context: &Context, command: Command) ->
         }
         Command::Status => status(config, context.repository.as_ref()).await,
         Command::Help => Ok(()),
+        Command::Catalog { .. } => Err(AppError::Internal("离线业务目录不能进入数据库用例".into())),
     }
 }
 
@@ -181,6 +184,40 @@ pub async fn target_inventory(
     write_inventory(output, &inventory)?;
     println!("已写入显式目标的只读完整表清单；该清单不表示跨目标一致性、备份或恢复成功。");
     Ok(())
+}
+
+pub fn business_catalog(
+    modules: &[ryframe_sdk::RyFrameBusinessModule],
+    output: &Path,
+) -> AppResult<()> {
+    #[derive(Serialize)]
+    struct Module<'a> {
+        name: &'a str,
+        resources: &'a [ryframe_sdk::ResourceDescriptor],
+    }
+    #[derive(Serialize)]
+    struct Catalog<'a> {
+        format_version: u16,
+        kind: &'static str,
+        modules: Vec<Module<'a>>,
+        tenant_schema_fingerprint: &'static str,
+        tenant_tables:
+            &'static [ryframe_application::ports::tenant_data::TenantDataTableDescriptor],
+    }
+    let catalog = Catalog {
+        format_version: 1,
+        kind: "ryframe-business-data-catalog",
+        modules: modules
+            .iter()
+            .map(|module| Module {
+                name: module.name(),
+                resources: module.resources(),
+            })
+            .collect(),
+        tenant_schema_fingerprint: ryframe_tenant_db::migration::tenant_data_schema_fingerprint(),
+        tenant_tables: ryframe_tenant_db::migration::tenant_data_catalog().tables(),
+    };
+    write_inventory(output, &catalog)
 }
 
 fn write_inventory(output: &Path, inventory: &impl Serialize) -> AppResult<()> {

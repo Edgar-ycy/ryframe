@@ -17,7 +17,7 @@ impl TenantDatabaseRouter {
             target_key,
             placement_generation,
             switch_token,
-            &crate::migration::TENANT_DATA_CATALOG,
+            crate::migration::tenant_data_catalog(),
         )
         .await
     }
@@ -100,7 +100,7 @@ impl TenantDatabaseRouter {
         target_key: &str,
         placement_generation: i64,
         switch_token: &str,
-        descriptor: &crate::migration::TenantDataTableDescriptor,
+        descriptor: &ryframe_application::ports::tenant_data::TenantDataTableDescriptor,
         batch_size: u32,
     ) -> Result<u64, TenantDataError> {
         self.delete_tenant_rows_batch_for_catalog(
@@ -112,7 +112,7 @@ impl TenantDatabaseRouter {
                 descriptor,
                 batch_size,
             },
-            &crate::migration::TENANT_DATA_CATALOG,
+            crate::migration::tenant_data_catalog(),
         )
         .await
     }
@@ -214,7 +214,7 @@ impl TenantDatabaseRouter {
             target_key,
             placement_generation,
             switch_token,
-            &crate::migration::TENANT_DATA_CATALOG,
+            crate::migration::tenant_data_catalog(),
         )
         .await
     }

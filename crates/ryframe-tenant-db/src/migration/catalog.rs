@@ -1,4 +1,8 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use ryframe_application::ports::tenant_data::TenantDataTableDescriptor;
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet, VecDeque},
+};
 
 use sha2::{Digest, Sha256};
 
@@ -9,60 +13,45 @@ const RESOURCE_OWNERSHIP_SCHEMA_CANONICAL: &str = "v4|table=ryframe_resource_own
 
 /// 应用构建所要求的稳定、小写十六进制 SHA-256 schema 指纹。
 pub fn tenant_data_schema_fingerprint() -> &'static str {
-    crate::generated::catalog::GENERATED_TENANT_DATA_SCHEMA_FINGERPRINT
+    super::business_catalog::runtime_fingerprint()
 }
-
-/// 编译期业务表复制描述。表名和列名不能来自配置或请求。
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TenantDataTableDescriptor {
-    pub table: &'static str,
-    pub copy_order: u32,
-    pub tenant_column: &'static str,
-    pub primary_key_cursor_columns: &'static [&'static str],
-    pub checksum_columns: &'static [&'static str],
-    /// 与 checksum/copy 列同序的 information_schema DATA_TYPE。
-    pub column_types: &'static [&'static str],
-    pub has_generated_columns: bool,
-    pub foreign_key_dependencies: &'static [&'static str],
-    pub foreign_keys: &'static [TenantDataForeignKeyDescriptor],
-    /// 由 generator 从资源 DDL 模型生成，与 information_schema 精确比对。
-    pub schema_canonical: &'static str,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TenantDataForeignKeyDescriptor {
-    pub name: &'static str,
-    pub columns: &'static [&'static str],
-    pub referenced_table: &'static str,
-    pub referenced_columns: &'static [&'static str],
-}
-
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TenantDataCatalog {
-    tables: &'static [TenantDataTableDescriptor],
+    tables: Cow<'static, [TenantDataTableDescriptor]>,
 }
 
 /// 生成入口登记的业务表；路由基础设施不参与租户数据复制。
 pub const TENANT_DATA_CATALOG: TenantDataCatalog = TenantDataCatalog {
-    tables: crate::generated::catalog::GENERATED_TENANT_DATA_TABLES,
+    tables: Cow::Borrowed(crate::generated::catalog::GENERATED_TENANT_DATA_TABLES),
 };
 
 impl TenantDataCatalog {
     /// 构造一个静态、编译期可验证的 catalog。生产使用生成常量；集成测试可注入
     /// 测试专用描述符而无需污染产品 catalog。
     pub const fn new(tables: &'static [TenantDataTableDescriptor]) -> Self {
-        Self { tables }
+        Self {
+            tables: Cow::Borrowed(tables),
+        }
     }
-
-    pub const fn tables(&self) -> &'static [TenantDataTableDescriptor] {
-        self.tables
+    pub fn composed(tables: Vec<TenantDataTableDescriptor>) -> Self {
+        Self {
+            tables: Cow::Owned(tables),
+        }
+    }
+    pub fn tables(&self) -> &[TenantDataTableDescriptor] {
+        &self.tables
     }
 
     /// 启动时验证安全命名、租户列、游标/校验列和 FK DAG。
     pub fn validate(&self) -> Result<(), String> {
         self.validate_structure()?;
         let computed = self.schema_fingerprint();
-        if computed != tenant_data_schema_fingerprint() {
+        let expected = if matches!(self.tables, Cow::Borrowed(_)) {
+            crate::generated::catalog::GENERATED_TENANT_DATA_SCHEMA_FINGERPRINT
+        } else {
+            tenant_data_schema_fingerprint()
+        };
+        if computed != expected {
             return Err("租户数据目录与当前构建要求的 schema 指纹不一致".into());
         }
         Ok(())
@@ -93,7 +82,7 @@ impl TenantDataCatalog {
         let mut by_name = HashMap::with_capacity(self.tables.len());
         let mut copy_orders = HashSet::with_capacity(self.tables.len());
         let mut previous_copy_order = None;
-        for table in self.tables {
+        for table in self.tables.iter() {
             validate_table_columns(table)?;
             if !copy_orders.insert(table.copy_order) {
                 return Err(format!("duplicate copy_order: {}", table.copy_order));
@@ -113,7 +102,7 @@ impl TenantDataCatalog {
             .iter()
             .map(|table| (table.table, 0usize))
             .collect::<HashMap<_, _>>();
-        for table in self.tables {
+        for table in self.tables.iter() {
             let mut dependencies = HashSet::with_capacity(table.foreign_key_dependencies.len());
             for dependency in table.foreign_key_dependencies {
                 if !safe_identifier(dependency) {
@@ -154,7 +143,7 @@ impl TenantDataCatalog {
         let mut visited = 0usize;
         while let Some(done) = ready.pop_front() {
             visited += 1;
-            for table in self.tables {
+            for table in self.tables.iter() {
                 if table.foreign_key_dependencies.contains(&done) {
                     let degree = incoming.get_mut(table.table).expect("catalog table exists");
                     *degree -= 1;

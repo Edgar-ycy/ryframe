@@ -6,7 +6,7 @@ use ryframe_application::ports::tenant_data::{
 use ryframe_kernel::AppResult;
 
 use crate::{
-    TenantDatabaseRouter, TenantDatabaseTargetHealthStatus, migration::TENANT_DATA_CATALOG,
+    TenantDatabaseRouter, TenantDatabaseTargetHealthStatus, migration::tenant_data_catalog,
 };
 
 use super::super::map_error;
@@ -30,11 +30,11 @@ impl TenantDataTargetPort for TenantDatabaseRouter {
     }
 
     fn catalog_fingerprint(&self) -> String {
-        TENANT_DATA_CATALOG.schema_fingerprint()
+        tenant_data_catalog().schema_fingerprint()
     }
 
     fn catalog_table_count(&self) -> usize {
-        TENANT_DATA_CATALOG.tables().len()
+        tenant_data_catalog().tables().len()
     }
 
     async fn metadata(&self) -> AppResult<Vec<TenantDataTargetMetadata>> {
@@ -74,13 +74,13 @@ impl TenantDataTargetPort for TenantDatabaseRouter {
     }
 
     async fn verify_now(&self, target_key: &str) -> AppResult<()> {
-        self.verify_target_now_for_catalog(target_key, &TENANT_DATA_CATALOG)
+        self.verify_target_now_for_catalog(target_key, tenant_data_catalog())
             .await
             .map_err(map_error)
     }
 
     async fn validate_catalog(&self, target_key: &str) -> AppResult<TenantDataTargetAccess> {
-        self.open_target_for_catalog(target_key, &TENANT_DATA_CATALOG)
+        self.open_target_for_catalog(target_key, tenant_data_catalog())
             .await
             .map(|target| TenantDataTargetAccess {
                 dedicated: target.is_dedicated(),
@@ -89,14 +89,14 @@ impl TenantDataTargetPort for TenantDatabaseRouter {
     }
 
     async fn is_occupied(&self, target_key: &str) -> AppResult<bool> {
-        self.target_occupancy_for_catalog(target_key, &TENANT_DATA_CATALOG)
+        self.target_occupancy_for_catalog(target_key, tenant_data_catalog())
             .await
             .map(|occupancy| occupancy.is_some())
             .map_err(map_error)
     }
 
     async fn tenant_is_empty(&self, target_key: &str, tenant_id: &str) -> AppResult<bool> {
-        self.tenant_is_empty_on_target_for_catalog(target_key, tenant_id, &TENANT_DATA_CATALOG)
+        self.tenant_is_empty_on_target_for_catalog(target_key, tenant_id, tenant_data_catalog())
             .await
             .map_err(map_error)
     }

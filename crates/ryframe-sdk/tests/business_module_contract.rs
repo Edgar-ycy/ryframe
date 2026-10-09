@@ -1,5 +1,6 @@
 use ryframe_sdk::{
-    BusinessModuleBuilder, ResourceDatabase, ResourceModel, RyFrameBusinessModule, validate_modules,
+    BusinessModuleBuilder, ResourceDatabase, ResourceModel, RyFrameBusinessModule,
+    TenantDataTableDescriptor, validate_modules,
 };
 
 #[derive(ResourceModel)]
@@ -39,4 +40,44 @@ fn module(name: &'static str, dependencies: &'static [&'static str]) -> RyFrameB
     BusinessModuleBuilder::new(name)
         .dependencies(dependencies)
         .build()
+}
+
+const TABLE: TenantDataTableDescriptor = TenantDataTableDescriptor {
+    table: "biz_order",
+    copy_order: 1,
+    tenant_column: "tenant_id",
+    primary_key_cursor_columns: &["tenant_id", "id"],
+    checksum_columns: &["tenant_id", "id", "name"],
+    column_types: &["varchar", "bigint", "varchar"],
+    has_generated_columns: false,
+    foreign_key_dependencies: &[],
+    foreign_keys: &[],
+    schema_canonical: "order-schema",
+};
+
+#[test]
+fn tenant_resources_require_complete_matching_catalog() {
+    let descriptor = Order::descriptor();
+    let missing = BusinessModuleBuilder::new("order")
+        .resources([descriptor])
+        .build();
+    assert!(validate_modules(&[missing]).is_err());
+    let complete = BusinessModuleBuilder::new("order")
+        .resources([descriptor])
+        .tenant_data_tables(&[TABLE])
+        .build();
+    assert!(validate_modules(&[complete]).is_ok());
+    let incomplete = BusinessModuleBuilder::new("order")
+        .resources([descriptor])
+        .tenant_data_tables(&[TenantDataTableDescriptor {
+            checksum_columns: &["tenant_id", "id"],
+            ..TABLE
+        }])
+        .build();
+    assert!(validate_modules(&[incomplete]).is_err());
+    let duplicate = BusinessModuleBuilder::new("order")
+        .resources([descriptor])
+        .tenant_data_tables(&[TABLE, TABLE])
+        .build();
+    assert!(validate_modules(&[duplicate]).is_err());
 }

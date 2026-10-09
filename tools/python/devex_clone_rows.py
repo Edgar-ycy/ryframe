@@ -49,6 +49,11 @@ def schema_catalog(backend: Path) -> tuple[dict, dict]:
     if set(tenant) & set(generated_tenant):
         raise ValueError("生成租户表与固定基线表重复")
     tenant.update(generated_tenant)
+    from devex_business_catalog import business_columns
+    business = business_columns(backend)
+    if set(tenant) & set(business):
+        raise ValueError("框架与独立业务目录重复声明租户表")
+    tenant.update(business)
     if not set(STATES | {name: None for name in EMPTY}).issubset(control):
         raise ValueError("当前 schema 缺少开发复制必须审查的状态表")
     return {name: columns for name, columns in control.items() if name not in EXCLUDED}, tenant

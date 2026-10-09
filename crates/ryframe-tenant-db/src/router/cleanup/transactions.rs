@@ -4,7 +4,7 @@ pub(super) async fn delete_tenant_rows_batch_in_transaction(
     transaction: &DatabaseTransaction,
     provision: &FenceProvision,
     target_mode: TenantDatabaseTargetMode,
-    descriptor: &crate::migration::TenantDataTableDescriptor,
+    descriptor: &ryframe_application::ports::tenant_data::TenantDataTableDescriptor,
     batch_size: u32,
 ) -> Result<u64, TenantDataError> {
     let slot = if target_mode == TenantDatabaseTargetMode::Dedicated {

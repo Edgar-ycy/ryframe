@@ -17,6 +17,7 @@ pub use ir::{
     StorageKind, ValueType, WidgetIr,
 };
 pub(crate) use render::business::render_business_resource;
+pub(crate) use render::tenant_catalog::{business_tenant_manifest, render_business_tenant_catalog};
 pub use render::{AssetRoot, GeneratedAsset, GeneratedCatalog, render_resources};
 pub use spec::{
     AccessSpec, ApiSpec, AuditSpec, DatabaseSpec, EnumValueSpec, ExtensionSpec, FieldSpec,

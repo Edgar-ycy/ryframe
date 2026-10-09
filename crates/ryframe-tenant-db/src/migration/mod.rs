@@ -5,6 +5,7 @@
 //! `ryframe-db::migration` 管理，不能经此入口安装到 dedicated 目标。
 
 mod baseline_contract;
+mod business_catalog;
 mod catalog;
 #[cfg(feature = "migration")]
 mod m20260820_000000_tenant_baseline;
@@ -22,10 +23,10 @@ pub fn expected_migration_names() -> impl Iterator<Item = &'static str> {
         .chain(crate::generated::MIGRATION_NAMES.iter().copied())
 }
 
+pub use business_catalog::{register_business_catalog, tenant_data_catalog};
 pub use catalog::{
-    TENANT_DATA_CATALOG, TenantDataCatalog, TenantDataForeignKeyDescriptor,
-    TenantDataTableDescriptor, catalog_entry_canonical, schema_fingerprint_for_catalog,
-    tenant_data_schema_fingerprint,
+    TENANT_DATA_CATALOG, TenantDataCatalog, catalog_entry_canonical,
+    schema_fingerprint_for_catalog, tenant_data_schema_fingerprint,
 };
 #[cfg(feature = "migration")]
 pub use m20260820_000000_tenant_baseline::{
@@ -35,8 +36,7 @@ pub use m20260820_000000_tenant_baseline::{
 pub use runtime::{Migrator, up, up_pending_business_migrations};
 pub use ryframe_db::migration::normalize_check_clause;
 pub use schema::{
-    canonical_table_schema, ensure_local_foreign_key_schema, ensure_mysql_target_boundary,
-    register_business_tables, verify, verify_for_catalog, verify_mysql_80, verify_mysql_target,
-    verify_mysql_target_for_catalog,
+    canonical_table_schema, ensure_local_foreign_key_schema, ensure_mysql_target_boundary, verify,
+    verify_for_catalog, verify_mysql_80, verify_mysql_target, verify_mysql_target_for_catalog,
 };
 pub use status::{MigrationStatus, TENANT_DATA_MIGRATION_LEDGER, status};

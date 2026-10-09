@@ -121,7 +121,7 @@ fn target_tables(control: bool) -> AppResult<TargetTables> {
         "biz_tenant_target_slot".to_owned(),
     ]);
     business.extend(
-        crate::migration::TENANT_DATA_CATALOG
+        crate::migration::tenant_data_catalog()
             .tables()
             .iter()
             .map(|table| table.table.to_owned()),
@@ -134,6 +134,11 @@ fn target_tables(control: bool) -> AppResult<TargetTables> {
         vec![ryframe_db::resource_ownership::RESOURCE_OWNERSHIP_TABLE.into()]
     };
     preserved.push(crate::migration::TENANT_DATA_MIGRATION_LEDGER.into());
+    if crate::migration::tenant_data_catalog().tables().len()
+        > crate::migration::TENANT_DATA_CATALOG.tables().len()
+    {
+        preserved.push("ryframe_business_migration".into());
+    }
     canonical_table_names(&mut preserved)?;
 
     let business_names = business.iter().map(String::as_str).collect::<BTreeSet<_>>();

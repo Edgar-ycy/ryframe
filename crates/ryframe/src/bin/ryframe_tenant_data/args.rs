@@ -2,6 +2,7 @@ use serde::Serialize;
 use std::{collections::BTreeMap, path::PathBuf};
 
 pub const USAGE: &str = "用法：
+  ryframe-tenant-data business-catalog --output <catalog.json>
   ryframe-tenant-data target-inventory --target <已配置目标key> --output <target.json>
   ryframe-tenant-data backup-inventory --output <inventory.json> --source-sha <SHA> <--quiesced-at|--observed-at> <RFC3339>
   ryframe-tenant-data backup-register --manifest <manifest.json> --backup-root <目录>
@@ -13,6 +14,7 @@ pub const USAGE: &str = "用法：
 登记库使用 APP_CONFIG_DIR。恢复目标使用独立配置目录；APP_* 覆盖仍生效，最终 scope、物理身份、JWT 与 Redis namespace 必须隔离。
 备份复制和数据库恢复由外部工具执行。inventory 与 verify 只读目标资源；begin、register 和 verify 的状态写入登记库。
 target-inventory 覆盖未分配租户的明确目标及其迁移、ownership、登记表，不访问对象存储；跨目标一致性仍要求外部停止全部生产者。
+business-catalog 离线输出当前进程已启用业务及完整租户表目录，不加载配置、不连接数据库。
 observed-at 仅声明开始观察，不能作为停止证明或正式备份库存；正式备份必须使用 quiesced-at。";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -25,6 +27,9 @@ pub enum InventoryTime<T> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Command {
     Help,
+    Catalog {
+        output: PathBuf,
+    },
     TargetInventory {
         target: String,
         output: PathBuf,
@@ -81,6 +86,9 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
     };
     let result = match command.as_str() {
         "--help" | "-h" => Command::Help,
+        "business-catalog" => Command::Catalog {
+            output: take("--output")?.into(),
+        },
         "target-inventory" => Command::TargetInventory {
             target: take("--target")?,
             output: take("--output")?.into(),

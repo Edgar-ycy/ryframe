@@ -1,13 +1,12 @@
-use ryframe_application::ports::tenant_data::TenantDataRow;
+use ryframe_application::ports::tenant_data::{TenantDataRow, TenantDataTableDescriptor};
 use ryframe_tenant_db::{
     application_ports::tenant_data::{
         business_cursor_columns, catalog_table, cursor_from_last_row, validate_batch_size,
     },
     migration::{
         Migrator, RESOURCE_OWNERSHIP_DDL, TENANT_DATA_CATALOG, TENANT_DATA_MIGRATION_LEDGER,
-        TENANT_FENCE_DDL, TENANT_TARGET_SLOT_DDL, TenantDataTableDescriptor,
-        ensure_local_foreign_key_schema, expected_migration_names, normalize_check_clause,
-        tenant_data_schema_fingerprint,
+        TENANT_FENCE_DDL, TENANT_TARGET_SLOT_DDL, ensure_local_foreign_key_schema,
+        expected_migration_names, normalize_check_clause, tenant_data_schema_fingerprint,
     },
 };
 use sea_orm_migration::MigratorTrait;

@@ -20,6 +20,10 @@ def schema_models(backend: Path) -> tuple[dict, dict, dict, dict]:
     control, tenant = schema_catalog(backend)
     full_control = parse_schema((backend / "sql/ryframe_config.sql").read_text(encoding="utf-8"))
     full_tenant = parse_schema((backend / "crates/ryframe-tenant-db/src/migration/m20260820_000000_tenant_baseline.rs").read_text(encoding="utf-8"))
+    full_tenant.update(tenant)
+    from devex_business_catalog import business_tables, business_ledger_columns
+    if business_tables(backend):
+        full_tenant["ryframe_business_migration"] = business_ledger_columns(backend)
     return control, tenant, full_control, full_tenant
 
 

@@ -1,6 +1,9 @@
+mod catalog;
 mod migration;
 mod targets;
 mod tracking;
+
+pub use catalog::{TenantDataForeignKeyDescriptor, TenantDataTableDescriptor};
 
 pub use migration::{
     TenantDataCatalogTable, TenantDataCleanupOwnership, TenantDataFence, TenantDataMigrationPort,
