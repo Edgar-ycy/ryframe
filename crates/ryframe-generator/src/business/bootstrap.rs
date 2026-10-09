@@ -181,7 +181,8 @@ fn add_composition_dependency(source: &str, package: &str) -> Result<String, Res
     );
     updated = add_feature_items(&updated, "bin-api", &["dep", "api"], package)?;
     updated = add_feature_items(&updated, "bin-worker", &["dep", "runtime"], package)?;
-    add_feature_items(&updated, "bin-migrate", &["dep", "migration"], package)
+    updated = add_feature_items(&updated, "bin-migrate", &["dep", "migration"], package)?;
+    add_feature_items(&updated, "bin-tenant-data", &["dep", "runtime"], package)
 }
 
 fn add_feature_items(
@@ -383,7 +384,7 @@ mod tests {
         .expect("写入工作区清单");
         fs::write(
             root.join("crates/ryframe/Cargo.toml"),
-            "[package]\nname = \"ryframe\"\n\n[dependencies]\n\n[dev-dependencies]\n\n[features]\nbin-api = [\n]\nbin-worker = [\n]\nbin-migrate = [\n]\n",
+            "[package]\nname = \"ryframe\"\n\n[dependencies]\n\n[dev-dependencies]\n\n[features]\nbin-api = [\n]\nbin-worker = [\n]\nbin-migrate = [\n]\nbin-tenant-data = [\n]\n",
         )
         .expect("写入组合根清单");
         fs::write(
@@ -441,6 +442,14 @@ mod tests {
         ] {
             assert!(composition.contains(expected), "缺少 {expected}");
         }
+        let parsed: toml::Value = toml::from_str(&composition).expect("组合根清单应为合法 TOML");
+        assert_eq!(
+            parsed["features"]["bin-tenant-data"],
+            toml::Value::Array(vec![
+                toml::Value::String("dep:order-business".into()),
+                toml::Value::String("order-business/runtime".into()),
+            ])
+        );
         let registry = fs::read_to_string(directory.path().join("crates/ryframe/src/business.rs"))
             .expect("读取业务注册表");
         assert!(registry.contains("order_business::module()"));

@@ -25,6 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     commands::validate_outputs(&mut command)?;
+    ryframe::business::registered_business_modules()?;
     let environment = Environment::from_env()?;
     let config = AppConfig::load_from_env(environment)?;
     ryframe_kernel::snowflake::initialize(config.snowflake_worker_id)?;
