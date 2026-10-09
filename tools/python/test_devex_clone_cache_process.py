@@ -1,10 +1,12 @@
 """Redis 控制设施的离线边界与显式 WSL Python 子进程测试；不运行 Redis。"""
 import copy
+import ast
 import io
 import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import threading
 import unittest
 from workspace_directory import WorkspaceDirectory
@@ -14,6 +16,38 @@ import devex_clone_cache_process as process
 
 
 BOOT = "5a81dc04-9e9a-416b-8eab-1b059bddf489"
+
+
+class FrozenHelperSetTests(unittest.TestCase):
+    """WSL 冻结辅助集合必须自包含；仓库工具目录不进入 Linux 侧导入路径。"""
+
+    def helpers(self) -> dict:
+        tools = Path(__file__).resolve().parent
+        return {"cache": tools / "devex_clone_cache_process.py", "process": tools / "full_stack_process.py"}
+
+    def test_unconditional_imports_stay_inside_the_frozen_set(self):
+        allowed = set(sys.stdlib_module_names) | set(self.helpers())
+        for key, path in self.helpers().items():
+            names = set()
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in tree.body:  # 只统计无条件模块级导入；平台守卫由 Linux 子进程用例覆盖
+                if isinstance(node, ast.Import):
+                    names.update(alias.name.split(".")[0] for alias in node.names)
+                elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                    names.add(node.module.split(".")[0])
+            with self.subTest(helper=key):
+                self.assertEqual(sorted(names - allowed), [])
+
+    @unittest.skipIf(os.name == "nt", "WSL 辅助进程只在 Linux/WSL 侧导入")
+    def test_frozen_helpers_import_without_the_repository_tools(self):
+        temporary = WorkspaceDirectory(dir=Path(__file__).resolve().parents[2] / ".local-tests/tmp", prefix="fh-")
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        (root / "cache.py").write_bytes(self.helpers()["cache"].read_bytes())
+        (root / "full_stack_process.py").write_bytes(self.helpers()["process"].read_bytes())
+        result = subprocess.run([sys.executable, "-B", "-c", "import cache, full_stack_process"], cwd=root,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 @unittest.skipUnless(os.name == "nt", "WSL Redis 进程测试仅在 Windows runner 执行")

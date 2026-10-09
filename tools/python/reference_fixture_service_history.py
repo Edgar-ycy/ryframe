@@ -97,31 +97,53 @@ def validate_history(run: Path, state: dict, *, ready: bool = True, settled: boo
                     or read_json(path).get("status") != "controller_recovered"):
                 raise ValueError("夹具控制器恢复结果不完整")
         elif item["mode"] == "reconcile":
-            if closed or external_recovery is not None or len(unsettled) != 1:
-                raise ValueError("夹具关闭和解必须对应唯一未结算失败")
+            if closed or len(unsettled) != 1:
+                raise ValueError("夹具生命周期和解必须对应唯一未结算失败")
             failed_number = unsettled[0]
             failed = attempts[failed_number - 1]
-            if (failed["stage"], failed["mode"], failed["status"]) != (LIFECYCLE_STAGE, "close", "failed"):
-                raise ValueError("夹具关闭和解仅能消费失败的 close 阶段")
             reconciliation = result.get("reconciliation", {})
             path = Path(reconciliation.get("path", ""))
             controller = _attempt_controller_binding(run, item)
-            exact(result, {"format_version", "kind", "operation", "status", "run", "remote_writes",
-                           "resources_deleted", "controller", "owner", "failed_attempt", "services",
-                           "reconciliation"})
-            if (result.get("status") != "failed_close_reconciled"
-                    or result.get("failed_attempt") != failed_number
-                    or result.get("owner") != sources.get("state_before")
-                    or result.get("controller") != controller
-                    or result.get("services") != {"redis": "stopped", "rustfs": "stopped"}
-                    or path != run / f"lifecycle-{index + 1:04d}/reconciliation.json"
-                    or linked(path) or binding(path) != reconciliation):
-                raise ValueError("夹具关闭和解结果不完整")
-            _validate_close_reconciliation(read_json(path), run, index + 1,
-                                           sources, failed, active_generation)
-            unsettled.clear()
-            closed = True
-            restart_predecessor = item["result"]
+            if result.get("status") == "failed_close_reconciled":
+                if (external_recovery is not None
+                        or (failed["stage"], failed["mode"], failed["status"]) != (LIFECYCLE_STAGE, "close", "failed")):
+                    raise ValueError("夹具关闭和解仅能消费失败的 close 阶段")
+                exact(result, {"format_version", "kind", "operation", "status", "run", "remote_writes",
+                               "resources_deleted", "controller", "owner", "failed_attempt", "services",
+                               "reconciliation"})
+                if (result.get("failed_attempt") != failed_number
+                        or result.get("owner") != sources.get("state_before")
+                        or result.get("controller") != controller
+                        or result.get("services") != {"redis": "stopped", "rustfs": "stopped"}
+                        or path != run / f"lifecycle-{index + 1:04d}/reconciliation.json"
+                        or linked(path) or binding(path) != reconciliation):
+                    raise ValueError("夹具关闭和解结果不完整")
+                _validate_close_reconciliation(read_json(path), run, index + 1,
+                                               sources, failed, active_generation)
+                unsettled.clear()
+                closed = True
+                restart_predecessor = item["result"]
+            elif result.get("status") == "failed_restart_reconciled":
+                if (external_recovery is None or failed["number"] != index
+                        or (failed["stage"], failed["mode"], failed["status"]) != (LIFECYCLE_STAGE, "restart", "failed")):
+                    raise ValueError("夹具重启和解仅能消费外部终止核对后的唯一失败 restart")
+                exact(result, {"format_version", "kind", "operation", "status", "run", "remote_writes",
+                               "resources_deleted", "controller", "owner", "failed_attempt",
+                               "external_termination", "services", "reconciliation"})
+                recovery = read_json(Path(external_recovery.get("path", "")))
+                if (result.get("failed_attempt") != failed_number
+                        or result.get("owner") != sources.get("state_before")
+                        or result.get("controller") != controller
+                        or result.get("external_termination") != recovery.get("evidence")
+                        or result.get("services") != {"redis": "stopped", "rustfs": "external-termination-unreconciled"}
+                        or path != run / f"lifecycle-{index + 1:04d}/reconciliation.json"
+                        or linked(path) or binding(path) != reconciliation):
+                    raise ValueError("夹具重启和解结果不完整")
+                _validate_restart_reconciliation(read_json(path), run, index + 1, sources, failed,
+                                                 external_recovery, active_generation)
+                unsettled.clear()
+            else:
+                raise ValueError("夹具生命周期和解结果状态无效")
         else:
             if unsettled:
                 raise ValueError("夹具服务未和解失败阶段后不能重启")
@@ -168,6 +190,65 @@ def reconcilable_failed_close(state: dict, history: dict) -> dict | None:
            for item in later):
         return None
     return failed
+
+
+def reconcilable_failed_restart(state: dict, history: dict) -> dict | None:
+    """外部终止核对后的唯一失败 restart 允许和解回原现场，重启前驱保持不变。"""
+    if history["closed"] or history["external_recovery"] is None or len(history["unsettled"]) != 1:
+        return None
+    number = history["unsettled"][0]
+    attempts = state["attempts"]
+    if number != len(attempts) or number < 1:
+        return None
+    failed = attempts[number - 1]
+    if (failed["stage"], failed["mode"], failed["status"]) != (LIFECYCLE_STAGE, "restart", "failed"):
+        return None
+    return failed
+
+
+def failed_restart_reconciliation_evidence(run: Path, failed: dict, sources: dict,
+                                           predecessor: dict) -> dict:
+    """核对失败 restart 的账本前像；现场观察由生命周期层在发布前再次核对。"""
+    stable_sources = {key: descriptor for key, descriptor in sources.items()
+                      if key not in {"state_before", "restart_predecessor"}}
+    if (set(failed["sources"]) != set(sources) | {"restart_predecessor"}
+            or any(failed["sources"].get(key) != descriptor
+                   for key, descriptor in stable_sources.items())
+            or failed["sources"].get("restart_predecessor") != predecessor
+            or historical_state(run, failed["sources"].get("state_before"))["historical_attempts"]
+            != failed["number"] - 1):
+        raise ValueError("失败 restart 未绑定当前夹具输入及完整账本前像")
+    return {"failed_controller": _attempt_controller_binding(run, failed)}
+
+
+def _validate_restart_reconciliation(proof: dict, run: Path, number: int, sources: dict,
+                                     failed: dict, external_recovery: dict, generation: dict) -> None:
+    exact(proof, {"format_version", "kind", "run", "attempt", "owner", "failed_attempt",
+                  "failed_error_type", "failed_sources", "failed_controller", "external_termination",
+                  "services", "remote_writes", "resources_deleted"})
+    stable_sources = {key: descriptor for key, descriptor in sources.items()
+                      if key not in {"state_before", "restart_predecessor"}}
+    if (set(failed["sources"]) != set(sources) | {"restart_predecessor"}
+            or any(failed["sources"].get(key) != descriptor
+                   for key, descriptor in stable_sources.items())
+            or failed["sources"].get("restart_predecessor") != external_recovery
+            or historical_state(run, failed["sources"].get("state_before"))["historical_attempts"]
+            != failed["number"] - 1):
+        raise ValueError("失败 restart 未绑定当前夹具输入及完整账本前像")
+    recovery = read_json(Path(external_recovery.get("path", "")))
+    if (proof["format_version"] != 1 or proof["kind"] != "reference-fixture-failed-restart-reconciliation"
+            or proof["run"] != str(run) or proof["attempt"] != number
+            or proof["owner"] != sources["state_before"]
+            or proof["failed_attempt"] != failed["number"]
+            or proof["failed_error_type"] != failed["error_type"]
+            or proof["failed_sources"] != failed["sources"]
+            or proof["failed_controller"] != _attempt_controller_binding(run, failed)
+            or proof["external_termination"] != recovery.get("evidence")
+            or proof["services"] != {"redis": "stopped", "rustfs": "external-termination-unreconciled"}
+            or proof["remote_writes"] != 0 or proof["resources_deleted"] is not False):
+        raise ValueError("夹具重启和解证据未绑定失败阶段与原外部终止现场")
+    _validate_external_termination(read_json(Path(proof["external_termination"]["path"])), run,
+                                   recovery.get("owner"), generation)
 
 
 def _attempt_controller_binding(run: Path, attempt: dict) -> dict:

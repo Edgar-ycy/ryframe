@@ -11,7 +11,13 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from artifact_digests import filesystem_path
+if os.name == "nt":
+    # Windows 扩展路径语义只在该平台生效。
+    from artifact_digests import filesystem_path
+else:
+    def filesystem_path(path: Path | str) -> str:
+        """WSL/Linux 辅助进程只复制最小冻结集合，没有扩展路径语义。"""
+        return os.fspath(path)
 
 PROCESS_ROLES = frozenset({
     "alertmanager",

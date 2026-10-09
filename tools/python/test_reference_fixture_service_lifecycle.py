@@ -583,6 +583,69 @@ class ServiceLifecycleTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_history(self.run, load_state(self.run))
 
+    def test_failed_restart_returns_to_the_recorded_external_termination_and_restarts(self):
+        termination = self.external_observation()
+        stopped = {"redis": "stopped", "rustfs": "external-termination-unreconciled",
+                   "termination": termination}
+        old_services = self.restart_services(termination["evidence"])
+        with patch.object(lifecycle, "registered_services", return_value=old_services), \
+                patch.object(lifecycle, "observe_services", return_value=stopped):
+            lifecycle.recover(self.backend, self.review, self.bootstrap,
+                              self.run / "state.json", write=True)
+
+        def start_storage(_backend, request, _environment, output, _manifest, _controller,
+                          _number, guard, **_options):
+            guard()
+            write_json(output / "process.json", {"process": True})
+            write_json(output / "launch.json", {"launch": True})
+            return {"identity": old_services["tree"]["process"], "sha256": request["executable"]["sha256"],
+                    "process_receipt": binding(output / "process.json"),
+                    "launch_receipt": binding(output / "launch.json"),
+                    "tree": binding(output / "launch.json")}
+
+        def failing_redis(*_args, **_kwargs):
+            raise RuntimeError("Redis 启动未获得授权")
+
+        with patch.object(lifecycle, "registered_services", return_value=old_services), \
+                patch.object(lifecycle, "observe_services", return_value=stopped), \
+                patch("devex_clone_storage_process.start", side_effect=start_storage), \
+                patch.object(lifecycle, "start_cache", side_effect=failing_redis), \
+                self.assertRaises(RuntimeError):
+            lifecycle.restart(self.backend, self.review, self.bootstrap,
+                              self.run / "state.json", write=True)
+        history = validate_history(self.run, load_state(self.run), settled=False)
+        self.assertEqual(len(history["unsettled"]), 1)
+        failed_number = history["unsettled"][0]
+        self.assertEqual(load_state(self.run)["attempts"][failed_number - 1]["mode"], "restart")
+
+        running = {"redis": "running", "rustfs": "running", "termination": None}
+        before = self.snapshot()
+        with patch.object(lifecycle, "registered_services", return_value=old_services), \
+                patch.object(lifecycle, "observe_services", return_value=running), \
+                self.assertRaisesRegex(ValueError, "外部终止现场"):
+            lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                self.run / "state.json", write=True)
+        self.assertEqual(before, self.snapshot())
+
+        with patch.object(lifecycle, "registered_services", return_value=old_services), \
+                patch.object(lifecycle, "observe_services", return_value=stopped):
+            result = lifecycle.reconcile(self.backend, self.review, self.bootstrap,
+                                         self.run / "state.json", write=True)
+        self.assertEqual(result["status"], "failed_restart_reconciled")
+        self.assertEqual(result["failed_attempt"], failed_number)
+        history = validate_history(self.run, load_state(self.run))
+        self.assertEqual(history["unsettled"], [])
+        self.assertIsNotNone(history["external_recovery"])
+        self.assertFalse(history["closed"])
+
+        restarted, _, _ = self.restart_generation(old_services, stopped)
+        self.assertEqual(restarted["status"], "services_restarted")
+        state = load_state(self.run)
+        history = validate_history(self.run, state)
+        self.assertEqual(history["unsettled"], [])
+        self.assertEqual(history["active_generation"], state["attempts"][-1]["result"])
+        self.assertEqual((state["attempts"][-1]["mode"], state["attempts"][-1]["status"]), ("restart", "passed"))
+
     def test_restart_appends_a_new_generation_with_previous_lineage(self):
         termination = self.external_observation()
         stopped = {"redis": "stopped", "rustfs": "external-termination-unreconciled",

@@ -19,7 +19,9 @@ from process_guard import process_guard
 from reference_fixture_service_context import (context, guard, observe_services, registered_services,
                                                unknown_recoveries)
 from reference_fixture_service_history import (LIFECYCLE_STAGE, close_reconciliation_evidence,
-                                               reconcilable_failed_close, validate_history)
+                                               failed_restart_reconciliation_evidence,
+                                               reconcilable_failed_close, reconcilable_failed_restart,
+                                               validate_history)
 
 
 def _result(run: Path, operation: str, status: str, **details) -> dict:
@@ -120,19 +122,39 @@ def _reconciliation_evidence(value: dict, failed: dict, services: dict) -> tuple
     return observations, {"evidence": evidence, "failed_controller": failed_controller}
 
 
+def _restart_reconciliation_evidence(value: dict, failed: dict, services: dict) -> tuple[dict, dict]:
+    """失败 restart 和解必须回到已记录的外部终止观察，不引入新的服务代次。"""
+    recovery = read_json(Path(value["history"]["external_recovery"]["path"]))
+    recorded = read_json(local_path(value["backend"], recovery["evidence"]["path"]))
+    proof_sources = failed_restart_reconciliation_evidence(
+        value["run"], failed, value["sources"], value["history"]["external_recovery"])
+    observations = observe_services(services)
+    if observations != {"redis": "stopped", "rustfs": "external-termination-unreconciled",
+                        "termination": recorded["observation"]}:
+        raise ValueError("失败 restart 和解时服务未回到已核对的外部终止现场")
+    return observations, proof_sources
+
+
 def reconcile(backend: Path, review: Path, bootstrap: Path, owner_file: Path, *, write: bool) -> dict:
     if not write:
-        raise ValueError("和解夹具关闭证据必须显式指定 --write")
+        raise ValueError("和解夹具生命周期证据必须显式指定 --write")
     value = context(backend, review, bootstrap)
     run = value["run"]
     owner_path = local_path(backend, str(owner_file if owner_file.is_absolute() else backend / owner_file))
     if owner_path != run / "state.json" or binding(owner_path) != value["sources"]["state_before"]:
-        raise ValueError("夹具关闭和解必须精确绑定 status 返回的当前 state 文件")
-    failed = reconcilable_failed_close(value["state"], value["history"])
-    if failed is None or unknown_recoveries(run) or controller_observation(run) is not None:
-        raise ValueError("只允许和解唯一未结算的失败 close，且不能有控制器或未知恢复")
+        raise ValueError("夹具生命周期和解必须精确绑定 status 返回的当前 state 文件")
+    failed_close = reconcilable_failed_close(value["state"], value["history"])
+    failed_restart = reconcilable_failed_restart(value["state"], value["history"])
+    if (failed_close is None) == (failed_restart is None) or unknown_recoveries(run) \
+            or controller_observation(run) is not None:
+        raise ValueError("只允许和解唯一未结算的失败 close，或外部终止核对后的失败 restart")
     services = registered_services(value, settled=False)
-    observations, proof_sources = _reconciliation_evidence(value, failed, services)
+    if failed_close is not None:
+        observations, proof_sources = _reconciliation_evidence(value, failed_close, services)
+        status = "failed_close_reconciled"
+    else:
+        observations, proof_sources = _restart_reconciliation_evidence(value, failed_restart, services)
+        status = "failed_restart_reconciled"
     with run_lock(run) as owner:
         guard(value)
         if unknown_recoveries(run):
@@ -143,26 +165,45 @@ def reconcile(backend: Path, review: Path, bootstrap: Path, owner_file: Path, *,
         try:
             output = local_path(backend, str(run / f"lifecycle-{number:04d}"), new=True)
             output.mkdir()
-            current_observations, current_sources = _reconciliation_evidence(value, failed, services)
+            current_observations, current_sources = (
+                _reconciliation_evidence(value, failed_close, services) if failed_close is not None
+                else _restart_reconciliation_evidence(value, failed_restart, services))
             if current_observations != observations or current_sources != proof_sources:
-                raise ValueError("发布和解前关闭证据或服务状态发生变化")
+                raise ValueError("发布和解前证据或服务状态发生变化")
             proof_file = output / "reconciliation.json"
-            proof = {"format_version": 1, "kind": "reference-fixture-failed-close-reconciliation",
-                     "run": str(run), "attempt": number, "owner": value["sources"]["state_before"],
-                     "failed_attempt": failed["number"], "failed_error_type": failed["error_type"],
-                     "failed_sources": failed["sources"],
-                     "failed_controller": proof_sources["failed_controller"],
-                     "services": {key: observations[key] for key in ("redis", "rustfs")},
-                     "evidence": proof_sources["evidence"],
-                     "remote_writes": 0, "resources_deleted": False}
+            failed = failed_close if failed_close is not None else failed_restart
+            if failed_close is not None:
+                proof = {"format_version": 1, "kind": "reference-fixture-failed-close-reconciliation",
+                         "run": str(run), "attempt": number, "owner": value["sources"]["state_before"],
+                         "failed_attempt": failed["number"], "failed_error_type": failed["error_type"],
+                         "failed_sources": failed["sources"],
+                         "failed_controller": proof_sources["failed_controller"],
+                         "services": {key: observations[key] for key in ("redis", "rustfs")},
+                         "evidence": proof_sources["evidence"],
+                         "remote_writes": 0, "resources_deleted": False}
+            else:
+                recovery = read_json(Path(value["history"]["external_recovery"]["path"]))
+                proof = {"format_version": 1, "kind": "reference-fixture-failed-restart-reconciliation",
+                         "run": str(run), "attempt": number, "owner": value["sources"]["state_before"],
+                         "failed_attempt": failed["number"], "failed_error_type": failed["error_type"],
+                         "failed_sources": failed["sources"],
+                         "failed_controller": proof_sources["failed_controller"],
+                         "external_termination": recovery["evidence"],
+                         "services": {key: observations[key] for key in ("redis", "rustfs")},
+                         "remote_writes": 0, "resources_deleted": False}
             write_json(proof_file, proof)
             guard(value, running_state)
-            final_observations, final_sources = _reconciliation_evidence(value, failed, services)
+            final_observations, final_sources = (
+                _reconciliation_evidence(value, failed_close, services) if failed_close is not None
+                else _restart_reconciliation_evidence(value, failed_restart, services))
             if final_observations != observations or final_sources != proof_sources:
-                raise ValueError("和解证据写入后关闭现场发生变化")
-            result = _result(run, "reconcile", "failed_close_reconciled", controller=controller,
-                             owner=value["sources"]["state_before"], failed_attempt=failed["number"],
-                             services=proof["services"], reconciliation=binding(proof_file))
+                raise ValueError("和解证据写入后现场发生变化")
+            details = {"controller": controller, "owner": value["sources"]["state_before"],
+                       "failed_attempt": failed["number"], "services": proof["services"],
+                       "reconciliation": binding(proof_file)}
+            if failed_close is None:
+                details["external_termination"] = recovery["evidence"]
+            result = _result(run, "reconcile", status, **details)
             finish(run, number, result=result)
         except BaseException as error:
             finish(run, number, error=error)
