@@ -234,7 +234,10 @@ fn process_features_select_precise_database_surfaces() {
     let tenant_connection = manifest_feature_members(TENANT_DB_MANIFEST, "connection");
     assert!(tenant_connection.contains("ryframe-db/connection"));
     assert!(!tenant_connection.contains("sea-orm-migration"));
-    assert!(!tenant_connection.contains("ryframe-application"));
+    // 连接阶段使用 application 的中立租户表描述，不能引入生成宏或业务组合根。
+    assert!(tenant_connection.contains("dep:ryframe-application"));
+    assert!(!tenant_connection.contains("ryframe-macro"));
+    assert!(!tenant_connection.contains("ryframe-sdk"));
     let tenant_migration = manifest_feature_members(TENANT_DB_MANIFEST, "migration");
     assert!(tenant_migration.contains("connection"));
     assert!(tenant_migration.contains("dep:sea-orm-migration"));
@@ -247,7 +250,7 @@ fn process_features_select_precise_database_surfaces() {
     assert!(!tenant_repositories.contains("migration"));
     assert!(!tenant_repositories.contains("sea-orm-migration"));
     assert!(tenant_repositories.contains("ryframe-db/repositories"));
-    assert!(tenant_repositories.contains("ryframe-application"));
+    assert!(!tenant_repositories.contains("dep:ryframe-application"));
 
     let database = feature_members("runtime-database");
     assert!(database.contains("ryframe-db/connection"));
