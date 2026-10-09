@@ -28,6 +28,6 @@ pub fn registered_business_modules() -> AppResult<Vec<RyFrameBusinessModule>> {
             .iter()
             .flat_map(|module| module.tenant_data_tables().iter().copied()),
     )
-    .map_err(|error| ryframe_kernel::AppError::Config(error.to_string()))?;
+    .map_err(ryframe_kernel::AppError::Config)?;
     Ok(modules)
 }
