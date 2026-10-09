@@ -11,6 +11,7 @@ import subprocess
 from typing import Mapping
 import uuid
 
+from artifact_digests import filesystem_path
 from devex_clone_capture import read_json, regular_file, write_json
 from devex_clone_export import cli_executable, schema_models
 from devex_clone_model import digest, exact, linked, local_path, schema_fingerprints
@@ -191,11 +192,15 @@ def capture_side_inventory(backend: Path, side: str, tools: ExternalTools, maint
                              {"path": str(inventory_path), **published}, evidence)
     except Exception as error:
         inventory_path = output / "inventory.json"
-        if (published is not None and inventory_path.is_file() and not linked(inventory_path)
+        if (published is not None and os.path.isfile(filesystem_path(inventory_path)) and not linked(inventory_path)
                 and file_digest(inventory_path) == published):
-            inventory_path.unlink()
+            os.unlink(filesystem_path(inventory_path))
         failure = {"format_version": 1, "status": "side_inventory_failed", "stage": stage,
                    "error_type": type(error).__name__, "remote_writes": 0, "target_ready": False, "clone_verified": False}
+        if isinstance(error, OSError) and getattr(error, "filename", None):
+            # 只记录调用方自己的路径，便于区分缺失文件与超长路径等系统级故障。
+            failure["failed_path"] = str(error.filename)
+            failure["winerror"] = getattr(error, "winerror", None)
         if isinstance(error, DatabaseVerificationError):
             failure["database_verification"] = error.safe_details()
         write_json(output / "failure.json", failure)
@@ -292,7 +297,8 @@ class _Capture:
         stdout, stderr, code, error_type = b"", b"", None, None
         filename = self.output / ("command-" + uuid.uuid4().hex + ".json")
         self._track(filename)
-        with filename.open("x", encoding="utf-8", newline="\n") as stream:
+        # 深层验收目录可能超过 MAX_PATH；收据写入统一走扩展路径。
+        with open(filesystem_path(filename), "x", encoding="utf-8", newline="\n") as stream:
             try:
                 result = self.original.run(command, env=environment, **kwargs)
                 stdout, stderr, code = result.stdout, result.stderr, result.returncode
