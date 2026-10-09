@@ -113,6 +113,28 @@ class SourceExportTests(unittest.TestCase):
         self.assertEqual((self.fixture.output / uploads["entries"][0]["artifact"]["file"]).read_bytes(), b"data")
         self.assertNotEqual(control["artifact"]["sha256"], result["logical_inventory_sha256"])
 
+    def test_registered_unused_target_is_exported_from_actual_target_inventory(self):
+        item = self.fixture
+        empty = copy.deepcopy(item.request["source"]["databases"][-1])
+        empty.update(key="dedicated-empty", database="clone_source_dedicated_empty")
+        item.request["source"]["databases"].append(empty)
+        item.data[empty["key"]] = []
+        item.case.add(empty["key"], "biz_tenant_target_slot", slot_id=1)
+        item.case.refresh()
+        item.write_config(item.request["source"])
+        item.save_request()
+        item.backup_omits_empty = True
+        result = self.export()
+        inventory = json.loads((item.output / "inventory-before.json").read_text(encoding="utf-8"))
+        actual = next(database for database in inventory["databases"] if database["key"] == empty["key"])
+        raw = json.loads((item.output / "inventory-before-target-dedicated-empty.json").read_text(encoding="utf-8"))
+        self.assertEqual(actual, raw["target"]["database"])
+        self.assertEqual(actual["placements"], [])
+        self.assertTrue(all(table["rows"] == (1 if table["table"] == "biz_tenant_target_slot" else 0)
+                            for table in actual["tables"]))
+        self.assertIn(empty["key"], {database["key"] for database in result["databases"]})
+        self.assertIn("inventory-before-targets", result["evidence"])
+
     def test_schema_snapshot_combined_shared_and_dedicated_use_actual_ledgers(self):
         item = self.fixture
         shared = copy.deepcopy(item.request["source"]["databases"][-1])

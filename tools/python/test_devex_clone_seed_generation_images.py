@@ -126,6 +126,13 @@ class GenerationImageTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.verify(descriptor)
 
+    def test_raw_observation_target_is_bound_to_image(self):
+        descriptor = self.capture()
+        path = self.output / "inventory-before-target-shared.json"
+        path.write_text(path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "证据"):
+            self.verify(descriptor)
+
     def test_redis_or_inventory_drift_prevents_successful_image(self):
         self.resources.redis_state.side_effect = [{"same": "owner"}, {"different": "external-key"}]
         with self.assertRaisesRegex(ValueError, "采集期间"):
@@ -134,7 +141,7 @@ class GenerationImageTests(unittest.TestCase):
         self.output = self.f.local / "j"
         self.resources.redis_state.side_effect = None
         self.inventory_drift, self.count = True, 0
-        with self.assertRaisesRegex(ValueError, "采集期间"):
+        with self.assertRaisesRegex(ValueError, "常规库存与逐目标实际库存不一致"):
             self.capture()
         self.assertFalse((self.output / "image.json").exists())
 

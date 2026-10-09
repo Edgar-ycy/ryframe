@@ -51,12 +51,19 @@ class InventoryObservationTests(unittest.TestCase):
         tools = SimpleNamespace(work=Path("inventory"))
         generation = {"maintenance": {}, "source": {"head": self.sha}}
         with patch("devex_clone_export.cli_executable", return_value="tenant-data"), \
-                patch("devex_clone_export.run_cli") as execute, patch("devex_clone_export.read_json", return_value=self.value):
+                patch("devex_clone_export.run_cli") as execute, \
+                patch("devex_clone_export.read_json", side_effect=[self.value, {
+                    **{field: self.value[field] for field in ("scope_id", "control_schema_fingerprint", "tenant_schema_fingerprint")},
+                    "target": {"database": self.value["databases"][0], "preserved_tables": []}}]), \
+                patch("devex_clone_export.file_digest", return_value={"bytes": 1, "sha256": "d" * 64}), \
+                patch("devex_clone_export.write_json"):
             capture_inventory(tools, Path("backend"), self.request, generation, self.models, "before", self.instant, observed=True)
-        command = execute.call_args.args[2]
+        self.assertEqual(execute.call_count, 2)
+        command = execute.call_args_list[0].args[2]
         self.assertEqual(command[1], "backup-inventory")
         self.assertIn("--observed-at", command)
         self.assertNotIn("--quiesced-at", command)
+        self.assertEqual(execute.call_args_list[1].args[2][1:4], ["target-inventory", "--target", "shared"])
 
     def test_formal_backup_rejects_observed_before_inspecting_any_resources(self):
         from restore_reference_plan import validate_inventory as formal_inventory

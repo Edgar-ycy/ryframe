@@ -10,6 +10,7 @@ from devex_clone_capture import CaptureReader, owner_evidence, read_json, verify
 from devex_clone_export import capture_inventory, logical_inventory, schema_models, schema_snapshot, validate_inventory, verify_migrations
 from devex_clone_export_verify import verify_schema
 from devex_clone_inventory import KEYS, capture_side_inventory, verify_side_inventory
+from devex_clone_inventory_complete import inventory_proofs
 from devex_clone_object_batch import capture_objects
 from devex_clone_run_state import binding
 from devex_clone_source_proof import bound_file
@@ -75,6 +76,7 @@ def capture_image(backend: Path, execution: Path, selected: dict, request: dict,
              "object_evidence": object_evidence,
              "owner_evidence": [binding(output / item["file"]) for item in owners + repeated],
              "logical_inventories": [binding(output / f"inventory-{phase}.json") for phase in ("before", "after")],
+             "inventory_origins": [binding(output / f"inventory-{phase}-targets.json") for phase in ("before", "after")],
              "schema_evidence": [binding(output / f"schema-{phase}-{database['key']}.json")
                                  for phase in ("before", "after") for database in selected["databases"]],
              "image": {"databases": inventories, "schema": schema, "objects": object_images,
@@ -89,7 +91,7 @@ def verify_image(backend: Path, descriptor: dict, selected: dict, predecessor: d
     path = bound_file(backend, descriptor)
     value = read_json(path)
     exact(value, {"format_version", "kind", "inventory", "raw_inventories", "object_evidence", "owner_evidence",
-                  "logical_inventories", "schema_evidence", "image", "image_sha256", "scale", "source_registration"})
+                  "logical_inventories", "inventory_origins", "schema_evidence", "image", "image_sha256", "scale", "source_registration"})
     exact(value["image"], {"databases", "schema", "objects", "owners", "redis", "storage"})
     exact(value["image"]["databases"], set(KEYS))
     exact(value["image"]["objects"], set(BUCKETS))
@@ -156,6 +158,13 @@ def verify_image(backend: Path, descriptor: dict, selected: dict, predecessor: d
     if value["logical_inventories"] != expected_logical:
         raise ValueError("运行中完整像缺少同目录两次观察库存")
     logical = [read_json(bound_file(backend, item)) for item in expected_logical]
+    expected_origins = [binding(path.parent / f"inventory-{phase}-targets.json") for phase in ("before", "after")]
+    if value["inventory_origins"] != expected_origins:
+        raise ValueError("运行中完整像缺少原始逐目标库存绑定")
+    for phase, current, origin in zip(("before", "after"), logical, expected_origins, strict=True):
+        inventory_proofs(path.parent, {"inventory-" + phase: current,
+                         "inventory-" + phase + "-targets": read_json(bound_file(backend, origin))},
+                         {"source": selected}, phase)
     for current in logical:
         validate_inventory(current, {**predecessor, "source": selected}, models,
                            verified["binding"]["source"]["snapshot"]["head"], current.get("observed_at", ""), observed=True)

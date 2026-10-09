@@ -94,6 +94,7 @@ class SourceFixture:
         self.unknown_column = False
         self.ledger_sets = {}
         self.missing_target = self.omit_empty_table = False
+        self.backup_omits_empty = False
         self.environment = {"APP_ENV": "test", "APP_SCOPE_ID": self.scope, "APP_JOBS_MODE": "external",
                             "APP_SOURCE_PASSWORD": "fixture-secret", "APP_CONFIG_DIR": str(self.backend / "config"),
                             "TEST_ACCESS": "access-fixture", "TEST_SECRET": "secret-fixture"}
@@ -157,6 +158,11 @@ class SourceFixture:
                                         "shared": database["mode"] == "shared", "placements": placements, "tables": digests})
         if self.missing_target:
             result["databases"].pop()
+        self.target_databases = copy.deepcopy(result["databases"])
+        if self.backup_omits_empty:
+            result["databases"] = [database for database in result["databases"]
+                                   if database["placements"] or any(table["rows"] for table in database["tables"]
+                                                                      if table["table"] != "biz_tenant_target_slot")]
         for bucket in sorted(BUCKETS):
             entries = [] if bucket != "uploads" else [{"key": self.scope + "/system/file.txt", "bytes": 4,
                                                         "sha256": hashlib.sha256(b"data").hexdigest()}]
@@ -170,6 +176,14 @@ class SourceFixture:
         if "backup-inventory" in command:
             Path(command[command.index("--output") + 1]).write_text(json.dumps(self.inventory(command)), encoding="utf-8")
             return subprocess.CompletedProcess(command, 0, stdout=b"inventory written", stderr=b"")
+        if "target-inventory" in command:
+            key = command[command.index("--target") + 1]
+            database = next(database for database in self.target_databases if database["key"] == key)
+            value = {"scope_id": self.scope, "control_schema_fingerprint": "c" * 16,
+                     "tenant_schema_fingerprint": "d" * 64,
+                     "target": {"database": database, "preserved_tables": []}}
+            Path(command[command.index("--output") + 1]).write_text(json.dumps(value), encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, stdout=b"target inventory written", stderr=b"")
         if "verify" in command:
             return subprocess.CompletedProcess(command, 0, stdout=b"schema=verified", stderr=b"")
         if "--no-create-info" in command:

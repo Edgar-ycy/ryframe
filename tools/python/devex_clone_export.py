@@ -8,6 +8,7 @@ import subprocess
 
 from devex_clone import read_json
 from devex_clone_capture import write_json
+from devex_clone_inventory_complete import complete_inventory
 from devex_clone_model import bound_file, collect, declared_tenants, digest, exact, schema_fingerprints, state, validate_relations
 from devex_clone_rows import parse_schema, reject_physical, rows, schema_catalog, validate_state
 from devex_clone_schedule import schedule_row_sha256
@@ -144,13 +145,24 @@ def validate_inventory(value: dict, request: dict, models: tuple, source_sha: st
 
 def capture_inventory(tools: ExternalTools, backend: Path, request: dict, generation: dict,
                       models: tuple, phase: str, observation_at: str, *, observed: bool = False) -> dict:
-    filename = tools.work / f"inventory-{phase}.json"
+    filename = tools.work / f"inventory-{phase}-runtime.json"
     executable = cli_executable(generation["maintenance"], "tenant-data")
     sha = generation["source"]["head"]
     run_cli(tools, "inventory-" + phase, [executable, "backup-inventory", "--output", str(filename),
             "--source-sha", sha, "--observed-at" if observed else "--quiesced-at", observation_at], backend)
-    value = read_json(filename)
+    runtime = read_json(filename)
+    targets, bindings = [], []
+    for database in sorted(request["source"]["databases"], key=lambda item: item["key"]):
+        target_file = tools.work / f"inventory-{phase}-target-{database['key']}.json"
+        run_cli(tools, f"inventory-{phase}-target-{database['key']}",
+                [executable, "target-inventory", "--target", database["key"], "--output", str(target_file)], backend)
+        targets.append(read_json(target_file))
+        bindings.append({"file": target_file.name, **file_digest(target_file)})
+    value = complete_inventory(runtime, targets, request)
     validate_inventory(value, request, models, sha, observation_at, observed=observed)
+    write_json(tools.work / f"inventory-{phase}-targets.json",
+               {"runtime": {"file": filename.name, **file_digest(filename)}, "targets": bindings})
+    write_json(tools.work / f"inventory-{phase}.json", value)
     return value
 
 

@@ -16,6 +16,7 @@ import uuid
 from devex_clone_capture import CaptureReader, inspect_response, read_json, regular_file, unique_object, verify_capture, write_json
 from devex_clone_export import logical_inventory, schema_models, validate_dump_state, validate_inventory
 from devex_clone_inventory import configuration
+from devex_clone_inventory_complete import inventory_proofs
 from devex_clone_model import bound_file, digest, exact, linked, local_path
 from devex_clone_object_batch import ordered_batches
 from devex_clone_rows import schema_catalog
@@ -26,7 +27,8 @@ from restore_reference_plan import BUCKETS, plan_hash
 from restore_source_binding import source_binding
 from source_fingerprints import build_source
 
-EVIDENCE = {"request", "generation-before", "generation-after", "inventory-before", "inventory-after", "schema-before", "schema-after"}
+EVIDENCE = {"request", "generation-before", "generation-after", "inventory-before", "inventory-after",
+            "inventory-before-targets", "inventory-after-targets", "schema-before", "schema-after"}
 EXPORT_FIELDS = {"format_version", "kind", "status", "id", "scope_id", "request", "source_snapshot", "worktree_fingerprint",
                  "source", "artifact_root", "databases", "objects", "enabled_system_schedule_rows", "logical_inventory_sha256",
                  "evidence", "catalog_sha256", "quiesced_at", "completed_at", "requires_offline_plan", "operator_declared_producers_only",
@@ -178,6 +180,7 @@ def verify_source_export(backend: Path, binding: dict) -> dict:
     execution = execution_backend(backend, request)
     models = schema_models(execution)
     generation = verify_generation_evidence(value, request, evidence, models)
+    inventory_paths = [path for phase in ("before", "after") for path in inventory_proofs(root, evidence, request, phase)]
     build = read_json(request_file(backend, request["backend_build"]))
     if (generation["source"] != build_source(build)["snapshot"]
             or generation["maintenance"] != read_json(request_file(execution, request["maintenance_build"]))
@@ -190,7 +193,7 @@ def verify_source_export(backend: Path, binding: dict) -> dict:
     tools = ExternalTools({"source": request["source"]}, root)
     if validate_dump_state(tools, models, value["databases"], index) != value["enabled_system_schedule_rows"]:
         raise ValueError("源实际业务关系或调度处置与导出结果不同")
-    proofs += [request_path, *[root / (name + ".json") for name in sorted(EVIDENCE)]]
+    proofs += [request_path, *[root / (name + ".json") for name in sorted(EVIDENCE)], *inventory_paths]
     result = {"export": value, "binding": copy.deepcopy(binding), "request": request, "generation": generation,
               "inventory": inventory, "captures": captures,
               "proof_files": {str(path): file_digest(regular_file(path)) for path in proofs}}
@@ -234,6 +237,9 @@ def verify_export_bindings(backend: Path, verified: dict, *, selection="all") ->
             or verified["inventory"] != read_json(root / "inventory-before.json") or set(verified["captures"]) != BUCKETS):
         raise ValueError("调用方源证据快照被修改")
     global_paths = {str(request_file(backend, value["request"])), *[str(root / (name + ".json")) for name in EVIDENCE]}
+    evidence = saved_evidence(root, value)
+    global_paths.update(str(path) for phase in ("before", "after")
+                        for path in inventory_proofs(root, evidence, verified["request"], phase))
     selected, object_paths = proof_dependencies(root, value, selection)
     expected_paths = global_paths | object_paths
     for bucket in value["objects"]:

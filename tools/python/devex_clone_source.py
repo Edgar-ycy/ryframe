@@ -100,7 +100,8 @@ def export_source(backend: Path, request_path: Path, output: Path, run=subproces
                   "source": request["source"], "artifact_root": str(output), "databases": dumps, "objects": objects,
                   "enabled_system_schedule_rows": schedules, "logical_inventory_sha256": plan_hash(logical_inventory(inventory_before)),
                   "evidence": {name: {"file": name + ".json", **file_digest(output / (name + ".json"))} for name in
-                               ("request", "generation-before", "generation-after", "inventory-before", "inventory-after", "schema-before", "schema-after")},
+                               ("request", "generation-before", "generation-after", "inventory-before", "inventory-after",
+                                "inventory-before-targets", "inventory-after-targets", "schema-before", "schema-after")},
                   "catalog_sha256": plan_hash({"control": models[0], "tenant": models[1]}),
                   "quiesced_at": quiesced, "completed_at": now(), "requires_offline_plan": True,
                   "operator_declared_producers_only": True, "remote_writes": 0, "clone_verified": False, "restore_qualified": False,

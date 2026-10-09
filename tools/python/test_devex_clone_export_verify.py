@@ -37,6 +37,16 @@ class ExportVerificationTests(unittest.TestCase):
     def load(self):
         return verify.verify_source_export(self.fixture.backend, self.binding)
 
+    def test_raw_target_inventory_is_bound_before_and_after_loading(self):
+        loaded = self.load()
+        path = self.fixture.output / "inventory-before-target-dedicated-a.json"
+        self.assertIn(str(path), loaded["proof_files"])
+        path.write_text(path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "证据"):
+            self.load()
+        with self.assertRaisesRegex(ValueError, "证据"):
+            verify.verify_export_bindings(self.fixture.backend, loaded, selection="global")
+
     def save_export(self):
         path = Path(self.binding["path"])
         path.write_text(json.dumps(self.export), encoding="utf-8")
