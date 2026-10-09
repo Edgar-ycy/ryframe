@@ -107,10 +107,10 @@ def verify(backend: Path, environment_path: Path, output_path: Path) -> dict:
     with Environments(values, values).use("source"):
         build = read_json(output / "backend-build.json")
         verify_build_artifacts(build)
-        verify_build_evidence(execution, output)
+        build_evidence = verify_build_evidence(execution, output)
         runtime = verify_runtime(execution, output)
     return {"status": "reference_fixture_runtime_verified", "runtime": _bound(output / "runtime.json"),
-            "scope_id": runtime["scope_id"], "remote_writes": 0}
+            "scope_id": runtime["scope_id"], "build_evidence": build_evidence, "remote_writes": 0}
 
 
 def run(backend: Path, environment_path: Path, output_path: Path, operation: str) -> dict:

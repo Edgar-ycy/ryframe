@@ -108,6 +108,27 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "参考夹具根"):
             runtime._output(self.execution, self.root / "outside", new=True)
 
+    def test_verify_returns_build_checked_inside_registered_environment(self):
+        output = self.reference / "runtime-verify"
+        output.mkdir()
+        self._pair(self.execution, output / "source-pair.json")
+        write_json(output / "backend-build.json", {"artifacts": {}})
+        write_json(output / "runtime.json", {"scope_id": "fixture-source"})
+        evidence = {"source": {"fixture": "business", "head": "b" * 40}}
+        original = dict(os.environ)
+        def check(_execution, _output):
+            self.assertEqual(os.environ["RYFRAME_E2E_FIXTURE"], "business")
+            self.assertEqual(os.environ["RYFRAME_CODE_SHA"], "b" * 40)
+            self.assertEqual(os.environ["APP_SCOPE_ID"], "fixture-source")
+            return evidence
+        with patch.object(runtime, "verify_build_artifacts"), \
+                patch.object(runtime, "verify_build_evidence", side_effect=check) as verify, \
+                patch.object(runtime, "verify_runtime", return_value={"scope_id": "fixture-source"}):
+            result = runtime.verify(self.backend, self.bootstrap, output)
+        self.assertEqual(verify.call_count, 1)
+        self.assertIs(result["build_evidence"], evidence)
+        self.assertEqual(dict(os.environ), original)
+
     def test_bootstrap_rejects_environment_or_secret_drift(self):
         original = (self.environment / "environment.json").read_bytes()
         (self.environment / "environment.json").unlink()

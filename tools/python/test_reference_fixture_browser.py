@@ -111,6 +111,7 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         }
         verified = {"runtime": {"path": str(self.output / "runtime.json"),
                                 **runtime.file_digest(self.output / "runtime.json")},
+                    "build_evidence": {"source": self.source},
                     "scope_id": "fixture-source", "remote_writes": 0}
         self.process_state = "running"
         state = lambda *_args: {"processes": {
@@ -122,7 +123,6 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
 
     def patches(self):
         stack = ExitStack()
-        stack.enter_context(patch.object(browser, "verify_build_evidence", return_value={"source": self.source}))
         stack.enter_context(patch.object(browser, "rate_limit_settings", return_value={
             "capacity": 100, "window_secs": 60, "api_window_secs": 30,
             "api_limits": {"POST /api/v1/auth/login": 7},

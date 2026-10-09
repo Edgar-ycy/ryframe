@@ -15,7 +15,6 @@ from devex_clone_capture import read_json
 from process_environment import configured
 from devex_clone_model import linked, local_path
 from devex_clone_source_proof import require_closed_port
-from full_stack_provenance import verify_build_evidence
 from full_stack_rate_limit_config import rate_limit_settings
 from reference_fixture_browser_evidence import (
     ArtifactManifestSnapshot,
@@ -218,7 +217,7 @@ def _plan(api: RuntimeApi, backend: Path, environment_path: Path, output_path: P
     expected_processes = {"api": process_state, "worker": process_state}
     if status["processes"] != expected_processes:
         raise ValueError(f"业务 crate 浏览器核验要求 API 与 Worker 均为 {process_state}")
-    build = verify_build_evidence(execution, runtime)
+    build = verified["build_evidence"]
     frontend, frontend_source = _frontend_source(build)
     review, selected, review_binding = _review(backend, bootstrap_file)
     api_url = f"http://{private['APP_APP_HOST']}:{private['APP_APP_PORT']}"
