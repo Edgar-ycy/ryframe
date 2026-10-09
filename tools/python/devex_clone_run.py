@@ -206,6 +206,30 @@ def target_storage_run(backend: Path, value: dict, *, live: bool = True) -> Path
     return directory
 
 
+def target_fixture_storage_run(backend: Path, initialized_descriptor: dict) -> Path | None:
+    """解析 source_to_seed 目标的夹具服务运行；非夹具注册或空绑定返回 None。"""
+    initialized = bound_file(backend, initialized_descriptor)
+    if initialized.name != "initialized.json":
+        raise ValueError("目标必须绑定显式初始化入口的最终收据")
+    registration_path = initialized.parent.parent / "registration.json"
+    if not registration_path.is_file() or linked(registration_path):
+        return None
+    initialization_history(backend, initialized)
+    registration = read_json(registration_path)
+    storage_run = registration.get("storage_run")
+    if not isinstance(storage_run, dict) or not storage_run:
+        return None
+    exact(storage_run, HISTORICAL_STORAGE_RUN_FIELDS)
+    directory = local_path(backend, storage_run["path"])
+    if (linked(directory) or not directory.is_dir()
+            or bound_file(backend, storage_run["manifest"]) != directory / "manifest.json"):
+        raise ValueError("source_to_seed 目标存储运行目录不属于 fresh 注册")
+    historical_state(directory, storage_run["state"])
+    if read_json(directory / "manifest.json").get("kind") != "reference-fixture-service-run":
+        return None
+    return directory
+
+
 def _require_owned_run(directory: Path) -> None:
     from full_stack_process import process_identity
 
@@ -235,7 +259,25 @@ def _target_storage_snapshot(directory: Path) -> tuple[tuple[int, int], dict]:
 
 @contextmanager
 def target_storage_control(backend: Path, current_run: Path, value: dict):
-    """在目标核验或复制期间锁住 seed_to_arm 继承的存储运行，阻止重启与停止竞态。"""
+    """在目标核验或复制期间锁住目标存储运行，阻止重启与停止竞态。"""
+    if value["copy_stage"] != "seed_to_arm":
+        fixture = target_fixture_storage_run(backend, value["initialized"])
+        if fixture is None:
+            yield current_run
+            return
+        if _overlap(current_run, fixture) and current_run != fixture:
+            raise ValueError("当前运行与目标夹具服务运行不能互相包含")
+        observed = _target_storage_snapshot(fixture)
+        with run_lock(fixture):
+            frozen = _target_storage_snapshot(fixture)
+            if frozen != observed:
+                raise ValueError("目标夹具服务运行在取得控制锁前变化")
+            try:
+                yield fixture
+            finally:
+                if _target_storage_snapshot(fixture) != frozen:
+                    raise ValueError("目标夹具服务运行在阶段期间变化")
+        return
     selected = target_storage_run(backend, value, live=False)
     if selected is None:
         yield current_run
