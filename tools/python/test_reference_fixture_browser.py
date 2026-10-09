@@ -45,10 +45,15 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         self.environment = self.root / "environment"
         self.environment.mkdir()
         self.tools = {}
-        for name in ("mysql.exe", "corepack.cmd", "launcher.exe", "python.exe"):
+        for name in ("mysql.exe", "corepack.cmd", "launcher.exe", "python.exe", "node.exe"):
             path = self.root / name
             path.write_bytes(name.encode())
             self.tools[name] = path
+        entry = self.root / "node_modules/corepack/dist/corepack.js"
+        entry.parent.mkdir(parents=True)
+        entry.write_text("corepack fixture", encoding="utf-8")
+        self.tools["corepack_entry"] = entry
+        (self.frontend / ".local-tests/corepack").mkdir(parents=True)
         self.review = self.root / "review.json"
         write_json(self.review, {
             "tools": {"mysql": {"path": str(self.tools["mysql.exe"]),
@@ -134,7 +139,8 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         }))
         stack.enter_context(patch.object(browser.SourceGuard, "capture", return_value=StableGuard()))
         stack.enter_context(patch.object(browser, "require_closed_port"))
-        stack.enter_context(patch.object(browser.shutil, "which", return_value=str(self.tools["corepack.cmd"])))
+        stack.enter_context(patch.object(browser.shutil, "which", side_effect=lambda name, **_: str(
+            self.tools["node.exe" if name == "node" else "corepack.cmd"])))
         stack.enter_context(patch.object(browser.sys, "executable", str(self.tools["python.exe"])))
 
         def safe(values):
@@ -565,7 +571,8 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         process.wait.side_effect = [KeyboardInterrupt(), 137]
         binding = {"scope_id": "fixture-source", "tools": {
             "corepack": {"path": str(self.tools["corepack.cmd"])},
-            "launcher": {"path": str(self.tools["launcher.exe"])}},
+            "node": {"path": str(self.tools["node.exe"])},
+            "corepack_entry": {"path": str(self.tools["corepack_entry"])}},
         }
         log = self.output / "interrupt.log"
         process_dir = self.output / "interrupt-process"
@@ -592,7 +599,8 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         process.wait.return_value = 0
         binding = {"scope_id": "fixture-source", "tools": {
             "corepack": {"path": str(self.tools["corepack.cmd"])},
-            "launcher": {"path": str(self.tools["launcher.exe"])}},
+            "node": {"path": str(self.tools["node.exe"])},
+            "corepack_entry": {"path": str(self.tools["corepack_entry"])}},
         }
 
         def launch(*_args, **_kwargs):
@@ -618,6 +626,16 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         self.assertEqual(evidence["completion"], completion)
         self.assertEqual(set(evidence), {"directory", "process", "tree", "completion"})
         self.assertEqual((self.output / "success.log").read_text(encoding="utf-8"), "completed\n")
+
+    def test_windows_corepack_uses_bound_node_and_preserves_literal_arguments(self):
+        binding = {"tools": {"corepack": {"path": "D:/Program Files/nodejs/corepack.cmd"},
+                            "node": {"path": "D:/Program Files/nodejs/node.exe"},
+                            "corepack_entry": {"path": "D:/Program Files/nodejs/node_modules/corepack/dist/corepack.js"}}}
+        with patch.object(browser_process.os, "name", "nt"):
+            command = browser_process.command(binding, ["exec", "node", "含 空格&参数.mjs"])
+        self.assertEqual(command, [binding["tools"]["node"]["path"],
+                                   binding["tools"]["corepack_entry"]["path"], "pnpm",
+                                   "exec", "node", "含 空格&参数.mjs"])
 
     def test_failure_evidence_uses_tree_result_and_members_completion_names(self):
         directory = self.output / "failed-process"

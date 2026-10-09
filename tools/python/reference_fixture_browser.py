@@ -237,9 +237,19 @@ def _plan(api: RuntimeApi, backend: Path, environment_path: Path, output_path: P
         raise ValueError("业务 crate 浏览器 MySQL 客户端摘要已变化")
     safe = configured({})
     corepack_path = shutil.which("corepack", path=safe.get("PATH"))
-    launcher_path = safe.get("COMSPEC") if os.name == "nt" else corepack_path
-    if corepack_path is None or not launcher_path:
-        raise ValueError("本机缺少 Corepack 或安全命令启动器")
+    if corepack_path is None:
+        raise ValueError("本机缺少 Corepack")
+    corepack_tools = {"corepack": _tool(Path(corepack_path), "Corepack")}
+    if os.name == "nt":
+        node_path = shutil.which("node", path=safe.get("PATH"))
+        if node_path is None:
+            raise ValueError("本机缺少 Node")
+        entry = Path(corepack_path).parent / "node_modules/corepack/dist/corepack.js"
+        corepack_tools.update(node=_tool(Path(node_path), "Node"), corepack_entry=_tool(entry, "Corepack 入口"))
+    cache = Path(os.environ.get("COREPACK_HOME", str(frontend / ".local-tests/corepack"))).resolve(strict=True)
+    if linked(cache) or not cache.is_dir():
+        raise ValueError("Corepack 缓存必须是已准备的明确目录")
+    corepack_tools["corepack_home"] = str(cache)
     limits = rate_limit_settings(execution, private)
     outputs = browser_outputs(frontend, runtime, run_id, server)
     if require_fresh and server == "preview" and (frontend / "dist").exists():
@@ -256,8 +266,7 @@ def _plan(api: RuntimeApi, backend: Path, environment_path: Path, output_path: P
         "backend": {"path": str(execution), "source": build["source"]["generated"]["backend"]},
         "frontend": {"path": str(frontend), "source": frontend_source},
         "tools": {"python": _tool(Path(sys.executable), "Python"), "mysql": mysql_tool,
-                  "corepack": _tool(Path(corepack_path), "Corepack"),
-                  "launcher": _tool(Path(launcher_path), "命令启动器")},
+                  **corepack_tools},
         "endpoints": {"api": api_url, "frontend": frontend_url},
         "identity": {"tenant_id": "system", "username": "admin",
                      "password_env": "RYFRAME_RESET_ADMIN_PASSWORD"},
@@ -313,6 +322,7 @@ def bind_browser(api: RuntimeApi, backend: Path, environment_path: Path, output_
 
 def _build_environment(context: dict, binding: dict) -> dict:
     return configured({"COREPACK_ENABLE_NETWORK": "0", "VITE_APP_API_ORIGIN": "",
+                       "COREPACK_HOME": binding["tools"]["corepack_home"],
                        "VITE_APP_PROXY_TARGET": binding["endpoints"]["api"],
                        "TEMP": context["private"]["TEMP"], "TMP": context["private"]["TMP"]})
 

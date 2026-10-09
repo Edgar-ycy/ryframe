@@ -84,8 +84,7 @@ def command(binding: dict, arguments: list[str]) -> list[str]:
     corepack = binding["tools"]["corepack"]["path"]
     if os.name != "nt":
         return [corepack, "pnpm", *arguments]
-    raw = subprocess.list2cmdline([corepack, "pnpm", *arguments])
-    return [binding["tools"]["launcher"]["path"], "/d", "/s", "/c", raw]
+    return [binding["tools"]["node"]["path"], binding["tools"]["corepack_entry"]["path"], "pnpm", *arguments]
 
 
 def run_frontend_command(binding: dict, frontend: Path, arguments: list[str], environment: dict,

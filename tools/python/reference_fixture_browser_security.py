@@ -56,6 +56,7 @@ def browser_environment(private: dict, binding: dict) -> dict:
     request, login = binding["rate_limits"]["request"], binding["rate_limits"]["login"]
     values.update({
         "COREPACK_ENABLE_NETWORK": "0", "PLAYWRIGHT_CHANNEL": "chrome", "PYTHONUTF8": "1",
+        "COREPACK_HOME": binding["tools"]["corepack_home"],
         "APP_API_DOCS_ENABLED": "false", "RYFRAME_CODE_SHA": binding["backend"]["source"]["head"],
         "VITE_APP_PROXY_TARGET": binding["endpoints"]["api"],
         "RYFRAME_E2E_FIXTURE": "business", "RYFRAME_E2E_SERVER": binding.get("server", "preview"),
