@@ -75,15 +75,19 @@ def validate_request(tools: ExternalTools, side: str, bucket: str, key: str, out
             or type(max_bytes) is not int or max_bytes < expected["bytes"] or max_bytes < 0):
         raise ValueError("采集必须绑定已登记的字节数、SHA256 和明确大小上限")
     for path in (output, *output.parents, tools.work, *tools.work.parents):
-        if path.is_symlink() or (path.exists() and getattr(path.lstat(), "st_file_attributes", 0) & 0x400):
+        item = Path(filesystem_path(path))
+        if item.is_symlink() or (item.exists() and getattr(item.lstat(), "st_file_attributes", 0) & 0x400):
             raise ValueError("采集证据目录不能经过链接")
     if (not output.is_absolute() or not tools.work.is_absolute() or not tools.work.is_dir()
             or output.resolve() == tools.work.resolve() or not output.resolve().is_relative_to(tools.work.resolve())
-            or not output.parent.is_dir() or output.exists() != existing or existing and not output.is_dir()):
+            or not Path(filesystem_path(output.parent)).is_dir()
+            or Path(filesystem_path(output)).exists() != existing
+            or existing and not Path(filesystem_path(output)).is_dir()):
         raise ValueError("采集输出必须是当前 work 内状态符合本次操作的明确独立目录")
 
 
 def regular_file(path: Path) -> Path:
+    path = Path(filesystem_path(path))
     for item in (path, *path.parents):
         if item.is_symlink() or (item.exists() and getattr(item.lstat(), "st_file_attributes", 0) & 0x400):
             raise ValueError("采集文件不能经过链接")
@@ -207,7 +211,7 @@ class CaptureReader:
             if operation == "get-object" and identity["VersionId"] is not None:
                 command.extend(["--version-id", identity["VersionId"]])
         if body is not None:
-            if body.exists() or body.is_symlink():
+            if Path(filesystem_path(body)).exists() or Path(filesystem_path(body)).is_symlink():
                 raise ValueError("采集不能覆盖任何已有字节文件")
             command.append(filesystem_path(body))
         diagnostic = self.output / f"{stage}.diagnostic.json"
@@ -251,7 +255,7 @@ def copy_evidence(source: Path, destination: Path, bindings: dict) -> None:
         if file_digest(path) != expected:
             raise ValueError("对象阶段原始证据在复用前变化")
         content = path.read_bytes()
-        with (destination / name).open("xb") as stream:
+        with open(filesystem_path(destination / name), "xb") as stream:
             stream.write(content)
             stream.flush()
             os.fsync(stream.fileno())
@@ -298,7 +302,7 @@ class CaptureStages:
                              self.request["expected"], self.request["max_bytes"])
             if output.parent != reader.output:
                 raise ValueError("复用对象读取只能创建同次观察下的 capture 目录")
-            output.mkdir()
+            Path(filesystem_path(output)).mkdir()
             write_json(output / "intent.json", self.request)
             reader = CaptureReader(reader.tools, reader.side, output)
         try:
@@ -352,7 +356,7 @@ def capture_object(tools: ExternalTools, side: str, bucket: str, key: str, outpu
     """
     validate_request(tools, side, bucket, key, output, expected, max_bytes)
     owner_scope(owner_buckets, bucket=bucket)
-    output.mkdir()
+    Path(filesystem_path(output)).mkdir()
     stages = CaptureStages(CaptureReader(tools, side, output), bucket, key, expected, max_bytes, owner_buckets=owner_buckets)
     write_json(output / "intent.json", stages.request)
     try:
@@ -368,7 +372,7 @@ def verify_capture(tools: ExternalTools, side: str, bucket: str, key: str, outpu
     """只复核已有证据字节，不访问 S3，也不证明此刻 live 源仍相同或复制已成功。"""
     validate_request(tools, side, bucket, key, output, expected, max_bytes, existing=True)
     owner_scope(owner_buckets, bucket=bucket)
-    failure = output / "failure.json"
+    failure = Path(filesystem_path(output / "failure.json"))
     if failure.exists() or failure.is_symlink():
         raise ValueError("采集目录有失败证据，不能使用残留成功文件")
     tools.command("aws")

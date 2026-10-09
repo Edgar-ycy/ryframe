@@ -11,6 +11,7 @@ import time
 
 from full_stack_process import assert_identity, process_identity, terminate_owned_process, write_receipt
 from full_stack_process_members import WindowsMembers, UnixMembers, finish_members, join_windows_job
+from artifact_digests import filesystem_path
 
 
 def receipt_path(directory: Path, role: str, operation_id: str, suffix: str) -> Path:
@@ -34,7 +35,7 @@ def start_monitor(directory: Path, role: str, scope: str, operation_id: str) -> 
     if os.name != "nt" and (os.getsid(0) != os.getpid() or os.getpgid(0) != os.getpid()):
         raise ValueError("Unix 产品监督进程必须拥有独立 session/group")
     ready = receipt_path(directory, role, operation_id, "ready")
-    if ready.exists():
+    if Path(filesystem_path(ready)).exists():
         raise ValueError("成员监督器登记已经存在，拒绝接管")
     environment = dict(os.environ)
     environment.pop("__PYVENV_LAUNCHER__", None)
@@ -49,7 +50,7 @@ def start_monitor(directory: Path, role: str, scope: str, operation_id: str) -> 
         if identity is None:
             raise ValueError("成员监督器在登记前退出")
         deadline = time.monotonic() + 5
-        while not ready.is_file():
+        while not Path(filesystem_path(ready)).is_file():
             if child.poll() is not None or time.monotonic() >= deadline:
                 raise TimeoutError("成员监督器未发布启动前归属")
             time.sleep(0.01)
@@ -84,7 +85,7 @@ def wait_members(receipt: dict, timeout: float = 10) -> dict:
             continue
         if actual is not None and actual != identity:
             raise ValueError("成员监督器 PID 已复用，拒绝认定关闭成功")
-        if path.is_file():
+        if Path(filesystem_path(path)).is_file():
             proof = _read(path)
             expected = {"format_version", "operation_id", "directory", "role", "scope_id", "supervisor",
                         "monitor", "status", "members", "error_type"}
@@ -118,7 +119,7 @@ def wait_members(receipt: dict, timeout: float = 10) -> dict:
 def wait_startup_cleanup(directory: Path, role: str, scope: str, operation_id: str, supervisor: dict) -> None:
     """未发布产品树时也等待已经启动的成员监督器，不留下日志句柄和后台回收进程。"""
     path = receipt_path(directory, role, operation_id, "ready")
-    if not path.exists():
+    if not Path(filesystem_path(path)).exists():
         return
     ready = _read(path)
     if (ready.get("supervisor") != supervisor or ready.get("operation_id") != operation_id

@@ -166,7 +166,7 @@ def record_process(directory: Path, role: str, pid: int, executable: str, scope:
 def read_process(directory: Path, role: str, scope: str) -> dict:
     if role not in PROCESS_ROLES:
         raise ValueError("未知全栈进程角色")
-    receipt = json.loads((directory / f"{role}.json").read_text(encoding="utf-8"))
+    receipt = json.loads(Path(filesystem_path(directory / f"{role}.json")).read_text(encoding="utf-8"))
     if any(receipt.get(key) != value for key, value in {
         "format_version": 1, "role": role, "scope_id": scope,
     }.items()) or not isinstance(receipt.get("identity"), dict):

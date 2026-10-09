@@ -1,6 +1,7 @@
 import json
 import os
 import signal
+import shutil
 import socket
 import subprocess
 import sys
@@ -9,6 +10,7 @@ import unittest
 from pathlib import Path
 
 from workspace_directory import WorkspaceDirectory
+from artifact_digests import filesystem_path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from full_stack_process import process_identity, terminate_owned_process
@@ -103,6 +105,32 @@ class FullStackProcessTreeTests(unittest.TestCase):
         for identity in self.children:
             if process_identity(identity["pid"]) == identity:
                 terminate_owned_process(identity, crash=True)
+
+    @unittest.skipUnless(os.name == "nt", "需要 Windows 扩展路径语义")
+    def test_supervision_completes_with_long_member_receipt_paths(self):
+        from full_stack_process_monitor import completion_binding
+
+        directory = self.root / ("x" * 100) / ("y" * 20)
+        os.makedirs(filesystem_path(directory))
+        self.addCleanup(shutil.rmtree, filesystem_path(self.root / ("x" * 100)))
+        log_path = self.root / "long-tree.log"
+        with log_path.open("wb") as log:
+            try:
+                process = launch_supervised_process(
+                    directory, "api", "tree-test", [str(Path(sys.executable).resolve()),
+                    "-c", "import time; time.sleep(0.5)"],
+                    cwd=ROOT, environment=dict(os.environ), output=log,
+                )
+            except BaseException as error:
+                error.add_note(log_path.read_text(encoding="utf-8"))
+                raise
+            self.addCleanup(terminate_owned_process_tree, process.tree, crash=True)
+            self.assertEqual(process.wait(timeout=10), 0)
+            proof = completion_binding(process.tree)
+            self.assertGreater(len(proof["path"]), 260)
+            self.assertFalse(proof["path"].startswith("\\\\?\\"))
+            names = validate_process_tree_directory(directory, {"api": process.tree["operation_id"]})
+            self.assertTrue(any(name.endswith("stopped.json") for name in names))
 
     @staticmethod
     def _free_port() -> int:

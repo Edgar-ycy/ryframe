@@ -297,6 +297,11 @@ class CaptureTests(unittest.TestCase):
         with open(capture_module.filesystem_path(directory / "get.diagnostic.json"), encoding="utf-8") as stream:
             self.assertIsNone(json.load(stream)["error_type"])
         self.assertEqual(response, self.store.downloaded)
+        self.output = directory / "完整采集"
+        result = self.capture()
+        verified = verify_capture(self.tools, "source", "uploads", "source/system/registered.bin",
+                                  self.output, expected=self.expected, max_bytes=1024)
+        self.assertEqual(verified["capture"], result)
 
     def test_oversized_head_is_rejected_before_body_and_partial_or_excess_body_never_pass(self):
         self.store.head["ContentLength"] = 2048

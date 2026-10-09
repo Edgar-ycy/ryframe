@@ -25,6 +25,7 @@ from full_stack_process import (
 )
 
 from full_stack_process import PROCESS_ROLES
+from artifact_digests import filesystem_path
 
 ROLES = PROCESS_ROLES
 OPERATION_ID = re.compile(r"^[a-f0-9]{32}$")
@@ -87,7 +88,7 @@ def validate_process_tree_directory(
                 f"{role}-tree-{operation}-result.json",
             }
         )
-    entries = tuple(sorted(directory.iterdir(), key=lambda item: item.name))
+    entries = tuple(sorted(Path(filesystem_path(directory)).iterdir(), key=lambda item: item.name))
     if any(
         not entry.is_file()
         or entry.is_symlink()
@@ -103,6 +104,7 @@ def validate_process_tree_directory(
 
 
 def _read_object(path: Path) -> dict:
+    path = Path(filesystem_path(path))
     def unique(pairs: list[tuple[str, object]]) -> dict:
         value = {}
         for key, item in pairs:
@@ -216,7 +218,7 @@ def _write_control(receipt: dict, mode: str) -> None:
 
 
 def _read_control(receipt: dict) -> str | None:
-    path = _bound_path(receipt, "control")
+    path = Path(filesystem_path(_bound_path(receipt, "control")))
     if not path.exists():
         return None
     control = _read_object(path)
@@ -249,7 +251,7 @@ def _write_result(receipt: dict, exit_code: int, termination: str) -> None:
 
 
 def _read_result(receipt: dict) -> dict | None:
-    path = _bound_path(receipt, "result")
+    path = Path(filesystem_path(_bound_path(receipt, "result")))
     if not path.exists():
         return None
     result = _read_object(path)
@@ -481,7 +483,7 @@ def launch_supervised_process(
     if OPERATION_ID.fullmatch(operation_id) is None:
         raise ValueError("监督进程操作 ID 无效")
     path = _tree_path(directory, role)
-    if path.exists():
+    if Path(filesystem_path(path)).exists():
         raise ValueError("运行目录已有进程树收据；必须先核对并回收原进程树")
     command = [
         _python_executable(),
@@ -514,7 +516,7 @@ def launch_supervised_process(
     deadline = time.monotonic() + timeout
     try:
         while time.monotonic() < deadline:
-            if path.is_file() and (directory / f"{role}.json").is_file():
+            if Path(filesystem_path(path)).is_file() and Path(filesystem_path(directory / f"{role}.json")).is_file():
                 tree = read_process_tree(directory, role, scope)
                 if tree["operation_id"] != operation_id:
                     raise ValueError("进程树收据属于其他启动操作")
