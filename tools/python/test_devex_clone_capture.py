@@ -81,6 +81,8 @@ class CaptureTests(unittest.TestCase):
         path.write_text('{"value":1}\n', encoding="utf-8")
         descriptor = {"path": str(path), **file_digest(path)}
         self.assertEqual(capture_module.read_bound_json(path, descriptor), {"value": 1})
+        self.assertEqual(capture_module.regular_file(path), path)
+        self.assertFalse(str(capture_module.regular_file(path)).startswith("\\\\?\\"))
 
     @unittest.skipUnless(os.name == "nt", "需要 Windows 扩展路径语义")
     def test_write_json_preserves_long_chinese_space_path_and_existing_receipt(self):

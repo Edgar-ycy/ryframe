@@ -87,17 +87,18 @@ def validate_request(tools: ExternalTools, side: str, bucket: str, key: str, out
 
 
 def regular_file(path: Path) -> Path:
-    path = Path(filesystem_path(path))
-    for item in (path, *path.parents):
+    native = Path(filesystem_path(path))
+    for item in (native, *native.parents):
         if item.is_symlink() or (item.exists() and getattr(item.lstat(), "st_file_attributes", 0) & 0x400):
             raise ValueError("采集文件不能经过链接")
-    if not path.is_file():
+    if not native.is_file():
         raise ValueError("采集证据文件缺失")
     return path
 
 
 def read_json(path: Path) -> dict:
-    value = json.loads(regular_file(path).read_text(encoding="utf-8"), object_pairs_hook=unique_object)
+    value = json.loads(Path(filesystem_path(regular_file(path))).read_text(encoding="utf-8"),
+                       object_pairs_hook=unique_object)
     if not isinstance(value, dict):
         raise ValueError("采集证据必须是 JSON 对象")
     return value
@@ -112,11 +113,11 @@ def read_bound_json(path: Path, descriptor: dict) -> dict:
             or re.fullmatch(r"[a-f0-9]{64}", descriptor["sha256"]) is None):
         raise ValueError("绑定 JSON 文件描述无效")
     path = regular_file(path)
-    with path.open("rb") as stream:
+    with open(filesystem_path(path), "rb") as stream:
         before = os.fstat(stream.fileno())
         content = stream.read(16 * 1024 * 1024 + 1)
         after = os.fstat(stream.fileno())
-    current = path.stat()
+    current = Path(filesystem_path(path)).stat()
     def identity(value):
         return value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns
     if (not stat.S_ISREG(before.st_mode) or identity(before) != identity(after)
@@ -188,7 +189,7 @@ def capture_result(request: dict, before_raw: dict, get_raw: dict, after_raw: di
 
 
 def owner_evidence(output: Path, stage: str, bucket: str, scope: str) -> dict:
-    body = regular_file(output / f"{stage}-{bucket}.bin")
+    body = Path(filesystem_path(regular_file(output / f"{stage}-{bucket}.bin")))
     expected = f"ryframe-owner:v1:{scope}:object-storage:{bucket}".encode()
     if body.stat().st_size != len(expected) or body.read_bytes() != expected:
         raise ValueError("对象 ownership 不属于明确计划 scope")
@@ -254,7 +255,7 @@ def copy_evidence(source: Path, destination: Path, bindings: dict) -> None:
         path = regular_file(source / name)
         if file_digest(path) != expected:
             raise ValueError("对象阶段原始证据在复用前变化")
-        content = path.read_bytes()
+        content = Path(filesystem_path(path)).read_bytes()
         with open(filesystem_path(destination / name), "xb") as stream:
             stream.write(content)
             stream.flush()
