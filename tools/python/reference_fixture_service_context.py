@@ -285,8 +285,11 @@ def runtime_transition(backend: Path, run: Path, expected: dict) -> tuple[dict |
     if value["history"]["active_generation"].get("kind") == "initial":
         return None, None
     services = registered_services(value)
-    if expected != services["origin"]:
-        raise ValueError("夹具服务重启 lineage 未绑定 fresh-target 的原始服务代次")
+    current = {"storage": {key: services["storage"][key]
+                           for key in ("identity", "sha256", "process_receipt", "launch_receipt")},
+               "redis": services["runtime"]["redis"]}
+    if expected != services["origin"] and expected != current:
+        raise ValueError("夹具服务重启 lineage 未绑定 fresh-target 的原始或当前服务代次")
     storage = {key: services["storage"][key]
                for key in ("identity", "sha256", "process_receipt", "launch_receipt")}
     request = services["requests"]["rustfs"]
