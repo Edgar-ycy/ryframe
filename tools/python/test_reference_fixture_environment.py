@@ -380,7 +380,19 @@ class ReferenceFixtureEnvironmentTests(unittest.TestCase):
         self.assertTrue(all(item["tls_mode"] == "disabled" for item in json.loads(values["APP_TENANT_DATA_TARGETS"])))
         self.assertEqual(values["APP_OBJECT_STORAGE_ACCESS_KEY"], "access")
         self.assertEqual(values["APP_MONITOR_METRICS_BEARER_TOKEN"], "metrics")
+        self.assertEqual(values["APP_API_DOCS_ENABLED"], "false")
         self.assertEqual(set(files), {"mysql-client.cnf", *names})
+
+        # 目标代次、运行登记与复制运行环境必须来自同一份 APP_* 配置；只有非 APP_ 的
+        # 运行标记允许由运行环境补充。
+        import reference_fixture_runtime as runtime
+
+        runtime_values = runtime._runtime_environment(
+            values, {"sources": {"backend": {"head": fixture["sources"]["backend"]["head"]}}})
+        self.assertEqual(
+            {key: value for key, value in runtime_values.items() if key.startswith("APP_")},
+            {key: value for key, value in values.items() if key.startswith("APP_")},
+        )
 
         secret_set = secrets.parent / "secrets-r10"
         fixture_file = self.write("business-fixture.json", fixture)

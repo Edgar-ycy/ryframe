@@ -451,6 +451,10 @@ def _environment(backend: Path, review: dict, fixture: dict, output: Path, side:
     frontend_origin = f"{frontend.scheme}://{frontend.netloc}"
     environment = {
         "APP_ENV": "test", "APP_SCOPE_ID": scope, "APP_CONFIG_DIR": str(execution / "config"),
+        # 夹具 API 按 `--no-default-features --features bin-api` 构建，不包含 runtime-swagger-ui；
+        # 与夹具运行环境保持一致，必须在准备阶段就显式关闭 api_docs，否则目标代次、运行登记
+        # 与复制运行环境会得到不同的配置摘要。
+        "APP_API_DOCS_ENABLED": "false",
         "APP_APP_HOST": api.hostname, "APP_APP_PORT": str(api.port),
         "APP_CORS_ALLOW_ORIGINS": frontend_origin,
         # 控制库使用应用配置的正式覆盖名；租户目标仍以独立的秘密环境变量引用同一凭据。
