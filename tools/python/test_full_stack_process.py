@@ -1,6 +1,8 @@
 import os
 import subprocess
 import sys
+import json
+import shutil
 import unittest
 from unittest.mock import patch
 from workspace_directory import WorkspaceDirectory
@@ -8,6 +10,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from full_stack_process import _linux_identity, process_identity, read_process, record_process, terminate_owned_process
+from full_stack_process import write_receipt
+from artifact_digests import filesystem_path
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -55,6 +59,19 @@ class OwnedProcessTests(unittest.TestCase):
         if self.process.poll() is None:
             self.process.terminate()
         self.process.wait(timeout=5)
+
+    @unittest.skipUnless(os.name == "nt", "需要 Windows 扩展路径语义")
+    def test_atomic_receipt_supports_long_paths_without_temporary_files(self):
+        directory = self.root / ("x" * 100) / ("y" * 100)
+        os.makedirs(filesystem_path(directory))
+        self.addCleanup(shutil.rmtree, filesystem_path(self.root / ("x" * 100)))
+        path = directory / "frontend-members-ready.json"
+        self.assertGreater(len(str(path)), 260)
+        write_receipt(path, {"status": "ready"})
+        write_receipt(path, {"status": "complete"})
+        with open(filesystem_path(path), encoding="utf-8") as stream:
+            self.assertEqual(json.load(stream), {"status": "complete"})
+        self.assertEqual(os.listdir(filesystem_path(directory)), [path.name])
 
     def test_live_process_identity_prevents_pid_reuse_and_cleans_exact_child(self):
         identity = process_identity(self.process.pid)

@@ -11,6 +11,8 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+from artifact_digests import filesystem_path
+
 PROCESS_ROLES = frozenset({
     "alertmanager",
     "api",
@@ -143,11 +145,11 @@ def write_receipt(path: Path, receipt: dict) -> None:
     # Windows 验收目录会让原子发布的临时路径超过 MAX_PATH。
     temporary = path.with_name(f".{uuid.uuid4().hex}.tmp")
     try:
-        with temporary.open("x", encoding="utf-8", newline="\n") as output:
+        with open(filesystem_path(temporary), "x", encoding="utf-8", newline="\n") as output:
             output.write(json.dumps(receipt, indent=2) + "\n")
-        temporary.replace(path)
+        os.replace(filesystem_path(temporary), filesystem_path(path))
     finally:
-        temporary.unlink(missing_ok=True)
+        Path(filesystem_path(temporary)).unlink(missing_ok=True)
 
 
 def record_process(directory: Path, role: str, pid: int, executable: str, scope: str) -> dict:

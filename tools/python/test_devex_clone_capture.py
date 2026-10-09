@@ -280,6 +280,24 @@ class CaptureTests(unittest.TestCase):
         self.assertNotIn("access-fixture", diagnostic["stderr"])
         self.assertEqual(len(self.business_calls()), 2)
 
+    @unittest.skipUnless(os.name == "nt", "需要 Windows 扩展路径语义")
+    def test_reader_preserves_diagnostic_and_body_under_long_path(self):
+        root = self.work / "采集 长路径"
+        directory = root
+        for _ in range(5):
+            directory /= "对象证据 " + "x" * 40
+        os.makedirs(capture_module.filesystem_path(directory))
+        self.addCleanup(shutil.rmtree, capture_module.filesystem_path(root))
+        body = directory / "object.bin"
+        self.assertGreater(len(str(body)), 260)
+        reader = CaptureReader(self.tools, "source", directory)
+        response = reader.read("get", "get-object", "uploads", "source/system/file", body=body)
+        with open(capture_module.filesystem_path(body), "rb") as stream:
+            self.assertEqual(stream.read(), self.store.body)
+        with open(capture_module.filesystem_path(directory / "get.diagnostic.json"), encoding="utf-8") as stream:
+            self.assertIsNone(json.load(stream)["error_type"])
+        self.assertEqual(response, self.store.downloaded)
+
     def test_oversized_head_is_rejected_before_body_and_partial_or_excess_body_never_pass(self):
         self.store.head["ContentLength"] = 2048
         self.failed()

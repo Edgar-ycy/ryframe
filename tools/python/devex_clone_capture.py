@@ -209,10 +209,10 @@ class CaptureReader:
         if body is not None:
             if body.exists() or body.is_symlink():
                 raise ValueError("采集不能覆盖任何已有字节文件")
-            command.append(str(body))
+            command.append(filesystem_path(body))
         diagnostic = self.output / f"{stage}.diagnostic.json"
         # 在请求前排他创建诊断位置，失败不丢失 CLI 的脱敏原因。
-        with diagnostic.open("x", encoding="utf-8", newline="\n") as stream:
+        with open(filesystem_path(diagnostic), "x", encoding="utf-8", newline="\n") as stream:
             stderr, returncode, error_type = b"", None, None
             try:
                 result = self.tools.execute(command, env=env)
