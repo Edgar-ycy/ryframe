@@ -29,6 +29,7 @@ from restore_runtime import read_json
 from restore_runtime_evidence import read_json_document
 from restore_runtime_registration import registered_stopped_runtime
 from restore_reference_target import execute_plan
+from source_inventory import build_source_domains, capture_inventory
 
 DATASET_PROTOCOL_ENV = "RYFRAME_XTASK_RECOVERY_DATASET_PREPARE"
 DATASET_PROTOCOL_KIND = "ryframe-xtask-recovery-dataset-prepare"
@@ -483,6 +484,15 @@ def execute(args, plan: dict, backend: Path, tools: ExternalTools, work: Path) -
         if args.command == "dataset":
             timeout = dataset_timeout_seconds(plan)
             source = source_snapshot(backend)
+            tool_root = Path(__file__).resolve().parents[2]
+            tool_inventory = capture_inventory(tool_root)
+            runner = tool_root / "tools/js/restore_reference_dataset.mjs"
+            write_json(work / "dataset-tools.json", {
+                "format_version": 1, "kind": "restore-reference-dataset-tools",
+                "root": str(tool_root),
+                "sources": build_source_domains(tool_inventory, "backend"),
+                "runner": {"path": str(runner), **file_digest(runner)},
+            })
             check_api(plan, tools, "source")
             require_empty_source(plan, tools)
             preflight = {
@@ -500,7 +510,7 @@ def execute(args, plan: dict, backend: Path, tools: ExternalTools, work: Path) -
             environment[DATASET_PROTOCOL_ENV] = dataset_protocol(
                 backend, args.plan.resolve(), preflight_path.resolve())
             tools.execute(
-                [*tools.command("node"), str(backend / "tools/js/restore_reference_dataset.mjs")],
+                [*tools.command("node"), str(runner)],
                 env=environment,
                 timeout=timeout,
             )
@@ -509,6 +519,8 @@ def execute(args, plan: dict, backend: Path, tools: ExternalTools, work: Path) -
                 raise ValueError("数据准备预检收据在执行期间发生变化")
             if source_snapshot(backend) != source:
                 raise ValueError("参考数据准备期间源码发生变化")
+            if capture_inventory(tool_root) != tool_inventory:
+                raise ValueError("参考数据准备期间维护工具来源发生变化")
             result = {**result, "source": source}
         elif args.command == "backup":
             inventory = read_json(args.inventory)

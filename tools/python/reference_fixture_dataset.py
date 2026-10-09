@@ -229,7 +229,9 @@ def prepare(backend: Path, environment_path: Path, runtime_path: Path, plan_path
     reports.mkdir()
     node_options = " ".join(item for item in (os.environ.get("NODE_OPTIONS", ""), "--report-on-fatalerror",
                                                  f'--report-directory="{reports}"') if item)
-    command = [sys.executable, "-X", "utf8", str(execution / "tools/python/restore_reference.py")]
+    # 产品夹具保持冻结；维护工具来自当前控制器，不把工具修复写进已有产物来源。
+    runner = Path(__file__).resolve().with_name("restore_reference.py")
+    command = [sys.executable, "-X", "utf8", str(runner)]
     protocol = json.dumps({"format_version": 1, "kind": "ryframe-xtask-recovery-reference",
                            "request": {"backend_dir": str(execution), "format_version": 1,
                                        "operation": "dataset", "plan": str(plan_file),

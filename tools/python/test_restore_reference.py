@@ -300,6 +300,11 @@ class ReferenceTests(unittest.TestCase):
         self.assertEqual(tools.execute.call_args.kwargs["timeout"], 21600)
         command = tools.execute.call_args.args[0]
         self.assertEqual(len(command), 2)
+        self.assertEqual(Path(command[1]), Path(reference.__file__).resolve().parents[1]
+                         / "js/restore_reference_dataset.mjs")
+        recorded = reference.read_json(work / "dataset-tools.json")
+        self.assertEqual(recorded["kind"], "restore-reference-dataset-tools")
+        self.assertIn("tools", recorded["sources"])
         protocol = json.loads(
             tools.execute.call_args.kwargs["env"][reference.DATASET_PROTOCOL_ENV]
         )
@@ -310,6 +315,24 @@ class ReferenceTests(unittest.TestCase):
         preflight = reference.read_json(Path(protocol["preflight"]))
         self.assertEqual(preflight["plan_sha256"], reference.plan_hash(self.plan))
         self.assertEqual(preflight["scope_id"], self.plan["source"]["scope_id"])
+        self.assertEqual(reference.read_json(work / "dataset.json")["status"], "failed")
+
+    def test_dataset_tool_drift_cannot_publish_success_for_frozen_product(self):
+        self.plan["dataset"] = {"timeout_seconds": 21600}
+        work = reference.work_directory(self.plan)
+        (work / "dataset").mkdir()
+        reference.write_json(work / "dataset/result.json", {"records": 100000})
+        tools = Mock()
+        tools.command.return_value = ["node"]
+        args = SimpleNamespace(command="dataset", copy_id=None, plan=self.backend / "plan.json")
+        with (
+            patch.object(reference, "source_snapshot", return_value={"head": "a" * 40}),
+            patch.object(reference, "capture_inventory", side_effect=[{"revision": 1}, {"revision": 2}]),
+            patch.object(reference, "build_source_domains", return_value={"tools": {"sha256": "a" * 64}}),
+            patch.object(reference, "check_api"), patch.object(reference, "require_empty_source"),
+        ):
+            with self.assertRaisesRegex(ValueError, "维护工具来源发生变化"):
+                reference.execute(args, self.plan, self.backend, tools, work)
         self.assertEqual(reference.read_json(work / "dataset.json")["status"], "failed")
 
     def test_called_process_failure_records_redacted_output(self):
