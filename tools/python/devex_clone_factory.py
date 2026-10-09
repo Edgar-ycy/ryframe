@@ -112,7 +112,7 @@ class CloneSession:
         return self.output / (name(purpose) + "-" + uuid.uuid4().hex)
 
     def _source_generation(self, selection: str | tuple[str, str] = "all") -> dict:
-        with source_check(self.backend), self.environment.use("source"):
+        with self.environment.use("source"):
             if self.source_storage_run is not None:
                 from devex_clone_run import source_storage_binding
 
@@ -120,13 +120,14 @@ class CloneSession:
                     self.backend, self.source_storage_run, copy_stage=self.copy_stage,
                 )
             verify_export_bindings(self.backend, self.source_verified, selection=selection)
+            # 夹具源码树不属于当前验收仓库的检查窗口；窗口外完整核验，禁止跨仓库复用窗口结果。
             current = verify_generation(self.backend, self.source_request, self.run)
         if current != self.source_verified["generation"]:
             raise ValueError("源实际运行、停止声明、配置或构建代次与导出不同")
         return current
 
     def _target_generation(self):
-        with source_check(self.backend), self.environment.use("target"):
+        with self.environment.use("target"):
             return target_history(self.backend, self.target_binding, self.output, self.run,
                                   owned_lock_identity=self.owned_lock_identity,
                                   storage_run=self.target_storage_run)
@@ -167,7 +168,8 @@ class CloneSession:
         self.bind_credentials()
         source_generation = self._source_generation()
         initial, self.target_request, _ = self._target_generation()
-        with source_check(self.backend), self.environment.use("target"):
+        # 目标同样来自夹具源码树；必须在该仓库自己的完整核验下复验。
+        with self.environment.use("target"):
             target_proof = verify_target(
                 self.backend, self.target_directory, self.directory("target-precopy"), self.run,
                 storage_run=self.target_storage_run,
