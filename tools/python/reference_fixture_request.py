@@ -121,7 +121,9 @@ def _service(backend: Path, run: Path, review_binding: dict, review: dict) -> di
             "identity": identity,
             "launch_receipt": _bound(launch_file),
             "process_receipt": _bound(process_file),
-            "sha256": identity.get("sha256"),
+            # 服务账本的 origin 记录使用审阅工具的可执行摘要，二者必须同一口径，
+            # 否则重启后的服务 lineage 无法与 fresh-target 注册闭合。
+            "sha256": review["tools"]["rustfs"]["sha256"],
         },
         "redis": redis,
     }
