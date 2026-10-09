@@ -109,16 +109,17 @@ def _plan_file(execution: Path, runtime: Path, value: Path, *, new: bool) -> Pat
     return path
 
 
-def _dataset() -> dict:
+def _dataset(review: dict) -> dict:
+    approved = review["dataset"]
     return {
         "timeout_seconds": 43_200,
-        "request_interval_ms": 1_000,
+        "request_interval_ms": approved["request_interval_ms"],
         "api_validation_posts": 2,
         "post_batch_rows": 1_000,
-        "tenant_targets": ["shared"] * 8 + ["dedicated-a", "dedicated-b"],
-        "records": 100_000,
-        "object_count": 256,
-        "object_bytes": 4 * 1024 * 1024,
+        "tenant_targets": list(approved["tenant_targets"]),
+        "records": approved["records"],
+        "object_count": approved["object_count"],
+        "object_bytes": approved["object_bytes"],
         "admin": {
             "tenant_id": "system",
             "username": "admin",
@@ -186,7 +187,7 @@ def build_plan(backend: Path, environment_path: Path, runtime_path: Path, work_d
             name: {key: tools[name][key] for key in ("path", "sha256")}
             for name in ("mysql", "mysqldump", "aws")
         } | {"node": _node()},
-        "dataset": _dataset(),
+        "dataset": _dataset(review),
         "fixture_bindings": {
             "bootstrap": _bound(bootstrap_file),
             "runtime": verified["runtime"],

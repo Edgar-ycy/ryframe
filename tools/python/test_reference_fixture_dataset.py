@@ -69,7 +69,10 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
         tools = {name: {"path": str(self.tool), "sha256": dataset.file_digest(self.tool)["sha256"]}
                  for name in ("mysql", "mysqldump", "aws")}
         return {"scopes": {side: self._scope(side) for side in ("seed", "base", "candidate")},
-                "tools": tools}
+                "tools": tools,
+                "dataset": {"tenant_targets": ["shared"] * 9 + ["dedicated-a"],
+                            "records": 100_000, "object_count": 256,
+                            "object_bytes": 4 * 1024 * 1024, "request_interval_ms": 1000}}
 
     def test_build_plan_binds_current_runtime_and_required_dataset_scale(self):
         value = dataset.build_plan(self.backend, self.bootstrap, self.runtime, self.work, "base")
@@ -80,8 +83,27 @@ class ReferenceFixtureDatasetTests(unittest.TestCase):
         self.assertEqual(value["target_side"], "base")
         self.assertEqual(value["dataset"]["records"], 100_000)
         self.assertEqual(value["dataset"]["object_count"] * value["dataset"]["object_bytes"], 1024**3)
-        self.assertEqual(value["dataset"]["tenant_targets"].count("shared"), 8)
+        self.assertEqual(value["dataset"]["tenant_targets"], self._review()["dataset"]["tenant_targets"])
         self.assertEqual(set(value["tools"]), {"mysql", "mysqldump", "aws", "node"})
+
+    def test_dataset_preserves_all_reviewed_inputs_without_aliasing(self):
+        review = self._review()
+        review["dataset"].update({"tenant_targets": ["shared"] * 8 + ["dedicated-a", "dedicated-b"],
+                                  "records": 200_000, "object_count": 512,
+                                  "object_bytes": 2 * 1024 * 1024, "request_interval_ms": 1500})
+        result = dataset._dataset(review)
+        for key, expected in review["dataset"].items():
+            self.assertEqual(result[key], expected)
+        result["tenant_targets"].append("shared")
+        self.assertEqual(len(review["dataset"]["tenant_targets"]), 10)
+
+    def test_dataset_rejects_missing_reviewed_input(self):
+        for key in self._review()["dataset"]:
+            with self.subTest(key=key):
+                review = self._review()
+                del review["dataset"][key]
+                with self.assertRaises(KeyError):
+                    dataset._dataset(review)
 
     def test_build_plan_rejects_overlapping_api_and_worker_probe(self):
         review = self._review()
