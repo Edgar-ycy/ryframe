@@ -172,6 +172,7 @@ class ExistingTests(unittest.TestCase):
                     if failure and key == 'target-one/0': raise ValueError('first batch failed')
                 with patch('devex_clone_post_context.source_check', return_value=nullcontext()), \
                         patch('devex_clone_post_context.bound_file', return_value=context.output / 'maintenance.json'), \
+                        patch('devex_clone_post_context.execution_root', return_value=context.backend), \
                         patch('devex_clone_post_context.capture_side_inventory', return_value=SimpleNamespace(observations=[])), \
                         patch('devex_clone_post_context.ExternalTools'), \
                         patch('devex_clone_post_context.observe_target_object', side_effect=observe):
@@ -181,6 +182,38 @@ class ExistingTests(unittest.TestCase):
                 self.assertFalse(active[0])
                 self.assertEqual(len(calls), 4 if failure else 9)
                 self.assertEqual(len(set(allocations)), 10)
+
+    def test_before_api_verifies_target_tree_outside_current_repo_window(self):
+        context = self.object_context()
+        context.copy['plan']['objects'] = []
+        context.target = {'maintenance_build': {}}
+        context.bindings = lambda: None
+        context.source_guard = lambda **_: None
+        context.target_guard = lambda **_: SimpleNamespace(object_keys=lambda _: {'target-one/.ryframe-owner'})
+        context.old = context.environments = SimpleNamespace(use=lambda _: nullcontext({}))
+        windows = []
+
+        @contextmanager
+        def window(_root):
+            windows.append(True)
+            try:
+                yield None
+            finally:
+                windows.pop()
+
+        def capture(*_args, **_kwargs):
+            self.assertFalse(windows, "目标执行树核验必须在当前仓源码窗口之外")
+            return SimpleNamespace(observations=[])
+
+        with patch('devex_clone_post_context.source_check', window), \
+                patch('devex_clone_post_context.bound_file', return_value=context.output / 'maintenance.json'), \
+                patch('devex_clone_post_context.execution_root', return_value=context.backend), \
+                patch('devex_clone_post_context.capture_side_inventory', side_effect=capture) as observed, \
+                patch('devex_clone_post_context.ExternalTools'), \
+                patch('devex_clone_post_context.observe_target_object'):
+            context.before_api()
+        self.assertEqual(observed.call_count, 1)
+        self.assertEqual(windows, [])
 
 
 if __name__ == '__main__':

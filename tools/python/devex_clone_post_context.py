@@ -300,13 +300,14 @@ class Context:
             self.bindings()
         # 来源执行工作树（夹具等）不属于当前仓源码窗口；窗口外按该根完整核验，禁止复用窗口结果。
         self.source_guard(complete=True)
+        # 目标执行工作树同理：维护工具按该根复核，放在当前仓窗口内会命中“窗口不能跨仓库复用”。
+        with self.old.use('target') as environment:
+            tools = ExternalTools(self.tool_plan, self.output, self.run)
+            actual = capture_side_inventory(execution_root(self.backend, self.target), 'target', tools,
+                                            bound_file(self.backend, self.target['maintenance_build']),
+                                            self.directory('target-copy-handoff'), environment=environment,
+                                            evidence_root=self.backend)
         with source_check(self.backend):
-            with self.old.use('target') as environment:
-                tools = ExternalTools(self.tool_plan, self.output, self.run)
-                actual = capture_side_inventory(execution_root(self.backend, self.target), 'target', tools,
-                                                bound_file(self.backend, self.target['maintenance_build']),
-                                                self.directory('target-copy-handoff'), environment=environment,
-                                                evidence_root=self.backend)
             for observed in actual.observations:
                 key = next(db['key'] for db in self.target_config['databases'] if db['database'] == observed.resource['database'])
                 original = self.initial['inventory']['observations'][observed.resource['database']]
