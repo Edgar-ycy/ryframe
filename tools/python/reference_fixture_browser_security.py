@@ -52,7 +52,10 @@ def browser_environment(private: dict, binding: dict) -> dict:
     missing = sorted(name for name in RUNTIME_NAMES if not isinstance(private.get(name), str))
     if missing:
         raise ValueError("业务 crate 浏览器环境缺少运行字段：" + "、".join(missing))
-    values = configured({name: private[name] for name in RUNTIME_NAMES})
+    # 全栈 Worker 控制会用进程内的完整 APP_* 集合复核运行收据；浏览器环境必须携带与运行
+    # 环境完全相同的 APP_* 键值，否则配置摘要不同会拒绝停止或重启 Worker。
+    values = configured({**{name: private[name] for name in RUNTIME_NAMES},
+                         **{name: value for name, value in private.items() if name.startswith("APP_")}})
     request, login = binding["rate_limits"]["request"], binding["rate_limits"]["login"]
     values.update({
         "COREPACK_ENABLE_NETWORK": "0", "PLAYWRIGHT_CHANNEL": "chrome", "PYTHONUTF8": "1",

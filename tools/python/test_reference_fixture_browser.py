@@ -299,7 +299,12 @@ class ReferenceFixtureBrowserTests(unittest.TestCase):
         self.assertEqual(values["APP_OBJECT_STORAGE_ACCESS_KEY"], "RustfsAccess123")
         self.assertEqual(values["RYFRAME_E2E_PASSWORD"], "Admin!Secret123")
         self.assertNotIn("RYFRAME_RESET_USER_PASSWORD", values)
-        self.assertNotIn("APP_RESET_LEGACY_MYSQL_EXCLUSIVE", values)
+        # 运行收据的配置摘要覆盖进程内全部 APP_*；浏览器环境必须与运行环境保持同一集合。
+        runtime_app = {key: value for key, value in context["private"].items() if key.startswith("APP_")}
+        runtime_app["APP_API_DOCS_ENABLED"] = "false"
+        self.assertEqual(
+            {key: value for key, value in values.items() if key.startswith("APP_")}, runtime_app)
+        self.assertEqual(values["APP_API_DOCS_ENABLED"], "false")
         self.assertIn("RustfsAccess123", context["secrets"])
         self.assertIn("Database!Secret123", context["secrets"])
 
