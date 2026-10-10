@@ -58,6 +58,22 @@ class WindowsIdentityDenialTests(unittest.TestCase):
                 patch.object(module.time, "sleep"):
             self.assertIsNone(module._windows_identity(kernel, 1234, 4321))
 
+    def test_gen_failure_during_image_lookup_waits_for_exit(self):
+        import full_stack_process as module
+
+        kernel = self.kernel([258, 258, 258, 0])
+        with patch.object(module.ctypes, "get_last_error", return_value=31), \
+                patch.object(module.time, "sleep"):
+            self.assertIsNone(module._windows_identity(kernel, 1234, 4321))
+
+    def test_other_kernel_errors_still_fail_closed_while_alive(self):
+        import full_stack_process as module
+
+        kernel = self.kernel([258, 258])
+        with patch.object(module.ctypes, "get_last_error", return_value=87):
+            with self.assertRaises(OSError):
+                module._windows_identity(kernel, 1234, 4321)
+
     def test_persistent_denial_without_exit_fails_closed(self):
         import full_stack_process as module
 
