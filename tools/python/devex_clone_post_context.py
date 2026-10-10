@@ -284,7 +284,9 @@ class Context:
     def before_api(self):
         with source_check(self.backend):
             self.bindings()
-            self.source_guard(complete=True)
+        # 来源执行工作树（夹具等）不属于当前仓源码窗口；窗口外按该根完整核验，禁止复用窗口结果。
+        self.source_guard(complete=True)
+        with source_check(self.backend):
             with self.old.use('target') as environment:
                 tools = ExternalTools(self.tool_plan, self.output, self.run)
                 actual = capture_side_inventory(self.backend, 'target', tools, bound_file(self.backend, self.target['maintenance_build']),
