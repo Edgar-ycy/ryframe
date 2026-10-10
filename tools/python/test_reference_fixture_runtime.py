@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import unittest
 from unittest.mock import patch
@@ -107,6 +108,52 @@ class ReferenceFixtureRuntimeTests(unittest.TestCase):
     def test_output_rejects_paths_outside_the_business_reference_root(self):
         with self.assertRaisesRegex(ValueError, "参考夹具根"):
             runtime._output(self.execution, self.root / "outside", new=True)
+
+    def test_run_controls_the_worker_through_the_full_stack_entry(self):
+        entry = self.execution / runtime.WORKER_ENTRY
+        entry.parent.mkdir(parents=True, exist_ok=True)
+        entry.write_text("worker", encoding="utf-8")
+        output = self.reference / "runtime-r10"
+        output.mkdir()
+        write_json(output / "runtime.json", {"scope_id": "fixture-source"})
+        self._pair(self.execution, output / "source-pair.json")
+        commands = []
+
+        def fake_run(command, *, cwd, capture_output):
+            commands.append((command, str(cwd), capture_output))
+            value = {"operation": command[4], "scope_id": "fixture-source", "state": "stopped"}
+            return subprocess.CompletedProcess(command, 0, stdout=json.dumps(value), stderr="")
+
+        private = {"APP_ENV": "test", "APP_SCOPE_ID": "fixture-source", "APP_APP_HOST": "127.0.0.1",
+                   "APP_APP_PORT": "18200", "APP_JOBS_MODE": "external", "TEMP": str(self.root),
+                   "TMP": str(self.root)}
+        with patch.object(runtime, "verify", return_value={"runtime": {}}), \
+                patch.object(runtime, "_bootstrap", return_value=(None, self.execution, private)), \
+                patch.object(runtime, "_output", return_value=output), \
+                patch.object(runtime, "_run", side_effect=fake_run), \
+                patch.object(runtime, "control",
+                             return_value={"processes": {"api": {"state": "stopped"}}}) as control:
+            result = runtime.run(self.backend, self.bootstrap, output, "stop")
+        self.assertEqual(result["processes"], {"api": "stopped", "worker": "stopped"})
+        self.assertEqual(control.call_args.args[3], ("api",))
+        self.assertEqual(commands, [([sys.executable, "-X", "utf8", str(entry), "stop",
+                                      "--backend-root", str(self.execution), "--runtime-dir", str(output)],
+                                     str(self.execution), True)])
+
+    def test_run_rejects_a_missing_worker_control_entry(self):
+        output = self.reference / "runtime-r11"
+        output.mkdir()
+        write_json(output / "runtime.json", {"scope_id": "fixture-source"})
+        self._pair(self.execution, output / "source-pair.json")
+        private = {"APP_ENV": "test", "APP_SCOPE_ID": "fixture-source", "APP_APP_HOST": "127.0.0.1",
+                   "APP_APP_PORT": "18200", "APP_JOBS_MODE": "external", "TEMP": str(self.root),
+                   "TMP": str(self.root)}
+        with patch.object(runtime, "verify", return_value={"runtime": {}}), \
+                patch.object(runtime, "_bootstrap", return_value=(None, self.execution, private)), \
+                patch.object(runtime, "_output", return_value=output), \
+                patch.object(runtime, "control", return_value={"processes": {"api": {"state": "running"}}}):
+            with self.assertRaisesRegex(ValueError, "Worker 控制入口"):
+                runtime.run(self.backend, self.bootstrap, output, "start")
 
     def test_verify_returns_build_checked_inside_registered_environment(self):
         output = self.reference / "runtime-verify"

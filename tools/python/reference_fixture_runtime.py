@@ -62,6 +62,35 @@ def _run(command: list[str], *, cwd: Path, capture_output: bool) -> subprocess.C
                           creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
 
 
+WORKER_ENTRY = "tools/python/full_stack_worker.py"
+
+
+def _worker_entry(execution: Path) -> Path:
+    path = execution / WORKER_ENTRY
+    if linked(path) or not path.is_file():
+        raise ValueError("夹具运行树缺少正式的 Worker 控制入口")
+    return path
+
+
+def _worker_control(execution: Path, output: Path, operation: str) -> str:
+    """Worker 必须由正式全栈监督器启动并登记进程树；浏览器用例按该入口停止或崩溃 Worker。"""
+    if operation not in {"start", "stop", "status"}:
+        raise ValueError("夹具 Worker 控制操作无效")
+    completed = _run([sys.executable, "-X", "utf8", str(_worker_entry(execution)), operation,
+                      "--backend-root", str(execution), "--runtime-dir", str(output)],
+                     cwd=execution, capture_output=True)
+    try:
+        value = json.loads(completed.stdout)
+    except json.JSONDecodeError as error:
+        raise ValueError("Worker 控制入口未返回可解析的运行收据") from error
+    contract = read_json(output / "runtime.json")
+    state = value.get("state") if isinstance(value, dict) else None
+    if (not isinstance(value, dict) or value.get("operation") != operation
+            or value.get("scope_id") != contract["scope_id"] or state not in {"running", "stopped"}):
+        raise ValueError("Worker 控制收据与当前运行或操作不一致")
+    return state
+
+
 def _backend_build(execution: Path, output: Path, binaries: dict[str, str], inventory: dict,
                    context: dict) -> dict:
     sources = build_source_domains(inventory, "backend")
@@ -123,10 +152,15 @@ def run(backend: Path, environment_path: Path, output_path: Path, operation: str
     values = _runtime_environment(private, pair)
     api_url = f"http://{values['APP_APP_HOST']}:{values['APP_APP_PORT']}"
     with Environments(values, values).use("source"):
-        result = control(execution, output, operation, ("api", "worker"), api_url)
+        # 先停 Worker 再停 API，先起 API 再起受监督的 Worker。
+        worker = _worker_control(execution, output, "stop") if operation == "stop" else None
+        result = control(execution, output, operation, ("api",), api_url)
+        if worker is None:
+            worker = _worker_control(execution, output, operation)
+    processes = {role: value["state"] for role, value in result["processes"].items()}
+    processes["worker"] = worker
     return {"status": "reference_fixture_runtime_" + operation, "runtime": verified["runtime"],
-            "processes": {role: value["state"] for role, value in result["processes"].items()},
-            "remote_writes": 0}
+            "processes": processes, "remote_writes": 0}
 
 
 def observe_runtime(backend: Path, environment_path: Path, output_path: Path,
@@ -140,10 +174,12 @@ def observe_runtime(backend: Path, environment_path: Path, output_path: Path,
     values = _runtime_environment(private, pair)
     api_url = f"http://{values['APP_APP_HOST']}:{values['APP_APP_PORT']}"
     with Environments(values, values).use("source"):
-        result = observe(execution, output, ("api", "worker"), api_url)
+        result = observe(execution, output, ("api",), api_url)
+        worker = _worker_control(execution, output, "status")
+    processes = {role: value["state"] for role, value in result["processes"].items()}
+    processes["worker"] = worker
     return {"status": "reference_fixture_runtime_observed", "runtime": verified["runtime"],
-            "processes": {role: value["state"] for role, value in result["processes"].items()},
-            "remote_writes": 0}
+            "processes": processes, "remote_writes": 0}
 
 
 def _browser_api() -> RuntimeApi:

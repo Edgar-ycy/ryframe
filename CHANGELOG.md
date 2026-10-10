@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- 夹具 Worker 改由正式全栈监督器启动并登记 supervisor/monitor 进程树：冻结的业务浏览器用例通过 `full_stack_worker` 停止、崩溃或重启 Worker，缺少进程树收据时此前无法控制运行。
+
 - 业务浏览器环境携带与运行环境完全相同的 `APP_*` 集合：全栈 Worker 控制按进程配置摘要复核运行收据，缺少 `APP_RESET_*` 会拒绝停止或重启 Worker。
 
 - fresh-target 请求的服务 lineage 使用与账本一致的可执行摘要口径，重启后的服务代次可与注册闭合。
