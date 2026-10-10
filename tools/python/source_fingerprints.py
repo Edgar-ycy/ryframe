@@ -223,9 +223,19 @@ def _bridge_registration(root: Path, binding: dict, current: dict, current_inven
                        "original_fingerprints", "audited_source", "audited_inventory", "product_inputs",
                        "restore_qualified", "compiled"}
             or bridge["format_version"] != 1 or bridge["kind"] != "devex-artifact-source-bridge"
-            or bridge["backend_root"] != str(root) or bridge["restore_qualified"] is not False
+            or bridge["restore_qualified"] is not False
             or bridge["compiled"] is not False):
         raise ValueError("产物来源桥接格式或用途不符")
+    nested = bridge["backend_root"] != str(root)
+    if nested:
+        # 夹具等嵌套产品树自带根；必须位于运行根内且不经过链接，并按该根完整重查。
+        from devex_clone_model import linked
+
+        bridge_root = Path(bridge["backend_root"])
+        if (not bridge_root.is_absolute() or any(linked(item) for item in (bridge_root, *bridge_root.parents))
+                or not bridge_root.resolve().is_relative_to(root.resolve())):
+            raise ValueError("嵌套产物来源桥接的根不属于当前运行目录")
+        current, current_inventory = current_execution_source(bridge_root), capture_inventory(bridge_root)
     receipt = read_binding(root, bridge["build"])
     inventory = read_binding(root, bridge["inventory"])
     _verify_bridge_build(root, Path(bridge["build"]["path"]), receipt)
