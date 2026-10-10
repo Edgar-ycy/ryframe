@@ -75,7 +75,9 @@ class WindowsMembers:
         self.stack.callback(self.kernel.CloseHandle, self.handle)
         try:
             information = _ExtendedLimitInformation()
-            information.BasicLimitInformation.LimitFlags = 0x2000
+            # KILL_ON_JOB_CLOSE 保证整树回收；BREAKAWAY_OK 允许受控子链（如夹具 Worker）在
+            # 被浏览器阶段等外层 Job 包裹启动时显式脱离，避免随外层 Job 关闭被一并终止。
+            information.BasicLimitInformation.LimitFlags = 0x2000 | 0x800
             if not self.kernel.SetInformationJobObject(self.handle, 9, ctypes.byref(information), ctypes.sizeof(information)):
                 raise ctypes.WinError(ctypes.get_last_error())
             kernel, handle = self.stack.enter_context(_windows_handle(supervisor["pid"]))

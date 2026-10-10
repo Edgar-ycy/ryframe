@@ -391,26 +391,35 @@ def _authorize_supervisor(
     environment.pop("SNOWFLAKE_WORKER_ID", None)
     log = directory / f"worker-supervisor-{operation_id}.log"
     with log.open("xb") as output:
-        process = subprocess.Popen(
-            [
-                sys.executable,
-                str(Path(__file__).resolve()),
-                "__supervise",
-                "--backend-root",
-                str(backend),
-                "--runtime-dir",
-                str(directory),
-                "--operation-id",
-                operation_id,
-            ],
+        command = [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "__supervise",
+            "--backend-root",
+            str(backend),
+            "--runtime-dir",
+            str(directory),
+            "--operation-id",
+            operation_id,
+        ]
+        creation = dict(
             cwd=backend,
             env=environment,
             stdin=subprocess.DEVNULL,
             stdout=output,
             stderr=subprocess.STDOUT,
             start_new_session=True,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
+        if os.name == "nt":
+            # 夹具 Worker 可能由浏览器阶段（外层 Job）内启动；显式脱离外层 Job，
+            # 避免套件结束关闭外层 Job 时连同受监督 Worker 一起终止。
+            breakaway = subprocess.CREATE_NO_WINDOW | getattr(subprocess, "CREATE_BREAKAWAY_FROM_JOB", 0x01000000)
+            try:
+                process = subprocess.Popen(command, creationflags=breakaway, **creation)
+            except OSError:
+                process = subprocess.Popen(command, creationflags=subprocess.CREATE_NO_WINDOW, **creation)
+        else:
+            process = subprocess.Popen(command, creationflags=0, **creation)
     candidate_path = operation["path"] / "candidate.json"
     deadline = time.monotonic() + 5
     spawned_identity = None
