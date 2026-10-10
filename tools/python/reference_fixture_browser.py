@@ -69,12 +69,16 @@ class SourceGuard:
         return cls(root, expected, inventory, tuple(states))
 
     def assert_unchanged(self) -> None:
+        changed = []
         for relative, expected in self.states:
             found = source_file(self.root, relative, allow_missing=True)
             if found is None or file_state(found[1]) != expected:
-                raise ValueError("业务 crate 浏览器期间源码曾被替换或修改")
+                changed.append(relative)
+        if changed:
+            raise ValueError("业务 crate 浏览器期间源码曾被替换或修改："
+                             + f"{self.root}：" + ", ".join(changed[:5]))
         if capture_inventory(self.root) != self.inventory:
-            raise ValueError("业务 crate 浏览器期间源码发生变化")
+            raise ValueError("业务 crate 浏览器期间源码发生变化：" + str(self.root))
 
 
 def _bound(path: Path) -> dict:
