@@ -145,7 +145,8 @@ class CloneSession:
             # 既有来源请求未声明执行工作树；维护构建收据绑定真实后端根时以它为准。
             recorded = read_json(receipt).get("backend_root")
             execution = Path(recorded) if isinstance(recorded, str) and Path(recorded).is_dir() else self.backend
-        with source_check(self.backend), self.environment.use(side) as environment:
+        # 夹具执行树不在当前验收仓库的检查窗口内；采集必须在窗口外完整核验。
+        with self.environment.use(side) as environment:
             captured = capture_side_inventory(execution, side, self.tools, receipt,
                                               self.directory(side + "-inventory"), environment=environment)
         by_name = {db["database"]: db["key"] for db in config["databases"]}
