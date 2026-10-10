@@ -2,7 +2,6 @@ use axum::{
     Json, Router,
     extract::State,
     http::{HeaderMap, StatusCode},
-    middleware::from_fn_with_state,
 };
 use ryframe_macro::{post, route};
 
@@ -11,18 +10,11 @@ use crate::{
     dto::{export_dto::PostExportRequestDto, public_dto::ExportJobVo},
     handlers::export_handler::request_export,
     http::{ApiResponse, HttpResult},
-    router::{CapabilityGuardState, capability_guard},
     state::AppState,
 };
 
 pub fn post_export_router(state: AppState) -> Router {
-    Router::new()
-        .merge(route!(request_post_export))
-        .layer(from_fn_with_state(
-            CapabilityGuardState::new(state.clone(), "system.post"),
-            capability_guard,
-        ))
-        .with_state(state)
+    Router::new().merge(route!(request_post_export)).with_state(state)
 }
 
 /// 创建岗位异步导出任务。
