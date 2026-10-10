@@ -49,8 +49,9 @@ class PostPlanTests(unittest.TestCase):
         patch.object(context_module, 'request_binding', return_value=({}, self.fixture.initial['generation']['selected'])).start()
         patch.object(context_module, 'verify_source_export', return_value=source).start()
         # 这里只隔离已经在登记单测覆盖的字段检查；正式发布/账本门禁和语义解析都实际执行。
-        self.validate = patch.object(context_module, 'validate_registration', side_effect=lambda backend, directory, value, _:
-            run.require_target_copy(backend, directory, value, ('api',))).start()
+        self.validate = patch.object(context_module, 'validate_registration',
+                                     side_effect=lambda backend, directory, value, _, owned_lock_identity=None:
+                                     run.require_target_copy(backend, directory, value, ('api',))).start()
 
     def test_actual_context_constructor_reuses_the_single_full_plan_and_complete_ledger(self):
         with patch.object(clone, 'create_plan', wraps=clone.create_plan) as parse:
@@ -62,7 +63,7 @@ class PostPlanTests(unittest.TestCase):
             self.assertEqual(parse.call_count, 1)
 
     def test_changed_payload_between_publication_gate_and_context_reuse_is_rejected(self):
-        def validate(backend, directory, value, _):
+        def validate(backend, directory, value, _, owned_lock_identity=None):
             token = run.require_target_copy(backend, directory, value, ('api',))
             (self.fixture.case.fixture.root / 'file.bin').write_bytes(b'evil')
             return token

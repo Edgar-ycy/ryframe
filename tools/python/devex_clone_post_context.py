@@ -52,7 +52,8 @@ class Context:
             active = registration(backend, directory)
             self.request_binding = active.descriptor
             self.request = active.request
-            self.verified_plan = validate_registration(backend, directory, value, self.request)
+            self.verified_plan = validate_registration(backend, directory, value, self.request,
+                                                       owned_lock_identity=owned_lock_identity)
             self.copy_root = Path(value["copy_directory"])
             self.copy = {"plan": reuse_plan(backend, str(self.copy_root / "plan.json"), self.verified_plan)[0]["plan"],
                          "result": read_json(self.copy_root / "result.json"), "session": read_json(self.copy_root / "session.json")}
