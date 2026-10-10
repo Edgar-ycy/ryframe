@@ -215,6 +215,29 @@ class ExistingTests(unittest.TestCase):
         self.assertEqual(observed.call_count, 1)
         self.assertEqual(windows, [])
 
+    def test_guard_verifies_source_outside_current_repo_window(self):
+        context = Context.__new__(Context)
+        context.backend, context.output = self.context.backend, self.context.output
+        context.bindings = lambda: None
+        context.target_guard = lambda **_: None
+        windows = []
+
+        @contextmanager
+        def window(_root):
+            windows.append(True)
+            try:
+                yield None
+            finally:
+                windows.pop()
+
+        def source_guard(**kwargs):
+            self.assertFalse(windows, "来源执行树核验必须在当前仓源码窗口之外")
+
+        context.source_guard = source_guard
+        with patch('devex_clone_post_context.source_check', window):
+            context.guard()
+        self.assertEqual(windows, [])
+
 
 if __name__ == '__main__':
     unittest.main()

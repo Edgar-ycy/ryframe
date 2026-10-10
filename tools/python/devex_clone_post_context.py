@@ -343,7 +343,9 @@ class Context:
     def guard(self, *, complete=False):
         with source_check(self.backend):
             self.bindings()
-            self.source_guard(complete=complete)
+        # 来源执行工作树（夹具等）与 prepare 同样在当前仓源码窗口之外核验。
+        self.source_guard(complete=complete)
+        with source_check(self.backend):
             self.target_guard(api=True)
             self.bindings()
 
