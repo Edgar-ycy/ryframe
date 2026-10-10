@@ -7,6 +7,7 @@ import json
 import os
 import select
 import signal
+import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
@@ -83,12 +84,27 @@ def _windows_identity(kernel, handle, pid: int) -> dict | None:
     kernel.GetProcessTimes.argtypes = (wintypes.HANDLE, *([ctypes.POINTER(wintypes.FILETIME)] * 4))
     times = [wintypes.FILETIME() for _ in range(4)]
     if not kernel.GetProcessTimes(handle, *(ctypes.byref(value) for value in times)):
-        raise ctypes.WinError(ctypes.get_last_error())
+        error = ctypes.get_last_error()
+        if error == 5 and kernel.WaitForSingleObject(handle, 0) == 0:
+            return None
+        raise ctypes.WinError(error)
     kernel.QueryFullProcessImageNameW.argtypes = (wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD))
-    size = wintypes.DWORD(32768)
-    executable = ctypes.create_unicode_buffer(size.value)
-    if not kernel.QueryFullProcessImageNameW(handle, 0, executable, ctypes.byref(size)):
-        raise ctypes.WinError(ctypes.get_last_error())
+    # 正在退出的进程可能短暂拒绝查询镜像路径（WinError 5）；等到其退出或恢复可读为止，
+    # 期限内持续拒绝则失败关闭，不把无权限当成进程已退出。
+    deadline = time.monotonic() + 5
+    while True:
+        size = wintypes.DWORD(32768)
+        executable = ctypes.create_unicode_buffer(size.value)
+        if kernel.QueryFullProcessImageNameW(handle, 0, executable, ctypes.byref(size)):
+            break
+        error = ctypes.get_last_error()
+        if error != 5:
+            raise ctypes.WinError(error)
+        if kernel.WaitForSingleObject(handle, 0) == 0:
+            return None
+        if time.monotonic() >= deadline:
+            raise ctypes.WinError(error)
+        time.sleep(0.05)
     started = (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
     return {"pid": pid, "started": str(started), "executable": str(Path(executable.value).resolve())}
 

@@ -626,7 +626,20 @@ def stop(request, environment, runtime, output):
         write(Path(output) / "stopped.json", result)
         return result
     windows_identity(request, runtime, required=False)
-    result = linux_call(request, runtime, "stop")
+    observed_after_failed_stop = False
+    try:
+        result = linux_call(request, runtime, "stop")
+    except RuntimeError as error:
+        # 精确停止调用失败时用同一冻结身份做一次只读复核：记录中的 Linux 进程已经不
+        # 存在且端口空闲时，停止目标已经达成；仍在运行或复核失败则保留原始错误。
+        try:
+            observation = linux_call(request, runtime, "check")
+        except BaseException:
+            raise error
+        if observation["alive"]:
+            raise error
+        result = observation
+        observed_after_failed_stop = True
     if result["alive"]:
         raise ValueError("Redis 精确回收后仍在运行")
     deadline = time.monotonic() + 10
@@ -636,6 +649,8 @@ def stop(request, environment, runtime, output):
         time.sleep(0.05)
     require_closed_port(f"http://127.0.0.1:{request['port']}")
     result = {**result, "status": "redis_process_stopped", "runtime": runtime, "resources_deleted": False}
+    if observed_after_failed_stop:
+        result["observed_after_failed_stop"] = True
     write(Path(output) / "stopped.json", result)
     return result
 

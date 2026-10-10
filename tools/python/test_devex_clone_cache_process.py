@@ -374,6 +374,44 @@ class CacheProcessTests(unittest.TestCase):
         with patch.object(process, "windows_identity", return_value=True), patch.object(process, "linux_call", return_value=stopped), self.assertRaises(ValueError):
             process.status(self.request, runtime)
 
+    def test_stop_falls_back_to_read_only_check_when_precise_stop_call_fails(self):
+        runtime = self.recorded()
+        stopped = {"identity": self.identity, "alive": False, "boot_id": BOOT, "terminated": False}
+        actions = []
+
+        def linux_call(_request, _runtime, action):
+            actions.append(action)
+            if action == "stop":
+                raise RuntimeError("WSL Redis 精确身份操作失败")
+            return stopped
+
+        with patch.object(process, "windows_identity", return_value=False), \
+                patch.object(process, "linux_call", side_effect=linux_call), \
+                patch("full_stack_process.process_identity", return_value=None), \
+                patch("devex_clone_source_proof.require_closed_port"):
+            result = process.stop(self.request, {}, runtime, self.output)
+        self.assertEqual(actions, ["stop", "check"])
+        self.assertEqual(result["status"], "redis_process_stopped")
+        self.assertTrue(result["observed_after_failed_stop"])
+        self.assertFalse(result["alive"])
+        saved = json.loads((self.output / "stopped.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved, result)
+
+    def test_stop_keeps_original_error_when_read_only_check_still_alive(self):
+        runtime = self.recorded()
+        alive = {"identity": self.identity, "alive": True, "boot_id": BOOT, "terminated": False}
+
+        def linux_call(_request, _runtime, action):
+            if action == "stop":
+                raise RuntimeError("WSL Redis 精确身份操作失败")
+            return alive
+
+        with patch.object(process, "windows_identity", return_value=False), \
+                patch.object(process, "linux_call", side_effect=linux_call), \
+                self.assertRaisesRegex(RuntimeError, "精确身份操作失败"):
+            process.stop(self.request, {}, runtime, self.output)
+        self.assertFalse((self.output / "stopped.json").exists())
+
     def test_launch_constructor_exception_remains_unknown(self):
         with patch("devex_clone_source_proof.require_closed_port"), patch.object(process.subprocess, "Popen", side_effect=OSError("injected")):
             with self.assertRaises(OSError):
