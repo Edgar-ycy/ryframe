@@ -337,7 +337,12 @@ if __name__ == "__main__":
         print("reference_fixture_runtime_protocol_error：夹具运行时私有协议无效。",
               file=sys.stderr)
         raise SystemExit(2)
-    except Exception:
-        print("reference_fixture_runtime_failed：夹具运行时失败，请核对已登记证据；不自动重放。",
+    except Exception as error:
+        from restore_reference_io import redact_object_diagnostic
+
+        detail = type(error).__name__
+        if isinstance(error, ValueError):
+            detail += "：" + redact_object_diagnostic(str(error), os.environ)
+        print(f"reference_fixture_runtime_failed：{detail}；请核对已登记证据，不自动重放。",
               file=sys.stderr)
         raise SystemExit(1)
