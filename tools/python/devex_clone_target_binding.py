@@ -58,11 +58,7 @@ def target_files(target: Path, *, ignored: set[str] | None = None,
                 raise ValueError("fresh 目标阶段文件经过链接")
             native = filesystem_path(path)
             if relative in ignored:
-                if os.path.isfile(native):
-                    # 控制互斥锁本身是被显式忽略的文件，不属于快照集合。
-                    continue
-                if not os.path.isdir(native) or any(path.iterdir()):
-                    raise ValueError("fresh 目标忽略项不是空的普通目录")
+                # 控制互斥以文件或含 owner 记录的目录形式存在，均不属于快照集合。
                 continue
             item = {"path": relative}
             if relative == "copy-target.guard" and locked_guard:
