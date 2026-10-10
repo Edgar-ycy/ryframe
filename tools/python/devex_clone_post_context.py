@@ -15,7 +15,7 @@ from process_environment import Environments
 from devex_clone_inventory import capture_side_inventory
 from devex_clone_ledger import CloneLedger
 from devex_clone_live_object import observe_target_object
-from devex_clone_model import linked
+from devex_clone_model import linked, local_path
 from devex_clone_object_batch import ordered_batches
 from devex_clone_post import registration, registered, validate_registration, pacing_binding
 from devex_clone_post_model import action_input, full_row_sql, exact_directory
